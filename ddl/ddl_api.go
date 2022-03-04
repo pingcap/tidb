@@ -691,7 +691,7 @@ func typesNeedCharset(tp byte) bool {
 	return false
 }
 
-func setCharsetCollationFlenDecimal(tp *types.FieldType, colCharset, colCollate string) error {
+func setCharsetCollationFlenDecimal(tp *types.FieldType, colName, colCharset, colCollate string, sessVars *variable.SessionVars) error {
 	var err error
 	if typesNeedCharset(tp.Tp) {
 		tp.Charset = colCharset
@@ -715,9 +715,11 @@ func setCharsetCollationFlenDecimal(tp *types.FieldType, colCharset, colCollate 
 		}
 	} else {
 		// Adjust the field type for blob/text types if the flen is set.
-		err = adjustBlobTypesFlen(tp, colCharset)
+		if err = adjustBlobTypesFlen(tp, colCharset); err != nil {
+			return err
+		}
 	}
-	return err
+	return checkTooBigFieldLengthAndTryAutoConvert(tp, colName, sessVars)
 }
 
 // buildColumnAndConstraint builds table.Column and ast.Constraint from the parameters.
@@ -749,7 +751,7 @@ func buildColumnAndConstraint(
 		return nil, nil, errors.Trace(err)
 	}
 
-	if err := setCharsetCollationFlenDecimal(colDef.Tp, chs, coll); err != nil {
+	if err := setCharsetCollationFlenDecimal(colDef.Tp, colDef.Name.Name.O, chs, coll, ctx.GetSessionVars()); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	col, cts, err := columnDefToCol(ctx, offset, colDef, outPriKeyConstraint)
@@ -3355,7 +3357,7 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 		return nil, errors.Trace(err)
 	}
 
-	originDefVal, err := generateOriginDefaultValue(col.ToInfo())
+	originDefVal, err := generateOriginDefaultValue(col.ToInfo(), ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -4447,7 +4449,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 		}
 	}
 
-	if err = setCharsetCollationFlenDecimal(&newCol.FieldType, chs, coll); err != nil {
+	if err = setCharsetCollationFlenDecimal(&newCol.FieldType, newCol.Name.O, chs, coll, sctx.GetSessionVars()); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -7064,4 +7066,24 @@ func (d *ddl) AlterTableNoCache(ctx sessionctx.Context, ti ast.Ident) (err error
 
 	err = d.doDDLJob(ctx, job)
 	return d.callHookOnChanged(err)
+}
+
+// checkTooBigFieldLengthAndTryAutoConvert will check whether the field length is too big
+// in non-strict mode and varchar column. If it is, will try to adjust to blob or text, see issue #30328
+func checkTooBigFieldLengthAndTryAutoConvert(tp *types.FieldType, colName string, sessVars *variable.SessionVars) error {
+	if sessVars != nil && !sessVars.SQLMode.HasStrictMode() && tp.Tp == mysql.TypeVarchar {
+		err := IsTooBigFieldLength(tp.Flen, colName, tp.Charset)
+		if err != nil && terror.ErrorEqual(types.ErrTooBigFieldLength, err) {
+			tp.Tp = mysql.TypeBlob
+			if err = adjustBlobTypesFlen(tp, tp.Charset); err != nil {
+				return err
+			}
+			if tp.Charset == charset.CharsetBin {
+				sessVars.StmtCtx.AppendWarning(ErrAutoConvert.GenWithStackByArgs(colName, "VARBINARY", "BLOB"))
+			} else {
+				sessVars.StmtCtx.AppendWarning(ErrAutoConvert.GenWithStackByArgs(colName, "VARCHAR", "TEXT"))
+			}
+		}
+	}
+	return nil
 }

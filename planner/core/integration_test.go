@@ -2623,6 +2623,7 @@ func TestIndexJoinOnClusteredIndex(t *testing.T) {
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Res...))
 	}
 }
+
 func TestIssue18984(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -2645,13 +2646,87 @@ func TestIssue18984(t *testing.T) {
 		"3 3 3 2 4 3 5"))
 }
 
+func TestBitColumnPushDown(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a bit(8), b int)")
+	tk.MustExec("create table t2(a bit(8), b int)")
+	tk.MustExec("insert into t1 values ('1', 1), ('2', 2), ('3', 3), ('4', 4), ('1', 1), ('2', 2), ('3', 3), ('4', 4)")
+	tk.MustExec("insert into t2 values ('1', 1), ('2', 2), ('3', 3), ('4', 4), ('1', 1), ('2', 2), ('3', 3), ('4', 4)")
+	sql := "select b from t1 where t1.b > (select min(t2.b) from t2 where t2.a < t1.a)"
+	tk.MustQuery(sql).Sort().Check(testkit.Rows("2", "2", "3", "3", "4", "4"))
+	rows := [][]interface{}{
+		{"Projection_15", "root", "test.t1.b"},
+		{"└─Apply_17", "root", "CARTESIAN inner join, other cond:gt(test.t1.b, Column#7)"},
+		{"  ├─TableReader_20(Build)", "root", "data:Selection_19"},
+		{"  │ └─Selection_19", "cop[tikv]", "not(isnull(test.t1.b))"},
+		{"  │   └─TableFullScan_18", "cop[tikv]", "keep order:false, stats:pseudo"},
+		{"  └─Selection_21(Probe)", "root", "not(isnull(Column#7))"},
+		{"    └─StreamAgg_23", "root", "funcs:min(test.t2.b)->Column#7"},
+		{"      └─TopN_24", "root", "test.t2.b, offset:0, count:1"},
+		{"        └─TableReader_32", "root", "data:TopN_31"},
+		{"          └─TopN_31", "cop[tikv]", "test.t2.b, offset:0, count:1"},
+		{"            └─Selection_30", "cop[tikv]", "lt(test.t2.a, test.t1.a), not(isnull(test.t2.b))"},
+		{"              └─TableFullScan_29", "cop[tikv]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
+	tk.MustExec("insert t1 values ('A', 1);")
+	sql = "select a from t1 where ascii(a)=65"
+	tk.MustQuery(sql).Check(testkit.Rows("A"))
+	rows = [][]interface{}{
+		{"TableReader_7", "root", "data:Selection_6"},
+		{"└─Selection_6", "cop[tikv]", "eq(ascii(cast(test.t1.a, var_string(1))), 65)"},
+		{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = `eq(concat(cast(test.t1.a, var_string(1)), "A"), "AA")`
+	sql = "select a from t1 where concat(a, 'A')='AA'"
+	tk.MustQuery(sql).Check(testkit.Rows("A"))
+	tk.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = `eq(cast(test.t1.a, binary(1)), "A")`
+	sql = "select a from t1 where binary a='A'"
+	tk.MustQuery(sql).Check(testkit.Rows("A"))
+	tk.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = `eq(cast(test.t1.a, var_string(1)), "A")`
+	sql = "select a from t1 where cast(a as char)='A'"
+	tk.MustQuery(sql).Check(testkit.Rows("A"))
+	tk.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
+
+	tk.MustExec("insert into mysql.expr_pushdown_blacklist values('bit', 'tikv','');")
+	tk.MustExec("admin reload expr_pushdown_blacklist;")
+	rows = [][]interface{}{
+		{"Selection_5", "root", `eq(cast(test.t1.a, var_string(1)), "A")`},
+		{"└─TableReader_7", "root", "data:TableFullScan_6"},
+		{"  └─TableFullScan_6", "cop[tikv]", "keep order:false, stats:pseudo"},
+	}
+	sql = "select a from t1 where cast(a as char)='A'"
+	tk.MustQuery(sql).Check(testkit.Rows("A"))
+	tk.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
+
+	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name='bit'")
+	tk.MustExec("admin reload expr_pushdown_blacklist;")
+	sql = "select a from t1 where ascii(a)=65"
+	tk.MustQuery(sql).Check(testkit.Rows("A"))
+	rows = [][]interface{}{
+		{"TableReader_7", "root", "data:Selection_6"},
+		{"└─Selection_6", "cop[tikv]", "eq(ascii(cast(test.t1.a, var_string(1))), 65)"},
+		{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
+}
+
 func TestScalarFunctionPushDown(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(id int signed, id2 int unsigned ,c varchar(11), d datetime, b double)")
-	tk.MustExec("insert into t(id,c,d) values (1,'abc','2021-12-12')")
+	tk.MustExec("create table t(id int signed, id2 int unsigned, c varchar(11), d datetime, b double, e bit(10))")
+	tk.MustExec("insert into t(id, id2, c, d) values (-1, 1, 'abc', '2021-12-12')")
 	rows := [][]interface{}{
 		{"TableReader_7", "root", "data:Selection_6"},
 		{"└─Selection_6", "cop[tikv]", "right(test.t.c, 1)"},
@@ -2749,17 +2824,17 @@ func TestScalarFunctionPushDown(t *testing.T) {
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where to_days(d);").
 		CheckAt([]int{0, 3, 6}, rows)
 
-	rows[1][2] = "last_day(test.t.d)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where last_day(d);").
-		CheckAt([]int{0, 3, 6}, rows)
+	//rows[1][2] = "last_day(test.t.d)"
+	//tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where last_day(d);").
+	//	CheckAt([]int{0, 3, 6}, rows)
 
 	rows[1][2] = "gt(4, test.t.id)"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where pi() > id;").
 		CheckAt([]int{0, 3, 6}, rows)
 
-	rows[1][2] = "truncate(test.t.id, 0)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where truncate(id,0)").
-		CheckAt([]int{0, 3, 6}, rows)
+	//rows[1][2] = "truncate(test.t.id, 0)"
+	//tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where truncate(id,0)").
+	//	CheckAt([]int{0, 3, 6}, rows)
 
 	rows[1][2] = "bin(test.t.id)"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where bin(id)").
@@ -2851,6 +2926,30 @@ func TestScalarFunctionPushDown(t *testing.T) {
 
 	rows[1][2] = "gt(test.t.d, sysdate())"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "ascii(cast(test.t.e, var_string(2)))"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where ascii(e);").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "lower(test.t.c)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where lower(c)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "upper(test.t.c)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where upper(c)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "insert_func(test.t.c, 1, 1, \"c\")"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where insert_func(c, 1, 1,'c')").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "greatest(test.t.id, 1)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where greatest(id, 1)").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	rows[1][2] = "least(test.t.id, 1)"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where least(id, 1)").
 		CheckAt([]int{0, 3, 6}, rows)
 }
 
@@ -6013,4 +6112,61 @@ func TestIssue31240(t *testing.T) {
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 	tk.MustExec("drop table if exists t31240")
+}
+
+func TestIssue32632(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `partsupp` (" +
+		" `PS_PARTKEY` bigint(20) NOT NULL," +
+		"`PS_SUPPKEY` bigint(20) NOT NULL," +
+		"`PS_AVAILQTY` bigint(20) NOT NULL," +
+		"`PS_SUPPLYCOST` decimal(15,2) NOT NULL," +
+		"`PS_COMMENT` varchar(199) NOT NULL," +
+		"PRIMARY KEY (`PS_PARTKEY`,`PS_SUPPKEY`) /*T![clustered_index] NONCLUSTERED */)")
+	tk.MustExec("CREATE TABLE `supplier` (" +
+		"`S_SUPPKEY` bigint(20) NOT NULL," +
+		"`S_NAME` char(25) NOT NULL," +
+		"`S_ADDRESS` varchar(40) NOT NULL," +
+		"`S_NATIONKEY` bigint(20) NOT NULL," +
+		"`S_PHONE` char(15) NOT NULL," +
+		"`S_ACCTBAL` decimal(15,2) NOT NULL," +
+		"`S_COMMENT` varchar(101) NOT NULL," +
+		"PRIMARY KEY (`S_SUPPKEY`) /*T![clustered_index] CLUSTERED */)")
+	tk.MustExec("analyze table partsupp;")
+	tk.MustExec("analyze table supplier;")
+	tk.MustExec("set @@tidb_enforce_mpp = 1")
+
+	tbl1, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "partsupp", L: "partsupp"})
+	require.NoError(t, err)
+	tbl2, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "supplier", L: "supplier"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+	tbl2.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	h := dom.StatsHandle()
+	statsTbl1 := h.GetTableStats(tbl1.Meta())
+	statsTbl1.Count = 800000
+	statsTbl2 := h.GetTableStats(tbl2.Meta())
+	statsTbl2.Count = 10000
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	integrationSuiteData := core.GetIntegrationSuiteData()
+	integrationSuiteData.GetTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+	tk.MustExec("drop table if exists partsupp")
+	tk.MustExec("drop table if exists supplier")
 }

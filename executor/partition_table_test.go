@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1113,28 +1112,28 @@ func TestPartitionTableWithDifferentJoin(t *testing.T) {
 	// require.True(t,tk.HasPlan(queryHash, "IndexMergeJoin"))
 	// tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 	tk.MustQuery(queryHash)
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1815|Optimizer Hint /*+ INL_MERGE_JOIN(trange, trange2) */ is inapplicable"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1815|Optimizer Hint /*+ INL_MERGE_JOIN(trange, trange2) */ is inapplicable"))
 
 	queryHash = fmt.Sprintf("select /*+ inl_merge_join(trange, trange2) */ * from trange, trange2 where trange.a=trange2.a and trange.a > %v and trange2.a > %v;", x1, x2)
 	// queryRegular = fmt.Sprintf("select /*+ inl_merge_join(tregular2, tregular4) */ * from tregular2, tregular4 where tregular2.a=tregular4.a and tregular2.a > %v and tregular4.a > %v;", x1, x2)
 	// require.True(t,tk.HasPlan(queryHash, "IndexMergeJoin"))
 	// tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 	tk.MustQuery(queryHash)
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1815|Optimizer Hint /*+ INL_MERGE_JOIN(trange, trange2) */ is inapplicable"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1815|Optimizer Hint /*+ INL_MERGE_JOIN(trange, trange2) */ is inapplicable"))
 
 	queryHash = fmt.Sprintf("select /*+ inl_merge_join(trange, trange2) */ * from trange, trange2 where trange.a=trange2.a and trange.a > %v and trange.b > %v;", x1, x2)
 	// queryRegular = fmt.Sprintf("select /*+ inl_merge_join(tregular2, tregular4) */ * from tregular2, tregular4 where tregular2.a=tregular4.a and tregular2.a > %v and tregular2.b > %v;", x1, x2)
 	// require.True(t,tk.HasPlan(queryHash, "IndexMergeJoin"))
 	// tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 	tk.MustQuery(queryHash)
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1815|Optimizer Hint /*+ INL_MERGE_JOIN(trange, trange2) */ is inapplicable"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1815|Optimizer Hint /*+ INL_MERGE_JOIN(trange, trange2) */ is inapplicable"))
 
 	queryHash = fmt.Sprintf("select /*+ inl_merge_join(trange, trange2) */ * from trange, trange2 where trange.a=trange2.a and trange.a > %v and trange2.b > %v;", x1, x2)
 	// queryRegular = fmt.Sprintf("select /*+ inl_merge_join(tregular2, tregular4) */ * from tregular2, tregular4 where tregular2.a=tregular4.a and tregular2.a > %v and tregular4.b > %v;", x1, x2)
 	// require.True(t,tk.HasPlan(queryHash, "IndexMergeJoin"))
 	// tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 	tk.MustQuery(queryHash)
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1815|Optimizer Hint /*+ INL_MERGE_JOIN(trange, trange2) */ is inapplicable"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1815|Optimizer Hint /*+ INL_MERGE_JOIN(trange, trange2) */ is inapplicable"))
 
 	// group 6
 	// index_merge_join range partition and regualr table
@@ -1829,13 +1828,20 @@ func TestPartitionPruningInTransaction(t *testing.T) {
 	tk.MustExec("create database test_pruning_transaction")
 	defer tk.MustExec(`drop database test_pruning_transaction`)
 	tk.MustExec("use test_pruning_transaction")
-	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec(`create table t(a int, b int) partition by range(a) (partition p0 values less than(3), partition p1 values less than (5), partition p2 values less than(11))`)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
 	tk.MustExec(`begin`)
 	tk.MustPartitionByList(`select * from t`, []string{"p0", "p1", "p2"})
 	tk.MustPartitionByList(`select * from t where a > 3`, []string{"p1", "p2"}) // partition pruning can work in transactions
 	tk.MustPartitionByList(`select * from t where a > 7`, []string{"p2"})
 	tk.MustExec(`rollback`)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec(`begin`)
+	tk.MustPartition(`select * from t`, "all")
+	tk.MustPartition(`select * from t where a > 3`, "p1,p2") // partition pruning can work in transactions
+	tk.MustPartition(`select * from t where a > 7`, "p2")
+	tk.MustExec(`rollback`)
+	tk.MustExec("set @@tidb_partition_prune_mode = default")
 }
 
 func TestIssue25253(t *testing.T) {
@@ -2984,8 +2990,8 @@ partition p2 values less than (11))`)
 	}
 
 	partitionModes := []string{
-		"'dynamic-only'",
-		"'static-only'",
+		"'dynamic'",
+		"'static'",
 	}
 	testCases := []func(){
 		optimisticTableReader,
@@ -3262,4 +3268,164 @@ func TestIssue26251(t *testing.T) {
 	// Clean up
 	<-ch
 	tk2.MustExec("rollback")
+}
+
+func TestLeftJoinForUpdate(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("create database TestLeftJoinForUpdate")
+	defer tk1.MustExec("drop database TestLeftJoinForUpdate")
+	tk1.MustExec("use TestLeftJoinForUpdate")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use TestLeftJoinForUpdate")
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use TestLeftJoinForUpdate")
+
+	tk1.MustExec("drop table if exists nt, pt")
+	tk1.MustExec("create table nt (id int, col varchar(32), primary key (id))")
+	tk1.MustExec("create table pt (id int, col varchar(32), primary key (id)) partition by hash(id) partitions 4")
+
+	resetData := func() {
+		tk1.MustExec("truncate table nt")
+		tk1.MustExec("truncate table pt")
+		tk1.MustExec("insert into nt values (1, 'hello')")
+		tk1.MustExec("insert into pt values (2, 'test')")
+	}
+
+	// ========================== First round of test ==================
+	// partition table left join normal table.
+	// =================================================================
+	resetData()
+	ch := make(chan int, 10)
+	tk1.MustExec("begin pessimistic")
+	// No union scan
+	tk1.MustQuery("select * from pt left join nt on pt.id = nt.id for update").Check(testkit.Rows("2 test <nil> <nil>"))
+	go func() {
+		// Check the key is locked.
+		tk2.MustExec("update pt set col = 'xxx' where id = 2")
+		ch <- 2
+	}()
+
+	// Union scan
+	tk1.MustExec("insert into pt values (1, 'world')")
+	tk1.MustQuery("select * from pt left join nt on pt.id = nt.id for update").Sort().Check(testkit.Rows("1 world 1 hello", "2 test <nil> <nil>"))
+	go func() {
+		// Check the key is locked.
+		tk3.MustExec("update nt set col = 'yyy' where id = 1")
+		ch <- 3
+	}()
+
+	// Give chance for the goroutines to run first.
+	time.Sleep(80 * time.Millisecond)
+	ch <- 1
+	tk1.MustExec("rollback")
+
+	checkOrder := func() {
+		require.Equal(t, <-ch, 1)
+		v1 := <-ch
+		v2 := <-ch
+		require.True(t, (v1 == 2 && v2 == 3) || (v1 == 3 && v2 == 2))
+	}
+	checkOrder()
+
+	// ========================== Another round of test ==================
+	// normal table left join partition table.
+	// ===================================================================
+	resetData()
+	tk1.MustExec("begin pessimistic")
+	// No union scan
+	tk1.MustQuery("select * from nt left join pt on pt.id = nt.id for update").Check(testkit.Rows("1 hello <nil> <nil>"))
+
+	// Union scan
+	tk1.MustExec("insert into pt values (1, 'world')")
+	tk1.MustQuery("select * from nt left join pt on pt.id = nt.id for update").Check(testkit.Rows("1 hello 1 world"))
+	go func() {
+		tk2.MustExec("replace into pt values (1, 'aaa')")
+		ch <- 2
+	}()
+	go func() {
+		tk3.MustExec("update nt set col = 'bbb' where id = 1")
+		ch <- 3
+	}()
+	time.Sleep(80 * time.Millisecond)
+	ch <- 1
+	tk1.MustExec("rollback")
+	checkOrder()
+}
+
+func TestIssue31024(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("create database TestIssue31024")
+	defer tk1.MustExec("drop database TestIssue31024")
+	tk1.MustExec("use TestIssue31024")
+	tk1.MustExec("create table t1 (c_datetime datetime, c1 int, c2 int, primary key (c_datetime), key(c1), key(c2))" +
+		" partition by range (to_days(c_datetime)) " +
+		"( partition p0 values less than (to_days('2020-02-01'))," +
+		" partition p1 values less than (to_days('2020-04-01'))," +
+		" partition p2 values less than (to_days('2020-06-01'))," +
+		" partition p3 values less than maxvalue)")
+	tk1.MustExec("create table t2 (c_datetime datetime, unique key(c_datetime))")
+	tk1.MustExec("insert into t1 values ('2020-06-26 03:24:00', 1, 1), ('2020-02-21 07:15:33', 2, 2), ('2020-04-27 13:50:58', 3, 3)")
+	tk1.MustExec("insert into t2 values ('2020-01-10 09:36:00'), ('2020-02-04 06:00:00'), ('2020-06-12 03:45:18')")
+	tk1.MustExec("SET GLOBAL tidb_txn_mode = 'pessimistic'")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use TestIssue31024")
+
+	ch := make(chan int, 10)
+	tk1.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk1.MustExec("begin pessimistic")
+	tk1.MustQuery("select /*+ use_index_merge(t1) */ * from t1 join t2 on t1.c_datetime >= t2.c_datetime where t1.c1 < 10 or t1.c2 < 10 for update")
+
+	go func() {
+		// Check the key is locked.
+		tk2.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+		tk2.MustExec("begin pessimistic")
+		tk2.MustExec("update t1 set c_datetime = '2020-06-26 03:24:00' where c1 = 1")
+		ch <- 2
+	}()
+
+	// Give chance for the goroutines to run first.
+	time.Sleep(80 * time.Millisecond)
+	ch <- 1
+	tk1.MustExec("rollback")
+
+	require.Equal(t, <-ch, 1)
+	require.Equal(t, <-ch, 2)
+
+	tk2.MustExec("rollback")
+}
+
+func TestIssue27346(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("create database TestIssue27346")
+	defer tk1.MustExec("drop database TestIssue27346")
+	tk1.MustExec("use TestIssue27346")
+
+	tk1.MustExec("set @@tidb_enable_index_merge=1,@@tidb_partition_prune_mode='dynamic'")
+
+	tk1.MustExec("DROP TABLE IF EXISTS `tbl_18`")
+	tk1.MustExec("CREATE TABLE `tbl_18` (`col_119` binary(16) NOT NULL DEFAULT 'skPoKiwYUi',`col_120` int(10) unsigned NOT NULL,`col_121` timestamp NOT NULL,`col_122` double NOT NULL DEFAULT '3937.1887880628115',`col_123` bigint(20) NOT NULL DEFAULT '3550098074891542725',PRIMARY KEY (`col_123`,`col_121`,`col_122`,`col_120`) CLUSTERED,UNIQUE KEY `idx_103` (`col_123`,`col_119`,`col_120`),UNIQUE KEY `idx_104` (`col_122`,`col_120`),UNIQUE KEY `idx_105` (`col_119`,`col_120`),KEY `idx_106` (`col_121`,`col_120`,`col_122`,`col_119`),KEY `idx_107` (`col_121`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci PARTITION BY HASH( `col_120` ) PARTITIONS 3")
+	tk1.MustExec("INSERT INTO tbl_18 (`col_119`, `col_120`, `col_121`, `col_122`, `col_123`) VALUES (X'736b506f4b6977595569000000000000', 672436701, '1974-02-24 00:00:00', 3937.1887880628115e0, -7373106839136381229), (X'736b506f4b6977595569000000000000', 2637316689, '1993-10-29 00:00:00', 3937.1887880628115e0, -4522626077860026631), (X'736b506f4b6977595569000000000000', 831809724, '1995-11-20 00:00:00', 3937.1887880628115e0, -4426441253940231780), (X'736b506f4b6977595569000000000000', 1588592628, '2001-03-28 00:00:00', 3937.1887880628115e0, 1329207475772244999), (X'736b506f4b6977595569000000000000', 3908038471, '2031-06-06 00:00:00', 3937.1887880628115e0, -6562815696723135786), (X'736b506f4b6977595569000000000000', 1674237178, '2001-10-24 00:00:00', 3937.1887880628115e0, -6459065549188938772), (X'736b506f4b6977595569000000000000', 3507075493, '2010-03-25 00:00:00', 3937.1887880628115e0, -4329597025765326929), (X'736b506f4b6977595569000000000000', 1276461709, '2019-07-20 00:00:00', 3937.1887880628115e0, 3550098074891542725)")
+
+	tk1.MustQuery("select col_120,col_122,col_123 from tbl_18 where tbl_18.col_122 = 4763.320888074281 and not( tbl_18.col_121 in ( '2032-11-01' , '1975-05-21' , '1994-05-16' , '1984-01-15' ) ) or not( tbl_18.col_121 >= '2008-10-24' ) order by tbl_18.col_119,tbl_18.col_120,tbl_18.col_121,tbl_18.col_122,tbl_18.col_123 limit 919 for update").Sort().Check(testkit.Rows(
+		"1588592628 3937.1887880628115 1329207475772244999",
+		"1674237178 3937.1887880628115 -6459065549188938772",
+		"2637316689 3937.1887880628115 -4522626077860026631",
+		"672436701 3937.1887880628115 -7373106839136381229",
+		"831809724 3937.1887880628115 -4426441253940231780"))
+	tk1.MustQuery("select /*+ use_index_merge( tbl_18 ) */ col_120,col_122,col_123 from tbl_18 where tbl_18.col_122 = 4763.320888074281 and not( tbl_18.col_121 in ( '2032-11-01' , '1975-05-21' , '1994-05-16' , '1984-01-15' ) ) or not( tbl_18.col_121 >= '2008-10-24' ) order by tbl_18.col_119,tbl_18.col_120,tbl_18.col_121,tbl_18.col_122,tbl_18.col_123 limit 919 for update").Sort().Check(testkit.Rows(
+		"1588592628 3937.1887880628115 1329207475772244999",
+		"1674237178 3937.1887880628115 -6459065549188938772",
+		"2637316689 3937.1887880628115 -4522626077860026631",
+		"672436701 3937.1887880628115 -7373106839136381229",
+		"831809724 3937.1887880628115 -4426441253940231780"))
 }
