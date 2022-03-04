@@ -463,7 +463,7 @@ func TestTxnContextForStaleRead(t *testing.T) {
 		tk.MustQuery("select * from t1 as of timestamp @a").Check(testkit.Rows("1 10"))
 	})
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
-	tk.MustExec("set @@tidb_read_staleness='0'")
+	tk.MustExec("set @@tidb_read_staleness=''")
 
 	// select ... as of ...
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is1)
