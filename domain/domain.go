@@ -789,7 +789,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 	var capacity int
 	if variable.AllowConcurrencyDDL.Load() {
 		// reorgWorker + generalWorker + sessForAddDDL + PollTiFlashRoutine + limitDDLJobs
-		capacity = (10+1)*2 + 1 + 1 + 1
+		capacity = (10+1)*3 + 1 + 1 + 1
 	} else {
 		capacity = 2
 	}
