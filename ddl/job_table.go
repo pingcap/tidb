@@ -338,7 +338,7 @@ func (d *ddl) doGeneralDDLJobWorker(job *model.Job) {
 			d.generalDDLWorkerPool.put(wk)
 		}()
 		wk.handleDDLJobWaitSchemaSynced(d.ddlCtx, job)
-		if err := wk.handleDDLJob(d.ddlCtx, job, d.ddlJobCh); err != nil {
+		if err := wk.HandleDDLJob(d.ddlCtx, job, d.ddlJobCh); err != nil {
 			log.Error("[ddl] handle General DDL job failed", zap.Error(err))
 		}
 	})
@@ -373,7 +373,7 @@ func (d *ddl) doReorgDDLJobWorker(job *model.Job) {
 			d.reorgWorkerPool.put(wk)
 		}()
 		wk.handleDDLJobWaitSchemaSynced(d.ddlCtx, job)
-		if err := wk.handleDDLJob(d.ddlCtx, job, d.ddlJobCh); err != nil {
+		if err := wk.HandleDDLJob(d.ddlCtx, job, d.ddlJobCh); err != nil {
 			log.Error("[ddl] handle Reorg DDL job failed", zap.Error(err))
 		}
 	})
