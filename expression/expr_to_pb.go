@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
+	ast "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -183,7 +184,7 @@ func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 	}
 	switch column.GetType().Tp {
 	case mysql.TypeBit:
-		if !IsPushDownEnabled("bit", kv.TiKV) {
+		if !IsPushDownEnabled(ast.TypeStr(column.GetType().Tp), kv.TiKV) {
 			return nil
 		}
 	case mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
