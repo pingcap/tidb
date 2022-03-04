@@ -704,7 +704,7 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 	// and retry later if the job is not cancelled.
 	schemaVer, runJobErr = w.runDDLJob(d, t, job)
 	if job.IsCancelled() {
-		txn.Reset()
+		w.sessForJob.StmtRollback()
 		err = w.finishDDLJob(t, job)
 		if err != nil {
 			err1 := txn.Rollback()
