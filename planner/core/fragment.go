@@ -126,7 +126,12 @@ func (f *Fragment) init(p PhysicalPlan) error {
 		}
 		f.TableScan = x
 	case *PhysicalExchangeReceiver:
+<<<<<<< HEAD
 		f.singleton = x.children[0].(*PhysicalExchangeSender).ExchangeType == tipb.ExchangeType_PassThrough
+=======
+		// TODO: after we support partial merge, we should check whether all the target exchangeReceiver is same.
+		f.singleton = f.singleton || x.children[0].(*PhysicalExchangeSender).ExchangeType == tipb.ExchangeType_PassThrough
+>>>>>>> fcdbf826e... planner: Fix the issue that TiDB may dispatch duplicated tasks to TiFlash (#32813)
 		f.ExchangeReceivers = append(f.ExchangeReceivers, x)
 	case *PhysicalUnionAll:
 		return errors.New("unexpected union all detected")
