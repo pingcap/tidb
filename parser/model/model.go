@@ -628,6 +628,39 @@ func (t *TableInfo) IsLocked() bool {
 	return t.Lock != nil && len(t.Lock.Sessions) > 0
 }
 
+// MoveColumnInfo moves a column to another offset.
+func (t *TableInfo) MoveColumnInfo(from, to int) {
+	if from == to {
+		return
+	}
+	updatedOffsets := make(map[int]int)
+	src := t.Columns[from]
+	if from < to {
+		for i := from; i < to; i++ {
+			t.Columns[i] = t.Columns[i+1]
+			t.Columns[i].Offset = i
+			updatedOffsets[i+1] = i
+		}
+	} else if from > to {
+		for i := from; i > to; i-- {
+			t.Columns[i] = t.Columns[i-1]
+			t.Columns[i].Offset = i
+			updatedOffsets[i-1] = i
+		}
+	}
+	t.Columns[to] = src
+	t.Columns[to].Offset = to
+	updatedOffsets[from] = to
+	for _, idx := range t.Indices {
+		for _, idxCol := range idx.Columns {
+			newOffset, ok := updatedOffsets[idxCol.Offset]
+			if ok {
+				idxCol.Offset = newOffset
+			}
+		}
+	}
+}
+
 // NewExtraHandleColInfo mocks a column info for extra handle column.
 func NewExtraHandleColInfo() *ColumnInfo {
 	colInfo := &ColumnInfo{
