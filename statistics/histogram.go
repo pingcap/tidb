@@ -1425,7 +1425,28 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 				return 0, err
 			}
 			if expBackoffSuccess {
-				totalCount += expBackoffSel * idx.TotalRowCount()
+				expBackoffCnt := expBackoffSel * idx.TotalRowCount()
+
+				upperLimit := expBackoffCnt
+				// Use the multi-column stats to calculate the max possible row count of [l, r)
+				if idx.Len() > 0 {
+					_, lowerBkt, _, _ := idx.locateBucket(l)
+					_, upperBkt, _, _ := idx.locateBucket(r)
+					preCount := float64(0)
+					if lowerBkt > 0 {
+						preCount = float64(idx.Buckets[lowerBkt-1].Count)
+					}
+					upperCnt := float64(idx.Buckets[upperBkt].Count)
+					upperLimit = upperCnt - preCount
+					upperLimit += float64(idx.TopN.BetweenCount(lb, rb))
+				}
+
+				// If the result of exponential backoff strategy is larger than the result from multi-column stats,
+				// 	use the upper limit from multi-column histogram instead.
+				if expBackoffCnt > upperLimit {
+					expBackoffCnt = upperLimit
+				}
+				totalCount += expBackoffCnt
 			}
 		}
 		if !expBackoffSuccess {
