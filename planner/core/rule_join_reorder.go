@@ -119,7 +119,7 @@ func extractImplictDirectedEdges(edge1 directedEdge, edge2 directedEdge) (implic
 	endPoints, ok := getCommonImplictEndPoint(joinNodeGraph)
 
 	if ok {
-		for i, _ := range endPoints {
+		for i := range endPoints {
 			if endPoints[i] == edge1.left || endPoints[i] == edge1.right {
 				// Construct implicit edges
 				implicitEdges = append(implicitEdges, directedEdge{
