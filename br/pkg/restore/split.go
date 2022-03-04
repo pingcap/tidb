@@ -431,8 +431,8 @@ func CheckRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) erro
 func PaginateScanRegion(
 	ctx context.Context, client SplitClient, startKey, endKey []byte, limit int,
 ) ([]*RegionInfo, error) {
-	if len(endKey) != 0 && bytes.Compare(startKey, endKey) >= 0 {
-		return nil, errors.Annotatef(berrors.ErrRestoreInvalidRange, "startKey >= endKey, startKey: %s, endkey: %s",
+	if len(endKey) != 0 && bytes.Compare(startKey, endKey) > 0 {
+		return nil, errors.Annotatef(berrors.ErrRestoreInvalidRange, "startKey > endKey, startKey: %s, endkey: %s",
 			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 	}
 

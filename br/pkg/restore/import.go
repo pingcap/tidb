@@ -760,10 +760,17 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 		RestoreTs: restoreTs,
 	}
 
+	reqCtx := &kvrpcpb.Context{
+		RegionId:    regionInfo.Region.GetId(),
+		RegionEpoch: regionInfo.Region.GetRegionEpoch(),
+		Peer:        leader,
+	}
+
 	req := &import_sstpb.ApplyRequest{
 		Meta:           meta,
 		StorageBackend: importer.backend,
 		RewriteRule:    rule,
+		Context: reqCtx,
 	}
 	log.Debug("apply kv file", logutil.Leader(leader))
 	_, err := importer.importClient.ApplyKVFile(ctx, leader.GetStoreId(), req)
