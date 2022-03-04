@@ -185,7 +185,7 @@ func main() {
 	err := cpuprofile.StartCPUProfiler()
 	terror.MustNil(err)
 
-	// Enable failpoints in tikv/client-go if the test API is enabled.
+	// Enabled failpoints in tikv/client-go if the test API is enabled.
 	// It appears in the main function to be set before any use of client-go to prevent data race.
 	if _, err := failpoint.Status("github.com/pingcap/tidb/server/enableTestAPI"); err == nil {
 		warnMsg := "tikv/client-go failpoint is enabled, this should NOT happen in the production environment"
@@ -533,7 +533,7 @@ func overrideConfig(cfg *config.Config) {
 func setGlobalVars() {
 	cfg := config.GetGlobalConfig()
 
-	// Disable automaxprocs log
+	// Disabled automaxprocs log
 	nopLog := func(string, ...interface{}) {}
 	_, err := maxprocs.Set(maxprocs.Logger(nopLog))
 	terror.MustNil(err)
@@ -673,7 +673,7 @@ func createServer(storage kv.Storage, dom *domain.Domain) *server.Server {
 
 func setupMetrics() {
 	cfg := config.GetGlobalConfig()
-	// Enable the mutex profile, 1/10 of mutex blocking event sampling.
+	// Enabled the mutex profile, 1/10 of mutex blocking event sampling.
 	runtime.SetMutexProfileFraction(10)
 	systimeErrHandler := func() {
 		metrics.TimeJumpBackCounter.Inc()

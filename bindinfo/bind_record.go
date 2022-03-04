@@ -27,13 +27,13 @@ import (
 )
 
 const (
-	// Enable is the bind info's in enable status.
+	// Enabled is the bind info's in enabled status.
 	// It is the same as the previous 'Using' status.
-	// Only use 'Enable' status in the future, not the 'Using' status.
+	// Only use 'Enabled' status in the future, not the 'Using' status.
 	// The using status is preserved for compatibility.
-	Enable = "enable"
-	// Disable is the bind info's in disable status.
-	Disable = "disable"
+	Enabled = "enabled"
+	// Disabled is the bind info's in disabled status.
+	Disabled = "disabled"
 	// Using is the bind info's in use status.
 	// The 'Using' status is preserved for compatibility.
 	Using = "using"
@@ -61,7 +61,7 @@ type Binding struct {
 	BindSQL string
 	// Status represents the status of the binding. It can only be one of the following values:
 	// 1. deleted: BindRecord is deleted, can not be used anymore.
-	// 2. enable, using: Binding is in the normal active mode.
+	// 2. enabled, using: Binding is in the normal active mode.
 	Status     string
 	CreateTime types.Time
 	UpdateTime types.Time
@@ -82,9 +82,9 @@ func (b *Binding) isSame(rb *Binding) bool {
 	return b.BindSQL == rb.BindSQL
 }
 
-// IsBindingEnable returns whether the binding is enable.
-func (b *Binding) IsBindingEnable() bool {
-	return b.Status == Enable || b.Status == Using
+// IsBindingEnabled returns whether the binding is enabled.
+func (b *Binding) IsBindingEnabled() bool {
+	return b.Status == Enabled || b.Status == Using
 }
 
 // SinceUpdateTime returns the duration since last update time. Export for test.
@@ -107,7 +107,7 @@ type BindRecord struct {
 // HasUsingBinding checks if there are any using bindings in bind record.
 func (br *BindRecord) HasUsingBinding() bool {
 	for _, binding := range br.Bindings {
-		if binding.IsBindingEnable() {
+		if binding.IsBindingEnabled() {
 			return true
 		}
 	}
@@ -118,7 +118,7 @@ func (br *BindRecord) HasUsingBinding() bool {
 // There is at most one binding that can be used now
 func (br *BindRecord) FindUsingBinding() *Binding {
 	for _, binding := range br.Bindings {
-		if binding.IsBindingEnable() {
+		if binding.IsBindingEnabled() {
 			return &binding
 		}
 	}
@@ -255,7 +255,7 @@ func (br *BindRecord) size() float64 {
 }
 
 var statusIndex = map[string]int{
-	Enable:  0,
+	Enabled: 0,
 	deleted: 1,
 	Invalid: 2,
 }
