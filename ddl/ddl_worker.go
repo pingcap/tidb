@@ -642,8 +642,9 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 	var (
 		schemaVer int64
 		runJobErr error
+		waitTime  = 2 * d.lease
 	)
-	waitTime := 2 * d.lease
+
 	w.setDDLLabelForTopSQL(job)
 	err := w.sessForJob.NewTxn(w.ctx)
 	if err != nil {
