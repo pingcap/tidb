@@ -71,12 +71,12 @@ func extractJoinGroup(p LogicalPlan) (group []*joinNode, eqEdges []*expression.S
 
 		for idx := range lhsDirectedEdges {
 			lhsEdge := lhsDirectedEdges[idx]
-			implicitEdges := extractNatureDirectedEdges(lhsEdge, edge)
+			implicitEdges := extractImplictDirectedEdges(lhsEdge, edge)
 			directedEdges = append(directedEdges, implicitEdges...)
 		}
 		for idx := range rhsDirectedEdges {
 			rhsEdge := rhsDirectedEdges[idx]
-			implicitEdges := extractNatureDirectedEdges(rhsEdge, edge)
+			implicitEdges := extractImplictDirectedEdges(rhsEdge, edge)
 			directedEdges = append(directedEdges, implicitEdges...)
 		}
 	}
@@ -100,53 +100,61 @@ func extractJoinGroup(p LogicalPlan) (group []*joinNode, eqEdges []*expression.S
 	return group, eqEdges, otherConds, directedEdges, joinTypes
 }
 
-// Extract implicit join order
-func extractNatureDirectedEdges(edge1 directedEdge, edge2 directedEdge) (implicitEdges []directedEdge) {
-	implicitEdges = make([]directedEdge, 0)
-	if edge2.joinType == LeftOuterJoin {
-		if (edge1.joinType == InnerJoin || edge1.joinType == RightOuterJoin) && edge1.left == edge2.right {
-			implicitEdges = append(implicitEdges, directedEdge{
-				left:       edge1.right,
-				right:      edge2.left,
-				isImplicit: true,
-			})
-		} else if (edge1.joinType == InnerJoin || edge1.joinType == LeftOuterJoin) && edge1.right == edge2.right {
-			implicitEdges = append(implicitEdges, directedEdge{
-				left:       edge1.left,
-				right:      edge2.left,
-				isImplicit: true,
-			})
-		}
-	} else if edge2.joinType == RightOuterJoin {
-		if (edge1.joinType == InnerJoin || edge1.joinType == RightOuterJoin) && edge1.left == edge2.left {
-			implicitEdges = append(implicitEdges, directedEdge{
-				left:       edge1.right,
-				right:      edge2.left,
-				isImplicit: true,
-			})
-		} else if (edge1.joinType == InnerJoin || edge1.joinType == LeftOuterJoin) && edge1.right == edge2.left {
-			implicitEdges = append(implicitEdges, directedEdge{
-				left:       edge1.left,
-				right:      edge2.right,
-				isImplicit: true,
-			})
-		}
-	} else if edge2.joinType == InnerJoin {
-		if edge1.joinType == RightOuterJoin && edge1.left == edge2.left {
-			implicitEdges = append(implicitEdges, directedEdge{
-				left:       edge1.right,
-				right:      edge2.right,
-				isImplicit: true,
-			})
-		} else if edge1.joinType == LeftOuterJoin && edge1.right == edge2.left {
-			implicitEdges = append(implicitEdges, directedEdge{
-				left:       edge1.left,
-				right:      edge2.right,
-				isImplicit: true,
-			})
+// extractImplictDirectedEdges constructs implicit directed edges to guarantee join order
+// when the implicit join order is not directly represented by the "join" expression.
+//
+// For example `A right join B right join C`,
+// there is an implicit meaning that B must join A before C,
+// so there will be a directed edge `B->C`
+func extractImplictDirectedEdges(edge1 directedEdge, edge2 directedEdge) (implicitEdges []directedEdge) {
+	if edge1.joinType == InnerJoin && edge2.joinType == InnerJoin {
+		return nil
+	}
+
+	// Construct a directed graph of joinNode
+	joinNodeGraph := make(map[*joinNode][]*joinNode, 4)
+	mergeToGraph(edge1, joinNodeGraph)
+	mergeToGraph(edge2, joinNodeGraph)
+	// Find endpoints from the same source in a directed edge
+	endPoints, ok := getCommonImplictEndPoint(joinNodeGraph)
+
+	if ok {
+		for i, _ := range endPoints {
+			if endPoints[i] == edge1.left || endPoints[i] == edge1.right {
+				// Construct implicit edges
+				implicitEdges = append(implicitEdges, directedEdge{
+					left:       endPoints[i],
+					right:      endPoints[i^1],
+					isImplicit: true,
+				})
+				return
+			}
 		}
 	}
 	return
+}
+
+// mergeToGraph merge directed edge to construct graph
+func mergeToGraph(edge directedEdge, joinNodeGraph map[*joinNode][]*joinNode) {
+	if edge.joinType == LeftOuterJoin {
+		joinNodeGraph[edge.right] = append(joinNodeGraph[edge.right], edge.left)
+	} else if edge.joinType == RightOuterJoin {
+		joinNodeGraph[edge.left] = append(joinNodeGraph[edge.left], edge.right)
+	} else if edge.joinType == InnerJoin {
+		joinNodeGraph[edge.left] = append(joinNodeGraph[edge.left], edge.right)
+		joinNodeGraph[edge.right] = append(joinNodeGraph[edge.right], edge.left)
+	}
+}
+
+// getCommonImplictEndPoint find endpoints from the same source in a directed edge
+// For example there is a directed graph `A->B,A->C`, we will return points B,A
+func getCommonImplictEndPoint(joinNodeGraph map[*joinNode][]*joinNode) ([]*joinNode, bool) {
+	for _, endPoints := range joinNodeGraph {
+		if len(endPoints) == 2 {
+			return endPoints, true
+		}
+	}
+	return nil, false
 }
 
 type joinReOrderSolver struct {
