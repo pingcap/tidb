@@ -3429,3 +3429,34 @@ func TestIssue27346(t *testing.T) {
 		"672436701 3937.1887880628115 -7373106839136381229",
 		"831809724 3937.1887880628115 -4426441253940231780"))
 }
+
+func TestIssue32719(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database TestIssue32719")
+	tk.MustExec("use TestIssue32719")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	tk.MustExec(`create table t (a int primary key, b int, key (b)) partition by hash(a) (partition P0, partition p1, partition P2)`)
+	tk.MustExec(`insert into t values (1,1),(2,2),(3,3)`)
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`explain format = 'brief' select * from t`).Check(testkit.Rows(
+		"PartitionUnion 3.00 root  ",
+		"├─TableReader 1.00 root  data:TableFullScan",
+		"│ └─TableFullScan 1.00 cop[tikv] table:t, partition:P0 keep order:false",
+		"├─TableReader 1.00 root  data:TableFullScan",
+		"│ └─TableFullScan 1.00 cop[tikv] table:t, partition:p1 keep order:false",
+		"└─TableReader 1.00 root  data:TableFullScan",
+		"  └─TableFullScan 1.00 cop[tikv] table:t, partition:P2 keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 1`).Check(testkit.Rows("Point_Get 1.00 root table:t, partition:p1 handle:1"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 2`).Check(testkit.Rows("Point_Get 1.00 root table:t, partition:P2 handle:2"))
+	tk.MustQuery(`explain format = 'brief' select * from t where b = 1`).Check(testkit.Rows(
+		"PartitionUnion 1.00 root  ",
+		"├─IndexReader 1.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:P0, index:b(b) range:[1,1], keep order:false",
+		"├─IndexReader 1.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:b(b) range:[1,1], keep order:false",
+		"└─IndexReader 1.00 root  index:IndexRangeScan",
+		"  └─IndexRangeScan 1.00 cop[tikv] table:t, partition:P2, index:b(b) range:[1,1], keep order:false"))
+}
