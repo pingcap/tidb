@@ -26,6 +26,7 @@ type KvPair struct {
 
 type Request struct {
 	Type     tikvrpc.CmdType `json:"type"`
+	Plan     string          `json:"plan"`
 	Request  []byte          `json:"request"`
 	Response []byte          `json:"response"`
 }
@@ -54,10 +55,11 @@ type TestGenConfig struct {
 	RequestData     []Request            `json:"request_data"`
 }
 
-func (c *TestGenConfig) AddRequest(reqType tikvrpc.CmdType, req []byte, resp []byte) {
+func (c *TestGenConfig) AddRequest(reqType tikvrpc.CmdType, req []byte, plan string, resp []byte) {
 	c.RequestData = append(c.RequestData, Request{
 		Type:     reqType,
 		Request:  req,
+		Plan:     plan,
 		Response: resp,
 	})
 }

@@ -20,6 +20,7 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -302,6 +303,42 @@ func (c *RPCClient) sendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	return resp, nil
 }
 
+func getRootExecFromExecutorList(executors []*tipb.Executor) (*tipb.Executor, string) {
+	plan := make([]string, 0, len(executors))
+	root := executors[len(executors)-1]
+	for i := len(executors) - 1; 0 <= i; i-- {
+		var child *tipb.Executor
+		if i != 0 {
+			child = executors[i-1]
+		}
+		switch executors[i].Tp {
+		case tipb.ExecType_TypeTableScan:
+			plan = append(plan, fmt.Sprintf("TblScan"))
+		case tipb.ExecType_TypeTopN:
+			executors[i].TopN.Child = child
+			plan = append(plan, fmt.Sprintf("TopN(%d)", executors[i].TopN.Limit))
+		case tipb.ExecType_TypeStreamAgg, tipb.ExecType_TypeAggregation:
+			executors[i].Aggregation.Child = child
+			plan = append(plan, fmt.Sprintf("Agg"))
+		case tipb.ExecType_TypeLimit:
+			executors[i].Limit.Child = child
+			plan = append(plan, fmt.Sprintf("Limit(%d)", executors[i].Limit.Limit))
+		case tipb.ExecType_TypeExchangeSender:
+			executors[i].ExchangeSender.Child = child
+			plan = append(plan, fmt.Sprintf("ExchSender"))
+		case tipb.ExecType_TypeSelection:
+			executors[i].Selection.Child = child
+			plan = append(plan, fmt.Sprintf("Selection"))
+		case tipb.ExecType_TypeProjection:
+			executors[i].Projection.Child = child
+			plan = append(plan, fmt.Sprintf("Projection"))
+		default:
+			panic("unsupported executor type " + executors[i].Tp.String())
+		}
+	}
+	return root, strings.Join(plan, ", ")
+}
+
 // SendRequest sends a request to mock cluster.
 func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	resp, err := c.sendRequest(ctx, addr, req, timeout)
@@ -315,6 +352,21 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		tid := tablecodec.DecodeTableID(start)
 		if c.testGenConfig.IsTableInterested(tid) {
 			fmt.Printf("Sending Cop Request to Table %d\n", tid)
+
+			var plan string
+			dagReq := &tipb.DAGRequest{}
+
+			err = dagReq.Unmarshal(cop.Data)
+			if err != nil {
+				return nil, err
+			}
+			dagReq.RootExecutor, plan = getRootExecFromExecutorList(dagReq.Executors)
+			dagReq.Executors = nil
+			cop.Data, err = dagReq.Marshal()
+			if err != nil {
+				return nil, err
+			}
+
 			reqData, err := cop.Marshal()
 			if err != nil {
 				return nil, err
@@ -325,15 +377,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 				break
 			}
 			rspData, err := resp.Resp.(*coprocessor.Response).Marshal()
-			c.testGenConfig.AddRequest(req.Type, reqData, rspData)
-			dag := &tipb.DAGRequest{}
-			dag.Unmarshal(cop.Data)
-			fmt.Println("cop request")
-			fmt.Println(cop)
-			fmt.Println("dag request")
-			fmt.Println(dag)
-			fmt.Println("resp")
-			fmt.Println(resp)
+			c.testGenConfig.AddRequest(req.Type, reqData, plan, rspData)
 		}
 	case tikvrpc.CmdScan:
 		scan := req.Scan()
