@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
@@ -325,7 +326,7 @@ func (e *CancelDDLJobsExec) Open(ctx context.Context) error {
 	// We want to use a global transaction to execute the admin command, so we don't use e.ctx here.
 	if variable.AllowConcurrencyDDL.Load() {
 		var err error
-		e.errs, err = domain.GetDomain(e.ctx).DDL().CancelConcurrencyJobs(e.ctx, e.jobIDs)
+		e.errs, err = ddl.CancelConcurrencyJobs(e.ctx, e.jobIDs)
 		return err
 	}
 	// We want to use a global transaction to execute the admin command, so we don't use e.ctx here.

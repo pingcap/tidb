@@ -187,8 +187,6 @@ type DDL interface {
 	GetHook() Callback
 	// SetHook sets the hook.
 	SetHook(h Callback)
-	// CancelConcurrencyJobs cancels the concurrent jobs.
-	CancelConcurrencyJobs(sess sessionctx.Context, ids []int64) ([]error, error)
 }
 
 type limitJobTask struct {
@@ -393,6 +391,66 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 	return delRangeMgr
 }
 
+func (d *ddl) readyForConcurrencyDDL() error {
+	reorgWorkerFunc := func() (pools.Resource, error) {
+		wk, err := newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
+		if err != nil {
+			return wk, errors.Trace(err)
+		}
+		metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
+
+		// When the start function is called, we will send a fake job to let worker
+		// checks owner firstly and try to find whether a job exists and run.
+		asyncNotify(wk.ddlJobCh)
+		return wk, nil
+	}
+	generalWorkerFunc := func() (pools.Resource, error) {
+		wk, err := newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
+		if err != nil {
+			return wk, errors.Trace(err)
+		}
+		metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
+
+		// When the start function is called, we will send a fake job to let worker
+		// checks owner firstly and try to find whether a job exists and run.
+		asyncNotify(wk.ddlJobCh)
+		return wk, nil
+	}
+	d.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(reorgWorkerFunc, batchAddingJobs, batchAddingJobs, 3*time.Minute))
+	d.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(generalWorkerFunc, 1, 1, 0))
+	var err error
+	d.sessForAddDDL, err = d.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	d.wg.Run(d.startDispatchLoop)
+	return nil
+}
+
+func (d *ddl) readyForDDL() {
+	var err error
+	d.workers = make(map[workerType]*worker, 2)
+	d.workers[generalWorker], err = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
+	if err != nil {
+		log.Fatal("fail to create generalWorker", zap.Error(err))
+	}
+	d.workers[addIdxWorker], err = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
+	if err != nil {
+		log.Fatal("fail to create addIdxWorker", zap.Error(err))
+	}
+	for _, worker := range d.workers {
+		worker.wg.Add(1)
+		w := worker
+		go w.start(d.ddlCtx)
+
+		metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, worker.String())).Inc()
+
+		// When the start function is called, we will send a fake job to let worker
+		// checks owner firstly and try to find whether a job exists and run.
+		asyncNotify(worker.ddlJobCh)
+	}
+}
+
 // Start implements DDL.Start interface.
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
@@ -411,58 +469,12 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
 
 		if variable.AllowConcurrencyDDL.Load() {
-			reorgWorkerFunc := func() (pools.Resource, error) {
-				wk, err := newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
-				if err != nil {
-					return wk, errors.Trace(err)
-				}
-				metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
-
-				// When the start function is called, we will send a fake job to let worker
-				// checks owner firstly and try to find whether a job exists and run.
-				asyncNotify(wk.ddlJobCh)
-				return wk, nil
-			}
-			generalWorkerFunc := func() (pools.Resource, error) {
-				wk, err := newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
-				if err != nil {
-					return wk, errors.Trace(err)
-				}
-				metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
-
-				// When the start function is called, we will send a fake job to let worker
-				// checks owner firstly and try to find whether a job exists and run.
-				asyncNotify(wk.ddlJobCh)
-				return wk, nil
-			}
-			d.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(reorgWorkerFunc, batchAddingJobs, batchAddingJobs, 3*time.Minute))
-			d.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(generalWorkerFunc, 1, 1, 0))
-			d.sessForAddDDL, err = d.sessPool.get()
+			err = d.readyForConcurrencyDDL()
 			if err != nil {
 				return errors.Trace(err)
 			}
-			d.wg.Run(d.startDispatchLoop)
 		} else {
-			d.workers = make(map[workerType]*worker, 2)
-			d.workers[generalWorker], err = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
-			if err != nil {
-				log.Fatal("fail to create generalWorker", zap.Error(err))
-			}
-			d.workers[addIdxWorker], err = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
-			if err != nil {
-				log.Fatal("fail to create addIdxWorker", zap.Error(err))
-			}
-			for _, worker := range d.workers {
-				worker.wg.Add(1)
-				w := worker
-				go w.start(d.ddlCtx)
-
-				metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, worker.String())).Inc()
-
-				// When the start function is called, we will send a fake job to let worker
-				// checks owner firstly and try to find whether a job exists and run.
-				asyncNotify(worker.ddlJobCh)
-			}
+			d.readyForDDL()
 		}
 
 		err = kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
@@ -473,7 +485,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		if err != nil {
 			return err
 		}
-
 		go d.schemaSyncer.StartCleanWork()
 		if config.TableLockEnabled() {
 			d.wg.Add(1)
@@ -930,7 +941,7 @@ func GetDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint ui
 	return false, nil
 }
 
-func (d *ddl) CancelConcurrencyJobs(sess sessionctx.Context, ids []int64) ([]error, error) {
+func CancelConcurrencyJobs(sess sessionctx.Context, ids []int64) ([]error, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
