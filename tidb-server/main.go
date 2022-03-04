@@ -730,6 +730,7 @@ func setupTracing() {
 
 func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	tikv.StoreShuttingDown(1)
+	kv.CloseGlobalInnerTxnTsBox()
 	dom.Close()
 	err := storage.Close()
 	terror.Log(errors.Trace(err))
