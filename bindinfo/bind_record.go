@@ -30,7 +30,7 @@ const (
 	// Enabled is the bind info's in enabled status.
 	// It is the same as the previous 'Using' status.
 	// Only use 'Enabled' status in the future, not the 'Using' status.
-	// The using status is preserved for compatibility.
+	// The 'Using' status is preserved for compatibility.
 	Enabled = "enabled"
 	// Disabled is the bind info's in disabled status.
 	Disabled = "disabled"

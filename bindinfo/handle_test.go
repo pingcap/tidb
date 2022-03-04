@@ -246,7 +246,7 @@ func TestEvolveInvalidBindings(t *testing.T) {
 	require.True(t, status == bindinfo.Enabled)
 	require.Equal(t, "SELECT /*+ USE_INDEX(t,idx_a) */ * FROM test.t WHERE a > 10", rows[1][1])
 	status = rows[1][3].(string)
-	require.True(t, status == bindinfo.Enabled || status == "rejected")
+	require.True(t, status == bindinfo.Enabled || status == bindinfo.Rejected)
 }
 
 var testSQLs = []struct {
