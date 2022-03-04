@@ -1017,11 +1017,14 @@ type Column struct {
 	Count      int64
 	Info       *model.ColumnInfo
 	IsHandle   bool
-	Loaded     bool
 	ErrorRate
 	Flag           int64
 	LastAnalyzePos types.Datum
 	StatsVer       int64 // StatsVer is the version of the current stats, used to maintain compatibility
+
+	// Loaded means if the histogram, the topn and the cm sketch are loaded fully.
+	// Those three parts of a Column is loaded lazily. It will only be loaded after trying to use them.
+	Loaded bool
 }
 
 func (c *Column) String() string {
