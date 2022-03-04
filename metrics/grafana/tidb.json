@@ -13147,6 +13147,14 @@
               "intervalFactor": 2,
               "legendFormat": "{{type}}",
               "refId": "A"
+            },
+            {
+              "exemplar": true,
+              "expr": "histogram_quantile(0.99, sum(rate(tikv_resource_metering_report_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[5m])) by (le))",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "tikv-record",
+              "refId": "B"
             }
           ],
           "thresholds": [],
@@ -13243,10 +13251,10 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(increase(tidb_topsql_report_data_total_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
+              "expr": "sum(increase(tidb_topsql_report_data_total_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (type, job)",
               "hide": false,
               "interval": "",
-              "legendFormat": "{{type}}",
+              "legendFormat": "{{job}}-{{type}}",
               "refId": "B"
             }
           ],
@@ -13297,7 +13305,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "",
+          "description": "Total TiDB/TiKV TopSQL report count.",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
@@ -13357,6 +13365,14 @@
               "interval": "",
               "legendFormat": "",
               "refId": "A"
+            },
+            {
+              "exemplar": true,
+              "expr": "sum(tikv_resource_metering_report_data_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"sent\"}) by (type)",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "tikv-{{type}}",
+              "refId": "C"
             }
           ],
           "thresholds": [],
@@ -13505,11 +13521,117 @@
             "align": false,
             "alignLevel": null
           }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "",
+          "editable": true,
+          "error": false,
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 1,
+          "fillGradient": 0,
+          "grid": {},
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 31
+          },
+          "hiddenSeries": false,
+          "id": 245,
+          "legend": {
+            "alignAsTable": true,
+            "avg": false,
+            "current": false,
+            "max": true,
+            "min": false,
+            "rightSide": true,
+            "show": false,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 2,
+          "links": [],
+          "nullPointMode": "null as zero",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.11",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "rate(tikv_resource_metering_stat_task_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])",
+              "format": "time_series",
+              "hide": false,
+              "interval": "",
+              "intervalFactor": 2,
+              "legendFormat": "{{instance}}",
+              "refId": "A",
+              "step": 40
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "TiKV Stat Task OPS",
+          "tooltip": {
+            "msResolution": true,
+            "shared": true,
+            "sort": 0,
+            "value_type": "cumulative"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": "0",
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
         }
       ],
       "title": "TopSQL",
       "type": "row"
-    }
+    } 
   ],
   "refresh": "30s",
   "schemaVersion": 18,
