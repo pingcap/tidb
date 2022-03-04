@@ -78,8 +78,9 @@ func TestDDLStatsInfo(t *testing.T) {
 		case err := <-done:
 			require.NoError(t, err)
 			exit = true
-		case <-TestCheckWorkerNumCh:
+		case wg := <-TestCheckWorkerNumCh:
 			varMap, err := d.Stats(nil)
+			wg.Done()
 			require.NoError(t, err)
 			require.Equal(t, varMap[ddlJobReorgHandle], "1")
 		}

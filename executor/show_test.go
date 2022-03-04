@@ -1008,6 +1008,17 @@ func TestShowCreateTable(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
 		"PARTITION BY HASH (`id`) PARTITIONS 1",
 	))
+
+	// default value escape character '\\' display case
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int primary key, b varchar(20) default '\\\\');")
+	tk.MustQuery("show create table t;").Check(testkit.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) NOT NULL,\n"+
+			"  `b` varchar(20) DEFAULT '\\\\',\n"+
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
 func TestShowCreateTablePlacement(t *testing.T) {
@@ -1719,4 +1730,32 @@ func TestShowCachedTable(t *testing.T) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("select create_options from information_schema.tables where table_schema = 'test' and table_name = 't1'").Check(
 		testkit.Rows(""))
+}
+
+func TestShowBindingCache(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec(`set global tidb_mem_quota_bind_cache = 1`)
+	tk.MustQuery("select @@global.tidb_mem_quota_bind_cache").Check(testkit.Rows("1"))
+	tk.MustExec("admin reload bindings;")
+	res := tk.MustQuery("show global bindings")
+	require.Equal(t, 0, len(res.Rows()))
+
+	tk.MustExec("create global binding for select * from t using select * from t")
+	res = tk.MustQuery("show global bindings")
+	require.Equal(t, 0, len(res.Rows()))
+
+	tk.MustExec(`set global tidb_mem_quota_bind_cache = default`)
+	tk.MustQuery("select @@global.tidb_mem_quota_bind_cache").Check(testkit.Rows("67108864"))
+	tk.MustExec("admin reload bindings")
+	res = tk.MustQuery("show global bindings")
+	require.Equal(t, 1, len(res.Rows()))
+
+	tk.MustExec("create global binding for select * from t where a > 1 using select * from t where a > 1")
+	res = tk.MustQuery("show global bindings")
+	require.Equal(t, 2, len(res.Rows()))
 }
