@@ -5830,7 +5830,7 @@ func (s *testSessionSuite) TestTiDBReadStaleness(c *C) {
 	c.Assert(err, NotNil)
 	err = tk.ExecToErr("set @@tidb_read_staleness='100'")
 	c.Assert(err, NotNil)
-	tk.MustExec("set @@tidb_read_staleness='0'")
+	tk.MustExec("set @@tidb_read_staleness=''")
 }
 
 func (s *testSessionSuite) TestFixSetTiDBSnapshotTS(c *C) {
@@ -6016,7 +6016,7 @@ func (s *testSessionSuite) TestForbidSettingBothTSVariable(c *C) {
 	_, err = tk.Exec("set @@tidb_snapshot = '2007-01-01 15:04:05.999999'")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "tidb_read_staleness should be clear before setting tidb_snapshot")
-	tk.MustExec("set @@tidb_read_staleness = '0'")
+	tk.MustExec("set @@tidb_read_staleness = ''")
 	tk.MustExec("set @@tidb_snapshot = '2007-01-01 15:04:05.999999'")
 }
 
