@@ -946,7 +946,7 @@ func TestWalkDir(t *testing.T) {
 			}, nil
 		}).
 		After(thirdCall)
-	s.s3.EXPECT().
+	fifthCall := s.s3.EXPECT().
 		ListObjectsWithContext(ctx, gomock.Any()).
 		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
 			require.Equal(t, aws.StringValue(contents[3].Key), aws.StringValue(input.Marker))
@@ -957,6 +957,20 @@ func TestWalkDir(t *testing.T) {
 			}, nil
 		}).
 		After(fourthCall)
+	s.s3.EXPECT().
+		ListObjectsWithContext(ctx, gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, opt ...request.Option) (*s3.ListObjectsOutput, error) {
+			require.Equal(t, "bucket", aws.StringValue(input.Bucket))
+			require.Equal(t, "prefix/sp/1", aws.StringValue(input.Prefix))
+			require.Equal(t, "", aws.StringValue(input.Marker))
+			require.Equal(t, int64(3), aws.Int64Value(input.MaxKeys))
+			require.Equal(t, "", aws.StringValue(input.Delimiter))
+		return &s3.ListObjectsOutput{
+				IsTruncated: aws.Bool(false),
+				Contents:    contents[2:],
+			}, nil
+		}).
+		After(fifthCall)
 
 	// Ensure we receive the items in order.
 	i := 0
@@ -978,6 +992,21 @@ func TestWalkDir(t *testing.T) {
 	err = s.storage.WalkDir(
 		ctx,
 		&WalkOption{ListCount: 4},
+		func(path string, size int64) error {
+			require.Equal(t, *contents[i].Key, "prefix/"+path, "index = %d", i)
+			require.Equal(t, *contents[i].Size, size, "index = %d", i)
+			i++
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, contents, i)
+
+	// Ensure we receive the items in order with prefix.
+	i = 2
+	err = s.storage.WalkDir(
+		ctx,
+		&WalkOption{SubDir: "sp", ObjPrefix: "1", ListCount: 3},
 		func(path string, size int64) error {
 			require.Equal(t, *contents[i].Key, "prefix/"+path, "index = %d", i)
 			require.Equal(t, *contents[i].Size, size, "index = %d", i)
