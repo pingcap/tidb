@@ -5824,11 +5824,10 @@ func (s *testTiDBAsLibrary) TestMemoryLeak(c *C) {
 func (s *testSessionSuite) TestTiDBReadStaleness(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_read_staleness='-5'")
+	tk.MustExec("set @@tidb_read_staleness='-100'")
 	err := tk.ExecToErr("set @@tidb_read_staleness='-5s'")
 	c.Assert(err, NotNil)
 	err = tk.ExecToErr("set @@tidb_read_staleness='foo'")
-	c.Assert(err, NotNil)
-	err = tk.ExecToErr("set @@tidb_read_staleness='100'")
 	c.Assert(err, NotNil)
 	tk.MustExec("set @@tidb_read_staleness=''")
 	tk.MustExec("set @@tidb_read_staleness='0'")
