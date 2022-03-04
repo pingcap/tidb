@@ -280,6 +280,7 @@ load stats 's/imdbload_stats/cast_info.json';
 -- The statistics and actual row count are from the latest imdb dataset that is distributed as old text files.
 
 -- Actual row count: 1
+-- Index lookup on itest2 index is the best plan, runs <50ms for the first time. Table scan + Selection runs >800ms. (using 8 core tikv * 5, copr cache disabled)
 explain select * from char_name where ((imdb_index = 'I') and (surname_pcode < 'E436')) or ((imdb_index = 'L') and (surname_pcode < 'E436'));
 
 -- Actual row count: 0
