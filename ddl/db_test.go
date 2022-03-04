@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -55,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	ntestkit "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
@@ -65,6 +67,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
 
@@ -288,6 +291,22 @@ func backgroundExec(s kv.Storage, sql string, done chan error) {
 	}
 	defer se.Close()
 	_, err = se.Execute(context.Background(), "use test_db")
+	if err != nil {
+		done <- errors.Trace(err)
+		return
+	}
+	_, err = se.Execute(context.Background(), sql)
+	done <- errors.Trace(err)
+}
+
+func backgroundExecT(s kv.Storage, sql string, done chan error) {
+	se, err := session.CreateSession4Test(s)
+	if err != nil {
+		done <- errors.Trace(err)
+		return
+	}
+	defer se.Close()
+	_, err = se.Execute(context.Background(), "use test")
 	if err != nil {
 		done <- errors.Trace(err)
 		return
@@ -580,6 +599,76 @@ func (s *testDBSuite7) TestCancelAddIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table t1")
+}
+
+func backgroundExecOnJobUpdatedExported(c *C, store kv.Storage, ctx sessionctx.Context, hook *ddl.TestDDLCallback, idxName string) (
+	func(*model.Job), *model.IndexInfo, error) {
+	var checkErr error
+	first := true
+	c3IdxInfo := &model.IndexInfo{}
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		addIndexNotFirstReorg := (job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey) &&
+			job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0
+		// If the action is adding index and the state is writing reorganization, it want to test the case of cancelling the job when backfilling indexes.
+		// When the job satisfies this case of addIndexNotFirstReorg, the worker will start to backfill indexes.
+		if !addIndexNotFirstReorg {
+			// Get the index's meta.
+			if c3IdxInfo.ID != 0 {
+				return
+			}
+			t := testGetTableByName(c, ctx, "test_db", "t1")
+			for _, index := range t.Indices() {
+				if !tables.IsIndexWritable(index) {
+					continue
+				}
+				if index.Meta().Name.L == idxName {
+					*c3IdxInfo = *index.Meta()
+				}
+			}
+			return
+		}
+		// The job satisfies the case of addIndexNotFirst for the first time, the worker hasn't finished a batch of backfill indexes.
+		if first {
+			first = false
+			return
+		}
+		if checkErr != nil {
+			return
+		}
+		hookCtx := mock.NewContext()
+		hookCtx.Store = store
+		err := hookCtx.NewTxn(context.Background())
+		if err != nil {
+			checkErr = errors.Trace(err)
+			return
+		}
+		jobIDs := []int64{job.ID}
+		txn, err := hookCtx.Txn(true)
+		if err != nil {
+			checkErr = errors.Trace(err)
+			return
+		}
+		errs, err := admin.CancelJobs(txn, jobIDs)
+		if err != nil {
+			checkErr = errors.Trace(err)
+			return
+		}
+		// It only tests cancel one DDL job.
+		if errs[0] != nil {
+			checkErr = errors.Trace(errs[0])
+			return
+		}
+		txn, err = hookCtx.Txn(true)
+		if err != nil {
+			checkErr = errors.Trace(err)
+			return
+		}
+		err = txn.Commit(context.Background())
+		if err != nil {
+			checkErr = errors.Trace(err)
+		}
+	}
+	return hook.OnJobUpdatedExported, c3IdxInfo, checkErr
 }
 
 func testCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.Duration, idxName, addIdxSQL, sqlModeSQL string, dom *domain.Domain) {
@@ -1944,6 +2033,20 @@ func testGetIndexID(c *C, ctx sessionctx.Context, dbName, tblName, idxName strin
 	return -1
 }
 
+func testGetIndexIDT(t *testing.T, ctx sessionctx.Context, dbName, tblName, idxName string) int64 {
+	is := domain.GetDomain(ctx).InfoSchema()
+	tt, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
+	require.NoError(t, err)
+
+	for _, idx := range tt.Indices() {
+		if idx.Meta().Name.L == idxName {
+			return idx.Meta().ID
+		}
+	}
+	t.Fatalf("index %s not found(db: %s, tbl: %s)", idxName, dbName, tblName)
+	return -1
+}
+
 type testDDLJobIDCallback struct {
 	ddl.Callback
 	jobID int64
@@ -1982,33 +2085,11 @@ func checkDelRangeAdded(tk *testkit.TestKit, jobID int64, elemID int64) {
 	tk.MustQuery(query, jobID, elemID, jobID, elemID).Check(testkit.Rows("1"))
 }
 
-func checkGlobalIndexCleanUpDone(c *C, ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, pid int64) int {
-	c.Assert(ctx.NewTxn(context.Background()), IsNil)
-	txn, err := ctx.Txn(true)
-	c.Assert(err, IsNil)
-	defer func() {
-		err := txn.Rollback()
-		c.Assert(err, IsNil)
-	}()
-
-	cnt := 0
-	prefix := tablecodec.EncodeTableIndexPrefix(tblInfo.ID, idxInfo.ID)
-	it, err := txn.Iter(prefix, nil)
-	c.Assert(err, IsNil)
-	for it.Valid() {
-		if !it.Key().HasPrefix(prefix) {
-			break
-		}
-		segs := tablecodec.SplitIndexValue(it.Value())
-		c.Assert(segs.PartitionID, NotNil)
-		_, pi, err := codec.DecodeInt(segs.PartitionID)
-		c.Assert(err, IsNil)
-		c.Assert(pi, Not(Equals), pid)
-		cnt++
-		err = it.Next()
-		c.Assert(err, IsNil)
-	}
-	return cnt
+func checkDelRangeAddedN(tk *ntestkit.TestKit, jobID int64, elemID int64) {
+	query := `select sum(cnt) from
+	(select count(1) cnt from mysql.gc_delete_range where job_id = ? and element_id = ? union
+	select count(1) cnt from mysql.gc_delete_range_done where job_id = ? and element_id = ?) as gdr;`
+	tk.MustQuery(query, jobID, elemID, jobID, elemID).Check(testkit.Rows("1"))
 }
 
 func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
