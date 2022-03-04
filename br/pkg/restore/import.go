@@ -397,7 +397,6 @@ func (importer *FileImporter) download(
 		downloadMetas = make([]*import_sstpb.SSTMeta, 0, len(files))
 		remainFiles   = files
 	)
-
 	errDownload := utils.WithRetry(ctx, func() error {
 		var e error
 		for i, f := range remainFiles {
@@ -407,6 +406,7 @@ func (importer *FileImporter) download(
 			} else {
 				downloadMeta, e = importer.downloadSST(ctx, regionInfo, f, rewriteRules, cipher)
 			}
+
 			failpoint.Inject("restore-storage-error", func(val failpoint.Value) {
 				msg := val.(string)
 				log.Debug("failpoint restore-storage-error injected.", zap.String("msg", msg))
@@ -416,10 +416,20 @@ func (importer *FileImporter) download(
 				log.Warn("the connection to TiKV has been cut by a neko, meow :3")
 				e = status.Error(codes.Unavailable, "the connection to TiKV has been cut by a neko, meow :3")
 			})
+			if isDecryptSstErr(e) {
+				log.Info("fail to decrypt when download sst, try again without no-crypt", logutil.File(f))
+				if importer.isRawKvMode {
+					downloadMeta, e = importer.downloadRawKVSST(ctx, regionInfo, f, nil, apiVersion)
+				} else {
+					downloadMeta, e = importer.downloadSST(ctx, regionInfo, f, rewriteRules, nil)
+				}
+			}
+
 			if e != nil {
 				remainFiles = remainFiles[i:]
 				return errors.Trace(e)
 			}
+
 			downloadMetas = append(downloadMetas, downloadMeta)
 		}
 
@@ -669,6 +679,7 @@ func (importer *FileImporter) ingestSSTs(
 }
 
 func isDecryptSstErr(err error) bool {
-	return strings.Contains(err.Error(), "Engine Engine") &&
+	return err != nil &&
+		strings.Contains(err.Error(), "Engine Engine") &&
 		strings.Contains(err.Error(), "Corruption: Bad table magic number")
 }
