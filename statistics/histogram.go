@@ -430,8 +430,8 @@ func (hg *Histogram) ToString(idxCols int) string {
 // equalRowCount estimates the row count where the column equals to value.
 // matched: return true if this returned row count is from Bucket.Repeat or bucket NDV, which is more accurate than if not.
 func (hg *Histogram) equalRowCount(value types.Datum, hasBucketNDV bool) (count float64, matched bool) {
-	exceed, bucketIdx, inBucket, match := hg.locateBucket(value)
-	if exceed || !inBucket {
+	_, bucketIdx, inBucket, match := hg.locateBucket(value)
+	if !inBucket {
 		return 0, false
 	}
 	if match {
