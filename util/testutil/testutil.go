@@ -31,11 +31,8 @@ import (
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/testkit/testdata"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
 )
 
 // CompareUnorderedStringSlice compare two string slices.
@@ -72,44 +69,6 @@ func CompareUnorderedStringSlice(a []string, b []string) bool {
 		}
 	}
 	return len(m) == 0
-}
-
-// MustNewCommonHandle create a common handle with given values.
-// TODO: please use testkit.MustNewCommonHandle to replace this function to migrate to testify
-func MustNewCommonHandle(c *check.C, values ...interface{}) kv.Handle {
-	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.MakeDatums(values...)...)
-	c.Assert(err, check.IsNil)
-	ch, err := kv.NewCommonHandle(encoded)
-	c.Assert(err, check.IsNil)
-	return ch
-}
-
-type handleEqualsChecker struct {
-	*check.CheckerInfo
-}
-
-// HandleEquals checker verifies that the obtained handle is equal to
-// the expected handle.
-// For example:
-//     c.Assert(value, HandleEquals, kv.IntHandle(42))
-var HandleEquals = &handleEqualsChecker{
-	&check.CheckerInfo{Name: "HandleEquals", Params: []string{"obtained", "expected"}},
-}
-
-func (checker *handleEqualsChecker) Check(params []interface{}, names []string) (result bool, errStr string) {
-	if params[0] == nil && params[1] == nil {
-		return true, ""
-	}
-	param1, ok1 := params[0].(kv.Handle)
-	param2, ok2 := params[1].(kv.Handle)
-	if !ok1 || !ok2 {
-		return false, "Argument to " + checker.Name + " must be kv.Handle"
-	}
-	if param1.IsInt() != param2.IsInt() {
-		return false, "Two handle types arguments to" + checker.Name + " must be same"
-	}
-
-	return param1.String() == param2.String(), ""
 }
 
 // RowsWithSep is a convenient function to wrap args to a slice of []interface.
