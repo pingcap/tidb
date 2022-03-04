@@ -241,14 +241,16 @@ func (d *ddl) getReorgJob(sess sessionctx.Context) (*model.Job, error) {
 }
 
 func (d *ddl) startDispatchLoop() {
-	time.Sleep(2 * time.Second)
 	for !d.isOwner() {
 		time.Sleep(time.Second)
 		if isChanClosed(d.ctx.Done()) {
 			return
 		}
 	}
-	sess, _ := d.sessPool.get()
+	sess, err := d.sessPool.get()
+	if err != nil {
+		log.Fatal("fail to get sessPool", zap.Error(err))
+	}
 	defer d.sessPool.put(sess)
 	var notifyDDLJobByEtcdChGeneral clientv3.WatchChan
 	var notifyDDLJobByEtcdChReorg clientv3.WatchChan
