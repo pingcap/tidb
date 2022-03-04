@@ -927,3 +927,18 @@ func TestTiFlashBatchKill(t *testing.T) {
 	require.False(t, timeOut)
 	time.Sleep(time.Second * 2)
 }
+
+func TestTiFlashBatchUnsupported(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	tk.MustExec("create database tiflash_ddl_view")
+	tk.MustExec("create table tiflash_ddl_view.t(z int)")
+	tk.MustExec("insert into tiflash_ddl_view.t values (1)")
+	tk.MustExec("CREATE VIEW tiflash_ddl_view.v AS select * from tiflash_ddl_view.t")
+	tk.MustExec(fmt.Sprintf("alter database tiflash_ddl_view set tiflash replica %v", 1))
+	require.Equal(t, "In total 2 tables: 1 succeed, 0 failed, 1 skipped", tk.Session().GetSessionVars().StmtCtx.GetMessage())
+	tk.MustGetErrCode(fmt.Sprintf("alter database information_schema set tiflash replica %v", 1), 8200)
+	time.Sleep(2 * time.Second)
+}

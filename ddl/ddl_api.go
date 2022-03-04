@@ -243,6 +243,10 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
 	}
+	if util.IsMemOrSysDB(dbInfo.Name.L) {
+		return errors.Trace(errUnsupportedAlterReplicaForSysTable)
+	}
+
 	total := len(dbInfo.Tables)
 	succ := 0
 	skip := 0
@@ -292,7 +296,29 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 
 		tbReplicaInfo := tbl.TiFlashReplica
 		if !shouldModifyTiFlashReplica(tbReplicaInfo, tiflashReplica) {
-			logutil.BgLogger().Info("skip processing schema table", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
+			logutil.BgLogger().Info("skip repeated processing table", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
+			skip += 1
+			continue
+		}
+
+		// Ban setting replica count for tables in system database.
+		if tbl.TempTableType != model.TempTableNone {
+			logutil.BgLogger().Info("skip processing temporary table", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
+			skip += 1
+			continue
+		}
+
+		charsetOk := true
+		// Ban setting replica count for tables which has charset not supported by TiFlash
+		for _, col := range tbl.Cols() {
+			_, ok := charset.TiFlashSupportedCharsets[col.Charset]
+			if !ok {
+				charsetOk = false
+				break
+			}
+		}
+		if !charsetOk {
+			logutil.BgLogger().Info("skip processing schema table, unsupported charset", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
 			skip += 1
 			continue
 		}
