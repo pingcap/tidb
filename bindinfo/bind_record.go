@@ -274,6 +274,7 @@ var statusIndex = map[string]int{
 	Enable:  0,
 	deleted: 1,
 	Invalid: 2,
+	Disable: 3,
 }
 
 func (br *BindRecord) metrics() ([]float64, []int) {
