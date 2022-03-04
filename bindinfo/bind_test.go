@@ -1038,7 +1038,12 @@ func TestSPMHitInfo(t *testing.T) {
 	require.True(t, tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"))
 	tk.MustExec("SELECT * from t1,t2 where t1.id = t2.id")
 	tk.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("1"))
+	tk.MustExec("set binding disable for SELECT * from t1,t2 where t1.id = t2.id")
+	tk.MustExec("SELECT * from t1,t2 where t1.id = t2.id")
+	tk.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("0"))
+
 	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
+
 }
 
 func TestReCreateBind(t *testing.T) {
@@ -1165,6 +1170,9 @@ func TestSPMWithoutUseDatabase(t *testing.T) {
 	require.True(t, tk1.MustUseIndex("select * from test.t", "a"))
 	tk1.MustExec("select * from test.t")
 	tk1.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("1"))
+	tk1.MustExec("set binding disable for select * from test.t")
+	tk1.MustExec("select * from test.t")
+	tk1.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("0"))
 }
 
 func TestBindingWithoutCharset(t *testing.T) {

@@ -87,6 +87,12 @@ func (b *Binding) IsBindingEnable() bool {
 	return b.Status == Enable || b.Status == Using
 }
 
+// IsBindingAvailable returns whether the binding is available.
+// It includes the 'Enable', 'Using' and 'Disable' status.
+func (b *Binding) IsBindingAvailable() bool {
+	return b.IsBindingEnable() || b.Status == Disable
+}
+
 // SinceUpdateTime returns the duration since last update time. Export for test.
 func (b *Binding) SinceUpdateTime() (time.Duration, error) {
 	updateTime, err := b.UpdateTime.GoTime(time.Local)
@@ -104,8 +110,8 @@ type BindRecord struct {
 	Bindings []Binding
 }
 
-// HasUsingBinding checks if there are any using bindings in bind record.
-func (br *BindRecord) HasUsingBinding() bool {
+// HasEnableBinding checks if there are any enable bindings in bind record.
+func (br *BindRecord) HasEnableBinding() bool {
 	for _, binding := range br.Bindings {
 		if binding.IsBindingEnable() {
 			return true
@@ -114,9 +120,19 @@ func (br *BindRecord) HasUsingBinding() bool {
 	return false
 }
 
-// FindUsingBinding gets the using binding.
-// There is at most one binding that can be used now
-func (br *BindRecord) FindUsingBinding() *Binding {
+// HasAvailableBinding checks if there are any avaiable bindings in bind record.
+func (br *BindRecord) HasAvailableBinding() bool {
+	for _, binding := range br.Bindings {
+		if binding.IsBindingAvailable() {
+			return true
+		}
+	}
+	return false
+}
+
+// FindEnableBinding gets the enable binding.
+// There is at most one binding that can be used now.
+func (br *BindRecord) FindEnableBinding() *Binding {
 	for _, binding := range br.Bindings {
 		if binding.IsBindingEnable() {
 			return &binding

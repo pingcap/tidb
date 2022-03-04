@@ -266,7 +266,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 	if oldRecord != nil {
 		binding := oldRecord.FindBinding(record.Bindings[0].ID)
 		if binding != nil {
-			// There is already a binding with status `Using`, `PendingVerify` or `Rejected`, we could directly cancel the job.
+			// There is already a binding with status `Enable`, `disable`, `PendingVerify` or `Rejected`, we could directly cancel the job.
 			if record.Bindings[0].Status == PendingVerify {
 				return nil
 			}
@@ -733,7 +733,7 @@ func (h *BindHandle) CaptureBaselines() {
 		}
 		dbName := utilparser.GetDefaultDB(stmt, bindableStmt.Schema)
 		normalizedSQL, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, dbName, bindableStmt.Query))
-		if r := h.GetBindRecord(digest.String(), normalizedSQL, dbName); r != nil && r.HasUsingBinding() {
+		if r := h.GetBindRecord(digest.String(), normalizedSQL, dbName); r != nil && r.HasAvailableBinding() {
 			continue
 		}
 		bindSQL := GenerateBindSQL(context.TODO(), stmt, bindableStmt.PlanHint, true, dbName)
