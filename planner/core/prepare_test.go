@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -2271,10 +2270,6 @@ func TestIssue30100(t *testing.T) {
 }
 
 func TestPartitionTable(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	orgEnable := core.PreparedPlanCacheEnabled()
@@ -2407,10 +2402,6 @@ func TestPartitionTable(t *testing.T) {
 }
 
 func TestPartitionWithVariedDataSources(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	orgEnable := core.PreparedPlanCacheEnabled()

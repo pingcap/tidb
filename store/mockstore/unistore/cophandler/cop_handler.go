@@ -314,6 +314,10 @@ func newRowDecoder(columnInfos []*tipb.ColumnInfo, fieldTps []*types.FieldType, 
 	)
 	for i := range columnInfos {
 		info := columnInfos[i]
+		if info.ColumnId == model.ExtraPhysTblID {
+			// Skip since it needs to be filled in from the key
+			continue
+		}
 		ft := fieldTps[i]
 		col := rowcodec.ColInfo{
 			ID:         info.ColumnId,

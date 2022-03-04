@@ -19,6 +19,7 @@ DB="$TEST_NAME"
 TABLE="usertable"
 DDL_COUNT=5
 LOG=/$TEST_DIR/backup.log
+RESTORE_LOG=LOG=/$TEST_DIR/restore.log
 BACKUP_STAT=/$TEST_DIR/backup_stat
 RESOTRE_STAT=/$TEST_DIR/restore_stat
 
@@ -110,6 +111,20 @@ fi
 # clear restore environment
 run_sql "DROP DATABASE $DB;"
 
+# restore full
+echo "restore start..."
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/restore/restore-createtables-error=return(true)"
+run_br restore full -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --log-file $RESTORE_LOG --ddl-batch-size=128 || { cat $RESTORE_LOG; }
+export GO_FAILPOINTS=""
+
+panic_count=$(cat $RESTORE_LOG | grep "panic"| wc -l)
+if [ "${panic_count}" != "0" ];then
+    echo "TEST: [$TEST_NAME] fail on batch create tables"
+    exit 1
+fi
+
+# clear restore environment
+run_sql "DROP DATABASE $DB;"
 # restore full
 echo "restore start..."
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/pdutil/PDEnabledPauseConfig=return(true)"
