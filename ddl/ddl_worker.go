@@ -668,26 +668,26 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 			return err
 		}
 		w.sessForJob.StmtCommit()
-		if t.Diff != nil {
-			d.schemaVersionMu.Lock()
-			err := t.SetSchemaDiff(d.store)
+		err := func() error {
+			if t.Diff != nil {
+				d.schemaVersionMu.Lock()
+				defer d.schemaVersionMu.Unlock()
+				err := t.SetSchemaDiff(d.store)
+				if err != nil {
+					err1 := txn.Rollback()
+					log.Error("Rollback", zap.Error(err1))
+					return err
+				}
+			}
+			err = txn.Commit(w.ctx)
 			if err != nil {
-				err1 := txn.Rollback()
-				log.Error("Rollback", zap.Error(err1))
-				w.unlockSeqNum()
 				return err
 			}
-		}
-		err := txn.Commit(w.ctx)
+			return nil
+		}()
 		if err != nil {
-			if t.Diff != nil {
-				d.schemaVersionMu.Unlock()
-			}
 			w.unlockSeqNum()
 			return err
-		}
-		if t.Diff != nil {
-			d.schemaVersionMu.Unlock()
 		}
 		asyncNotify(d.ddlJobDoneCh)
 		if w.lockSeqNum {
