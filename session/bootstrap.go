@@ -1496,7 +1496,7 @@ func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[st
 		db := row.GetString(1)
 		status := row.GetString(2)
 
-		if status != "enable" && status != "builtin" {
+		if !(status == bindinfo.Enable || status == bindinfo.Using || status != bindinfo.Builtin) {
 			continue
 		}
 

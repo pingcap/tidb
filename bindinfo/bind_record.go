@@ -84,7 +84,7 @@ func (b *Binding) isSame(rb *Binding) bool {
 
 // IsBindingEnable returns whether the binding is enable.
 func (b *Binding) IsBindingEnable() bool {
-	return b.Status == Enable
+	return b.Status == Enable || b.Status == Using
 }
 
 // SinceUpdateTime returns the duration since last update time. Export for test.

@@ -359,7 +359,7 @@ func TestConcurrentCapture(t *testing.T) {
 	tk.MustExec("admin capture bindings")
 	tk.MustQuery("select original_sql, source, status from mysql.bind_info where source != 'builtin'").Check(testkit.Rows(
 		"select * from `test` . `t` manual deleted",
-		"select * from `test` . `t` capture using",
+		"select * from `test` . `t` capture enable",
 	))
 }
 

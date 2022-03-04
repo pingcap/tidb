@@ -1055,7 +1055,7 @@ func TestReCreateBind(t *testing.T) {
 
 	tk.MustExec("create global binding for select * from t using select * from t")
 	tk.MustQuery("select original_sql, status from mysql.bind_info where source != 'builtin';").Check(testkit.Rows(
-		"select * from `test` . `t` using",
+		"select * from `test` . `t` enable",
 	))
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)

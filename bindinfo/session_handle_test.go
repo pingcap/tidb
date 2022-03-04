@@ -261,7 +261,7 @@ func TestBaselineDBLowerCase(t *testing.T) {
 	require.Equal(t, "spm", rows[0][2])
 	tk.MustQuery("select original_sql, default_db, status from mysql.bind_info where original_sql = 'select * from `spm` . `t`'").Check(testkit.Rows(
 		"select * from `spm` . `t` SPM deleted",
-		"select * from `spm` . `t` spm using",
+		"select * from `spm` . `t` spm enable",
 	))
 }
 
