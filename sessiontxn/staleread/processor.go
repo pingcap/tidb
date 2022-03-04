@@ -26,6 +26,9 @@ import (
 	"github.com/pingcap/tidb/table/temptable"
 )
 
+// enforce implement Processor interface
+var _ Processor = &staleReadProcessor{}
+
 // StalenessTSEvaluator is a function to get staleness ts
 type StalenessTSEvaluator func(sctx sessionctx.Context) (uint64, error)
 
