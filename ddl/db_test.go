@@ -25,6 +25,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -55,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	ntestkit "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
@@ -65,6 +67,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
 
@@ -288,6 +291,22 @@ func backgroundExec(s kv.Storage, sql string, done chan error) {
 	}
 	defer se.Close()
 	_, err = se.Execute(context.Background(), "use test_db")
+	if err != nil {
+		done <- errors.Trace(err)
+		return
+	}
+	_, err = se.Execute(context.Background(), sql)
+	done <- errors.Trace(err)
+}
+
+func backgroundExecT(s kv.Storage, sql string, done chan error) {
+	se, err := session.CreateSession4Test(s)
+	if err != nil {
+		done <- errors.Trace(err)
+		return
+	}
+	defer se.Close()
+	_, err = se.Execute(context.Background(), "use test")
 	if err != nil {
 		done <- errors.Trace(err)
 		return
@@ -580,6 +599,76 @@ func (s *testDBSuite7) TestCancelAddIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table t1")
+}
+
+func backgroundExecOnJobUpdatedExported(c *C, store kv.Storage, ctx sessionctx.Context, hook *ddl.TestDDLCallback, idxName string) (
+	func(*model.Job), *model.IndexInfo, error) {
+	var checkErr error
+	first := true
+	c3IdxInfo := &model.IndexInfo{}
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		addIndexNotFirstReorg := (job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey) &&
+			job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0
+		// If the action is adding index and the state is writing reorganization, it want to test the case of cancelling the job when backfilling indexes.
+		// When the job satisfies this case of addIndexNotFirstReorg, the worker will start to backfill indexes.
+		if !addIndexNotFirstReorg {
+			// Get the index's meta.
+			if c3IdxInfo.ID != 0 {
+				return
+			}
+			t := testGetTableByName(c, ctx, "test_db", "t1")
+			for _, index := range t.Indices() {
+				if !tables.IsIndexWritable(index) {
+					continue
+				}
+				if index.Meta().Name.L == idxName {
+					*c3IdxInfo = *index.Meta()
+				}
+			}
+			return
+		}
+		// The job satisfies the case of addIndexNotFirst for the first time, the worker hasn't finished a batch of backfill indexes.
+		if first {
+			first = false
+			return
+		}
+		if checkErr != nil {
+			return
+		}
+		hookCtx := mock.NewContext()
+		hookCtx.Store = store
+		err := hookCtx.NewTxn(context.Background())
+		if err != nil {
+			checkErr = errors.Trace(err)
+			return
+		}
+		jobIDs := []int64{job.ID}
+		txn, err := hookCtx.Txn(true)
+		if err != nil {
+			checkErr = errors.Trace(err)
+			return
+		}
+		errs, err := admin.CancelJobs(txn, jobIDs)
+		if err != nil {
+			checkErr = errors.Trace(err)
+			return
+		}
+		// It only tests cancel one DDL job.
+		if errs[0] != nil {
+			checkErr = errors.Trace(errs[0])
+			return
+		}
+		txn, err = hookCtx.Txn(true)
+		if err != nil {
+			checkErr = errors.Trace(err)
+			return
+		}
+		err = txn.Commit(context.Background())
+		if err != nil {
+			checkErr = errors.Trace(err)
+		}
+	}
+	return hook.OnJobUpdatedExported, c3IdxInfo, checkErr
 }
 
 func testCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.Duration, idxName, addIdxSQL, sqlModeSQL string, dom *domain.Domain) {
@@ -1944,6 +2033,20 @@ func testGetIndexID(c *C, ctx sessionctx.Context, dbName, tblName, idxName strin
 	return -1
 }
 
+func testGetIndexIDT(t *testing.T, ctx sessionctx.Context, dbName, tblName, idxName string) int64 {
+	is := domain.GetDomain(ctx).InfoSchema()
+	tt, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
+	require.NoError(t, err)
+
+	for _, idx := range tt.Indices() {
+		if idx.Meta().Name.L == idxName {
+			return idx.Meta().ID
+		}
+	}
+	t.Fatalf("index %s not found(db: %s, tbl: %s)", idxName, dbName, tblName)
+	return -1
+}
+
 type testDDLJobIDCallback struct {
 	ddl.Callback
 	jobID int64
@@ -1982,33 +2085,11 @@ func checkDelRangeAdded(tk *testkit.TestKit, jobID int64, elemID int64) {
 	tk.MustQuery(query, jobID, elemID, jobID, elemID).Check(testkit.Rows("1"))
 }
 
-func checkGlobalIndexCleanUpDone(c *C, ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, pid int64) int {
-	c.Assert(ctx.NewTxn(context.Background()), IsNil)
-	txn, err := ctx.Txn(true)
-	c.Assert(err, IsNil)
-	defer func() {
-		err := txn.Rollback()
-		c.Assert(err, IsNil)
-	}()
-
-	cnt := 0
-	prefix := tablecodec.EncodeTableIndexPrefix(tblInfo.ID, idxInfo.ID)
-	it, err := txn.Iter(prefix, nil)
-	c.Assert(err, IsNil)
-	for it.Valid() {
-		if !it.Key().HasPrefix(prefix) {
-			break
-		}
-		segs := tablecodec.SplitIndexValue(it.Value())
-		c.Assert(segs.PartitionID, NotNil)
-		_, pi, err := codec.DecodeInt(segs.PartitionID)
-		c.Assert(err, IsNil)
-		c.Assert(pi, Not(Equals), pid)
-		cnt++
-		err = it.Next()
-		c.Assert(err, IsNil)
-	}
-	return cnt
+func checkDelRangeAddedN(tk *ntestkit.TestKit, jobID int64, elemID int64) {
+	query := `select sum(cnt) from
+	(select count(1) cnt from mysql.gc_delete_range where job_id = ? and element_id = ? union
+	select count(1) cnt from mysql.gc_delete_range_done where job_id = ? and element_id = ?) as gdr;`
+	tk.MustQuery(query, jobID, elemID, jobID, elemID).Check(testkit.Rows("1"))
 }
 
 func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
@@ -7255,43 +7336,6 @@ func (s *testSerialDBSuite) TestIssue22819(c *C) {
 	c.Assert(err, ErrorMatches, ".*8028.*Information schema is changed during the execution of the statement.*")
 }
 
-func (s *testSerialSuite) TestTruncateAllPartitions(c *C) {
-	tk1 := testkit.NewTestKit(c, s.store)
-	tk1.MustExec("use test;")
-	tk1.MustExec("drop table if exists partition_table;")
-	defer func() {
-		tk1.MustExec("drop table if exists partition_table;")
-	}()
-	tk1.MustExec("create table partition_table (v int) partition by hash (v) partitions 10;")
-	tk1.MustExec("insert into partition_table values (0),(1),(2),(3),(4),(5),(6),(7),(8),(9),(10);")
-	tk1.MustExec("alter table partition_table truncate partition all;")
-	tk1.MustQuery("select count(*) from partition_table;").Check(testkit.Rows("0"))
-}
-
-func (s *testSerialSuite) TestIssue23872(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists test_create_table;")
-	defer tk.MustExec("drop table if exists test_create_table;")
-	tk.MustExec("create table test_create_table(id smallint,id1 int, primary key (id));")
-	rs, err := tk.Exec("select * from test_create_table;")
-	c.Assert(err, IsNil)
-	cols := rs.Fields()
-	err = rs.Close()
-	c.Assert(err, IsNil)
-	expectFlag := uint16(mysql.NotNullFlag | mysql.PriKeyFlag | mysql.NoDefaultValueFlag)
-	c.Assert(cols[0].Column.Flag, Equals, uint(expectFlag))
-	tk.MustExec("create table t(a int default 1, primary key(a));")
-	defer tk.MustExec("drop table if exists t;")
-	rs1, err := tk.Exec("select * from t;")
-	c.Assert(err, IsNil)
-	cols1 := rs1.Fields()
-	err = rs1.Close()
-	c.Assert(err, IsNil)
-	expectFlag1 := uint16(mysql.NotNullFlag | mysql.PriKeyFlag)
-	c.Assert(cols1[0].Column.Flag, Equals, uint(expectFlag1))
-}
-
 // Close issue #23321.
 // See https://github.com/pingcap/tidb/issues/23321
 func (s *testSerialDBSuite) TestJsonUnmarshalErrWhenPanicInCancellingPath(c *C) {
@@ -7813,4 +7857,27 @@ func (s *testDBSuite1) TestGetTimeZone(c *C) {
 		c.Assert(tc.tzName, Equals, tz, Commentf("sql: %s, offset: %d", tc.tzSQL, offset))
 		c.Assert(tc.offset, Equals, offset, Commentf("sql: %s", tc.tzSQL))
 	}
+}
+
+// for issue #30328
+func (s *testDBSuite5) TestTooBigFieldLengthAutoConvert(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	err := tk.ExecToErr("create table i30328_1(a varbinary(70000), b varchar(70000000))")
+	c.Assert(types.ErrTooBigFieldLength.Equal(err), IsTrue)
+
+	// save previous sql_mode and change
+	r := tk.MustQuery("select @@sql_mode")
+	defer func(sqlMode string) {
+		tk.MustExec("set @@sql_mode= '" + sqlMode + "'")
+		tk.MustExec("drop table if exists i30328_1")
+		tk.MustExec("drop table if exists i30328_2")
+	}(r.Rows()[0][0].(string))
+	tk.MustExec("set @@sql_mode='NO_ENGINE_SUBSTITUTION'")
+
+	tk.MustExec("create table i30328_1(a varbinary(70000), b varchar(70000000))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1246 Converting column 'a' from VARBINARY to BLOB", "Warning 1246 Converting column 'b' from VARCHAR to TEXT"))
+	tk.MustExec("create table i30328_2(a varchar(200))")
+	tk.MustExec("alter table i30328_2 modify a varchar(70000000);")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1246 Converting column 'a' from VARCHAR to TEXT"))
 }

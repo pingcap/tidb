@@ -293,6 +293,11 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt
 	for i := 0; i < p.handleCols.NumCols(); i++ {
 		parentUsedCols = append(parentUsedCols, p.handleCols.GetCol(i))
 	}
+	for _, col := range p.Schema().Columns {
+		if col.ID == model.ExtraPidColID || col.ID == model.ExtraPhysTblID {
+			parentUsedCols = append(parentUsedCols, col)
+		}
+	}
 	condCols := expression.ExtractColumnsFromExpressions(nil, p.conditions, nil)
 	parentUsedCols = append(parentUsedCols, condCols...)
 	return p.children[0].PruneColumns(parentUsedCols, opt)
@@ -479,16 +484,15 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *log
 		return p.baseLogicalPlan.PruneColumns(parentUsedCols, opt)
 	}
 
-	if len(p.partitionedTable) > 0 {
-		// If the children include partitioned tables, there is an extra partition ID column.
-		parentUsedCols = append(parentUsedCols, p.extraPIDInfo.Columns...)
-	}
-
-	for _, cols := range p.tblID2Handle {
+	for tblID, cols := range p.tblID2Handle {
 		for _, col := range cols {
 			for i := 0; i < col.NumCols(); i++ {
 				parentUsedCols = append(parentUsedCols, col.GetCol(i))
 			}
+		}
+		if physTblIDCol, ok := p.tblID2PhysTblIDCol[tblID]; ok {
+			// If the children include partitioned tables, there is an extra partition ID column.
+			parentUsedCols = append(parentUsedCols, physTblIDCol)
 		}
 	}
 	return p.children[0].PruneColumns(parentUsedCols, opt)
