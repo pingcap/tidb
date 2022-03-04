@@ -636,6 +636,21 @@ func (cf *captureFilter) isEmpty() bool {
 	return len(cf.tables) == 0 && len(cf.users) == 0
 }
 
+// ParseCaptureTableFilter checks whether this filter is valid and parses it.
+func ParseCaptureTableFilter(tableFilter string) (f tablefilter.Filter, valid bool) {
+	// forbidden wildcards '!' and '@' for safety,
+	// please see https://github.com/pingcap/tidb-tools/tree/master/pkg/table-filter for more details.
+	if strings.ContainsAny(tableFilter, "!@") {
+		return nil, false
+	}
+	var err error
+	f, err = tablefilter.Parse([]string{tableFilter})
+	if err != nil {
+		return nil, false
+	}
+	return f, true
+}
+
 func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 	filter = &captureFilter{
 		frequency: 1,
@@ -654,9 +669,9 @@ func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 		valStr := strings.ToLower(row.GetString(1))
 		switch filterTp {
 		case "table":
-			tfilter, err := tablefilter.Parse([]string{valStr})
-			if err != nil {
-				logutil.BgLogger().Warn("[sql-bind] failed to parse table name, ignore it", zap.String("filter_value", valStr))
+			tfilter, valid := ParseCaptureTableFilter(valStr)
+			if !valid {
+				logutil.BgLogger().Warn("[sql-bind] capture table filter is invalid, ignore it", zap.String("filter_value", valStr))
 				continue
 			}
 			filter.tables = append(filter.tables, tfilter)

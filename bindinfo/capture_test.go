@@ -612,6 +612,39 @@ func TestCaptureUserFilter(t *testing.T) {
 	require.Len(t, rows, 0) // filtered by the table filter
 }
 
+func TestCaptureTableFilterValid(t *testing.T) {
+	type matchCase struct {
+		table   string
+		matched bool
+	}
+	type filterCase struct {
+		filter string
+		valid  bool
+		mcases []matchCase
+	}
+	filterCases := []filterCase{
+		{"*.*", true, []matchCase{{"db.t", true}}},
+		{"***.***", true, []matchCase{{"db.t", true}}},
+		{"d*.*", true, []matchCase{{"db.t", true}}},
+		{"*.t", true, []matchCase{{"db.t", true}}},
+		{"?.t*", true, []matchCase{{"d.t", true}, {"d.tb", true}, {"db.t", false}}},
+		{"db.t[1-3]", true, []matchCase{{"db.t1", true}, {"db.t2", true}, {"db.t4", false}}},
+		{"!db.table", false, nil},
+		{"@db.table", false, nil},
+		{"table", false, nil},
+	}
+	for _, fc := range filterCases {
+		f, valid := bindinfo.ParseCaptureTableFilter(fc.filter)
+		require.Equal(t, fc.valid, valid)
+		if valid {
+			for _, mc := range fc.mcases {
+				tmp := strings.Split(mc.table, ".")
+				require.Equal(t, mc.matched, f.MatchTable(tmp[0], tmp[1]))
+			}
+		}
+	}
+}
+
 func TestCaptureWildcardFilter(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
