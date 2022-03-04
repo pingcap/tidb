@@ -594,6 +594,43 @@ func (w *worker) unlockSeqNum() {
 	}
 }
 
+func (w *worker) handleDDLJobWaitSchemaSynced(d *ddlCtx, job *model.Job) {
+	if job == nil {
+		return
+	}
+	waitTime := 2 * d.lease
+	waitDependencyJobCnt := 0
+	var schemaVer int64
+	w.waitSchemaSynced(d, job, waitTime)
+	if w.lockSeqNum {
+		w.lockSeqNum = false
+		d.ddlSeqNumMu.Unlock()
+	}
+	w.waitDependencyJobFinished(job, &waitDependencyJobCnt)
+
+	// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
+	// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
+	// the newest schema.
+	ctx, cancel := context.WithTimeout(w.ctx, waitTime)
+	w.waitSchemaChanged(ctx, d, waitTime, schemaVer, job)
+	cancel()
+
+	if RunInGoTest {
+		// d.mu.hook is initialed from domain / test callback, which will force the owner host update schema diff synchronously.
+		d.mu.RLock()
+		d.mu.hook.OnSchemaStateChanged()
+		d.mu.RUnlock()
+	}
+
+	d.mu.RLock()
+	d.mu.hook.OnJobUpdated(job)
+	d.mu.RUnlock()
+
+	if job.IsSynced() || job.IsCancelled() || job.IsRollbackDone() {
+		asyncNotify(d.ddlJobDoneCh)
+	}
+}
+
 func (w *worker) handleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error {
 	defer func() {
 		r := recover()
@@ -607,7 +644,6 @@ func (w *worker) handleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 		runJobErr error
 	)
 	waitTime := 2 * d.lease
-
 	w.setDDLLabelForTopSQL(job)
 	err := w.sessForJob.NewTxn(w.ctx)
 	if err != nil {
