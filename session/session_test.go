@@ -2312,6 +2312,36 @@ func (s *testSchemaSerialSuite) TestSchemaCheckerSQL(c *C) {
 	tk.MustQuery(`select * from t for update`)
 	_, err = tk.Exec(`commit;`)
 	c.Assert(err, NotNil)
+
+	// Repeated tests for partitioned table
+	tk.MustExec(`create table pt (id int, c int) partition by hash (id) partitions 3`)
+	tk.MustExec(`insert into pt values(1, 1);`)
+	// The schema version is out of date in the first transaction, and the SQL can't be retried.
+	tk.MustExec(`begin;`)
+	tk1.MustExec(`alter table pt modify column c bigint;`)
+	tk.MustExec(`insert into pt values(3, 3);`)
+	_, err = tk.Exec(`commit;`)
+	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue, Commentf("err %v", err))
+
+	// But the transaction related table IDs aren't in the updated table IDs.
+	tk.MustExec(`begin;`)
+	tk1.MustExec(`alter table pt add index idx2(c);`)
+	tk.MustExec(`insert into t1 values(4, 4);`)
+	tk.MustExec(`commit;`)
+
+	// Test for "select for update".
+	tk.MustExec(`begin;`)
+	tk1.MustExec(`alter table pt add index idx3(c);`)
+	tk.MustQuery(`select * from pt for update`)
+	_, err = tk.Exec(`commit;`)
+	c.Assert(err, NotNil)
+
+	// Test for "select for update".
+	tk.MustExec(`begin;`)
+	tk1.MustExec(`alter table pt add index idx4(c);`)
+	tk.MustQuery(`select * from pt partition (p1) for update`)
+	_, err = tk.Exec(`commit;`)
+	c.Assert(err, NotNil)
 }
 
 func (s *testSchemaSerialSuite) TestSchemaCheckerTempTable(c *C) {

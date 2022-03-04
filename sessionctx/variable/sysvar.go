@@ -1381,16 +1381,9 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal | ScopeSession, Name: SysdateIsNow, Value: BoolToOnOff(DefSysdateIsNow), skipInit: true, Type: TypeBool,
+	{Scope: ScopeGlobal | ScopeSession, Name: SysdateIsNow, Value: BoolToOnOff(DefSysdateIsNow), Type: TypeBool,
 		SetSession: func(vars *SessionVars, s string) error {
 			vars.SysdateIsNow = TiDBOptOn(s)
-			return nil
-		},
-		GetGlobal: func(vars *SessionVars) (s string, err error) {
-			return strconv.FormatBool(GlobalSysdateIsNow.Load()), nil
-		},
-		SetGlobal: func(vars *SessionVars, s string) error {
-			GlobalSysdateIsNow.Store(TiDBOptOn(s))
 			return nil
 		},
 	},
