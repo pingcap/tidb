@@ -1,0 +1,1 @@
+explain format = 'brief' select * from ((select 4 as a) union all (select 33 as a)) tmp order by a desc limit 1;

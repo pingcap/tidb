@@ -1,5 +1,4 @@
 --echo ///// SUBQUERY
-set names utf8mb4;
 drop table if exists t1;
 create table t1(c1 int, c2 int, c3 int, key(c1), key(c2));
 insert into t1 values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);
