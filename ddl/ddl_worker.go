@@ -751,13 +751,13 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 	if t.Diff != nil {
 		d.schemaVersionMu.Lock()
 		err = t.SetSchemaDiff(d.store)
-		w.sessForJob.StmtCommit()
 		if err != nil {
 			err1 := txn.Rollback()
 			log.Error("Rollback", zap.Error(err1))
 			w.unlockSeqNum()
 			return err
 		}
+		w.sessForJob.StmtCommit()
 		schemaVer = t.Diff.Version
 	}
 	err = txn.Commit(w.ctx)
