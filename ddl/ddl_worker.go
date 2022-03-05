@@ -747,29 +747,28 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 		return err
 	}
 	writeBinlog(d.binlogCli, txn, job)
-
-	if t.Diff != nil {
-		d.schemaVersionMu.Lock()
-		err = t.SetSchemaDiff(d.store)
-		if err != nil {
-			err1 := txn.Rollback()
-			log.Error("Rollback", zap.Error(err1))
-			w.unlockSeqNum()
-			return err
-		}
-		w.sessForJob.StmtCommit()
-		schemaVer = t.Diff.Version
-	}
-	err = txn.Commit(w.ctx)
-	if err != nil {
+	err = func() error {
 		if t.Diff != nil {
-			d.schemaVersionMu.Unlock()
+			d.schemaVersionMu.Lock()
+			defer d.schemaVersionMu.Unlock()
+			err = t.SetSchemaDiff(d.store)
+			if err != nil {
+				err1 := txn.Rollback()
+				log.Error("Rollback", zap.Error(err1))
+				return err
+			}
+			w.sessForJob.StmtCommit()
+			schemaVer = t.Diff.Version
+			err = txn.Commit(w.ctx)
+			if err != nil {
+				return err
+			}
 		}
+		return nil
+	}()
+	if err != nil {
 		w.unlockSeqNum()
 		return err
-	}
-	if t.Diff != nil {
-		d.schemaVersionMu.Unlock()
 	}
 
 	if runJobErr != nil {
