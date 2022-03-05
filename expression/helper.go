@@ -56,25 +56,44 @@ func IsValidCurrentTimestampExpr(exprNode ast.ExprNode, fieldType *types.FieldTy
 	return (containsArg && isConsistent) || (!containsArg && !containsFsp)
 }
 
-// GetTimeValue gets the time value with type tp.
-func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int8) (d types.Datum, err error) {
+// GetTimeCurrentTimestamp is used for generating a timestamp for some special cases: cast null value to timestamp type with not null flag.
+func GetTimeCurrentTimestamp(ctx sessionctx.Context, tp byte, fsp int) (d types.Datum, err error) {
+	var t types.Time
+	t, err = getTimeCurrentTimeStamp(ctx, tp, fsp)
+	if err != nil {
+		return d, err
+	}
+	d.SetMysqlTime(t)
+	return d, nil
+}
+
+func getTimeCurrentTimeStamp(ctx sessionctx.Context, tp byte, fsp int) (t types.Time, err error) {
 	value := types.NewTime(types.ZeroCoreTime, tp, fsp)
+	defaultTime, err := getStmtTimestamp(ctx)
+	if err != nil {
+		return value, err
+	}
+	value.SetCoreTime(types.FromGoTime(defaultTime.Truncate(time.Duration(math.Pow10(9-fsp)) * time.Nanosecond)))
+	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
+		err = value.ConvertTimeZone(time.Local, ctx.GetSessionVars().Location())
+		if err != nil {
+			return value, err
+		}
+	}
+	return value, nil
+}
+
+// GetTimeValue gets the time value with type tp.
+func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int) (d types.Datum, err error) {
+	var value types.Time
 
 	sc := ctx.GetSessionVars().StmtCtx
 	switch x := v.(type) {
 	case string:
 		upperX := strings.ToUpper(x)
 		if upperX == strings.ToUpper(ast.CurrentTimestamp) {
-			defaultTime, err := getStmtTimestamp(ctx)
-			if err != nil {
+			if value, err = getTimeCurrentTimeStamp(ctx, tp, fsp); err != nil {
 				return d, err
-			}
-			value.SetCoreTime(types.FromGoTime(defaultTime.Truncate(time.Duration(math.Pow10(9-int(fsp))) * time.Nanosecond)))
-			if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
-				err = value.ConvertTimeZone(time.Local, ctx.GetSessionVars().Location())
-				if err != nil {
-					return d, err
-				}
 			}
 		} else if upperX == types.ZeroDatetimeStr {
 			value, err = types.ParseTimeFromNum(sc, 0, tp, fsp)

@@ -16,6 +16,7 @@ package parser_test
 import (
 	"bytes"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -33,8 +34,6 @@ import (
 )
 
 func TestSimple(t *testing.T) {
-	t.Parallel()
-
 	p := parser.New()
 
 	reservedKws := []string{
@@ -85,7 +84,7 @@ func TestSimple(t *testing.T) {
 		"auto_increment", "after", "begin", "bit", "bool", "boolean", "charset", "columns", "commit",
 		"date", "datediff", "datetime", "deallocate", "do", "from_days", "end", "engine", "engines", "execute", "extended", "first", "file", "full",
 		"local", "names", "offset", "password", "prepare", "quick", "rollback", "session", "signed",
-		"start", "global", "tables", "tablespace", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
+		"start", "global", "tables", "tablespace", "target", "text", "time", "timestamp", "tidb", "transaction", "truncate", "unknown",
 		"value", "warnings", "year", "now", "substr", "subpartition", "subpartitions", "substring", "mode", "any", "some", "user", "identified",
 		"collation", "comment", "avg_row_length", "checksum", "compression", "connection", "key_block_size",
 		"max_rows", "min_rows", "national", "quarter", "escape", "grants", "status", "fields", "triggers", "language",
@@ -312,8 +311,6 @@ func TestSimple(t *testing.T) {
 }
 
 func TestSpecialComments(t *testing.T) {
-	t.Parallel()
-
 	p := parser.New()
 
 	// 1. Make sure /*! ... */ respects the same SQL mode.
@@ -462,8 +459,6 @@ func RunErrMsgTest(t *testing.T, table []testErrMsgCase) {
 }
 
 func TestDMLStmt(t *testing.T) {
-	t.Parallel()
-
 	table := []testCase{
 		{"", true, ""},
 		{";", true, ""},
@@ -815,6 +810,11 @@ func TestDMLStmt(t *testing.T) {
 		// This case would be removed once TiDB PR to remove ADMIN RELOAD STATISTICS is merged.
 		{"admin reload statistics", true, "ADMIN RELOAD STATS_EXTENDED"},
 		{"admin reload stats_extended", true, "ADMIN RELOAD STATS_EXTENDED"},
+		// Test for 'admin flush plan_cache'
+		{"admin flush instance plan_cache", true, "ADMIN FLUSH INSTANCE PLAN_CACHE"},
+		{"admin flush session plan_cache", true, "ADMIN FLUSH SESSION PLAN_CACHE"},
+		// We do not support the global level. We will check it in the later.
+		{"admin flush global plan_cache", true, "ADMIN FLUSH GLOBAL PLAN_CACHE"},
 
 		// for on duplicate key update
 		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true, "INSERT INTO `t` (`a`,`b`,`c`) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE `c`=VALUES(`a`)+VALUES(`b`)"},
@@ -1032,8 +1032,6 @@ AAAAAAAAAAAA5gm5Mg==
 }
 
 func TestDBAStmt(t *testing.T) {
-	t.Parallel()
-
 	table := []testCase{
 		// for SHOW statement
 		{"SHOW VARIABLES LIKE 'character_set_results'", true, "SHOW SESSION VARIABLES LIKE _UTF8MB4'character_set_results'"},
@@ -1128,6 +1126,8 @@ func TestDBAStmt(t *testing.T) {
 		// for show stats_topn.
 		{"show stats_topn", true, "SHOW STATS_TOPN"},
 		{"show stats_topn where table_name = 't'", true, "SHOW STATS_TOPN WHERE `table_name`=_UTF8MB4't'"},
+		// for show histograms_in_flight.
+		{"show histograms_in_flight", true, "SHOW HISTOGRAMS_IN_FLIGHT"},
 		// for show column_stats_usage.
 		{"show column_stats_usage", true, "SHOW COLUMN_STATS_USAGE"},
 		{"show column_stats_usage where table_name = 't'", true, "SHOW COLUMN_STATS_USAGE WHERE `table_name`=_UTF8MB4't'"},
@@ -1285,8 +1285,6 @@ func TestDBAStmt(t *testing.T) {
 }
 
 func TestSetVariable(t *testing.T) {
-	t.Parallel()
-
 	table := []struct {
 		Input    string
 		Name     string
@@ -1298,10 +1296,12 @@ func TestSetVariable(t *testing.T) {
 		{"set xx.xx = 666", "xx.xx", false, true},
 		// Set session system variable xx.xx
 		{"set session xx.xx = 666", "xx.xx", false, true},
+		{"set local xx.xx = 666", "xx.xx", false, true},
 		{"set global xx.xx = 666", "xx.xx", true, true},
 
 		{"set @@xx.xx = 666", "xx.xx", false, true},
 		{"set @@session.xx.xx = 666", "xx.xx", false, true},
+		{"set @@local.xx.xx = 666", "xx.xx", false, true},
 		{"set @@global.xx.xx = 666", "xx.xx", true, true},
 
 		// Set user defined variable xx.xx
@@ -1328,8 +1328,6 @@ func TestSetVariable(t *testing.T) {
 }
 
 func TestFlushTable(t *testing.T) {
-	t.Parallel()
-
 	p := parser.New()
 	stmt, _, err := p.Parse("flush local tables tbl1,tbl2 with read lock", "", "")
 	require.NoError(t, err)
@@ -1342,8 +1340,6 @@ func TestFlushTable(t *testing.T) {
 }
 
 func TestFlushPrivileges(t *testing.T) {
-	t.Parallel()
-
 	p := parser.New()
 	stmt, _, err := p.Parse("flush privileges", "", "")
 	require.NoError(t, err)
@@ -1352,8 +1348,6 @@ func TestFlushPrivileges(t *testing.T) {
 }
 
 func TestExpression(t *testing.T) {
-	t.Parallel()
-
 	table := []testCase{
 		// sign expression
 		{"SELECT ++1", true, "SELECT ++1"},
@@ -1410,8 +1404,6 @@ func TestExpression(t *testing.T) {
 }
 
 func TestBuiltin(t *testing.T) {
-	t.Parallel()
-
 	table := []testCase{
 		// for builtin functions
 		{"SELECT POW(1, 2)", true, "SELECT POW(1, 2)"},
@@ -1492,6 +1484,8 @@ func TestBuiltin(t *testing.T) {
 		{"SELECT LEAST(), LEAST(1, 2, 3);", true, "SELECT LEAST(),LEAST(1, 2, 3)"},
 
 		{"SELECT INTERVAL(1, 0, 1, 2)", true, "SELECT INTERVAL(1, 0, 1, 2)"},
+		{"SELECT (INTERVAL(1, 0, 1, 2)+5)*7+INTERVAL(1, 0, 1, 2)/2", true, "SELECT (INTERVAL(1, 0, 1, 2)+5)*7+INTERVAL(1, 0, 1, 2)/2"},
+		{"SELECT INTERVAL(0, (1*5)/2)+INTERVAL(5, 4, 3)", true, "SELECT INTERVAL(0, (1*5)/2)+INTERVAL(5, 4, 3)"},
 		{"SELECT DATE_ADD('2008-01-02', INTERVAL INTERVAL(1, 0, 1) DAY);", true, "SELECT DATE_ADD(_UTF8MB4'2008-01-02', INTERVAL INTERVAL(1, 0, 1) DAY)"},
 
 		// information functions
@@ -2146,8 +2140,6 @@ func TestBuiltin(t *testing.T) {
 }
 
 func TestIdentifier(t *testing.T) {
-	t.Parallel()
-
 	table := []testCase{
 		// for quote identifier
 		{"select `a`, `a.b`, `a b` from t", true, "SELECT `a`,`a.b`,`a b` FROM `t`"},
@@ -2198,13 +2190,117 @@ func TestIdentifier(t *testing.T) {
 		{`select .78'123'`, true, "SELECT 0.78 AS `123`"},
 		{"select .78`123`", true, "SELECT 0.78 AS `123`"},
 		{`select .78"123"`, true, "SELECT 0.78 AS `123`"},
+		{"select 111 as \xd6\xf7", true, "SELECT 111 AS `??`"},
 	}
 	RunTest(t, table, false)
 }
 
-func TestDDL(t *testing.T) {
-	t.Parallel()
+func TestBuiltinFuncAsIdentifier(t *testing.T) {
+	whitespaceFuncs := []struct {
+		funcName string
+		args     string
+	}{
+		{"BIT_AND", "`c1`"},
+		{"BIT_OR", "`c1`"},
+		{"BIT_XOR", "`c1`"},
+		{"CAST", "1 AS FLOAT"},
+		{"COUNT", "1"},
+		{"CURDATE", ""},
+		{"CURTIME", ""},
+		{"DATE_ADD", "_UTF8MB4'2011-11-11 10:10:10', INTERVAL 10 SECOND"},
+		{"DATE_SUB", "_UTF8MB4'2011-11-11 10:10:10', INTERVAL 10 SECOND"},
+		{"EXTRACT", "SECOND FROM _UTF8MB4'2011-11-11 10:10:10'"},
+		{"GROUP_CONCAT", "`c2`, `c1` SEPARATOR ','"},
+		{"MAX", "`c1`"},
+		{"MID", "_UTF8MB4'Sakila', -5, 3"},
+		{"MIN", "`c1`"},
+		{"NOW", ""},
+		{"POSITION", "_UTF8MB4'bar' IN _UTF8MB4'foobarbar'"},
+		{"STDDEV_POP", "`c1`"},
+		{"STDDEV_SAMP", "`c1`"},
+		{"SUBSTR", "_UTF8MB4'Quadratically', 5"},
+		{"SUBSTRING", "_UTF8MB4'Quadratically', 5"},
+		{"SUM", "`c1`"},
+		{"SYSDATE", ""},
+		{"TRIM", "_UTF8MB4' foo '"},
+		{"VAR_POP", "`c1`"},
+		{"VAR_SAMP", "`c1`"},
+	}
 
+	testcases := make([]testCase, 0, 3*len(whitespaceFuncs))
+	runTests := func(ignoreSpace bool) {
+		p := parser.New()
+		if ignoreSpace {
+			p.SetSQLMode(mysql.ModeIgnoreSpace)
+		}
+		for _, c := range testcases {
+			_, _, err := p.Parse(c.src, "", "")
+			if !c.ok {
+				require.Errorf(t, err, "source %v", c.src)
+				continue
+			}
+			require.NoErrorf(t, err, "source %v", c.src)
+			if c.ok && !ignoreSpace {
+				RunRestoreTest(t, c.src, c.restore, false)
+			}
+		}
+	}
+
+	for _, function := range whitespaceFuncs {
+		// `x` is recognized as a function name for `x()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("select %s(%s)", function.funcName, function.args), true, fmt.Sprintf("SELECT %s(%s)", function.funcName, function.args)})
+
+		// In MySQL, `select x ()` is recognized as a stored function.
+		// In TiDB, most of these functions are recognized as identifiers while some are builtin functions (such as COUNT, CURDATE)
+		// because the later ones are not added to the token map. We'd better not to modify it since it breaks compatibility.
+		// For example, `select CURDATE ()` reports an error in MySQL but it works well for TiDB.
+
+		// `x` is recognized as an identifier for `x ()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("create table %s (a int)", function.funcName), true, fmt.Sprintf("CREATE TABLE `%s` (`a` INT)", function.funcName)})
+
+		// `x` is recognized as a function name for `x()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("create table %s(a int)", function.funcName), false, ""})
+	}
+	runTests(false)
+
+	testcases = make([]testCase, 0, 4*len(whitespaceFuncs))
+	for _, function := range whitespaceFuncs {
+		testcases = append(testcases, testCase{fmt.Sprintf("select %s(%s)", function.funcName, function.args), true, fmt.Sprintf("SELECT %s(%s)", function.funcName, function.args)})
+		testcases = append(testcases, testCase{fmt.Sprintf("select %s (%s)", function.funcName, function.args), true, fmt.Sprintf("SELECT %s(%s)", function.funcName, function.args)})
+		testcases = append(testcases, testCase{fmt.Sprintf("create table %s (a int)", function.funcName), false, ""})
+		testcases = append(testcases, testCase{fmt.Sprintf("create table %s(a int)", function.funcName), false, ""})
+	}
+	runTests(true)
+
+	normalFuncs := []struct {
+		funcName string
+		args     string
+	}{
+		{"ADDDATE", "_UTF8MB4'2011-11-11 10:10:10', INTERVAL 10 SECOND"},
+		{"SESSION_USER", ""},
+		{"SUBDATE", "_UTF8MB4'2011-11-11 10:10:10', INTERVAL 10 SECOND"},
+		{"SYSTEM_USER", ""},
+	}
+
+	testcases = make([]testCase, 0, 4*len(normalFuncs))
+	for _, function := range normalFuncs {
+		// `x` is recognized as a function name for `select x()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("select %s(%s)", function.funcName, function.args), true, fmt.Sprintf("SELECT %s(%s)", function.funcName, function.args)})
+
+		// `x` is recognized as a function name for `select x ()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("select %s (%s)", function.funcName, function.args), true, fmt.Sprintf("SELECT %s(%s)", function.funcName, function.args)})
+
+		// `x` is recognized as an identifier for `create table x ()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("create table %s (a int)", function.funcName), true, fmt.Sprintf("CREATE TABLE `%s` (`a` INT)", function.funcName)})
+
+		// `x` is recognized as an identifier for `create table x()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("create table %s(a int)", function.funcName), true, fmt.Sprintf("CREATE TABLE `%s` (`a` INT)", function.funcName)})
+	}
+	runTests(false)
+	runTests(true)
+}
+
+func TestDDL(t *testing.T) {
 	table := []testCase{
 		{"CREATE", false, ""},
 		{"CREATE TABLE", false, ""},
@@ -2344,106 +2440,128 @@ func TestDDL(t *testing.T) {
 
 		// for placement option
 		// 1. create table
-		{`create table t (c int) primary_region="us";`, true, "CREATE TABLE `t` (`c` INT) PRIMARY_REGION = 'us'"},
-		{`create table t (c int) regions="us,3";`, true, "CREATE TABLE `t` (`c` INT) REGIONS = 'us,3'"},
+		{`create table t (c int) primary_region="us";`, false, ""},
+		{`create table t (c int) regions="us,3";`, false, ""},
 		{`create table t (c int) followers="us,3";`, false, ""},
-		{`create table t (c int) followers=3;`, true, "CREATE TABLE `t` (`c` INT) FOLLOWERS = 3"},
-		{`create table t (c int) voters="us,3";`, false, ""},
-		{`create table t (c int) voters=3;`, true, "CREATE TABLE `t` (`c` INT) VOTERS = 3"},
+		{`create table t (c int) followers=3;`, false, ""},
+		{`create table t (c int) followers=0;`, false, ""},
+		{`create table t (c int) voters=3;`, false, ""},
 		{`create table t (c int) learners="us,3";`, false, ""},
-		{`create table t (c int) learners=3;`, true, "CREATE TABLE `t` (`c` INT) LEARNERS = 3"},
-		{`create table t (c int) schedule="even";`, true, "CREATE TABLE `t` (`c` INT) SCHEDULE = 'even'"},
-		{`create table t (c int) constraints="ww";`, true, "CREATE TABLE `t` (`c` INT) CONSTRAINTS = 'ww'"},
-		{`create table t (c int) leader_constraints="ww";`, true, "CREATE TABLE `t` (`c` INT) LEADER_CONSTRAINTS = 'ww'"},
-		{`create table t (c int) follower_constraints="ww";`, true, "CREATE TABLE `t` (`c` INT) FOLLOWER_CONSTRAINTS = 'ww'"},
-		{`create table t (c int) voter_constraints="ww";`, true, "CREATE TABLE `t` (`c` INT) VOTER_CONSTRAINTS = 'ww'"},
-		{`create table t (c int) learner_constraints="ww";`, true, "CREATE TABLE `t` (`c` INT) LEARNER_CONSTRAINTS = 'ww'"},
-		{`create table t (c int) placement policy="ww";`, true, "CREATE TABLE `t` (`c` INT) PLACEMENT POLICY = `ww`"},
-		{`create table t (c int) /*T![placement] primary_region="us" */;`, true, "CREATE TABLE `t` (`c` INT) PRIMARY_REGION = 'us'"},
-		{`create table t (c int) /*T![placement] regions="us,3" */;`, true, "CREATE TABLE `t` (`c` INT) REGIONS = 'us,3'"},
+		{`create table t (c int) learners=3;`, false, ""},
+		{`create table t (c int) schedule="even";`, false, ""},
+		{`create table t (c int) constraints="ww";`, false, ""},
+		{`create table t (c int) leader_constraints="ww";`, false, ""},
+		{`create table t (c int) follower_constraints="ww";`, false, ""},
+		{`create table t (c int) voter_constraints="ww";`, false, ""},
+		{`create table t (c int) learner_constraints="ww";`, false, ""},
+		{`create table t (c int) /*T![placement] primary_region="us" */;`, false, ""},
+		{`create table t (c int) /*T![placement] regions="us,3" */;`, false, ""},
 		{`create table t (c int) /*T![placement] followers="us,3 */";`, false, ""},
-		{`create table t (c int) /*T![placement] followers=3 */;`, true, "CREATE TABLE `t` (`c` INT) FOLLOWERS = 3"},
+		{`create table t (c int) /*T![placement] followers=3 */;`, false, ""},
+		{`create table t (c int) /*T![placement] followers=0 */;`, false, ""},
 		{`create table t (c int) /*T![placement] voters="us,3" */;`, false, ""},
-		{`create table t (c int) /*T![placement] primary_region="us" regions="us,3"  */;`, true, "CREATE TABLE `t` (`c` INT) PRIMARY_REGION = 'us' REGIONS = 'us,3'"},
+		{`create table t (c int) /*T![placement] primary_region="us" regions="us,3"  */;`, false, ""},
+		{`create table t (c int) placement policy="ww";`, true, "CREATE TABLE `t` (`c` INT) PLACEMENT POLICY = `ww`"},
 		{"create table t (c int) /*T![placement] placement policy=`x` */;", true, "CREATE TABLE `t` (`c` INT) PLACEMENT POLICY = `x`"},
 		{`create table t (c int) /*T![placement] placement policy="y" */;`, true, "CREATE TABLE `t` (`c` INT) PLACEMENT POLICY = `y`"},
 		// 2. alter table
-		{`alter table t primary_region="us";`, true, "ALTER TABLE `t` PRIMARY_REGION = 'us'"},
-		{`alter table t regions="us,3";`, true, "ALTER TABLE `t` REGIONS = 'us,3'"},
-		{`alter table t followers=3;`, true, "ALTER TABLE `t` FOLLOWERS = 3"},
-		{`alter table t voters=3;`, true, "ALTER TABLE `t` VOTERS = 3"},
-		{`alter table t learners=3;`, true, "ALTER TABLE `t` LEARNERS = 3"},
-		{`alter table t schedule="even";`, true, "ALTER TABLE `t` SCHEDULE = 'even'"},
-		{`alter table t constraints="ww";`, true, "ALTER TABLE `t` CONSTRAINTS = 'ww'"},
-		{`alter table t leader_constraints="ww";`, true, "ALTER TABLE `t` LEADER_CONSTRAINTS = 'ww'"},
-		{`alter table t follower_constraints="ww";`, true, "ALTER TABLE `t` FOLLOWER_CONSTRAINTS = 'ww'"},
-		{`alter table t voter_constraints="ww";`, true, "ALTER TABLE `t` VOTER_CONSTRAINTS = 'ww'"},
-		{`alter table t learner_constraints="ww";`, true, "ALTER TABLE `t` LEARNER_CONSTRAINTS = 'ww'"},
+		{`alter table t primary_region="us";`, false, ""},
+		{`alter table t regions="us,3";`, false, ""},
+		{`alter table t followers=3;`, false, ""},
+		{`alter table t followers=0;`, false, ""},
+		{`alter table t voters=3;`, false, ""},
+		{`alter table t learners=3;`, false, ""},
+		{`alter table t schedule="even";`, false, ""},
+		{`alter table t constraints="ww";`, false, ""},
+		{`alter table t leader_constraints="ww";`, false, ""},
+		{`alter table t follower_constraints="ww";`, false, ""},
+		{`alter table t voter_constraints="ww";`, false, ""},
+		{`alter table t learner_constraints="ww";`, false, ""},
+		{`alter table t /*T![placement] primary_region="us" */;`, false, ""},
 		{`alter table t placement policy="ww";`, true, "ALTER TABLE `t` PLACEMENT POLICY = `ww`"},
-		{`alter table t /*T![placement] primary_region="us" */;`, true, "ALTER TABLE `t` PRIMARY_REGION = 'us'"},
+		{`alter table t /*T![placement] placement policy="ww" */;`, true, "ALTER TABLE `t` PLACEMENT POLICY = `ww`"},
 		// 3. create db
-		{`create database t primary_region="us";`, true, "CREATE DATABASE `t` PRIMARY_REGION = 'us'"},
-		{`create database t regions="us,3";`, true, "CREATE DATABASE `t` REGIONS = 'us,3'"},
-		{`create database t followers=3;`, true, "CREATE DATABASE `t` FOLLOWERS = 3"},
-		{`create database t voters=3;`, true, "CREATE DATABASE `t` VOTERS = 3"},
-		{`create database t learners=3;`, true, "CREATE DATABASE `t` LEARNERS = 3"},
-		{`create database t schedule="even";`, true, "CREATE DATABASE `t` SCHEDULE = 'even'"},
-		{`create database t constraints="ww";`, true, "CREATE DATABASE `t` CONSTRAINTS = 'ww'"},
-		{`create database t leader_constraints="ww";`, true, "CREATE DATABASE `t` LEADER_CONSTRAINTS = 'ww'"},
-		{`create database t follower_constraints="ww";`, true, "CREATE DATABASE `t` FOLLOWER_CONSTRAINTS = 'ww'"},
-		{`create database t voter_constraints="ww";`, true, "CREATE DATABASE `t` VOTER_CONSTRAINTS = 'ww'"},
-		{`create database t learner_constraints="ww";`, true, "CREATE DATABASE `t` LEARNER_CONSTRAINTS = 'ww'"},
+		{`create database t primary_region="us";`, false, ""},
+		{`create database t regions="us,3";`, false, ""},
+		{`create database t followers=3;`, false, ""},
+		{`create database t followers=0;`, false, ""},
+		{`create database t voters=3;`, false, ""},
+		{`create database t learners=3;`, false, ""},
+		{`create database t schedule="even";`, false, ""},
+		{`create database t constraints="ww";`, false, ""},
+		{`create database t leader_constraints="ww";`, false, ""},
+		{`create database t follower_constraints="ww";`, false, ""},
+		{`create database t voter_constraints="ww";`, false, ""},
+		{`create database t learner_constraints="ww";`, false, ""},
+		{`create database t /*T![placement] primary_region="us" */;`, false, ""},
 		{`create database t placement policy="ww";`, true, "CREATE DATABASE `t` PLACEMENT POLICY = `ww`"},
 		{`create database t default placement policy="ww";`, true, "CREATE DATABASE `t` PLACEMENT POLICY = `ww`"},
-		{`create database t /*T![placement] primary_region="us" */;`, true, "CREATE DATABASE `t` PRIMARY_REGION = 'us'"},
+		{`create database t /*T![placement] placement policy="ww" */;`, true, "CREATE DATABASE `t` PLACEMENT POLICY = `ww`"},
 		// 4. alter db
-		{`alter database t primary_region="us";`, true, "ALTER DATABASE `t` PRIMARY_REGION = 'us'"},
-		{`alter database t regions="us,3";`, true, "ALTER DATABASE `t` REGIONS = 'us,3'"},
-		{`alter database t followers=3;`, true, "ALTER DATABASE `t` FOLLOWERS = 3"},
-		{`alter database t voters=3;`, true, "ALTER DATABASE `t` VOTERS = 3"},
-		{`alter database t learners=3;`, true, "ALTER DATABASE `t` LEARNERS = 3"},
-		{`alter database t schedule="even";`, true, "ALTER DATABASE `t` SCHEDULE = 'even'"},
-		{`alter database t constraints="ww";`, true, "ALTER DATABASE `t` CONSTRAINTS = 'ww'"},
-		{`alter database t leader_constraints="ww";`, true, "ALTER DATABASE `t` LEADER_CONSTRAINTS = 'ww'"},
-		{`alter database t follower_constraints="ww";`, true, "ALTER DATABASE `t` FOLLOWER_CONSTRAINTS = 'ww'"},
-		{`alter database t voter_constraints="ww";`, true, "ALTER DATABASE `t` VOTER_CONSTRAINTS = 'ww'"},
-		{`alter database t learner_constraints="ww";`, true, "ALTER DATABASE `t` LEARNER_CONSTRAINTS = 'ww'"},
+		{`alter database t primary_region="us";`, false, ""},
+		{`alter database t regions="us,3";`, false, ""},
+		{`alter database t followers=3;`, false, ""},
+		{`alter database t followers=0;`, false, ""},
+		{`alter database t voters=3;`, false, ""},
+		{`alter database t learners=3;`, false, ""},
+		{`alter database t schedule="even";`, false, ""},
+		{`alter database t constraints="ww";`, false, ""},
+		{`alter database t leader_constraints="ww";`, false, ""},
+		{`alter database t follower_constraints="ww";`, false, ""},
+		{`alter database t voter_constraints="ww";`, false, ""},
+		{`alter database t learner_constraints="ww";`, false, ""},
+		{`alter database t /*T![placement] primary_region="us" */;`, false, ""},
 		{`alter database t placement policy="ww";`, true, "ALTER DATABASE `t` PLACEMENT POLICY = `ww`"},
 		{`alter database t default placement policy="ww";`, true, "ALTER DATABASE `t` PLACEMENT POLICY = `ww`"},
-		{`alter database t /*T![placement] primary_region="us" */;`, true, "ALTER DATABASE `t` PRIMARY_REGION = 'us'"},
 		{`alter database t PLACEMENT POLICY='DEFAULT';`, true, "ALTER DATABASE `t` PLACEMENT POLICY = `DEFAULT`"},
 		{`alter database t PLACEMENT POLICY=DEFAULT;`, true, "ALTER DATABASE `t` PLACEMENT POLICY = `DEFAULT`"},
 		{`alter database t PLACEMENT POLICY = DEFAULT;`, true, "ALTER DATABASE `t` PLACEMENT POLICY = `DEFAULT`"},
 		{`alter database t PLACEMENT POLICY SET DEFAULT`, true, "ALTER DATABASE `t` PLACEMENT POLICY = `DEFAULT`"},
 		{"alter database t PLACEMENT POLICY=`DEFAULT`;", true, "ALTER DATABASE `t` PLACEMENT POLICY = `DEFAULT`"},
+		{`alter database t /*T![placement] PLACEMENT POLICY='DEFAULT' */;`, true, "ALTER DATABASE `t` PLACEMENT POLICY = `DEFAULT`"},
 		// 5. create partition
-		{`create table m (c int) partition by range (c) (partition p1 values less than (200) primary_region="us");`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) PRIMARY_REGION = 'us')"},
-		{`create table m (c int) partition by range (c) (partition p1 values less than (200) regions="us,3");`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) REGIONS = 'us,3')"},
-		{`create table m (c int) partition by range (c) (partition p1 values less than (200) followers=3);`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) FOLLOWERS = 3)"},
-		{`create table m (c int) partition by range (c) (partition p1 values less than (200) voters=3);`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) VOTERS = 3)"},
-		{`create table m (c int) partition by range (c) (partition p1 values less than (200) learners=3);`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) LEARNERS = 3)"},
-		{`create table m (c int) partition by range (c) (partition p1 values less than (200) schedule="even");`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) SCHEDULE = 'even')"},
-		{`create table m (c int) partition by range (c) (partition p1 values less than (200) constraints="ww");`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) CONSTRAINTS = 'ww')"},
-		{`create table m (c int) partition by range (c) (partition p1 values less than (200) leader_constraints="ww");`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) LEADER_CONSTRAINTS = 'ww')"},
-		{`create table m (c int) partition by range (c) (partition p1 values less than (200) follower_constraints="ww");`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) FOLLOWER_CONSTRAINTS = 'ww')"},
-		{`create table m (c int) partition by range (c) (partition p1 values less than (200) voter_constraints="ww");`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) VOTER_CONSTRAINTS = 'ww')"},
-		{`create table m (c int) partition by range (c) (partition p1 values less than (200) learner_constraints="ww");`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) LEARNER_CONSTRAINTS = 'ww')"},
+		{`create table m (c int) partition by range (c) (partition p1 values less than (200) primary_region="us");`, false, ""},
+		{`create table m (c int) partition by range (c) (partition p1 values less than (200) regions="us,3");`, false, ""},
+		{`create table m (c int) partition by range (c) (partition p1 values less than (200) followers=3);`, false, ""},
+		{`create table m (c int) partition by range (c) (partition p1 values less than (200) voters=3);`, false, ""},
+		{`create table m (c int) partition by range (c) (partition p1 values less than (200) learners=3);`, false, ""},
+		{`create table m (c int) partition by range (c) (partition p1 values less than (200) schedule="even");`, false, ""},
+		{`create table m (c int) partition by range (c) (partition p1 values less than (200) constraints="ww");`, false, ""},
+		{`create table m (c int) partition by range (c) (partition p1 values less than (200) leader_constraints="ww");`, false, ""},
+		{`create table m (c int) partition by range (c) (partition p1 values less than (200) follower_constraints="ww");`, false, ""},
+		{`create table m (c int) partition by range (c) (partition p1 values less than (200) voter_constraints="ww");`, false, ""},
+		{`create table m (c int) partition by range (c) (partition p1 values less than (200) learner_constraints="ww");`, false, ""},
 		{`create table m (c int) partition by range (c) (partition p1 values less than (200) placement policy="ww");`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) PLACEMENT POLICY = `ww`)"},
+		{`create table m (c int) partition by range (c) (partition p1 values less than (200) /*T![placement] placement policy="ww" */);`, true, "CREATE TABLE `m` (`c` INT) PARTITION BY RANGE (`c`) (PARTITION `p1` VALUES LESS THAN (200) PLACEMENT POLICY = `ww`)"},
 		// 6. alter partition
-		{`alter table m partition t primary_region="us";`, true, "ALTER TABLE `m` PARTITION `t` PRIMARY_REGION = 'us'"},
-		{`alter table m partition t regions="us,3";`, true, "ALTER TABLE `m` PARTITION `t` REGIONS = 'us,3'"},
-		{`alter table m partition t followers=3;`, true, "ALTER TABLE `m` PARTITION `t` FOLLOWERS = 3"},
-		{`alter table m partition t primary_region="us" followers=3;`, true, "ALTER TABLE `m` PARTITION `t` PRIMARY_REGION = 'us' FOLLOWERS = 3"},
-		{`alter table m partition t voters=3;`, true, "ALTER TABLE `m` PARTITION `t` VOTERS = 3"},
-		{`alter table m partition t learners=3;`, true, "ALTER TABLE `m` PARTITION `t` LEARNERS = 3"},
-		{`alter table m partition t schedule="even";`, true, "ALTER TABLE `m` PARTITION `t` SCHEDULE = 'even'"},
-		{`alter table m partition t constraints="ww";`, true, "ALTER TABLE `m` PARTITION `t` CONSTRAINTS = 'ww'"},
-		{`alter table m partition t leader_constraints="ww";`, true, "ALTER TABLE `m` PARTITION `t` LEADER_CONSTRAINTS = 'ww'"},
-		{`alter table m partition t follower_constraints="ww";`, true, "ALTER TABLE `m` PARTITION `t` FOLLOWER_CONSTRAINTS = 'ww'"},
-		{`alter table m partition t voter_constraints="ww";`, true, "ALTER TABLE `m` PARTITION `t` VOTER_CONSTRAINTS = 'ww'"},
-		{`alter table m partition t learner_constraints="ww";`, true, "ALTER TABLE `m` PARTITION `t` LEARNER_CONSTRAINTS = 'ww'"},
+		{`alter table m partition t primary_region="us";`, false, ""},
+		{`alter table m partition t regions="us,3";`, false, ""},
+		{`alter table m partition t followers=3;`, false, ""},
+		{`alter table m partition t primary_region="us" followers=3;`, false, ""},
+		{`alter table m partition t voters=3;`, false, ""},
+		{`alter table m partition t learners=3;`, false, ""},
+		{`alter table m partition t schedule="even";`, false, ""},
+		{`alter table m partition t constraints="ww";`, false, ""},
+		{`alter table m partition t leader_constraints="ww";`, false, ""},
+		{`alter table m partition t follower_constraints="ww";`, false, ""},
+		{`alter table m partition t voter_constraints="ww";`, false, ""},
+		{`alter table m partition t learner_constraints="ww";`, false, ""},
 		{`alter table m partition t placement policy="ww";`, true, "ALTER TABLE `m` PARTITION `t` PLACEMENT POLICY = `ww`"},
-
+		{`alter table m partition t /*T![placement] placement policy="ww" */;`, true, "ALTER TABLE `m` PARTITION `t` PLACEMENT POLICY = `ww`"},
+		// 7. add partition
+		{`alter table m add partition (partition p1 values less than (200) primary_region="us");`, false, ""},
+		{`alter table m add partition (partition p1 values less than (200) regions="us,3");`, false, ""},
+		{`alter table m add partition (partition p1 values less than (200) followers=3);`, false, ""},
+		{`alter table m add partition (partition p1 values less than (200) voters=3);`, false, ""},
+		{`alter table m add partition (partition p1 values less than (200) learners=3);`, false, ""},
+		{`alter table m add partition (partition p1 values less than (200) schedule="even");`, false, ""},
+		{`alter table m add partition (partition p1 values less than (200) constraints="ww");`, false, ""},
+		{`alter table m add partition (partition p1 values less than (200) leader_constraints="ww");`, false, ""},
+		{`alter table m add partition (partition p1 values less than (200) follower_constraints="ww");`, false, ""},
+		{`alter table m add partition (partition p1 values less than (200) voter_constraints="ww");`, false, ""},
+		{`alter table m add partition (partition p1 values less than (200) learner_constraints="ww");`, false, ""},
+		{`alter table m add partition (partition p1 values less than (200) placement policy="ww");`, true, "ALTER TABLE `m` ADD PARTITION (PARTITION `p1` VALUES LESS THAN (200) PLACEMENT POLICY = `ww`)"},
+		{`alter table m add partition (partition p1 values less than (200) /*T![placement] placement policy="ww" */);`, true, "ALTER TABLE `m` ADD PARTITION (PARTITION `p1` VALUES LESS THAN (200) PLACEMENT POLICY = `ww`)"},
 		// for check clause
 		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)) not enforced, check (c2 in (0, 1)))", true, "CREATE TABLE `t` (`c1` TINYINT(1),`c2` TINYINT(1),CHECK(`c1` IN (0,1)) NOT ENFORCED,CHECK(`c2` IN (0,1)) ENFORCED)"},
 		{"CREATE TABLE Customer (SD integer CHECK (SD > 0), First_Name varchar(30));", true, "CREATE TABLE `Customer` (`SD` INT CHECK(`SD`>0) ENFORCED,`First_Name` VARCHAR(30))"},
@@ -3222,6 +3340,12 @@ func TestDDL(t *testing.T) {
 
 		{"ALTER TABLE t SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b'", true, "ALTER TABLE `t` SET TIFLASH REPLICA 2 LOCATION LABELS 'a', 'b'"},
 		{"ALTER TABLE t SET TIFLASH REPLICA 0", true, "ALTER TABLE `t` SET TIFLASH REPLICA 0"},
+		{"ALTER DATABASE t SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b'", true, "ALTER DATABASE `t` SET TIFLASH REPLICA 2 LOCATION LABELS 'a', 'b'"},
+		{"ALTER DATABASE t SET TIFLASH REPLICA 0", true, "ALTER DATABASE `t` SET TIFLASH REPLICA 0"},
+		{"ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b'", true, "ALTER DATABASE `t` SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2 LOCATION LABELS 'a', 'b'"},
+		{"ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2", true, "ALTER DATABASE `t` SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2"},
+		{"ALTER DATABASE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a','b' SET TIFLASH REPLICA 2", true, "ALTER DATABASE `t` SET TIFLASH REPLICA 1 LOCATION LABELS 'a', 'b' SET TIFLASH REPLICA 2"},
+		{"ALTER DATABASE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a','b' SET TIFLASH REPLICA 2 LOCATION LABELS 'a', 'b'", true, "ALTER DATABASE `t` SET TIFLASH REPLICA 1 LOCATION LABELS 'a', 'b' SET TIFLASH REPLICA 2 LOCATION LABELS 'a', 'b'"},
 
 		// for issue 537
 		{"CREATE TABLE IF NOT EXISTS table_ident (a SQL_TSI_YEAR(4), b SQL_TSI_YEAR);", true, "CREATE TABLE IF NOT EXISTS `table_ident` (`a` YEAR(4),`b` YEAR)"},
@@ -3392,6 +3516,7 @@ func TestDDL(t *testing.T) {
 		{"create placement policy x primary_region='us'", true, "CREATE PLACEMENT POLICY `x` PRIMARY_REGION = 'us'"},
 		{"create placement policy x region='us, 3'", false, ""},
 		{"create placement policy x followers=3", true, "CREATE PLACEMENT POLICY `x` FOLLOWERS = 3"},
+		{"create placement policy x followers=0", false, ""},
 		{"create placement policy x voters=3", true, "CREATE PLACEMENT POLICY `x` VOTERS = 3"},
 		{"create placement policy x learners=3", true, "CREATE PLACEMENT POLICY `x` LEARNERS = 3"},
 		{"create placement policy x schedule='even'", true, "CREATE PLACEMENT POLICY `x` SCHEDULE = 'even'"},
@@ -3456,19 +3581,17 @@ func TestDDL(t *testing.T) {
 }
 
 func TestHintError(t *testing.T) {
-	t.Parallel()
-
 	p := parser.New()
 	stmt, warns, err := p.Parse("select /*+ tidb_unknown(T1,t2) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err)
 	require.Len(t, warns, 1)
-	require.Regexp(t, `.*Optimizer hint syntax error at line 1 column 23 near "tidb_unknown\(T1,t2\) \*/" `, warns[0].Error())
+	require.Regexp(t, `Optimizer hint syntax error at line 1 column 23 near "tidb_unknown\(T1,t2\) \*/" $`, warns[0].Error())
 	require.Len(t, stmt[0].(*ast.SelectStmt).TableHints, 0)
 	stmt, warns, err = p.Parse("select /*+ TIDB_INLJ(t1, T2) tidb_unknow(T1,t2, 1) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.Len(t, stmt[0].(*ast.SelectStmt).TableHints, 0)
 	require.NoError(t, err)
 	require.Len(t, warns, 1)
-	require.Regexp(t, `.*Optimizer hint syntax error at line 1 column 40 near "tidb_unknow\(T1,t2, 1\) \*/" `, warns[0].Error())
+	require.Regexp(t, `Optimizer hint syntax error at line 1 column 40 near "tidb_unknow\(T1,t2, 1\) \*/" $`, warns[0].Error())
 	_, _, err = p.Parse("select c1, c2 from /*+ tidb_unknow(T1,t2) */ t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err) // Hints are ignored after the "FROM" keyword!
 	_, _, err = p.Parse("select1 /*+ TIDB_INLJ(t1, T2) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
@@ -3488,7 +3611,7 @@ func TestHintError(t *testing.T) {
 	_, warns, err = p.Parse("SELECT id FROM tbl WHERE id = 0 FOR UPDATE /*+ xyz */", "", "")
 	require.NoError(t, err)
 	require.Len(t, warns, 1)
-	require.Regexp(t, `.*near '/\*\+' at line 1`, warns[0].Error())
+	require.Regexp(t, `near '/\*\+' at line 1$`, warns[0].Error())
 
 	_, warns, err = p.Parse("create global binding for select /*+ max_execution_time(1) */ 1 using select /*+ max_execution_time(1) */ 1;\n", "", "")
 	require.NoError(t, err)
@@ -3496,8 +3619,6 @@ func TestHintError(t *testing.T) {
 }
 
 func TestErrorMsg(t *testing.T) {
-	t.Parallel()
-
 	p := parser.New()
 	_, _, err := p.Parse("select1 1", "", "")
 	require.EqualError(t, err, "line 1 column 7 near \"select1 1\" ")
@@ -3596,8 +3717,6 @@ func TestErrorMsg(t *testing.T) {
 }
 
 func TestOptimizerHints(t *testing.T) {
-	t.Parallel()
-
 	p := parser.New()
 	// Test USE_INDEX
 	stmt, _, err := p.Parse("select /*+ USE_INDEX(T1,T2), use_index(t3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
@@ -4067,8 +4186,6 @@ func TestOptimizerHints(t *testing.T) {
 }
 
 func TestType(t *testing.T) {
-	t.Parallel()
-
 	table := []testCase{
 		// for time fsp
 		{"CREATE TABLE t( c1 TIME(2), c2 DATETIME(2), c3 TIMESTAMP(2) );", true, "CREATE TABLE `t` (`c1` TIME(2),`c2` DATETIME(2),`c3` TIMESTAMP(2))"},
@@ -4251,8 +4368,6 @@ func TestPrivilege(t *testing.T) {
 }
 
 func TestComment(t *testing.T) {
-	t.Parallel()
-
 	table := []testCase{
 		{"create table t (c int comment 'comment')", true, "CREATE TABLE `t` (`c` INT COMMENT 'comment')"},
 		{"create table t (c int) comment = 'comment'", true, "CREATE TABLE `t` (`c` INT) COMMENT = 'comment'"},
@@ -4279,8 +4394,6 @@ func TestComment(t *testing.T) {
 }
 
 func TestParserErrMsg(t *testing.T) {
-	t.Parallel()
-
 	commentMsgCases := []testErrMsgCase{
 		{"delete from t where a = 7 or 1=1/*' and b = 'p'", errors.New("near '/*' and b = 'p'' at line 1")},
 		{"delete from t where a = 7 or\n 1=1/*' and b = 'p'", errors.New("near '/*' and b = 'p'' at line 2")},
@@ -4315,8 +4428,6 @@ func (sc *subqueryChecker) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 }
 
 func TestSubquery(t *testing.T) {
-	t.Parallel()
-
 	table := []testCase{
 		// for compare subquery
 		{"SELECT 1 > (select 1)", true, "SELECT 1>(SELECT 1)"},
@@ -4339,6 +4450,11 @@ func TestSubquery(t *testing.T) {
 		{"SELECT t1.a AS a FROM ((SELECT a FROM t) AS t1)", true, "SELECT `t1`.`a` AS `a` FROM (SELECT `a` FROM `t`) AS `t1`"},
 		{"select count(*) from (select a, b from x1 union all select a, b from x3 union all (select x1.a, x3.b from (select * from x3 union all select * from x2) x3 left join x1 on x3.a = x1.b))", true, "SELECT COUNT(1) FROM (SELECT `a`,`b` FROM `x1` UNION ALL SELECT `a`,`b` FROM `x3` UNION ALL (SELECT `x1`.`a`,`x3`.`b` FROM (SELECT * FROM `x3` UNION ALL SELECT * FROM `x2`) AS `x3` LEFT JOIN `x1` ON `x3`.`a`=`x1`.`b`))"},
 		{"(SELECT 1 a,3 b) UNION (SELECT 2,1) ORDER BY (SELECT 2)", true, "(SELECT 1 AS `a`,3 AS `b`) UNION (SELECT 2,1) ORDER BY (SELECT 2)"},
+		{"((select * from t1)) union (select * from t1)", true, "(SELECT * FROM `t1`) UNION (SELECT * FROM `t1`)"},
+		{"(((select * from t1))) union (select * from t1)", true, "(SELECT * FROM `t1`) UNION (SELECT * FROM `t1`)"},
+		{"select * from (((select * from t1)) union (select * from t1) union (select * from t1)) a", true, "SELECT * FROM ((SELECT * FROM `t1`) UNION (SELECT * FROM `t1`) UNION (SELECT * FROM `t1`)) AS `a`"},
+		{"SELECT COUNT(*) FROM plan_executions WHERE (EXISTS((SELECT * FROM triggers WHERE plan_executions.trigger_id=triggers.id AND triggers.type='CRON')))", true, "SELECT COUNT(1) FROM `plan_executions` WHERE (EXISTS (SELECT * FROM `triggers` WHERE `plan_executions`.`trigger_id`=`triggers`.`id` AND `triggers`.`type`=_UTF8MB4'CRON'))"},
+		{"select exists((select 1));", true, "SELECT EXISTS (SELECT 1)"},
 		{"select * from ((SELECT 1 a,3 b) UNION (SELECT 2,1) ORDER BY (SELECT 2)) t order by a,b", true, "SELECT * FROM ((SELECT 1 AS `a`,3 AS `b`) UNION (SELECT 2,1) ORDER BY (SELECT 2)) AS `t` ORDER BY `a`,`b`"},
 		{"select (select * from t1 where a != t.a union all (select * from t2 where a != t.a) order by a limit 1) from t1 t", true, "SELECT (SELECT * FROM `t1` WHERE `a`!=`t`.`a` UNION ALL (SELECT * FROM `t2` WHERE `a`!=`t`.`a`) ORDER BY `a` LIMIT 1) FROM `t1` AS `t`"},
 	}
@@ -4363,8 +4479,6 @@ func TestSubquery(t *testing.T) {
 }
 
 func TestSetOperator(t *testing.T) {
-	t.Parallel()
-
 	table := []testCase{
 		// union and union all
 		{"select c1 from t1 union select c2 from t2", true, "SELECT `c1` FROM `t1` UNION SELECT `c2` FROM `t2`"},
@@ -4490,8 +4604,6 @@ func checkOrderBy(t *testing.T, s ast.Node, hasOrderBy []bool, i int) int {
 }
 
 func TestUnionOrderBy(t *testing.T) {
-	t.Parallel()
-
 	p := parser.New()
 	p.EnableWindowFunc(false)
 
@@ -4525,8 +4637,6 @@ func TestUnionOrderBy(t *testing.T) {
 }
 
 func TestLikeEscape(t *testing.T) {
-	t.Parallel()
-
 	table := []testCase{
 		// for like escape
 		{`select "abc_" like "abc\\_" escape ''`, true, "SELECT _UTF8MB4'abc_' LIKE _UTF8MB4'abc\\_'"},
@@ -4540,8 +4650,6 @@ func TestLikeEscape(t *testing.T) {
 }
 
 func TestLockUnlockTables(t *testing.T) {
-	t.Parallel()
-
 	table := []testCase{
 		{`UNLOCK TABLES;`, true, "UNLOCK TABLES"},
 		{`LOCK TABLES t1 READ;`, true, "LOCK TABLES `t1` READ"},
@@ -4575,8 +4683,6 @@ func TestLockUnlockTables(t *testing.T) {
 }
 
 func TestIndexHint(t *testing.T) {
-	t.Parallel()
-
 	table := []testCase{
 		{`select * from t use index (primary)`, true, "SELECT * FROM `t` USE INDEX (`primary`)"},
 		{"select * from t use index (`primary`)", true, "SELECT * FROM `t` USE INDEX (`primary`)"},
@@ -4594,8 +4700,6 @@ func TestIndexHint(t *testing.T) {
 }
 
 func TestPriority(t *testing.T) {
-	t.Parallel()
-
 	table := []testCase{
 		{`select high_priority * from t`, true, "SELECT HIGH_PRIORITY * FROM `t`"},
 		{`select low_priority * from t`, true, "SELECT LOW_PRIORITY * FROM `t`"},
@@ -4623,8 +4727,6 @@ func TestPriority(t *testing.T) {
 }
 
 func TestSQLResult(t *testing.T) {
-	t.Parallel()
-
 	table := []testCase{
 		{`select SQL_BIG_RESULT c1 from t group by c1`, true, "SELECT SQL_BIG_RESULT `c1` FROM `t` GROUP BY `c1`"},
 		{`select SQL_SMALL_RESULT c1 from t group by c1`, true, "SELECT SQL_SMALL_RESULT `c1` FROM `t` GROUP BY `c1`"},
@@ -4638,8 +4740,6 @@ func TestSQLResult(t *testing.T) {
 }
 
 func TestSQLNoCache(t *testing.T) {
-	t.Parallel()
-
 	table := []testCase{
 		{`select SQL_NO_CACHE * from t`, false, ""},
 		{`select SQL_CACHE * from t`, true, "SELECT * FROM `t`"},
@@ -4657,8 +4757,6 @@ func TestSQLNoCache(t *testing.T) {
 }
 
 func TestEscape(t *testing.T) {
-	t.Parallel()
-
 	table := []testCase{
 		{`select """;`, false, ""},
 		{`select """";`, true, "SELECT _UTF8MB4'\"'"},
@@ -4672,8 +4770,6 @@ func TestEscape(t *testing.T) {
 }
 
 func TestExplain(t *testing.T) {
-	t.Parallel()
-
 	table := []testCase{
 		{"explain select c1 from t1", true, "EXPLAIN FORMAT = 'row' SELECT `c1` FROM `t1`"},
 		{"explain delete t1, t2 from t1 inner join t2 inner join t3 where t1.id=t2.id and t2.id=t3.id;", true, "EXPLAIN FORMAT = 'row' DELETE `t1`,`t2` FROM (`t1` JOIN `t2`) JOIN `t3` WHERE `t1`.`id`=`t2`.`id` AND `t2`.`id`=`t3`.`id`"},
@@ -4721,7 +4817,6 @@ func TestExplain(t *testing.T) {
 }
 
 func TestPrepare(t *testing.T) {
-	t.Parallel()
 	table := []testCase{
 		{"PREPARE pname FROM 'SELECT ?'", true, "PREPARE `pname` FROM 'SELECT ?'"},
 		{"PREPARE pname FROM @test", true, "PREPARE `pname` FROM @`test`"},
@@ -4731,7 +4826,6 @@ func TestPrepare(t *testing.T) {
 }
 
 func TestDeallocate(t *testing.T) {
-	t.Parallel()
 	table := []testCase{
 		{"DEALLOCATE PREPARE test", true, "DEALLOCATE PREPARE `test`"},
 		{"DEALLOCATE PREPARE ``", true, "DEALLOCATE PREPARE ``"},
@@ -4740,7 +4834,6 @@ func TestDeallocate(t *testing.T) {
 }
 
 func TestExecute(t *testing.T) {
-	t.Parallel()
 	table := []testCase{
 		{"EXECUTE test", true, "EXECUTE `test`"},
 		{"EXECUTE test USING @var1,@var2", true, "EXECUTE `test` USING @`var1`,@`var2`"},
@@ -4750,7 +4843,6 @@ func TestExecute(t *testing.T) {
 }
 
 func TestTrace(t *testing.T) {
-	t.Parallel()
 	table := []testCase{
 		{"trace begin", true, "TRACE START TRANSACTION"},
 		{"trace commit", true, "TRACE COMMIT"},
@@ -4764,12 +4856,14 @@ func TestTrace(t *testing.T) {
 		{"trace select c1 from t1 union (select c2 from t2) limit 1, 1", true, "TRACE SELECT `c1` FROM `t1` UNION (SELECT `c2` FROM `t2`) LIMIT 1,1"},
 		{"trace format = 'row' select c1 from t1 union (select c2 from t2) limit 1, 1", true, "TRACE SELECT `c1` FROM `t1` UNION (SELECT `c2` FROM `t2`) LIMIT 1,1"},
 		{"trace format = 'json' update t set id = id + 1 order by id desc;", true, "TRACE FORMAT = 'json' UPDATE `t` SET `id`=`id`+1 ORDER BY `id` DESC"},
+		{"trace plan select c1 from t1", true, "TRACE PLAN SELECT `c1` FROM `t1`"},
+		{"trace plan target = 'estimation' select c1 from t1", true, "TRACE PLAN TARGET = 'estimation' SELECT `c1` FROM `t1`"},
+		{"trace plan target = 'arandomstring' select c1 from t1", true, "TRACE PLAN TARGET = 'arandomstring' SELECT `c1` FROM `t1`"},
 	}
 	RunTest(t, table, false)
 }
 
 func TestBinding(t *testing.T) {
-	t.Parallel()
 	table := []testCase{
 		{"create global binding for select * from t using select * from t use index(a)", true, "CREATE GLOBAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t` USE INDEX (`a`)"},
 		{"create session binding for select * from t using select * from t use index(a)", true, "CREATE SESSION BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t` USE INDEX (`a`)"},
@@ -4779,6 +4873,10 @@ func TestBinding(t *testing.T) {
 		{"drop session binding for select * from t using select * from t use index(a)", true, "DROP SESSION BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t` USE INDEX (`a`)"},
 		{"show global bindings", true, "SHOW GLOBAL BINDINGS"},
 		{"show session bindings", true, "SHOW SESSION BINDINGS"},
+		{"set binding enable for select * from t", true, "SET BINDING ENABLE FOR SELECT * FROM `t`"},
+		{"set binding enable for select * from t using select * from t use index(a)", true, "SET BINDING ENABLE FOR SELECT * FROM `t` USING SELECT * FROM `t` USE INDEX (`a`)"},
+		{"set binding disable for select * from t", true, "SET BINDING DISABLE FOR SELECT * FROM `t`"},
+		{"set binding disable for select * from t using select * from t use index(a)", true, "SET BINDING DISABLE FOR SELECT * FROM `t` USING SELECT * FROM `t` USE INDEX (`a`)"},
 		{"create global binding for select * from t union all select * from t using select * from t use index(a) union all select * from t use index(a)", true, "CREATE GLOBAL BINDING FOR SELECT * FROM `t` UNION ALL SELECT * FROM `t` USING SELECT * FROM `t` USE INDEX (`a`) UNION ALL SELECT * FROM `t` USE INDEX (`a`)"},
 		{"create session binding for select * from t union all select * from t using select * from t use index(a) union all select * from t use index(a)", true, "CREATE SESSION BINDING FOR SELECT * FROM `t` UNION ALL SELECT * FROM `t` USING SELECT * FROM `t` USE INDEX (`a`) UNION ALL SELECT * FROM `t` USE INDEX (`a`)"},
 		{"drop global binding for select * from t union all select * from t using select * from t use index(a) union all select * from t use index(a)", true, "DROP GLOBAL BINDING FOR SELECT * FROM `t` UNION ALL SELECT * FROM `t` USING SELECT * FROM `t` USE INDEX (`a`) UNION ALL SELECT * FROM `t` USE INDEX (`a`)"},
@@ -4843,7 +4941,6 @@ func TestBinding(t *testing.T) {
 }
 
 func TestView(t *testing.T) {
-	t.Parallel()
 	table := []testCase{
 		{"create view v as select * from t", true, "CREATE ALGORITHM = UNDEFINED DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `v` AS SELECT * FROM `t`"},
 		{"create or replace view v as select * from t", true, "CREATE OR REPLACE ALGORITHM = UNDEFINED DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `v` AS SELECT * FROM `t`"},
@@ -4950,7 +5047,6 @@ func TestView(t *testing.T) {
 }
 
 func TestTimestampDiffUnit(t *testing.T) {
-	t.Parallel()
 	// Test case for timestampdiff unit.
 	// TimeUnit should be unified to upper case.
 	p := parser.New()
@@ -4987,7 +5083,6 @@ func TestTimestampDiffUnit(t *testing.T) {
 }
 
 func TestFuncCallExprOffset(t *testing.T) {
-	t.Parallel()
 	// Test case for offset field on func call expr.
 	p := parser.New()
 	stmt, _, err := p.Parse("SELECT s.a(), b();", "", "")
@@ -5014,7 +5109,6 @@ func TestFuncCallExprOffset(t *testing.T) {
 }
 
 func TestSessionManage(t *testing.T) {
-	t.Parallel()
 	table := []testCase{
 		// Kill statement.
 		// See https://dev.mysql.com/doc/refman/5.7/en/kill.html
@@ -5033,7 +5127,6 @@ func TestSessionManage(t *testing.T) {
 }
 
 func TestParseShowOpenTables(t *testing.T) {
-	t.Parallel()
 	table := []testCase{
 		{"SHOW OPEN TABLES", true, "SHOW OPEN TABLES"},
 		{"SHOW OPEN TABLES IN test", true, "SHOW OPEN TABLES IN `test`"},
@@ -5043,7 +5136,6 @@ func TestParseShowOpenTables(t *testing.T) {
 }
 
 func TestSQLModeANSIQuotes(t *testing.T) {
-	t.Parallel()
 	p := parser.New()
 	p.SetSQLMode(mysql.ModeANSIQuotes)
 	tests := []string{
@@ -5057,7 +5149,6 @@ func TestSQLModeANSIQuotes(t *testing.T) {
 }
 
 func TestDDLStatements(t *testing.T) {
-	t.Parallel()
 	p := parser.New()
 	// Tests that whatever the charset it is define, we always assign utf8 charset and utf8_bin collate.
 	createTableStr := `CREATE TABLE t (
@@ -5134,10 +5225,17 @@ func TestDDLStatements(t *testing.T) {
 	createTableStr = `CREATE TABLE t (c_double double(10, 2))`
 	_, _, err = p.Parse(createTableStr, "", "")
 	require.NoError(t, err)
+
+	createTableStr = `create global temporary table t010(local_01 int, local_03 varchar(20))`
+	_, _, err = p.Parse(createTableStr, "", "")
+	require.EqualError(t, err, "line 1 column 70 near \"\"GLOBAL TEMPORARY and ON COMMIT DELETE ROWS must appear together ")
+
+	createTableStr = `create global temporary table t010(local_01 int, local_03 varchar(20)) on commit preserve rows`
+	_, _, err = p.Parse(createTableStr, "", "")
+	require.NoError(t, err)
 }
 
 func TestAnalyze(t *testing.T) {
-	t.Parallel()
 	table := []testCase{
 		{"analyze table t1", true, "ANALYZE TABLE `t1`"},
 		{"analyze table t1.*", false, ""},
@@ -5188,7 +5286,6 @@ func TestAnalyze(t *testing.T) {
 }
 
 func TestTableSample(t *testing.T) {
-	t.Parallel()
 	table := []testCase{
 		// positive test cases
 		{"select * from tbl tablesample system (50);", true, "SELECT * FROM `tbl` TABLESAMPLE SYSTEM (50)"},
@@ -5246,7 +5343,6 @@ func TestTableSample(t *testing.T) {
 }
 
 func TestGeneratedColumn(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		input string
 		ok    bool
@@ -5276,7 +5372,6 @@ func TestGeneratedColumn(t *testing.T) {
 }
 
 func TestSetTransaction(t *testing.T) {
-	t.Parallel()
 	// Set transaction is equivalent to setting the global or session value of tx_isolation.
 	// For example:
 	// SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED
@@ -5309,7 +5404,6 @@ func TestSetTransaction(t *testing.T) {
 }
 
 func TestSideEffect(t *testing.T) {
-	t.Parallel()
 	// This test cover a bug that parse an error SQL doesn't leave the parser in a
 	// clean state, cause the following SQL parse fail.
 	p := parser.New()
@@ -5321,8 +5415,6 @@ func TestSideEffect(t *testing.T) {
 }
 
 func TestTablePartition(t *testing.T) {
-	t.Parallel()
-
 	table := []testCase{
 		{"ALTER TABLE t1 TRUNCATE PARTITION p0", true, "ALTER TABLE `t1` TRUNCATE PARTITION `p0`"},
 		{"ALTER TABLE t1 TRUNCATE PARTITION p0, p1", true, "ALTER TABLE `t1` TRUNCATE PARTITION `p0`,`p1`"},
@@ -5523,7 +5615,6 @@ ENGINE=INNODB PARTITION BY LINEAR HASH (a) PARTITIONS 1;`, true, "CREATE TABLE `
 }
 
 func TestTablePartitionNameList(t *testing.T) {
-	t.Parallel()
 	table := []testCase{
 		{`select * from t partition (p0,p1)`, true, ""},
 	}
@@ -5545,7 +5636,6 @@ func TestTablePartitionNameList(t *testing.T) {
 }
 
 func TestNotExistsSubquery(t *testing.T) {
-	t.Parallel()
 	table := []testCase{
 		{`select * from t1 where not exists (select * from t2 where t1.a = t2.a)`, true, ""},
 	}
@@ -5563,7 +5653,6 @@ func TestNotExistsSubquery(t *testing.T) {
 }
 
 func TestWindowFunctionIdentifier(t *testing.T) {
-	t.Parallel()
 	var table []testCase
 	for key := range parser.WindowFuncTokenMapForTest {
 		table = append(table, testCase{fmt.Sprintf("select 1 %s", key), false, fmt.Sprintf("SELECT 1 AS `%s`", key)})
@@ -5577,7 +5666,6 @@ func TestWindowFunctionIdentifier(t *testing.T) {
 }
 
 func TestWindowFunctions(t *testing.T) {
-	t.Parallel()
 	table := []testCase{
 		// For window function descriptions.
 		// See https://dev.mysql.com/doc/refman/8.0/en/window-function-descriptions.html
@@ -5685,8 +5773,6 @@ func (wfc *windowFrameBoundChecker) Leave(inNode ast.Node) (node ast.Node, ok bo
 // For issue #51
 // See https://github.com/pingcap/parser/pull/51 for details
 func TestVisitFrameBound(t *testing.T) {
-	t.Parallel()
-
 	p := parser.New()
 	p.EnableWindowFunc(true)
 	table := []struct {
@@ -5710,7 +5796,6 @@ func TestVisitFrameBound(t *testing.T) {
 }
 
 func TestFieldText(t *testing.T) {
-	t.Parallel()
 	p := parser.New()
 	stmts, _, err := p.Parse("select a from t", "", "")
 	require.NoError(t, err)
@@ -5733,7 +5818,6 @@ func TestFieldText(t *testing.T) {
 
 // See https://github.com/pingcap/parser/issue/94
 func TestQuotedSystemVariables(t *testing.T) {
-	t.Parallel()
 	p := parser.New()
 
 	st, err := p.ParseOneStmt(
@@ -5795,8 +5879,6 @@ func TestQuotedSystemVariables(t *testing.T) {
 
 // See https://github.com/pingcap/parser/issue/95
 func TestQuotedVariableColumnName(t *testing.T) {
-	t.Parallel()
-
 	p := parser.New()
 
 	st, err := p.ParseOneStmt(
@@ -5827,8 +5909,6 @@ func TestQuotedVariableColumnName(t *testing.T) {
 }
 
 func TestCharset(t *testing.T) {
-	t.Parallel()
-
 	p := parser.New()
 
 	st, err := p.ParseOneStmt("ALTER SCHEMA GLOBAL DEFAULT CHAR SET utf8mb4", "", "")
@@ -5843,8 +5923,6 @@ func TestCharset(t *testing.T) {
 }
 
 func TestFulltextSearch(t *testing.T) {
-	t.Parallel()
-
 	p := parser.New()
 
 	st, err := p.ParseOneStmt("SELECT * FROM fulltext_test WHERE MATCH(content) AGAINST('search')", "", "")
@@ -5890,8 +5968,6 @@ func TestFulltextSearch(t *testing.T) {
 }
 
 func TestStartTransaction(t *testing.T) {
-	t.Parallel()
-
 	cases := []testCase{
 		{"START TRANSACTION READ WRITE", true, "START TRANSACTION"},
 		{"START TRANSACTION WITH CONSISTENT SNAPSHOT", true, "START TRANSACTION"},
@@ -5909,8 +5985,6 @@ func TestStartTransaction(t *testing.T) {
 }
 
 func TestSignedInt64OutOfRange(t *testing.T) {
-	t.Parallel()
-
 	p := parser.New()
 	cases := []string{
 		"recover table by job 18446744073709551612",
@@ -5940,7 +6014,7 @@ type nodeTextCleaner struct {
 
 // Enter implements Visitor interface.
 func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	in.SetText("")
+	in.SetText(nil, "")
 	in.SetOriginTextPosition(0)
 	switch node := in.(type) {
 	case *ast.CreateTableStmt:
@@ -6020,8 +6094,6 @@ func (checker *nodeTextCleaner) Leave(in ast.Node) (out ast.Node, ok bool) {
 
 // For index advisor
 func TestIndexAdviseStmt(t *testing.T) {
-	t.Parallel()
-
 	table := []testCase{
 		{"INDEX ADVISE INFILE '/tmp/t.sql'", true, "INDEX ADVISE INFILE '/tmp/t.sql'"},
 		{"INDEX ADVISE LOCAL INFILE '/tmp/t.sql'", true, "INDEX ADVISE LOCAL INFILE '/tmp/t.sql'"},
@@ -6082,8 +6154,6 @@ func TestIndexAdviseStmt(t *testing.T) {
 
 // For BRIE
 func TestBRIE(t *testing.T) {
-	t.Parallel()
-
 	table := []testCase{
 		{"BACKUP DATABASE a TO 'local:///tmp/archive01/'", true, "BACKUP DATABASE `a` TO 'local:///tmp/archive01/'"},
 		{"BACKUP SCHEMA a TO 'local:///tmp/archive01/'", true, "BACKUP DATABASE `a` TO 'local:///tmp/archive01/'"},
@@ -6195,8 +6265,6 @@ func TestAsyncImport(t *testing.T) {
 }
 
 func TestStatisticsOps(t *testing.T) {
-	t.Parallel()
-
 	table := []testCase{
 		{"create statistics stats1 (cardinality) on t(a,b,c)", true, "CREATE STATISTICS `stats1` (CARDINALITY) ON `t`(`a`, `b`, `c`)"},
 		{"create statistics stats2 (dependency) on t(a,b)", true, "CREATE STATISTICS `stats2` (DEPENDENCY) ON `t`(`a`, `b`)"},
@@ -6227,8 +6295,6 @@ func TestStatisticsOps(t *testing.T) {
 }
 
 func TestHighNotPrecedenceMode(t *testing.T) {
-	t.Parallel()
-
 	p := parser.New()
 	var sb strings.Builder
 
@@ -6273,8 +6339,6 @@ func TestHighNotPrecedenceMode(t *testing.T) {
 
 // For CTE
 func TestCTE(t *testing.T) {
-	t.Parallel()
-
 	table := []testCase{
 		{"WITH `cte` AS (SELECT 1,2) SELECT `col1`,`col2` FROM `cte`", true, "WITH `cte` AS (SELECT 1,2) SELECT `col1`,`col2` FROM `cte`"},
 		{"WITH `cte` (col1, col2) AS (SELECT 1,2 UNION ALL SELECT 3,4) SELECT col1, col2 FROM cte;", true, "WITH `cte` (`col1`, `col2`) AS (SELECT 1,2 UNION ALL SELECT 3,4) SELECT `col1`,`col2` FROM `cte`"},
@@ -6299,7 +6363,6 @@ func TestCTE(t *testing.T) {
 }
 
 func TestAsOfClause(t *testing.T) {
-	t.Parallel()
 	table := []testCase{
 		{"SELECT * FROM `t` AS /* comment */ a;", true, "SELECT * FROM `t` AS `a`"},
 		{"SELECT * FROM `t` AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW());", true, "SELECT * FROM `t` AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())"},
@@ -6317,8 +6380,6 @@ func TestAsOfClause(t *testing.T) {
 
 // For `PARTITION BY [LINEAR] KEY ALGORITHM` syntax
 func TestPartitionKeyAlgorithm(t *testing.T) {
-	t.Parallel()
-
 	table := []testCase{
 		{"CREATE TABLE t  (c1 integer ,c2 integer) PARTITION BY LINEAR KEY ALGORITHM = 1 (c1,c2) PARTITIONS 4", true, "CREATE TABLE `t` (`c1` INT,`c2` INT) PARTITION BY LINEAR KEY ALGORITHM = 1 (`c1`,`c2`) PARTITIONS 4"},
 		{"CREATE TABLE t  (c1 integer ,c2 integer) PARTITION BY LINEAR KEY ALGORITHM = -1 (c1,c2) PARTITIONS 4", false, ""},
@@ -6331,8 +6392,6 @@ func TestPartitionKeyAlgorithm(t *testing.T) {
 
 // server side help syntax
 func TestHelp(t *testing.T) {
-	t.Parallel()
-
 	table := []testCase{
 		{"HELP 'select'", true, "HELP 'select'"},
 	}
@@ -6341,8 +6400,6 @@ func TestHelp(t *testing.T) {
 }
 
 func TestRestoreBinOpWithBrackets(t *testing.T) {
-	t.Parallel()
-
 	cases := []testCase{
 		{"select mod(a+b, 4)+1", true, "SELECT (((`a` + `b`) % 4) + 1)"},
 		{"select mod( year(a) - abs(weekday(a) + dayofweek(a)), 4) + 1", true, "SELECT (((year(`a`) - abs((weekday(`a`) + dayofweek(`a`)))) % 4) + 1)"},
@@ -6386,8 +6443,6 @@ func TestRestoreBinOpWithBrackets(t *testing.T) {
 
 // For CTE bindings.
 func TestCTEBindings(t *testing.T) {
-	t.Parallel()
-
 	table := []testCase{
 		{"WITH `cte` AS (SELECT * from t) SELECT `col1`,`col2` FROM `cte`", true, "WITH `cte` AS (SELECT * FROM `test`.`t`) SELECT `col1`,`col2` FROM `cte`"},
 		{"WITH `cte` (col1, col2) AS (SELECT * from t UNION ALL SELECT 3,4) SELECT col1, col2 FROM cte;", true, "WITH `cte` (`col1`, `col2`) AS (SELECT * FROM `test`.`t` UNION ALL SELECT 3,4) SELECT `col1`,`col2` FROM `cte`"},
@@ -6445,7 +6500,6 @@ func TestCTEBindings(t *testing.T) {
 }
 
 func TestPlanReplayer(t *testing.T) {
-	t.Parallel()
 	table := []testCase{
 		{"PLAN REPLAYER DUMP EXPLAIN SELECT a FROM t", true, "PLAN REPLAYER DUMP EXPLAIN SELECT `a` FROM `t`"},
 		{"PLAN REPLAYER DUMP EXPLAIN SELECT * FROM t WHERE a > 10", true, "PLAN REPLAYER DUMP EXPLAIN SELECT * FROM `t` WHERE `a`>10"},
@@ -6479,7 +6533,6 @@ func TestPlanReplayer(t *testing.T) {
 }
 
 func TestGBKEncoding(t *testing.T) {
-	t.Parallel()
 	p := parser.New()
 	gbkEncoding, _ := charset.Lookup("gbk")
 	encoder := gbkEncoding.NewEncoder()
@@ -6501,18 +6554,30 @@ func TestGBKEncoding(t *testing.T) {
 	require.Equal(t, "测试列", checker.colName)
 	require.Equal(t, "GBK测试用例", checker.expr)
 
-	utf8SQL := "select '芢' from `玚`;"
-	sql, err = encoder.String(utf8SQL)
-	require.NoError(t, err)
-	stmt, _, err = p.ParseSQL(sql, gbkOpt)
-	require.NoError(t, err)
-	stmt, _, err = p.ParseSQL("select '\xc6\x5c' from `\xab\x60`;", gbkOpt)
-	require.NoError(t, err)
-	stmt, _, err = p.ParseSQL(`prepare p1 from "insert into t values ('中文');";`, gbkOpt)
-	require.NoError(t, err)
-
-	stmt, _, err = p.ParseSQL("select _gbk '\xc6\x5c' from dual;")
+	_, _, err = p.ParseSQL("select _gbk '\xc6\x5c' from dual;")
 	require.Error(t, err)
+
+	for _, test := range []struct {
+		sql string
+		err bool
+	}{
+		{"select '\xc6\x5c' from `\xab\x60`;", false},
+		{`prepare p1 from "insert into t values ('中文');";`, false},
+		{"select '啊';", false},
+		{"create table t1(s set('a一','b二','c三'));", false},
+		{"insert into t3 values('一a');", false},
+		{"select '\xa5\x5c'", false},
+		{"select '''\xa5\x5c'", false},
+		{"select ```\xa5\x5c`", false},
+		{"select '\x65\x5c'", true},
+	} {
+		_, _, err = p.ParseSQL(test.sql, gbkOpt)
+		if test.err {
+			require.Error(t, err, test.sql)
+		} else {
+			require.NoError(t, err, test.sql)
+		}
+	}
 }
 
 type gbkEncodingChecker struct {
@@ -6541,4 +6606,26 @@ func (g *gbkEncodingChecker) Enter(n ast.Node) (node ast.Node, skipChildren bool
 
 func (g *gbkEncodingChecker) Leave(n ast.Node) (node ast.Node, ok bool) {
 	return n, true
+}
+
+func TestInsertStatementMemoryAllocation(t *testing.T) {
+	sql := "insert t values (1)" + strings.Repeat(",(1)", 1000)
+	var oldStats, newStats runtime.MemStats
+	runtime.ReadMemStats(&oldStats)
+	_, err := parser.New().ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	runtime.ReadMemStats(&newStats)
+	require.Less(t, int(newStats.TotalAlloc-oldStats.TotalAlloc), 1024*500)
+}
+
+func TestCharsetIntroducer(t *testing.T) {
+	p := parser.New()
+	defer charset.RemoveCharset("gbk")
+	// `_gbk` is treated as a character set.
+	_, _, err := p.Parse("select _gbk 'a';", "", "")
+	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
+	_, _, err = p.Parse("select _gbk 0x1234;", "", "")
+	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
+	_, _, err = p.Parse("select _gbk 0b101001;", "", "")
+	require.EqualError(t, err, "[ddl:1115]Unsupported character introducer: 'gbk'")
 }

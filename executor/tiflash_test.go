@@ -84,6 +84,20 @@ func (s *tiflashTestSuite) TearDownSuite(c *C) {
 	c.Assert(s.store.Close(), IsNil)
 }
 
+func (s *tiflashTestSuite) TestNonsupportCharsetTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b char(10) charset gbk collate gbk_bin)")
+	err := tk.ExecToErr("alter table t set tiflash replica 1")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported ALTER table replica for table contain gbk charset")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a char(10) charset utf8)")
+	tk.MustExec("alter table t set tiflash replica 1")
+}
+
 func (s *tiflashTestSuite) TestReadPartitionTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -103,15 +117,15 @@ func (s *tiflashTestSuite) TestReadPartitionTable(c *C) {
 	tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("3"))
 	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1 0", "2 0", "3 0"))
 
-	// test union scan
-	tk.MustExec("begin")
-	tk.MustExec("insert into t values(4,0)")
-	tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("4"))
-	tk.MustExec("insert into t values(5,0)")
-	tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("5"))
-	tk.MustExec("insert into t values(6,0)")
-	tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("6"))
-	tk.MustExec("commit")
+	// test union scan, enable it when https://github.com/pingcap/tics/issues/4180 is fixed
+	// tk.MustExec("begin")
+	// tk.MustExec("insert into t values(4,0)")
+	// tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("4"))
+	// tk.MustExec("insert into t values(5,0)")
+	// tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("5"))
+	// tk.MustExec("insert into t values(6,0)")
+	// tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("6"))
+	// tk.MustExec("commit")
 }
 
 func (s *tiflashTestSuite) TestReadUnsigedPK(c *C) {
@@ -773,6 +787,49 @@ func (s *tiflashTestSuite) TestUnionWithEmptyDualTable(c *C) {
 	tk.MustQuery("select count(*) from (select a , b from t union all select a , c from t1 where false) tt").Check(testkit.Rows("1"))
 }
 
+func (s *tiflashTestSuite) TestAvgOverflow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// avg int
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a decimal(1,0))")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into t values(9)")
+	for i := 0; i < 16; i++ {
+		tk.MustExec("insert into t select * from t")
+	}
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
+	tk.MustQuery("select avg(a) from t group by a").Check(testkit.Rows("9.0000"))
+	tk.MustExec("drop table if exists t")
+
+	// avg decimal
+	tk.MustExec("drop table if exists td;")
+	tk.MustExec("create table td (col_bigint bigint(20), col_smallint smallint(6));")
+	tk.MustExec("alter table td set tiflash replica 1")
+	tb = testGetTableByName(c, tk.Se, "test", "td")
+	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("insert into td values (null, 22876);")
+	tk.MustExec("insert into td values (9220557287087669248, 32767);")
+	tk.MustExec("insert into td values (28030, 32767);")
+	tk.MustExec("insert into td values (-3309864251140603904,32767);")
+	tk.MustExec("insert into td values (4,0);")
+	tk.MustExec("insert into td values (null,0);")
+	tk.MustExec("insert into td values (4,-23828);")
+	tk.MustExec("insert into td values (54720,32767);")
+	tk.MustExec("insert into td values (0,29815);")
+	tk.MustExec("insert into td values (10017,-32661);")
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
+	tk.MustQuery(" SELECT AVG( col_bigint / col_smallint) AS field1 FROM td;").Sort().Check(testkit.Rows("25769363061037.62077260"))
+	tk.MustQuery(" SELECT AVG(col_bigint) OVER (PARTITION BY col_smallint) as field2 FROM td where col_smallint = -23828;").Sort().Check(testkit.Rows("4.0000"))
+	tk.MustExec("drop table if exists td;")
+}
+
 func (s *tiflashTestSuite) TestMppApply(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1013,4 +1070,55 @@ func (s *tiflashTestSuite) TestForbidTiflashDuringStaleRead(c *C) {
 	res = resBuff.String()
 	c.Assert(strings.Contains(res, "tiflash"), IsFalse)
 	c.Assert(strings.Contains(res, "tikv"), IsTrue)
+}
+
+func (s *tiflashTestSuite) TestForbidTiFlashIfExtraPhysTableIDIsNeeded(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null primary key, b int not null) partition by hash(a) partitions 2")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("set tidb_partition_prune_mode=dynamic")
+	tk.MustExec("set tidb_enforce_mpp=1")
+
+	rows := tk.MustQuery("explain select count(*) from t").Rows()
+	resBuff := bytes.NewBufferString("")
+	for _, row := range rows {
+		fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	res := resBuff.String()
+	c.Assert(strings.Contains(res, "tiflash"), IsTrue)
+	c.Assert(strings.Contains(res, "tikv"), IsFalse)
+
+	rows = tk.MustQuery("explain select count(*) from t for update").Rows()
+	resBuff = bytes.NewBufferString("")
+	for _, row := range rows {
+		fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	res = resBuff.String()
+	c.Assert(strings.Contains(res, "tiflash"), IsFalse)
+	c.Assert(strings.Contains(res, "tikv"), IsTrue)
+
+	tk.MustExec("begin")
+	rows = tk.MustQuery("explain select count(*) from t").Rows()
+	resBuff = bytes.NewBufferString("")
+	for _, row := range rows {
+		fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	res = resBuff.String()
+	c.Assert(strings.Contains(res, "tiflash"), IsTrue)
+	c.Assert(strings.Contains(res, "tikv"), IsFalse)
+	tk.MustExec("insert into t values(1,2)")
+	rows = tk.MustQuery("explain select count(*) from t").Rows()
+	resBuff = bytes.NewBufferString("")
+	for _, row := range rows {
+		fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	res = resBuff.String()
+	c.Assert(strings.Contains(res, "tikv"), IsTrue)
+	c.Assert(strings.Contains(res, "tiflash"), IsFalse)
+	tk.MustExec("rollback")
 }

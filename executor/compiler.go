@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 )
 
 var (
@@ -57,13 +58,23 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 
 	ret := &plannercore.PreprocessorReturn{}
 	pe := &plannercore.PreprocessExecuteISUpdate{ExecuteInfoSchemaUpdate: planner.GetExecuteForUpdateReadIS, Node: stmtNode}
-	err := plannercore.Preprocess(c.Ctx, stmtNode, plannercore.WithPreprocessorReturn(ret), plannercore.WithExecuteInfoSchemaUpdate(pe))
+	err := plannercore.Preprocess(c.Ctx,
+		stmtNode,
+		plannercore.WithPreprocessorReturn(ret),
+		plannercore.WithExecuteInfoSchemaUpdate(pe),
+		plannercore.InitTxnContextProvider,
+	)
 	if err != nil {
 		return nil, err
 	}
-	stmtNode = plannercore.TryAddExtraLimit(c.Ctx, stmtNode)
 
-	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, ret.InfoSchema)
+	failpoint.Inject("assertTxnManagerInCompile", func() {
+		sessiontxn.RecordAssert(c.Ctx, "assertTxnManagerInCompile", true)
+		sessiontxn.AssertTxnManagerInfoSchema(c.Ctx, ret.InfoSchema)
+	})
+
+	is := sessiontxn.GetTxnManager(c.Ctx).GetTxnInfoSchema()
+	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, is)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +97,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		SnapshotTS:       ret.LastSnapshotTS,
 		IsStaleness:      ret.IsStaleness,
 		ReplicaReadScope: ret.ReadReplicaScope,
-		InfoSchema:       ret.InfoSchema,
+		InfoSchema:       is,
 		Plan:             finalPlan,
 		LowerPriority:    lowerPriority,
 		Text:             stmtNode.Text(),
@@ -354,7 +365,13 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 		}
 		return "DropTable"
 	case *ast.ExplainStmt:
-		return "Explain"
+		if _, ok := x.Stmt.(*ast.ShowStmt); ok {
+			return "DescTable"
+		}
+		if x.Analyze {
+			return "ExplainAnalyzeSQL"
+		}
+		return "ExplainSQL"
 	case *ast.InsertStmt:
 		if x.IsReplace {
 			return "Replace"

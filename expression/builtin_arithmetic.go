@@ -111,7 +111,7 @@ func setFlenDecimal4RealOrDecimal(ctx sessionctx.Context, retTp *types.FieldType
 		if isMultiply {
 			digitsInt = a.Flen - a.Decimal + b.Flen - b.Decimal
 		}
-		retTp.Flen = digitsInt + retTp.Decimal + 3
+		retTp.Flen = digitsInt + retTp.Decimal + 1
 		if isReal {
 			retTp.Flen = mathutil.Min(retTp.Flen, mysql.MaxRealWidth)
 			return
@@ -128,10 +128,10 @@ func setFlenDecimal4RealOrDecimal(ctx sessionctx.Context, retTp *types.FieldType
 
 func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.FieldType) {
 	var deca, decb = a.Decimal, b.Decimal
-	if deca == int(types.UnspecifiedFsp) {
+	if deca == types.UnspecifiedFsp {
 		deca = 0
 	}
-	if decb == int(types.UnspecifiedFsp) {
+	if decb == types.UnspecifiedFsp {
 		decb = 0
 	}
 	retTp.Decimal = deca + precIncrement

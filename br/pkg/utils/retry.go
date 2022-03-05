@@ -16,6 +16,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	tmysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser/terror"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -117,7 +118,9 @@ func isSingleRetryableError(err error) bool {
 	case *mysql.MySQLError:
 		switch nerr.Number {
 		// ErrLockDeadlock can retry to commit while meet deadlock
-		case tmysql.ErrUnknown, tmysql.ErrLockDeadlock, tmysql.ErrWriteConflictInTiDB, tmysql.ErrPDServerTimeout, tmysql.ErrTiKVServerTimeout, tmysql.ErrTiKVServerBusy, tmysql.ErrResolveLockTimeout, tmysql.ErrRegionUnavailable:
+		case tmysql.ErrUnknown, tmysql.ErrLockDeadlock, tmysql.ErrWriteConflict, tmysql.ErrWriteConflictInTiDB,
+			tmysql.ErrPDServerTimeout, tmysql.ErrTiKVServerTimeout, tmysql.ErrTiKVServerBusy, tmysql.ErrResolveLockTimeout,
+			tmysql.ErrRegionUnavailable, tmysql.ErrInfoSchemaExpired, tmysql.ErrInfoSchemaChanged, tmysql.ErrTxnRetryable:
 			return true
 		default:
 			return false
@@ -135,4 +138,12 @@ func isSingleRetryableError(err error) bool {
 			return false
 		}
 	}
+}
+
+func FallBack2CreateTable(err error) bool {
+	switch nerr := errors.Cause(err).(type) {
+	case *terror.Error:
+		return nerr.Code() == tmysql.ErrInvalidDDLJob
+	}
+	return false
 }

@@ -31,7 +31,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -159,17 +158,9 @@ func (b *builtinAesDecryptSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, err
 	}
-	cryptStr, err = charset.NewEncoding(b.args[0].GetType().Charset).EncodeString(cryptStr)
-	if err != nil {
-		return "", false, err
-	}
 	keyStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
-	}
-	keyStr, err = charset.NewEncoding(b.args[1].GetType().Charset).EncodeString(keyStr)
-	if err != nil {
-		return "", false, err
 	}
 	if !b.ivRequired && len(b.args) == 3 {
 		// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
@@ -210,27 +201,15 @@ func (b *builtinAesDecryptIVSig) evalString(row chunk.Row) (string, bool, error)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	cryptStr, err = charset.NewEncoding(b.args[0].GetType().Charset).EncodeString(cryptStr)
-	if err != nil {
-		return "", false, err
-	}
 
 	keyStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	keyStr, err = charset.NewEncoding(b.args[1].GetType().Charset).EncodeString(keyStr)
-	if err != nil {
-		return "", false, err
-	}
 
 	iv, isNull, err := b.args[2].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
-	}
-	iv, err = charset.NewEncoding(b.args[2].GetType().Charset).EncodeString(iv)
-	if err != nil {
-		return "", false, err
 	}
 	if len(iv) < aes.BlockSize {
 		return "", true, errIncorrectArgs.GenWithStack("The initialization vector supplied to aes_decrypt is too short. Must be at least %d bytes long", aes.BlockSize)
@@ -427,20 +406,10 @@ func (b *builtinDecodeSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, err
 	}
-	dataTp := b.args[0].GetType()
-	dataStr, err = charset.NewEncoding(dataTp.Charset).EncodeString(dataStr)
-	if err != nil {
-		return "", false, err
-	}
 
 	passwordStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
-	}
-	passwordTp := b.args[1].GetType()
-	passwordStr, err = charset.NewEncoding(passwordTp.Charset).EncodeString(passwordStr)
-	if err != nil {
-		return "", false, err
 	}
 
 	decodeStr, err := encrypt.SQLDecode(dataStr, passwordStr)
@@ -500,20 +469,10 @@ func (b *builtinEncodeSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, err
 	}
-	decodeTp := b.args[0].GetType()
-	decodeStr, err = charset.NewEncoding(decodeTp.Charset).EncodeString(decodeStr)
-	if err != nil {
-		return "", false, err
-	}
 
 	passwordStr, isNull, err := b.args[1].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
-	}
-	passwordTp := b.args[1].GetType()
-	passwordStr, err = charset.NewEncoding(passwordTp.Charset).EncodeString(passwordStr)
-	if err != nil {
-		return "", false, err
 	}
 
 	dataStr, err := encrypt.SQLEncode(decodeStr, passwordStr)
@@ -576,16 +535,11 @@ func (b *builtinPasswordSig) evalString(row chunk.Row) (d string, isNull bool, e
 		return "", false, nil
 	}
 
-	dStr, err := charset.NewEncoding(b.args[0].GetType().Charset).EncodeString(pass)
-	if err != nil {
-		return "", false, err
-	}
-
 	// We should append a warning here because function "PASSWORD" is deprecated since MySQL 5.7.6.
 	// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
 	b.ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.GenWithStackByArgs("PASSWORD"))
 
-	return auth.EncodePassword(dStr), false, nil
+	return auth.EncodePassword(pass), false, nil
 }
 
 type randomBytesFunctionClass struct {
@@ -619,17 +573,17 @@ func (b *builtinRandomBytesSig) Clone() builtinFunc {
 // evalString evals RANDOM_BYTES(len).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_random-bytes
 func (b *builtinRandomBytesSig) evalString(row chunk.Row) (string, bool, error) {
-	len, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	if len < 1 || len > 1024 {
+	if val < 1 || val > 1024 {
 		return "", false, types.ErrOverflow.GenWithStackByArgs("length", "random_bytes")
 	}
-	buf := make([]byte, len)
+	buf := make([]byte, val)
 	if n, err := rand.Read(buf); err != nil {
 		return "", true, err
-	} else if int64(n) != len {
+	} else if int64(n) != val {
 		return "", false, errors.New("fail to generate random bytes")
 	}
 	return string(buf), false, nil
@@ -671,12 +625,7 @@ func (b *builtinMD5Sig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	var sum [16]byte
-	dBytes, err := charset.NewEncoding(b.args[0].GetType().Charset).Encode(nil, []byte(arg))
-	if err != nil {
-		return "", false, err
-	}
-	sum = md5.Sum(dBytes) // #nosec G401
+	sum := md5.Sum([]byte(arg)) // #nosec G401
 	hexStr := fmt.Sprintf("%x", sum)
 	return hexStr, false, nil
 }
@@ -718,12 +667,8 @@ func (b *builtinSHA1Sig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	bytes, err := charset.NewEncoding(b.args[0].GetType().Charset).Encode(nil, []byte(str))
-	if err != nil {
-		return "", false, err
-	}
 	hasher := sha1.New() // #nosec G401
-	_, err = hasher.Write(bytes)
+	_, err = hasher.Write([]byte(str))
 	if err != nil {
 		return "", true, err
 	}
@@ -775,10 +720,6 @@ func (b *builtinSHA2Sig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	bytes, err := charset.NewEncoding(b.args[0].GetType().Charset).Encode(nil, []byte(str))
-	if err != nil {
-		return "", false, err
-	}
 	hashLength, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
@@ -799,7 +740,7 @@ func (b *builtinSHA2Sig) evalString(row chunk.Row) (string, bool, error) {
 		return "", true, nil
 	}
 
-	_, err = hasher.Write(bytes)
+	_, err = hasher.Write([]byte(str))
 	if err != nil {
 		return "", true, err
 	}
@@ -875,11 +816,6 @@ func (b *builtinCompressSig) evalString(row chunk.Row) (string, bool, error) {
 	str, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
-	}
-	strTp := b.args[0].GetType()
-	str, err = charset.NewEncoding(strTp.Charset).EncodeString(str)
-	if err != nil {
-		return "", false, err
 	}
 
 	// According to doc: Empty strings are stored as empty strings.
@@ -1013,8 +949,7 @@ func (b *builtinUncompressedLengthSig) evalInt(row chunk.Row) (int64, bool, erro
 		sc.AppendWarning(errZlibZData)
 		return 0, false, nil
 	}
-	len := binary.LittleEndian.Uint32([]byte(payload)[0:4])
-	return int64(len), false, nil
+	return int64(binary.LittleEndian.Uint32([]byte(payload)[0:4])), false, nil
 }
 
 type validatePasswordStrengthFunctionClass struct {

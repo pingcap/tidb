@@ -16,8 +16,8 @@ package core
 
 import (
 	"fmt"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -25,19 +25,8 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
-
-var _ = Suite(&testJoinReorderDPSuite{})
-
-type testJoinReorderDPSuite struct {
-	ctx      sessionctx.Context
-	statsMap map[int]*property.StatsInfo
-}
-
-func (s *testJoinReorderDPSuite) SetUpTest(c *C) {
-	s.ctx = MockContext()
-	s.ctx.GetSessionVars().PlanID = -1
-}
 
 type mockLogicalJoin struct {
 	logicalSchemaProducer
@@ -58,32 +47,28 @@ func (mj *mockLogicalJoin) recursiveDeriveStats(_ [][]*expression.Column) (*prop
 	return mj.statsMap[mj.involvedNodeSet], nil
 }
 
-func (s *testJoinReorderDPSuite) newMockJoin(lChild, rChild LogicalPlan, eqConds []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType JoinType) LogicalPlan {
-	retJoin := mockLogicalJoin{}.init(s.ctx)
-	retJoin.schema = expression.MergeSchema(lChild.Schema(), rChild.Schema())
-	retJoin.statsMap = s.statsMap
-	if mj, ok := lChild.(*mockLogicalJoin); ok {
-		retJoin.involvedNodeSet = mj.involvedNodeSet
-	} else {
-		retJoin.involvedNodeSet = 1 << uint(lChild.ID())
-	}
-	if mj, ok := rChild.(*mockLogicalJoin); ok {
-		retJoin.involvedNodeSet |= mj.involvedNodeSet
-	} else {
-		retJoin.involvedNodeSet |= 1 << uint(rChild.ID())
-	}
-	retJoin.SetChildren(lChild, rChild)
-	retJoin.JoinType = joinType
-	return retJoin
-}
-
-func (s *testJoinReorderDPSuite) mockStatsInfo(state int, count float64) {
-	s.statsMap[state] = &property.StatsInfo{
-		RowCount: count,
+func newMockJoin(ctx sessionctx.Context, statsMap map[int]*property.StatsInfo) func(lChild, rChild LogicalPlan, _ []*expression.ScalarFunction, _ []expression.Expression) LogicalPlan {
+	return func(lChild, rChild LogicalPlan, _ []*expression.ScalarFunction, _ []expression.Expression) LogicalPlan {
+		retJoin := mockLogicalJoin{}.init(s.ctx)
+		retJoin.schema = expression.MergeSchema(lChild.Schema(), rChild.Schema())
+		retJoin.statsMap = s.statsMap
+		if mj, ok := lChild.(*mockLogicalJoin); ok {
+			retJoin.involvedNodeSet = mj.involvedNodeSet
+		} else {
+			retJoin.involvedNodeSet = 1 << uint(lChild.ID())
+		}
+		if mj, ok := rChild.(*mockLogicalJoin); ok {
+			retJoin.involvedNodeSet |= mj.involvedNodeSet
+		} else {
+			retJoin.involvedNodeSet |= 1 << uint(rChild.ID())
+		}
+		retJoin.SetChildren(lChild, rChild)
+		retJoin.JoinType = joinType
+		return retJoin
 	}
 }
 
-func (s *testJoinReorderDPSuite) makeStatsMapForTPCHQ5() {
+func makeStatsMapForTPCHQ5() map[int]*property.StatsInfo {
 	// Labeled as lineitem -> 0, orders -> 1, customer -> 2, supplier 3, nation 4, region 5
 	// This graph can be shown as following:
 	// +---------------+            +---------------+
@@ -114,48 +99,48 @@ func (s *testJoinReorderDPSuite) makeStatsMapForTPCHQ5() {
 	//                |    region     |
 	//                |               |
 	//                +---------------+
-	s.statsMap = make(map[int]*property.StatsInfo)
-	s.mockStatsInfo(3, 9103367)
-	s.mockStatsInfo(6, 2275919)
-	s.mockStatsInfo(7, 9103367)
-	s.mockStatsInfo(9, 59986052)
-	s.mockStatsInfo(11, 9103367)
-	s.mockStatsInfo(12, 5999974575)
-	s.mockStatsInfo(13, 59999974575)
-	s.mockStatsInfo(14, 9103543072)
-	s.mockStatsInfo(15, 99103543072)
-	s.mockStatsInfo(20, 1500000)
-	s.mockStatsInfo(22, 2275919)
-	s.mockStatsInfo(23, 7982159)
-	s.mockStatsInfo(24, 100000)
-	s.mockStatsInfo(25, 59986052)
-	s.mockStatsInfo(27, 9103367)
-	s.mockStatsInfo(28, 5999974575)
-	s.mockStatsInfo(29, 59999974575)
-	s.mockStatsInfo(30, 59999974575)
-	s.mockStatsInfo(31, 59999974575)
-	s.mockStatsInfo(48, 5)
-	s.mockStatsInfo(52, 299838)
-	s.mockStatsInfo(54, 454183)
-	s.mockStatsInfo(55, 1815222)
-	s.mockStatsInfo(56, 20042)
-	s.mockStatsInfo(57, 12022687)
-	s.mockStatsInfo(59, 1823514)
-	s.mockStatsInfo(60, 1201884359)
-	s.mockStatsInfo(61, 12001884359)
-	s.mockStatsInfo(62, 12001884359)
-	s.mockStatsInfo(63, 72985)
-
+	statsMap := make(map[int]*property.StatsInfo)
+	statsMap[3] = &property.StatsInfo{RowCount: 9103367}
+	statsMap[6] = &property.StatsInfo{RowCount: 2275919}
+	statsMap[7] = &property.StatsInfo{RowCount: 9103367}
+	statsMap[9] = &property.StatsInfo{RowCount: 59986052}
+	statsMap[11] = &property.StatsInfo{RowCount: 9103367}
+	statsMap[12] = &property.StatsInfo{RowCount: 5999974575}
+	statsMap[13] = &property.StatsInfo{RowCount: 59999974575}
+	statsMap[14] = &property.StatsInfo{RowCount: 9103543072}
+	statsMap[15] = &property.StatsInfo{RowCount: 99103543072}
+	statsMap[20] = &property.StatsInfo{RowCount: 1500000}
+	statsMap[22] = &property.StatsInfo{RowCount: 2275919}
+	statsMap[23] = &property.StatsInfo{RowCount: 7982159}
+	statsMap[24] = &property.StatsInfo{RowCount: 100000}
+	statsMap[25] = &property.StatsInfo{RowCount: 59986052}
+	statsMap[27] = &property.StatsInfo{RowCount: 9103367}
+	statsMap[28] = &property.StatsInfo{RowCount: 5999974575}
+	statsMap[29] = &property.StatsInfo{RowCount: 59999974575}
+	statsMap[30] = &property.StatsInfo{RowCount: 59999974575}
+	statsMap[31] = &property.StatsInfo{RowCount: 59999974575}
+	statsMap[48] = &property.StatsInfo{RowCount: 5}
+	statsMap[52] = &property.StatsInfo{RowCount: 299838}
+	statsMap[54] = &property.StatsInfo{RowCount: 454183}
+	statsMap[55] = &property.StatsInfo{RowCount: 1815222}
+	statsMap[56] = &property.StatsInfo{RowCount: 20042}
+	statsMap[57] = &property.StatsInfo{RowCount: 12022687}
+	statsMap[59] = &property.StatsInfo{RowCount: 1823514}
+	statsMap[60] = &property.StatsInfo{RowCount: 1201884359}
+	statsMap[61] = &property.StatsInfo{RowCount: 12001884359}
+	statsMap[62] = &property.StatsInfo{RowCount: 12001884359}
+	statsMap[63] = &property.StatsInfo{RowCount: 72985}
+	return statsMap
 }
 
-func (s *testJoinReorderDPSuite) newDataSource(name string, count int) LogicalPlan {
-	ds := DataSource{}.Init(s.ctx, 0)
+func newDataSource(ctx sessionctx.Context, name string, count int) LogicalPlan {
+	ds := DataSource{}.Init(ctx, 0)
 	tan := model.NewCIStr(name)
 	ds.TableAsName = &tan
 	ds.schema = expression.NewSchema()
-	s.ctx.GetSessionVars().PlanColumnID++
+	ctx.GetSessionVars().PlanColumnID++
 	ds.schema.Append(&expression.Column{
-		UniqueID: s.ctx.GetSessionVars().PlanColumnID,
+		UniqueID: ctx.GetSessionVars().PlanColumnID,
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	ds.stats = &property.StatsInfo{
@@ -164,18 +149,21 @@ func (s *testJoinReorderDPSuite) newDataSource(name string, count int) LogicalPl
 	return ds
 }
 
-func (s *testJoinReorderDPSuite) planToString(plan LogicalPlan) string {
+func planToString(plan LogicalPlan) string {
 	switch x := plan.(type) {
 	case *mockLogicalJoin:
-		return fmt.Sprintf("MockJoin{%v, %v}", s.planToString(x.children[0]), s.planToString(x.children[1]))
+		return fmt.Sprintf("MockJoin{%v, %v}", planToString(x.children[0]), planToString(x.children[1]))
 	case *DataSource:
 		return x.TableAsName.L
 	}
 	return ""
 }
 
-func (s *testJoinReorderDPSuite) TestDPReorderTPCHQ5(c *C) {
-	s.makeStatsMapForTPCHQ5()
+func TestDPReorderTPCHQ5(t *testing.T) {
+	statsMap := makeStatsMapForTPCHQ5()
+
+	ctx := MockContext()
+	ctx.GetSessionVars().PlanID = -1
 	joinGroups := make([]*joinNode, 0, 6)
 	joinGroups = append(joinGroups, &joinNode{p: s.newDataSource("lineitem", 59986052)})
 	joinGroups = append(joinGroups, &joinNode{p: s.newDataSource("orders", 15000000)})
@@ -193,16 +181,23 @@ func (s *testJoinReorderDPSuite) TestDPReorderTPCHQ5(c *C) {
 	eqConds = append(eqConds, expression.NewFunctionInternal(s.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[4].p.Schema().Columns[0], joinGroups[5].p.Schema().Columns[0]))
 	solver := &joinReorderDPSolver{
 		baseSingleGroupJoinOrderSolver: &baseSingleGroupJoinOrderSolver{
-			ctx: s.ctx,
+			ctx: ctx,
 		},
-		newJoin: s.newMockJoin,
+		newJoin: newMockJoin(ctx, statsMap),
 	}
-	result, err := solver.solve(joinGroups, eqConds)
-	c.Assert(err, IsNil)
-	c.Assert(s.planToString(result), Equals, "MockJoin{supplier, MockJoin{lineitem, MockJoin{orders, MockJoin{customer, MockJoin{nation, region}}}}}")
+	result, err := solver.solve(joinGroups, eqConds, nil)
+	require.NoError(t, err)
+
+	expected := "MockJoin{supplier, MockJoin{lineitem, MockJoin{orders, MockJoin{customer, MockJoin{nation, region}}}}}"
+	require.Equal(t, expected, planToString(result))
 }
 
-func (s *testJoinReorderDPSuite) TestDPReorderAllCartesian(c *C) {
+func TestDPReorderAllCartesian(t *testing.T) {
+	statsMap := makeStatsMapForTPCHQ5()
+
+	ctx := MockContext()
+	ctx.GetSessionVars().PlanID = -1
+
 	joinGroup := make([]*joinNode, 0, 4)
 	joinGroup = append(joinGroup, &joinNode{p: s.newDataSource("a", 100)})
 	joinGroup = append(joinGroup, &joinNode{p: s.newDataSource("b", 100)})
@@ -210,11 +205,13 @@ func (s *testJoinReorderDPSuite) TestDPReorderAllCartesian(c *C) {
 	joinGroup = append(joinGroup, &joinNode{p: s.newDataSource("d", 100)})
 	solver := &joinReorderDPSolver{
 		baseSingleGroupJoinOrderSolver: &baseSingleGroupJoinOrderSolver{
-			ctx: s.ctx,
+			ctx: ctx,
 		},
-		newJoin: s.newMockJoin,
+		newJoin: newMockJoin(ctx, statsMap),
 	}
-	result, err := solver.solve(joinGroup, nil)
-	c.Assert(err, IsNil)
-	c.Assert(s.planToString(result), Equals, "MockJoin{MockJoin{a, b}, MockJoin{c, d}}")
+	result, err := solver.solve(joinGroup, nil, nil)
+	require.NoError(t, err)
+
+	expected := "MockJoin{MockJoin{a, b}, MockJoin{c, d}}"
+	require.Equal(t, expected, planToString(result))
 }

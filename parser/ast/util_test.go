@@ -26,7 +26,6 @@ import (
 )
 
 func TestCacheable(t *testing.T) {
-	t.Parallel()
 	// test non-SelectStmt
 	var stmt Node = &DeleteStmt{}
 	require.False(t, IsReadOnly(stmt))
@@ -76,7 +75,6 @@ func TestCacheable(t *testing.T) {
 }
 
 func TestUnionReadOnly(t *testing.T) {
-	t.Parallel()
 	selectReadOnly := &SelectStmt{}
 	selectForUpdate := &SelectStmt{
 		LockInfo: &SelectLockInfo{LockType: SelectLockForUpdate},
@@ -122,7 +120,7 @@ type nodeTextCleaner struct {
 
 // Enter implements Visitor interface.
 func (checker *nodeTextCleaner) Enter(in Node) (out Node, skipChildren bool) {
-	in.SetText("")
+	in.SetText(nil, "")
 	in.SetOriginTextPosition(0)
 	switch node := in.(type) {
 	case *Constraint:

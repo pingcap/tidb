@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
@@ -109,23 +108,14 @@ type TableReaderExecutor struct {
 	// batchCop indicates whether use super batch coprocessor request, only works for TiFlash engine.
 	batchCop bool
 
-	// extraPIDColumnIndex is used for partition reader to add an extra partition ID column.
-	extraPIDColumnIndex offsetOptional
+	// If dummy flag is set, this is not a real TableReader, it just provides the KV ranges for UnionScan.
+	// Used by the temporary table, cached table.
+	dummy bool
 }
 
-// offsetOptional may be a positive integer, or invalid.
-type offsetOptional int
-
-func newOffset(i int) offsetOptional {
-	return offsetOptional(i + 1)
-}
-
-func (i offsetOptional) valid() bool {
-	return i != 0
-}
-
-func (i offsetOptional) value() int {
-	return int(i - 1)
+// Table implements the dataSourceExecutor interface.
+func (e *TableReaderExecutor) Table() table.Table {
+	return e.table
 }
 
 // Open initializes necessary variables for using this executor.
@@ -180,7 +170,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 	// Calculate the kv ranges here, UnionScan rely on this kv ranges.
 	// cached table and temporary table are similar
-	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
+	if e.dummy {
 		kvReq, err := e.buildKVReq(ctx, firstPartRanges)
 		if err != nil {
 			return err
@@ -218,7 +208,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
+	if e.dummy {
 		// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 		req.Reset()
 		return nil
@@ -241,29 +231,12 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		return err
 	}
 
-	// When 'select ... for update' work on a partitioned table, the table reader should
-	// add the partition ID as an extra column. The SelectLockExec need this information
-	// to construct the lock key.
-	physicalID := getPhysicalTableID(e.table)
-	if e.extraPIDColumnIndex.valid() {
-		fillExtraPIDColumn(req, e.extraPIDColumnIndex.value(), physicalID)
-	}
-
 	return nil
-}
-
-func fillExtraPIDColumn(req *chunk.Chunk, extraPIDColumnIndex int, physicalID int64) {
-	numRows := req.NumRows()
-	pidColumn := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), numRows)
-	for i := 0; i < numRows; i++ {
-		pidColumn.AppendInt64(physicalID)
-	}
-	req.SetCol(extraPIDColumnIndex, pidColumn)
 }
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
-	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
+	if e.dummy {
 		return nil
 	}
 
@@ -314,7 +287,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 	if err != nil {
 		return nil, err
 	}
-	var kvReqs []*kv.Request
+	kvReqs := make([]*kv.Request, 0, len(kvRanges))
 	for i, kvRange := range kvRanges {
 		e.kvRanges = append(e.kvRanges, kvRange...)
 		if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, pids[i], true); err != nil {

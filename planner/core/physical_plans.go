@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -69,6 +68,11 @@ var (
 	_ PhysicalPlan = &PhysicalTableSample{}
 )
 
+type tableScanAndPartitionInfo struct {
+	tableScan     *PhysicalTableScan
+	partitionInfo PartitionInfo
+}
+
 // PhysicalTableReader is the table reader in tidb.
 type PhysicalTableReader struct {
 	physicalSchemaProducer
@@ -87,6 +91,8 @@ type PhysicalTableReader struct {
 
 	// Used by partition table.
 	PartitionInfo PartitionInfo
+	// Used by MPP, because MPP plan may contain join/union/union all, it is possible that a physical table reader contains more than 1 table scan
+	PartitionInfos []tableScanAndPartitionInfo
 }
 
 // PartitionInfo indicates partition helper info in physical plan.
@@ -264,6 +270,7 @@ type PhysicalIndexLookUpReader struct {
 	TablePlans []PhysicalPlan
 	indexPlan  PhysicalPlan
 	tablePlan  PhysicalPlan
+	Paging     bool
 
 	ExtraHandleCol *expression.Column
 	// PushedLimit is used to avoid unnecessary table scan tasks of IndexLookUpReader.
@@ -548,7 +555,7 @@ func (ts *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error)
 	} else {
 		var err error
 		pkTP := ts.Table.GetPkColInfo().FieldType
-		ts.Ranges, err = ranger.BuildTableRange(access, ts.SCtx().GetSessionVars().StmtCtx, &pkTP)
+		ts.Ranges, err = ranger.BuildTableRange(access, ts.SCtx(), &pkTP)
 		if err != nil {
 			return nil, err
 		}
@@ -952,9 +959,8 @@ type PhysicalLock struct {
 
 	Lock *ast.SelectLockInfo
 
-	TblID2Handle     map[int64][]HandleCols
-	PartitionedTable []table.PartitionedTable
-	ExtraPIDInfo     extraPIDInfo
+	TblID2Handle       map[int64][]HandleCols
+	TblID2PhysTblIDCol map[int64]*expression.Column
 }
 
 // PhysicalLimit is the physical operator of Limit.
@@ -1198,11 +1204,11 @@ func (p *PhysicalIndexScan) IsPartition() (bool, int64) {
 }
 
 // IsPointGetByUniqueKey checks whether is a point get by unique key.
-func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sc *stmtctx.StatementContext) bool {
+func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sctx sessionctx.Context) bool {
 	return len(p.Ranges) == 1 &&
 		p.Index.Unique &&
 		len(p.Ranges[0].LowVal) == len(p.Index.Columns) &&
-		p.Ranges[0].IsPoint(sc)
+		p.Ranges[0].IsPointNonNullable(sctx)
 }
 
 // PhysicalSelection represents a filter.
@@ -1326,8 +1332,10 @@ const (
 type PhysicalShuffleReceiverStub struct {
 	physicalSchemaProducer
 
-	// Worker points to `executor.shuffleReceiver`.
+	// Receiver points to `executor.shuffleReceiver`.
 	Receiver unsafe.Pointer
+	// DataSource is the PhysicalPlan of the Receiver.
+	DataSource PhysicalPlan
 }
 
 // CollectPlanStatsVersion uses to collect the statistics version of the plan.
@@ -1358,6 +1366,8 @@ type PhysicalShow struct {
 	physicalSchemaProducer
 
 	ShowContents
+
+	Extractor ShowPredicateExtractor
 }
 
 // PhysicalShowDDLJobs is for showing DDL job list.

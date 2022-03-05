@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
@@ -65,6 +64,9 @@ type AccessPath struct {
 	Forced bool
 	// IsSingleScan indicates whether the path is a single index/table scan or table access after index scan.
 	IsSingleScan bool
+
+	// Maybe added in model.IndexInfo better, but the cache of model.IndexInfo may lead side effect
+	IsUkShardIndexPath bool
 }
 
 // IsTablePath returns true if it's IntHandlePath or CommonHandlePath.
@@ -151,34 +153,124 @@ func isColEqCorColOrConstant(ctx sessionctx.Context, filter expression.Expressio
 }
 
 // OnlyPointRange checks whether each range is a point(no interval range exists).
-func (path *AccessPath) OnlyPointRange(sc *stmtctx.StatementContext) bool {
-	noIntervalRange := true
+func (path *AccessPath) OnlyPointRange(sctx sessionctx.Context) bool {
 	if path.IsIntHandlePath {
 		for _, ran := range path.Ranges {
-			if !ran.IsPoint(sc) {
-				noIntervalRange = false
-				break
+			if !ran.IsPointNullable(sctx) {
+				return false
 			}
 		}
-		return noIntervalRange
+		return true
 	}
-	haveNullVal := false
 	for _, ran := range path.Ranges {
 		// Not point or the not full matched.
-		if !ran.IsPoint(sc) || len(ran.HighVal) != len(path.Index.Columns) {
-			noIntervalRange = false
-			break
-		}
-		// Check whether there's null value.
-		for i := 0; i < len(path.Index.Columns); i++ {
-			if ran.HighVal[i].IsNull() {
-				haveNullVal = true
-				break
-			}
-		}
-		if haveNullVal {
-			break
+		if !ran.IsPointNonNullable(sctx) || len(ran.HighVal) != len(path.Index.Columns) {
+			return false
 		}
 	}
-	return noIntervalRange && !haveNullVal
+	return true
+}
+
+// Col2Len maps expression.Column.UniqueID to column length
+type Col2Len map[int64]int
+
+// ExtractCol2Len collects index/table columns with lengths from expressions. If idxCols and idxColLens are not nil, it collects index columns with lengths(maybe prefix lengths).
+// Otherwise it collects table columns with full lengths.
+func ExtractCol2Len(exprs []expression.Expression, idxCols []*expression.Column, idxColLens []int) Col2Len {
+	col2len := make(Col2Len, len(idxCols))
+	for _, expr := range exprs {
+		extractCol2LenFromExpr(expr, idxCols, idxColLens, col2len)
+	}
+	return col2len
+}
+
+func extractCol2LenFromExpr(expr expression.Expression, idxCols []*expression.Column, idxColLens []int, col2Len Col2Len) {
+	switch v := expr.(type) {
+	case *expression.Column:
+		if idxCols == nil {
+			col2Len[v.UniqueID] = types.UnspecifiedLength
+		} else {
+			for i, col := range idxCols {
+				if col != nil && v.EqualByExprAndID(nil, col) {
+					col2Len[v.UniqueID] = idxColLens[i]
+					break
+				}
+			}
+		}
+	case *expression.ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			extractCol2LenFromExpr(arg, idxCols, idxColLens, col2Len)
+		}
+	}
+}
+
+// compareLength will compare the two column lengths. The return value:
+// (1) -1 means that l is shorter than r;
+// (2) 0 means that l equals to r;
+// (3) 1 means that l is longer than r;
+func compareLength(l, r int) int {
+	if l == r {
+		return 0
+	}
+	if l == types.UnspecifiedLength {
+		return 1
+	}
+	if r == types.UnspecifiedLength {
+		return -1
+	}
+	if l > r {
+		return 1
+	}
+	return -1
+}
+
+// dominate return true if each column of c2 exists in c1 and c2's column length is no longer than c1's column length.
+func (c1 Col2Len) dominate(c2 Col2Len) bool {
+	if len(c2) > len(c1) {
+		return false
+	}
+	for colID, len2 := range c2 {
+		len1, ok := c1[colID]
+		if !ok || compareLength(len2, len1) == 1 {
+			return false
+		}
+	}
+	return true
+}
+
+// CompareCol2Len will compare the two Col2Len maps. The last return value is used to indicate whether they are comparable.
+// When the second return value is true, the first return value:
+// (1) -1 means that c1 is worse than c2;
+// (2) 0 means that c1 equals to c2;
+// (3) 1 means that c1 is better than c2;
+func CompareCol2Len(c1, c2 Col2Len) (int, bool) {
+	l1, l2 := len(c1), len(c2)
+	if l1 > l2 {
+		if c1.dominate(c2) {
+			return 1, true
+		}
+		return 0, false
+	}
+	if l1 < l2 {
+		if c2.dominate(c1) {
+			return -1, true
+		}
+		return 0, false
+	}
+	// If c1 and c2 have the same columns but have different lengths on some column, we regard c1 and c2 incomparable.
+	for colID, colLen2 := range c2 {
+		colLen1, ok := c1[colID]
+		if !ok || colLen1 != colLen2 {
+			return 0, false
+		}
+	}
+	return 0, true
+}
+
+// GetCol2LenFromAccessConds returns columns with lengths from path.AccessConds.
+func (path *AccessPath) GetCol2LenFromAccessConds() Col2Len {
+	if path.IsTablePath() {
+		return ExtractCol2Len(path.AccessConds, nil, nil)
+	}
+	return ExtractCol2Len(path.AccessConds, path.IdxCols, path.IdxColLens)
 }

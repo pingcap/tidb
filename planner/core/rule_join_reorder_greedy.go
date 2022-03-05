@@ -43,20 +43,22 @@ type joinReorderGreedySolver struct {
 //
 // For the nodes and join trees which don't have a join equal condition to
 // connect them, we make a bushy join tree to do the cartesian joins finally.
-func (s *joinReorderGreedySolver) solve(joinNodePlans []*joinNode) (LogicalPlan, error) {
+func (s *joinReorderGreedySolver) solve(joinNodePlans []*joinNode, tracer *joinReorderTrace) (LogicalPlan, error) {
 	joinNodeCount := 0
 	for _, node := range joinNodePlans {
 		_, err := node.p.recursiveDeriveStats(nil)
 		if err != nil {
 			return nil, err
 		}
+		cost := s.baseNodeCumCost(node)
 		s.curJoinGroup = append(s.curJoinGroup, &jrNode{
 			id:      joinNodeCount,
 			p:       node.p,
-			cumCost: s.baseNodeCumCost(node.p),
+			cumCost: cost,
 		})
 		node.id = joinNodeCount
 		joinNodeCount++
+		tracer.appendLogicalJoinCost(node, cost)
 	}
 
 	s.directGraph = make([][]byte, joinNodeCount)
@@ -110,7 +112,7 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []*joinNode) (LogicalPlan,
 
 	var cartesianGroup []LogicalPlan
 	for len(s.curJoinGroup) > 0 {
-		newNode, err := s.constructConnectedJoinTree()
+		newNode, err := s.constructConnectedJoinTree(tracer)
 		if err != nil {
 			return nil, err
 		}
@@ -133,7 +135,7 @@ func (s *joinReorderGreedySolver) merge(dest []byte, src []byte) (isChange bool)
 	return
 }
 
-func (s *joinReorderGreedySolver) constructConnectedJoinTree() (*jrNode, error) {
+func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorderTrace) (*jrNode, error) {
 	curJoinTree := s.curJoinGroup[0]
 	s.curJoinGroup = s.curJoinGroup[1:]
 	s.remainJoinGroup = s.remainJoinGroup[:0]
@@ -153,6 +155,7 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree() (*jrNode, error) 
 				return nil, err
 			}
 			curCost := s.calcJoinCumCost(newJoin, curJoinTree, node)
+			tracer.appendLogicalJoinCost(newJoin, curCost)
 			if bestCost > curCost {
 				bestCost = curCost
 				bestJoin = newJoin

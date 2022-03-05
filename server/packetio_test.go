@@ -26,8 +26,6 @@ import (
 )
 
 func TestPacketIOWrite(t *testing.T) {
-	t.Parallel()
-
 	// Test write one packet
 	var outBuffer bytes.Buffer
 	pkt := &packetIO{bufWriter: bufio.NewWriter(&outBuffer)}
@@ -53,8 +51,6 @@ func TestPacketIOWrite(t *testing.T) {
 }
 
 func TestPacketIORead(t *testing.T) {
-	t.Parallel()
-
 	var inBuffer bytes.Buffer
 	_, err := inBuffer.Write([]byte{0x01, 0x00, 0x00, 0x00, 0x01})
 	require.NoError(t, err)

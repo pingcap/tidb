@@ -142,10 +142,10 @@ import (
 	"strings"
 
 	"github.com/cznic/mathutil"
-	parser "github.com/cznic/parser/yacc"
 	"github.com/cznic/sortutil"
 	"github.com/cznic/strutil"
-	"github.com/cznic/y"
+	parser "modernc.org/parser/yacc"
+	"modernc.org/y"
 )
 
 var (
@@ -324,7 +324,7 @@ func main1(in string) (err error) {
 	}
 
 	if fn := *oXErrorsGen; fn != "" {
-		f, err := os.OpenFile(fn, os.O_RDWR|os.O_CREATE, 0666)
+		f, err := os.OpenFile(fn, os.O_RDWR|os.O_CREATE, 0600)
 		if err != nil {
 			return err
 		}

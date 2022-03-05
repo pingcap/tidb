@@ -16,8 +16,6 @@
 
 set -eux
 
-# skip for temporary due to checksum for table a,c succeed, but expect to fail.
-exit 0
 # Check that error summary are written at the bottom of import.
 run_sql 'DROP DATABASE IF EXISTS tidb_lightning_checkpoint_error_summary;'
 

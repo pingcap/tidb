@@ -22,8 +22,6 @@ import (
 )
 
 func TestWeekBehaviour(t *testing.T) {
-	t.Parallel()
-
 	require.Equal(t, weekBehaviour(1), weekBehaviourMondayFirst)
 	require.Equal(t, weekBehaviour(2), weekBehaviourYear)
 	require.Equal(t, weekBehaviour(4), weekBehaviourFirstWeekday)
@@ -34,8 +32,6 @@ func TestWeekBehaviour(t *testing.T) {
 }
 
 func TestWeek(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		Input  CoreTime
 		Mode   int
@@ -53,8 +49,6 @@ func TestWeek(t *testing.T) {
 }
 
 func TestCalcDaynr(t *testing.T) {
-	t.Parallel()
-
 	require.Equal(t, 0, calcDaynr(0, 0, 0))
 	require.Equal(t, 3652424, calcDaynr(9999, 12, 31))
 	require.Equal(t, 719528, calcDaynr(1970, 1, 1))
@@ -64,8 +58,6 @@ func TestCalcDaynr(t *testing.T) {
 }
 
 func TestCalcTimeTimeDiff(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		T1           CoreTime
 		T2           CoreTime
@@ -105,8 +97,6 @@ func TestCalcTimeTimeDiff(t *testing.T) {
 }
 
 func TestCompareTime(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		T1     CoreTime
 		T2     CoreTime
@@ -126,8 +116,6 @@ func TestCompareTime(t *testing.T) {
 }
 
 func TestGetDateFromDaynr(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		daynr uint
 		year  uint
@@ -157,8 +145,6 @@ func TestGetDateFromDaynr(t *testing.T) {
 }
 
 func TestMixDateAndTime(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		date   CoreTime
 		dur    Duration
@@ -208,8 +194,6 @@ func TestMixDateAndTime(t *testing.T) {
 }
 
 func TestIsLeapYear(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		T      CoreTime
 		Expect bool
@@ -234,8 +218,6 @@ func TestIsLeapYear(t *testing.T) {
 	}
 }
 func TestGetLastDay(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		year        int
 		month       int
@@ -255,8 +237,6 @@ func TestGetLastDay(t *testing.T) {
 }
 
 func TestGetFixDays(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		year        int
 		month       int
@@ -278,8 +258,6 @@ func TestGetFixDays(t *testing.T) {
 }
 
 func TestAddDate(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		year  int
 		month int
@@ -300,8 +278,6 @@ func TestAddDate(t *testing.T) {
 }
 
 func TestWeekday(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		Input  CoreTime
 		Expect string
@@ -314,5 +290,81 @@ func TestWeekday(t *testing.T) {
 	for _, tt := range tests {
 		weekday := tt.Input.Weekday()
 		require.Equal(t, tt.Expect, weekday.String())
+	}
+}
+
+func TestFindZoneTransition(t *testing.T) {
+	tests := []struct {
+		TZ      string
+		dt      string
+		Expect  string
+		Success bool
+	}{
+		{"Australia/Lord_Howe", "2020-06-29 03:45:00", "", false},
+		{"Australia/Lord_Howe", "2020-10-04 02:15:00", "2020-10-04 02:30:00 +11 +1100", true},
+		{"Australia/Lord_Howe", "2020-10-04 02:29:59", "2020-10-04 02:30:00 +11 +1100", true},
+		{"Australia/Lord_Howe", "2020-10-04 02:29:59.99", "2020-10-04 02:30:00 +11 +1100", true},
+		{"Australia/Lord_Howe", "2020-10-04 02:30:00.0001", "2020-10-04 02:30:00 +11 +1100", true},
+		{"Australia/Lord_Howe", "2020-10-04 02:30:00", "2020-10-04 02:30:00 +11 +1100", true},
+		{"Australia/Lord_Howe", "2020-10-04 02:30:01", "2020-10-04 02:30:00 +11 +1100", true},
+		{"Europe/Vilnius", "2020-03-29 03:45:00", "2020-03-29 04:00:00 EEST +0300", true},
+		{"Europe/Vilnius", "2020-10-25 03:45:00", "2020-10-25 03:00:00 EET +0200", true},
+		{"Europe/Vilnius", "2020-06-29 03:45:00", "", false},
+		{"Europe/Amsterdam", "2020-03-29 02:45:00", "2020-03-29 03:00:00 CEST +0200", true},
+		{"Europe/Amsterdam", "2020-10-25 02:35:00", "2020-10-25 02:00:00 CET +0100", true},
+		{"Europe/Amsterdam", "2020-03-29 02:59:59", "2020-03-29 03:00:00 CEST +0200", true},
+		{"Europe/Amsterdam", "2020-03-29 02:59:59.999999999", "2020-03-29 03:00:00 CEST +0200", true},
+		{"Europe/Amsterdam", "2020-03-29 03:00:00.000000001", "2020-03-29 03:00:00 CEST +0200", true},
+	}
+
+	for _, tt := range tests {
+		loc, err := time.LoadLocation(tt.TZ)
+		require.NoError(t, err)
+		tm, err := time.ParseInLocation("2006-01-02 15:04:05", tt.dt, loc)
+		require.NoError(t, err)
+		tp, err := FindZoneTransition(tm)
+		if !tt.Success {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+			require.Equal(t, tt.Expect, tp.Format("2006-01-02 15:04:05.999999999 MST -0700"))
+		}
+	}
+}
+
+func TestAdjustedGoTime(t *testing.T) {
+	tests := []struct {
+		TZ      string
+		dt      CoreTime
+		Expect  string
+		Success bool
+	}{
+		{"Australia/Lord_Howe", FromDate(2020, 10, 04, 01, 59, 59, 997), "2020-10-04 01:59:59.000997 +1030 +1030", true},
+		{"Australia/Lord_Howe", FromDate(2020, 10, 04, 02, 00, 00, 0), "2020-10-04 02:30:00 +11 +1100", true},
+		{"Australia/Lord_Howe", FromDate(2020, 10, 04, 02, 15, 00, 0), "2020-10-04 02:30:00 +11 +1100", true},
+		{"Australia/Lord_Howe", FromDate(2020, 10, 04, 02, 29, 59, 999999), "2020-10-04 02:30:00 +11 +1100", true},
+		{"Australia/Lord_Howe", FromDate(2020, 10, 04, 02, 30, 00, 1), "2020-10-04 02:30:00.000001 +11 +1100", true},
+		{"Australia/Lord_Howe", FromDate(2020, 06, 29, 03, 45, 00, 0), "2020-06-29 03:45:00 +1030 +1030", true},
+		{"Australia/Lord_Howe", FromDate(2020, 04, 04, 01, 45, 00, 0), "2020-04-04 01:45:00 +11 +1100", true},
+		{"Europe/Vilnius", FromDate(2020, 03, 29, 03, 45, 00, 0), "2020-03-29 04:00:00 EEST +0300", true},
+		{"Europe/Vilnius", FromDate(2020, 03, 29, 03, 59, 59, 456789), "2020-03-29 04:00:00 EEST +0300", true},
+		{"Europe/Vilnius", FromDate(2020, 03, 29, 04, 00, 01, 130000), "2020-03-29 04:00:01.13 EEST +0300", true},
+		{"Europe/Vilnius", FromDate(2020, 10, 25, 03, 45, 00, 0), "2020-10-25 03:45:00 EET +0200", true},
+		{"Europe/Vilnius", FromDate(2020, 06, 29, 03, 45, 00, 0), "2020-06-29 03:45:00 EEST +0300", true},
+		{"Europe/Amsterdam", FromDate(2020, 03, 29, 02, 45, 00, 0), "2020-03-29 03:00:00 CEST +0200", true},
+		{"Europe/Amsterdam", FromDate(2020, 10, 25, 02, 35, 00, 0), "2020-10-25 02:35:00 CET +0100", true},
+		{"UTC", FromDate(2020, 2, 31, 02, 35, 00, 0), "", false},
+	}
+
+	for _, tt := range tests {
+		loc, err := time.LoadLocation(tt.TZ)
+		require.NoError(t, err)
+		tp, err := tt.dt.AdjustedGoTime(loc)
+		if !tt.Success {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+			require.Equal(t, tt.Expect, tp.Format("2006-01-02 15:04:05.999999999 MST -0700"))
+		}
 	}
 }

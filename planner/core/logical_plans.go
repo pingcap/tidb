@@ -75,9 +75,15 @@ const (
 	AntiLeftOuterSemiJoin
 )
 
-// IsOuterJoin returns if this joiner is a outer joiner
+// IsOuterJoin returns if this joiner is an outer joiner
 func (tp JoinType) IsOuterJoin() bool {
 	return tp == LeftOuterJoin || tp == RightOuterJoin ||
+		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
+}
+
+// IsSemiJoin returns if this joiner is a semi/anti-semi joiner
+func (tp JoinType) IsSemiJoin() bool {
+	return tp == SemiJoin || tp == AntiSemiJoin ||
 		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
 }
 
@@ -147,10 +153,22 @@ type LogicalJoin struct {
 	// Currently, only `aggregation push down` phase will set this.
 	DefaultValues []types.Datum
 
-	// redundantSchema contains columns which are eliminated in join.
-	// For select * from a join b using (c); a.c will in output schema, and b.c will only in redundantSchema.
-	redundantSchema *expression.Schema
-	redundantNames  types.NameSlice
+	// fullSchema contains all the columns that the Join can output. It's ordered as [outer schema..., inner schema...].
+	// This is useful for natural joins and "using" joins. In these cases, the join key columns from the
+	// inner side (or the right side when it's an inner join) will not be in the schema of Join.
+	// But upper operators should be able to find those "redundant" columns, and the user also can specifically select
+	// those columns, so we put the "redundant" columns here to make them be able to be found.
+	//
+	// For example:
+	// create table t1(a int, b int); create table t2(a int, b int);
+	// select * from t1 join t2 using (b);
+	// schema of the Join will be [t1.b, t1.a, t2.a]; fullSchema will be [t1.a, t1.b, t2.a, t2.b].
+	//
+	// We record all columns and keep them ordered is for correctly handling SQLs like
+	// select t1.*, t2.* from t1 join t2 using (b);
+	// (*PlanBuilder).unfoldWildStar() handles the schema for such case.
+	fullSchema *expression.Schema
+	fullNames  types.NameSlice
 
 	// equalCondOutCnt indicates the estimated count of joined rows after evaluating `EqualConditions`.
 	equalCondOutCnt float64
@@ -537,7 +555,7 @@ type DataSource struct {
 	// pushedDownConds are the conditions that will be pushed down to coprocessor.
 	pushedDownConds []expression.Expression
 	// allConds contains all the filters on this table. For now it's maintained
-	// in predicate push down and used only in partition pruning.
+	// in predicate push down and used in partition pruning/index merge.
 	allConds []expression.Expression
 
 	statisticTable *statistics.Table
@@ -574,6 +592,10 @@ type DataSource struct {
 	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
 	// 2. isolation level is RC
 	isForUpdateRead bool
+
+	// contain unique index and the first field is tidb_shard(),
+	// such as (tidb_shard(a), a ...), the fields are more than 2
+	containExprPrefixUk bool
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -714,7 +736,6 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 	if len(conds) == 0 {
 		return nil
 	}
-	sc := ds.ctx.GetSessionVars().StmtCtx
 	if len(path.IdxCols) != 0 {
 		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.ctx, conds, path.IdxCols, path.IdxColLens)
 		if err != nil {
@@ -732,7 +753,7 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 				path.ConstCols[i] = res.ColumnValues[i] != nil
 			}
 		}
-		path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(sc, path.Index.ID, path.Ranges)
+		path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(ds.ctx, path.Index.ID, path.Ranges)
 		if err != nil {
 			return err
 		}
@@ -773,7 +794,6 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 		return ds.deriveCommonHandleTablePathStats(path, conds, isIm)
 	}
 	var err error
-	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.CountAfterAccess = float64(ds.statisticTable.Count)
 	path.TableFilters = conds
 	var pkCol *expression.Column
@@ -832,11 +852,11 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 		path.CountAfterAccess = 1
 		return nil
 	}
-	path.Ranges, err = ranger.BuildTableRange(path.AccessConds, sc, pkCol.RetType)
+	path.Ranges, err = ranger.BuildTableRange(path.AccessConds, ds.ctx, pkCol.RetType)
 	if err != nil {
 		return err
 	}
-	path.CountAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(sc, pkCol.ID, path.Ranges)
+	path.CountAfterAccess, err = ds.statisticTable.GetRowCountByIntColumnRanges(ds.ctx, pkCol.ID, path.Ranges)
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	if path.CountAfterAccess < ds.stats.RowCount && !isIm {
@@ -846,7 +866,6 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 }
 
 func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Expression) error {
-	sc := ds.ctx.GetSessionVars().StmtCtx
 	path.Ranges = ranger.FullRange()
 	path.CountAfterAccess = float64(ds.statisticTable.Count)
 	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
@@ -888,7 +907,7 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 				path.ConstCols[i] = res.ColumnValues[i] != nil
 			}
 		}
-		path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(sc, path.Index.ID, path.Ranges)
+		path.CountAfterAccess, err = ds.tableStats.HistColl.GetRowCountByIndexRanges(ds.ctx, path.Index.ID, path.Ranges)
 		if err != nil {
 			return err
 		}
@@ -1036,26 +1055,17 @@ type LogicalLimit struct {
 	limitHints limitHintInfo
 }
 
-// extraPIDInfo is used by SelectLock on partitioned table, the TableReader need
-// to return the partition id column.
-// Because SelectLock has to used that partition id to encode the lock key.
-// the child of SelectLock may be Join, so that table can be multiple extra PID columns.
-// fields are for each of the table, and TblIDs are the corresponding table IDs.
-type extraPIDInfo struct {
-	Columns []*expression.Column
-	TblIDs  []int64
-}
-
 // LogicalLock represents a select lock plan.
 type LogicalLock struct {
 	baseLogicalPlan
 
-	Lock             *ast.SelectLockInfo
-	tblID2Handle     map[int64][]HandleCols
-	partitionedTable []table.PartitionedTable
-	// extraPIDInfo is used when it works on partition table, the child executor
-	// need to return an extra partition ID column in the chunk row.
-	extraPIDInfo
+	Lock         *ast.SelectLockInfo
+	tblID2Handle map[int64][]HandleCols
+
+	// tblID2phyTblIDCol is used for partitioned tables,
+	// the child executor need to return an extra column containing
+	// the Physical Table ID (i.e. from which partition the row came from)
+	tblID2PhysTblIDCol map[int64]*expression.Column
 }
 
 // WindowFrame represents a window function frame.
@@ -1252,6 +1262,8 @@ type ShowContents struct {
 type LogicalShow struct {
 	logicalSchemaProducer
 	ShowContents
+
+	Extractor ShowPredicateExtractor
 }
 
 // LogicalShowDDLJobs is for showing DDL job list.
@@ -1275,10 +1287,11 @@ type CTEClass struct {
 	// storageID for this CTE.
 	IDForStorage int
 	// optFlag is the optFlag for the whole CTE.
-	optFlag  uint64
-	HasLimit bool
-	LimitBeg uint64
-	LimitEnd uint64
+	optFlag   uint64
+	HasLimit  bool
+	LimitBeg  uint64
+	LimitEnd  uint64
+	IsInApply bool
 }
 
 // LogicalCTE is for CTE.
@@ -1297,6 +1310,9 @@ type LogicalCTETable struct {
 	seedStat     *property.StatsInfo
 	name         string
 	idForStorage int
+
+	// seedSchema is only used in columnStatsUsageCollector to get column mapping
+	seedSchema *expression.Schema
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.

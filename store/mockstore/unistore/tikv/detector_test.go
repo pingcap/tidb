@@ -36,8 +36,6 @@ import (
 )
 
 func TestDeadlock(t *testing.T) {
-	t.Parallel()
-
 	makeDiagCtx := func(key string, resourceGroupTag string) diagnosticContext {
 		return diagnosticContext{
 			key:              []byte(key),
@@ -55,20 +53,20 @@ func TestDeadlock(t *testing.T) {
 	expireInterval := 100 * time.Millisecond
 	urgentSize := uint64(1)
 	detector := NewDetector(ttl, urgentSize, expireInterval)
-	err := detector.Detect(1, 2, 100, makeDiagCtx("k1", "tag1"))
-	require.Nil(t, err)
+	result := detector.Detect(1, 2, 100, makeDiagCtx("k1", "tag1"))
+	require.Nil(t, result)
 	require.Equal(t, uint64(1), detector.totalSize)
-	err = detector.Detect(2, 3, 200, makeDiagCtx("k2", "tag2"))
-	require.Nil(t, err)
+	result = detector.Detect(2, 3, 200, makeDiagCtx("k2", "tag2"))
+	require.Nil(t, result)
 	require.Equal(t, uint64(2), detector.totalSize)
-	err = detector.Detect(3, 1, 300, makeDiagCtx("k3", "tag3"))
-	require.NotNil(t, err)
-	require.Equal(t, "deadlock", err.Error())
-	require.Equal(t, 3, len(err.WaitChain))
+	result = detector.Detect(3, 1, 300, makeDiagCtx("k3", "tag3"))
+	require.NotNil(t, result)
+	require.Equal(t, "deadlock", result.Error())
+	require.Equal(t, 3, len(result.WaitChain))
 	// The order of entries in the wait chain is specific: each item is waiting for the next one.
-	checkWaitChainEntry(err.WaitChain[0], 1, 2, "k1", "tag1")
-	checkWaitChainEntry(err.WaitChain[1], 2, 3, "k2", "tag2")
-	checkWaitChainEntry(err.WaitChain[2], 3, 1, "k3", "tag3")
+	checkWaitChainEntry(result.WaitChain[0], 1, 2, "k1", "tag1")
+	checkWaitChainEntry(result.WaitChain[1], 2, 3, "k2", "tag2")
+	checkWaitChainEntry(result.WaitChain[2], 3, 1, "k3", "tag3")
 
 	require.Equal(t, uint64(2), detector.totalSize)
 	detector.CleanUp(2)
@@ -78,21 +76,21 @@ func TestDeadlock(t *testing.T) {
 
 	// After cycle is broken, no deadlock now.
 	diagCtx := diagnosticContext{}
-	err = detector.Detect(3, 1, 300, diagCtx)
-	require.Nil(t, err)
+	result = detector.Detect(3, 1, 300, diagCtx)
+	require.Nil(t, result)
 	list3 := detector.waitForMap[3]
 	require.Equal(t, 1, list3.txns.Len())
 	require.Equal(t, uint64(2), detector.totalSize)
 
 	// Different keyHash grows the list.
-	err = detector.Detect(3, 1, 400, diagCtx)
-	require.Nil(t, err)
+	result = detector.Detect(3, 1, 400, diagCtx)
+	require.Nil(t, result)
 	require.Equal(t, 2, list3.txns.Len())
 	require.Equal(t, uint64(3), detector.totalSize)
 
 	// Same waitFor and key hash doesn't grow the list.
-	err = detector.Detect(3, 1, 400, diagCtx)
-	require.Nil(t, err)
+	result = detector.Detect(3, 1, 400, diagCtx)
+	require.Nil(t, result)
 	require.Equal(t, 2, list3.txns.Len())
 	require.Equal(t, uint64(3), detector.totalSize)
 
@@ -106,16 +104,16 @@ func TestDeadlock(t *testing.T) {
 
 	// after 100ms, all entries expired, detect non exist edges
 	time.Sleep(100 * time.Millisecond)
-	err = detector.Detect(100, 200, 100, diagCtx)
-	require.Nil(t, err)
+	result = detector.Detect(100, 200, 100, diagCtx)
+	require.Nil(t, result)
 	require.Equal(t, uint64(1), detector.totalSize)
 	require.Equal(t, 1, len(detector.waitForMap))
 
 	// expired entry should not report deadlock, detect will remove this entry
 	// not dependent on expire check interval
 	time.Sleep(60 * time.Millisecond)
-	err = detector.Detect(200, 100, 200, diagCtx)
-	require.Nil(t, err)
+	result = detector.Detect(200, 100, 200, diagCtx)
+	require.Nil(t, result)
 	require.Equal(t, uint64(1), detector.totalSize)
 	require.Equal(t, 1, len(detector.waitForMap))
 }

@@ -24,13 +24,18 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/stretchr/testify/require"
 )
+
+// initProgressOnce is used to ensure init progress once to avoid data race.
+var initProgressOnce sync.Once
 
 type lightningServerSuite struct {
 	lightning *Lightning
@@ -39,6 +44,8 @@ type lightningServerSuite struct {
 }
 
 func createSuite(t *testing.T) (s *lightningServerSuite, clean func()) {
+	initProgressOnce.Do(web.EnableCurrentProgress)
+
 	cfg := config.NewGlobalConfig()
 	cfg.TiDB.Host = "test.invalid"
 	cfg.TiDB.Port = 4000
@@ -92,7 +99,7 @@ func TestRunServer(t *testing.T) {
 	resp, err = http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
-	require.Regexp(t, ".*"+http.MethodPost+".*", resp.Header.Get("Allow"))
+	require.Contains(t, resp.Header.Get("Allow"), http.MethodPost)
 	require.NoError(t, resp.Body.Close())
 
 	resp, err = http.Post(url, "application/toml", strings.NewReader("????"))
@@ -101,7 +108,7 @@ func TestRunServer(t *testing.T) {
 	err = json.NewDecoder(resp.Body).Decode(&data)
 	require.NoError(t, err)
 	require.Contains(t, data, "error")
-	require.Regexp(t, "cannot parse task.*", data["error"])
+	require.Regexp(t, "^cannot parse task", data["error"])
 	require.NoError(t, resp.Body.Close())
 
 	resp, err = http.Post(url, "application/toml", strings.NewReader("[mydumper.csv]\nseparator = 'fooo'\ndelimiter= 'foo'"))
@@ -110,7 +117,7 @@ func TestRunServer(t *testing.T) {
 	err = json.NewDecoder(resp.Body).Decode(&data)
 	require.NoError(t, err)
 	require.Contains(t, data, "error")
-	require.Regexp(t, "invalid task configuration:.*", data["error"])
+	require.Regexp(t, "^invalid task configuration:", data["error"])
 	require.NoError(t, resp.Body.Close())
 
 	for i := 0; i < 20; i++ {
@@ -306,6 +313,7 @@ func TestHTTPAPIOutsideServerMode(t *testing.T) {
 
 	errCh := make(chan error)
 	cfg := config.NewConfig()
+	cfg.TiDB.DistSQLScanConcurrency = 4
 	err := cfg.LoadFromGlobal(s.lightning.globalCfg)
 	require.NoError(t, err)
 	go func() {

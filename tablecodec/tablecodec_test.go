@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/stretchr/testify/require"
 )
@@ -34,7 +35,6 @@ import (
 // TestTableCodec  tests some functions in package tablecodec
 // TODO: add more tests.
 func TestTableCodec(t *testing.T) {
-	t.Parallel()
 	key := EncodeRowKey(1, codec.EncodeInt(nil, 2))
 	h, err := DecodeRowKey(key)
 	require.NoError(t, err)
@@ -46,6 +46,20 @@ func TestTableCodec(t *testing.T) {
 	require.Equal(t, int64(2), h.IntValue())
 }
 
+// https://github.com/pingcap/tidb/issues/27687.
+func TestTableCodecInvalid(t *testing.T) {
+	tableID := int64(100)
+	buf := make([]byte, 0, 11)
+	buf = append(buf, 't')
+	buf = codec.EncodeInt(buf, tableID)
+	buf = append(buf, '_', 'r')
+	buf = codec.EncodeInt(buf, -9078412423848787968)
+	buf = append(buf, '0')
+	_, err := DecodeRowKey(buf)
+	require.NotNil(t, err)
+	require.Equal(t, "invalid encoded key", err.Error())
+}
+
 // column is a structure used for test
 type column struct {
 	id int64
@@ -53,7 +67,6 @@ type column struct {
 }
 
 func TestRowCodec(t *testing.T) {
-	t.Parallel()
 	c1 := &column{id: 1, tp: types.NewFieldType(mysql.TypeLonglong)}
 	c2 := &column{id: 2, tp: types.NewFieldType(mysql.TypeVarchar)}
 	c3 := &column{id: 3, tp: types.NewFieldType(mysql.TypeNewDecimal)}
@@ -93,7 +106,7 @@ func TestRowCodec(t *testing.T) {
 	for i, col := range cols {
 		v, ok := r[col.id]
 		require.True(t, ok)
-		equal, err1 := v.CompareDatum(sc, &row[i])
+		equal, err1 := v.Compare(sc, &row[i], collate.GetBinaryCollator())
 		require.NoError(t, err1)
 		require.Equalf(t, 0, equal, "expect: %v, got %v", row[i], v)
 	}
@@ -107,7 +120,7 @@ func TestRowCodec(t *testing.T) {
 	for i, col := range cols {
 		v, ok := r[col.id]
 		require.True(t, ok)
-		equal, err1 := v.CompareDatum(sc, &row[i])
+		equal, err1 := v.Compare(sc, &row[i], collate.GetBinaryCollator())
 		require.NoError(t, err1)
 		require.Equal(t, 0, equal)
 	}
@@ -125,7 +138,7 @@ func TestRowCodec(t *testing.T) {
 		}
 		v, ok := r[col.id]
 		require.True(t, ok)
-		equal, err1 := v.CompareDatum(sc, &row[i])
+		equal, err1 := v.Compare(sc, &row[i], collate.GetBinaryCollator())
 		require.NoError(t, err1)
 		require.Equal(t, 0, equal)
 	}
@@ -141,7 +154,6 @@ func TestRowCodec(t *testing.T) {
 }
 
 func TestDecodeColumnValue(t *testing.T) {
-	t.Parallel()
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 
 	// test timestamp
@@ -154,7 +166,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	tp := types.NewFieldType(mysql.TypeTimestamp)
 	d1, err := DecodeColumnValue(bs, tp, sc.TimeZone)
 	require.NoError(t, err)
-	cmp, err := d1.CompareDatum(sc, &d)
+	cmp, err := d1.Compare(sc, &d, collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
@@ -171,7 +183,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	tp.Elems = elems
 	d1, err = DecodeColumnValue(bs, tp, sc.TimeZone)
 	require.NoError(t, err)
-	cmp, err = d1.CompareDatum(sc, &d)
+	cmp, err = d1.Compare(sc, &d, collate.GetCollator(tp.Collate))
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
@@ -186,7 +198,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	tp.Flen = 24
 	d1, err = DecodeColumnValue(bs, tp, sc.TimeZone)
 	require.NoError(t, err)
-	cmp, err = d1.CompareDatum(sc, &d)
+	cmp, err = d1.Compare(sc, &d, collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
@@ -200,19 +212,18 @@ func TestDecodeColumnValue(t *testing.T) {
 	tp = types.NewFieldType(mysql.TypeEnum)
 	d1, err = DecodeColumnValue(bs, tp, sc.TimeZone)
 	require.NoError(t, err)
-	cmp, err = d1.CompareDatum(sc, &d)
+	cmp, err = d1.Compare(sc, &d, collate.GetCollator(tp.Collate))
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 }
 
 func TestUnflattenDatums(t *testing.T) {
-	t.Parallel()
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	input := types.MakeDatums(int64(1))
 	tps := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	output, err := UnflattenDatums(input, tps, sc.TimeZone)
 	require.NoError(t, err)
-	cmp, err := input[0].CompareDatum(sc, &output[0])
+	cmp, err := input[0].Compare(sc, &output[0], collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
@@ -221,14 +232,13 @@ func TestUnflattenDatums(t *testing.T) {
 	tps[0].Collate = "utf8mb4_unicode_ci"
 	output, err = UnflattenDatums(input, tps, sc.TimeZone)
 	require.NoError(t, err)
-	cmp, err = input[0].CompareDatum(sc, &output[0])
+	cmp, err = input[0].Compare(sc, &output[0], collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 	require.Equal(t, "utf8mb4_unicode_ci", output[0].Collation())
 }
 
 func TestTimeCodec(t *testing.T) {
-	t.Parallel()
 	c1 := &column{id: 1, tp: types.NewFieldType(mysql.TypeLonglong)}
 	c2 := &column{id: 2, tp: types.NewFieldType(mysql.TypeVarchar)}
 	c3 := &column{id: 3, tp: types.NewFieldType(mysql.TypeTimestamp)}
@@ -271,14 +281,13 @@ func TestTimeCodec(t *testing.T) {
 	for i, col := range cols {
 		v, ok := r[col.id]
 		require.True(t, ok)
-		equal, err1 := v.CompareDatum(sc, &row[i])
+		equal, err1 := v.Compare(sc, &row[i], collate.GetBinaryCollator())
 		require.Nil(t, err1)
 		require.Equal(t, 0, equal)
 	}
 }
 
 func TestCutRow(t *testing.T) {
-	t.Parallel()
 	var err error
 	c1 := &column{id: 1, tp: types.NewFieldType(mysql.TypeLonglong)}
 	c2 := &column{id: 2, tp: types.NewFieldType(mysql.TypeVarchar)}
@@ -331,7 +340,6 @@ func TestCutRow(t *testing.T) {
 }
 
 func TestCutKeyNew(t *testing.T) {
-	t.Parallel()
 	values := []types.Datum{types.NewIntDatum(1), types.NewBytesDatum([]byte("abc")), types.NewFloat64Datum(5.5)}
 	handle := types.NewIntDatum(100)
 	values = append(values, handle)
@@ -354,7 +362,6 @@ func TestCutKeyNew(t *testing.T) {
 }
 
 func TestCutKey(t *testing.T) {
-	t.Parallel()
 	colIDs := []int64{1, 2, 3}
 	values := []types.Datum{types.NewIntDatum(1), types.NewBytesDatum([]byte("abc")), types.NewFloat64Datum(5.5)}
 	handle := types.NewIntDatum(100)
@@ -391,7 +398,6 @@ func TestDecodeBadDecical(t *testing.T) {
 }
 
 func TestIndexKey(t *testing.T) {
-	t.Parallel()
 	tableID := int64(4)
 	indexID := int64(5)
 	indexKey := EncodeIndexSeekKey(tableID, indexID, []byte{})
@@ -403,7 +409,6 @@ func TestIndexKey(t *testing.T) {
 }
 
 func TestRecordKey(t *testing.T) {
-	t.Parallel()
 	tableID := int64(55)
 	tableKey := EncodeRowKeyWithHandle(tableID, kv.IntHandle(math.MaxUint32))
 	tTableID, _, isRecordKey, err := DecodeKeyHead(tableKey)
@@ -431,7 +436,6 @@ func TestRecordKey(t *testing.T) {
 }
 
 func TestPrefix(t *testing.T) {
-	t.Parallel()
 	const tableID int64 = 66
 	key := EncodeTablePrefix(tableID)
 	tTableID := DecodeTableID(key)
@@ -457,7 +461,6 @@ func TestPrefix(t *testing.T) {
 }
 
 func TestDecodeIndexKey(t *testing.T) {
-	t.Parallel()
 	tableID := int64(4)
 	indexID := int64(5)
 	values := []types.Datum{
@@ -492,7 +495,6 @@ func TestDecodeIndexKey(t *testing.T) {
 }
 
 func TestCutPrefix(t *testing.T) {
-	t.Parallel()
 	key := EncodeTableIndexPrefix(42, 666)
 	res := CutRowKeyPrefix(key)
 	require.Equal(t, []byte{0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2, 0x9a}, res)
@@ -501,7 +503,6 @@ func TestCutPrefix(t *testing.T) {
 }
 
 func TestRange(t *testing.T) {
-	t.Parallel()
 	s1, e1 := GetTableHandleKeyRange(22)
 	s2, e2 := GetTableHandleKeyRange(23)
 	require.Less(t, string(s1), string(e1))
@@ -516,7 +517,6 @@ func TestRange(t *testing.T) {
 }
 
 func TestDecodeAutoIDMeta(t *testing.T) {
-	t.Parallel()
 	keyBytes := []byte{0x6d, 0x44, 0x42, 0x3a, 0x35, 0x36, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x31, 0x30, 0x38, 0x0, 0xfe}
 	key, field, err := DecodeMetaKey(keyBytes)
 	require.NoError(t, err)
@@ -563,7 +563,6 @@ func BenchmarkEncodeValue(b *testing.B) {
 }
 
 func TestError(t *testing.T) {
-	t.Parallel()
 	kvErrs := []*terror.Error{
 		errInvalidKey,
 		errInvalidRecordKey,
@@ -577,7 +576,6 @@ func TestError(t *testing.T) {
 }
 
 func TestUntouchedIndexKValue(t *testing.T) {
-	t.Parallel()
 	untouchedIndexKey := []byte("t00000001_i000000001")
 	untouchedIndexValue := []byte{0, 0, 0, 0, 0, 0, 0, 1, 49}
 	require.True(t, IsUntouchedIndexKValue(untouchedIndexKey, untouchedIndexValue))

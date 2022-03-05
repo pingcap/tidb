@@ -16,14 +16,17 @@ package ddl
 
 import (
 	"context"
+	"fmt"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
 
 type testCtxKeyType int
@@ -34,226 +37,249 @@ func (k testCtxKeyType) String() string {
 
 const testCtxKey testCtxKeyType = 0
 
-func (s *testDDLSuite) TestReorg(c *C) {
-	store := testCreateStore(c, "test_reorg")
-	defer func() {
-		err := store.Close()
-		c.Assert(err, IsNil)
-	}()
-
-	d := testNewDDLAndStart(
-		context.Background(),
-		c,
-		WithStore(store),
-		WithLease(testLease),
-	)
-	defer func() {
-		err := d.Stop()
-		c.Assert(err, IsNil)
-	}()
-
-	time.Sleep(testLease)
-
-	ctx := testNewContext(d)
-
-	ctx.SetValue(testCtxKey, 1)
-	c.Assert(ctx.Value(testCtxKey), Equals, 1)
-	ctx.ClearValue(testCtxKey)
-
-	err := ctx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
-	txn, err := ctx.Txn(true)
-	c.Assert(err, IsNil)
-	err = txn.Set([]byte("a"), []byte("b"))
-	c.Assert(err, IsNil)
-	err = txn.Rollback()
-	c.Assert(err, IsNil)
-
-	err = ctx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
-	txn, err = ctx.Txn(true)
-	c.Assert(err, IsNil)
-	err = txn.Set([]byte("a"), []byte("b"))
-	c.Assert(err, IsNil)
-	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-
-	rowCount := int64(10)
-	handle := s.NewHandle().Int(100).Common("a", 100, "string")
-	f := func() error {
-		d.generalWorker().reorgCtx.setRowCount(rowCount)
-		d.generalWorker().reorgCtx.setNextKey(handle.Encoded())
-		time.Sleep(1*ReorgWaitTimeout + 100*time.Millisecond)
-		return nil
+func TestReorg(t *testing.T) {
+	tests := []struct {
+		isCommonHandle bool
+		handle         kv.Handle
+		startKey       kv.Handle
+		endKey         kv.Handle
+	}{
+		{
+			false,
+			kv.IntHandle(100),
+			kv.IntHandle(1),
+			kv.IntHandle(0),
+		},
+		{
+			true,
+			testutil.MustNewCommonHandle(t, "a", 100, "string"),
+			testutil.MustNewCommonHandle(t, 100, "string"),
+			testutil.MustNewCommonHandle(t, 101, "string"),
+		},
 	}
-	job := &model.Job{
-		ID:          1,
-		SnapshotVer: 1, // Make sure it is not zero. So the reorgInfo's first is false.
-	}
-	err = ctx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
-	txn, err = ctx.Txn(true)
-	c.Assert(err, IsNil)
-	m := meta.NewMeta(txn)
-	e := &meta.Element{ID: 333, TypeKey: meta.IndexElementKey}
-	rInfo := &reorgInfo{
-		Job:         job,
-		currElement: e,
-	}
-	mockTbl := tables.MockTableFromMeta(&model.TableInfo{IsCommonHandle: s.IsCommonHandle, CommonHandleVersion: 1})
-	err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, f)
-	c.Assert(err, NotNil)
 
-	// The longest to wait for 5 seconds to make sure the function of f is returned.
-	for i := 0; i < 1000; i++ {
-		time.Sleep(5 * time.Millisecond)
-		err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, f)
-		if err == nil {
-			c.Assert(job.RowCount, Equals, rowCount)
-			c.Assert(d.generalWorker().reorgCtx.rowCount, Equals, int64(0))
+	for _, test := range tests {
+		t.Run(fmt.Sprintf("isCommandHandle(%v)", test.isCommonHandle), func(t *testing.T) {
+			store := createMockStore(t)
+			defer func() {
+				require.NoError(t, store.Close())
+			}()
 
-			// Test whether reorgInfo's Handle is update.
-			err = txn.Commit(context.Background())
-			c.Assert(err, IsNil)
+			d, err := testNewDDLAndStart(
+				context.Background(),
+				WithStore(store),
+				WithLease(testLease),
+			)
+			require.NoError(t, err)
+			defer func() {
+				err := d.Stop()
+				require.NoError(t, err)
+			}()
+
+			time.Sleep(testLease)
+
+			ctx := testNewContext(d)
+
+			ctx.SetValue(testCtxKey, 1)
+			require.Equal(t, ctx.Value(testCtxKey), 1)
+			ctx.ClearValue(testCtxKey)
+
 			err = ctx.NewTxn(context.Background())
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
+			txn, err := ctx.Txn(true)
+			require.NoError(t, err)
+			err = txn.Set([]byte("a"), []byte("b"))
+			require.NoError(t, err)
+			err = txn.Rollback()
+			require.NoError(t, err)
 
-			m = meta.NewMeta(txn)
-			info, err1 := getReorgInfo(d.ddlCtx, m, job, mockTbl, nil)
-			c.Assert(err1, IsNil)
-			c.Assert(info.StartKey, DeepEquals, kv.Key(handle.Encoded()))
-			c.Assert(info.currElement, DeepEquals, e)
-			_, doneHandle, _ := d.generalWorker().reorgCtx.getRowCountAndKey()
-			c.Assert(doneHandle, IsNil)
-			break
-		}
+			err = ctx.NewTxn(context.Background())
+			require.NoError(t, err)
+			txn, err = ctx.Txn(true)
+			require.NoError(t, err)
+			err = txn.Set([]byte("a"), []byte("b"))
+			require.NoError(t, err)
+			err = txn.Commit(context.Background())
+			require.NoError(t, err)
+
+			rowCount := int64(10)
+			handle := test.handle
+			f := func() error {
+				d.generalWorker().reorgCtx.setRowCount(rowCount)
+				d.generalWorker().reorgCtx.setNextKey(handle.Encoded())
+				time.Sleep(1*ReorgWaitTimeout + 100*time.Millisecond)
+				return nil
+			}
+			job := &model.Job{
+				ID:          1,
+				SnapshotVer: 1, // Make sure it is not zero. So the reorgInfo's first is false.
+			}
+			err = ctx.NewTxn(context.Background())
+			require.NoError(t, err)
+			txn, err = ctx.Txn(true)
+			require.NoError(t, err)
+			m := meta.NewMeta(txn)
+			e := &meta.Element{ID: 333, TypeKey: meta.IndexElementKey}
+			rInfo := &reorgInfo{
+				Job:         job,
+				currElement: e,
+			}
+			mockTbl := tables.MockTableFromMeta(&model.TableInfo{IsCommonHandle: test.isCommonHandle, CommonHandleVersion: 1})
+			err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, f)
+			require.Error(t, err)
+
+			// The longest to wait for 5 seconds to make sure the function of f is returned.
+			for i := 0; i < 1000; i++ {
+				time.Sleep(5 * time.Millisecond)
+				err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, f)
+				if err == nil {
+					require.Equal(t, job.RowCount, rowCount)
+					require.Equal(t, d.generalWorker().reorgCtx.rowCount, int64(0))
+
+					// Test whether reorgInfo's Handle is update.
+					err = txn.Commit(context.Background())
+					require.NoError(t, err)
+					err = ctx.NewTxn(context.Background())
+					require.NoError(t, err)
+
+					m = meta.NewMeta(txn)
+					info, err1 := getReorgInfo(d.ddlCtx, m, job, mockTbl, nil)
+					require.NoError(t, err1)
+					require.Equal(t, info.StartKey, kv.Key(handle.Encoded()))
+					require.Equal(t, info.currElement, e)
+					_, doneHandle, _ := d.generalWorker().reorgCtx.getRowCountAndKey()
+					require.Nil(t, doneHandle)
+					break
+				}
+			}
+			require.NoError(t, err)
+
+			job = &model.Job{
+				ID:          2,
+				SchemaID:    1,
+				Type:        model.ActionCreateSchema,
+				Args:        []interface{}{model.NewCIStr("test")},
+				SnapshotVer: 1, // Make sure it is not zero. So the reorgInfo's first is false.
+			}
+
+			element := &meta.Element{ID: 123, TypeKey: meta.ColumnElementKey}
+			info := &reorgInfo{
+				Job:             job,
+				d:               d.ddlCtx,
+				currElement:     element,
+				StartKey:        test.startKey.Encoded(),
+				EndKey:          test.endKey.Encoded(),
+				PhysicalTableID: 456,
+			}
+			err = kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+				m := meta.NewMeta(txn)
+				var err1 error
+				_, err1 = getReorgInfo(d.ddlCtx, m, job, mockTbl, []*meta.Element{element})
+				require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err1))
+				require.Equal(t, job.SnapshotVer, uint64(0))
+				return nil
+			})
+			require.NoError(t, err)
+			job.SnapshotVer = uint64(1)
+			err = info.UpdateReorgMeta(info.StartKey)
+			require.NoError(t, err)
+			err = kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+				m := meta.NewMeta(txn)
+				info1, err1 := getReorgInfo(d.ddlCtx, m, job, mockTbl, []*meta.Element{element})
+				require.NoError(t, err1)
+				require.Equal(t, info1.currElement, info.currElement)
+				require.Equal(t, info1.StartKey, info.StartKey)
+				require.Equal(t, info1.EndKey, info.EndKey)
+				require.Equal(t, info1.PhysicalTableID, info.PhysicalTableID)
+				return nil
+			})
+			require.NoError(t, err)
+
+			err = d.Stop()
+			require.NoError(t, err)
+			err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, func() error {
+				time.Sleep(4 * testLease)
+				return nil
+			})
+			require.Error(t, err)
+			txn, err = ctx.Txn(true)
+			require.NoError(t, err)
+			err = txn.Commit(context.Background())
+			require.NoError(t, err)
+		})
 	}
-	c.Assert(err, IsNil)
-
-	job = &model.Job{
-		ID:          2,
-		SchemaID:    1,
-		Type:        model.ActionCreateSchema,
-		Args:        []interface{}{model.NewCIStr("test")},
-		SnapshotVer: 1, // Make sure it is not zero. So the reorgInfo's first is false.
-	}
-
-	element := &meta.Element{ID: 123, TypeKey: meta.ColumnElementKey}
-	info := &reorgInfo{
-		Job:             job,
-		d:               d.ddlCtx,
-		currElement:     element,
-		StartKey:        s.NewHandle().Int(1).Common(100, "string").Encoded(),
-		EndKey:          s.NewHandle().Int(0).Common(101, "string").Encoded(),
-		PhysicalTableID: 456,
-	}
-	err = kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		var err1 error
-		_, err1 = getReorgInfo(d.ddlCtx, t, job, mockTbl, []*meta.Element{element})
-		c.Assert(meta.ErrDDLReorgElementNotExist.Equal(err1), IsTrue)
-		c.Assert(job.SnapshotVer, Equals, uint64(0))
-		return nil
-	})
-	c.Assert(err, IsNil)
-	job.SnapshotVer = uint64(1)
-	err = info.UpdateReorgMeta(info.StartKey)
-	c.Assert(err, IsNil)
-	err = kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		info1, err1 := getReorgInfo(d.ddlCtx, t, job, mockTbl, []*meta.Element{element})
-		c.Assert(err1, IsNil)
-		c.Assert(info1.currElement, DeepEquals, info.currElement)
-		c.Assert(info1.StartKey, DeepEquals, info.StartKey)
-		c.Assert(info1.EndKey, DeepEquals, info.EndKey)
-		c.Assert(info1.PhysicalTableID, Equals, info.PhysicalTableID)
-		return nil
-	})
-	c.Assert(err, IsNil)
-
-	err = d.Stop()
-	c.Assert(err, IsNil)
-	err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, func() error {
-		time.Sleep(4 * testLease)
-		return nil
-	})
-	c.Assert(err, NotNil)
-	txn, err = ctx.Txn(true)
-	c.Assert(err, IsNil)
-	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-	s.RerunWithCommonHandleEnabled(c, s.TestReorg)
 }
 
-func (s *testDDLSuite) TestReorgOwner(c *C) {
-	store := testCreateStore(c, "test_reorg_owner")
+func TestReorgOwner(t *testing.T) {
+	store := createMockStore(t)
 	defer func() {
-		err := store.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, store.Close())
 	}()
 
-	d1 := testNewDDLAndStart(
+	d1, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	require.NoError(t, err)
 	defer func() {
 		err := d1.Stop()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 
 	ctx := testNewContext(d1)
 
-	testCheckOwner(c, d1, true)
+	testCheckOwner(t, d1, true)
 
-	d2 := testNewDDLAndStart(
+	d2, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	require.NoError(t, err)
 	defer func() {
 		err := d2.Stop()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 
-	dbInfo := testSchemaInfo(c, d1, "test_reorg")
-	testCreateSchema(c, ctx, d1, dbInfo)
+	dbInfo, err := testSchemaInfo(d1, "test_reorg")
+	require.NoError(t, err)
+	testCreateSchema(t, ctx, d1, dbInfo)
 
-	tblInfo := testTableInfo(c, d1, "t", 3)
-	testCreateTable(c, ctx, d1, dbInfo, tblInfo)
-	t := testGetTable(c, d1, dbInfo.ID, tblInfo.ID)
+	tblInfo, err := testTableInfo(d1, "t", 3)
+	require.NoError(t, err)
+	testCreateTable(t, ctx, d1, dbInfo, tblInfo)
+	tbl := testGetTable(t, d1, dbInfo.ID, tblInfo.ID)
 
 	num := 10
 	for i := 0; i < num; i++ {
-		_, err := t.AddRecord(ctx, types.MakeDatums(i, i, i))
-		c.Assert(err, IsNil)
+		_, err := tbl.AddRecord(ctx, types.MakeDatums(i, i, i))
+		require.NoError(t, err)
 	}
 
 	txn, err := ctx.Txn(true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	tc := &TestDDLCallback{}
 	tc.onJobRunBefore = func(job *model.Job) {
 		if job.SchemaState == model.StateDeleteReorganization {
 			err = d1.Stop()
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 		}
 	}
 
 	d1.SetHook(tc)
 
-	testDropSchema(c, ctx, d1, dbInfo)
+	testDropSchema(t, ctx, d1, dbInfo)
 
 	err = kv.RunInNewTxn(context.Background(), d1.store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		db, err1 := t.GetDatabase(dbInfo.ID)
-		c.Assert(err1, IsNil)
-		c.Assert(db, IsNil)
+		m := meta.NewMeta(txn)
+		db, err1 := m.GetDatabase(dbInfo.ID)
+		require.NoError(t, err1)
+		require.Nil(t, db)
 		return nil
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }

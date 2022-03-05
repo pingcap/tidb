@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
@@ -40,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -294,6 +297,16 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 		}
 		prepared.SchemaVersion = is.SchemaMetaVersion()
 	}
+	// If the lastUpdateTime less than expiredTimeStamp4PC,
+	// it means other sessions have executed 'admin flush instance plan_cache'.
+	// So we need to clear the current session's plan cache.
+	// And update lastUpdateTime to the newest one.
+	expiredTimeStamp4PC := domain.GetDomain(sctx).ExpiredTimeStamp4PC()
+	if prepared.UseCache && expiredTimeStamp4PC.Compare(vars.LastUpdateTime4PC) > 0 {
+		sctx.PreparedPlanCache().DeleteAll()
+		prepared.CachedPlan = nil
+		vars.LastUpdateTime4PC = expiredTimeStamp4PC
+	}
 	err = e.getPhysicalPlan(ctx, sctx, is, preparedObj)
 	if err != nil {
 		return err
@@ -380,31 +393,51 @@ func (e *Execute) setFoundInPlanCache(sctx sessionctx.Context, opt bool) error {
 	return err
 }
 
+// GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.
+func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareStmt) string {
+	useBinding := sctx.GetSessionVars().UsePlanBaselines
+	if !useBinding || preparedStmt.PreparedAst.Stmt == nil || preparedStmt.NormalizedSQL4PC == "" || preparedStmt.SQLDigest4PC == "" {
+		return ""
+	}
+	if sctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
+		return ""
+	}
+	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+	bindRecord := sessionHandle.GetBindRecord(preparedStmt.SQLDigest4PC, preparedStmt.NormalizedSQL4PC, "")
+	if bindRecord != nil {
+		usingBinding := bindRecord.FindUsingBinding()
+		if usingBinding != nil {
+			return usingBinding.BindSQL
+		}
+	}
+	globalHandle := domain.GetDomain(sctx).BindHandle()
+	if globalHandle == nil {
+		return ""
+	}
+	bindRecord = globalHandle.GetBindRecord(preparedStmt.SQLDigest4PC, preparedStmt.NormalizedSQL4PC, "")
+	if bindRecord != nil {
+		usingBinding := bindRecord.FindUsingBinding()
+		if usingBinding != nil {
+			return usingBinding.BindSQL
+		}
+	}
+	return ""
+}
+
 func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) error {
 	var cacheKey kvcache.Key
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	prepared := preparedStmt.PreparedAst
-	if prepared.UseCache {
-		// disable the cache if cache table in prepared statement
-		for _, vInfo := range preparedStmt.VisitInfos {
-			tbl, err := is.TableByName(model.NewCIStr(vInfo.db), model.NewCIStr(vInfo.table))
-			// if table does not exist, skip it, maybe it is a `create table` statement
-			if err != nil {
-				continue
-			}
-			if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
-				prepared.UseCache = false
-				break
-			}
-		}
-	}
 	stmtCtx.UseCache = prepared.UseCache
 
+	var bindSQL string
 	if prepared.UseCache {
-		cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
+		bindSQL = GetBindSQL4PlanCache(sctx, preparedStmt)
+		cacheKey = NewPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
 	}
 	tps := make([]*types.FieldType, len(e.UsingVars))
+	varsNum := len(e.UsingVars)
 	for i, param := range e.UsingVars {
 		name := param.(*expression.ScalarFunction).GetArgs()[0].String()
 		tps[i] = sctx.GetSessionVars().UserVarTypes[name]
@@ -443,8 +476,15 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			if err := e.checkPreparedPriv(ctx, sctx, preparedStmt, is); err != nil {
 				return err
 			}
-			cachedVals := cacheValue.([]*PSTMTPlanCacheValue)
+			cachedVals := cacheValue.([]*PlanCacheValue)
 			for _, cachedVal := range cachedVals {
+				if cachedVal.BindSQL != bindSQL {
+					// When BindSQL does not match, it means that we have added a new binding,
+					// and the original cached plan will be invalid,
+					// so the original cached plan can be cleared directly
+					sctx.PreparedPlanCache().Delete(cacheKey)
+					break
+				}
 				if !cachedVal.UserVarTypes.Equal(tps) {
 					continue
 				}
@@ -468,6 +508,14 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					if err != nil {
 						return err
 					}
+					if len(bindSQL) > 0 {
+						// When the `len(bindSQL) > 0`, it means we use the binding.
+						// So we need to record this.
+						err = sessVars.SetSystemVar(variable.TiDBFoundInBinding, variable.BoolToOnOff(true))
+						if err != nil {
+							return err
+						}
+					}
 					if metrics.ResettablePlanCacheCounterFortTest {
 						metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
 					} else {
@@ -484,7 +532,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 REBUILD:
-	stmt := TryAddExtraLimit(sctx, prepared.Stmt)
+	stmt := prepared.Stmt
 	p, names, err := OptimizeAstNode(ctx, sctx, stmt, is)
 	if err != nil {
 		return err
@@ -495,43 +543,62 @@ REBUILD:
 	}
 	e.names = names
 	e.Plan = p
-	_, isTableDual := p.(*PhysicalTableDual)
-	if !isTableDual && prepared.UseCache && !stmtCtx.MaybeOverOptimized4PlanCache {
+	// We only cache the tableDual plan when the number of vars are zero.
+	if containTableDual(p) && varsNum > 0 {
+		stmtCtx.SkipPlanCache = true
+	}
+	if prepared.UseCache && !stmtCtx.SkipPlanCache {
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
-			cacheKey = NewPSTMTPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
+			cacheKey = NewPlanCacheKey(sessVars, e.ExecID, prepared.SchemaVersion)
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
-		cached := NewPSTMTPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps)
+		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps, sessVars.StmtCtx.BindSQL)
 		preparedStmt.NormalizedPlan, preparedStmt.PlanDigest = NormalizePlan(p)
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		if cacheVals, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			hitVal := false
-			for i, cacheVal := range cacheVals.([]*PSTMTPlanCacheValue) {
+			for i, cacheVal := range cacheVals.([]*PlanCacheValue) {
 				if cacheVal.UserVarTypes.Equal(tps) {
 					hitVal = true
-					cacheVals.([]*PSTMTPlanCacheValue)[i] = cached
+					cacheVals.([]*PlanCacheValue)[i] = cached
 					break
 				}
 			}
 			if !hitVal {
-				cacheVals = append(cacheVals.([]*PSTMTPlanCacheValue), cached)
+				cacheVals = append(cacheVals.([]*PlanCacheValue), cached)
 			}
 			sctx.PreparedPlanCache().Put(cacheKey, cacheVals)
 		} else {
-			sctx.PreparedPlanCache().Put(cacheKey, []*PSTMTPlanCacheValue{cached})
+			sctx.PreparedPlanCache().Put(cacheKey, []*PlanCacheValue{cached})
 		}
 	}
 	err = e.setFoundInPlanCache(sctx, false)
 	return err
 }
 
+func containTableDual(p Plan) bool {
+	_, isTableDual := p.(*PhysicalTableDual)
+	if isTableDual {
+		return true
+	}
+	physicalPlan, ok := p.(PhysicalPlan)
+	if !ok {
+		return false
+	}
+	childContainTableDual := false
+	for _, child := range physicalPlan.Children() {
+		childContainTableDual = childContainTableDual || containTableDual(child)
+	}
+	return childContainTableDual
+}
+
 // tryCachePointPlan will try to cache point execution plan, there may be some
 // short paths for these executions, currently "point select" and "point update"
 func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context,
 	preparedStmt *CachedPrepareStmt, is infoschema.InfoSchema, p Plan) error {
-	if sctx.GetSessionVars().StmtCtx.MaybeOverOptimized4PlanCache {
+	if sctx.GetSessionVars().StmtCtx.SkipPlanCache {
 		return nil
 	}
 	var (
@@ -610,6 +677,9 @@ func (e *Execute) rebuildRange(p Plan) error {
 				if err != nil {
 					return err
 				}
+				if len(ranges.Ranges) == 0 || len(ranges.AccessConds) != len(x.AccessConditions) {
+					return errors.New("failed to rebuild range: the length of the range has changed")
+				}
 				for i := range x.IndexValues {
 					x.IndexValues[i] = ranges.Ranges[0].LowVal[i]
 				}
@@ -621,9 +691,12 @@ func (e *Execute) rebuildRange(p Plan) error {
 					}
 				}
 				if pkCol != nil {
-					ranges, err := ranger.BuildTableRange(x.AccessConditions, x.ctx.GetSessionVars().StmtCtx, pkCol.RetType)
+					ranges, err := ranger.BuildTableRange(x.AccessConditions, x.ctx, pkCol.RetType)
 					if err != nil {
 						return err
+					}
+					if len(ranges) == 0 {
+						return errors.New("failed to rebuild range: the length of the range has changed")
 					}
 					x.Handle = kv.IntHandle(ranges[0].LowVal[0].GetInt64())
 				}
@@ -635,18 +708,25 @@ func (e *Execute) rebuildRange(p Plan) error {
 			// TODO: relocate the partition after rebuilding range to make PlanCache support PointGet
 			return errors.New("point get for partition table can not use plan cache")
 		}
-		if x.HandleParam != nil {
-			var iv int64
-			iv, err = x.HandleParam.Datum.ToInt64(sc)
+		if x.HandleConstant != nil {
+			dVal, err := convertConstant2Datum(sc, x.HandleConstant, x.handleFieldType)
+			if err != nil {
+				return err
+			}
+			iv, err := dVal.ToInt64(sc)
 			if err != nil {
 				return err
 			}
 			x.Handle = kv.IntHandle(iv)
 			return nil
 		}
-		for i, param := range x.IndexValueParams {
+		for i, param := range x.IndexConstants {
 			if param != nil {
-				x.IndexValues[i] = param.Datum
+				dVal, err := convertConstant2Datum(sc, param, x.ColsFieldType[i])
+				if err != nil {
+					return err
+				}
+				x.IndexValues[i] = *dVal
 			}
 		}
 		return nil
@@ -657,6 +737,9 @@ func (e *Execute) rebuildRange(p Plan) error {
 				ranges, err := ranger.DetachCondAndBuildRangeForIndex(x.ctx, x.AccessConditions, x.IdxCols, x.IdxColLens)
 				if err != nil {
 					return err
+				}
+				if len(ranges.Ranges) != len(x.IndexValues) || len(ranges.AccessConds) != len(x.AccessConditions) {
+					return errors.New("failed to rebuild range: the length of the range has changed")
 				}
 				for i := range x.IndexValues {
 					for j := range ranges.Ranges[i].LowVal {
@@ -671,9 +754,12 @@ func (e *Execute) rebuildRange(p Plan) error {
 					}
 				}
 				if pkCol != nil {
-					ranges, err := ranger.BuildTableRange(x.AccessConditions, x.ctx.GetSessionVars().StmtCtx, pkCol.RetType)
+					ranges, err := ranger.BuildTableRange(x.AccessConditions, x.ctx, pkCol.RetType)
 					if err != nil {
 						return err
+					}
+					if len(ranges) != len(x.Handles) {
+						return errors.New("failed to rebuild range: the length of the range has changed")
 					}
 					for i := range ranges {
 						x.Handles[i] = kv.IntHandle(ranges[i].LowVal[0].GetInt64())
@@ -683,8 +769,11 @@ func (e *Execute) rebuildRange(p Plan) error {
 		}
 		for i, param := range x.HandleParams {
 			if param != nil {
-				var iv int64
-				iv, err = param.Datum.ToInt64(sc)
+				dVal, err := convertConstant2Datum(sc, param, x.HandleType)
+				if err != nil {
+					return err
+				}
+				iv, err := dVal.ToInt64(sc)
 				if err != nil {
 					return err
 				}
@@ -697,7 +786,11 @@ func (e *Execute) rebuildRange(p Plan) error {
 			}
 			for j, param := range params {
 				if param != nil {
-					x.IndexValues[i][j] = param.Datum
+					dVal, err := convertConstant2Datum(sc, param, x.IndexColTypes[j])
+					if err != nil {
+						return err
+					}
+					x.IndexValues[i][j] = *dVal
 				}
 			}
 		}
@@ -732,6 +825,23 @@ func (e *Execute) rebuildRange(p Plan) error {
 		}
 	}
 	return nil
+}
+
+func convertConstant2Datum(sc *stmtctx.StatementContext, con *expression.Constant, target *types.FieldType) (*types.Datum, error) {
+	val, err := con.Eval(chunk.Row{})
+	if err != nil {
+		return nil, err
+	}
+	dVal, err := val.ConvertTo(sc, target)
+	if err != nil {
+		return nil, err
+	}
+	// The converted result must be same as original datum.
+	cmp, err := dVal.Compare(sc, &val, collate.GetCollator(target.Collate))
+	if err != nil || cmp != 0 {
+		return nil, errors.New("Convert constant to datum is failed, because the constant has changed after the covert")
+	}
+	return &dVal, nil
 }
 
 func (e *Execute) buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err error) {
@@ -774,7 +884,7 @@ func (e *Execute) buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTa
 			}
 		}
 		if pkCol != nil {
-			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sctx.GetSessionVars().StmtCtx, pkCol.RetType)
+			ts.Ranges, err = ranger.BuildTableRange(ts.AccessCondition, sctx, pkCol.RetType)
 			if err != nil {
 				return err
 			}
@@ -956,6 +1066,16 @@ type AnalyzeInfo struct {
 	TableID       statistics.AnalyzeTableID
 	Incremental   bool
 	StatsVersion  int
+	V2Options     *V2AnalyzeOptions
+}
+
+// V2AnalyzeOptions is used to hold analyze options information.
+type V2AnalyzeOptions struct {
+	PhyTableID int64
+	RawOpts    map[ast.AnalyzeOptionType]uint64
+	FilledOpts map[ast.AnalyzeOptionType]uint64
+	ColChoice  model.ColumnChoice
+	ColumnList []*model.ColumnInfo
 }
 
 // AnalyzeColumnsTask is used for analyze columns.
@@ -979,9 +1099,10 @@ type AnalyzeIndexTask struct {
 type Analyze struct {
 	baseSchemaProducer
 
-	ColTasks []AnalyzeColumnsTask
-	IdxTasks []AnalyzeIndexTask
-	Opts     map[ast.AnalyzeOptionType]uint64
+	ColTasks   []AnalyzeColumnsTask
+	IdxTasks   []AnalyzeIndexTask
+	Opts       map[ast.AnalyzeOptionType]uint64
+	OptionsMap map[int64]V2AnalyzeOptions
 }
 
 // LoadData represents a loaddata plan.
@@ -1298,6 +1419,8 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 		}
 	case *PhysicalCTE:
 		e.ctes = append(e.ctes, x)
+	case *PhysicalShuffleReceiverStub:
+		err = e.explainPlanInRowFormat(x.DataSource, "root", "", childIndent, true)
 	}
 	return
 }
@@ -1326,7 +1449,7 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan, runtimeStatsColl *execdetail
 		}
 		copStats := runtimeStatsColl.GetCopStats(explainID)
 		analyzeInfo += copStats.String()
-		actRows = fmt.Sprint(copStats.GetActRows())
+		actRows = strconv.FormatInt(copStats.GetActRows(), 10)
 	}
 	memoryInfo = "N/A"
 	memTracker := ctx.GetSessionVars().StmtCtx.MemTracker.SearchTrackerWithoutLock(p.ID())
@@ -1484,10 +1607,10 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 	switch v := p.(type) {
 	case *PhysicalIndexReader:
 		indexScan := v.IndexPlans[0].(*PhysicalIndexScan)
-		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
+		return indexScan.IsPointGetByUniqueKey(ctx), nil
 	case *PhysicalTableReader:
 		tableScan := v.TablePlans[0].(*PhysicalTableScan)
-		isPointRange := len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx)
+		isPointRange := len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPointNonNullable(ctx)
 		if !isPointRange {
 			return false, nil
 		}

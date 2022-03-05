@@ -1,3 +1,4 @@
+set names utf8mb4;
 use test;
 drop table if exists t;
 create table t(a int, b real, c bigint as ((a+1)) virtual, e real as ((b+a)));
@@ -446,14 +447,14 @@ StreamAgg	4.80	root		group by:upper(test.t.b), funcs:max(upper(test.t.b))->Colum
   └─IndexFullScan	6.00	cop[tikv]	table:t, index:expression_index_2(upper(`b`))	keep order:true
 desc format = 'brief' select count(upper(b)) from t use index() group by upper(b);
 id	estRows	task	access object	operator info
-HashAgg	6.00	root		group by:Column#9, funcs:count(Column#8)->Column#7
-└─Projection	6.00	root		upper(test.t.b)->Column#8, upper(test.t.b)->Column#9
+HashAgg	6.00	root		group by:Column#11, funcs:count(Column#10)->Column#7
+└─Projection	6.00	root		upper(test.t.b)->Column#10, upper(test.t.b)->Column#11
   └─TableReader	6.00	root		data:TableFullScan
     └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
 desc format = 'brief' select max(upper(b)) from t use index() group by upper(b);
 id	estRows	task	access object	operator info
-HashAgg	6.00	root		group by:Column#9, funcs:max(Column#8)->Column#7
-└─Projection	6.00	root		upper(test.t.b)->Column#8, upper(test.t.b)->Column#9
+HashAgg	6.00	root		group by:Column#11, funcs:max(Column#10)->Column#7
+└─Projection	6.00	root		upper(test.t.b)->Column#10, upper(test.t.b)->Column#11
   └─TableReader	6.00	root		data:TableFullScan
     └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
 drop table if exists t;
@@ -522,4 +523,97 @@ a
 b
 select @@tidb_allow_function_for_expression_index;
 @@tidb_allow_function_for_expression_index
-lower, md5, reverse, upper, vitess_hash
+lower, md5, reverse, tidb_shard, upper, vitess_hash
+CREATE TABLE `PK_S_MULTI_30_tmp` (
+`COL1` double NOT NULL,
+`COL2` double NOT NULL,
+`COL3` double DEFAULT NULL,
+PRIMARY KEY (`COL1`,`COL2`) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+insert into `PK_S_MULTI_30_tmp` values (-1.7976931348623157e308, 0, 0);
+alter table `PK_S_MULTI_30_tmp` add index  ((ceil(col1)));
+alter table `PK_S_MULTI_30_tmp` add index  ((floor(col1)));
+insert into `PK_S_MULTI_30_tmp` values (-1.7976931348623157e308, 1, 0);
+select * from  `PK_S_MULTI_30_tmp` use index (expression_index) where ceil(col1) = ceil(-1.7976931348623157e+308);
+COL1	COL2	COL3
+-1.7976931348623157e308	0	0
+-1.7976931348623157e308	1	0
+select * from  `PK_S_MULTI_30_tmp` ignore index (expression_index) where ceil(col1) = ceil(-1.7976931348623157e+308);
+COL1	COL2	COL3
+-1.7976931348623157e308	0	0
+-1.7976931348623157e308	1	0
+select * from  `PK_S_MULTI_30_tmp` use index (expression_index) where floor(col1) = floor(-1.7976931348623157e+308);
+COL1	COL2	COL3
+-1.7976931348623157e308	0	0
+-1.7976931348623157e308	1	0
+select * from  `PK_S_MULTI_30_tmp` ignore index (expression_index) where floor(col1) = floor(-1.7976931348623157e+308);
+COL1	COL2	COL3
+-1.7976931348623157e308	0	0
+-1.7976931348623157e308	1	0
+alter table PK_S_MULTI_30_tmp add index eidx ((truncate(col1, 3)));
+select * from PK_S_MULTI_30_tmp ignore index (eidx) where truncate(col1, 3) <= truncate(-1.7976931348623157e308, 3);
+COL1	COL2	COL3
+-1.7976931348623157e308	0	0
+-1.7976931348623157e308	1	0
+select * from PK_S_MULTI_30_tmp use index (eidx) where truncate(col1, 3) <= truncate(-1.7976931348623157e308, 3);
+COL1	COL2	COL3
+-1.7976931348623157e308	0	0
+-1.7976931348623157e308	1	0
+create table t004(a date);
+insert into t004 values ('2021-08-20');
+select * from t004 where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');
+a
+2021-08-20
+alter table t004 add index eidx ((timestampadd(microsecond, 1, a)));
+select * from t004 use index(eidx) where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');
+a
+2021-08-20
+select * from t004 ignore index (eidx) where timestampadd(microsecond, 1, a) = timestampadd(microsecond, 1, '2021-08-20');
+a
+2021-08-20
+drop table if exists t;
+create table t ( c_int int, c_str varchar(40) character set utf8 collate utf8_general_ci, primary key(c_int, c_str(9))  clustered, key idx((reverse(c_str))));
+replace into t (c_int, c_str) values (9, "beautiful hermann");
+select reverse(c_str) from t use index(idx);
+reverse(c_str)
+nnamreh lufituaeb
+drop table if exists t1;
+drop table if exists t2;
+create table t1 (c_int int, c_str varchar(40) character set utf8 collate utf8_general_ci, c_datetime datetime, c_timestamp timestamp, c_double double, c_decimal decimal(12, 6), c_enum enum('blue','green','red','yellow','white','orange','purple'), primary key (c_datetime) , key(c_int)  , key(c_datetime) , key((c_int + 1)), key((c_int -1)), key((lower(c_str))), key((md5(c_str))), key((reverse(c_str))), key((upper(c_str))));
+create table t2 like t1;
+insert into t1 values(11, 'loving grothendieck', '2020-02-02 19:25:49', '2020-03-27 15:17:14',     3.269, 1.851000, 'white' );
+insert into t1 values(11, 'quirky kapitsa'     , '2020-06-21 03:55:31', '2020-02-29 17:02:48',      6.94, 1.851000, 'yellow');
+insert into t1 values( 7, 'boring bouman'      , '2020-05-10 00:01:04', '2020-02-01 20:18:00', 84.096168, 6.996000, 'white' );
+insert into t2 values( 11, 'wizardly antonelli', '2020-01-30 17:27:17', '2020-01-01 10:05:31', 6.886177, 6.332000, 'green'   );
+insert into t2 values( 2, 'angry kapitsa'       , '2020-03-30 05:09:44', '2020-02-15 00:36:52', 95.798378, 3.118000, 'blue'  );
+insert into t2 values( 7, 'dreamy shamir'       , '2020-05-28 14:13:42', '2020-06-02 07:23:22', 26.623227, 3.105000, 'orange');
+begin;
+delete from t2 where c_decimal > c_double/2 order by c_int, c_str, c_double, c_decimal limit 1;
+desc format='brief' select t2.c_enum from t2,t1 where t1.c_int - 1 = t2.c_int - 1 order  by t2.c_enum;
+id	estRows	task	access object	operator info
+Sort	12487.50	root		test.t2.c_enum
+└─HashJoin	12487.50	root		inner join, equal:[eq(minus(test.t1.c_int, 1), minus(test.t2.c_int, 1))]
+  ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
+  │ └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:expression_index_2(`c_int` - 1)	keep order:false, stats:pseudo
+  └─Projection(Probe)	10000.00	root		test.t2.c_enum, minus(test.t2.c_int, 1), test.t2._tidb_rowid
+    └─UnionScan	8000.00	root		not(isnull(minus(test.t2.c_int, 1)))
+      └─Selection	8000.00	root		not(isnull(minus(test.t2.c_int, 1)))
+        └─TableReader	10000.00	root		data:TableFullScan
+          └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+select t2.c_enum from t2,t1 where t1.c_int - 1 = t2.c_int - 1 order  by t2.c_enum;
+c_enum
+orange
+drop table t1, t2;
+drop table t;
+drop table if exists t1,t2;
+create table t1 (c_int int, c_str varchar(40) ,primary key (c_int)  , key(c_str(36))  , key((c_int + 1))) partition by hash (c_int) partitions 4 ;
+create table t2  like t1 ;
+insert into t1 values (1, 'sleepy kowalevski');
+insert into t2 values (3, 'unruffled chaplygin');
+select (select t2.c_str from t2 where t2.c_int + 1 = 4 order by t2.c_str) x from t1;
+x
+unruffled chaplygin
+select (select t2.c_str from t2 where t2.c_int = 3 order by t2.c_str) x from t1;
+x
+unruffled chaplygin
+drop table t1,t2;
