@@ -579,13 +579,16 @@ func (m *Meta) CreateDDLJobTable(dbid int64) error {
 	reorgCol5.FieldType = *types.NewFieldType(mysql.TypeBlob)
 	reorgCol6.FieldType = *types.NewFieldType(mysql.TypeBlob)
 	reorgCol7.FieldType = *types.NewFieldType(mysql.TypeLonglong)
-	//reorgIdx := &model.IndexInfo{
-	//	ID:    1,
-	//Name:  model.NewCIStr("idx_job_id"),
-	//Table: model.NewCIStr("tidb_ddl_reorg"),
-	//State: model.StatePublic,
-	//Tp:    model.IndexTypeBtree,
-	//}
+	reorgIdx := &model.IndexInfo{
+		ID:    1,
+		Name:  model.NewCIStr("idx_job_id"),
+		Table: model.NewCIStr("tidb_ddl_reorg"),
+		State: model.StatePublic,
+		Tp:    model.IndexTypeBtree,
+		Columns: []*model.IndexColumn{
+			{Offset: 0},
+		},
+	}
 	id, err = m.GenGlobalID()
 	if err != nil {
 		return err
@@ -597,7 +600,7 @@ func (m *Meta) CreateDDLJobTable(dbid int64) error {
 		Collate: mysql.UTF8MB4DefaultCollation,
 		State:   model.StatePublic,
 	}
-	//reorgTableInfo.Indices = append(reorgTableInfo.Indices, reorgIdx)
+	reorgTableInfo.Indices = append(reorgTableInfo.Indices, reorgIdx)
 	reorgTableInfo.Columns = append(reorgTableInfo.Columns, reorgCol, reorgCol2, reorgCol3, reorgCol4, reorgCol5, reorgCol6, reorgCol7)
 
 	data, err = json.Marshal(reorgTableInfo)
