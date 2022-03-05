@@ -206,7 +206,11 @@ func (d *ddl) getReorgJob(sess sessionctx.Context) (*model.Job, error) {
 	if err != nil {
 		return nil, err
 	}
+	cnt := 0
 	for {
+		if cnt > 5 {
+			return nil, err
+		}
 		canRun, err := d.checkReorgJobIsRunnable(sess, job)
 		if err != nil {
 			return nil, err
@@ -237,6 +241,7 @@ func (d *ddl) getReorgJob(sess sessionctx.Context) (*model.Job, error) {
 		if err != nil {
 			return nil, err
 		}
+		cnt = cnt + 1
 	}
 }
 
