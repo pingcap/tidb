@@ -668,8 +668,10 @@ func (d *ddl) asyncNotifyWorker(job *model.Job) {
 			key = addingDDLJobGeneral
 		}
 		if d.ownerManager.IsOwner() {
+			logutil.BgLogger().Error("4444444444444444444444444444444")
 			asyncNotify(d.ddlJobCh)
 		} else {
+			logutil.BgLogger().Error("3333333333333333333333333333333333333")
 			d.asyncNotifyByEtcd(key, job)
 		}
 	} else {
@@ -717,6 +719,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	d.limitJobCh <- task
 	// worker should restart to continue handling tasks in limitJobCh, and send back through task.err
 	err := <-task.err
+	logutil.BgLogger().Error("111111111111111111111111")
 	if err != nil {
 		// The transaction of enqueuing job is failed.
 		return errors.Trace(err)
@@ -725,6 +728,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 
 	// Notice worker that we push a new job and wait the job done.
+	logutil.BgLogger().Error("2222222222222222222")
 	d.asyncNotifyWorker(job)
 	logutil.BgLogger().Info("[ddl] start DDL job", zap.String("job", job.String()), zap.String("query", job.Query))
 
