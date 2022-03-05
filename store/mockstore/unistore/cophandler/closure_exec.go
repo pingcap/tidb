@@ -302,9 +302,18 @@ func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) {
 
 	e.idxScanCtx.primaryColumnIds = idxScan.PrimaryColumnIds
 	lastColumn := e.columnInfos[len(e.columnInfos)-1]
-	if lastColumn.GetColumnId() == model.ExtraPidColID {
-		lastColumn = e.columnInfos[len(e.columnInfos)-2]
+
+	// Here it is required that ExtraPhysTblID is last
+	if lastColumn.GetColumnId() == model.ExtraPhysTblID {
 		e.idxScanCtx.columnLen--
+		lastColumn = e.columnInfos[e.idxScanCtx.columnLen-1]
+	}
+
+	// Here it is required that ExtraPidColID
+	// is after all other columns except ExtraPhysTblID
+	if lastColumn.GetColumnId() == model.ExtraPidColID {
+		e.idxScanCtx.columnLen--
+		lastColumn = e.columnInfos[e.idxScanCtx.columnLen-1]
 	}
 
 	if len(e.idxScanCtx.primaryColumnIds) == 0 {
@@ -846,6 +855,12 @@ func (e *closureExecutor) tableScanProcessCore(key, value []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Add ExtraPhysTblID if requested
+	// Assumes it is always last!
+	if e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraPhysTblID {
+		tblID := tablecodec.DecodeTableID(key)
+		e.scanCtx.chk.AppendInt64(len(e.columnInfos)-1, tblID)
+	}
 	incRow = true
 	return nil
 }
@@ -917,6 +932,12 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 				return errors.Trace(err)
 			}
 		}
+	}
+	// Add ExtraPhysTblID if requested
+	// Assumes it is always last!
+	if e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraPhysTblID {
+		tblID := tablecodec.DecodeTableID(key)
+		chk.AppendInt64(len(e.columnInfos)-1, tblID)
 	}
 	gotRow = true
 	return nil

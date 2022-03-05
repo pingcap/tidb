@@ -2132,16 +2132,29 @@ func (s *testSessionSuite2) TestDeletePanic(c *C) {
 func (s *testSessionSuite2) TestInformationSchemaCreateTime(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table t (c int)")
+	tk.MustExec(`set @@time_zone = 'Asia/Shanghai'`)
 	ret := tk.MustQuery("select create_time from information_schema.tables where table_name='t';")
 	// Make sure t1 is greater than t.
 	time.Sleep(time.Second)
 	tk.MustExec("alter table t modify c int default 11")
 	ret1 := tk.MustQuery("select create_time from information_schema.tables where table_name='t';")
+	ret2 := tk.MustQuery("show table status like 't'")
+	c.Assert(ret1.Rows()[0][0].(string), Equals, ret2.Rows()[0][11].(string))
 	t, err := types.ParseDatetime(nil, ret.Rows()[0][0].(string))
 	c.Assert(err, IsNil)
 	t1, err := types.ParseDatetime(nil, ret1.Rows()[0][0].(string))
 	c.Assert(err, IsNil)
 	r := t1.Compare(t)
+	c.Assert(r, Equals, 1)
+	// Check that time_zone changes makes the create_time different
+	tk.MustExec(`set @@time_zone = 'Europe/Amsterdam'`)
+	ret = tk.MustQuery(`select create_time from information_schema.tables where table_name='t'`)
+	ret2 = tk.MustQuery(`show table status like 't'`)
+	c.Assert(ret.Rows()[0][0].(string), Equals, ret2.Rows()[0][11].(string))
+	t, err = types.ParseDatetime(nil, ret.Rows()[0][0].(string))
+	c.Assert(err, IsNil)
+	// Asia/Shanghai 2022-02-17 17:40:05 > Europe/Amsterdam 2022-02-17 10:40:05
+	r = t1.Compare(t)
 	c.Assert(r, Equals, 1)
 }
 
@@ -2297,6 +2310,36 @@ func (s *testSchemaSerialSuite) TestSchemaCheckerSQL(c *C) {
 	tk.MustExec(`begin;`)
 	tk1.MustExec(`alter table t add index idx3(c);`)
 	tk.MustQuery(`select * from t for update`)
+	_, err = tk.Exec(`commit;`)
+	c.Assert(err, NotNil)
+
+	// Repeated tests for partitioned table
+	tk.MustExec(`create table pt (id int, c int) partition by hash (id) partitions 3`)
+	tk.MustExec(`insert into pt values(1, 1);`)
+	// The schema version is out of date in the first transaction, and the SQL can't be retried.
+	tk.MustExec(`begin;`)
+	tk1.MustExec(`alter table pt modify column c bigint;`)
+	tk.MustExec(`insert into pt values(3, 3);`)
+	_, err = tk.Exec(`commit;`)
+	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue, Commentf("err %v", err))
+
+	// But the transaction related table IDs aren't in the updated table IDs.
+	tk.MustExec(`begin;`)
+	tk1.MustExec(`alter table pt add index idx2(c);`)
+	tk.MustExec(`insert into t1 values(4, 4);`)
+	tk.MustExec(`commit;`)
+
+	// Test for "select for update".
+	tk.MustExec(`begin;`)
+	tk1.MustExec(`alter table pt add index idx3(c);`)
+	tk.MustQuery(`select * from pt for update`)
+	_, err = tk.Exec(`commit;`)
+	c.Assert(err, NotNil)
+
+	// Test for "select for update".
+	tk.MustExec(`begin;`)
+	tk1.MustExec(`alter table pt add index idx4(c);`)
+	tk.MustQuery(`select * from pt partition (p1) for update`)
 	_, err = tk.Exec(`commit;`)
 	c.Assert(err, NotNil)
 }

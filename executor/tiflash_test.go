@@ -117,15 +117,15 @@ func (s *tiflashTestSuite) TestReadPartitionTable(c *C) {
 	tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("3"))
 	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1 0", "2 0", "3 0"))
 
-	// test union scan
-	tk.MustExec("begin")
-	tk.MustExec("insert into t values(4,0)")
-	tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("4"))
-	tk.MustExec("insert into t values(5,0)")
-	tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("5"))
-	tk.MustExec("insert into t values(6,0)")
-	tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("6"))
-	tk.MustExec("commit")
+	// test union scan, enable it when https://github.com/pingcap/tics/issues/4180 is fixed
+	// tk.MustExec("begin")
+	// tk.MustExec("insert into t values(4,0)")
+	// tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("4"))
+	// tk.MustExec("insert into t values(5,0)")
+	// tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("5"))
+	// tk.MustExec("insert into t values(6,0)")
+	// tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("6"))
+	// tk.MustExec("commit")
 }
 
 func (s *tiflashTestSuite) TestReadUnsigedPK(c *C) {
@@ -1070,6 +1070,57 @@ func (s *tiflashTestSuite) TestForbidTiflashDuringStaleRead(c *C) {
 	res = resBuff.String()
 	c.Assert(strings.Contains(res, "tiflash"), IsFalse)
 	c.Assert(strings.Contains(res, "tikv"), IsTrue)
+}
+
+func (s *tiflashTestSuite) TestForbidTiFlashIfExtraPhysTableIDIsNeeded(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null primary key, b int not null) partition by hash(a) partitions 2")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := testGetTableByName(c, tk.Se, "test", "t")
+	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
+	c.Assert(err, IsNil)
+	tk.MustExec("set tidb_partition_prune_mode=dynamic")
+	tk.MustExec("set tidb_enforce_mpp=1")
+
+	rows := tk.MustQuery("explain select count(*) from t").Rows()
+	resBuff := bytes.NewBufferString("")
+	for _, row := range rows {
+		fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	res := resBuff.String()
+	c.Assert(strings.Contains(res, "tiflash"), IsTrue)
+	c.Assert(strings.Contains(res, "tikv"), IsFalse)
+
+	rows = tk.MustQuery("explain select count(*) from t for update").Rows()
+	resBuff = bytes.NewBufferString("")
+	for _, row := range rows {
+		fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	res = resBuff.String()
+	c.Assert(strings.Contains(res, "tiflash"), IsFalse)
+	c.Assert(strings.Contains(res, "tikv"), IsTrue)
+
+	tk.MustExec("begin")
+	rows = tk.MustQuery("explain select count(*) from t").Rows()
+	resBuff = bytes.NewBufferString("")
+	for _, row := range rows {
+		fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	res = resBuff.String()
+	c.Assert(strings.Contains(res, "tiflash"), IsTrue)
+	c.Assert(strings.Contains(res, "tikv"), IsFalse)
+	tk.MustExec("insert into t values(1,2)")
+	rows = tk.MustQuery("explain select count(*) from t").Rows()
+	resBuff = bytes.NewBufferString("")
+	for _, row := range rows {
+		fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	res = resBuff.String()
+	c.Assert(strings.Contains(res, "tikv"), IsTrue)
+	c.Assert(strings.Contains(res, "tiflash"), IsFalse)
+	tk.MustExec("rollback")
 }
 
 func (s *tiflashTestSuite) TestTiflashPartitionTableScan(c *C) {

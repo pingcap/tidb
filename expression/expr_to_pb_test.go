@@ -130,10 +130,9 @@ func TestColumn2Pb(t *testing.T) {
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 
-	colExprs = append(colExprs, genColumn(mysql.TypeBit, 1))
-	colExprs = append(colExprs, genColumn(mysql.TypeSet, 2))
-	colExprs = append(colExprs, genColumn(mysql.TypeGeometry, 4))
-	colExprs = append(colExprs, genColumn(mysql.TypeUnspecified, 5))
+	colExprs = append(colExprs, genColumn(mysql.TypeSet, 1))
+	colExprs = append(colExprs, genColumn(mysql.TypeGeometry, 2))
+	colExprs = append(colExprs, genColumn(mysql.TypeUnspecified, 3))
 
 	pushed, remained := PushDownExprs(sc, colExprs, client, kv.UnSpecified)
 	require.Len(t, pushed, 0)
@@ -168,6 +167,7 @@ func TestColumn2Pb(t *testing.T) {
 	colExprs = append(colExprs, genColumn(mysql.TypeVarString, 22))
 	colExprs = append(colExprs, genColumn(mysql.TypeString, 23))
 	colExprs = append(colExprs, genColumn(mysql.TypeEnum, 24))
+	colExprs = append(colExprs, genColumn(mysql.TypeBit, 25))
 	pushed, remained = PushDownExprs(sc, colExprs, client, kv.UnSpecified)
 	require.Len(t, pushed, len(colExprs))
 	require.Len(t, remained, 0)
@@ -198,6 +198,7 @@ func TestColumn2Pb(t *testing.T) {
 		"{\"tp\":201,\"val\":\"gAAAAAAAABY=\",\"sig\":0,\"field_type\":{\"tp\":253,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-46,\"charset\":\"utf8mb4\"},\"has_distinct\":false}",
 		"{\"tp\":201,\"val\":\"gAAAAAAAABc=\",\"sig\":0,\"field_type\":{\"tp\":254,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-46,\"charset\":\"utf8mb4\"},\"has_distinct\":false}",
 		"{\"tp\":201,\"val\":\"gAAAAAAAABg=\",\"sig\":0,\"field_type\":{\"tp\":247,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAABk=\",\"sig\":0,\"field_type\":{\"tp\":16,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-63,\"charset\":\"binary\"},\"has_distinct\":false}",
 	}
 	for i, pbExpr := range pbExprs {
 		require.NotNil(t, pbExprs)
@@ -1034,6 +1035,24 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// greatest
+	function, err = NewFunction(mock.NewContext(), ast.Greatest, types.NewFieldType(mysql.TypeLonglong), int32Column, intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Greatest, types.NewFieldType(mysql.TypeDouble), float32Column, intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// least
+	function, err = NewFunction(mock.NewContext(), ast.Least, types.NewFieldType(mysql.TypeLonglong), int32Column, intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Least, types.NewFieldType(mysql.TypeDouble), float32Column, intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiFlash)
 	require.Len(t, pushed, len(exprs))
 	require.Len(t, remained, 0)
@@ -1262,11 +1281,11 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			retType:      types.NewFieldType(mysql.TypeDouble),
 			args:         []Expression{intColumn},
 		},
-		{
-			functionName: ast.Truncate,
-			retType:      types.NewFieldType(mysql.TypeDouble),
-			args:         []Expression{intColumn, intColumn},
-		},
+		//{
+		//	functionName: ast.Truncate,
+		//	retType:      types.NewFieldType(mysql.TypeDouble),
+		//	args:         []Expression{intColumn, intColumn},
+		//},
 		{
 			functionName: ast.Bin,
 			retType:      types.NewFieldType(mysql.TypeString),
@@ -1372,6 +1391,36 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			retType:      types.NewFieldType(mysql.TypeDate),
 			args:         []Expression{dateColumn, dateColumn},
 		},
+		{
+			functionName: ast.Lower,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn},
+		},
+		{
+			functionName: ast.InsertFunc,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn, intColumn, intColumn, stringColumn},
+		},
+		{
+			functionName: ast.Greatest,
+			retType:      types.NewFieldType(mysql.TypeInt24),
+			args:         []Expression{intColumn, intColumn},
+		},
+		{
+			functionName: ast.Least,
+			retType:      types.NewFieldType(mysql.TypeInt24),
+			args:         []Expression{intColumn, intColumn},
+		},
+		{
+			functionName: ast.Upper,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn},
+		},
+		{
+			functionName: ast.Mod,
+			retType:      types.NewFieldType(mysql.TypeInt24),
+			args:         []Expression{intColumn, intColumn},
+		},
 	}
 
 	for _, tc := range testcases {
@@ -1379,10 +1428,6 @@ func TestExprPushDownToTiKV(t *testing.T) {
 		require.NoError(t, err)
 		exprs = append(exprs, function)
 	}
-
-	function, err = NewFunction(mock.NewContext(), ast.Mod, types.NewFieldType(mysql.TypeInt24), intColumn, intColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
 
 	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiKV)
 	require.Len(t, pushed, len(exprs))

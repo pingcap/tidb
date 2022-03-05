@@ -22,7 +22,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
@@ -48,14 +47,11 @@ type testColumnSuiteToVerify struct {
 }
 
 func TestColumnSuite(t *testing.T) {
-	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, true)
-	require.NoError(t, err)
-
 	suite.Run(t, new(testColumnSuiteToVerify))
 }
 
 func (s *testColumnSuiteToVerify) SetupSuite() {
-	s.store = testCreateStore(s.T(), "test_column")
+	s.store = createMockStore(s.T())
 	d, err := testNewDDLAndStart(
 		context.Background(),
 		WithStore(s.store),
@@ -1216,8 +1212,8 @@ func TestModifyColumn(t *testing.T) {
 		{"varchar(10) character set gbk", "varchar(255) character set gbk", nil},
 	}
 	for _, tt := range tests {
-		ftA := colDefStrToFieldType(t, tt.origin)
-		ftB := colDefStrToFieldType(t, tt.to)
+		ftA := colDefStrToFieldType(t, tt.origin, ctx)
+		ftB := colDefStrToFieldType(t, tt.to, ctx)
 		err := checkModifyTypes(ctx, ftA, ftB, false)
 		if err == nil {
 			require.NoErrorf(t, tt.err, "origin:%v, to:%v", tt.origin, tt.to)
@@ -1227,13 +1223,13 @@ func TestModifyColumn(t *testing.T) {
 	}
 }
 
-func colDefStrToFieldType(t *testing.T, str string) *types.FieldType {
+func colDefStrToFieldType(t *testing.T, str string, ctx sessionctx.Context) *types.FieldType {
 	sqlA := "alter table t modify column a " + str
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
 	require.NoError(t, err)
 	colDef := stmt.(*ast.AlterTableStmt).Specs[0].NewColumns[0]
 	chs, coll := charset.GetDefaultCharsetAndCollate()
-	col, _, err := buildColumnAndConstraint(nil, 0, colDef, nil, chs, coll)
+	col, _, err := buildColumnAndConstraint(ctx, 0, colDef, nil, chs, coll)
 	require.NoError(t, err)
 	return &col.FieldType
 }

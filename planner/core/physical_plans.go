@@ -982,9 +982,8 @@ type PhysicalLock struct {
 
 	Lock *ast.SelectLockInfo
 
-	TblID2Handle     map[int64][]HandleCols
-	PartitionedTable []table.PartitionedTable
-	ExtraPIDInfo     extraPIDInfo
+	TblID2Handle       map[int64][]HandleCols
+	TblID2PhysTblIDCol map[int64]*expression.Column
 }
 
 // PhysicalLimit is the physical operator of Limit.
