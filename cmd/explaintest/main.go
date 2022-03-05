@@ -118,7 +118,7 @@ func (t *tester) Run() error {
 	var s string
 	defer func() {
 		if t.tx != nil {
-			log.Error("transaction is not committed correctly, rollback")
+			log.Error("transaction is not committed correctly, rollback", zap.String("name", t.name))
 			err = t.rollback()
 			if err != nil {
 				log.Error("transaction is failed rollback", zap.Error(err))
