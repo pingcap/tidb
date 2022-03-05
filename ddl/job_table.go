@@ -333,7 +333,9 @@ func (d *ddl) doGeneralDDLJobWorker(job *model.Job) {
 	d.insertRunningDDLJobMap(int(job.ID))
 	d.wg.Run(func() {
 		defer d.deleteRunningDDLJobMap(int(job.ID))
+		log.Info("ready to get generalDDLWorkerPool")
 		wk, err := d.generalDDLWorkerPool.get()
+		log.Info("complete to get generalDDLWorkerPool")
 		if err != nil {
 			log.Error("fail to get generalDDLWorkerPool", zap.Error(err))
 			return
@@ -368,7 +370,9 @@ func (d *ddl) doReorgDDLJobWorker(job *model.Job) {
 	d.insertRunningDDLJobMap(int(job.ID))
 	d.wg.Run(func() {
 		defer d.deleteRunningDDLJobMap(int(job.ID))
+		log.Info("ready to get reorgWorkerPool")
 		wk, err := d.reorgWorkerPool.get()
+		log.Info("complete to get reorgWorkerPool")
 		if err != nil {
 			log.Error("fail to get reorgWorkerPool", zap.Error(err))
 			return
