@@ -281,10 +281,10 @@ func (d *ddl) startDispatchLoop() {
 		select {
 		case <-d.ddlJobCh:
 			enableGeneralDDLJob = true
-			isTicker = true
 		case <-ticker.C:
 			enableGeneralDDLJob = true
 			enableReorgDDLJob = true
+			isTicker = true
 		case _, ok = <-notifyDDLJobByEtcdChGeneral:
 			if !ok {
 				logutil.BgLogger().Error("[ddl] notifyDDLJobByEtcdChGeneral channel closed")
