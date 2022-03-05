@@ -267,6 +267,7 @@ func (d *ddl) startDispatchLoop() {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	var ok bool
+	var isTicker bool
 	for {
 		if isChanClosed(d.ctx.Done()) {
 			return
@@ -275,10 +276,12 @@ func (d *ddl) startDispatchLoop() {
 			time.Sleep(time.Second)
 			continue
 		}
+		isTicker = false
 		var enableGeneralDDLJob, enableReorgDDLJob bool
 		select {
 		case <-d.ddlJobCh:
 			enableGeneralDDLJob = true
+			isTicker = true
 		case <-ticker.C:
 			enableGeneralDDLJob = true
 			enableReorgDDLJob = true
@@ -308,7 +311,7 @@ func (d *ddl) startDispatchLoop() {
 			if enableReorgDDLJob {
 				retryReorgDDLJob = d.reorgDDLJob(sess)
 			}
-			if (retryGeneral || retryReorgDDLJob) && cnt < 2 {
+			if (retryGeneral || retryReorgDDLJob) && cnt < 2 && !isTicker {
 				cnt = cnt + 1
 				continue
 			}
