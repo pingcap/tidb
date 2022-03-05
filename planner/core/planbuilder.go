@@ -1164,6 +1164,16 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	return available, nil
 }
 
+func filterOutTiFlashPaths(paths []*util.AccessPath) []*util.AccessPath {
+	updatedPaths := make([]*util.AccessPath, 0, len(paths))
+	for _, path := range paths {
+		if path.StoreType != kv.TiFlash {
+			updatedPaths = append(updatedPaths, path)
+		}
+	}
+	return updatedPaths
+}
+
 func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath, tblName model.CIStr, dbName model.CIStr) ([]*util.AccessPath, error) {
 	// TODO: filter paths with isolation read locations.
 	if dbName.L == mysql.SystemDB {
