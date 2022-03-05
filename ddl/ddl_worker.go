@@ -668,6 +668,7 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 			err1 := txn.Rollback()
 			log.Error("Rollback", zap.Error(err1))
 			w.unlockSeqNum()
+			log.Error("finishDDLJob", zap.Error(err))
 			return err
 		}
 		w.sessForJob.StmtCommit()
@@ -679,11 +680,13 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 				if err != nil {
 					err1 := txn.Rollback()
 					log.Error("Rollback", zap.Error(err1))
+					log.Error("SetSchemaDiff", zap.Error(err))
 					return err
 				}
 			}
 			err = txn.Commit(w.ctx)
 			if err != nil {
+				log.Error("txn.Commit", zap.Error(err))
 				return err
 			}
 			return nil
@@ -713,12 +716,14 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 			err1 := txn.Rollback()
 			log.Error("Rollback", zap.Error(err1))
 			w.unlockSeqNum()
+			log.Error("finishDDLJob", zap.Error(err))
 			return err
 		}
 		w.sessForJob.StmtCommit()
 		err = txn.Commit(w.ctx)
 		if err != nil {
 			w.unlockSeqNum()
+			log.Error("txn.Commit", zap.Error(err))
 			return err
 		}
 		if w.lockSeqNum {
