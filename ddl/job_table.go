@@ -308,7 +308,7 @@ func (d *ddl) startDispatchLoop() {
 			if enableReorgDDLJob {
 				retryReorgDDLJob = d.reorgDDLJob(sess)
 			}
-			if (retryGeneral || retryReorgDDLJob) && cnt < 5 {
+			if (retryGeneral || retryReorgDDLJob) && cnt < 2 {
 				cnt = cnt + 1
 				continue
 			}
