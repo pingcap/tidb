@@ -327,7 +327,7 @@ func (d *ddl) generalDDLJob(sctx sessionctx.Context) bool {
 		return true
 	}
 	if job == nil {
-		return true
+		return false
 	}
 	d.doGeneralDDLJobWorker(job)
 	return false
@@ -364,7 +364,7 @@ func (d *ddl) reorgDDLJob(sctx sessionctx.Context) bool {
 		return true
 	}
 	if job == nil {
-		return true
+		return false
 	}
 	d.doReorgDDLJobWorker(job)
 	return false
