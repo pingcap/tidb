@@ -117,15 +117,15 @@ func (s *tiflashTestSuite) TestReadPartitionTable(c *C) {
 	tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("3"))
 	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1 0", "2 0", "3 0"))
 
-	// test union scan
-	tk.MustExec("begin")
-	tk.MustExec("insert into t values(4,0)")
-	tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("4"))
-	tk.MustExec("insert into t values(5,0)")
-	tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("5"))
-	tk.MustExec("insert into t values(6,0)")
-	tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("6"))
-	tk.MustExec("commit")
+	// test union scan, enable it when https://github.com/pingcap/tics/issues/4180 is fixed
+	// tk.MustExec("begin")
+	// tk.MustExec("insert into t values(4,0)")
+	// tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("4"))
+	// tk.MustExec("insert into t values(5,0)")
+	// tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("5"))
+	// tk.MustExec("insert into t values(6,0)")
+	// tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("6"))
+	// tk.MustExec("commit")
 }
 
 func (s *tiflashTestSuite) TestReadUnsigedPK(c *C) {
