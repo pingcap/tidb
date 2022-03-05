@@ -351,7 +351,7 @@ Sort	5.00	root		Column#49:desc
         │ └─TableFullScan	7500000.00	cop[tikv]	table:customer	keep order:false
         └─HashJoin(Probe)	11822812.50	root		inner join, equal:[eq(tpch.orders.o_orderkey, tpch.lineitem.l_orderkey)]
           ├─TableReader(Build)	11822812.50	root		data:Selection
-          │ └─Selection	11822812.50	cop[tikv]		ge(tpch.orders.o_orderdate, 1994-01-01 00:00:00.000000), lt(tpch.orders.o_orderdate, 1995-01-01)
+          │ └─Selection	11822812.50	cop[tikv]		ge(tpch.orders.o_orderdate, 1994-01-01 00:00:00.000000), lt(tpch.orders.o_orderdate, 1995-01-01 00:00:00.000000)
           │   └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false
           └─HashJoin(Probe)	61163763.01	root		inner join, equal:[eq(tpch.lineitem.l_suppkey, tpch.supplier.s_suppkey)]
             ├─HashJoin(Build)	100000.00	root		inner join, equal:[eq(tpch.supplier.s_nationkey, tpch.nation.n_nationkey)]
@@ -544,7 +544,7 @@ Sort	719.02	root		Column#62
               │ └─TableReader(Probe)	22413367.93	root		data:Selection
               │   └─Selection	22413367.93	cop[tikv]		ge(tpch.orders.o_orderdate, 1995-01-01 00:00:00.000000), le(tpch.orders.o_orderdate, 1996-12-31 00:00:00.000000)
               │     └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false
-              └─IndexLookUp(Probe)	4.05	root
+              └─IndexLookUp(Probe)	4.05	root		
                 ├─IndexRangeScan(Build)	4.05	cop[tikv]	table:lineitem, index:PRIMARY(L_ORDERKEY, L_LINENUMBER)	range: decided by [eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)], keep order:false
                 └─TableRowIDScan(Probe)	4.05	cop[tikv]	table:lineitem	keep order:false
 /*
@@ -770,10 +770,10 @@ id	estRows	task	access object	operator info
 Sort	1.00	root		tpch.lineitem.l_shipmode
 └─Projection	1.00	root		tpch.lineitem.l_shipmode, Column#27, Column#28
   └─HashAgg	1.00	root		group by:Column#40, funcs:sum(Column#37)->Column#27, funcs:sum(Column#38)->Column#28, funcs:firstrow(Column#39)->tpch.lineitem.l_shipmode
-    └─Projection	10023369.01	root		cast(case(or(eq(tpch.orders.o_orderpriority, 1-URGENT), eq(tpch.orders.o_orderpriority, 2-HIGH)), 1, 0), decimal(22,0) BINARY)->Column#37, cast(case(and(ne(tpch.orders.o_orderpriority, 1-URGENT), ne(tpch.orders.o_orderpriority, 2-HIGH)), 1, 0), decimal(22,0) BINARY)->Column#38, tpch.lineitem.l_shipmode, tpch.lineitem.l_shipmode
+    └─Projection	10023369.01	root		cast(case(or(eq(tpch.orders.o_orderpriority, 1-URGENT), eq(tpch.orders.o_orderpriority, 2-HIGH)), 1, 0), decimal(20,0) BINARY)->Column#37, cast(case(and(ne(tpch.orders.o_orderpriority, 1-URGENT), ne(tpch.orders.o_orderpriority, 2-HIGH)), 1, 0), decimal(20,0) BINARY)->Column#38, tpch.lineitem.l_shipmode, tpch.lineitem.l_shipmode
       └─IndexJoin	10023369.01	root		inner join, inner:TableReader, outer key:tpch.lineitem.l_orderkey, inner key:tpch.orders.o_orderkey, equal cond:eq(tpch.lineitem.l_orderkey, tpch.orders.o_orderkey)
         ├─TableReader(Build)	10023369.01	root		data:Selection
-        │ └─Selection	10023369.01	cop[tikv]		ge(tpch.lineitem.l_receiptdate, 1997-01-01 00:00:00.000000), in(tpch.lineitem.l_shipmode, "RAIL", "FOB"), lt(tpch.lineitem.l_commitdate, tpch.lineitem.l_receiptdate), lt(tpch.lineitem.l_receiptdate, 1998-01-01), lt(tpch.lineitem.l_shipdate, tpch.lineitem.l_commitdate)
+        │ └─Selection	10023369.01	cop[tikv]		ge(tpch.lineitem.l_receiptdate, 1997-01-01 00:00:00.000000), in(tpch.lineitem.l_shipmode, "RAIL", "FOB"), lt(tpch.lineitem.l_commitdate, tpch.lineitem.l_receiptdate), lt(tpch.lineitem.l_receiptdate, 1998-01-01 00:00:00.000000), lt(tpch.lineitem.l_shipdate, tpch.lineitem.l_commitdate)
         │   └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
         └─TableReader(Probe)	1.00	root		data:TableRangeScan
           └─TableRangeScan	1.00	cop[tikv]	table:orders	range: decided by [tpch.lineitem.l_orderkey], keep order:false

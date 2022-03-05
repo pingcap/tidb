@@ -50,7 +50,7 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []*joinNode, tracer *joinR
 		if err != nil {
 			return nil, err
 		}
-		cost := s.baseNodeCumCost(node)
+		cost := s.baseNodeCumCost(node.p)
 		s.curJoinGroup = append(s.curJoinGroup, &jrNode{
 			id:      joinNodeCount,
 			p:       node.p,
@@ -58,7 +58,7 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []*joinNode, tracer *joinR
 		})
 		node.id = joinNodeCount
 		joinNodeCount++
-		tracer.appendLogicalJoinCost(node, cost)
+		tracer.appendLogicalJoinCost(node.p, cost)
 	}
 
 	s.directGraph = make([][]byte, joinNodeCount)

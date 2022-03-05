@@ -196,7 +196,7 @@ EXPLAIN format = 'brief' SELECT name FROM person where city_no=1;
 id	estRows	task	access object	operator info
 Projection	10.00	root		test.person.name
 └─Projection	10.00	root		test.person.name, test.person.city_no
-  └─IndexLookUp	10.00	root
+  └─IndexLookUp	10.00	root		
     ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:person, index:city_no(city_no)	range:[1,1], keep order:false, stats:pseudo
     └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:person	keep order:false, stats:pseudo
 DROP TABLE IF EXISTS t1;

@@ -592,7 +592,7 @@ delete from t2 where c_decimal > c_double/2 order by c_int, c_str, c_double, c_d
 desc format='brief' select t2.c_enum from t2,t1 where t1.c_int - 1 = t2.c_int - 1 order  by t2.c_enum;
 id	estRows	task	access object	operator info
 Sort	12487.50	root		test.t2.c_enum
-└─HashJoin	12487.50	root		inner join, equal:[eq(minus(test.t1.c_int, 1), minus(test.t2.c_int, 1))]
+└─HashJoin	12487.50	root		inner join, equal:[eq(minus(test.t2.c_int, 1), minus(test.t1.c_int, 1))]
   ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
   │ └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:expression_index_2(`c_int` - 1)	keep order:false, stats:pseudo
   └─Projection(Probe)	10000.00	root		test.t2.c_enum, minus(test.t2.c_int, 1), test.t2._tidb_rowid

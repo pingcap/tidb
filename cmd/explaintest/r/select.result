@@ -647,6 +647,7 @@ Projection	4.00	root		test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, tes
     │     └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
     └─TableReader(Probe)	4.00	root		data:TableFullScan
       └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
+drop table if exists t3;
 create table t3(a char(10), primary key (a));
 insert into t3 values ('a');
 select * from t3 where a > 0x80;

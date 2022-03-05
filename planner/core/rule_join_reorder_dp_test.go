@@ -171,6 +171,7 @@ func TestDPReorderTPCHQ5(t *testing.T) {
 	joinGroups = append(joinGroups, &joinNode{p: s.newDataSource("supplier", 100000)})
 	joinGroups = append(joinGroups, &joinNode{p: s.newDataSource("nation", 25)})
 	joinGroups = append(joinGroups, &joinNode{p: s.newDataSource("region", 5)})
+
 	var eqConds []expression.Expression
 	eqConds = append(eqConds, expression.NewFunctionInternal(s.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[0].p.Schema().Columns[0], joinGroups[1].p.Schema().Columns[0]))
 	eqConds = append(eqConds, expression.NewFunctionInternal(s.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), joinGroups[1].p.Schema().Columns[0], joinGroups[2].p.Schema().Columns[0]))

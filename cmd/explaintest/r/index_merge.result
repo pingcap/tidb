@@ -386,17 +386,17 @@ insert into t1 values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);
 explain delete from t1 where c1 in (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 10 or c2 < 10 and c3 < 10) order by 1;
 id	estRows	task	access object	operator info
 Delete_10	N/A	root		N/A
-└─Sort_14	4056.68	root		test.t1.c1
-  └─HashJoin_31	4056.68	root		inner join, equal:[eq(test.t1.c1, test.t1.c1)]
-    ├─HashAgg_34(Build)	3245.34	root		group by:test.t1.c1, funcs:firstrow(test.t1.c1)->test.t1.c1
-    │ └─IndexMerge_39	2248.30	root		
-    │   ├─IndexRangeScan_35(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-    │   ├─IndexRangeScan_36(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-    │   └─Selection_38(Probe)	2248.30	cop[tikv]		not(isnull(test.t1.c1)), or(lt(test.t1.c1, 10), and(lt(test.t1.c2, 10), lt(test.t1.c3, 10)))
-    │     └─TableRowIDScan_37	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
-    └─TableReader_42(Probe)	9990.00	root		data:Selection_41
-      └─Selection_41	9990.00	cop[tikv]		not(isnull(test.t1.c1))
-        └─TableFullScan_40	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Sort_13	4056.68	root		test.t1.c1
+  └─HashJoin_28	4056.68	root		inner join, equal:[eq(test.t1.c1, test.t1.c1)]
+    ├─HashAgg_32(Build)	3245.34	root		group by:test.t1.c1, funcs:firstrow(test.t1.c1)->test.t1.c1
+    │ └─IndexMerge_37	2248.30	root		
+    │   ├─IndexRangeScan_33(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+    │   ├─IndexRangeScan_34(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+    │   └─Selection_36(Probe)	2248.30	cop[tikv]		not(isnull(test.t1.c1)), or(lt(test.t1.c1, 10), and(lt(test.t1.c2, 10), lt(test.t1.c3, 10)))
+    │     └─TableRowIDScan_35	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─TableReader_40(Probe)	9990.00	root		data:Selection_39
+      └─Selection_39	9990.00	cop[tikv]		not(isnull(test.t1.c1))
+        └─TableFullScan_38	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 delete from t1 where c1 in (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 10 or c2 < 10 and c3 < 10) order by 1;
 select * from t1;
 c1	c2	c3
@@ -404,7 +404,7 @@ c1	c2	c3
 explain update t1 set c1 = 100, c2 = 100, c3 = 100 where c1 in (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 10 or c2 < 10 and c3 < 10);
 id	estRows	task	access object	operator info
 Update_9	N/A	root		N/A
-└─HashJoin_28	4056.68	root		inner join, equal:[eq(test.t1.c1, test.t1.c1)]
+└─HashJoin_27	4056.68	root		inner join, equal:[eq(test.t1.c1, test.t1.c1)]
   ├─HashAgg_31(Build)	3245.34	root		group by:test.t1.c1, funcs:firstrow(test.t1.c1)->test.t1.c1
   │ └─IndexMerge_36	2248.30	root		
   │   ├─IndexRangeScan_32(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo

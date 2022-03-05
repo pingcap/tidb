@@ -274,6 +274,7 @@ explain format = 'brief' select * from (t1 left join t2 on t1.a=t2.a) left join 
 explain format = 'brief' select * from (t1 left join t2 on t1.a=t2.a) left join (t3 left join t4 on t3.a=t4.a) on t2.a=t3.a;
 explain format = 'brief' select * from (t1 left join t2 on t1.a=t2.a) left join (t3 left join t4 on t3.a=t4.a) on t1.a=t4.a;
 
+drop table if exists t3;
 create table t3(a char(10), primary key (a));
 insert into t3 values ('a');
 --error 1105

@@ -43,12 +43,12 @@ func (s *joinReorderDPSolver) solve(joinGroup []*joinNode, eqConds []expression.
 		if err != nil {
 			return nil, err
 		}
-		cost := s.baseNodeCumCost(node)
+		cost := s.baseNodeCumCost(node.p)
 		s.curJoinGroup = append(s.curJoinGroup, &jrNode{
 			p:       node.p,
 			cumCost: cost,
 		})
-		tracer.appendLogicalJoinCost(node, cost)
+		tracer.appendLogicalJoinCost(node.p, cost)
 	}
 	adjacents := make([][]int, len(s.curJoinGroup))
 	totalEqEdges := make([]joinGroupEqEdge, 0, len(eqConds))
