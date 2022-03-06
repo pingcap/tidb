@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
@@ -636,8 +635,6 @@ func TestDispatchTaskRetry(t *testing.T) {
 }
 
 func TestCancelMppTasks(t *testing.T) {
-	testleak.BeforeTest()
-	defer testleak.AfterTestT(t)()
 	var hang = "github.com/pingcap/tidb/store/mockstore/unistore/mppRecvHang"
 	store, clean := createTiFlashStore(t)
 	defer clean()
