@@ -264,7 +264,7 @@ func (d *ddl) startDispatchLoop() {
 		notifyDDLJobByEtcdChGeneral = d.etcdCli.Watch(context.Background(), addingDDLJobGeneral)
 		notifyDDLJobByEtcdChReorg = d.etcdCli.Watch(context.Background(), addingDDLJobReorg)
 	}
-	ticker := time.NewTicker(100 * time.Millisecond)
+	ticker := time.NewTicker(128 * time.Millisecond)
 	defer ticker.Stop()
 	var ok bool
 	var isTicker bool
