@@ -62,6 +62,11 @@ type UnionScanExec struct {
 	// cacheTable not nil means it's reading from cached table.
 	cacheTable kv.MemBuffer
 	collators  []collate.Collator
+
+	// If partitioned table and the physical table id is encoded in the chuck at this column index
+	// used with dynamic prune mode
+	// < 0 if not used.
+	physTblIDIdx int
 }
 
 // Open implements the Executor Open interface.
@@ -93,6 +98,13 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 		return err
 	}
 
+	us.physTblIDIdx = -1
+	for i := len(us.columns) - 1; i >= 0; i-- {
+		if us.columns[i].ID == model.ExtraPhysTblID {
+			us.physTblIDIdx = i
+			break
+		}
+	}
 	mb := txn.GetMemBuffer()
 	mb.RLock()
 	defer mb.RUnlock()
@@ -237,7 +249,13 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 			if err != nil {
 				return nil, err
 			}
-			checkKey := tablecodec.EncodeRecordKey(us.table.RecordPrefix(), snapshotHandle)
+			var checkKey kv.Key
+			if us.physTblIDIdx >= 0 {
+				tblID := row.GetInt64(us.physTblIDIdx)
+				checkKey = tablecodec.EncodeRowKeyWithHandle(tblID, snapshotHandle)
+			} else {
+				checkKey = tablecodec.EncodeRecordKey(us.table.RecordPrefix(), snapshotHandle)
+			}
 			if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
 				// If src handle appears in added rows, it means there is conflict and the transaction will fail to
 				// commit, but for simplicity, we don't handle it here.

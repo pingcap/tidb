@@ -60,6 +60,12 @@ For support, please contact [PingCAP](http://bit.ly/contact_us_via_github).
 
 ## Quick start
 
+### To start using TiDB Cloud
+
+We provide TiDB Cloud - a fully-managed Database as a Service for you.
+
+See [TiDB Cloud Quick Start](https://docs.pingcap.com/tidbcloud/public-preview/tidb-cloud-quickstart).
+
 ### To start using TiDB
 
 See [Quick Start Guide](https://docs.pingcap.com/tidb/stable/quick-start-with-tidb).
