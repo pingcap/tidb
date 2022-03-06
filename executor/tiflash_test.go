@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -45,16 +44,8 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 )
 
-type tiflashContext struct {
-	store kv.Storage
-	dom   *domain.Domain
-	*parser.Parser
-}
-
-func createTiFlashContext(t *testing.T) (*tiflashContext, func()) {
-	s := &tiflashContext{}
-	var err error
-	s.store, err = mockstore.NewMockStore(
+func createTiFlashStore(t *testing.T) (kv.Storage, func()) {
+	store, clean := testkit.CreateMockStore(t,
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockCluster := c.(*unistore.Cluster)
 			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
@@ -70,26 +61,13 @@ func createTiFlashContext(t *testing.T) (*tiflashContext, func()) {
 		}),
 		mockstore.WithStoreType(mockstore.EmbedUnistore),
 	)
-
-	require.NoError(t, err)
-
-	session.SetSchemaLease(0)
-	session.DisableStats4Test()
-
-	s.dom, err = session.BootstrapSession(s.store)
-	require.NoError(t, err)
-	s.dom.SetStatsUpdating(true)
-
-	tearDown := func() {
-		s.dom.Close()
-		require.NoError(t, s.store.Close())
-	}
-
-	return s, tearDown
+	return store, clean
 }
 
 func TestNonsupportCharsetTable(t *testing.T) {
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := createTiFlashStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b char(10) charset gbk collate gbk_bin)")
@@ -103,7 +81,9 @@ func TestNonsupportCharsetTable(t *testing.T) {
 }
 
 func TestReadPartitionTable(t *testing.T) {
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := createTiFlashStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int not null primary key, b int not null) partition by hash(a) partitions 2")
@@ -133,7 +113,9 @@ func TestReadPartitionTable(t *testing.T) {
 }
 
 func TestReadUnsigedPK(t *testing.T) {
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := createTiFlashStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
@@ -172,7 +154,9 @@ func TestReadUnsigedPK(t *testing.T) {
 
 // to fix https://github.com/pingcap/tidb/issues/27952
 func TestJoinRace(t *testing.T) {
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := createTiFlashStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int not null, b int not null)")
@@ -201,9 +185,11 @@ func TestJoinRace(t *testing.T) {
 
 func TestMppExecution(t *testing.T) {
 	if israce.RaceEnabled {
-		c.Skip("skip race test because of long running")
+		t.Skip("skip race test because of long running")
 	}
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := createTiFlashStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int not null primary key, b int not null)")
@@ -297,7 +283,9 @@ func TestMppExecution(t *testing.T) {
 }
 
 func TestInjectExtraProj(t *testing.T) {
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := createTiFlashStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a bigint(20))")
@@ -317,9 +305,11 @@ func TestInjectExtraProj(t *testing.T) {
 }
 
 func TestTiFlashPartitionTableShuffledHashJoin(t *testing.T) {
-	c.Skip("too slow")
+	t.Skip("too slow")
 
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := createTiFlashStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`create database tiflash_partition_SHJ`)
 	tk.MustExec("use tiflash_partition_SHJ")
 	tk.MustExec(`create table thash (a int, b int) partition by hash(a) partitions 4`)
@@ -391,9 +381,11 @@ func TestTiFlashPartitionTableShuffledHashJoin(t *testing.T) {
 }
 
 func TestTiFlashPartitionTableReader(t *testing.T) {
-	c.Skip("too slow")
+	t.Skip("too slow")
 
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := createTiFlashStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`create database tiflash_partition_tablereader`)
 	tk.MustExec("use tiflash_partition_tablereader")
 	tk.MustExec(`create table thash (a int, b int) partition by hash(a) partitions 4`)
@@ -455,7 +447,9 @@ func TestTiFlashPartitionTableReader(t *testing.T) {
 }
 
 func TestPartitionTable(t *testing.T) {
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := createTiFlashStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
@@ -546,7 +540,9 @@ func TestPartitionTable(t *testing.T) {
 }
 
 func TestMppEnum(t *testing.T) {
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := createTiFlashStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int not null primary key, b enum('aca','bca','zca'))")
@@ -566,7 +562,9 @@ func TestMppEnum(t *testing.T) {
 }
 
 func TestTiFlashPlanCacheable(t *testing.T) {
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := createTiFlashStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	orgEnable := plannercore.PreparedPlanCacheEnabled()
 	defer func() {
 		plannercore.SetPreparedPlanCache(orgEnable)
@@ -617,7 +615,9 @@ func TestTiFlashPlanCacheable(t *testing.T) {
 }
 
 func TestDispatchTaskRetry(t *testing.T) {
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := createTiFlashStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int not null primary key, b int not null)")
@@ -637,9 +637,11 @@ func TestDispatchTaskRetry(t *testing.T) {
 
 func TestCancelMppTasks(t *testing.T) {
 	testleak.BeforeTest()
-	defer testleak.AfterTest(c)()
+	defer testleak.AfterTestT(t)()
 	var hang = "github.com/pingcap/tidb/store/mockstore/unistore/mppRecvHang"
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := createTiFlashStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int not null primary key, b int not null)")
@@ -678,7 +680,9 @@ func TestMppGoroutinesExitFromErrors(t *testing.T) {
 	var mppNonRootTaskError = "github.com/pingcap/tidb/store/copr/mppNonRootTaskError"
 	// mock root tasks hang
 	var hang = "github.com/pingcap/tidb/store/mockstore/unistore/mppRecvHang"
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := createTiFlashStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int not null primary key, b int not null)")
@@ -714,7 +718,9 @@ func TestMppGoroutinesExitFromErrors(t *testing.T) {
 }
 
 func TestMppUnionAll(t *testing.T) {
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := createTiFlashStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists x1")
 	tk.MustExec("create table x1(a int , b int);")
@@ -770,7 +776,9 @@ func TestMppUnionAll(t *testing.T) {
 }
 
 func TestUnionWithEmptyDualTable(t *testing.T) {
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := createTiFlashStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
@@ -792,7 +800,9 @@ func TestUnionWithEmptyDualTable(t *testing.T) {
 }
 
 func TestAvgOverflow(t *testing.T) {
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := createTiFlashStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// avg int
 	tk.MustExec("drop table if exists t")
@@ -835,7 +845,9 @@ func TestAvgOverflow(t *testing.T) {
 }
 
 func TestMppApply(t *testing.T) {
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := createTiFlashStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists x1")
 	tk.MustExec("create table x1(a int primary key, b int);")
@@ -865,7 +877,9 @@ func TestMppApply(t *testing.T) {
 }
 
 func TestTiFlashVirtualColumn(t *testing.T) {
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := createTiFlashStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1,t2,t3")
 	tk.MustExec("create table t1 (a bit(4), b bit(4), c bit(4) generated always as (a) virtual)")
@@ -902,9 +916,11 @@ func TestTiFlashVirtualColumn(t *testing.T) {
 }
 
 func TestTiFlashPartitionTableShuffledHashAggregation(t *testing.T) {
-	c.Skip("too slow")
+	t.Skip("too slow")
 
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := createTiFlashStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database tiflash_partition_AGG")
 	tk.MustExec("use tiflash_partition_AGG")
 	tk.MustExec(`create table thash (a int, b int) partition by hash(a) partitions 4`)
@@ -972,9 +988,11 @@ func TestTiFlashPartitionTableShuffledHashAggregation(t *testing.T) {
 }
 
 func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
-	c.Skip("too slow")
+	t.Skip("too slow")
 
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := createTiFlashStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database tiflash_partition_BCJ")
 	tk.MustExec("use tiflash_partition_BCJ")
 	tk.MustExec(`create table thash (a int, b int) partition by hash(a) partitions 4`)
@@ -1043,7 +1061,9 @@ func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
 }
 
 func TestForbidTiflashDuringStaleRead(t *testing.T) {
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := createTiFlashStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a bigint(20))")
@@ -1078,7 +1098,9 @@ func TestForbidTiflashDuringStaleRead(t *testing.T) {
 }
 
 func TestForbidTiFlashIfExtraPhysTableIDIsNeeded(t *testing.T) {
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := createTiFlashStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int not null primary key, b int not null) partition by hash(a) partitions 2")
