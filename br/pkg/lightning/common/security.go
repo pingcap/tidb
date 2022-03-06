@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/httputil"
+	"github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -75,6 +76,7 @@ func ToTLSConfig(caPath, certPath, keyPath string) (*tls.Config, error) {
 		Certificates: certificates,
 		RootCAs:      certPool,
 		NextProtos:   []string{"h2", "http/1.1"}, // specify `h2` to let Go use HTTP/2.
+		MinVersion:   tls.VersionTLS12,
 	}, nil
 }
 
@@ -154,6 +156,15 @@ func (tc *TLS) ToPDSecurityOption() pd.SecurityOption {
 		CAPath:   tc.caPath,
 		CertPath: tc.certPath,
 		KeyPath:  tc.keyPath,
+	}
+}
+
+func (tc *TLS) ToTiKVSecurityConfig() config.Security {
+	return config.Security{
+		ClusterSSLCA:    tc.caPath,
+		ClusterSSLCert:  tc.certPath,
+		ClusterSSLKey:   tc.keyPath,
+		ClusterVerifyCN: nil, // FIXME should fill this in?
 	}
 }
 

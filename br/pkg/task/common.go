@@ -3,9 +3,12 @@
 package task
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/hex"
 	"net/url"
+	"os"
 	"path"
 	"strings"
 	"time"
@@ -15,18 +18,20 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	pd "github.com/tikv/pd/client"
-	"go.etcd.io/etcd/pkg/transport"
+	"go.etcd.io/etcd/client/pkg/v3/transport"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/keepalive"
 )
@@ -72,7 +77,14 @@ const (
 	defaultGRPCKeepaliveTime    = 10 * time.Second
 	defaultGRPCKeepaliveTimeout = 3 * time.Second
 
-	unlimited = 0
+	flagCipherType    = "crypter.method"
+	flagCipherKey     = "crypter.key"
+	flagCipherKeyFile = "crypter.key-file"
+
+	unlimited           = 0
+	crypterAES128KeyLen = 16
+	crypterAES192KeyLen = 24
+	crypterAES256KeyLen = 32
 )
 
 // TLSConfig is the common configuration for TLS connection.
@@ -99,6 +111,12 @@ func (tls *TLSConfig) ToTLSConfig() (*tls.Config, error) {
 		return nil, errors.Trace(err)
 	}
 	return tlsConfig, nil
+}
+
+// ParseFromFlags parses the TLS config from the flag set.
+func (tls *TLSConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
+	tls.CA, tls.Cert, tls.Key, err = ParseTLSTripleFromFlags(flags)
+	return
 }
 
 // Config is the common configuration for all BRIE tasks.
@@ -148,6 +166,8 @@ type Config struct {
 	GRPCKeepaliveTime time.Duration `json:"grpc-keepalive-time" toml:"grpc-keepalive-time"`
 	// GrpcKeepaliveTimeout is the max time a grpc conn can keep idel before killed.
 	GRPCKeepaliveTimeout time.Duration `json:"grpc-keepalive-timeout" toml:"grpc-keepalive-timeout"`
+
+	CipherInfo backuppb.CipherInfo `json:"-" toml:"-"`
 }
 
 // DefineCommonFlags defines the flags common to all BRIE commands.
@@ -195,6 +215,14 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 	flags.BoolP(flagSkipCheckPath, "", false, "Skip path verification")
 	_ = flags.MarkHidden(flagSkipCheckPath)
 
+	flags.String(flagCipherType, "plaintext", "Encrypt/decrypt method, "+
+		"be one of plaintext|aes128-ctr|aes192-ctr|aes256-ctr case-insensitively, "+
+		"\"plaintext\" represents no encrypt/decrypt")
+	flags.String(flagCipherKey, "",
+		"aes-crypter key, used to encrypt/decrypt the data "+
+			"by the hexadecimal string, eg: \"0123456789abcdef0123456789abcdef\"")
+	flags.String(flagCipherKeyFile, "", "FilePath, its content is used as the cipher-key")
+
 	storage.DefineFlags(flags)
 }
 
@@ -218,13 +246,6 @@ func DefineFilterFlags(command *cobra.Command, defaultFilter []string) {
 	flags.Bool(flagCaseSensitive, false, "whether the table names used in --filter should be case-sensitive")
 }
 
-// ParseFromFlags parses the TLS config from the flag set.
-func (tls *TLSConfig) ParseFromFlags(flags *pflag.FlagSet) error {
-	var err error
-	tls.CA, tls.Cert, tls.Key, err = ParseTLSTripleFromFlags(flags)
-	return err
-}
-
 // ParseTLSTripleFromFlags parses the (ca, cert, key) triple from flags.
 func ParseTLSTripleFromFlags(flags *pflag.FlagSet) (ca, cert, key string, err error) {
 	ca, err = flags.GetString(flagCA)
@@ -240,6 +261,104 @@ func ParseTLSTripleFromFlags(flags *pflag.FlagSet) (ca, cert, key string, err er
 		return
 	}
 	return
+}
+
+func parseCipherType(t string) (encryptionpb.EncryptionMethod, error) {
+	ct := encryptionpb.EncryptionMethod_UNKNOWN
+	switch t {
+	case "plaintext", "PLAINTEXT":
+		ct = encryptionpb.EncryptionMethod_PLAINTEXT
+	case "aes128-ctr", "AES128-CTR":
+		ct = encryptionpb.EncryptionMethod_AES128_CTR
+	case "aes192-ctr", "AES192-CTR":
+		ct = encryptionpb.EncryptionMethod_AES192_CTR
+	case "aes256-ctr", "AES256-CTR":
+		ct = encryptionpb.EncryptionMethod_AES256_CTR
+	default:
+		return ct, errors.Annotatef(berrors.ErrInvalidArgument, "invalid crypter method '%s'", t)
+	}
+
+	return ct, nil
+}
+
+func checkCipherKey(cipherKey, cipherKeyFile string) error {
+	if (len(cipherKey) == 0) == (len(cipherKeyFile) == 0) {
+		return errors.Annotate(berrors.ErrInvalidArgument,
+			"exactly one of --crypter.key or --crypter.key-file should be provided")
+	}
+	return nil
+}
+
+func getCipherKeyContent(cipherKey, cipherKeyFile string) ([]byte, error) {
+	if err := checkCipherKey(cipherKey, cipherKeyFile); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// if cipher-key is valid, convert the hexadecimal string to bytes
+	if len(cipherKey) > 0 {
+		return hex.DecodeString(cipherKey)
+	}
+
+	// convert the content(as hexadecimal string) from cipher-file to bytes
+	content, err := os.ReadFile(cipherKeyFile)
+	if err != nil {
+		return nil, errors.Annotate(err, "failed to read cipher file")
+	}
+
+	content = bytes.TrimSuffix(content, []byte("\n"))
+	return hex.DecodeString(string(content))
+}
+
+func checkCipherKeyMatch(cipher *backuppb.CipherInfo) bool {
+	switch cipher.CipherType {
+	case encryptionpb.EncryptionMethod_PLAINTEXT:
+		return true
+	case encryptionpb.EncryptionMethod_AES128_CTR:
+		return len(cipher.CipherKey) == crypterAES128KeyLen
+	case encryptionpb.EncryptionMethod_AES192_CTR:
+		return len(cipher.CipherKey) == crypterAES192KeyLen
+	case encryptionpb.EncryptionMethod_AES256_CTR:
+		return len(cipher.CipherKey) == crypterAES256KeyLen
+	default:
+		return false
+	}
+}
+
+func (cfg *Config) parseCipherInfo(flags *pflag.FlagSet) error {
+	crypterStr, err := flags.GetString(flagCipherType)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	cfg.CipherInfo.CipherType, err = parseCipherType(crypterStr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if cfg.CipherInfo.CipherType == encryptionpb.EncryptionMethod_PLAINTEXT {
+		return nil
+	}
+
+	key, err := flags.GetString(flagCipherKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	keyFilePath, err := flags.GetString(flagCipherKeyFile)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	cfg.CipherInfo.CipherKey, err = getCipherKeyContent(key, keyFilePath)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if !checkCipherKeyMatch(&cfg.CipherInfo) {
+		return errors.Annotate(berrors.ErrInvalidArgument, "crypter method and key length not match")
+	}
+
+	return nil
 }
 
 func (cfg *Config) normalizePDURLs() error {
@@ -366,6 +485,14 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if cfg.SkipCheckPath, err = flags.GetBool(flagSkipCheckPath); err != nil {
 		return errors.Trace(err)
 	}
+	if cfg.SkipCheckPath {
+		log.L().Info("--skip-check-path is deprecated, need explicitly set it anymore")
+	}
+
+	if err = cfg.parseCipherInfo(flags); err != nil {
+		return errors.Trace(err)
+	}
+
 	return cfg.normalizePDURLs()
 }
 
@@ -424,7 +551,6 @@ func storageOpts(cfg *Config) *storage.ExternalStorageOptions {
 	return &storage.ExternalStorageOptions{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
-		SkipCheckPath:   cfg.SkipCheckPath,
 	}
 }
 
@@ -461,9 +587,21 @@ func ReadBackupMeta(
 			return nil, nil, nil, errors.Annotate(err, "load backupmeta failed")
 		}
 	}
+
+	// the prefix of backupmeta file is iv(16 bytes) if encryption method is valid
+	var iv []byte
+	if cfg.CipherInfo.CipherType != encryptionpb.EncryptionMethod_PLAINTEXT {
+		iv = metaData[:metautil.CrypterIvLen]
+	}
+	decryptBackupMeta, err := metautil.Decrypt(metaData[len(iv):], &cfg.CipherInfo, iv)
+	if err != nil {
+		return nil, nil, nil, errors.Annotate(err, "decrypt failed with wrong key")
+	}
+
 	backupMeta := &backuppb.BackupMeta{}
-	if err = proto.Unmarshal(metaData, backupMeta); err != nil {
-		return nil, nil, nil, errors.Annotate(err, "parse backupmeta failed")
+	if err = proto.Unmarshal(decryptBackupMeta, backupMeta); err != nil {
+		return nil, nil, nil, errors.Annotate(err,
+			"parse backupmeta failed because of wrong aes cipher")
 	}
 	return u, s, backupMeta, nil
 }

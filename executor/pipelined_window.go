@@ -179,7 +179,7 @@ func (e *PipelinedWindowExec) getRowsInPartition(ctx context.Context) (err error
 		var drained, samePartition bool
 		drained, err = e.fetchChild(ctx)
 		if err != nil {
-			err = errors.Trace(err)
+			return errors.Trace(err)
 		}
 		// we return immediately to use a combination of true newPartition but 0 in e.rowToConsume to indicate the data source is drained,
 		if drained {

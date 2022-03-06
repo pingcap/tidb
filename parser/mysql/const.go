@@ -164,8 +164,8 @@ const (
 
 // Auth name information.
 const (
-	AuthNativePassword      = "mysql_native_password"
-	AuthCachingSha2Password = "caching_sha2_password"
+	AuthNativePassword      = "mysql_native_password" // #nosec G101
+	AuthCachingSha2Password = "caching_sha2_password" // #nosec G101
 	AuthSocket              = "auth_socket"
 )
 
@@ -589,7 +589,9 @@ func (n *PriorityEnum) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-// PrimaryKeyName defines primary key name.
 const (
+	// PrimaryKeyName defines primary key name.
 	PrimaryKeyName = "PRIMARY"
+	// DefaultDecimal defines the default decimal value when the value out of range.
+	DefaultDecimal = "99999999999999999999999999999999999999999999999999999999999999999"
 )

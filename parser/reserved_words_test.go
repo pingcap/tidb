@@ -11,7 +11,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//+build reserved_words_test
+//go:build reserved_words_test
+// +build reserved_words_test
 
 // This file ensures that the set of reserved keywords is the same as that of
 // MySQL. To run:
@@ -19,29 +20,56 @@
 //  1. Set up a MySQL server listening at 127.0.0.1:3306 using root and no password
 //  2. Run this test with:
 //
-//		go test -tags reserved_words_test -check.f TestReservedWords
+//		go test -tags reserved_words_test -run '^TestCompareReservedWordsWithMySQL$'
+
 package parser
 
 import (
-	dbsql "database/sql"
-
 	// needed to connect to MySQL
-	_ "github.com/go-sql-driver/mysql"
-	. "github.com/pingcap/check"
 
+	dbsql "database/sql"
+	"io/ioutil"
+	"os"
+	"path"
+	"runtime"
+	"testing"
+
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/tidb/parser/ast"
+	requires "github.com/stretchr/testify/require"
 )
 
-func (s *testConsistentSuite) TestCompareReservedWordsWithMySQL(c *C) {
+func TestCompareReservedWordsWithMySQL(t *testing.T) {
+	_, filename, _, _ := runtime.Caller(0)
+	parserFilename := path.Join(path.Dir(filename), "parser.y")
+	parserFile, err := os.Open(parserFilename)
+	requires.NoError(t, err)
+	data, err := ioutil.ReadAll(parserFile)
+	requires.NoError(t, err)
+	content := string(data)
+
+	reservedKeywordStartMarker := "\t/* The following tokens belong to ReservedKeyword. Notice: make sure these tokens are contained in ReservedKeyword. */"
+	unreservedKeywordStartMarker := "\t/* The following tokens belong to UnReservedKeyword. Notice: make sure these tokens are contained in UnReservedKeyword. */"
+	notKeywordTokenStartMarker := "\t/* The following tokens belong to NotKeywordToken. Notice: make sure these tokens are contained in NotKeywordToken. */"
+	tidbKeywordStartMarker := "\t/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */"
+	identTokenEndMarker := "%token\t<item>"
+
+	reservedKeywords := extractKeywords(content, reservedKeywordStartMarker, unreservedKeywordStartMarker)
+	unreservedKeywords := extractKeywords(content, unreservedKeywordStartMarker, notKeywordTokenStartMarker)
+	notKeywordTokens := extractKeywords(content, notKeywordTokenStartMarker, tidbKeywordStartMarker)
+	tidbKeywords := extractKeywords(content, tidbKeywordStartMarker, identTokenEndMarker)
+
 	p := New()
 	db, err := dbsql.Open("mysql", "root@tcp(127.0.0.1:3306)/")
-	c.Assert(err, IsNil)
-	defer db.Close()
+	requires.NoError(t, err)
+	defer func() {
+		requires.NoError(t, db.Close())
+	}()
 
-	for _, kw := range s.reservedKeywords {
+	for _, kw := range reservedKeywords {
 		switch kw {
-		case "CURRENT_ROLE":
-			// special case: we do reserve CURRENT_ROLE but MySQL didn't,
+		case "CURRENT_ROLE", "INTERSECT", "STATS_EXTENDED", "TABLESAMPLE":
+			// special case: we do reserve these words but MySQL didn't,
 			// and unreservering it causes legit parser conflict.
 			continue
 		}
@@ -54,29 +82,32 @@ func (s *testConsistentSuite) TestCompareReservedWordsWithMySQL(c *C) {
 		if _, ok := windowFuncTokenMap[kw]; !ok {
 			// for some reason the query does parse even then the keyword is reserved in TiDB.
 			_, _, err = p.Parse(query, "", "")
-			c.Assert(err, ErrorMatches, errRegexp)
+			requires.Error(t, err)
+			requires.Regexp(t, errRegexp, err.Error())
 		}
 		_, err = db.Exec(query)
-		c.Assert(err, ErrorMatches, errRegexp, Commentf("MySQL suggests that '%s' should *not* be reserved!", kw))
+		requires.Error(t, err)
+		requires.Regexp(t, errRegexp, err.Error(), "MySQL suggests that '%s' should *not* be reserved!", kw)
 	}
 
-	for _, kws := range [][]string{s.unreservedKeywords, s.notKeywordTokens, s.tidbKeywords} {
+	for _, kws := range [][]string{unreservedKeywords, notKeywordTokens, tidbKeywords} {
 		for _, kw := range kws {
 			switch kw {
 			case "FUNCTION", // reserved in 8.0.1
-				"SEPARATOR": // ?
+				"PURGE", "SYSTEM", "SEPARATOR": // ?
 				continue
 			}
 
 			query := "do (select 1 as " + kw + ")"
 
 			stmts, _, err := p.Parse(query, "", "")
-			c.Assert(err, IsNil)
-			c.Assert(stmts, HasLen, 1)
-			c.Assert(stmts[0], FitsTypeOf, &ast.DoStmt{})
+			requires.NoError(t, err)
+			requires.Len(t, stmts, 1)
+			requires.IsType(t, &ast.DoStmt{}, stmts[0])
 
 			_, err = db.Exec(query)
-			c.Assert(err, IsNil, Commentf("MySQL suggests that '%s' should be reserved!", kw))
+			println(query)
+			requires.NoErrorf(t, err, "MySQL suggests that '%s' should be reserved!", kw)
 		}
 	}
 }

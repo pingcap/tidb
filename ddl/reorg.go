@@ -89,7 +89,10 @@ func newContext(store kv.Storage) sessionctx.Context {
 	c := mock.NewContext()
 	c.Store = store
 	c.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, false)
-	c.GetSessionVars().StmtCtx.TimeZone = time.UTC
+
+	tz := *time.UTC
+	c.GetSessionVars().TimeZone = &tz
+	c.GetSessionVars().StmtCtx.TimeZone = &tz
 	return c
 }
 
@@ -199,6 +202,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 			SQLMode:       mysql.ModeNone,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
+			Location:      &model.TimeZoneLocation{Name: time.UTC.String(), Offset: 0},
 		}
 	}
 	if w.reorgCtx.doneCh == nil {
@@ -340,11 +344,7 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 		return statistics.PseudoRowCount
 	}
 	sql := "select table_rows from information_schema.tables where tidb_table_id=%?;"
-	stmt, err := executor.ParseWithParams(w.ddlJobCtx, sql, tblInfo.ID)
-	if err != nil {
-		return statistics.PseudoRowCount
-	}
-	rows, _, err := executor.ExecRestrictedStmt(w.ddlJobCtx, stmt)
+	rows, _, err := executor.ExecRestrictedSQL(w.ddlJobCtx, nil, sql, tblInfo.ID)
 	if err != nil {
 		return statistics.PseudoRowCount
 	}

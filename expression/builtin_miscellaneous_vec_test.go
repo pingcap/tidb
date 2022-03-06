@@ -19,11 +19,11 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
 var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
@@ -108,14 +108,17 @@ var vecBuiltinMiscellaneousCases = map[string][]vecExprBenchCase{
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&uuidBinGener{newDefaultRandGen()}}},
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}, geners: []dataGenerator{&uuidBinGener{newDefaultRandGen()}}},
 	},
+	ast.IsUUID: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString}, geners: []dataGenerator{&uuidStrGener{newDefaultRandGen()}}},
+	},
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinMiscellaneousEvalOneVec(c *C) {
-	testVectorizedEvalOneVec(c, vecBuiltinMiscellaneousCases)
+func TestVectorizedBuiltinMiscellaneousEvalOneVec(t *testing.T) {
+	testVectorizedEvalOneVec(t, vecBuiltinMiscellaneousCases)
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinMiscellaneousFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinMiscellaneousCases)
+func TestVectorizedBuiltinMiscellaneousFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinMiscellaneousCases)
 }
 
 func BenchmarkVectorizedBuiltinMiscellaneousEvalOneVec(b *testing.B) {
@@ -135,7 +138,7 @@ func (c *counter) add(diff int) int {
 	return c.count
 }
 
-func (s *testEvaluatorSuite) TestSleepVectorized(c *C) {
+func TestSleepVectorized(t *testing.T) {
 	ctx := mock.NewContext()
 	sessVars := ctx.GetSessionVars()
 
@@ -143,68 +146,68 @@ func (s *testEvaluatorSuite) TestSleepVectorized(c *C) {
 	ft := eType2FieldType(types.ETReal)
 	col0 := &Column{RetType: ft, Index: 0}
 	f, err := fc.getFunction(ctx, []Expression{col0})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	input := chunk.NewChunkWithCapacity([]*types.FieldType{ft}, 1024)
 	result := chunk.NewColumn(ft, 1024)
 	warnCnt := counter{}
 
 	// non-strict model
-	sessVars.StrictSQLMode = false
+	sessVars.StmtCtx.BadNullAsWarning = true
 	input.AppendFloat64(0, 1)
 	err = f.vecEvalInt(input, result)
-	c.Assert(err, IsNil)
-	c.Assert(result.GetInt64(0), Equals, int64(0))
-	c.Assert(sessVars.StmtCtx.WarningCount(), Equals, uint16(warnCnt.add(0)))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), result.GetInt64(0))
+	require.Equal(t, uint16(warnCnt.add(0)), sessVars.StmtCtx.WarningCount())
 
 	input.Reset()
 	input.AppendFloat64(0, -1)
 	err = f.vecEvalInt(input, result)
-	c.Assert(err, IsNil)
-	c.Assert(result.GetInt64(0), Equals, int64(0))
-	c.Assert(sessVars.StmtCtx.WarningCount(), Equals, uint16(warnCnt.add(1)))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), result.GetInt64(0))
+	require.Equal(t, uint16(warnCnt.add(1)), sessVars.StmtCtx.WarningCount())
 
 	input.Reset()
 	input.AppendNull(0)
 	err = f.vecEvalInt(input, result)
-	c.Assert(err, IsNil)
-	c.Assert(result.GetInt64(0), Equals, int64(0))
-	c.Assert(sessVars.StmtCtx.WarningCount(), Equals, uint16(warnCnt.add(1)))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), result.GetInt64(0))
+	require.Equal(t, uint16(warnCnt.add(1)), sessVars.StmtCtx.WarningCount())
 
 	input.Reset()
 	input.AppendNull(0)
 	input.AppendFloat64(0, 1)
 	input.AppendFloat64(0, -1)
 	err = f.vecEvalInt(input, result)
-	c.Assert(err, IsNil)
-	c.Assert(result.GetInt64(0), Equals, int64(0))
-	c.Assert(result.GetInt64(1), Equals, int64(0))
-	c.Assert(result.GetInt64(2), Equals, int64(0))
-	c.Assert(sessVars.StmtCtx.WarningCount(), Equals, uint16(warnCnt.add(2)))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), result.GetInt64(0))
+	require.Equal(t, int64(0), result.GetInt64(1))
+	require.Equal(t, int64(0), result.GetInt64(2))
+	require.Equal(t, uint16(warnCnt.add(2)), sessVars.StmtCtx.WarningCount())
 
 	// for error case under the strict model
-	sessVars.StrictSQLMode = true
+	sessVars.StmtCtx.BadNullAsWarning = false
 	input.Reset()
 	input.AppendNull(0)
 	err = f.vecEvalInt(input, result)
-	c.Assert(err, NotNil)
-	c.Assert(result.GetInt64(0), Equals, int64(0))
+	require.Error(t, err)
+	require.Equal(t, int64(0), result.GetInt64(0))
 
 	sessVars.StmtCtx.SetWarnings(nil)
 	input.Reset()
 	input.AppendFloat64(0, -2.5)
 	err = f.vecEvalInt(input, result)
-	c.Assert(err, NotNil)
-	c.Assert(result.GetInt64(0), Equals, int64(0))
+	require.Error(t, err)
+	require.Equal(t, int64(0), result.GetInt64(0))
 
 	// strict model
 	input.Reset()
 	input.AppendFloat64(0, 0.5)
 	start := time.Now()
 	err = f.vecEvalInt(input, result)
-	c.Assert(err, IsNil)
-	c.Assert(result.GetInt64(0), Equals, int64(0))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), result.GetInt64(0))
 	sub := time.Since(start)
-	c.Assert(sub.Nanoseconds(), GreaterEqual, int64(0.5*1e9))
+	require.GreaterOrEqual(t, sub.Nanoseconds(), int64(0.5*1e9))
 
 	input.Reset()
 	input.AppendFloat64(0, 0.01)
@@ -217,10 +220,10 @@ func (s *testEvaluatorSuite) TestSleepVectorized(c *C) {
 	}()
 	err = f.vecEvalInt(input, result)
 	sub = time.Since(start)
-	c.Assert(err, IsNil)
-	c.Assert(result.GetInt64(0), Equals, int64(0))
-	c.Assert(result.GetInt64(1), Equals, int64(1))
-	c.Assert(result.GetInt64(2), Equals, int64(1))
-	c.Assert(sub.Nanoseconds(), LessEqual, int64(2*1e9))
-	c.Assert(sub.Nanoseconds(), GreaterEqual, int64(1*1e9))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), result.GetInt64(0))
+	require.Equal(t, int64(1), result.GetInt64(1))
+	require.Equal(t, int64(1), result.GetInt64(2))
+	require.LessOrEqual(t, sub.Nanoseconds(), int64(2*1e9))
+	require.GreaterOrEqual(t, sub.Nanoseconds(), int64(1*1e9))
 }

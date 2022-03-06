@@ -4,14 +4,11 @@ package utils
 
 import (
 	"context"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
-
-type testProgressSuite struct{}
-
-var _ = Suite(&testProgressSuite{})
 
 type testWriter struct {
 	fn func(string)
@@ -22,7 +19,7 @@ func (t *testWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (r *testProgressSuite) TestProgress(c *C) {
+func TestProgress(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	var p string
@@ -34,15 +31,16 @@ func (r *testProgressSuite) TestProgress(c *C) {
 	progress2.Inc()
 	time.Sleep(2 * time.Second)
 	p = <-pCh2
-	c.Assert(p, Matches, `.*"P":"50\.00%".*`)
+	require.Contains(t, p, `"P":"50.00%"`)
 	progress2.Inc()
 	time.Sleep(2 * time.Second)
 	p = <-pCh2
-	c.Assert(p, Matches, `.*"P":"100\.00%".*`)
+	require.Contains(t, p, `"P":"100.00%"`)
 	progress2.Inc()
 	time.Sleep(2 * time.Second)
 	p = <-pCh2
-	c.Assert(p, Matches, `.*"P":"100\.00%".*`)
+	require.Contains(t, p, `"P":"100.00%"`)
+	progress2.Close()
 
 	pCh4 := make(chan string, 4)
 	progress4 := NewProgressPrinter("test", 4, false)
@@ -52,12 +50,12 @@ func (r *testProgressSuite) TestProgress(c *C) {
 	progress4.Inc()
 	time.Sleep(2 * time.Second)
 	p = <-pCh4
-	c.Assert(p, Matches, `.*"P":"25\.00%".*`)
+	require.Contains(t, p, `"P":"25.00%"`)
 	progress4.Inc()
 	progress4.Close()
 	time.Sleep(2 * time.Second)
 	p = <-pCh4
-	c.Assert(p, Matches, `.*"P":"100\.00%".*`)
+	require.Contains(t, p, `"P":"100.00%"`)
 
 	pCh8 := make(chan string, 8)
 	progress8 := NewProgressPrinter("test", 8, false)
@@ -68,10 +66,11 @@ func (r *testProgressSuite) TestProgress(c *C) {
 	progress8.Inc()
 	time.Sleep(2 * time.Second)
 	p = <-pCh8
-	c.Assert(p, Matches, `.*"P":"25\.00%".*`)
+	require.Contains(t, p, `"P":"25.00%"`)
 
 	// Cancel should stop progress at the current position.
 	cancel()
 	p = <-pCh8
-	c.Assert(p, Matches, `.*"P":"25\.00%".*`)
+	require.Contains(t, p, `"P":"25.00%"`)
+	progress8.Close()
 }

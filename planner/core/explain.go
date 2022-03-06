@@ -332,8 +332,7 @@ func (p *PhysicalTableReader) ExplainNormalizedInfo() string {
 	return ""
 }
 
-func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) string {
-	ts := p.TablePlans[0].(*PhysicalTableScan)
+func getAccessObjectForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan, partitionInfo PartitionInfo) string {
 	pi := ts.Table.GetPartitionInfo()
 	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ""
@@ -346,7 +345,51 @@ func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) string {
 	}
 	tbl := tmp.(table.PartitionedTable)
 
-	return partitionAccessObject(sctx, tbl, pi, &p.PartitionInfo)
+	return partitionAccessObject(sctx, tbl, pi, &partitionInfo)
+}
+
+func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) string {
+	if !sctx.GetSessionVars().UseDynamicPartitionPrune() {
+		return ""
+	}
+	if len(p.PartitionInfos) == 0 {
+		ts := p.TablePlans[0].(*PhysicalTableScan)
+		return getAccessObjectForTableScan(sctx, ts, p.PartitionInfo)
+	}
+	if len(p.PartitionInfos) == 1 {
+		return getAccessObjectForTableScan(sctx, p.PartitionInfos[0].tableScan, p.PartitionInfos[0].partitionInfo)
+	}
+	containsPartitionTable := false
+	for _, info := range p.PartitionInfos {
+		if info.tableScan.Table.GetPartitionInfo() != nil {
+			containsPartitionTable = true
+			break
+		}
+	}
+	if !containsPartitionTable {
+		return ""
+	}
+	var buffer bytes.Buffer
+	for index, info := range p.PartitionInfos {
+		if index > 0 {
+			buffer.WriteString(", ")
+		}
+
+		tblName := info.tableScan.Table.Name.O
+		if info.tableScan.TableAsName != nil && info.tableScan.TableAsName.O != "" {
+			tblName = info.tableScan.TableAsName.O
+		}
+
+		if info.tableScan.Table.GetPartitionInfo() == nil {
+			buffer.WriteString("table of ")
+			buffer.WriteString(tblName)
+			continue
+		}
+		buffer.WriteString(getAccessObjectForTableScan(sctx, info.tableScan, info.partitionInfo))
+		buffer.WriteString(" of ")
+		buffer.WriteString(tblName)
+	}
+	return buffer.String()
 }
 
 func partitionAccessObject(sctx sessionctx.Context, tbl table.PartitionedTable, pi *model.PartitionInfo, partTable *PartitionInfo) string {
@@ -388,7 +431,7 @@ func (p *PhysicalIndexReader) ExplainInfo() string {
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexReader) ExplainNormalizedInfo() string {
-	return p.ExplainInfo()
+	return "index:" + p.indexPlan.TP()
 }
 
 func (p *PhysicalIndexReader) accessObject(sctx sessionctx.Context) string {
@@ -413,17 +456,22 @@ func (p *PhysicalIndexReader) accessObject(sctx sessionctx.Context) string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
+	var str strings.Builder
 	// The children can be inferred by the relation symbol.
 	if p.PushedLimit != nil {
-		var str strings.Builder
 		str.WriteString("limit embedded(offset:")
 		str.WriteString(strconv.FormatUint(p.PushedLimit.Offset, 10))
 		str.WriteString(", count:")
 		str.WriteString(strconv.FormatUint(p.PushedLimit.Count, 10))
 		str.WriteString(")")
-		return str.String()
 	}
-	return ""
+	if p.Paging {
+		if p.PushedLimit != nil {
+			str.WriteString(", ")
+		}
+		str.WriteString("paging:true")
+	}
+	return str.String()
 }
 
 func (p *PhysicalIndexLookUpReader) accessObject(sctx sessionctx.Context) string {

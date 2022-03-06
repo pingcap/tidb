@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"go.uber.org/multierr"
@@ -52,7 +53,7 @@ type TableRestore struct {
 	alloc     autoid.Allocators
 	logger    log.Logger
 
-	ignoreColumns []string
+	ignoreColumns map[string]struct{}
 }
 
 func NewTableRestore(
@@ -61,7 +62,7 @@ func NewTableRestore(
 	dbInfo *checkpoints.TidbDBInfo,
 	tableInfo *checkpoints.TidbTableInfo,
 	cp *checkpoints.TableCheckpoint,
-	ignoreColumns []string,
+	ignoreColumns map[string]struct{},
 ) (*TableRestore, error) {
 	idAlloc := kv.NewPanickingAllocators(cp.AllocBase)
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo.Core)
@@ -166,15 +167,21 @@ func (tr *TableRestore) initializeColumns(columns []string, ccp *checkpoints.Chu
 	return nil
 }
 
-func createColumnPermutation(columns []string, ignoreColumns []string, tableInfo *model.TableInfo) ([]int, error) {
+func createColumnPermutation(columns []string, ignoreColumns map[string]struct{}, tableInfo *model.TableInfo) ([]int, error) {
 	var colPerm []int
 	if len(columns) == 0 {
 		colPerm = make([]int, 0, len(tableInfo.Columns)+1)
 		shouldIncludeRowID := common.TableHasAutoRowID(tableInfo)
 
 		// no provided columns, so use identity permutation.
-		for i := range tableInfo.Columns {
-			colPerm = append(colPerm, i)
+		for i, col := range tableInfo.Columns {
+			idx := i
+			if _, ok := ignoreColumns[col.Name.L]; ok {
+				idx = -1
+			} else if col.IsGenerated() {
+				idx = -1
+			}
+			colPerm = append(colPerm, idx)
 		}
 		if shouldIncludeRowID {
 			colPerm = append(colPerm, -1)
@@ -192,18 +199,8 @@ func createColumnPermutation(columns []string, ignoreColumns []string, tableInfo
 func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp *checkpoints.TableCheckpoint) error {
 	indexEngineCp := cp.Engines[indexEngineID]
 	if indexEngineCp == nil {
+		tr.logger.Error("fail to restoreEngines because indexengine is nil")
 		return errors.Errorf("table %v index engine checkpoint not found", tr.tableName)
-	}
-	// If there is an index engine only, it indicates no data needs to restore.
-	// So we can change status to imported directly and avoid opening engine.
-	if len(cp.Engines) == 1 {
-		if err := rc.saveStatusCheckpoint(pCtx, tr.tableName, indexEngineID, nil, checkpoints.CheckpointStatusImported); err != nil {
-			return errors.Trace(err)
-		}
-		if err := rc.saveStatusCheckpoint(pCtx, tr.tableName, checkpoints.WholeTableEngineID, nil, checkpoints.CheckpointStatusIndexImported); err != nil {
-			return errors.Trace(err)
-		}
-		return nil
 	}
 
 	ctx, cancel := context.WithCancel(pCtx)
@@ -361,11 +358,10 @@ func (tr *TableRestore) restoreEngines(pCtx context.Context, rc *Controller, cp 
 		var err error
 		if indexEngineCp.Status < checkpoints.CheckpointStatusImported {
 			err = tr.importKV(ctx, closedIndexEngine, rc, indexEngineID)
+			failpoint.Inject("FailBeforeIndexEngineImported", func() {
+				panic("forcing failure due to FailBeforeIndexEngineImported")
+			})
 		}
-
-		failpoint.Inject("FailBeforeIndexEngineImported", func() {
-			panic("forcing failure due to FailBeforeIndexEngineImported")
-		})
 
 		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusIndexImported)
 		if err = firstErr(err, saveCpErr); err != nil {
@@ -454,6 +450,11 @@ func (tr *TableRestore) restoreEngine(
 		}
 	}()
 
+	setError := func(err error) {
+		chunkErr.Set(err)
+		cancel()
+	}
+
 	// Restore table data
 	for chunkIndex, chunk := range cp.Chunks {
 		if chunk.Chunk.Offset >= chunk.Chunk.EndOffset {
@@ -492,7 +493,8 @@ func (tr *TableRestore) restoreEngine(
 		// 	4. flush kvs data (into tikv node)
 		cr, err := newChunkRestore(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo)
 		if err != nil {
-			return nil, errors.Trace(err)
+			setError(err)
+			break
 		}
 		var remainChunkCnt float64
 		if chunk.Chunk.Offset < chunk.Chunk.EndOffset {
@@ -500,19 +502,23 @@ func (tr *TableRestore) restoreEngine(
 			metric.ChunkCounter.WithLabelValues(metric.ChunkStatePending).Add(remainChunkCnt)
 		}
 
-		restoreWorker := rc.regionWorkers.Apply()
-		wg.Add(1)
-
 		dataWriter, err := dataEngine.LocalWriter(ctx, dataWriterCfg)
 		if err != nil {
-			return nil, errors.Trace(err)
+			cr.close()
+			setError(err)
+			break
 		}
 
 		indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
 		if err != nil {
-			return nil, errors.Trace(err)
+			_, _ = dataWriter.Close(ctx)
+			cr.close()
+			setError(err)
+			break
 		}
 
+		restoreWorker := rc.regionWorkers.Apply()
+		wg.Add(1)
 		go func(w *worker.Worker, cr *chunkRestore) {
 			// Restore a chunk.
 			defer func() {
@@ -547,8 +553,7 @@ func (tr *TableRestore) restoreEngine(
 				}
 			} else {
 				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFailed).Add(remainChunkCnt)
-				chunkErr.Set(err)
-				cancel()
+				setError(err)
 			}
 		}(restoreWorker, cr)
 	}
@@ -667,10 +672,7 @@ func (tr *TableRestore) postProcess(
 	forcePostProcess bool,
 	metaMgr tableMetaMgr,
 ) (bool, error) {
-	// there are no data in this table, no need to do post process
-	// this is important for tables that are just the dump table of views
-	// because at this stage, the table was already deleted and replaced by the related view
-	if !rc.backend.ShouldPostProcess() || len(cp.Engines) == 1 {
+	if !rc.backend.ShouldPostProcess() {
 		return false, nil
 	}
 
@@ -700,11 +702,15 @@ func (tr *TableRestore) postProcess(
 		return false, errors.Trace(err)
 	}
 
+	if !forcePostProcess && rc.cfg.PostRestore.PostProcessAtLast {
+		return true, nil
+	}
+
 	w := rc.checksumWorks.Apply()
 	defer rc.checksumWorks.Recycle(w)
 
-	finished := true
-	if cp.Status < checkpoints.CheckpointStatusChecksummed {
+	shouldSkipAnalyze := false
+	if cp.Status < checkpoints.CheckpointStatusChecksumSkipped {
 		// 4. do table checksum
 		var localChecksum verify.KVChecksum
 		for _, engine := range cp.Engines {
@@ -716,11 +722,18 @@ func (tr *TableRestore) postProcess(
 
 		// 4.5. do duplicate detection.
 		hasDupe := false
-		if rc.cfg.TikvImporter.DuplicateDetection {
+		if rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
+			opts := &kv.SessionOptions{
+				SQLMode: mysql.ModeStrictAllTables,
+				SysVars: rc.sysVars,
+			}
 			var err error
-			hasDupe, err = rc.backend.CollectLocalDuplicateRows(ctx, tr.encTable)
+			hasLocalDupe, err := rc.backend.CollectLocalDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
 			if err != nil {
 				tr.logger.Error("collect local duplicate keys failed", log.ShortError(err))
+				return false, err
+			} else {
+				hasDupe = hasLocalDupe
 			}
 		}
 
@@ -729,74 +742,81 @@ func (tr *TableRestore) postProcess(
 			return false, err
 		}
 
-		if needRemoteDupe && rc.cfg.TikvImporter.DuplicateDetection {
-			hasRemoteDupe, err := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable)
-			if err != nil {
-				tr.logger.Error("collect remote duplicate keys failed", log.ShortError(err))
-				err = nil
+		if needRemoteDupe && rc.cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
+			opts := &kv.SessionOptions{
+				SQLMode: mysql.ModeStrictAllTables,
+				SysVars: rc.sysVars,
 			}
-			hasDupe = hasDupe || hasRemoteDupe
+			hasRemoteDupe, e := rc.backend.CollectRemoteDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
+			if e != nil {
+				tr.logger.Error("collect remote duplicate keys failed", log.ShortError(e))
+				return false, e
+			} else {
+				hasDupe = hasDupe || hasRemoteDupe
+			}
+			if err = rc.backend.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, rc.cfg.TikvImporter.DuplicateResolution); err != nil {
+				tr.logger.Error("resolve remote duplicate keys failed", log.ShortError(err))
+				return false, err
+			}
 		}
 
-		if rc.cfg.PostRestore.Checksum == config.OpLevelOff {
-			tr.logger.Info("skip checksum")
-			if err := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, nil, checkpoints.CheckpointStatusChecksumSkipped); err != nil {
-				return false, errors.Trace(err)
-			}
-		} else if forcePostProcess || !rc.cfg.PostRestore.PostProcessAtLast {
-			if !needChecksum {
-				return false, nil
-			}
+		nextStage := checkpoints.CheckpointStatusChecksummed
+		if rc.cfg.PostRestore.Checksum != config.OpLevelOff && !hasDupe && needChecksum {
 			if cp.Checksum.SumKVS() > 0 || baseTotalChecksum.SumKVS() > 0 {
 				localChecksum.Add(&cp.Checksum)
 				localChecksum.Add(baseTotalChecksum)
 				tr.logger.Info("merged local checksum", zap.Object("checksum", &localChecksum))
 			}
 
-			if hasDupe {
-				// If there are duplicate keys, do not set the `ChecksumMismatch` error
-				tr.logger.Warn("checksum not performed due to duplicated records")
-			} else {
-				remoteChecksum, err := DoChecksum(ctx, tr.tableInfo)
+			var remoteChecksum *RemoteChecksum
+			remoteChecksum, err = DoChecksum(ctx, tr.tableInfo)
+			if err != nil {
+				return false, err
+			}
+			err = tr.compareChecksum(remoteChecksum, localChecksum)
+			// with post restore level 'optional', we will skip checksum error
+			if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
 				if err != nil {
-					return false, err
-				}
-				err = tr.compareChecksum(remoteChecksum, localChecksum)
-				// with post restore level 'optional', we will skip checksum error
-				if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
-					if err != nil {
-						tr.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
-						err = nil
-					}
+					tr.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
+					err = nil
 				}
 			}
-			if err == nil {
-				err = metaMgr.FinishTable(ctx)
-			}
-
-			saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusChecksummed)
-			if err = firstErr(err, saveCpErr); err != nil {
-				return false, errors.Trace(err)
-			}
-
-			cp.Status = checkpoints.CheckpointStatusChecksummed
 		} else {
-			finished = false
+			switch {
+			case rc.cfg.PostRestore.Checksum == config.OpLevelOff:
+				tr.logger.Info("skip checksum because the checksum option is off")
+			case hasDupe:
+				tr.logger.Info("skip checksum&analyze because duplicates were detected")
+				shouldSkipAnalyze = true
+			case !needChecksum:
+				tr.logger.Info("skip checksum&analyze because other lightning instance will do this")
+				shouldSkipAnalyze = true
+			}
+			err = nil
+			nextStage = checkpoints.CheckpointStatusChecksumSkipped
 		}
-	}
-	if !finished {
-		return !finished, nil
+
+		// Don't call FinishTable when other lightning will calculate checksum.
+		if err == nil && needChecksum {
+			err = metaMgr.FinishTable(ctx)
+		}
+
+		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, nextStage)
+		if err = firstErr(err, saveCpErr); err != nil {
+			return false, errors.Trace(err)
+		}
+		cp.Status = nextStage
 	}
 
 	// 5. do table analyze
-	if cp.Status < checkpoints.CheckpointStatusAnalyzed {
+	if cp.Status < checkpoints.CheckpointStatusAnalyzeSkipped {
 		switch {
-		case rc.cfg.PostRestore.Analyze == config.OpLevelOff:
+		case shouldSkipAnalyze || rc.cfg.PostRestore.Analyze == config.OpLevelOff:
 			tr.logger.Info("skip analyze")
 			if err := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, nil, checkpoints.CheckpointStatusAnalyzeSkipped); err != nil {
 				return false, errors.Trace(err)
 			}
-			cp.Status = checkpoints.CheckpointStatusAnalyzed
+			cp.Status = checkpoints.CheckpointStatusAnalyzeSkipped
 		case forcePostProcess || !rc.cfg.PostRestore.PostProcessAtLast:
 			err := tr.analyzeTable(ctx, rc.tidbGlue.GetSQLExecutor())
 			// witch post restore level 'optional', we will skip analyze error
@@ -812,26 +832,19 @@ func (tr *TableRestore) postProcess(
 			}
 			cp.Status = checkpoints.CheckpointStatusAnalyzed
 		default:
-			finished = false
+			return true, nil
 		}
 	}
 
-	return !finished, nil
+	return true, nil
 }
 
-func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignoreColumns []string) ([]int, error) {
+func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignoreColumns map[string]struct{}) ([]int, error) {
 	colPerm := make([]int, 0, len(tableInfo.Columns)+1)
 
 	columnMap := make(map[string]int)
 	for i, column := range columns {
 		columnMap[column] = i
-	}
-
-	ignoreMap := make(map[string]int)
-	for _, column := range ignoreColumns {
-		if i, ok := columnMap[column]; ok {
-			ignoreMap[column] = i
-		}
 	}
 
 	tableColumnMap := make(map[string]int)
@@ -843,7 +856,7 @@ func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignor
 	var unknownCols []string
 	for _, c := range columns {
 		if _, ok := tableColumnMap[c]; !ok && c != model.ExtraHandleName.L {
-			if _, ignore := ignoreMap[c]; !ignore {
+			if _, ignore := ignoreColumns[c]; !ignore {
 				unknownCols = append(unknownCols, c)
 			}
 		}
@@ -855,7 +868,7 @@ func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignor
 
 	for _, colInfo := range tableInfo.Columns {
 		if i, ok := columnMap[colInfo.Name.L]; ok {
-			if _, ignore := ignoreMap[colInfo.Name.L]; !ignore {
+			if _, ignore := ignoreColumns[colInfo.Name.L]; !ignore {
 				colPerm = append(colPerm, i)
 			} else {
 				log.L().Debug("column ignored by user requirements",
@@ -876,11 +889,16 @@ func parseColumnPermutations(tableInfo *model.TableInfo, columns []string, ignor
 			colPerm = append(colPerm, -1)
 		}
 	}
+	// append _tidb_rowid column
+	rowIDIdx := -1
 	if i, ok := columnMap[model.ExtraHandleName.L]; ok {
-		colPerm = append(colPerm, i)
-	} else if common.TableHasAutoRowID(tableInfo) {
-		colPerm = append(colPerm, -1)
+		if _, ignored := ignoreColumns[model.ExtraHandleName.L]; !ignored {
+			rowIDIdx = i
+		}
 	}
+	// FIXME: the schema info for tidb backend is not complete, so always add the _tidb_rowid field.
+	// Other logic should ignore this extra field if not needed.
+	colPerm = append(colPerm, rowIDIdx)
 
 	return colPerm, nil
 }
@@ -895,12 +913,14 @@ func (tr *TableRestore) importKV(
 	regionSplitSize := int64(rc.cfg.TikvImporter.RegionSplitSize)
 	if regionSplitSize == 0 && rc.taskMgr != nil {
 		regionSplitSize = int64(config.SplitRegionSize)
-		rc.taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
+		if err := rc.taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
 			if len(tasks) > 0 {
 				regionSplitSize = int64(config.SplitRegionSize) * int64(utils.MinInt(len(tasks), config.MaxSplitRegionSizeRatio))
 			}
 			return nil, nil
-		})
+		}); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	err := closedEngine.Import(ctx, regionSplitSize)
 	saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, engineID, err, checkpoints.CheckpointStatusImported)
@@ -974,8 +994,8 @@ func estimateCompactionThreshold(cp *checkpoints.TableCheckpoint, factor int64) 
 	threshold := totalRawFileSize / 512
 	threshold = utils.NextPowerOfTwo(threshold)
 	if threshold < compactionLowerThreshold {
-		// disable compaction if threshold is smaller than lower bound
-		threshold = 0
+		// too may small SST files will cause inaccuracy of region range estimation,
+		threshold = compactionLowerThreshold
 	} else if threshold > compactionUpperThreshold {
 		threshold = compactionUpperThreshold
 	}

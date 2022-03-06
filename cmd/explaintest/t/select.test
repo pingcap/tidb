@@ -56,10 +56,10 @@ SELECT * from t a, t2 b;
 SELECT * from t as a, t2 as b;
 SELECT * from t a left join t2 b on a.c1 = b.c1;
 
---error ER_DUP_FIELDNAME
+--error 1060
 SELECT * from (SELECT 1, 1) as a;
 
---error ER_DUP_FIELDNAME
+--error 1060
 SELECT * from (SELECT * FROM t, t2) as a;
 
 # Select bool field
@@ -181,12 +181,18 @@ desc select sysdate(), sleep(1), sysdate();
 # test select partition table
 drop table if exists th;
 set @@session.tidb_enable_table_partition = '1';
+set @@session.tidb_partition_prune_mode = 'static';
 create table th (a int, b int) partition by hash(a) partitions 3;
 insert into th values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8);
 insert into th values (-1,-1),(-2,-2),(-3,-3),(-4,-4),(-5,-5),(-6,-6),(-7,-7),(-8,-8);
 desc select * from th where a=-2;
 desc select * from th;
 desc select * from th partition (p2,p1);
+set @@session.tidb_partition_prune_mode = 'dynamic';
+desc select * from th where a=-2;
+desc select * from th;
+desc select * from th partition (p2,p1);
+set @@session.tidb_partition_prune_mode = DEFAULT;
 
 # test != any(subq) and = all(subq)
 drop table if exists t;
@@ -244,3 +250,8 @@ insert into precise_types values (
     18446744073709551614
 );
 SELECT a, b, c, d FROM precise_types;
+
+create table t3(a char(10), primary key (a));
+insert into t3 values ('a');
+--error 1105
+select * from t3 where a > 0x80;

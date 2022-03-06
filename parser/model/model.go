@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
 )
@@ -213,7 +214,16 @@ func FindColumnInfo(cols []*ColumnInfo, name string) *ColumnInfo {
 			return col
 		}
 	}
+	return nil
+}
 
+// FindColumnInfoByID finds ColumnInfo in cols by id.
+func FindColumnInfoByID(cols []*ColumnInfo, id int64) *ColumnInfo {
+	for _, col := range cols {
+		if col.ID == id {
+			return col
+		}
+	}
 	return nil
 }
 
@@ -223,6 +233,12 @@ const ExtraHandleID = -1
 
 // ExtraPidColID is the column ID of column which store the partitionID decoded in global index values.
 const ExtraPidColID = -2
+
+// ExtraPhysTblID is the column ID of column that should be filled in with the physical table id.
+// Primarily used for table partition dynamic prune mode, to return which partition (physical table id) the row came from.
+// Using a dedicated id for this, since in the future ExtraPidColID and ExtraPhysTblID may be used for the same request.
+// Must be after ExtraPidColID!
+const ExtraPhysTblID = -3
 
 const (
 	// TableInfoVersion0 means the table info version is 0.
@@ -264,6 +280,9 @@ var ExtraHandleName = NewCIStr("_tidb_rowid")
 
 // ExtraPartitionIdName is the name of ExtraPartitionId Column.
 var ExtraPartitionIdName = NewCIStr("_tidb_pid")
+
+// ExtraPhysTblIdName is the name of ExtraPhysTblID Column.
+var ExtraPhysTblIdName = NewCIStr("_tidb_tid")
 
 // TableInfo provides meta data describing a DB table.
 type TableInfo struct {
@@ -337,10 +356,32 @@ type TableInfo struct {
 	// It's true when the engine of the table is TiFlash only.
 	IsColumnar bool `json:"is_columnar"`
 
-	TempTableType `json:"temp_table_type"`
+	TempTableType        `json:"temp_table_type"`
+	TableCacheStatusType `json:"cache_table_status"`
+	PlacementPolicyRef   *PolicyRefInfo `json:"policy_ref_info"`
 
-	PlacementPolicyRef  *PolicyRefInfo     `json:"policy_ref_info"`
-	DirectPlacementOpts *PlacementSettings `json:"placement_settings"`
+	// StatsOptions is used when do analyze/auto-analyze for each table
+	StatsOptions *StatsOptions `json:"stats_options"`
+}
+type TableCacheStatusType int
+
+const (
+	TableCacheStatusDisable TableCacheStatusType = iota
+	TableCacheStatusEnable
+	TableCacheStatusSwitching
+)
+
+func (t TableCacheStatusType) String() string {
+	switch t {
+	case TableCacheStatusDisable:
+		return "disable"
+	case TableCacheStatusEnable:
+		return "enable"
+	case TableCacheStatusSwitching:
+		return "switching"
+	default:
+		return ""
+	}
 }
 
 type TempTableType byte
@@ -605,6 +646,7 @@ func NewExtraHandleColInfo() *ColumnInfo {
 	colInfo.Flag = mysql.PriKeyFlag | mysql.NotNullFlag
 	colInfo.Tp = mysql.TypeLonglong
 	colInfo.Flen, colInfo.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	colInfo.Charset, colInfo.Collate = charset.CharsetBin, charset.CollationBin
 	return colInfo
 }
 
@@ -613,6 +655,17 @@ func NewExtraPartitionIDColInfo() *ColumnInfo {
 	colInfo := &ColumnInfo{
 		ID:   ExtraPidColID,
 		Name: ExtraPartitionIdName,
+	}
+	colInfo.Tp = mysql.TypeLonglong
+	colInfo.Flen, colInfo.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	return colInfo
+}
+
+// NewExtraPhysTblIDColInfo mocks a column info for extra partition id column.
+func NewExtraPhysTblIDColInfo() *ColumnInfo {
+	colInfo := &ColumnInfo{
+		ID:   ExtraPhysTblID,
+		Name: ExtraPhysTblIdName,
 	}
 	colInfo.Tp = mysql.TypeLonglong
 	colInfo.Flen, colInfo.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
@@ -629,6 +682,11 @@ func (t *TableInfo) ColumnIsInIndex(c *ColumnInfo) bool {
 		}
 	}
 	return false
+}
+
+// HasClusteredIndex checks whether the table has a clustered index.
+func (t *TableInfo) HasClusteredIndex() bool {
+	return t.PKIsHandle || t.IsCommonHandle
 }
 
 // IsView checks if TableInfo is a view.
@@ -858,13 +916,12 @@ type PartitionState struct {
 
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
-	ID                  int64              `json:"id"`
-	Name                CIStr              `json:"name"`
-	LessThan            []string           `json:"less_than"`
-	InValues            [][]string         `json:"in_values"`
-	PlacementPolicyRef  *PolicyRefInfo     `json:"policy_ref_info"`
-	DirectPlacementOpts *PlacementSettings `json:"placement_settings"`
-	Comment             string             `json:"comment,omitempty"`
+	ID                 int64          `json:"id"`
+	Name               CIStr          `json:"name"`
+	LessThan           []string       `json:"less_than"`
+	InValues           [][]string     `json:"in_values"`
+	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
+	Comment            string         `json:"comment,omitempty"`
 }
 
 // Clone clones ConstraintInfo.
@@ -1044,14 +1101,13 @@ func (fk *FKInfo) Clone() *FKInfo {
 
 // DBInfo provides meta data describing a DB.
 type DBInfo struct {
-	ID                  int64              `json:"id"`      // Database ID
-	Name                CIStr              `json:"db_name"` // DB name.
-	Charset             string             `json:"charset"`
-	Collate             string             `json:"collate"`
-	Tables              []*TableInfo       `json:"-"` // Tables in the DB.
-	State               SchemaState        `json:"state"`
-	PlacementPolicyRef  *PolicyRefInfo     `json:"policy_ref_info"`
-	DirectPlacementOpts *PlacementSettings `json:"placement_settings"`
+	ID                 int64          `json:"id"`      // Database ID
+	Name               CIStr          `json:"db_name"` // DB name.
+	Charset            string         `json:"charset"`
+	Collate            string         `json:"collate"`
+	Tables             []*TableInfo   `json:"-"` // Tables in the DB.
+	State              SchemaState    `json:"state"`
+	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
 }
 
 // Clone clones DBInfo.
@@ -1198,4 +1254,82 @@ func (p *PlacementSettings) String() string {
 	}
 
 	return sb.String()
+}
+
+type StatsOptions struct {
+	*StatsWindowSettings
+	AutoRecalc   bool         `json:"auto_recalc"`
+	ColumnChoice ColumnChoice `json:"column_choice"`
+	ColumnList   []CIStr      `json:"column_list"`
+	SampleNum    uint64       `json:"sample_num"`
+	SampleRate   float64      `json:"sample_rate"`
+	Buckets      uint64       `json:"buckets"`
+	TopN         uint64       `json:"topn"`
+	Concurrency  uint         `json:"concurrency"`
+}
+
+func NewStatsOptions() *StatsOptions {
+	return &StatsOptions{
+		AutoRecalc:   true,
+		ColumnChoice: DefaultChoice,
+		ColumnList:   []CIStr{},
+		SampleNum:    uint64(0),
+		SampleRate:   0.0,
+		Buckets:      uint64(0),
+		TopN:         uint64(0),
+		Concurrency:  uint(0),
+	}
+}
+
+type ColumnChoice byte
+
+const (
+	DefaultChoice ColumnChoice = iota
+	AllColumns
+	PredicateColumns
+	ColumnList
+)
+
+func (s ColumnChoice) String() string {
+	switch s {
+	case AllColumns:
+		return "ALL"
+	case PredicateColumns:
+		return "PREDICATE"
+	case ColumnList:
+		return "LIST"
+	default:
+		return "DEFAULT"
+	}
+}
+
+type StatsWindowSettings struct {
+	WindowStart    time.Time        `json:"window_start"`
+	WindowEnd      time.Time        `json:"window_end"`
+	RepeatType     WindowRepeatType `json:"repeat_type"`
+	RepeatInterval uint             `json:"repeat_interval"`
+}
+
+type WindowRepeatType byte
+
+const (
+	Never WindowRepeatType = iota
+	Day
+	Week
+	Month
+)
+
+func (s WindowRepeatType) String() string {
+	switch s {
+	case Never:
+		return "Never"
+	case Day:
+		return "Day"
+	case Week:
+		return "Week"
+	case Month:
+		return "Month"
+	default:
+		return ""
+	}
 }

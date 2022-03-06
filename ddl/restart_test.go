@@ -11,6 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+//go:build !race
 // +build !race
 
 package ddl
@@ -18,15 +19,23 @@ package ddl
 import (
 	"context"
 	"errors"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
 // this test file include some test that will cause data race, mainly because restartWorkers modify d.ctx
+
+func getDDLSchemaVer(t *testing.T, d *ddl) int64 {
+	m, err := d.Stats(nil)
+	require.NoError(t, err)
+	v := m[ddlSchemaVersion]
+	return v.(int64)
+}
 
 // restartWorkers is like the function of d.start. But it won't initialize the "workers" and create a new worker.
 // It only starts the original workers.
@@ -52,7 +61,7 @@ func (d *ddl) restartWorkers(ctx context.Context) {
 }
 
 // runInterruptedJob should be called concurrently with restartWorkers
-func runInterruptedJob(c *C, d *ddl, job *model.Job, doneCh chan error) {
+func runInterruptedJob(d *ddl, job *model.Job, doneCh chan error) {
 	ctx := mock.NewContext()
 	ctx.Store = d.store
 
@@ -81,86 +90,83 @@ func runInterruptedJob(c *C, d *ddl, job *model.Job, doneCh chan error) {
 	doneCh <- err
 }
 
-func testRunInterruptedJob(c *C, d *ddl, job *model.Job) {
+func testRunInterruptedJob(t *testing.T, d *ddl, job *model.Job) {
 	done := make(chan error, 1)
-	go runInterruptedJob(c, d, job, done)
+	go runInterruptedJob(d, job, done)
 
 	ticker := time.NewTicker(d.lease * 1)
 	defer ticker.Stop()
-LOOP:
 	for {
 		select {
 		case <-ticker.C:
 			err := d.Stop()
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			d.restartWorkers(context.Background())
 			time.Sleep(time.Millisecond * 20)
 		case err := <-done:
-			c.Assert(err, IsNil)
-			break LOOP
+			require.Nil(t, err)
+			return
 		}
 	}
 }
 
-func (s *testSchemaSuite) TestSchemaResume(c *C) {
-	store := testCreateStore(c, "test_schema_resume")
+func TestSchemaResume(t *testing.T) {
+	store := createMockStore(t)
 	defer func() {
-		err := store.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, store.Close())
 	}()
 
-	d1 := testNewDDLAndStart(
+	d1, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	require.NoError(t, err)
 	defer func() {
-		err := d1.Stop()
-		c.Assert(err, IsNil)
+		require.NoError(t, d1.Stop())
 	}()
 
-	testCheckOwner(c, d1, true)
+	testCheckOwner(t, d1, true)
 
-	dbInfo := testSchemaInfo(c, d1, "test_restart")
+	dbInfo, err := testSchemaInfo(d1, "test_restart")
+	require.NoError(t, err)
 	job := &model.Job{
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionCreateSchema,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{dbInfo},
 	}
-	testRunInterruptedJob(c, d1, job)
-	testCheckSchemaState(c, d1, dbInfo, model.StatePublic)
+	testRunInterruptedJob(t, d1, job)
+	testCheckSchemaState(t, d1, dbInfo, model.StatePublic)
 
 	job = &model.Job{
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionDropSchema,
 		BinlogInfo: &model.HistoryInfo{},
 	}
-	testRunInterruptedJob(c, d1, job)
-	testCheckSchemaState(c, d1, dbInfo, model.StateNone)
+	testRunInterruptedJob(t, d1, job)
+	testCheckSchemaState(t, d1, dbInfo, model.StateNone)
 }
 
-func (s *testStatSuite) TestStat(c *C) {
-	store := testCreateStore(c, "test_stat")
+func TestStat(t *testing.T) {
+	store := createMockStore(t)
 	defer func() {
-		err := store.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, store.Close())
 	}()
 
-	d := testNewDDLAndStart(
+	d, err := testNewDDLAndStart(
 		context.Background(),
-		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
+	require.NoError(t, err)
 	defer func() {
-		err := d.Stop()
-		c.Assert(err, IsNil)
+		require.NoError(t, d.Stop())
 	}()
 
-	dbInfo := testSchemaInfo(c, d, "test_restart")
-	testCreateSchema(c, testNewContext(d), d, dbInfo)
+	dbInfo, err := testSchemaInfo(d, "test_restart")
+	require.NoError(t, err)
+	testCreateSchema(t, testNewContext(d), d, dbInfo)
 
 	// TODO: Get this information from etcd.
 	//	m, err := d.Stats(nil)
@@ -175,51 +181,72 @@ func (s *testStatSuite) TestStat(c *C) {
 	}
 
 	done := make(chan error, 1)
-	go runInterruptedJob(c, d, job, done)
+	go runInterruptedJob(d, job, done)
 
 	ticker := time.NewTicker(d.lease * 1)
 	defer ticker.Stop()
-	ver := s.getDDLSchemaVer(c, d)
+	ver := getDDLSchemaVer(t, d)
 LOOP:
 	for {
 		select {
 		case <-ticker.C:
 			err := d.Stop()
-			c.Assert(err, IsNil)
-			c.Assert(s.getDDLSchemaVer(c, d), GreaterEqual, ver)
+			require.Nil(t, err)
+			require.GreaterOrEqual(t, getDDLSchemaVer(t, d), ver)
 			d.restartWorkers(context.Background())
 			time.Sleep(time.Millisecond * 20)
 		case err := <-done:
 			// TODO: Get this information from etcd.
 			// m, err := d.Stats(nil)
-			c.Assert(err, IsNil)
+			require.Nil(t, err)
 			break LOOP
 		}
 	}
 }
 
-func (s *testTableSuite) TestTableResume(c *C) {
-	d := s.d
+func TestTableResume(t *testing.T) {
+	store := createMockStore(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
 
-	testCheckOwner(c, d, true)
+	d, err := testNewDDLAndStart(
+		context.Background(),
+		WithStore(store),
+		WithLease(testLease),
+	)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, d.Stop())
+	}()
 
-	tblInfo := testTableInfo(c, d, "t1", 3)
+	dbInfo, err := testSchemaInfo(d, "test_table")
+	require.NoError(t, err)
+	testCreateSchema(t, testNewContext(d), d, dbInfo)
+	defer func() {
+		testDropSchema(t, testNewContext(d), d, dbInfo)
+	}()
+
+	testCheckOwner(t, d, true)
+
+	tblInfo, err := testTableInfo(d, "t1", 3)
+	require.NoError(t, err)
 	job := &model.Job{
-		SchemaID:   s.dbInfo.ID,
+		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{tblInfo},
 	}
-	testRunInterruptedJob(c, d, job)
-	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
+	testRunInterruptedJob(t, d, job)
+	testCheckTableState(t, d, dbInfo, tblInfo, model.StatePublic)
 
 	job = &model.Job{
-		SchemaID:   s.dbInfo.ID,
+		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
 		Type:       model.ActionDropTable,
 		BinlogInfo: &model.HistoryInfo{},
 	}
-	testRunInterruptedJob(c, d, job)
-	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StateNone)
+	testRunInterruptedJob(t, d, job)
+	testCheckTableState(t, d, dbInfo, tblInfo, model.StateNone)
 }

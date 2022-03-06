@@ -88,7 +88,13 @@ func numericContextResultType(ft *types.FieldType) types.EvalType {
 
 // setFlenDecimal4RealOrDecimal is called to set proper `Flen` and `Decimal` of return
 // type according to the two input parameter's types.
-func setFlenDecimal4RealOrDecimal(retTp, a, b *types.FieldType, isReal bool, isMultiply bool) {
+func setFlenDecimal4RealOrDecimal(ctx sessionctx.Context, retTp *types.FieldType, arg0, arg1 Expression, isReal bool, isMultiply bool) {
+	a, b := arg0.GetType(), arg1.GetType()
+	if MaybeOverOptimized4PlanCache(ctx, []Expression{arg0, arg1}) {
+		// set length and decimal to unspecified if arguments depend on parameters
+		retTp.Flen, retTp.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
+		return
+	}
 	if a.Decimal != types.UnspecifiedLength && b.Decimal != types.UnspecifiedLength {
 		retTp.Decimal = a.Decimal + b.Decimal
 		if !isMultiply {
@@ -105,7 +111,7 @@ func setFlenDecimal4RealOrDecimal(retTp, a, b *types.FieldType, isReal bool, isM
 		if isMultiply {
 			digitsInt = a.Flen - a.Decimal + b.Flen - b.Decimal
 		}
-		retTp.Flen = digitsInt + retTp.Decimal + 3
+		retTp.Flen = digitsInt + retTp.Decimal + 1
 		if isReal {
 			retTp.Flen = mathutil.Min(retTp.Flen, mysql.MaxRealWidth)
 			return
@@ -122,10 +128,10 @@ func setFlenDecimal4RealOrDecimal(retTp, a, b *types.FieldType, isReal bool, isM
 
 func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.FieldType) {
 	var deca, decb = a.Decimal, b.Decimal
-	if deca == int(types.UnspecifiedFsp) {
+	if deca == types.UnspecifiedFsp {
 		deca = 0
 	}
-	if decb == int(types.UnspecifiedFsp) {
+	if decb == types.UnspecifiedFsp {
 		decb = 0
 	}
 	retTp.Decimal = deca + precIncrement
@@ -164,7 +170,7 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx sessionctx.Context, args [
 		if err != nil {
 			return nil, err
 		}
-		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), true, false)
+		setFlenDecimal4RealOrDecimal(ctx, bf.tp, args[0], args[1], true, false)
 		sig := &builtinArithmeticPlusRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_PlusReal)
 		return sig, nil
@@ -173,7 +179,7 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx sessionctx.Context, args [
 		if err != nil {
 			return nil, err
 		}
-		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), false, false)
+		setFlenDecimal4RealOrDecimal(ctx, bf.tp, args[0], args[1], false, false)
 		sig := &builtinArithmeticPlusDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_PlusDecimal)
 		return sig, nil
@@ -316,7 +322,7 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx sessionctx.Context, args 
 		if err != nil {
 			return nil, err
 		}
-		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), true, false)
+		setFlenDecimal4RealOrDecimal(ctx, bf.tp, args[0], args[1], true, false)
 		sig := &builtinArithmeticMinusRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MinusReal)
 		return sig, nil
@@ -325,7 +331,7 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx sessionctx.Context, args 
 		if err != nil {
 			return nil, err
 		}
-		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), false, false)
+		setFlenDecimal4RealOrDecimal(ctx, bf.tp, args[0], args[1], false, false)
 		sig := &builtinArithmeticMinusDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MinusDecimal)
 		return sig, nil
@@ -502,7 +508,7 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx sessionctx.Context, ar
 		if err != nil {
 			return nil, err
 		}
-		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), true, true)
+		setFlenDecimal4RealOrDecimal(ctx, bf.tp, args[0], args[1], true, true)
 		sig := &builtinArithmeticMultiplyRealSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MultiplyReal)
 		return sig, nil
@@ -511,7 +517,7 @@ func (c *arithmeticMultiplyFunctionClass) getFunction(ctx sessionctx.Context, ar
 		if err != nil {
 			return nil, err
 		}
-		setFlenDecimal4RealOrDecimal(bf.tp, args[0].GetType(), args[1].GetType(), false, true)
+		setFlenDecimal4RealOrDecimal(ctx, bf.tp, args[0], args[1], false, true)
 		sig := &builtinArithmeticMultiplyDecimalSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_MultiplyDecimal)
 		return sig, nil

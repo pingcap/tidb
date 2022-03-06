@@ -133,6 +133,7 @@ func GetSSTMetaFromFile(
 		Length:      file.GetSize_(),
 		RegionId:    region.GetId(),
 		RegionEpoch: region.GetRegionEpoch(),
+		CipherIv:    file.GetCipherIv(),
 	}
 }
 
@@ -344,10 +345,11 @@ func SplitRanges(
 	ranges []rtree.Range,
 	rewriteRules *RewriteRules,
 	updateCh glue.Progress,
+	isRawKv bool,
 ) error {
-	splitter := NewRegionSplitter(NewSplitClient(client.GetPDClient(), client.GetTLSConfig()))
+	splitter := NewRegionSplitter(NewSplitClient(client.GetPDClient(), client.GetTLSConfig(), isRawKv))
 
-	return splitter.Split(ctx, ranges, rewriteRules, func(keys [][]byte) {
+	return splitter.Split(ctx, ranges, rewriteRules, isRawKv, func(keys [][]byte) {
 		for range keys {
 			updateCh.Inc()
 		}

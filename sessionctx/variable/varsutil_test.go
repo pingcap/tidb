@@ -98,7 +98,7 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, int64(DefTiDBShardAllocateStep), vars.ShardAllocateStep)
 	require.Equal(t, DefTiDBAnalyzeVersion, vars.AnalyzeVersion)
 	require.Equal(t, DefCTEMaxRecursionDepth, vars.CTEMaxRecursionDepth)
-	require.Equal(t, int64(DefTMPTableSize), vars.TMPTableSize)
+	require.Equal(t, int64(DefTiDBTmpTableMaxSize), vars.TMPTableSize)
 
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(t, reflect.ValueOf(vars.BatchSize))
@@ -309,13 +309,13 @@ func TestVarsutil(t *testing.T) {
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBCheckMb4ValueInUTF8)
 	require.NoError(t, err)
 	require.Equal(t, "ON", val)
-	require.True(t, config.GetGlobalConfig().CheckMb4ValueInUTF8)
+	require.True(t, config.GetGlobalConfig().CheckMb4ValueInUTF8.Load())
 	err = SetSessionSystemVar(v, TiDBCheckMb4ValueInUTF8, "0")
 	require.NoError(t, err)
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBCheckMb4ValueInUTF8)
 	require.NoError(t, err)
 	require.Equal(t, "OFF", val)
-	require.False(t, config.GetGlobalConfig().CheckMb4ValueInUTF8)
+	require.False(t, config.GetGlobalConfig().CheckMb4ValueInUTF8.Load())
 
 	err = SetSessionSystemVar(v, TiDBLowResolutionTSO, "1")
 	require.NoError(t, err)
@@ -437,54 +437,23 @@ func TestVarsutil(t *testing.T) {
 	require.Equal(t, "leader-and-follower", val)
 	require.Equal(t, kv.ReplicaReadMixed, v.GetReplicaRead())
 
-	err = SetSessionSystemVar(v, TiDBEnableStmtSummary, "ON")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBEnableStmtSummary)
-	require.NoError(t, err)
-	require.Equal(t, "ON", val)
-
 	err = SetSessionSystemVar(v, TiDBRedactLog, "ON")
 	require.NoError(t, err)
 	val, err = GetSessionOrGlobalSystemVar(v, TiDBRedactLog)
 	require.NoError(t, err)
 	require.Equal(t, "ON", val)
 
-	err = SetSessionSystemVar(v, TiDBStmtSummaryRefreshInterval, "10")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBStmtSummaryRefreshInterval)
-	require.NoError(t, err)
-	require.Equal(t, "10", val)
-
-	err = SetSessionSystemVar(v, TiDBStmtSummaryHistorySize, "10")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBStmtSummaryHistorySize)
-	require.NoError(t, err)
-	require.Equal(t, "10", val)
-
-	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount, "10")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBStmtSummaryMaxStmtCount)
-	require.NoError(t, err)
-	require.Equal(t, "10", val)
-	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxStmtCount, "a")
-	require.Regexp(t, ".*Incorrect argument type to variable 'tidb_stmt_summary_max_stmt_count'", err)
-
-	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxSQLLength, "10")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBStmtSummaryMaxSQLLength)
-	require.NoError(t, err)
-	require.Equal(t, "10", val)
-	err = SetSessionSystemVar(v, TiDBStmtSummaryMaxSQLLength, "a")
-	require.Regexp(t, ".*Incorrect argument type to variable 'tidb_stmt_summary_max_sql_length'", err.Error())
-
 	err = SetSessionSystemVar(v, TiDBFoundInPlanCache, "1")
-	require.Regexp(t, ".*]Variable 'last_plan_from_cache' is a read only variable", err.Error())
+	require.Error(t, err)
+	require.Regexp(t, "]Variable 'last_plan_from_cache' is a read only variable$", err.Error())
 
 	err = SetSessionSystemVar(v, TiDBFoundInBinding, "1")
-	require.Regexp(t, ".*]Variable 'last_plan_from_binding' is a read only variable", err.Error())
+	require.Error(t, err)
+	require.Regexp(t, "]Variable 'last_plan_from_binding' is a read only variable$", err.Error())
 
 	err = SetSessionSystemVar(v, "UnknownVariable", "on")
-	require.Regexp(t, ".*]Unknown system variable 'UnknownVariable'", err.Error())
+	require.Error(t, err)
+	require.Regexp(t, "]Unknown system variable 'UnknownVariable'$", err.Error())
 
 	// reset warnings
 	v.StmtCtx.TruncateWarnings(0)
@@ -493,25 +462,12 @@ func TestVarsutil(t *testing.T) {
 	err = SetSessionSystemVar(v, TiDBAnalyzeVersion, "4")
 	require.NoError(t, err) // converts to max value
 	warn := v.StmtCtx.GetWarnings()[0]
-	require.Regexp(t, ".*Truncated incorrect tidb_analyze_version value", warn.Err.Error())
-}
+	require.Error(t, warn.Err)
+	require.Contains(t, warn.Err.Error(), "Truncated incorrect tidb_analyze_version value")
 
-func TestSetOverflowBehave(t *testing.T) {
-	ddRegWorker := maxDDLReorgWorkerCount + 1
-	SetDDLReorgWorkerCounter(ddRegWorker)
-	require.Equal(t, GetDDLReorgWorkerCounter(), maxDDLReorgWorkerCount)
-
-	ddlReorgBatchSize := MaxDDLReorgBatchSize + 1
-	SetDDLReorgBatchSize(ddlReorgBatchSize)
-	require.Equal(t, GetDDLReorgBatchSize(), MaxDDLReorgBatchSize)
-	ddlReorgBatchSize = MinDDLReorgBatchSize - 1
-	SetDDLReorgBatchSize(ddlReorgBatchSize)
-	require.Equal(t, GetDDLReorgBatchSize(), MinDDLReorgBatchSize)
-
-	val := tidbOptInt64("a", 1)
-	require.Equal(t, int64(1), val)
-	val2 := tidbOptFloat64("b", 1.2)
-	require.Equal(t, 1.2, val2)
+	err = SetSessionSystemVar(v, TiDBTableCacheLease, "123")
+	require.Error(t, err)
+	require.Regexp(t, "'tidb_table_cache_lease' is a GLOBAL variable and should be set with SET GLOBAL", err.Error())
 }
 
 func TestValidate(t *testing.T) {
@@ -605,7 +561,6 @@ func TestValidate(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.key, func(t *testing.T) {
-			t.Parallel()
 			_, err := GetSysVar(tc.key).Validate(v, tc.value, ScopeGlobal)
 			if tc.error {
 				require.Errorf(t, err, "%v got err=%v", tc, err)
@@ -634,7 +589,6 @@ func TestValidate(t *testing.T) {
 		// copy iterator variable into a new variable, see issue #27779
 		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
-			t.Parallel()
 			_, err := GetSysVar(tc.key).Validate(v, tc.value, ScopeSession)
 			if tc.error {
 				require.Errorf(t, err, "%v got err=%v", tc, err)
@@ -655,46 +609,30 @@ func TestValidateStmtSummary(t *testing.T) {
 		key   string
 		value string
 		error bool
-		scope ScopeFlag
 	}{
-		{TiDBEnableStmtSummary, "a", true, ScopeSession},
-		{TiDBEnableStmtSummary, "-1", true, ScopeSession},
-		{TiDBEnableStmtSummary, "", false, ScopeSession},
-		{TiDBEnableStmtSummary, "", true, ScopeGlobal},
-		{TiDBStmtSummaryInternalQuery, "a", true, ScopeSession},
-		{TiDBStmtSummaryInternalQuery, "-1", true, ScopeSession},
-		{TiDBStmtSummaryInternalQuery, "", false, ScopeSession},
-		{TiDBStmtSummaryInternalQuery, "", true, ScopeGlobal},
-		{TiDBStmtSummaryRefreshInterval, "a", true, ScopeSession},
-		{TiDBStmtSummaryRefreshInterval, "", false, ScopeSession},
-		{TiDBStmtSummaryRefreshInterval, "", true, ScopeGlobal},
-		{TiDBStmtSummaryRefreshInterval, "0", false, ScopeGlobal},
-		{TiDBStmtSummaryRefreshInterval, "99999999999", false, ScopeGlobal},
-		{TiDBStmtSummaryHistorySize, "a", true, ScopeSession},
-		{TiDBStmtSummaryHistorySize, "", false, ScopeSession},
-		{TiDBStmtSummaryHistorySize, "", true, ScopeGlobal},
-		{TiDBStmtSummaryHistorySize, "0", false, ScopeGlobal},
-		{TiDBStmtSummaryHistorySize, "-1", false, ScopeGlobal},
-		{TiDBStmtSummaryHistorySize, "99999999", false, ScopeGlobal},
-		{TiDBStmtSummaryMaxStmtCount, "a", true, ScopeSession},
-		{TiDBStmtSummaryMaxStmtCount, "", false, ScopeSession},
-		{TiDBStmtSummaryMaxStmtCount, "", true, ScopeGlobal},
-		{TiDBStmtSummaryMaxStmtCount, "0", false, ScopeGlobal},
-		{TiDBStmtSummaryMaxStmtCount, "99999999", false, ScopeGlobal},
-		{TiDBStmtSummaryMaxSQLLength, "a", true, ScopeSession},
-		{TiDBStmtSummaryMaxSQLLength, "", false, ScopeSession},
-		{TiDBStmtSummaryMaxSQLLength, "", true, ScopeGlobal},
-		{TiDBStmtSummaryMaxSQLLength, "0", false, ScopeGlobal},
-		{TiDBStmtSummaryMaxSQLLength, "-1", false, ScopeGlobal},
-		{TiDBStmtSummaryMaxSQLLength, "99999999999", false, ScopeGlobal},
+		{TiDBEnableStmtSummary, "", true},
+		{TiDBStmtSummaryInternalQuery, "", true},
+		{TiDBStmtSummaryRefreshInterval, "", true},
+		{TiDBStmtSummaryRefreshInterval, "0", false},
+		{TiDBStmtSummaryRefreshInterval, "99999999999", false},
+		{TiDBStmtSummaryHistorySize, "", true},
+		{TiDBStmtSummaryHistorySize, "0", false},
+		{TiDBStmtSummaryHistorySize, "-1", false},
+		{TiDBStmtSummaryHistorySize, "99999999", false},
+		{TiDBStmtSummaryMaxStmtCount, "", true},
+		{TiDBStmtSummaryMaxStmtCount, "0", false},
+		{TiDBStmtSummaryMaxStmtCount, "99999999", false},
+		{TiDBStmtSummaryMaxSQLLength, "", true},
+		{TiDBStmtSummaryMaxSQLLength, "0", false},
+		{TiDBStmtSummaryMaxSQLLength, "-1", false},
+		{TiDBStmtSummaryMaxSQLLength, "99999999999", false},
 	}
 
 	for _, tc := range testCases {
 		// copy iterator variable into a new variable, see issue #27779
 		tc := tc
 		t.Run(tc.key, func(t *testing.T) {
-			t.Parallel()
-			_, err := GetSysVar(tc.key).Validate(v, tc.value, tc.scope)
+			_, err := GetSysVar(tc.key).Validate(v, tc.value, ScopeGlobal)
 			if tc.error {
 				require.Errorf(t, err, "%v got err=%v", tc, err)
 			} else {
@@ -757,9 +695,9 @@ func TestHelperFuncs(t *testing.T) {
 	require.Equal(t, 5, tidbOptPositiveInt32("-1234", 5))
 	require.Equal(t, 5, tidbOptPositiveInt32("bogus", 5))
 
-	require.Equal(t, 1234, tidbOptInt("1234", 5))
-	require.Equal(t, -1234, tidbOptInt("-1234", 5))
-	require.Equal(t, 5, tidbOptInt("bogus", 5))
+	require.Equal(t, 1234, TidbOptInt("1234", 5))
+	require.Equal(t, -1234, TidbOptInt("-1234", 5))
+	require.Equal(t, 5, TidbOptInt("bogus", 5))
 }
 
 func TestStmtVars(t *testing.T) {

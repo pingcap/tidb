@@ -44,14 +44,16 @@ endif
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
+
 PACKAGE_LIST  := go list ./...
-PACKAGE_LIST_TIDB_TESTS  := go list ./... | grep -vE "github.com\/pingcap\/tidb\/br|github.com\/pingcap\/tidb\/cmd"
+PACKAGE_LIST_TIDB_TESTS  := go list ./... | grep -vE "github.com\/pingcap\/tidb\/br|github.com\/pingcap\/tidb\/cmd|github.com\/pingcap\/tidb\/dumpling"
 PACKAGES  ?= $$($(PACKAGE_LIST))
 PACKAGES_TIDB_TESTS ?= $$($(PACKAGE_LIST_TIDB_TESTS))
 PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
 PACKAGE_DIRECTORIES_TIDB_TESTS := $(PACKAGE_LIST_TIDB_TESTS) | sed 's|github.com/pingcap/$(PROJECT)/||'
 FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go")
 FILES_TIDB_TESTS := $$(find $$($(PACKAGE_DIRECTORIES_TIDB_TESTS)) -name "*.go")
+
 UNCONVERT_PACKAGES_LIST := go list ./...| grep -vE "lightning\/checkpoints|lightning\/manual|lightning\/common"
 UNCONVERT_PACKAGES := $$($(UNCONVERT_PACKAGES_LIST))
 
@@ -88,7 +90,26 @@ endif
 
 BR_PKG := github.com/pingcap/tidb/br
 BR_PACKAGES       := go list ./...| grep "github.com\/pingcap\/tidb\/br"
+BR_PACKAGE_DIRECTORIES := $(BR_PACKAGES) | sed 's|github.com/pingcap/$(PROJECT)/||'
 LIGHTNING_BIN     := bin/tidb-lightning
 LIGHTNING_CTL_BIN := bin/tidb-lightning-ctl
 BR_BIN            := bin/br
 TEST_DIR          := /tmp/backup_restore_test
+
+
+DUMPLING_PKG := github.com/pingcap/tidb/dumpling
+DUMPLING_PACKAGES   := go list ./... | grep 'github.com\/pingcap\/tidb\/dumpling'
+DUMPLING_PACKAGE_DIRECTORIES := $(DUMPLING_PACKAGES) | sed 's|github.com/pingcap/$(PROJECT)/||'
+DUMPLING_BIN        := bin/dumpling
+DUMPLING_CHECKER := awk '{ print } END { if (NR > 0) { exit 1 } }'
+
+DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.ReleaseVersion=$(shell git describe --tags --dirty='-dev')"
+DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.BuildTimestamp=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
+DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GitHash=$(shell git rev-parse HEAD)"
+DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
+DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GoVersion=$(shell go version)"
+
+DUMPLING_GOBUILD := CGO_ENABLED=0 GO111MODULE=on go build -trimpath -ldflags '$(DUMPLING_LDFLAGS)'
+DUMPLING_GOTEST  := CGO_ENABLED=1 GO111MODULE=on go test -ldflags '$(DUMPLING_LDFLAGS)'
+
+TEST_COVERAGE_DIR := "test_coverage"

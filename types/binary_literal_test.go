@@ -24,7 +24,6 @@ import (
 
 func TestBinaryLiteral(t *testing.T) {
 	t.Run("TestTrimLeadingZeroBytes", func(t *testing.T) {
-		t.Parallel()
 		tbl := []struct {
 			Input    []byte
 			Expected []byte
@@ -46,7 +45,6 @@ func TestBinaryLiteral(t *testing.T) {
 	})
 
 	t.Run("TestParseBitStr", func(t *testing.T) {
-		t.Parallel()
 		tbl := []struct {
 			Input    string
 			Expected []byte
@@ -108,14 +106,13 @@ func TestBinaryLiteral(t *testing.T) {
 	})
 
 	t.Run("TestParseBitStr", func(t *testing.T) {
-		t.Parallel()
 		b, err := ParseBitStr("")
 		require.Nil(t, b)
+		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid empty ")
 	})
 
 	t.Run("TestParseHexStr", func(t *testing.T) {
-		t.Parallel()
 		tbl := []struct {
 			Input    string
 			Expected []byte
@@ -148,14 +145,13 @@ func TestBinaryLiteral(t *testing.T) {
 	})
 
 	t.Run("TestParseHexStr", func(t *testing.T) {
-		t.Parallel()
 		b, err := ParseBitStr("")
 		require.Nil(t, b)
+		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid empty ")
 	})
 
 	t.Run("TestString", func(t *testing.T) {
-		t.Parallel()
 		tbl := []struct {
 			Input    BinaryLiteral
 			Expected string
@@ -172,7 +168,6 @@ func TestBinaryLiteral(t *testing.T) {
 	})
 
 	t.Run("TestToBitLiteralString", func(t *testing.T) {
-		t.Parallel()
 		tbl := []struct {
 			Input           BinaryLiteral
 			TrimLeadingZero bool
@@ -198,7 +193,6 @@ func TestBinaryLiteral(t *testing.T) {
 	})
 
 	t.Run("TestToInt", func(t *testing.T) {
-		t.Parallel()
 		tbl := []struct {
 			Input    string
 			Expected uint64
@@ -228,7 +222,6 @@ func TestBinaryLiteral(t *testing.T) {
 	})
 
 	t.Run("TestNewBinaryLiteralFromUint", func(t *testing.T) {
-		t.Parallel()
 		tbl := []struct {
 			Input    uint64
 			ByteSize int
@@ -265,7 +258,6 @@ func TestBinaryLiteral(t *testing.T) {
 	})
 
 	t.Run("TestCompare", func(t *testing.T) {
-		t.Parallel()
 		tbl := []struct {
 			a   BinaryLiteral
 			b   BinaryLiteral
@@ -282,7 +274,6 @@ func TestBinaryLiteral(t *testing.T) {
 	})
 
 	t.Run("TestToString", func(t *testing.T) {
-		t.Parallel()
 		h, _ := NewHexLiteral("x'3A3B'")
 		str := h.ToString()
 		require.Equal(t, str, ":;")

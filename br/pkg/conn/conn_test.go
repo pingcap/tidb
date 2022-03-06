@@ -165,8 +165,6 @@ func TestCheckStoresAlive(t *testing.T) {
 }
 
 func TestGetAllTiKVStores(t *testing.T) {
-	t.Parallel()
-
 	testCases := []struct {
 		stores         []*metapb.Store
 		storeBehavior  StoreBehavior
@@ -201,7 +199,7 @@ func TestGetAllTiKVStores(t *testing.T) {
 				{Id: 2, Labels: []*metapb.StoreLabel{{Key: "engine", Value: "tiflash"}}},
 			},
 			storeBehavior: ErrorOnTiFlash,
-			expectedError: "cannot restore to a cluster with active TiFlash stores.*",
+			expectedError: "^cannot restore to a cluster with active TiFlash stores",
 		},
 		{
 			stores: []*metapb.Store{
@@ -225,7 +223,7 @@ func TestGetAllTiKVStores(t *testing.T) {
 				{Id: 6, Labels: []*metapb.StoreLabel{{Key: "else", Value: "tiflash"}, {Key: "engine", Value: "tikv"}}},
 			},
 			storeBehavior: ErrorOnTiFlash,
-			expectedError: "cannot restore to a cluster with active TiFlash stores.*",
+			expectedError: "^cannot restore to a cluster with active TiFlash stores",
 		},
 		{
 			stores: []*metapb.Store{
@@ -258,8 +256,6 @@ func TestGetAllTiKVStores(t *testing.T) {
 }
 
 func TestGetConnOnCanceledContext(t *testing.T) {
-	t.Parallel()
-
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -267,9 +263,9 @@ func TestGetConnOnCanceledContext(t *testing.T) {
 
 	_, err := mgr.GetBackupClient(ctx, 42)
 	require.Error(t, err)
-	require.Regexp(t, ".*context canceled.*", err.Error())
+	require.Contains(t, err.Error(), "context canceled")
 
 	_, err = mgr.ResetBackupClient(ctx, 42)
 	require.Error(t, err)
-	require.Regexp(t, ".*context canceled.*", err.Error())
+	require.Contains(t, err.Error(), "context canceled")
 }

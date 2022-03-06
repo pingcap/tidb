@@ -154,6 +154,36 @@ func (b *builtinIsIPv6Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) 
 	return nil
 }
 
+func (b *builtinIsUUIDSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinIsUUIDSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
+		return err
+	}
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	result.MergeNulls(buf)
+	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
+		if _, err = uuid.Parse(buf.GetString(i)); err != nil {
+			i64s[i] = 0
+		} else {
+			i64s[i] = 1
+		}
+	}
+	return nil
+}
+
 func (b *builtinNameConstStringSig) vectorized() bool {
 	return true
 }
@@ -311,7 +341,8 @@ func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 
 		sessVars := b.ctx.GetSessionVars()
 		if isNull || val < 0 {
-			if sessVars.StrictSQLMode {
+			// for insert ignore stmt, the StrictSQLMode and ignoreErr should both be considered.
+			if !sessVars.StmtCtx.BadNullAsWarning {
 				return errIncorrectArgs.GenWithStackByArgs("sleep")
 			}
 			err := errIncorrectArgs.GenWithStackByArgs("sleep")

@@ -20,25 +20,23 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"testing"
 	"time"
 
-	sqlmock "github.com/DATA-DOG/go-sqlmock"
-	. "github.com/pingcap/check"
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-type utilSuite struct{}
-
-var _ = Suite(&utilSuite{})
-
-func (s *utilSuite) TestDirNotExist(c *C) {
-	c.Assert(common.IsDirExists("."), IsTrue)
-	c.Assert(common.IsDirExists("not-exists"), IsFalse)
+func TestDirNotExist(t *testing.T) {
+	require.True(t, common.IsDirExists("."))
+	require.False(t, common.IsDirExists("not-exists"))
 }
 
-func (s *utilSuite) TestGetJSON(c *C) {
+func TestGetJSON(t *testing.T) {
 	type TestPayload struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -53,7 +51,7 @@ func (s *utilSuite) TestGetJSON(c *C) {
 	handle := func(res http.ResponseWriter, _ *http.Request) {
 		res.WriteHeader(http.StatusOK)
 		err := json.NewEncoder(res).Encode(request)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 	testServer := httptest.NewServer(http.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
 		handle(res, req)
@@ -64,21 +62,21 @@ func (s *utilSuite) TestGetJSON(c *C) {
 
 	response := TestPayload{}
 	err := common.GetJSON(ctx, client, "http://not-exists", &response)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	err = common.GetJSON(ctx, client, testServer.URL, &response)
-	c.Assert(err, IsNil)
-	c.Assert(request, DeepEquals, response)
+	require.NoError(t, err)
+	require.Equal(t, request, response)
 
 	// Mock `StatusNoContent` response
 	handle = func(res http.ResponseWriter, _ *http.Request) {
 		res.WriteHeader(http.StatusNoContent)
 	}
 	err = common.GetJSON(ctx, client, testServer.URL, &response)
-	c.Assert(err, NotNil)
-	c.Assert(err, ErrorMatches, ".*http status code != 200.*")
+	require.Error(t, err)
+	require.Regexp(t, ".*http status code != 200.*", err.Error())
 }
 
-func (s *utilSuite) TestToDSN(c *C) {
+func TestToDSN(t *testing.T) {
 	param := common.MySQLConnectParam{
 		Host:             "127.0.0.1",
 		Port:             4000,
@@ -91,25 +89,26 @@ func (s *utilSuite) TestToDSN(c *C) {
 			"tidb_distsql_scan_concurrency": "1",
 		},
 	}
-	c.Assert(param.ToDSN(), Equals, "root:123456@tcp(127.0.0.1:4000)/?charset=utf8mb4&sql_mode='strict'&maxAllowedPacket=1234&tls=cluster&tidb_distsql_scan_concurrency=1")
+	require.Equal(t, "root:123456@tcp(127.0.0.1:4000)/?charset=utf8mb4&sql_mode='strict'&maxAllowedPacket=1234&tls=cluster&tidb_distsql_scan_concurrency='1'", param.ToDSN())
 }
 
-func (s *utilSuite) TestIsContextCanceledError(c *C) {
-	c.Assert(common.IsContextCanceledError(context.Canceled), IsTrue)
-	c.Assert(common.IsContextCanceledError(io.EOF), IsFalse)
+func TestIsContextCanceledError(t *testing.T) {
+	require.True(t, common.IsContextCanceledError(context.Canceled))
+	require.False(t, common.IsContextCanceledError(io.EOF))
 }
 
-func (s *utilSuite) TestUniqueTable(c *C) {
+func TestUniqueTable(t *testing.T) {
 	tableName := common.UniqueTable("test", "t1")
-	c.Assert(tableName, Equals, "`test`.`t1`")
+	require.Equal(t, "`test`.`t1`", tableName)
 
 	tableName = common.UniqueTable("test", "t`1")
-	c.Assert(tableName, Equals, "`test`.`t``1`")
+	require.Equal(t, "`test`.`t``1`", tableName)
 }
 
-func (s *utilSuite) TestSQLWithRetry(c *C) {
+func TestSQLWithRetry(t *testing.T) {
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+	defer db.Close()
 
 	sqlWithRetry := &common.SQLWithRetry{
 		DB:     db,
@@ -122,48 +121,48 @@ func (s *utilSuite) TestSQLWithRetry(c *C) {
 		mock.ExpectQuery("select a from test.t1").WillReturnError(errors.New("mock error"))
 	}
 	err = sqlWithRetry.QueryRow(context.Background(), "", "select a from test.t1", aValue)
-	c.Assert(err, ErrorMatches, ".*mock error")
+	require.Regexp(t, ".*mock error", err.Error())
 
 	// meet unretryable error and will return directly
 	mock.ExpectQuery("select a from test.t1").WillReturnError(context.Canceled)
 	err = sqlWithRetry.QueryRow(context.Background(), "", "select a from test.t1", aValue)
-	c.Assert(err, ErrorMatches, ".*context canceled")
+	require.Regexp(t, ".*context canceled", err.Error())
 
 	// query success
 	rows := sqlmock.NewRows([]string{"a"}).AddRow("1")
 	mock.ExpectQuery("select a from test.t1").WillReturnRows(rows)
 
 	err = sqlWithRetry.QueryRow(context.Background(), "", "select a from test.t1", aValue)
-	c.Assert(err, IsNil)
-	c.Assert(*aValue, Equals, 1)
+	require.NoError(t, err)
+	require.Equal(t, 1, *aValue)
 
 	// test Exec
 	mock.ExpectExec("delete from").WillReturnError(context.Canceled)
 	err = sqlWithRetry.Exec(context.Background(), "", "delete from test.t1 where id = ?", 2)
-	c.Assert(err, ErrorMatches, ".*context canceled")
+	require.Regexp(t, ".*context canceled", err.Error())
 
 	mock.ExpectExec("delete from").WillReturnResult(sqlmock.NewResult(0, 1))
 	err = sqlWithRetry.Exec(context.Background(), "", "delete from test.t1 where id = ?", 2)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.Nil(t, mock.ExpectationsWereMet())
 }
 
-func (s *utilSuite) TestStringSliceEqual(c *C) {
-	c.Assert(common.StringSliceEqual(nil, nil), IsTrue)
-	c.Assert(common.StringSliceEqual(nil, []string{}), IsTrue)
-	c.Assert(common.StringSliceEqual(nil, []string{"a"}), IsFalse)
-	c.Assert(common.StringSliceEqual([]string{"a"}, nil), IsFalse)
-	c.Assert(common.StringSliceEqual([]string{"a"}, []string{"a"}), IsTrue)
-	c.Assert(common.StringSliceEqual([]string{"a"}, []string{"b"}), IsFalse)
-	c.Assert(common.StringSliceEqual([]string{"a", "b", "c"}, []string{"a", "b", "c"}), IsTrue)
-	c.Assert(common.StringSliceEqual([]string{"a"}, []string{"a", "b", "c"}), IsFalse)
-	c.Assert(common.StringSliceEqual([]string{"a", "b", "c"}, []string{"a", "b"}), IsFalse)
-	c.Assert(common.StringSliceEqual([]string{"a", "x", "y"}, []string{"a", "y", "x"}), IsFalse)
+func TestStringSliceEqual(t *testing.T) {
+	assert.True(t, common.StringSliceEqual(nil, nil))
+	assert.True(t, common.StringSliceEqual(nil, []string{}))
+	assert.False(t, common.StringSliceEqual(nil, []string{"a"}))
+	assert.False(t, common.StringSliceEqual([]string{"a"}, nil))
+	assert.True(t, common.StringSliceEqual([]string{"a"}, []string{"a"}))
+	assert.False(t, common.StringSliceEqual([]string{"a"}, []string{"b"}))
+	assert.True(t, common.StringSliceEqual([]string{"a", "b", "c"}, []string{"a", "b", "c"}))
+	assert.False(t, common.StringSliceEqual([]string{"a"}, []string{"a", "b", "c"}))
+	assert.False(t, common.StringSliceEqual([]string{"a", "b", "c"}, []string{"a", "b"}))
+	assert.False(t, common.StringSliceEqual([]string{"a", "x", "y"}, []string{"a", "y", "x"}))
 }
 
-func (s *utilSuite) TestInterpolateMySQLString(c *C) {
-	c.Assert(common.InterpolateMySQLString("123"), Equals, "'123'")
-	c.Assert(common.InterpolateMySQLString("1'23"), Equals, "'1''23'")
-	c.Assert(common.InterpolateMySQLString("1'2''3"), Equals, "'1''2''''3'")
+func TestInterpolateMySQLString(t *testing.T) {
+	assert.Equal(t, "'123'", common.InterpolateMySQLString("123"))
+	assert.Equal(t, "'1''23'", common.InterpolateMySQLString("1'23"))
+	assert.Equal(t, "'1''2''''3'", common.InterpolateMySQLString("1'2''3"))
 }

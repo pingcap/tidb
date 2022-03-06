@@ -443,11 +443,73 @@ func (e *ShowExec) appendTableForStatsHealthy(dbName, tblName, partitionName str
 	})
 }
 
+func (e *ShowExec) fetchShowHistogramsInFlight() {
+	e.appendRow([]interface{}{statistics.HistogramNeededColumns.Length()})
+}
+
 func (e *ShowExec) fetchShowAnalyzeStatus() {
 	rows := dataForAnalyzeStatusHelper(e.baseExecutor.ctx)
 	for _, row := range rows {
-		for i, val := range row {
-			e.result.AppendDatum(i, &val)
+		for i := range row {
+			e.result.AppendDatum(i, &row[i])
 		}
 	}
+}
+
+func (e *ShowExec) fetchShowColumnStatsUsage() error {
+	do := domain.GetDomain(e.ctx)
+	h := do.StatsHandle()
+	colStatsMap, err := h.LoadColumnStatsUsage(e.ctx.GetSessionVars().Location())
+	if err != nil {
+		return err
+	}
+	dbs := do.InfoSchema().AllSchemas()
+
+	appendTableForColumnStatsUsage := func(dbName string, tbl *model.TableInfo, global bool, def *model.PartitionDefinition) {
+		tblID := tbl.ID
+		if def != nil {
+			tblID = def.ID
+		}
+		partitionName := ""
+		if def != nil {
+			partitionName = def.Name.O
+		} else if global {
+			partitionName = "global"
+		}
+		for _, col := range tbl.Columns {
+			tblColID := model.TableColumnID{TableID: tblID, ColumnID: col.ID}
+			colStatsUsage, ok := colStatsMap[tblColID]
+			if !ok {
+				continue
+			}
+			row := []interface{}{dbName, tbl.Name.O, partitionName, col.Name.O}
+			if colStatsUsage.LastUsedAt != nil {
+				row = append(row, *colStatsUsage.LastUsedAt)
+			} else {
+				row = append(row, nil)
+			}
+			if colStatsUsage.LastAnalyzedAt != nil {
+				row = append(row, *colStatsUsage.LastAnalyzedAt)
+			} else {
+				row = append(row, nil)
+			}
+			e.appendRow(row)
+		}
+	}
+
+	for _, db := range dbs {
+		for _, tbl := range db.Tables {
+			pi := tbl.GetPartitionInfo()
+			// Though partition tables in static pruning mode don't have global stats, we dump predicate columns of partitions with table ID
+			// rather than partition ID. Hence appendTableForColumnStatsUsage needs to be called for both partition and global in both dynamic
+			// and static pruning mode.
+			appendTableForColumnStatsUsage(db.Name.O, tbl, pi != nil, nil)
+			if pi != nil {
+				for i := range pi.Definitions {
+					appendTableForColumnStatsUsage(db.Name.O, tbl, false, &pi.Definitions[i])
+				}
+			}
+		}
+	}
+	return nil
 }

@@ -13,23 +13,23 @@
 
 package parser
 
-func isLetter(ch rune) bool {
+func isLetter(ch byte) bool {
 	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
 }
 
-func isDigit(ch rune) bool {
+func isDigit(ch byte) bool {
 	return ch >= '0' && ch <= '9'
 }
 
-func isIdentChar(ch rune) bool {
+func isIdentChar(ch byte) bool {
 	return isLetter(ch) || isDigit(ch) || ch == '_' || ch == '$' || isIdentExtend(ch)
 }
 
-func isIdentExtend(ch rune) bool {
-	return ch >= 0x80 && ch <= '\uffff'
+func isIdentExtend(ch byte) bool {
+	return ch >= 0x80
 }
 
-func isUserVarChar(ch rune) bool {
+func isUserVarChar(ch byte) bool {
 	return isLetter(ch) || isDigit(ch) || ch == '_' || ch == '$' || ch == '.' || isIdentExtend(ch)
 }
 
@@ -157,6 +157,10 @@ var tokenMap = map[string]int{
 	"ASC":                      asc,
 	"ASCII":                    ascii,
 	"ATTRIBUTES":               attributes,
+	"STATS_OPTIONS":            statsOptions,
+	"STATS_SAMPLE_RATE":        statsSampleRate,
+	"STATS_COL_CHOICE":         statsColChoice,
+	"STATS_COL_LIST":           statsColList,
 	"AUTO_ID_CACHE":            autoIdCache,
 	"AUTO_INCREMENT":           autoIncrement,
 	"AUTO_RANDOM":              autoRandom,
@@ -528,6 +532,7 @@ var tokenMap = map[string]int{
 	"PESSIMISTIC":              pessimistic,
 	"PLACEMENT":                placement,
 	"PLAN":                     plan,
+	"PLAN_CACHE":               planCache,
 	"PLUGINS":                  plugins,
 	"POLICY":                   policy,
 	"POSITION":                 position,
@@ -602,6 +607,7 @@ var tokenMap = map[string]int{
 	"RUNNING":                  running,
 	"S3":                       s3,
 	"SAMPLES":                  samples,
+	"SAMPLERATE":               sampleRate,
 	"SAN":                      san,
 	"SCHEDULE":                 schedule,
 	"SCHEMA":                   database,
@@ -665,6 +671,7 @@ var tokenMap = map[string]int{
 	"STATS_HISTOGRAMS":         statsHistograms,
 	"STATS_TOPN":               statsTopN,
 	"STATS_META":               statsMeta,
+	"HISTOGRAMS_IN_FLIGHT":     histogramsInFlight,
 	"STATS_PERSISTENT":         statsPersistent,
 	"STATS_SAMPLE_PAGES":       statsSamplePages,
 	"STATS":                    stats,
@@ -692,6 +699,7 @@ var tokenMap = map[string]int{
 	"SWITCHES":                 switchesSym,
 	"SYSTEM":                   system,
 	"SYSTEM_TIME":              systemTime,
+	"TARGET":                   target,
 	"TABLE_CHECKSUM":           tableChecksum,
 	"TABLE":                    tableKwd,
 	"TABLES":                   tables,
@@ -789,9 +797,10 @@ var tokenMap = map[string]int{
 	"WAIT":                     wait,
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/function-resolution.html for details
+// See https://dev.mysql.com/doc/refman/5.7/en/function-resolution.html for details.
+// ADDDATE, SESSION_USER, SUBDATE, and SYSTEM_USER are exceptions because they are actually recognized as
+// identifiers even in `create table adddate (a int)`.
 var btFuncTokenMap = map[string]int{
-	"ADDDATE":               builtinAddDate,
 	"BIT_AND":               builtinBitAnd,
 	"BIT_OR":                builtinBitOr,
 	"BIT_XOR":               builtinBitXor,
@@ -810,17 +819,14 @@ var btFuncTokenMap = map[string]int{
 	"MIN":                   builtinMin,
 	"NOW":                   builtinNow,
 	"POSITION":              builtinPosition,
-	"SESSION_USER":          builtinUser,
 	"STD":                   builtinStddevPop,
 	"STDDEV":                builtinStddevPop,
 	"STDDEV_POP":            builtinStddevPop,
 	"STDDEV_SAMP":           builtinStddevSamp,
-	"SUBDATE":               builtinSubDate,
 	"SUBSTR":                builtinSubstring,
 	"SUBSTRING":             builtinSubstring,
 	"SUM":                   builtinSum,
 	"SYSDATE":               builtinSysDate,
-	"SYSTEM_USER":           builtinUser,
 	"TRANSLATE":             builtinTranslate,
 	"TRIM":                  builtinTrim,
 	"VARIANCE":              builtinVarPop,

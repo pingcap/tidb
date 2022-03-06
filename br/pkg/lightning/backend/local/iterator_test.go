@@ -20,27 +20,24 @@ import (
 	"math/rand"
 	"path/filepath"
 	"sort"
+	"testing"
 	"time"
 
 	"github.com/cockroachdb/pebble"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/stretchr/testify/require"
 )
 
-type iteratorSuite struct{}
-
-var _ = Suite(&iteratorSuite{})
-
-func (s *iteratorSuite) TestDuplicateIterator(c *C) {
+func TestDupDetectIterator(t *testing.T) {
 	var pairs []common.KvPair
 	prevRowMax := int64(0)
 	// Unique pairs.
 	for i := 0; i < 20; i++ {
 		pairs = append(pairs, common.KvPair{
-			Key:    randBytes(32),
-			Val:    randBytes(128),
-			RowID:  prevRowMax,
-			Offset: int64(i * 1234),
+			Key:   randBytes(32),
+			Val:   randBytes(128),
+			RowID: prevRowMax,
 		})
 		prevRowMax++
 	}
@@ -48,17 +45,15 @@ func (s *iteratorSuite) TestDuplicateIterator(c *C) {
 	for i := 20; i < 40; i++ {
 		key := randBytes(32)
 		pairs = append(pairs, common.KvPair{
-			Key:    key,
-			Val:    randBytes(128),
-			RowID:  prevRowMax,
-			Offset: int64(i * 1234),
+			Key:   key,
+			Val:   randBytes(128),
+			RowID: prevRowMax,
 		})
 		prevRowMax++
 		pairs = append(pairs, common.KvPair{
-			Key:    key,
-			Val:    randBytes(128),
-			RowID:  prevRowMax,
-			Offset: int64(i * 1235),
+			Key:   key,
+			Val:   randBytes(128),
+			RowID: prevRowMax,
 		})
 		prevRowMax++
 	}
@@ -66,30 +61,27 @@ func (s *iteratorSuite) TestDuplicateIterator(c *C) {
 	for i := 40; i < 50; i++ {
 		key := randBytes(32)
 		pairs = append(pairs, common.KvPair{
-			Key:    key,
-			Val:    randBytes(128),
-			RowID:  prevRowMax,
-			Offset: int64(i * 1234),
+			Key:   key,
+			Val:   randBytes(128),
+			RowID: prevRowMax,
 		})
 		prevRowMax++
 		pairs = append(pairs, common.KvPair{
-			Key:    key,
-			Val:    randBytes(128),
-			RowID:  prevRowMax,
-			Offset: int64(i * 1235),
+			Key:   key,
+			Val:   randBytes(128),
+			RowID: prevRowMax,
 		})
 		prevRowMax++
 		pairs = append(pairs, common.KvPair{
-			Key:    key,
-			Val:    randBytes(128),
-			RowID:  prevRowMax,
-			Offset: int64(i * 1236),
+			Key:   key,
+			Val:   randBytes(128),
+			RowID: prevRowMax,
 		})
 		prevRowMax++
 	}
 
 	// Find duplicates from the generated pairs.
-	var duplicatePairs []common.KvPair
+	var dupPairs []common.KvPair
 	sort.Slice(pairs, func(i, j int) bool {
 		return bytes.Compare(pairs[i].Key, pairs[j].Key) < 0
 	})
@@ -105,150 +97,133 @@ func (s *iteratorSuite) TestDuplicateIterator(c *C) {
 			continue
 		}
 		for k := i; k < j; k++ {
-			duplicatePairs = append(duplicatePairs, pairs[k])
+			dupPairs = append(dupPairs, pairs[k])
 		}
 		i = j
 	}
 
-	keyAdapter := duplicateKeyAdapter{}
+	keyAdapter := dupDetectKeyAdapter{}
 
 	// Write pairs to db after shuffling the pairs.
 	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
 	rnd.Shuffle(len(pairs), func(i, j int) {
 		pairs[i], pairs[j] = pairs[j], pairs[i]
 	})
-	storeDir := c.MkDir()
+	storeDir := t.TempDir()
 	db, err := pebble.Open(filepath.Join(storeDir, "kv"), &pebble.Options{})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	wb := db.NewBatch()
 	for _, p := range pairs {
-		key := keyAdapter.Encode(nil, p.Key, 1, p.Offset)
-		c.Assert(wb.Set(key, p.Val, nil), IsNil)
+		key := keyAdapter.Encode(nil, p.Key, p.RowID)
+		require.NoError(t, wb.Set(key, p.Val, nil))
 	}
-	c.Assert(wb.Commit(pebble.Sync), IsNil)
+	require.NoError(t, wb.Commit(pebble.Sync))
 
-	duplicateDB, err := pebble.Open(filepath.Join(storeDir, "duplicates"), &pebble.Options{})
-	c.Assert(err, IsNil)
-	engineFile := &File{
-		ctx:         context.Background(),
-		db:          db,
-		keyAdapter:  keyAdapter,
-		duplicateDB: duplicateDB,
-	}
-	iter := newDuplicateIter(context.Background(), engineFile, &pebble.IterOptions{})
+	dupDB, err := pebble.Open(filepath.Join(storeDir, "duplicates"), &pebble.Options{})
+	require.NoError(t, err)
+	var iter Iter
+	iter = newDupDetectIter(context.Background(), db, keyAdapter, &pebble.IterOptions{}, dupDB, log.L())
 	sort.Slice(pairs, func(i, j int) bool {
-		key1 := keyAdapter.Encode(nil, pairs[i].Key, pairs[i].RowID, pairs[i].Offset)
-		key2 := keyAdapter.Encode(nil, pairs[j].Key, pairs[j].RowID, pairs[j].Offset)
+		key1 := keyAdapter.Encode(nil, pairs[i].Key, pairs[i].RowID)
+		key2 := keyAdapter.Encode(nil, pairs[j].Key, pairs[j].RowID)
 		return bytes.Compare(key1, key2) < 0
 	})
 
 	// Verify first pair.
-	c.Assert(iter.First(), IsTrue)
-	c.Assert(iter.Valid(), IsTrue)
-	c.Assert(iter.Key(), BytesEquals, pairs[0].Key)
-	c.Assert(iter.Value(), BytesEquals, pairs[0].Val)
+	require.True(t, iter.First())
+	require.True(t, iter.Valid())
+	require.Equal(t, pairs[0].Key, iter.Key())
+	require.Equal(t, pairs[0].Val, iter.Value())
 
 	// Verify last pair.
-	c.Assert(iter.Last(), IsTrue)
-	c.Assert(iter.Valid(), IsTrue)
-	c.Assert(iter.Key(), BytesEquals, pairs[len(pairs)-1].Key)
-	c.Assert(iter.Value(), BytesEquals, pairs[len(pairs)-1].Val)
+	require.True(t, iter.Last())
+	require.True(t, iter.Valid())
+	require.Equal(t, pairs[len(pairs)-1].Key, iter.Key())
+	require.Equal(t, pairs[len(pairs)-1].Val, iter.Value())
 
 	// Iterate all keys and check the count of unique keys.
 	for iter.First(); iter.Valid(); iter.Next() {
-		c.Assert(iter.Key(), BytesEquals, uniqueKeys[0])
+		require.Equal(t, uniqueKeys[0], iter.Key())
 		uniqueKeys = uniqueKeys[1:]
 	}
-	c.Assert(iter.Error(), IsNil)
-	c.Assert(len(uniqueKeys), Equals, 0)
-	c.Assert(iter.Close(), IsNil)
-	c.Assert(engineFile.Close(), IsNil)
+	require.NoError(t, iter.Error())
+	require.Equal(t, 0, len(uniqueKeys))
+	require.NoError(t, iter.Close())
+	require.NoError(t, db.Close())
 
-	// Check duplicates detected by duplicate iterator.
-	iter = pebbleIter{Iterator: duplicateDB.NewIter(&pebble.IterOptions{})}
+	// Check duplicates detected by dupDetectIter.
+	iter = newDupDBIter(dupDB, keyAdapter, &pebble.IterOptions{})
 	var detectedPairs []common.KvPair
 	for iter.First(); iter.Valid(); iter.Next() {
-		key, _, _, err := keyAdapter.Decode(nil, iter.Key())
-		c.Assert(err, IsNil)
 		detectedPairs = append(detectedPairs, common.KvPair{
-			Key: key,
+			Key: append([]byte{}, iter.Key()...),
 			Val: append([]byte{}, iter.Value()...),
 		})
 	}
-	c.Assert(iter.Error(), IsNil)
-	c.Assert(iter.Close(), IsNil)
-	c.Assert(duplicateDB.Close(), IsNil)
-	c.Assert(len(detectedPairs), Equals, len(duplicatePairs))
+	require.NoError(t, iter.Error())
+	require.NoError(t, iter.Close())
+	require.NoError(t, dupDB.Close())
+	require.Equal(t, len(dupPairs), len(detectedPairs))
 
-	sort.Slice(duplicatePairs, func(i, j int) bool {
-		keyCmp := bytes.Compare(duplicatePairs[i].Key, duplicatePairs[j].Key)
-		return keyCmp < 0 || keyCmp == 0 && bytes.Compare(duplicatePairs[i].Val, duplicatePairs[j].Val) < 0
+	sort.Slice(dupPairs, func(i, j int) bool {
+		keyCmp := bytes.Compare(dupPairs[i].Key, dupPairs[j].Key)
+		return keyCmp < 0 || keyCmp == 0 && bytes.Compare(dupPairs[i].Val, dupPairs[j].Val) < 0
 	})
 	sort.Slice(detectedPairs, func(i, j int) bool {
 		keyCmp := bytes.Compare(detectedPairs[i].Key, detectedPairs[j].Key)
 		return keyCmp < 0 || keyCmp == 0 && bytes.Compare(detectedPairs[i].Val, detectedPairs[j].Val) < 0
 	})
 	for i := 0; i < len(detectedPairs); i++ {
-		c.Assert(detectedPairs[i].Key, BytesEquals, duplicatePairs[i].Key)
-		c.Assert(detectedPairs[i].Val, BytesEquals, duplicatePairs[i].Val)
+		require.Equal(t, dupPairs[i].Key, detectedPairs[i].Key)
+		require.Equal(t, dupPairs[i].Val, detectedPairs[i].Val)
 	}
 }
 
-func (s *iteratorSuite) TestDuplicateIterSeek(c *C) {
+func TestDupDetectIterSeek(t *testing.T) {
 	pairs := []common.KvPair{
 		{
-			Key:    []byte{1, 2, 3, 0},
-			Val:    randBytes(128),
-			RowID:  1,
-			Offset: 0,
+			Key:   []byte{1, 2, 3, 0},
+			Val:   randBytes(128),
+			RowID: 1,
 		},
 		{
-			Key:    []byte{1, 2, 3, 1},
-			Val:    randBytes(128),
-			RowID:  2,
-			Offset: 100,
+			Key:   []byte{1, 2, 3, 1},
+			Val:   randBytes(128),
+			RowID: 2,
 		},
 		{
-			Key:    []byte{1, 2, 3, 1},
-			Val:    randBytes(128),
-			RowID:  3,
-			Offset: 200,
+			Key:   []byte{1, 2, 3, 1},
+			Val:   randBytes(128),
+			RowID: 3,
 		},
 		{
-			Key:    []byte{1, 2, 3, 2},
-			Val:    randBytes(128),
-			RowID:  4,
-			Offset: 300,
+			Key:   []byte{1, 2, 3, 2},
+			Val:   randBytes(128),
+			RowID: 4,
 		},
 	}
 
-	storeDir := c.MkDir()
+	storeDir := t.TempDir()
 	db, err := pebble.Open(filepath.Join(storeDir, "kv"), &pebble.Options{})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	keyAdapter := duplicateKeyAdapter{}
+	keyAdapter := dupDetectKeyAdapter{}
 	wb := db.NewBatch()
 	for _, p := range pairs {
-		key := keyAdapter.Encode(nil, p.Key, p.RowID, p.Offset)
-		c.Assert(wb.Set(key, p.Val, nil), IsNil)
+		key := keyAdapter.Encode(nil, p.Key, p.RowID)
+		require.NoError(t, wb.Set(key, p.Val, nil))
 	}
-	c.Assert(wb.Commit(pebble.Sync), IsNil)
+	require.NoError(t, wb.Commit(pebble.Sync))
 
-	duplicateDB, err := pebble.Open(filepath.Join(storeDir, "duplicates"), &pebble.Options{})
-	c.Assert(err, IsNil)
-	engineFile := &File{
-		ctx:         context.Background(),
-		db:          db,
-		keyAdapter:  keyAdapter,
-		duplicateDB: duplicateDB,
-	}
-	iter := newDuplicateIter(context.Background(), engineFile, &pebble.IterOptions{})
+	dupDB, err := pebble.Open(filepath.Join(storeDir, "duplicates"), &pebble.Options{})
+	require.NoError(t, err)
+	iter := newDupDetectIter(context.Background(), db, keyAdapter, &pebble.IterOptions{}, dupDB, log.L())
 
-	c.Assert(iter.Seek([]byte{1, 2, 3, 1}), IsTrue)
-	c.Assert(iter.Value(), BytesEquals, pairs[1].Val)
-	c.Assert(iter.Next(), IsTrue)
-	c.Assert(iter.Value(), BytesEquals, pairs[3].Val)
-	c.Assert(iter.Close(), IsNil)
-	c.Assert(engineFile.Close(), IsNil)
-	c.Assert(duplicateDB.Close(), IsNil)
+	require.True(t, iter.Seek([]byte{1, 2, 3, 1}))
+	require.Equal(t, pairs[1].Val, iter.Value())
+	require.True(t, iter.Next())
+	require.Equal(t, pairs[3].Val, iter.Value())
+	require.NoError(t, iter.Close())
+	require.NoError(t, db.Close())
+	require.NoError(t, dupDB.Close())
 }

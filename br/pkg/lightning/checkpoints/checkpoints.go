@@ -21,8 +21,9 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"os"
+	"path"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/joho/sqltocsv"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"go.uber.org/zap"
 	"modernc.org/mathutil"
@@ -525,7 +527,11 @@ func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (DB, error) {
 		return cpdb, nil
 
 	case config.CheckpointDriverFile:
-		return NewFileCheckpointsDB(cfg.Checkpoint.DSN), nil
+		cpdb, err := NewFileCheckpointsDB(ctx, cfg.Checkpoint.DSN)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return cpdb, nil
 
 	default:
 		return nil, errors.Errorf("Unknown checkpoint driver %s", cfg.Checkpoint.Driver)
@@ -556,13 +562,15 @@ func IsCheckpointsDBExists(ctx context.Context, cfg *config.Config) (bool, error
 		return result, nil
 
 	case config.CheckpointDriverFile:
-		_, err := os.Stat(cfg.Checkpoint.DSN)
-		if err == nil {
-			return true, err
-		} else if os.IsNotExist(err) {
-			return false, nil
+		s, fileName, err := createExstorageByCompletePath(ctx, cfg.Checkpoint.DSN)
+		if err != nil {
+			return false, errors.Trace(err)
 		}
-		return false, errors.Trace(err)
+		result, err := s.FileExists(ctx, fileName)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		return result, nil
 
 	default:
 		return false, errors.Errorf("Unknown checkpoint driver %s", cfg.Checkpoint.Driver)
@@ -940,10 +948,13 @@ func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpoi
 type FileCheckpointsDB struct {
 	lock        sync.Mutex // we need to ensure only a thread can access to `checkpoints` at a time
 	checkpoints checkpointspb.CheckpointsModel
+	ctx         context.Context
 	path        string
+	fileName    string
+	exStorage   storage.ExternalStorage
 }
 
-func NewFileCheckpointsDB(path string) *FileCheckpointsDB {
+func NewFileCheckpointsDB(ctx context.Context, path string) (*FileCheckpointsDB, error) {
 	cpdb := &FileCheckpointsDB{
 		path: path,
 		checkpoints: checkpointspb.CheckpointsModel{
@@ -951,35 +962,104 @@ func NewFileCheckpointsDB(path string) *FileCheckpointsDB {
 			Checkpoints:    map[string]*checkpointspb.TableCheckpointModel{},
 		},
 	}
-	// ignore all errors -- file maybe not created yet (and it is fine).
-	content, err := os.ReadFile(path)
-	if err == nil {
-		err2 := cpdb.checkpoints.Unmarshal(content)
-		if err2 != nil {
-			log.L().Error("checkpoint file is broken", zap.String("path", path), zap.Error(err2))
-		}
-		// FIXME: patch for empty map may need initialize manually, because currently
-		// FIXME: a map of zero size -> marshall -> unmarshall -> become nil, see checkpoint_test.go
-		if cpdb.checkpoints.Checkpoints == nil {
-			cpdb.checkpoints.Checkpoints = map[string]*checkpointspb.TableCheckpointModel{}
-		}
-		for _, table := range cpdb.checkpoints.Checkpoints {
-			if table.Engines == nil {
-				table.Engines = map[int32]*checkpointspb.EngineCheckpointModel{}
-			}
-			for _, engine := range table.Engines {
-				if engine.Chunks == nil {
-					engine.Chunks = map[string]*checkpointspb.ChunkCheckpointModel{}
-				}
-			}
-		}
-	} else {
+
+	// init ExternalStorage
+	s, fileName, err := createExstorageByCompletePath(ctx, path)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	cpdb.ctx = ctx
+	cpdb.fileName = fileName
+	cpdb.exStorage = s
+
+	if cpdb.fileName == "" {
+		return nil, errors.Errorf("the checkpoint DSN '%s' must not be a directory", path)
+	}
+
+	exist, err := cpdb.exStorage.FileExists(ctx, cpdb.fileName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if !exist {
 		log.L().Info("open checkpoint file failed, going to create a new one",
 			zap.String("path", path),
 			log.ShortError(err),
 		)
+		return cpdb, nil
 	}
-	return cpdb
+	content, err := cpdb.exStorage.ReadFile(ctx, cpdb.fileName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = cpdb.checkpoints.Unmarshal(content)
+	if err != nil {
+		log.L().Error("checkpoint file is broken", zap.String("path", path), zap.Error(err))
+	}
+	// FIXME: patch for empty map may need initialize manually, because currently
+	// FIXME: a map of zero size -> marshall -> unmarshall -> become nil, see checkpoint_test.go
+	if cpdb.checkpoints.Checkpoints == nil {
+		cpdb.checkpoints.Checkpoints = map[string]*checkpointspb.TableCheckpointModel{}
+	}
+	for _, table := range cpdb.checkpoints.Checkpoints {
+		if table.Engines == nil {
+			table.Engines = map[int32]*checkpointspb.EngineCheckpointModel{}
+		}
+		for _, engine := range table.Engines {
+			if engine.Chunks == nil {
+				engine.Chunks = map[string]*checkpointspb.ChunkCheckpointModel{}
+			}
+		}
+	}
+	return cpdb, nil
+}
+
+// createExstorageByCompletePath create ExternalStorage by completePath and return fileName.
+func createExstorageByCompletePath(ctx context.Context, completePath string) (storage.ExternalStorage, string, error) {
+	if completePath == "" {
+		return nil, "", nil
+	}
+	fileName, newPath, err := separateCompletePath(completePath)
+	if err != nil {
+		return nil, "", errors.Trace(err)
+	}
+	u, err := storage.ParseBackend(newPath, nil)
+	if err != nil {
+		return nil, "", errors.Trace(err)
+	}
+	s, err := storage.New(ctx, u, &storage.ExternalStorageOptions{})
+	if err != nil {
+		return nil, "", errors.Trace(err)
+	}
+	return s, fileName, nil
+}
+
+// separateCompletePath separates fileName from completePath, returns fileName and newPath.
+func separateCompletePath(completePath string) (string, string, error) {
+	if completePath == "" {
+		return "", "", nil
+	}
+	var fileName, newPath string
+	purl, err := storage.ParseRawURL(completePath)
+	if err != nil {
+		return "", "", errors.Trace(err)
+	}
+	// not url format, we don't use url library to avoid being escaped or unescaped
+	if purl.Scheme == "" {
+		// no fileName, just path
+		if strings.HasSuffix(completePath, "/") {
+			return "", completePath, nil
+		}
+		fileName = path.Base(completePath)
+		newPath = path.Dir(completePath)
+	} else {
+		if strings.HasSuffix(purl.Path, "/") {
+			return "", completePath, nil
+		}
+		fileName = path.Base(purl.Path)
+		purl.Path = path.Dir(purl.Path)
+		newPath = purl.String()
+	}
+	return fileName, newPath, nil
 }
 
 func (cpdb *FileCheckpointsDB) save() error {
@@ -987,16 +1067,7 @@ func (cpdb *FileCheckpointsDB) save() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// because `os.WriteFile` is not atomic, directly write into it may reset the file
-	// to an empty file if write is not finished.
-	tmpPath := cpdb.path + ".tmp"
-	if err := os.WriteFile(tmpPath, serialized, 0o644); err != nil {
-		return errors.Trace(err)
-	}
-	if err := os.Rename(tmpPath, cpdb.path); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	return cpdb.exStorage.WriteFile(cpdb.ctx, cpdb.fileName, serialized)
 }
 
 func (cpdb *FileCheckpointsDB) Initialize(ctx context.Context, cfg *config.Config, dbInfo map[string]*TidbDBInfo) error {
@@ -1301,6 +1372,7 @@ func (cpdb *MySQLCheckpointsDB) GetLocalStoringTables(ctx context.Context) (map[
 	// 1. table status is earlier than CheckpointStatusIndexImported, and
 	// 2. engine status is earlier than CheckpointStatusImported, and
 	// 3. chunk has been read
+
 	query := fmt.Sprintf(`
 		SELECT DISTINCT t.table_name, c.engine_id
 		FROM %s.%s t, %s.%s c, %s.%s e
@@ -1314,7 +1386,7 @@ func (cpdb *MySQLCheckpointsDB) GetLocalStoringTables(ctx context.Context) (map[
 
 	err := common.Retry("get local storing tables", log.L(), func() error {
 		targetTables = make(map[string][]int32)
-		rows, err := cpdb.db.QueryContext(ctx, query)
+		rows, err := cpdb.db.QueryContext(ctx, query) // #nosec G201
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1416,7 +1488,7 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 	err := s.Transact(ctx, "destroy error checkpoints", func(c context.Context, tx *sql.Tx) error {
 		// Obtain the list of tables
 		targetTables = nil
-		rows, e := tx.QueryContext(c, selectQuery, tableName)
+		rows, e := tx.QueryContext(c, selectQuery, tableName) // #nosec G201
 		if e != nil {
 			return errors.Trace(e)
 		}
@@ -1528,7 +1600,7 @@ func (cpdb *FileCheckpointsDB) RemoveCheckpoint(_ context.Context, tableName str
 
 	if tableName == allTables {
 		cpdb.checkpoints.Reset()
-		return errors.Trace(os.Remove(cpdb.path))
+		return errors.Trace(cpdb.exStorage.DeleteFile(cpdb.ctx, cpdb.fileName))
 	}
 
 	delete(cpdb.checkpoints.Checkpoints, tableName)
@@ -1539,8 +1611,8 @@ func (cpdb *FileCheckpointsDB) MoveCheckpoints(ctx context.Context, taskID int64
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
 
-	newPath := fmt.Sprintf("%s.%d.bak", cpdb.path, taskID)
-	return errors.Trace(os.Rename(cpdb.path, newPath))
+	newFileName := fmt.Sprintf("%s.%d.bak", cpdb.fileName, taskID)
+	return cpdb.exStorage.Rename(cpdb.ctx, cpdb.fileName, newFileName)
 }
 
 func (cpdb *FileCheckpointsDB) GetLocalStoringTables(_ context.Context) (map[string][]int32, error) {

@@ -28,20 +28,21 @@
     "name": "TestEnforceMPPWarning1",
     "cases": [
       "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1;",
-      "explain select count(*) from t where a=1 -- 1. no replica",
+      "explain format = 'brief' select count(*) from t where a=1 -- 1. no replica",
       "cmd: create-replica",
       "explain select count(*) from t where a=1 -- 2. replica not ready",
       "cmd: enable-replica",
       "set @@session.tidb_isolation_read_engines = 'tikv';",
       "explain select count(*) from t where a=1 -- 3. isolation_engine not match",
       "set @@session.tidb_isolation_read_engines = 'tikv, tiflash';",
-      "explain select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1 -- 4. hint use tikv",
-      "explain SELECT a, ROW_NUMBER() OVER (ORDER BY a) FROM t; -- 5. window unsupported",
-      "EXPLAIN SELECT t1.b FROM t t1 join t t2 where t1.a=t2.a; -- 6. virtual column",
-      "EXPLAIN SELECT count(b) from t where a=1; -- 7. agg func has virtual column",
-      "EXPLAIN SELECT count(*) from t group by b; -- 8. group by virtual column",
-      "EXPLAIN SELECT count(a) from t group by md5(a); -- 10. scalar func not supported",
-      "EXPLAIN SELECT count(a) from t where c=1; -- 11. type not supported"
+      "explain format = 'brief' select /*+ read_from_storage(tikv[t]) */ count(*) from t where a=1 -- 4. hint use tikv",
+      "explain format = 'brief' SELECT a, ROW_NUMBER() OVER (ORDER BY a) FROM t; -- 5. window unsupported",
+      "EXPLAIN format = 'brief' SELECT t1.b FROM t t1 join t t2 where t1.a=t2.a; -- 6. virtual column",
+      "EXPLAIN format = 'brief' SELECT count(b) from t where a=1; -- 7. agg func has virtual column",
+      "EXPLAIN format = 'brief' SELECT count(*) from t group by b; -- 8. group by virtual column",
+      "EXPLAIN format = 'brief' SELECT count(a) from t group by md5(a); -- 10. scalar func not supported",
+      "EXPLAIN format = 'brief' SELECT count(a) from t where c=1; -- 11. type not supported",
+      "EXPLAIN format = 'brief' SELECT count(a) from t where d=1; -- 11.1. type not supported"
     ]
   },
   {
@@ -81,7 +82,7 @@
       "EXPLAIN SELECT * from t join s; -- can use mpp",
       "set @@tidb_broadcast_join_threshold_size = 104857600; set @@tidb_opt_broadcast_cartesian_join = 1;",
       "explain select a from t where t.a>1 or t.a in (select a from t); -- 7. left outer semi join",
-      "explain select a from t where t.a>1 or t.a not in (select a from t); -- 8. anti left outer semi join",
+      "explain select a from t where t.a>1 or t.a not in (select a from t); -- now it's supported -- 8. anti left outer semi join",
       "explain select a from t where t.a not in (select a from s where t.a<1); -- 9. non left join has left conditions"
     ]
   }

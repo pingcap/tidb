@@ -15,16 +15,19 @@
 package handle_test
 
 import (
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testStatsSuite) TestGCStats(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	testKit := testkit.NewTestKit(c, s.store)
+func TestGCStats(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("set @@tidb_analyze_version = 1")
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, index idx(a, b), index idx_a(a))")
 	testKit.MustExec("insert into t values (1,1),(2,2),(3,3)")
@@ -33,30 +36,32 @@ func (s *testStatsSuite) TestGCStats(c *C) {
 	testKit.MustExec("alter table t drop index idx")
 	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("4"))
 	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("12"))
-	h := s.do.StatsHandle()
+	h := dom.StatsHandle()
 	ddlLease := time.Duration(0)
-	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
+	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("3"))
 	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("9"))
 
 	testKit.MustExec("alter table t drop index idx_a")
 	testKit.MustExec("alter table t drop column a")
-	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
+	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("1"))
 	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("3"))
 
 	testKit.MustExec("drop table t")
-	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
+	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("1"))
 	testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("0"))
 	testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("0"))
-	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
+	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("0"))
 }
 
-func (s *testStatsSuite) TestGCPartition(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	testKit := testkit.NewTestKit(c, s.store)
+func TestGCPartition(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("set @@tidb_analyze_version = 1")
 	testkit.WithPruneMode(testKit, variable.Static, func() {
 		testKit.MustExec("use test")
 		testKit.MustExec("set @@session.tidb_enable_table_partition=1")
@@ -69,31 +74,32 @@ func (s *testStatsSuite) TestGCPartition(c *C) {
 
 		testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("6"))
 		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("15"))
-		h := s.do.StatsHandle()
+		h := dom.StatsHandle()
 		ddlLease := time.Duration(0)
 		testKit.MustExec("alter table t drop index idx")
-		c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
+		require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 		testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("4"))
 		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("10"))
 
 		testKit.MustExec("alter table t drop column b")
-		c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
+		require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 		testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("2"))
 		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("5"))
 
 		testKit.MustExec("drop table t")
-		c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
+		require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 		testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("2"))
 		testKit.MustQuery("select count(*) from mysql.stats_histograms").Check(testkit.Rows("0"))
 		testKit.MustQuery("select count(*) from mysql.stats_buckets").Check(testkit.Rows("0"))
-		c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
+		require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 		testKit.MustQuery("select count(*) from mysql.stats_meta").Check(testkit.Rows("0"))
 	})
 }
 
-func (s *testStatsSuite) TestGCExtendedStats(c *C) {
-	defer cleanEnv(c, s.store, s.do)
-	testKit := testkit.NewTestKit(c, s.store)
+func TestGCExtendedStats(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("set session tidb_enable_extended_stats = on")
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, c int)")
@@ -111,14 +117,14 @@ func (s *testStatsSuite) TestGCExtendedStats(c *C) {
 		"s1 2 [1,2] 1.000000 1",
 		"s2 2 [2,3] 1.000000 1",
 	))
-	h := s.do.StatsHandle()
+	h := dom.StatsHandle()
 	ddlLease := time.Duration(0)
-	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
+	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
 		"s1 2 [1,2] 1.000000 2",
 		"s2 2 [2,3] 1.000000 1",
 	))
-	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
+	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
 		"s2 2 [2,3] 1.000000 1",
 	))
@@ -127,10 +133,31 @@ func (s *testStatsSuite) TestGCExtendedStats(c *C) {
 	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
 		"s2 2 [2,3] 1.000000 1",
 	))
-	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
+	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
 		"s2 2 [2,3] 1.000000 2",
 	))
-	c.Assert(h.GCStats(s.do.InfoSchema(), ddlLease), IsNil)
+	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows())
+}
+
+func TestGCColumnStatsUsage(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t(a int, b int, c int)")
+	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
+	testKit.MustExec("analyze table t")
+	testKit.MustQuery("select count(*) from mysql.column_stats_usage").Check(testkit.Rows("3"))
+	testKit.MustExec("alter table t drop column a")
+	testKit.MustQuery("select count(*) from mysql.column_stats_usage").Check(testkit.Rows("3"))
+	h := dom.StatsHandle()
+	ddlLease := time.Duration(0)
+	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
+	testKit.MustQuery("select count(*) from mysql.column_stats_usage").Check(testkit.Rows("2"))
+	testKit.MustExec("drop table t")
+	testKit.MustQuery("select count(*) from mysql.column_stats_usage").Check(testkit.Rows("2"))
+	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
+	testKit.MustQuery("select count(*) from mysql.column_stats_usage").Check(testkit.Rows("0"))
 }

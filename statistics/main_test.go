@@ -29,10 +29,10 @@ import (
 	"go.uber.org/goleak"
 )
 
-var testDataMap = make(testdata.BookKeeper, 1)
+var testDataMap = make(testdata.BookKeeper, 3)
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 
 	if !flag.Parsed() {
 		flag.Parse()
@@ -44,9 +44,11 @@ func TestMain(m *testing.M) {
 	})
 
 	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
+	testDataMap.LoadTestSuiteData("testdata", "stats_suite")
+	testDataMap.LoadTestSuiteData("testdata", "trace_suite")
 
 	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 
@@ -61,25 +63,30 @@ func GetIntegrationSuiteData() testdata.TestData {
 	return testDataMap["integration_suite"]
 }
 
+func GetStatsSuiteData() testdata.TestData {
+	return testDataMap["stats_suite"]
+}
+
+func GetTraceSuiteData() testdata.TestData {
+	return testDataMap["trace_suite"]
+}
+
 // TestStatistics batches tests sharing a test suite to reduce the setups
 // overheads.
 func TestStatistics(t *testing.T) {
-	s := createTestStatisticsSamples(t)
-
 	// fmsketch_test.go
-	t.Run("SubTestSketch", SubTestSketch(s))
-	t.Run("SubTestSketchProtoConversion", SubTestSketchProtoConversion(s))
-	t.Run("SubTestFMSketchCoding", SubTestFMSketchCoding(s))
+	t.Run("SubTestSketch", SubTestSketch())
+	t.Run("SubTestSketchProtoConversion", SubTestSketchProtoConversion())
+	t.Run("SubTestFMSketchCoding", SubTestFMSketchCoding())
 
 	// statistics_test.go
-	t.Run("SubTestColumnRange", SubTestColumnRange(s))
-	t.Run("SubTestIntColumnRanges", SubTestIntColumnRanges(s))
-	t.Run("SubTestIndexRanges", SubTestIndexRanges(s))
+	t.Run("SubTestColumnRange", SubTestColumnRange())
+	t.Run("SubTestIntColumnRanges", SubTestIntColumnRanges())
+	t.Run("SubTestIndexRanges", SubTestIndexRanges())
 
 	// statistics_serial_test.go
-	t.Run("SubTestBuild", SubTestBuild(s))
-	t.Run("SubTestHistogramProtoConversion", SubTestHistogramProtoConversion(s))
-
+	t.Run("SubTestBuild", SubTestBuild())
+	t.Run("SubTestHistogramProtoConversion", SubTestHistogramProtoConversion())
 }
 
 func createTestStatisticsSamples(t *testing.T) *testStatisticsSamples {

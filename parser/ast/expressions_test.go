@@ -14,16 +14,13 @@
 package ast_test
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	. "github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/stretchr/testify/require"
 )
-
-var _ = Suite(&testExpressionsSuite{})
-
-type testExpressionsSuite struct {
-}
 
 type checkVisitor struct{}
 
@@ -63,7 +60,7 @@ func (n *checkExpr) reset() {
 	n.leaveCnt = 0
 }
 
-func (tc *testExpressionsSuite) TestExpresionsVisitorCover(c *C) {
+func TestExpresionsVisitorCover(t *testing.T) {
 	ce := &checkExpr{}
 	stmts :=
 		[]struct {
@@ -97,13 +94,13 @@ func (tc *testExpressionsSuite) TestExpresionsVisitorCover(c *C) {
 	for _, v := range stmts {
 		ce.reset()
 		v.node.Accept(checkVisitor{})
-		c.Check(ce.enterCnt, Equals, v.expectedEnterCnt)
-		c.Check(ce.leaveCnt, Equals, v.expectedLeaveCnt)
+		require.Equal(t, v.expectedEnterCnt, ce.enterCnt)
+		require.Equal(t, v.expectedLeaveCnt, ce.leaveCnt)
 		v.node.Accept(visitor1{})
 	}
 }
 
-func (tc *testExpressionsSuite) TestUnaryOperationExprRestore(c *C) {
+func TestUnaryOperationExprRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"++1", "++1"},
 		{"--1", "--1"},
@@ -116,10 +113,10 @@ func (tc *testExpressionsSuite) TestUnaryOperationExprRestore(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Fields.Fields[0].Expr
 	}
-	RunNodeRestoreTest(c, testCases, "select %s", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "select %s", extractNodeFunc)
 }
 
-func (tc *testExpressionsSuite) TestColumnNameExprRestore(c *C) {
+func TestColumnNameExprRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"abc", "`abc`"},
 		{"`abc`", "`abc`"},
@@ -132,10 +129,10 @@ func (tc *testExpressionsSuite) TestColumnNameExprRestore(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Fields.Fields[0].Expr
 	}
-	RunNodeRestoreTest(c, testCases, "select %s", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "select %s", extractNodeFunc)
 }
 
-func (tc *testExpressionsSuite) TestIsNullExprRestore(c *C) {
+func TestIsNullExprRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"a is null", "`a` IS NULL"},
 		{"a is not null", "`a` IS NOT NULL"},
@@ -143,10 +140,10 @@ func (tc *testExpressionsSuite) TestIsNullExprRestore(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Fields.Fields[0].Expr
 	}
-	RunNodeRestoreTest(c, testCases, "select %s", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "select %s", extractNodeFunc)
 }
 
-func (tc *testExpressionsSuite) TestIsTruthRestore(c *C) {
+func TestIsTruthRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"a is true", "`a` IS TRUE"},
 		{"a is not true", "`a` IS NOT TRUE"},
@@ -156,10 +153,10 @@ func (tc *testExpressionsSuite) TestIsTruthRestore(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Fields.Fields[0].Expr
 	}
-	RunNodeRestoreTest(c, testCases, "select %s", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "select %s", extractNodeFunc)
 }
 
-func (tc *testExpressionsSuite) TestBetweenExprRestore(c *C) {
+func TestBetweenExprRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"b between 1 and 2", "`b` BETWEEN 1 AND 2"},
 		{"b not between 1 and 2", "`b` NOT BETWEEN 1 AND 2"},
@@ -170,10 +167,10 @@ func (tc *testExpressionsSuite) TestBetweenExprRestore(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Fields.Fields[0].Expr
 	}
-	RunNodeRestoreTest(c, testCases, "select %s", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "select %s", extractNodeFunc)
 }
 
-func (tc *testExpressionsSuite) TestCaseExpr(c *C) {
+func TestCaseExpr(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"case when 1 then 2 end", "CASE WHEN 1 THEN 2 END"},
 		{"case when 1 then 'a' when 2 then 'b' end", "CASE WHEN 1 THEN _UTF8MB4'a' WHEN 2 THEN _UTF8MB4'b' END"},
@@ -184,10 +181,10 @@ func (tc *testExpressionsSuite) TestCaseExpr(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Fields.Fields[0].Expr
 	}
-	RunNodeRestoreTest(c, testCases, "select %s", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "select %s", extractNodeFunc)
 }
 
-func (tc *testExpressionsSuite) TestBinaryOperationExpr(c *C) {
+func TestBinaryOperationExpr(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"'a'!=1", "_UTF8MB4'a'!=1"},
 		{"a!=1", "`a`!=1"},
@@ -211,10 +208,10 @@ func (tc *testExpressionsSuite) TestBinaryOperationExpr(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Fields.Fields[0].Expr
 	}
-	RunNodeRestoreTest(c, testCases, "select %s", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "select %s", extractNodeFunc)
 }
 
-func (tc *testExpressionsSuite) TestBinaryOperationExprWithFlags(c *C) {
+func TestBinaryOperationExprWithFlags(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"'a'!=1", "_UTF8MB4'a' != 1"},
 		{"a!=1", "`a` != 1"},
@@ -229,10 +226,10 @@ func (tc *testExpressionsSuite) TestBinaryOperationExprWithFlags(c *C) {
 		return node.(*SelectStmt).Fields.Fields[0].Expr
 	}
 	flags := format.DefaultRestoreFlags | format.RestoreSpacesAroundBinaryOperation
-	RunNodeRestoreTestWithFlags(c, testCases, "select %s", extractNodeFunc, flags)
+	runNodeRestoreTestWithFlags(t, testCases, "select %s", extractNodeFunc, flags)
 }
 
-func (tc *testExpressionsSuite) TestParenthesesExpr(c *C) {
+func TestParenthesesExpr(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"(1+2)*3", "(1+2)*3"},
 		{"1+2*3", "1+2*3"},
@@ -240,10 +237,10 @@ func (tc *testExpressionsSuite) TestParenthesesExpr(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Fields.Fields[0].Expr
 	}
-	RunNodeRestoreTest(c, testCases, "select %s", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "select %s", extractNodeFunc)
 }
 
-func (tc *testExpressionsSuite) TestWhenClause(c *C) {
+func TestWhenClause(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"when 1 then 2", "WHEN 1 THEN 2"},
 		{"when 1 then 'a'", "WHEN 1 THEN _UTF8MB4'a'"},
@@ -252,10 +249,10 @@ func (tc *testExpressionsSuite) TestWhenClause(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Fields.Fields[0].Expr.(*CaseExpr).WhenClauses[0]
 	}
-	RunNodeRestoreTest(c, testCases, "select case %s end", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "select case %s end", extractNodeFunc)
 }
 
-func (tc *testExpressionsSuite) TestDefaultExpr(c *C) {
+func TestDefaultExpr(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"default", "DEFAULT"},
 		{"default(i)", "DEFAULT(`i`)"},
@@ -263,10 +260,10 @@ func (tc *testExpressionsSuite) TestDefaultExpr(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*InsertStmt).Lists[0][0]
 	}
-	RunNodeRestoreTest(c, testCases, "insert into t values(%s)", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "insert into t values(%s)", extractNodeFunc)
 }
 
-func (tc *testExpressionsSuite) TestPatternInExprRestore(c *C) {
+func TestPatternInExprRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"'a' in ('b')", "_UTF8MB4'a' IN (_UTF8MB4'b')"},
 		{"2 in (0,3,7)", "2 IN (0,3,7)"},
@@ -277,10 +274,10 @@ func (tc *testExpressionsSuite) TestPatternInExprRestore(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Fields.Fields[0].Expr
 	}
-	RunNodeRestoreTest(c, testCases, "select %s", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "select %s", extractNodeFunc)
 }
 
-func (tc *testExpressionsSuite) TestPatternLikeExprRestore(c *C) {
+func TestPatternLikeExprRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"a like 't1'", "`a` LIKE _UTF8MB4't1'"},
 		{"a like 't1%'", "`a` LIKE _UTF8MB4't1%'"},
@@ -294,10 +291,10 @@ func (tc *testExpressionsSuite) TestPatternLikeExprRestore(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Fields.Fields[0].Expr
 	}
-	RunNodeRestoreTest(c, testCases, "select %s", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "select %s", extractNodeFunc)
 }
 
-func (tc *testExpressionsSuite) TestValuesExpr(c *C) {
+func TestValuesExpr(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"values(a)", "VALUES(`a`)"},
 		{"values(a)+values(b)", "VALUES(`a`)+VALUES(`b`)"},
@@ -305,10 +302,10 @@ func (tc *testExpressionsSuite) TestValuesExpr(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*InsertStmt).OnDuplicate[0].Expr
 	}
-	RunNodeRestoreTest(c, testCases, "insert into t values (1,2,3) on duplicate key update c=%s", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "insert into t values (1,2,3) on duplicate key update c=%s", extractNodeFunc)
 }
 
-func (tc *testExpressionsSuite) TestPatternRegexpExprRestore(c *C) {
+func TestPatternRegexpExprRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"a regexp 't1'", "`a` REGEXP _UTF8MB4't1'"},
 		{"a regexp '^[abc][0-9]{11}|ok$'", "`a` REGEXP _UTF8MB4'^[abc][0-9]{11}|ok$'"},
@@ -322,10 +319,10 @@ func (tc *testExpressionsSuite) TestPatternRegexpExprRestore(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Fields.Fields[0].Expr
 	}
-	RunNodeRestoreTest(c, testCases, "select %s", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "select %s", extractNodeFunc)
 }
 
-func (tc *testExpressionsSuite) TestRowExprRestore(c *C) {
+func TestRowExprRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"(1,2)", "ROW(1,2)"},
 		{"(col1,col2)", "ROW(`col1`,`col2`)"},
@@ -335,31 +332,31 @@ func (tc *testExpressionsSuite) TestRowExprRestore(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Where.(*BinaryOperationExpr).L
 	}
-	RunNodeRestoreTest(c, testCases, "select 1 from t1 where %s = row(1,2)", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "select 1 from t1 where %s = row(1,2)", extractNodeFunc)
 }
 
-func (tc *testExpressionsSuite) TestMaxValueExprRestore(c *C) {
+func TestMaxValueExprRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"maxvalue", "MAXVALUE"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*AlterTableStmt).Specs[0].PartDefinitions[0].Clause.(*PartitionDefinitionClauseLessThan).Exprs[0]
 	}
-	RunNodeRestoreTest(c, testCases, "alter table posts add partition ( partition p1 values less than %s)", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "alter table posts add partition ( partition p1 values less than %s)", extractNodeFunc)
 }
 
-func (tc *testExpressionsSuite) TestPositionExprRestore(c *C) {
+func TestPositionExprRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"1", "1"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).OrderBy.Items[0]
 	}
-	RunNodeRestoreTest(c, testCases, "select * from t order by %s", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "select * from t order by %s", extractNodeFunc)
 
 }
 
-func (tc *testExpressionsSuite) TestExistsSubqueryExprRestore(c *C) {
+func TestExistsSubqueryExprRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"EXISTS (SELECT 2)", "EXISTS (SELECT 2)"},
 		{"NOT EXISTS (SELECT 2)", "NOT EXISTS (SELECT 2)"},
@@ -369,10 +366,10 @@ func (tc *testExpressionsSuite) TestExistsSubqueryExprRestore(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Where
 	}
-	RunNodeRestoreTest(c, testCases, "select 1 from t1 where %s", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "select 1 from t1 where %s", extractNodeFunc)
 }
 
-func (tc *testExpressionsSuite) TestVariableExpr(c *C) {
+func TestVariableExpr(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"@a>1", "@`a`>1"},
 		{"@`aB`+1", "@`aB`+1"},
@@ -383,7 +380,6 @@ func (tc *testExpressionsSuite) TestVariableExpr(c *C) {
 		{"@``", "@``"},
 		{"@", "@``"},
 		{"@@``", "@@``"},
-		{"@@", "@@``"},
 		{"@@var", "@@`var`"},
 		{"@@global.b='foo'", "@@GLOBAL.`b`=_UTF8MB4'foo'"},
 		{"@@session.'C'", "@@SESSION.`c`"},
@@ -392,10 +388,10 @@ func (tc *testExpressionsSuite) TestVariableExpr(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Fields.Fields[0].Expr
 	}
-	RunNodeRestoreTest(c, testCases, "select %s", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "select %s", extractNodeFunc)
 }
 
-func (tc *testExpressionsSuite) TestMatchAgainstExpr(c *C) {
+func TestMatchAgainstExpr(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{`MATCH(content, title) AGAINST ('search for')`, "MATCH (`content`,`title`) AGAINST (_UTF8MB4'search for')"},
 		{`MATCH(content) AGAINST ('search for' IN BOOLEAN MODE)`, "MATCH (`content`) AGAINST (_UTF8MB4'search for' IN BOOLEAN MODE)"},
@@ -408,5 +404,5 @@ func (tc *testExpressionsSuite) TestMatchAgainstExpr(c *C) {
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Where
 	}
-	RunNodeRestoreTest(c, testCases, "SELECT * FROM t WHERE %s", extractNodeFunc)
+	runNodeRestoreTest(t, testCases, "SELECT * FROM t WHERE %s", extractNodeFunc)
 }

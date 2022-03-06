@@ -16,16 +16,18 @@ package expression
 
 import (
 	"errors"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
+func TestCaseWhen(t *testing.T) {
+	ctx := createContext(t)
 	tbl := []struct {
 		Arg []interface{}
 		Ret interface{}
@@ -43,21 +45,22 @@ func (s *testEvaluatorSuite) TestCaseWhen(c *C) {
 		{[]interface{}{0.0, 1, 0.1, 2}, 2},
 	}
 	fc := funcs[ast.Case]
-	for _, t := range tbl {
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.Arg...)))
-		c.Assert(err, IsNil)
+	for _, tt := range tbl {
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.Arg...)))
+		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(d, testutil.DatumEquals, types.NewDatum(t.Ret))
+		require.NoError(t, err)
+		testutil.DatumEqual(t, types.NewDatum(tt.Ret), d)
 	}
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(errors.New("can't convert string to bool"), 1, true)))
-	c.Assert(err, IsNil)
+	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(errors.New("can't convert string to bool"), 1, true)))
+	require.NoError(t, err)
 	_, err = evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 }
 
-func (s *testEvaluatorSuite) TestIf(c *C) {
-	stmtCtx := s.ctx.GetSessionVars().StmtCtx
+func TestIf(t *testing.T) {
+	ctx := createContext(t)
+	stmtCtx := ctx.GetSessionVars().StmtCtx
 	origin := stmtCtx.IgnoreTruncate
 	stmtCtx.IgnoreTruncate = true
 	defer func() {
@@ -88,22 +91,23 @@ func (s *testEvaluatorSuite) TestIf(c *C) {
 	}
 
 	fc := funcs[ast.If]
-	for _, t := range tbl {
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(t.Arg1, t.Arg2, t.Arg3)))
-		c.Assert(err, IsNil)
+	for _, tt := range tbl {
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.Arg1, tt.Arg2, tt.Arg3)))
+		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(d, testutil.DatumEquals, types.NewDatum(t.Ret))
+		require.NoError(t, err)
+		testutil.DatumEqual(t, types.NewDatum(tt.Ret), d)
 	}
-	f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(errors.New("must error"), 1, 2)))
-	c.Assert(err, IsNil)
+	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(errors.New("must error"), 1, 2)))
+	require.NoError(t, err)
 	_, err = evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, NotNil)
-	_, err = fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(1, 2)))
-	c.Assert(err, NotNil)
+	require.Error(t, err)
+	_, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(1, 2)))
+	require.Error(t, err)
 }
 
-func (s *testEvaluatorSuite) TestIfNull(c *C) {
+func TestIfNull(t *testing.T) {
+	ctx := createContext(t)
 	tbl := []struct {
 		arg1     interface{}
 		arg2     interface{}
@@ -124,25 +128,25 @@ func (s *testEvaluatorSuite) TestIfNull(c *C) {
 		{errors.New(""), nil, "", true, true},
 	}
 
-	for _, t := range tbl {
-		f, err := newFunctionForTest(s.ctx, ast.Ifnull, s.primitiveValsToConstants([]interface{}{t.arg1, t.arg2})...)
-		c.Assert(err, IsNil)
+	for _, tt := range tbl {
+		f, err := newFunctionForTest(ctx, ast.Ifnull, primitiveValsToConstants(ctx, []interface{}{tt.arg1, tt.arg2})...)
+		require.NoError(t, err)
 		d, err := f.Eval(chunk.Row{})
-		if t.getErr {
-			c.Assert(err, NotNil)
+		if tt.getErr {
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
-			if t.isNil {
-				c.Assert(d.Kind(), Equals, types.KindNull)
+			require.NoError(t, err)
+			if tt.isNil {
+				require.Equal(t, types.KindNull, d.Kind())
 			} else {
-				c.Assert(d.GetValue(), DeepEquals, t.expected)
+				require.Equal(t, tt.expected, d.GetValue())
 			}
 		}
 	}
 
-	_, err := funcs[ast.Ifnull].getFunction(s.ctx, []Expression{NewZero(), NewZero()})
-	c.Assert(err, IsNil)
+	_, err := funcs[ast.Ifnull].getFunction(ctx, []Expression{NewZero(), NewZero()})
+	require.NoError(t, err)
 
-	_, err = funcs[ast.Ifnull].getFunction(s.ctx, []Expression{NewZero()})
-	c.Assert(err, NotNil)
+	_, err = funcs[ast.Ifnull].getFunction(ctx, []Expression{NewZero()})
+	require.Error(t, err)
 }

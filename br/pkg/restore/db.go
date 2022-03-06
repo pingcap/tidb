@@ -14,12 +14,18 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"go.uber.org/zap"
 )
 
 // DB is a TiDB instance, not thread-safe.
 type DB struct {
 	se glue.Session
+}
+
+type UniqueTableName struct {
+	DB    string
+	Table string
 }
 
 // NewDB returns a new DB.
@@ -87,6 +93,28 @@ func (db *DB) ExecDDL(ctx context.Context, ddlJob *model.Job) error {
 	return errors.Trace(err)
 }
 
+// UpdateStatsMeta update count and snapshot ts in mysql.stats_meta
+func (db *DB) UpdateStatsMeta(ctx context.Context, tableID int64, restoreTS uint64, count uint64) error {
+	sysDB := mysql.SystemDB
+	statsMetaTbl := "stats_meta"
+
+	// set restoreTS to snapshot and version which is used to update stats_meta
+	err := db.se.ExecuteInternal(
+		ctx,
+		"update %n.%n set snapshot = %?, version = %?, count = %? where table_id = %?",
+		sysDB,
+		statsMetaTbl,
+		restoreTS,
+		restoreTS,
+		count,
+		tableID,
+	)
+	if err != nil {
+		log.Error("execute update sql failed", zap.Error(err))
+	}
+	return nil
+}
+
 // CreateDatabase executes a CREATE DATABASE SQL.
 func (db *DB) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
 	err := db.se.CreateDatabase(ctx, schema)
@@ -96,17 +124,10 @@ func (db *DB) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
 	return errors.Trace(err)
 }
 
-// CreateTable executes a CREATE TABLE SQL.
-func (db *DB) CreateTable(ctx context.Context, table *metautil.Table) error {
-	err := db.se.CreateTable(ctx, table.DB.Name, table.Info)
-	if err != nil {
-		log.Error("create table failed",
-			zap.Stringer("db", table.DB.Name),
-			zap.Stringer("table", table.Info.Name),
-			zap.Error(err))
-		return errors.Trace(err)
-	}
-
+//
+func (db *DB) restoreSequence(ctx context.Context, table *metautil.Table) error {
+	var restoreMetaSQL string
+	var err error
 	if table.Info.IsSequence() {
 		setValFormat := fmt.Sprintf("do setval(%s.%s, %%d);",
 			utils.EncloseName(table.DB.Name.O),
@@ -136,7 +157,6 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table) error {
 					zap.Error(err))
 				return errors.Trace(err)
 			}
-
 			// trigger cycle round > 0
 			err = db.se.Execute(ctx, nextSeqSQL)
 			if err != nil {
@@ -148,8 +168,54 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table) error {
 				return errors.Trace(err)
 			}
 		}
-		restoreMetaSQL := fmt.Sprintf(setValFormat, table.Info.AutoIncID)
-		if err = db.se.Execute(ctx, restoreMetaSQL); err != nil {
+		restoreMetaSQL = fmt.Sprintf(setValFormat, table.Info.AutoIncID)
+		err = db.se.Execute(ctx, restoreMetaSQL)
+	}
+	if err != nil {
+		log.Error("restore meta sql failed",
+			zap.String("query", restoreMetaSQL),
+			zap.Stringer("db", table.DB.Name),
+			zap.Stringer("table", table.Info.Name),
+			zap.Error(err))
+		return errors.Trace(err)
+	}
+	return errors.Trace(err)
+}
+
+func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table, ddlTables map[UniqueTableName]bool) error {
+
+	var restoreMetaSQL string
+	var err error
+	switch {
+	case table.Info.IsView():
+		return nil
+	case table.Info.IsSequence():
+		err = db.restoreSequence(ctx, table)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	// only table exists in ddlJobs during incremental restoration should do alter after creation.
+	case ddlTables[UniqueTableName{table.DB.Name.String(), table.Info.Name.String()}]:
+		if utils.NeedAutoID(table.Info) {
+			restoreMetaSQL = fmt.Sprintf(
+				"alter table %s.%s auto_increment = %d;",
+				utils.EncloseName(table.DB.Name.O),
+				utils.EncloseName(table.Info.Name.O),
+				table.Info.AutoIncID)
+		} else if table.Info.PKIsHandle && table.Info.ContainsAutoRandomBits() {
+			restoreMetaSQL = fmt.Sprintf(
+				"alter table %s.%s auto_random_base = %d",
+				utils.EncloseName(table.DB.Name.O),
+				utils.EncloseName(table.Info.Name.O),
+				table.Info.AutoRandID)
+		} else {
+			log.Info("table exists in incremental ddl jobs, but don't need to be altered",
+				zap.Stringer("db", table.DB.Name),
+				zap.Stringer("table", table.Info.Name))
+			return nil
+		}
+		err = db.se.Execute(ctx, restoreMetaSQL)
+		if err != nil {
 			log.Error("restore meta sql failed",
 				zap.String("query", restoreMetaSQL),
 				zap.Stringer("db", table.DB.Name),
@@ -158,7 +224,47 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table) error {
 			return errors.Trace(err)
 		}
 	}
-	return errors.Trace(err)
+	return nil
+}
+
+// CreateTables execute a internal CREATE TABLES.
+func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table, ddlTables map[UniqueTableName]bool) error {
+	if batchSession, ok := db.se.(glue.BatchCreateTableSession); ok {
+		m := map[string][]*model.TableInfo{}
+		for _, table := range tables {
+			m[table.DB.Name.L] = append(m[table.DB.Name.L], table.Info)
+		}
+		if err := batchSession.CreateTables(ctx, m); err != nil {
+			return err
+		}
+
+		for _, table := range tables {
+			err := db.CreateTablePostRestore(ctx, table, ddlTables)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	return nil
+}
+
+// CreateTable executes a CREATE TABLE SQL.
+func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, ddlTables map[UniqueTableName]bool) error {
+	err := db.se.CreateTable(ctx, table.DB.Name, table.Info)
+	if err != nil {
+		log.Error("create table failed",
+			zap.Stringer("db", table.DB.Name),
+			zap.Stringer("table", table.Info.Name),
+			zap.Error(err))
+		return errors.Trace(err)
+	}
+
+	err = db.CreateTablePostRestore(ctx, table, ddlTables)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return err
 }
 
 // Close closes the connection.
@@ -196,20 +302,15 @@ func FilterDDLJobs(allDDLJobs []*model.Job, tables []*metautil.Table) (ddlJobs [
 		}
 	}
 
-	type namePair struct {
-		db    string
-		table string
-	}
-
 	for _, table := range tables {
 		tableIDs := make(map[int64]bool)
 		tableIDs[table.Info.ID] = true
-		tableNames := make(map[namePair]bool)
-		name := namePair{table.DB.Name.String(), table.Info.Name.String()}
+		tableNames := make(map[UniqueTableName]bool)
+		name := UniqueTableName{table.DB.Name.String(), table.Info.Name.String()}
 		tableNames[name] = true
 		for _, job := range allDDLJobs {
 			if job.BinlogInfo.TableInfo != nil {
-				name := namePair{job.SchemaName, job.BinlogInfo.TableInfo.Name.String()}
+				name = UniqueTableName{job.SchemaName, job.BinlogInfo.TableInfo.Name.String()}
 				if tableIDs[job.TableID] || tableNames[name] {
 					ddlJobs = append(ddlJobs, job)
 					tableIDs[job.TableID] = true

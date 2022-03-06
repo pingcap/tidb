@@ -83,9 +83,10 @@ func (rp *point) Clone(value types.Datum) *point {
 }
 
 type pointSorter struct {
-	points []*point
-	err    error
-	sc     *stmtctx.StatementContext
+	points   []*point
+	err      error
+	sc       *stmtctx.StatementContext
+	collator collate.Collator
 }
 
 func (r *pointSorter) Len() int {
@@ -95,18 +96,18 @@ func (r *pointSorter) Len() int {
 func (r *pointSorter) Less(i, j int) bool {
 	a := r.points[i]
 	b := r.points[j]
-	less, err := rangePointLess(r.sc, a, b)
+	less, err := rangePointLess(r.sc, a, b, r.collator)
 	if err != nil {
 		r.err = err
 	}
 	return less
 }
 
-func rangePointLess(sc *stmtctx.StatementContext, a, b *point) (bool, error) {
+func rangePointLess(sc *stmtctx.StatementContext, a, b *point, collator collate.Collator) (bool, error) {
 	if a.value.Kind() == types.KindMysqlEnum && b.value.Kind() == types.KindMysqlEnum {
 		return rangePointEnumLess(sc, a, b)
 	}
-	cmp, err := a.value.CompareDatum(sc, &b.value)
+	cmp, err := a.value.Compare(sc, &b.value, collator)
 	if cmp != 0 {
 		return cmp < 0, nil
 	}
@@ -158,14 +159,14 @@ func getNotNullFullRange() []*point {
 // So we need to set it to MaxInt64.
 func FullIntRange(isUnsigned bool) []*Range {
 	if isUnsigned {
-		return []*Range{{LowVal: []types.Datum{types.NewUintDatum(0)}, HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)}}}
+		return []*Range{{LowVal: []types.Datum{types.NewUintDatum(0)}, HighVal: []types.Datum{types.NewUintDatum(math.MaxUint64)}, Collators: collate.GetBinaryCollatorSlice(1)}}
 	}
-	return []*Range{{LowVal: []types.Datum{types.NewIntDatum(math.MinInt64)}, HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)}}}
+	return []*Range{{LowVal: []types.Datum{types.NewIntDatum(math.MinInt64)}, HighVal: []types.Datum{types.NewIntDatum(math.MaxInt64)}, Collators: collate.GetBinaryCollatorSlice(1)}}
 }
 
 // FullRange is [null, +∞) for Range.
 func FullRange() []*Range {
-	return []*Range{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}}}
+	return []*Range{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{types.MaxValueDatum()}, Collators: collate.GetBinaryCollatorSlice(1)}}
 }
 
 // FullNotNullRange is (-∞, +∞) for Range.
@@ -175,7 +176,7 @@ func FullNotNullRange() []*Range {
 
 // NullRange is [null, null] for Range.
 func NullRange() []*Range {
-	return []*Range{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{{}}}}
+	return []*Range{{LowVal: []types.Datum{{}}, HighVal: []types.Datum{{}}, Collators: collate.GetBinaryCollatorSlice(1)}}
 }
 
 // builder is the range builder struct.
@@ -184,12 +185,12 @@ type builder struct {
 	sc  *stmtctx.StatementContext
 }
 
-func (r *builder) build(expr expression.Expression) []*point {
+func (r *builder) build(expr expression.Expression, collator collate.Collator) []*point {
 	switch x := expr.(type) {
 	case *expression.Column:
 		return r.buildFromColumn(x)
 	case *expression.ScalarFunction:
-		return r.buildFromScalarFunc(x)
+		return r.buildFromScalarFunc(x, collator)
 	case *expression.Constant:
 		return r.buildFromConstant(x)
 	}
@@ -457,6 +458,10 @@ func handleEnumFromBinOp(sc *stmtctx.StatementContext, ft *types.FieldType, val 
 		res = append(res, &point{value: d, excl: false, start: false})
 	}
 
+	if op == ast.NullEQ && val.IsNull() {
+		res = append(res, &point{start: true}, &point{}) // null point
+	}
+
 	tmpEnum := types.Enum{}
 	for i := 0; i <= len(ft.Elems); i++ {
 		if i == 0 {
@@ -467,7 +472,7 @@ func handleEnumFromBinOp(sc *stmtctx.StatementContext, ft *types.FieldType, val 
 		}
 
 		d := types.NewCollateMysqlEnumDatum(tmpEnum, ft.Collate)
-		if v, err := d.CompareDatum(sc, &val); err == nil {
+		if v, err := d.Compare(sc, &val, collate.GetCollator(ft.Collate)); err == nil {
 			switch op {
 			case ast.LT:
 				if v < 0 {
@@ -485,7 +490,7 @@ func handleEnumFromBinOp(sc *stmtctx.StatementContext, ft *types.FieldType, val 
 				if v >= 0 {
 					appendPointFunc(d)
 				}
-			case ast.EQ:
+			case ast.EQ, ast.NullEQ:
 				if v == 0 {
 					appendPointFunc(d)
 				}
@@ -567,9 +572,6 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 			hasNull = true
 			continue
 		}
-		if dt.Kind() == types.KindString || dt.Kind() == types.KindBinaryLiteral {
-			dt.SetString(dt.GetString(), colCollate)
-		}
 		if expr.GetArgs()[0].GetType().Tp == mysql.TypeEnum {
 			switch dt.Kind() {
 			case types.KindString, types.KindBytes, types.KindBinaryLiteral:
@@ -597,6 +599,9 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 				continue
 			}
 		}
+		if expr.GetArgs()[0].GetType().EvalType() == types.ETString && (dt.Kind() == types.KindString || dt.Kind() == types.KindBinaryLiteral) {
+			dt.SetString(dt.GetString(), expr.GetArgs()[0].GetType().Collate) // refine the string like what we did in builder.buildFromBinOp
+		}
 		var startValue, endValue types.Datum
 		dt.Copy(&startValue)
 		dt.Copy(&endValue)
@@ -604,7 +609,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 		endPoint := &point{value: endValue}
 		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
-	sorter := pointSorter{points: rangePoints, sc: r.sc}
+	sorter := pointSorter{points: rangePoints, sc: r.sc, collator: collate.GetCollator(colCollate)}
 	sort.Sort(&sorter)
 	if sorter.err != nil {
 		r.err = sorter.err
@@ -627,7 +632,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 }
 
 func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*point {
-	_, collation := expr.CharsetAndCollation(expr.GetCtx())
+	_, collation := expr.CharsetAndCollation()
 	if !collate.CompatibleCollate(expr.GetArgs()[0].GetType().Collate, collation) {
 		return getFullRange()
 	}
@@ -684,7 +689,7 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*po
 		return []*point{{value: types.MinNotNullDatum(), start: true}, {value: types.MaxValueDatum()}}
 	}
 	if isExactMatch {
-		val := types.NewCollationStringDatum(string(lowValue), tpOfPattern.Collate, tpOfPattern.Flen)
+		val := types.NewCollationStringDatum(string(lowValue), tpOfPattern.Collate)
 		return []*point{{value: val, start: true}, {value: val}}
 	}
 	startPoint := &point{start: true, excl: exclude}
@@ -764,14 +769,14 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []*point {
 	return getFullRange()
 }
 
-func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction) []*point {
+func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction, collator collate.Collator) []*point {
 	switch op := expr.FuncName.L; op {
 	case ast.GE, ast.GT, ast.LT, ast.LE, ast.EQ, ast.NE, ast.NullEQ:
 		return r.buildFromBinOp(expr)
 	case ast.LogicAnd:
-		return r.intersection(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]))
+		return r.intersection(r.build(expr.GetArgs()[0], collator), r.build(expr.GetArgs()[1], collator), collator)
 	case ast.LogicOr:
-		return r.union(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]))
+		return r.union(r.build(expr.GetArgs()[0], collator), r.build(expr.GetArgs()[1], collator), collator)
 	case ast.IsTruthWithoutNull:
 		return r.buildFromIsTrue(expr, 0, false)
 	case ast.IsTruthWithNull:
@@ -794,19 +799,19 @@ func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction) []*point 
 	return nil
 }
 
-func (r *builder) intersection(a, b []*point) []*point {
-	return r.merge(a, b, false)
+func (r *builder) intersection(a, b []*point, collator collate.Collator) []*point {
+	return r.merge(a, b, false, collator)
 }
 
-func (r *builder) union(a, b []*point) []*point {
-	return r.merge(a, b, true)
+func (r *builder) union(a, b []*point, collator collate.Collator) []*point {
+	return r.merge(a, b, true, collator)
 }
 
-func (r *builder) mergeSorted(a, b []*point) []*point {
+func (r *builder) mergeSorted(a, b []*point, collator collate.Collator) []*point {
 	ret := make([]*point, 0, len(a)+len(b))
 	i, j := 0, 0
 	for i < len(a) && j < len(b) {
-		less, err := rangePointLess(r.sc, a[i], b[j])
+		less, err := rangePointLess(r.sc, a[i], b[j], collator)
 		if err != nil {
 			r.err = err
 			return nil
@@ -827,8 +832,8 @@ func (r *builder) mergeSorted(a, b []*point) []*point {
 	return ret
 }
 
-func (r *builder) merge(a, b []*point, union bool) []*point {
-	mergedPoints := r.mergeSorted(a, b)
+func (r *builder) merge(a, b []*point, union bool, collator collate.Collator) []*point {
+	mergedPoints := r.mergeSorted(a, b, collator)
 	if r.err != nil {
 		return nil
 	}
