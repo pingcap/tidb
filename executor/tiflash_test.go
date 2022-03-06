@@ -885,7 +885,6 @@ func TestTiFlashVirtualColumn(t *testing.T) {
 	tk.MustExec("create table t1 (a bit(4), b bit(4), c bit(4) generated always as (a) virtual)")
 	tk.MustExec("alter table t1 set tiflash replica 1")
 	tb := tk.GetTableByName("test", "t1")
-	tb = tk.GetTableByName("test", "t1")
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 	tk.MustExec("insert into t1(a,b) values(b'01',b'01'),(b'10',b'10'),(b'11',b'11')")
