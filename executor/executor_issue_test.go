@@ -152,7 +152,7 @@ func TestIssue24210(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockStreamAggExecBaseExecutorOpenReturnedError", `return(true)`))
 	err = tk.ExecToErr("select sum(a) from (select 1 as a, 2 as b) t")
 	require.EqualError(t, err, "mock StreamAggExec.baseExecutor.Open returned error")
-	require.NoError(t, err, failpoint.Disable("github.com/pingcap/tidb/executor/mockStreamAggExecBaseExecutorOpenReturnedError"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockStreamAggExecBaseExecutorOpenReturnedError"))
 
 	// for SelectionExec
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockSelectionExecBaseExecutorOpenReturnedError", `return(true)`))
