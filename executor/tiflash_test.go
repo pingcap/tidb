@@ -571,10 +571,10 @@ func TestTiFlashPlanCacheable(t *testing.T) {
 	}()
 	plannercore.SetPreparedPlanCache(true)
 
-	var err error
-	tk.Session(), err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+	sess, err := session.CreateSession4TestWithOpt(store, &session.Opt{
 		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
 	})
+	tk.SetSession(sess)
 	require.NoError(t, err)
 
 	tk.MustExec("use test;")
