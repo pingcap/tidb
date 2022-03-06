@@ -24,7 +24,7 @@ import (
 )
 
 func TestInvalidReadTemporaryTable(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Second))
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
