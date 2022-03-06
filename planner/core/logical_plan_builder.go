@@ -2206,6 +2206,20 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 	return havingAggMapper, extractor.aggMapper, nil
 }
 
+func (b *PlanBuilder) extractAggFuncsInExprs(exprs []ast.ExprNode) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int) {
+	extractor := &AggregateFuncExtractor{skipAggMap: b.correlatedAggMapper}
+	for _, expr := range exprs {
+		expr.Accept(extractor)
+	}
+	aggList := extractor.AggFuncs
+	totalAggMapper := make(map[*ast.AggregateFuncExpr]int, len(aggList))
+
+	for i, agg := range aggList {
+		totalAggMapper[agg] = i
+	}
+	return aggList, totalAggMapper
+}
+
 func (b *PlanBuilder) extractAggFuncsInSelectFields(fields []*ast.SelectField) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int) {
 	extractor := &AggregateFuncExtractor{skipAggMap: b.correlatedAggMapper}
 	for _, f := range fields {

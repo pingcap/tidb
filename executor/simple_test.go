@@ -54,6 +54,17 @@ func TestDo(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
 }
 
+func TestDoWithAggFunc(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("DO sum(1)")
+	tk.MustExec("DO avg(@e+@f)")
+	tk.MustExec("DO GROUP_CONCAT(NULLIF(ELT(1, @e), 2.0) ORDER BY 1)")
+}
+
 func TestSetRoleAllCorner(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
