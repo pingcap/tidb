@@ -1083,8 +1083,8 @@ func TestForbidTiflashDuringStaleRead(t *testing.T) {
 		fmt.Fprintf(resBuff, "%s\n", row)
 	}
 	res := resBuff.String()
-	require.True(t, strings.Contains(res, "tiflash"))
-	require.False(t, strings.Contains(res, "tikv"))
+	require.Contains(t, res, "tiflash")
+	require.NotContains(t, res, "tikv")
 	tk.MustExec("set transaction read only as of timestamp now(1)")
 	rows = tk.MustQuery("explain select avg(a) from t").Rows()
 	resBuff = bytes.NewBufferString("")
@@ -1092,8 +1092,8 @@ func TestForbidTiflashDuringStaleRead(t *testing.T) {
 		fmt.Fprintf(resBuff, "%s\n", row)
 	}
 	res = resBuff.String()
-	require.False(t, strings.Contains(res, "tiflash"))
-	require.True(t, strings.Contains(res, "tikv"))
+	require.NotContains(t, res, "tiflash")
+	require.Contains(t, res, "tikv")
 }
 
 func TestForbidTiFlashIfExtraPhysTableIDIsNeeded(t *testing.T) {
@@ -1116,8 +1116,8 @@ func TestForbidTiFlashIfExtraPhysTableIDIsNeeded(t *testing.T) {
 		fmt.Fprintf(resBuff, "%s\n", row)
 	}
 	res := resBuff.String()
-	require.True(t, strings.Contains(res, "tiflash"))
-	require.False(t, strings.Contains(res, "tikv"))
+	require.Contains(t, res, "tiflash")
+	require.NotContains(t, res, "tikv")
 
 	rows = tk.MustQuery("explain select count(*) from t for update").Rows()
 	resBuff = bytes.NewBufferString("")
@@ -1125,8 +1125,8 @@ func TestForbidTiFlashIfExtraPhysTableIDIsNeeded(t *testing.T) {
 		fmt.Fprintf(resBuff, "%s\n", row)
 	}
 	res = resBuff.String()
-	require.False(t, strings.Contains(res, "tiflash"))
-	require.True(t, strings.Contains(res, "tikv"))
+	require.NotContains(t, res, "tiflash")
+	require.Contains(t, res, "tikv")
 
 	tk.MustExec("begin")
 	rows = tk.MustQuery("explain select count(*) from t").Rows()
@@ -1135,8 +1135,8 @@ func TestForbidTiFlashIfExtraPhysTableIDIsNeeded(t *testing.T) {
 		fmt.Fprintf(resBuff, "%s\n", row)
 	}
 	res = resBuff.String()
-	require.True(t, strings.Contains(res, "tiflash"))
-	require.False(t, strings.Contains(res, "tikv"))
+	require.Contains(t, res, "tiflash")
+	require.NotContains(t, res, "tikv")
 	tk.MustExec("insert into t values(1,2)")
 	rows = tk.MustQuery("explain select count(*) from t").Rows()
 	resBuff = bytes.NewBufferString("")
@@ -1144,7 +1144,7 @@ func TestForbidTiFlashIfExtraPhysTableIDIsNeeded(t *testing.T) {
 		fmt.Fprintf(resBuff, "%s\n", row)
 	}
 	res = resBuff.String()
-	require.True(t, strings.Contains(res, "tikv"))
-	require.False(t, strings.Contains(res, "tiflash"))
+	require.Contains(t, res, "tikv")
+	require.NotContains(t, res, "tiflash")
 	tk.MustExec("rollback")
 }
