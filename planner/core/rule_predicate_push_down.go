@@ -667,7 +667,7 @@ func (p *LogicalMemTable) PredicatePushDown(predicates []expression.Expression, 
 	return predicates, p.self
 }
 
-func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
+func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
 	if len(predicates) == 0 {
 		return predicates, p.self
 	}
