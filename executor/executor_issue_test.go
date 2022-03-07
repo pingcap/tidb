@@ -725,3 +725,23 @@ func TestIssue5055(t *testing.T) {
 	result := tk.MustQuery("select tbl1.* from (select t1.a, 1 from t1) tbl1 left join t2 tbl2 on tbl1.a = tbl2.a order by tbl1.a desc limit 1;")
 	result.Check(testkit.Rows("1 1"))
 }
+
+// TestIssue4024 This tests https://github.com/pingcap/tidb/issues/4024
+func TestIssue4024(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database test2")
+	tk.MustExec("use test2")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec("update t, test2.t set test2.t.a=2")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from test2.t").Check(testkit.Rows("2"))
+	tk.MustExec("update test.t, test2.t set test.t.a=3")
+	tk.MustQuery("select * from t").Check(testkit.Rows("3"))
+	tk.MustQuery("select * from test2.t").Check(testkit.Rows("2"))
+}

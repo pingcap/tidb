@@ -3312,24 +3312,6 @@ func (s *testSuite) TestEmptyEnum(c *C) {
 	tk.MustQuery("select id, c1+0, c1 from t;").Check(testkit.Rows("1 0 ", "2 0 "))
 }
 
-// TestIssue4024 This tests https://github.com/pingcap/tidb/issues/4024
-func (s *testSuite) TestIssue4024(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("create database test2")
-	tk.MustExec("use test2")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("insert into t values(1)")
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("insert into t values(1)")
-	tk.MustExec("update t, test2.t set test2.t.a=2")
-	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
-	tk.MustQuery("select * from test2.t").Check(testkit.Rows("2"))
-	tk.MustExec("update test.t, test2.t set test.t.a=3")
-	tk.MustQuery("select * from t").Check(testkit.Rows("3"))
-	tk.MustQuery("select * from test2.t").Check(testkit.Rows("2"))
-}
-
 const (
 	checkRequestOff = iota
 	checkRequestSyncLog
