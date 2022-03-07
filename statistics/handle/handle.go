@@ -132,7 +132,7 @@ func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...in
 	return h.mu.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, params...)
 }
 
-func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int, sql string, procTrackID uint64, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
+func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int, procTrackID uint64, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	optFuncs := []sqlexec.OptionFuncAlias{
 		sqlexec.ExecOptionUseSessionPool,
 		execOptionForAnalyze[statsVer],
