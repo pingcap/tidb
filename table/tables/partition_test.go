@@ -16,6 +16,7 @@ package tables_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/ddl"
@@ -398,6 +399,49 @@ func TestLocatePartitionSingleColumn(t *testing.T) {
 	tk.MustQuery("SELECT count(*) FROM t_range PARTITION (p2)").Check(testkit.Rows("2"))
 	_, err := tk.Exec("INSERT INTO t_range VALUES (4, NULL)")
 	require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
+}
+
+func TestLocatePartition(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON;")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	tk.MustExec("drop table if exists t;")
+
+	tk.MustExec(`CREATE TABLE t (
+    	id bigint(20) DEFAULT NULL,
+    	type varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL
+    	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    	PARTITION BY LIST COLUMNS(type)
+    	(PARTITION push_event VALUES IN ("PushEvent"),
+    	PARTITION watch_event VALUES IN ("WatchEvent")
+    );`)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+	tks := []*testkit.TestKit{tk1, tk2, tk3}
+
+	wg := sync.WaitGroup{}
+	exec := func(tk0 *testkit.TestKit) {
+		tk0.MustExec("use test")
+		tk0.MustQuery("desc select id, type from t where  type = 'WatchEvent';").Check(testkit.Rows("TableReader_7 10.00 root partition:watch_event data:Selection_6]\n[└─Selection_6 10.00 cop[tikv]  eq(test.t.type, \"WatchEvent\")]\n[  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	}
+
+	run := func(num int, e func(tk *testkit.TestKit)) {
+		wg.Add(1)
+		tk := tks[num]
+		go func() {
+			defer wg.Done()
+			e(tk)
+		}()
+	}
+	run(0, exec)
+	run(1, exec)
+	run(2, exec)
+	wg.Wait()
 }
 
 func TestTimeZoneChange(t *testing.T) {
