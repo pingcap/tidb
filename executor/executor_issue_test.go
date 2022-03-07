@@ -745,3 +745,141 @@ func TestIssue4024(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("3"))
 	tk.MustQuery("select * from test2.t").Check(testkit.Rows("2"))
 }
+
+func TestIssue5666(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@profiling=1")
+	tk.MustQuery("SELECT QUERY_ID, SUM(DURATION) AS SUM_DURATION FROM INFORMATION_SCHEMA.PROFILING GROUP BY QUERY_ID;").Check(testkit.Rows("0 0"))
+}
+
+func TestIssue5341(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop table if exists test.t")
+	tk.MustExec("create table test.t(a char)")
+	tk.MustExec("insert into test.t value('a')")
+	tk.MustQuery("select * from test.t where a < 1 order by a limit 0;").Check(testkit.Rows())
+}
+
+func TestIssue16921(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a float);")
+	tk.MustExec("create index a on t(a);")
+	tk.MustExec("insert into t values (1.0), (NULL), (0), (2.0);")
+	tk.MustQuery("select `a` from `t` use index (a) where !`a`;").Check(testkit.Rows("0"))
+	tk.MustQuery("select `a` from `t` ignore index (a) where !`a`;").Check(testkit.Rows("0"))
+	tk.MustQuery("select `a` from `t` use index (a) where `a`;").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select `a` from `t` ignore index (a) where `a`;").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select a from t use index (a) where not a is true;").Check(testkit.Rows("<nil>", "0"))
+	tk.MustQuery("select a from t use index (a) where not not a is true;").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select a from t use index (a) where not not a;").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select a from t use index (a) where not not not a is true;").Check(testkit.Rows("<nil>", "0"))
+	tk.MustQuery("select a from t use index (a) where not not not a;").Check(testkit.Rows("0"))
+}
+
+func TestIssue19100(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (c decimal);")
+	tk.MustExec("create table t2 (c decimal, key(c));")
+	tk.MustExec("insert into t1 values (null);")
+	tk.MustExec("insert into t2 values (null);")
+	tk.MustQuery("select count(*) from t1 where not c;").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from t2 where not c;").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from t1 where c;").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from t2 where c;").Check(testkit.Rows("0"))
+}
+
+func TestIssue27232(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a timestamp)")
+	tk.MustExec("insert into t values (\"1970-07-23 10:04:59\"), (\"2038-01-19 03:14:07\")")
+	tk.MustQuery("select * from t where date_sub(a, interval 10 month) = date_sub(\"1970-07-23 10:04:59\", interval 10 month)").Check(testkit.Rows("1970-07-23 10:04:59"))
+	tk.MustQuery("select * from t where timestampadd(hour, 1, a ) = timestampadd(hour, 1, \"2038-01-19 03:14:07\")").Check(testkit.Rows("2038-01-19 03:14:07"))
+}
+
+func TestIssue15718(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists tt;")
+	tk.MustExec("create table tt(a decimal(10, 0), b varchar(1), c time);")
+	tk.MustExec("insert into tt values(0, '2', null), (7, null, '1122'), (NULL, 'w', null), (NULL, '2', '3344'), (NULL, NULL, '0'), (7, 'f', '33');")
+	tk.MustQuery("select a and b as d, a or c as e from tt;").Check(testkit.Rows("0 <nil>", "<nil> 1", "0 <nil>", "<nil> 1", "<nil> <nil>", "0 1"))
+
+	tk.MustExec("drop table if exists tt;")
+	tk.MustExec("create table tt(a decimal(10, 0), b varchar(1), c time);")
+	tk.MustExec("insert into tt values(0, '2', '123'), (7, null, '1122'), (null, 'w', null);")
+	tk.MustQuery("select a and b as d, a, b from tt order by d limit 1;").Check(testkit.Rows("<nil> 7 <nil>"))
+	tk.MustQuery("select b or c as d, b, c from tt order by d limit 1;").Check(testkit.Rows("<nil> w <nil>"))
+
+	tk.MustExec("drop table if exists t0;")
+	tk.MustExec("CREATE TABLE t0(c0 FLOAT);")
+	tk.MustExec("INSERT INTO t0(c0) VALUES (NULL);")
+	tk.MustQuery("SELECT * FROM t0 WHERE NOT(0 OR t0.c0);").Check(testkit.Rows())
+}
+
+func TestIssue15767(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists tt;")
+	tk.MustExec("create table t(a int, b char);")
+	tk.MustExec("insert into t values (1,'s'),(2,'b'),(1,'c'),(2,'e'),(1,'a');")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustExec("insert into t select * from t;")
+	tk.MustQuery("select b, count(*) from ( select b from t order by a limit 20 offset 2) as s group by b order by b;").Check(testkit.Rows("a 6", "c 7", "s 7"))
+}
+
+func TestIssue16025(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t0;")
+	tk.MustExec("CREATE TABLE t0(c0 NUMERIC PRIMARY KEY);")
+	tk.MustExec("INSERT IGNORE INTO t0(c0) VALUES (NULL);")
+	tk.MustQuery("SELECT * FROM t0 WHERE c0;").Check(testkit.Rows())
+}
+
+func TestIssue16854(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE `t` (	`a` enum('WAITING','PRINTED','STOCKUP','CHECKED','OUTSTOCK','PICKEDUP','WILLBACK','BACKED') DEFAULT NULL)")
+	tk.MustExec("insert into t values(1),(2),(3),(4),(5),(6),(7);")
+	for i := 0; i < 7; i++ {
+		tk.MustExec("insert into t select * from t;")
+	}
+	tk.MustExec("set @@tidb_max_chunk_size=100;")
+	tk.MustQuery("select distinct a from t order by a").Check(testkit.Rows("WAITING", "PRINTED", "STOCKUP", "CHECKED", "OUTSTOCK", "PICKEDUP", "WILLBACK"))
+	tk.MustExec("drop table t")
+
+	tk.MustExec("CREATE TABLE `t` (	`a` set('WAITING','PRINTED','STOCKUP','CHECKED','OUTSTOCK','PICKEDUP','WILLBACK','BACKED') DEFAULT NULL)")
+	tk.MustExec("insert into t values(1),(2),(3),(4),(5),(6),(7);")
+	for i := 0; i < 7; i++ {
+		tk.MustExec("insert into t select * from t;")
+	}
+	tk.MustExec("set @@tidb_max_chunk_size=100;")
+	tk.MustQuery("select distinct a from t order by a").Check(testkit.Rows("WAITING", "PRINTED", "WAITING,PRINTED", "STOCKUP", "WAITING,STOCKUP", "PRINTED,STOCKUP", "WAITING,PRINTED,STOCKUP"))
+	tk.MustExec("drop table t")
+}
