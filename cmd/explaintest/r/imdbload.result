@@ -276,21 +276,21 @@ load stats 's/imdbload_stats/movie_info.json';
 load stats 's/imdbload_stats/cast_info.json';
 explain select * from char_name where ((imdb_index = 'I') and (surname_pcode < 'E436')) or ((imdb_index = 'L') and (surname_pcode < 'E436'));
 id	estRows	task	access object	operator info
-TableReader_7	804024.75	root		data:Selection_6
-└─Selection_6	804024.75	cop[tikv]		or(and(eq(imdbload.char_name.imdb_index, "I"), lt(imdbload.char_name.surname_pcode, "E436")), and(eq(imdbload.char_name.imdb_index, "L"), lt(imdbload.char_name.surname_pcode, "E436")))
-  └─TableFullScan_5	4314864.00	cop[tikv]	table:char_name	keep order:false
+IndexLookUp_10	1005030.94	root		
+├─IndexRangeScan_8(Build)	1005030.94	cop[tikv]	table:char_name, index:itest2(imdb_index, surname_pcode, name_pcode_nf)	range:["I" -inf,"I" "E436"), ["L" -inf,"L" "E436"), keep order:false
+└─TableRowIDScan_9(Probe)	1005030.94	cop[tikv]	table:char_name	keep order:false
 explain select * from char_name use index (itest2) where ((imdb_index = 'I') and (surname_pcode < 'E436')) or ((imdb_index = 'L') and (surname_pcode < 'E436'));
 id	estRows	task	access object	operator info
-IndexLookUp_7	2010061.87	root
-├─IndexRangeScan_5(Build)	2010061.87	cop[tikv]	table:char_name, index:itest2(imdb_index, surname_pcode, name_pcode_nf)	range:["I" -inf,"I" "E436"), ["L" -inf,"L" "E436"), keep order:false
-└─TableRowIDScan_6(Probe)	2010061.87	cop[tikv]	table:char_name	keep order:false
+IndexLookUp_7	1005030.94	root		
+├─IndexRangeScan_5(Build)	1005030.94	cop[tikv]	table:char_name, index:itest2(imdb_index, surname_pcode, name_pcode_nf)	range:["I" -inf,"I" "E436"), ["L" -inf,"L" "E436"), keep order:false
+└─TableRowIDScan_6(Probe)	1005030.94	cop[tikv]	table:char_name	keep order:false
 trace plan target = 'estimation' select * from char_name where ((imdb_index = 'I') and (surname_pcode < 'E436')) or ((imdb_index = 'L') and (surname_pcode < 'E436'));
 CE_trace
-[{"table_name":"char_name","type":"Column Stats-Range","expr":"((id >= -9223372036854775808 and id <= 9223372036854775807))","row_count":4314864},{"table_name":"char_name","type":"Index Stats-Range","expr":"((imdb_index = 'I') and (surname_pcode < 'E436')) or ((imdb_index = 'L') and (surname_pcode < 'E436'))","row_count":2010061},{"table_name":"char_name","type":"Index Stats-Range","expr":"((surname_pcode < 'E436'))","row_count":1005030},{"table_name":"char_name","type":"Table Stats-Expression-CNF","expr":"`or`(`and`(`eq`(imdbload.char_name.imdb_index, 'I'), `lt`(imdbload.char_name.surname_pcode, 'E436')), `and`(`eq`(imdbload.char_name.imdb_index, 'L'), `lt`(imdbload.char_name.surname_pcode, 'E436')))","row_count":804024}]
+[{"table_name":"char_name","type":"Column Stats-Point","expr":"((imdb_index = 'I'))","row_count":0},{"table_name":"char_name","type":"Column Stats-Point","expr":"((imdb_index = 'L'))","row_count":0},{"table_name":"char_name","type":"Column Stats-Range","expr":"((id >= -9223372036854775808 and id <= 9223372036854775807))","row_count":4314864},{"table_name":"char_name","type":"Index Stats-Range","expr":"((imdb_index = 'I') and (surname_pcode < 'E436')) or ((imdb_index = 'L') and (surname_pcode < 'E436'))","row_count":0},{"table_name":"char_name","type":"Index Stats-Range","expr":"((surname_pcode < 'E436'))","row_count":1005030},{"table_name":"char_name","type":"Table Stats-Expression-CNF","expr":"`or`(`and`(`eq`(imdbload.char_name.imdb_index, 'I'), `lt`(imdbload.char_name.surname_pcode, 'E436')), `and`(`eq`(imdbload.char_name.imdb_index, 'L'), `lt`(imdbload.char_name.surname_pcode, 'E436')))","row_count":804024}]
 
 explain select * from char_name where ((imdb_index = 'V') and (surname_pcode < 'L3416'));
 id	estRows	task	access object	operator info
-IndexLookUp_10	0.00	root
+IndexLookUp_10	0.00	root		
 ├─IndexRangeScan_8(Build)	0.00	cop[tikv]	table:char_name, index:itest2(imdb_index, surname_pcode, name_pcode_nf)	range:["V" -inf,"V" "L3416"), keep order:false
 └─TableRowIDScan_9(Probe)	0.00	cop[tikv]	table:char_name	keep order:false
 explain select * from char_name where imdb_index > 'V';
@@ -309,7 +309,7 @@ IndexLookUp_10	0.00	root
 └─TableRowIDScan_9(Probe)	0.00	cop[tikv]	table:movie_companies	keep order:false
 trace plan target = 'estimation' select * from movie_companies where company_type_id > 2;
 CE_trace
-[{"table_name":"movie_companies","type":"Column Stats-Range","expr":"((company_type_id > 2 and true))","row_count":2532707},{"table_name":"movie_companies","type":"Column Stats-Range","expr":"((id >= -9223372036854775808 and id <= 9223372036854775807))","row_count":4958296},{"table_name":"movie_companies","type":"Index Stats-Range","expr":"((company_type_id > 2 and true))","row_count":0},{"table_name":"movie_companies","type":"Table Stats-Expression-CNF","expr":"`gt`(imdbload.movie_companies.company_type_id, 2)","row_count":0}]
+[{"table_name":"movie_companies","type":"Column Stats-Range","expr":"((company_type_id > 2 and true))","row_count":2479148},{"table_name":"movie_companies","type":"Column Stats-Range","expr":"((id >= -9223372036854775808 and id <= 9223372036854775807))","row_count":4958296},{"table_name":"movie_companies","type":"Index Stats-Range","expr":"((company_type_id > 2 and true))","row_count":0},{"table_name":"movie_companies","type":"Table Stats-Expression-CNF","expr":"`gt`(imdbload.movie_companies.company_type_id, 2)","row_count":0}]
 
 explain select * from char_name where imdb_index > 'I' and imdb_index < 'II';
 id	estRows	task	access object	operator info
