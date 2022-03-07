@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
@@ -894,7 +893,7 @@ func TestChangingTableCharset(t *testing.T) {
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t (a blob) character set utf8;")
 	tk.MustExec("alter table t charset=utf8mb4 collate=utf8mb4_bin;")
-	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` blob DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
@@ -1232,15 +1231,14 @@ func TestBitDefaultValue(t *testing.T) {
 
 func TestBackwardCompatibility(t *testing.T) {
 	var cluster testutils.Cluster
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
-		mockstore.BootstrapWithSingleStore(c)
-		cluster = c
-	}))
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond,
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			cluster = c
+		}))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database if not exists test_backward_compatibility")
-	defer tk.MustExec("drop database test_backward_compatibility")
-	tk.MustExec("use test_backward_compatibility")
+	tk.MustExec("use test")
 	tk.MustExec("create table t(a int primary key, b int)")
 	for i := 0; i < 200; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
@@ -1248,7 +1246,7 @@ func TestBackwardCompatibility(t *testing.T) {
 
 	// alter table t add index idx_b(b);
 	is := dom.InfoSchema()
-	schemaName := model.NewCIStr("test_backward_compatibility")
+	schemaName := model.NewCIStr("test")
 	tableName := model.NewCIStr("t")
 	schema, ok := is.SchemaByName(schemaName)
 	require.True(t, ok)
@@ -1259,7 +1257,6 @@ func TestBackwardCompatibility(t *testing.T) {
 	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
 	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 10)
 
-	unique := false
 	indexName := model.NewCIStr("idx_b")
 	indexPartSpecification := &ast.IndexPartSpecification{
 		Column: &ast.ColumnName{
@@ -1276,12 +1273,12 @@ func TestBackwardCompatibility(t *testing.T) {
 		TableID:    tbl.Meta().ID,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption},
+		Args:       []interface{}{false /* unique */, indexName, indexPartSpecifications, indexOption},
 	}
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	tt := meta.NewMeta(txn)
-	job.ID, err = tt.GenGlobalID()
+	m := meta.NewMeta(txn)
+	job.ID, err = m.GenGlobalID()
 	require.NoError(t, err)
 	job.Version = 1
 	job.StartTS = txn.StartTS()
@@ -1289,7 +1286,7 @@ func TestBackwardCompatibility(t *testing.T) {
 	// Simulate old TiDB init the add index job, old TiDB will not init the model.Job.ReorgMeta field,
 	// if we set job.SnapshotVer here, can simulate the behavior.
 	job.SnapshotVer = txn.StartTS()
-	err = tt.EnQueueDDLJob(job)
+	err = m.EnQueueDDLJob(job)
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
