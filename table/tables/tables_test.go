@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -499,11 +498,11 @@ func TestHiddenColumn(t *testing.T) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// Test show (extended) columns
-	tk.MustQuery("show columns from t").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show columns from t").Check(testkit.RowsWithSep("|",
 		"a|int(11)|NO|PRI|<nil>|",
 		"c|int(11)|YES||<nil>|",
 		"e|int(11)|YES||<nil>|"))
-	tk.MustQuery("show extended columns from t").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show extended columns from t").Check(testkit.RowsWithSep("|",
 		"a|int(11)|NO|PRI|<nil>|",
 		"b|int(11)|YES||<nil>|VIRTUAL GENERATED",
 		"c|int(11)|YES||<nil>|",
@@ -599,7 +598,7 @@ func TestHiddenColumn(t *testing.T) {
 			"  `e` int(11) DEFAULT NULL,\n" +
 			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustQuery("show extended columns from t").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show extended columns from t").Check(testkit.RowsWithSep("|",
 		"a|int(11)|NO|PRI|<nil>|",
 		"b|int(11)|YES||<nil>|VIRTUAL GENERATED",
 		"c|int(11)|YES||<nil>|",
@@ -696,7 +695,7 @@ func TestConstraintCheckForUniqueIndex(t *testing.T) {
 	ch := make(chan int, 2)
 	go func() {
 		tk2.MustExec("use test")
-		_, err = tk2.Exec("insert into ttt(k,c) values(3, 'tidb')")
+		_, err := tk2.Exec("insert into ttt(k,c) values(3, 'tidb')")
 		require.Error(t, err)
 		ch <- 2
 	}()
@@ -732,12 +731,12 @@ func TestViewColumns(t *testing.T) {
 		{"select data_type from INFORMATION_SCHEMA.columns where table_name = 'va'", []string{types.TypeToStr(mysql.TypeLonglong, "")}},
 	}
 	for _, testCase := range testCases {
-		tk.MustQuery(testCase.query).Check(testutil.RowsWithSep("|", testCase.expected...))
+		tk.MustQuery(testCase.query).Check(testkit.RowsWithSep("|", testCase.expected...))
 	}
 	tk.MustExec("drop table if exists t")
 	for _, testCase := range testCases {
 		require.Len(t, tk.MustQuery(testCase.query).Rows(), 0)
-		tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+		tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 			"Warning|1356|View 'test.v' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them",
 			"Warning|1356|View 'test.va' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them"))
 	}

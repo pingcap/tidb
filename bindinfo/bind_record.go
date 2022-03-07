@@ -22,11 +22,20 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
 )
 
 const (
+	// Enabled is the bind info's in enabled status.
+	// It is the same as the previous 'Using' status.
+	// Only use 'Enabled' status in the future, not the 'Using' status.
+	// The 'Using' status is preserved for compatibility.
+	Enabled = "enabled"
+	// Disabled is the bind info's in disabled status.
+	Disabled = "disabled"
 	// Using is the bind info's in use status.
+	// The 'Using' status is preserved for compatibility.
 	Using = "using"
 	// deleted is the bind info's deleted status.
 	deleted = "deleted"
@@ -52,7 +61,7 @@ type Binding struct {
 	BindSQL string
 	// Status represents the status of the binding. It can only be one of the following values:
 	// 1. deleted: BindRecord is deleted, can not be used anymore.
-	// 2. using: Binding is in the normal active mode.
+	// 2. enabled, using: Binding is in the normal active mode.
 	Status     string
 	CreateTime types.Time
 	UpdateTime types.Time
@@ -73,6 +82,11 @@ func (b *Binding) isSame(rb *Binding) bool {
 	return b.BindSQL == rb.BindSQL
 }
 
+// IsBindingEnabled returns whether the binding is enabled.
+func (b *Binding) IsBindingEnabled() bool {
+	return b.Status == Enabled || b.Status == Using
+}
+
 // SinceUpdateTime returns the duration since last update time. Export for test.
 func (b *Binding) SinceUpdateTime() (time.Duration, error) {
 	updateTime, err := b.UpdateTime.GoTime(time.Local)
@@ -81,9 +95,6 @@ func (b *Binding) SinceUpdateTime() (time.Duration, error) {
 	}
 	return time.Since(updateTime), nil
 }
-
-// cache is a k-v map, key is original sql, value is a slice of BindRecord.
-type cache map[string][]*BindRecord
 
 // BindRecord represents a sql bind record retrieved from the storage.
 type BindRecord struct {
@@ -96,7 +107,7 @@ type BindRecord struct {
 // HasUsingBinding checks if there are any using bindings in bind record.
 func (br *BindRecord) HasUsingBinding() bool {
 	for _, binding := range br.Bindings {
-		if binding.Status == Using {
+		if binding.IsBindingEnabled() {
 			return true
 		}
 	}
@@ -107,7 +118,7 @@ func (br *BindRecord) HasUsingBinding() bool {
 // There is at most one binding that can be used now
 func (br *BindRecord) FindUsingBinding() *Binding {
 	for _, binding := range br.Bindings {
-		if binding.Status == Using {
+		if binding.IsBindingEnabled() {
 			return &binding
 		}
 	}
@@ -234,8 +245,17 @@ func (br *BindRecord) isSame(other *BindRecord) bool {
 	return br.OriginalSQL == other.OriginalSQL
 }
 
+// size calculates the memory size of a BindRecord.
+func (br *BindRecord) size() float64 {
+	mem := float64(len(hack.Slice(br.OriginalSQL)) + len(hack.Slice(br.Db)))
+	for _, binding := range br.Bindings {
+		mem += binding.size()
+	}
+	return mem
+}
+
 var statusIndex = map[string]int{
-	Using:   0,
+	Enabled: 0,
 	deleted: 1,
 	Invalid: 2,
 }
@@ -264,7 +284,7 @@ func (br *BindRecord) metrics() ([]float64, []int) {
 
 // size calculates the memory size of a bind info.
 func (b *Binding) size() float64 {
-	res := len(b.BindSQL) + len(b.Status) + 2*int(unsafe.Sizeof(b.CreateTime)) + len(b.Charset) + len(b.Collation)
+	res := len(b.BindSQL) + len(b.Status) + 2*int(unsafe.Sizeof(b.CreateTime)) + len(b.Charset) + len(b.Collation) + len(b.ID)
 	return float64(res)
 }
 
