@@ -108,17 +108,13 @@ var _ = SerialSuites(&testSuiteWithCliBaseCharset{})
 var _ = Suite(&testSuite2{&baseTestSuite{}})
 var _ = Suite(&testSuite3{&baseTestSuite{}})
 var _ = Suite(&testSuite6{&baseTestSuite{}})
-var _ = Suite(&testSuite7{&baseTestSuite{}})
 var _ = Suite(&testSuite8{&baseTestSuite{}})
 var _ = SerialSuites(&testRecoverTable{})
-var _ = SerialSuites(&testFlushSuite{})
-var _ = SerialSuites(&testAutoRandomSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testClusterTableSuite{})
 var _ = SerialSuites(&testSplitTable{&baseTestSuite{}})
 var _ = Suite(&testSuiteWithData{baseTestSuite: &baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite1{&baseTestSuite{}})
 var _ = SerialSuites(&testSlowQuery{&baseTestSuite{}})
-var _ = Suite(&partitionTableSuite{&baseTestSuite{}})
 var _ = SerialSuites(&globalIndexSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testCoprCache{})
@@ -134,7 +130,6 @@ type testSuiteWithData struct {
 	testData testutil.TestData
 }
 type testSlowQuery struct{ *baseTestSuite }
-type partitionTableSuite struct{ *baseTestSuite }
 type globalIndexSuite struct{ *baseTestSuite }
 type testSerialSuite struct{ *baseTestSuite }
 type testCoprCache struct {
@@ -4755,26 +4750,6 @@ func (s *testSuite6) TearDownTest(c *C) {
 	}
 }
 
-type testSuite7 struct {
-	*baseTestSuite
-}
-
-func (s *testSuite7) TearDownTest(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	r := tk.MustQuery("show full tables")
-	for _, tb := range r.Rows() {
-		tableName := tb[0]
-		if tb[1] == "VIEW" {
-			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
-		} else if tb[1] == "SEQUENCE" {
-			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
-		} else {
-			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
-		}
-	}
-}
-
 type testSuite8 struct {
 	*baseTestSuite
 }
@@ -5596,22 +5571,6 @@ func (s *testSuiteWithCliBaseCharset) TestCharsetWithPrefixIndex(c *C) {
 	tk.MustExec("create table t(a char(20) charset gbk, b char(20) charset gbk, unique index idx_a(a(2)));")
 	tk.MustExec("insert into t values ('a', '中文'), ('中文', '中文'), ('一二三', '一二三'), ('b', '一二三');")
 	tk.MustQuery("select * from t").Check(testkit.Rows("a 中文", "中文 中文", "一二三 一二三", "b 一二三"))
-}
-
-func (s *testSerialSuite2) TestIssue23567(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	oriProbability := statistics.FeedbackProbability.Load()
-	statistics.FeedbackProbability.Store(1.0)
-	defer func() { statistics.FeedbackProbability.Store(oriProbability) }()
-	failpoint.Enable("github.com/pingcap/tidb/statistics/feedbackNoNDVCollect", `return("")`)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a bigint unsigned, b int, primary key(a))")
-	tk.MustExec("insert into t values (1, 1), (2, 2)")
-	tk.MustExec("analyze table t")
-	// The SQL should not panic.
-	tk.MustQuery("select count(distinct b) from t")
-	failpoint.Disable("github.com/pingcap/tidb/statistics/feedbackNoNDVCollect")
 }
 
 func (s *testSuite) TestSummaryFailedUpdate(c *C) {
