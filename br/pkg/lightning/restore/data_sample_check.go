@@ -39,8 +39,8 @@ import (
 type dataSampleCheck struct {
 	controller *Controller
 
-	checkCfg      *config.CheckOnly
-	wg            sync.WaitGroup
+	checkCfg *config.CheckOnly
+	wg       sync.WaitGroup
 
 	totalRows                    atomic.Int64
 	totalColumnCountMismatchRows atomic.Int64
@@ -49,8 +49,8 @@ type dataSampleCheck struct {
 
 func newDataSampleCheck(controller *Controller) *dataSampleCheck {
 	return &dataSampleCheck{
-		controller:    controller,
-		checkCfg:      controller.cfg.CheckOnly,
+		controller: controller,
+		checkCfg:   controller.cfg.CheckOnly,
 	}
 }
 
@@ -121,7 +121,7 @@ func (d *dataSampleCheck) checkRoutine(ctx context.Context, fileChan chan *sampl
 			row := fileParser.LastRow()
 			if columnCount == -1 {
 				columnNames = fileParser.Columns()
-				if columnNames == nil {
+				if len(columnNames) == 0 {
 					columnCount = 0
 					columnNames = make([]string, 0, columnCount)
 					for _, col := range fileInfo.TableInfo.Columns {
