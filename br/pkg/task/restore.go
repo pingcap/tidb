@@ -39,12 +39,15 @@ const (
 	FlagPDConcurrency = "pd-concurrency"
 	// FlagBatchFlushInterval controls after how long the restore batch would be auto sended.
 	FlagBatchFlushInterval = "batch-flush-interval"
+	// flagDdlBatchSize controls batch ddl size to create a batch of tables
+	FlagDdlBatchSize = "ddl-batch-size"
 
 	defaultRestoreConcurrency = 128
 	maxRestoreBatchSizeLimit  = 10240
 	defaultPDConcurrency      = 1
 	defaultBatchFlushInterval = 16 * time.Second
 	defaultDDLConcurrency     = 16
+	defaultFlagDdlBatchSize   = 128
 )
 
 // RestoreCommonConfig is the common configuration for all BR restore tasks.
@@ -82,10 +85,13 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 		"concurrency pd-relative operations like split & scatter.")
 	flags.Duration(FlagBatchFlushInterval, defaultBatchFlushInterval,
 		"after how long a restore batch would be auto sended.")
+	flags.Uint(FlagDdlBatchSize, defaultFlagDdlBatchSize,
+		"batch size for ddl to create a batch of tabes once.")
 	_ = flags.MarkHidden(FlagMergeRegionSizeBytes)
 	_ = flags.MarkHidden(FlagMergeRegionKeyCount)
 	_ = flags.MarkHidden(FlagPDConcurrency)
 	_ = flags.MarkHidden(FlagBatchFlushInterval)
+	_ = flags.MarkHidden(FlagDdlBatchSize)
 }
 
 // ParseFromFlags parses the config from the flag set.
@@ -114,6 +120,8 @@ type RestoreConfig struct {
 	NoSchema           bool          `json:"no-schema" toml:"no-schema"`
 	PDConcurrency      uint          `json:"pd-concurrency" toml:"pd-concurrency"`
 	BatchFlushInterval time.Duration `json:"batch-flush-interval" toml:"batch-flush-interval"`
+	// DdlBatchSize use to define the size of batch ddl to create tables
+	DdlBatchSize uint `json:"ddl-batch-size" toml:"ddl-batch-size"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -152,6 +160,11 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagBatchFlushInterval)
 	}
+
+	cfg.DdlBatchSize, err = flags.GetUint(FlagDdlBatchSize)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagDdlBatchSize)
+	}
 	return nil
 }
 
@@ -175,6 +188,40 @@ func (cfg *RestoreConfig) adjustRestoreConfig() {
 	if cfg.BatchFlushInterval == 0 {
 		cfg.BatchFlushInterval = defaultBatchFlushInterval
 	}
+	if cfg.DdlBatchSize == 0 {
+		cfg.DdlBatchSize = defaultFlagDdlBatchSize
+	}
+}
+
+func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *RestoreConfig) error {
+	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	opts := storage.ExternalStorageOptions{
+		NoCredentials:   cfg.NoCreds,
+		SendCredentials: cfg.SendCreds,
+	}
+	if err = client.SetStorage(ctx, u, &opts); err != nil {
+		return errors.Trace(err)
+	}
+	client.SetRateLimit(cfg.RateLimit)
+	client.SetCrypter(&cfg.CipherInfo)
+	client.SetConcurrency(uint(cfg.Concurrency))
+	if cfg.Online {
+		client.EnableOnline()
+	}
+	if cfg.NoSchema {
+		client.EnableSkipCreateSQL()
+	}
+	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
+	client.SetBatchDdlSize(cfg.DdlBatchSize)
+	err = client.LoadRestoreStores(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return nil
 }
 
 // CheckRestoreDBAndTable is used to check whether the restore dbs or tables have been backup
@@ -228,42 +275,21 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	// Restore needs domain to do DDL.
 	needDomain := true
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain)
+	keepaliveCfg := GetKeepalive(&cfg.Config)
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, keepaliveCfg, cfg.CheckRequirements, needDomain)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer mgr.Close()
 
-	keepaliveCfg := GetKeepalive(&cfg.Config)
 	keepaliveCfg.PermitWithoutStream = true
-	client, err := restore.NewRestoreClient(g, mgr.GetPDClient(), mgr.GetStorage(), mgr.GetTLSConfig(), keepaliveCfg)
+	client, err := restore.NewRestoreClient(g, mgr.GetPDClient(), mgr.GetStorage(), mgr.GetTLSConfig(), keepaliveCfg, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer client.Close()
 
-	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	opts := storage.ExternalStorageOptions{
-		NoCredentials:   cfg.NoCreds,
-		SendCredentials: cfg.SendCreds,
-	}
-	if err = client.SetStorage(ctx, u, &opts); err != nil {
-		return errors.Trace(err)
-	}
-	client.SetRateLimit(cfg.RateLimit)
-	client.SetCrypter(&cfg.CipherInfo)
-	client.SetConcurrency(uint(cfg.Concurrency))
-	if cfg.Online {
-		client.EnableOnline()
-	}
-	if cfg.NoSchema {
-		client.EnableSkipCreateSQL()
-	}
-	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
-	err = client.LoadRestoreStores(ctx)
+	err = configureRestoreClient(ctx, client, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -230,10 +230,10 @@ func TestFailSchemaSyncer(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	defer tk.MustExec("drop table if exists t")
-	originalRetryTimes := domain.SchemaOutOfDateRetryTimes
-	domain.SchemaOutOfDateRetryTimes = 1
+	originalRetryTimes := domain.SchemaOutOfDateRetryTimes.Load()
+	domain.SchemaOutOfDateRetryTimes.Store(1)
 	defer func() {
-		domain.SchemaOutOfDateRetryTimes = originalRetryTimes
+		domain.SchemaOutOfDateRetryTimes.Store(originalRetryTimes)
 	}()
 	require.True(t, s.dom.SchemaValidator.IsStarted())
 	mockSyncer, ok := s.dom.DDL().SchemaSyncer().(*ddl.MockSchemaSyncer)
@@ -398,11 +398,12 @@ func TestAddIndexWorkerNum(t *testing.T) {
 				case err = <-done:
 					require.NoError(t, err)
 					running = false
-				case <-ddl.TestCheckWorkerNumCh:
+				case wg := <-ddl.TestCheckWorkerNumCh:
 					lastSetWorkerCnt = int32(rand.Intn(8) + 8)
 					tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", lastSetWorkerCnt))
 					atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
 					checkNum++
+					wg.Done()
 				}
 			}
 

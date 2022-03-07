@@ -191,7 +191,7 @@ var (
 	MinLogErrorRate = atomic.NewFloat64(0.5)
 )
 
-// StoreQueryFeedback merges the feedback into stats collector.
+// StoreQueryFeedback merges the feedback into stats collector. Deprecated.
 func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Handle) error {
 	q := feedback.(*statistics.QueryFeedback)
 	if !q.Valid || q.Hist == nil {
@@ -468,6 +468,7 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 			deltaMap.update(id, -item.Delta, -item.Count, nil)
 		}
 		if err = h.dumpTableStatColSizeToKV(id, item); err != nil {
+			delete(deltaMap, id)
 			return errors.Trace(err)
 		}
 		if updated {
@@ -483,6 +484,12 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 
 // dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.
 func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (updated bool, err error) {
+	statsVer := uint64(0)
+	defer func() {
+		if err == nil && statsVer != 0 {
+			err = h.recordHistoricalStatsMeta(id, statsVer)
+		}
+	}()
 	if delta.Count == 0 {
 		return true, nil
 	}
@@ -510,6 +517,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 		} else {
 			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
 		}
+		statsVer = startTS
 		return errors.Trace(err)
 	}
 	if err = updateStatsMeta(id); err != nil {
@@ -553,7 +561,7 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 	return errors.Trace(err)
 }
 
-// DumpStatsFeedbackToKV dumps the stats feedback to KV.
+// DumpStatsFeedbackToKV dumps the stats feedback to KV. Deprecated.
 func (h *Handle) DumpStatsFeedbackToKV() error {
 	h.feedback.Lock()
 	feedback := h.feedback.data
@@ -1114,7 +1122,9 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 }
 
 func (h *Handle) autoAnalyzePartitionTable(tblInfo *model.TableInfo, pi *model.PartitionInfo, db string, start, end time.Time, ratio float64) bool {
+	h.mu.RLock()
 	tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
+	h.mu.RUnlock()
 	partitionNames := make([]interface{}, 0, len(pi.Definitions))
 	for _, def := range pi.Definitions {
 		partitionStatsTbl := h.GetPartitionStats(tblInfo, def.ID)
@@ -1334,7 +1344,7 @@ func logForPK(prefix string, c *statistics.Column, ranges []*ranger.Range, actua
 	}
 }
 
-// RecalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo.
+// RecalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo. Deprecated.
 func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 	t, ok := h.statsCache.Load().(statsCache).tables[q.PhysicalID]
 	if !ok {
@@ -1448,7 +1458,7 @@ func convertRangeType(ran *ranger.Range, ft *types.FieldType, loc *time.Location
 	return statistics.ConvertDatumsType(ran.HighVal, ft, loc)
 }
 
-// DumpFeedbackForIndex dumps the feedback for index.
+// DumpFeedbackForIndex dumps the feedback for index. Deprecated.
 // For queries that contains both equality and range query, we will split them and Update accordingly.
 func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics.Table) error {
 	idx, ok := t.Indices[q.Hist.ID]

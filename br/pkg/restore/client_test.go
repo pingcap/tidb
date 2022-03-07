@@ -32,7 +32,7 @@ var defaultKeepaliveCfg = keepalive.ClientParameters{
 
 func TestCreateTables(t *testing.T) {
 	m := mc
-	client, err := restore.NewRestoreClient(gluetidb.New(), m.PDClient, m.Storage, nil, defaultKeepaliveCfg)
+	client, err := restore.NewRestoreClient(gluetidb.New(), m.PDClient, m.Storage, nil, defaultKeepaliveCfg, false)
 	require.NoError(t, err)
 
 	info, err := m.Domain.GetSnapshotInfoSchema(math.MaxUint64)
@@ -40,6 +40,7 @@ func TestCreateTables(t *testing.T) {
 	dbSchema, isExist := info.SchemaByName(model.NewCIStr("test"))
 	require.True(t, isExist)
 
+	client.SetBatchDdlSize(1)
 	tables := make([]*metautil.Table, 4)
 	intField := types.NewFieldType(mysql.TypeLong)
 	intField.Charset = "binary"
@@ -88,7 +89,7 @@ func TestCreateTables(t *testing.T) {
 
 func TestIsOnline(t *testing.T) {
 	m := mc
-	client, err := restore.NewRestoreClient(gluetidb.New(), m.PDClient, m.Storage, nil, defaultKeepaliveCfg)
+	client, err := restore.NewRestoreClient(gluetidb.New(), m.PDClient, m.Storage, nil, defaultKeepaliveCfg, false)
 	require.NoError(t, err)
 
 	require.False(t, client.IsOnline())
@@ -98,7 +99,7 @@ func TestIsOnline(t *testing.T) {
 
 func TestPreCheckTableClusterIndex(t *testing.T) {
 	m := mc
-	client, err := restore.NewRestoreClient(gluetidb.New(), m.PDClient, m.Storage, nil, defaultKeepaliveCfg)
+	client, err := restore.NewRestoreClient(gluetidb.New(), m.PDClient, m.Storage, nil, defaultKeepaliveCfg, false)
 	require.NoError(t, err)
 
 	info, err := m.Domain.GetSnapshotInfoSchema(math.MaxUint64)
@@ -192,7 +193,7 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 
 	client, err := restore.NewRestoreClient(gluetidb.New(), fakePDClient{
 		stores: mockStores,
-	}, m.Storage, nil, defaultKeepaliveCfg)
+	}, m.Storage, nil, defaultKeepaliveCfg, false)
 	require.NoError(t, err)
 
 	tables := make([]*metautil.Table, 4)

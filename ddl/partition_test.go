@@ -26,7 +26,11 @@ import (
 )
 
 func ExportTestDropAndTruncatePartition(t *testing.T) {
-	store := testCreateStoreT(t, "test_store")
+	store := createMockStore(t)
+	defer func() {
+		err := store.Close()
+		require.NoError(t, err)
+	}()
 	d, err := testNewDDLAndStart(
 		context.Background(),
 		WithStore(store),
@@ -120,7 +124,7 @@ func testDropPartition(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *mod
 	job := buildDropPartitionJob(dbInfo, tblInfo, partNames)
 	err := d.doDDLJob(ctx, job)
 	require.NoError(t, err)
-	v := getSchemaVerT(t, ctx)
+	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
@@ -139,7 +143,7 @@ func testTruncatePartition(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo 
 	job := buildTruncatePartitionJob(dbInfo, tblInfo, pids)
 	err := d.doDDLJob(ctx, job)
 	require.NoError(t, err)
-	v := getSchemaVerT(t, ctx)
+	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }

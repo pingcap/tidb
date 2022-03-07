@@ -25,10 +25,11 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
+
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 )
 
 const (
@@ -737,6 +738,22 @@ func (rs *S3Storage) Create(ctx context.Context, name string) (ExternalFileWrite
 	}
 	uploaderWriter := newBufferedWriter(uploader, hardcodedS3ChunkSize, NoCompression)
 	return uploaderWriter, nil
+}
+
+// Rename implements ExternalStorage interface.
+func (rs *S3Storage) Rename(ctx context.Context, oldFileName, newFileName string) error {
+	content, err := rs.ReadFile(ctx, oldFileName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = rs.WriteFile(ctx, newFileName, content)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err = rs.DeleteFile(ctx, oldFileName); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 // retryerWithLog wrappes the client.DefaultRetryer, and logging when retry triggered.

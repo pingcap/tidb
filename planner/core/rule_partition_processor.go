@@ -43,6 +43,7 @@ import (
 const FullRange = -1
 
 // partitionProcessor rewrites the ast for table partition.
+// Used by static partition prune mode.
 //
 // create table t (id int) partition by range (id)
 //   (partition p1 values less than (10),
@@ -307,6 +308,15 @@ func (s *partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.
 				TblName:     ds.tableInfo.Name,
 				ColName:     model.ExtraPartitionIdName,
 				OrigColName: model.ExtraPartitionIdName,
+			})
+			continue
+		}
+		if colExpr.ID == model.ExtraPhysTblID {
+			names = append(names, &types.FieldName{
+				DBName:      ds.DBName,
+				TblName:     ds.tableInfo.Name,
+				ColName:     model.ExtraPhysTblIdName,
+				OrigColName: model.ExtraPhysTblIdName,
 			})
 			continue
 		}
@@ -640,7 +650,7 @@ func (s *partitionProcessor) prune(ds *DataSource, opt *logicalOptimizeOp) (Logi
 		return s.processListPartition(ds, pi, opt)
 	}
 
-	// We haven't implement partition by list and so on.
+	// We haven't implement partition by key and so on.
 	return s.makeUnionAllChildren(ds, pi, fullRange(len(pi.Definitions)), opt)
 }
 
@@ -930,7 +940,7 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 		monotonous = getMonotoneMode(raw.FuncName.L)
 		// Check the partitionExpr is in the form: fn(col, ...)
 		// There should be only one column argument, and it should be the first parameter.
-		if expression.ExtractColumnSet(args).Len() == 1 {
+		if expression.ExtractColumnSet(args...).Len() == 1 {
 			if col1, ok := args[0].(*expression.Column); ok {
 				col = col1
 			}
@@ -963,6 +973,9 @@ func partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression,
 		} else if op.FuncName.L == ast.In {
 			if p, ok := pruner.(*rangePruner); ok {
 				newRange := partitionRangeForInExpr(sctx, op.GetArgs(), p)
+				return result.intersection(newRange)
+			} else if p, ok := pruner.(*rangeColumnsPruner); ok {
+				newRange := partitionRangeColumnForInExpr(sctx, op.GetArgs(), p)
 				return result.intersection(newRange)
 			}
 			return result
@@ -1022,6 +1035,43 @@ func partitionRangeForOrExpr(sctx sessionctx.Context, expr1, expr2 expression.Ex
 	tmp1 := partitionRangeForExpr(sctx, expr1, pruner, pruner.fullRange())
 	tmp2 := partitionRangeForExpr(sctx, expr2, pruner, pruner.fullRange())
 	return tmp1.union(tmp2)
+}
+
+func partitionRangeColumnForInExpr(sctx sessionctx.Context, args []expression.Expression,
+	pruner *rangeColumnsPruner) partitionRangeOR {
+	col, ok := args[0].(*expression.Column)
+	if !ok || col.ID != pruner.partCol.ID {
+		return pruner.fullRange()
+	}
+
+	var result partitionRangeOR
+	for i := 1; i < len(args); i++ {
+		constExpr, ok := args[i].(*expression.Constant)
+		if !ok {
+			return pruner.fullRange()
+		}
+		switch constExpr.Value.Kind() {
+		case types.KindInt64, types.KindUint64, types.KindMysqlTime: // for safety, only support int and datetime now
+		case types.KindNull:
+			result = append(result, partitionRange{0, 1})
+			continue
+		default:
+			return pruner.fullRange()
+		}
+
+		// convert all elements to EQ-exprs and prune them one by one
+		sf, err := expression.NewFunction(sctx, ast.EQ, types.NewFieldType(types.KindInt64), []expression.Expression{col, args[i]}...)
+		if err != nil {
+			return pruner.fullRange()
+		}
+		start, end, ok := pruner.partitionRangeForExpr(sctx, sf)
+		if !ok {
+			return pruner.fullRange()
+		}
+		result = append(result, partitionRange{start, end})
+	}
+
+	return result.simplify()
 }
 
 func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expression,

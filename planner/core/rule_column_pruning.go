@@ -180,10 +180,10 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 	return nil
 }
 
-func pruneByItems(p LogicalPlan, old []*util.ByItems, opt *logicalOptimizeOp) (new []*util.ByItems,
+func pruneByItems(p LogicalPlan, old []*util.ByItems, opt *logicalOptimizeOp) (byItems []*util.ByItems,
 	parentUsedCols []*expression.Column) {
 	prunedByItems := make([]*util.ByItems, 0)
-	new = make([]*util.ByItems, 0, len(old))
+	byItems = make([]*util.ByItems, 0, len(old))
 	seen := make(map[string]struct{}, len(old))
 	for _, byItem := range old {
 		pruned := true
@@ -196,14 +196,14 @@ func pruneByItems(p LogicalPlan, old []*util.ByItems, opt *logicalOptimizeOp) (n
 		} else if len(cols) == 0 {
 			if !expression.IsRuntimeConstExpr(byItem.Expr) {
 				pruned = false
-				new = append(new, byItem)
+				byItems = append(byItems, byItem)
 			}
 		} else if byItem.Expr.GetType().Tp == mysql.TypeNull {
 			// do nothing, should be filtered
 		} else {
 			pruned = false
 			parentUsedCols = append(parentUsedCols, cols...)
-			new = append(new, byItem)
+			byItems = append(byItems, byItem)
 		}
 		if pruned {
 			prunedByItems = append(prunedByItems, byItem)
@@ -293,6 +293,11 @@ func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt
 	for i := 0; i < p.handleCols.NumCols(); i++ {
 		parentUsedCols = append(parentUsedCols, p.handleCols.GetCol(i))
 	}
+	for _, col := range p.Schema().Columns {
+		if col.ID == model.ExtraPidColID || col.ID == model.ExtraPhysTblID {
+			parentUsedCols = append(parentUsedCols, col)
+		}
+	}
 	condCols := expression.ExtractColumnsFromExpressions(nil, p.conditions, nil)
 	parentUsedCols = append(parentUsedCols, condCols...)
 	return p.children[0].PruneColumns(parentUsedCols, opt)
@@ -310,6 +315,12 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *log
 	originColumns := ds.Columns
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && !exprUsed[i] {
+			// If ds has a shard index, and the column is generated column by `tidb_shard()`
+			// it can't prune the generated column of shard index
+			if ds.containExprPrefixUk &&
+				expression.GcColumnExprIsTidbShard(ds.schema.Columns[i].VirtualExpr) {
+				continue
+			}
 			prunedColumns = append(prunedColumns, ds.schema.Columns[i])
 			ds.schema.Columns = append(ds.schema.Columns[:i], ds.schema.Columns[i+1:]...)
 			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
@@ -473,16 +484,15 @@ func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column, opt *log
 		return p.baseLogicalPlan.PruneColumns(parentUsedCols, opt)
 	}
 
-	if len(p.partitionedTable) > 0 {
-		// If the children include partitioned tables, there is an extra partition ID column.
-		parentUsedCols = append(parentUsedCols, p.extraPIDInfo.Columns...)
-	}
-
-	for _, cols := range p.tblID2Handle {
+	for tblID, cols := range p.tblID2Handle {
 		for _, col := range cols {
 			for i := 0; i < col.NumCols(); i++ {
 				parentUsedCols = append(parentUsedCols, col.GetCol(i))
 			}
+		}
+		if physTblIDCol, ok := p.tblID2PhysTblIDCol[tblID]; ok {
+			// If the children include partitioned tables, there is an extra partition ID column.
+			parentUsedCols = append(parentUsedCols, physTblIDCol)
 		}
 	}
 	return p.children[0].PruneColumns(parentUsedCols, opt)

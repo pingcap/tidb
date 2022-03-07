@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -773,18 +774,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			case ast.TableOptionShardRowID:
 				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
 				return
-			case ast.TableOptionPlacementPrimaryRegion,
-				ast.TableOptionPlacementRegions,
-				ast.TableOptionPlacementFollowerCount,
-				ast.TableOptionPlacementVoterCount,
-				ast.TableOptionPlacementLearnerCount,
-				ast.TableOptionPlacementSchedule,
-				ast.TableOptionPlacementConstraints,
-				ast.TableOptionPlacementLeaderConstraints,
-				ast.TableOptionPlacementLearnerConstraints,
-				ast.TableOptionPlacementFollowerConstraints,
-				ast.TableOptionPlacementVoterConstraints,
-				ast.TableOptionPlacementPolicy:
+			case ast.TableOptionPlacementPolicy:
 				p.err = ErrOptOnTemporaryTable.GenWithStackByArgs("PLACEMENT")
 				return
 			}
@@ -798,8 +788,11 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	countPrimaryKey := 0
 	for _, colDef := range stmt.Cols {
 		if err := checkColumn(colDef); err != nil {
-			p.err = err
-			return
+			// Try to convert to BLOB or TEXT, see issue #30328
+			if !terror.ErrorEqual(err, types.ErrTooBigFieldLength) || !p.hasAutoConvertWarning(colDef) {
+				p.err = err
+				return
+			}
 		}
 		isPrimary, err := checkColumnOptions(stmt.TemporaryKeyword != ast.TemporaryNone, colDef.Options)
 		if err != nil {
@@ -847,6 +840,16 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	} else if len(stmt.Cols) == 0 && stmt.ReferTable == nil {
 		p.err = ddl.ErrTableMustHaveColumns
 		return
+	}
+
+	if stmt.Partition != nil {
+		for _, def := range stmt.Partition.Definitions {
+			pName := def.Name.String()
+			if isIncorrectName(pName) {
+				p.err = ddl.ErrWrongPartitionName.GenWithStackByArgs(pName)
+				return
+			}
+		}
 	}
 }
 
@@ -1118,6 +1121,14 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 				p.err = ErrInternal.GenWithStack(msg)
 				return
 			}
+		case ast.AlterTableAddPartitions:
+			for _, def := range spec.PartDefinitions {
+				pName := def.Name.String()
+				if isIncorrectName(pName) {
+					p.err = ddl.ErrWrongPartitionName.GenWithStackByArgs(pName)
+					return
+				}
+			}
 		default:
 			// Nothing to do now.
 		}
@@ -1139,13 +1150,19 @@ func checkDuplicateColumnName(IndexPartSpecifications []*ast.IndexPartSpecificat
 	return nil
 }
 
-// checkIndexInfo checks index name and index column names.
+// checkIndexInfo checks index name, index column names and prefix lengths.
 func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSpecification) error {
 	if strings.EqualFold(indexName, mysql.PrimaryKeyName) {
 		return ddl.ErrWrongNameForIndex.GenWithStackByArgs(indexName)
 	}
 	if len(IndexPartSpecifications) > mysql.MaxKeyParts {
 		return infoschema.ErrTooManyKeyParts.GenWithStackByArgs(mysql.MaxKeyParts)
+	}
+	for _, idxSpec := range IndexPartSpecifications {
+		// -1 => unspecified/full, > 0 OK, 0 => error
+		if idxSpec.Expr == nil && idxSpec.Length == 0 {
+			return ErrKeyPart0.GenWithStackByArgs(idxSpec.Column.Name.O)
+		}
 	}
 	return checkDuplicateColumnName(IndexPartSpecifications)
 }
@@ -1204,7 +1221,7 @@ func checkReferInfoForTemporaryTable(tableMetaInfo *model.TableInfo) error {
 	if tableMetaInfo.ShardRowIDBits != 0 {
 		return ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
 	}
-	if tableMetaInfo.DirectPlacementOpts != nil || tableMetaInfo.PlacementPolicyRef != nil {
+	if tableMetaInfo.PlacementPolicyRef != nil {
 		return ErrOptOnTemporaryTable.GenWithStackByArgs("placement")
 	}
 
@@ -1688,6 +1705,11 @@ func (p *preprocessor) handleAsOfAndReadTS(node *ast.AsOfClause) {
 			p.LastSnapshotTS = ts
 			p.IsStaleness = true
 		}
+	case readTS == 0 && node == nil && readStaleness == 0:
+		// If both readTS and node is empty while the readStaleness is empty,
+		// setting p.ReadReplicaScope is necessary to verify the txn scope later
+		// because we may be in a local txn without using the Stale Read.
+		p.ReadReplicaScope = scope
 	}
 
 	// If the select statement is related to multi tables, we should grantee that all tables use the same timestamp
@@ -1740,4 +1762,18 @@ func (p *preprocessor) initTxnContextProviderIfNecessary(node ast.Node) {
 	p.err = sessiontxn.GetTxnManager(p.ctx).SetContextProvider(&sessiontxn.SimpleTxnContextProvider{
 		InfoSchema: p.ensureInfoSchema(),
 	})
+}
+
+func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
+	sessVars := p.ctx.GetSessionVars()
+	if !sessVars.SQLMode.HasStrictMode() && colDef.Tp.Tp == mysql.TypeVarchar {
+		colDef.Tp.Tp = mysql.TypeBlob
+		if colDef.Tp.Charset == charset.CharsetBin {
+			sessVars.StmtCtx.AppendWarning(ddl.ErrAutoConvert.GenWithStackByArgs(colDef.Name.Name.O, "VARBINARY", "BLOB"))
+		} else {
+			sessVars.StmtCtx.AppendWarning(ddl.ErrAutoConvert.GenWithStackByArgs(colDef.Name.Name.O, "VARCHAR", "TEXT"))
+		}
+		return true
+	}
+	return false
 }
