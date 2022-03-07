@@ -299,7 +299,10 @@ func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.
 		return variable.GetGlobalSystemVar(e.ctx.GetSessionVars(), v.Name)
 	}
 	nativeVal, err := v.Expr.Eval(chunk.Row{})
-	if err != nil || nativeVal.IsNull() {
+	if err != nil {
+		return "", err
+	}
+	if nativeVal.IsNull() {
 		if sysVar == nil {
 			sysVar = variable.GetSysVar(v.Name)
 		}
