@@ -310,6 +310,11 @@ type LogicalPlan interface {
 	canPushToCop(store kv.StoreType) bool
 }
 
+type IRConstructor struct {
+	Name string
+	Body string
+}
+
 // PhysicalPlan is a tree of the physical operators.
 type PhysicalPlan interface {
 	Plan
@@ -356,6 +361,9 @@ type PhysicalPlan interface {
 
 	// Clone clones this physical plan.
 	Clone() (PhysicalPlan, error)
+
+	// ExportIR exports the physical plan in IR format, which is a go function that could reproduce the physical plan
+	// ExportIR() (IRConstructor, error)
 }
 
 type baseLogicalPlan struct {
@@ -442,6 +450,10 @@ func (p *basePhysicalPlan) GetChildReqProps(idx int) *property.PhysicalProperty 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
 func (p *basePhysicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return nil
+}
+
+func (p *basePhysicalPlan) ExportIR() (IRConstructor, error) {
+	return IRConstructor{Name: "", Body: ""}, nil
 }
 
 // GetLogicalTS4TaskMap get the logical TimeStamp now to help rollback the TaskMap changes after that.

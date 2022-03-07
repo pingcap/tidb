@@ -15,9 +15,14 @@
 package core
 
 import (
+	"bytes"
 	"fmt"
+	"os"
 	"strconv"
 	"unsafe"
+
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/mysql"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
@@ -71,6 +76,198 @@ var (
 type tableScanAndPartitionInfo struct {
 	tableScan     *PhysicalTableScan
 	partitionInfo PartitionInfo
+}
+
+/*
+
+col1 := NewCol()
+col2 := NewCol()
+
+fun := Sum(col1, col2)
+(fun should also be a column)
+
+col3 := Mul(col1, fun)
+(so we can use it like col1)
+
+or, we should explicitly point out projection
+
+cols := Proj(col1, col2, Sum(col1, col2), Mul(col1, Sub(col1, col2)))
+(now cols has 4 columns)
+
+where does cols come from?
+
+they come from table reader
+
+cols := Schema(t)
+// cols contains the columns in t
+cols := TableReader(t,
+
+
+*/
+
+func ConstructPhysicalPlan(ctx sessionctx.Context, is infoschema.InfoSchema) PhysicalPlan {
+	// create table t (a int primary key, b varchar(30));
+	// create table s (c int, d int);
+	dbName := model.NewCIStr("test")
+	tbName := model.NewCIStr("t")
+	tb, err := is.TableByName(dbName, tbName)
+	if err != nil {
+		panic(err)
+	}
+	tbInfo := tb.Meta()
+	schema, _, err := expression.TableInfo2SchemaAndNames(ctx, dbName, tbInfo)
+	fmt.Println(schema)
+
+	ft := types.NewFieldType(mysql.TypeLonglong)
+	val := types.Datum{}
+	val.SetInt64(12)
+	cond, err := expression.NewFunction(ctx, ast.GE, ft, schema.Columns[0], &expression.Constant{
+		Value:        val,
+		RetType:      ft.Clone(),
+		DeferredExpr: nil,
+		ParamMarker:  nil,
+	})
+	if err != nil {
+		panic(err)
+	}
+	accessConditions := []expression.Expression{cond}
+	ranges, err := ranger.BuildTableRange([]expression.Expression{cond}, ctx, ft)
+	fmt.Println(ranges)
+	if err != nil {
+		panic(err)
+	}
+	colInfo := []*model.ColumnInfo{tbInfo.Columns[1]}
+
+	ts := &PhysicalTableScan{
+		AccessCondition: accessConditions,
+		Table:           tbInfo,
+		Columns:         colInfo,
+		DBName:          dbName,
+		Ranges:          ranges,
+		TableAsName:     &tbName,
+		Hist:            nil,
+		HandleIdx:       nil,
+		HandleCols:      nil,
+		StoreType:       kv.TiKV,
+		IsGlobalRead:    false,
+		KeepOrder:       false,
+		Desc:            false,
+		PartitionInfo:   PartitionInfo{},
+		SampleInfo:      nil,
+	}
+	ts = ts.Init(ctx, 0)
+	ts.stats = &property.StatsInfo{}
+	outputSchema := expression.NewSchema(schema.Columns[1])
+	ts.SetSchema(outputSchema)
+	p := &PhysicalTableReader{
+		tablePlan:      ts,
+		TablePlans:     nil,
+		StoreType:      kv.TiKV,
+		BatchCop:       false,
+		IsCommonHandle: false,
+		PartitionInfo:  PartitionInfo{},
+	}
+	p = p.Init(ctx, 0)
+	if err != nil {
+		panic(err)
+	}
+	p.SetSchema(outputSchema)
+
+	pb, err := p.GetTablePlan().ToPB(ctx, kv.TiFlash)
+	if err != nil {
+		panic(err)
+	}
+	bytes, err := pb.Marshal()
+	if err != nil {
+		panic(err)
+	}
+	// write marshal bytes to file
+	file, err := os.Create("/tmp/test.pb")
+	if err != nil {
+		panic(err)
+	}
+	defer file.Close()
+	_, err = file.Write(bytes)
+	if err != nil {
+		panic(err)
+	}
+
+	return p
+}
+
+func ConstructPhysicalPlanWithProjection(ctx sessionctx.Context, is infoschema.InfoSchema) PhysicalPlan {
+	// create table t (a int primary key, b varchar(30));
+	// create table s (c int, d int);
+	dbName := model.NewCIStr("test")
+	tbName := model.NewCIStr("s")
+	tb, err := is.TableByName(dbName, tbName)
+	if err != nil {
+		panic(err)
+	}
+	tbInfo := tb.Meta()
+	schema, _, err := expression.TableInfo2SchemaAndNames(ctx, dbName, tbInfo)
+
+	ft := types.NewFieldType(mysql.TypeLonglong)
+	val := types.Datum{}
+	val.SetInt64(12)
+	expr, err := expression.NewFunction(ctx, ast.Mul, ft, schema.Columns[0], schema.Columns[1])
+	if err != nil {
+		panic(err)
+	}
+	colInfo := []*model.ColumnInfo{tbInfo.Columns[0], tbInfo.Columns[1]}
+
+	ts := &PhysicalTableScan{
+		AccessCondition: nil,
+		Table:           tbInfo,
+		Columns:         colInfo,
+		DBName:          dbName,
+		Ranges:          ranger.FullIntRange(false),
+		TableAsName:     &tbName,
+		Hist:            nil,
+		HandleIdx:       nil,
+		HandleCols:      nil,
+		StoreType:       kv.TiKV,
+		IsGlobalRead:    false,
+		KeepOrder:       false,
+		Desc:            false,
+		PartitionInfo:   PartitionInfo{},
+		SampleInfo:      nil,
+	}
+	ts = ts.Init(ctx, 0)
+	ts.stats = &property.StatsInfo{}
+	ts.SetSchema(schema)
+	p := &PhysicalTableReader{
+		tablePlan:      ts,
+		TablePlans:     nil,
+		StoreType:      kv.TiKV,
+		BatchCop:       false,
+		IsCommonHandle: false,
+		PartitionInfo:  PartitionInfo{},
+	}
+	p = p.Init(ctx, 0)
+	if err != nil {
+		panic(err)
+	}
+	p.SetSchema(schema)
+
+	proj := &PhysicalProjection{
+		physicalSchemaProducer: physicalSchemaProducer{},
+		Exprs:                  []expression.Expression{expr},
+		CalculateNoDelay:       false,
+		AvoidColumnEvaluator:   false,
+	}
+	proj = proj.Init(ctx, nil, 0)
+	proj.stats = &property.StatsInfo{}
+
+	resultCol := &expression.Column{
+		RetType:  ft.Clone(),
+		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
+	}
+
+	proj.SetSchema(expression.NewSchema(resultCol))
+	proj.SetChildren(p)
+
+	return proj
 }
 
 // PhysicalTableReader is the table reader in tidb.
@@ -491,6 +688,27 @@ type PhysicalTableScan struct {
 	PartitionInfo PartitionInfo
 
 	SampleInfo *TableSampleInfo
+}
+
+func (ts *PhysicalTableScan) ExportIR() (IRConstructor, error) {
+	name := fmt.Sprintf("GetPhysicalTableScan_%d", ts.ID())
+
+	var buf bytes.Buffer
+	buf.WriteString(fmt.Sprintf("func %s(ctx sessionctx.Context, is infoschema.InfoSchema) (ts *PhysicalTableScan, err error) {\n", name))
+
+	tbName := ts.Table.Name.O
+	dbName := ts.DBName.O
+
+	buf.WriteString(fmt.Sprintf(`
+	tbName := model.NewCIStr("%s")
+	dbName := model.NewCIStr("%s")
+	tbInfo, err := is.TableByName(dbName, tbName)
+	if err != nil {
+		return
+	}
+`, dbName, tbName))
+
+	return IRConstructor{}, nil
 }
 
 // Clone implements PhysicalPlan interface.

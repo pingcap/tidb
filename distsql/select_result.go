@@ -267,6 +267,7 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 			return nil
 		}
 	}
+	//fmt.Println("get chk", chk)
 	// TODO(Shenghui Wu): add metrics
 	switch r.selectResp.GetEncodeType() {
 	case tipb.EncodeType_TypeDefault:

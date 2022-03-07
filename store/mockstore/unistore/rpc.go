@@ -15,10 +15,12 @@
 package unistore
 
 import (
+	"fmt"
 	"io"
 	"math"
 	"os"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -33,7 +35,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/parser/terror"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/metadata"
@@ -45,19 +49,19 @@ var undeterminedErr = terror.ErrResultUndetermined
 // RPCClient sends kv RPC calls to mock cluster. RPCClient mocks the behavior of
 // a rpc client at tikv's side.
 type RPCClient struct {
-	usSvr      *us.Server
-	cluster    *Cluster
-	path       string
-	rawHandler *rawHandler
-	persistent bool
-	closed     int32
+	usSvr         *us.Server
+	cluster       *Cluster
+	path          string
+	rawHandler    *rawHandler
+	persistent    bool
+	closed        int32
+	testGenConfig *TestGenConfig
 }
 
 // UnistoreRPCClientSendHook exports for test.
 var UnistoreRPCClientSendHook func(*tikvrpc.Request)
 
-// SendRequest sends a request to mock cluster.
-func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+func (c *RPCClient) sendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	failpoint.Inject("rpcServerBusy", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}))
@@ -297,6 +301,95 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		}
 	}
 	return resp, nil
+}
+
+func getRootExecFromExecutorList(executors []*tipb.Executor) (*tipb.Executor, string) {
+	plan := make([]string, 0, len(executors))
+	root := executors[len(executors)-1]
+	for i := len(executors) - 1; 0 <= i; i-- {
+		var child *tipb.Executor
+		if i != 0 {
+			child = executors[i-1]
+		}
+		switch executors[i].Tp {
+		case tipb.ExecType_TypeTableScan:
+			plan = append(plan, fmt.Sprintf("TblScan"))
+		case tipb.ExecType_TypeTopN:
+			executors[i].TopN.Child = child
+			plan = append(plan, fmt.Sprintf("TopN(%d)", executors[i].TopN.Limit))
+		case tipb.ExecType_TypeStreamAgg, tipb.ExecType_TypeAggregation:
+			executors[i].Aggregation.Child = child
+			plan = append(plan, fmt.Sprintf("Agg"))
+		case tipb.ExecType_TypeLimit:
+			executors[i].Limit.Child = child
+			plan = append(plan, fmt.Sprintf("Limit(%d)", executors[i].Limit.Limit))
+		case tipb.ExecType_TypeExchangeSender:
+			executors[i].ExchangeSender.Child = child
+			plan = append(plan, fmt.Sprintf("ExchSender"))
+		case tipb.ExecType_TypeSelection:
+			executors[i].Selection.Child = child
+			plan = append(plan, fmt.Sprintf("Selection"))
+		case tipb.ExecType_TypeProjection:
+			executors[i].Projection.Child = child
+			plan = append(plan, fmt.Sprintf("Projection"))
+		default:
+			panic("unsupported executor type " + executors[i].Tp.String())
+		}
+	}
+	return root, strings.Join(plan, ", ")
+}
+
+// SendRequest sends a request to mock cluster.
+func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	resp, err := c.sendRequest(ctx, addr, req, timeout)
+	if c.testGenConfig == nil {
+		return resp, err
+	}
+	switch req.Type {
+	case tikvrpc.CmdCop:
+		cop := req.Cop()
+		start := cop.Ranges[0].Start
+		tid := tablecodec.DecodeTableID(start)
+		if c.testGenConfig.IsTableInterested(tid) {
+			fmt.Printf("Sending Cop Request to Table %d\n", tid)
+
+			var plan string
+			dagReq := &tipb.DAGRequest{}
+
+			err = dagReq.Unmarshal(cop.Data)
+			if err != nil {
+				return nil, err
+			}
+			dagReq.RootExecutor, plan = getRootExecFromExecutorList(dagReq.Executors)
+			dagReq.Executors = nil
+			cop.Data, err = dagReq.Marshal()
+			if err != nil {
+				return nil, err
+			}
+
+			reqData, err := cop.Marshal()
+			if err != nil {
+				return nil, err
+			}
+			rsp := resp.Resp.(*coprocessor.Response)
+			if rsp.RegionError != nil {
+				fmt.Printf("RegionError %s\n", rsp.RegionError.String())
+				break
+			}
+			rspData, err := resp.Resp.(*coprocessor.Response).Marshal()
+			c.testGenConfig.AddRequest(req.Type, reqData, plan, rspData)
+		}
+	case tikvrpc.CmdScan:
+		scan := req.Scan()
+		start := scan.StartKey
+		tid := tablecodec.DecodeTableID(start)
+		if c.testGenConfig.IsTableInterested(tid) {
+			fmt.Printf("Sending Scan Request to Table %d\n", tid)
+			fmt.Println(scan)
+			fmt.Println(resp)
+		}
+	}
+	return resp, err
 }
 
 func (c *RPCClient) handleCopStream(ctx context.Context, req *coprocessor.Request) (*tikvrpc.CopStreamResponse, error) {

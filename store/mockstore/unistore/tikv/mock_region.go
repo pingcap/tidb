@@ -16,6 +16,7 @@ package tikv
 
 import (
 	"bytes"
+	"fmt"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -606,6 +607,7 @@ func (rm *MockRegionManager) ScanRegions(startKey, endKey []byte, limit int) []*
 			return true
 		}
 
+		fmt.Println("ScanRegions", r.Meta().Id, r.Meta().StartKey, r.Meta().EndKey, r.RawStart(), r.RawEnd())
 		regions = append(regions, &pdclient.Region{
 			Meta:   proto.Clone(r.Meta()).(*metapb.Region),
 			Leader: proto.Clone(r.Meta().Peers[0]).(*metapb.Peer),

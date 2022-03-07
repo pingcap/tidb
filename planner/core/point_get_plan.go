@@ -327,6 +327,13 @@ func (p *BatchPointGetPlan) ExtractCorrelatedCols() []*expression.CorrelatedColu
 	return nil
 }
 
+func (p *BatchPointGetPlan) ExportIR() (IRConstructor, error) {
+	return IRConstructor{
+		Name: "",
+		Body: "",
+	}, nil
+}
+
 // attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 // current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
 func (p *BatchPointGetPlan) attach2Task(...task) task {
