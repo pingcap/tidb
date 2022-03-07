@@ -246,7 +246,16 @@ func (d *dataSampleCheck) getSampledDataFiles() ([]*sampledDataFileInfo, error) 
 	for _, fileInfo := range dataFiles {
 		tableMeta := fileInfo.Table
 
-		tableInfo := rc.dbInfos[tableMeta.DB].Tables[tableMeta.Name]
+		dbInfo := rc.dbInfos[tableMeta.DB]
+		if dbInfo == nil {
+			log.L().Error("failed to find database info", zap.String("db", tableMeta.DB))
+			return nil, errors.Errorf("database %s not found", tableMeta.DB)
+		}
+		tableInfo := dbInfo.Tables[tableMeta.Name]
+		if tableInfo == nil {
+			log.L().Error("failed to find table info", zap.String("db", tableMeta.DB), zap.String("table", tableMeta.Name))
+			return nil, errors.Errorf("table %s not found", tableMeta.Name)
+		}
 		fileInfo.TableInfo = tableInfo.Core
 	}
 	return dataFiles, nil
