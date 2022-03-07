@@ -714,7 +714,7 @@ func TestIssue345(t *testing.T) {
 
 func TestIssue5055(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
-	defer clean()``
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t1, t2`)
