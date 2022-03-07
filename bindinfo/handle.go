@@ -640,7 +640,11 @@ func (cf *captureFilter) isEmpty() bool {
 func ParseCaptureTableFilter(tableFilter string) (f tablefilter.Filter, valid bool) {
 	// forbid wildcards '!' and '@' for safety,
 	// please see https://github.com/pingcap/tidb-tools/tree/master/pkg/table-filter for more details.
-	if strings.ContainsAny(tableFilter, "!@") {
+	tableFilter = strings.TrimLeft(tableFilter, " \t")
+	if tableFilter == "" {
+		return nil, false
+	}
+	if tableFilter[0] == '!' || tableFilter[0] == '@' {
 		return nil, false
 	}
 	var err error

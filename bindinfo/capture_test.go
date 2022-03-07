@@ -632,6 +632,8 @@ func TestCaptureTableFilterValid(t *testing.T) {
 		{"!db.table", false, nil},
 		{"@db.table", false, nil},
 		{"table", false, nil},
+		{"", false, nil},
+		{"\t  ", false, nil},
 	}
 	for _, fc := range filterCases {
 		f, valid := bindinfo.ParseCaptureTableFilter(fc.filter)
