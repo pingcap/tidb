@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
+	"github.com/pingcap/tidb/br/pkg/resolver"
 	split "github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
@@ -123,23 +124,22 @@ type importClientFactoryImpl struct {
 	conns          *common.GRPCConns
 	splitCli       split.SplitClient
 	tls            *common.TLS
+	resolveBuilder *resolver.Builder
 	tcpConcurrency int
 }
 
 func newImportClientFactoryImpl(splitCli split.SplitClient, tls *common.TLS, tcpConcurrency int) *importClientFactoryImpl {
+	resolveBuilder := resolver.NewBuilder(splitCli)
 	return &importClientFactoryImpl{
 		conns:          common.NewGRPCConns(),
 		splitCli:       splitCli,
 		tls:            tls,
+		resolveBuilder: resolveBuilder,
 		tcpConcurrency: tcpConcurrency,
 	}
 }
 
 func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
-	store, err := f.splitCli.GetStore(ctx, storeID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	opt := grpc.WithInsecure()
 	if f.tls.TLSConfig() != nil {
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(f.tls.TLSConfig()))
@@ -148,14 +148,9 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 
 	bfConf := backoff.DefaultConfig
 	bfConf.MaxDelay = gRPCBackOffMaxDelay
-	// we should use peer address for tiflash. for tikv, peer address is empty
-	addr := store.GetPeerAddress()
-	if addr == "" {
-		addr = store.GetAddress()
-	}
 	conn, err := grpc.DialContext(
 		ctx,
-		addr,
+		f.resolveBuilder.Target(storeID),
 		opt,
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
@@ -163,6 +158,7 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 			Timeout:             gRPCKeepAliveTimeout,
 			PermitWithoutStream: true,
 		}),
+		grpc.WithResolvers(f.resolveBuilder),
 	)
 	cancel()
 	if err != nil {
