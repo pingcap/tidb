@@ -66,8 +66,6 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 	tk.MustQuery("split table t1 between (0) and (8192) regions 8;").Check(testkit.Rows("8 1"))
 
 	tbl := tk.GetTableByName("test", "t1")
-	originalHook := dom.DDL().GetHook()
-	defer dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 
 	// Check insert null before job first update.
 	hook := &ddl.TestDDLCallback{Do: dom}
@@ -110,7 +108,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 		}
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr", `return("cantDecodeRecordErr")`))
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 	err := tk.ExecToErr(sql)
 	require.EqualError(t, err, "[ddl:8202]Cannot decode index value, because mock can't decode record error")
 	require.NoError(t, checkErr)
@@ -897,9 +895,7 @@ func TestModifyColumnTypeWhenInterception(t *testing.T) {
 			}
 		}
 	}
-	originHook := d.GetHook()
-	d.(ddl.DDLForTest).SetHook(hook)
-	defer d.(ddl.DDLForTest).SetHook(originHook)
+	d.SetHook(hook)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/MockReorgTimeoutInOneRegion", `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/MockReorgTimeoutInOneRegion"))
@@ -973,8 +969,7 @@ func TestModifyColumnRollBack(t *testing.T) {
 		}
 	}
 
-	originalHook := dom.DDL().GetHook()
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 	done := make(chan error, 1)
 	go backgroundExecT(store, "alter table test.t1 change c2 c2 bigint not null;", done)
 
@@ -989,6 +984,5 @@ func TestModifyColumnRollBack(t *testing.T) {
 		}
 	}
 	require.False(t, mysql.HasNotNullFlag(c2.Flag))
-	dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	tk.MustExec("drop table t1")
 }
