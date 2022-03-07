@@ -339,3 +339,23 @@ trace plan target = 'estimation' select * from aka_title where kind_id > 7;
 CE_trace
 [{"table_name":"aka_title","type":"Column Stats-Range","expr":"((id >= -9223372036854775808 and id <= 9223372036854775807))","row_count":528337},{"table_name":"aka_title","type":"Column Stats-Range","expr":"((kind_id > 7 and true))","row_count":0},{"table_name":"aka_title","type":"Index Stats-Range","expr":"((kind_id > 7 and true))","row_count":0},{"table_name":"aka_title","type":"Table Stats-Expression-CNF","expr":"`gt`(imdbload.aka_title.kind_id, 7)","row_count":0}]
 
+explain select * from keyword where ((phonetic_code = 'R1652') and (keyword > 'ecg-monitor' and keyword < 'killers'));
+id	estRows	task	access object	operator info
+IndexLookUp_11	10129.18	root		
+├─IndexRangeScan_8(Build)	10129.18	cop[tikv]	table:keyword, index:itest(phonetic_code, keyword)	range:("R1652" "ecg-monitor","R1652" "killers"), keep order:false
+└─Selection_10(Probe)	10129.18	cop[tikv]		gt(imdbload.keyword.keyword, "ecg-monitor"), lt(imdbload.keyword.keyword, "killers")
+  └─TableRowIDScan_9	10129.18	cop[tikv]	table:keyword	keep order:false
+trace plan target = 'estimation' select * from keyword where ((phonetic_code = 'R1652') and (keyword > 'ecg-monitor' and keyword < 'killers'));
+CE_trace
+[{"table_name":"keyword","type":"Column Stats-Point","expr":"((phonetic_code = 'R1652'))","row_count":23480},{"table_name":"keyword","type":"Column Stats-Range","expr":"((id >= -9223372036854775808 and id <= 9223372036854775807))","row_count":236627},{"table_name":"keyword","type":"Column Stats-Range","expr":"((keyword > 'ecg-monitor' and keyword < 'killers'))","row_count":44075},{"table_name":"keyword","type":"Index Stats-Point","expr":"((phonetic_code = 'R1652'))","row_count":23480},{"table_name":"keyword","type":"Index Stats-Range","expr":"((keyword > 'ecg-monitor' and keyword < 'killers'))","row_count":44036},{"table_name":"keyword","type":"Index Stats-Range","expr":"((keyword >= 'ecg-m' and keyword <= 'kille'))","row_count":44036},{"table_name":"keyword","type":"Index Stats-Range","expr":"((phonetic_code = 'R1652') and (keyword > 'ecg-monitor' and keyword < 'killers'))","row_count":10129},{"table_name":"keyword","type":"Table Stats-Expression-CNF","expr":"`and`(`eq`(imdbload.keyword.phonetic_code, 'R1652'), `and`(`gt`(imdbload.keyword.keyword, 'ecg-monitor'), `lt`(imdbload.keyword.keyword, 'killers')))","row_count":10129}]
+
+explain select * from cast_info where (nr_order is null) and (person_role_id = 2) and (note >= '(key set pa: Florida');
+id	estRows	task	access object	operator info
+IndexLookUp_11	935147.84	root		
+├─IndexRangeScan_8(Build)	935147.84	cop[tikv]	table:cast_info, index:itest2(nr_order, person_role_id, note)	range:[NULL 2 "(key set pa: Florida",NULL 2 +inf], keep order:false
+└─Selection_10(Probe)	935147.84	cop[tikv]		ge(imdbload.cast_info.note, "(key set pa: Florida")
+  └─TableRowIDScan_9	935147.84	cop[tikv]	table:cast_info	keep order:false
+trace plan target = 'estimation' select * from cast_info where (nr_order is null) and (person_role_id = 2) and (note >= '(key set pa: Florida');
+CE_trace
+[{"table_name":"cast_info","type":"Column Stats-Point","expr":"((nr_order is null))","row_count":45995275},{"table_name":"cast_info","type":"Column Stats-Point","expr":"((person_role_id = 2))","row_count":2089611},{"table_name":"cast_info","type":"Column Stats-Range","expr":"((id >= -9223372036854775808 and id <= 9223372036854775807))","row_count":63475835},{"table_name":"cast_info","type":"Column Stats-Range","expr":"((note >= '(key set pa: Florida' and true))","row_count":14934328},{"table_name":"cast_info","type":"Index Stats-Point","expr":"((person_role_id = 2))","row_count":2089611},{"table_name":"cast_info","type":"Index Stats-Range","expr":"((nr_order is null) and (person_role_id = 2) and (note >= '(key set pa: Florida' and true))","row_count":935147},{"table_name":"cast_info","type":"Table Stats-Expression-CNF","expr":"`and`(`isnull`(imdbload.cast_info.nr_order), `and`(`eq`(imdbload.cast_info.person_role_id, 2), `ge`(imdbload.cast_info.note, '(key set pa: Florida')))","row_count":935147},{"table_name":"cast_info","type":"Table Stats-Expression-CNF","expr":"`eq`(imdbload.cast_info.person_role_id, 2)","row_count":2089611}]
+

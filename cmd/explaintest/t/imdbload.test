@@ -310,3 +310,11 @@ explain select * from aka_title where kind_id = 5;
 -- Actual row count: 2
 explain select * from aka_title where kind_id > 7;
 trace plan target = 'estimation' select * from aka_title where kind_id > 7;
+
+-- Actual row count: 0
+explain select * from keyword where ((phonetic_code = 'R1652') and (keyword > 'ecg-monitor' and keyword < 'killers'));
+trace plan target = 'estimation' select * from keyword where ((phonetic_code = 'R1652') and (keyword > 'ecg-monitor' and keyword < 'killers'));
+
+-- Actual row count: 37928
+explain select * from cast_info where (nr_order is null) and (person_role_id = 2) and (note >= '(key set pa: Florida');
+trace plan target = 'estimation' select * from cast_info where (nr_order is null) and (person_role_id = 2) and (note >= '(key set pa: Florida');
