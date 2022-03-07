@@ -38,7 +38,7 @@ func TestPlanStringer(t *testing.T) {
 	}{
 		{
 			sql:  "show columns from t like 'a'",
-			plan: "Show(field_pattern:[a])",
+			plan: "Show(field:[a])",
 		},
 		{
 			sql:  "show columns from t like 'a%'",
