@@ -55,39 +55,35 @@ func NewSchemasReplace(
 	}
 }
 
-func (sr *SchemasReplace) rewriteKeyForDB(key []byte, cf string) ([]byte, string, error) {
+func (sr *SchemasReplace) rewriteKeyForDB(key []byte, cf string) ([]byte, string, string, error) {
 	rawMetaKey, err := ParseTxnMetaKeyFrom(key)
 	if err != nil {
-		return nil, "", errors.Trace(err)
+		return nil, "", "", errors.Trace(err)
 	}
 
 	dbID, err := meta.ParseDBKey(rawMetaKey.Field)
 	if err != nil {
-		return nil, "", errors.Trace(err)
+		return nil, "", "", errors.Trace(err)
 	}
 
 	db, exist := sr.OldDBs[dbID]
 	if !exist {
 		// It represents new created database if not found in map.
-		return nil, "", nil
+		return nil, "", "", nil
 	}
 
 	dbName := db.Name.String()
 	newDbID := sr.NewSchemas[dbName].DbInfo.ID
 
 	rawMetaKey.UpdateField(meta.DBkey(newDbID))
-	return rawMetaKey.EncodeMetaKey(), dbName, nil
+	return rawMetaKey.EncodeMetaKey(), dbName, "", nil
 }
 
-func (sr *SchemasReplace) rewriteDB(value []byte, dbName string) ([]byte, error) {
+func (sr *SchemasReplace) rewriteDB(value []byte, dbName, tableName string) ([]byte, error) {
 	dbInfo := model.DBInfo{}
 
 	if err := json.Unmarshal(value, &dbInfo); err != nil {
 		return nil, errors.Trace(err)
-	}
-
-	if dbInfo.Name.String() != dbName {
-		panic(fmt.Sprintf("db name:%s in key don't equals name:%s in value", dbName, dbInfo.Name.String()))
 	}
 
 	newDbID := sr.NewSchemas[dbName].DbInfo.ID
@@ -100,14 +96,14 @@ func (sr *SchemasReplace) rewriteDB(value []byte, dbName string) ([]byte, error)
 }
 
 func (sr *SchemasReplace) rewriteKVEntryForDB(e *kv.Entry, cf string) (*kv.Entry, error) {
-	newKey, dbName, err := sr.rewriteKeyForDB(e.Key, cf)
+	newKey, dbName, tableName, err := sr.rewriteKeyForDB(e.Key, cf)
 	if err != nil {
 		return nil, errors.Trace(err)
 	} else if newKey == nil {
 		return nil, nil
 	}
 
-	newValue, err := sr.rewriteValue(e.Value, dbName, cf, sr.rewriteDB)
+	newValue, err := sr.rewriteValue(e.Value, dbName, tableName, cf, sr.rewriteDB)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -115,33 +111,33 @@ func (sr *SchemasReplace) rewriteKVEntryForDB(e *kv.Entry, cf string) (*kv.Entry
 	return &kv.Entry{Key: newKey, Value: newValue}, nil
 }
 
-func (sr *SchemasReplace) rewriteKeyForTable(key []byte, cf string) ([]byte, string, error) {
+func (sr *SchemasReplace) rewriteKeyForTable(key []byte, cf string) ([]byte, string, string, error) {
 	rawMetakey, err := ParseTxnMetaKeyFrom(key)
 	if err != nil {
-		return nil, "", errors.Trace(err)
+		return nil, "", "", errors.Trace(err)
 	}
 
 	dbID, err := meta.ParseDBKey(rawMetakey.Key)
 	if err != nil {
-		return nil, "", errors.Trace(err)
+		return nil, "", "", errors.Trace(err)
 	}
 
 	tableID, err := meta.ParseTableKey(rawMetakey.Field)
 	if err != nil {
 		log.Info("parse table key failed", zap.ByteString("field", rawMetakey.Field))
-		return nil, "", errors.Trace(err)
+		return nil, "", "", errors.Trace(err)
 	}
 
 	db, exist := sr.OldDBs[dbID]
 	if !exist {
 		// It represents new created database if not exist in map.
-		return nil, "", nil
+		return nil, "", "", nil
 	}
 
 	tbl, exist := sr.OldTables[tableID]
 	if !exist {
 		// It represents new created table if not exist in map.
-		return nil, "", nil
+		return nil, "", "", nil
 	}
 	dbName := db.Name.String()
 	tableName := tbl.Name.String()
@@ -153,10 +149,10 @@ func (sr *SchemasReplace) rewriteKeyForTable(key []byte, cf string) ([]byte, str
 	if cf == "write" {
 		rawMetakey.UpdateTS(sr.RewriteTS)
 	}
-	return rawMetakey.EncodeMetaKey(), dbName, nil
+	return rawMetakey.EncodeMetaKey(), dbName, tableName, nil
 }
 
-func (sr *SchemasReplace) rewriteTable(value []byte, dbName string) ([]byte, error) {
+func (sr *SchemasReplace) rewriteTable(value []byte, dbName, tableName string) ([]byte, error) {
 	var (
 		tableInfo model.TableInfo
 		newValue  []byte
@@ -167,7 +163,6 @@ func (sr *SchemasReplace) rewriteTable(value []byte, dbName string) ([]byte, err
 		return nil, errors.Trace(err)
 	}
 
-	tableName := tableInfo.Name.String()
 	newTableID := sr.NewSchemas[dbName].Tables[tableName].ID
 	log.Debug("rewrite value", zap.String("tableName", dbName+"."+tableName),
 		zap.Int64("oldTableID", tableInfo.ID), zap.Int64("newTableID", newTableID))
@@ -181,14 +176,14 @@ func (sr *SchemasReplace) rewriteTable(value []byte, dbName string) ([]byte, err
 }
 
 func (sr *SchemasReplace) rewriteKVEntryForTable(e *kv.Entry, cf string) (*kv.Entry, error) {
-	newKey, dbName, err := sr.rewriteKeyForTable(e.Key, cf)
+	newKey, dbName, tableName, err := sr.rewriteKeyForTable(e.Key, cf)
 	if err != nil {
 		return nil, errors.Trace(err)
 	} else if newKey == nil {
 		return nil, nil
 	}
 
-	newValue, err := sr.rewriteValue(e.Value, dbName, cf, sr.rewriteTable)
+	newValue, err := sr.rewriteValue(e.Value, dbName, tableName, cf, sr.rewriteTable)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -199,11 +194,12 @@ func (sr *SchemasReplace) rewriteKVEntryForTable(e *kv.Entry, cf string) (*kv.En
 func (sr *SchemasReplace) rewriteValue(
 	value []byte,
 	dbName string,
+	tableName string,
 	cf string,
-	rewriteValue func([]byte, string) ([]byte, error),
+	rewriteValue func([]byte, string, string) ([]byte, error),
 ) ([]byte, error) {
 	if cf == "default" {
-		return rewriteValue(value, dbName)
+		return rewriteValue(value, dbName, tableName)
 	} else if cf == "write" {
 		rawWriteCFValue := new(RawWriteCFValue)
 		if err := rawWriteCFValue.ParseFrom(value); err != nil {
@@ -214,7 +210,7 @@ func (sr *SchemasReplace) rewriteValue(
 			return value, nil
 		}
 
-		shortValue, err := rewriteValue(rawWriteCFValue.GetShortValue(), dbName)
+		shortValue, err := rewriteValue(rawWriteCFValue.GetShortValue(), dbName, tableName)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
