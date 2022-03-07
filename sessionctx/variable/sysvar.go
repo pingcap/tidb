@@ -666,6 +666,12 @@ var defaultSysVars = []*SysVar{
 		s.MemQuotaApplyCache = TidbOptInt64(val, DefTiDBMemQuotaApplyCache)
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBMemQuotaBindCache, Value: strconv.FormatInt(DefTiDBMemQuotaBindCache, 10), Type: TypeUnsigned, MaxValue: math.MaxInt32, GetGlobal: func(sv *SessionVars) (string, error) {
+		return strconv.FormatInt(MemQuotaBindCache.Load(), 10), nil
+	}, SetGlobal: func(s *SessionVars, val string) error {
+		MemQuotaBindCache.Store(TidbOptInt64(val, DefTiDBMemQuotaBindCache))
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBBackoffLockFast, Value: strconv.Itoa(tikvstore.DefBackoffLockFast), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
 		s.KVVars.BackoffLockFast = tidbOptPositiveInt32(val, tikvstore.DefBackoffLockFast)
 		return nil
@@ -1375,6 +1381,30 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: SysdateIsNow, Value: BoolToOnOff(DefSysdateIsNow), Type: TypeBool,
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.SysdateIsNow = TiDBOptOn(s)
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableMutationChecker, Hidden: true,
+		Value: BoolToOnOff(DefTiDBEnableMutationChecker), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.EnableMutationChecker = TiDBOptOn(val)
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTxnAssertionLevel, Value: DefTiDBTxnAssertionLevel, PossibleValues: []string{AssertionOffStr, AssertionFastStr, AssertionStrictStr}, Hidden: true, Type: TypeEnum, SetSession: func(s *SessionVars, val string) error {
+		s.AssertionLevel = tidbOptAssertionLevel(val)
+		return nil
+	}},
+	{Scope: ScopeSession, Name: TiDBLastDDLInfo, Value: strconv.Itoa(DefCurretTS), ReadOnly: true, skipInit: true, GetSession: func(s *SessionVars) (string, error) {
+		info, err := json.Marshal(s.LastDDLInfo)
+		if err != nil {
+			return "", err
+		}
+		return string(info), nil
+	}},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
@@ -1684,4 +1714,6 @@ const (
 	RandSeed1 = "rand_seed1"
 	// RandSeed2 is the name of 'rand_seed2' system variable.
 	RandSeed2 = "rand_seed2"
+	// SysdateIsNow is the name of the `sysdate_is_now` system variable
+	SysdateIsNow = "sysdate_is_now"
 )

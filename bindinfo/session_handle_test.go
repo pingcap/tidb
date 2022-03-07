@@ -106,7 +106,7 @@ func TestSessionBinding(t *testing.T) {
 		metrics.BindMemoryUsage.Reset()
 
 		_, err := tk.Exec("create session " + testSQL.createSQL)
-		require.Nil(t, err, "err %v", err)
+		require.NoError(t, err, "err %v", err)
 
 		if testSQL.overlaySQL != "" {
 			_, err = tk.Exec("create session " + testSQL.overlaySQL)
@@ -114,10 +114,10 @@ func TestSessionBinding(t *testing.T) {
 		}
 
 		pb := &dto.Metric{}
-		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
+		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession, bindinfo.Enabled).Write(pb)
 		require.NoError(t, err)
 		require.Equal(t, float64(1), pb.GetGauge().GetValue())
-		err = metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
+		err = metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession, bindinfo.Enabled).Write(pb)
 		require.NoError(t, err)
 		require.Equal(t, testSQL.memoryUsage, pb.GetGauge().GetValue())
 
@@ -129,7 +129,7 @@ func TestSessionBinding(t *testing.T) {
 		bind := bindData.Bindings[0]
 		require.Equal(t, testSQL.bindSQL, bind.BindSQL)
 		require.Equal(t, "test", bindData.Db)
-		require.Equal(t, "using", bind.Status)
+		require.Equal(t, bindinfo.Enabled, bind.Status)
 		require.NotNil(t, bind.Charset)
 		require.NotNil(t, bind.Collation)
 		require.NotNil(t, bind.CreateTime)
@@ -152,7 +152,7 @@ func TestSessionBinding(t *testing.T) {
 		require.Equal(t, testSQL.originSQL, row.GetString(0))
 		require.Equal(t, testSQL.bindSQL, row.GetString(1))
 		require.Equal(t, "test", row.GetString(2))
-		require.Equal(t, "using", row.GetString(3))
+		require.Equal(t, bindinfo.Enabled, row.GetString(3))
 		require.NotNil(t, row.GetTime(4))
 		require.NotNil(t, row.GetTime(5))
 		require.NotNil(t, row.GetString(6))
@@ -165,10 +165,10 @@ func TestSessionBinding(t *testing.T) {
 		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
 		require.Len(t, bindData.Bindings, 0)
 
-		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
+		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession, bindinfo.Enabled).Write(pb)
 		require.NoError(t, err)
 		require.Equal(t, float64(0), pb.GetGauge().GetValue())
-		err = metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
+		err = metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession, bindinfo.Enabled).Write(pb)
 		require.NoError(t, err)
 		require.Equal(t, float64(0), pb.GetGauge().GetValue())
 	}
@@ -224,7 +224,7 @@ func TestBaselineDBLowerCase(t *testing.T) {
 	utilCleanBindingEnv(tk, dom)
 
 	// Simulate existing bindings with upper case default_db.
-	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t`', 'select * from `spm` . `t`', 'SPM', 'using', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
+	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t`', 'select * from `spm` . `t`', 'SPM', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
 		bindinfo.Manual + "')")
 	tk.MustQuery("select original_sql, default_db from mysql.bind_info where original_sql = 'select * from `spm` . `t`'").Check(testkit.Rows(
 		"select * from `spm` . `t` SPM",
@@ -242,7 +242,7 @@ func TestBaselineDBLowerCase(t *testing.T) {
 
 	utilCleanBindingEnv(tk, dom)
 	// Simulate existing bindings with upper case default_db.
-	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t`', 'select * from `spm` . `t`', 'SPM', 'using', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
+	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t`', 'select * from `spm` . `t`', 'SPM', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
 		bindinfo.Manual + "')")
 	tk.MustQuery("select original_sql, default_db from mysql.bind_info where original_sql = 'select * from `spm` . `t`'").Check(testkit.Rows(
 		"select * from `spm` . `t` SPM",
@@ -261,7 +261,7 @@ func TestBaselineDBLowerCase(t *testing.T) {
 	require.Equal(t, "spm", rows[0][2])
 	tk.MustQuery("select original_sql, default_db, status from mysql.bind_info where original_sql = 'select * from `spm` . `t`'").Check(testkit.Rows(
 		"select * from `spm` . `t` SPM deleted",
-		"select * from `spm` . `t` spm using",
+		"select * from `spm` . `t` spm enabled",
 	))
 }
 
@@ -280,13 +280,13 @@ func TestShowGlobalBindings(t *testing.T) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 0)
 	// Simulate existing bindings in the mysql.bind_info.
-	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t`', 'select * from `spm` . `t` USE INDEX (`a`)', 'SPM', 'using', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
+	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t`', 'select * from `spm` . `t` USE INDEX (`a`)', 'SPM', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
 		bindinfo.Manual + "')")
-	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t0`', 'select * from `spm` . `t0` USE INDEX (`a`)', 'SPM', 'using', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
+	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t0`', 'select * from `spm` . `t0` USE INDEX (`a`)', 'SPM', 'enabled', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
 		bindinfo.Manual + "')")
-	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t`', 'select /*+ use_index(`t` `a`)*/ * from `spm` . `t`', 'SPM', 'using', '2000-01-03 09:00:00', '2000-01-03 09:00:00', '', '','" +
+	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t`', 'select /*+ use_index(`t` `a`)*/ * from `spm` . `t`', 'SPM', 'enabled', '2000-01-03 09:00:00', '2000-01-03 09:00:00', '', '','" +
 		bindinfo.Manual + "')")
-	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t0`', 'select /*+ use_index(`t0` `a`)*/ * from `spm` . `t0`', 'SPM', 'using', '2000-01-04 09:00:00', '2000-01-04 09:00:00', '', '','" +
+	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t0`', 'select /*+ use_index(`t0` `a`)*/ * from `spm` . `t0`', 'SPM', 'enabled', '2000-01-04 09:00:00', '2000-01-04 09:00:00', '', '','" +
 		bindinfo.Manual + "')")
 	tk.MustExec("admin reload bindings")
 	rows = tk.MustQuery("show global bindings").Rows()

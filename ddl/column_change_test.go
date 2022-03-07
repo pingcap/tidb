@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -36,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -48,15 +46,12 @@ type testColumnChangeSuiteToVerify struct {
 }
 
 func TestColumnChangeSuite(t *testing.T) {
-	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, true)
-	require.NoError(t, err)
-
 	suite.Run(t, new(testColumnChangeSuiteToVerify))
 }
 
 func (s *testColumnChangeSuiteToVerify) SetupSuite() {
 	SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
-	s.store = testCreateStore(s.T(), "test_column_change")
+	s.store = createMockStore(s.T())
 	d, err := testNewDDLAndStart(
 		context.Background(),
 		WithStore(s.store),
@@ -73,7 +68,7 @@ func (s *testColumnChangeSuiteToVerify) SetupSuite() {
 }
 
 func (s *testColumnChangeSuiteToVerify) TearDownSuite() {
-	s.store.Close()
+	require.NoError(s.T(), s.store.Close())
 }
 
 func (s *testColumnChangeSuiteToVerify) TestColumnChange() {
@@ -136,7 +131,7 @@ func (s *testColumnChangeSuiteToVerify) TestColumnChange() {
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
-			err = s.checkAddWriteOnly(hookCtx, d, deleteOnlyTable, writeOnlyTable, h)
+			err = s.checkAddWriteOnly(hookCtx, deleteOnlyTable, writeOnlyTable, h)
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
@@ -146,7 +141,7 @@ func (s *testColumnChangeSuiteToVerify) TestColumnChange() {
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
-			err = s.checkAddPublic(hookCtx, d, writeOnlyTable, publicTable)
+			err = s.checkAddPublic(hookCtx, writeOnlyTable, publicTable)
 			if err != nil {
 				checkErr = errors.Trace(err)
 			}
@@ -342,7 +337,7 @@ func seek(t table.PhysicalTable, ctx sessionctx.Context, h kv.Handle) (kv.Handle
 	return handle, true, nil
 }
 
-func (s *testColumnChangeSuiteToVerify) checkAddWriteOnly(ctx sessionctx.Context, d *ddl, deleteOnlyTable, writeOnlyTable table.Table, h kv.Handle) error {
+func (s *testColumnChangeSuiteToVerify) checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable table.Table, h kv.Handle) error {
 	// WriteOnlyTable: insert t values (2, 3)
 	err := ctx.NewTxn(context.Background())
 	if err != nil {
@@ -356,8 +351,10 @@ func (s *testColumnChangeSuiteToVerify) checkAddWriteOnly(ctx sessionctx.Context
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = checkResult(ctx, writeOnlyTable, writeOnlyTable.WritableCols(),
-		testutil.RowsWithSep(" ", "1 2 <nil>", "2 3 3"))
+	err = checkResult(ctx, writeOnlyTable, writeOnlyTable.WritableCols(), [][]string{
+		{"1", "2", "<nil>"},
+		{"2", "3", "3"},
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -372,7 +369,10 @@ func (s *testColumnChangeSuiteToVerify) checkAddWriteOnly(ctx sessionctx.Context
 		return errors.Errorf("expect %v, got %v", expect, got)
 	}
 	// DeleteOnlyTable: select * from t
-	err = checkResult(ctx, deleteOnlyTable, deleteOnlyTable.WritableCols(), testutil.RowsWithSep(" ", "1 2", "2 3"))
+	err = checkResult(ctx, deleteOnlyTable, deleteOnlyTable.WritableCols(), [][]string{
+		{"1", "2"},
+		{"2", "3"},
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -390,7 +390,10 @@ func (s *testColumnChangeSuiteToVerify) checkAddWriteOnly(ctx sessionctx.Context
 		return errors.Trace(err)
 	}
 	// After we update the first row, its default value is also set.
-	err = checkResult(ctx, writeOnlyTable, writeOnlyTable.WritableCols(), testutil.RowsWithSep(" ", "2 2 3", "2 3 3"))
+	err = checkResult(ctx, writeOnlyTable, writeOnlyTable.WritableCols(), [][]string{
+		{"2", "2", "3"},
+		{"2", "3", "3"},
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -404,7 +407,9 @@ func (s *testColumnChangeSuiteToVerify) checkAddWriteOnly(ctx sessionctx.Context
 		return errors.Trace(err)
 	}
 	// After delete table has deleted the first row, check the WriteOnly table records.
-	err = checkResult(ctx, writeOnlyTable, writeOnlyTable.WritableCols(), testutil.RowsWithSep(" ", "2 3 3"))
+	err = checkResult(ctx, writeOnlyTable, writeOnlyTable.WritableCols(), [][]string{
+		{"2", "3", "3"},
+	})
 	return errors.Trace(err)
 }
 
@@ -416,7 +421,7 @@ func touchedSlice(t table.Table) []bool {
 	return touched
 }
 
-func (s *testColumnChangeSuiteToVerify) checkAddPublic(sctx sessionctx.Context, d *ddl, writeOnlyTable, publicTable table.Table) error {
+func (s *testColumnChangeSuiteToVerify) checkAddPublic(sctx sessionctx.Context, writeOnlyTable, publicTable table.Table) error {
 	ctx := context.TODO()
 	// publicTable Insert t values (4, 4, 4)
 	err := sctx.NewTxn(ctx)
@@ -449,7 +454,10 @@ func (s *testColumnChangeSuiteToVerify) checkAddPublic(sctx sessionctx.Context, 
 		return errors.Trace(err)
 	}
 	// publicTable select * from t, make sure the new c3 value 4 is not overwritten to default value 3.
-	err = checkResult(sctx, publicTable, publicTable.WritableCols(), testutil.RowsWithSep(" ", "2 3 3", "3 4 4"))
+	err = checkResult(sctx, publicTable, publicTable.WritableCols(), [][]string{
+		{"2", "3", "3"},
+		{"3", "4", "4"},
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -478,7 +486,7 @@ func getCurrentTable(d *ddl, schemaID, tableID int64) (table.Table, error) {
 	return tbl, err
 }
 
-func checkResult(ctx sessionctx.Context, t table.Table, cols []*table.Column, rows [][]interface{}) error {
+func checkResult(ctx sessionctx.Context, t table.Table, cols []*table.Column, rows [][]string) error {
 	var gotRows [][]interface{}
 	err := tables.IterRecords(t, ctx, cols, func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		gotRows = append(gotRows, datumsToInterfaces(data))

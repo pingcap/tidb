@@ -918,6 +918,9 @@ type SessionVars struct {
 	// LastQueryInfo keeps track the info of last query.
 	LastQueryInfo QueryInfo
 
+	// LastDDLInfo keeps track the info of last DDL.
+	LastDDLInfo LastDDLInfo
+
 	// PartitionPruneMode indicates how and when to prune partitions.
 	PartitionPruneMode atomic2.String
 
@@ -1001,6 +1004,13 @@ type SessionVars struct {
 
 	// StatsLoadSyncWait indicates how long to wait for stats load before timeout.
 	StatsLoadSyncWait int64
+
+	// SysdateIsNow indicates whether Sysdate is an alias of Now function
+	SysdateIsNow bool
+	// EnableMutationChecker indicates whether to check data consistency for mutations
+	EnableMutationChecker bool
+	// AssertionLevel controls how strict the assertions on data mutations should be.
+	AssertionLevel AssertionLevel
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1056,11 +1066,6 @@ func (s *SessionVars) CheckAndGetTxnScope() string {
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
 func (s *SessionVars) UseDynamicPartitionPrune() bool {
-	if s.InTxn() || !s.GetStatusFlag(mysql.ServerStatusAutocommit) {
-		// UnionScan cannot get partition table IDs in dynamic-mode, this is a quick-fix for issues/26719,
-		// please see it for more details.
-		return false
-	}
 	return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
 }
 
@@ -1662,7 +1667,7 @@ func (s *SessionVars) GetPrevStmtDigest() string {
 
 // LazyCheckKeyNotExists returns if we can lazy check key not exists.
 func (s *SessionVars) LazyCheckKeyNotExists() bool {
-	return s.PresumeKeyNotExists || (s.TxnCtx.IsPessimistic && !s.StmtCtx.DupKeyAsWarning)
+	return s.PresumeKeyNotExists || (s.TxnCtx != nil && s.TxnCtx.IsPessimistic && !s.StmtCtx.DupKeyAsWarning)
 }
 
 // GetTemporaryTable returns a TempTable by tableInfo.
@@ -2149,7 +2154,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 
 	if len(s.CurrentDB) > 0 {
-		writeSlowLogItem(&buf, SlowLogDBStr, s.CurrentDB)
+		writeSlowLogItem(&buf, SlowLogDBStr, strings.ToLower(s.CurrentDB))
 	}
 	if len(logItems.IndexNames) > 0 {
 		writeSlowLogItem(&buf, SlowLogIndexNamesStr, logItems.IndexNames)
@@ -2260,7 +2265,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 
 	if s.CurrentDBChanged {
-		buf.WriteString(fmt.Sprintf("use %s;\n", s.CurrentDB))
+		buf.WriteString(fmt.Sprintf("use %s;\n", strings.ToLower(s.CurrentDB)))
 		s.CurrentDBChanged = false
 	}
 
@@ -2282,6 +2287,12 @@ type QueryInfo struct {
 	StartTS     uint64 `json:"start_ts"`
 	ForUpdateTS uint64 `json:"for_update_ts"`
 	ErrMsg      string `json:"error,omitempty"`
+}
+
+// LastDDLInfo represents the information of last DDL. It's used to expose information for test purpose.
+type LastDDLInfo struct {
+	Query  string `json:"query"`
+	SeqNum uint64 `json:"seq_num"`
 }
 
 // TxnReadTS indicates the value and used situation for tx_read_ts

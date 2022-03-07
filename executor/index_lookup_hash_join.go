@@ -527,7 +527,7 @@ func (iw *indexHashJoinInnerWorker) getNewJoinResult(ctx context.Context) (*inde
 	select {
 	case joinResult.chk, ok = <-iw.joinChkResourceCh:
 	case <-ctx.Done():
-		return nil, false
+		return joinResult, false
 	}
 	return joinResult, ok
 }
@@ -654,7 +654,7 @@ func (iw *indexHashJoinInnerWorker) doJoinUnordered(ctx context.Context, task *i
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		ok, joinResult = iw.joinMatchedInnerRow2Chunk(ctx, row, task, joinResult, h, iw.joinKeyBuf)
 		if !ok {
-			return errors.New("indexHashJoinInnerWorker.doJoinUnordered failed")
+			return joinResult.err
 		}
 	}
 	for chkIdx, outerRowStatus := range task.outerRowStatus {

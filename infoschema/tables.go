@@ -991,7 +991,7 @@ var tableClusterConfigCols = []columnInfo{
 	{name: "TYPE", tp: mysql.TypeVarchar, size: 64},
 	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 64},
 	{name: "KEY", tp: mysql.TypeVarchar, size: 256},
-	{name: "VALUE", tp: mysql.TypeVarchar, size: 128},
+	{name: "VALUE", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 }
 
 var tableClusterLogCols = []columnInfo{
@@ -1160,6 +1160,7 @@ var tableDDLJobsCols = []columnInfo{
 	{name: "SCHEMA_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "ROW_COUNT", tp: mysql.TypeLonglong, size: 21},
+	{name: "CREATE_TIME", tp: mysql.TypeDatetime, size: 19},
 	{name: "START_TIME", tp: mysql.TypeDatetime, size: 19},
 	{name: "END_TIME", tp: mysql.TypeDatetime, size: 19},
 	{name: "STATE", tp: mysql.TypeVarchar, size: 64},

@@ -99,6 +99,16 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindRecord
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
 	sessVars := sctx.GetSessionVars()
 
+	if !sctx.GetSessionVars().InRestrictedSQL && variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load() {
+		allowed, err := allowInReadOnlyMode(sctx, node)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !allowed {
+			return nil, nil, errors.Trace(core.ErrSQLInReadOnlyMode)
+		}
+	}
+
 	// Because for write stmt, TiFlash has a different results when lock the data in point get plan. We ban the TiFlash
 	// engine in not read only stmt.
 	if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(node, sessVars) {
@@ -166,7 +176,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		originHints := hint.CollectHint(stmtNode)
 		// bindRecord must be not nil when coming here, try to find the best binding.
 		for _, binding := range bindRecord.Bindings {
-			if binding.Status != bindinfo.Using {
+			if !binding.IsBindingEnabled() {
 				continue
 			}
 			metrics.BindUsageCounter.WithLabelValues(scope).Inc()
@@ -349,16 +359,6 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	if err := plannercore.CheckTableLock(sctx, is, builder.GetVisitInfo()); err != nil {
 		return nil, nil, 0, err
-	}
-
-	if !sctx.GetSessionVars().InRestrictedSQL && variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load() {
-		allowed, err := allowInReadOnlyMode(sctx, node)
-		if err != nil {
-			return nil, nil, 0, err
-		}
-		if !allowed {
-			return nil, nil, 0, errors.Trace(core.ErrSQLInReadOnlyMode)
-		}
 	}
 
 	// Handle the execute statement.

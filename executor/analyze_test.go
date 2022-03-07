@@ -660,6 +660,7 @@ func TestFailedAnalyzeRequest(t *testing.T) {
 	tk.MustExec("set @@tidb_analyze_version = 1")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/buildStatsFromResult", `return(true)`))
 	_, err := tk.Exec("analyze table t")
+	require.NotNil(t, err)
 	require.Equal(t, "mock buildStatsFromResult error", err.Error())
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/buildStatsFromResult"))
 }
@@ -811,11 +812,11 @@ func TestNormalAnalyzeOnCommonHandle(t *testing.T) {
 }
 
 func TestDefaultValForAnalyze(t *testing.T) {
-	t.Skip("skip race test")
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-
+	tk.MustExec("set @@tidb_analyze_version=1")
+	defer tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("drop database if exists test_default_val_for_analyze;")
 	tk.MustExec("create database test_default_val_for_analyze;")
 	tk.MustExec("use test_default_val_for_analyze")
@@ -830,10 +831,10 @@ func TestDefaultValForAnalyze(t *testing.T) {
 	tk.MustQuery("select @@tidb_enable_fast_analyze").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@session.tidb_enable_fast_analyze").Check(testkit.Rows("0"))
 	tk.MustExec("analyze table t with 0 topn;")
-	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows("IndexReader_6 512.00 root  index:IndexRangeScan_5",
-		"└─IndexRangeScan_5 512.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
-	tk.MustQuery("explain format = 'brief' select * from t where a = 999").Check(testkit.Rows("IndexReader_6 0.00 root  index:IndexRangeScan_5",
-		"└─IndexRangeScan_5 0.00 cop[tikv] table:t, index:a(a) range:[999,999], keep order:false"))
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows("IndexReader 512.00 root  index:IndexRangeScan",
+		"└─IndexRangeScan 512.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
+	tk.MustQuery("explain format = 'brief' select * from t where a = 999").Check(testkit.Rows("IndexReader 0.00 root  index:IndexRangeScan",
+		"└─IndexRangeScan 0.00 cop[tikv] table:t, index:a(a) range:[999,999], keep order:false"))
 
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a int, key(a));")
@@ -844,8 +845,8 @@ func TestDefaultValForAnalyze(t *testing.T) {
 		tk.MustExec("insert into t values (?)", i)
 	}
 	tk.MustExec("analyze table t with 0 topn;")
-	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows("IndexReader_6 1.00 root  index:IndexRangeScan_5",
-		"└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows("IndexReader 1.00 root  index:IndexRangeScan",
+		"└─IndexRangeScan 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
 }
 
 func TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColumn(t *testing.T) {
@@ -1108,8 +1109,6 @@ func testAnalyzeIncremental(tk *testkit.TestKit, t *testing.T, dom *domain.Domai
 }
 
 func TestIssue20874(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1276,7 +1275,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	tk.MustQuery("select * from t where b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms())
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	tableInfo := table.Meta()
 	tbl := h.GetTableStats(tableInfo)
 	lastVersion := tbl.Version
@@ -1374,7 +1373,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustQuery("select * from t where b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms())
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	tableInfo := table.Meta()
 	pi := tableInfo.GetPartitionInfo()
 	require.NotNil(t, pi)
@@ -1490,7 +1489,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t partition p2")
 	is = dom.InfoSchema()
 	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	tableInfo = table.Meta()
 	pi = tableInfo.GetPartitionInfo()
 	p2 := h.GetPartitionStats(tableInfo, pi.Definitions[2].ID)
@@ -1583,7 +1582,7 @@ PARTITION BY RANGE ( a ) (
 	}()
 	is := dom.InfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	tableInfo := table.Meta()
 	pi := tableInfo.GetPartitionInfo()
 	require.NotNil(t, pi)
@@ -1702,9 +1701,9 @@ func TestSavedAnalyzeOptionsForMultipleTables(t *testing.T) {
 	tk.MustExec("analyze table t1,t2 with 2 topn")
 	is := dom.InfoSchema()
 	table1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	table2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	tableInfo1 := table1.Meta()
 	tableInfo2 := table2.Meta()
 	tblStats1 := h.GetTableStats(tableInfo1)
@@ -1762,7 +1761,7 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	}()
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.Nil(t, err)
+	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	tk.MustExec("select * from t where b > 1")
 	require.NoError(t, h.DumpColStatsUsageToKV())
@@ -2613,4 +2612,45 @@ func TestRecordHistoryStatsAfterAnalyze(t *testing.T) {
 	require.NoError(t, err)
 	// 5. historical stats must be equal to the current stats
 	require.JSONEq(t, string(jsOrigin), string(jsCur))
+}
+
+func TestRecordHistoryStatsMetaAfterAnalyze(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("set global tidb_enable_historical_stats = 0")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("analyze table test.t")
+
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+
+	// 1. switch off the tidb_enable_historical_stats, and there is no record in table `mysql.stats_meta_history`
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_meta_history where table_id = '%d'", tableInfo.Meta().ID)).Check(testkit.Rows("0"))
+	// insert demo tuples, and there is no record either.
+	insertNums := 5
+	for i := 0; i < insertNums; i++ {
+		tk.MustExec("insert into test.t (a,b) values (1,1), (2,2), (3,3)")
+		err := h.DumpStatsDeltaToKV(handle.DumpDelta)
+		require.NoError(t, err)
+	}
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_meta_history where table_id = '%d'", tableInfo.Meta().ID)).Check(testkit.Rows("0"))
+
+	// 2. switch on the tidb_enable_historical_stats and insert tuples to produce count/modifyCount delta change.
+	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	defer tk.MustExec("set global tidb_enable_historical_stats = 0")
+
+	for i := 0; i < insertNums; i++ {
+		tk.MustExec("insert into test.t (a,b) values (1,1), (2,2), (3,3)")
+		err := h.DumpStatsDeltaToKV(handle.DumpDelta)
+		require.NoError(t, err)
+	}
+	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta_history where table_id = '%d' order by create_time", tableInfo.Meta().ID)).Sort().Check(
+		testkit.Rows("18 18", "21 21", "24 24", "27 27", "30 30"))
 }

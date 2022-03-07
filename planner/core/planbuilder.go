@@ -787,8 +787,39 @@ func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (Plan, error) 
 	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.Init(b.ctx, b.getSelectOffset())
 	proj.names = make([]*types.FieldName, len(v.Exprs))
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(v.Exprs))...)
+
+	// Since do statement only contain expression list, and it may contain aggFunc, detecting to build the aggMapper firstly.
+	var (
+		err      error
+		aggFuncs []*ast.AggregateFuncExpr
+		totalMap map[*ast.AggregateFuncExpr]int
+	)
+	hasAgg := b.detectAggInExprNode(v.Exprs)
+	needBuildAgg := hasAgg
+	if hasAgg {
+		if b.buildingRecursivePartForCTE {
+			return nil, ErrCTERecursiveForbidsAggregation.GenWithStackByArgs(b.genCTETableNameForError())
+		}
+
+		aggFuncs, totalMap = b.extractAggFuncsInExprs(v.Exprs)
+
+		if len(aggFuncs) == 0 {
+			needBuildAgg = false
+		}
+	}
+	if needBuildAgg {
+		var aggIndexMap map[int]int
+		p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		for agg, idx := range totalMap {
+			totalMap[agg] = aggIndexMap[idx]
+		}
+	}
+
 	for _, astExpr := range v.Exprs {
-		expr, np, err := b.rewrite(ctx, astExpr, p, nil, true)
+		expr, np, err := b.rewrite(ctx, astExpr, p, totalMap, true)
 		if err != nil {
 			return nil, err
 		}
@@ -905,6 +936,16 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
+}
+
+// detectAggInExprNode detects an aggregate function in its exprs.
+func (b *PlanBuilder) detectAggInExprNode(exprs []ast.ExprNode) bool {
+	for _, expr := range exprs {
+		if ast.HasAggFlag(expr) {
+			return true
+		}
+	}
+	return false
 }
 
 // detectSelectAgg detects an aggregate function or GROUP BY clause.
@@ -1164,6 +1205,16 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	return available, nil
 }
 
+func filterOutTiFlashPaths(paths []*util.AccessPath) []*util.AccessPath {
+	updatedPaths := make([]*util.AccessPath, 0, len(paths))
+	for _, path := range paths {
+		if path.StoreType != kv.TiFlash {
+			updatedPaths = append(updatedPaths, path)
+		}
+	}
+	return updatedPaths
+}
+
 func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath, tblName model.CIStr, dbName model.CIStr) ([]*util.AccessPath, error) {
 	// TODO: filter paths with isolation read locations.
 	if dbName.L == mysql.SystemDB {
@@ -1226,50 +1277,40 @@ func removeTiflashDuringStaleRead(paths []*util.AccessPath) []*util.AccessPath {
 }
 
 func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo) (*LogicalLock, error) {
-	selectLock := LogicalLock{
-		Lock:             lock,
-		tblID2Handle:     b.handleHelper.tailMap(),
-		partitionedTable: b.partitionedTable,
-	}.Init(b.ctx)
-	selectLock.SetChildren(src)
-
+	var tblID2PhysTblIDCol map[int64]*expression.Column
 	if len(b.partitionedTable) > 0 {
+		tblID2PhysTblIDCol = make(map[int64]*expression.Column)
 		// If a chunk row is read from a partitioned table, which partition the row
 		// comes from is unknown. With the existence of Join, the situation could be
 		// even worse: SelectLock have to know the `pid` to construct the lock key.
-		// To solve the problem, an extra `pid` column is add to the schema, and the
+		// To solve the problem, an extra `pid` column is added to the schema, and the
 		// DataSource need to return the `pid` information in the chunk row.
-		err := addExtraPIDColumnToDataSource(src, &selectLock.extraPIDInfo)
-		if err != nil {
-			return nil, err
-		}
-		// TODO: Dynamic partition mode does not support adding extra pid column to the data source.
-		// (Because one table reader can read from multiple partitions, which partition a chunk row comes from is unknown)
-		// So we have to use the old "rewrite to union" way here, set `flagPartitionProcessor` flag for that.
-		b.optFlag = b.optFlag | flagPartitionProcessor
+		// For dynamic prune mode, it is filled in from the tableID in the key by storage.
+		// For static prune mode it is also filled in from the tableID in the key by storage.
+		// since it would otherwise be lost in the PartitionUnion executor.
+		setExtraPhysTblIDColsOnDataSource(src, tblID2PhysTblIDCol)
 	}
+	selectLock := LogicalLock{
+		Lock:               lock,
+		tblID2Handle:       b.handleHelper.tailMap(),
+		tblID2PhysTblIDCol: tblID2PhysTblIDCol,
+	}.Init(b.ctx)
+	selectLock.SetChildren(src)
 	return selectLock, nil
 }
 
-func addExtraPIDColumnToDataSource(p LogicalPlan, info *extraPIDInfo) error {
-	switch raw := p.(type) {
+func setExtraPhysTblIDColsOnDataSource(p LogicalPlan, tblID2PhysTblIDCol map[int64]*expression.Column) {
+	switch ds := p.(type) {
 	case *DataSource:
-		// Fix issue 26250, do not add extra pid column to normal table.
-		if raw.tableInfo.GetPartitionInfo() == nil {
-			return nil
+		if ds.tableInfo.GetPartitionInfo() == nil {
+			return
 		}
-		raw.addExtraPIDColumn(info)
-		return nil
+		tblID2PhysTblIDCol[ds.tableInfo.ID] = ds.AddExtraPhysTblIDColumn()
 	default:
-		var err error
 		for _, child := range p.Children() {
-			err = addExtraPIDColumnToDataSource(child, info)
-			if err != nil {
-				return err
-			}
+			setExtraPhysTblIDColsOnDataSource(child, tblID2PhysTblIDCol)
 		}
 	}
-	return nil
 }
 
 func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
@@ -2689,7 +2730,7 @@ func buildCleanupIndexFields() (*expression.Schema, types.NameSlice) {
 }
 
 func buildShowDDLJobsFields() (*expression.Schema, types.NameSlice) {
-	schema := newColumnsWithNames(11)
+	schema := newColumnsWithNames(12)
 	schema.Append(buildColumnWithName("", "JOB_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumnWithName("", "DB_NAME", mysql.TypeVarchar, 64))
 	schema.Append(buildColumnWithName("", "TABLE_NAME", mysql.TypeVarchar, 64))
@@ -2698,6 +2739,7 @@ func buildShowDDLJobsFields() (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName("", "SCHEMA_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumnWithName("", "TABLE_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumnWithName("", "ROW_COUNT", mysql.TypeLonglong, 4))
+	schema.Append(buildColumnWithName("", "CREATE_TIME", mysql.TypeDatetime, 19))
 	schema.Append(buildColumnWithName("", "START_TIME", mysql.TypeDatetime, 19))
 	schema.Append(buildColumnWithName("", "END_TIME", mysql.TypeDatetime, 19))
 	schema.Append(buildColumnWithName("", "STATE", mysql.TypeVarchar, 64))
@@ -2811,7 +2853,7 @@ type columnsWithNames struct {
 	names types.NameSlice
 }
 
-func newColumnsWithNames(cap int) *columnsWithNames {
+func newColumnsWithNames(c int) *columnsWithNames {
 	return &columnsWithNames{
 		cols:  make([]*expression.Column, 0, 2),
 		names: make(types.NameSlice, 0, 2),
@@ -3548,7 +3590,7 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, m
 			RetType: &x.Type,
 		}
 	case *driver.ParamMarkerExpr:
-		outExpr, err = expression.ParamMarkerExpression(b.ctx, x)
+		outExpr, err = expression.ParamMarkerExpression(b.ctx, x, false)
 	default:
 		b.curClause = fieldList
 		// subquery in insert values should not reference upper scope

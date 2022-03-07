@@ -51,8 +51,8 @@ import (
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
-	"go.etcd.io/etcd/clientv3"
-	"go.etcd.io/etcd/clientv3/concurrency"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
 
@@ -237,6 +237,7 @@ func initTiFlashPlacementManager(addrs []string) TiFlashPlacementManager {
 		m := mockTiFlashPlacementManager{}
 		return &m
 	}
+	logutil.BgLogger().Warn("init TiFlashPlacementManager", zap.Strings("pd addrs", addrs))
 	return &TiFlashPDPlacementManager{addrs: addrs}
 }
 
@@ -1011,10 +1012,10 @@ func ConfigureTiFlashPDForTable(id int64, count uint64, locationLabels *[]string
 		return errors.Trace(err)
 	}
 	ctx := context.Background()
-	logutil.BgLogger().Info("ConfigureTiFlashPDForTable", zap.Int64("tableID", id))
+	logutil.BgLogger().Info("ConfigureTiFlashPDForTable", zap.Int64("tableID", id), zap.Uint64("count", count))
 	ruleNew := MakeNewRule(id, count, *locationLabels)
 	if e := is.tiflashPlacementManager.SetPlacementRule(ctx, *ruleNew); e != nil {
-		return errors.Trace(err)
+		return errors.Trace(e)
 	}
 	return nil
 }
@@ -1027,10 +1028,10 @@ func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionD
 	}
 	ctx := context.Background()
 	for _, p := range *definitions {
-		logutil.BgLogger().Info("ConfigureTiFlashPDForPartitions", zap.Int64("partID", p.ID), zap.Bool("accel", accel))
+		logutil.BgLogger().Info("ConfigureTiFlashPDForPartitions", zap.Int64("partID", p.ID), zap.Bool("accel", accel), zap.Uint64("count", count))
 		ruleNew := MakeNewRule(p.ID, count, *locationLabels)
 		if e := is.tiflashPlacementManager.SetPlacementRule(ctx, *ruleNew); e != nil {
-			return errors.Trace(err)
+			return errors.Trace(e)
 		}
 		if accel {
 			e := is.tiflashPlacementManager.PostAccelerateSchedule(ctx, p.ID)

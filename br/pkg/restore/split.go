@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/tikv/pd/pkg/codec"
+	"github.com/pingcap/tidb/util/codec"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -77,6 +77,7 @@ func (rs *RegionSplitter) Split(
 	ctx context.Context,
 	ranges []rtree.Range,
 	rewriteRules *RewriteRules,
+	isRawKv bool,
 	onSplit OnSplitFunc,
 ) error {
 	if len(ranges) == 0 {
@@ -96,8 +97,8 @@ func (rs *RegionSplitter) Split(
 	if errSplit != nil {
 		return errors.Trace(errSplit)
 	}
-	minKey := codec.EncodeBytes(sortedRanges[0].StartKey)
-	maxKey := codec.EncodeBytes(sortedRanges[len(sortedRanges)-1].EndKey)
+	minKey := codec.EncodeBytes(nil, sortedRanges[0].StartKey)
+	maxKey := codec.EncodeBytes(nil, sortedRanges[len(sortedRanges)-1].EndKey)
 	interval := SplitRetryInterval
 	scatterRegions := make([]*RegionInfo, 0)
 SplitRegions:
@@ -111,7 +112,7 @@ SplitRegions:
 			}
 			return errors.Trace(errScan)
 		}
-		splitKeyMap := getSplitKeys(rewriteRules, sortedRanges, regions)
+		splitKeyMap := getSplitKeys(rewriteRules, sortedRanges, regions, isRawKv)
 		regionMap := make(map[uint64]*RegionInfo)
 		for _, region := range regions {
 			regionMap[region.Region.GetId()] = region
@@ -131,7 +132,7 @@ SplitRegions:
 						log.Error("split regions no valid key",
 							logutil.Key("startKey", region.Region.StartKey),
 							logutil.Key("endKey", region.Region.EndKey),
-							logutil.Key("key", codec.EncodeBytes(key)),
+							logutil.Key("key", codec.EncodeBytes(nil, key)),
 							rtree.ZapRanges(ranges))
 					}
 					return errors.Trace(errSplit)
@@ -185,12 +186,27 @@ SplitRegions:
 	return nil
 }
 
-func (rs *RegionSplitter) hasRegion(ctx context.Context, regionID uint64) (bool, error) {
+func (rs *RegionSplitter) hasHealthyRegion(ctx context.Context, regionID uint64) (bool, error) {
 	regionInfo, err := rs.client.GetRegionByID(ctx, regionID)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	return regionInfo != nil, nil
+	// the region hasn't get ready.
+	if regionInfo == nil {
+		return false, nil
+	}
+
+	// check whether the region is healthy and report.
+	// TODO: the log may be too verbose. we should use Prometheus metrics once it get ready for BR.
+	for _, peer := range regionInfo.PendingPeers {
+		log.Debug("unhealthy region detected", logutil.Peer(peer), zap.String("type", "pending"))
+	}
+	for _, peer := range regionInfo.DownPeers {
+		log.Debug("unhealthy region detected", logutil.Peer(peer), zap.String("type", "down"))
+	}
+	// we ignore down peers for they are (normally) hard to be fixed in reasonable time.
+	// (or once there is a peer down, we may get stuck at waiting region get ready.)
+	return len(regionInfo.PendingPeers) == 0, nil
 }
 
 func (rs *RegionSplitter) isScatterRegionFinished(ctx context.Context, regionID uint64) (bool, error) {
@@ -218,7 +234,7 @@ func (rs *RegionSplitter) isScatterRegionFinished(ctx context.Context, regionID 
 func (rs *RegionSplitter) waitForSplit(ctx context.Context, regionID uint64) {
 	interval := SplitCheckInterval
 	for i := 0; i < SplitCheckMaxRetryTimes; i++ {
-		ok, err := rs.hasRegion(ctx, regionID)
+		ok, err := rs.hasHealthyRegion(ctx, regionID)
 		if err != nil {
 			log.Warn("wait for split failed", zap.Error(err))
 			return
@@ -480,14 +496,14 @@ func (b *scanRegionBackoffer) Attempt() int {
 
 // getSplitKeys checks if the regions should be split by the end key of
 // the ranges, groups the split keys by region id.
-func getSplitKeys(rewriteRules *RewriteRules, ranges []rtree.Range, regions []*RegionInfo) map[uint64][][]byte {
+func getSplitKeys(rewriteRules *RewriteRules, ranges []rtree.Range, regions []*RegionInfo, isRawKv bool) map[uint64][][]byte {
 	splitKeyMap := make(map[uint64][][]byte)
 	checkKeys := make([][]byte, 0)
 	for _, rg := range ranges {
 		checkKeys = append(checkKeys, rg.EndKey)
 	}
 	for _, key := range checkKeys {
-		if region := NeedSplit(key, regions); region != nil {
+		if region := NeedSplit(key, regions, isRawKv); region != nil {
 			splitKeys, ok := splitKeyMap[region.Region.GetId()]
 			if !ok {
 				splitKeys = make([][]byte, 0, 1)
@@ -503,12 +519,14 @@ func getSplitKeys(rewriteRules *RewriteRules, ranges []rtree.Range, regions []*R
 }
 
 // NeedSplit checks whether a key is necessary to split, if true returns the split region.
-func NeedSplit(splitKey []byte, regions []*RegionInfo) *RegionInfo {
+func NeedSplit(splitKey []byte, regions []*RegionInfo, isRawKv bool) *RegionInfo {
 	// If splitKey is the max key.
 	if len(splitKey) == 0 {
 		return nil
 	}
-	splitKey = codec.EncodeBytes(splitKey)
+	if !isRawKv {
+		splitKey = codec.EncodeBytes(nil, splitKey)
+	}
 	for _, region := range regions {
 		// If splitKey is the boundary of the region
 		if bytes.Equal(splitKey, region.Region.GetStartKey()) {

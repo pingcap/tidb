@@ -1800,7 +1800,7 @@ func getUintFromNode(ctx sessionctx.Context, n ast.Node) (uVal uint64, isNull bo
 		if !v.InExecute {
 			return 0, false, true
 		}
-		param, err := expression.ParamMarkerExpression(ctx, v)
+		param, err := expression.ParamMarkerExpression(ctx, v, false)
 		if err != nil {
 			return 0, false, false
 		}
@@ -2204,6 +2204,20 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 	}
 	sel.Fields.Fields = extractor.selectFields
 	return havingAggMapper, extractor.aggMapper, nil
+}
+
+func (b *PlanBuilder) extractAggFuncsInExprs(exprs []ast.ExprNode) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int) {
+	extractor := &AggregateFuncExtractor{skipAggMap: b.correlatedAggMapper}
+	for _, expr := range exprs {
+		expr.Accept(extractor)
+	}
+	aggList := extractor.AggFuncs
+	totalAggMapper := make(map[*ast.AggregateFuncExpr]int, len(aggList))
+
+	for i, agg := range aggList {
+		totalAggMapper[agg] = i
+	}
+	return aggList, totalAggMapper
 }
 
 func (b *PlanBuilder) extractAggFuncsInSelectFields(fields []*ast.SelectField) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int) {
@@ -3182,7 +3196,7 @@ func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column [
 		}
 		if (dbName.L == "" || dbName.L == name.DBName.L) &&
 			(tblName.L == "" || tblName.L == name.TblName.L) &&
-			col.ID != model.ExtraHandleID {
+			col.ID != model.ExtraHandleID && col.ID != model.ExtraPidColID && col.ID != model.ExtraPhysTblID {
 			colName := &ast.ColumnNameExpr{
 				Name: &ast.ColumnName{
 					Schema: name.DBName,
@@ -3781,30 +3795,36 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 	}
 }
 
-// addExtraPIDColumn add an extra PID column for partition table.
+// AddExtraPhysTblIDColumn for partition table.
 // 'select ... for update' on a partition table need to know the partition ID
 // to construct the lock key, so this column is added to the chunk row.
-func (ds *DataSource) addExtraPIDColumn(info *extraPIDInfo) {
+// Also needed for checking against the sessions transaction buffer
+func (ds *DataSource) AddExtraPhysTblIDColumn() *expression.Column {
+	// Avoid adding multiple times (should never happen!)
+	cols := ds.TblCols
+	for i := len(cols) - 1; i >= 0; i-- {
+		if cols[i].ID == model.ExtraPhysTblID {
+			return cols[i]
+		}
+	}
 	pidCol := &expression.Column{
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
-		ID:       model.ExtraPidColID,
-		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraPartitionIdName),
+		ID:       model.ExtraPhysTblID,
+		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraPhysTblIdName),
 	}
 
-	ds.Columns = append(ds.Columns, model.NewExtraPartitionIDColInfo())
+	ds.Columns = append(ds.Columns, model.NewExtraPhysTblIDColInfo())
 	schema := ds.Schema()
 	schema.Append(pidCol)
 	ds.names = append(ds.names, &types.FieldName{
 		DBName:      ds.DBName,
 		TblName:     ds.TableInfo().Name,
-		ColName:     model.ExtraPartitionIdName,
-		OrigColName: model.ExtraPartitionIdName,
+		ColName:     model.ExtraPhysTblIdName,
+		OrigColName: model.ExtraPhysTblIdName,
 	})
 	ds.TblCols = append(ds.TblCols, pidCol)
-
-	info.Columns = append(info.Columns, pidCol)
-	info.TblIDs = append(info.TblIDs, ds.TableInfo().ID)
+	return pidCol
 }
 
 var (
@@ -4014,6 +4034,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if err != nil {
 		return nil, err
 	}
+	if tableHasDirtyContent(b.ctx, tableInfo) && tableInfo.Partition != nil && b.optFlag&flagPartitionProcessor == 0 {
+		// if partition table has dirty content and the partition prune mode is dynamic, do not read
+		// from TiFlash because TiFlash does not support virtual column `ExtraPhysTblID` yet
+		b.ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because partition table `" + tableInfo.Name.O + "` has uncommitted data when partition prune mode is dynamic.")
+		possiblePaths = filterOutTiFlashPaths(possiblePaths)
+	}
 	// Skip storage engine check for CreateView.
 	if b.capFlag&canExpandAST == 0 {
 		possiblePaths, err = filterPathByIsolationRead(b.ctx, possiblePaths, tblName, dbName)
@@ -4165,53 +4191,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	ds.SampleInfo = NewTableSampleInfo(tn.TableSample, schema.Clone(), b.partitionedTable)
 	b.isSampling = ds.SampleInfo != nil
 
-	// Init commonHandleCols and commonHandleLens for data source.
-	if tableInfo.IsCommonHandle {
-		ds.commonHandleCols, ds.commonHandleLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, tables.FindPrimaryIndex(tableInfo))
-	}
-	// Init FullIdxCols, FullIdxColLens for accessPaths.
-	for _, path := range ds.possibleAccessPaths {
-		if !path.IsIntHandlePath {
-			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
-		}
-	}
-
-	var result LogicalPlan = ds
-	dirty := tableHasDirtyContent(b.ctx, tableInfo)
-	if dirty || tableInfo.TempTableType == model.TempTableLocal {
-		us := LogicalUnionScan{handleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
-		us.SetChildren(ds)
-		result = us
-	}
-	// If a table is a cache table, it is judged whether it satisfies the conditions of read cache.
-	if tableInfo.TableCacheStatusType == model.TableCacheStatusEnable && b.ctx.GetSessionVars().SnapshotTS == 0 && !b.ctx.GetSessionVars().StmtCtx.IsStaleness {
-		cachedTable := tbl.(table.CachedTable)
-		txn, err := b.ctx.Txn(true)
-		if err != nil {
-			return nil, err
-		}
-		leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
-		// Use the TS of the transaction to determine whether the cache can be used.
-		cacheData := cachedTable.TryReadFromCache(txn.StartTS(), leaseDuration)
-		if cacheData != nil {
-			sessionVars.StmtCtx.ReadFromTableCache = true
-			us := LogicalUnionScan{handleCols: handleCols, cacheTable: cacheData}.Init(b.ctx, b.getSelectOffset())
-			us.SetChildren(ds)
-			result = us
-		} else {
-			if !b.inUpdateStmt && !b.inDeleteStmt && !sessionVars.StmtCtx.InExplainStmt {
-				startTS := txn.StartTS()
-				store := b.ctx.GetStore()
-				cachedTable.UpdateLockForRead(ctx, store, startTS, leaseDuration)
-			}
-		}
-	}
-
-	if sessionVars.StmtCtx.TblInfo2UnionScan == nil {
-		sessionVars.StmtCtx.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
-	}
-	sessionVars.StmtCtx.TblInfo2UnionScan[tableInfo] = dirty
-
 	for i, colExpr := range ds.Schema().Columns {
 		var expr expression.Expression
 		if i < len(columns) {
@@ -4225,6 +4204,53 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			}
 		}
 	}
+
+	// Init commonHandleCols and commonHandleLens for data source.
+	if tableInfo.IsCommonHandle {
+		ds.commonHandleCols, ds.commonHandleLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, tables.FindPrimaryIndex(tableInfo))
+	}
+	// Init FullIdxCols, FullIdxColLens for accessPaths.
+	for _, path := range ds.possibleAccessPaths {
+		if !path.IsIntHandlePath {
+			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
+
+			// check whether the path's index has a tidb_shard() prefix and the index column count
+			// more than 1. e.g. index(tidb_shard(a), a)
+			// set UkShardIndexPath only for unique secondary index
+			if !path.IsCommonHandlePath {
+				// tidb_shard expression must be first column of index
+				col := path.FullIdxCols[0]
+				if col != nil &&
+					expression.GcColumnExprIsTidbShard(col.VirtualExpr) &&
+					len(path.Index.Columns) > 1 &&
+					path.Index.Unique {
+					path.IsUkShardIndexPath = true
+					ds.containExprPrefixUk = true
+				}
+			}
+		}
+	}
+
+	var result LogicalPlan = ds
+	dirty := tableHasDirtyContent(b.ctx, tableInfo)
+	if dirty || tableInfo.TempTableType == model.TempTableLocal {
+		us := LogicalUnionScan{handleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
+		us.SetChildren(ds)
+		if tableInfo.Partition != nil && b.optFlag&flagPartitionProcessor == 0 {
+			// Adding ExtraPhysTblIDCol for UnionScan (transaction buffer handling)
+			// Not using old static prune mode
+			// Single TableReader for all partitions, needs the PhysTblID from storage
+			_ = ds.AddExtraPhysTblIDColumn()
+		}
+		result = us
+	}
+
+	// Adding ExtraPhysTblIDCol for SelectLock (SELECT FOR UPDATE) is done when building SelectLock
+
+	if sessionVars.StmtCtx.TblInfo2UnionScan == nil {
+		sessionVars.StmtCtx.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
+	}
+	sessionVars.StmtCtx.TblInfo2UnionScan[tableInfo] = dirty
 
 	return result, nil
 }
@@ -4783,8 +4809,9 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 }
 
 type tblUpdateInfo struct {
-	name      string
-	pkUpdated bool
+	name                string
+	pkUpdated           bool
+	partitionColUpdated bool
 }
 
 // CheckUpdateList checks all related columns in updatable state.
@@ -4793,7 +4820,12 @@ func CheckUpdateList(assignFlags []int, updt *Update, newTblID2Table map[int64]t
 	for _, content := range updt.TblColPosInfos {
 		tbl := newTblID2Table[content.TblID]
 		flags := assignFlags[content.Start:content.End]
-		var update, updatePK bool
+		var update, updatePK, updatePartitionCol bool
+		var partitionColumnNames []model.CIStr
+		if pt, ok := tbl.(table.PartitionedTable); ok && pt != nil {
+			partitionColumnNames = pt.GetPartitionColumnNames()
+		}
+
 		for i, col := range tbl.WritableCols() {
 			if flags[i] >= 0 && col.State != model.StatePublic {
 				return ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
@@ -4803,19 +4835,25 @@ func CheckUpdateList(assignFlags []int, updt *Update, newTblID2Table map[int64]t
 				if mysql.HasPriKeyFlag(col.Flag) {
 					updatePK = true
 				}
+				for _, partColName := range partitionColumnNames {
+					if col.Name.L == partColName.L {
+						updatePartitionCol = true
+					}
+				}
 			}
 		}
 		if update {
 			// Check for multi-updates on primary key,
 			// see https://dev.mysql.com/doc/mysql-errors/5.7/en/server-error-reference.html#error_er_multi_update_key_conflict
 			if otherTable, ok := updateFromOtherAlias[tbl.Meta().ID]; ok {
-				if otherTable.pkUpdated || updatePK {
+				if otherTable.pkUpdated || updatePK || otherTable.partitionColUpdated || updatePartitionCol {
 					return ErrMultiUpdateKeyConflict.GenWithStackByArgs(otherTable.name, updt.names[content.Start].TblName.O)
 				}
 			} else {
 				updateFromOtherAlias[tbl.Meta().ID] = tblUpdateInfo{
-					name:      updt.names[content.Start].TblName.O,
-					pkUpdated: updatePK,
+					name:                updt.names[content.Start].TblName.O,
+					pkUpdated:           updatePK,
+					partitionColUpdated: updatePartitionCol,
 				}
 			}
 		}
@@ -5025,9 +5063,9 @@ func IsDefaultExprSameColumn(names types.NameSlice, node ast.ExprNode) bool {
 	return false
 }
 
-func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (Plan, error) {
+func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan, error) {
 	b.pushSelectOffset(0)
-	b.pushTableHints(delete.TableHints, 0)
+	b.pushTableHints(ds.TableHints, 0)
 	defer func() {
 		b.popSelectOffset()
 		// table hints are only visible in the current DELETE statement.
@@ -5037,18 +5075,18 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	b.inDeleteStmt = true
 	b.isForUpdateRead = true
 
-	if delete.With != nil {
+	if ds.With != nil {
 		l := len(b.outerCTEs)
 		defer func() {
 			b.outerCTEs = b.outerCTEs[:l]
 		}()
-		err := b.buildWith(ctx, delete.With)
+		err := b.buildWith(ctx, ds.With)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	p, err := b.buildResultSetNode(ctx, delete.TableRefs.TableRefs)
+	p, err := b.buildResultSetNode(ctx, ds.TableRefs.TableRefs)
 	if err != nil {
 		return nil, err
 	}
@@ -5056,14 +5094,14 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	oldLen := oldSchema.Len()
 
 	// For explicit column usage, should use the all-public columns.
-	if delete.Where != nil {
-		p, err = b.buildSelection(ctx, p, delete.Where, nil)
+	if ds.Where != nil {
+		p, err = b.buildSelection(ctx, p, ds.Where, nil)
 		if err != nil {
 			return nil, err
 		}
 	}
 	if b.ctx.GetSessionVars().TxnCtx.IsPessimistic {
-		if !delete.IsMultiTable {
+		if !ds.IsMultiTable {
 			p, err = b.buildSelectLock(p, &ast.SelectLockInfo{
 				LockType: ast.SelectLockForUpdate,
 			})
@@ -5073,22 +5111,22 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		}
 	}
 
-	if delete.Order != nil {
-		p, err = b.buildSort(ctx, p, delete.Order.Items, nil, nil)
+	if ds.Order != nil {
+		p, err = b.buildSort(ctx, p, ds.Order.Items, nil, nil)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	if delete.Limit != nil {
-		p, err = b.buildLimit(p, delete.Limit)
+	if ds.Limit != nil {
+		p, err = b.buildLimit(p, ds.Limit)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	// If the delete is non-qualified it does not require Select Priv
-	if delete.Where == nil && delete.Order == nil {
+	if ds.Where == nil && ds.Order == nil {
 		b.popVisitInfo()
 	}
 	var authErr error
@@ -5116,7 +5154,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	}
 
 	del := Delete{
-		IsMultiTable: delete.IsMultiTable,
+		IsMultiTable: ds.IsMultiTable,
 	}.Init(b.ctx)
 
 	del.names = p.OutputNames()
@@ -5131,12 +5169,12 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	}
 
 	// Collect visitInfo.
-	if delete.Tables != nil {
+	if ds.Tables != nil {
 		// Delete a, b from a, b, c, d... add a and b.
 		updatableList := make(map[string]bool)
 		tbInfoList := make(map[string]*ast.TableName)
-		collectTableName(delete.TableRefs.TableRefs, &updatableList, &tbInfoList)
-		for _, tn := range delete.Tables.Tables {
+		collectTableName(ds.TableRefs.TableRefs, &updatableList, &tbInfoList)
+		for _, tn := range ds.Tables.Tables {
 			var canUpdate, foundMatch = false, false
 			name := tn.Name.L
 			if tn.Schema.L == "" {
@@ -5176,7 +5214,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	} else {
 		// Delete from a, b, c, d.
 		var tableList []*ast.TableName
-		tableList = extractTableList(delete.TableRefs.TableRefs, tableList, false)
+		tableList = extractTableList(ds.TableRefs.TableRefs, tableList, false)
 		for _, v := range tableList {
 			if isCTE(v) {
 				return nil, ErrNonUpdatableTable.GenWithStackByArgs(v.Name.O, "DELETE")
@@ -5202,8 +5240,8 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 		// Table ID may not be unique for deleting multiple tables, for statements like
 		// `delete from t as t1, t as t2`, the same table has two alias, we have to identify a table
 		// by its alias instead of ID.
-		tblID2TableName := make(map[int64][]*ast.TableName, len(delete.Tables.Tables))
-		for _, tn := range delete.Tables.Tables {
+		tblID2TableName := make(map[int64][]*ast.TableName, len(ds.Tables.Tables))
+		for _, tn := range ds.Tables.Tables {
 			tblID2TableName[tn.TableInfo.ID] = append(tblID2TableName[tn.TableInfo.ID], tn)
 		}
 		tblID2Handle = del.cleanTblID2HandleMap(tblID2TableName, tblID2Handle, del.names)

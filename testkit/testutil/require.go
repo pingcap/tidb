@@ -15,11 +15,12 @@
 //go:build !codes
 // +build !codes
 
-package trequire
+package testutil
 
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
@@ -27,9 +28,15 @@ import (
 )
 
 // DatumEqual verifies that the actual value is equal to the expected value. For string datum, they are compared by the binary collation.
-func DatumEqual(t *testing.T, expected, actual types.Datum, msgAndArgs ...interface{}) {
+func DatumEqual(t testing.TB, expected, actual types.Datum, msgAndArgs ...interface{}) {
 	sc := new(stmtctx.StatementContext)
 	res, err := actual.Compare(sc, &expected, collate.GetBinaryCollator())
 	require.NoError(t, err, msgAndArgs)
 	require.Zero(t, res, msgAndArgs)
+}
+
+// HandleEqual verifies that the actual handle is equal to the expected handle.
+func HandleEqual(t testing.TB, expected, actual kv.Handle, msgAndArgs ...interface{}) {
+	require.Equal(t, expected.IsInt(), actual.IsInt(), msgAndArgs)
+	require.Equal(t, expected.String(), actual.String(), msgAndArgs)
 }

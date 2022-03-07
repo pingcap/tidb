@@ -386,6 +386,16 @@ const (
 		UNIQUE KEY table_version_seq (table_id, version, seq_no),
 		KEY table_create_time (table_id, create_time, seq_no)
 	);`
+	// CreateStatsMetaHistory stores the historical meta stats.
+	CreateStatsMetaHistory = `CREATE TABLE IF NOT EXISTS mysql.stats_meta_history (
+		table_id bigint(64) NOT NULL,
+		modify_count bigint(64) NOT NULL,
+		count bigint(64) NOT NULL,
+		version bigint(64) NOT NULL comment 'stats version which corresponding to stats:version in EXPLAIN',
+		create_time datetime(6) NOT NULL,
+		UNIQUE KEY table_version (table_id, version),
+		KEY table_create_time (table_id, create_time)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -569,11 +579,13 @@ const (
 	version82 = 82
 	// version83 adds the tables mysql.stats_history
 	version83 = 83
+	// version84 adds the tables mysql.stats_meta_history
+	version84 = 84
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version83
+var currentBootstrapVersion int64 = version84
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -660,6 +672,7 @@ var (
 		upgradeToVer81,
 		upgradeToVer82,
 		upgradeToVer83,
+		upgradeToVer84,
 	}
 )
 
@@ -1496,7 +1509,7 @@ func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[st
 		db := row.GetString(1)
 		status := row.GetString(2)
 
-		if status != "using" && status != "builtin" {
+		if status != bindinfo.Enabled && status != bindinfo.Using && status != bindinfo.Builtin {
 			continue
 		}
 
@@ -1722,6 +1735,13 @@ func upgradeToVer83(s Session, ver int64) {
 	doReentrantDDL(s, CreateStatsHistory)
 }
 
+func upgradeToVer84(s Session, ver int64) {
+	if ver >= version84 {
+		return
+	}
+	doReentrantDDL(s, CreateStatsMetaHistory)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -1810,6 +1830,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateAnalyzeOptionsTable)
 	// Create stats_history table.
 	mustExecute(s, CreateStatsHistory)
+	// Create stats_meta_history table.
+	mustExecute(s, CreateStatsMetaHistory)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
@@ -1863,6 +1885,12 @@ func doDMLWorks(s Session) {
 			}
 			if v.Name == variable.TiDBEnable1PC && config.GetGlobalConfig().Store == "tikv" {
 				vVal = variable.On
+			}
+			if v.Name == variable.TiDBEnableMutationChecker {
+				vVal = variable.On
+			}
+			if v.Name == variable.TiDBTxnAssertionLevel {
+				vVal = variable.AssertionFastStr
 			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)

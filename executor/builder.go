@@ -152,6 +152,7 @@ func (b *MockExecutorBuilder) Build(p plannercore.Plan) Executor {
 }
 
 func (b *executorBuilder) build(p plannercore.Plan) Executor {
+	var e Executor
 	switch v := p.(type) {
 	case nil:
 		return nil
@@ -266,13 +267,13 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 	case *plannercore.Analyze:
 		return b.buildAnalyze(v)
 	case *plannercore.PhysicalTableReader:
-		return b.buildTableReader(v)
+		e = b.buildTableReader(v)
 	case *plannercore.PhysicalTableSample:
 		return b.buildTableSample(v)
 	case *plannercore.PhysicalIndexReader:
-		return b.buildIndexReader(v)
+		e = b.buildIndexReader(v)
 	case *plannercore.PhysicalIndexLookUpReader:
-		return b.buildIndexLookUpReader(v)
+		e = b.buildIndexLookUpReader(v)
 	case *plannercore.PhysicalWindow:
 		return b.buildWindow(v)
 	case *plannercore.PhysicalShuffle:
@@ -303,6 +304,57 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		b.err = ErrUnknownPlan.GenWithStack("Unknown Plan %T", p)
 		return nil
 	}
+
+	if tblExec, ok := e.(dataSourceExecutor); ok {
+		tbl := tblExec.Table()
+		tableInfo := tbl.Meta()
+		// When reading from a cached table, check whether it satisfies the conditions of read cache.
+		if tableInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+			physicalPlan := p.(plannercore.PhysicalPlan)
+			return b.buildCachedTableExecutor(tbl, physicalPlan, e)
+		}
+	}
+
+	return e
+}
+
+// buildCachedTableExecutor adds an UnionScan to the original Executor to make the reader read from table cache.
+func (b *executorBuilder) buildCachedTableExecutor(tbl table.Table, p plannercore.PhysicalPlan, e Executor) Executor {
+	if b.ctx.GetSessionVars().SnapshotTS != 0 || b.ctx.GetSessionVars().StmtCtx.IsStaleness {
+		return e
+	}
+
+	cachedTable := tbl.(table.CachedTable)
+	startTS, err := b.getSnapshotTS()
+	if err != nil {
+		b.err = errors.Trace(err)
+		return nil
+	}
+
+	leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
+	sessionVars := b.ctx.GetSessionVars()
+	// Use the TS of the transaction to determine whether the cache can be used.
+	cacheData := cachedTable.TryReadFromCache(startTS, leaseDuration)
+	if cacheData != nil {
+		sessionVars.StmtCtx.ReadFromTableCache = true
+		switch raw := e.(type) {
+		case *TableReaderExecutor:
+			raw.dummy = true
+		case *IndexReaderExecutor:
+			raw.dummy = true
+		case *IndexLookUpExecutor:
+			raw.dummy = true
+		}
+		us := plannercore.PhysicalUnionScan{CacheTable: cacheData}.Init(b.ctx, nil, -1)
+		us.SetChildren(p)
+		e = b.buildUnionScanFromReader(e, us)
+	} else {
+		if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !sessionVars.StmtCtx.InExplainStmt {
+			store := b.ctx.GetStore()
+			cachedTable.UpdateLockForRead(context.Background(), store, startTS, leaseDuration)
+		}
+	}
+	return e
 }
 
 func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Executor {
@@ -370,10 +422,13 @@ func (b *executorBuilder) buildShowDDL(v *plannercore.ShowDDL) Executor {
 }
 
 func (b *executorBuilder) buildShowDDLJobs(v *plannercore.PhysicalShowDDLJobs) Executor {
+	loc := b.ctx.GetSessionVars().Location()
+	ddlJobRetriever := DDLJobRetriever{TZLoc: loc}
 	e := &ShowDDLJobsExec{
-		jobNumber:    int(v.JobNumber),
-		is:           b.is,
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		jobNumber:       int(v.JobNumber),
+		is:              b.is,
+		baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		DDLJobRetriever: ddlJobRetriever,
 	}
 	return e
 }
@@ -662,10 +717,10 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		return src
 	}
 	e := &SelectLockExec{
-		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ID(), src),
-		Lock:             v.Lock,
-		tblID2Handle:     v.TblID2Handle,
-		partitionedTable: v.PartitionedTable,
+		baseExecutor:       newBaseExecutor(b.ctx, v.Schema(), v.ID(), src),
+		Lock:               v.Lock,
+		tblID2Handle:       v.TblID2Handle,
+		tblID2PhysTblIDCol: v.TblID2PhysTblIDCol,
 	}
 
 	// filter out temporary tables because they do not store any record in tikv and should not write any lock
@@ -681,16 +736,6 @@ func (b *executorBuilder) buildSelectLock(v *plannercore.PhysicalLock) Executor 
 		}
 	}
 
-	if len(e.partitionedTable) > 0 {
-		schema := v.Schema()
-		e.tblID2PIDColumnIndex = make(map[int64]int)
-		for i := 0; i < len(v.ExtraPIDInfo.Columns); i++ {
-			col := v.ExtraPIDInfo.Columns[i]
-			tblID := v.ExtraPIDInfo.TblIDs[i]
-			offset := schema.ColumnIndex(col)
-			e.tblID2PIDColumnIndex[tblID] = offset
-		}
-	}
 	return e
 }
 
@@ -1655,6 +1700,14 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 					timeRange: v.QueryTimeRange,
 				},
 			}
+		case strings.ToLower(infoschema.TableTiKVRegionPeers):
+			return &MemTableReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+				table:        v.Table,
+				retriever: &tikvRegionPeersRetriever{
+					extractor: v.Extractor.(*plannercore.TikvRegionPeersExtractor),
+				},
+			}
 		case strings.ToLower(infoschema.TableSchemata),
 			strings.ToLower(infoschema.TableStatistics),
 			strings.ToLower(infoschema.TableTiDBIndexes),
@@ -1676,7 +1729,6 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableProcesslist),
 			strings.ToLower(infoschema.ClusterTableProcesslist),
 			strings.ToLower(infoschema.TableTiKVRegionStatus),
-			strings.ToLower(infoschema.TableTiKVRegionPeers),
 			strings.ToLower(infoschema.TableTiDBHotRegions),
 			strings.ToLower(infoschema.TableSessionVar),
 			strings.ToLower(infoschema.TableConstraints),
@@ -1772,9 +1824,12 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				},
 			}
 		case strings.ToLower(infoschema.TableDDLJobs):
+			loc := b.ctx.GetSessionVars().Location()
+			ddlJobRetriever := DDLJobRetriever{TZLoc: loc}
 			return &DDLJobsReaderExec{
-				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-				is:           b.is,
+				baseExecutor:    newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+				is:              b.is,
+				DDLJobRetriever: ddlJobRetriever,
 			}
 		case strings.ToLower(infoschema.TableTiFlashTables),
 			strings.ToLower(infoschema.TableTiFlashSegments):
@@ -3105,9 +3160,6 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		storeType:        v.StoreType,
 		batchCop:         v.BatchCop,
 	}
-	if tbl.Meta().Partition != nil {
-		e.extraPIDColumnIndex = extraPIDColumnIndex(v.Schema())
-	}
 	e.buildVirtualColumnInfo()
 	if containsLimit(dagReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, ts.Desc)
@@ -3136,15 +3188,6 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	}
 
 	return e, nil
-}
-
-func extraPIDColumnIndex(schema *expression.Schema) offsetOptional {
-	for idx, col := range schema.Columns {
-		if col.ID == model.ExtraPidColID {
-			return newOffset(idx)
-		}
-	}
-	return 0
 }
 
 func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Executor {
@@ -3192,6 +3235,10 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	if err = b.validCanReadTemporaryOrCacheTable(ts.Table); err != nil {
 		b.err = err
 		return nil
+	}
+
+	if ret.table.Meta().TempTableType != model.TempTableNone {
+		ret.dummy = true
 	}
 
 	ret.ranges = ts.Ranges
@@ -3421,6 +3468,10 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) E
 		return nil
 	}
 
+	if ret.table.Meta().TempTableType != model.TempTableNone {
+		ret.dummy = true
+	}
+
 	ret.ranges = is.Ranges
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
@@ -3545,9 +3596,6 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		tblPlans:          v.TablePlans,
 		PushedLimit:       v.PushedLimit,
 	}
-	if ok, _ := ts.IsPartition(); ok {
-		e.extraPIDColumnIndex = extraPIDColumnIndex(v.Schema())
-	}
 
 	if containsLimit(indexReq.Executors) {
 		e.feedback = statistics.NewQueryFeedback(0, nil, 0, is.Desc)
@@ -3590,6 +3638,10 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	if err != nil {
 		b.err = err
 		return nil
+	}
+
+	if ret.table.Meta().TempTableType != model.TempTableNone {
+		ret.dummy = true
 	}
 
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)

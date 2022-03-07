@@ -15,12 +15,14 @@
 //go:build !codes
 // +build !codes
 
-package testkit
+package testutil
 
 import (
+	"sort"
 	"testing"
 
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -30,8 +32,21 @@ import (
 // MustNewCommonHandle create a common handle with given values.
 func MustNewCommonHandle(t *testing.T, values ...interface{}) kv.Handle {
 	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.MakeDatums(values...)...)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	ch, err := kv.NewCommonHandle(encoded)
-	require.Nil(t, err)
+	require.NoError(t, err)
 	return ch
+}
+
+// MaskSortHandles sorts the handles by lowest (fieldTypeBits - 1 - shardBitsCount) bits.
+func MaskSortHandles(handles []int64, shardBitsCount int, fieldType byte) []int64 {
+	typeBitsLength := mysql.DefaultLengthOfMysqlTypes[fieldType] * 8
+	const signBitCount = 1
+	shiftBitsCount := 64 - typeBitsLength + shardBitsCount + signBitCount
+	ordered := make([]int64, len(handles))
+	for i, h := range handles {
+		ordered[i] = h << shiftBitsCount >> shiftBitsCount
+	}
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i] < ordered[j] })
+	return ordered
 }

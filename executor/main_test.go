@@ -16,7 +16,6 @@ package executor_test
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/pingcap/tidb/config"
@@ -32,14 +31,19 @@ import (
 var testDataMap = make(testdata.BookKeeper)
 var prepareMergeSuiteData testdata.TestData
 var aggMergeSuiteData testdata.TestData
+var executorSuiteData testdata.TestData
+var pointGetSuiteData testdata.TestData
 
 func TestMain(m *testing.M) {
 	testbridge.SetupForCommonTest()
-
-	testDataMap.LoadTestSuiteData("testdata", "prepare_suite")
 	testDataMap.LoadTestSuiteData("testdata", "agg_suite")
-	prepareMergeSuiteData = testDataMap["prepare_suite"]
+	testDataMap.LoadTestSuiteData("testdata", "executor_suite")
+	testDataMap.LoadTestSuiteData("testdata", "prepare_suite")
+	testDataMap.LoadTestSuiteData("testdata", "point_get_suite")
 	aggMergeSuiteData = testDataMap["agg_suite"]
+	executorSuiteData = testDataMap["executor_suite"]
+	prepareMergeSuiteData = testDataMap["prepare_suite"]
+	pointGetSuiteData = testDataMap["point_get_suite"]
 
 	autoid.SetStep(5000)
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -47,16 +51,15 @@ func TestMain(m *testing.M) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 		conf.Experimental.AllowsExpressionIndex = true
+		conf.OOMAction = config.OOMActionLog
 	})
 	tikv.EnableFailpoints()
-	tmpDir := config.GetGlobalConfig().TempStoragePath
-	_ = os.RemoveAll(tmpDir) // clean the uncleared temp file during the last run.
-	_ = os.MkdirAll(tmpDir, 0755)
 
 	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
+		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 	}
 	callback := func(i int) int {
 		testDataMap.GenerateOutputIfNeeded()

@@ -18,11 +18,9 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"testing"
 
-	"github.com/pingcap/check"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/auth"
@@ -32,26 +30,24 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testSuite5) TestShowVisibility(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowVisibility(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database showdatabase")
 	tk.MustExec("use showdatabase")
 	tk.MustExec("create table t1 (id int)")
 	tk.MustExec("create table t2 (id int)")
 	tk.MustExec(`create user 'show'@'%'`)
 
-	tk1 := testkit.NewTestKit(c, s.store)
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "show", Hostname: "%"}, nil, nil), IsTrue)
-	tk1.Se = se
+	tk1 := testkit.NewTestKit(t, store)
+	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "show", Hostname: "%"}, nil, nil))
 
 	// No ShowDatabases privilege, this user would see nothing except INFORMATION_SCHEMA.
 	tk.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA"))
@@ -71,14 +67,16 @@ func (s *testSuite5) TestShowVisibility(c *C) {
 	// Grant any global privilege would make show databases available.
 	tk.MustExec(`grant CREATE on *.* to 'show'@'%'`)
 	rows := tk1.MustQuery("show databases").Rows()
-	c.Assert(len(rows), GreaterEqual, 2) // At least INFORMATION_SCHEMA and showdatabase
+	require.GreaterOrEqual(t, len(rows), 2)
 
 	tk.MustExec(`drop user 'show'@'%'`)
 	tk.MustExec("drop database showdatabase")
 }
 
-func (s *testSuite5) TestShowDatabasesInfoSchemaFirst(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowDatabasesInfoSchemaFirst(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA"))
 	tk.MustExec(`create user 'show'@'%'`)
 
@@ -87,11 +85,8 @@ func (s *testSuite5) TestShowDatabasesInfoSchemaFirst(c *C) {
 	tk.MustExec(`grant select on AAAA.* to 'show'@'%'`)
 	tk.MustExec(`grant select on BBBB.* to 'show'@'%'`)
 
-	tk1 := testkit.NewTestKit(c, s.store)
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "show", Hostname: "%"}, nil, nil), IsTrue)
-	tk1.Se = se
+	tk1 := testkit.NewTestKit(t, store)
+	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "show", Hostname: "%"}, nil, nil))
 	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA", "AAAA", "BBBB"))
 
 	tk.MustExec(`drop user 'show'@'%'`)
@@ -99,41 +94,45 @@ func (s *testSuite5) TestShowDatabasesInfoSchemaFirst(c *C) {
 	tk.MustExec(`drop database BBBB`)
 }
 
-func (s *testSuite5) TestShowWarnings(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowWarnings(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	testSQL := `create table if not exists show_warnings (a int)`
 	tk.MustExec(testSQL)
 	tk.MustExec("set @@sql_mode=''")
 	tk.MustExec("insert show_warnings values ('a')")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DOUBLE value: 'a'"))
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect DOUBLE value: 'a'"))
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect DOUBLE value: 'a'"))
+	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect DOUBLE value: 'a'"))
+	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 
 	// Test Warning level 'Error'
 	testSQL = `create table show_warnings (a int)`
 	_, _ = tk.Exec(testSQL)
 	// FIXME: Table 'test.show_warnings' already exists
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Error|1050|Table 'test.show_warnings' already exists"))
-	tk.MustQuery("select @@error_count").Check(testutil.RowsWithSep("|", "1"))
+	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Error|1050|Table 'test.show_warnings' already exists"))
+	tk.MustQuery("select @@error_count").Check(testkit.RowsWithSep("|", "1"))
 
 	// Test Warning level 'Note'
 	testSQL = `create table show_warnings_2 (a int)`
 	tk.MustExec(testSQL)
 	testSQL = `create table if not exists show_warnings_2 like show_warnings`
 	_, err := tk.Exec(testSQL)
-	c.Assert(err, IsNil)
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1050|Table 'test.show_warnings_2' already exists"))
-	tk.MustQuery("select @@warning_count").Check(testutil.RowsWithSep("|", "1"))
-	tk.MustQuery("select @@warning_count").Check(testutil.RowsWithSep("|", "0"))
+	require.NoError(t, err)
+	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Note|1050|Table 'test.show_warnings_2' already exists"))
+	tk.MustQuery("select @@warning_count").Check(testkit.RowsWithSep("|", "1"))
+	tk.MustQuery("select @@warning_count").Check(testkit.RowsWithSep("|", "0"))
 }
 
-func (s *testSuite5) TestShowErrors(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowErrors(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	testSQL := `create table if not exists show_errors (a int)`
 	tk.MustExec(testSQL)
@@ -141,20 +140,22 @@ func (s *testSuite5) TestShowErrors(c *C) {
 	// FIXME: 'test.show_errors' already exists
 	_, _ = tk.Exec(testSQL)
 
-	tk.MustQuery("show errors").Check(testutil.RowsWithSep("|", "Error|1050|Table 'test.show_errors' already exists"))
+	tk.MustQuery("show errors").Check(testkit.RowsWithSep("|", "Error|1050|Table 'test.show_errors' already exists"))
 }
 
-func (s *testSuite5) TestShowWarningsForExprPushdown(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowWarningsForExprPushdown(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	testSQL := `create table if not exists show_warnings_expr_pushdown (a int, value date)`
 	tk.MustExec(testSQL)
 
 	// create tiflash replica
 	{
-		is := domain.GetDomain(tk.Se).InfoSchema()
+		is := dom.InfoSchema()
 		db, exists := is.SchemaByName(model.NewCIStr("test"))
-		c.Assert(exists, IsTrue)
+		require.True(t, exists)
 		for _, tblInfo := range db.Tables {
 			if tblInfo.Name.L == "show_warnings_expr_pushdown" {
 				tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
@@ -166,57 +167,53 @@ func (s *testSuite5) TestShowWarningsForExprPushdown(c *C) {
 	}
 	tk.MustExec("set tidb_allow_mpp=0")
 	tk.MustExec("explain select * from show_warnings_expr_pushdown t where md5(value) = '2020-01-01'")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now."))
+	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now."))
 	tk.MustExec("explain select max(md5(value)) from show_warnings_expr_pushdown group by a")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(2))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.", "Warning|1105|Aggregation can not be pushed to tiflash because arguments of AggFunc `max` contains unsupported exprs"))
+	require.Equal(t, uint16(2), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.", "Warning|1105|Aggregation can not be pushed to tiflash because arguments of AggFunc `max` contains unsupported exprs"))
 	tk.MustExec("explain select max(a) from show_warnings_expr_pushdown group by md5(value)")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(2))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.", "Warning|1105|Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs"))
+	require.Equal(t, uint16(2), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1105|Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.", "Warning|1105|Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs"))
 	tk.MustExec("set tidb_opt_distinct_agg_push_down=0")
 	tk.MustExec("explain select max(distinct a) from show_warnings_expr_pushdown group by value")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
-	// tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|Aggregation can not be pushed to storage layer in non-mpp mode because it contains agg function with distinct"))
+	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	// tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1105|Aggregation can not be pushed to storage layer in non-mpp mode because it contains agg function with distinct"))
 }
 
-func (s *testSuite5) TestShowGrantsPrivilege(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowGrantsPrivilege(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create user show_grants")
 	tk.MustExec("show grants for show_grants")
-	tk1 := testkit.NewTestKit(c, s.store)
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "show_grants", Hostname: "%"}, nil, nil), IsTrue)
-	tk1.Se = se
-	err = tk1.QueryToErr("show grants for root")
-	c.Assert(err.Error(), Equals, executor.ErrDBaccessDenied.GenWithStackByArgs("show_grants", "%", mysql.SystemDB).Error())
+	tk1 := testkit.NewTestKit(t, store)
+	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "show_grants", Hostname: "%"}, nil, nil))
+	err := tk1.QueryToErr("show grants for root")
+	require.EqualError(t, executor.ErrDBaccessDenied.GenWithStackByArgs("show_grants", "%", mysql.SystemDB), err.Error())
 	// Test show grants for user with auth host name `%`.
-	tk2 := testkit.NewTestKit(c, s.store)
-	se2, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	c.Assert(se2.Auth(&auth.UserIdentity{Username: "show_grants", Hostname: "127.0.0.1", AuthUsername: "show_grants", AuthHostname: "%"}, nil, nil), IsTrue)
-	tk2.Se = se2
+	tk2 := testkit.NewTestKit(t, store)
+	require.True(t, tk2.Session().Auth(&auth.UserIdentity{Username: "show_grants", Hostname: "127.0.0.1", AuthUsername: "show_grants", AuthHostname: "%"}, nil, nil))
 	tk2.MustQuery("show grants")
 }
 
-func (s *testSuite5) TestShowStatsPrivilege(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowStatsPrivilege(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create user show_stats")
-	tk1 := testkit.NewTestKit(c, s.store)
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "show_stats", Hostname: "%"}, nil, nil), IsTrue)
-	tk1.Se = se
+	tk1 := testkit.NewTestKit(t, store)
+
+	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "show_stats", Hostname: "%"}, nil, nil))
 	eqErr := plannercore.ErrDBaccessDenied.GenWithStackByArgs("show_stats", "%", mysql.SystemDB)
-	_, err = tk1.Exec("show stats_meta")
-	c.Assert(err.Error(), Equals, eqErr.Error())
+	_, err := tk1.Exec("show stats_meta")
+	require.EqualError(t, err, eqErr.Error())
 	_, err = tk1.Exec("SHOW STATS_BUCKETS")
-	c.Assert(err.Error(), Equals, eqErr.Error())
+	require.EqualError(t, err, eqErr.Error())
 	_, err = tk1.Exec("SHOW STATS_HEALTHY")
-	c.Assert(err.Error(), Equals, eqErr.Error())
+	require.EqualError(t, err, eqErr.Error())
 	_, err = tk1.Exec("SHOW STATS_HISTOGRAMS")
-	c.Assert(err.Error(), Equals, eqErr.Error())
+	require.EqualError(t, err, eqErr.Error())
 	tk.MustExec("grant select on mysql.* to show_stats")
 	tk1.MustExec("show stats_meta")
 	tk1.MustExec("SHOW STATS_BUCKETS")
@@ -224,55 +221,53 @@ func (s *testSuite5) TestShowStatsPrivilege(c *C) {
 	tk1.MustExec("SHOW STATS_HISTOGRAMS")
 }
 
-func (s *testSuite5) TestIssue18878(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil), IsTrue)
-	tk.Se = se
+func TestIssue18878(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil))
 	tk.MustQuery("select user()").Check(testkit.Rows("root@127.0.0.1"))
 	tk.MustQuery("show grants")
 	tk.MustQuery("select user()").Check(testkit.Rows("root@127.0.0.1"))
-	err = tk.QueryToErr("show grants for root@127.0.0.1")
-	c.Assert(err.Error(), Equals, privileges.ErrNonexistingGrant.FastGenByArgs("root", "127.0.0.1").Error())
+	err := tk.QueryToErr("show grants for root@127.0.0.1")
+	require.Equal(t, privileges.ErrNonexistingGrant.FastGenByArgs("root", "127.0.0.1").Error(), err.Error())
 	err = tk.QueryToErr("show grants for root@localhost")
-	c.Assert(err.Error(), Equals, privileges.ErrNonexistingGrant.FastGenByArgs("root", "localhost").Error())
+	require.Equal(t, privileges.ErrNonexistingGrant.FastGenByArgs("root", "localhost").Error(), err.Error())
 	err = tk.QueryToErr("show grants for root@1.1.1.1")
-	c.Assert(err.Error(), Equals, privileges.ErrNonexistingGrant.FastGenByArgs("root", "1.1.1.1").Error())
+	require.Equal(t, privileges.ErrNonexistingGrant.FastGenByArgs("root", "1.1.1.1").Error(), err.Error())
 	tk.MustExec("create user `show_grants`@`127.0.%`")
 	err = tk.QueryToErr("show grants for `show_grants`@`127.0.0.1`")
-	c.Assert(err.Error(), Equals, privileges.ErrNonexistingGrant.FastGenByArgs("show_grants", "127.0.0.1").Error())
+	require.Equal(t, privileges.ErrNonexistingGrant.FastGenByArgs("show_grants", "127.0.0.1").Error(), err.Error())
 	tk.MustQuery("show grants for `show_grants`@`127.0.%`")
 }
 
-func (s *testSuite5) TestIssue17794(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue17794(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER 'root'@'8.8.%'")
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "9.9.9.9", AuthHostname: "%"}, nil, nil), IsTrue)
-	tk.Se = se
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "9.9.9.9", AuthHostname: "%"}, nil, nil))
 
-	tk1 := testkit.NewTestKit(c, s.store)
-	se1, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	c.Assert(se1.Auth(&auth.UserIdentity{Username: "root", Hostname: "8.8.8.8", AuthHostname: "8.8.%"}, nil, nil), IsTrue)
-	tk1.Se = se1
-
+	tk1 := testkit.NewTestKit(t, store)
+	require.True(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "8.8.8.8", AuthHostname: "8.8.%"}, nil, nil))
 	tk.MustQuery("show grants").Check(testkit.Rows("GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION"))
 	tk1.MustQuery("show grants").Check(testkit.Rows("GRANT USAGE ON *.* TO 'root'@'8.8.%'"))
 }
 
-func (s *testSuite5) TestIssue3641(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue3641(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Exec("show tables;")
-	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
+	require.Equal(t, plannercore.ErrNoDB.Error(), err.Error())
 	_, err = tk.Exec("show table status;")
-	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
+	require.Equal(t, plannercore.ErrNoDB.Error(), err.Error())
 }
 
-func (s *testSuite5) TestIssue10549(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue10549(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE DATABASE newdb;")
 	tk.MustExec("CREATE ROLE 'app_developer';")
 	tk.MustExec("GRANT ALL ON newdb.* TO 'app_developer';")
@@ -280,35 +275,39 @@ func (s *testSuite5) TestIssue10549(c *C) {
 	tk.MustExec("GRANT 'app_developer' TO 'dev';")
 	tk.MustExec("SET DEFAULT ROLE app_developer TO 'dev';")
 
-	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "dev", Hostname: "%", AuthUsername: "dev", AuthHostname: "%"}, nil, nil), IsTrue)
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "dev", Hostname: "%", AuthUsername: "dev", AuthHostname: "%"}, nil, nil))
 	tk.MustQuery("SHOW DATABASES;").Check(testkit.Rows("INFORMATION_SCHEMA", "newdb"))
 	tk.MustQuery("SHOW GRANTS;").Check(testkit.Rows("GRANT USAGE ON *.* TO 'dev'@'%'", "GRANT ALL PRIVILEGES ON newdb.* TO 'dev'@'%'", "GRANT 'app_developer'@'%' TO 'dev'@'%'"))
 	tk.MustQuery("SHOW GRANTS FOR CURRENT_USER").Check(testkit.Rows("GRANT USAGE ON *.* TO 'dev'@'%'", "GRANT ALL PRIVILEGES ON newdb.* TO 'dev'@'%'", "GRANT 'app_developer'@'%' TO 'dev'@'%'"))
 	tk.MustQuery("SHOW GRANTS FOR dev").Check(testkit.Rows("GRANT USAGE ON *.* TO 'dev'@'%'", "GRANT 'app_developer'@'%' TO 'dev'@'%'"))
 }
 
-func (s *testSuite5) TestIssue11165(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue11165(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE ROLE 'r_manager';")
 	tk.MustExec("CREATE USER 'manager'@'localhost';")
 	tk.MustExec("GRANT 'r_manager' TO 'manager'@'localhost';")
 
-	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "manager", Hostname: "localhost", AuthUsername: "manager", AuthHostname: "localhost"}, nil, nil), IsTrue)
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "manager", Hostname: "localhost", AuthUsername: "manager", AuthHostname: "localhost"}, nil, nil))
 	tk.MustExec("SET DEFAULT ROLE ALL TO 'manager'@'localhost';")
 	tk.MustExec("SET DEFAULT ROLE NONE TO 'manager'@'localhost';")
 	tk.MustExec("SET DEFAULT ROLE 'r_manager' TO 'manager'@'localhost';")
 }
 
 // TestShow2 is moved from session_test
-func (s *testSuite5) TestShow2(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShow2(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	tk.MustExec("set global autocommit=0")
-	tk1 := testkit.NewTestKit(c, s.store)
+	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustQuery("show global variables where variable_name = 'autocommit'").Check(testkit.Rows("autocommit OFF"))
 	tk.MustExec("set global autocommit = 1")
-	tk2 := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustQuery("show global variables where variable_name = 'autocommit'").Check(testkit.Rows("autocommit ON"))
 
 	// TODO: Specifying the charset for national char/varchar should not be supported.
@@ -388,11 +387,11 @@ func (s *testSuite5) TestShow2(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`create table if not exists t (c int) comment '注释'`)
 	tk.MustExec("create or replace definer='root'@'localhost' view v as select * from t")
-	tk.MustQuery(`show columns from t`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
-	tk.MustQuery(`describe t`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
-	tk.MustQuery(`show columns from v`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
-	tk.MustQuery(`describe v`).Check(testutil.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
-	tk.MustQuery("show collation where Charset = 'utf8' and Collation = 'utf8_bin'").Check(testutil.RowsWithSep(",", "utf8_bin,utf8,83,Yes,Yes,1"))
+	tk.MustQuery(`show columns from t`).Check(testkit.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
+	tk.MustQuery(`describe t`).Check(testkit.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
+	tk.MustQuery(`show columns from v`).Check(testkit.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
+	tk.MustQuery(`describe v`).Check(testkit.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
+	tk.MustQuery("show collation where Charset = 'utf8' and Collation = 'utf8_bin'").Check(testkit.RowsWithSep(",", "utf8_bin,utf8,83,Yes,Yes,1"))
 	tk.MustExec(`drop sequence if exists seq`)
 	tk.MustExec(`create sequence seq`)
 	tk.MustQuery("show tables").Check(testkit.Rows("seq", "t", "v"))
@@ -403,14 +402,13 @@ func (s *testSuite5) TestShow2(c *C) {
 	tk.MustQuery("SHOW FULL TABLES in information_schema like 'VIEWS'").Check(testkit.Rows("VIEWS SYSTEM VIEW"))
 	tk.MustQuery("SHOW FULL TABLES in metrics_schema like 'uptime'").Check(testkit.Rows("uptime SYSTEM VIEW"))
 
-	ctx := tk.Se.(sessionctx.Context)
-	is := domain.GetDomain(ctx).InfoSchema()
+	is := dom.InfoSchema()
 	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	createTime := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format("2006-01-02 15:04:05")
 
 	// The Hostname is the actual host
-	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "192.168.0.1", AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "192.168.0.1", AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 
 	r := tk.MustQuery("show table status from test like 't'")
 	r.Check(testkit.Rows(fmt.Sprintf("t InnoDB 10 Compact 0 0 0 0 0 0 <nil> %s <nil> <nil> utf8mb4_bin   注释", createTime)))
@@ -424,8 +422,10 @@ func (s *testSuite5) TestShow2(c *C) {
 	tk.MustQuery("show grants for current_user").Check(testkit.Rows(`GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION`))
 }
 
-func (s *testSuite5) TestShowCreateUser(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowCreateUser(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	// Create a new user.
 	tk.MustExec(`CREATE USER 'test_show_create_user'@'%' IDENTIFIED BY 'root';`)
 	tk.MustQuery("show create user 'test_show_create_user'@'%'").
@@ -437,57 +437,56 @@ func (s *testSuite5) TestShowCreateUser(c *C) {
 
 	// Case: the user exists but the host portion doesn't match
 	err := tk.QueryToErr("show create user 'test_show_create_user'@'asdf';")
-	c.Assert(err.Error(), Equals, executor.ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER", "'test_show_create_user'@'asdf'").Error())
+	require.Equal(t, executor.ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER", "'test_show_create_user'@'asdf'").Error(), err.Error())
 
 	// Case: a user that doesn't exist
 	err = tk.QueryToErr("show create user 'aaa'@'localhost';")
-	c.Assert(err.Error(), Equals, executor.ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER", "'aaa'@'localhost'").Error())
+	require.Equal(t, executor.ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER", "'aaa'@'localhost'").Error(), err.Error())
 
-	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1", AuthUsername: "root", AuthHostname: "%"}, nil, nil)
-	rows := tk.MustQuery("show create user current_user")
-	rows.Check(testkit.Rows("CREATE USER 'root'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1", AuthUsername: "root", AuthHostname: "%"}, nil, nil)
+	tk.MustQuery("show create user current_user").
+		Check(testkit.Rows("CREATE USER 'root'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
 
-	rows = tk.MustQuery("show create user current_user()")
-	rows.Check(testkit.Rows("CREATE USER 'root'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+	tk.MustQuery("show create user current_user()").
+		Check(testkit.Rows("CREATE USER 'root'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
 
 	tk.MustExec("create user 'check_priv'")
 
 	// "show create user" for other user requires the SELECT privilege on mysql database.
-	tk1 := testkit.NewTestKit(c, s.store)
+	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use mysql")
-	succ := tk1.Se.Auth(&auth.UserIdentity{Username: "check_priv", Hostname: "127.0.0.1", AuthUsername: "test_show", AuthHostname: "asdf"}, nil, nil)
-	c.Assert(succ, IsTrue)
+	succ := tk1.Session().Auth(&auth.UserIdentity{Username: "check_priv", Hostname: "127.0.0.1", AuthUsername: "test_show", AuthHostname: "asdf"}, nil, nil)
+	require.True(t, succ)
 	err = tk1.QueryToErr("show create user 'root'@'%'")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	// "show create user" for current user doesn't check privileges.
-	rows = tk1.MustQuery("show create user current_user")
-	rows.Check(testkit.Rows("CREATE USER 'check_priv'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
+	tk1.MustQuery("show create user current_user").
+		Check(testkit.Rows("CREATE USER 'check_priv'@'127.0.0.1' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK"))
 
 	// Creating users with `IDENTIFIED WITH 'caching_sha2_password'`
 	tk.MustExec("CREATE USER 'sha_test'@'%' IDENTIFIED WITH 'caching_sha2_password' BY 'temp_passwd'")
 
 	// Compare only the start of the output as the salt changes every time.
-	rows = tk.MustQuery("SHOW CREATE USER 'sha_test'@'%'")
-	c.Assert(rows.Rows()[0][0].(string)[:78], check.Equals, "CREATE USER 'sha_test'@'%' IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$")
-
+	rows := tk.MustQuery("SHOW CREATE USER 'sha_test'@'%'")
+	require.Equal(t, "CREATE USER 'sha_test'@'%' IDENTIFIED WITH 'caching_sha2_password' AS '$A$005$", rows.Rows()[0][0].(string)[:78])
 	// Creating users with `IDENTIFIED WITH 'auth-socket'`
 	tk.MustExec("CREATE USER 'sock'@'%' IDENTIFIED WITH 'auth_socket'")
 
 	// Compare only the start of the output as the salt changes every time.
 	rows = tk.MustQuery("SHOW CREATE USER 'sock'@'%'")
-	c.Assert(rows.Rows()[0][0].(string), check.Equals, "CREATE USER 'sock'@'%' IDENTIFIED WITH 'auth_socket' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK")
-
+	require.Equal(t, "CREATE USER 'sock'@'%' IDENTIFIED WITH 'auth_socket' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK", rows.Rows()[0][0].(string))
 	tk.MustExec("CREATE USER 'sock2'@'%' IDENTIFIED WITH 'auth_socket' AS 'sock3'")
 
 	// Compare only the start of the output as the salt changes every time.
 	rows = tk.MustQuery("SHOW CREATE USER 'sock2'@'%'")
-	c.Assert(rows.Rows()[0][0].(string), check.Equals, "CREATE USER 'sock2'@'%' IDENTIFIED WITH 'auth_socket' AS 'sock3' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK")
+	require.Equal(t, "CREATE USER 'sock2'@'%' IDENTIFIED WITH 'auth_socket' AS 'sock3' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK", rows.Rows()[0][0].(string))
 }
 
-func (s *testSuite5) TestUnprivilegedShow(c *C) {
-
-	tk := testkit.NewTestKit(c, s.store)
+func TestUnprivilegedShow(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE DATABASE testshow")
 	tk.MustExec("USE testshow")
 	tk.MustExec("CREATE TABLE t1 (a int)")
@@ -495,66 +494,69 @@ func (s *testSuite5) TestUnprivilegedShow(c *C) {
 
 	tk.MustExec(`CREATE USER 'lowprivuser'`) // no grants
 
-	tk.Se.Auth(&auth.UserIdentity{Username: "lowprivuser", Hostname: "192.168.0.1", AuthUsername: "lowprivuser", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tk.Session().Auth(&auth.UserIdentity{Username: "lowprivuser", Hostname: "192.168.0.1", AuthUsername: "lowprivuser", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 	rs, err := tk.Exec("SHOW TABLE STATUS FROM testshow")
-	c.Assert(err, IsNil)
-	c.Assert(rs, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, rs)
 
-	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "192.168.0.1", AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "192.168.0.1", AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 	tk.MustExec("GRANT ALL ON testshow.t1 TO 'lowprivuser'")
-	tk.Se.Auth(&auth.UserIdentity{Username: "lowprivuser", Hostname: "192.168.0.1", AuthUsername: "lowprivuser", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tk.Session().Auth(&auth.UserIdentity{Username: "lowprivuser", Hostname: "192.168.0.1", AuthUsername: "lowprivuser", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 
-	ctx := tk.Se.(sessionctx.Context)
-	is := domain.GetDomain(ctx).InfoSchema()
+	is := dom.InfoSchema()
 	tblInfo, err := is.TableByName(model.NewCIStr("testshow"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	createTime := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format("2006-01-02 15:04:05")
 
 	tk.MustQuery("show table status from testshow").Check(testkit.Rows(fmt.Sprintf("t1 InnoDB 10 Compact 0 0 0 0 0 0 <nil> %s <nil> <nil> utf8mb4_bin   ", createTime)))
 
 }
 
-func (s *testSuite5) TestCollation(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestCollation(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	rs, err := tk.Exec("show collation;")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	fields := rs.Fields()
-	c.Assert(fields[0].Column.Tp, Equals, mysql.TypeVarchar)
-	c.Assert(fields[1].Column.Tp, Equals, mysql.TypeVarchar)
-	c.Assert(fields[2].Column.Tp, Equals, mysql.TypeLonglong)
-	c.Assert(fields[3].Column.Tp, Equals, mysql.TypeVarchar)
-	c.Assert(fields[4].Column.Tp, Equals, mysql.TypeVarchar)
-	c.Assert(fields[5].Column.Tp, Equals, mysql.TypeLonglong)
+	require.Equal(t, mysql.TypeVarchar, fields[0].Column.Tp)
+	require.Equal(t, mysql.TypeVarchar, fields[1].Column.Tp)
+	require.Equal(t, mysql.TypeLonglong, fields[2].Column.Tp)
+	require.Equal(t, mysql.TypeVarchar, fields[3].Column.Tp)
+	require.Equal(t, mysql.TypeVarchar, fields[4].Column.Tp)
+	require.Equal(t, mysql.TypeLonglong, fields[5].Column.Tp)
 }
 
-func (s *testSuite5) TestShowTableStatus(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowTableStatus(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a bigint);`)
 
-	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "192.168.0.1", AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "192.168.0.1", AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 
 	// It's not easy to test the result contents because every time the test runs, "Create_time" changed.
 	tk.MustExec("show table status;")
 	rs, err := tk.Exec("show table status;")
-	c.Assert(err, IsNil)
-	c.Assert(rs, NotNil)
-	rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+	require.NotNil(t, rs)
+	rows, err := session.GetRows4Test(context.Background(), tk.Session(), rs)
+	require.NoError(t, err)
 	err = rs.Close()
-	c.Assert(err, IsNil)
-	c.Assert(len(rows), Equals, 1)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(rows))
 
 	for i := range rows {
 		row := rows[i]
-		c.Assert(row.GetString(0), Equals, "t")
-		c.Assert(row.GetString(1), Equals, "InnoDB")
-		c.Assert(row.GetInt64(2), Equals, int64(10))
-		c.Assert(row.GetString(3), Equals, "Compact")
+		require.Equal(t, "t", row.GetString(0))
+		require.Equal(t, "InnoDB", row.GetString(1))
+		require.Equal(t, int64(10), row.GetInt64(2))
+		require.Equal(t, "Compact", row.GetString(3))
 	}
 	tk.MustExec(`drop table if exists tp;`)
 	tk.MustExec(`create table tp (a int)
@@ -564,38 +566,40 @@ func (s *testSuite5) TestShowTableStatus(c *C) {
 		  partition p2 values less than (maxvalue)
   		);`)
 	rs, err = tk.Exec("show table status from test like 'tp';")
-	c.Assert(err, IsNil)
-	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
-	c.Assert(err, IsNil)
-	c.Assert(rows[0].GetString(16), Equals, "partitioned")
+	require.NoError(t, err)
+	rows, err = session.GetRows4Test(context.Background(), tk.Session(), rs)
+	require.NoError(t, err)
+	require.Equal(t, "partitioned", rows[0].GetString(16))
 
 	tk.MustExec("create database UPPER_CASE")
 	tk.MustExec("use UPPER_CASE")
 	tk.MustExec("create table t (i int)")
 	rs, err = tk.Exec("show table status")
-	c.Assert(err, IsNil)
-	c.Assert(rs, NotNil)
-	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+	require.NotNil(t, rs)
+	rows, err = session.GetRows4Test(context.Background(), tk.Session(), rs)
+	require.NoError(t, err)
 	err = rs.Close()
-	c.Assert(err, IsNil)
-	c.Assert(len(rows), Equals, 1)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(rows))
 
 	tk.MustExec("use upper_case")
 	rs, err = tk.Exec("show table status")
-	c.Assert(err, IsNil)
-	c.Assert(rs, NotNil)
-	rows, err = session.GetRows4Test(context.Background(), tk.Se, rs)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+	require.NotNil(t, rs)
+	rows, err = session.GetRows4Test(context.Background(), tk.Session(), rs)
+	require.NoError(t, err)
 	err = rs.Close()
-	c.Assert(err, IsNil)
-	c.Assert(len(rows), Equals, 1)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(rows))
 
 	tk.MustExec("drop database UPPER_CASE")
 }
 
-func (s *testSuite5) TestShowSlow(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowSlow(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	// The test result is volatile, because
 	// 1. Slow queries is stored in domain, which may be affected by other tests.
 	// 2. Collecting slow queries is a asynchronous process, check immediately may not get the expected result.
@@ -607,54 +611,58 @@ func (s *testSuite5) TestShowSlow(c *C) {
 	tk.MustQuery(`admin show slow top all 3`)
 }
 
-func (s *testSuite5) TestShowOpenTables(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowOpenTables(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("show open tables")
 	tk.MustQuery("show open tables in test")
 }
-func (s *testSuite5) TestShowCreateViewDefiner(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%", AuthUsername: "root", AuthHostname: "%"}, nil, nil), IsTrue)
-	tk.Se = se
+func TestShowCreateViewDefiner(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%", AuthUsername: "root", AuthHostname: "%"}, nil, nil))
+
 	tk.MustExec("use test")
 	tk.MustExec("create or replace view v1 as select 1")
-	tk.MustQuery("show create view v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v1` (`1`) AS SELECT 1 AS `1`|utf8mb4|utf8mb4_bin"))
+	tk.MustQuery("show create view v1").Check(testkit.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v1` (`1`) AS SELECT 1 AS `1`|utf8mb4|utf8mb4_bin"))
 	tk.MustExec("drop view v1")
 }
 
-func (s *testSuite5) TestShowCreateTable(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowCreateTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int,b int)")
 	tk.MustExec("drop view if exists v1")
 	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v1 as select * from t1")
-	tk.MustQuery("show create table v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS SELECT `test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b` FROM `test`.`t1`|utf8mb4|utf8mb4_bin"))
-	tk.MustQuery("show create view v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS SELECT `test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b` FROM `test`.`t1`|utf8mb4|utf8mb4_bin"))
+	tk.MustQuery("show create table v1").Check(testkit.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS SELECT `test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b` FROM `test`.`t1`|utf8mb4|utf8mb4_bin"))
+	tk.MustQuery("show create view v1").Check(testkit.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a`, `b`) AS SELECT `test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b` FROM `test`.`t1`|utf8mb4|utf8mb4_bin"))
 	tk.MustExec("drop view v1")
 	tk.MustExec("drop table t1")
 
 	tk.MustExec("drop view if exists v")
 	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v as select JSON_MERGE('{}', '{}') as col;")
-	tk.MustQuery("show create view v").Check(testutil.RowsWithSep("|", "v|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v` (`col`) AS SELECT JSON_MERGE(_UTF8MB4'{}', _UTF8MB4'{}') AS `col`|utf8mb4|utf8mb4_bin"))
+	tk.MustQuery("show create view v").Check(testkit.RowsWithSep("|", "v|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v` (`col`) AS SELECT JSON_MERGE(_UTF8MB4'{}', _UTF8MB4'{}') AS `col`|utf8mb4|utf8mb4_bin"))
 	tk.MustExec("drop view if exists v")
 
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(a int,b int)")
 	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v1 as select avg(a),t1.* from t1 group by a")
-	tk.MustQuery("show create view v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`avg(a)`, `a`, `b`) AS SELECT AVG(`a`) AS `avg(a)`,`test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b` FROM `test`.`t1` GROUP BY `a`|utf8mb4|utf8mb4_bin"))
+	tk.MustQuery("show create view v1").Check(testkit.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`avg(a)`, `a`, `b`) AS SELECT AVG(`a`) AS `avg(a)`,`test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b` FROM `test`.`t1` GROUP BY `a`|utf8mb4|utf8mb4_bin"))
 	tk.MustExec("drop view v1")
 	tk.MustExec("create or replace definer=`root`@`127.0.0.1` view v1 as select a+b, t1.* , a as c from t1")
-	tk.MustQuery("show create view v1").Check(testutil.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a+b`, `a`, `b`, `c`) AS SELECT `a`+`b` AS `a+b`,`test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b`,`a` AS `c` FROM `test`.`t1`|utf8mb4|utf8mb4_bin"))
+	tk.MustQuery("show create view v1").Check(testkit.RowsWithSep("|", "v1|CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`127.0.0.1` SQL SECURITY DEFINER VIEW `v1` (`a+b`, `a`, `b`, `c`) AS SELECT `a`+`b` AS `a+b`,`test`.`t1`.`a` AS `a`,`test`.`t1`.`b` AS `b`,`a` AS `c` FROM `test`.`t1`|utf8mb4|utf8mb4_bin"))
 	tk.MustExec("drop table t1")
 	tk.MustExec("drop view v1")
 
 	// For issue #9211
 	tk.MustExec("create table t(c int, b int as (c + 1))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
-	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table `t`").Check(testkit.RowsWithSep("|",
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `c` int(11) DEFAULT NULL,\n"+
@@ -664,7 +672,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(c int, b int as (c + 1) not null)ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
-	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table `t`").Check(testkit.RowsWithSep("|",
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `c` int(11) DEFAULT NULL,\n"+
@@ -673,7 +681,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	))
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t ( a char(10) charset utf8 collate utf8_bin, b char(10) as (rtrim(a)));")
-	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table `t`").Check(testkit.RowsWithSep("|",
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `a` char(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n"+
@@ -684,7 +692,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 
 	tk.MustExec(`drop table if exists different_charset`)
 	tk.MustExec(`create table different_charset(ch1 varchar(10) charset utf8, ch2 varchar(10) charset binary);`)
-	tk.MustQuery(`show create table different_charset`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table different_charset`).Check(testkit.RowsWithSep("|",
 		""+
 			"different_charset CREATE TABLE `different_charset` (\n"+
 			"  `ch1` varchar(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,\n"+
@@ -701,7 +709,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 		"`e` varchar(20) default 'cUrrent_tImestamp',\n" +
 		"`f` datetime(2) default current_timestamp(2) on update current_timestamp(2),\n" +
 		"`g` timestamp(2) default current_timestamp(2) on update current_timestamp(2))")
-	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table `t`").Check(testkit.RowsWithSep("|",
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `a` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n"+
@@ -716,7 +724,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	tk.MustExec("drop table t")
 
 	tk.MustExec("create table t (a int, b int) shard_row_id_bits = 4 pre_split_regions=3;")
-	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table `t`").Check(testkit.RowsWithSep("|",
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL,\n"+
@@ -728,7 +736,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	// for issue #20446
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(c int unsigned default 0);")
-	tk.MustQuery("show create table `t1`").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table `t1`").Check(testkit.RowsWithSep("|",
 		""+
 			"t1 CREATE TABLE `t1` (\n"+
 			"  `c` int(10) unsigned DEFAULT '0'\n"+
@@ -762,7 +770,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 		"PARTITION `p10` VALUES LESS THAN (11)," +
 		"PARTITION `p11` VALUES LESS THAN (12)," +
 		"PARTITION `p12` VALUES LESS THAN (MAXVALUE))")
-	tk.MustQuery("show create table log").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table log").Check(testkit.RowsWithSep("|",
 		"log CREATE TABLE `log` (\n"+
 			"  `LOG_ID` bigint(20) unsigned NOT NULL AUTO_INCREMENT,\n"+
 			"  `ROUND_ID` bigint(20) unsigned NOT NULL,\n"+
@@ -792,14 +800,14 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 
 	// for issue #11831
 	tk.MustExec("create table ttt4(a varchar(123) default null collate utf8mb4_unicode_ci)engine=innodb default charset=utf8mb4 collate=utf8mb4_unicode_ci;")
-	tk.MustQuery("show create table `ttt4`").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table `ttt4`").Check(testkit.RowsWithSep("|",
 		""+
 			"ttt4 CREATE TABLE `ttt4` (\n"+
 			"  `a` varchar(123) COLLATE utf8mb4_unicode_ci DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 	))
 	tk.MustExec("create table ttt5(a varchar(123) default null)engine=innodb default charset=utf8mb4 collate=utf8mb4_bin;")
-	tk.MustQuery("show create table `ttt5`").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table `ttt5`").Check(testkit.RowsWithSep("|",
 		""+
 			"ttt5 CREATE TABLE `ttt5` (\n"+
 			"  `a` varchar(123) DEFAULT NULL\n"+
@@ -810,7 +818,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int, b real);")
 	tk.MustExec("alter table t add index expr_idx((a*b+1));")
-	tk.MustQuery("show create table t;").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table t;").Check(testkit.RowsWithSep("|",
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL,\n"+
@@ -827,7 +835,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	// Test for issue #15633, 'binary' collation should be ignored in the result of 'show create table'.
 	tk.MustExec(`drop table if exists binary_collate`)
 	tk.MustExec(`create table binary_collate(a varchar(10)) default collate=binary;`)
-	tk.MustQuery(`show create table binary_collate`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table binary_collate`).Check(testkit.RowsWithSep("|",
 		""+
 			"binary_collate CREATE TABLE `binary_collate` (\n"+
 			"  `a` varbinary(10) DEFAULT NULL\n"+
@@ -835,7 +843,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	))
 	tk.MustExec(`drop table if exists binary_collate`)
 	tk.MustExec(`create table binary_collate(a varchar(10)) default charset=binary collate=binary;`)
-	tk.MustQuery(`show create table binary_collate`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table binary_collate`).Check(testkit.RowsWithSep("|",
 		""+
 			"binary_collate CREATE TABLE `binary_collate` (\n"+
 			"  `a` varbinary(10) DEFAULT NULL\n"+
@@ -843,7 +851,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	))
 	tk.MustExec(`drop table if exists binary_collate`)
 	tk.MustExec(`create table binary_collate(a varchar(10)) default charset=utf8mb4 collate=utf8mb4_bin;`)
-	tk.MustQuery(`show create table binary_collate`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table binary_collate`).Check(testkit.RowsWithSep("|",
 		""+
 			"binary_collate CREATE TABLE `binary_collate` (\n"+
 			"  `a` varchar(10) DEFAULT NULL\n"+
@@ -852,7 +860,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	// Test for issue #17 in bug competition, default num and sequence should be shown without quote.
 	tk.MustExec(`drop table if exists default_num`)
 	tk.MustExec("create table default_num(a int default 11)")
-	tk.MustQuery("show create table default_num").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table default_num").Check(testkit.RowsWithSep("|",
 		""+
 			"default_num CREATE TABLE `default_num` (\n"+
 			"  `a` int(11) DEFAULT '11'\n"+
@@ -860,7 +868,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	))
 	tk.MustExec(`drop table if exists default_varchar`)
 	tk.MustExec("create table default_varchar(a varchar(10) default \"haha\")")
-	tk.MustQuery("show create table default_varchar").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table default_varchar").Check(testkit.RowsWithSep("|",
 		""+
 			"default_varchar CREATE TABLE `default_varchar` (\n"+
 			"  `a` varchar(10) DEFAULT 'haha'\n"+
@@ -868,7 +876,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	))
 	tk.MustExec(`drop table if exists default_sequence`)
 	tk.MustExec("create table default_sequence(a int default nextval(seq))")
-	tk.MustQuery("show create table default_sequence").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table default_sequence").Check(testkit.RowsWithSep("|",
 		""+
 			"default_sequence CREATE TABLE `default_sequence` (\n"+
 			"  `a` int(11) DEFAULT nextval(`test`.`seq`)\n"+
@@ -881,7 +889,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	tk.MustExec(`DROP TABLE IF EXISTS parent, child`)
 	tk.MustExec(`CREATE TABLE child (id INT NOT NULL PRIMARY KEY auto_increment, parent_id INT NOT NULL, INDEX par_ind (parent_id), CONSTRAINT child_ibfk_1 FOREIGN KEY (parent_id) REFERENCES parent(id))`)
 	tk.MustExec(`CREATE TABLE parent ( id INT NOT NULL PRIMARY KEY auto_increment )`)
-	tk.MustQuery(`show create table child`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table child`).Check(testkit.RowsWithSep("|",
 		""+
 			"child CREATE TABLE `child` (\n"+
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
@@ -895,7 +903,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	// Test Foreign keys + ON DELETE / ON UPDATE
 	tk.MustExec(`DROP TABLE child`)
 	tk.MustExec(`CREATE TABLE child (id INT NOT NULL PRIMARY KEY auto_increment, parent_id INT NOT NULL, INDEX par_ind (parent_id), CONSTRAINT child_ibfk_1 FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE SET NULL ON UPDATE CASCADE)`)
-	tk.MustQuery(`show create table child`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table child`).Check(testkit.RowsWithSep("|",
 		""+
 			"child CREATE TABLE `child` (\n"+
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
@@ -910,12 +918,11 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int, b char(10) as ('a'));")
 	result := tk.MustQuery("show create table t;").Rows()[0][1]
-	c.Assert(result, Matches, `(?s).*GENERATED ALWAYS AS \(_utf8mb4'a'\).*`)
+	require.Regexp(t, `(?s).*GENERATED ALWAYS AS \(_utf8mb4'a'\).*`, result)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int, b char(10) as (_utf8'a'));")
 	result = tk.MustQuery("show create table t;").Rows()[0][1]
-	c.Assert(result, Matches, `(?s).*GENERATED ALWAYS AS \(_utf8'a'\).*`)
-
+	require.Regexp(t, `(?s).*GENERATED ALWAYS AS \(_utf8'a'\).*`, result)
 	// Test show list partition table
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
@@ -925,7 +932,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
     	partition p2 values in (4,12,13,14,18),
     	partition p3 values in (7,8,15,16,null)
 	);`)
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `id` int(11) DEFAULT NULL,\n"+
 			"  `name` varchar(10) DEFAULT NULL,\n"+
@@ -944,7 +951,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
     	partition p2 values in (4,12,13,14,18),
     	partition p3 values in (7,8,15,16,null)
 	);`)
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `id` int(11) DEFAULT NULL,\n"+
 			"  `name` varchar(10) DEFAULT NULL,\n"+
@@ -959,7 +966,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id, name)) partition by list columns (id, name) (
     	partition p0 values in ((3, '1'), (5, '5')),
     	partition p1 values in ((1, '1')));`)
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `id` int(11) DEFAULT NULL,\n"+
 			"  `name` varchar(10) DEFAULT NULL,\n"+
@@ -970,7 +977,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			" PARTITION `p1` VALUES IN ((1,\"1\")))"))
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
 	tk.MustExec(`create table t (id int primary key, v varchar(255) not null, key idx_v (v) comment 'foo\'bar')`)
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `id` int(11) NOT NULL,\n"+
 			"  `v` varchar(255) NOT NULL,\n"+
@@ -980,7 +987,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 
 	// For issue #29922
 	tk.MustExec("CREATE TABLE `thash` (\n  `id` bigint unsigned NOT NULL,\n  `data` varchar(255) DEFAULT NULL,\n  PRIMARY KEY (`id`)\n)\nPARTITION BY HASH (`id`)\n(PARTITION pEven COMMENT = \"Even ids\",\n PARTITION pOdd COMMENT = \"Odd ids\");")
-	tk.MustQuery("show create table `thash`").Check(testutil.RowsWithSep("|", ""+
+	tk.MustQuery("show create table `thash`").Check(testkit.RowsWithSep("|", ""+
 		"thash CREATE TABLE `thash` (\n"+
 		"  `id` bigint(20) unsigned NOT NULL,\n"+
 		"  `data` varchar(255) DEFAULT NULL,\n"+
@@ -993,7 +1000,7 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 	// empty edge case
 	tk.MustExec("drop table if exists `thash`")
 	tk.MustExec("CREATE TABLE `thash` (\n  `id` bigint unsigned NOT NULL,\n  `data` varchar(255) DEFAULT NULL,\n  PRIMARY KEY (`id`)\n)\nPARTITION BY HASH (`id`);")
-	tk.MustQuery("show create table `thash`").Check(testutil.RowsWithSep("|", ""+
+	tk.MustQuery("show create table `thash`").Check(testkit.RowsWithSep("|", ""+
 		"thash CREATE TABLE `thash` (\n"+
 		"  `id` bigint(20) unsigned NOT NULL,\n"+
 		"  `data` varchar(255) DEFAULT NULL,\n"+
@@ -1001,10 +1008,23 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
 		"PARTITION BY HASH (`id`) PARTITIONS 1",
 	))
+
+	// default value escape character '\\' display case
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int primary key, b varchar(20) default '\\\\');")
+	tk.MustQuery("show create table t;").Check(testkit.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) NOT NULL,\n"+
+			"  `b` varchar(20) DEFAULT '\\\\',\n"+
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
-func (s *testSuite5) TestShowCreateTablePlacement(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowCreateTablePlacement(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	defer tk.MustExec(`DROP TABLE IF EXISTS t`)
 
@@ -1016,7 +1036,7 @@ func (s *testSuite5) TestShowCreateTablePlacement(c *C) {
 	defer tk.MustExec(`DROP PLACEMENT POLICY IF EXISTS x`)
 	tk.MustExec("create table t(a int)" +
 		"PLACEMENT POLICY=\"x\"")
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
@@ -1027,7 +1047,7 @@ func (s *testSuite5) TestShowCreateTablePlacement(c *C) {
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
 	tk.MustExec("create table t(a int)" +
 		"/*T![placement] PLACEMENT POLICY=\"x\" */")
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
@@ -1045,7 +1065,7 @@ func (s *testSuite5) TestShowCreateTablePlacement(c *C) {
 		"(PARTITION pLow VALUES in (1,2,3,5,8) COMMENT 'a comment' placement policy 'x'," +
 		" PARTITION pMid VALUES in (9) COMMENT 'another comment'," +
 		"partition pMax values IN (10,11,12))")
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|", ""+
+	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
 		"t CREATE TABLE `t` (\n"+
 		"  `a` int(11) DEFAULT NULL,\n"+
 		"  `b` varchar(255) DEFAULT NULL\n"+
@@ -1061,7 +1081,7 @@ func (s *testSuite5) TestShowCreateTablePlacement(c *C) {
 		"PARTITION BY LIST COLUMNS (b)\n" +
 		"(PARTITION pLow VALUES in ('1','2','3','5','8') COMMENT 'a comment' placement policy 'x'," +
 		"partition pMax values IN ('10','11','12'))")
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|", ""+
+	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
 		"t CREATE TABLE `t` (\n"+
 		"  `a` int(11) DEFAULT NULL,\n"+
 		"  `b` varchar(255) DEFAULT NULL\n"+
@@ -1076,7 +1096,7 @@ func (s *testSuite5) TestShowCreateTablePlacement(c *C) {
 		"PARTITION BY LIST COLUMNS (a,b)\n" +
 		"(PARTITION pLow VALUES in ((1,'1'),(2,'2'),(3,'3'),(5,'5'),(8,'8')) COMMENT 'a comment' placement policy 'x'," +
 		"partition pMax values IN ((10,'10'),(11,'11'),(12,'12')))")
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|", ""+
+	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
 		"t CREATE TABLE `t` (\n"+
 		"  `a` int(11) DEFAULT NULL,\n"+
 		"  `b` varchar(255) DEFAULT NULL\n"+
@@ -1091,7 +1111,7 @@ func (s *testSuite5) TestShowCreateTablePlacement(c *C) {
 		"PARTITION BY RANGE (a)\n" +
 		"(PARTITION pLow VALUES less than (1000000) COMMENT 'a comment' placement policy 'x'," +
 		"partition pMax values LESS THAN (MAXVALUE))")
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|", ""+
+	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
 		"t CREATE TABLE `t` (\n"+
 		"  `a` int(11) DEFAULT NULL,\n"+
 		"  `b` varchar(255) DEFAULT NULL\n"+
@@ -1106,7 +1126,7 @@ func (s *testSuite5) TestShowCreateTablePlacement(c *C) {
 		"PARTITION BY RANGE COLUMNS (b)\n" +
 		"(PARTITION pLow VALUES less than ('1000000') COMMENT 'a comment' placement policy 'x'," +
 		"partition pMax values LESS THAN (MAXVALUE))")
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|", ""+
+	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
 		"t CREATE TABLE `t` (\n"+
 		"  `a` int(11) DEFAULT NULL,\n"+
 		"  `b` varchar(255) DEFAULT NULL\n"+
@@ -1126,7 +1146,7 @@ func (s *testSuite5) TestShowCreateTablePlacement(c *C) {
 		" PARTITION pMadMax VALUES less than (MAXVALUE,'1000000') COMMENT ='Not a comment' placement policy 'x'," +
 		"partition pMax values LESS THAN (MAXVALUE, MAXVALUE))")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8200 Unsupported partition type RANGE, treat as normal table"))
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|", ""+
+	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
 		"t CREATE TABLE `t` (\n"+
 		"  `a` int(11) DEFAULT NULL,\n"+
 		"  `b` varchar(255) DEFAULT NULL\n"+
@@ -1137,7 +1157,7 @@ func (s *testSuite5) TestShowCreateTablePlacement(c *C) {
 	tk.MustExec("create table t(a int, b varchar(255))" +
 		"/*T![placement] PLACEMENT POLICY=\"x\" */" +
 		"PARTITION BY HASH (a) PARTITIONS 2")
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|", ""+
+	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
 		"t CREATE TABLE `t` (\n"+
 		"  `a` int(11) DEFAULT NULL,\n"+
 		"  `b` varchar(255) DEFAULT NULL\n"+
@@ -1150,7 +1170,7 @@ func (s *testSuite5) TestShowCreateTablePlacement(c *C) {
 		"PARTITION BY HASH (a)\n" +
 		"(PARTITION pLow COMMENT 'a comment' placement policy 'x'," +
 		"partition pMax)")
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|", ""+
+	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|", ""+
 		"t CREATE TABLE `t` (\n"+
 		"  `a` int(11) DEFAULT NULL,\n"+
 		"  `b` varchar(255) DEFAULT NULL\n"+
@@ -1162,13 +1182,15 @@ func (s *testSuite5) TestShowCreateTablePlacement(c *C) {
 	tk.MustExec(`DROP TABLE t`)
 }
 
-func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowCreateTableAutoRandom(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	// Basic show create table.
 	tk.MustExec("create table auto_random_tbl1 (a bigint primary key auto_random(3), b varchar(255))")
-	tk.MustQuery("show create table `auto_random_tbl1`").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table `auto_random_tbl1`").Check(testkit.RowsWithSep("|",
 		""+
 			"auto_random_tbl1 CREATE TABLE `auto_random_tbl1` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(3) */,\n"+
@@ -1179,7 +1201,7 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 
 	// Implicit auto_random value should be shown explicitly.
 	tk.MustExec("create table auto_random_tbl2 (a bigint auto_random primary key, b char)")
-	tk.MustQuery("show create table auto_random_tbl2").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table auto_random_tbl2").Check(testkit.RowsWithSep("|",
 		""+
 			"auto_random_tbl2 CREATE TABLE `auto_random_tbl2` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
@@ -1190,7 +1212,7 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 
 	// Special version comment can be shown in TiDB with new version.
 	tk.MustExec("create table auto_random_tbl3 (a bigint /*T![auto_rand] auto_random */ primary key)")
-	tk.MustQuery("show create table auto_random_tbl3").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table auto_random_tbl3").Check(testkit.RowsWithSep("|",
 		""+
 			"auto_random_tbl3 CREATE TABLE `auto_random_tbl3` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
@@ -1199,7 +1221,7 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 	))
 	// Test show auto_random table option.
 	tk.MustExec("create table auto_random_tbl4 (a bigint primary key auto_random(5), b varchar(255)) auto_random_base = 100")
-	tk.MustQuery("show create table `auto_random_tbl4`").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table `auto_random_tbl4`").Check(testkit.RowsWithSep("|",
 		""+
 			"auto_random_tbl4 CREATE TABLE `auto_random_tbl4` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
@@ -1209,7 +1231,7 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 	))
 	// Test implicit auto_random with auto_random table option.
 	tk.MustExec("create table auto_random_tbl5 (a bigint auto_random primary key, b char) auto_random_base 50")
-	tk.MustQuery("show create table auto_random_tbl5").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table auto_random_tbl5").Check(testkit.RowsWithSep("|",
 		""+
 			"auto_random_tbl5 CREATE TABLE `auto_random_tbl5` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
@@ -1219,7 +1241,7 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 	))
 	// Test auto_random table option already with special comment.
 	tk.MustExec("create table auto_random_tbl6 (a bigint /*T![auto_rand] auto_random */ primary key) auto_random_base 200")
-	tk.MustQuery("show create table auto_random_tbl6").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table auto_random_tbl6").Check(testkit.RowsWithSep("|",
 		""+
 			"auto_random_tbl6 CREATE TABLE `auto_random_tbl6` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
@@ -1229,13 +1251,15 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 }
 
 // TestAutoIdCache overrides testAutoRandomSuite to test auto id cache.
-func (s *testAutoRandomSuite) TestAutoIdCache(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestAutoIdCache(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int auto_increment key) auto_id_cache = 10")
-	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n"+
@@ -1244,7 +1268,7 @@ func (s *testAutoRandomSuite) TestAutoIdCache(c *C) {
 	))
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int auto_increment unique, b int key) auto_id_cache 100")
-	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n"+
@@ -1255,7 +1279,7 @@ func (s *testAutoRandomSuite) TestAutoIdCache(c *C) {
 	))
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int key) auto_id_cache 5")
-	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) NOT NULL,\n"+
@@ -1264,15 +1288,17 @@ func (s *testAutoRandomSuite) TestAutoIdCache(c *C) {
 	))
 }
 
-func (s *testSuite5) TestShowCreateStmtIgnoreLocalTemporaryTables(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowCreateStmtIgnoreLocalTemporaryTables(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	// SHOW CREATE VIEW ignores local temporary table with the same name
 	tk.MustExec("drop view if exists v1")
 	tk.MustExec("create view v1 as select 1")
 	tk.MustExec("create temporary table v1 (a int)")
-	tk.MustQuery("show create table v1").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table v1").Check(testkit.RowsWithSep("|",
 		""+
 			"v1 CREATE TEMPORARY TABLE `v1` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
@@ -1280,33 +1306,34 @@ func (s *testSuite5) TestShowCreateStmtIgnoreLocalTemporaryTables(c *C) {
 	))
 	tk.MustExec("drop view v1")
 	err := tk.ExecToErr("show create view v1")
-	c.Assert(infoschema.ErrTableNotExists.Equal(err), IsTrue)
+	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 
 	// SHOW CREATE SEQUENCE ignores local temporary table with the same name
 	tk.MustExec("drop view if exists seq1")
 	tk.MustExec("create sequence seq1")
 	tk.MustExec("create temporary table seq1 (a int)")
-	tk.MustQuery("show create sequence seq1").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create sequence seq1").Check(testkit.RowsWithSep("|",
 		"seq1 CREATE SEQUENCE `seq1` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB",
 	))
 	tk.MustExec("drop sequence seq1")
 	err = tk.ExecToErr("show create sequence seq1")
-	c.Assert(infoschema.ErrTableNotExists.Equal(err), IsTrue)
+	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 }
 
-func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+func TestAutoRandomBase(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"))
 	}()
-
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a bigint primary key auto_random(5), b int unique key auto_increment) auto_random_base = 100, auto_increment = 100")
-	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
@@ -1317,7 +1344,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 	))
 
 	tk.MustExec("insert into t(`a`) values (1000)")
-	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
@@ -1328,8 +1355,10 @@ func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 	))
 }
 
-func (s *testSuite5) TestAutoRandomWithLargeSignedShowTableRegions(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestAutoRandomWithLargeSignedShowTableRegions(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists auto_random_db;")
 	defer tk.MustExec("drop database if exists auto_random_db;")
 	tk.MustExec("use auto_random_db;")
@@ -1343,17 +1372,19 @@ func (s *testSuite5) TestAutoRandomWithLargeSignedShowTableRegions(c *C) {
 		Check(testkit.Rows("1 1"))
 	startKey := tk.MustQuery("show table t regions;").Rows()[1][1].(string)
 	idx := strings.Index(startKey, "_r_")
-	c.Assert(idx == -1, IsFalse)
-	c.Assert(startKey[idx+3] == '-', IsFalse, Commentf("actual key: %s", startKey))
+	require.False(t, idx == -1)
+	require.Falsef(t, startKey[idx+3] == '-', "actual key: %s", startKey)
 }
 
-func (s *testSuite5) TestShowEscape(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowEscape(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists `t``abl\"e`")
 	tk.MustExec("create table `t``abl\"e`(`c``olum\"n` int(11) primary key)")
-	tk.MustQuery("show create table `t``abl\"e`").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table `t``abl\"e`").Check(testkit.RowsWithSep("|",
 		""+
 			"t`abl\"e CREATE TABLE `t``abl\"e` (\n"+
 			"  `c``olum\"n` int(11) NOT NULL,\n"+
@@ -1364,7 +1395,7 @@ func (s *testSuite5) TestShowEscape(c *C) {
 	// ANSI_QUOTES will change the SHOW output
 	tk.MustExec("set @old_sql_mode=@@sql_mode")
 	tk.MustExec("set sql_mode=ansi_quotes")
-	tk.MustQuery("show create table \"t`abl\"\"e\"").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table \"t`abl\"\"e\"").Check(testkit.RowsWithSep("|",
 		""+
 			"t`abl\"e CREATE TABLE \"t`abl\"\"e\" (\n"+
 			"  \"c`olum\"\"n\" int(11) NOT NULL,\n"+
@@ -1376,19 +1407,23 @@ func (s *testSuite5) TestShowEscape(c *C) {
 	tk.MustExec("set sql_mode=@old_sql_mode")
 }
 
-func (s *testSuite5) TestShowBuiltin(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowBuiltin(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	res := tk.MustQuery("show builtins;")
-	c.Assert(res, NotNil)
+	require.NotNil(t, res)
 	rows := res.Rows()
-	const builtinFuncNum = 274
-	c.Assert(builtinFuncNum, Equals, len(rows))
-	c.Assert("abs", Equals, rows[0][0].(string))
-	c.Assert("yearweek", Equals, rows[builtinFuncNum-1][0].(string))
+	const builtinFuncNum = 275
+	require.Equal(t, len(rows), builtinFuncNum)
+	require.Equal(t, rows[0][0].(string), "abs")
+	require.Equal(t, rows[builtinFuncNum-1][0].(string), "yearweek")
 }
 
-func (s *testSuite5) TestShowClusterConfig(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowClusterConfig(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	var confItems [][]types.Datum
@@ -1396,7 +1431,7 @@ func (s *testSuite5) TestShowClusterConfig(c *C) {
 	var confFunc executor.TestShowClusterConfigFunc = func() ([][]types.Datum, error) {
 		return confItems, confErr
 	}
-	tk.Se.SetValue(executor.TestShowClusterConfigKey, confFunc)
+	tk.Session().SetValue(executor.TestShowClusterConfigKey, confFunc)
 	strs2Items := func(strs ...string) []types.Datum {
 		items := make([]types.Datum, 0, len(strs))
 		for _, s := range strs {
@@ -1418,40 +1453,42 @@ func (s *testSuite5) TestShowClusterConfig(c *C) {
 		"tikv 127.0.0.1:3333 log.level info"))
 
 	confErr = fmt.Errorf("something unknown error")
-	c.Assert(tk.QueryToErr("show config"), ErrorMatches, confErr.Error())
+	require.EqualError(t, tk.QueryToErr("show config"), confErr.Error())
 }
 
-func (s *testSuite5) TestInvisibleCoprCacheConfig(c *C) {
-	se1, err := session.CreateSession(s.store)
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKitWithSession(c, s.store, se1)
+func TestInvisibleCoprCacheConfig(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	rows := tk.MustQuery("show variables like '%config%'").Rows()
-	c.Assert(len(rows), Equals, 1)
+	require.Equal(t, 1, len(rows))
 	configValue := rows[0][1].(string)
 	coprCacheVal :=
 		"\t\t\"copr-cache\": {\n" +
 			"\t\t\t\"capacity-mb\": 1000\n" +
 			"\t\t},\n"
-	c.Assert(strings.Contains(configValue, coprCacheVal), Equals, true)
+	require.Equal(t, true, strings.Contains(configValue, coprCacheVal))
 }
 
-func (s *testSuite5) TestInvisibleGlobalKillConfig(c *C) {
-	se1, err := session.CreateSession(s.store)
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKitWithSession(c, s.store, se1)
+func TestInvisibleGlobalKillConfig(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	rows := tk.MustQuery("show variables like '%config%'").Rows()
-	c.Assert(len(rows), Equals, 1)
+	require.Equal(t, 1, len(rows))
 	configValue := rows[0][1].(string)
 	globalKillVal := "global-kill"
-	c.Assert(strings.Contains(configValue, globalKillVal), Equals, false)
+	require.Equal(t, false, strings.Contains(configValue, globalKillVal))
 }
 
-func (s *testSerialSuite1) TestShowCreateTableWithIntegerDisplayLengthWarnings(c *C) {
+func TestShowCreateTableWithIntegerDisplayLengthWarnings(t *testing.T) {
 	parsertypes.TiDBStrictIntegerDisplayWidth = true
 	defer func() {
 		parsertypes.TiDBStrictIntegerDisplayWidth = false
 	}()
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t")
@@ -1510,8 +1547,10 @@ func (s *testSerialSuite1) TestShowCreateTableWithIntegerDisplayLengthWarnings(c
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
-func (s *testSuite5) TestShowVar(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowVar(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	var showSQL string
 	sessionVars := make([]string, 0, len(variable.GetSysVars()))
 	globalVars := make([]string, 0, len(variable.GetSysVars()))
@@ -1531,45 +1570,47 @@ func (s *testSuite5) TestShowVar(c *C) {
 	sessionVarsStr := strings.Join(sessionVars, "','")
 	showSQL = "show variables where variable_name in('" + sessionVarsStr + "')"
 	res := tk.MustQuery(showSQL)
-	c.Check(res.Rows(), HasLen, len(sessionVars))
+	require.Len(t, res.Rows(), len(sessionVars))
 	showSQL = "show global variables where variable_name in('" + sessionVarsStr + "')"
 	res = tk.MustQuery(showSQL)
-	c.Check(res.Rows(), HasLen, 0)
+	require.Len(t, res.Rows(), 0)
 
 	globalVarsStr := strings.Join(globalVars, "','")
 	showSQL = "show variables where variable_name in('" + globalVarsStr + "')"
 	res = tk.MustQuery(showSQL)
-	c.Check(res.Rows(), HasLen, len(globalVars))
+	require.Len(t, res.Rows(), len(globalVars))
 	showSQL = "show global variables where variable_name in('" + globalVarsStr + "')"
 	res = tk.MustQuery(showSQL)
-	c.Check(res.Rows(), HasLen, len(globalVars))
+	require.Len(t, res.Rows(), len(globalVars))
 
 	// Test a known hidden variable.
 	res = tk.MustQuery("show variables like '" + variable.TiDBPartitionPruneMode + "'")
-	c.Check(res.Rows(), HasLen, 0)
+	require.Len(t, res.Rows(), 0)
 	res = tk.MustQuery("show global variables like '" + variable.TiDBPartitionPruneMode + "'")
-	c.Check(res.Rows(), HasLen, 0)
+	require.Len(t, res.Rows(), 0)
 	// Test Hidden tx_read_ts
 	res = tk.MustQuery("show variables like '%tx_read_ts'")
-	c.Check(res.Rows(), HasLen, 0)
+	require.Len(t, res.Rows(), 0)
 	// Test Hidden tidb_enable_streaming
 	res = tk.MustQuery("show variables like '%tidb_enable_streaming%';")
-	c.Check(res.Rows(), HasLen, 0)
+	require.Len(t, res.Rows(), 0)
 }
 
-func (s *testSuite5) TestIssue19507(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue19507(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE t2(a int primary key, b int unique, c int not null, unique index (c));")
 	tk.MustQuery("SHOW INDEX IN t2;").Check(
-		testutil.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|<nil>|YES",
+		testkit.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|<nil>|YES",
 			"t2|0|c|1|c|A|0|<nil>|<nil>||BTREE|||YES|<nil>|NO",
 			"t2|0|b|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|<nil>|NO"))
 
 	tk.MustExec("CREATE INDEX t2_b_c_index ON t2 (b, c);")
 	tk.MustExec("CREATE INDEX t2_c_b_index ON t2 (c, b);")
 	tk.MustQuery("SHOW INDEX IN t2;").Check(
-		testutil.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|<nil>|YES",
+		testkit.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|<nil>|YES",
 			"t2|0|c|1|c|A|0|<nil>|<nil>||BTREE|||YES|<nil>|NO",
 			"t2|0|b|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|<nil>|NO",
 			"t2|1|t2_b_c_index|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|<nil>|NO",
@@ -1579,8 +1620,10 @@ func (s *testSuite5) TestIssue19507(c *C) {
 }
 
 // TestShowPerformanceSchema tests for Issue 19231
-func (s *testSuite5) TestShowPerformanceSchema(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowPerformanceSchema(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	// Ideally we should create a new performance_schema table here with indices that we run the tests on.
 	// However, its not possible to create a new performance_schema table since its a special in memory table.
 	// Instead the test below uses the default index on the table.
@@ -1589,21 +1632,25 @@ func (s *testSuite5) TestShowPerformanceSchema(c *C) {
 			"events_statements_summary_by_digest 0 SCHEMA_NAME 2 DIGEST A 0 <nil> <nil> YES BTREE   YES <nil> NO"))
 }
 
-func (s *testSuite5) TestShowCreatePlacementPolicy(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowCreatePlacementPolicy(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE PLACEMENT POLICY xyz PRIMARY_REGION='us-east-1' REGIONS='us-east-1,us-east-2' FOLLOWERS=4")
 	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz").Check(testkit.Rows("xyz CREATE PLACEMENT POLICY `xyz` PRIMARY_REGION=\"us-east-1\" REGIONS=\"us-east-1,us-east-2\" FOLLOWERS=4"))
 	// non existent policy
 	err := tk.QueryToErr("SHOW CREATE PLACEMENT POLICY doesnotexist")
-	c.Assert(err.Error(), Equals, infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs("doesnotexist").Error())
+	require.Equal(t, infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs("doesnotexist").Error(), err.Error())
 	// alter and try second example
 	tk.MustExec("ALTER PLACEMENT POLICY xyz FOLLOWERS=4")
 	tk.MustQuery("SHOW CREATE PLACEMENT POLICY xyz").Check(testkit.Rows("xyz CREATE PLACEMENT POLICY `xyz` FOLLOWERS=4"))
 	tk.MustExec("DROP PLACEMENT POLICY xyz")
 }
 
-func (s *testSuite5) TestShowTemporaryTable(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowTemporaryTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create global temporary table t1 (id int) on commit delete rows")
 	tk.MustExec("create global temporary table t3 (i int primary key, j int) on commit delete rows")
@@ -1662,8 +1709,10 @@ func (s *testSuite5) TestShowTemporaryTable(c *C) {
 	tk.MustQuery("show create table t7").Check(testkit.Rows("t7 " + expect))
 }
 
-func (s *testSuite5) TestShowCachedTable(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestShowCachedTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int)")
 	tk.MustExec("alter table t1 cache")
@@ -1681,4 +1730,32 @@ func (s *testSuite5) TestShowCachedTable(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("select create_options from information_schema.tables where table_schema = 'test' and table_name = 't1'").Check(
 		testkit.Rows(""))
+}
+
+func TestShowBindingCache(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec(`set global tidb_mem_quota_bind_cache = 1`)
+	tk.MustQuery("select @@global.tidb_mem_quota_bind_cache").Check(testkit.Rows("1"))
+	tk.MustExec("admin reload bindings;")
+	res := tk.MustQuery("show global bindings")
+	require.Equal(t, 0, len(res.Rows()))
+
+	tk.MustExec("create global binding for select * from t using select * from t")
+	res = tk.MustQuery("show global bindings")
+	require.Equal(t, 0, len(res.Rows()))
+
+	tk.MustExec(`set global tidb_mem_quota_bind_cache = default`)
+	tk.MustQuery("select @@global.tidb_mem_quota_bind_cache").Check(testkit.Rows("67108864"))
+	tk.MustExec("admin reload bindings")
+	res = tk.MustQuery("show global bindings")
+	require.Equal(t, 1, len(res.Rows()))
+
+	tk.MustExec("create global binding for select * from t where a > 1 using select * from t where a > 1")
+	res = tk.MustQuery("show global bindings")
+	require.Equal(t, 2, len(res.Rows()))
 }
