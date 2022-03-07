@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util"
 	"math"
 	"math/rand"
 	"runtime"
@@ -2287,14 +2288,8 @@ func addNewAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	if job == nil {
 		return
 	}
-	var procID uint64
-	if ctx.GetSessionVars().InRestrictedSQL {
-		// TODO: set auto analyze procID
-	} else {
-		procID = ctx.GetSessionVars().ConnectionID
-	}
 	statsHandle := domain.GetDomain(ctx).StatsHandle()
-	err := statsHandle.RecordAnalyzeJob(job, procID)
+	err := statsHandle.RecordAnalyzeJob(job, ctx.GetSessionVars().ConnectionID)
 	if err != nil {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 	}

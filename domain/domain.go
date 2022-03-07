@@ -1515,7 +1515,7 @@ func (do *Domain) gcAnalyzeHistory(owner owner.Manager) {
 				updateTime := time.Now().AddDate(0, 0, -DaysToKeep)
 				err := statsHandle.DeleteAnalyzeJobs(updateTime)
 				if err != nil {
-					logutil.BgLogger().Debug("gc analyze history failed", zap.Error(err))
+					logutil.BgLogger().Warn("gc analyze history failed", zap.Error(err))
 				}
 			}
 		case <-do.exit:
