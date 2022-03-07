@@ -403,14 +403,14 @@ const (
 		table_schema CHAR(64) NOT NULL DEFAULT '',
 		table_name CHAR(64) NOT NULL DEFAULT '',
 		partition_name CHAR(64) NOT NULL DEFAULT '',
-		job_info TEXT NOT NULL DEFAULT '',
+		job_info TEXT NOT NULL,
 		processed_rows BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
 		start_time TIMESTAMP,
 		end_time TIMESTAMP,
 		state ENUM('pending', 'running', 'finished', 'failed') NOT NULL,
 		instance CHAR(64) NOT NULL comment 'address of the TiDB instance executing the analyze job',
 		process_id BIGINT(64) UNSIGNED comment 'ID of the process executing the analyze job',
-		PRIMARY KEY (id) CLUSTERED,
+		PRIMARY KEY (id),
 		KEY (update_time)
 	);`
 )
