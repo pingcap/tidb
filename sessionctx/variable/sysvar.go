@@ -51,7 +51,7 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: DefaultWeekFormat, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: 7},
-	{Scope: ScopeGlobal | ScopeSession, Name: SQLModeVar, Value: mysql.DefaultSQLMode, IsHintUpdatable: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	{Scope: ScopeGlobal | ScopeSession, Name: SQLModeVar, Value: mysql.DefaultSQLMode, IsHintUpdatable: true, NotNull: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		// Ensure the SQL mode parses
 		normalizedValue = mysql.FormatSQLModeStr(normalizedValue)
 		if _, err := mysql.GetSQLMode(normalizedValue); err != nil {

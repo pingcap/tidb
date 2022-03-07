@@ -2316,6 +2316,11 @@ func (s *testSuiteP2) TestSQLMode(c *C) {
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
 	tk.MustExec("set @@global.sql_mode = ''")
 
+	_, err = tk.Exec("set sql_mode = null")
+	c.Check(err, NotNil)
+	_, err = tk.Exec("set @@global.sql_mode = null")
+	c.Check(err, NotNil)
+
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test")
 	tk2.MustExec("drop table if exists t2")

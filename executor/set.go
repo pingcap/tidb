@@ -300,6 +300,12 @@ func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.
 	}
 	nativeVal, err := v.Expr.Eval(chunk.Row{})
 	if err != nil || nativeVal.IsNull() {
+		if sysVar == nil {
+			sysVar = variable.GetSysVar(v.Name)
+		}
+		if sysVar != nil && sysVar.NotNull {
+			err = variable.ErrWrongValueForVar.GenWithStackByArgs(sysVar.Name, "NULL")
+		}
 		return "", err
 	}
 	return nativeVal.ToString()
