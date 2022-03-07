@@ -220,7 +220,6 @@ func TestFDSet_ExtractFD(t *testing.T) {
 }
 
 func TestFDSet_ExtractFDForApply(t *testing.T) {
-	t.Parallel()
 	ass := assert.New(t)
 
 	store, clean := testkit.CreateMockStore(t)
@@ -297,6 +296,62 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 	ctx := context.TODO()
 	is := testGetIS(ass, tk.Session())
 	for i, tt := range tests {
+		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
+		stmt, err := par.ParseOneStmt(tt.sql, "", "")
+		ass.Nil(err, comment)
+		tk.Session().GetSessionVars().PlanID = 0
+		tk.Session().GetSessionVars().PlanColumnID = 0
+		err = plannercore.Preprocess(tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
+		ass.Nil(err)
+		tk.Session().PrepareTSFuture(ctx)
+		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session(), is, &hint.BlockHintProcessor{})
+		// extract FD to every OP
+		p, err := builder.Build(ctx, stmt)
+		ass.Nil(err)
+		p, err = plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag(), p.(plannercore.LogicalPlan))
+		ass.Nil(err)
+		ass.Equal(tt.best, plannercore.ToString(p), comment)
+		// extract FD to every OP
+		p.(plannercore.LogicalPlan).ExtractFD()
+		ass.Equal(tt.fd, plannercore.FDToString(p.(plannercore.LogicalPlan)), comment)
+	}
+}
+
+func TestFDSet_MakeOuterJoin(t *testing.T) {
+	ass := assert.New(t)
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	par := parser.New()
+	par.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE X (a INT PRIMARY KEY, b INT, c INT, d INT, e INT)")
+	tk.MustExec("CREATE UNIQUE INDEX uni ON X (b, c)")
+	tk.MustExec("CREATE TABLE Y (m INT, n INT, p INT, q INT, PRIMARY KEY (m, n))")
+
+	tests := []struct {
+		sql  string
+		best string
+		fd   string
+	}{
+		{
+			sql:  "select * from X left outer join (select *, p+q from Y) Y1 ON true",
+			best: "Join{DataScan(X)->DataScan(Y)->Projection}->Projection",
+			fd:   "{(1)-->(2-5), (2,3)~~>(1,4,5), (6,7)-->(8,9,11), (8,9)~~>(11), (1,6,7)-->(2-5,8,9,11)} >>> {(1)-->(2-5), (2,3)~~>(1,4,5), (6,7)-->(8,9,11), (8,9)~~>(11), (1,6,7)-->(2-5,8,9,11)}",
+		},
+		{
+			sql: "select * ",
+		},
+	}
+
+	ctx := context.TODO()
+	is := testGetIS(ass, tk.Session())
+	for i, tt := range tests {
+		if i == 0 {
+			fmt.Println(1)
+		}
 		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
 		stmt, err := par.ParseOneStmt(tt.sql, "", "")
 		ass.Nil(err, comment)

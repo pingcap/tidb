@@ -65,7 +65,7 @@ func TestFuncDeps_ColsAreKey(t *testing.T) {
 	loj = *abcde
 	loj.MakeCartesianProduct(mnpq)
 	loj.AddConstants(NewFastIntSet(3))
-	loj.MakeOuterJoin(nil, &FDSet{}, preservedCols, nullExtendedCols)
+	loj.MakeOuterJoin(&FDSet{}, &FDSet{}, preservedCols, nullExtendedCols)
 	loj.AddEquivalence(NewFastIntSet(1), NewFastIntSet(10))
 
 	testcases := []struct {
