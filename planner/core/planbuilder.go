@@ -787,8 +787,39 @@ func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (Plan, error) 
 	proj := LogicalProjection{Exprs: make([]expression.Expression, 0, len(v.Exprs))}.Init(b.ctx, b.getSelectOffset())
 	proj.names = make([]*types.FieldName, len(v.Exprs))
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(v.Exprs))...)
+
+	// Since do statement only contain expression list, and it may contain aggFunc, detecting to build the aggMapper firstly.
+	var (
+		err      error
+		aggFuncs []*ast.AggregateFuncExpr
+		totalMap map[*ast.AggregateFuncExpr]int
+	)
+	hasAgg := b.detectAggInExprNode(v.Exprs)
+	needBuildAgg := hasAgg
+	if hasAgg {
+		if b.buildingRecursivePartForCTE {
+			return nil, ErrCTERecursiveForbidsAggregation.GenWithStackByArgs(b.genCTETableNameForError())
+		}
+
+		aggFuncs, totalMap = b.extractAggFuncsInExprs(v.Exprs)
+
+		if len(aggFuncs) == 0 {
+			needBuildAgg = false
+		}
+	}
+	if needBuildAgg {
+		var aggIndexMap map[int]int
+		p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		for agg, idx := range totalMap {
+			totalMap[agg] = aggIndexMap[idx]
+		}
+	}
+
 	for _, astExpr := range v.Exprs {
-		expr, np, err := b.rewrite(ctx, astExpr, p, nil, true)
+		expr, np, err := b.rewrite(ctx, astExpr, p, totalMap, true)
 		if err != nil {
 			return nil, err
 		}
@@ -905,6 +936,16 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
+}
+
+// detectAggInExprNode detects an aggregate function in its exprs.
+func (b *PlanBuilder) detectAggInExprNode(exprs []ast.ExprNode) bool {
+	for _, expr := range exprs {
+		if ast.HasAggFlag(expr) {
+			return true
+		}
+	}
+	return false
 }
 
 // detectSelectAgg detects an aggregate function or GROUP BY clause.
@@ -1162,6 +1203,16 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 		available = append(available, tablePath)
 	}
 	return available, nil
+}
+
+func filterOutTiFlashPaths(paths []*util.AccessPath) []*util.AccessPath {
+	updatedPaths := make([]*util.AccessPath, 0, len(paths))
+	for _, path := range paths {
+		if path.StoreType != kv.TiFlash {
+			updatedPaths = append(updatedPaths, path)
+		}
+	}
+	return updatedPaths
 }
 
 func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath, tblName model.CIStr, dbName model.CIStr) ([]*util.AccessPath, error) {
