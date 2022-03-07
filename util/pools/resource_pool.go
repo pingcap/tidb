@@ -75,7 +75,7 @@ func NewResourcePool(factory Factory, capacity, maxCap int, idleTimeout time.Dur
 // Close empties the pool calling Close on all its resources.
 // You can call Close while there are outstanding resources.
 // It waits for all resources to be returned (Put).
-// After a Close, Get and TryGet are not allowed.
+// After a Close, Get are not allowed.
 func (rp *ResourcePool) Close() {
 	// Atomically swap new capacity with old, but only
 	// if old capacity is non-zero.
