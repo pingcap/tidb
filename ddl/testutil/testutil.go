@@ -28,8 +28,8 @@ import (
 )
 
 // SessionExecInGoroutine export for testing.
-func SessionExecInGoroutine(s kv.Storage, sql string, done chan error) {
-	ExecMultiSQLInGoroutine(s, "test_db", []string{sql}, done)
+func SessionExecInGoroutine(s kv.Storage, dbName, sql string, done chan error) {
+	ExecMultiSQLInGoroutine(s, dbName, []string{sql}, done)
 }
 
 // ExecMultiSQLInGoroutine exports for testing.
