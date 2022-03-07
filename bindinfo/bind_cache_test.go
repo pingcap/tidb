@@ -25,7 +25,7 @@ import (
 )
 
 func TestBindCache(t *testing.T) {
-	variable.MemQuotaBindCache.Store(100)
+	variable.MemQuotaBindCache.Store(200)
 	bindCache := newBindCache()
 
 	value := make([][]*BindRecord, 3)
@@ -39,25 +39,26 @@ func TestBindCache(t *testing.T) {
 		require.Equal(t, int64(100), calcBindCacheKVMem(key[i], value[i]))
 	}
 
-	ok := bindCache.set(key[0], value[0])
-	require.True(t, ok)
+	err := bindCache.set(key[0], value[0])
+	require.Nil(t, err)
 	result := bindCache.get(key[0])
 	require.NotNil(t, result)
 
-	ok = bindCache.set(key[1], value[1])
-	require.True(t, ok)
+	err = bindCache.set(key[1], value[1])
+	require.Nil(t, err)
 	result = bindCache.get(key[1])
 	require.NotNil(t, result)
 
-	ok = bindCache.set(key[2], value[2])
-	require.True(t, ok)
+	err = bindCache.set(key[2], value[2])
+	require.NotNil(t, err)
 	result = bindCache.get(key[2])
 	require.NotNil(t, result)
 
-	// Both key[0] and key[1] are not in the cache
+	// key[0] is not in the cache
 	result = bindCache.get(key[0])
 	require.Nil(t, result)
 
+	// key[1] is still in the cache
 	result = bindCache.get(key[1])
-	require.Nil(t, result)
+	require.NotNil(t, result)
 }

@@ -15,13 +15,16 @@
 package bindinfo
 
 import (
+	"errors"
 	"sync"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"go.uber.org/zap"
 )
 
 // bindCache uses the LRU cache to store the bindRecord.
@@ -75,10 +78,12 @@ func (c *bindCache) get(key bindCacheKey) []*BindRecord {
 
 // set inserts an item to the cache. It's not thread-safe.
 // Only other functions of the bindCache can use this function.
-func (c *bindCache) set(key bindCacheKey, value []*BindRecord) bool {
+// The set operation is failed when the memory usage of binding_cache exceeds its capacity.
+func (c *bindCache) set(key bindCacheKey, value []*BindRecord) (err error) {
 	mem := calcBindCacheKVMem(key, value)
 	if mem > c.memCapacity { // ignore this kv pair if its size is too large
-		return false
+		err = errors.New("The memory usage of the binding_cache exceeds its capacity")
+		return
 	}
 	bindRecords := c.get(key)
 	if bindRecords != nil {
@@ -86,15 +91,16 @@ func (c *bindCache) set(key bindCacheKey, value []*BindRecord) bool {
 		mem -= calcBindCacheKVMem(key, bindRecords)
 	}
 	for mem+c.memTracker.BytesConsumed() > c.memCapacity {
+		err = errors.New("The memory usage of the binding_cache exceeds its capacity")
 		evictedKey, evictedValue, evicted := c.cache.RemoveOldest()
 		if !evicted {
-			return false
+			return
 		}
 		c.memTracker.Consume(-calcBindCacheKVMem(evictedKey.(bindCacheKey), evictedValue.([]*BindRecord)))
 	}
 	c.memTracker.Consume(mem)
 	c.cache.Put(key, value)
-	return true
+	return
 }
 
 // delete remove an item from the cache. It's not thread-safe.
@@ -105,8 +111,9 @@ func (c *bindCache) delete(key bindCacheKey) bool {
 		mem := calcBindCacheKVMem(key, bindRecords)
 		c.cache.Delete(key)
 		c.memTracker.Consume(-mem)
+		return true
 	}
-	return true
+	return false
 }
 
 // GetBindRecord gets the BindRecord from the cache.
@@ -150,7 +157,10 @@ func (c *bindCache) SetBindRecord(hash string, meta *BindRecord) {
 			metas[i] = meta
 		}
 	}
-	c.set(cacheKey, []*BindRecord{meta})
+	err := c.set(cacheKey, []*BindRecord{meta})
+	if err != nil {
+		logutil.BgLogger().Warn("[sql-bind] ", zap.Error(err))
+	}
 }
 
 // RemoveBindRecord removes the BindRecord which has same originSQL with specified BindRecord.
@@ -175,7 +185,9 @@ func (c *bindCache) RemoveBindRecord(hash string, meta *BindRecord) {
 			}
 		}
 	}
-	c.set(bindCacheKey(hash), metas)
+	// This function can guarantee the memory usage for the cache will never grow up.
+	// So we don't need to handle the return value here.
+	_ = c.set(bindCacheKey(hash), metas)
 }
 
 // SetMemCapacity sets the memory capacity for the cache.
@@ -195,19 +207,34 @@ func (c *bindCache) GetMemCapacity() int64 {
 	return c.memCapacity
 }
 
+// GetMemUsage get the memory Usage for the cache.
+// The function is thread-safe.
+func (c *bindCache) GetMemUsage() int64 {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	return c.memTracker.BytesConsumed()
+}
+
 // Copy copies a new bindCache from the origin cache.
 // The function is thread-safe.
 func (c *bindCache) Copy() *bindCache {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	newCache := newBindCache()
+	if c.GetMemUsage() > newCache.GetMemCapacity() {
+		logutil.BgLogger().Warn("[sql-bind] During the cache copy operation, " +
+			"the memory capacity of the new cache is less than the memory consumption of the old cache, " +
+			"so there are bindings that are not loaded into the cache")
+	}
 	keys := c.cache.Keys()
 	for _, key := range keys {
 		cacheKey := key.(bindCacheKey)
 		v := c.get(cacheKey)
 		bindRecords := make([]*BindRecord, len(v))
 		copy(bindRecords, v)
-		newCache.set(cacheKey, bindRecords)
+		// The memory usage of cache has been handled at the beginning of this function.
+		// So we don't need to handle the return value here.
+		_ = newCache.set(cacheKey, bindRecords)
 	}
 	return newCache
 }
