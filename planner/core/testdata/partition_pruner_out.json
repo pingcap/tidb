@@ -1485,10 +1485,10 @@
         "SQL": "select * from t1 where a in (1,6) and (a=3 and b =3)",
         "Result": null,
         "Plan": [
-          "TableDual 8000.00 root  rows:0"
+          "TableDual 0.00 root  rows:0"
         ],
         "IndexPlan": [
-          "TableDual 8000.00 root  rows:0"
+          "TableDual 0.00 root  rows:0"
         ]
       },
       {
@@ -2488,10 +2488,10 @@
         "SQL": "select * from t1 where a in (1,6) and (a=3 and b =3)",
         "Result": null,
         "Plan": [
-          "TableDual 8000.00 root  rows:0"
+          "TableDual 0.00 root  rows:0"
         ],
         "IndexPlan": [
-          "TableDual 8000.00 root  rows:0"
+          "TableDual 0.00 root  rows:0"
         ]
       },
       {
