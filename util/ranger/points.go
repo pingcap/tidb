@@ -257,7 +257,7 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 			if err1 != nil {
 				return err1
 			}
-			*value, err = value.ConvertToMysqlYear(r.sc, col.RetType)
+			*value, err = value.ConvertToMysqlYearForCompare(r.sc, col.RetType)
 			if errors.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 				// Keep err for EQ and NE.
 				switch *op {

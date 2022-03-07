@@ -7944,6 +7944,18 @@ func (s *testSuite) TestIssue20305(c *C) {
 	tk.MustQuery("SELECT * FROM `t3` where y <= a").Check(testkit.Rows("2155 2156"))
 }
 
+func (s *testSuite) TestIssue25993(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, y YEAR)")
+	tk.MustExec("insert ignore t1 values (1, 1900), (2, 2156), (3, '1900'), (4, '2156')")
+	tk.MustQuery("SELECT * FROM `t1`  where a = 1").Check(testkit.Rows("1 0"))
+	tk.MustQuery("SELECT * FROM `t1`  where a = 2").Check(testkit.Rows("2 0"))
+	tk.MustQuery("SELECT * FROM `t1`  where a = 3").Check(testkit.Rows("3 0"))
+	tk.MustQuery("SELECT * FROM `t1`  where a = 4").Check(testkit.Rows("4 0"))
+}
+
 func (s *testSuite) TestIssue22817(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

@@ -1502,6 +1502,50 @@ func (d *Datum) ConvertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 	return ret, errors.Trace(err)
 }
 
+// ConvertToMysqlYearForCompare converts a datum to MySQLYear using function ConvertToYearForCompare.
+func (d *Datum) ConvertToMysqlYearForCompare(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
+	var (
+		ret    Datum
+		y      int64
+		err    error
+		adjust bool
+	)
+	switch d.k {
+	case KindString, KindBytes:
+		s := d.GetString()
+		trimS := strings.TrimSpace(s)
+		y, err = StrToInt(sc, trimS, false)
+		if err != nil {
+			ret.SetInt64(0)
+			return ret, errors.Trace(err)
+		}
+		// condition:
+		// parsed to 0, not a string of length 4, the first valid char is a 0 digit
+		if len(s) != 4 && y == 0 && strings.HasPrefix(trimS, "0") {
+			adjust = true
+		}
+	case KindMysqlTime:
+		y = int64(d.GetMysqlTime().Year())
+	case KindMysqlJSON:
+		y, err = ConvertJSONToInt64(sc, d.GetMysqlJSON(), false)
+		if err != nil {
+			ret.SetInt64(0)
+			return ret, errors.Trace(err)
+		}
+	default:
+		ret, err = d.convertToInt(sc, NewFieldType(mysql.TypeLonglong))
+		if err != nil {
+			_, err = invalidConv(d, target.Tp)
+			ret.SetInt64(0)
+			return ret, err
+		}
+		y = ret.GetInt64()
+	}
+	y, err = ConvertToYearForCompare(y, adjust)
+	ret.SetInt64(y)
+	return ret, errors.Trace(err)
+}
+
 func (d *Datum) convertStringToMysqlBit(sc *stmtctx.StatementContext) (uint64, error) {
 	bitStr, err := ParseBitStr(BinaryLiteral(d.b).ToString())
 	if err != nil {
