@@ -2247,18 +2247,38 @@ func TestChangeFromTimeToYear(t *testing.T) {
 // For select statement, it truncates the string and return no errors. (which is 3977-02-22 00:00:00 here)
 // For ddl reorging or changing column in ctc, it needs report some errors.
 func TestCastDateToTimestampInReorgAttribute(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE `t` (`a` DATE NULL DEFAULT '8497-01-06')")
 	tk.MustExec("insert into t values(now())")
 
+	tbl := tk.GetTableByName("test", "t")
+	require.NotNil(t, tbl)
+	require.Len(t, tbl.Cols(), 1)
+	var checkErr1 error
+	var checkErr2 error
+
+	hook := &ddl.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if checkErr1 != nil || checkErr2 != nil || tbl.Meta().ID != job.TableID {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateWriteOnly:
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			checkErr1 = tk.ExecToErr("insert into `t` set  `a` = '3977-02-22'") // this(string) will be cast to a as date, then cast a(date) as timestamp to changing column.
+			checkErr2 = tk.ExecToErr("update t set `a` = '3977-02-22'")
+		}
+	}
+	dom.DDL().SetHook(hook)
+
 	tk.MustExec("alter table t modify column a  TIMESTAMP NULL DEFAULT '2021-04-28 03:35:11' FIRST")
-	require.EqualError(t, tk.ExecToErr("insert into `t` set  `a` = '3977-02-22'"), "[table:1292]Incorrect timestamp value: '3977-02-22' for column 'a' at row 1")
-	require.EqualError(t, tk.ExecToErr("update t set `a` = '3977-02-22'"), "[types:1292]Incorrect timestamp value: '3977-02-22'")
+	require.EqualError(t, checkErr1, "[types:1292]Incorrect timestamp value: '3977-02-22'")
+	require.EqualError(t, checkErr2, "[types:1292]Incorrect timestamp value: '3977-02-22'")
 }
 
 // https://github.com/pingcap/tidb/issues/25282.
