@@ -667,9 +667,9 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBMemQuotaBindingCache, Value: strconv.FormatInt(DefTiDBMemQuotaBindingCache, 10), Type: TypeUnsigned, MaxValue: math.MaxInt32, GetGlobal: func(sv *SessionVars) (string, error) {
-		return strconv.FormatInt(MemQuotaBindCache.Load(), 10), nil
+		return strconv.FormatInt(MemQuotaBindingCache.Load(), 10), nil
 	}, SetGlobal: func(s *SessionVars, val string) error {
-		MemQuotaBindCache.Store(TidbOptInt64(val, DefTiDBMemQuotaBindingCache))
+		MemQuotaBindingCache.Store(TidbOptInt64(val, DefTiDBMemQuotaBindingCache))
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBBackoffLockFast, Value: strconv.Itoa(tikvstore.DefBackoffLockFast), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {

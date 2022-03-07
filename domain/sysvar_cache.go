@@ -165,7 +165,7 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 	var err error
 	switch name {
 	case variable.TiDBMemQuotaBindingCache:
-		variable.MemQuotaBindCache.Store(variable.TidbOptInt64(sVal, variable.DefTiDBMemQuotaBindingCache))
+		variable.MemQuotaBindingCache.Store(variable.TidbOptInt64(sVal, variable.DefTiDBMemQuotaBindingCache))
 	case variable.TiDBTSOClientBatchMaxWaitTime:
 		var val float64
 		val, err = strconv.ParseFloat(sVal, 64)
