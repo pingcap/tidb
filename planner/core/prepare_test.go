@@ -1326,6 +1326,15 @@ func TestPlanCacheSwitchDB(t *testing.T) {
 	tk.MustExec(`insert into t values (-1)`)
 	tk.MustExec(`prepare stmt from 'select * from t'`)
 
+	// DB is not specified
+	se2, err := session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	require.NoError(t, err)
+	tk2 := testkit.NewTestKitWithSession(t, store, se2)
+	require.Equal(t, tk2.ExecToErr(`prepare stmt from 'select * from t'`).Error(), "[planner:1046]No database selected")
+	require.Equal(t, tk2.ExecToErr(`prepare stmt from 'select * from test.t'`), nil)
+
 	// switch to a new DB
 	tk.MustExec(`drop database if exists plan_cache`)
 	tk.MustExec(`create database plan_cache`)
