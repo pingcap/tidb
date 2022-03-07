@@ -90,17 +90,6 @@ func getSchemaVer(t *testing.T, ctx sessionctx.Context) int64 {
 	return ver
 }
 
-func getSchemaVerT(t *testing.T, ctx sessionctx.Context) int64 {
-	err := ctx.NewTxn(context.Background())
-	require.NoError(t, err)
-	txn, err := ctx.Txn(true)
-	require.NoError(t, err)
-	m := meta.NewMeta(txn)
-	ver, err := m.GetSchemaVersion()
-	require.NoError(t, err)
-	return ver
-}
-
 type historyJobArgs struct {
 	ver    int64
 	db     *model.DBInfo
