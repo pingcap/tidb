@@ -1927,7 +1927,6 @@ func TestDDLExitWhenCancelMeetPanic(t *testing.T) {
 	// when it panics in write-reorg state, the job will be pulled up as a cancelling job. Since drop-index with
 	// write-reorg can't be cancelled, so it will be converted to running state and try again (dead loop).
 	err := tk.ExecToErr("alter table t drop index b")
-	require.Error(t, err)
 	require.EqualError(t, err, "[ddl:-1]panic in handling DDL logic and error count beyond the limitation 3, cancelled")
 	require.Less(t, int64(0), jobID)
 
