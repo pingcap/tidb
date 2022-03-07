@@ -965,7 +965,7 @@ func TestWalkDir(t *testing.T) {
 			require.Equal(t, "", aws.StringValue(input.Marker))
 			require.Equal(t, int64(3), aws.Int64Value(input.MaxKeys))
 			require.Equal(t, "", aws.StringValue(input.Delimiter))
-		return &s3.ListObjectsOutput{
+			return &s3.ListObjectsOutput{
 				IsTruncated: aws.Bool(false),
 				Contents:    contents[2:],
 			}, nil

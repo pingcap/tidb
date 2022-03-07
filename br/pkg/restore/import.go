@@ -758,8 +758,8 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 		Length:    0,
 		IsDelete:  file.Type == backuppb.FileType_Delete,
 		RestoreTs: restoreTs,
-		StartKey: regionInfo.Region.GetStartKey(),
-		EndKey: regionInfo.Region.GetEndKey(),
+		StartKey:  regionInfo.Region.GetStartKey(),
+		EndKey:    regionInfo.Region.GetEndKey(),
 	}
 
 	reqCtx := &kvrpcpb.Context{
@@ -772,7 +772,7 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 		Meta:           meta,
 		StorageBackend: importer.backend,
 		RewriteRule:    rule,
-		Context: reqCtx,
+		Context:        reqCtx,
 	}
 	log.Debug("apply kv file", logutil.Leader(leader))
 	_, err := importer.importClient.ApplyKVFile(ctx, leader.GetStoreId(), req)
