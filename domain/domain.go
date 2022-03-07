@@ -96,7 +96,6 @@ type Domain struct {
 	serverID             uint64
 	serverIDSession      *concurrency.Session
 	isLostConnectionToPD atomicutil.Int32 // !0: true, 0: false.
-	renewLeaseCh         chan func()      // It is used to call the renewLease function of the cache table.
 	onClose              func()
 	sysExecutorFactory   func(*Domain) (pools.Resource, error)
 }
@@ -163,7 +162,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.renewLeaseCh, do.sysFacHack).InitWithDBInfos(schemas, bundles, policies, neededSchemaVersion)
+	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithDBInfos(schemas, bundles, policies, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -285,7 +284,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 		diffs = append(diffs, diff)
 	}
-	builder := infoschema.NewBuilder(do.Store(), do.renewLeaseCh, do.sysFacHack).InitWithOldInfoSchema(do.infoCache.GetLatest())
+	builder := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithOldInfoSchema(do.infoCache.GetLatest())
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
 	for _, diff := range diffs {
@@ -729,7 +728,6 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		indexUsageSyncLease: idxUsageSyncLease,
 		planReplayer:        &planReplayer{planReplayerGCLease: planReplayerGCLease},
 		onClose:             onClose,
-		renewLeaseCh:        make(chan func(), 10),
 		expiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),
 	}
 
@@ -862,10 +860,9 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		// Local store needs to get the change information for every DDL state in each session.
 		go do.loadSchemaInLoop(ctx, ddlLease)
 	}
-	do.wg.Add(4)
+	do.wg.Add(3)
 	go do.topNSlowQueryLoop()
 	go do.infoSyncerKeeper()
-	go do.renewLease()
 	go do.globalConfigSyncerKeeper()
 	if !skipRegisterToDashboard {
 		do.wg.Add(1)
@@ -1813,22 +1810,6 @@ func (do *Domain) serverIDKeeper() {
 func (do *Domain) MockInfoCacheAndLoadInfoSchema(is infoschema.InfoSchema) {
 	do.infoCache = infoschema.NewCache(16)
 	do.infoCache.Insert(is, 0)
-}
-
-func (do *Domain) renewLease() {
-	defer func() {
-		do.wg.Done()
-		logutil.BgLogger().Info("renew lease goroutine exited.")
-	}()
-	for {
-		select {
-		case <-do.exit:
-			close(do.renewLeaseCh)
-			return
-		case op := <-do.renewLeaseCh:
-			op()
-		}
-	}
 }
 
 func init() {
