@@ -107,8 +107,6 @@ var _ = SerialSuites(&testSerialSuite2{})
 var _ = SerialSuites(&testSuiteWithCliBaseCharset{})
 var _ = Suite(&testSuite2{&baseTestSuite{}})
 var _ = Suite(&testSuite3{&baseTestSuite{}})
-var _ = Suite(&testSuite4{&baseTestSuite{}})
-var _ = Suite(&testSuite5{&baseTestSuite{}})
 var _ = Suite(&testSuite6{&baseTestSuite{}})
 var _ = Suite(&testSuite7{&baseTestSuite{}})
 var _ = Suite(&testSuite8{&baseTestSuite{}})
@@ -4722,46 +4720,6 @@ type testSuite3 struct {
 }
 
 func (s *testSuite3) TearDownTest(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	r := tk.MustQuery("show full tables")
-	for _, tb := range r.Rows() {
-		tableName := tb[0]
-		if tb[1] == "VIEW" {
-			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
-		} else if tb[1] == "SEQUENCE" {
-			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
-		} else {
-			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
-		}
-	}
-}
-
-type testSuite4 struct {
-	*baseTestSuite
-}
-
-func (s *testSuite4) TearDownTest(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	r := tk.MustQuery("show full tables")
-	for _, tb := range r.Rows() {
-		tableName := tb[0]
-		if tb[1] == "VIEW" {
-			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
-		} else if tb[1] == "SEQUENCE" {
-			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
-		} else {
-			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
-		}
-	}
-}
-
-type testSuite5 struct {
-	*baseTestSuite
-}
-
-func (s *testSuite5) TearDownTest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	r := tk.MustQuery("show full tables")
