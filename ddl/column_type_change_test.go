@@ -162,7 +162,7 @@ func TestColumnTypeChangeStateBetweenInteger(t *testing.T) {
 	SQL := "alter table t modify column c2 tinyint not null"
 	tk.MustExec(SQL)
 	// Assert the checkErr in the job of every state.
-	require.NotNil(t, checkErr)
+	require.NoError(t, checkErr)
 
 	// Check the col meta after the column type change.
 	tbl = tk.GetTableByName("test", "t")
