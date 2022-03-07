@@ -282,12 +282,12 @@ func TestCheckTiDBVersion(t *testing.T) {
 	require.Error(t, err)
 	require.Regexp(t, "^TiDB version too new", err.Error())
 
-	version = "5.7.25-TiDB-v6.0.0"
+	version = "5.7.25-TiDB-v7.0.0"
 	err = checkTiDBVersionByTLS(ctx, tls, requiredMinTiDBVersion, requiredMaxTiDBVersion)
 	require.Error(t, err)
 	require.Regexp(t, "^TiDB version too new", err.Error())
 
-	version = "5.7.25-TiDB-v6.0.0-beta"
+	version = "5.7.25-TiDB-v7.0.0-beta"
 	err = checkTiDBVersionByTLS(ctx, tls, requiredMinTiDBVersion, requiredMaxTiDBVersion)
 	require.Error(t, err)
 	require.Regexp(t, "^TiDB version too new", err.Error())

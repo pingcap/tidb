@@ -54,6 +54,17 @@ func TestDo(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
 }
 
+func TestDoWithAggFunc(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("DO sum(1)")
+	tk.MustExec("DO avg(@e+@f)")
+	tk.MustExec("DO GROUP_CONCAT(NULLIF(ELT(1, @e), 2.0) ORDER BY 1)")
+}
+
 func TestSetRoleAllCorner(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -606,7 +617,7 @@ func TestKillStmt(t *testing.T) {
 	result.Check(testkit.Rows("Warning 1105 Parse ConnectionID failed: Unexpected connectionID excceeds int64"))
 
 	// local kill
-	connID := util.GlobalConnID{Is64bits: true, ServerID: 1, LocalConnID: 101}
+	connID := util.NewGlobalConnID(1, true)
 	tk.MustExec("kill " + strconv.FormatUint(connID.ID(), 10))
 	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows())
@@ -641,8 +652,6 @@ func TestFlushPrivileges(t *testing.T) {
 	require.NoError(t, err)
 
 }
-
-type testFlushSuite struct{}
 
 func TestFlushPrivilegesPanic(t *testing.T) {
 	// Run in a separate suite because this test need to set SkipGrantTable config.
