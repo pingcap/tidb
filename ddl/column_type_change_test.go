@@ -1929,7 +1929,7 @@ func TestDDLExitWhenCancelMeetPanic(t *testing.T) {
 	err := tk.ExecToErr("alter table t drop index b")
 	require.Error(t, err)
 	require.EqualError(t, err, "[ddl:-1]panic in handling DDL logic and error count beyond the limitation 3, cancelled")
-	require.Less(t, 0, jobID)
+	require.Less(t, int64(0), jobID)
 
 	// Verification of the history job state.
 	var job *model.Job
