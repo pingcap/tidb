@@ -66,11 +66,11 @@ func TestPlanStringer(t *testing.T) {
 		},
 		{
 			sql:  "show tables in test like 't%'",
-			plan: "Show(table_pattern:[(?i)t.*])",
+			plan: "Show(table_pattern:[t%])",
 		},
 		{
 			sql:  "show tables in test like '%T%'",
-			plan: "Show(table_pattern:[(?i).*T.*])",
+			plan: "Show(table_pattern:[%t%])",
 		},
 	}
 	parser := parser.New()
