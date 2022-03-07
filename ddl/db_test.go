@@ -361,7 +361,7 @@ func (s *testSerialDBSuite) TestWriteReorgForColumnTypeChangeOnAmendTxn(c *C) {
 
 	d := s.dom.DDL()
 	originalHook := d.GetHook()
-	defer d.(ddl.DDLForTest).SetHook(originalHook)
+	defer d.SetHook(originalHook)
 	testInsertOnModifyColumn := func(sql string, startColState, commitColState model.SchemaState, retStrs []string, retErr error) {
 		tk := testkit.NewTestKit(c, s.store)
 		tk.MustExec("use test_db")
@@ -395,7 +395,7 @@ func (s *testSerialDBSuite) TestWriteReorgForColumnTypeChangeOnAmendTxn(c *C) {
 			}
 			times++
 		}
-		d.(ddl.DDLForTest).SetHook(hook)
+		d.SetHook(hook)
 
 		tk.MustExec(sql)
 		if retErr == nil {
@@ -475,7 +475,7 @@ func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
 			}
 		}
 	}
-	d.(ddl.DDLForTest).SetHook(hook)
+	d.SetHook(hook)
 
 	tk.MustGetErrMsg("alter table t1 add index expr_idx ((pow(c1, c2)));", "[ddl:8202]Cannot decode index value, because [types:1690]DOUBLE value is out of range in 'pow(160, 160)'")
 	c.Assert(checkErr, IsNil)
@@ -717,7 +717,7 @@ func testCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.Duration, 
 	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(c, store, ctx, hook, idxName)
 	originalHook := d.GetHook()
 	jobIDExt := wrapJobIDExtCallback(hook)
-	d.(ddl.DDLForTest).SetHook(jobIDExt)
+	d.SetHook(jobIDExt)
 	done := make(chan error, 1)
 	go backgroundExec(store, addIdxSQL, done)
 
@@ -748,7 +748,7 @@ LOOP:
 		}
 	}
 	checkDelRangeAdded(tk, jobIDExt.jobID, c3IdxInfo.ID)
-	d.(ddl.DDLForTest).SetHook(originalHook)
+	d.SetHook(originalHook)
 }
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
@@ -795,7 +795,7 @@ func (s *testDBSuite4) TestCancelAddIndex1(c *C) {
 		}
 	}
 	originalHook := s.dom.DDL().GetHook()
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	s.dom.DDL().SetHook(hook)
 	rs, err := tk.Exec("alter table t add index idx_c2(c2)")
 	if rs != nil {
 		rs.Close()
@@ -804,7 +804,7 @@ func (s *testDBSuite4) TestCancelAddIndex1(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 
-	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	s.dom.DDL().SetHook(originalHook)
 	t := s.testGetTable(c, "t")
 	for _, idx := range t.Indices() {
 		c.Assert(strings.EqualFold(idx.Meta().Name.L, "idx_c2"), IsFalse)
@@ -887,7 +887,7 @@ func testCancelDropIndex(c *C, store kv.Storage, d ddl.DDL, idxName, addIdxSQL, 
 		}
 	}
 	originalHook := d.GetHook()
-	d.(ddl.DDLForTest).SetHook(hook)
+	d.SetHook(hook)
 	ctx := tk.Se.(sessionctx.Context)
 	for i := range testCases {
 		testCase = &testCases[i]
@@ -914,7 +914,7 @@ func testCancelDropIndex(c *C, store kv.Storage, d ddl.DDL, idxName, addIdxSQL, 
 			c.Assert(indexInfo, IsNil)
 		}
 	}
-	d.(ddl.DDLForTest).SetHook(originalHook)
+	d.SetHook(originalHook)
 	tk.MustExec(addIdxSQL)
 	tk.MustExec(dropIdxSQL)
 }
@@ -957,12 +957,12 @@ func (s *testDBSuite5) TestCancelTruncateTable(c *C) {
 		}
 	}
 	originalHook := s.dom.DDL().GetHook()
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	s.dom.DDL().SetHook(hook)
 	_, err := tk.Exec("truncate table t")
 	c.Assert(checkErr, IsNil)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
-	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	s.dom.DDL().SetHook(originalHook)
 }
 
 func (s *testDBSuite5) TestParallelDropSchemaAndDropTable(c *C) {
@@ -990,9 +990,9 @@ func (s *testDBSuite5) TestParallelDropSchemaAndDropTable(c *C) {
 		}
 	}
 	originalHook := s.dom.DDL().GetHook()
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	s.dom.DDL().SetHook(hook)
 	s.mustExec(tk, c, "drop database test_drop_schema_table")
-	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	s.dom.DDL().SetHook(originalHook)
 	wg.Wait()
 	c.Assert(done, IsTrue)
 	c.Assert(checkErr, NotNil)
@@ -1062,7 +1062,7 @@ func (s *testDBSuite1) TestCancelRenameIndex(c *C) {
 		}
 	}
 	originalHook := s.dom.DDL().GetHook()
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	s.dom.DDL().SetHook(hook)
 	rs, err := tk.Exec("alter table t rename index idx_c2 to idx_c3")
 	if rs != nil {
 		rs.Close()
@@ -1070,7 +1070,7 @@ func (s *testDBSuite1) TestCancelRenameIndex(c *C) {
 	c.Assert(checkErr, IsNil)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
-	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	s.dom.DDL().SetHook(originalHook)
 	t := s.testGetTable(c, "t")
 	for _, idx := range t.Indices() {
 		c.Assert(strings.EqualFold(idx.Meta().Name.L, "idx_c3"), IsFalse)
@@ -1135,8 +1135,8 @@ func (s *testDBSuite2) TestCancelDropTableAndSchema(c *C) {
 		}
 	}
 	originHook := s.dom.DDL().GetHook()
-	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	defer s.dom.DDL().SetHook(originHook)
+	s.dom.DDL().SetHook(hook)
 	var err error
 	sql := ""
 	for i := range testCases {
@@ -1726,7 +1726,7 @@ func (s *testDBSuite1) TestCancelAddTableAndDropTablePartition(c *C) {
 		}
 	}
 	originalHook := s.dom.DDL().GetHook()
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	s.dom.DDL().SetHook(hook)
 
 	var err error
 	sql := ""
@@ -1761,7 +1761,7 @@ func (s *testDBSuite1) TestCancelAddTableAndDropTablePartition(c *C) {
 			c.Assert(err, NotNil)
 		}
 	}
-	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	s.dom.DDL().SetHook(originalHook)
 }
 
 func (s *testDBSuite1) TestDropPrimaryKey(c *C) {
@@ -1878,7 +1878,7 @@ func (s *testDBSuite3) TestCancelDropColumn(c *C) {
 	}
 
 	originalHook := s.dom.DDL().GetHook()
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	s.dom.DDL().SetHook(hook)
 	var err1 error
 	for i := range testCases {
 		var c3IdxID int64
@@ -1924,7 +1924,7 @@ func (s *testDBSuite3) TestCancelDropColumn(c *C) {
 			}
 		}
 	}
-	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	s.dom.DDL().SetHook(originalHook)
 	s.mustExec(tk, c, "alter table test_drop_column add column c3 int")
 	s.mustExec(tk, c, "alter table test_drop_column drop column c3")
 }
@@ -1981,7 +1981,7 @@ func (s *testDBSuite3) TestCancelDropColumns(c *C) {
 	}
 
 	originalHook := s.dom.DDL().GetHook()
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	s.dom.DDL().SetHook(hook)
 	var err1 error
 	for i := range testCases {
 		var c3IdxID int64
@@ -2025,7 +2025,7 @@ func (s *testDBSuite3) TestCancelDropColumns(c *C) {
 			}
 		}
 	}
-	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	s.dom.DDL().SetHook(originalHook)
 	s.mustExec(tk, c, "alter table test_drop_column add column c3 int, add column c4 int")
 	s.mustExec(tk, c, "alter table test_drop_column drop column c3, drop column c4")
 }
@@ -2839,8 +2839,8 @@ func (s *testSerialDBSuite) TestCreateTableWithLike2(c *C) {
 		}
 	}
 	originalHook := s.dom.DDL().GetHook()
-	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	defer s.dom.DDL().SetHook(originalHook)
+	s.dom.DDL().SetHook(hook)
 
 	// create table when refer table add column
 	tk.MustExec("alter table t1 add column d int")
@@ -2886,7 +2886,7 @@ func (s *testSerialDBSuite) TestCreateTableWithLike2(c *C) {
 		c.Assert(err, IsNil)
 	}()
 
-	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	s.dom.DDL().SetHook(originalHook)
 	tk.MustExec("drop table if exists t1,t2;")
 	tk.MustExec("create table t1 (a int) partition by hash(a) partitions 2;")
 	tk.MustExec("alter table t1 set tiflash replica 3 location labels 'a','b';")
@@ -3121,8 +3121,8 @@ func (s *testSerialDBSuite) TestRepairTable(c *C) {
 		}
 	}
 	originalHook := s.dom.DDL().GetHook()
-	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	defer s.dom.DDL().SetHook(originalHook)
+	s.dom.DDL().SetHook(hook)
 
 	// Exec the repair statement to override the tableInfo.
 	tk.MustExec("admin repair table origin CREATE TABLE origin (a int primary key nonclustered auto_increment, b varchar(5), c int);")
@@ -4298,7 +4298,7 @@ func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 	}
 
 	originHook := s.dom.DDL().GetHook()
-	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
+	defer s.dom.DDL().SetHook(originHook)
 	hook := &ddl.TestDDLCallback{Do: s.dom}
 	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
@@ -4320,7 +4320,7 @@ func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 			}
 		}
 	}
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	s.dom.DDL().SetHook(hook)
 	done := make(chan error, 1)
 	// test transaction on add column.
 	go backgroundExec(s.store, "alter table t1 add column c int not null after a", done)
@@ -4346,7 +4346,7 @@ func (s *testDBSuite3) TestIssue22307(c *C) {
 	s.mustExec(tk, c, "insert into t values(1, 1);")
 
 	originHook := s.dom.DDL().GetHook()
-	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
+	defer s.dom.DDL().SetHook(originHook)
 	hook := &ddl.TestDDLCallback{Do: s.dom}
 	var checkErr1, checkErr2 error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
@@ -4356,7 +4356,7 @@ func (s *testDBSuite3) TestIssue22307(c *C) {
 		_, checkErr1 = tk.Exec("update t set a = 3 where b = 1;")
 		_, checkErr2 = tk.Exec("update t set a = 3 order by b;")
 	}
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	s.dom.DDL().SetHook(hook)
 	done := make(chan error, 1)
 	// test transaction on add column.
 	go backgroundExec(s.store, "alter table t drop column b;", done)
@@ -4382,7 +4382,7 @@ func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {
 	}
 
 	originHook := s.dom.DDL().GetHook()
-	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
+	defer s.dom.DDL().SetHook(originHook)
 	hook := &ddl.TestDDLCallback{Do: s.dom}
 	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
@@ -4404,7 +4404,7 @@ func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {
 			}
 		}
 	}
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	s.dom.DDL().SetHook(hook)
 	done := make(chan error, 1)
 	// test transaction on add column.
 	go backgroundExec(s.store, "alter table t1 add column c int not null", done)
@@ -4430,7 +4430,7 @@ func (s *testDBSuite4) TestAddColumn2(c *C) {
 	defer s.mustExec(tk, c, "drop table if exists t1, t2")
 
 	originHook := s.dom.DDL().GetHook()
-	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originHook)
+	defer s.dom.DDL().SetHook(originHook)
 	hook := &ddl.TestDDLCallback{}
 	var writeOnlyTable table.Table
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
@@ -4438,7 +4438,7 @@ func (s *testDBSuite4) TestAddColumn2(c *C) {
 			writeOnlyTable, _ = s.dom.InfoSchema().TableByID(job.TableID)
 		}
 	}
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	s.dom.DDL().SetHook(hook)
 	done := make(chan error, 1)
 	// test transaction on add column.
 	go backgroundExec(s.store, "alter table t1 add column c int not null", done)
@@ -4481,7 +4481,7 @@ func (s *testDBSuite4) TestAddColumn2(c *C) {
 		s.mustExec(tk, c, "commit")
 
 	}
-	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	s.dom.DDL().SetHook(hook)
 
 	go backgroundExec(s.store, "alter table t2 add column b int not null default 3", done)
 	err = <-done
@@ -5679,8 +5679,8 @@ func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 ses
 	}
 	d := s.dom.DDL()
 	originalCallback := d.GetHook()
-	defer d.(ddl.DDLForTest).SetHook(originalCallback)
-	d.(ddl.DDLForTest).SetHook(callback)
+	defer d.SetHook(originalCallback)
+	d.SetHook(callback)
 
 	var wg util.WaitGroupWrapper
 	var err1 error
@@ -6089,9 +6089,9 @@ func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
 					}
 				}
 				originalCallback := do.GetHook()
-				do.(ddl.DDLForTest).SetHook(hook)
+				do.SetHook(hook)
 				tk2.MustExec(curCase.idxDDL)
-				do.(ddl.DDLForTest).SetHook(originalCallback)
+				do.SetHook(originalCallback)
 				tk2.MustExec("admin check table t1")
 				for i, checkSQL := range curCase.checkSQLs {
 					if len(curCase.rowsExps[i]) > 0 {
@@ -6217,8 +6217,8 @@ func (s *testSerialDBSuite) TestColumnTypeChangeGenUniqueChangingName(c *C) {
 	}
 	d := s.dom.DDL()
 	originHook := d.GetHook()
-	d.(ddl.DDLForTest).SetHook(hook)
-	defer d.(ddl.DDLForTest).SetHook(originHook)
+	d.SetHook(hook)
+	defer d.SetHook(originHook)
 
 	tk.MustExec("create table if not exists t(c1 varchar(256), c2 bigint, `_col$_c2` varchar(10), unique _idx$_idx(c1), unique idx(c2));")
 	tk.MustExec("alter table test.t change column c2 cC2 tinyint after `_col$_c2`")
@@ -6273,7 +6273,7 @@ func (s *testSerialDBSuite) TestColumnTypeChangeGenUniqueChangingName(c *C) {
 			}
 		}
 	}
-	d.(ddl.DDLForTest).SetHook(hook)
+	d.SetHook(hook)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table if not exists t(c1 bigint, _col$_c1 bigint, _col$__col$_c1_0 bigint, _col$__col$__col$_c1_0_0 bigint)")
@@ -6457,8 +6457,8 @@ func (s *testSerialDBSuite) TestCancelJobWriteConflict(c *C) {
 	hook := &ddl.TestDDLCallback{}
 	d := s.dom.DDL()
 	originalHook := d.GetHook()
-	d.(ddl.DDLForTest).SetHook(hook)
-	defer d.(ddl.DDLForTest).SetHook(originalHook)
+	d.SetHook(hook)
+	defer d.SetHook(originalHook)
 
 	// Test when cancelling cannot be retried and adding index succeeds.
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
@@ -6626,7 +6626,7 @@ func testCancelDropIndexes(c *C, store kv.Storage, d ddl.DDL) {
 		}
 	}
 	originalHook := d.GetHook()
-	d.(ddl.DDLForTest).SetHook(hook)
+	d.SetHook(hook)
 	ctx := tk.Se.(sessionctx.Context)
 	for i := range testCases {
 		testCase = &testCases[i]
@@ -6661,7 +6661,7 @@ func testCancelDropIndexes(c *C, store kv.Storage, d ddl.DDL) {
 			c.Assert(indexInfos, IsNil)
 		}
 	}
-	d.(ddl.DDLForTest).SetHook(originalHook)
+	d.SetHook(originalHook)
 	tk.MustExec(addIdxesSQL)
 	tk.MustExec(dropIdxesSQL)
 }
@@ -6902,7 +6902,7 @@ func (s *testSerialDBSuite) TestAddGeneratedColumnAndInsert(c *C) {
 			}
 		}
 	}
-	d.(ddl.DDLForTest).SetHook(hook)
+	d.SetHook(hook)
 
 	tk.MustExec("alter table t1 add column gc int as ((a+1))")
 	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("4 5", "10 11"))
