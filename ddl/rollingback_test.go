@@ -80,7 +80,7 @@ func TestCancelAddIndexJobError(t *testing.T) {
 			}
 		}
 	}
-	d.(ddl.DDLForTest).SetHook(hook)
+	d.SetHook(hook)
 
 	// This will hang on stateDeleteOnly, and the job will be canceled.
 	err := tk.ExecToErr("alter table t_cancel_add_index add index idx(a)")
