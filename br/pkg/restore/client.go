@@ -1466,25 +1466,31 @@ func (rc *Client) RestoreKVFiles(
 	}
 
 	eg, ectx := errgroup.WithContext(ctx)
+	skipFile := 0
 	for _, file := range files {
-		filesReplica := file
+		fileReplica := file
 		// get rewrite rule from table id
-		rule, ok := rules[filesReplica.TableId]
+		rule, ok := rules[fileReplica.TableId]
 		if !ok {
 			// TODO handle new created table
 			// For this version we do not handle new created table after full backup.
 			// in next version we will perform rewrite and restore meta key to restore new created tables.
 			// so we can simply skip the file that doesn't have the rule here.
-			log.Info("skip file due to table id not matched", zap.String("file", file.Path))
+			log.Debug("skip file due to table id not matched", zap.String("file", fileReplica.Path), zap.Int64("tableId", fileReplica.TableId))
+			skipFile ++
 			continue
 		}
 		rc.workerPool.ApplyOnErrorGroup(eg, func() error {
 			fileStart := time.Now()
 			defer func() {
-				log.Info("import files done", zap.String("name", file.Path), zap.Duration("take", time.Since(fileStart)))
+				log.Info("import files done", zap.String("name", fileReplica.Path), zap.Duration("take", time.Since(fileStart)))
 			}()
-			return rc.fileImporter.ImportKVFiles(ectx, filesReplica, rule, rc.restoreTs)
+			return rc.fileImporter.ImportKVFiles(ectx, fileReplica, rule, rc.restoreTs)
 		})
+	}
+	log.Info("total skip files due to table id not matched", zap.Int("count", skipFile))
+	if skipFile > 0 {
+		log.Debug("table id in full backup storage", zap.Any("tables", rules))
 	}
 
 	if err = eg.Wait(); err != nil {
