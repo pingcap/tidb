@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
@@ -894,7 +893,7 @@ func TestChangingTableCharset(t *testing.T) {
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t (a blob) character set utf8;")
 	tk.MustExec("alter table t charset=utf8mb4 collate=utf8mb4_bin;")
-	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` blob DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
@@ -1469,6 +1468,79 @@ func TestResolveCharset(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "binary", tbl.Cols()[0].Charset)
 	require.Equal(t, "binary", tbl.Meta().Charset)
+}
+
+func TestAddColumnDefaultNow(t *testing.T) {
+	// Related Issue: https://github.com/pingcap/tidb/issues/31968
+	mockStore, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, mockStore)
+	const dateHourLength = len("yyyy-mm-dd hh:")
+
+	tk.MustExec("SET timestamp = 1000")
+	tk.MustExec("USE test")
+	tk.MustExec("DROP TABLE IF EXISTS t1")
+	tk.MustExec("CREATE TABLE t1 ( i INT )")
+	tk.MustExec("INSERT INTO t1 VALUES (1)")
+
+	// test datetime
+	tk.MustExec("ALTER TABLE t1 ADD COLUMN c4 DATETIME(6) DEFAULT NOW(6) ON UPDATE NOW(6) FIRST")
+	tk.MustExec("ALTER TABLE t1 ADD COLUMN c3 DATETIME(6) DEFAULT NOW(6) FIRST")
+
+	// test timestamp
+	tk.MustExec("ALTER TABLE t1 ADD COLUMN c2 TIMESTAMP(6) DEFAULT NOW(6) ON UPDATE NOW(6) FIRST")
+	tk.MustExec("ALTER TABLE t1 ADD COLUMN c1 TIMESTAMP(6) DEFAULT NOW(6) FIRST")
+
+	tk.MustExec("SET time_zone = 'Europe/Amsterdam'")
+	rows := tk.MustQuery("select * from t1").Sort().Rows()
+	require.Len(t, rows, 1, "Result should has only 1 row")
+	row := rows[0]
+	if c3, ok := row[0].(string); ok {
+		require.Equal(t, "19", c3[:len("19")], "The datetime should start with '19'")
+	}
+	if c4, ok := row[1].(string); ok {
+		require.Equal(t, "19", c4[:len("19")], "The datetime should start with '19'")
+	}
+
+	var amsterdamC1YMDH, shanghaiC1YMDH, amsterdamC1MS, shanghaiC1MS string
+	var amsterdamC2YMDH, shanghaiC2YMDH, amsterdamC2MS, shanghaiC2MS string
+
+	if c1, ok := row[0].(string); ok {
+		require.Equal(t, "19", c1[:len("19")], "The timestamp should start with '19'")
+
+		amsterdamC1YMDH = c1[:dateHourLength] // YMDH means "yyyy-mm-dd hh"
+		amsterdamC1MS = c1[dateHourLength:]   // MS means "mm-ss.fractional"
+	}
+	if c2, ok := row[1].(string); ok {
+		require.Equal(t, "19", c2[:len("19")], "The timestamp should start with '19'")
+
+		amsterdamC2YMDH = c2[:dateHourLength] // YMDH means "yyyy-mm-dd hh"
+		amsterdamC2MS = c2[dateHourLength:]   // MS means "mm-ss.fractional"
+	}
+
+	tk.MustExec("SET time_zone = 'Asia/Shanghai'")
+	rows = tk.MustQuery("select * from t1").Sort().Rows()
+	require.Len(t, rows, 1, "Result should has only 1 row")
+	row = rows[0]
+
+	if c1, ok := row[0].(string); ok {
+		require.Equal(t, "19", c1[:len("19")], "The timestamp should start with '19'")
+
+		shanghaiC1YMDH = c1[:dateHourLength] // YMDH means "yyyy-mm-dd hh"
+		shanghaiC1MS = c1[dateHourLength:]   // MS means "mm-ss.fractional"
+	}
+	if c2, ok := row[1].(string); ok {
+		require.Equal(t, "19", c2[:len("19")], "The timestamp should start with '19'")
+
+		shanghaiC2YMDH = c2[:dateHourLength] // YMDH means "yyyy-mm-dd hh"
+		shanghaiC2MS = c2[dateHourLength:]   // MS means "mm-ss.fractional"
+	}
+
+	require.True(t, amsterdamC1YMDH != shanghaiC1YMDH, "The timestamp before 'hour' should not be equivalent")
+	require.True(t, amsterdamC2YMDH != shanghaiC2YMDH, "The timestamp before 'hour' should not be equivalent")
+	require.Equal(t, amsterdamC1MS, shanghaiC1MS, "The timestamp after 'hour' should be equivalent")
+	require.Equal(t, amsterdamC2MS, shanghaiC2MS, "The timestamp after 'hour' should be equivalent")
+
 }
 
 func TestAddColumnTooMany(t *testing.T) {
@@ -2146,6 +2218,10 @@ func TestDropAutoIncrementIndex(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int(11) not null auto_increment key, b int(11), c bigint, unique key (a, b, c))")
+	tk.MustExec("alter table t1 drop index a")
 
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int auto_increment, unique key (a))")
