@@ -1144,6 +1144,30 @@ func TestInsertFloatOverflow(t *testing.T) {
 	tk.MustExec("drop table if exists t,t1")
 }
 
+// gitHub issue：https://github.com/pingcap/tidb/issues/32601
+func TestTextTooLongError(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// For max_allowed_packet default value is big enough to ensure tinytext, text can test correctly.
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec("CREATE TABLE t1(c1 TINYTEXT CHARACTER SET utf8mb4);")
+	_, err := tk.Exec("INSERT INTO t1 (c1) VALUES(REPEAT(X'C385', 128));")
+	require.EqualError(t, err, "[types:1406]Data too long for column 'c1' at row 1")
+
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec("CREATE TABLE t1(c1 Text CHARACTER SET utf8mb4);")
+	_, err = tk.Exec("INSERT INTO t1 (c1) VALUES(REPEAT(X'C385', 32768));")
+	require.EqualError(t, err, "[types:1406]Data too long for column 'c1' at row 1")
+
+	//For mediumtext, tidb has another bug, at present ,it store  text exceed limit as null without error.
+	//we will trace it with issue:https://github.com/pingcap/tidb/issues/32869
+
+	// For long text, max_allowed_packet default value can not allow 4GB package, skip the test case.
+	tk.MustExec("drop table if exists t1")
+}
+
 // TestAutoIDIncrementAndOffset There is a potential issue in MySQL: when the value of auto_increment_offset is greater
 // than that of auto_increment_increment, the value of auto_increment_offset is ignored
 // (https://dev.mysql.com/doc/refman/8.0/en/replication-options-master.html#sysvar_auto_increment_increment),

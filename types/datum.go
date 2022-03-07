@@ -1065,7 +1065,15 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementCon
 		// Flen is the rune length, not binary length, for Non-binary charset, we need to calculate the
 		// rune count and truncate to Flen runes if it is too long.
 		if chs != charset.CharsetBinary {
-			characterLen = utf8.RuneCountInString(s)
+			// For mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob, use binary byte number.
+			// others, use character length that depends on the charset.
+			switch tp.Tp {
+			case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+				characterLen = len(s)
+			default:
+				characterLen = utf8.RuneCountInString(s)
+			}
+
 			if characterLen > flen {
 				// 1. If len(s) is 0 and flen is 0, truncateLen will be 0, don't truncate s.
 				//    CREATE TABLE t (a char(0));
