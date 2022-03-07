@@ -638,7 +638,7 @@ func (cf *captureFilter) isEmpty() bool {
 
 // ParseCaptureTableFilter checks whether this filter is valid and parses it.
 func ParseCaptureTableFilter(tableFilter string) (f tablefilter.Filter, valid bool) {
-	// forbidden wildcards '!' and '@' for safety,
+	// forbid wildcards '!' and '@' for safety,
 	// please see https://github.com/pingcap/tidb-tools/tree/master/pkg/table-filter for more details.
 	if strings.ContainsAny(tableFilter, "!@") {
 		return nil, false
