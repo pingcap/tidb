@@ -96,7 +96,6 @@ var _ = SerialSuites(&testDBSuite6{&testDBSuite{}})
 var _ = Suite(&testDBSuite7{&testDBSuite{}})
 var _ = Suite(&testDBSuite8{&testDBSuite{}})
 var _ = SerialSuites(&testSerialDBSuite{&testDBSuite{}})
-var _ = SerialSuites(&testSerialDBSuite1{&testDBSuite{}})
 
 const defaultBatchSize = 1024
 const defaultReorgBatchSize = 256
@@ -168,7 +167,6 @@ type testDBSuite6 struct{ *testDBSuite }
 type testDBSuite7 struct{ *testDBSuite }
 type testDBSuite8 struct{ *testDBSuite }
 type testSerialDBSuite struct{ *testDBSuite }
-type testSerialDBSuite1 struct{ *testDBSuite }
 
 func (s *testDBSuite5) TestAddIndexWithDupIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
