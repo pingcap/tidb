@@ -386,6 +386,16 @@ const (
 		UNIQUE KEY table_version_seq (table_id, version, seq_no),
 		KEY table_create_time (table_id, create_time, seq_no)
 	);`
+	// CreateStatsMetaHistory stores the historical meta stats.
+	CreateStatsMetaHistory = `CREATE TABLE IF NOT EXISTS mysql.stats_meta_history (
+		table_id bigint(64) NOT NULL,
+		modify_count bigint(64) NOT NULL,
+		count bigint(64) NOT NULL,
+		version bigint(64) NOT NULL comment 'stats version which corresponding to stats:version in EXPLAIN',
+		create_time datetime(6) NOT NULL,
+		UNIQUE KEY table_version (table_id, version),
+		KEY table_create_time (table_id, create_time)
+	);`
 	// CreateAnalyzeJobs stores the analyze jobs.
 	CreateAnalyzeJobs = `CREATE TABLE IF NOT EXISTS mysql.analyze_jobs (
 		id BIGINT(64) UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -586,13 +596,15 @@ const (
 	version82 = 82
 	// version83 adds the tables mysql.stats_history
 	version83 = 83
-	// version84 adds the mysql.analyze_jobs table
+	// version84 adds the tables mysql.stats_meta_history
 	version84 = 84
+	// version85 adds the mysql.analyze_jobs table
+	version85 = 85
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version84
+var currentBootstrapVersion int64 = version85
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -680,6 +692,7 @@ var (
 		upgradeToVer82,
 		upgradeToVer83,
 		upgradeToVer84,
+		upgradeToVer85,
 	}
 )
 
@@ -1746,6 +1759,13 @@ func upgradeToVer84(s Session, ver int64) {
 	if ver >= version84 {
 		return
 	}
+	doReentrantDDL(s, CreateStatsMetaHistory)
+}
+
+func upgradeToVer85(s Session, ver int64) {
+	if ver >= version85 {
+		return
+	}
 	doReentrantDDL(s, CreateAnalyzeJobs)
 }
 
@@ -1837,6 +1857,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateAnalyzeOptionsTable)
 	// Create stats_history table.
 	mustExecute(s, CreateStatsHistory)
+	// Create stats_meta_history table.
+	mustExecute(s, CreateStatsMetaHistory)
 	// Create analyze_jobs table.
 	mustExecute(s, CreateAnalyzeJobs)
 }

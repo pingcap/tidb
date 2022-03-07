@@ -791,6 +791,11 @@ ForColumnsTag:
 		var columnDefault interface{}
 		if columnDesc.DefaultValue != nil {
 			columnDefault = fmt.Sprintf("%v", columnDesc.DefaultValue)
+			if col.Tp == mysql.TypeBit {
+				defaultStr := fmt.Sprintf("%v", columnDesc.DefaultValue)
+				defaultValBinaryLiteral := types.BinaryLiteral(defaultStr)
+				columnDefault = defaultValBinaryLiteral.ToBitLiteralString(true)
+			}
 		}
 		record := types.MakeDatums(
 			infoschema.CatalogVal,                // TABLE_CATALOG
@@ -1517,6 +1522,8 @@ func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *helper.RegionInfo,
 		} else {
 			row[6].SetInt64(0)
 		}
+	} else {
+		row[6].SetInt64(0)
 	}
 	row[9].SetInt64(region.Epoch.ConfVer)
 	row[10].SetInt64(region.Epoch.Version)

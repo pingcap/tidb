@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	tablefilter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -106,7 +107,7 @@ type bindRecordUpdate struct {
 func NewBindHandle(ctx sessionctx.Context) *BindHandle {
 	handle := &BindHandle{}
 	handle.sctx.Context = ctx
-	handle.bindInfo.Value.Store(make(cache, 32))
+	handle.bindInfo.Value.Store(newBindCache())
 	handle.bindInfo.parser = parser.New()
 	handle.invalidBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
 	handle.invalidBindRecordMap.flushFunc = func(record *BindRecord) error {
@@ -142,7 +143,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 		return err
 	}
 
-	newCache := h.bindInfo.Value.Load().(cache).copy()
+	newCache := h.bindInfo.Value.Load().(*bindCache).Copy()
 	defer func() {
 		h.bindInfo.lastUpdateTime = lastUpdateTime
 		h.bindInfo.Value.Store(newCache)
@@ -167,14 +168,14 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 			continue
 		}
 
-		oldRecord := newCache.getBindRecord(hash, meta.OriginalSQL, meta.Db)
+		oldRecord := newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
 		newRecord := merge(oldRecord, meta).removeDeletedBindings()
 		if len(newRecord.Bindings) > 0 {
-			newCache.setBindRecord(hash, newRecord)
+			newCache.SetBindRecord(hash, newRecord)
 		} else {
-			newCache.removeDeletedBindRecord(hash, newRecord)
+			newCache.RemoveBindRecord(hash, newRecord)
 		}
-		updateMetrics(metrics.ScopeGlobal, oldRecord, newCache.getBindRecord(hash, meta.OriginalSQL, meta.Db), true)
+		updateMetrics(metrics.ScopeGlobal, oldRecord, newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db), true)
 	}
 	return nil
 }
@@ -517,25 +518,24 @@ func (h *BindHandle) AddDropInvalidBindTask(invalidBindRecord *BindRecord) {
 
 // Size returns the size of bind info cache.
 func (h *BindHandle) Size() int {
-	size := 0
-	for _, bindRecords := range h.bindInfo.Load().(cache) {
-		size += len(bindRecords)
-	}
+	size := len(h.bindInfo.Load().(*bindCache).GetAllBindRecords())
 	return size
 }
 
 // GetBindRecord returns the BindRecord of the (normdOrigSQL,db) if BindRecord exist.
 func (h *BindHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindRecord {
-	return h.bindInfo.Load().(cache).getBindRecord(hash, normdOrigSQL, db)
+	return h.bindInfo.Load().(*bindCache).GetBindRecord(hash, normdOrigSQL, db)
 }
 
 // GetAllBindRecord returns all bind records in cache.
 func (h *BindHandle) GetAllBindRecord() (bindRecords []*BindRecord) {
-	bindRecordMap := h.bindInfo.Load().(cache)
-	for _, bindRecord := range bindRecordMap {
-		bindRecords = append(bindRecords, bindRecord...)
-	}
-	return bindRecords
+	return h.bindInfo.Load().(*bindCache).GetAllBindRecords()
+}
+
+// SetBindCacheCapacity reset the capacity for the bindCache.
+// It will not affect already cached BindRecords.
+func (h *BindHandle) SetBindCacheCapacity(capacity int64) {
+	h.bindInfo.Load().(*bindCache).SetMemCapacity(capacity)
 }
 
 // newBindRecord builds BindRecord from a tuple in storage.
@@ -565,9 +565,9 @@ func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
 // setBindRecord sets the BindRecord to the cache, if there already exists a BindRecord,
 // it will be overridden.
 func (h *BindHandle) setBindRecord(hash string, meta *BindRecord) {
-	newCache := h.bindInfo.Value.Load().(cache).copy()
-	oldRecord := newCache.getBindRecord(hash, meta.OriginalSQL, meta.Db)
-	newCache.setBindRecord(hash, meta)
+	newCache := h.bindInfo.Value.Load().(*bindCache).Copy()
+	oldRecord := newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
+	newCache.SetBindRecord(hash, meta)
 	h.bindInfo.Value.Store(newCache)
 	updateMetrics(metrics.ScopeGlobal, oldRecord, meta, false)
 }
@@ -575,64 +575,21 @@ func (h *BindHandle) setBindRecord(hash string, meta *BindRecord) {
 // appendBindRecord addes the BindRecord to the cache, all the stale BindRecords are
 // removed from the cache after this operation.
 func (h *BindHandle) appendBindRecord(hash string, meta *BindRecord) {
-	newCache := h.bindInfo.Value.Load().(cache).copy()
-	oldRecord := newCache.getBindRecord(hash, meta.OriginalSQL, meta.Db)
+	newCache := h.bindInfo.Value.Load().(*bindCache).Copy()
+	oldRecord := newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
 	newRecord := merge(oldRecord, meta)
-	newCache.setBindRecord(hash, newRecord)
+	newCache.SetBindRecord(hash, newRecord)
 	h.bindInfo.Value.Store(newCache)
 	updateMetrics(metrics.ScopeGlobal, oldRecord, newRecord, false)
 }
 
 // removeBindRecord removes the BindRecord from the cache.
 func (h *BindHandle) removeBindRecord(hash string, meta *BindRecord) {
-	newCache := h.bindInfo.Value.Load().(cache).copy()
-	oldRecord := newCache.getBindRecord(hash, meta.OriginalSQL, meta.Db)
-	newCache.removeDeletedBindRecord(hash, meta)
+	newCache := h.bindInfo.Value.Load().(*bindCache).Copy()
+	oldRecord := newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
+	newCache.RemoveBindRecord(hash, meta)
 	h.bindInfo.Value.Store(newCache)
-	updateMetrics(metrics.ScopeGlobal, oldRecord, newCache.getBindRecord(hash, meta.OriginalSQL, meta.Db), false)
-}
-
-// removeDeletedBindRecord removes the BindRecord which has same originSQL and db with specified BindRecord.
-func (c cache) removeDeletedBindRecord(hash string, meta *BindRecord) {
-	metas, ok := c[hash]
-	if !ok {
-		return
-	}
-
-	for i := len(metas) - 1; i >= 0; i-- {
-		if metas[i].isSame(meta) {
-			metas[i] = metas[i].remove(meta)
-			if len(metas[i].Bindings) == 0 {
-				metas = append(metas[:i], metas[i+1:]...)
-			}
-			if len(metas) == 0 {
-				delete(c, hash)
-				return
-			}
-		}
-	}
-	c[hash] = metas
-}
-
-func (c cache) setBindRecord(hash string, meta *BindRecord) {
-	metas := c[hash]
-	for i := range metas {
-		if metas[i].OriginalSQL == meta.OriginalSQL {
-			metas[i] = meta
-			return
-		}
-	}
-	c[hash] = append(c[hash], meta)
-}
-
-func (c cache) copy() cache {
-	newCache := make(cache, len(c))
-	for k, v := range c {
-		bindRecords := make([]*BindRecord, len(v))
-		copy(bindRecords, v)
-		newCache[k] = bindRecords
-	}
-	return newCache
+	updateMetrics(metrics.ScopeGlobal, oldRecord, newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db), false)
 }
 
 func copyBindRecordUpdateMap(oldMap map[string]*bindRecordUpdate) map[string]*bindRecordUpdate {
@@ -643,20 +600,9 @@ func copyBindRecordUpdateMap(oldMap map[string]*bindRecordUpdate) map[string]*bi
 	return newMap
 }
 
-func (c cache) getBindRecord(hash, normdOrigSQL, db string) *BindRecord {
-	bindRecords := c[hash]
-	for _, bindRecord := range bindRecords {
-		if bindRecord.OriginalSQL == normdOrigSQL {
-			return bindRecord
-		}
-	}
-	return nil
-}
-
 type captureFilter struct {
-	dbs       map[string]struct{}
 	frequency int64
-	tables    map[stmtctx.TableEntry]struct{}
+	tables    []tablefilter.Filter // `schema.table`
 	users     map[string]struct{}
 
 	fail      bool
@@ -673,10 +619,10 @@ func (cf *captureFilter) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if x.Schema.L == "" {
 			tblEntry.DB = cf.currentDB
 		}
-		if _, ok := cf.dbs[tblEntry.DB]; ok {
-			cf.fail = true
-		} else if _, ok := cf.tables[tblEntry]; ok {
-			cf.fail = true
+		for _, tableFilter := range cf.tables {
+			if tableFilter.MatchTable(tblEntry.DB, tblEntry.Table) {
+				cf.fail = true // some filter is matched
+			}
 		}
 	}
 	return in, cf.fail
@@ -687,14 +633,31 @@ func (cf *captureFilter) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 func (cf *captureFilter) isEmpty() bool {
-	return len(cf.dbs) == 0 && len(cf.tables) == 0 && len(cf.users) == 0
+	return len(cf.tables) == 0 && len(cf.users) == 0
+}
+
+// ParseCaptureTableFilter checks whether this filter is valid and parses it.
+func ParseCaptureTableFilter(tableFilter string) (f tablefilter.Filter, valid bool) {
+	// forbid wildcards '!' and '@' for safety,
+	// please see https://github.com/pingcap/tidb-tools/tree/master/pkg/table-filter for more details.
+	tableFilter = strings.TrimLeft(tableFilter, " \t")
+	if tableFilter == "" {
+		return nil, false
+	}
+	if tableFilter[0] == '!' || tableFilter[0] == '@' {
+		return nil, false
+	}
+	var err error
+	f, err = tablefilter.Parse([]string{tableFilter})
+	if err != nil {
+		return nil, false
+	}
+	return f, true
 }
 
 func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 	filter = &captureFilter{
-		dbs:       make(map[string]struct{}),
 		frequency: 1,
-		tables:    make(map[stmtctx.TableEntry]struct{}),
 		users:     make(map[string]struct{}),
 	}
 	exec := h.sctx.Context.(sqlexec.RestrictedSQLExecutor)
@@ -709,19 +672,13 @@ func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 		filterTp := strings.ToLower(row.GetString(0))
 		valStr := strings.ToLower(row.GetString(1))
 		switch filterTp {
-		case "db":
-			filter.dbs[valStr] = struct{}{}
 		case "table":
-			strs := strings.Split(valStr, ".")
-			if len(strs) != 2 {
-				logutil.BgLogger().Warn("[sql-bind] failed to parse table name, ignore it", zap.String("filter_value", valStr))
+			tfilter, valid := ParseCaptureTableFilter(valStr)
+			if !valid {
+				logutil.BgLogger().Warn("[sql-bind] capture table filter is invalid, ignore it", zap.String("filter_value", valStr))
 				continue
 			}
-			tblEntry := stmtctx.TableEntry{
-				DB:    strs[0],
-				Table: strs[1],
-			}
-			filter.tables[tblEntry] = struct{}{}
+			filter.tables = append(filter.tables, tfilter)
 		case "user":
 			filter.users[valStr] = struct{}{}
 		case "frequency":
@@ -984,25 +941,23 @@ const (
 )
 
 func (h *BindHandle) getOnePendingVerifyJob() (string, string, Binding) {
-	cache := h.bindInfo.Value.Load().(cache)
-	for _, bindRecords := range cache {
-		for _, bindRecord := range bindRecords {
-			for _, bind := range bindRecord.Bindings {
-				if bind.Status == PendingVerify {
-					return bindRecord.OriginalSQL, bindRecord.Db, bind
-				}
-				if bind.Status != Rejected {
-					continue
-				}
-				dur, err := bind.SinceUpdateTime()
-				// Should not happen.
-				if err != nil {
-					continue
-				}
-				// Rejected and retry it now.
-				if dur > nextVerifyDuration {
-					return bindRecord.OriginalSQL, bindRecord.Db, bind
-				}
+	cache := h.bindInfo.Value.Load().(*bindCache)
+	for _, bindRecord := range cache.GetAllBindRecords() {
+		for _, bind := range bindRecord.Bindings {
+			if bind.Status == PendingVerify {
+				return bindRecord.OriginalSQL, bindRecord.Db, bind
+			}
+			if bind.Status != Rejected {
+				continue
+			}
+			dur, err := bind.SinceUpdateTime()
+			// Should not happen.
+			if err != nil {
+				continue
+			}
+			// Rejected and retry it now.
+			if dur > nextVerifyDuration {
+				return bindRecord.OriginalSQL, bindRecord.Db, bind
 			}
 		}
 	}
@@ -1115,7 +1070,7 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context, adminEvolve b
 // Clear resets the bind handle. It is only used for test.
 func (h *BindHandle) Clear() {
 	h.bindInfo.Lock()
-	h.bindInfo.Store(make(cache))
+	h.bindInfo.Store(newBindCache())
 	h.bindInfo.lastUpdateTime = types.ZeroTimestamp
 	h.bindInfo.Unlock()
 	h.invalidBindRecordMap.Store(make(map[string]*bindRecordUpdate))
@@ -1133,7 +1088,7 @@ func (h *BindHandle) FlushBindings() error {
 // It is used to maintain consistency between cache and mysql.bind_info if the table is deleted or truncated.
 func (h *BindHandle) ReloadBindings() error {
 	h.bindInfo.Lock()
-	h.bindInfo.Store(make(cache))
+	h.bindInfo.Store(newBindCache())
 	h.bindInfo.lastUpdateTime = types.ZeroTimestamp
 	h.bindInfo.Unlock()
 	return h.Update(true)
