@@ -184,6 +184,37 @@ func TestPointGetForUpdate(t *testing.T) {
 	tk.MustExec("rollback")
 }
 
+func TestGetExtraColumn(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (
+	  a int(11) DEFAULT NULL,
+	  b int(11) DEFAULT NULL,
+	  UNIQUE KEY idx (a))`)
+	tk.MustQuery(`explain format='brief' select t.*, _tidb_rowid from t where a = 1`).Check(testkit.Rows("Point_Get 1.00 root table:t, index:idx(a) "))
+	tk.MustQuery(`explain format='brief' select t.*, _tidb_rowid, date_format(a, "") from t where a = 1`).Check(testkit.Rows(
+		`Projection 1.00 root  test.t.a, test.t.b, test.t._tidb_rowid, date_format(cast(test.t.a, datetime BINARY), )->Column#4`,
+		`└─Point_Get 1.00 root table:t, index:idx(a) `))
+	tk.MustExec(`begin`) // in transaction
+	tk.MustExec(`insert into t values (1, 1)`)
+	tk.MustQuery(`explain format='brief' select t.*, _tidb_rowid from t where a = 1`).Check(testkit.Rows(`Point_Get 1.00 root table:t, index:idx(a) `))
+	tk.MustExec(`commit`)
+	tk.MustQuery(`explain format='brief' select count(_tidb_rowid) from t where a=1`).Check(testkit.Rows(
+		`StreamAgg 1.00 root  funcs:count(test.t._tidb_rowid)->Column#4`,
+		`└─Point_Get 1.00 root table:t, index:idx(a) `))
+	tk.MustQuery(`explain format='brief' select *, date_format(b, "") from t where a =1 for update`).Check(testkit.Rows(
+		`Projection 1.00 root  test.t.a, test.t.b, date_format(cast(test.t.b, datetime BINARY), )->Column#4`,
+		`└─SelectLock 1.00 root  for update 0`,
+		`  └─Point_Get 1.00 root table:t, index:idx(a) `))
+
+	// if the PK is handled
+	tk.MustExec(`create table t1 (pk int, a int, b int, primary key(pk), unique key(a))`)
+	err := tk.ExecToErr(`explain format='brief' select t1.*, _tidb_rowid from t1 where a = 1`)
+	require.EqualError(t, err, `[planner:1054]Unknown column '_tidb_rowid' in 'field list'`)
+}
+
 func TestPointGetForUpdateWithSubquery(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -339,8 +370,8 @@ func TestCBOPointGet(t *testing.T) {
 		Plan []string
 		Res  []string
 	}
-	statsSuiteData := core.GetPointGetPlanData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	pointGetPlanData := core.GetPointGetPlanData()
+	pointGetPlanData.GetTestCases(t, &input, &output)
 	require.Equal(t, len(input), len(output))
 	for i, sql := range input {
 		plan := tk.MustQuery("explain format = 'brief' " + sql)
@@ -827,8 +858,8 @@ func TestCBOShouldNotUsePointGet(t *testing.T) {
 		Res  []string
 	}
 
-	statsSuiteData := core.GetPointGetPlanData()
-	statsSuiteData.GetTestCases(t, &input, &output)
+	pointGetPlanData := core.GetPointGetPlanData()
+	pointGetPlanData.GetTestCases(t, &input, &output)
 	require.Equal(t, len(input), len(output))
 	for i, sql := range input {
 		plan := tk.MustQuery("explain format = 'brief' " + sql)

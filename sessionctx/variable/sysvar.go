@@ -666,6 +666,12 @@ var defaultSysVars = []*SysVar{
 		s.MemQuotaApplyCache = TidbOptInt64(val, DefTiDBMemQuotaApplyCache)
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBMemQuotaBindCache, Value: strconv.FormatInt(DefTiDBMemQuotaBindCache, 10), Type: TypeUnsigned, MaxValue: math.MaxInt32, GetGlobal: func(sv *SessionVars) (string, error) {
+		return strconv.FormatInt(MemQuotaBindCache.Load(), 10), nil
+	}, SetGlobal: func(s *SessionVars, val string) error {
+		MemQuotaBindCache.Store(TidbOptInt64(val, DefTiDBMemQuotaBindCache))
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBBackoffLockFast, Value: strconv.Itoa(tikvstore.DefBackoffLockFast), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
 		s.KVVars.BackoffLockFast = tidbOptPositiveInt32(val, tikvstore.DefBackoffLockFast)
 		return nil
@@ -1375,16 +1381,9 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal | ScopeSession, Name: SysdateIsNow, Value: BoolToOnOff(DefSysdateIsNow), skipInit: true, Type: TypeBool,
+	{Scope: ScopeGlobal | ScopeSession, Name: SysdateIsNow, Value: BoolToOnOff(DefSysdateIsNow), Type: TypeBool,
 		SetSession: func(vars *SessionVars, s string) error {
 			vars.SysdateIsNow = TiDBOptOn(s)
-			return nil
-		},
-		GetGlobal: func(vars *SessionVars) (s string, err error) {
-			return strconv.FormatBool(GlobalSysdateIsNow.Load()), nil
-		},
-		SetGlobal: func(vars *SessionVars, s string) error {
-			GlobalSysdateIsNow.Store(TiDBOptOn(s))
 			return nil
 		},
 	},
@@ -1398,6 +1397,13 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTxnAssertionLevel, Value: DefTiDBTxnAssertionLevel, PossibleValues: []string{AssertionOffStr, AssertionFastStr, AssertionStrictStr}, Hidden: true, Type: TypeEnum, SetSession: func(s *SessionVars, val string) error {
 		s.AssertionLevel = tidbOptAssertionLevel(val)
 		return nil
+	}},
+	{Scope: ScopeSession, Name: TiDBLastDDLInfo, Value: strconv.Itoa(DefCurretTS), ReadOnly: true, skipInit: true, GetSession: func(s *SessionVars) (string, error) {
+		info, err := json.Marshal(s.LastDDLInfo)
+		if err != nil {
+			return "", err
+		}
+		return string(info), nil
 	}},
 }
 

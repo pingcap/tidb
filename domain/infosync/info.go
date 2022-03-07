@@ -51,8 +51,8 @@ import (
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
-	"go.etcd.io/etcd/clientv3"
-	"go.etcd.io/etcd/clientv3/concurrency"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
 
@@ -237,6 +237,7 @@ func initTiFlashPlacementManager(addrs []string) TiFlashPlacementManager {
 		m := mockTiFlashPlacementManager{}
 		return &m
 	}
+	logutil.BgLogger().Warn("init TiFlashPlacementManager", zap.Strings("pd addrs", addrs))
 	return &TiFlashPDPlacementManager{addrs: addrs}
 }
 

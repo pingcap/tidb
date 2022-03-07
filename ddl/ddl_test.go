@@ -16,26 +16,19 @@ package ddl
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/stretchr/testify/require"
 )
 
@@ -64,37 +57,6 @@ func GetMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, end
 	return getRangeEndKey(store, priority, t, startHandle, endHandle)
 }
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	*CustomParallelSuiteFlag = true
-	logLevel := os.Getenv("log_level")
-	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
-	if err != nil {
-		t.Fatal(err)
-	}
-	autoid.SetStep(5000)
-	ReorgWaitTimeout = 30 * time.Millisecond
-	batchInsertDeleteRangeSize = 2
-
-	config.UpdateGlobal(func(conf *config.Config) {
-		// Test for table lock.
-		conf.EnableTableLock = true
-		conf.Log.SlowThreshold = 10000
-		conf.TiKVClient.AsyncCommit.SafeWindow = 0
-		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
-		conf.Experimental.AllowsExpressionIndex = true
-	})
-
-	_, err = infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	testleak.BeforeTest()
-	TestingT(t)
-	testleak.AfterTestT(t)()
-}
-
 func testNewDDLAndStart(ctx context.Context, options ...Option) (*ddl, error) {
 	// init infoCache and a stub infoSchema
 	ic := infoschema.NewCache(2)
@@ -105,13 +67,7 @@ func testNewDDLAndStart(ctx context.Context, options ...Option) (*ddl, error) {
 	return d, err
 }
 
-func testCreateStore(t *testing.T, name string) kv.Storage {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	return store
-}
-
-func testCreateStoreT(t *testing.T, name string) kv.Storage {
+func createMockStore(t *testing.T) kv.Storage {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	return store
@@ -124,17 +80,6 @@ func testNewContext(d *ddl) sessionctx.Context {
 }
 
 func getSchemaVer(t *testing.T, ctx sessionctx.Context) int64 {
-	err := ctx.NewTxn(context.Background())
-	require.NoError(t, err)
-	txn, err := ctx.Txn(true)
-	require.NoError(t, err)
-	m := meta.NewMeta(txn)
-	ver, err := m.GetSchemaVersion()
-	require.NoError(t, err)
-	return ver
-}
-
-func getSchemaVerT(t *testing.T, ctx sessionctx.Context) int64 {
 	err := ctx.NewTxn(context.Background())
 	require.NoError(t, err)
 	txn, err := ctx.Txn(true)
@@ -317,7 +262,7 @@ func buildRebaseAutoIDJobJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, new
 	}
 }
 
-func (s *testDDLSuiteToVerify) TestGetIntervalFromPolicy() {
+func TestGetIntervalFromPolicy(t *testing.T) {
 	policy := []time.Duration{
 		1 * time.Second,
 		2 * time.Second,
@@ -328,18 +273,18 @@ func (s *testDDLSuiteToVerify) TestGetIntervalFromPolicy() {
 	)
 
 	val, changed = getIntervalFromPolicy(policy, 0)
-	require.Equal(s.T(), val, 1*time.Second)
-	require.Equal(s.T(), changed, true)
+	require.Equal(t, val, 1*time.Second)
+	require.True(t, changed)
 
 	val, changed = getIntervalFromPolicy(policy, 1)
-	require.Equal(s.T(), val, 2*time.Second)
-	require.Equal(s.T(), changed, true)
+	require.Equal(t, val, 2*time.Second)
+	require.True(t, changed)
 
 	val, changed = getIntervalFromPolicy(policy, 2)
-	require.Equal(s.T(), val, 2*time.Second)
-	require.Equal(s.T(), changed, false)
+	require.Equal(t, val, 2*time.Second)
+	require.False(t, changed)
 
 	val, changed = getIntervalFromPolicy(policy, 3)
-	require.Equal(s.T(), val, 2*time.Second)
-	require.Equal(s.T(), changed, false)
+	require.Equal(t, val, 2*time.Second)
+	require.False(t, changed)
 }

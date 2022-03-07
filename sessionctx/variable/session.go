@@ -921,6 +921,9 @@ type SessionVars struct {
 	// LastQueryInfo keeps track the info of last query.
 	LastQueryInfo QueryInfo
 
+	// LastDDLInfo keeps track the info of last DDL.
+	LastDDLInfo LastDDLInfo
+
 	// PartitionPruneMode indicates how and when to prune partitions.
 	PartitionPruneMode atomic2.String
 
@@ -1066,11 +1069,6 @@ func (s *SessionVars) CheckAndGetTxnScope() string {
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
 func (s *SessionVars) UseDynamicPartitionPrune() bool {
-	if s.InTxn() || !s.GetStatusFlag(mysql.ServerStatusAutocommit) {
-		// UnionScan cannot get partition table IDs in dynamic-mode, this is a quick-fix for issues/26719,
-		// please see it for more details.
-		return false
-	}
 	return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
 }
 
@@ -2292,6 +2290,12 @@ type QueryInfo struct {
 	StartTS     uint64 `json:"start_ts"`
 	ForUpdateTS uint64 `json:"for_update_ts"`
 	ErrMsg      string `json:"error,omitempty"`
+}
+
+// LastDDLInfo represents the information of last DDL. It's used to expose information for test purpose.
+type LastDDLInfo struct {
+	Query  string `json:"query"`
+	SeqNum uint64 `json:"seq_num"`
 }
 
 // TxnReadTS indicates the value and used situation for tx_read_ts
