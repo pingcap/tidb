@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -30,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/stretchr/testify/require"
 )
 
@@ -59,15 +57,6 @@ func GetMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, end
 	return getRangeEndKey(store, priority, t, startHandle, endHandle)
 }
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	*CustomParallelSuiteFlag = true
-
-	testleak.BeforeTest()
-	TestingT(t)
-	testleak.AfterTestT(t)()
-}
-
 func testNewDDLAndStart(ctx context.Context, options ...Option) (*ddl, error) {
 	// init infoCache and a stub infoSchema
 	ic := infoschema.NewCache(2)
@@ -91,17 +80,6 @@ func testNewContext(d *ddl) sessionctx.Context {
 }
 
 func getSchemaVer(t *testing.T, ctx sessionctx.Context) int64 {
-	err := ctx.NewTxn(context.Background())
-	require.NoError(t, err)
-	txn, err := ctx.Txn(true)
-	require.NoError(t, err)
-	m := meta.NewMeta(txn)
-	ver, err := m.GetSchemaVersion()
-	require.NoError(t, err)
-	return ver
-}
-
-func getSchemaVerT(t *testing.T, ctx sessionctx.Context) int64 {
 	err := ctx.NewTxn(context.Background())
 	require.NoError(t, err)
 	txn, err := ctx.Txn(true)
