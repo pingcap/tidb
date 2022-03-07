@@ -859,11 +859,9 @@ func (rc *Controller) loadSchemaForCheckOnly(ctx context.Context) error {
 			tableName := tblInfo.Name.String()
 			if tblInfo.State != model.StatePublic {
 				err := errors.Errorf("table [%s.%s] state is not public", schema.Name, tableName)
-				metric.RecordTableCount(metric.TableStatePending, err)
 				return err
 			}
 			// err = nil
-			metric.RecordTableCount(metric.TableStatePending, err)
 			tableInfo := &checkpoints.TidbTableInfo{
 				ID:   tblInfo.ID,
 				DB:   schema.Name,

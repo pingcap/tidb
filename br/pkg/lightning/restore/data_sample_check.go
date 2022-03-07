@@ -122,10 +122,13 @@ func (d *dataSampleCheck) checkRoutine(ctx context.Context, fileChan chan *sampl
 			if columnCount == -1 {
 				columnNames = fileParser.Columns()
 				if columnNames == nil {
-					columnCount = len(fileInfo.TableInfo.Columns)
-					columnNames = make([]string, columnCount)
-					for i, col := range fileInfo.TableInfo.Columns {
-						columnNames[i] = col.Name.L
+					columnCount = 0
+					columnNames = make([]string, 0, columnCount)
+					for _, col := range fileInfo.TableInfo.Columns {
+						if !col.Hidden {
+							columnNames = append(columnNames, col.Name.L)
+							columnCount++
+						}
 					}
 				} else {
 					columnCount = len(columnNames)
