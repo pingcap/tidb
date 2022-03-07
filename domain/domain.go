@@ -98,6 +98,8 @@ type Domain struct {
 	isLostConnectionToPD atomicutil.Int32 // !0: true, 0: false.
 	onClose              func()
 	sysExecutorFactory   func(*Domain) (pools.Resource, error)
+
+	sysProcesses SysProcesses
 }
 
 // loadInfoSchema loads infoschema at startTS.
@@ -733,6 +735,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
+	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
 	return do
 }
 
@@ -933,6 +936,11 @@ func (p *sessionPool) Close() {
 // SysSessionPool returns the system session pool.
 func (do *Domain) SysSessionPool() *sessionPool {
 	return do.sysSessionPool
+}
+
+// SysProcTracker returns the system processes tracker.
+func (do *Domain) SysProcTracker() sessionctx.SysProcTracker {
+	return &do.sysProcesses
 }
 
 // GetEtcdClient returns the etcd client.
@@ -1242,7 +1250,7 @@ func (do *Domain) StatsHandle() *handle.Handle {
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) error {
-	h, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool)
+	h, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool, &do.sysProcesses)
 	if err != nil {
 		return err
 	}
@@ -1272,7 +1280,7 @@ var RunAutoAnalyze = true
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool)
+	statsHandle, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool, &do.sysProcesses)
 	if err != nil {
 		return err
 	}
@@ -1823,3 +1831,56 @@ var (
 	ErrInfoSchemaChanged = dbterror.ClassDomain.NewStdErr(errno.ErrInfoSchemaChanged,
 		mysql.Message(errno.MySQLErrName[errno.ErrInfoSchemaChanged].Raw+". "+kv.TxnRetryableMark, nil))
 )
+
+// SysProcesses holds the sys processes infos
+type SysProcesses struct {
+	mu      *sync.RWMutex
+	procMap map[uint64]sessionctx.Context
+}
+
+// Track tracks the sys process into procMap
+func (s *SysProcesses) Track(id uint64, proc sessionctx.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if oldProc, ok := s.procMap[id]; ok && oldProc != proc {
+		return errors.Errorf("The ID is in use: %v", id)
+	}
+	s.procMap[id] = proc
+	proc.GetSessionVars().ConnectionID = id
+	atomic.StoreUint32(&proc.GetSessionVars().Killed, 0)
+	return nil
+}
+
+// UnTrack removes the sys process from procMap
+func (s *SysProcesses) UnTrack(id uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if proc, ok := s.procMap[id]; ok {
+		delete(s.procMap, id)
+		proc.GetSessionVars().ConnectionID = 0
+		atomic.StoreUint32(&proc.GetSessionVars().Killed, 0)
+	}
+}
+
+// GetSysProcessList gets list of system ProcessInfo
+func (s *SysProcesses) GetSysProcessList() map[uint64]*util.ProcessInfo {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rs := make(map[uint64]*util.ProcessInfo)
+	for connID, proc := range s.procMap {
+		// if session is still tracked in this map, it's not returned to sysSessionPool yet
+		if pi := proc.ShowProcess(); pi != nil && pi.ID == connID {
+			rs[connID] = pi
+		}
+	}
+	return rs
+}
+
+// KillSysProcess kills sys process with specified ID
+func (s *SysProcesses) KillSysProcess(id uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if proc, ok := s.procMap[id]; ok {
+		atomic.StoreUint32(&proc.GetSessionVars().Killed, 1)
+	}
+}

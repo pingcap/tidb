@@ -124,16 +124,20 @@ type Handle struct {
 
 	// StatsLoad is used to load stats concurrently
 	StatsLoad StatsLoad
+
+	// sysProcTracker is used to track sys process like analyze
+	sysProcTracker sessionctx.SysProcTracker
 }
 
 func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	return h.mu.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, params...)
 }
 
-func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
+func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int, procTrackID uint64, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	optFuncs := []sqlexec.OptionFuncAlias{
 		sqlexec.ExecOptionUseSessionPool,
 		execOptionForAnalyze[statsVer],
+		sqlexec.ExecOptionWithSysProcTrack(procTrackID, h.sysProcTracker.Track, h.sysProcTracker.UnTrack),
 	}
 	return h.mu.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, optFuncs, sql, params...)
 }
@@ -181,13 +185,14 @@ type sessionPool interface {
 }
 
 // NewHandle creates a Handle for update stats.
-func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool) (*Handle, error) {
+func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker) (*Handle, error) {
 	cfg := config.GetGlobalConfig()
 	handle := &Handle{
 		ddlEventCh:       make(chan *util.Event, 100),
 		listHead:         &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
 		idxUsageListHead: &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
 		pool:             pool,
+		sysProcTracker:   tracker,
 	}
 	handle.lease.Store(lease)
 	handle.statsCache.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)

@@ -860,7 +860,7 @@ func (pi *PartitionInfo) GetNameByID(id int64) string {
 	// see https://github.com/pingcap/parser/pull/1072 for the benchmark.
 	for i := range definitions {
 		if id == definitions[i].ID {
-			return definitions[i].Name.L
+			return definitions[i].Name.O
 		}
 	}
 	return ""
