@@ -78,8 +78,8 @@ func (c *bindCache) get(key bindCacheKey) []*BindRecord {
 
 // set inserts an item to the cache. It's not thread-safe.
 // Only other functions of the bindCache can use this function.
-// The set operation is failed when the memory usage of binding_cache exceeds its capacity.
-func (c *bindCache) set(key bindCacheKey, value []*BindRecord) (err error) {
+// The set operation will return error message when the memory usage of binding_cache exceeds its capacity.
+func (c *bindCache) set(key bindCacheKey, value []*BindRecord) (ok bool, err error) {
 	mem := calcBindCacheKVMem(key, value)
 	if mem > c.memCapacity { // ignore this kv pair if its size is too large
 		err = errors.New("The memory usage of the binding_cache exceeds its capacity")
@@ -100,6 +100,7 @@ func (c *bindCache) set(key bindCacheKey, value []*BindRecord) (err error) {
 	}
 	c.memTracker.Consume(mem)
 	c.cache.Put(key, value)
+	ok = true
 	return
 }
 
@@ -157,7 +158,10 @@ func (c *bindCache) SetBindRecord(hash string, meta *BindRecord) {
 			metas[i] = meta
 		}
 	}
-	err := c.set(cacheKey, []*BindRecord{meta})
+	ok, err := c.set(cacheKey, []*BindRecord{meta})
+	if !ok {
+		logutil.BgLogger().Warn("[sql-bind] The binding is too large to be loaded into the cache")
+	}
 	if err != nil {
 		logutil.BgLogger().Warn("[sql-bind] ", zap.Error(err))
 	}
@@ -187,7 +191,7 @@ func (c *bindCache) RemoveBindRecord(hash string, meta *BindRecord) {
 	}
 	// This function can guarantee the memory usage for the cache will never grow up.
 	// So we don't need to handle the return value here.
-	_ = c.set(bindCacheKey(hash), metas)
+	c.set(bindCacheKey(hash), metas)
 }
 
 // SetMemCapacity sets the memory capacity for the cache.
@@ -234,7 +238,7 @@ func (c *bindCache) Copy() *bindCache {
 		copy(bindRecords, v)
 		// The memory usage of cache has been handled at the beginning of this function.
 		// So we don't need to handle the return value here.
-		_ = newCache.set(cacheKey, bindRecords)
+		newCache.set(cacheKey, bindRecords)
 	}
 	return newCache
 }

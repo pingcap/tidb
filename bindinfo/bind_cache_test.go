@@ -30,26 +30,31 @@ func TestBindCache(t *testing.T) {
 
 	value := make([][]*BindRecord, 3)
 	key := make([]bindCacheKey, 3)
+	var bigKey string
 	for i := 0; i < 3; i++ {
 		cacheKey := strings.Repeat(strconv.Itoa(i), 50)
 		key[i] = bindCacheKey(hack.Slice(cacheKey))
 		record := &BindRecord{OriginalSQL: cacheKey, Db: ""}
 		value[i] = []*BindRecord{record}
+		bigKey += cacheKey
 
 		require.Equal(t, int64(100), calcBindCacheKVMem(key[i], value[i]))
 	}
 
-	err := bindCache.set(key[0], value[0])
+	ok, err := bindCache.set(key[0], value[0])
+	require.True(t, ok)
 	require.Nil(t, err)
 	result := bindCache.get(key[0])
 	require.NotNil(t, result)
 
-	err = bindCache.set(key[1], value[1])
+	ok, err = bindCache.set(key[1], value[1])
+	require.True(t, ok)
 	require.Nil(t, err)
 	result = bindCache.get(key[1])
 	require.NotNil(t, result)
 
-	err = bindCache.set(key[2], value[2])
+	ok, err = bindCache.set(key[2], value[2])
+	require.True(t, ok)
 	require.NotNil(t, err)
 	result = bindCache.get(key[2])
 	require.NotNil(t, result)
@@ -61,4 +66,15 @@ func TestBindCache(t *testing.T) {
 	// key[1] is still in the cache
 	result = bindCache.get(key[1])
 	require.NotNil(t, result)
+
+	bigBindCacheKey := bindCacheKey(hack.Slice(bigKey))
+	bigRecord := &BindRecord{OriginalSQL: bigKey, Db: ""}
+	bigBindCacheValue := []*BindRecord{bigRecord}
+	require.Equal(t, int64(300), calcBindCacheKVMem(bigBindCacheKey, bigBindCacheValue))
+	ok, err = bindCache.set(bigBindCacheKey, bigBindCacheValue)
+	require.False(t, ok)
+	require.NotNil(t, err)
+	result = bindCache.get(bigBindCacheKey)
+	require.Nil(t, result)
+
 }
