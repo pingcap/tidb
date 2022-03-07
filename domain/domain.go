@@ -1809,6 +1809,7 @@ type SysProcesses struct {
 	procMap map[uint64]sessionctx.Context
 }
 
+// Track tracks the sys process into procMap
 func (s *SysProcesses) Track(id uint64, proc sessionctx.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1821,6 +1822,7 @@ func (s *SysProcesses) Track(id uint64, proc sessionctx.Context) error {
 	return nil
 }
 
+// UnTrack removes the sys process from procMap
 func (s *SysProcesses) UnTrack(id uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
