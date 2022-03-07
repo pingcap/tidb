@@ -368,14 +368,11 @@ func TestMeta(t *testing.T) {
 	}
 	if !variable.AllowConcurrencyDDL.Load() {
 		m.PreSetSchemaDiff(schemaDiff)
-	}
-	err = m.SetSchemaDiff(store)
-	require.NoError(t, err)
-	readDiff, err := m.GetSchemaDiff(schemaDiff.Version)
-	require.NoError(t, err)
-	require.Equal(t, schemaDiff, readDiff)
-
-	if !variable.AllowConcurrencyDDL.Load() {
+		err = m.SetSchemaDiff(store)
+		require.NoError(t, err)
+		readDiff, err := m.GetSchemaDiff(schemaDiff.Version)
+		require.NoError(t, err)
+		require.Equal(t, schemaDiff, readDiff)
 		err = txn.Commit(context.Background())
 		require.NoError(t, err)
 	}
