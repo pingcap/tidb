@@ -598,7 +598,7 @@ func hasDefault(col *model.ColumnInfo) bool {
 		col.IsGenerated() || mysql.HasAutoIncrementFlag(col.Flag)
 }
 
-func (rc *Controller) createDataFileParser(ctx context.Context, dataFileMeta mydump.SourceFileMeta, replaceStr string) (mydump.Parser, error) {
+func (rc *Controller) createDataFileParser(ctx context.Context, dataFileMeta mydump.SourceFileMeta, dataInvalidCharReplace string) (mydump.Parser, error) {
 	var reader storage.ReadSeekCloser
 	var err error
 	if dataFileMeta.Type == mydump.SourceTypeParquet {
@@ -616,7 +616,7 @@ func (rc *Controller) createDataFileParser(ctx context.Context, dataFileMeta myd
 	case mydump.SourceTypeCSV:
 		hasHeader := rc.cfg.Mydumper.CSV.Header
 		// Create a utf8mb4 convertor to encode and decode data with the charset of CSV files.
-		charsetConvertor, err := mydump.NewCharsetConvertor(rc.cfg.Mydumper.DataCharacterSet, replaceStr)
+		charsetConvertor, err := mydump.NewCharsetConvertor(rc.cfg.Mydumper.DataCharacterSet, dataInvalidCharReplace)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
