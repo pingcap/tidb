@@ -484,6 +484,12 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 
 // dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.
 func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (updated bool, err error) {
+	statsVer := uint64(0)
+	defer func() {
+		if err == nil && statsVer != 0 {
+			err = h.recordHistoricalStatsMeta(id, statsVer)
+		}
+	}()
 	if delta.Count == 0 {
 		return true, nil
 	}
@@ -511,6 +517,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 		} else {
 			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
 		}
+		statsVer = startTS
 		return errors.Trace(err)
 	}
 	if err = updateStatsMeta(id); err != nil {
