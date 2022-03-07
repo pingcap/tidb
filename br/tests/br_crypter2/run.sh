@@ -22,7 +22,7 @@ DB_COUNT=3
 function create_db_with_table(){
     for i in $(seq $DB_COUNT); do
         run_sql "CREATE DATABASE $DB${i};"
-        ../bin/go-ycsb load mysql -P tests/$TEST_NAME/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB${i}
+        go-ycsb load mysql -P tests/$TEST_NAME/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB${i}
     done
 }
 
