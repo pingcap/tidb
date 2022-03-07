@@ -485,7 +485,7 @@ type Performance struct {
 	CrossJoin             bool    `toml:"cross-join" json:"cross-join"`
 	RunAutoAnalyze        bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
 	DistinctAggPushDown   bool    `toml:"distinct-agg-push-down" json:"distinct-agg-push-down"`
-	// Whether enable projection push down to tikv
+	// Whether enable projection push down for coprocessors (both tikv & tiflash), default false.
 	ProjectionPushDown   bool   `toml:"projection-push-down" json:"projection-push-down"`
 	CommitterConcurrency int    `toml:"committer-concurrency" json:"committer-concurrency"`
 	MaxTxnTTL            uint64 `toml:"max-txn-ttl" json:"max-txn-ttl"`

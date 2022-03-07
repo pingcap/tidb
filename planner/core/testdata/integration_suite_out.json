@@ -4339,6 +4339,64 @@
     ]
   },
   {
+    "Name": "TestPushDownProjectionForTiKV",
+    "Cases": [
+      {
+        "SQL": "desc format = 'brief' select i * 2 from t",
+        "Plan": [
+          "TableReader 10000.00 root  data:Projection",
+          "└─Projection 10000.00 cop[tikv]  mul(test.t.i, 2)->Column#6",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select DATE_FORMAT(t, '%Y-%m-%d %H') as date from t",
+        "Plan": [
+          "[TableReader 10000.00 root  data:Projection]",
+          "[└─Projection 10000.00 cop[tikv]  date_format(test.t.t, %Y-%m-%d %H)->Column#6]",
+          "[  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo]"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select md5(s) from t",
+        "Plan": [
+          "[TableReader 10000.00 root  data:Projection]",
+          "[└─Projection 10000.00 cop[tikv]  md5(test.t.s)->Column#6]",
+          "[  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo]"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestPushDownProjectionForTiFlashCoprocessor",
+    "Cases": [
+      {
+        "SQL": "desc format = 'brief' select i * 2 from t",
+        "Plan": [
+          "TableReader 10000.00 root  data:Projection",
+          "└─Projection 10000.00 cop[tiflash]  mul(test.t.i, 2)->Column#6",
+          "  └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select DATE_FORMAT(t, '%Y-%m-%d %H') as date from t",
+        "Plan": [
+          "[TableReader 10000.00 root  data:Projection]",
+          "[└─Projection 10000.00 cop[tiflash]  date_format(test.t.t, %Y-%m-%d %H)->Column#6]",
+          "[  └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo]"
+        ]
+      },
+      {
+        "SQL": "desc format = 'brief' select md5(s) from t",
+        "Plan": [
+          "[Projection 10000.00 root  md5(test.t.s)->Column#6]",
+          "[└─TableReader 10000.00 root  data:TableFullScan]",
+          "[  └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo]"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestPushDownProjectionForTiFlash",
     "Cases": [
       {

@@ -606,14 +606,6 @@
       "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct a) from (select * from ta union all select * from tb) t;"
     ]
   },
-    {
-    "name": "TestPushdownProjection",
-    "cases": [
-      "select i + 1 from t;",
-      "select DATE_FORMAT(t, '%Y-%m-%d %H') as date from t;",
-      "select md5(s) from t;"
-    ]
-  },
   {
     "name": "TestPushdownDistinctEnableAggPushDownDisable",
     "cases": [

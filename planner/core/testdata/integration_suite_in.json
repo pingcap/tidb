@@ -671,6 +671,22 @@
     ]
   },
   {
+    "name": "TestPushDownProjectionForTiKV",
+    "cases": [
+      "desc format = 'brief' select i * 2 from t",
+      "desc format = 'brief' select DATE_FORMAT(t, '%Y-%m-%d %H') as date from t",
+      "desc format = 'brief' select md5(s) from t"
+    ]
+  },
+  {
+    "name": "TestPushDownProjectionForTiFlashCoprocessor",
+    "cases": [
+      "desc format = 'brief' select i * 2 from t",
+      "desc format = 'brief' select DATE_FORMAT(t, '%Y-%m-%d %H') as date from t",
+      "desc format = 'brief' select md5(s) from t"
+    ]
+  },
+  {
     "name": "TestPushDownProjectionForTiFlash",
     "cases": [
       "desc format = 'brief' select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A",
