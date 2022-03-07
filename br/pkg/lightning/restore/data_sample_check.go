@@ -92,6 +92,13 @@ func (d *dataSampleCheck) checkRoutine(ctx context.Context, fileChan chan *sampl
 			return
 		}
 
+		ignoreColumns, err := rc.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(fileInfo.Table.DB, fileInfo.Table.Name, rc.cfg.Mydumper.CaseSensitive)
+		if err != nil {
+			resultErr = err
+			return
+		}
+		ignoreColumnsMap := ignoreColumns.ColumnsMap()
+
 		ddlColumnMap := make(map[string]*model.ColumnInfo, len(fileInfo.TableInfo.Columns))
 		for _, col := range fileInfo.TableInfo.Columns {
 			ddlColumnMap[col.Name.L] = col
@@ -146,7 +153,12 @@ func (d *dataSampleCheck) checkRoutine(ctx context.Context, fileChan chan *sampl
 					break
 				}
 
-				columnInfo := ddlColumnMap[columnNames[colIdx]]
+				// no need to check ignored column, since it's not encoded in kv
+				colName := columnNames[colIdx]
+				if _, ok := ignoreColumnsMap[colName]; ok {
+					continue
+				}
+				columnInfo := ddlColumnMap[colName]
 				if columnInfo == nil {
 					// we don't check this kind of error here
 					continue

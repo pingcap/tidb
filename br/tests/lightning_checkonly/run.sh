@@ -101,3 +101,10 @@ run_lightning --config "tests/$TEST_NAME/config_gbk.toml" -d "tests/$TEST_NAME/d
 check_contains "Total sample of 6 rows of data checked"
 run_sql "$check_db_sql"
 check_contains "s: 0"
+
+echo ">>> check-only for ignored column"
+run_lightning --config "tests/$TEST_NAME/config_gbk_ignore_columns.toml" -d "tests/$TEST_NAME/data_csv" --check-only 1,3 > $out_file_name
+check_contains "Total sample of 3 rows of data checked, 1 errors found."
+check_contains "Some checks failed, please check the log for more information."
+run_sql "select count(1) s from test_check.tbl1"
+check_contains "s: 0"

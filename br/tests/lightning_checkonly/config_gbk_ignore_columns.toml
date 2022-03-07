@@ -1,0 +1,9 @@
+[tikv-importer]
+backend = "local"
+
+[mydumper]
+data-character-set="gbk"
+ignore-columns = [{table-filter = ["*.*"], columns = ["id"]}]
+
+[mydumper.csv]
+header = true
