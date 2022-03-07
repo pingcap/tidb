@@ -18,7 +18,6 @@
 
 // Package pools provides functionality to manage and reuse resources
 // like connections.
-
 package pools
 
 import (
@@ -27,8 +26,6 @@ import (
 
 	"go.uber.org/atomic"
 )
-
-var ClosedErr = fmt.Errorf("ResourcePool is closed")
 
 type Factory func() (Resource, error)
 
@@ -80,7 +77,27 @@ func NewResourcePool(factory Factory, capacity, maxCap int, idleTimeout time.Dur
 // It waits for all resources to be returned (Put).
 // After a Close, Get and TryGet are not allowed.
 func (rp *ResourcePool) Close() {
-	_ = rp.SetCapacity(0)
+	// Atomically swap new capacity with old, but only
+	// if old capacity is non-zero.
+	var capacity int
+	for {
+		capacity = int(rp.capacity.Load())
+		if capacity == 0 {
+			return
+		}
+		if rp.capacity.CAS(int64(capacity), int64(0)) {
+			break
+		}
+	}
+
+	for i := 0; i < capacity; i++ {
+		wrapper := <-rp.resources
+		if wrapper.resource != nil {
+			wrapper.resource.Close()
+		}
+	}
+
+	close(rp.resources)
 }
 
 // IsClosed returns whether the ResourcePool is closed.
@@ -95,15 +112,9 @@ func (rp *ResourcePool) Get() (resource Resource, err error) {
 	// Fetch
 	var wrapper resourceWrapper
 	var ok bool
-	select {
-	case wrapper, ok = <-rp.resources:
-	default:
-		startTime := time.Now()
-		wrapper, ok = <-rp.resources
-		rp.recordWait(startTime)
-	}
+	wrapper, ok = <-rp.resources
 	if !ok {
-		return nil, ClosedErr
+		return nil, fmt.Errorf("ResourcePool is closed")
 	}
 
 	// Unwrap
@@ -135,54 +146,4 @@ func (rp *ResourcePool) Put(resource Resource) {
 	default:
 		panic(fmt.Errorf("attempt to Put into a full ResourcePool"))
 	}
-}
-
-// SetCapacity changes the capacity of the pool.
-// You can use it to shrink or expand, but not beyond
-// the max capacity. If the change requires the pool
-// to be shrunk, SetCapacity waits till the necessary
-// number of resources are returned to the pool.
-// A SetCapacity of 0 is equivalent to closing the ResourcePool.
-func (rp *ResourcePool) SetCapacity(capacity int) error {
-	if capacity < 0 || capacity > cap(rp.resources) {
-		return fmt.Errorf("capacity %d is out of range", capacity)
-	}
-
-	// Atomically swap new capacity with old, but only
-	// if old capacity is non-zero.
-	var oldcap int
-	for {
-		oldcap = int(rp.capacity.Load())
-		if oldcap == 0 {
-			return ClosedErr
-		}
-		if oldcap == capacity {
-			return nil
-		}
-		if rp.capacity.CAS(int64(oldcap), int64(capacity)) {
-			break
-		}
-	}
-
-	if capacity < oldcap {
-		for i := 0; i < oldcap-capacity; i++ {
-			wrapper := <-rp.resources
-			if wrapper.resource != nil {
-				wrapper.resource.Close()
-			}
-		}
-	} else {
-		for i := 0; i < capacity-oldcap; i++ {
-			rp.resources <- resourceWrapper{}
-		}
-	}
-	if capacity == 0 {
-		close(rp.resources)
-	}
-	return nil
-}
-
-func (rp *ResourcePool) recordWait(start time.Time) {
-	rp.waitCount.Add(1)
-	rp.waitTime.Add(time.Now().Sub(start))
 }
