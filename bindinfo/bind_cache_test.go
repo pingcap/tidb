@@ -76,5 +76,4 @@ func TestBindCache(t *testing.T) {
 	require.NotNil(t, err)
 	result = bindCache.get(bigBindCacheKey)
 	require.Nil(t, result)
-
 }
