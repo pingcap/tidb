@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -882,4 +883,211 @@ func TestIssue16854(t *testing.T) {
 	tk.MustExec("set @@tidb_max_chunk_size=100;")
 	tk.MustQuery("select distinct a from t order by a").Check(testkit.Rows("WAITING", "PRINTED", "WAITING,PRINTED", "STOCKUP", "WAITING,STOCKUP", "PRINTED,STOCKUP", "WAITING,PRINTED,STOCKUP"))
 	tk.MustExec("drop table t")
+}
+
+func issue20975Prepare(t *testing.T, store kv.Storage) (*testkit.TestKit, *testkit.TestKit) {
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("drop table if exists t1, t2")
+	tk2.MustExec("use test")
+	tk1.MustExec("create table t1(id int primary key, c int)")
+	tk1.MustExec("insert into t1 values(1, 10), (2, 20)")
+	return tk1, tk2
+}
+
+func TestIssue20975UpdateNoChange(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk1, tk2 := issue20975Prepare(t, store)
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("update t1 set c=c")
+	tk2.MustExec("create table t2(a int)")
+	tk1.MustExec("commit")
+}
+
+func TestIssue20975SelectForUpdate(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk1, tk2 := issue20975Prepare(t, store)
+	tk1.MustExec("begin")
+	tk1.MustExec("select * from t1 for update")
+	tk2.MustExec("create table t2(a int)")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t1 for update")
+	tk2.MustExec("drop table t2")
+	tk1.MustExec("commit")
+}
+
+func TestIssue20975SelectForUpdatePointGet(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk1, tk2 := issue20975Prepare(t, store)
+	tk1.MustExec("begin")
+	tk1.MustExec("select * from t1 where id=1 for update")
+	tk2.MustExec("create table t2(a int)")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t1 where id=1 for update")
+	tk2.MustExec("drop table t2")
+	tk1.MustExec("commit")
+}
+
+func TestIssue20975SelectForUpdateBatchPointGet(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk1, tk2 := issue20975Prepare(t, store)
+	tk1.MustExec("begin")
+	tk1.MustExec("select * from t1 where id in (1, 2) for update")
+	tk2.MustExec("create table t2(a int)")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t1 where id in (1, 2) for update")
+	tk2.MustExec("drop table t2")
+	tk1.MustExec("commit")
+}
+
+func issue20975PreparePartitionTable(t *testing.T, store kv.Storage) (*testkit.TestKit, *testkit.TestKit) {
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("drop table if exists t1, t2")
+	tk2.MustExec("use test")
+	tk1.MustExec(`create table t1(id int primary key, c int) partition by range (id) (
+		partition p1 values less than (10),
+		partition p2 values less than (20)
+	)`)
+	tk1.MustExec("insert into t1 values(1, 10), (2, 20), (11, 30), (12, 40)")
+	return tk1, tk2
+}
+
+func TestIssue20975UpdateNoChangeWithPartitionTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk1, tk2 := issue20975PreparePartitionTable(t, store)
+
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("update t1 set c=c")
+	tk2.MustExec("create table t2(a int)")
+	tk1.MustExec("commit")
+}
+
+func TestIssue20975SelectForUpdateWithPartitionTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk1, tk2 := issue20975PreparePartitionTable(t, store)
+	tk1.MustExec("begin")
+	tk1.MustExec("select * from t1 for update")
+	tk2.MustExec("create table t2(a int)")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t1 for update")
+	tk2.MustExec("drop table t2")
+	tk1.MustExec("commit")
+}
+
+func TestIssue20975SelectForUpdatePointGetWithPartitionTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk1, tk2 := issue20975PreparePartitionTable(t, store)
+	tk1.MustExec("begin")
+	tk1.MustExec("select * from t1 where id=1 for update")
+	tk2.MustExec("create table t2(a int)")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("begin")
+	tk1.MustExec("select * from t1 where id=12 for update")
+	tk2.MustExec("drop table t2")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t1 where id=1 for update")
+	tk2.MustExec("create table t2(a int)")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t1 where id=12 for update")
+	tk2.MustExec("drop table t2")
+	tk1.MustExec("commit")
+}
+
+func TestIssue20975SelectForUpdateBatchPointGetWithPartitionTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk1, tk2 := issue20975PreparePartitionTable(t, store)
+	tk1.MustExec("begin")
+	tk1.MustExec("select * from t1 where id in (1, 2) for update")
+	tk2.MustExec("create table t2(a int)")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("begin")
+	tk1.MustExec("select * from t1 where id in (11, 12) for update")
+	tk2.MustExec("drop table t2")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("begin")
+	tk1.MustExec("select * from t1 where id in (1, 11) for update")
+	tk2.MustExec("create table t2(a int)")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t1 where id in (1, 2) for update")
+	tk2.MustExec("drop table t2")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t1 where id in (11, 12) for update")
+	tk2.MustExec("create table t2(a int)")
+	tk1.MustExec("commit")
+
+	tk1.MustExec("begin pessimistic")
+	tk1.MustExec("select * from t1 where id in (1, 11) for update")
+	tk2.MustExec("drop table t2")
+	tk1.MustExec("commit")
+}
+
+func TestIssue20305(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t2 (a year(4))")
+	tk.MustExec("insert into t2 values(69)")
+	tk.MustQuery("select * from t2 where a <= 69").Check(testkit.Rows("2069"))
+	// the following test is a regression test that matches MySQL's behavior.
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("CREATE TABLE `t3` (`y` year DEFAULT NULL, `a` int DEFAULT NULL)")
+	tk.MustExec("INSERT INTO `t3` VALUES (2069, 70), (2010, 11), (2155, 2156), (2069, 69)")
+	tk.MustQuery("SELECT * FROM `t3` where y <= a").Check(testkit.Rows("2155 2156"))
+}
+
+func TestIssue22817(t *testing.T) {
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec("create table t3 (a year)")
+	tk.MustExec("insert into t3 values (1991), (\"1992\"), (\"93\"), (94)")
+	tk.MustQuery("select * from t3 where a >= NULL").Check(testkit.Rows())
+}
+
+func TestIssue13953(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (`id` int(11) DEFAULT NULL, `tp_bigint` bigint(20) DEFAULT NULL )")
+	tk.MustExec("insert into t values(0,1),(1,9215570218099803537)")
+	tk.MustQuery("select A.tp_bigint,B.id from t A join t B on A.id < B.id * 16 where A.tp_bigint = B.id;").Check(
+		testkit.Rows("1 1"))
 }
