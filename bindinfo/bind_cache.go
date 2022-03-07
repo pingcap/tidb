@@ -191,7 +191,7 @@ func (c *bindCache) RemoveBindRecord(hash string, meta *BindRecord) {
 	}
 	// This function can guarantee the memory usage for the cache will never grow up.
 	// So we don't need to handle the return value here.
-	c.set(bindCacheKey(hash), metas)
+	_, _ = c.set(bindCacheKey(hash), metas)
 }
 
 // SetMemCapacity sets the memory capacity for the cache.
@@ -238,7 +238,7 @@ func (c *bindCache) Copy() *bindCache {
 		copy(bindRecords, v)
 		// The memory usage of cache has been handled at the beginning of this function.
 		// So we don't need to handle the return value here.
-		newCache.set(cacheKey, bindRecords)
+		_, _ = newCache.set(cacheKey, bindRecords)
 	}
 	return newCache
 }
