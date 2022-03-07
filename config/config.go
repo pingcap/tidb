@@ -111,31 +111,28 @@ type Config struct {
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
 	TempStorageQuota int64 `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
 	// Deprecated
-	EnableStreaming bool                    `toml:"-" json:"-"`
-	EnableBatchDML  bool                    `toml:"enable-batch-dml" json:"enable-batch-dml"`
-	TxnLocalLatches tikvcfg.TxnLocalLatches `toml:"-" json:"-"`
-	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
-	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
-	LowerCaseTableNames        int                `toml:"lower-case-table-names" json:"lower-case-table-names"`
-	ServerVersion              string             `toml:"server-version" json:"server-version"`
-	Log                        Log                `toml:"log" json:"log"`
-	Security                   Security           `toml:"security" json:"security"`
-	Status                     Status             `toml:"status" json:"status"`
-	Performance                Performance        `toml:"performance" json:"performance"`
-	PreparedPlanCache          PreparedPlanCache  `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
-	OpenTracing                OpenTracing        `toml:"opentracing" json:"opentracing"`
-	ProxyProtocol              ProxyProtocol      `toml:"proxy-protocol" json:"proxy-protocol"`
-	PDClient                   tikvcfg.PDClient   `toml:"pd-client" json:"pd-client"`
-	TiKVClient                 tikvcfg.TiKVClient `toml:"tikv-client" json:"tikv-client"`
-	Binlog                     Binlog             `toml:"binlog" json:"binlog"`
-	CompatibleKillQuery        bool               `toml:"compatible-kill-query" json:"compatible-kill-query"`
-	Plugin                     Plugin             `toml:"plugin" json:"plugin"`
-	PessimisticTxn             PessimisticTxn     `toml:"pessimistic-txn" json:"pessimistic-txn"`
-	CheckMb4ValueInUTF8        AtomicBool         `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
-	MaxIndexLength             int                `toml:"max-index-length" json:"max-index-length"`
-	IndexLimit                 int                `toml:"index-limit" json:"index-limit"`
-	TableColumnCountLimit      uint32             `toml:"table-column-count-limit" json:"table-column-count-limit"`
-	GracefulWaitBeforeShutdown int                `toml:"graceful-wait-before-shutdown" json:"graceful-wait-before-shutdown"`
+	EnableStreaming            bool                    `toml:"-" json:"-"`
+	EnableBatchDML             bool                    `toml:"enable-batch-dml" json:"enable-batch-dml"`
+	TxnLocalLatches            tikvcfg.TxnLocalLatches `toml:"-" json:"-"`
+	ServerVersion              string                  `toml:"server-version" json:"server-version"`
+	Log                        Log                     `toml:"log" json:"log"`
+	Security                   Security                `toml:"security" json:"security"`
+	Status                     Status                  `toml:"status" json:"status"`
+	Performance                Performance             `toml:"performance" json:"performance"`
+	PreparedPlanCache          PreparedPlanCache       `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
+	OpenTracing                OpenTracing             `toml:"opentracing" json:"opentracing"`
+	ProxyProtocol              ProxyProtocol           `toml:"proxy-protocol" json:"proxy-protocol"`
+	PDClient                   tikvcfg.PDClient        `toml:"pd-client" json:"pd-client"`
+	TiKVClient                 tikvcfg.TiKVClient      `toml:"tikv-client" json:"tikv-client"`
+	Binlog                     Binlog                  `toml:"binlog" json:"binlog"`
+	CompatibleKillQuery        bool                    `toml:"compatible-kill-query" json:"compatible-kill-query"`
+	Plugin                     Plugin                  `toml:"plugin" json:"plugin"`
+	PessimisticTxn             PessimisticTxn          `toml:"pessimistic-txn" json:"pessimistic-txn"`
+	CheckMb4ValueInUTF8        AtomicBool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	MaxIndexLength             int                     `toml:"max-index-length" json:"max-index-length"`
+	IndexLimit                 int                     `toml:"index-limit" json:"index-limit"`
+	TableColumnCountLimit      uint32                  `toml:"table-column-count-limit" json:"table-column-count-limit"`
+	GracefulWaitBeforeShutdown int                     `toml:"graceful-wait-before-shutdown" json:"graceful-wait-before-shutdown"`
 	// AlterPrimaryKey is used to control alter primary key feature.
 	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
@@ -645,7 +642,6 @@ var defaultConf = Config{
 	RepairTableList:              []string{},
 	MaxServerConnections:         0,
 	TxnLocalLatches:              defTiKVCfg.TxnLocalLatches,
-	LowerCaseTableNames:          2,
 	GracefulWaitBeforeShutdown:   0,
 	ServerVersion:                "",
 	Log: Log{
@@ -794,6 +790,7 @@ var deprecatedConfig = map[string]struct{}{
 	"alter-primary-key":                {}, // use NONCLUSTERED keyword instead
 	"enable-streaming":                 {},
 	"performance.mem-profile-interval": {},
+	"lower-case-table-names":           {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
@@ -930,11 +927,6 @@ func (c *Config) Valid() error {
 	}
 	if c.TableColumnCountLimit < DefTableColumnCountLimit || c.TableColumnCountLimit > DefMaxOfTableColumnCountLimit {
 		return fmt.Errorf("table-column-limit should be [%d, %d]", DefIndexLimit, DefMaxOfTableColumnCountLimit)
-	}
-
-	// lower_case_table_names is allowed to be 0, 1, 2
-	if c.LowerCaseTableNames < 0 || c.LowerCaseTableNames > 2 {
-		return fmt.Errorf("lower-case-table-names should be 0 or 1 or 2")
 	}
 
 	// txn-local-latches

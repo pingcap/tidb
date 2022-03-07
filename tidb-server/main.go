@@ -580,7 +580,6 @@ func setGlobalVars() {
 	variable.SetSysVar(variable.TiDBForcePriority, mysql.Priority2Str[priority])
 	variable.SetSysVar(variable.TiDBOptDistinctAggPushDown, variable.BoolToOnOff(cfg.Performance.DistinctAggPushDown))
 	variable.SetSysVar(variable.TiDBMemQuotaQuery, strconv.FormatInt(cfg.MemQuotaQuery, 10))
-	variable.SetSysVar(variable.LowerCaseTableNames, strconv.Itoa(cfg.LowerCaseTableNames))
 	variable.SetSysVar(variable.LogBin, variable.BoolToOnOff(cfg.Binlog.Enable))
 	variable.SetSysVar(variable.Port, fmt.Sprintf("%d", cfg.Port))
 	cfg.Socket = strings.Replace(cfg.Socket, "{Port}", fmt.Sprintf("%d", cfg.Port), 1)
