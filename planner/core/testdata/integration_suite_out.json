@@ -5574,7 +5574,7 @@
         "Plan": [
           "IndexMerge 8.00 root  ",
           "├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false",
-          "├─Selection(Build) 0.80 cop[tikv]  1",
+          "├─Selection(Build) 1.00 cop[tikv]  1",
           "│ └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false",
           "└─TableRowIDScan(Probe) 8.00 cop[tikv] table:t keep order:false"
         ],
@@ -5585,7 +5585,7 @@
         "Plan": [
           "IndexMerge 8.00 root  ",
           "├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false",
-          "├─Selection(Build) 0.80 cop[tikv]  1",
+          "├─Selection(Build) 1.00 cop[tikv]  1",
           "│ └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false",
           "└─TableRowIDScan(Probe) 8.00 cop[tikv] table:t keep order:false"
         ],
@@ -5595,9 +5595,9 @@
         "SQL": "desc format='brief' select /*+ use_index_merge(t) */ * from t where (a=1 and length(a)=1) or (b=1 and length(b)=1)",
         "Plan": [
           "IndexMerge 8.00 root  ",
-          "├─Selection(Build) 0.80 cop[tikv]  1",
+          "├─Selection(Build) 1.00 cop[tikv]  1",
           "│ └─IndexRangeScan 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false",
-          "├─Selection(Build) 0.80 cop[tikv]  1",
+          "├─Selection(Build) 1.00 cop[tikv]  1",
           "│ └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false",
           "└─TableRowIDScan(Probe) 8.00 cop[tikv] table:t keep order:false"
         ],
@@ -6558,6 +6558,26 @@
           "└─TableReader 10000.00 root  data:ExchangeSender",
           "  └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
           "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIssue32632",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select sum(ps_supplycost) from partsupp, supplier where ps_suppkey = s_suppkey;",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:sum(Column#15)->Column#14",
+          "└─TableReader 1.00 root  data:ExchangeSender",
+          "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(test.partsupp.ps_supplycost)->Column#15",
+          "      └─Projection 12500.00 batchCop[tiflash]  test.partsupp.ps_supplycost",
+          "        └─HashJoin 12500.00 batchCop[tiflash]  inner join, equal:[eq(test.supplier.s_suppkey, test.partsupp.ps_suppkey)]",
+          "          ├─ExchangeReceiver(Build) 10000.00 batchCop[tiflash]  ",
+          "          │ └─ExchangeSender 10000.00 batchCop[tiflash]  ExchangeType: Broadcast",
+          "          │   └─TableFullScan 10000.00 batchCop[tiflash] table:supplier keep order:false",
+          "          └─TableFullScan(Probe) 800000.00 batchCop[tiflash] table:partsupp keep order:false"
         ]
       }
     ]

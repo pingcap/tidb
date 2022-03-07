@@ -2244,53 +2244,41 @@ func TestChangeFromTimeToYear(t *testing.T) {
 
 // Fix issue: https://github.com/pingcap/tidb/issues/26292
 // Cast date to timestamp has two kind behavior: cast("3977-02-22" as date)
-// For select statement, it truncate the string and return no errors. (which is 3977-02-22 00:00:00 here)
-// For ddl reorging or changing column in ctc, it need report some errors.
+// For select statement, it truncates the string and return no errors. (which is 3977-02-22 00:00:00 here)
+// For ddl reorging or changing column in ctc, it needs report some errors.
 func TestCastDateToTimestampInReorgAttribute(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
+	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE `t` (`a` DATE NULL DEFAULT '8497-01-06')")
 	tk.MustExec("insert into t values(now())")
 
-	originalHook := dom.DDL().GetHook()
-	defer dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
-
-	// use new session to check meta in callback function.
-	internalTK := testkit.NewTestKit(t, store)
-	internalTK.MustExec("use test")
-
 	tbl := tk.GetTableByName("test", "t")
 	require.NotNil(t, tbl)
-	require.Equal(t, 1, len(tbl.Cols()))
+	require.Len(t, tbl.Cols(), 1)
+	var checkErr1 error
+	var checkErr2 error
 
 	hook := &ddl.TestDDLCallback{Do: dom}
-	var (
-		checkErr1 error
-		checkErr2 error
-	)
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if checkErr1 != nil || checkErr2 != nil {
-			return
-		}
-		if tbl.Meta().ID != job.TableID {
+		if checkErr1 != nil || checkErr2 != nil || tbl.Meta().ID != job.TableID {
 			return
 		}
 		switch job.SchemaState {
 		case model.StateWriteOnly:
-			_, checkErr1 = internalTK.Exec("insert into `t` set  `a` = '3977-02-22'") // this(string) will be cast to a as date, then cast a(date) as timestamp to changing column.
-			_, checkErr2 = internalTK.Exec("update t set `a` = '3977-02-22'")
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			checkErr1 = tk.ExecToErr("insert into `t` set  `a` = '3977-02-22'") // this(string) will be cast to a as date, then cast a(date) as timestamp to changing column.
+			checkErr2 = tk.ExecToErr("update t set `a` = '3977-02-22'")
 		}
 	}
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 
 	tk.MustExec("alter table t modify column a  TIMESTAMP NULL DEFAULT '2021-04-28 03:35:11' FIRST")
-	require.Equal(t, "[types:1292]Incorrect timestamp value: '3977-02-22'", checkErr1.Error())
-	require.Equal(t, "[types:1292]Incorrect timestamp value: '3977-02-22'", checkErr2.Error())
-	tk.MustExec("drop table if exists t")
+	require.EqualError(t, checkErr1, "[types:1292]Incorrect timestamp value: '3977-02-22'")
+	require.EqualError(t, checkErr2, "[types:1292]Incorrect timestamp value: '3977-02-22'")
 }
 
 // https://github.com/pingcap/tidb/issues/25282.

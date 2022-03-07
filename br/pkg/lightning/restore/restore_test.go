@@ -115,11 +115,10 @@ func TestErrorSummaries(t *testing.T) {
 
 func TestVerifyCheckpoint(t *testing.T) {
 	dir := t.TempDir()
-
-	cpdb := checkpoints.NewFileCheckpointsDB(filepath.Join(dir, "cp.pb"))
-	defer cpdb.Close()
 	ctx := context.Background()
-
+	cpdb, err := checkpoints.NewFileCheckpointsDB(ctx, filepath.Join(dir, "cp.pb"))
+	require.NoError(t, err)
+	defer cpdb.Close()
 	actualReleaseVersion := build.ReleaseVersion
 	defer func() {
 		build.ReleaseVersion = actualReleaseVersion
