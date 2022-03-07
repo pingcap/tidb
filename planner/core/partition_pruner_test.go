@@ -591,10 +591,11 @@ func TestHashPartitionPruning(t *testing.T) {
 	tk.MustQuery("SELECT col1, COL3 FROM t WHERE COL1 IN (0,14158354938390,0) AND COL3 IN (3522101843073676459,-2846203247576845955,838395691793635638);").Check(testkit.Rows("0 3522101843073676459"))
 }
 
-func (s *testPartitionPruneSuit) TestIssue32007(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue32007(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database Issue32007")
-	defer tk.MustExec("drop database Issue32007")
 	tk.MustExec("USE Issue32007")
 	tk.MustExec("create table t1 (a int, b tinyint, primary key (a)) partition by range (a) (" +
 		"partition p0 values less than (5)," +
