@@ -149,7 +149,7 @@ func (p *PointGetPlan) AccessObject(normalized bool) string {
 			buffer.WriteString(", partition:?")
 		} else {
 			buffer.WriteString(", partition:")
-			buffer.WriteString(p.PartitionInfo.Name.L)
+			buffer.WriteString(p.PartitionInfo.Name.O)
 		}
 	}
 	if p.IndexInfo != nil {
