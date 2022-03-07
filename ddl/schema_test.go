@@ -69,7 +69,7 @@ func testCreateSchemaT(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *mod
 	err := d.doDDLJob(ctx, job)
 	require.NoError(t, err)
 
-	v := getSchemaVerT(t, ctx)
+	v := getSchemaVer(t, ctx)
 	dbInfo.State = model.StatePublic
 	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v, db: dbInfo})
 	dbInfo.State = model.StateNone
