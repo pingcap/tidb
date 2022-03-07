@@ -35,7 +35,7 @@ type WalkOption struct {
 	// ObjPrefix used fo prefix search in storage.
 	// it can save lots of time when we want find specify prefix objects in storage.
 	// For example. we have 10000 <Hash>.sst files and 10 backupmeta.(\d+) files.
-	// we can use ObjPrefix = "backupmeta" to retrive all meta files quickly.
+	// we can use ObjPrefix = "backupmeta" to retrieve all meta files quickly.
 	ObjPrefix string
 	// ListCount is the number of entries per page.
 	//

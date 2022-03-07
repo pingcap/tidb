@@ -18,11 +18,10 @@ import (
 
 const (
 	// The commmon prefix of keys involved by the stream backup.
-	streamKeyPrefix    = "/tidb/br-stream"
-	taskInfoPath       = "/info"
-	taskCheckpointPath = "/checkpoint"
-	taskRangesPath     = "/ranges"
-	taskPausePath      = "/pause"
+	streamKeyPrefix = "/tidb/br-stream"
+	taskInfoPath    = "/info"
+	taskRangesPath  = "/ranges"
+	taskPausePath   = "/pause"
 )
 
 var (
@@ -144,7 +143,7 @@ func (t *TaskInfo) UntilTS(ts uint64) *TaskInfo {
 }
 
 // WithTableFilterHint adds the table filter of the stream backup, and return itself.
-// When schama version changed, TiDB should change the ranges of the task accroding to the table filter.
+// When schama version changed, TiDB should change the ranges of the task according to the table filter.
 func (t *TaskInfo) WithTableFilter(filterChain ...string) *TaskInfo {
 	t.PBInfo.TableFilter = filterChain
 	return t
