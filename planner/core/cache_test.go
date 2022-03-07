@@ -33,8 +33,8 @@ func TestCacheKey(t *testing.T) {
 		t.Fail() // no statement text
 	}
 	key, err = NewPlanCacheKey(ctx.GetSessionVars(), "select 1", "", 1)
-	if err.Error() != "no statement database" {
-		t.Fail() // no statement text
+	if err != nil {
+		t.Fail() // schema can be nil
 	}
 	key, err = NewPlanCacheKey(ctx.GetSessionVars(), "select 1", "test", 1)
 	if err != nil {

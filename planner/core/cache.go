@@ -135,7 +135,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		return nil, errors.New("no statement text")
 	}
 	if stmtDB == "" {
-		return nil, errors.New("no statement database")
+		stmtDB = sessionVars.CurrentDB
 	}
 	timezoneOffset := 0
 	if sessionVars.TimeZone != nil {
