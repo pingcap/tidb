@@ -33,8 +33,6 @@ import (
 )
 
 type DDLForTest interface {
-	// SetHook sets the hook.
-	SetHook(h Callback)
 	// SetInterceptor sets the interceptor.
 	SetInterceptor(h Interceptor)
 }
@@ -80,17 +78,6 @@ func testNewContext(d *ddl) sessionctx.Context {
 }
 
 func getSchemaVer(t *testing.T, ctx sessionctx.Context) int64 {
-	err := ctx.NewTxn(context.Background())
-	require.NoError(t, err)
-	txn, err := ctx.Txn(true)
-	require.NoError(t, err)
-	m := meta.NewMeta(txn)
-	ver, err := m.GetSchemaVersion()
-	require.NoError(t, err)
-	return ver
-}
-
-func getSchemaVerT(t *testing.T, ctx sessionctx.Context) int64 {
 	err := ctx.NewTxn(context.Background())
 	require.NoError(t, err)
 	txn, err := ctx.Txn(true)

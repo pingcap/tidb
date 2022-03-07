@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -1138,49 +1137,49 @@ func TestClusteredIndexAndNewCollationIndexEncodeDecodeV5(t *testing.T) {
 
 	tk.MustExec("insert into t values (1, '啊  ', '啊  ', '啊  ', '啊  ', '啊  ', '啊  ')")
 	// Single Read.
-	tk.MustQuery("select * from t ").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t ").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
 
-	tk.MustQuery("select * from t use index(a)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
-	tk.MustQuery("select * from t use index(ua)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
-	tk.MustQuery("select * from t use index(b)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
-	tk.MustQuery("select * from t use index(ub)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
-	tk.MustQuery("select * from t use index(c)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
-	tk.MustQuery("select * from t use index(uc)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
-	tk.MustQuery("select * from t use index(d)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
-	tk.MustQuery("select * from t use index(ud)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
-	tk.MustQuery("select * from t use index(e)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
-	tk.MustQuery("select * from t use index(ue)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
-	tk.MustQuery("select * from t use index(f)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
-	tk.MustQuery("select * from t use index(uf)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
-	tk.MustQuery("select * from t use index(g)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
-	tk.MustQuery("select * from t use index(ug)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(a)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(ua)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(b)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(ub)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(c)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(uc)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(d)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(ud)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(e)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(ue)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(f)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(uf)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(g)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
+	tk.MustQuery("select * from t use index(ug)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  "))
 
 	tk.MustExec("alter table t add column h varchar(10) collate utf8mb4_general_ci default '🐸'")
 	tk.MustExec("alter table t add column i varchar(10) collate utf8mb4_general_ci default '🐸'")
 	tk.MustExec("alter table t add index h(h)")
 	tk.MustExec("alter table t add unique index uh(h)")
 
-	tk.MustQuery("select * from t use index(h)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(uh)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(h)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(uh)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
 
 	// Double read.
-	tk.MustQuery("select * from t use index(a)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(ua)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(b)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(ub)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(c)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(uc)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(d)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(ud)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(e)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
-	tk.MustQuery("select * from t use index(ue)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(a)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(ua)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(b)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(ub)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(c)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(uc)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(d)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(ud)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(e)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
+	tk.MustQuery("select * from t use index(ue)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸"))
 	tk.MustExec("admin check table t")
 	tk.MustExec("admin recover index t a")
 	tk.MustExec("alter table t add column n char(10) COLLATE utf8mb4_unicode_ci")
 	tk.MustExec("alter table t add index n(n)")
 	tk.MustExec("update t set n = '吧';")
-	tk.MustQuery("select * from t").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸,吧"))
-	tk.MustQuery("select * from t use index(n)").Check(testutil.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸,吧"))
+	tk.MustQuery("select * from t").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸,吧"))
+	tk.MustQuery("select * from t use index(n)").Check(testkit.RowsWithSep(",", "1,啊,啊,啊  ,啊  ,啊,啊  ,🐸,🐸,吧"))
 	tk.MustExec("admin check table t")
 
 	tk.MustExec("drop table if exists t;")
@@ -1847,7 +1846,7 @@ func TestTimeBuiltin(t *testing.T) {
 	tk.MustExec(`insert into t select year("0000-00-00 00:00:00")`)
 	tk.MustExec(`set sql_mode="NO_ZERO_DATE";`) // with zero date
 	tk.MustExec(`insert into t select year("0000-00-00 00:00:00")`)
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
 	tk.MustExec(`set sql_mode="NO_ZERO_DATE,STRICT_TRANS_TABLES";`)
 	_, err = tk.Exec(`insert into t select year("0000-00-00 00:00:00");`)
 	require.Error(t, err)
@@ -1879,7 +1878,7 @@ func TestTimeBuiltin(t *testing.T) {
 	tk.MustExec(`insert into t select month("0000-00-00 00:00:00")`)
 	tk.MustExec(`set sql_mode="NO_ZERO_DATE";`)
 	tk.MustExec(`insert into t select month("0000-00-00 00:00:00")`)
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
 	tk.MustExec(`set sql_mode="NO_ZERO_DATE,STRICT_TRANS_TABLES";`)
 	_, err = tk.Exec(`insert into t select month("0000-00-00 00:00:00");`)
 	require.Error(t, err)
@@ -2136,34 +2135,34 @@ func TestTimeBuiltin(t *testing.T) {
 
 	result = tk.MustQuery("select addtime(-32073, 0), addtime(0, -32073);")
 	result.Check(testkit.Rows("<nil> <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Truncated incorrect time value: '-32073'",
 		"Warning|1292|Truncated incorrect time value: '-32073'"))
 	result = tk.MustQuery("select addtime(-32073, c), addtime(c, -32073) from t;")
 	result.Check(testkit.Rows("<nil> <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Truncated incorrect time value: '-32073'",
 		"Warning|1292|Truncated incorrect time value: '-32073'"))
 	result = tk.MustQuery("select addtime(a, -32073), addtime(b, -32073), addtime(d, -32073) from t;")
 	result.Check(testkit.Rows("<nil> <nil> <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Truncated incorrect time value: '-32073'",
 		"Warning|1292|Truncated incorrect time value: '-32073'",
 		"Warning|1292|Truncated incorrect time value: '-32073'"))
 
 	result = tk.MustQuery("select subtime(-32073, 0), subtime(0, -32073);")
 	result.Check(testkit.Rows("<nil> <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Truncated incorrect time value: '-32073'",
 		"Warning|1292|Truncated incorrect time value: '-32073'"))
 	result = tk.MustQuery("select subtime(-32073, c), subtime(c, -32073) from t;")
 	result.Check(testkit.Rows("<nil> <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Truncated incorrect time value: '-32073'",
 		"Warning|1292|Truncated incorrect time value: '-32073'"))
 	result = tk.MustQuery("select subtime(a, -32073), subtime(b, -32073), subtime(d, -32073) from t;")
 	result.Check(testkit.Rows("<nil> <nil> <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Truncated incorrect time value: '-32073'",
 		"Warning|1292|Truncated incorrect time value: '-32073'",
 		"Warning|1292|Truncated incorrect time value: '-32073'"))
@@ -2303,11 +2302,11 @@ func TestTimeBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("Friday November 13 2015 10:20:19 AM 15"))
 	result = tk.MustQuery(`SELECT DATE_FORMAT('0000-00-00', '%W %M %e %Y %r %y');`)
 	result.Check(testkit.Rows("<nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
 	result = tk.MustQuery(`SELECT DATE_FORMAT('0', '%W %M %e %Y %r %y'), DATE_FORMAT('0.0', '%W %M %e %Y %r %y'), DATE_FORMAT(0, 0);`)
 	result.Check(testkit.Rows("<nil> <nil> 0"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Incorrect time value: '0'",
 		"Warning|1292|Incorrect datetime value: '0.0'"))
 	result = tk.MustQuery(`SELECT DATE_FORMAT(0, '%W %M %e %Y %r %y'), DATE_FORMAT(0.0, '%W %M %e %Y %r %y');`)
@@ -2355,7 +2354,7 @@ func TestTimeBuiltin(t *testing.T) {
 	tk.MustExec(`update t set a = dayOfMonth("0000-00-00")`)
 	tk.MustExec("set sql_mode = 'NO_ZERO_DATE';")
 	tk.MustExec("insert into t value(dayOfMonth('0000-00-00'))")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
 	tk.MustExec(`update t set a = dayOfMonth("0000-00-00")`)
 	tk.MustExec("set sql_mode = 'NO_ZERO_DATE,STRICT_TRANS_TABLES';")
 	_, err = tk.Exec("insert into t value(dayOfMonth('0000-00-00'))")
@@ -2444,7 +2443,7 @@ func TestTimeBuiltin(t *testing.T) {
 	tk.MustExec(`update t set a = monthname("0000-00-00")`)
 	tk.MustExec("set sql_mode = 'NO_ZERO_DATE'")
 	tk.MustExec("insert into t value(monthname('0000-00-00'))")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
 	tk.MustExec(`update t set a = monthname("0000-00-00")`)
 	tk.MustExec("set sql_mode = ''")
 	tk.MustExec("insert into t value(monthname('0000-00-00'))")
@@ -2455,7 +2454,7 @@ func TestTimeBuiltin(t *testing.T) {
 	require.NoError(t, err)
 	result = tk.MustQuery(`select monthname("2017-12-01"), monthname("0000-00-00"), monthname("0000-01-00"), monthname("0000-01-00 00:00:00")`)
 	result.Check(testkit.Rows("December <nil> January January"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'"))
 
 	// for dayname
 	tk.MustExec(`drop table if exists t`)
@@ -2471,7 +2470,7 @@ func TestTimeBuiltin(t *testing.T) {
 	require.NoError(t, err)
 	result = tk.MustQuery(`select dayname("2017-12-01"), dayname("0000-00-00"), dayname("0000-01-00"), dayname("0000-01-00 00:00:00")`)
 	result.Check(testkit.Rows("Friday <nil> <nil> <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00.000000'",
 		"Warning|1292|Incorrect datetime value: '0000-01-00 00:00:00.000000'",
 		"Warning|1292|Incorrect datetime value: '0000-01-00 00:00:00.000000'"))
@@ -2523,7 +2522,7 @@ func TestTimeBuiltin(t *testing.T) {
 	// TODO: MySQL returns "<nil> <nil>".
 	result.Check(testkit.Rows("0000-00-01 <nil>"))
 	result = tk.MustQuery("show warnings")
-	result.Sort().Check(testutil.RowsWithSep("|",
+	result.Sort().Check(testkit.RowsWithSep("|",
 		"Warning|1292|Incorrect datetime value: '0000-00-00 00:00:00'",
 		"Warning|1292|Truncated incorrect datetime value: '01-01-2017'"))
 
@@ -2533,7 +2532,7 @@ func TestTimeBuiltin(t *testing.T) {
 	result = tk.MustQuery("select str_to_date('2020-07-04 11:22:33 PM c', '%Y-%m-%d %r')")
 	result.Check(testkit.Rows("2020-07-04 23:22:33"))
 	result = tk.MustQuery("show warnings")
-	result.Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect datetime value: '2020-07-04 11:22:33 PM c'"))
+	result.Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect datetime value: '2020-07-04 11:22:33 PM c'"))
 
 	result = tk.MustQuery("select str_to_date('11:22:33 PM', ' %r')")
 	result.Check(testkit.Rows("23:22:33"))
