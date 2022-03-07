@@ -1477,7 +1477,7 @@ func (rc *Client) RestoreKVFiles(
 			// in next version we will perform rewrite and restore meta key to restore new created tables.
 			// so we can simply skip the file that doesn't have the rule here.
 			log.Debug("skip file due to table id not matched", zap.String("file", fileReplica.Path), zap.Int64("tableId", fileReplica.TableId))
-			skipFile ++
+			skipFile++
 			continue
 		}
 		rc.workerPool.ApplyOnErrorGroup(eg, func() error {
@@ -1504,9 +1504,9 @@ func (rc *Client) RestoreKVFiles(
 	return nil
 }
 
-// initSchemasRepalceForDDL gets schemas information Mapping from old schemas to new schemas.
+// initSchemasReplaceForDDL gets schemas information Mapping from old schemas to new schemas.
 // It is used to rewrite meta kv-event.
-func (rc *Client) initSchemasRepalceForDDL(tables *map[int64]*metautil.Table) (*stream.SchemasReplace, error) {
+func (rc *Client) initSchemasReplaceForDDL(tables *map[int64]*metautil.Table) (*stream.SchemasReplace, error) {
 	var (
 		oldDBs     = make(map[int64]*model.DBInfo)
 		oldTables  = make(map[int64]*model.TableInfo)
@@ -1563,7 +1563,7 @@ func (rc *Client) RestoreMetaKVFiles(
 	files []*backuppb.DataFileInfo,
 	tables *map[int64]*metautil.Table,
 ) error {
-	schemasReplace, err := rc.initSchemasRepalceForDDL(tables)
+	schemasReplace, err := rc.initSchemasReplaceForDDL(tables)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1620,7 +1620,7 @@ func (rc *Client) RestoreMetaKVFile(
 			continue
 		}
 
-		log.Debug("rewrite txn entry",
+		log.Info("rewrite txn entry",
 			zap.Int("txnKey-len", len(txnEntry.Key)), zap.ByteString("txnKey", txnEntry.Key),
 			zap.Int("newKey-len", len(newEntry.Key)), zap.ByteString("newkey", newEntry.Key))
 

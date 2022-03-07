@@ -107,10 +107,10 @@ func GetSSTMetaFromFile(
 ) import_sstpb.SSTMeta {
 	// Get the column family of the file by the file name.
 	var cfName string
-	if strings.Contains(file.GetName(), DefaultCFName) {
-		cfName = DefaultCFName
-	} else if strings.Contains(file.GetName(), WriteCFName) {
-		cfName = WriteCFName
+	if strings.Contains(file.GetName(), defaultCFName) {
+		cfName = defaultCFName
+	} else if strings.Contains(file.GetName(), writeCFName) {
+		cfName = writeCFName
 	}
 	// Find the overlapped part between the file and the region.
 	// Here we rewrites the keys to compare with the keys of the region.

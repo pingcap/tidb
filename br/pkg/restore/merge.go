@@ -22,8 +22,8 @@ const (
 	// DefaultMergeRegionKeyCount is the default region key count, 960000.
 	DefaultMergeRegionKeyCount uint64 = 960000
 
-	WriteCFName   = "write"
-	DefaultCFName = "default"
+	writeCFName   = "write"
+	defaultCFName = "default"
 )
 
 // MergeRangesStat holds statistics for the MergeRanges.
@@ -61,9 +61,9 @@ func MergeFileRanges(
 		filesMap[string(file.StartKey)] = append(filesMap[string(file.StartKey)], file)
 
 		// We skips all default cf files because we don't range overlap.
-		if file.Cf == WriteCFName || strings.Contains(file.GetName(), WriteCFName) {
+		if file.Cf == writeCFName || strings.Contains(file.GetName(), writeCFName) {
 			writeCFFile++
-		} else if file.Cf == DefaultCFName || strings.Contains(file.GetName(), DefaultCFName) {
+		} else if file.Cf == defaultCFName || strings.Contains(file.GetName(), defaultCFName) {
 			defaultCFFile++
 		}
 		totalBytes += file.TotalBytes
