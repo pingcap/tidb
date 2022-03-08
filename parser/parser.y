@@ -371,12 +371,14 @@ import (
 	delayKeyWrite         "DELAY_KEY_WRITE"
 	directory             "DIRECTORY"
 	disable               "DISABLE"
+	disabled              "DISABLED"
 	discard               "DISCARD"
 	disk                  "DISK"
 	do                    "DO"
 	duplicate             "DUPLICATE"
 	dynamic               "DYNAMIC"
 	enable                "ENABLE"
+	enabled               "ENABLED"
 	encryption            "ENCRYPTION"
 	end                   "END"
 	enforced              "ENFORCED"
@@ -3419,13 +3421,13 @@ StatsType:
 	}
 
 BindingStatusType:
-	"ENABLE"
+	"ENABLED"
 	{
-		$$ = ast.BindingStatusTypeEnable
+		$$ = ast.BindingStatusTypeEnabled
 	}
-|	"DISABLE"
+|	"DISABLED"
 	{
-		$$ = ast.BindingStatusTypeDisable
+		$$ = ast.BindingStatusTypeDisabled
 	}
 
 CreateStatisticsStmt:
@@ -5893,7 +5895,9 @@ UnReservedKeyword:
 |	"PROCESSLIST"
 |	"SQL_NO_CACHE"
 |	"DISABLE"
+|	"DISABLED"
 |	"ENABLE"
+|	"ENABLED"
 |	"REVERSE"
 |	"PRIVILEGES"
 |	"NO"

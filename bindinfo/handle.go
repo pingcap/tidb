@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	tablefilter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -549,9 +550,14 @@ func (h *BindHandle) GetMemCapacity() (memCapacity int64) {
 
 // newBindRecord builds BindRecord from a tuple in storage.
 func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
+	status := row.GetString(3)
+	// For compatibility, the 'Using' status binding will be converted to the 'Enabled' status binding.
+	if status == Using {
+		status = Enabled
+	}
 	hint := Binding{
 		BindSQL:    row.GetString(1),
-		Status:     row.GetString(3),
+		Status:     status,
 		CreateTime: row.GetTime(4),
 		UpdateTime: row.GetTime(5),
 		Charset:    row.GetString(6),
@@ -610,9 +616,8 @@ func copyBindRecordUpdateMap(oldMap map[string]*bindRecordUpdate) map[string]*bi
 }
 
 type captureFilter struct {
-	dbs       map[string]struct{}
 	frequency int64
-	tables    map[stmtctx.TableEntry]struct{}
+	tables    []tablefilter.Filter // `schema.table`
 	users     map[string]struct{}
 
 	fail      bool
@@ -629,10 +634,10 @@ func (cf *captureFilter) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if x.Schema.L == "" {
 			tblEntry.DB = cf.currentDB
 		}
-		if _, ok := cf.dbs[tblEntry.DB]; ok {
-			cf.fail = true
-		} else if _, ok := cf.tables[tblEntry]; ok {
-			cf.fail = true
+		for _, tableFilter := range cf.tables {
+			if tableFilter.MatchTable(tblEntry.DB, tblEntry.Table) {
+				cf.fail = true // some filter is matched
+			}
 		}
 	}
 	return in, cf.fail
@@ -643,14 +648,31 @@ func (cf *captureFilter) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 func (cf *captureFilter) isEmpty() bool {
-	return len(cf.dbs) == 0 && len(cf.tables) == 0 && len(cf.users) == 0
+	return len(cf.tables) == 0 && len(cf.users) == 0
+}
+
+// ParseCaptureTableFilter checks whether this filter is valid and parses it.
+func ParseCaptureTableFilter(tableFilter string) (f tablefilter.Filter, valid bool) {
+	// forbid wildcards '!' and '@' for safety,
+	// please see https://github.com/pingcap/tidb-tools/tree/master/pkg/table-filter for more details.
+	tableFilter = strings.TrimLeft(tableFilter, " \t")
+	if tableFilter == "" {
+		return nil, false
+	}
+	if tableFilter[0] == '!' || tableFilter[0] == '@' {
+		return nil, false
+	}
+	var err error
+	f, err = tablefilter.Parse([]string{tableFilter})
+	if err != nil {
+		return nil, false
+	}
+	return f, true
 }
 
 func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 	filter = &captureFilter{
-		dbs:       make(map[string]struct{}),
 		frequency: 1,
-		tables:    make(map[stmtctx.TableEntry]struct{}),
 		users:     make(map[string]struct{}),
 	}
 	exec := h.sctx.Context.(sqlexec.RestrictedSQLExecutor)
@@ -665,19 +687,13 @@ func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 		filterTp := strings.ToLower(row.GetString(0))
 		valStr := strings.ToLower(row.GetString(1))
 		switch filterTp {
-		case "db":
-			filter.dbs[valStr] = struct{}{}
 		case "table":
-			strs := strings.Split(valStr, ".")
-			if len(strs) != 2 {
-				logutil.BgLogger().Warn("[sql-bind] failed to parse table name, ignore it", zap.String("filter_value", valStr))
+			tfilter, valid := ParseCaptureTableFilter(valStr)
+			if !valid {
+				logutil.BgLogger().Warn("[sql-bind] capture table filter is invalid, ignore it", zap.String("filter_value", valStr))
 				continue
 			}
-			tblEntry := stmtctx.TableEntry{
-				DB:    strs[0],
-				Table: strs[1],
-			}
-			filter.tables[tblEntry] = struct{}{}
+			filter.tables = append(filter.tables, tfilter)
 		case "user":
 			filter.users[valStr] = struct{}{}
 		case "frequency":
@@ -748,7 +764,7 @@ func (h *BindHandle) CaptureBaselines() {
 		charset, collation := h.sctx.GetSessionVars().GetCharsetInfo()
 		binding := Binding{
 			BindSQL:   bindSQL,
-			Status:    Using,
+			Status:    Enabled,
 			Charset:   charset,
 			Collation: collation,
 			Source:    Capture,
@@ -1060,7 +1076,7 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context, adminEvolve b
 			zap.String("digestText", digestText),
 		)
 	} else {
-		binding.Status = Using
+		binding.Status = Enabled
 	}
 	// We don't need to pass the `sctx` because the BindSQL has been validated already.
 	return h.AddBindRecord(nil, &BindRecord{OriginalSQL: originalSQL, Db: db, Bindings: []Binding{binding}})

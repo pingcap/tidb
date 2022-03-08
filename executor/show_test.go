@@ -1008,6 +1008,17 @@ func TestShowCreateTable(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
 		"PARTITION BY HASH (`id`) PARTITIONS 1",
 	))
+
+	// default value escape character '\\' display case
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int primary key, b varchar(20) default '\\\\');")
+	tk.MustQuery("show create table t;").Check(testkit.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) NOT NULL,\n"+
+			"  `b` varchar(20) DEFAULT '\\\\',\n"+
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
 func TestShowCreateTablePlacement(t *testing.T) {
