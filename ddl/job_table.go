@@ -117,7 +117,7 @@ func (d *ddl) getGeneralJob(sess sessionctx.Context) (*model.Job, error) {
 					continue
 				}
 				jobBinary = rows[0].GetBytes(0)
-				job = model.Job{}
+				var job model.Job
 				if err = job.Decode(jobBinary); err != nil {
 					return nil, errors.Trace(err)
 				}

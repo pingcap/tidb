@@ -665,8 +665,7 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 		}
 		err = w.finishDDLJob(t, job)
 		if err != nil {
-			err1 := txn.Rollback()
-			log.Error("Rollback", zap.Error(err1))
+			w.sessForJob.RollbackTxn(w.ctx)
 			w.unlockSeqNum()
 			log.Error("finishDDLJob", zap.Error(err))
 			return err
@@ -678,15 +677,14 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 				defer d.schemaVersionMu.Unlock()
 				err := t.SetSchemaDiff(d.store)
 				if err != nil {
-					err1 := txn.Rollback()
-					log.Error("Rollback", zap.Error(err1))
+					w.sessForJob.RollbackTxn(w.ctx)
 					log.Error("SetSchemaDiff", zap.Error(err))
 					return err
 				}
 			}
-			err = txn.Commit(w.ctx)
+			err = w.sessForJob.CommitTxn(w.ctx)
 			if err != nil {
-				log.Error("txn.Commit", zap.Error(err))
+				log.Error("sessForJob.CommitTxn", zap.Error(err))
 				return err
 			}
 			return nil
@@ -713,14 +711,13 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 		w.sessForJob.StmtRollback()
 		err = w.finishDDLJob(t, job)
 		if err != nil {
-			err1 := txn.Rollback()
-			log.Error("Rollback", zap.Error(err1))
+			w.sessForJob.RollbackTxn(context.TODO())
 			w.unlockSeqNum()
 			log.Error("finishDDLJob", zap.Error(err))
 			return err
 		}
-		w.sessForJob.StmtCommit()
-		err = txn.Commit(w.ctx)
+		//w.sessForJob.StmtCommit()
+		err = w.sessForJob.CommitTxn(w.ctx)
 		if err != nil {
 			w.unlockSeqNum()
 			log.Error("txn.Commit", zap.Error(err))
@@ -748,8 +745,7 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 
 	err = w.UpdateDDLJob(t, job, runJobErr != nil)
 	if err = w.handleUpdateJobError(t, job, err); err != nil {
-		err1 := txn.Rollback()
-		log.Error("Rollback", zap.Error(err1))
+		w.sessForJob.RollbackTxn(context.TODO())
 		w.unlockSeqNum()
 		return err
 	}
@@ -760,13 +756,12 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 			defer d.schemaVersionMu.Unlock()
 			err = t.SetSchemaDiff(d.store)
 			if err != nil {
-				err1 := txn.Rollback()
-				log.Error("Rollback", zap.Error(err1))
+				w.sessForJob.RollbackTxn(w.ctx)
 				return err
 			}
 			w.sessForJob.StmtCommit()
 			schemaVer = t.Diff.Version
-			err = txn.Commit(w.ctx)
+			err = w.sessForJob.CommitTxn(w.ctx)
 			if err != nil {
 				return err
 			}
