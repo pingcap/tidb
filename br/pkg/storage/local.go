@@ -56,6 +56,12 @@ func (l *LocalStorage) FileExists(ctx context.Context, name string) (bool, error
 // function; the second argument is the size in byte of the file determined
 // by path.
 func (l *LocalStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(string, int64) error) error {
+	if opt == nil {
+		opt = &WalkOption{}
+	}
+	if len(opt.ObjPrefix) != 0 {
+		return errors.New("local storage not support ObjPrefix for now")
+	}
 	base := filepath.Join(l.base, opt.SubDir)
 	return filepath.Walk(base, func(path string, f os.FileInfo, err error) error {
 		if os.IsNotExist(err) {
