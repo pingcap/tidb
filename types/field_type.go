@@ -15,7 +15,6 @@
 package types
 
 import (
-	"errors"
 	"fmt"
 	"strconv"
 
@@ -24,6 +23,7 @@ import (
 	ast "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	utilMath "github.com/pingcap/tidb/util/math"
 )
 
@@ -1329,13 +1329,13 @@ func CheckModifyTypeCompatible(origin *FieldType, to *FieldType) (canReorg bool,
 			}
 			if len(to.Elems) < len(origin.Elems) {
 				msg := fmt.Sprintf("the number of %s column's elements is less than the original: %d", typeVar, len(origin.Elems))
-				return true, errors.New(msg)
+				return true, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
 			}
 			for index, originElem := range origin.Elems {
 				toElem := to.Elems[index]
 				if originElem != toElem {
 					msg := fmt.Sprintf("cannot modify %s column value %s to %s", typeVar, originElem, toElem)
-					return true, errors.New(msg)
+					return true, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
 				}
 			}
 		}
@@ -1346,7 +1346,7 @@ func CheckModifyTypeCompatible(origin *FieldType, to *FieldType) (canReorg bool,
 			// remains the same.
 			if to.Flen != origin.Flen || to.Decimal != origin.Decimal || mysql.HasUnsignedFlag(to.Flag) != mysql.HasUnsignedFlag(origin.Flag) {
 				msg := fmt.Sprintf("decimal change from decimal(%d, %d) to decimal(%d, %d)", origin.Flen, origin.Decimal, to.Flen, to.Decimal)
-				return true, errors.New(msg)
+				return true, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
 			}
 		}
 
@@ -1354,13 +1354,13 @@ func CheckModifyTypeCompatible(origin *FieldType, to *FieldType) (canReorg bool,
 		if !needReorg {
 			return false, nil
 		}
-		return true, errors.New(reason)
+		return true, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(reason)
 	}
 
 	// Deal with the different type.
 	if !checkTypeChangeSupported(origin, to) {
 		unsupportedMsg := fmt.Sprintf("change from original type %v to %v is currently unsupported yet", origin.CompactStr(), to.CompactStr())
-		return false, errors.New(unsupportedMsg)
+		return false, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 	}
 
 	// Check if different type can directly convert and no need to reorg.
@@ -1371,11 +1371,11 @@ func CheckModifyTypeCompatible(origin *FieldType, to *FieldType) (canReorg bool,
 		if !needReorg {
 			return false, nil
 		}
-		return true, errors.New(reason)
+		return true, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(reason)
 	}
 
 	notCompatibleMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
-	return true, errors.New(notCompatibleMsg)
+	return true, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(notCompatibleMsg)
 }
 
 func needReorgToChange(origin *FieldType, to *FieldType) (needReorg bool, reasonMsg string) {
