@@ -326,10 +326,7 @@ func (e *CancelDDLJobsExec) Open(ctx context.Context) error {
 		e.errs, err = admin.CancelJobs(txn, e.jobIDs)
 		return
 	})
-	if errInTxn != nil {
-		return errInTxn
-	}
-	return nil
+	return errInTxn
 }
 
 // Next implements the Executor Next interface.
