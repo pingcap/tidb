@@ -899,7 +899,7 @@ func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, mergeTaskCh chan []byte) error {
 	defer close(mergeTaskCh)
 	for {
-		failpoint.Inject("mockSlowAnalyze", func() {
+		failpoint.Inject("mockAnalyzeJobRunning", func() {
 			time.Sleep(100 * time.Millisecond)
 		})
 		if atomic.LoadUint32(&ctx.GetSessionVars().Killed) == 1 {

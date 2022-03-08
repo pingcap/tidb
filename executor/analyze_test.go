@@ -2706,22 +2706,16 @@ func TestKillAutoAnalyze(t *testing.T) {
 		func() {
 			comment := fmt.Sprintf("kill %v analyze job", status)
 			statistics.ClearHistoryJobs()
-			if status == "finished" {
-				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockAnalyzeJobFinished", "return"))
+			mockAnalyzeStatus := "github.com/pingcap/tidb/executor/mockAnalyzeJob" + strings.Title(status)
+			require.NoError(t, failpoint.Enable(mockAnalyzeStatus, "return"))
+			defer func() {
+				require.NoError(t, failpoint.Disable(mockAnalyzeStatus))
+			}()
+			if status == "pending" || status == "running" {
+				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockSlowAnalyze", "return"))
 				defer func() {
-					require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeJobFinished"))
+					require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockSlowAnalyze"))
 				}()
-			} else {
-				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/mockSlowAnalyze", "return"))
-				defer func() {
-					require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/mockSlowAnalyze"))
-				}()
-				if status == "pending" {
-					require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockAnalyzeJobPending", "return"))
-					defer func() {
-						require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeJobPending"))
-					}()
-				}
 			}
 			ch := make(chan bool)
 			go func() {
@@ -2741,7 +2735,7 @@ func TestKillAutoAnalyze(t *testing.T) {
 				require.Greater(t, currentVersion, lastVersion, comment)
 			} else {
 				// If we kill a pending/running job, after kill command the status is failed and the table stats are not updated.
-				// We expect the killed analyze stops quickly. Specifically, end_time - start_time <= 1s.
+				// We expect the killed analyze stops quickly. Specifically, end_time - start_time < 1s.
 				checkAnalyzeStatus("failed", 1, comment)
 				require.Equal(t, currentVersion, lastVersion, comment)
 			}
