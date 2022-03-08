@@ -1444,7 +1444,7 @@ func (rc *Client) RestoreKVFiles(ctx context.Context, rules map[int64]*RewriteRu
 			onProgress()
 			summary.CollectInt("FileSkip", 1)
 			log.Debug("skip file due to table id not matched", zap.String("file", fileReplica.Path), zap.Int64("tableId", fileReplica.TableId))
-			skipFile ++
+			skipFile++
 			continue
 		}
 		rc.workerPool.ApplyOnErrorGroup(eg, func() error {
