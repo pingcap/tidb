@@ -761,10 +761,6 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 			}
 			w.sessForJob.StmtCommit()
 			schemaVer = t.Diff.Version
-			err = w.sessForJob.CommitTxn(w.ctx)
-			if err != nil {
-				return err
-			}
 		}
 		err = w.sessForJob.CommitTxn(w.ctx)
 		if err != nil {
