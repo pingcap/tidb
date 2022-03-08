@@ -61,7 +61,7 @@ func TestMemTracker4UpdateExec(t *testing.T) {
 	oom.SetTracker("")
 
 	tk.MustExec("insert into t_MemTracker4UpdateExec values (1,1,1), (2,2,2), (3,3,3)")
-	require.Equal(t, "schemaLeaseChecker is not set for this transaction", oom.GetTracker())
+	require.Equal(t, "Fail to delete internal txn startTS, globalInnerTxnTsBox is nil", oom.GetTracker())
 
 	tk.Session().GetSessionVars().MemQuotaQuery = 244
 	tk.MustExec("update t_MemTracker4UpdateExec set a = 4")
@@ -84,7 +84,7 @@ func TestMemTracker4InsertAndReplaceExec(t *testing.T) {
 	oom.SetTracker("")
 
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
-	require.Equal(t, "schemaLeaseChecker is not set for this transaction", oom.GetTracker())
+	require.Equal(t, "Fail to delete internal txn startTS, globalInnerTxnTsBox is nil", oom.GetTracker())
 	tk.Session().GetSessionVars().MemQuotaQuery = 1
 	tk.MustExec("insert into t_MemTracker4InsertAndReplaceExec values (1,1,1), (2,2,2), (3,3,3)")
 	require.Equal(t, "expensive_query during bootstrap phase", oom.GetTracker())
