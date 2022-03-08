@@ -15,17 +15,15 @@
 package types
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 
-	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
-	parserMysql "github.com/pingcap/tidb/parser/mysql"
 	ast "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/dbterror"
 	utilMath "github.com/pingcap/tidb/util/math"
 )
 
@@ -1316,8 +1314,6 @@ func SetBinChsClnFlag(ft *FieldType) {
 // VarStorageLen indicates this column is a variable length column.
 const VarStorageLen = ast.VarStorageLen
 
-var errUnsupportedModifyColumn = dbterror.ClassDDL.NewStdErr(errno.ErrUnsupportedDDLOperation, parserMysql.Message(fmt.Sprintf(mysql.MySQLErrName[errno.ErrUnsupportedDDLOperation].Raw, "modify column: %s"), nil))
-
 // CheckModifyTypeCompatible checks whether changes column type to another is compatible and can be changed.
 // If types are compatible and can be directly changed, nil err will be returned; otherwise the types are incompatible.
 // There are two cases when types incompatible:
@@ -1333,13 +1329,13 @@ func CheckModifyTypeCompatible(origin *FieldType, to *FieldType) (canReorg bool,
 			}
 			if len(to.Elems) < len(origin.Elems) {
 				msg := fmt.Sprintf("the number of %s column's elements is less than the original: %d", typeVar, len(origin.Elems))
-				return true, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+				return true, errors.New(msg)
 			}
 			for index, originElem := range origin.Elems {
 				toElem := to.Elems[index]
 				if originElem != toElem {
 					msg := fmt.Sprintf("cannot modify %s column value %s to %s", typeVar, originElem, toElem)
-					return true, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+					return true, errors.New(msg)
 				}
 			}
 		}
@@ -1350,7 +1346,7 @@ func CheckModifyTypeCompatible(origin *FieldType, to *FieldType) (canReorg bool,
 			// remains the same.
 			if to.Flen != origin.Flen || to.Decimal != origin.Decimal || mysql.HasUnsignedFlag(to.Flag) != mysql.HasUnsignedFlag(origin.Flag) {
 				msg := fmt.Sprintf("decimal change from decimal(%d, %d) to decimal(%d, %d)", origin.Flen, origin.Decimal, to.Flen, to.Decimal)
-				return true, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+				return true, errors.New(msg)
 			}
 		}
 
@@ -1358,13 +1354,13 @@ func CheckModifyTypeCompatible(origin *FieldType, to *FieldType) (canReorg bool,
 		if !needReorg {
 			return false, nil
 		}
-		return true, errUnsupportedModifyColumn.GenWithStackByArgs(reason)
+		return true, errors.New(reason)
 	}
 
 	// Deal with the different type.
 	if !checkTypeChangeSupported(origin, to) {
 		unsupportedMsg := fmt.Sprintf("change from original type %v to %v is currently unsupported yet", origin.CompactStr(), to.CompactStr())
-		return false, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		return false, errors.New(unsupportedMsg)
 	}
 
 	// Check if different type can directly convert and no need to reorg.
@@ -1375,11 +1371,11 @@ func CheckModifyTypeCompatible(origin *FieldType, to *FieldType) (canReorg bool,
 		if !needReorg {
 			return false, nil
 		}
-		return true, errUnsupportedModifyColumn.GenWithStackByArgs(reason)
+		return true, errors.New(reason)
 	}
 
 	notCompatibleMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
-	return true, errUnsupportedModifyColumn.GenWithStackByArgs(notCompatibleMsg)
+	return true, errors.New(notCompatibleMsg)
 }
 
 func needReorgToChange(origin *FieldType, to *FieldType) (needReorg bool, reasonMsg string) {

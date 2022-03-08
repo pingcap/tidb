@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/mock"
@@ -172,8 +173,8 @@ func (s *testDBSuite5) TestAddIndexWithDupIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use " + s.schemaName)
 
-	err1 := ddl.ErrDupKeyName.GenWithStack("index already exist %s", "idx")
-	err2 := ddl.ErrDupKeyName.GenWithStack("index already exist %s; "+
+	err1 := dbterror.ErrDupKeyName.GenWithStack("index already exist %s", "idx")
+	err2 := dbterror.ErrDupKeyName.GenWithStack("index already exist %s; "+
 		"a background job is trying to add the same index, "+
 		"please check by `ADMIN SHOW DDL JOBS`", "idx")
 
@@ -4218,7 +4219,7 @@ func (s *testSerialDBSuite) TestShardRowIDBitsOnTemporaryTable(c *C) {
 	tk.MustExec("create global temporary table shard_row_id_temporary (a int) on commit delete rows;")
 	defer tk.MustExec("drop table if exists shard_row_id_temporary")
 	_, err = tk.Exec("alter table shard_row_id_temporary shard_row_id_bits = 4;")
-	c.Assert(err.Error(), Equals, ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error())
+	c.Assert(err.Error(), Equals, dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error())
 	// for local temporary table
 	tk.MustExec("drop table if exists local_shard_row_id_temporary")
 	_, err = tk.Exec("create temporary table local_shard_row_id_temporary (a int) shard_row_id_bits = 5;")
@@ -4226,7 +4227,7 @@ func (s *testSerialDBSuite) TestShardRowIDBitsOnTemporaryTable(c *C) {
 	tk.MustExec("create temporary table local_shard_row_id_temporary (a int);")
 	defer tk.MustExec("drop table if exists local_shard_row_id_temporary")
 	_, err = tk.Exec("alter table local_shard_row_id_temporary shard_row_id_bits = 4;")
-	c.Assert(err.Error(), Equals, ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ALTER TABLE").Error())
+	c.Assert(err.Error(), Equals, dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ALTER TABLE").Error())
 }
 
 // port from mysql
