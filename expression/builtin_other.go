@@ -85,7 +85,7 @@ type inFunctionClass struct {
 }
 
 func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
-	args = c.validateConstArgByType(ctx, args)
+	args = c.validateConstArgByType(args)
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -157,12 +157,11 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	return sig, nil
 }
 
-func (c *inFunctionClass) validateConstArgByType(ctx sessionctx.Context, args []Expression) []Expression {
+func (c *inFunctionClass) validateConstArgByType(args []Expression) []Expression {
 	columnType := args[0].GetType()
 	validatedArgs := make([]Expression, 0, len(args))
 	for _, arg := range args {
-		if arg.ConstItem(ctx.GetSessionVars().StmtCtx) {
-			constant := arg.(*Constant)
+		if constant, ok := arg.(*Constant); ok {
 			switch {
 			case columnType.Tp == mysql.TypeBit && constant.Value.Kind() == types.KindInt64:
 				if constant.Value.GetInt64() < 0 {
