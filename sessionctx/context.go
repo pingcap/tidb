@@ -50,6 +50,9 @@ type Context interface {
 	// NewStaleTxnWithStartTS initializes a staleness transaction with the given StartTS.
 	NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) error
 
+	RollbackTxn(ctx context.Context)
+
+	CommitTxn(ctx context.Context) error
 	// Txn returns the current transaction which is created before executing a statement.
 	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
 	// If the active parameter is true, call this function will wait for the pending txn

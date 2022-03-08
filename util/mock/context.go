@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
@@ -224,6 +225,21 @@ func (c *Context) NewTxn(context.Context) error {
 		return errors.Trace(err)
 	}
 	c.txn.Transaction = txn
+	return nil
+}
+
+func (c *Context) RollbackTxn(ctx context.Context) {
+	defer c.sessionVars.SetInTxn(false)
+	if c.txn.Valid() {
+		terror.Log(c.txn.Rollback())
+	}
+}
+
+func (c *Context) CommitTxn(ctx context.Context) error {
+	defer c.sessionVars.SetInTxn(false)
+	if c.txn.Valid() {
+		return c.txn.Commit(ctx)
+	}
 	return nil
 }
 
