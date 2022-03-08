@@ -18,6 +18,7 @@ import (
 	"math"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
@@ -27,7 +28,7 @@ import (
 )
 
 func TestSlowQueryWithoutSlowLog(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	originCfg := config.GetGlobalConfig()
@@ -43,7 +44,7 @@ func TestSlowQueryWithoutSlowLog(t *testing.T) {
 }
 
 func TestSlowQuerySensitiveQuery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	originCfg := config.GetGlobalConfig()
@@ -79,7 +80,7 @@ func TestSlowQuerySensitiveQuery(t *testing.T) {
 }
 
 func TestSlowQueryPrepared(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	originCfg := config.GetGlobalConfig()
@@ -120,7 +121,7 @@ func TestSlowQueryPrepared(t *testing.T) {
 }
 
 func TestLogSlowLogIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	f, err := os.CreateTemp("", "tidb-slow-*.log")
@@ -147,7 +148,7 @@ func TestLogSlowLogIndex(t *testing.T) {
 }
 
 func TestSlowQuery(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 
