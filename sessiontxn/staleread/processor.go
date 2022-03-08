@@ -150,6 +150,9 @@ func (p *staleReadProcessor) OnSelectTable(tn *ast.TableName) error {
 		}
 
 		if txnCtx := p.sctx.GetSessionVars().TxnCtx; txnCtx.IsStaleness {
+			// It means we meet following case:
+			// 1. start transaction read only as of timestamp ts
+			// 2. select statement
 			return p.setEvaluatedValues(
 				txnCtx.StartTS,
 				temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, txnCtx.InfoSchema.(infoschema.InfoSchema)),
@@ -159,18 +162,23 @@ func (p *staleReadProcessor) OnSelectTable(tn *ast.TableName) error {
 		return p.setAsNonStaleRead()
 	}
 
+	// If `stmtAsOfTS` is not 0, it means we use 'select ... from xxx as of timestamp ...'
 	stmtAsOfTS, err := parseAndValidateAsOf(p.sctx, tn.AsOf)
 	if err != nil {
 		return err
 	}
 
 	if p.evaluated {
+		// If the select statement is related to multi tables, we should guarantee that all tables use the same timestamp
 		if p.stmtAsOfTs != stmtAsOfTS {
 			return errAsOf.GenWithStack("can not set different time in the as of")
 		}
 		return nil
 	}
 
+	// If `txnReadTS` is not 0, it means  we meet following situation:
+	// start transaction read only as of timestamp ...
+	// select from table
 	txnReadTS := p.sctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
 	if txnReadTS > 0 && stmtAsOfTS > 0 {
 		// `as of` and `@@tx_read_ts` cannot be set in the same time
@@ -186,11 +194,15 @@ func (p *staleReadProcessor) OnSelectTable(tn *ast.TableName) error {
 		return p.setEvaluatedTS(txnReadTS)
 	}
 
-	// set ts from `@@tidb_read_staleness` when both `as of` and `@@tx_read_ts` are not set
+	// If both txnReadTS and stmtAsOfTS is empty while the readStaleness isn't, it means we meet following situation:
+	// set @@tidb_read_staleness='-5';
+	// select from table
+	// Then the following select statement should be affected by the tidb_read_staleness in session.
 	if evaluator := getTsEvaluatorFromReadStaleness(p.sctx); evaluator != nil {
 		return p.setEvaluatedEvaluator(evaluator)
 	}
 
+	// Otherwise, it means we should not use stale read.
 	return p.setAsNonStaleRead()
 }
 
