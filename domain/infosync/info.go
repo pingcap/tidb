@@ -632,12 +632,16 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	}
 
 	for _, interTS := range InnerSessionStartTSList {
+		innerTxnStartTime := oracle.GetTimeFromTS(interTS)
+		if now.Sub(innerTxnStartTime) > kv.TimeToPrintLongTimeInternalTxn {
+			logutil.BgLogger().Info("An trasanction running by internal session lasts more than 1 minute")
+		}
 		if interTS > startTSLowerLimit && interTS < minStartTS {
 			minStartTS = interTS
 		}
 	}
 
-	is.minStartTS = kv.WrapGetMinStartTs(startTSLowerLimit, minStartTS)
+	is.minStartTS = kv.WrapGetMinStartTs(now, startTSLowerLimit, minStartTS)
 	err = is.storeMinStartTS(context.Background())
 	if err != nil {
 		logutil.BgLogger().Error("update minStartTS failed", zap.Error(err))

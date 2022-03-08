@@ -26,12 +26,14 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
 
 const (
-	chanBufferSize             = 256
-	undeletedStartTsBufferSize = 16
+	chanBufferSize                 = 256
+	undeletedStartTsBufferSize     = 16
+	TimeToPrintLongTimeInternalTxn = time.Minute
 )
 
 var globalInnerTxnTsBox atomic.Value
@@ -219,7 +221,7 @@ func (ib *innerTxnStartTsBox) putToUndeletedTSMap(startTS uint64) {
 }
 
 // WrapGetMinStartTs get the min StatTS between startTSLowerLimit and curMinStartTS in globalInnerTxnTsBox
-func WrapGetMinStartTs(startTSLowerLimit uint64,
+func WrapGetMinStartTs(now time.Time, startTSLowerLimit uint64,
 	curMinStartTS uint64) uint64 {
 	ib := getGlobalInnerTxnTsBox()
 	if ib == nil {
@@ -229,14 +231,19 @@ func WrapGetMinStartTs(startTSLowerLimit uint64,
 	if !ib.isBoxRunning() {
 		return curMinStartTS
 	}
-	return ib.getMinStartTs(startTSLowerLimit, curMinStartTS)
+	return ib.getMinStartTs(now, startTSLowerLimit, curMinStartTS)
 }
 
-func (ib *innerTxnStartTsBox) getMinStartTs(startTSLowerLimit uint64,
+func (ib *innerTxnStartTsBox) getMinStartTs(now time.Time, startTSLowerLimit uint64,
 	curMinStartTS uint64) uint64 {
 	minStartTS := curMinStartTS
 	ib.innerTSLock.Lock()
 	for _, innerTS := range ib.innerTxnStartTsMap {
+		innerTxnStartTime := oracle.GetTimeFromTS(innerTS)
+		if now.Sub(innerTxnStartTime) > TimeToPrintLongTimeInternalTxn {
+			logutil.BgLogger().Info("An trasanction running by RunInNewTxn lasts more than 1 minute")
+		}
+
 		if innerTS > startTSLowerLimit && innerTS < minStartTS {
 			minStartTS = innerTS
 		}
