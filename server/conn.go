@@ -403,8 +403,11 @@ func (cc *clientConn) writePacket(data []byte) error {
 			failpoint.Return(nil)
 		}
 	})
-	return cc.pkt.writePacket(data)
+	logutil.BgLogger().Error("testcwwwwwww 222222")
+	return cc.pkt.writePacketDirect(cc.bufReadConn,data)
 }
+
+
 
 // getSessionVarsWaitTimeout get session variable wait_timeout
 func (cc *clientConn) getSessionVarsWaitTimeout(ctx context.Context) uint64 {
@@ -1453,7 +1456,9 @@ func (cc *clientConn) writeOkWith(ctx context.Context, msg string, affectedRows,
 	if len(msg) > 0 {
 		enclen = lengthEncodedIntSize(uint64(len(msg))) + len(msg)
 	}
-
+	//1.Prepare the packet and serialize it to a buffer allocated by the area.Allocator
+	//Write this data through packetIO.WritePacket, in the WritePacket, the data will be cached in a buffer writer
+	//Flush the buffer writer to the connection
 	data := cc.alloc.AllocWithLen(4, 32+enclen)
 	data = append(data, mysql.OKHeader)
 	data = dumpLengthEncodedInt(data, affectedRows)
@@ -1467,7 +1472,7 @@ func (cc *clientConn) writeOkWith(ctx context.Context, msg string, affectedRows,
 		// it is actually string<lenenc>
 		data = dumpLengthEncodedString(data, []byte(msg))
 	}
-
+	logutil.BgLogger().Error("testcwwwwwww")
 	err := cc.writePacket(data)
 	if err != nil {
 		return err

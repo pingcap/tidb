@@ -181,6 +181,40 @@ func (p *packetIO) writePacket(data []byte) error {
 	}
 }
 
+// writePacket writes data that already have header
+func (p *packetIO) writePacketDirect(conn *bufferedReadConn, data []byte) error {
+	length := len(data) - 4
+	writePacketBytes.Add(float64(len(data)))
+
+	var mergeData []byte
+	for length >= mysql.MaxPayloadLen {
+		data[0] = 0xff
+		data[1] = 0xff
+		data[2] = 0xff
+
+		data[3] = p.sequence
+		mergeData = data[:4+mysql.MaxPayloadLen]
+		p.sequence++
+		length -= mysql.MaxPayloadLen
+		data = data[mysql.MaxPayloadLen:]
+	}
+
+	data[0] = byte(length)
+	data[1] = byte(length >> 8)
+	data[2] = byte(length >> 16)
+	data[3] = p.sequence
+	mergeData = append(mergeData, data...)
+	if n, err := conn.Conn.Write(mergeData); err != nil {
+		terror.Log(errors.Trace(err))
+		return errors.Trace(mysql.ErrBadConn)
+	} else if n != len(data) {
+		return errors.Trace(mysql.ErrBadConn)
+	} else {
+		p.sequence++
+		return nil
+	}
+}
+
 func (p *packetIO) flush() error {
 	err := p.bufWriter.Flush()
 	if err != nil {
