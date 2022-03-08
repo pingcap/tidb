@@ -1425,14 +1425,15 @@ func (rc *Client) FixIndex(ctx context.Context, schema, table, index string) err
 }
 
 // FixIndicdesOfTable tries to fix the indices of the table via `ADMIN RECOVERY INDEX`.
-func (rc *Client) FixIndicesOfTable(ctx context.Context, schema string, table *model.TableInfo) error {
+func (rc *Client) FixIndicesOfTable(ctx context.Context, schema string, table *model.TableInfo, onProgress func()) error {
 	tableName := table.Name.L
 	// NOTE: Maybe we can create multi sessions and restore indices concurrently?
 	for _, index := range table.Indices {
 		start := time.Now()
 		if err := rc.FixIndex(ctx, schema, tableName, index.Name.L); err != nil {
-			return errors.Annotatef(err, "failed to fix index %s for table %s", index.Name, tableName)
+			return errors.Annotatef(err, "failed to fix index %s", index.Name)
 		}
+		onProgress()
 		log.Info("Fix index done.", zap.Stringer("take", time.Since(start)),
 			zap.String("table", tableName),
 			zap.String("database", schema),
@@ -1441,11 +1442,11 @@ func (rc *Client) FixIndicesOfTable(ctx context.Context, schema string, table *m
 	return nil
 }
 
-// RestoreKVFiles tries to restore files about data kv-event from stream-backup.
 func (rc *Client) RestoreKVFiles(
 	ctx context.Context,
 	rules map[int64]*RewriteRules,
 	files []*backuppb.DataFileInfo,
+	onProgress func(),
 ) error {
 	var err error
 	start := time.Now()
@@ -1476,6 +1477,8 @@ func (rc *Client) RestoreKVFiles(
 			// For this version we do not handle new created table after full backup.
 			// in next version we will perform rewrite and restore meta key to restore new created tables.
 			// so we can simply skip the file that doesn't have the rule here.
+			onProgress()
+			summary.CollectInt("FileSkip", 1)
 			log.Debug("skip file due to table id not matched", zap.String("file", fileReplica.Path), zap.Int64("tableId", fileReplica.TableId))
 			skipFile++
 			continue
@@ -1483,6 +1486,8 @@ func (rc *Client) RestoreKVFiles(
 		rc.workerPool.ApplyOnErrorGroup(eg, func() error {
 			fileStart := time.Now()
 			defer func() {
+				onProgress()
+				summary.CollectInt("File", 1)
 				log.Info("import files done", zap.String("name", fileReplica.Path), zap.Duration("take", time.Since(fileStart)))
 			}()
 			return rc.fileImporter.ImportKVFiles(ectx, fileReplica, rule, rc.restoreTs)
