@@ -79,6 +79,9 @@ const (
 	dialTimeout             = 5 * time.Minute
 	maxRetryTimes           = 5
 	defaultRetryBackoffTime = 3 * time.Second
+	// maxWriteAndIngestRetryTimes is the max retry times for write and ingest.
+	// A large retry times is for tolerating tikv cluster failures.
+	maxWriteAndIngestRetryTimes = 30
 
 	gRPCKeepAliveTime    = 10 * time.Minute
 	gRPCKeepAliveTimeout = 5 * time.Minute
@@ -1272,27 +1275,32 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 				wg.Done()
 			}()
 			var err error
-			// max retry backoff time: 2+4+8+16=30s
+			// max retry backoff time: 2+4+8+16+30*26=810s
 			backOffTime := time.Second
-			for i := 0; i < maxRetryTimes; i++ {
+		loop:
+			for i := 0; i < maxWriteAndIngestRetryTimes; i++ {
 				err = local.writeAndIngestByRange(ctx, engine, startKey, endKey, regionSplitSize, regionSplitKeys)
 				if err == nil || common.IsContextCanceledError(err) {
-					return
+					break
 				}
 				log.L().Warn("write and ingest by range failed",
 					zap.Int("retry time", i+1), log.ShortError(err))
 				backOffTime *= 2
+				if backOffTime > time.Second*30 {
+					backOffTime = time.Second * 30
+				}
 				select {
 				case <-time.After(backOffTime):
 				case <-ctx.Done():
-					return
+					err = ctx.Err()
+					break loop
 				}
 			}
 
-			allErrLock.Lock()
-			allErr = multierr.Append(allErr, err)
-			allErrLock.Unlock()
 			if err != nil {
+				allErrLock.Lock()
+				allErr = multierr.Append(allErr, err)
+				allErrLock.Unlock()
 				metErr.Store(true)
 			}
 		}(w)
