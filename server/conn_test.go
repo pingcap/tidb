@@ -176,12 +176,14 @@ func TestInitialHandshake(t *testing.T) {
 	drv := NewTiDBDriver(store)
 	srv, err := NewServer(cfg, drv)
 	require.NoError(t, err)
+	var inBuffer bytes.Buffer
+	_, err = inBuffer.Write([]byte{})
 	cc := &clientConn{
 		connectionID: 1,
 		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
 		server:       srv,
 		pkt: &packetIO{
-			bufWriter: bufio.NewWriter(&outBuffer),
+			bufReadConn: newBufferedReadConn(&bytesConn{inBuffer}),
 		},
 	}
 
@@ -207,7 +209,10 @@ func TestInitialHandshake(t *testing.T) {
 	expected.Write([]byte{0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14, 0x00}) // Salt
 	expected.WriteString("mysql_native_password")                                                        // Authentication Plugin
 	expected.WriteByte(0x00)                                                                             // NULL
-	require.Equal(t, expected.Bytes(), outBuffer.Bytes()[4:])
+	actual := make([]byte, 256)
+	n, err := cc.bufReadConn.Conn.Read(actual)
+	require.NoError(t, err)
+	require.Equal(t, expected.Bytes(), actual[4:n])
 }
 
 type dispatchInput struct {

@@ -95,7 +95,7 @@ func (c *bytesConn) Read(b []byte) (n int, err error) {
 }
 
 func (c *bytesConn) Write(b []byte) (n int, err error) {
-	return 0, nil
+	return c.b.Write(b)
 }
 
 func (c *bytesConn) Close() error {
