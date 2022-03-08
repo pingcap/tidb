@@ -314,6 +314,9 @@ func StrToDuration(sc *stmtctx.StatementContext, str string, fsp int8) (d Durati
 	if length > 0 && str[0] == '-' {
 		length--
 	}
+	if n := strings.IndexByte(str, '.'); n >= 0 {
+		length = length - len(str[n:])
+	}
 	// Timestamp format is 'YYYYMMDDHHMMSS' or 'YYMMDDHHMMSS', which length is 12.
 	// See #3923, it explains what we do here.
 	if length >= 12 {

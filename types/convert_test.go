@@ -1107,6 +1107,8 @@ func (s *testTypeConvertSuite) TestStrToDuration(c *C) {
 		{"20190101180000", 6, false},
 		{"20190101180000", 1, false},
 		{"20190101181234", 3, false},
+		{"00:00:00.000000", 6, true},
+		{"00:00:00", 0, true},
 	}
 	for _, tt := range tests {
 		_, _, isDuration, err := StrToDuration(sc, tt.str, tt.fsp)
