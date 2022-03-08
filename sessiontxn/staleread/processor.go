@@ -46,7 +46,7 @@ type Processor interface {
 	// OnSelectTable will be called when process table in select statement
 	OnSelectTable(tn *ast.TableName) error
 	// OnExecutePreparedStmt when process execute
-	OnExecutePreparedStmt(tsEvaluator StalenessTSEvaluator) error
+	OnExecutePreparedStmt(preparedTSEvaluator StalenessTSEvaluator) error
 }
 
 type baseProcessor struct {
@@ -171,21 +171,22 @@ func (p *staleReadProcessor) OnSelectTable(tn *ast.TableName) error {
 	return p.evaluateFromStmtTSOrSysVariable(stmtAsOfTS, true)
 }
 
-func (p *staleReadProcessor) OnExecutePreparedStmt(tsEvaluator StalenessTSEvaluator) (err error) {
+func (p *staleReadProcessor) OnExecutePreparedStmt(preparedTSEvaluator StalenessTSEvaluator) (err error) {
 	if p.evaluated {
 		return errors.New("already evaluated")
 	}
 
 	if p.sctx.GetSessionVars().InTxn() {
-		if tsEvaluator != nil {
+		if preparedTSEvaluator != nil {
 			return errAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
 		}
 		return p.evaluateFromTxn()
 	}
 
 	var stmtTS uint64
-	if tsEvaluator != nil {
-		if stmtTS, err = tsEvaluator(p.sctx); err != nil {
+	if preparedTSEvaluator != nil {
+		// If the `preparedTSEvaluator` is not nil, it means the prepared statement is stale read
+		if stmtTS, err = preparedTSEvaluator(p.sctx); err != nil {
 			return err
 		}
 	}
@@ -226,11 +227,11 @@ func (p *staleReadProcessor) evaluateFromStmtTSOrSysVariable(stmtTS uint64, setE
 		return p.setEvaluatedTS(txnReadTS, setEvaluator)
 	}
 
-	// If both txnReadTS and stmtAsOfTS is empty while the readStaleness isn't, it means we meet following situation:
-	// set @@tidb_read_staleness='-5';
-	// select from table
-	// Then the following select statement should be affected by the tidb_read_staleness in session.
 	if evaluator := getTsEvaluatorFromReadStaleness(p.sctx); evaluator != nil {
+		// If both txnReadTS and stmtAsOfTS is empty while the return of getTsEvaluatorFromReadStaleness is not nil, it means we meet following situation:
+		// set @@tidb_read_staleness='-5';
+		// select from table
+		// Then the following select statement should be affected by the tidb_read_staleness in session.
 		return p.setEvaluatedEvaluator(evaluator)
 	}
 
