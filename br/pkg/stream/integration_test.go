@@ -92,8 +92,7 @@ func simpleTask(name string, tableCount int) stream.TaskInfo {
 }
 
 func keyIs(t *testing.T, key, value []byte, etcd *embed.Etcd) {
-	ctx := context.Background()
-	r, err := etcd.Server.KV().Range(ctx, key, nil, mvcc.RangeOptions{})
+	r, err := etcd.Server.KV().Range(context.TODO(), key, nil, mvcc.RangeOptions{})
 	require.NoError(t, err)
 	require.Len(t, r.KVs, 1)
 	require.Equal(t, key, r.KVs[0].Key)
@@ -101,22 +100,19 @@ func keyIs(t *testing.T, key, value []byte, etcd *embed.Etcd) {
 }
 
 func keyExists(t *testing.T, key []byte, etcd *embed.Etcd) {
-	ctx := context.Background()
-	r, err := etcd.Server.KV().Range(ctx, key, nil, mvcc.RangeOptions{})
+	r, err := etcd.Server.KV().Range(context.TODO(), key, nil, mvcc.RangeOptions{})
 	require.NoError(t, err)
 	require.Len(t, r.KVs, 1)
 }
 
 func keyNotExists(t *testing.T, key []byte, etcd *embed.Etcd) {
-	ctx := context.Background()
-	r, err := etcd.Server.KV().Range(ctx, key, nil, mvcc.RangeOptions{})
+	r, err := etcd.Server.KV().Range(context.TODO(), key, nil, mvcc.RangeOptions{})
 	require.NoError(t, err)
 	require.Len(t, r.KVs, 0)
 }
 
 func rangeMatches(t *testing.T, ranges stream.Ranges, etcd *embed.Etcd) {
-	ctx := context.Background()
-	r, err := etcd.Server.KV().Range(ctx, ranges[0].StartKey, ranges[len(ranges)-1].EndKey, mvcc.RangeOptions{})
+	r, err := etcd.Server.KV().Range(context.TODO(), ranges[0].StartKey, ranges[len(ranges)-1].EndKey, mvcc.RangeOptions{})
 	require.NoError(t, err)
 	if len(r.KVs) != len(ranges) {
 		t.Logf("len(ranges) not match len(response.KVs) [%d vs %d]", len(ranges), len(r.KVs))
@@ -130,8 +126,7 @@ func rangeMatches(t *testing.T, ranges stream.Ranges, etcd *embed.Etcd) {
 }
 
 func rangeIsEmpty(t *testing.T, prefix []byte, etcd *embed.Etcd) {
-	ctx := context.Background()
-	r, err := etcd.Server.KV().Range(ctx, prefix, kv.PrefixNextKey(prefix), mvcc.RangeOptions{})
+	r, err := etcd.Server.KV().Range(context.TODO(), prefix, kv.PrefixNextKey(prefix), mvcc.RangeOptions{})
 	require.NoError(t, err)
 	require.Len(t, r.KVs, 0)
 }

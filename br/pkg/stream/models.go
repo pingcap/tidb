@@ -20,8 +20,10 @@ const (
 	// The commmon prefix of keys involved by the stream backup.
 	streamKeyPrefix = "/tidb/br-stream"
 	taskInfoPath    = "/info"
-	taskRangesPath  = "/ranges"
-	taskPausePath   = "/pause"
+	// nolint:deadcode,varcheck
+	taskCheckpointPath = "/checkpoint"
+	taskRangesPath     = "/ranges"
+	taskPausePath      = "/pause"
 )
 
 var (
