@@ -34,7 +34,7 @@ type StalenessTSEvaluator func(sctx sessionctx.Context) (uint64, error)
 
 // Processor is an interface used to process stale read
 type Processor interface {
-	// IsStaleness indicates that whether we should use the staleness
+	// IsStaleness indicates that whether we should use the staleness.
 	IsStaleness() bool
 	// GetStalenessInfoSchema returns the information schema if it is stale read, otherwise returns nil
 	GetStalenessInfoSchema() infoschema.InfoSchema
