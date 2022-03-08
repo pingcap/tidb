@@ -29,29 +29,48 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	chanBufferSize             = 256
+	undeletedStartTsBufferSize = 16
+)
+
 var globalInnerTxnTsBox atomic.Value
 
 type innerTxnStartTsBox struct {
 	wg                  sync.WaitGroup
-	chanToStoreStartTs  chan uint64
+	chanToStoreStartTS  chan uint64
 	chanToDeleteStartTS chan uint64
-	innerTxnTsBoxRun    atomic.Value
-	innerTSLock         sync.Mutex
-	innerTxnStartTsMap  map[uint64]uint64
+
+	innerTxnTsBoxRun atomic.Value
+
+	innerTSLock        sync.Mutex
+	innerTxnStartTsMap map[uint64]uint64
+
+	// `storeInnerTxnStartTsLoop` and `deleteInnerTxnStartTsLoop` run asynchronously,
+	// It can't ensure `storeInnerTxnStartTsLoop` receives startTS before `deleteInnerTxnStartTsLoop`,
+	// though `RunInNewTxn`send startTS to `storeInnerTxnStartTsLoop` firstly. If `deleteInnerTxnStartTsLoop`
+	// recevied startTS before `storeInnerTxnStartTsLoop`, the `startTS` couldn't be deleted from `innerTxnStartTsMap`,
+	// and GC safepoint can't be advanced properly.
+	undeletedTsLock        sync.Mutex
+	chanToProcUndelStartTS chan uint64
+	undeletedStartTsMap    map[uint64]uint64
 }
 
 // InitInnerTxnStartTsBox initializes globalInnerTxnTsBox
 func InitInnerTxnStartTsBox() {
 	iTxnTsBox := &innerTxnStartTsBox{
-		chanToStoreStartTs:  make(chan uint64, 100), // 100 is decided by experience
-		chanToDeleteStartTS: make(chan uint64, 100),
-		innerTxnStartTsMap:  make(map[uint64]uint64, 100),
+		chanToStoreStartTS:     make(chan uint64, chanBufferSize),
+		chanToDeleteStartTS:    make(chan uint64, chanBufferSize),
+		innerTxnStartTsMap:     make(map[uint64]uint64, chanBufferSize),
+		chanToProcUndelStartTS: make(chan uint64, undeletedStartTsBufferSize),
+		undeletedStartTsMap:    make(map[uint64]uint64, undeletedStartTsBufferSize),
 	}
 	globalInnerTxnTsBox.Store(iTxnTsBox)
-	iTxnTsBox.wg.Add(2)
+	iTxnTsBox.wg.Add(3)
 	iTxnTsBox.innerTxnTsBoxRun.Store(true)
 	go iTxnTsBox.storeInnerTxnStartTsLoop()
 	go iTxnTsBox.deleteInnerTxnStartTsLoop()
+	go iTxnTsBox.processUndeletedStartTsLoop()
 }
 
 func (ib *innerTxnStartTsBox) resetGlobalInnerTxnTsBox() {
@@ -65,7 +84,7 @@ func (ib *innerTxnStartTsBox) isBoxRunning() bool {
 func (ib *innerTxnStartTsBox) storeInnerTxnStartTsLoop() {
 	logutil.BgLogger().Info("storeInnerTxnStartTsLoop started")
 	defer ib.wg.Done()
-	for startTS := range ib.chanToStoreStartTs {
+	for startTS := range ib.chanToStoreStartTS {
 		ib.storeInnerTxnTS(startTS)
 	}
 	logutil.BgLogger().Info("storeInnerTxnStartTsLoop exited")
@@ -80,11 +99,42 @@ func (ib *innerTxnStartTsBox) deleteInnerTxnStartTsLoop() {
 	logutil.BgLogger().Info("deleteInnerTxnStartTsLoop exited")
 }
 
+func (ib *innerTxnStartTsBox) processUndeletedStartTsLoop() {
+	logutil.BgLogger().Info("processUndeletedStartTsLoop started")
+	defer ib.wg.Done()
+	defer logutil.BgLogger().Info("processUndeletedStartTsLoop exited")
+	ticker := time.NewTicker(time.Millisecond * 100)
+	defer ticker.Stop()
+	for {
+		select {
+		case startTS, ok := <-ib.chanToProcUndelStartTS:
+			if !ok {
+				return
+			}
+			ib.putToUndeletedTSMap(startTS)
+		case <-ticker.C:
+			ib.processUndeletedStartTS()
+		}
+	}
+}
+
+func (ib *innerTxnStartTsBox) processUndeletedStartTS() {
+	ib.undeletedTsLock.Lock()
+	for startTS := range ib.undeletedStartTsMap { // infinite loop ??
+		if ib.realDeleteInnerTxnTS(startTS) {
+			// modify the map when traverse it, refer to https://go.dev/doc/effective_go#for
+			delete(ib.undeletedStartTsMap, startTS)
+		}
+	}
+	ib.undeletedTsLock.Unlock()
+}
+
 // close close chan chanToStoreStartTs and chanToDeleteStartTS
 func (ib *innerTxnStartTsBox) close() {
 	ib.resetGlobalInnerTxnTsBox()
-	close(ib.chanToStoreStartTs)
+	close(ib.chanToStoreStartTS)
 	close(ib.chanToDeleteStartTS)
+	close(ib.chanToProcUndelStartTS)
 	ib.wg.Wait()
 }
 
@@ -122,7 +172,7 @@ func wrapStoreInterTxnTS(startTS uint64) {
 	if !ib.isBoxRunning() {
 		return
 	}
-	ib.chanToStoreStartTs <- startTS
+	ib.chanToStoreStartTS <- startTS
 }
 
 func (ib *innerTxnStartTsBox) storeInnerTxnTS(startTS uint64) {
@@ -146,9 +196,26 @@ func wrapDeleteInterTxnTS(startTS uint64) {
 }
 
 func (ib *innerTxnStartTsBox) deleteInnerTxnTS(startTS uint64) {
+	deleted := ib.realDeleteInnerTxnTS(startTS)
+	if !deleted {
+		ib.chanToProcUndelStartTS <- startTS
+	}
+}
+
+func (ib *innerTxnStartTsBox) realDeleteInnerTxnTS(startTS uint64) bool {
 	ib.innerTSLock.Lock()
-	delete(ib.innerTxnStartTsMap, startTS)
-	ib.innerTSLock.Unlock()
+	defer ib.innerTSLock.Unlock()
+	if _, ok := ib.innerTxnStartTsMap[startTS]; ok {
+		delete(ib.innerTxnStartTsMap, startTS)
+		return true
+	}
+	return false
+}
+
+func (ib *innerTxnStartTsBox) putToUndeletedTSMap(startTS uint64) {
+	ib.undeletedTsLock.Lock()
+	ib.undeletedStartTsMap[startTS] = startTS
+	ib.undeletedTsLock.Unlock()
 }
 
 // WrapGetMinStartTs get the min StatTS between startTSLowerLimit and curMinStartTS in globalInnerTxnTsBox
