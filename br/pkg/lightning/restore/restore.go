@@ -842,8 +842,6 @@ func (rc *Controller) loadSchemaForCheckOnly(ctx context.Context) error {
 			Tables: make(map[string]*checkpoints.TidbTableInfo),
 		}
 
-		// reset error
-		err = nil
 		for _, tbl := range schema.Tables {
 			tblInfo, ok := tableMap[strings.ToLower(tbl.Name)]
 			if !ok {
