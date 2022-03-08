@@ -77,6 +77,7 @@ var Priv2SetStr = map[PrivilegeType]string{
 	CreateRolePriv:     "Create Role",
 	DropRolePriv:       "Drop Role",
 	ShutdownPriv:       "Shutdown Role",
+	TriggerPriv:        "Trigger",
 }
 
 // SetStr2Priv is the map for privilege set string to privilege type.
@@ -99,6 +100,7 @@ var SetStr2Priv = map[string]PrivilegeType{
 	"Index":                   IndexPriv,
 	"Create View":             CreateViewPriv,
 	"Show View":               ShowViewPriv,
+	"Trigger":                 TriggerPriv,
 }
 
 // Priv2UserCol is the privilege to mysql.user table column name.
