@@ -169,7 +169,6 @@ func TestInitialHandshake(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
-	var outBuffer bytes.Buffer
 	cfg := newTestConfig()
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
@@ -185,6 +184,7 @@ func TestInitialHandshake(t *testing.T) {
 		pkt: &packetIO{
 			bufReadConn: newBufferedReadConn(&bytesConn{inBuffer}),
 		},
+		bufReadConn: newBufferedReadConn(&bytesConn{inBuffer}),
 	}
 
 	err = cc.writeInitialHandshake(context.TODO())
@@ -485,14 +485,18 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 	server, err := NewServer(cfg, tidbdrv)
 	require.NoError(t, err)
 	defer server.Close()
-
+	var inBuffer bytes.Buffer
+	_, err = inBuffer.Write([]byte{})
+	require.NoError(t, err)
 	cc := &clientConn{
 		connectionID: 1,
 		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
 		server:       server,
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(&outBuffer),
+
 		},
+		bufReadConn: newBufferedReadConn(&bytesConn{inBuffer}),
 		collation:  mysql.DefaultCollationID,
 		peerHost:   "localhost",
 		alloc:      arena.NewAllocator(512),
@@ -507,7 +511,10 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 		if err == nil {
 			err = cc.flush(context.TODO())
 			require.NoError(t, err)
-			require.Equal(t, cs.out, outBuffer.Bytes())
+			actual := make([]byte, 256)
+			n, err := cc.bufReadConn.Conn.Read(actual)
+			require.NoError(t, err)
+			require.Equal(t, cs.out, actual[:n])
 		} else {
 			_ = cc.flush(context.TODO())
 		}
@@ -565,14 +572,19 @@ func TestConnExecutionTimeout(t *testing.T) {
 		Session: se,
 		stmts:   make(map[int]*TiDBStatement),
 	}
+	var inBuffer bytes.Buffer
+	_, err = inBuffer.Write([]byte{})
 	cc := &clientConn{
 		connectionID: connID,
 		server: &Server{
 			capability: defaultCapability,
 		},
+		pkt: &packetIO{
+		},
 		ctx:        tc,
 		alloc:      arena.NewAllocator(32 * 1024),
 		chunkAlloc: chunk.NewAllocator(),
+		bufReadConn: newBufferedReadConn(&bytesConn{inBuffer}),
 	}
 	srv := &Server{
 		clients: map[uint64]*clientConn{
@@ -673,12 +685,15 @@ func TestPrefetchPointKeys(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	var inBuffer bytes.Buffer
+	_, err := inBuffer.Write([]byte{})
 	cc := &clientConn{
 		alloc:      arena.NewAllocator(1024),
 		chunkAlloc: chunk.NewAllocator(),
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
+		bufReadConn: newBufferedReadConn(&bytesConn{inBuffer}),
 	}
 	tk := testkit.NewTestKit(t, store)
 	cc.ctx = &TiDBContext{Session: tk.Session()}
@@ -697,7 +712,7 @@ func TestPrefetchPointKeys(t *testing.T) {
 	query := "update prefetch set c = c + 1 where a = 1 and b = 1;" +
 		"update prefetch set c = c + 1 where a = 2 and b = 2;" +
 		"update prefetch set c = c + 1 where a = 3 and b = 3;"
-	err := cc.handleQuery(ctx, query)
+	err = cc.handleQuery(ctx, query)
 	require.NoError(t, err)
 	txn, err := tk.Session().Txn(false)
 	require.NoError(t, err)
@@ -734,12 +749,15 @@ func TestTiFlashFallback(t *testing.T) {
 	)
 	defer clean()
 
+	var inBuffer bytes.Buffer
+	_, err := inBuffer.Write([]byte{})
 	cc := &clientConn{
 		alloc:      arena.NewAllocator(1024),
 		chunkAlloc: chunk.NewAllocator(),
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
+		bufReadConn: newBufferedReadConn(&bytesConn{inBuffer}),
 	}
 
 	tk := testkit.NewTestKit(t, store)
@@ -750,7 +768,7 @@ func TestTiFlashFallback(t *testing.T) {
 	tk.MustExec("create table t(a int not null primary key, b int not null)")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := tk.GetTableByName("test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
 	dml := "insert into t values"
@@ -853,18 +871,22 @@ func testFallbackWork(t *testing.T, tk *testkit.TestKit, cc *clientConn, sql str
 func TestShowErrors(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+	var inBuffer bytes.Buffer
+	_, err := inBuffer.Write([]byte{})
+
 	cc := &clientConn{
 		alloc:      arena.NewAllocator(1024),
 		chunkAlloc: chunk.NewAllocator(),
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
+		bufReadConn: newBufferedReadConn(&bytesConn{inBuffer}),
 	}
 	ctx := context.Background()
 	tk := testkit.NewTestKit(t, store)
 	cc.ctx = &TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)}
 
-	err := cc.handleQuery(ctx, "create database if not exists test;")
+	err = cc.handleQuery(ctx, "create database if not exists test;")
 	require.NoError(t, err)
 	err = cc.handleQuery(ctx, "use test;")
 	require.NoError(t, err)
@@ -896,6 +918,9 @@ func TestHandleAuthPlugin(t *testing.T) {
 
 	// 5.5, 5.6 or 5.7 client trying to authenticate with mysql_native_password, w/o password
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
+	var inBuffer bytes.Buffer
+	_, err = inBuffer.Write([]byte{})
+
 	cc := &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
@@ -904,9 +929,11 @@ func TestHandleAuthPlugin(t *testing.T) {
 		peerHost:     "localhost",
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+			bufReadConn: newBufferedReadConn(&bytesConn{inBuffer}),
 		},
 		server: srv,
 		user:   "unativepassword",
+		bufReadConn: newBufferedReadConn(&bytesConn{inBuffer}),
 	}
 	resp := handshakeResponse41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
@@ -1109,6 +1136,8 @@ func TestAuthPlugin2(t *testing.T) {
 	drv := NewTiDBDriver(store)
 	srv, err := NewServer(cfg, drv)
 	require.NoError(t, err)
+	var inBuffer bytes.Buffer
+	_, err = inBuffer.Write([]byte{})
 
 	cc := &clientConn{
 		connectionID: 1,
@@ -1116,9 +1145,11 @@ func TestAuthPlugin2(t *testing.T) {
 		chunkAlloc:   chunk.NewAllocator(),
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
+			bufReadConn: newBufferedReadConn(&bytesConn{inBuffer}),
 		},
 		server: srv,
 		user:   "root",
+		bufReadConn: newBufferedReadConn(&bytesConn{inBuffer}),
 	}
 	ctx := context.Background()
 	se, _ := session.CreateSession4Test(store)
