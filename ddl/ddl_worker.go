@@ -766,6 +766,11 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 				return err
 			}
 		}
+		err = w.sessForJob.CommitTxn(w.ctx)
+		if err != nil {
+			log.Error("sessForJob.CommitTxn", zap.Error(err))
+			return err
+		}
 		return nil
 	}()
 	if err != nil {
