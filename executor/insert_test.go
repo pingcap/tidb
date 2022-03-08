@@ -1160,8 +1160,10 @@ func TestTextTooLongError(t *testing.T) {
 	_, err = tk.Exec("INSERT INTO t1 (c1) VALUES(REPEAT(X'C385', 32768));")
 	require.EqualError(t, err, "[types:1406]Data too long for column 'c1' at row 1")
 
-	//For mediumtext, tidb has another bug, at present ,it store  text exceed limit as null without error.
-	//we will trace it with issue:https://github.com/pingcap/tidb/issues/32869
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec("CREATE TABLE t1(c1 mediumtext);")
+	_, err = tk.Exec("INSERT INTO t1 (c1) VALUES(REPEAT(X'C385', 8777215));")
+	require.EqualError(t, err, "[types:1406]Data too long for column 'c1' at row 1")
 
 	// For long text, max_allowed_packet default value can not allow 4GB package, skip the test case.
 	tk.MustExec("drop table if exists t1")
