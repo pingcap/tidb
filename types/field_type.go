@@ -1316,7 +1316,7 @@ func SetBinChsClnFlag(ft *FieldType) {
 // VarStorageLen indicates this column is a variable length column.
 const VarStorageLen = ast.VarStorageLen
 
-var ErrUnsupportedModifyColumn = dbterror.ClassDDL.NewStdErr(errno.ErrUnsupportedDDLOperation, parserMysql.Message(fmt.Sprintf(mysql.MySQLErrName[errno.ErrUnsupportedDDLOperation].Raw, "modify column: %s"), nil))
+var errUnsupportedModifyColumn = dbterror.ClassDDL.NewStdErr(errno.ErrUnsupportedDDLOperation, parserMysql.Message(fmt.Sprintf(mysql.MySQLErrName[errno.ErrUnsupportedDDLOperation].Raw, "modify column: %s"), nil))
 
 // CheckModifyTypeCompatible checks whether changes column type to another is compatible and can be changed.
 // If types are compatible and can be directly changed, nil err will be returned; otherwise the types are incompatible.
@@ -1333,13 +1333,13 @@ func CheckModifyTypeCompatible(origin *FieldType, to *FieldType) (canReorg bool,
 			}
 			if len(to.Elems) < len(origin.Elems) {
 				msg := fmt.Sprintf("the number of %s column's elements is less than the original: %d", typeVar, len(origin.Elems))
-				return true, ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
+				return true, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 			}
 			for index, originElem := range origin.Elems {
 				toElem := to.Elems[index]
 				if originElem != toElem {
 					msg := fmt.Sprintf("cannot modify %s column value %s to %s", typeVar, originElem, toElem)
-					return true, ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
+					return true, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 				}
 			}
 		}
@@ -1350,7 +1350,7 @@ func CheckModifyTypeCompatible(origin *FieldType, to *FieldType) (canReorg bool,
 			// remains the same.
 			if to.Flen != origin.Flen || to.Decimal != origin.Decimal || mysql.HasUnsignedFlag(to.Flag) != mysql.HasUnsignedFlag(origin.Flag) {
 				msg := fmt.Sprintf("decimal change from decimal(%d, %d) to decimal(%d, %d)", origin.Flen, origin.Decimal, to.Flen, to.Decimal)
-				return true, ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
+				return true, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 			}
 		}
 
@@ -1358,13 +1358,13 @@ func CheckModifyTypeCompatible(origin *FieldType, to *FieldType) (canReorg bool,
 		if !needReorg {
 			return false, nil
 		}
-		return true, ErrUnsupportedModifyColumn.GenWithStackByArgs(reason)
+		return true, errUnsupportedModifyColumn.GenWithStackByArgs(reason)
 	}
 
 	// Deal with the different type.
 	if !checkTypeChangeSupported(origin, to) {
 		unsupportedMsg := fmt.Sprintf("change from original type %v to %v is currently unsupported yet", origin.CompactStr(), to.CompactStr())
-		return false, ErrUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		return false, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 	}
 
 	// Check if different type can directly convert and no need to reorg.
@@ -1375,11 +1375,11 @@ func CheckModifyTypeCompatible(origin *FieldType, to *FieldType) (canReorg bool,
 		if !needReorg {
 			return false, nil
 		}
-		return true, ErrUnsupportedModifyColumn.GenWithStackByArgs(reason)
+		return true, errUnsupportedModifyColumn.GenWithStackByArgs(reason)
 	}
 
 	notCompatibleMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
-	return true, ErrUnsupportedModifyColumn.GenWithStackByArgs(notCompatibleMsg)
+	return true, errUnsupportedModifyColumn.GenWithStackByArgs(notCompatibleMsg)
 }
 
 func needReorgToChange(origin *FieldType, to *FieldType) (needReorg bool, reasonMsg string) {

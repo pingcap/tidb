@@ -19,7 +19,6 @@ import (
 
 	mysql "github.com/pingcap/tidb/errno"
 	parser_mysql "github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
 )
 
@@ -40,7 +39,7 @@ var (
 	// We don't support dropping column with index covered now.
 	errCantDropColWithIndex                   = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "drop column with index"), nil))
 	errUnsupportedAddColumn                   = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add column"), nil))
-	errUnsupportedModifyColumn                = types.ErrUnsupportedModifyColumn
+	errUnsupportedModifyColumn                = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "modify column: %s"), nil))
 	errUnsupportedModifyCharset               = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "modify %s"), nil))
 	errUnsupportedModifyCollation             = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "modifying collation from %s to %s"), nil))
 	errUnsupportedPKHandle                    = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "drop integer primary key"), nil))
