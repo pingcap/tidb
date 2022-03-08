@@ -596,7 +596,122 @@ func TestSetPlacementRuleFail(t *testing.T) {
 	require.False(t, res)
 }
 
-func TestAlterDatabaseFail(t *testing.T) {
+// Test standalone backoffer
+func TestTiFlashBackoffer(t *testing.T) {
+	var maxTick ddl.TiFlashTick = 10
+	var rate ddl.TiFlashTick = 1.5
+	c := 2
+	backoff, err := ddl.NewPollTiFlashBackoffContext(1, maxTick, c, rate)
+	require.NoError(t, err)
+	mustGet := func(ID int64) *ddl.PollTiFlashBackoffElement {
+		e, ok := backoff.Get(ID)
+		require.True(t, ok)
+		return e
+	}
+	mustNotGrow := func(ID int64) {
+		e := mustGet(ID)
+		ori := e.Threshold
+		oriTotal := e.TotalCounter
+		c := e.Counter
+		growed, ok, total := backoff.Tick(ID)
+		require.True(t, ok)
+		require.False(t, growed)
+		require.Equal(t, ori, e.Threshold)
+		require.Equal(t, c+1, e.Counter)
+		require.Equal(t, oriTotal+1, total)
+	}
+	mustGrow := func(ID int64) {
+		e := mustGet(ID)
+		ori := e.Threshold
+		oriTotal := e.TotalCounter
+		growed, ok, total := backoff.Tick(ID)
+		require.True(t, ok)
+		require.True(t, growed)
+		require.Equal(t, e.Threshold, rate*ori)
+		require.Equal(t, 1, e.Counter)
+		require.Equal(t, oriTotal+1, total)
+	}
+	// Test grow
+	ok := backoff.Put(1)
+	require.True(t, ok)
+	require.False(t, mustGet(1).NeedGrow())
+	mustNotGrow(1) // 0;1 -> 1;1
+	mustGrow(1)    // 1;1 -> 0;1.5 -> 1;1.5
+	mustGrow(1)    // 1;1.5 -> 0;2.25 -> 1;2.25
+	mustNotGrow(1) // 1;2.25 -> 2;2.25
+	mustGrow(1)    // 2;2.25 -> 0;3.375 -> 1;3.375
+	mustNotGrow(1) // 1;3.375 -> 2;3.375
+	mustNotGrow(1) // 2;3.375 -> 3;3.375
+	mustGrow(1)    // 3;3.375 -> 0;5.0625
+	require.Equal(t, 8, mustGet(1).TotalCounter)
+
+	// Test converge
+	backoff.Put(2)
+	for i := 0; i < 20; i++ {
+		backoff.Tick(2)
+	}
+	require.Equal(t, maxTick, mustGet(2).Threshold)
+	require.Equal(t, 20, mustGet(2).TotalCounter)
+
+	// Test context
+	ok = backoff.Put(3)
+	require.False(t, ok)
+	_, ok, _ = backoff.Tick(3)
+	require.False(t, ok)
+
+	require.True(t, backoff.Remove(1))
+	require.False(t, backoff.Remove(1))
+	require.Equal(t, 1, backoff.Len())
+
+	// Test error context
+	_, err = ddl.NewPollTiFlashBackoffContext(0.5, 1, 1, 1)
+	require.Error(t, err)
+	_, err = ddl.NewPollTiFlashBackoffContext(10, 1, 1, 1)
+	require.Error(t, err)
+	_, err = ddl.NewPollTiFlashBackoffContext(1, 10, 0, 1)
+	require.Error(t, err)
+	_, err = ddl.NewPollTiFlashBackoffContext(1, 10, 1, 0.5)
+	require.Error(t, err)
+	_, err = ddl.NewPollTiFlashBackoffContext(1, 10, 1, -1)
+	require.Error(t, err)
+}
+
+// Test backoffer in TiFlash.
+func TestTiFlashBackoff(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ddltiflash")
+	tk.MustExec("create table ddltiflash(z int)")
+
+	// Not available for all tables
+	ddl.DisableTiFlashPoll(s.dom.DDL())
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplacePrevAvailableValue", `return(false)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue", `return(false)`))
+	ddl.EnableTiFlashPoll(s.dom.DDL())
+	tk.MustExec("alter table ddltiflash set tiflash replica 1")
+
+	// 1, 1.5, 2.25, 3.375, 5.5625
+	// (1), 1, 1, 2, 3, 5
+	time.Sleep(ddl.PollTiFlashInterval * 5)
+	tb, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	require.NoError(t, err)
+	require.NotNil(t, tb)
+	require.False(t, tb.Meta().TiFlashReplica.Available)
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplacePrevAvailableValue"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue"))
+
+	time.Sleep(ddl.PollTiFlashInterval * 3)
+	tb, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ddltiflash"))
+	require.NoError(t, err)
+	require.NotNil(t, tb)
+	require.True(t, tb.Meta().TiFlashReplica.Available)
+}
+
+func TestAlterDatabaseErrorGrammar(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -612,4 +727,40 @@ func TestAlterDatabaseFail(t *testing.T) {
 	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2", "[ddl:8200]Unsupported multi schema change")
 	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a','b' SET TIFLASH REPLICA 2", "[ddl:8200]Unsupported multi schema change")
 	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a','b' SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b'", "[ddl:8200]Unsupported multi schema change")
+}
+
+func TestAlterDatabaseBasic(t *testing.T) {
+	s, teardown := createTiFlashContext(t)
+	defer teardown()
+	tk := testkit.NewTestKit(t, s.store)
+
+	tk.MustExec("drop database if exists tiflash_ddl")
+	tk.MustExec("create database tiflash_ddl")
+	tk.MustExec("create table tiflash_ddl.ddltiflash(z int)")
+	tk.MustExec("create table tiflash_ddl.ddltiflash2(z int)")
+	// ALTER DATABASE can override previous ALTER TABLE.
+	tk.MustExec("alter table tiflash_ddl.ddltiflash set tiflash replica 1")
+	tk.MustExec("alter database tiflash_ddl set tiflash replica 2")
+	require.Equal(t, "In total 2 tables: 2 succeed, 0 failed, 0 skipped", tk.Session().GetSessionVars().StmtCtx.GetMessage())
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 2)
+	CheckTableAvailableWithTableName(s.dom, t, 2, []string{}, "tiflash_ddl", "ddltiflash")
+	CheckTableAvailableWithTableName(s.dom, t, 2, []string{}, "tiflash_ddl", "ddltiflash2")
+
+	// Skip already set TiFlash tables.
+	tk.MustExec("alter database tiflash_ddl set tiflash replica 2")
+	require.Equal(t, "In total 2 tables: 0 succeed, 0 failed, 2 skipped", tk.Session().GetSessionVars().StmtCtx.GetMessage())
+	CheckTableAvailableWithTableName(s.dom, t, 2, []string{}, "tiflash_ddl", "ddltiflash")
+	CheckTableAvailableWithTableName(s.dom, t, 2, []string{}, "tiflash_ddl", "ddltiflash2")
+
+	// There is no existing database.
+	tk.MustExec("drop database if exists tiflash_ddl_missing")
+	tk.MustGetErrMsg("alter database tiflash_ddl_missing set tiflash replica 2", "[schema:1049]Unknown database 'tiflash_ddl_missing'")
+
+	// There is no table in database
+	tk.MustExec("drop database if exists tiflash_ddl_empty")
+	tk.MustExec("create database tiflash_ddl_empty")
+	tk.MustGetErrMsg("alter database tiflash_ddl_empty set tiflash replica 2", "[schema:1049]Empty database 'tiflash_ddl_empty'")
+
+	// There is less TiFlash store
+	tk.MustGetErrMsg("alter database tiflash_ddl set tiflash replica 3", "the tiflash replica count: 3 should be less than the total tiflash server count: 2")
 }

@@ -1667,7 +1667,8 @@ func (c *fromUnixTimeFunctionClass) getFunction(ctx sessionctx.Context, args []E
 		argTps = append(argTps, types.ETString)
 	}
 
-	isArg0Str := args[0].GetType().EvalType() == types.ETString
+	arg0Tp := args[0].GetType()
+	isArg0Str := arg0Tp.EvalType() == types.ETString
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, retTp, argTps...)
 	if err != nil {
 		return nil, err
@@ -1682,8 +1683,8 @@ func (c *fromUnixTimeFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	// Calculate the time fsp.
 	fsp := types.MaxFsp
 	if !isArg0Str {
-		if args[0].GetType().Decimal != types.UnspecifiedLength {
-			fsp = mathutil.Min(bf.tp.Decimal, args[0].GetType().Decimal)
+		if arg0Tp.Decimal != types.UnspecifiedLength {
+			fsp = mathutil.Min(bf.tp.Decimal, arg0Tp.Decimal)
 		}
 	}
 	bf.setDecimalAndFlenForDatetime(fsp)
