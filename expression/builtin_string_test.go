@@ -507,7 +507,7 @@ func TestRepeat(t *testing.T) {
 	require.NoError(t, err)
 	v, err = evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
-	require.True(t, v.IsNull())
+	require.False(t, v.IsNull())
 
 	args = []interface{}{"a", uint64(16777216)}
 	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
