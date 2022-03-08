@@ -845,6 +845,18 @@ func TestDefaultCharsetAndCollation(t *testing.T) {
 	require.Equal(t, val, mysql.DefaultCollationName)
 }
 
+func TestInstanceScope(t *testing.T) {
+
+	// Instance scope used to be settable via "SET SESSION", which is weird to any MySQL user.
+	// It is now settable via SET GLOBAL, but to work correctly a sysvar can only ever
+	// be INSTANCE scoped or GLOBAL scoped, never *both* at the same time (at least for now).
+	// Otherwise the semantics are confusing to users for how precedence applies.
+
+	for _, sv := range GetSysVars() {
+		require.False(t, sv.HasGlobalScope() && sv.HasInstanceScope(), "sysvar %s has both instance and global scope", sv.Name)
+	}
+}
+
 func TestIndexMergeSwitcher(t *testing.T) {
 	vars := NewSessionVars()
 	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()

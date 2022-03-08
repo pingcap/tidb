@@ -1303,6 +1303,10 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 		return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 
+	if sv.HasInstanceScope() { // has INSTANCE scope only, not pure global
+		return "", errors.New("variable has only instance scope and no GetGlobal func. Not sure how to handle yet.")
+	}
+
 	sysVar, err := domain.GetDomain(s).GetGlobalVar(name)
 	if err != nil {
 		// The sysvar exists, but there is no cache entry yet.
@@ -1321,6 +1325,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 }
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
+// it is used for setting instance scope as well.
 func (s *session) SetGlobalSysVar(name, value string) (err error) {
 	sv := variable.GetSysVar(name)
 	if sv == nil {
@@ -1331,6 +1336,9 @@ func (s *session) SetGlobalSysVar(name, value string) (err error) {
 	}
 	if err = sv.SetGlobalFromHook(s.sessionVars, value, false); err != nil {
 		return err
+	}
+	if sv.HasInstanceScope() { // skip for INSTANCE scope
+		return nil
 	}
 	if sv.GlobalConfigName != "" {
 		domain.GetDomain(s).NotifyGlobalConfigChange(sv.GlobalConfigName, variable.OnOffToTrueFalse(value))
@@ -1347,6 +1355,9 @@ func (s *session) SetGlobalSysVarOnly(name, value string) (err error) {
 	}
 	if err = sv.SetGlobalFromHook(s.sessionVars, value, true); err != nil {
 		return err
+	}
+	if !sv.HasInstanceScope() { // skip for INSTANCE scope
+		return nil
 	}
 	return s.replaceGlobalVariablesTableValue(context.TODO(), sv.Name, value)
 }
