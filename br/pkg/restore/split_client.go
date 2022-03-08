@@ -312,6 +312,9 @@ func (c *pdClient) sendSplitRegionRequest(
 		}
 		storeID := peer.GetStoreId()
 		conn, err := c.dialStore(ctx, storeID)
+		if err != nil {
+			return nil, multierr.Append(splitErrors, err)
+		}
 		defer conn.Close()
 		client := tikvpb.NewTikvClient(conn)
 		resp, err := splitRegionWithFailpoint(ctx, regionInfo, peer, client, keys, c.isRawKv)

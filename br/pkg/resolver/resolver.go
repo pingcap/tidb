@@ -92,16 +92,17 @@ func (s *storeResolver) resolveNow() {
 	ctx, cancel := context.WithTimeout(s.ctx, defaultGetStoreTimeout)
 	defer cancel()
 	store, err := s.splitClient.GetStore(ctx, s.storeID)
-	if err != nil {
-		s.conn.ReportError(err)
-	} else {
+	if err == nil {
 		// We should use peer address for tiflash. For tikv, peer address is empty.
 		addr := store.GetPeerAddress()
 		if addr == "" {
 			addr = store.GetAddress()
 		}
 		state := grpcresolver.State{Addresses: []grpcresolver.Address{{Addr: addr}}}
-		s.conn.UpdateState(state)
+		err = s.conn.UpdateState(state)
+	}
+	if err != nil {
+		s.conn.ReportError(err)
 	}
 }
 
