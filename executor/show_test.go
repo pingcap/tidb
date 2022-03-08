@@ -1781,7 +1781,7 @@ func TestShowBindingCacheStatus(t *testing.T) {
 	require.Equal(t, len(rows), 1)
 
 	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
-		"1 1 157 67108864"))
+		"1 1 159 67108864"))
 
 	tk.MustExec(`set global tidb_mem_quota_bind_cache = 250`)
 	tk.MustQuery(`select @@global.tidb_mem_quota_bind_cache`).Check(testkit.Rows("250"))
@@ -1792,5 +1792,5 @@ func TestShowBindingCacheStatus(t *testing.T) {
 	require.Equal(t, len(rows), 1)
 
 	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
-		"2 1 185 250"))
+		"2 1 187 250"))
 }

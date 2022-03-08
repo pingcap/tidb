@@ -343,10 +343,9 @@ func (e *ShowExec) fetchShowBind() error {
 }
 
 func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
-	// TODO: Should we need to check the privilege for the mysql.bind_info table
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT count(*) FROM mysql.bind_info where status = 'using';`)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT count(*) FROM mysql.bind_info where status = 'using' or status = 'enabled';`)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -357,7 +356,7 @@ func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 	numBindings := 0
 	for _, bindRecord := range bindRecords {
 		for _, binding := range bindRecord.Bindings {
-			if binding.Status == bindinfo.Using {
+			if binding.IsBindingEnabled() {
 				numBindings++
 			}
 		}
