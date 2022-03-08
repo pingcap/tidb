@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"math"
 	"sort"
 	"time"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
