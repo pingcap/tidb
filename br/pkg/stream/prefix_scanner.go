@@ -8,7 +8,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/kv"
 	kvutil "github.com/tikv/client-go/v2/kv"
-	"go.etcd.io/etcd/client/v3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 // etcdSource is the adapter for etcd client and the `Source` interface.
@@ -19,7 +19,7 @@ type etcdSource struct {
 // Scan ordered in range [from, to).
 // return at most limit kvs at once.
 // WARNING: The method for scanning keeps poor consistency: we may get different reversion of different pages.
-// This might be accpetable just for calculating min backup ts or ranges to backup.
+// This might be acceptable just for calculating min backup ts or ranges to backup.
 func (e etcdSource) Scan(
 	ctx context.Context,
 	from, to []byte,

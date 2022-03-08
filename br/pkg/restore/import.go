@@ -388,6 +388,7 @@ func (importer *FileImporter) ImportKVFiles(
 				logutil.Key("fileEnd", file.EndKey),
 				logutil.Region(info.Region),
 			)
+			summary.CollectInt("RegionInvolved", 1)
 		}
 		return nil
 	}, utils.NewImportSSTBackoffer())
@@ -818,7 +819,7 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 		Meta:           meta,
 		StorageBackend: importer.backend,
 		RewriteRule:    rule,
-		Context: reqCtx,
+		Context:        reqCtx,
 	}
 	log.Debug("apply kv file", logutil.Leader(leader))
 	_, err := importer.importClient.ApplyKVFile(ctx, leader.GetStoreId(), req)
