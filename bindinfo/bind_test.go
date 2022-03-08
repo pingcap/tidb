@@ -1038,7 +1038,7 @@ func TestSPMHitInfo(t *testing.T) {
 	require.True(t, tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"))
 	tk.MustExec("SELECT * from t1,t2 where t1.id = t2.id")
 	tk.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("1"))
-	tk.MustExec("set binding disable for SELECT * from t1,t2 where t1.id = t2.id")
+	tk.MustExec("set binding disabled for SELECT * from t1,t2 where t1.id = t2.id")
 	tk.MustExec("SELECT * from t1,t2 where t1.id = t2.id")
 	tk.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("0"))
 

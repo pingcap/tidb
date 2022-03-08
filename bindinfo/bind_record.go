@@ -130,7 +130,7 @@ func (br *BindRecord) HasAvailableBinding() bool {
 	return false
 }
 
-// FindEnabledBinding gets the enable binding.
+// FindEnabledBinding gets the enabled binding.
 // There is at most one binding that can be used now.
 func (br *BindRecord) FindEnabledBinding() *Binding {
 	for _, binding := range br.Bindings {
