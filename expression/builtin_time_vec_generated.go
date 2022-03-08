@@ -746,8 +746,8 @@ func (b *builtinSubDatetimeAndStringSig) vecEvalTime(input *chunk.Chunk, result 
 			}
 			return err
 		}
-
 		output, err := arg0.Add(sc, arg1Duration.Neg())
+
 		if err != nil {
 			return err
 		}
