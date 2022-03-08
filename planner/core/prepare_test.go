@@ -95,24 +95,24 @@ func TestPrepareIgnoreCloseStmtCmd(t *testing.T) {
 	tk.MustExec(`set global tidb_ignore_close_stmt_cmd=0`)
 	tk.MustQuery(`select @@global.tidb_ignore_close_stmt_cmd`).Check(testkit.Rows("0"))
 	tk.MustExec(`prepare stmt from 'select * from t'`)
-	tk.MustExec(`execute stmt`)
-	tk.MustExec(`execute stmt`)
+	tk.MustQuery(`execute stmt`).Check(testkit.Rows())
+	tk.MustQuery(`execute stmt`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 	tk.MustExec(`deallocate prepare stmt`) // close/deallocate this stmt
 	tk.MustExec(`prepare stmt from 'select * from t'`)
-	tk.MustExec(`execute stmt`)
+	tk.MustQuery(`execute stmt`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // cannot reuse last plan since it is closed
 
 	// enable the ignore-stmt-cmd
 	tk.MustExec(`set global tidb_ignore_close_stmt_cmd=1`)
 	tk.MustQuery(`select @@global.tidb_ignore_close_stmt_cmd`).Check(testkit.Rows("1"))
 	tk.MustExec(`prepare stmt from 'select * from t'`)
-	tk.MustExec(`execute stmt`)
-	tk.MustExec(`execute stmt`)
+	tk.MustQuery(`execute stmt`).Check(testkit.Rows())
+	tk.MustQuery(`execute stmt`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 	tk.MustExec(`deallocate prepare stmt`) // close/deallocate this stmt
 	tk.MustExec(`prepare stmt from 'select * from t'`)
-	tk.MustExec(`execute stmt`)
+	tk.MustQuery(`execute stmt`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can reuse last plan since last close-cmd was ignored
 }
 
