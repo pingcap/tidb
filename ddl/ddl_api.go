@@ -2832,22 +2832,8 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 	}
 
 	if len(validSpecs) > 1 {
-		switch validSpecs[0].Tp {
-		case ast.AlterTableAddColumns:
-			err = d.AddColumns(sctx, ident, validSpecs)
-		case ast.AlterTableDropColumn:
-			err = d.DropColumns(sctx, ident, validSpecs)
-		case ast.AlterTableDropPrimaryKey, ast.AlterTableDropIndex:
-			err = d.DropIndexes(sctx, ident, validSpecs)
-		default:
-			return errRunMultiSchemaChanges
-		}
-		if err != nil {
-			return errors.Trace(err)
-		}
-		return nil
+		sctx.GetSessionVars().StmtCtx.MultiSchemaInfo = model.NewMultiSchemaInfo()
 	}
-
 	for _, spec := range validSpecs {
 		var handledCharsetOrCollate bool
 		switch spec.Tp {
@@ -3030,6 +3016,12 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 			// Nothing to do now.
 		}
 
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if sctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
+		err = d.MultiSchemaChange(sctx, ident)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -6989,4 +6981,23 @@ func checkTooBigFieldLengthAndTryAutoConvert(tp *types.FieldType, colName string
 		}
 	}
 	return nil
+}
+
+func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	job := &model.Job{
+		SchemaID:        schema.ID,
+		TableID:         t.Meta().ID,
+		SchemaName:      schema.Name.L,
+		Type:            model.ActionMultiSchemaChange,
+		BinlogInfo:      &model.HistoryInfo{},
+		Args:            nil,
+		MultiSchemaInfo: ctx.GetSessionVars().StmtCtx.MultiSchemaInfo,
+	}
+	ctx.GetSessionVars().StmtCtx.MultiSchemaInfo = nil
+	err = d.doDDLJob(ctx, job)
+	return d.callHookOnChanged(err)
 }
