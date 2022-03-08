@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/util/logutil"
 	"strconv"
 	"strings"
 	"sync"
@@ -2731,11 +2730,8 @@ func TestKillAutoAnalyze(t *testing.T) {
 			}()
 			// wait 60ms to make auto-analyze launch
 			time.Sleep(60 * time.Millisecond)
-			logutil.BgLogger().Info("here11")
 			checkAnalyzeStatus(status, -1, comment)
-			logutil.BgLogger().Info("here12")
 			dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
-			logutil.BgLogger().Info("here13")
 			analyzed := <-ch
 			require.True(t, analyzed, comment)
 			currentVersion := h.GetTableStats(tableInfo).Version
