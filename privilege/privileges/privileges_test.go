@@ -2875,6 +2875,23 @@ func TestSkipGrantTable(t *testing.T) {
 	tk.MustExec(`GRANT RESTRICTED_USER_ADMIN ON *.* TO 'test2'@'%';`)
 }
 
+// https://github.com/pingcap/tidb/issues/32891
+func TestIncorrectUsageDBGrant(t *testing.T) {
+	store, clean := createStoreAndPrepareDB(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`CREATE USER ucorrect1, ucorrect2;`)
+	tk.MustExec(`CREATE TABLE test.trigger_table (a int)`)
+	tk.MustExec(`GRANT CREATE TEMPORARY TABLES,DELETE,EXECUTE,INSERT,SELECT,SHOW VIEW,TRIGGER,UPDATE ON test.* TO ucorrect1;`)
+	tk.MustExec(`GRANT TRIGGER ON test.trigger_table TO ucorrect2;`)
+	tk.MustExec(`DROP TABLE test.trigger_table`)
+
+	err := tk.ExecToErr(`GRANT CREATE TEMPORARY TABLES,DELETE,EXECUTE,INSERT,SELECT,SHOW VIEW,TRIGGER,UPDATE ON test.* TO uincorrect;`)
+	require.EqualError(t, err, "[executor:1410]You are not allowed to create a user with GRANT")
+
+}
+
 func TestIssue29823(t *testing.T) {
 	store, clean := createStoreAndPrepareDB(t)
 	defer clean()
