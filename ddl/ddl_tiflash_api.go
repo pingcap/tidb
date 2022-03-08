@@ -370,9 +370,6 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 		s := store
 		if err := d.UpdateTiFlashHTTPAddress(&s); err != nil {
 			// We issue no log in tests, since there are no etcd.
-			if d.lease > 0 {
-				logutil.BgLogger().Info("Update TiFlash status address failed", zap.Error(err))
-			}
 		}
 	}
 
@@ -393,7 +390,6 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 		}
 	}
 
-	var totalTableCount uint32 = 0
 	for _, tb := range tableList {
 		// For every region in each table, if it has one replica, we reckon it ready.
 		// These request can be batched as an optimization.
@@ -437,7 +433,6 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 			})
 
 			if !avail {
-				totalTableCount += 1
 				logutil.BgLogger().Info("Tiflash replica is not available", zap.Int64("tableID", tb.ID), zap.Uint64("region need", uint64(regionCount)), zap.Uint64("region have", uint64(flashRegionCount)))
 				pollTiFlashContext.Backoff.Put(tb.ID)
 				err := infosync.UpdateTiFlashTableSyncProgress(context.Background(), tb.ID, float64(flashRegionCount)/float64(regionCount))

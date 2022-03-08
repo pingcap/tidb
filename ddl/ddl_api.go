@@ -75,10 +75,10 @@ const (
 	// When setting the placement policy with "PLACEMENT POLICY `default`",
 	// it means to remove placement policy from the specified object.
 	defaultPlacementPolicyName        = "default"
-	tiflashCheckPendingTablesWaitTime = 2500 * time.Millisecond
+	tiflashCheckPendingTablesWaitTime = 3000 * time.Millisecond
 	// Once tiflashCheckPendingTablesLimit is reached, we trigger a limiter detection.
 	tiflashCheckPendingTablesLimit = 100
-	tiflashCheckPendingTablesRetry = 8
+	tiflashCheckPendingTablesRetry = 7
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt, placementPolicyRef *model.PolicyRefInfo) (err error) {
