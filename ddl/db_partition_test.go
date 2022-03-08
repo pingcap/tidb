@@ -2825,9 +2825,9 @@ func testPartitionCancelAddIndex(t *testing.T, store kv.Storage, d ddl.DDL, leas
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", originBatchSize.Rows()[0][0]))
 	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExportedT(tk, store, hook, idxName)
 	originHook := d.GetHook()
-	defer d.(ddl.DDLForTest).SetHook(originHook)
+	defer d.SetHook(originHook)
 	jobIDExt := wrapJobIDExtCallback(hook)
-	d.(ddl.DDLForTest).SetHook(jobIDExt)
+	d.SetHook(jobIDExt)
 	done := make(chan error, 1)
 	go backgroundExecT(store, addIdxSQL, done)
 

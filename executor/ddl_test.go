@@ -957,10 +957,6 @@ func TestShardRowIDBits(t *testing.T) {
 	require.Truef(t, autoid.ErrAutoincReadFailed.Equal(err), "err:%v", err)
 }
 
-type testAutoRandomSuite struct {
-	*baseTestSuite
-}
-
 func TestAutoRandomBitsData(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
