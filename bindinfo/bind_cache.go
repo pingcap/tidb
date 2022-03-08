@@ -211,21 +211,13 @@ func (c *bindCache) GetMemCapacity() int64 {
 	return c.memCapacity
 }
 
-// GetMemUsage get the memory Usage for the cache.
-// The function is thread-safe.
-func (c *bindCache) GetMemUsage() int64 {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	return c.memTracker.BytesConsumed()
-}
-
 // Copy copies a new bindCache from the origin cache.
 // The function is thread-safe.
 func (c *bindCache) Copy() *bindCache {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	newCache := newBindCache()
-	if c.GetMemUsage() > newCache.GetMemCapacity() {
+	if c.memTracker.BytesConsumed() > newCache.GetMemCapacity() {
 		logutil.BgLogger().Warn("[sql-bind] During the cache copy operation, " +
 			"the memory capacity of the new cache is less than the memory consumption of the old cache, " +
 			"so there are bindings that are not loaded into the cache")
