@@ -17,6 +17,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
@@ -169,7 +170,9 @@ func (ts *TiDBStatement) Close() error {
 			if err != nil {
 				return err
 			}
-			ts.ctx.PreparedPlanCache().Delete(cacheKey)
+			if !variable.OptIgnoreCloseStmtCmd.Load() { // keep the plan in cache if this flag is true
+				ts.ctx.PreparedPlanCache().Delete(cacheKey)
+			}
 		}
 		ts.ctx.GetSessionVars().RemovePreparedStmt(ts.id)
 	}

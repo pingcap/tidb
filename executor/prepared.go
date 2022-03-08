@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"math"
 	"sort"
 	"time"
@@ -336,7 +337,9 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if err != nil {
 			return err
 		}
-		e.ctx.PreparedPlanCache().Delete(cacheKey)
+		if !variable.OptIgnoreCloseStmtCmd.Load() { // keep the plan in cache if this flag is true
+			e.ctx.PreparedPlanCache().Delete(cacheKey)
+		}
 	}
 	vars.RemovePreparedStmt(id)
 	return nil
