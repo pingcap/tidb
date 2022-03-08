@@ -652,12 +652,12 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 	if err != nil {
 		return err
 	}
-	w.sessForJob.PrepareTSFuture(w.ctx)
+	//w.sessForJob.PrepareTSFuture(w.ctx)
 	txn, err := w.sessForJob.Txn(true)
 	if err != nil {
 		return err
 	}
-	w.sessForJob.GetSessionVars().SetInTxn(true)
+	//w.sessForJob.GetSessionVars().SetInTxn(true)
 	t := meta.NewMeta(txn)
 	if job.IsDone() || job.IsRollbackDone() {
 		if !job.IsRollbackDone() {
