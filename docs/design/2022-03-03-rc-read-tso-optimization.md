@@ -32,5 +32,5 @@ The execution flow is like this:
 
 ## Compatibility
 
-The default behaviours of the `read-consistency` isolation level will not change. One thing differnt is that if the user client uses `COM_STMT_FETCH` like utility to read data from `TiDB`,
+The default behaviours of the `read-consistency` isolation level will not change. One thing different is that if the user client uses `COM_STMT_FETCH` like utility to read data from `TiDB`,
 there could be problem if the returned first chunk result is already used by the client but an error is reported processing next result chunk.
