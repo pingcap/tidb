@@ -1,12 +1,8 @@
-ddl TestTiFlashReplicaPartitionTableNormal
 ddl TestTestSerialStatSuite
 ddl testSerialDBSuite.TestModifyColumnTypeWhenInterception
-session testPessimisticSuite.TestSelectForUpdateNoWait
-server TestGetSchemaStorage
-server TestUptime
-executor TestSpillToDisk
-executor TestHashRowContainer
-executor TestExplainAnalyzeCTEMemoryAndDiskInfo
+ddl TestStateChange
+ddl testDBSuite1.TestAddIndexWithSplitTable
+util/cpuprofile TestGetCPUProfile
 executor TestDefaultValForAnalyze
 executor TestPBMemoryLeak
-statistics/handle TestAnalyzeGlobalStatsWithOpts1
+executor TestDirectReadingWithAgg

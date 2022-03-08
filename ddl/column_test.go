@@ -1212,8 +1212,8 @@ func TestModifyColumn(t *testing.T) {
 		{"varchar(10) character set gbk", "varchar(255) character set gbk", nil},
 	}
 	for _, tt := range tests {
-		ftA := colDefStrToFieldType(t, tt.origin)
-		ftB := colDefStrToFieldType(t, tt.to)
+		ftA := colDefStrToFieldType(t, tt.origin, ctx)
+		ftB := colDefStrToFieldType(t, tt.to, ctx)
 		err := checkModifyTypes(ctx, ftA, ftB, false)
 		if err == nil {
 			require.NoErrorf(t, tt.err, "origin:%v, to:%v", tt.origin, tt.to)
@@ -1223,13 +1223,13 @@ func TestModifyColumn(t *testing.T) {
 	}
 }
 
-func colDefStrToFieldType(t *testing.T, str string) *types.FieldType {
+func colDefStrToFieldType(t *testing.T, str string, ctx sessionctx.Context) *types.FieldType {
 	sqlA := "alter table t modify column a " + str
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
 	require.NoError(t, err)
 	colDef := stmt.(*ast.AlterTableStmt).Specs[0].NewColumns[0]
 	chs, coll := charset.GetDefaultCharsetAndCollate()
-	col, _, err := buildColumnAndConstraint(nil, 0, colDef, nil, chs, coll)
+	col, _, err := buildColumnAndConstraint(ctx, 0, colDef, nil, chs, coll)
 	require.NoError(t, err)
 	return &col.FieldType
 }

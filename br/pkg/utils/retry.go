@@ -16,6 +16,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	tmysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser/terror"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -137,4 +138,12 @@ func isSingleRetryableError(err error) bool {
 			return false
 		}
 	}
+}
+
+func FallBack2CreateTable(err error) bool {
+	switch nerr := errors.Cause(err).(type) {
+	case *terror.Error:
+		return nerr.Code() == tmysql.ErrInvalidDDLJob
+	}
+	return false
 }
