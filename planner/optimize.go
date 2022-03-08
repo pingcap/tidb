@@ -177,7 +177,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		originHints := hint.CollectHint(stmtNode)
 		// bindRecord must be not nil when coming here, try to find the best binding.
 		for _, binding := range bindRecord.Bindings {
-			if binding.Status != bindinfo.Using {
+			if !binding.IsBindingEnabled() {
 				continue
 			}
 			metrics.BindUsageCounter.WithLabelValues(scope).Inc()
