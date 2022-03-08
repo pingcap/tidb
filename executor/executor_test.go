@@ -76,7 +76,6 @@ import (
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/israce"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -116,7 +115,6 @@ var _ = SerialSuites(&testClusterTableSuite{})
 var _ = SerialSuites(&testSplitTable{&baseTestSuite{}})
 var _ = Suite(&testSuiteWithData{baseTestSuite: &baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite1{&baseTestSuite{}})
-var _ = SerialSuites(&testSlowQuery{&baseTestSuite{}})
 var _ = SerialSuites(&globalIndexSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testCoprCache{})
@@ -131,7 +129,6 @@ type testSuiteWithData struct {
 	*baseTestSuite
 	testData testutil.TestData
 }
-type testSlowQuery struct{ *baseTestSuite }
 type globalIndexSuite struct{ *baseTestSuite }
 type testSerialSuite struct{ *baseTestSuite }
 type testCoprCache struct {
@@ -6951,150 +6948,6 @@ func (s *testSuite) TestGenerateColumnReplace(c *C) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows("2 3"))
 	tk.MustExec("insert into `t1` (`a`) VALUES (2) on duplicate key update a = 3;")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("3 4"))
-}
-
-func (s *testSlowQuery) TestSlowQueryWithoutSlowLog(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	originCfg := config.GetGlobalConfig()
-	newCfg := *originCfg
-	newCfg.Log.SlowQueryFile = "tidb-slow-not-exist.log"
-	newCfg.Log.SlowThreshold = math.MaxUint64
-	config.StoreGlobalConfig(&newCfg)
-	defer func() {
-		config.StoreGlobalConfig(originCfg)
-	}()
-	tk.MustQuery("select query from information_schema.slow_query").Check(testkit.Rows())
-	tk.MustQuery("select query from information_schema.slow_query where time > '2020-09-15 12:16:39' and time < now()").Check(testkit.Rows())
-}
-
-func (s *testSlowQuery) TestSlowQuerySensitiveQuery(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	originCfg := config.GetGlobalConfig()
-	newCfg := *originCfg
-
-	f, err := os.CreateTemp("", "tidb-slow-*.log")
-	c.Assert(err, IsNil)
-	f.Close()
-	newCfg.Log.SlowQueryFile = f.Name()
-	config.StoreGlobalConfig(&newCfg)
-	defer func() {
-		tk.MustExec("set tidb_slow_log_threshold=300;")
-		config.StoreGlobalConfig(originCfg)
-		err = os.Remove(newCfg.Log.SlowQueryFile)
-		c.Assert(err, IsNil)
-	}()
-	err = logutil.InitLogger(newCfg.Log.ToLogConfig())
-	c.Assert(err, IsNil)
-
-	tk.MustExec("set tidb_slow_log_threshold=0;")
-	tk.MustExec("drop user if exists user_sensitive;")
-	tk.MustExec("create user user_sensitive identified by '123456789';")
-	tk.MustExec("alter user 'user_sensitive'@'%' identified by 'abcdefg';")
-	tk.MustExec("set password for 'user_sensitive'@'%' = 'xyzuvw';")
-	tk.MustQuery("select query from `information_schema`.`slow_query` " +
-		"where (query like 'set password%' or query like 'create user%' or query like 'alter user%') " +
-		"and query like '%user_sensitive%' order by query;").
-		Check(testkit.Rows(
-			"alter user {user_sensitive@% password = ***};",
-			"create user {user_sensitive@% password = ***};",
-			"set password for user user_sensitive@%;",
-		))
-}
-
-func (s *testSlowQuery) TestSlowQueryPrepared(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	originCfg := config.GetGlobalConfig()
-	newCfg := *originCfg
-
-	f, err := os.CreateTemp("", "tidb-slow-*.log")
-	c.Assert(err, IsNil)
-	f.Close()
-	newCfg.Log.SlowQueryFile = f.Name()
-	config.StoreGlobalConfig(&newCfg)
-	defer func() {
-		tk.MustExec("set tidb_slow_log_threshold=300;")
-		tk.MustExec("set tidb_redact_log=0;")
-		config.StoreGlobalConfig(originCfg)
-		os.Remove(newCfg.Log.SlowQueryFile)
-	}()
-	err = logutil.InitLogger(newCfg.Log.ToLogConfig())
-	c.Assert(err, IsNil)
-
-	tk.MustExec("set tidb_slow_log_threshold=0;")
-	tk.MustExec(`prepare mystmt1 from 'select sleep(?), 1';`)
-	tk.MustExec("SET @num = 0.01;")
-	tk.MustExec("execute mystmt1 using @num;")
-	tk.MustQuery("SELECT Query FROM `information_schema`.`slow_query` " +
-		"where query like 'select%sleep%' order by time desc limit 1").
-		Check(testkit.Rows(
-			"select sleep(?), 1 [arguments: 0.01];",
-		))
-
-	tk.MustExec("set tidb_redact_log=1;")
-	tk.MustExec(`prepare mystmt2 from 'select sleep(?), 2';`)
-	tk.MustExec("execute mystmt2 using @num;")
-	tk.MustQuery("SELECT Query FROM `information_schema`.`slow_query` " +
-		"where query like 'select%sleep%' order by time desc limit 1").
-		Check(testkit.Rows(
-			"select `sleep` ( ? ) , ?;",
-		))
-}
-
-func (s *testSlowQuery) TestLogSlowLogIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	f, err := os.CreateTemp("", "tidb-slow-*.log")
-	c.Assert(err, IsNil)
-	f.Close()
-
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Log.SlowQueryFile = f.Name()
-	})
-	err = logutil.InitLogger(config.GetGlobalConfig().Log.ToLogConfig())
-	c.Assert(err, IsNil)
-
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int, b int,index idx(a));")
-	tk.MustExec("set tidb_slow_log_threshold=0;")
-	tk.MustQuery("select * from t use index (idx) where a in (1) union select * from t use index (idx) where a in (2,3);")
-	tk.MustExec("set tidb_slow_log_threshold=300;")
-	tk.MustQuery("select index_names from `information_schema`.`slow_query` " +
-		"where query like 'select%union%' limit 1").
-		Check(testkit.Rows(
-			"[t:idx]",
-		))
-}
-
-func (s *testSlowQuery) TestSlowQuery(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-
-	f, err := os.CreateTemp("", "tidb-slow-*.log")
-	c.Assert(err, IsNil)
-	_, err = f.WriteString(`
-# Time: 2020-10-13T20:08:13.970563+08:00
-select * from t;
-# Time: 2020-10-16T20:08:13.970563+08:00
-select * from t;
-`)
-	c.Assert(err, IsNil)
-	err = f.Close()
-	c.Assert(err, IsNil)
-	executor.ParseSlowLogBatchSize = 1
-	originCfg := config.GetGlobalConfig()
-	newCfg := *originCfg
-	newCfg.Log.SlowQueryFile = f.Name()
-	config.StoreGlobalConfig(&newCfg)
-	defer func() {
-		executor.ParseSlowLogBatchSize = 64
-		config.StoreGlobalConfig(originCfg)
-		err = os.Remove(newCfg.Log.SlowQueryFile)
-		c.Assert(err, IsNil)
-	}()
-	err = logutil.InitLogger(newCfg.Log.ToLogConfig())
-	c.Assert(err, IsNil)
-
-	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time > '2020-10-16 20:08:13' and time < '2020-10-16 21:08:13'").Check(testkit.Rows("1"))
-	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time > '2019-10-13 20:08:13' and time < '2020-10-16 21:08:13'").Check(testkit.Rows("2"))
 }
 
 func (s *testSerialSuite) TestKillTableReader(c *C) {
