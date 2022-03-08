@@ -9,7 +9,7 @@
 For the read-consistency isolation level read requests in a single transaction, each will need to fetch a new `tso` to read the latest committed data.
 If the workload is a read-heavy one or the read `qps` is large, fetching tso each time will increase the query lantecy.
 
-The new tso itself is used to ensure the most recent data will be returned, if the data version dose not change frequently then it's unnecessary to fetch tso every time.
+The new tso itself is used to ensure the most recent data will be returned, if the data version does not change frequently then it's unnecessary to fetch tso every time.
 That is the `rc-read` could be processed in a optimistic way, the tso could be updated only when a new version data is met， then the tso cost will be saved a lot for this case.
 
 ## Detailed Design
