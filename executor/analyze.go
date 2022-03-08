@@ -2346,8 +2346,8 @@ func finishAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, meetEr
 		state = statistics.AnalyzeFinished
 	}
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	const sql = "UPDATE mysql.analyze_jobs SET end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %? WHERE id = %?"
-	_, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, sql, job.EndTime.UTC().Format(types.TimeFormat), state, job.ID)
+	const sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %? WHERE id = %?"
+	_, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, sql, job.Delta.Count, job.EndTime.UTC().Format(types.TimeFormat), state, job.ID)
 	if err != nil {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 	}
