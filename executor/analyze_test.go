@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
 	"strconv"
 	"strings"
 	"sync"
@@ -2702,8 +2703,7 @@ func TestKillAutoAnalyze(t *testing.T) {
 	}
 
 	// kill auto analyze when it is pending/running/finished
-	//for _, status := range []string{"pending", "running", "finished"} {
-	for _, status := range []string{"running"} {
+	for _, status := range []string{"pending", "running", "finished"} {
 		func() {
 			comment := fmt.Sprintf("kill %v analyze job", status)
 			statistics.ClearHistoryJobs()
@@ -2729,10 +2729,13 @@ func TestKillAutoAnalyze(t *testing.T) {
 				analyzed := h.HandleAutoAnalyze(is)
 				ch <- analyzed
 			}()
-			// wait 100ms to make auto-analyze launch
-			time.Sleep(100 * time.Millisecond)
+			// wait 60ms to make auto-analyze launch
+			time.Sleep(60 * time.Millisecond)
+			logutil.BgLogger().Info("here11")
 			checkAnalyzeStatus(status, -1, comment)
+			logutil.BgLogger().Info("here12")
 			dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
+			logutil.BgLogger().Info("here13")
 			analyzed := <-ch
 			require.True(t, analyzed, comment)
 			currentVersion := h.GetTableStats(tableInfo).Version
@@ -2742,9 +2745,8 @@ func TestKillAutoAnalyze(t *testing.T) {
 				require.Greater(t, currentVersion, lastVersion, comment)
 			} else {
 				// If we kill a pending/running job, after kill command the status is failed and the table stats are not updated.
-				// copIteratorWorker sleeps 5s before handling analyze task and copIterator checks killed flag every 3s in recvFromRespCh.
-				// Hence we expect that end_time - start_time <= 4s.
-				checkAnalyzeStatus("failed", 4, comment)
+				// We expect the killed analyze stops quickly. Specifically, end_time - start_time <= 1s.
+				checkAnalyzeStatus("failed", 1, comment)
 				require.Equal(t, currentVersion, lastVersion, comment)
 			}
 		}()

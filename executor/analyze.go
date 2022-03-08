@@ -100,7 +100,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		statistics.AddNewAnalyzeJob(task.job)
 	}
 	failpoint.Inject("mockAnalyzeJobPending", func() {
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	})
 	for _, task := range e.tasks {
 		taskCh <- task
@@ -191,7 +191,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		statistics.MoveToHistory(task.job)
 	}
 	failpoint.Inject("mockAnalyzeJobFinished", func() {
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	})
 	if err != nil {
 		return err
@@ -896,11 +896,17 @@ func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 	return nil
 }
 
-func readDataAndSendTask(handler *tableResultHandler, mergeTaskCh chan []byte) error {
+func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, mergeTaskCh chan []byte) error {
 	defer close(mergeTaskCh)
 	for {
 		failpoint.Inject("mockSlowAnalyze", func() {
-			time.Sleep(3100 * time.Millisecond)
+			time.Sleep(100 * time.Millisecond)
+		})
+		if atomic.LoadUint32(&ctx.GetSessionVars().Killed) == 1 {
+			return errors.Trace(ErrQueryInterrupted)
+		}
+		failpoint.Inject("mockSlowAnalyze", func() {
+			time.Sleep(5 * time.Second)
 		})
 		data, err := handler.nextRaw(context.TODO())
 		if err != nil {
@@ -953,7 +959,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	for i := 0; i < statsConcurrency; i++ {
 		go e.subMergeWorker(mergeResultCh, mergeTaskCh, l, i == 0)
 	}
-	if err = readDataAndSendTask(e.resultHandler, mergeTaskCh); err != nil {
+	if err = readDataAndSendTask(e.ctx, e.resultHandler, mergeTaskCh); err != nil {
 		return 0, nil, nil, nil, nil, err
 	}
 
@@ -1465,6 +1471,9 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		}
 	}
 	for {
+		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
+			return nil, nil, nil, nil, nil, errors.Trace(ErrQueryInterrupted)
+		}
 		data, err1 := e.resultHandler.nextRaw(context.TODO())
 		if err1 != nil {
 			return nil, nil, nil, nil, nil, err1
