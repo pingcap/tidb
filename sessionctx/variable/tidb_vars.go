@@ -626,6 +626,9 @@ const (
 	// TiDBTxnAssertionLevel indicates how strict the assertion will be, which helps to detect and preventing data &
 	// index inconsistency problems.
 	TiDBTxnAssertionLevel = "tidb_txn_assertion_level"
+
+	// TiDBIgnoreClosePreparedStmt indicates whether to ignore close-stmt commands for prepared statements.
+	TiDBIgnoreCloseStmtCmd = "tidb_ignore_close_stmt_cmd"
 )
 
 // TiDB vars that have only global scope
@@ -827,6 +830,7 @@ const (
 	DefSysdateIsNow                       = false
 	DefTiDBEnableMutationChecker          = false
 	DefTiDBTxnAssertionLevel              = AssertionOffStr
+	DefTiDBIgnoreCloseStmtCmd             = false
 )
 
 // Process global variables.
@@ -861,4 +865,5 @@ var (
 	StatsLoadSyncWait                     = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
 	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
 	MemQuotaBindCache                     = atomic.NewInt64(DefTiDBMemQuotaBindCache)
+	OptIgnoreCloseStmtCmd                 = atomic.NewBool(DefTiDBIgnoreCloseStmtCmd)
 )

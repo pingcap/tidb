@@ -1405,6 +1405,12 @@ var defaultSysVars = []*SysVar{
 		}
 		return string(info), nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBIgnoreCloseStmtCmd, Value: BoolToOnOff(DefTiDBIgnoreCloseStmtCmd), Type: TypeBool,
+		SetGlobal: func(s *SessionVars, val string) error {
+			OptIgnoreCloseStmtCmd.Store(TiDBOptOn(val))
+			return nil
+		},
+	},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
