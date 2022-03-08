@@ -204,7 +204,7 @@ func (p *packetIO) writePacketDirect(conn *bufferedReadConn, data []byte) error 
 	data[2] = byte(length >> 16)
 	data[3] = p.sequence
 	mergeData = append(mergeData, data...)
-	if n, err := conn.Conn.Write(mergeData); err != nil {
+	if n, err := p.bufReadConn.Conn.Write(mergeData); err != nil {
 		terror.Log(errors.Trace(err))
 		return errors.Trace(mysql.ErrBadConn)
 	} else if n != len(data) {
