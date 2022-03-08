@@ -960,15 +960,15 @@ func CancelConcurrencyJobs(sess sessionctx.Context, ids []int64) ([]error, error
 		getJobSQL = fmt.Sprintf("select job_meta from mysql.tidb_ddl_job where job_id in (%s) order by job_id", strings.Join(idsStr, ", "))
 	}
 	rs, err := sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), getJobSQL)
+	if err != nil {
+		return nil, err
+	}
 	defer func() {
 		err = rs.Close()
 		if err != nil {
 			logutil.BgLogger().Error("close result set error", zap.Error(err))
 		}
 	}()
-	if err != nil {
-		return nil, err
-	}
 	var rows []chunk.Row
 	rows, err = sqlexec.DrainRecordSet(context.TODO(), rs, 8)
 	if err != nil {
