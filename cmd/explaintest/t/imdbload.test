@@ -1,0 +1,314 @@
+CREATE DATABASE IF NOT EXISTS `imdbload`;
+USE `imdbload`;
+-- The table schema is converted from imdb dataset using IMDbPY
+CREATE TABLE `kind_type` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `kind` varchar(15) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `kind_type_kind` (`kind`(5))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 AUTO_INCREMENT=11;
+CREATE TABLE `keyword` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `keyword` text NOT NULL,
+  `phonetic_code` varchar(5) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `keyword_idx_keyword` (`keyword`(5)),
+  KEY `keyword_idx_pcode` (`phonetic_code`),
+  KEY `itest` (`phonetic_code`,`keyword`(20))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 AUTO_INCREMENT=236629;
+CREATE TABLE `company_type` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `kind` varchar(32) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `company_type_kind` (`kind`(5))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 AUTO_INCREMENT=6;
+CREATE TABLE `comp_cast_type` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `kind` varchar(32) NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `comp_cast_type_kind` (`kind`(5))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 AUTO_INCREMENT=6;
+CREATE TABLE `complete_cast` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `movie_id` int(11) DEFAULT NULL,
+  `subject_id` int(11) NOT NULL,
+  `status_id` int(11) NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `complete_cast_idx_mid` (`movie_id`),
+  KEY `complete_cast_idx_sid` (`subject_id`),
+  KEY `itest` (`movie_id`,`subject_id`,`status_id`),
+  KEY `itest2` (`subject_id`,`status_id`,`movie_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 AUTO_INCREMENT=135088;
+CREATE TABLE `info_type` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `info` varchar(32) NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `info_type_info` (`info`(5))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 AUTO_INCREMENT=115;
+CREATE TABLE `link_type` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `link` varchar(32) NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `link_type_link` (`link`(5))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 AUTO_INCREMENT=20;
+CREATE TABLE `company_name` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `name` text NOT NULL,
+  `country_code` varchar(255) DEFAULT NULL,
+  `imdb_id` int(11) DEFAULT NULL,
+  `name_pcode_nf` varchar(5) DEFAULT NULL,
+  `name_pcode_sf` varchar(5) DEFAULT NULL,
+  `md5sum` varchar(32) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `company_name_idx_name` (`name`(6)),
+  KEY `company_name_idx_ccode` (`country_code`(5)),
+  KEY `company_name_idx_imdb_id` (`imdb_id`),
+  KEY `company_name_idx_pcodenf` (`name_pcode_nf`),
+  KEY `company_name_idx_pcodesf` (`name_pcode_sf`),
+  KEY `company_name_idx_md5` (`md5sum`(5)),
+  KEY `itest` (`country_code`,`name_pcode_nf`,`name_pcode_sf`),
+  KEY `itest2` (`name_pcode_sf`,`country_code`,`name`(20))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 AUTO_INCREMENT=362133;
+CREATE TABLE `role_type` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `role` varchar(32) NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `role_type_role` (`role`(5))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 AUTO_INCREMENT=14;
+CREATE TABLE `movie_link` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `movie_id` int(11) NOT NULL,
+  `linked_movie_id` int(11) NOT NULL,
+  `link_type_id` int(11) NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `movie_link_idx_mid` (`movie_id`),
+  KEY `movie_link_idx_lmid` (`linked_movie_id`),
+  KEY `movie_link_idx_ltypeid` (`link_type_id`),
+  KEY `itest` (`link_type_id`,`linked_movie_id`,`movie_id`),
+  KEY `itest2` (`movie_id`,`link_type_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 AUTO_INCREMENT=2585152;
+CREATE TABLE `aka_title` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `movie_id` int(11) NOT NULL,
+  `title` text NOT NULL,
+  `imdb_index` varchar(12) DEFAULT NULL,
+  `kind_id` int(11) NOT NULL,
+  `production_year` int(11) DEFAULT NULL,
+  `phonetic_code` varchar(5) DEFAULT NULL,
+  `episode_of_id` int(11) DEFAULT NULL,
+  `season_nr` int(11) DEFAULT NULL,
+  `episode_nr` int(11) DEFAULT NULL,
+  `note` text DEFAULT NULL,
+  `md5sum` varchar(32) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `aka_title_idx_movieid` (`movie_id`),
+  KEY `aka_title_idx_title` (`title`(10)),
+  KEY `aka_title_idx_kindid` (`kind_id`),
+  KEY `aka_title_idx_year` (`production_year`),
+  KEY `aka_title_idx_pcode` (`phonetic_code`),
+  KEY `aka_title_idx_epof` (`episode_of_id`),
+  KEY `aka_title_idx_md5` (`md5sum`(5)),
+  KEY `itest` (`phonetic_code`,`production_year`,`kind_id`,`note`(20)),
+  KEY `itest2` (`episode_of_id`,`season_nr`,`episode_nr`,`production_year`),
+  KEY `itest3` (`episode_of_id`,`note`(20),`production_year`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 AUTO_INCREMENT=562493;
+CREATE TABLE `aka_name` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `person_id` int(11) NOT NULL,
+  `name` text NOT NULL,
+  `imdb_index` varchar(12) DEFAULT NULL,
+  `name_pcode_cf` varchar(5) DEFAULT NULL,
+  `name_pcode_nf` varchar(5) DEFAULT NULL,
+  `surname_pcode` varchar(5) DEFAULT NULL,
+  `md5sum` varchar(32) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `aka_name_idx_person` (`person_id`),
+  KEY `aka_name_idx_name` (`name`(6)),
+  KEY `aka_name_idx_pcodecf` (`name_pcode_cf`),
+  KEY `aka_name_idx_pcodenf` (`name_pcode_nf`),
+  KEY `aka_name_idx_pcode` (`surname_pcode`),
+  KEY `aka_name_idx_md5` (`md5sum`(5)),
+  KEY `itest` (`name_pcode_cf`,`name_pcode_nf`,`surname_pcode`),
+  KEY `itest2` (`surname_pcode`,`name_pcode_cf`,`name_pcode_nf`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 AUTO_INCREMENT=1312275;
+CREATE TABLE `movie_keyword` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `movie_id` int(11) NOT NULL,
+  `keyword_id` int(11) NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `movie_keyword_idx_mid` (`movie_id`),
+  KEY `movie_keyword_idx_keywordid` (`keyword_id`),
+  KEY `itest` (`movie_id`,`keyword_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 AUTO_INCREMENT=7480089;
+CREATE TABLE `movie_companies` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `movie_id` int(11) NOT NULL,
+  `company_id` int(11) NOT NULL,
+  `company_type_id` int(11) NOT NULL,
+  `note` text DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `movie_companies_idx_mid` (`movie_id`),
+  KEY `movie_companies_idx_cid` (`company_id`),
+  KEY `movie_companies_idx_ctypeid` (`company_type_id`),
+  KEY `itest` (`movie_id`,`company_type_id`,`company_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 AUTO_INCREMENT=4958298;
+CREATE TABLE `char_name` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `name` text NOT NULL,
+  `imdb_index` varchar(12) DEFAULT NULL,
+  `imdb_id` int(11) DEFAULT NULL,
+  `name_pcode_nf` varchar(5) DEFAULT NULL,
+  `surname_pcode` varchar(5) DEFAULT NULL,
+  `md5sum` varchar(32) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `char_name_idx_name` (`name`(6)),
+  KEY `char_name_idx_imdb_id` (`imdb_id`),
+  KEY `char_name_idx_pcodenf` (`name_pcode_nf`),
+  KEY `char_name_idx_pcode` (`surname_pcode`),
+  KEY `char_name_idx_md5` (`md5sum`(5)),
+  KEY `itest` (`name_pcode_nf`,`surname_pcode`,`imdb_id`),
+  KEY `itest2` (`imdb_index`,`surname_pcode`,`name_pcode_nf`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 AUTO_INCREMENT=4314866;
+CREATE TABLE `title` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `title` text NOT NULL,
+  `imdb_index` varchar(12) DEFAULT NULL,
+  `kind_id` int(11) NOT NULL,
+  `production_year` int(11) DEFAULT NULL,
+  `imdb_id` int(11) DEFAULT NULL,
+  `phonetic_code` varchar(5) DEFAULT NULL,
+  `episode_of_id` int(11) DEFAULT NULL,
+  `season_nr` int(11) DEFAULT NULL,
+  `episode_nr` int(11) DEFAULT NULL,
+  `series_years` varchar(49) DEFAULT NULL,
+  `md5sum` varchar(32) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `title_idx_title` (`title`(10)),
+  KEY `title_idx_kindid` (`kind_id`),
+  KEY `title_idx_year` (`production_year`),
+  KEY `title_idx_imdb_id` (`imdb_id`),
+  KEY `title_idx_pcode` (`phonetic_code`),
+  KEY `title_idx_epof` (`episode_of_id`),
+  KEY `title_idx_season_nr` (`season_nr`),
+  KEY `title_idx_episode_nr` (`episode_nr`),
+  KEY `title_idx_md5` (`md5sum`(5)),
+  KEY `itest` (`episode_of_id`,`season_nr`,`episode_nr`,`imdb_index`,`phonetic_code`),
+  KEY `itest2` (`kind_id`,`production_year`,`imdb_id`,`title`(20)),
+  KEY `itest3` (`phonetic_code`,`production_year`,`kind_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 AUTO_INCREMENT=4736511;
+CREATE TABLE `name` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `name` text NOT NULL,
+  `imdb_index` varchar(12) DEFAULT NULL,
+  `imdb_id` int(11) DEFAULT NULL,
+  `gender` varchar(1) DEFAULT NULL,
+  `name_pcode_cf` varchar(5) DEFAULT NULL,
+  `name_pcode_nf` varchar(5) DEFAULT NULL,
+  `surname_pcode` varchar(5) DEFAULT NULL,
+  `md5sum` varchar(32) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `name_idx_name` (`name`(6)),
+  KEY `name_idx_imdb_id` (`imdb_id`),
+  KEY `name_idx_gender` (`gender`),
+  KEY `name_idx_pcodecf` (`name_pcode_cf`),
+  KEY `name_idx_pcodenf` (`name_pcode_nf`),
+  KEY `name_idx_pcode` (`surname_pcode`),
+  KEY `name_idx_md5` (`md5sum`(5)),
+  KEY `itest` (`name_pcode_cf`,`name_pcode_nf`,`surname_pcode`,`imdb_index`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 AUTO_INCREMENT=6379742;
+CREATE TABLE `person_info` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `person_id` int(11) NOT NULL,
+  `info_type_id` int(11) NOT NULL,
+  `info` text NOT NULL,
+  `note` text DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `person_info_idx_pid` (`person_id`),
+  KEY `person_info_idx_itypeid` (`info_type_id`),
+  KEY `itest` (`person_id`,`info_type_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 AUTO_INCREMENT=4130209;
+CREATE TABLE `movie_info` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `movie_id` int(11) NOT NULL,
+  `info_type_id` int(11) NOT NULL,
+  `info` text NOT NULL,
+  `note` text DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `movie_info_idx_mid` (`movie_id`),
+  KEY `movie_info_idx_infotypeid` (`info_type_id`),
+  KEY `movie_info_idx_info` (`info`(10)),
+  KEY `itest` (`movie_id`,`info_type_id`,`info`(20))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 AUTO_INCREMENT=29774986;
+CREATE TABLE `cast_info` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `person_id` int(11) NOT NULL,
+  `movie_id` int(11) NOT NULL,
+  `person_role_id` int(11) DEFAULT NULL,
+  `note` text DEFAULT NULL,
+  `nr_order` int(11) DEFAULT NULL,
+  `role_id` int(11) NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `cast_info_idx_pid` (`person_id`),
+  KEY `cast_info_idx_mid` (`movie_id`),
+  KEY `cast_info_idx_cid` (`person_role_id`),
+  KEY `cast_info_idx_rid` (`role_id`),
+  KEY `itest` (`person_id`,`movie_id`,`person_role_id`),
+  KEY `itest2` (`nr_order`,`person_role_id`,`note`(20))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 AUTO_INCREMENT=63475837;
+
+load stats 's/imdbload_stats/kind_type.json';
+load stats 's/imdbload_stats/keyword.json';
+load stats 's/imdbload_stats/company_type.json';
+load stats 's/imdbload_stats/comp_cast_type.json';
+load stats 's/imdbload_stats/complete_cast.json';
+load stats 's/imdbload_stats/info_type.json';
+load stats 's/imdbload_stats/link_type.json';
+load stats 's/imdbload_stats/company_name.json';
+load stats 's/imdbload_stats/role_type.json';
+load stats 's/imdbload_stats/movie_link.json';
+load stats 's/imdbload_stats/aka_title.json';
+load stats 's/imdbload_stats/aka_name.json';
+load stats 's/imdbload_stats/movie_keyword.json';
+load stats 's/imdbload_stats/movie_companies.json';
+load stats 's/imdbload_stats/char_name.json';
+load stats 's/imdbload_stats/title.json';
+load stats 's/imdbload_stats/name.json';
+load stats 's/imdbload_stats/person_info.json';
+load stats 's/imdbload_stats/movie_info.json';
+load stats 's/imdbload_stats/cast_info.json';
+
+-- The statistics and actual row count are from the latest imdb dataset that is distributed as old text files.
+
+-- Actual row count: 1
+explain select * from char_name where ((imdb_index = 'I') and (surname_pcode < 'E436')) or ((imdb_index = 'L') and (surname_pcode < 'E436'));
+explain select * from char_name use index (itest2) where ((imdb_index = 'I') and (surname_pcode < 'E436')) or ((imdb_index = 'L') and (surname_pcode < 'E436'));
+trace plan target = 'estimation' select * from char_name where ((imdb_index = 'I') and (surname_pcode < 'E436')) or ((imdb_index = 'L') and (surname_pcode < 'E436'));
+
+-- Actual row count: 0
+explain select * from char_name where ((imdb_index = 'V') and (surname_pcode < 'L3416'));
+
+-- Actual row count: 0
+explain select * from char_name where imdb_index > 'V';
+trace plan target = 'estimation' select * from char_name where imdb_index > 'V';
+
+-- Actual row count: 0
+explain select * from movie_companies where company_type_id > 2;
+trace plan target = 'estimation' select * from movie_companies where company_type_id > 2;
+
+-- Actual row count: 0
+explain select * from char_name where imdb_index > 'I' and imdb_index < 'II';
+trace plan target = 'estimation' select * from char_name where imdb_index > 'I' and imdb_index < 'II';
+
+-- Actual row count: 13
+explain select * from char_name where imdb_index > 'I';
+trace plan target = 'estimation' select * from char_name where imdb_index > 'I';
+
+-- Actual row count: 0
+explain select * from cast_info where nr_order < -2068070866;
+
+-- Actual row count: 0
+explain select * from aka_title where kind_id = 5;
+
+-- Actual row count: 2
+explain select * from aka_title where kind_id > 7;
+trace plan target = 'estimation' select * from aka_title where kind_id > 7;

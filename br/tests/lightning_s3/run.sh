@@ -76,8 +76,17 @@ SOURCE_DIR="s3://$emptyPath/not-exist-path?endpoint=http%3A//127.0.0.1%3A9900&ac
 ! run_lightning -d $SOURCE_DIR --backend local 2> /dev/null
 grep -Eq "data-source-dir .* doesn't exist or contains no files" $TEST_DIR/lightning.log
 
+rm -f $TEST_DIR/lightning.log
 SOURCE_DIR="s3://$BUCKET/?endpoint=http%3A//127.0.0.1%3A9900&access_key=$MINIO_ACCESS_KEY&secret_access_key=$MINIO_SECRET_KEY&force_path_style=true"
 run_lightning -d $SOURCE_DIR --backend local 2> /dev/null
+run_sql "SELECT count(*), sum(i) FROM \`$DB\`.$TABLE"
+check_contains "count(*): 7"
+check_contains "sum(i): 413"
+
+rm -f $TEST_DIR/lightning.log
+run_sql "DROP DATABASE IF EXISTS $DB;"
+run_sql "DROP TABLE IF EXISTS $DB.$TABLE;"
+run_lightning -d $SOURCE_DIR --backend local --config "tests/$TEST_NAME/config_s3_checkpoint.toml" 2> /dev/null
 run_sql "SELECT count(*), sum(i) FROM \`$DB\`.$TABLE"
 check_contains "count(*): 7"
 check_contains "sum(i): 413"

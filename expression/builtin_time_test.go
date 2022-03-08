@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/testkit/trequire"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
@@ -107,7 +107,7 @@ func TestDate(t *testing.T) {
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["Expect"][0], v)
+		testutil.DatumEqual(t, c["Expect"][0], v)
 	}
 
 	// test year, month and day
@@ -137,42 +137,42 @@ func TestDate(t *testing.T) {
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["Year"][0], v)
+		testutil.DatumEqual(t, c["Year"][0], v)
 
 		fc = funcs[ast.Month]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["Month"][0], v)
+		testutil.DatumEqual(t, c["Month"][0], v)
 
 		fc = funcs[ast.MonthName]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["MonthName"][0], v)
+		testutil.DatumEqual(t, c["MonthName"][0], v)
 
 		fc = funcs[ast.DayOfMonth]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["DayOfMonth"][0], v)
+		testutil.DatumEqual(t, c["DayOfMonth"][0], v)
 
 		fc = funcs[ast.DayOfWeek]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["DayOfWeek"][0], v)
+		testutil.DatumEqual(t, c["DayOfWeek"][0], v)
 
 		fc = funcs[ast.DayOfYear]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["DayOfYear"][0], v)
+		testutil.DatumEqual(t, c["DayOfYear"][0], v)
 
 		fc = funcs[ast.Weekday]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
@@ -180,35 +180,35 @@ func TestDate(t *testing.T) {
 		require.NotNil(t, f)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["WeekDay"][0], v)
+		testutil.DatumEqual(t, c["WeekDay"][0], v)
 
 		fc = funcs[ast.DayName]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["DayName"][0], v)
+		testutil.DatumEqual(t, c["DayName"][0], v)
 
 		fc = funcs[ast.Week]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["Week"][0], v, fmt.Sprintf("no.%d", ith))
+		testutil.DatumEqual(t, c["Week"][0], v, fmt.Sprintf("no.%d", ith))
 
 		fc = funcs[ast.WeekOfYear]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["WeekOfYear"][0], v)
+		testutil.DatumEqual(t, c["WeekOfYear"][0], v)
 
 		fc = funcs[ast.YearWeek]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["YearWeek"][0], v, fmt.Sprintf("no.%d", ith))
+		testutil.DatumEqual(t, c["YearWeek"][0], v, fmt.Sprintf("no.%d", ith))
 	}
 
 	// test nil
@@ -238,42 +238,42 @@ func TestDate(t *testing.T) {
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["Year"][0], v)
+		testutil.DatumEqual(t, c["Year"][0], v)
 
 		fc = funcs[ast.Month]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["Month"][0], v)
+		testutil.DatumEqual(t, c["Month"][0], v)
 
 		fc = funcs[ast.MonthName]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["MonthName"][0], v)
+		testutil.DatumEqual(t, c["MonthName"][0], v)
 
 		fc = funcs[ast.DayOfMonth]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["DayOfMonth"][0], v)
+		testutil.DatumEqual(t, c["DayOfMonth"][0], v)
 
 		fc = funcs[ast.DayOfWeek]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["DayOfWeek"][0], v)
+		testutil.DatumEqual(t, c["DayOfWeek"][0], v)
 
 		fc = funcs[ast.DayOfYear]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["DayOfYear"][0], v)
+		testutil.DatumEqual(t, c["DayOfYear"][0], v)
 
 		fc = funcs[ast.Weekday]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
@@ -281,35 +281,35 @@ func TestDate(t *testing.T) {
 		require.NotNil(t, f)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["WeekDay"][0], v)
+		testutil.DatumEqual(t, c["WeekDay"][0], v)
 
 		fc = funcs[ast.DayName]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["DayName"][0], v)
+		testutil.DatumEqual(t, c["DayName"][0], v)
 
 		fc = funcs[ast.Week]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["Week"][0], v)
+		testutil.DatumEqual(t, c["Week"][0], v)
 
 		fc = funcs[ast.WeekOfYear]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["WeekOfYear"][0], v)
+		testutil.DatumEqual(t, c["WeekOfYear"][0], v)
 
 		fc = funcs[ast.YearWeek]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["YearWeek"][0], v)
+		testutil.DatumEqual(t, c["YearWeek"][0], v)
 	}
 
 	// test nil with 'NO_ZERO_DATE' set in sql_mode
@@ -341,42 +341,42 @@ func TestDate(t *testing.T) {
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["Year"][0], v)
+		testutil.DatumEqual(t, c["Year"][0], v)
 
 		fc = funcs[ast.Month]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["Month"][0], v)
+		testutil.DatumEqual(t, c["Month"][0], v)
 
 		fc = funcs[ast.MonthName]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["MonthName"][0], v)
+		testutil.DatumEqual(t, c["MonthName"][0], v)
 
 		fc = funcs[ast.DayOfMonth]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["DayOfMonth"][0], v)
+		testutil.DatumEqual(t, c["DayOfMonth"][0], v)
 
 		fc = funcs[ast.DayOfWeek]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["DayOfWeek"][0], v)
+		testutil.DatumEqual(t, c["DayOfWeek"][0], v)
 
 		fc = funcs[ast.DayOfYear]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["DayOfYear"][0], v)
+		testutil.DatumEqual(t, c["DayOfYear"][0], v)
 
 		fc = funcs[ast.Weekday]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
@@ -384,35 +384,35 @@ func TestDate(t *testing.T) {
 		require.NotNil(t, f)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["WeekDay"][0], v)
+		testutil.DatumEqual(t, c["WeekDay"][0], v)
 
 		fc = funcs[ast.DayName]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["DayName"][0], v)
+		testutil.DatumEqual(t, c["DayName"][0], v)
 
 		fc = funcs[ast.Week]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["Week"][0], v)
+		testutil.DatumEqual(t, c["Week"][0], v)
 
 		fc = funcs[ast.WeekOfYear]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["WeekOfYear"][0], v)
+		testutil.DatumEqual(t, c["WeekOfYear"][0], v)
 
 		fc = funcs[ast.YearWeek]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["YearWeek"][0], v)
+		testutil.DatumEqual(t, c["YearWeek"][0], v)
 	}
 }
 
@@ -640,7 +640,7 @@ func TestDateFormat(t *testing.T) {
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
 		comment := fmt.Sprintf("no.%d\nobtain:%v\nexpect:%v\n", i, v.GetValue(), c["Expect"][0].GetValue())
-		trequire.DatumEqual(t, c["Expect"][0], v, comment)
+		testutil.DatumEqual(t, c["Expect"][0], v, comment)
 	}
 }
 
@@ -668,35 +668,35 @@ func TestClock(t *testing.T) {
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["Hour"][0], v)
+		testutil.DatumEqual(t, c["Hour"][0], v)
 
 		fc = funcs[ast.Minute]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["Minute"][0], v)
+		testutil.DatumEqual(t, c["Minute"][0], v)
 
 		fc = funcs[ast.Second]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["Second"][0], v)
+		testutil.DatumEqual(t, c["Second"][0], v)
 
 		fc = funcs[ast.MicroSecond]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["MicroSecond"][0], v)
+		testutil.DatumEqual(t, c["MicroSecond"][0], v)
 
 		fc = funcs[ast.Time]
 		f, err = fc.getFunction(ctx, datumsToConstants(c["Input"]))
 		require.NoError(t, err)
 		v, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["Time"][0], v)
+		testutil.DatumEqual(t, c["Time"][0], v)
 	}
 
 	// nil
@@ -2577,7 +2577,7 @@ func TestTimeFormat(t *testing.T) {
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
 		comment := fmt.Sprintf("no.%d\nobtain:%v\nexpect:%v\n", i, v.GetValue(), c["Expect"][0].GetValue())
-		trequire.DatumEqual(t, c["Expect"][0], v, comment)
+		testutil.DatumEqual(t, c["Expect"][0], v, comment)
 	}
 }
 

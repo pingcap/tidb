@@ -1055,26 +1055,17 @@ type LogicalLimit struct {
 	limitHints limitHintInfo
 }
 
-// extraPIDInfo is used by SelectLock on partitioned table, the TableReader need
-// to return the partition id column.
-// Because SelectLock has to used that partition id to encode the lock key.
-// the child of SelectLock may be Join, so that table can be multiple extra PID columns.
-// fields are for each of the table, and TblIDs are the corresponding table IDs.
-type extraPIDInfo struct {
-	Columns []*expression.Column
-	TblIDs  []int64
-}
-
 // LogicalLock represents a select lock plan.
 type LogicalLock struct {
 	baseLogicalPlan
 
-	Lock             *ast.SelectLockInfo
-	tblID2Handle     map[int64][]HandleCols
-	partitionedTable []table.PartitionedTable
-	// extraPIDInfo is used when it works on partition table, the child executor
-	// need to return an extra partition ID column in the chunk row.
-	extraPIDInfo
+	Lock         *ast.SelectLockInfo
+	tblID2Handle map[int64][]HandleCols
+
+	// tblID2phyTblIDCol is used for partitioned tables,
+	// the child executor need to return an extra column containing
+	// the Physical Table ID (i.e. from which partition the row came from)
+	tblID2PhysTblIDCol map[int64]*expression.Column
 }
 
 // WindowFrame represents a window function frame.

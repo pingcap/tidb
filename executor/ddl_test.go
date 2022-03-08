@@ -42,9 +42,9 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -203,7 +203,7 @@ func TestCreateTable(t *testing.T) {
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1051 Unknown table 'test.t_if_exists'"))
 	tk.MustExec("create table if not exists t1_if_exists(c int)")
 	tk.MustExec("drop table if exists t1_if_exists,t2_if_exists,t3_if_exists")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1051|Unknown table 'test.t2_if_exists'", "Note|1051|Unknown table 'test.t3_if_exists'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Note|1051|Unknown table 'test.t2_if_exists'", "Note|1051|Unknown table 'test.t3_if_exists'"))
 }
 
 func TestCreateView(t *testing.T) {
@@ -292,7 +292,7 @@ func TestCreateView(t *testing.T) {
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1051 Unknown table 'test.v_if_exists'"))
 	tk.MustExec("create view v1_if_exists as (select * from t1)")
 	tk.MustExec("drop view if exists v1_if_exists,v2_if_exists,v3_if_exists")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1051|Unknown table 'test.v2_if_exists'", "Note|1051|Unknown table 'test.v3_if_exists'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Note|1051|Unknown table 'test.v2_if_exists'", "Note|1051|Unknown table 'test.v3_if_exists'"))
 
 	// Test for create nested view.
 	tk.MustExec("create table test_v_nested(a int)")
@@ -456,22 +456,22 @@ func TestCreateDropDatabase(t *testing.T) {
 	require.Error(t, err)
 
 	tk.MustExec("create database charset_test charset ascii;")
-	tk.MustQuery("show create database charset_test;").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create database charset_test;").Check(testkit.RowsWithSep("|",
 		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET ascii */",
 	))
 	tk.MustExec("drop database charset_test;")
 	tk.MustExec("create database charset_test charset binary;")
-	tk.MustQuery("show create database charset_test;").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create database charset_test;").Check(testkit.RowsWithSep("|",
 		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET binary */",
 	))
 	tk.MustExec("drop database charset_test;")
 	tk.MustExec("create database charset_test collate utf8_general_ci;")
-	tk.MustQuery("show create database charset_test;").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create database charset_test;").Check(testkit.RowsWithSep("|",
 		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci */",
 	))
 	tk.MustExec("drop database charset_test;")
 	tk.MustExec("create database charset_test charset utf8 collate utf8_general_ci;")
-	tk.MustQuery("show create database charset_test;").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create database charset_test;").Check(testkit.RowsWithSep("|",
 		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci */",
 	))
 	tk.MustGetErrMsg("create database charset_test charset utf8 collate utf8mb4_unicode_ci;", "[ddl:1253]COLLATION 'utf8mb4_unicode_ci' is not valid for CHARACTER SET 'utf8'")
@@ -481,19 +481,19 @@ func TestCreateDropDatabase(t *testing.T) {
 
 	tk.MustExec("drop database charset_test;")
 	tk.MustExec("create database charset_test;")
-	tk.MustQuery("show create database charset_test;").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create database charset_test;").Check(testkit.RowsWithSep("|",
 		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET ascii */",
 	))
 
 	tk.MustExec("drop database charset_test;")
 	tk.MustExec("create database charset_test collate utf8mb4_general_ci;")
-	tk.MustQuery("show create database charset_test;").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create database charset_test;").Check(testkit.RowsWithSep("|",
 		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci */",
 	))
 
 	tk.MustExec("drop database charset_test;")
 	tk.MustExec("create database charset_test charset utf8mb4;")
-	tk.MustQuery("show create database charset_test;").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create database charset_test;").Check(testkit.RowsWithSep("|",
 		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
 	))
 }
@@ -1438,14 +1438,14 @@ func TestIssue9205(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(c time DEFAULT '12:12:12.8');`)
-	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table `t`").Check(testkit.RowsWithSep("|",
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `c` time DEFAULT '12:12:13'\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 	tk.MustExec(`alter table t add column c1 time default '12:12:12.000000';`)
-	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table `t`").Check(testkit.RowsWithSep("|",
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `c` time DEFAULT '12:12:13',\n"+
@@ -1454,7 +1454,7 @@ func TestIssue9205(t *testing.T) {
 	))
 
 	tk.MustExec(`alter table t alter column c1 set default '2019-02-01 12:12:10.4';`)
-	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table `t`").Check(testkit.RowsWithSep("|",
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `c` time DEFAULT '12:12:13',\n"+
@@ -1463,7 +1463,7 @@ func TestIssue9205(t *testing.T) {
 	))
 
 	tk.MustExec(`alter table t modify c1 time DEFAULT '770:12:12.000000';`)
-	tk.MustQuery("show create table `t`").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table `t`").Check(testkit.RowsWithSep("|",
 		""+
 			"t CREATE TABLE `t` (\n"+
 			"  `c` time DEFAULT '12:12:13',\n"+

@@ -96,9 +96,10 @@ type Domain struct {
 	serverID             uint64
 	serverIDSession      *concurrency.Session
 	isLostConnectionToPD atomicutil.Int32 // !0: true, 0: false.
-	renewLeaseCh         chan func()      // It is used to call the renewLease function of the cache table.
 	onClose              func()
 	sysExecutorFactory   func(*Domain) (pools.Resource, error)
+
+	sysProcesses SysProcesses
 }
 
 // loadInfoSchema loads infoschema at startTS.
@@ -163,7 +164,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.renewLeaseCh, do.sysFacHack).InitWithDBInfos(schemas, bundles, policies, neededSchemaVersion)
+	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithDBInfos(schemas, bundles, policies, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -285,7 +286,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 		diffs = append(diffs, diff)
 	}
-	builder := infoschema.NewBuilder(do.Store(), do.renewLeaseCh, do.sysFacHack).InitWithOldInfoSchema(do.infoCache.GetLatest())
+	builder := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithOldInfoSchema(do.infoCache.GetLatest())
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
 	for _, diff := range diffs {
@@ -729,12 +730,12 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		indexUsageSyncLease: idxUsageSyncLease,
 		planReplayer:        &planReplayer{planReplayerGCLease: planReplayerGCLease},
 		onClose:             onClose,
-		renewLeaseCh:        make(chan func(), 10),
 		expiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),
 	}
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
+	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
 	return do
 }
 
@@ -862,10 +863,9 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		// Local store needs to get the change information for every DDL state in each session.
 		go do.loadSchemaInLoop(ctx, ddlLease)
 	}
-	do.wg.Add(4)
+	do.wg.Add(3)
 	go do.topNSlowQueryLoop()
 	go do.infoSyncerKeeper()
-	go do.renewLease()
 	go do.globalConfigSyncerKeeper()
 	if !skipRegisterToDashboard {
 		do.wg.Add(1)
@@ -936,6 +936,11 @@ func (p *sessionPool) Close() {
 // SysSessionPool returns the system session pool.
 func (do *Domain) SysSessionPool() *sessionPool {
 	return do.sysSessionPool
+}
+
+// SysProcTracker returns the system processes tracker.
+func (do *Domain) SysProcTracker() sessionctx.SysProcTracker {
+	return &do.sysProcesses
 }
 
 // GetEtcdClient returns the etcd client.
@@ -1245,7 +1250,7 @@ func (do *Domain) StatsHandle() *handle.Handle {
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) error {
-	h, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool)
+	h, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool, &do.sysProcesses)
 	if err != nil {
 		return err
 	}
@@ -1275,7 +1280,7 @@ var RunAutoAnalyze = true
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool)
+	statsHandle, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool, &do.sysProcesses)
 	if err != nil {
 		return err
 	}
@@ -1786,22 +1791,6 @@ func (do *Domain) MockInfoCacheAndLoadInfoSchema(is infoschema.InfoSchema) {
 	do.infoCache.Insert(is, 0)
 }
 
-func (do *Domain) renewLease() {
-	defer func() {
-		do.wg.Done()
-		logutil.BgLogger().Info("renew lease goroutine exited.")
-	}()
-	for {
-		select {
-		case <-do.exit:
-			close(do.renewLeaseCh)
-			return
-		case op := <-do.renewLeaseCh:
-			op()
-		}
-	}
-}
-
 func init() {
 	initByLDFlagsForGlobalKill()
 }
@@ -1813,3 +1802,56 @@ var (
 	ErrInfoSchemaChanged = dbterror.ClassDomain.NewStdErr(errno.ErrInfoSchemaChanged,
 		mysql.Message(errno.MySQLErrName[errno.ErrInfoSchemaChanged].Raw+". "+kv.TxnRetryableMark, nil))
 )
+
+// SysProcesses holds the sys processes infos
+type SysProcesses struct {
+	mu      *sync.RWMutex
+	procMap map[uint64]sessionctx.Context
+}
+
+// Track tracks the sys process into procMap
+func (s *SysProcesses) Track(id uint64, proc sessionctx.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if oldProc, ok := s.procMap[id]; ok && oldProc != proc {
+		return errors.Errorf("The ID is in use: %v", id)
+	}
+	s.procMap[id] = proc
+	proc.GetSessionVars().ConnectionID = id
+	atomic.StoreUint32(&proc.GetSessionVars().Killed, 0)
+	return nil
+}
+
+// UnTrack removes the sys process from procMap
+func (s *SysProcesses) UnTrack(id uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if proc, ok := s.procMap[id]; ok {
+		delete(s.procMap, id)
+		proc.GetSessionVars().ConnectionID = 0
+		atomic.StoreUint32(&proc.GetSessionVars().Killed, 0)
+	}
+}
+
+// GetSysProcessList gets list of system ProcessInfo
+func (s *SysProcesses) GetSysProcessList() map[uint64]*util.ProcessInfo {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rs := make(map[uint64]*util.ProcessInfo)
+	for connID, proc := range s.procMap {
+		// if session is still tracked in this map, it's not returned to sysSessionPool yet
+		if pi := proc.ShowProcess(); pi != nil && pi.ID == connID {
+			rs[connID] = pi
+		}
+	}
+	return rs
+}
+
+// KillSysProcess kills sys process with specified ID
+func (s *SysProcesses) KillSysProcess(id uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if proc, ok := s.procMap[id]; ok {
+		atomic.StoreUint32(&proc.GetSessionVars().Killed, 1)
+	}
+}

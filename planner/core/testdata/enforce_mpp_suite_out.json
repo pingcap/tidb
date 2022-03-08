@@ -352,13 +352,16 @@
       {
         "SQL": "EXPLAIN format = 'brief' SELECT count(a) from t where d=1; -- 11.1. type not supported",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(test.t.a)->Column#6",
-          "└─Selection 8000.00 root  eq(test.t.d, 1)",
-          "  └─TableReader 10000.00 root  data:ExchangeSender",
-          "    └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "      └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:count(test.t.a)->Column#6",
+          "└─Selection 10.00 root  eq(test.t.d, 1)",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
+          "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
+          "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
+          "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
+          "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'.",
           "Expression about 'test.t.d' can not be pushed to TiFlash because it contains unsupported calculation of type 'bit'."
         ]
       }
