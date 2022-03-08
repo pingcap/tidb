@@ -90,7 +90,7 @@ func (b *Binding) IsBindingEnabled() bool {
 // IsBindingAvailable returns whether the binding is available.
 // It includes the 'Enable', 'Using' and 'Disable' status.
 func (b *Binding) IsBindingAvailable() bool {
-	return b.IsBindingEnable() || b.Status == Disable
+	return b.IsBindingEnabled() || b.Status == Disabled
 }
 
 // SinceUpdateTime returns the duration since last update time. Export for test.
