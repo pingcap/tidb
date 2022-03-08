@@ -7,6 +7,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/pingcap/errors"
 )
@@ -59,9 +60,6 @@ func (l *LocalStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(str
 	if opt == nil {
 		opt = &WalkOption{}
 	}
-	if len(opt.ObjPrefix) != 0 {
-		return errors.New("local storage not support ObjPrefix for now")
-	}
 	base := filepath.Join(l.base, opt.SubDir)
 	return filepath.Walk(base, func(path string, f os.FileInfo, err error) error {
 		if os.IsNotExist(err) {
@@ -78,6 +76,10 @@ func (l *LocalStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(str
 		// in mac osx, the path parameter is absolute path; in linux, the path is relative path to execution base dir,
 		// so use Rel to convert to relative path to l.base
 		path, _ = filepath.Rel(l.base, path)
+
+		if !strings.HasPrefix(path, opt.ObjPrefix) {
+			return nil
+		}
 
 		size := f.Size()
 		// if not a regular file, we need to use os.stat to get the real file size
