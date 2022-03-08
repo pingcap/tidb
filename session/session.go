@@ -1304,7 +1304,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 	}
 
 	if sv.HasInstanceScope() { // has INSTANCE scope only, not pure global
-		return "", errors.New("variable has only instance scope and no GetGlobal func. Not sure how to handle yet.")
+		return "", errors.New("variable has only instance scope and no GetGlobal func. Not sure how to handle yet")
 	}
 
 	sysVar, err := domain.GetDomain(s).GetGlobalVar(name)
