@@ -2668,6 +2668,7 @@ func TestKillAutoAnalyze(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
+	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int)")
@@ -2678,22 +2679,72 @@ func TestKillAutoAnalyze(t *testing.T) {
 	h := dom.StatsHandle()
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	lastVersion := h.GetTableStats(tableInfo).Version
 	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/mockSlowAnalyze", "return"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/mockSlowAnalyze"))
-	}()
-	ch := make(chan bool)
-	go func() {
-		analyzed := h.HandleAutoAnalyze(is)
-		ch <- analyzed
-	}()
-	// wait 500ms to let auto-analyze be running
-	time.Sleep(500 * time.Millisecond)
-	dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
-	analyzed := <- ch
-	require.True(t, analyzed)
-	rows := tk.MustQuery("show analyze status where table_schema = 'test' and table_name = 't' and partition_name = '' and job_info = 'auto analyze table'").Rows()
-	require.Equal(t, "failed", rows[len(rows)-1][7])
+
+	checkAnalyzeStatus := func(expectedStatus string, timeLimit int64) {
+		rows := tk.MustQuery("show analyze status where table_schema = 'test' and table_name = 't' and partition_name = '' and job_info = 'auto analyze table'").Rows()
+		require.Equal(t, 1, len(rows))
+		require.Equal(t, expectedStatus, rows[0][7])
+		if timeLimit <= 0 {
+			return
+		}
+		const layout = "2006-01-02 15:04:05"
+		startTime, err := time.Parse(layout, rows[0][5].(string))
+		require.NoError(t, err)
+		endTime, err := time.Parse(layout, rows[0][6].(string))
+		require.NoError(t, err)
+		require.Less(t, endTime.Sub(startTime), time.Duration(timeLimit) * time.Second)
+	}
+
+	// kill auto analyze when it is pending/running/finished
+	for _, status := range []string{"pending", "running", "finished"} {
+		func() {
+			statistics.ClearHistoryJobs()
+			if status == "finished" {
+				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockAnalyzeJobFinished", "return"))
+				defer func() {
+					require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeJobFinished"))
+				}()
+			} else {
+				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/mockSlowAnalyze", "return"))
+				defer func() {
+					require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/mockSlowAnalyze"))
+				}()
+				if status == "pending" {
+					require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockAnalyzeJobPending", "return"))
+					defer func() {
+						require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeJobPending"))
+					}()
+				}
+			}
+			ch := make(chan bool)
+			go func() {
+				analyzed := h.HandleAutoAnalyze(is)
+				ch <- analyzed
+			}()
+			// wait 100ms to make auto-analyze launch
+			time.Sleep(100 * time.Millisecond)
+			checkAnalyzeStatus(status, -1)
+			dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
+			analyzed := <-ch
+			require.True(t, analyzed)
+			currentVersion := h.GetTableStats(tableInfo).Version
+			if status == "finished" {
+				// If we kill a finished job, after kill command the status is still finished and the table stats are updated.
+				checkAnalyzeStatus("finished", -1)
+				require.Greater(t, currentVersion, lastVersion)
+			} else {
+				// If we kill a pending/running job, after kill command the status is failed and the table stats are not updated.
+				// copIteratorWorker sleeps 5s before handling analyze task and copIterator checks killed flag every 3s in recvFromRespCh.
+				// Hence we expect that end_time - start_time <= 4s.
+				checkAnalyzeStatus("failed", 4)
+				require.Equal(t, currentVersion, lastVersion)
+			}
+		}()
+	}
 }

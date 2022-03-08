@@ -99,6 +99,9 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	for _, task := range e.tasks {
 		statistics.AddNewAnalyzeJob(task.job)
 	}
+	failpoint.Inject("mockAnalyzeJobPending", func() {
+		time.Sleep(200 * time.Millisecond)
+	})
 	for _, task := range e.tasks {
 		taskCh <- task
 	}
@@ -187,6 +190,9 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	for _, task := range e.tasks {
 		statistics.MoveToHistory(task.job)
 	}
+	failpoint.Inject("mockAnalyzeJobFinished", func() {
+		time.Sleep(200 * time.Millisecond)
+	})
 	if err != nil {
 		return err
 	}
