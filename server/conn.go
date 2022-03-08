@@ -403,7 +403,7 @@ func (cc *clientConn) writePacket(data []byte) error {
 			failpoint.Return(nil)
 		}
 	})
-	return cc.pkt.writePacketDirect(cc.bufReadConn,data)
+	return cc.pkt.writePacketDirect(cc.bufReadConn, data)
 }
 
 // getSessionVarsWaitTimeout get session variable wait_timeout
