@@ -1585,6 +1585,7 @@ func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
 		fsp        int8
 		getWarning bool
 	}{
+<<<<<<< HEAD
 		{[]interface{}{"2000:01:01 00:00:00", "2000:01:01 00:00:00.000001"}, "-00:00:00.000001", false, 6, false},
 		{[]interface{}{"2008-12-31 23:59:59.000001", "2008-12-30 01:01:01.000002"}, "46:58:57.999999", false, 6, false},
 		{[]interface{}{"2016-12-00 12:00:00", "2016-12-01 12:00:00"}, "-24:00:00", false, 0, false},
@@ -1597,6 +1598,21 @@ func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
 		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
 		f, err := newFunctionForTest(s.ctx, ast.TimeDiff, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
+=======
+		{[]interface{}{"2000:01:01 00:00:00", "2000:01:01 00:00:00.000001"}, "-00:00:00.000001", false, 6, 17, false},
+		{[]interface{}{"2008-12-31 23:59:59.000001", "2008-12-30 01:01:01.000002"}, "46:58:57.999999", false, 6, 17, false},
+		{[]interface{}{"2016-12-00 12:00:00", "2016-12-01 12:00:00"}, "-24:00:00", false, 0, 10, false},
+		{[]interface{}{"10:10:10", "10:9:0"}, "00:01:10", false, 0, 10, false},
+		{[]interface{}{"2016-12-00 12:00:00", "10:9:0"}, "", true, 0, 10, false},
+		{[]interface{}{"2016-12-00 12:00:00", ""}, "", true, 0, 10, true},
+		{[]interface{}{"00:00:00.000000", "00:00:00.000001"}, "-00:00:00.000001", false, 6, 17, false},
+	}
+
+	for _, c := range tests {
+		preWarningCnt := ctx.GetSessionVars().StmtCtx.WarningCount()
+		f, err := newFunctionForTest(ctx, ast.TimeDiff, primitiveValsToConstants(ctx, c.args)...)
+		require.NoError(t, err)
+>>>>>>> d8fbad38a... expression, types: fix StrToDuration result (#32896)
 		tp := f.GetType()
 		c.Assert(tp.Tp, Equals, mysql.TypeDuration)
 		c.Assert(tp.Charset, Equals, charset.CharsetBin)
