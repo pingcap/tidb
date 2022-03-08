@@ -88,7 +88,7 @@ func (b *Binding) IsBindingEnabled() bool {
 }
 
 // IsBindingAvailable returns whether the binding is available.
-// It includes the 'Enable', 'Using' and 'Disable' status.
+// It includes the 'Enabled', 'Using' and 'Disabled' status.
 func (b *Binding) IsBindingAvailable() bool {
 	return b.IsBindingEnabled() || b.Status == Disabled
 }
@@ -110,8 +110,8 @@ type BindRecord struct {
 	Bindings []Binding
 }
 
-// HasEnableBinding checks if there are any enable bindings in bind record.
-func (br *BindRecord) HasEnableBinding() bool {
+// HasEnabledBinding checks if there are any enable bindings in bind record.
+func (br *BindRecord) HasEnabledBinding() bool {
 	for _, binding := range br.Bindings {
 		if binding.IsBindingEnabled() {
 			return true
@@ -120,7 +120,7 @@ func (br *BindRecord) HasEnableBinding() bool {
 	return false
 }
 
-// HasAvailableBinding checks if there are any avaiable bindings in bind record.
+// HasAvailableBinding checks if there are any available bindings in bind record.
 func (br *BindRecord) HasAvailableBinding() bool {
 	for _, binding := range br.Bindings {
 		if binding.IsBindingAvailable() {
@@ -130,9 +130,9 @@ func (br *BindRecord) HasAvailableBinding() bool {
 	return false
 }
 
-// FindEnableBinding gets the enable binding.
+// FindEnabledBinding gets the enable binding.
 // There is at most one binding that can be used now.
-func (br *BindRecord) FindEnableBinding() *Binding {
+func (br *BindRecord) FindEnabledBinding() *Binding {
 	for _, binding := range br.Bindings {
 		if binding.IsBindingEnabled() {
 			return &binding
@@ -271,10 +271,10 @@ func (br *BindRecord) size() float64 {
 }
 
 var statusIndex = map[string]int{
-	Enabled: 0,
-	deleted: 1,
-	Invalid: 2,
-	Disable: 3,
+	Enabled:  0,
+	deleted:  1,
+	Invalid:  2,
+	Disabled: 3,
 }
 
 func (br *BindRecord) metrics() ([]float64, []int) {

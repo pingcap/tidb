@@ -405,9 +405,9 @@ func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareSt
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindRecord := sessionHandle.GetBindRecord(preparedStmt.SQLDigest4PC, preparedStmt.NormalizedSQL4PC, "")
 	if bindRecord != nil {
-		enableBinding := bindRecord.FindEnableBinding()
-		if enableBinding != nil {
-			return enableBinding.BindSQL
+		enabledBinding := bindRecord.FindEnabledBinding()
+		if enabledBinding != nil {
+			return enabledBinding.BindSQL
 		}
 	}
 	globalHandle := domain.GetDomain(sctx).BindHandle()
@@ -416,9 +416,9 @@ func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareSt
 	}
 	bindRecord = globalHandle.GetBindRecord(preparedStmt.SQLDigest4PC, preparedStmt.NormalizedSQL4PC, "")
 	if bindRecord != nil {
-		enableBinding := bindRecord.FindEnableBinding()
-		if enableBinding != nil {
-			return enableBinding.BindSQL
+		enabledBinding := bindRecord.FindEnabledBinding()
+		if enabledBinding != nil {
+			return enabledBinding.BindSQL
 		}
 	}
 	return ""

@@ -267,7 +267,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 	if oldRecord != nil {
 		binding := oldRecord.FindBinding(record.Bindings[0].ID)
 		if binding != nil {
-			// There is already a binding with status `Enable`, `disable`, `PendingVerify` or `Rejected`, we could directly cancel the job.
+			// There is already a binding with status `Enabled`, `Disabled`, `PendingVerify` or `Rejected`, we could directly cancel the job.
 			if record.Bindings[0].Status == PendingVerify {
 				return nil
 			}

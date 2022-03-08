@@ -120,7 +120,7 @@ func TestCapturePlanBaseline(t *testing.T) {
 	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` > 10", rows[0][1])
 }
 
-func TestCapturePlanBaseline4DisableStatus(t *testing.T) {
+func TestCapturePlanBaseline4DisabledStatus(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -148,24 +148,24 @@ func TestCapturePlanBaseline4DisableStatus(t *testing.T) {
 	tk.MustExec("admin capture bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
-	require.Equal(t, "enable", rows[0][3])
-	require.Equal(t, "capture", rows[0][8])
+	require.Equal(t, bindinfo.Enabled, rows[0][3])
+	require.Equal(t, bindinfo.Capture, rows[0][8])
 
 	tk.MustExec("select * from t where a > 10")
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 
-	tk.MustExec("set binding disable for select * from t where a > 10")
+	tk.MustExec("set binding disabled for select * from t where a > 10")
 
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
-	require.Equal(t, "disable", rows[0][3])
+	require.Equal(t, bindinfo.Disabled, rows[0][3])
 
 	tk.MustExec("select * from t where a > 10")
 	tk.MustExec("select * from t where a > 10")
 	tk.MustExec("admin capture bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
-	require.Equal(t, "disable", rows[0][3])
+	require.Equal(t, bindinfo.Disabled, rows[0][3])
 
 	tk.MustExec("select * from t where a > 10")
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
