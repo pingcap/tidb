@@ -1614,6 +1614,7 @@ func TestTimeDiff(t *testing.T) {
 		{[]interface{}{"10:10:10", "10:9:0"}, "00:01:10", false, 0, 10, false},
 		{[]interface{}{"2016-12-00 12:00:00", "10:9:0"}, "", true, 0, 10, false},
 		{[]interface{}{"2016-12-00 12:00:00", ""}, "", true, 0, 10, true},
+		{[]interface{}{"00:00:00.000000", "00:00:00.000001"}, "-00:00:00.000001", false, 6, 17, false},
 	}
 
 	for _, c := range tests {
