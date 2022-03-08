@@ -33,7 +33,7 @@ import (
 const (
 	chanBufferSize             = 256
 	undeletedStartTsBufferSize = 16
-	// If the internal transaction lasts more than TimeToPrintLongTimeInternalTxn, TiDB prints
+	// TimeToPrintLongTimeInternalTxn, If the internal transaction lasts more than it, TiDB prints
 	// a log message
 	TimeToPrintLongTimeInternalTxn = time.Minute
 )
