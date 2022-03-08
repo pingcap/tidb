@@ -203,6 +203,7 @@ func main() {
 
 	storage, dom := createStoreAndDomain()
 	svr := createServer(storage, dom)
+	kv.InitInnerTxnStartTsBox()
 
 	// Register error API is not thread-safe, the caller MUST NOT register errors after initialization.
 	// To prevent misuse, set a flag to indicate that register new error will panic immediately.
@@ -730,7 +731,6 @@ func setupTracing() {
 
 func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	tikv.StoreShuttingDown(1)
-	kv.CloseGlobalInnerTxnTsBox()
 	dom.Close()
 	err := storage.Close()
 	terror.Log(errors.Trace(err))
@@ -745,6 +745,7 @@ func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, gracefu
 	}
 	plugin.Shutdown(context.Background())
 	closeDomainAndStorage(storage, dom)
+	kv.CloseGlobalInnerTxnTsBox()
 	disk.CleanUp()
 	topsql.Close()
 }

@@ -35,6 +35,7 @@ type innerTxnStartTsBox struct {
 	wg                  sync.WaitGroup
 	chanToStoreStartTs  chan uint64
 	chanToDeleteStartTS chan uint64
+	innerTxnTsBoxRun    atomic.Value
 	innerTSLock         sync.Mutex
 	innerTxnStartTsMap  map[uint64]uint64
 }
@@ -48,11 +49,21 @@ func InitInnerTxnStartTsBox() {
 	}
 	globalInnerTxnTsBox.Store(iTxnTsBox)
 	iTxnTsBox.wg.Add(2)
+	iTxnTsBox.innerTxnTsBoxRun.Store(true)
 	go iTxnTsBox.storeInnerTxnStartTsLoop()
 	go iTxnTsBox.deleteInnerTxnStartTsLoop()
 }
 
+func (ib *innerTxnStartTsBox) resetGlobalInnerTxnTsBox() {
+	ib.innerTxnTsBoxRun.Store(false)
+}
+
+func (ib *innerTxnStartTsBox) isBoxRunning() bool {
+	return ib.innerTxnTsBoxRun.Load().(bool)
+}
+
 func (ib *innerTxnStartTsBox) storeInnerTxnStartTsLoop() {
+	logutil.BgLogger().Info("storeInnerTxnStartTsLoop started")
 	defer ib.wg.Done()
 	for startTS := range ib.chanToStoreStartTs {
 		ib.storeInnerTxnTS(startTS)
@@ -61,6 +72,7 @@ func (ib *innerTxnStartTsBox) storeInnerTxnStartTsLoop() {
 }
 
 func (ib *innerTxnStartTsBox) deleteInnerTxnStartTsLoop() {
+	logutil.BgLogger().Info("deleteInnerTxnStartTsLoop started")
 	defer ib.wg.Done()
 	for startTS := range ib.chanToDeleteStartTS {
 		ib.deleteInnerTxnTS(startTS)
@@ -70,6 +82,7 @@ func (ib *innerTxnStartTsBox) deleteInnerTxnStartTsLoop() {
 
 // close close chan chanToStoreStartTs and chanToDeleteStartTS
 func (ib *innerTxnStartTsBox) close() {
+	ib.resetGlobalInnerTxnTsBox()
 	close(ib.chanToStoreStartTs)
 	close(ib.chanToDeleteStartTS)
 	ib.wg.Wait()
@@ -77,8 +90,13 @@ func (ib *innerTxnStartTsBox) close() {
 
 // CloseGlobalInnerTxnTsBox close chanels
 func CloseGlobalInnerTxnTsBox() {
+	logutil.BgLogger().Info("Begin to close GlobalInnerTxnTsBox")
 	ib := getGlobalInnerTxnTsBox()
 	if ib == nil {
+		return
+	}
+	if !ib.isBoxRunning() {
+		logutil.BgLogger().Info("GlobalInnerTxnTsBox is not running, doesn't need to close")
 		return
 	}
 	ib.close()
@@ -101,6 +119,9 @@ func wrapStoreInterTxnTS(startTS uint64) {
 		logutil.BgLogger().Info("Fail to store internal txn startTS, globalInnerTxnTsBox is nil")
 		return
 	}
+	if !ib.isBoxRunning() {
+		return
+	}
 	ib.chanToStoreStartTs <- startTS
 }
 
@@ -118,6 +139,9 @@ func wrapDeleteInterTxnTS(startTS uint64) {
 		logutil.BgLogger().Info("Fail to delete internal txn startTS, globalInnerTxnTsBox is nil")
 		return
 	}
+	if !ib.isBoxRunning() {
+		return
+	}
 	ib.chanToDeleteStartTS <- startTS
 }
 
@@ -133,6 +157,9 @@ func WrapGetMinStartTs(startTSLowerLimit uint64,
 	ib := getGlobalInnerTxnTsBox()
 	if ib == nil {
 		logutil.BgLogger().Info("Fail to get internal txn startTS, globalInnerTxnTsBox is nil")
+		return curMinStartTS
+	}
+	if !ib.isBoxRunning() {
 		return curMinStartTS
 	}
 	return ib.getMinStartTs(startTSLowerLimit, curMinStartTS)

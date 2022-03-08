@@ -2805,8 +2805,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 			return nil, err
 		}
 	}
-
-	kv.InitInnerTxnStartTsBox()
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
 		runInBootstrapSession(store, bootstrap)
