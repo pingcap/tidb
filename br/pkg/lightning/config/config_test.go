@@ -154,27 +154,39 @@ func TestCheckAndAdjustFilePath(t *testing.T) {
 	tmpDir := t.TempDir()
 	// use slashPath in url to be compatible with windows
 	slashPath := filepath.ToSlash(tmpDir)
+	pwd, err := os.Getwd()
+	require.NoError(t, err)
+	specialDir, err := os.MkdirTemp(tmpDir, "abc??bcd")
+	require.NoError(t, err)
+	specialDir1, err := os.MkdirTemp(tmpDir, "abc%3F%3F%3Fbcd")
+	require.NoError(t, err)
 
 	cfg := config.NewConfig()
-	cases := []string{
-		tmpDir,
-		".",
-		"file://" + slashPath,
-		"local://" + slashPath,
-		"s3://bucket_name",
-		"s3://bucket_name/path/to/dir",
-		"gcs://bucketname/path/to/dir",
-		"gs://bucketname/path/to/dir",
-		"noop:///",
-	}
 
+	cases := []struct {
+		test   string
+		expect string
+	}{
+		{tmpDir, tmpDir},
+		{".", filepath.ToSlash(pwd)},
+		{specialDir, specialDir},
+		{specialDir1, specialDir1},
+		{"file://" + slashPath, slashPath},
+		{"local://" + slashPath, slashPath},
+		{"s3://bucket_name", ""},
+		{"s3://bucket_name/path/to/dir", "/path/to/dir"},
+		{"gcs://bucketname/path/to/dir", "/path/to/dir"},
+		{"gs://bucketname/path/to/dir", "/path/to/dir"},
+		{"noop:///", "/"},
+	}
 	for _, testCase := range cases {
-		cfg.Mydumper.SourceDir = testCase
-
-		err := cfg.CheckAndAdjustFilePath()
+		cfg.Mydumper.SourceDir = testCase.test
+		err = cfg.CheckAndAdjustFilePath()
 		require.NoError(t, err)
+		u, err := url.Parse(cfg.Mydumper.SourceDir)
+		require.NoError(t, err)
+		require.Equal(t, testCase.expect, u.Path)
 	}
-
 }
 
 func TestAdjustFileRoutePath(t *testing.T) {

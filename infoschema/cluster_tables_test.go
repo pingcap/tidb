@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -236,7 +235,7 @@ func TestSelectClusterTable(t *testing.T) {
 		tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
 		tk.MustExec("set time_zone = '+08:00';")
 		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("2"))
-		tk.MustQuery("select time from `CLUSTER_SLOW_QUERY` where time='2019-02-12 19:33:56.571953'").Check(testutil.RowsWithSep("|", "2019-02-12 19:33:56.571953"))
+		tk.MustQuery("select time from `CLUSTER_SLOW_QUERY` where time='2019-02-12 19:33:56.571953'").Check(testkit.RowsWithSep("|", "2019-02-12 19:33:56.571953"))
 		tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
 		tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(fmt.Sprintf(":10080 1 root 127.0.0.1 <nil> Query 9223372036 %s <nil>  0 0 ", "")))
 		tk.MustQuery("select query_time, conn_id from `CLUSTER_SLOW_QUERY` order by time limit 1").Check(testkit.Rows("4.895492 6"))
@@ -415,20 +414,30 @@ func TestStmtSummaryHistoryTableWithUserTimezone(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec("set time_zone = '+08:00';")
 	tk.MustExec("select sleep(0.1);")
-	r := tk.MustQuery("select FIRST_SEEN, LAST_SEEN from INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY order by LAST_SEEN limit 1;")
+	r := tk.MustQuery("select FIRST_SEEN, LAST_SEEN, SUMMARY_BEGIN_TIME, SUMMARY_END_TIME from INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY order by LAST_SEEN limit 1;")
 	date8First, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][0].(string))
 	require.NoError(t, err)
 	date8Last, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][1].(string))
 	require.NoError(t, err)
+	date8Begin, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][2].(string))
+	require.NoError(t, err)
+	date8End, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][3].(string))
+	require.NoError(t, err)
 	tk.MustExec("set time_zone = '+01:00';")
-	r = tk.MustQuery("select FIRST_SEEN, LAST_SEEN from INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY order by LAST_SEEN limit 1;")
+	r = tk.MustQuery("select FIRST_SEEN, LAST_SEEN, SUMMARY_BEGIN_TIME, SUMMARY_END_TIME from INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY order by LAST_SEEN limit 1;")
 	date1First, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][0].(string))
 	require.NoError(t, err)
 	date1Last, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][1].(string))
 	require.NoError(t, err)
+	date1Begin, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][2].(string))
+	require.NoError(t, err)
+	date1End, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][3].(string))
+	require.NoError(t, err)
 
 	require.Less(t, date1First.Unix(), date8First.Unix())
 	require.Less(t, date1Last.Unix(), date8Last.Unix())
+	require.Less(t, date1Begin.Unix(), date8Begin.Unix())
+	require.Less(t, date1End.Unix(), date8End.Unix())
 }
 
 func TestStmtSummaryHistoryTable(t *testing.T) {

@@ -47,7 +47,7 @@ check-static: tools/bin/golangci-lint
 	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci.yml
 
 unconvert:tools/bin/unconvert
-	@echo "unconvert check(skip check the genenrated or copied code in lightning)"
+	@echo "unconvert check(skip check the generated or copied code in lightning)"
 	@GO111MODULE=on tools/bin/unconvert $(UNCONVERT_PACKAGES)
 
 gogenerate:
@@ -132,7 +132,15 @@ gotest_in_verify_ci: tools/bin/xprog tools/bin/ut failpoint-enable
 	@echo "Running gotest_in_verify_ci"
 	@mkdir -p $(TEST_COVERAGE_DIR)
 	@export TZ='Asia/Shanghai'; \
-	tools/bin/ut --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" --coverprofile "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" || { $(FAILPOINT_DISABLE); exit 1; }
+	tools/bin/ut --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" --coverprofile "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" --except unstable.txt || { $(FAILPOINT_DISABLE); exit 1; }
+	@$(FAILPOINT_DISABLE)
+	@$(CLEAN_UT_BINARY)
+
+gotest_unstable_in_verify_ci: tools/bin/xprog tools/bin/ut failpoint-enable
+	@echo "Running gotest_in_verify_ci"
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	@export TZ='Asia/Shanghai'; \
+	tools/bin/ut --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" --coverprofile "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" --only unstable.txt || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
 	@$(CLEAN_UT_BINARY)
 

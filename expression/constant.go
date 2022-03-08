@@ -227,6 +227,9 @@ func (c *Constant) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, 
 	} else if c.GetType().Hybrid() || dt.Kind() == types.KindString {
 		res, err := dt.ToInt64(ctx.GetSessionVars().StmtCtx)
 		return res, false, err
+	} else if dt.Kind() == types.KindMysqlBit {
+		uintVal, err := dt.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
+		return int64(uintVal), false, err
 	}
 	return dt.GetInt64(), false, nil
 }

@@ -42,7 +42,7 @@ func testCreateTableT(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *mode
 	err := d.doDDLJob(ctx, job)
 	require.NoError(t, err)
 
-	v := getSchemaVerT(t, ctx)
+	v := getSchemaVer(t, ctx)
 	tblInfo.State = model.StatePublic
 	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	tblInfo.State = model.StateNone
@@ -60,7 +60,7 @@ func testRenameTable(t *testing.T, ctx sessionctx.Context, d *ddl, newSchemaID, 
 	err := d.doDDLJob(ctx, job)
 	require.NoError(t, err)
 
-	v := getSchemaVerT(t, ctx)
+	v := getSchemaVer(t, ctx)
 	tblInfo.State = model.StatePublic
 	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	tblInfo.State = model.StateNone
@@ -80,7 +80,7 @@ func testRenameTables(
 	err := d.doDDLJob(ctx, job)
 	require.NoError(t, err)
 
-	v := getSchemaVerT(t, ctx)
+	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: nil})
 	return job
 }
@@ -103,7 +103,7 @@ func testLockTable(t *testing.T, ctx sessionctx.Context, d *ddl, newSchemaID int
 	err := d.doDDLJob(ctx, job)
 	require.NoError(t, err)
 
-	v := getSchemaVerT(t, ctx)
+	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v})
 	return job
 }
@@ -137,7 +137,7 @@ func testDropTableT(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.
 	err := d.doDDLJob(ctx, job)
 	require.NoError(t, err)
 
-	v := getSchemaVerT(t, ctx)
+	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
@@ -156,7 +156,7 @@ func testTruncateTable(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *mod
 	err = d.doDDLJob(ctx, job)
 	require.NoError(t, err)
 
-	v := getSchemaVerT(t, ctx)
+	v := getSchemaVer(t, ctx)
 	tblInfo.ID = newTableID
 	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
@@ -281,7 +281,7 @@ func ExportTestTable(t *testing.T) {
 	testCheckJobDoneT(t, ddl, job, true)
 	checkTableNoCacheTest(t, ddl, dbInfo1, tblInfo)
 
-	testDropSchemaT(t, testNewContext(ddl), ddl, dbInfo)
+	testDropSchema(t, testNewContext(ddl), ddl, dbInfo)
 	err = ddl.Stop()
 	require.NoError(t, err)
 	err = store.Close()
@@ -324,7 +324,7 @@ func testAlterCacheTable(t *testing.T, ctx sessionctx.Context, d *ddl, newSchema
 	err := d.doDDLJob(ctx, job)
 	require.NoError(t, err)
 
-	v := getSchemaVerT(t, ctx)
+	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v})
 	return job
 }
@@ -341,7 +341,7 @@ func testAlterNoCacheTable(t *testing.T, ctx sessionctx.Context, d *ddl, newSche
 	err := d.doDDLJob(ctx, job)
 	require.NoError(t, err)
 
-	v := getSchemaVerT(t, ctx)
+	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v})
 	return job
 }

@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -189,4 +190,18 @@ func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []str
 		}
 	}
 	return nil
+}
+
+// GetTimeZone gets the session location's zone name and offset.
+func GetTimeZone(sctx sessionctx.Context) (string, int) {
+	loc := sctx.GetSessionVars().Location()
+	name := loc.String()
+	if name != "" {
+		_, err := time.LoadLocation(name)
+		if err == nil {
+			return name, 0
+		}
+	}
+	_, offset := time.Now().In(loc).Zone()
+	return "UTC", offset
 }

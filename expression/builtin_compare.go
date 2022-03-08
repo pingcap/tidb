@@ -442,7 +442,7 @@ const (
 )
 
 // resolveType4Extremum gets compare type for GREATEST and LEAST and BETWEEN (mainly for datetime).
-func resolveType4Extremum(args []Expression) (_ types.EvalType, fieldTimeType GLRetTimeType, cmpStringMode GLCmpStringMode) {
+func resolveType4Extremum(args []Expression) (_ *types.FieldType, fieldTimeType GLRetTimeType, cmpStringMode GLCmpStringMode) {
 	aggType := aggregateType(args)
 	var temporalItem *types.FieldType
 	if aggType.EvalType().IsStringKind() {
@@ -471,7 +471,7 @@ func resolveType4Extremum(args []Expression) (_ types.EvalType, fieldTimeType GL
 	} else if aggType.Tp == mysql.TypeDatetime || aggType.Tp == mysql.TypeTimestamp {
 		timeType = GLRetDatetime
 	}
-	return aggType.EvalType(), timeType, cmpStringMode
+	return aggType, timeType, cmpStringMode
 }
 
 // unsupportedJSONComparison reports warnings while there is a JSON type in least/greatest function's arguments
@@ -493,34 +493,28 @@ func (c *greatestFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp, fieldTimeType, cmpStringMode := resolveType4Extremum(args)
-	argTp := tp
+	resFieldType, fieldTimeType, cmpStringMode := resolveType4Extremum(args)
+	resTp := resFieldType.EvalType()
+	argTp := resTp
 	if cmpStringMode != GLCmpStringDirectly {
 		// Args are temporal and string mixed, we cast all args as string and parse it to temporal mannualy to compare.
 		argTp = types.ETString
-	} else if tp == types.ETJson {
+	} else if resTp == types.ETJson {
 		unsupportedJSONComparison(ctx, args)
 		argTp = types.ETString
-		tp = types.ETString
+		resTp = types.ETString
 	}
 	argTps := make([]types.EvalType, len(args))
 	for i := range args {
 		argTps[i] = argTp
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, tp, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, resTp, argTps...)
 	if err != nil {
 		return nil, err
 	}
 	switch argTp {
 	case types.ETInt:
-		// adjust unsigned flag
-		greastInitUnsignedFlag := false
-		if isEqualsInitUnsignedFlag(greastInitUnsignedFlag, args) {
-			bf.tp.Flag &= ^mysql.UnsignedFlag
-		} else {
-			bf.tp.Flag |= mysql.UnsignedFlag
-		}
-
+		bf.tp.Flag |= resFieldType.Flag
 		sig = &builtinGreatestIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_GreatestInt)
 	case types.ETReal:
@@ -808,34 +802,28 @@ func (c *leastFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	tp, fieldTimeType, cmpStringMode := resolveType4Extremum(args)
-	argTp := tp
+	resFieldType, fieldTimeType, cmpStringMode := resolveType4Extremum(args)
+	resTp := resFieldType.EvalType()
+	argTp := resTp
 	if cmpStringMode != GLCmpStringDirectly {
 		// Args are temporal and string mixed, we cast all args as string and parse it to temporal mannualy to compare.
 		argTp = types.ETString
-	} else if tp == types.ETJson {
+	} else if resTp == types.ETJson {
 		unsupportedJSONComparison(ctx, args)
 		argTp = types.ETString
-		tp = types.ETString
+		resTp = types.ETString
 	}
 	argTps := make([]types.EvalType, len(args))
 	for i := range args {
 		argTps[i] = argTp
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, tp, argTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, resTp, argTps...)
 	if err != nil {
 		return nil, err
 	}
-	switch tp {
+	switch argTp {
 	case types.ETInt:
-		// adjust unsigned flag
-		leastInitUnsignedFlag := true
-		if isEqualsInitUnsignedFlag(leastInitUnsignedFlag, args) {
-			bf.tp.Flag |= mysql.UnsignedFlag
-		} else {
-			bf.tp.Flag &= ^mysql.UnsignedFlag
-		}
-
+		bf.tp.Flag |= resFieldType.Flag
 		sig = &builtinLeastIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LeastInt)
 	case types.ETReal:
@@ -2994,16 +2982,4 @@ func CompareJSON(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhs
 		return compareNull(isNull0, isNull1), true, nil
 	}
 	return int64(json.CompareBinary(arg0, arg1)), false, nil
-}
-
-// isEqualsInitUnsignedFlag can adjust unsigned flag for greatest/least function.
-// For greatest, returns unsigned result if there is at least one argument is unsigned.
-// For least, returns signed result if there is at least one argument is signed.
-func isEqualsInitUnsignedFlag(initUnsigned bool, args []Expression) bool {
-	for _, arg := range args {
-		if initUnsigned != mysql.HasUnsignedFlag(arg.GetType().Flag) {
-			return false
-		}
-	}
-	return true
 }

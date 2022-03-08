@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -501,7 +503,7 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*backfillWorker
 
 var (
 	// TestCheckWorkerNumCh use for test adjust backfill worker.
-	TestCheckWorkerNumCh = make(chan struct{})
+	TestCheckWorkerNumCh = make(chan *sync.WaitGroup)
 	// TestCheckWorkerNumber use for test adjust backfill worker.
 	TestCheckWorkerNumber = int32(16)
 	// TestCheckReorgTimeout is used to mock timeout when reorg data.
@@ -534,6 +536,19 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table) (map[int64]de
 	decodeColMap := decoder.BuildFullDecodeColMap(t.WritableCols(), mockSchema)
 
 	return decodeColMap, nil
+}
+
+func setSessCtxLocation(sctx sessionctx.Context, info *reorgInfo) error {
+	// It is set to SystemLocation to be compatible with nil LocationInfo.
+	*sctx.GetSessionVars().TimeZone = *timeutil.SystemLocation()
+	if info.ReorgMeta.Location != nil {
+		loc, err := info.ReorgMeta.Location.GetLocation()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		*sctx.GetSessionVars().TimeZone = *loc
+	}
+	return nil
 }
 
 // writePhysicalTableRecord handles the "add index" or "modify/change column" reorganization state for a non-partitioned table or a partition.
@@ -606,8 +621,10 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 			// Simulate the sql mode environment in the worker sessionCtx.
 			sqlMode := reorgInfo.ReorgMeta.SQLMode
 			sessCtx.GetSessionVars().SQLMode = sqlMode
-			// TODO: skip set the timezone, it will cause data inconsistency when add index, since some reorg place using the timeUtil.SystemLocation() to do the time conversion. (need a more systemic plan)
-			// sessCtx.GetSessionVars().TimeZone = reorgInfo.ReorgMeta.Location
+			if err := setSessCtxLocation(sessCtx, reorgInfo); err != nil {
+				return errors.Trace(err)
+			}
+
 			sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
 			sessCtx.GetSessionVars().StmtCtx.TruncateAsWarning = !sqlMode.HasStrictMode()
 			sessCtx.GetSessionVars().StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
@@ -656,7 +673,10 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 					} else if num != len(backfillWorkers) {
 						failpoint.Return(errors.Errorf("check backfill worker num error, len kv ranges is: %v, check backfill worker num is: %v, actual record num is: %v", len(kvRanges), num, len(backfillWorkers)))
 					}
-					TestCheckWorkerNumCh <- struct{}{}
+					var wg sync.WaitGroup
+					wg.Add(1)
+					TestCheckWorkerNumCh <- &wg
+					wg.Wait()
 				}
 			}
 		})

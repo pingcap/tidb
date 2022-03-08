@@ -157,7 +157,6 @@ type Session interface {
 	AuthWithoutVerification(user *auth.UserIdentity) bool
 	AuthPluginForUser(user *auth.UserIdentity) (string, error)
 	MatchIdentity(username, remoteHost string) (*auth.UserIdentity, error)
-	ShowProcess() *util.ProcessInfo
 	// Return the information of the txn current running
 	TxnInfo() *txninfo.TxnInfo
 	// PrepareTxnCtx is exported for test.
@@ -320,21 +319,28 @@ func (s *session) cleanRetryInfo() {
 
 	planCacheEnabled := plannercore.PreparedPlanCacheEnabled()
 	var cacheKey kvcache.Key
+	var err error
 	var preparedAst *ast.Prepared
+	var stmtText, stmtDB string
 	if planCacheEnabled {
 		firstStmtID := retryInfo.DroppedPreparedStmtIDs[0]
 		if preparedPointer, ok := s.sessionVars.PreparedStmts[firstStmtID]; ok {
 			preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
 			if ok {
 				preparedAst = preparedObj.PreparedAst
-				cacheKey = plannercore.NewPlanCacheKey(s.sessionVars, firstStmtID, preparedAst.SchemaVersion)
+				stmtText, stmtDB = preparedObj.StmtText, preparedObj.StmtDB
+				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedAst.SchemaVersion)
+				if err != nil {
+					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
+					return
+				}
 			}
 		}
 	}
 	for i, stmtID := range retryInfo.DroppedPreparedStmtIDs {
 		if planCacheEnabled {
 			if i > 0 && preparedAst != nil {
-				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtID, preparedAst.SchemaVersion, s.sessionVars.IsolationReadEngines)
+				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtText, preparedAst.SchemaVersion, s.sessionVars.IsolationReadEngines)
 			}
 			s.PreparedPlanCache().Delete(cacheKey)
 		}
@@ -1207,8 +1213,7 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
-		// TODO: Remove this line after fixing https://github.com/pingcap/tidb/issues/30880
-		// Chunk RPC protocol may have memory leak issue not solved.
+		// Internal session uses default format to prevent memory leak problem.
 		se.sessionVars.EnableChunkRPC = false
 		return se, nil
 	}
@@ -1230,8 +1235,7 @@ func createSessionWithDomainFunc(store kv.Storage) func(*domain.Domain) (pools.R
 		}
 		se.sessionVars.CommonGlobalLoaded = true
 		se.sessionVars.InRestrictedSQL = true
-		// TODO: Remove this line after fixing https://github.com/pingcap/tidb/issues/30880
-		// Chunk RPC protocol may have memory leak issue not solved.
+		// Internal session uses default format to prevent memory leak problem.
 		se.sessionVars.EnableChunkRPC = false
 		return se, nil
 	}
@@ -1674,12 +1678,18 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 	if execOption.AnalyzeVer != 0 {
 		s.sessionVars.AnalyzeVersion = execOption.AnalyzeVer
 	}
+	prevSQL := s.sessionVars.StmtCtx.OriginalSQL
+	prevStmtType := s.sessionVars.StmtCtx.StmtType
+	prevTables := s.sessionVars.StmtCtx.Tables
 	return s, func() {
 		s.sessionVars.AnalyzeVersion = prevStatsVer
 		if err := s.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
 			logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
 		}
 		s.sessionVars.SnapshotInfoschema = nil
+		s.sessionVars.StmtCtx.OriginalSQL = prevSQL
+		s.sessionVars.StmtCtx.StmtType = prevStmtType
+		s.sessionVars.StmtCtx.Tables = prevTables
 	}, nil
 }
 
@@ -1751,6 +1761,14 @@ func (s *session) withRestrictedSQLExecutor(ctx context.Context, opts []sqlexec.
 		return nil, nil, errors.Trace(err)
 	}
 	defer clean()
+	if execOption.TrackSysProcID > 0 {
+		err = execOption.TrackSysProc(execOption.TrackSysProcID, se)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		// unTrack should be called before clean (return sys session)
+		defer execOption.UnTrackSysProc(execOption.TrackSysProcID)
+	}
 	return fn(ctx, se)
 }
 

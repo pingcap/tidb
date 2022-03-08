@@ -78,4 +78,6 @@ var (
 	ErrWrongObject = dbterror.ClassSchema.NewStd(mysql.ErrWrongObject)
 	// ErrAdminCheckTable returns when the check table in temporary mode.
 	ErrAdminCheckTable = dbterror.ClassSchema.NewStd(mysql.ErrAdminCheckTable)
+	// ErrEmptyDatabase returns when the database is unexpectedly empty.
+	ErrEmptyDatabase = dbterror.ClassSchema.NewStd(mysql.ErrBadDB)
 )

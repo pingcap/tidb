@@ -313,11 +313,19 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 	ClusterTableInstanceColumnNameStr: func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest) interface{} {
 		return reader.instanceAddr
 	},
-	SummaryBeginTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
-		return types.NewTime(types.FromGoTime(time.Unix(ssElement.beginTime, 0)), mysql.TypeTimestamp, 0)
+	SummaryBeginTimeStr: func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
+		beginTime := time.Unix(ssElement.beginTime, 0)
+		if beginTime.Location() != reader.tz {
+			beginTime = beginTime.In(reader.tz)
+		}
+		return types.NewTime(types.FromGoTime(beginTime), mysql.TypeTimestamp, 0)
 	},
-	SummaryEndTimeStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
-		return types.NewTime(types.FromGoTime(time.Unix(ssElement.endTime, 0)), mysql.TypeTimestamp, 0)
+	SummaryEndTimeStr: func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) interface{} {
+		endTime := time.Unix(ssElement.endTime, 0)
+		if endTime.Location() != reader.tz {
+			endTime = endTime.In(reader.tz)
+		}
+		return types.NewTime(types.FromGoTime(endTime), mysql.TypeTimestamp, 0)
 	},
 	StmtTypeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest) interface{} {
 		return ssbd.stmtType

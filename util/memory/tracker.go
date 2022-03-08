@@ -622,6 +622,8 @@ const (
 	LabelForIndexJoinInnerWorker int = -20
 	// LabelForIndexJoinOuterWorker represents the label of IndexJoin OuterWorker
 	LabelForIndexJoinOuterWorker int = -21
+	// LabelForBindCache represents the label of the bind cache
+	LabelForBindCache int = -22
 	// LabelForAnalyzeMemory represents the label of the memory of each analyze job
 	LabelForAnalyzeMemory int = -22
 	// LabelForAnalyzeSharedMemory represents the label of the global memory of all analyze jobs

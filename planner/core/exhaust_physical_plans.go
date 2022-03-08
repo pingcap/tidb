@@ -2757,10 +2757,9 @@ func (p *LogicalLock) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 	}
 	childProp := prop.CloneEssentialFields()
 	lock := PhysicalLock{
-		Lock:             p.Lock,
-		TblID2Handle:     p.tblID2Handle,
-		PartitionedTable: p.partitionedTable,
-		ExtraPIDInfo:     p.extraPIDInfo,
+		Lock:               p.Lock,
+		TblID2Handle:       p.tblID2Handle,
+		TblID2PhysTblIDCol: p.tblID2PhysTblIDCol,
 	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 	return []PhysicalPlan{lock}, true, nil
 }

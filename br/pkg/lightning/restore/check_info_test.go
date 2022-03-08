@@ -530,7 +530,8 @@ func TestCheckTableEmpty(t *testing.T) {
 		},
 	}
 	rc.cfg.Checkpoint.Enable = true
-	rc.checkpointsDB = checkpoints.NewFileCheckpointsDB(filepath.Join(dir, "cp.pb"))
+	rc.checkpointsDB, err = checkpoints.NewFileCheckpointsDB(ctx, filepath.Join(dir, "cp.pb"))
+	require.NoError(t, err)
 	err = rc.checkpointsDB.Initialize(ctx, cfg, dbInfos)
 	require.NoError(t, err)
 	db, mock, err = sqlmock.New()

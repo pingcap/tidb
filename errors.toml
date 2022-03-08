@@ -361,6 +361,11 @@ error = '''
 Incorrect usage of %s and %s
 '''
 
+["ddl:1246"]
+error = '''
+Converting column '%s' from %s to %s
+'''
+
 ["ddl:1248"]
 error = '''
 Every derived table must have its own alias

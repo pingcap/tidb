@@ -42,13 +42,15 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
-	"go.etcd.io/etcd/integration"
+	"go.etcd.io/etcd/tests/v3/integration"
 )
 
 func TestInfo(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
+
+	integration.BeforeTest(t)
 
 	if !unixSocketAvailable() {
 		t.Skip("ETCD use ip:port as unix socket address, skip when it is unavailable.")
@@ -64,7 +66,7 @@ func TestInfo(t *testing.T) {
 
 	mockStore := &mockEtcdBackend{
 		Storage: s,
-		pdAddrs: []string{cluster.Members[0].GRPCAddr()}}
+		pdAddrs: []string{cluster.Members[0].GRPCURL()}}
 	ddlLease := 80 * time.Millisecond
 	dom := NewDomain(mockStore, ddlLease, 0, 0, 0, mockFactory, nil)
 	defer func() {
