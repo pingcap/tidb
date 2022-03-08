@@ -26,6 +26,9 @@ import (
 	"github.com/pingcap/tidb/table/temptable"
 )
 
+// enforce implement Processor interface
+var _ Processor = &staleReadProcessor{}
+
 // StalenessTSEvaluator is a function to get staleness ts
 type StalenessTSEvaluator func(sctx sessionctx.Context) (uint64, error)
 
@@ -129,7 +132,7 @@ func (p *baseProcessor) setEvaluatedValues(ts uint64, is infoschema.InfoSchema, 
 
 type staleReadProcessor struct {
 	baseProcessor
-	stmtTs uint64
+	stmtTS uint64
 }
 
 // NewStaleReadProcessor creates a new stale read processor
@@ -152,18 +155,19 @@ func (p *staleReadProcessor) OnSelectTable(tn *ast.TableName) error {
 		return nil
 	}
 
+	// If `stmtAsOfTS` is not 0, it means we use 'select ... from xxx as of timestamp ...'
 	stmtAsOfTS, err := parseAndValidateAsOf(p.sctx, tn.AsOf)
 	if err != nil {
 		return err
 	}
 
 	if p.evaluated {
-		if p.stmtTs != stmtAsOfTS {
+		// If the select statement is related to multi tables, we should guarantee that all tables use the same timestamp
+		if p.stmtTS != stmtAsOfTS {
 			return errAsOf.GenWithStack("can not set different time in the as of")
 		}
 		return nil
 	}
-
 	return p.evaluateFromStmtTSOrSysVariable(stmtAsOfTS, true)
 }
 
@@ -191,6 +195,9 @@ func (p *staleReadProcessor) OnExecutePreparedStmt(tsEvaluator StalenessTSEvalua
 func (p *staleReadProcessor) evaluateFromTxn() error {
 	// sys variables should be ignored when in an explicit transaction
 	if txnCtx := p.sctx.GetSessionVars().TxnCtx; txnCtx.IsStaleness {
+		// It means we meet following case:
+		// 1. `start transaction read only as of timestamp ts
+		// 2. select or execute statement
 		return p.setEvaluatedValues(
 			txnCtx.StartTS,
 			temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, txnCtx.InfoSchema.(infoschema.InfoSchema)),
@@ -201,6 +208,9 @@ func (p *staleReadProcessor) evaluateFromTxn() error {
 }
 
 func (p *staleReadProcessor) evaluateFromStmtTSOrSysVariable(stmtTS uint64, setEvaluator bool) error {
+	// If `txnReadTS` is not 0, it means  we meet following situation:
+	// start transaction read only as of timestamp ...
+	// select from table
 	txnReadTS := p.sctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
 	if txnReadTS > 0 && stmtTS > 0 {
 		// `as of` and `@@tx_read_ts` cannot be set in the same time
@@ -208,7 +218,7 @@ func (p *staleReadProcessor) evaluateFromStmtTSOrSysVariable(stmtTS uint64, setE
 	}
 
 	if stmtTS > 0 {
-		p.stmtTs = stmtTS
+		p.stmtTS = stmtTS
 		return p.setEvaluatedTS(stmtTS, setEvaluator)
 	}
 
@@ -216,11 +226,15 @@ func (p *staleReadProcessor) evaluateFromStmtTSOrSysVariable(stmtTS uint64, setE
 		return p.setEvaluatedTS(txnReadTS, setEvaluator)
 	}
 
-	// set ts from `@@tidb_read_staleness` when both `as of` and `@@tx_read_ts` are not set
+	// If both txnReadTS and stmtAsOfTS is empty while the readStaleness isn't, it means we meet following situation:
+	// set @@tidb_read_staleness='-5';
+	// select from table
+	// Then the following select statement should be affected by the tidb_read_staleness in session.
 	if evaluator := getTsEvaluatorFromReadStaleness(p.sctx); evaluator != nil {
 		return p.setEvaluatedEvaluator(evaluator)
 	}
 
+	// Otherwise, it means we should not use stale read.
 	return p.setAsNonStaleRead()
 }
 
