@@ -899,6 +899,9 @@ func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 func readDataAndSendTask(handler *tableResultHandler, mergeTaskCh chan []byte) error {
 	defer close(mergeTaskCh)
 	for {
+		failpoint.Inject("mockSlowAnalyze", func() {
+			time.Sleep(3100 * time.Millisecond)
+		})
 		data, err := handler.nextRaw(context.TODO())
 		if err != nil {
 			return errors.Trace(err)
