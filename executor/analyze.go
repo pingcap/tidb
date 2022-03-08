@@ -2302,7 +2302,7 @@ func startAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	job.StartTime = time.Now()
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 	const sql = "UPDATE mysql.analyze_jobs SET start_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %? WHERE id = %?"
-	_, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, sql, job.StartTime.UTC().Format(types.TimeFormat), statistics.AnalyzeRunning, job.ID)
+	_, _, err := exec.ExecRestrictedSQL(context.TODO(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, job.StartTime.UTC().Format(types.TimeFormat), statistics.AnalyzeRunning, job.ID)
 	if err != nil {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 	}
@@ -2327,7 +2327,7 @@ func updateAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, rowCou
 	}
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 	const sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %? WHERE id = %?"
-	_, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, sql, delta, job.ID)
+	_, _, err := exec.ExecRestrictedSQL(context.TODO(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, delta, job.ID)
 	if err != nil {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 	}
@@ -2347,7 +2347,7 @@ func finishAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, meetEr
 	}
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 	const sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %? WHERE id = %?"
-	_, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, sql, job.Delta.Count, job.EndTime.UTC().Format(types.TimeFormat), state, job.ID)
+	_, _, err := exec.ExecRestrictedSQL(context.TODO(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, job.Delta.Count, job.EndTime.UTC().Format(types.TimeFormat), state, job.ID)
 	if err != nil {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 	}
