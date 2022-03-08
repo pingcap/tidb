@@ -65,10 +65,10 @@ func (push *pushDown) pushBackup(
 
 	// Push down backup tasks to all tikv instances.
 	res := rtree.NewRangeTree()
-	failpoint.Inject("noop-backup", func(_ failpoint.Value) {
+	if _, _err_ := failpoint.Eval(_curpkg_("noop-backup")); _err_ == nil {
 		logutil.CL(ctx).Warn("skipping normal backup, jump to fine-grained backup, meow :3", logutil.Key("start-key", req.StartKey), logutil.Key("end-key", req.EndKey))
-		failpoint.Return(res, nil)
-	})
+		return res, nil
+	}
 
 	wg := new(sync.WaitGroup)
 	for _, s := range stores {
@@ -127,21 +127,21 @@ func (push *pushDown) pushBackup(
 				// Finished.
 				return res, nil
 			}
-			failpoint.Inject("backup-storage-error", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("backup-storage-error")); _err_ == nil {
 				msg := val.(string)
 				logutil.CL(ctx).Debug("failpoint backup-storage-error injected.", zap.String("msg", msg))
 				resp.Error = &backuppb.Error{
 					Msg: msg,
 				}
-			})
-			failpoint.Inject("tikv-rw-error", func(val failpoint.Value) {
+			}
+			if val, _err_ := failpoint.Eval(_curpkg_("tikv-rw-error")); _err_ == nil {
 				msg := val.(string)
 				logutil.CL(ctx).Debug("failpoint tikv-rw-error injected.", zap.String("msg", msg))
 				resp.Error = &backuppb.Error{
 					Msg: msg,
 				}
-			})
-			failpoint.Inject("tikv-region-error", func(val failpoint.Value) {
+			}
+			if val, _err_ := failpoint.Eval(_curpkg_("tikv-region-error")); _err_ == nil {
 				if !regionErrorIngestedOnce {
 					msg := val.(string)
 					logutil.CL(ctx).Debug("failpoint tikv-regionh-error injected.", zap.String("msg", msg))
@@ -155,7 +155,7 @@ func (push *pushDown) pushBackup(
 					}
 				}
 				regionErrorIngestedOnce = true
-			})
+			}
 			if resp.GetError() == nil {
 				// None error means range has been backuped successfully.
 				res.Put(

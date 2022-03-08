@@ -636,7 +636,7 @@ func (bc *Client) fineGrainedBackup(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	failpoint.Inject("hint-fine-grained-backup", func(v failpoint.Value) {
+	if v, _err_ := failpoint.Eval(_curpkg_("hint-fine-grained-backup")); _err_ == nil {
 		log.Info("failpoint hint-fine-grained-backup injected, "+
 			"process will sleep for 3s and notify the shell.", zap.String("file", v.(string)))
 		if sigFile, ok := v.(string); ok {
@@ -649,7 +649,7 @@ func (bc *Client) fineGrainedBackup(
 			}
 			time.Sleep(3 * time.Second)
 		}
-	})
+	}
 
 	bo := tikv.NewBackoffer(ctx, backupFineGrainedMaxBackoff)
 	for {
@@ -915,7 +915,7 @@ func doSendBackup(
 	req backuppb.BackupRequest,
 	respFn func(*backuppb.BackupResponse) error,
 ) error {
-	failpoint.Inject("hint-backup-start", func(v failpoint.Value) {
+	if v, _err_ := failpoint.Eval(_curpkg_("hint-backup-start")); _err_ == nil {
 		logutil.CL(ctx).Info("failpoint hint-backup-start injected, " +
 			"process will notify the shell.")
 		if sigFile, ok := v.(string); ok {
@@ -928,20 +928,20 @@ func doSendBackup(
 			}
 		}
 		time.Sleep(3 * time.Second)
-	})
+	}
 	bCli, err := client.Backup(ctx, &req)
-	failpoint.Inject("reset-retryable-error", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("reset-retryable-error")); _err_ == nil {
 		if val.(bool) {
 			logutil.CL(ctx).Debug("failpoint reset-retryable-error injected.")
 			err = status.Error(codes.Unavailable, "Unavailable error")
 		}
-	})
-	failpoint.Inject("reset-not-retryable-error", func(val failpoint.Value) {
+	}
+	if val, _err_ := failpoint.Eval(_curpkg_("reset-not-retryable-error")); _err_ == nil {
 		if val.(bool) {
 			logutil.CL(ctx).Debug("failpoint reset-not-retryable-error injected.")
 			err = status.Error(codes.Unknown, "Your server was haunted hence doesn't work, meow :3")
 		}
-	})
+	}
 	if err != nil {
 		return err
 	}

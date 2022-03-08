@@ -34,10 +34,10 @@ var (
 
 // GetStorageSize gets storage's capacity and available size
 func GetStorageSize(dir string) (size StorageSize, err error) {
-	failpoint.Inject("GetStorageSize", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("GetStorageSize")); _err_ == nil {
 		injectedSize := val.(int)
-		failpoint.Return(StorageSize{Capacity: uint64(injectedSize), Available: uint64(injectedSize)}, nil)
-	})
+		return StorageSize{Capacity: uint64(injectedSize), Available: uint64(injectedSize)}, nil
+	}
 	r, _, e := getDiskFreeSpaceExW.Call(
 		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(dir))),
 		uintptr(unsafe.Pointer(&size.Available)),

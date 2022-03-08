@@ -793,14 +793,14 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		plan:         v.Plan,
 		outputNames:  v.OutputNames(),
 	}
-	failpoint.Inject("assertExecutePrepareStatementStalenessOption", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("assertExecutePrepareStatementStalenessOption")); _err_ == nil {
 		vs := strings.Split(val.(string), "_")
 		assertTS, assertTxnScope := vs[0], vs[1]
 		if strconv.FormatUint(b.snapshotTS, 10) != assertTS ||
 			assertTxnScope != b.readReplicaScope {
 			panic("execute prepare statement have wrong staleness option")
 		}
-	})
+	}
 
 	return e
 }
@@ -2218,9 +2218,9 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 		b.err = err
 		return nil
 	}
-	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("injectAnalyzeSnapshot")); _err_ == nil {
 		startTS = uint64(val.(int))
-	})
+	}
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
@@ -2329,21 +2329,21 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		b.err = err
 		return nil
 	}
-	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("injectAnalyzeSnapshot")); _err_ == nil {
 		startTS = uint64(val.(int))
-	})
+	}
 	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
 	count, modifyCount, err := statsHandle.StatsMetaCountAndModifyCount(task.TableID.GetStatisticsID())
 	if err != nil {
 		b.err = err
 		return nil
 	}
-	failpoint.Inject("injectBaseCount", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("injectBaseCount")); _err_ == nil {
 		count = int64(val.(int))
-	})
-	failpoint.Inject("injectBaseModifyCount", func(val failpoint.Value) {
+	}
+	if val, _err_ := failpoint.Eval(_curpkg_("injectBaseModifyCount")); _err_ == nil {
 		modifyCount = int64(val.(int))
-	})
+	}
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
@@ -2458,13 +2458,13 @@ func (b *executorBuilder) getApproximateTableCountFromStorage(sctx sessionctx.Co
 	regionStats := &helper.PDRegionStats{}
 	pdHelper := helper.NewHelper(tikvStore)
 	err := pdHelper.GetPDRegionStats(tid, regionStats, true)
-	failpoint.Inject("calcSampleRateByStorageCount", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("calcSampleRateByStorageCount")); _err_ == nil {
 		// Force the TiDB thinking that there's PD and the count of region is small.
 		err = nil
 		regionStats.Count = 1
 		// Set a very large approximate count.
 		regionStats.StorageKeys = 1000000
-	})
+	}
 	if err != nil {
 		return 0, false
 	}
@@ -2516,9 +2516,9 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		b.err = err
 		return nil
 	}
-	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("injectAnalyzeSnapshot")); _err_ == nil {
 		startTS = uint64(val.(int))
-	})
+	}
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
@@ -3212,16 +3212,16 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		b.err = errors.New("stale requests require tikv backend")
 		return nil
 	}
-	failpoint.Inject("checkUseMPP", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("checkUseMPP")); _err_ == nil {
 		if val.(bool) != useMPPExecution(b.ctx, v) {
 			if val.(bool) {
 				b.err = errors.New("expect mpp but not used")
 			} else {
 				b.err = errors.New("don't expect mpp but we used it")
 			}
-			failpoint.Return(nil)
+			return nil
 		}
-	})
+	}
 	if useMPPExecution(b.ctx, v) {
 		return b.buildMPPGather(v)
 	}

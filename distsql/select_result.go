@@ -279,11 +279,11 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // NextRaw returns the next raw partial result.
 func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
-	failpoint.Inject("mockNextRawError", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockNextRawError")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(nil, errors.New("mockNextRawError"))
+			return nil, errors.New("mockNextRawError")
 		}
-	})
+	}
 
 	resultSubset, err := r.resp.Next(ctx)
 	r.partialCount++

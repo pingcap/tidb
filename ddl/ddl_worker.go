@@ -305,11 +305,11 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 				return errors.Trace(err)
 			}
 		}
-		failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("mockAddBatchDDLJobsErr")); _err_ == nil {
 			if val.(bool) {
-				failpoint.Return(errors.Errorf("mockAddBatchDDLJobsErr"))
+				return errors.Errorf("mockAddBatchDDLJobsErr")
 			}
-		})
+		}
 		return nil
 	})
 	var jobs string
@@ -367,11 +367,11 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 // updateDDLJob updates the DDL job information.
 // Every time we enter another state except final state, we must call this function.
 func (w *worker) updateDDLJob(t *meta.Meta, job *model.Job, meetErr bool) error {
-	failpoint.Inject("mockErrEntrySizeTooLarge", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockErrEntrySizeTooLarge")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(kv.ErrEntryTooLarge)
+			return kv.ErrEntryTooLarge
 		}
-	})
+	}
 	updateRawArgs := true
 	// If there is an error when running job and the RawArgs hasn't been decoded by DecodeArgs,
 	// so we shouldn't replace RawArgs with the marshaling Args.
@@ -753,7 +753,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		}, false)
 
 	// Mock for run ddl job panic.
-	failpoint.Inject("mockPanicInRunDDLJob", func(val failpoint.Value) {})
+	failpoint.Eval(_curpkg_("mockPanicInRunDDLJob"))
 
 	logutil.Logger(w.logCtx).Info("[ddl] run DDL job", zap.String("job", job.String()))
 	timeStart := time.Now()

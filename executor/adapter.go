@@ -266,10 +266,10 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 	}
 	pointExecutor := a.PsStmt.Executor.(*PointGetExecutor)
 
-	failpoint.Inject("assertTxnManagerInShortPointGetPlan", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("assertTxnManagerInShortPointGetPlan")); _err_ == nil {
 		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerInShortPointGetPlan", true)
 		sessiontxn.AssertTxnManagerInfoSchema(a.Ctx, is)
-	})
+	}
 
 	if err = pointExecutor.Open(ctx); err != nil {
 		terror.Call(pointExecutor.Close)
@@ -307,14 +307,14 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 
-	failpoint.Inject("assertTxnManagerInRebuildPlan", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("assertTxnManagerInRebuildPlan")); _err_ == nil {
 		if is, ok := a.Ctx.Value(sessiontxn.AssertTxnInfoSchemaAfterRetryKey).(infoschema.InfoSchema); ok {
 			a.Ctx.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is)
 			a.Ctx.SetValue(sessiontxn.AssertTxnInfoSchemaAfterRetryKey, nil)
 		}
 		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerInRebuildPlan", true)
 		sessiontxn.AssertTxnManagerInfoSchema(a.Ctx, ret.InfoSchema)
-	})
+	}
 
 	a.InfoSchema = sessiontxn.GetTxnManager(a.Ctx).GetTxnInfoSchema()
 	a.SnapshotTS = ret.LastSnapshotTS
@@ -365,14 +365,14 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.GetTextToLog()), zap.Stack("stack"))
 	}()
 
-	failpoint.Inject("assertStaleTSO", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("assertStaleTSO")); _err_ == nil {
 		if n, ok := val.(int); ok && a.IsStaleness {
 			startTS := oracle.ExtractPhysical(a.SnapshotTS) / 1000
 			if n != int(startTS) {
 				panic(fmt.Sprintf("different tso %d != %d", n, startTS))
 			}
 		}
-	})
+	}
 	sctx := a.Ctx
 	ctx = util.SetSessionID(ctx, sctx.GetSessionVars().ConnectionID)
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
@@ -794,9 +794,9 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
 	a.Ctx.GetSessionVars().RetryInfo.ResetOffset()
 
-	failpoint.Inject("assertTxnManagerAfterPessimisticLockErrorRetry", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("assertTxnManagerAfterPessimisticLockErrorRetry")); _err_ == nil {
 		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerAfterPessimisticLockErrorRetry", true)
-	})
+	}
 
 	if err = e.Open(ctx); err != nil {
 		return nil, err
@@ -852,10 +852,10 @@ func (a *ExecStmt) buildExecutor() (Executor, error) {
 		return nil, errors.Trace(b.err)
 	}
 
-	failpoint.Inject("assertTxnManagerAfterBuildExecutor", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("assertTxnManagerAfterBuildExecutor")); _err_ == nil {
 		sessiontxn.RecordAssert(a.Ctx, "assertTxnManagerAfterBuildExecutor", true)
 		sessiontxn.AssertTxnManagerInfoSchema(b.ctx, b.is)
-	})
+	}
 
 	// ExecuteExec is not a real Executor, we only use it to build another Executor from a prepared statement.
 	if executorExec, ok := e.(*ExecuteExec); ok {
