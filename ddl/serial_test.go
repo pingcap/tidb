@@ -481,9 +481,7 @@ func TestCancelAddIndexPanic(t *testing.T) {
 			checkErr = txn.Commit(context.Background())
 		}
 	}
-	origHook := dom.DDL().GetHook()
-	defer dom.DDL().(ddl.DDLForTest).SetHook(origHook)
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 	rs, err := tk.Exec("alter table t add index idx_c2(c2)")
 	if rs != nil {
 		require.NoError(t, rs.Close())
@@ -664,9 +662,7 @@ func TestRecoverTableByJobIDFail(t *testing.T) {
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `return(true)`))
 		}
 	}
-	origHook := dom.DDL().GetHook()
-	defer dom.DDL().(ddl.DDLForTest).SetHook(origHook)
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 
 	// do recover table.
 	tk.MustExec(fmt.Sprintf("recover table by job %d", jobID))
@@ -726,9 +722,7 @@ func TestRecoverTableByTableNameFail(t *testing.T) {
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `return(true)`))
 		}
 	}
-	origHook := dom.DDL().GetHook()
-	defer dom.DDL().(ddl.DDLForTest).SetHook(origHook)
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 
 	// do recover table.
 	tk.MustExec("recover table t_recover")
@@ -812,9 +806,7 @@ func TestCanceledJobTakeTime(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
-	origHook := dom.DDL().GetHook()
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
-	defer dom.DDL().(ddl.DDLForTest).SetHook(origHook)
+	dom.DDL().SetHook(hook)
 
 	originalWT := ddl.GetWaitTimeWhenErrorOccurred()
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Second)

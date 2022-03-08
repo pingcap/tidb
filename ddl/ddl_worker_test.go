@@ -50,10 +50,7 @@ func TestDDLSerialSuite(t *testing.T) {
 const testLease = 5 * time.Millisecond
 
 func (s *testDDLSerialSuiteToVerify) SetupSuite() {
-	SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
-
-	// We hope that this test is serially executed. So put it here.
-	s.testRunWorker()
+	SetWaitTimeWhenErrorOccurred(time.Microsecond)
 }
 
 func TestCheckOwner(t *testing.T) {
@@ -168,8 +165,8 @@ func TestNotifyDDLJob(t *testing.T) {
 	}
 }
 
-// testRunWorker tests no job is handled when the value of RunWorker is false.
-func (s *testDDLSerialSuiteToVerify) testRunWorker() {
+// TestRunWorker tests no job is handled when the value of RunWorker is false.
+func (s *testDDLSerialSuiteToVerify) TestRunWorker() {
 	store := createMockStore(s.T())
 	defer func() {
 		require.NoError(s.T(), store.Close())
