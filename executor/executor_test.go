@@ -8505,5 +8505,5 @@ func (s *testSuite1) TestBitColumnIn(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id bit(16), key id(id))")
 	tk.MustExec("insert into t values (65)")
-	tk.MustQuery("select * from t where id not in (-1,2)").Check(testkit.Rows("A"))
+	tk.MustQuery("select * from t where id not in (-1,2)").Check(testkit.Rows("\x00A"))
 }
