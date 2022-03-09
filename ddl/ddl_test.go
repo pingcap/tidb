@@ -105,16 +105,6 @@ func checkEqualTable(t *testing.T, t1, t2 *model.TableInfo) {
 	require.Equal(t, t1.AutoIncID, t2.AutoIncID)
 }
 
-func checkEqualTableT(t *testing.T, t1, t2 *model.TableInfo) {
-	require.Equal(t, t1.ID, t2.ID)
-	require.Equal(t, t1.Name, t2.Name)
-	require.Equal(t, t1.Charset, t2.Charset)
-	require.Equal(t, t1.Collate, t2.Collate)
-	require.EqualValues(t, t1.PKIsHandle, t2.PKIsHandle)
-	require.EqualValues(t, t1.Comment, t2.Comment)
-	require.EqualValues(t, t1.AutoIncID, t2.AutoIncID)
-}
-
 func checkHistoryJob(t *testing.T, job *model.Job) {
 	require.Equal(t, job.State, model.JobStateSynced)
 }
@@ -136,29 +126,6 @@ func checkHistoryJobArgs(t *testing.T, ctx sessionctx.Context, id int64, args *h
 	// for handling schema job
 	require.Equal(t, historyJob.BinlogInfo.SchemaVersion, args.ver)
 	require.Equal(t, historyJob.BinlogInfo.DBInfo, args.db)
-	// only for creating schema job
-	if args.db != nil && len(args.tblIDs) == 0 {
-		return
-	}
-}
-
-func checkHistoryJobArgsT(t *testing.T, ctx sessionctx.Context, id int64, args *historyJobArgs) {
-	txn, err := ctx.Txn(true)
-	require.NoError(t, err)
-	tt := meta.NewMeta(txn)
-	historyJob, err := tt.GetHistoryDDLJob(id)
-	require.NoError(t, err)
-	require.Greater(t, historyJob.BinlogInfo.FinishedTS, uint64(0))
-
-	if args.tbl != nil {
-		require.Equal(t, args.ver, historyJob.BinlogInfo.SchemaVersion)
-		checkEqualTableT(t, historyJob.BinlogInfo.TableInfo, args.tbl)
-		return
-	}
-
-	// for handling schema job
-	require.Equal(t, args.ver, historyJob.BinlogInfo.SchemaVersion)
-	require.EqualValues(t, args.db, historyJob.BinlogInfo.DBInfo)
 	// only for creating schema job
 	if args.db != nil && len(args.tblIDs) == 0 {
 		return
