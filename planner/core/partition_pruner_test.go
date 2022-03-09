@@ -463,69 +463,11 @@ partition by range (a) (
 	tk.MustQuery("select * from t3 where not (a = 1)").Sort().Check(testkit.Rows("11", "12", "13", "2", "3"))
 	tk.MustQuery("select * from t3 where not (a != 1)").Check(testkit.Rows("1"))
 }
-<<<<<<< HEAD
-=======
 
-//issue 22079
-func TestRangePartitionPredicatePruner(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Static) + "'")
-	tk.MustExec("drop database if exists test_partition;")
-	tk.MustExec("create database test_partition")
-	tk.MustExec("use test_partition")
-	tk.MustExec("drop table if exists t")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
-	tk.MustExec(`create table t (a int(11) default null) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-		partition by range(a) (
-		partition p0 values less than (1),
-		partition p1 values less than (2),
-		partition p2 values less than (3),
-		partition p_max values less than (maxvalue));`)
-
-	var input []string
-	var output []struct {
-		SQL    string
-		Result []string
-	}
-	partitionPrunerData := plannercore.GetPartitionPrunerData()
-	partitionPrunerData.GetTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
-	}
-}
-
-func TestHashPartitionPruning(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_partition_prune_mode='static'")
-	tk.MustExec("USE test;")
-	tk.MustExec("DROP TABLE IF EXISTS t;")
-	tk.MustExec("CREATE TABLE t (`COL1` int, `COL3` bigint) PARTITION BY HASH ((`COL1` * `COL3`))PARTITIONS 13;")
-	tk.MustQuery("SELECT * FROM t WHERE col3 =2659937067964964513 and col1 = 783367513002;").Check(testkit.Rows())
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE `t` (" +
-		"`COL1` int NOT NULL DEFAULT '25' COMMENT 'NUMERIC PK'," +
-		"`COL3` bigint NOT NULL," +
-		"PRIMARY KEY (`COL1`,`COL3`)" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin " +
-		"PARTITION BY HASH ((`COL1` * `COL3`))" +
-		"PARTITIONS 13;")
-	tk.MustExec("insert into t(col1, col3) values(0, 3522101843073676459);")
-	tk.MustQuery("SELECT col1, COL3 FROM t WHERE COL1 IN (0,14158354938390,0) AND COL3 IN (3522101843073676459,-2846203247576845955,838395691793635638);").Check(testkit.Rows("0 3522101843073676459"))
-}
-
-func TestIssue32007(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testPartitionPruneSuit) TestIssue32007(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database Issue32007")
+	defer tk.MustExec(`drop database Issue32007`)
 	tk.MustExec("USE Issue32007")
 	tk.MustExec("create table t1 (a int, b tinyint, primary key (a)) partition by range (a) (" +
 		"partition p0 values less than (5)," +
@@ -542,4 +484,3 @@ func TestIssue32007(t *testing.T) {
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustQuery("select * from t3 where t3.a <> ALL (select t1.a from t1 partition (p0)) order by t3.a").Sort().Check(testkit.Rows("10 10", "11 11", "12 12", "13 13", "14 14", "15 15", "16 16", "17 17", "18 18", "19 19", "20 20", "21 21", "22 22", "23 23", "5 5", "6 6", "7 7", "8 8", "9 9"))
 }
->>>>>>> b9bd5a7d7... *: add explicit partition pruning to index joins (#32007) (#32093)
