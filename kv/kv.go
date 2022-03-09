@@ -363,6 +363,7 @@ type Request struct {
 	Paging bool
 }
 
+// PartitionIDAndRanges used by PartitionTableScan in tiflash.
 type PartitionIDAndRanges struct {
 	ID        int64
 	KeyRanges []KeyRange
