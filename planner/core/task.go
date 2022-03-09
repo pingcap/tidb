@@ -2386,16 +2386,17 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	}.Init(ctx, t.p.SelectBlockOffset())
 	p.stats = t.p.statsInfo()
 	collectPartitionInfosFromMPPPlan(p, t.p)
-	rowSize := math.Min(collectRowSizeFromMPPPlan(t.p), 1) // use 1 as lower-bound for safety
+	rowSize := math.Max(collectRowSizeFromMPPPlan(t.p), 1) // use 1 as lower-bound for safety
 
 	cst := t.cst + t.count()*rowSize*ctx.GetSessionVars().GetNetworkFactor(nil)
-	p.cost = cst / p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
+	cst /= p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
+	p.cost = cst
 	if p.ctx.GetSessionVars().IsMPPEnforced() {
-		p.cost = cst / 1000000000
+		cst /= 1000000000
 	}
 	rt := &rootTask{
 		p:   p,
-		cst: p.cost,
+		cst: cst,
 	}
 	return rt
 }
