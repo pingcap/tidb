@@ -88,6 +88,7 @@ func (b *Binding) IsBindingEnabled() bool {
 }
 
 // IsBindingAvailable returns whether the binding is available.
+// The available means the binding can be used or can be converted into a usable status.
 // It includes the 'Enabled', 'Using' and 'Disabled' status.
 func (b *Binding) IsBindingAvailable() bool {
 	return b.IsBindingEnabled() || b.Status == Disabled
@@ -110,7 +111,7 @@ type BindRecord struct {
 	Bindings []Binding
 }
 
-// HasEnabledBinding checks if there are any enable bindings in bind record.
+// HasEnabledBinding checks if there are any enabled bindings in bind record.
 func (br *BindRecord) HasEnabledBinding() bool {
 	for _, binding := range br.Bindings {
 		if binding.IsBindingEnabled() {
@@ -121,6 +122,8 @@ func (br *BindRecord) HasEnabledBinding() bool {
 }
 
 // HasAvailableBinding checks if there are any available bindings in bind record.
+// The available means the binding can be used or can be converted into a usable status.
+// It includes the 'Enabled', 'Using' and 'Disabled' status.
 func (br *BindRecord) HasAvailableBinding() bool {
 	for _, binding := range br.Bindings {
 		if binding.IsBindingAvailable() {
