@@ -388,7 +388,7 @@ func (w *worker) deleteRange(ctx context.Context, job *model.Job) error {
 	if job.Version <= currentVersion {
 		err = w.delRangeManager.addDelRangeJob(ctx, job)
 	} else {
-		err = errInvalidDDLJobVersion.GenWithStackByArgs(job.Version, currentVersion)
+		err = dbterror.ErrInvalidDDLJobVersion.GenWithStackByArgs(job.Version, currentVersion)
 	}
 	return errors.Trace(err)
 }
@@ -888,7 +888,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
-		err = errInvalidDDLJob.GenWithStack("invalid ddl job type: %v", job.Type)
+		err = dbterror.ErrInvalidDDLJob.GenWithStack("invalid ddl job type: %v", job.Type)
 	}
 
 	// Save errors in job if any, so that others can know errors happened.
