@@ -157,6 +157,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	return sig, nil
 }
 
+// validateConstArgByType will discard invalid args according to column type and constant type
 func (c *inFunctionClass) validateConstArgByType(args []Expression) []Expression {
 	columnType := args[0].GetType()
 	validatedArgs := make([]Expression, 0, len(args))
