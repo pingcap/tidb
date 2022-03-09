@@ -406,7 +406,7 @@ func TestBindingSymbolList(t *testing.T) {
 	bind := bindData.Bindings[0]
 	require.Equal(t, "SELECT `a`,`b` FROM `test`.`t` USE INDEX (`ib`) WHERE `a` = 1 LIMIT 0,1", bind.BindSQL)
 	require.Equal(t, "test", bindData.Db)
-	require.Equal(t, "using", bind.Status)
+	require.Equal(t, bindinfo.Enabled, bind.Status)
 	require.NotNil(t, bind.Charset)
 	require.NotNil(t, bind.Collation)
 	require.NotNil(t, bind.CreateTime)
@@ -498,7 +498,7 @@ func TestBestPlanInBaselines(t *testing.T) {
 	bind := bindData.Bindings[0]
 	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `ia`)*/ `a`,`b` FROM `test`.`t` WHERE `a` = 1 LIMIT 0,1", bind.BindSQL)
 	require.Equal(t, "test", bindData.Db)
-	require.Equal(t, "using", bind.Status)
+	require.Equal(t, bindinfo.Enabled, bind.Status)
 
 	tk.MustQuery("select a, b from t where a = 3 limit 1, 10")
 	require.Equal(t, "t:ia", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
@@ -532,7 +532,7 @@ func TestErrorBind(t *testing.T) {
 	bind := bindData.Bindings[0]
 	require.Equal(t, "SELECT * FROM `test`.`t` USE INDEX (`index_t`) WHERE `i` > 100", bind.BindSQL)
 	require.Equal(t, "test", bindData.Db)
-	require.Equal(t, "using", bind.Status)
+	require.Equal(t, bindinfo.Enabled, bind.Status)
 	require.NotNil(t, bind.Charset)
 	require.NotNil(t, bind.Collation)
 	require.NotNil(t, bind.CreateTime)
@@ -651,7 +651,7 @@ func TestAddEvolveTasks(t *testing.T) {
 	require.Len(t, rows, 2)
 	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0", rows[0][1])
 	status := rows[0][3].(string)
-	require.True(t, status == "using" || status == "rejected")
+	require.True(t, status == bindinfo.Enabled || status == bindinfo.Rejected)
 }
 
 func TestRuntimeHintsInEvolveTasks(t *testing.T) {
@@ -910,7 +910,7 @@ func TestNotEvolvePlanForReadStorageHint(t *testing.T) {
 	// None evolve task, because of the origin binding is a read_from_storage binding.
 	require.Len(t, rows, 1)
 	require.Equal(t, "SELECT /*+ read_from_storage(tiflash[`t`])*/ * FROM `test`.`t` WHERE `a` >= 1 AND `b` >= 1", rows[0][1])
-	require.Equal(t, "using", rows[0][3])
+	require.Equal(t, bindinfo.Enabled, rows[0][3])
 }
 
 func TestBindingWithIsolationRead(t *testing.T) {
@@ -1055,23 +1055,23 @@ func TestReCreateBind(t *testing.T) {
 
 	tk.MustExec("create global binding for select * from t using select * from t")
 	tk.MustQuery("select original_sql, status from mysql.bind_info where source != 'builtin';").Check(testkit.Rows(
-		"select * from `test` . `t` using",
+		"select * from `test` . `t` enabled",
 	))
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t`", rows[0][0])
-	require.Equal(t, "using", rows[0][3])
+	require.Equal(t, bindinfo.Enabled, rows[0][3])
 
 	tk.MustExec("create global binding for select * from t using select * from t")
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t`", rows[0][0])
-	require.Equal(t, "using", rows[0][3])
+	require.Equal(t, bindinfo.Enabled, rows[0][3])
 
 	rows = tk.MustQuery("select original_sql, status from mysql.bind_info where source != 'builtin';").Rows()
 	require.Len(t, rows, 2)
 	require.Equal(t, "deleted", rows[0][1])
-	require.Equal(t, "using", rows[1][1])
+	require.Equal(t, bindinfo.Enabled, rows[1][1])
 }
 
 func TestExplainShowBindSQL(t *testing.T) {
@@ -1218,9 +1218,9 @@ func TestGCBindRecord(t *testing.T) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t` where `a` = ?", rows[0][0])
-	require.Equal(t, "using", rows[0][3])
+	require.Equal(t, bindinfo.Enabled, rows[0][3])
 	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
-		"using",
+		bindinfo.Enabled,
 	))
 
 	h := dom.BindHandle()
@@ -1229,9 +1229,9 @@ func TestGCBindRecord(t *testing.T) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t` where `a` = ?", rows[0][0])
-	require.Equal(t, "using", rows[0][3])
+	require.Equal(t, bindinfo.Enabled, rows[0][3])
 	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
-		"using",
+		bindinfo.Enabled,
 	))
 
 	tk.MustExec("drop global binding for select * from t where a = 1")
