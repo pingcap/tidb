@@ -938,7 +938,7 @@ func TestTiFlashBatchUnsupported(t *testing.T) {
 	tk.MustExec("create table tiflash_ddl_view.t(z int)")
 	tk.MustExec("insert into tiflash_ddl_view.t values (1)")
 	tk.MustExec("CREATE VIEW tiflash_ddl_view.v AS select * from tiflash_ddl_view.t")
-	tk.MustExec("alter database tiflash_ddl_view set tiflash replica 1", 1)
+	tk.MustExec("alter database tiflash_ddl_view set tiflash replica 1")
 	require.Equal(t, "In total 2 tables: 1 succeed, 0 failed, 1 skipped", tk.Session().GetSessionVars().StmtCtx.GetMessage())
 	tk.MustGetErrCode("alter database information_schema set tiflash replica 1", 8200)
 }
