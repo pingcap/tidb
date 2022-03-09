@@ -346,7 +346,7 @@ type IndexLookUpExecutor struct {
 	partitionTableMode bool                  // if this executor is accessing a partition table
 	prunedPartitions   []table.PhysicalTable // partition tables need to access
 	partitionRangeMap  map[int64][]*ranger.Range
-	partitionKVRanges  [][]kv.KeyRange // kvRanges of each partition table
+	partitionKVRanges  [][]kv.KeyRange // kvRanges of each prunedPartitions
 
 	// All fields above are immutable.
 
@@ -385,9 +385,6 @@ type IndexLookUpExecutor struct {
 	PushedLimit *plannercore.PushedDownLimit
 
 	stats *IndexLookUpRunTimeStats
-
-	// extraPIDColumnIndex is used for partition reader to add an extra partition ID column, default -1
-	extraPIDColumnIndex offsetOptional
 
 	// cancelFunc is called when close the executor
 	cancelFunc context.CancelFunc
@@ -676,18 +673,17 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 		table = task.partitionTable
 	}
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor:        newBaseExecutor(e.ctx, e.schema, e.getTableRootPlanID()),
-		table:               table,
-		dagPB:               e.tableRequest,
-		startTS:             e.startTS,
-		readReplicaScope:    e.readReplicaScope,
-		isStaleness:         e.isStaleness,
-		columns:             e.columns,
-		streaming:           e.tableStreaming,
-		feedback:            statistics.NewQueryFeedback(0, nil, 0, false),
-		corColInFilter:      e.corColInTblSide,
-		plans:               e.tblPlans,
-		extraPIDColumnIndex: e.extraPIDColumnIndex,
+		baseExecutor:     newBaseExecutor(e.ctx, e.schema, e.getTableRootPlanID()),
+		table:            table,
+		dagPB:            e.tableRequest,
+		startTS:          e.startTS,
+		readReplicaScope: e.readReplicaScope,
+		isStaleness:      e.isStaleness,
+		columns:          e.columns,
+		streaming:        e.tableStreaming,
+		feedback:         statistics.NewQueryFeedback(0, nil, 0, false),
+		corColInFilter:   e.corColInTblSide,
+		plans:            e.tblPlans,
 	}
 	tableReaderExec.buildVirtualColumnInfo()
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, task.handles, true)
