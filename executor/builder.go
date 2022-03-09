@@ -3292,14 +3292,21 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		return nil, err
 	}
 	tbInfo := e.table.Meta()
+<<<<<<< HEAD
 	if v.IsCommonHandle {
 		if tbInfo.GetPartitionInfo() == nil || !builder.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 			kvRanges, err := buildKvRangesForIndexJoin(e.ctx, getPhysicalTableID(e.table), -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+=======
+	if tbInfo.GetPartitionInfo() == nil || !builder.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+		if v.IsCommonHandle {
+			kvRanges, err := buildKvRangesForIndexJoin(e.ctx, getPhysicalTableID(e.table), -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
+>>>>>>> b9bd5a7d7... *: add explicit partition pruning to index joins (#32007) (#32093)
 			if err != nil {
 				return nil, err
 			}
 			return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 		}
+<<<<<<< HEAD
 
 		tbl, _ := builder.is.TableByID(tbInfo.ID)
 		pt := tbl.(table.PartitionedTable)
@@ -3312,6 +3319,31 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		var kvRanges []kv.KeyRange
 		if keyColumnsIncludeAllPartitionColumns(lookUpContents[0].keyCols, pe) {
 			// In this case we can use dynamic partition pruning.
+=======
+		handles, _ := dedupHandles(lookUpContents)
+		return builder.buildTableReaderFromHandles(ctx, e, handles, canReorderHandles)
+	}
+	tbl, _ := builder.is.TableByID(tbInfo.ID)
+	pt := tbl.(table.PartitionedTable)
+	pe, err := tbl.(interface {
+		PartitionExpr() (*tables.PartitionExpr, error)
+	}).PartitionExpr()
+	if err != nil {
+		return nil, err
+	}
+	partitionInfo := &v.PartitionInfo
+	usedPartitionList, err := partitionPruning(e.ctx, pt, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
+	if err != nil {
+		return nil, err
+	}
+	usedPartitions := make(map[int64]table.PhysicalTable, len(usedPartitionList))
+	for _, p := range usedPartitionList {
+		usedPartitions[p.GetPhysicalID()] = p
+	}
+	var kvRanges []kv.KeyRange
+	if v.IsCommonHandle {
+		if len(lookUpContents) > 0 && keyColumnsIncludeAllPartitionColumns(lookUpContents[0].keyCols, pe) {
+>>>>>>> b9bd5a7d7... *: add explicit partition pruning to index joins (#32007) (#32093)
 			locateKey := make([]types.Datum, e.Schema().Len())
 			kvRanges = make([]kv.KeyRange, 0, len(lookUpContents))
 			for _, content := range lookUpContents {
@@ -3323,13 +3355,21 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 					return nil, err
 				}
 				pid := p.GetPhysicalID()
+<<<<<<< HEAD
 				tmp, err := buildKvRangesForIndexJoin(e.ctx, pid, -1, []*indexJoinLookUpContent{content}, indexRanges, keyOff2IdxOff, cwc)
+=======
+				if _, ok := usedPartitions[pid]; !ok {
+					continue
+				}
+				tmp, err := buildKvRangesForIndexJoin(e.ctx, pid, -1, []*indexJoinLookUpContent{content}, indexRanges, keyOff2IdxOff, cwc, nil, interruptSignal)
+>>>>>>> b9bd5a7d7... *: add explicit partition pruning to index joins (#32007) (#32093)
 				if err != nil {
 					return nil, err
 				}
 				kvRanges = append(kvRanges, tmp...)
 			}
 		} else {
+<<<<<<< HEAD
 			partitionInfo := &v.PartitionInfo
 			partitions, err := partitionPruning(e.ctx, pt, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
 			if err != nil {
@@ -3339,6 +3379,11 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			for _, p := range partitions {
 				pid := p.GetPhysicalID()
 				tmp, err := buildKvRangesForIndexJoin(e.ctx, pid, -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+=======
+			kvRanges = make([]kv.KeyRange, 0, len(usedPartitions)*len(lookUpContents))
+			for _, p := range usedPartitionList {
+				tmp, err := buildKvRangesForIndexJoin(e.ctx, p.GetPhysicalID(), -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc, memTracker, interruptSignal)
+>>>>>>> b9bd5a7d7... *: add explicit partition pruning to index joins (#32007) (#32093)
 				if err != nil {
 					return nil, err
 				}
@@ -3349,13 +3394,8 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	}
 
 	handles, lookUpContents := dedupHandles(lookUpContents)
-	if tbInfo.GetPartitionInfo() == nil {
-		return builder.buildTableReaderFromHandles(ctx, e, handles, canReorderHandles)
-	}
-	if !builder.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-		return builder.buildTableReaderFromHandles(ctx, e, handles, canReorderHandles)
-	}
 
+<<<<<<< HEAD
 	tbl, _ := builder.is.TableByID(tbInfo.ID)
 	pt := tbl.(table.PartitionedTable)
 	pe, err := tbl.(interface {
@@ -3366,6 +3406,9 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	}
 	var kvRanges []kv.KeyRange
 	if keyColumnsIncludeAllPartitionColumns(lookUpContents[0].keyCols, pe) {
+=======
+	if len(lookUpContents) > 0 && keyColumnsIncludeAllPartitionColumns(lookUpContents[0].keyCols, pe) {
+>>>>>>> b9bd5a7d7... *: add explicit partition pruning to index joins (#32007) (#32093)
 		locateKey := make([]types.Datum, e.Schema().Len())
 		kvRanges = make([]kv.KeyRange, 0, len(lookUpContents))
 		for _, content := range lookUpContents {
@@ -3377,19 +3420,16 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 				return nil, err
 			}
 			pid := p.GetPhysicalID()
+			if _, ok := usedPartitions[pid]; !ok {
+				continue
+			}
 			handle := kv.IntHandle(content.keys[0].GetInt64())
 			tmp := distsql.TableHandlesToKVRanges(pid, []kv.Handle{handle})
 			kvRanges = append(kvRanges, tmp...)
 		}
 	} else {
-		partitionInfo := &v.PartitionInfo
-		partitions, err := partitionPruning(e.ctx, pt, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
-		if err != nil {
-			return nil, err
-		}
-		for _, p := range partitions {
-			pid := p.GetPhysicalID()
-			tmp := distsql.TableHandlesToKVRanges(pid, handles)
+		for _, p := range usedPartitionList {
+			tmp := distsql.TableHandlesToKVRanges(p.GetPhysicalID(), handles)
 			kvRanges = append(kvRanges, tmp...)
 		}
 	}

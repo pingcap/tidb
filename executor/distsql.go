@@ -319,6 +319,16 @@ type IndexLookUpExecutor struct {
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
 	*dataReaderBuilder
+<<<<<<< HEAD
+=======
+
+	// fields about accessing partition tables
+	partitionTableMode bool                  // if this executor is accessing a partition table
+	prunedPartitions   []table.PhysicalTable // partition tables need to access
+	partitionRangeMap  map[int64][]*ranger.Range
+	partitionKVRanges  [][]kv.KeyRange // kvRanges of each prunedPartitions
+
+>>>>>>> b9bd5a7d7... *: add explicit partition pruning to index joins (#32007) (#32093)
 	// All fields above are immutable.
 
 	idxWorkerWg sync.WaitGroup
