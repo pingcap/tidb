@@ -2361,6 +2361,18 @@ func collectPartitionInfosFromMPPPlan(p *PhysicalTableReader, mppPlan PhysicalPl
 	}
 }
 
+func collectRowSizeFromMPPPlan(mppPlan PhysicalPlan) (rowSize float64) {
+	switch x := mppPlan.(type) {
+	case *PhysicalTableScan:
+		rowSize += x.Stats().HistColl.GetAvgRowSize(x.ctx, x.schema.Columns, false, false)
+	default:
+		for _, ch := range mppPlan.Children() {
+			rowSize += collectRowSizeFromMPPPlan(ch)
+		}
+	}
+	return
+}
+
 func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	sender := PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_PassThrough,
@@ -2374,8 +2386,9 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	}.Init(ctx, t.p.SelectBlockOffset())
 	p.stats = t.p.statsInfo()
 	collectPartitionInfosFromMPPPlan(p, t.p)
+	rowSize := math.Min(collectRowSizeFromMPPPlan(t.p), 1) // use 1 as lower-bound for safety
 
-	cst := t.cst + t.count()*ctx.GetSessionVars().GetNetworkFactor(nil)
+	cst := t.cst + t.count()*rowSize*ctx.GetSessionVars().GetNetworkFactor(nil)
 	p.cost = cst / p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
 	if p.ctx.GetSessionVars().IsMPPEnforced() {
 		p.cost = cst / 1000000000
