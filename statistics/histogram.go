@@ -1052,7 +1052,14 @@ type Column struct {
 
 	// Loaded means if the histogram, the topn and the cm sketch are loaded fully.
 	// Those three parts of a Column is loaded lazily. It will only be loaded after trying to use them.
+	// Note: Currently please use Column.IsLoaded() to check if it's loaded.
 	Loaded bool
+}
+
+// IsLoaded is a wrap around c.Loaded.
+// It's just for safe when we are switching from `(c.Histogram.NDV > 0 && c.notNullCount() == 0)` to `c.Loaded`.
+func (c *Column) IsLoaded() bool {
+	return c.Loaded || (c.Histogram.NDV > 0 && c.notNullCount() == 0)
 }
 
 func (c *Column) String() string {
@@ -1112,7 +1119,7 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 		if stmtctx != nil && stmtctx.StatsLoad.Fallback {
 			return true
 		}
-		if !c.Loaded && stmtctx != nil {
+		if !c.IsLoaded() && stmtctx != nil {
 			if stmtctx.StatsLoad.Timeout > 0 {
 				logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
 					zap.String(strconv.FormatInt(c.Info.ID, 10), c.Info.Name.O))
@@ -1123,12 +1130,12 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 			}
 		}
 	}
-	return c.TotalRowCount() == 0 || !c.Loaded
+	return c.TotalRowCount() == 0 || !c.IsLoaded()
 }
 
 // IsHistNeeded checks if this column needs histogram to be loaded
 func (c *Column) IsHistNeeded(collPseudo bool) bool {
-	return (!collPseudo || !c.NotAccurate()) && !c.Loaded
+	return (!collPseudo || !c.NotAccurate()) && !c.IsLoaded()
 }
 
 func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encodedVal []byte, realtimeRowCount int64) (float64, error) {
