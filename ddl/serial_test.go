@@ -24,7 +24,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -43,9 +42,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/gcutil"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
@@ -451,34 +448,8 @@ func TestCancelAddIndexPanic(t *testing.T) {
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
-			jobIDs := []int64{job.ID}
-			hookCtx := mock.NewContext()
-			hookCtx.Store = store
-			err := hookCtx.NewTxn(context.Background())
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
-				return
-			}
-			txn, err = hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			checkErr = txn.Commit(context.Background())
+			cancelTk := testkit.NewTestKit(t, store)
+			_, checkErr = cancelTk.Exec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 		}
 	}
 	dom.DDL().SetHook(hook)

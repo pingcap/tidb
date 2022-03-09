@@ -497,31 +497,8 @@ func testCancelDropIndex(c *C, store kv.Storage, d ddl.DDL, idxName, addIdxSQL, 
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if (job.Type == model.ActionDropIndex || job.Type == model.ActionDropPrimaryKey) &&
 			job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
-			jobID = job.ID
-			jobIDs := []int64{job.ID}
-			hookCtx := mock.NewContext()
-			hookCtx.Store = store
-			err := hookCtx.NewTxn(context.TODO())
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
-				return
-			}
-			checkErr = txn.Commit(context.Background())
+			cancelTk := testkit.NewTestKit(c, store)
+			_, checkErr = cancelTk.Exec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 		}
 	}
 	originalHook := d.GetHook()
@@ -569,29 +546,8 @@ func (s *testDBSuite5) TestCancelTruncateTable(c *C) {
 	hook := &ddl.TestDDLCallback{Do: s.dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionTruncateTable && job.State == model.JobStateNone {
-			jobIDs := []int64{job.ID}
-			hookCtx := mock.NewContext()
-			hookCtx.Store = s.store
-			err := hookCtx.NewTxn(context.Background())
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
-				return
-			}
-			checkErr = txn.Commit(context.Background())
+			cancelTk := testkit.NewTestKit(c, s.store)
+			_, checkErr = cancelTk.Exec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 		}
 	}
 	originalHook := s.dom.DDL().GetHook()
@@ -674,29 +630,8 @@ func (s *testDBSuite1) TestCancelRenameIndex(c *C) {
 	hook := &ddl.TestDDLCallback{Do: s.dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionRenameIndex && job.State == model.JobStateNone {
-			jobIDs := []int64{job.ID}
-			hookCtx := mock.NewContext()
-			hookCtx.Store = s.store
-			err := hookCtx.NewTxn(context.Background())
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
-				return
-			}
-			checkErr = txn.Commit(context.Background())
+			cancelTk := testkit.NewTestKit(c, s.store)
+			_, checkErr = cancelTk.Exec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 		}
 	}
 	originalHook := s.dom.DDL().GetHook()
@@ -746,30 +681,8 @@ func (s *testDBSuite2) TestCancelDropTableAndSchema(c *C) {
 
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == testCase.action && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState && job.SchemaID == dbInfo.ID {
-			jobIDs := []int64{job.ID}
-			jobID = job.ID
-			hookCtx := mock.NewContext()
-			hookCtx.Store = s.store
-			err := hookCtx.NewTxn(context.TODO())
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
-				return
-			}
-			checkErr = txn.Commit(context.Background())
+			cancelTk := testkit.NewTestKit(c, s.store)
+			_, checkErr = cancelTk.Exec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 		}
 	}
 	originHook := s.dom.DDL().GetHook()
@@ -891,30 +804,8 @@ func (s *testDBSuite1) TestCancelAddTableAndDropTablePartition(c *C) {
 	var jobID int64
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == testCase.action && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
-			jobIDs := []int64{job.ID}
-			jobID = job.ID
-			hookCtx := mock.NewContext()
-			hookCtx.Store = s.store
-			err := hookCtx.NewTxn(context.Background())
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
-				return
-			}
-			checkErr = txn.Commit(context.Background())
+			cancelTk := testkit.NewTestKit(c, s.store)
+			_, checkErr = cancelTk.Exec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 		}
 	}
 	originalHook := s.dom.DDL().GetHook()
@@ -1042,30 +933,8 @@ func (s *testDBSuite3) TestCancelDropColumn(c *C) {
 	testCase := &testCases[0]
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionDropColumn && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
-			jobIDs := []int64{job.ID}
-			jobID = job.ID
-			hookCtx := mock.NewContext()
-			hookCtx.Store = s.store
-			err := hookCtx.NewTxn(context.TODO())
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
-				return
-			}
-			checkErr = txn.Commit(context.Background())
+			cancelTk := testkit.NewTestKit(c, s.store)
+			_, checkErr = cancelTk.Exec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 		}
 	}
 
@@ -1145,30 +1014,8 @@ func (s *testDBSuite3) TestCancelDropColumns(c *C) {
 	testCase := &testCases[0]
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionDropColumns && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
-			jobIDs := []int64{job.ID}
-			jobID = job.ID
-			hookCtx := mock.NewContext()
-			hookCtx.Store = s.store
-			err := hookCtx.NewTxn(context.TODO())
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
-				return
-			}
-			checkErr = txn.Commit(context.Background())
+			cancelTk := testkit.NewTestKit(c, s.store)
+			_, checkErr = cancelTk.Exec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 		}
 	}
 
@@ -5733,31 +5580,8 @@ func testCancelDropIndexes(c *C, store kv.Storage, d ddl.DDL) {
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if (job.Type == model.ActionDropIndex || job.Type == model.ActionDropPrimaryKey) &&
 			job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
-			jobID = job.ID
-			jobIDs := []int64{job.ID}
-			hookCtx := mock.NewContext()
-			hookCtx.Store = store
-			err := hookCtx.NewTxn(context.TODO())
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
-				return
-			}
-			checkErr = txn.Commit(context.Background())
+			cancelTk := testkit.NewTestKit(c, store)
+			_, checkErr = cancelTk.Exec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 		}
 	}
 	originalHook := d.GetHook()

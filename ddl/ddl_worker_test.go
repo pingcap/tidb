@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/mock"
 	"sync"
 	"testing"
 	"time"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"

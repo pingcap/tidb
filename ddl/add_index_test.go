@@ -25,7 +25,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
@@ -37,8 +36,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -718,7 +715,7 @@ func testCancelAddIndex(t *testing.T, store kv.Storage, dom *domain.Domain, idxN
 	// the hook.OnJobUpdatedExported is called when the job is updated, runReorgJob will wait ddl.ReorgWaitTimeout, then return the ddl.runDDLJob.
 	// After that ddl call d.hook.OnJobUpdated(job), so that we can canceled the job in this test case.
 	var checkErr error
-	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(tk, store, hook, idxName)
+	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(tk, store, hook, idxName, t)
 	originalHook := d.GetHook()
 	jobIDExt := wrapJobIDExtCallback(hook)
 	d.SetHook(jobIDExt)
@@ -754,7 +751,7 @@ LOOP:
 	d.SetHook(originalHook)
 }
 
-func backgroundExecOnJobUpdatedExported(tk *testkit.TestKit, store kv.Storage, hook *ddl.TestDDLCallback, idxName string) (func(*model.Job), *model.IndexInfo, error) {
+func backgroundExecOnJobUpdatedExported(tk *testkit.TestKit, store kv.Storage, hook *ddl.TestDDLCallback, idxName string, t *testing.T) (func(*model.Job), *model.IndexInfo, error) {
 	var checkErr error
 	first := true
 	c3IdxInfo := &model.IndexInfo{}
@@ -787,38 +784,8 @@ func backgroundExecOnJobUpdatedExported(tk *testkit.TestKit, store kv.Storage, h
 		if checkErr != nil {
 			return
 		}
-		hookCtx := mock.NewContext()
-		hookCtx.Store = store
-		err := hookCtx.NewTxn(context.Background())
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		jobIDs := []int64{job.ID}
-		txn, err := hookCtx.Txn(true)
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		errs, err := admin.CancelJobs(txn, jobIDs)
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		// It only tests cancel one DDL job.
-		if errs[0] != nil {
-			checkErr = errors.Trace(errs[0])
-			return
-		}
-		txn, err = hookCtx.Txn(true)
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		err = txn.Commit(context.Background())
-		if err != nil {
-			checkErr = errors.Trace(err)
-		}
+		cancelTk := testkit.NewTestKit(t, store)
+		_, checkErr = cancelTk.Exec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 	}
 	return hook.OnJobUpdatedExported, c3IdxInfo, checkErr
 }
@@ -838,31 +805,8 @@ func TestCancelAddIndex1(t *testing.T) {
 	hook := &ddl.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer == 0 {
-			jobIDs := []int64{job.ID}
-			hookCtx := mock.NewContext()
-			hookCtx.Store = store
-			err := hookCtx.NewTxn(context.Background())
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-
-			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
-				return
-			}
-
-			checkErr = txn.Commit(context.Background())
+			cancelTk := testkit.NewTestKit(t, store)
+			_, checkErr = cancelTk.Exec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 		}
 	}
 	originalHook := dom.DDL().GetHook()

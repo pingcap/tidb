@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/errno"
@@ -32,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -933,40 +931,8 @@ func TestModifyColumnRollBack(t *testing.T) {
 			tk.MustGetErrCode("insert into t1(c2) values (null);", errno.ErrBadNull)
 		}
 
-		hookCtx := mock.NewContext()
-		hookCtx.Store = store
-		err := hookCtx.NewTxn(context.Background())
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-
-		jobIDs := []int64{job.ID}
-		txn, err := hookCtx.Txn(true)
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		errs, err := admin.CancelJobs(txn, jobIDs)
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		// It only tests cancel one DDL job.
-		if errs[0] != nil {
-			checkErr = errors.Trace(errs[0])
-			return
-		}
-
-		txn, err = hookCtx.Txn(true)
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		err = txn.Commit(context.Background())
-		if err != nil {
-			checkErr = errors.Trace(err)
-		}
+		cancelTk := testkit.NewTestKit(t, store)
+		_, checkErr = cancelTk.Exec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 	}
 
 	dom.DDL().SetHook(hook)

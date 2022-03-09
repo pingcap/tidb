@@ -24,7 +24,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -46,10 +45,8 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -2823,7 +2820,7 @@ func testPartitionCancelAddIndex(t *testing.T, store kv.Storage, d ddl.DDL, leas
 	// Set batch size to lower try to slow down add-index reorganization, This if for hook to cancel this ddl job.
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 32")
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", originBatchSize.Rows()[0][0]))
-	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExportedT(tk, store, hook, idxName)
+	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExportedT(tk, store, hook, idxName, t)
 	originHook := d.GetHook()
 	defer d.SetHook(originHook)
 	jobIDExt := wrapJobIDExtCallback(hook)
@@ -2861,7 +2858,7 @@ LOOP:
 	tk.MustExec("drop table t1")
 }
 
-func backgroundExecOnJobUpdatedExportedT(tk *testkit.TestKit, store kv.Storage, hook *ddl.TestDDLCallback, idxName string) (
+func backgroundExecOnJobUpdatedExportedT(tk *testkit.TestKit, store kv.Storage, hook *ddl.TestDDLCallback, idxName string, t *testing.T) (
 	func(*model.Job), *model.IndexInfo, error) {
 	var checkErr error
 	first := true
@@ -2895,38 +2892,8 @@ func backgroundExecOnJobUpdatedExportedT(tk *testkit.TestKit, store kv.Storage, 
 		if checkErr != nil {
 			return
 		}
-		hookCtx := mock.NewContext()
-		hookCtx.Store = store
-		err := hookCtx.NewTxn(context.Background())
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		jobIDs := []int64{job.ID}
-		txn, err := hookCtx.Txn(true)
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		errs, err := admin.CancelJobs(txn, jobIDs)
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		// It only tests cancel one DDL job.
-		if errs[0] != nil {
-			checkErr = errors.Trace(errs[0])
-			return
-		}
-		txn, err = hookCtx.Txn(true)
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		err = txn.Commit(context.Background())
-		if err != nil {
-			checkErr = errors.Trace(err)
-		}
+		cancelTk := testkit.NewTestKit(t, store)
+		_, checkErr = cancelTk.Exec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 	}
 	return hook.OnJobUpdatedExported, c3IdxInfo, checkErr
 }
