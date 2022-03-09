@@ -653,8 +653,6 @@ func TestFlushPrivileges(t *testing.T) {
 
 }
 
-type testFlushSuite struct{}
-
 func TestFlushPrivilegesPanic(t *testing.T) {
 	// Run in a separate suite because this test need to set SkipGrantTable config.
 	store, err := mockstore.NewMockStore()
