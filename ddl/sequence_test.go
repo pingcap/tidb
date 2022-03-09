@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/ddl"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
@@ -132,7 +132,7 @@ func TestDropSequence(t *testing.T) {
 	tk.MustExec("create table seq3 (a int)")
 	_, err = tk.Exec("drop sequence seq3")
 	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, ddl.ErrWrongObject))
+	require.True(t, terror.ErrorEqual(err, dbterror.ErrWrongObject))
 
 	// Test schema is not exist.
 	_, err = tk.Exec("drop sequence unknown.seq")
@@ -156,7 +156,7 @@ func TestDropSequence(t *testing.T) {
 	// Test drop view when the object is a sequence.
 	_, err = tk.Exec("drop view seq")
 	require.Error(t, err)
-	require.True(t, terror.ErrorEqual(err, ddl.ErrWrongObject))
+	require.True(t, terror.ErrorEqual(err, dbterror.ErrWrongObject))
 	tk.MustExec("drop sequence seq")
 
 	// Test drop privilege.

@@ -15,12 +15,15 @@
 package types
 
 import (
+	"fmt"
 	"strconv"
 
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	ast "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	utilMath "github.com/pingcap/tidb/util/math"
 )
 
@@ -1310,3 +1313,141 @@ func SetBinChsClnFlag(ft *FieldType) {
 
 // VarStorageLen indicates this column is a variable length column.
 const VarStorageLen = ast.VarStorageLen
+
+// CheckModifyTypeCompatible checks whether changes column type to another is compatible and can be changed.
+// If types are compatible and can be directly changed, nil err will be returned; otherwise the types are incompatible.
+// There are two cases when types incompatible:
+// 1. returned canReorg == true: types can be changed by reorg
+// 2. returned canReorg == false: type change not supported yet
+func CheckModifyTypeCompatible(origin *FieldType, to *FieldType) (canReorg bool, err error) {
+	// Deal with the same type.
+	if origin.Tp == to.Tp {
+		if origin.Tp == mysql.TypeEnum || origin.Tp == mysql.TypeSet {
+			typeVar := "set"
+			if origin.Tp == mysql.TypeEnum {
+				typeVar = "enum"
+			}
+			if len(to.Elems) < len(origin.Elems) {
+				msg := fmt.Sprintf("the number of %s column's elements is less than the original: %d", typeVar, len(origin.Elems))
+				return true, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
+			}
+			for index, originElem := range origin.Elems {
+				toElem := to.Elems[index]
+				if originElem != toElem {
+					msg := fmt.Sprintf("cannot modify %s column value %s to %s", typeVar, originElem, toElem)
+					return true, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
+				}
+			}
+		}
+
+		if origin.Tp == mysql.TypeNewDecimal {
+			// Floating-point and fixed-point types also can be UNSIGNED. As with integer types, this attribute prevents
+			// negative values from being stored in the column. Unlike the integer types, the upper range of column values
+			// remains the same.
+			if to.Flen != origin.Flen || to.Decimal != origin.Decimal || mysql.HasUnsignedFlag(to.Flag) != mysql.HasUnsignedFlag(origin.Flag) {
+				msg := fmt.Sprintf("decimal change from decimal(%d, %d) to decimal(%d, %d)", origin.Flen, origin.Decimal, to.Flen, to.Decimal)
+				return true, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
+			}
+		}
+
+		needReorg, reason := needReorgToChange(origin, to)
+		if !needReorg {
+			return false, nil
+		}
+		return true, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(reason)
+	}
+
+	// Deal with the different type.
+	if !checkTypeChangeSupported(origin, to) {
+		unsupportedMsg := fmt.Sprintf("change from original type %v to %v is currently unsupported yet", origin.CompactStr(), to.CompactStr())
+		return false, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+	}
+
+	// Check if different type can directly convert and no need to reorg.
+	stringToString := IsString(origin.Tp) && IsString(to.Tp)
+	integerToInteger := mysql.IsIntegerType(origin.Tp) && mysql.IsIntegerType(to.Tp)
+	if stringToString || integerToInteger {
+		needReorg, reason := needReorgToChange(origin, to)
+		if !needReorg {
+			return false, nil
+		}
+		return true, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(reason)
+	}
+
+	notCompatibleMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
+	return true, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(notCompatibleMsg)
+}
+
+func needReorgToChange(origin *FieldType, to *FieldType) (needReorg bool, reasonMsg string) {
+	toFlen := to.Flen
+	originFlen := origin.Flen
+	if mysql.IsIntegerType(to.Tp) && mysql.IsIntegerType(origin.Tp) {
+		// For integers, we should ignore the potential display length represented by flen, using
+		// the default flen of the type.
+		originFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(origin.Tp)
+		toFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(to.Tp)
+	}
+
+	if ConvertBetweenCharAndVarchar(origin.Tp, to.Tp) {
+		return true, "conversion between char and varchar string needs reorganization"
+	}
+
+	if toFlen > 0 && toFlen != originFlen {
+		if toFlen < originFlen {
+			return true, fmt.Sprintf("length %d is less than origin %d", toFlen, originFlen)
+		}
+
+		// Due to the behavior of padding \x00 at binary type, we need to reorg when binary length changed
+		isBinaryType := func(tp *FieldType) bool { return tp.Tp == mysql.TypeString && IsBinaryStr(tp) }
+		if isBinaryType(origin) && isBinaryType(to) {
+			return true, "can't change binary types of different length"
+		}
+	}
+	if to.Decimal > 0 && to.Decimal < origin.Decimal {
+		return true, fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)
+	}
+	if mysql.HasUnsignedFlag(origin.Flag) != mysql.HasUnsignedFlag(to.Flag) {
+		return true, "can't change unsigned integer to signed or vice versa"
+	}
+	return false, ""
+}
+
+func checkTypeChangeSupported(origin *FieldType, to *FieldType) bool {
+	if (IsTypeTime(origin.Tp) || origin.Tp == mysql.TypeDuration || origin.Tp == mysql.TypeYear ||
+		IsString(origin.Tp) || origin.Tp == mysql.TypeJSON) &&
+		to.Tp == mysql.TypeBit {
+		// TODO: Currently date/datetime/timestamp/time/year/string/json data type cast to bit are not compatible with mysql, should fix here after compatible.
+		return false
+	}
+
+	if (IsTypeTime(origin.Tp) || origin.Tp == mysql.TypeDuration || origin.Tp == mysql.TypeYear ||
+		origin.Tp == mysql.TypeNewDecimal || origin.Tp == mysql.TypeFloat || origin.Tp == mysql.TypeDouble || origin.Tp == mysql.TypeJSON || origin.Tp == mysql.TypeBit) &&
+		(to.Tp == mysql.TypeEnum || to.Tp == mysql.TypeSet) {
+		// TODO: Currently date/datetime/timestamp/time/year/decimal/float/double/json/bit cast to enum/set are not support yet, should fix here after supported.
+		return false
+	}
+
+	if (origin.Tp == mysql.TypeEnum || origin.Tp == mysql.TypeSet || origin.Tp == mysql.TypeBit ||
+		origin.Tp == mysql.TypeNewDecimal || origin.Tp == mysql.TypeFloat || origin.Tp == mysql.TypeDouble) &&
+		(IsTypeTime(to.Tp)) {
+		// TODO: Currently enum/set/bit/decimal/float/double cast to date/datetime/timestamp type are not support yet, should fix here after supported.
+		return false
+	}
+
+	if (origin.Tp == mysql.TypeEnum || origin.Tp == mysql.TypeSet || origin.Tp == mysql.TypeBit) &&
+		to.Tp == mysql.TypeDuration {
+		// TODO: Currently enum/set/bit cast to time are not support yet, should fix here after supported.
+		return false
+	}
+
+	return true
+}
+
+// ConvertBetweenCharAndVarchar is that Column type conversion between varchar to char need reorganization because
+// 1. varchar -> char: char type is stored with the padding removed. All the indexes need to be rewritten.
+// 2. char -> varchar: the index value encoding of secondary index on clustered primary key tables is different.
+// These secondary indexes need to be rewritten.
+func ConvertBetweenCharAndVarchar(oldCol, newCol byte) bool {
+	return (IsTypeVarchar(oldCol) && newCol == mysql.TypeString) ||
+		(oldCol == mysql.TypeString && IsTypeVarchar(newCol) && collate.NewCollationEnabled())
+}
