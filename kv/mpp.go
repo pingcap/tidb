@@ -34,7 +34,7 @@ type MPPTask struct {
 	StartTs uint64
 	TableID int64 // physical table id
 
-	TableIDs []int64 // for partition table
+	PartitionTableIDs []int64
 }
 
 // ToPB generates the pb structure.

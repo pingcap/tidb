@@ -383,7 +383,7 @@ func (e *mppTaskGenerator) constructMPPTasksForPartitionTable(ctx context.Contex
 
 	tasks := make([]*kv.MPPTask, 0, len(metas))
 	for _, meta := range metas {
-		task := &kv.MPPTask{Meta: meta, ID: e.ctx.GetSessionVars().AllocMPPTaskID(e.startTS), StartTs: e.startTS, TableID: ts.Table.ID, TableIDs: allPartitionsIDs}
+		task := &kv.MPPTask{Meta: meta, ID: e.ctx.GetSessionVars().AllocMPPTaskID(e.startTS), StartTs: e.startTS, TableID: ts.Table.ID, PartitionTableIDs: allPartitionsIDs}
 		tasks = append(tasks, task)
 	}
 	return tasks, nil

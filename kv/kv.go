@@ -314,8 +314,7 @@ type Request struct {
 	KeyRanges []KeyRange
 
 	// For PartitionTableScan used by tiflash.
-	PartitionIDs           []int64
-	KeyRangesForPartitions [][]KeyRange
+	PartitionIDAndRanges []PartitionIDAndRanges
 
 	// Concurrency is 1, if it only sends the request to a single storage unit when
 	// ResponseIterator.Next is called. If concurrency is greater than 1, the request will be
@@ -362,6 +361,11 @@ type Request struct {
 	ResourceGroupTagger tikvrpc.ResourceGroupTagger
 	// Paging indicates whether the request is a paging request.
 	Paging bool
+}
+
+type PartitionIDAndRanges struct {
+	ID        int64
+	KeyRanges []KeyRange
 }
 
 const (

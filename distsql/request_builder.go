@@ -217,15 +217,9 @@ func (builder *RequestBuilder) SetAllowBatchCop(batchCop bool) *RequestBuilder {
 	return builder
 }
 
-// SetPartitionIDs sets `PartitionIDs` property.
-func (builder *RequestBuilder) SetPartitionIDs(PartitionIDs []int64) *RequestBuilder {
-	builder.PartitionIDs = PartitionIDs
-	return builder
-}
-
-// SetKeyRangeForPartition sets `KeyRangesForPartitions` property.
-func (builder *RequestBuilder) SetKeyRangeForPartition(Key [][]kv.KeyRange) *RequestBuilder {
-	builder.KeyRangesForPartitions = Key
+// SetPartitionIDAndRanges sets `PartitionIDAndRanges` property.
+func (builder *RequestBuilder) SetPartitionIDAndRanges(PartitionIDAndRanges []kv.PartitionIDAndRanges) *RequestBuilder {
+	builder.PartitionIDAndRanges = PartitionIDAndRanges
 	return builder
 }
 
