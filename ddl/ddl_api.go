@@ -236,6 +236,49 @@ func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion
 	return is.SchemaMetaVersion(), cnt
 }
 
+func isSessionDone(sctx sessionctx.Context) (bool, uint32) {
+	done := false
+	killed := atomic.LoadUint32(&sctx.GetSessionVars().Killed)
+	if killed == 1 {
+		done = true
+	}
+	failpoint.Inject("BatchAddTiFlashSendDone", func(val failpoint.Value) {
+		done = val.(bool)
+	})
+	return done, killed
+}
+
+func (d *ddl) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64, tableID int64, originVersion int64, pendingCount uint32, threshold uint32) (bool, int64, uint32, bool) {
+	configRetry := tiflashCheckPendingTablesRetry
+	configWaitTime := tiflashCheckPendingTablesWaitTime
+	failpoint.Inject("FastFailCheckTiFlashPendingTables", func(value failpoint.Value) {
+		configRetry = value.(int)
+		configWaitTime = time.Second
+	})
+
+	for retry := 0; retry < configRetry; retry += 1 {
+		done, killed := isSessionDone(sctx)
+		if done {
+			logutil.BgLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", schemaID), zap.Uint32("isKilled", killed))
+			return true, originVersion, pendingCount, false
+		}
+		originVersion, pendingCount = d.getPendingTiFlashTableCount(sctx, originVersion, pendingCount)
+		delay := time.Duration(0)
+		if pendingCount >= threshold {
+			logutil.BgLogger().Info("too many unavailable tables, wait", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount), zap.Int64("schemaID", schemaID), zap.Int64("tableID", tableID), zap.Duration("time", configWaitTime))
+			delay = configWaitTime
+		} else {
+			// If there are not many unavailable tables, we don't need a force check.
+			return false, originVersion, pendingCount, false
+		}
+		time.Sleep(delay)
+	}
+	logutil.BgLogger().Info("too many unavailable tables, timeout", zap.Int64("schemaID", schemaID), zap.Int64("tableID", tableID))
+	// If timeout here, we will trigger a ddl job, to force sync schema. However, it doesn't mean we remove limiter,
+	// so there is a force check immediately after that.
+	return false, originVersion, pendingCount, true
+}
+
 func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
 	dbName := model.NewCIStr(stmt.Name)
 	is := d.GetInfoSchemaWithInterceptor(sctx)
@@ -244,7 +287,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
 	}
 	if util.IsMemOrSysDB(dbInfo.Name.L) {
-		return errors.Trace(errUnsupportedAlterReplicaForSysTable)
+		return errors.Trace(dbterror.ErrUnsupportedAlterReplicaForSysTable)
 	}
 
 	total := len(dbInfo.Tables)
@@ -267,30 +310,11 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 
 	logutil.BgLogger().Info("start batch add TiFlash replicas", zap.Int("total", total), zap.Int64("schemaID", dbInfo.ID))
 	threshold := getBatchPendingTiFlashCount(sctx)
-	configRetry := tiflashCheckPendingTablesRetry
-	configWaitTime := tiflashCheckPendingTablesWaitTime
-	failpoint.Inject("FastFailCheckTiFlashPendingTables", func(value failpoint.Value) {
-		configRetry = value.(int)
-		configWaitTime = time.Second
-	})
-
-	isDone := func() bool {
-		done := false
-		killed := atomic.LoadUint32(&sctx.GetSessionVars().Killed)
-		if killed == 1 {
-			done = true
-		}
-		failpoint.Inject("BatchAddTiFlashSendDone", func(val failpoint.Value) {
-			done = val.(bool)
-		})
-		if done {
-			logutil.BgLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID), zap.Uint32("isKilled", killed))
-		}
-		return done
-	}
 
 	for _, tbl := range dbInfo.Tables {
-		if isDone() {
+		done, killed := isSessionDone(sctx)
+		if done {
+			logutil.BgLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID), zap.Uint32("isKilled", killed))
 			return nil
 		}
 
@@ -323,33 +347,13 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 			continue
 		}
 
-		pendingFunc := func() bool {
-			for retry := 0; retry < configRetry; retry += 1 {
-				if isDone() {
-					return true
-				}
-				originVersion, pendingCount = d.getPendingTiFlashTableCount(sctx, originVersion, pendingCount)
-				delay := time.Duration(0)
-				if pendingCount >= threshold {
-					logutil.BgLogger().Info("too many unavailable tables, wait", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount), zap.Int64("tableID", tbl.ID), zap.Duration("time", configWaitTime))
-					delay = configWaitTime
-				} else {
-					// If there are not many unavailable tables, we will no longer need force check.
-					forceCheck = false
-					return false
-				}
-				time.Sleep(delay)
-			}
-			logutil.BgLogger().Info("too many unavailable tables, timeout", zap.Int64("tableID", tbl.ID))
-			return false
-		}
-
 		// Alter `tiflashCheckPendingTablesLimit` tables are handled, we need to check if we have reached threshold.
 		if (succ+fail)%tiflashCheckPendingTablesLimit == 0 || forceCheck {
 			// We can execute one probing ddl to the latest schema, if we timeout in `pendingFunc`.
 			// However, we shall mark `forceCheck` to true, because we may still reach `threshold`.
-			forceCheck = true
-			if pendingFunc() {
+			finished := false
+			finished, originVersion, pendingCount, forceCheck = d.waitPendingTableThreshold(sctx, dbInfo.ID, tbl.ID, originVersion, pendingCount, threshold)
+			if finished {
 				logutil.BgLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID))
 				return nil
 			}
