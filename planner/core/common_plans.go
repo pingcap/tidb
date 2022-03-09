@@ -955,6 +955,8 @@ const (
 	OpEvolveBindings
 	// OpReloadBindings is used to reload plan binding.
 	OpReloadBindings
+	// OpSetBindingEnabled is used to set binding status.
+	OpSetBindingStatus
 )
 
 // SQLBindPlan represents a plan for SQL bind.
@@ -969,6 +971,7 @@ type SQLBindPlan struct {
 	Db           string
 	Charset      string
 	Collation    string
+	NewStatus    string
 }
 
 // Simple represents a simple statement plan which doesn't need any optimization.

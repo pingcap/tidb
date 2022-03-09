@@ -395,6 +395,85 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 	return err
 }
 
+// SetBindRecordStatus set a BindRecord's status to the storage and bind cache.
+func (h *BindHandle) SetBindRecordStatus(originalSQL, db string, binding *Binding, newStatus string) (err error) {
+	db = strings.ToLower(db)
+	h.bindInfo.Lock()
+	h.sctx.Lock()
+	defer func() {
+		h.sctx.Unlock()
+		h.bindInfo.Unlock()
+	}()
+	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
+	_, err = exec.ExecuteInternal(context.TODO(), "BEGIN PESSIMISTIC")
+	if err != nil {
+		return err
+	}
+	var updateTs types.Time
+	var oldStatus0, oldStatus1 string
+	if newStatus == Disabled {
+		// For compatibility reasons, when we need to 'set binding disabled for <stmt>',
+		// we need to consider both the 'enabled' and 'using' status.
+		oldStatus0 = Using
+		oldStatus1 = Enabled
+	} else if newStatus == Enabled {
+		// In order to unify the code, two identical old statuses are set.
+		oldStatus0 = Disabled
+		oldStatus1 = Disabled
+	}
+	defer func() {
+		if err != nil {
+			_, err1 := exec.ExecuteInternal(context.TODO(), "ROLLBACK")
+			terror.Log(err1)
+			return
+		}
+
+		_, err = exec.ExecuteInternal(context.TODO(), "COMMIT")
+		if err != nil {
+			return
+		}
+
+		record := &BindRecord{OriginalSQL: originalSQL, Db: db}
+		sqlDigest := parser.DigestNormalized(record.OriginalSQL)
+		oldRecord := h.GetBindRecord(sqlDigest.String(), originalSQL, db)
+		setBindingStatusSucc := false
+		if oldRecord != nil && len(oldRecord.Bindings) > 0 {
+			record.Bindings = make([]Binding, len(oldRecord.Bindings))
+			copy(record.Bindings, oldRecord.Bindings)
+			for ind, oldBinding := range record.Bindings {
+				if oldBinding.Status == oldStatus0 || oldBinding.Status == oldStatus1 {
+					if binding == nil || (binding != nil && oldBinding.isSame(binding)) {
+						setBindingStatusSucc = true
+						record.Bindings[ind].Status = newStatus
+						record.Bindings[ind].UpdateTime = updateTs
+					}
+				}
+			}
+		}
+		if setBindingStatusSucc {
+			h.setBindRecord(sqlDigest.String(), record)
+		} else {
+			logutil.BgLogger().Warn("[sql-bind] There are no bindings can be set the status")
+		}
+	}()
+
+	// Lock mysql.bind_info to synchronize with SetBindingStatus on other tidb instances.
+	if err = h.lockBindInfoTable(); err != nil {
+		return err
+	}
+
+	updateTs = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
+
+	if binding == nil {
+		_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND (status = %? or status = %?)`,
+			newStatus, updateTs.String(), originalSQL, updateTs.String(), oldStatus0, oldStatus1)
+	} else {
+		_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %? and (status = %? or status = %?)`,
+			newStatus, updateTs.String(), originalSQL, updateTs.String(), binding.BindSQL, oldStatus0, oldStatus1)
+	}
+	return err
+}
+
 // GCBindRecord physically removes the deleted bind records in mysql.bind_info.
 func (h *BindHandle) GCBindRecord() (err error) {
 	h.bindInfo.Lock()

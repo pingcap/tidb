@@ -249,6 +249,68 @@ func TestEvolveInvalidBindings(t *testing.T) {
 	require.True(t, status == bindinfo.Enabled || status == bindinfo.Rejected)
 }
 
+func TestSetBindingStatus(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, index idx_a(a))")
+	tk.MustQuery("show global bindings").Check(testkit.Rows())
+	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ USE_INDEX(t, idx_a) */ * from t where a > 10")
+	rows := tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, bindinfo.Enabled, rows[0][3])
+	tk.MustExec("select * from t where a > 10")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+
+	tk.MustExec("set binding disabled for select * from t where a > 10 using select * from t where a > 10")
+	rows = tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, bindinfo.Enabled, rows[0][3])
+	tk.MustExec("select * from t where a > 10")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+
+	tk.MustExec("set binding disabled for select * from t where a > 10")
+	rows = tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, bindinfo.Disabled, rows[0][3])
+	tk.MustExec("select * from t where a > 10")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+
+	tk.MustExec("set binding enabled for select * from t where a > 10")
+	rows = tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, bindinfo.Enabled, rows[0][3])
+
+	tk.MustExec("set binding disabled for select * from t where a > 10")
+	tk.MustExec("create global binding for select * from t where a > 10 using select * from t where a > 10")
+	rows = tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, bindinfo.Enabled, rows[0][3])
+	tk.MustExec("select * from t where a > 10")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+
+	tk.MustExec("set binding disabled for select * from t where a > 10 using select * from t where a > 10")
+	rows = tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, bindinfo.Disabled, rows[0][3])
+	tk.MustExec("select * from t where a > 10")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+
+	tk.MustExec("set binding enabled for select * from t where a > 10 using select * from t where a > 10")
+	rows = tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, bindinfo.Enabled, rows[0][3])
+
+	tk.MustExec("set binding disabled for select * from t where a > 10 using select * from t where a > 10")
+	tk.MustExec("drop global binding for select * from t where a > 10 using select * from t where a > 10")
+	rows = tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 0)
+}
+
 var testSQLs = []struct {
 	createSQL   string
 	overlaySQL  string
