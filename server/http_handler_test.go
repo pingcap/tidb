@@ -848,7 +848,7 @@ func TestGetSchema(t *testing.T) {
 	sort.Strings(names)
 	require.Equal(t, expects, names)
 
-	resp, err = ts.fetchStatus("/schema?table_id=5")
+	resp, err = ts.fetchStatus("/schema?table_id=6")
 	require.NoError(t, err)
 	var ti *model.TableInfo
 	decoder = json.NewDecoder(resp.Body)
@@ -894,7 +894,7 @@ func TestGetSchema(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 
-	resp, err = ts.fetchStatus("/db-table/5")
+	resp, err = ts.fetchStatus("/db-table/6")
 	require.NoError(t, err)
 	var dbtbl *dbTableInfo
 	decoder = json.NewDecoder(resp.Body)

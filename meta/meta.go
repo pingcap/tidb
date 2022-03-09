@@ -492,7 +492,7 @@ func (m *Meta) CreateDDLJobTable(dbid int64) error {
 		Unique:  true,
 		Primary: true,
 	}
-	idx.Columns = append(idx.Columns, &model.IndexColumn{Name: model.NewCIStr("PRIMARY"), Length: -1})
+	idx.Columns = append(idx.Columns, &model.IndexColumn{Name: model.NewCIStr("job_id"), Length: types.UnspecifiedLength})
 	col.FieldType = *types.NewFieldType(mysql.TypeLonglong)
 	col.Flag |= mysql.NotNullFlag
 	col.Flag |= mysql.PriKeyFlag
@@ -586,7 +586,7 @@ func (m *Meta) CreateDDLJobTable(dbid int64) error {
 		State: model.StatePublic,
 		Tp:    model.IndexTypeBtree,
 		Columns: []*model.IndexColumn{
-			{Offset: 0},
+			{Name: model.NewCIStr("job_id"), Offset: 0, Length: types.UnspecifiedLength},
 		},
 	}
 	id, err = m.GenGlobalID()
