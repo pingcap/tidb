@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/table"
 )
 
 func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
@@ -142,4 +143,43 @@ func handleRevertibleException(job *model.Job, res model.JobState, idx int) {
 			sub.State = model.JobStateCancelled
 		}
 	}
+}
+
+func checkOperateSameColumn(info *model.MultiSchemaInfo) error {
+	modifyCols := make(map[string]struct{})
+	for _, col := range info.AddColumns {
+		name := col.Name.L
+		if _, ok := modifyCols[name]; ok {
+			return errOperateSameColumn.GenWithStackByArgs(name)
+		} else {
+			modifyCols[name] = struct{}{}
+		}
+	}
+	for _, col := range info.DropColumns {
+		name := col.Name.L
+		if _, ok := modifyCols[name]; ok {
+			return errOperateSameColumn.GenWithStackByArgs(name)
+		} else {
+			modifyCols[name] = struct{}{}
+		}
+	}
+	return nil
+}
+
+func checkMultiSchemaInfo(info *model.MultiSchemaInfo, t table.Table) error {
+	err := checkOperateSameColumn(info)
+	if err != nil {
+		return err
+	}
+
+	err = checkDropVisibleColumnCnt(t, len(info.DropColumns))
+	if err != nil {
+		return err
+	}
+
+	err = checkAddColumnTooManyColumns(len(t.Cols()) + len(info.AddColumns) - len(info.DropColumns))
+	if err != nil {
+		return err
+	}
+	return nil
 }

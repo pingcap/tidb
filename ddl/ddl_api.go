@@ -2785,30 +2785,12 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 	return validSpecs, nil
 }
 
-func isSameTypeMultiSpecs(specs []*ast.AlterTableSpec) bool {
-	specType := specs[0].Tp
-	for _, spec := range specs {
-		// We think AlterTableDropPrimaryKey and AlterTableDropIndex are the same types.
-		if spec.Tp == ast.AlterTableDropPrimaryKey || spec.Tp == ast.AlterTableDropIndex {
-			continue
-		}
-		if spec.Tp != specType {
-			return false
-		}
-	}
-	return true
-}
-
 func checkMultiSpecs(sctx sessionctx.Context, specs []*ast.AlterTableSpec) error {
 	if !sctx.GetSessionVars().EnableChangeMultiSchema {
 		if len(specs) > 1 {
 			return errRunMultiSchemaChanges
 		}
 		if len(specs) == 1 && len(specs[0].NewColumns) > 1 && specs[0].Tp == ast.AlterTableAddColumns {
-			return errRunMultiSchemaChanges
-		}
-	} else {
-		if len(specs) > 1 && !isSameTypeMultiSpecs(specs) {
 			return errRunMultiSchemaChanges
 		}
 	}
@@ -3258,7 +3240,14 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 	}
 
 	err = col.SetOriginDefaultValue(originDefVal)
-	return col, err
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if info := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; info != nil {
+		info.AddColumns = append(info.AddColumns, col.ColumnInfo)
+	}
+	return col, nil
 }
 
 // AddColumn will add a new column to the table.
@@ -3902,6 +3891,9 @@ func checkIsDroppableColumn(ctx sessionctx.Context, t table.Table, spec *ast.Alt
 		return false, err
 	}
 
+	if info := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; info != nil {
+		info.DropColumns = append(info.DropColumns, col.ColumnInfo)
+	}
 	if err = isDroppableColumn(ctx.GetSessionVars().EnableChangeMultiSchema, tblInfo, colName); err != nil {
 		return false, errors.Trace(err)
 	}
@@ -6996,6 +6988,10 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
 		BinlogInfo:      &model.HistoryInfo{},
 		Args:            nil,
 		MultiSchemaInfo: ctx.GetSessionVars().StmtCtx.MultiSchemaInfo,
+	}
+	err = checkMultiSchemaInfo(ctx.GetSessionVars().StmtCtx.MultiSchemaInfo, t)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	ctx.GetSessionVars().StmtCtx.MultiSchemaInfo = nil
 	err = d.doDDLJob(ctx, job)

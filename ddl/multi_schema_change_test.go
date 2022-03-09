@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMultiSchemaChangeAddColumns(t *testing.T) {
@@ -31,4 +32,30 @@ func TestMultiSchemaChangeAddColumns(t *testing.T) {
 	tk.MustExec("insert into t values (1);")
 	tk.MustExec("alter table t add column b int default 2, add column c int default 3;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3"))
+}
+
+func TestMultiSchemaDropColumns(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
+
+	tk.MustExec("create table t (a int, b int)")
+	_, err := tk.Exec("alter table t drop column a, drop column b")
+	require.Equal(t, err.Error(), "[ddl:1113]A table must have at least 1 column")
+}
+
+func TestMultiSchemaChangeOperateSameColumn(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
+
+	tk.MustExec("create table t (a int, c int)")
+	_, err := tk.Exec("alter table t add column b int default 2, add column b int default 3")
+	require.Equal(t, err.Error(), "[ddl:8200]Unsupported operate same column 'b'")
+	_, err = tk.Exec("alter table t drop column a, drop column a")
+	require.Equal(t, err.Error(), "[ddl:8200]Unsupported operate same column 'a'")
 }
