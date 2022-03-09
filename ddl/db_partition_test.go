@@ -1296,7 +1296,7 @@ func TestAlterTableTruncatePartitionByList(t *testing.T) {
 	tk.MustExec(`insert into t values (1),(3),(5),(null)`)
 	oldTbl := tk.GetTableByName("test", "t")
 	tk.MustExec(`alter table t truncate partition p1`)
-	tk.MustQuery("select * from t").Check(testkit.Rows("1", "5", "<nil>"))
+	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1", "5", "<nil>"))
 	tbl := tk.GetTableByName("test", "t")
 	require.NotNil(t, tbl.Meta().Partition)
 	part := tbl.Meta().Partition
@@ -1329,7 +1329,7 @@ func TestAlterTableTruncatePartitionByListColumns(t *testing.T) {
 	tk.MustExec(`insert into t values (1,'a'),(3,'a'),(5,'a'),(null,null)`)
 	oldTbl := tk.GetTableByName("test", "t")
 	tk.MustExec(`alter table t truncate partition p1`)
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 a", "5 a", "<nil> <nil>"))
+	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 a", "5 a", "<nil> <nil>"))
 	tbl := tk.GetTableByName("test", "t")
 	require.NotNil(t, tbl.Meta().Partition)
 	part := tbl.Meta().Partition
