@@ -88,7 +88,6 @@ var _ = Suite(&testDBSuite2{&testDBSuite{}})
 var _ = Suite(&testDBSuite3{&testDBSuite{}})
 var _ = Suite(&testDBSuite4{&testDBSuite{}})
 var _ = Suite(&testDBSuite5{&testDBSuite{}})
-var _ = SerialSuites(&testDBSuite6{&testDBSuite{}})
 var _ = Suite(&testDBSuite7{&testDBSuite{}})
 var _ = Suite(&testDBSuite8{&testDBSuite{}})
 var _ = SerialSuites(&testSerialDBSuite{&testDBSuite{}})
@@ -159,7 +158,6 @@ type testDBSuite2 struct{ *testDBSuite }
 type testDBSuite3 struct{ *testDBSuite }
 type testDBSuite4 struct{ *testDBSuite }
 type testDBSuite5 struct{ *testDBSuite }
-type testDBSuite6 struct{ *testDBSuite }
 type testDBSuite7 struct{ *testDBSuite }
 type testDBSuite8 struct{ *testDBSuite }
 type testSerialDBSuite struct{ *testDBSuite }
@@ -819,26 +817,6 @@ func (s *testDBSuite5) TestAddMultiColumnsIndex(c *C) {
 	tk.MustExec("insert tidb.test values (6, 6);")
 	tk.MustExec("alter table tidb.test add index idx1 (a, b);")
 	tk.MustExec("admin check table test")
-}
-
-func (s *testDBSuite6) TestAddMultiColumnsIndexClusterIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("drop database if exists test_add_multi_col_index_clustered;")
-	tk.MustExec("create database test_add_multi_col_index_clustered;")
-	tk.MustExec("use test_add_multi_col_index_clustered;")
-
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
-	tk.MustExec("create table t (a int, b varchar(10), c int, primary key (a, b));")
-	tk.MustExec("insert into t values (1, '1', 1), (2, '2', NULL), (3, '3', 3);")
-	tk.MustExec("create index idx on t (a, c);")
-
-	tk.MustExec("admin check index t idx;")
-	tk.MustExec("admin check table t;")
-
-	tk.MustExec("insert into t values (5, '5', 5), (6, '6', NULL);")
-
-	tk.MustExec("admin check index t idx;")
-	tk.MustExec("admin check table t;")
 }
 
 // TestCancelAddTableAndDropTablePartition tests cancel ddl job which type is add/drop table partition.
@@ -3694,17 +3672,6 @@ func (s *testDBSuite5) TestAlterCheck(c *C) {
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8231|ALTER CHECK is not supported"))
 }
 
-func (s *testDBSuite6) TestDropCheck(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use " + s.schemaName)
-	tk.MustExec("drop table if exists drop_check")
-	tk.MustExec("create table drop_check (pk int primary key)")
-	defer tk.MustExec("drop table if exists drop_check")
-	tk.MustExec("alter table drop_check drop check crcn")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8231|DROP CHECK is not supported"))
-}
-
 func (s *testDBSuite7) TestAddConstraintCheck(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use " + s.schemaName)
@@ -3727,24 +3694,6 @@ func (s *testDBSuite7) TestCreateTableIngoreCheckConstraint(c *C) {
 		"admin_user CREATE TABLE `admin_user` (\n"+
 		"  `enable` tinyint(1) DEFAULT NULL\n"+
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-}
-
-func (s *testDBSuite6) TestAlterOrderBy(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use " + s.schemaName)
-	tk.MustExec("create table ob (pk int primary key, c int default 1, c1 int default 1, KEY cl(c1))")
-
-	// Test order by with primary key
-	tk.MustExec("alter table ob order by c")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|ORDER BY ignored as there is a user-defined clustered index in the table 'ob'"))
-
-	// Test order by with no primary key
-	tk.MustExec("drop table if exists ob")
-	tk.MustExec("create table ob (c int default 1, c1 int default 1, KEY cl(c1))")
-	tk.MustExec("alter table ob order by c")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
-	tk.MustExec("drop table if exists ob")
 }
 
 func (s *testSerialDBSuite) TestDDLJobErrorCount(c *C) {
