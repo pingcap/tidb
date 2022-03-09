@@ -22,7 +22,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -48,14 +48,11 @@ type testColumnSuiteToVerify struct {
 }
 
 func TestColumnSuite(t *testing.T) {
-	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, true)
-	require.NoError(t, err)
-
 	suite.Run(t, new(testColumnSuiteToVerify))
 }
 
 func (s *testColumnSuiteToVerify) SetupSuite() {
-	s.store = testCreateStore(s.T(), "test_column")
+	s.store = createMockStore(s.T())
 	d, err := testNewDDLAndStart(
 		context.Background(),
 		WithStore(s.store),
@@ -1197,7 +1194,7 @@ func TestModifyColumn(t *testing.T) {
 		{"int", "int unsigned", nil},
 		{"varchar(10)", "text", nil},
 		{"varbinary(10)", "blob", nil},
-		{"text", "blob", errUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8mb4 to binary")},
+		{"text", "blob", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8mb4 to binary")},
 		{"varchar(10)", "varchar(8)", nil},
 		{"varchar(10)", "varchar(11)", nil},
 		{"varchar(10) character set utf8 collate utf8_bin", "varchar(10) character set utf8", nil},
@@ -1207,17 +1204,17 @@ func TestModifyColumn(t *testing.T) {
 		{"decimal(2,1)", "int", nil},
 		{"decimal", "int", nil},
 		{"decimal(2,1)", "bigint", nil},
-		{"int", "varchar(10) character set gbk", errUnsupportedModifyCharset.GenWithStackByArgs("charset from binary to gbk")},
-		{"varchar(10) character set gbk", "int", errUnsupportedModifyCharset.GenWithStackByArgs("charset from gbk to binary")},
-		{"varchar(10) character set gbk", "varchar(10) character set utf8", errUnsupportedModifyCharset.GenWithStackByArgs("charset from gbk to utf8")},
-		{"varchar(10) character set gbk", "char(10) character set utf8", errUnsupportedModifyCharset.GenWithStackByArgs("charset from gbk to utf8")},
-		{"varchar(10) character set utf8", "char(10) character set gbk", errUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8 to gbk")},
-		{"varchar(10) character set utf8", "varchar(10) character set gbk", errUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8 to gbk")},
+		{"int", "varchar(10) character set gbk", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from binary to gbk")},
+		{"varchar(10) character set gbk", "int", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from gbk to binary")},
+		{"varchar(10) character set gbk", "varchar(10) character set utf8", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from gbk to utf8")},
+		{"varchar(10) character set gbk", "char(10) character set utf8", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from gbk to utf8")},
+		{"varchar(10) character set utf8", "char(10) character set gbk", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8 to gbk")},
+		{"varchar(10) character set utf8", "varchar(10) character set gbk", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8 to gbk")},
 		{"varchar(10) character set gbk", "varchar(255) character set gbk", nil},
 	}
 	for _, tt := range tests {
-		ftA := colDefStrToFieldType(t, tt.origin)
-		ftB := colDefStrToFieldType(t, tt.to)
+		ftA := colDefStrToFieldType(t, tt.origin, ctx)
+		ftB := colDefStrToFieldType(t, tt.to, ctx)
 		err := checkModifyTypes(ctx, ftA, ftB, false)
 		if err == nil {
 			require.NoErrorf(t, tt.err, "origin:%v, to:%v", tt.origin, tt.to)
@@ -1227,13 +1224,13 @@ func TestModifyColumn(t *testing.T) {
 	}
 }
 
-func colDefStrToFieldType(t *testing.T, str string) *types.FieldType {
+func colDefStrToFieldType(t *testing.T, str string, ctx sessionctx.Context) *types.FieldType {
 	sqlA := "alter table t modify column a " + str
 	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
 	require.NoError(t, err)
 	colDef := stmt.(*ast.AlterTableStmt).Specs[0].NewColumns[0]
 	chs, coll := charset.GetDefaultCharsetAndCollate()
-	col, _, err := buildColumnAndConstraint(nil, 0, colDef, nil, chs, coll)
+	col, _, err := buildColumnAndConstraint(ctx, 0, colDef, nil, chs, coll)
 	require.NoError(t, err)
 	return &col.FieldType
 }

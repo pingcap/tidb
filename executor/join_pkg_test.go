@@ -16,25 +16,21 @@ package executor
 
 import (
 	"context"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&pkgTestSuite{})
-var _ = SerialSuites(&pkgTestSerialSuite{})
-
-type pkgTestSuite struct{}
-
-type pkgTestSerialSuite struct{}
-
-func (s *pkgTestSerialSuite) TestJoinExec(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testRowContainerSpill", "return(true)"), IsNil)
-	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testRowContainerSpill"), IsNil) }()
+func TestJoinExec(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testRowContainerSpill", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testRowContainerSpill"))
+	}()
 	colTypes := []*types.FieldType{
 		types.NewFieldType(mysql.TypeLonglong),
 		types.NewFieldType(mysql.TypeDouble),
@@ -70,32 +66,32 @@ func (s *pkgTestSerialSuite) TestJoinExec(c *C) {
 			ctx := context.Background()
 			chk := newFirstChunk(exec)
 			err := exec.Open(ctx)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			for {
 				err = exec.Next(ctx, chk)
-				c.Assert(err, IsNil)
+				require.NoError(t, err)
 				if chk.NumRows() == 0 {
 					break
 				}
 				result.Append(chk, 0, chk.NumRows())
 			}
-			c.Assert(exec.rowContainer.alreadySpilledSafeForTest(), Equals, casTest.disk)
+			require.Equal(t, casTest.disk, exec.rowContainer.alreadySpilledSafeForTest())
 			err = exec.Close()
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 		}
 
-		c.Assert(result.NumCols(), Equals, 4)
-		c.Assert(result.NumRows(), Equals, casTest.rows)
+		require.Equal(t, 4, result.NumCols())
+		require.Equal(t, casTest.rows, result.NumRows())
 		visit := make(map[int64]bool, casTest.rows)
 		for i := 0; i < casTest.rows; i++ {
 			val := result.Column(0).Int64s()[i]
-			c.Assert(result.Column(1).Float64s()[i], Equals, float64(val))
-			c.Assert(result.Column(2).Int64s()[i], Equals, val)
-			c.Assert(result.Column(3).Float64s()[i], Equals, float64(val))
+			require.Equal(t, float64(val), result.Column(1).Float64s()[i])
+			require.Equal(t, val, result.Column(2).Int64s()[i])
+			require.Equal(t, float64(val), result.Column(3).Float64s()[i])
 			visit[val] = true
 		}
 		for i := 0; i < casTest.rows; i++ {
-			c.Assert(visit[int64(i)], IsTrue)
+			require.True(t, visit[int64(i)])
 		}
 	}
 
@@ -114,7 +110,7 @@ func (s *pkgTestSerialSuite) TestJoinExec(c *C) {
 	}
 }
 
-func (s *pkgTestSuite) TestHashJoinRuntimeStats(c *C) {
+func TestHashJoinRuntimeStats(t *testing.T) {
 	stats := &hashJoinRuntimeStats{
 		fetchAndBuildHashTable: 2 * time.Second,
 		hashStat: hashStatistic{
@@ -126,13 +122,13 @@ func (s *pkgTestSuite) TestHashJoinRuntimeStats(c *C) {
 		concurrent:       4,
 		maxFetchAndProbe: int64(2 * time.Second),
 	}
-	c.Assert(stats.String(), Equals, "build_hash_table:{total:2s, fetch:1.9s, build:100ms}, probe:{concurrency:4, total:5s, max:2s, probe:4s, fetch:1s, probe_collision:1}")
-	c.Assert(stats.String(), Equals, stats.Clone().String())
+	require.Equal(t, "build_hash_table:{total:2s, fetch:1.9s, build:100ms}, probe:{concurrency:4, total:5s, max:2s, probe:4s, fetch:1s, probe_collision:1}", stats.String())
+	require.Equal(t, stats.Clone().String(), stats.String())
 	stats.Merge(stats.Clone())
-	c.Assert(stats.String(), Equals, "build_hash_table:{total:4s, fetch:3.8s, build:200ms}, probe:{concurrency:4, total:10s, max:2s, probe:8s, fetch:2s, probe_collision:2}")
+	require.Equal(t, "build_hash_table:{total:4s, fetch:3.8s, build:200ms}, probe:{concurrency:4, total:10s, max:2s, probe:8s, fetch:2s, probe_collision:2}", stats.String())
 }
 
-func (s *pkgTestSuite) TestIndexJoinRuntimeStats(c *C) {
+func TestIndexJoinRuntimeStats(t *testing.T) {
 	stats := indexLookUpJoinRuntimeStats{
 		concurrency: 5,
 		probe:       int64(time.Second),
@@ -145,8 +141,8 @@ func (s *pkgTestSuite) TestIndexJoinRuntimeStats(c *C) {
 			join:      int64(150 * time.Millisecond),
 		},
 	}
-	c.Assert(stats.String(), Equals, "inner:{total:5s, concurrency:5, task:16, construct:100ms, fetch:300ms, build:250ms, join:150ms}, probe:1s")
-	c.Assert(stats.String(), Equals, stats.Clone().String())
+	require.Equal(t, "inner:{total:5s, concurrency:5, task:16, construct:100ms, fetch:300ms, build:250ms, join:150ms}, probe:1s", stats.String())
+	require.Equal(t, stats.Clone().String(), stats.String())
 	stats.Merge(stats.Clone())
-	c.Assert(stats.String(), Equals, "inner:{total:10s, concurrency:5, task:32, construct:200ms, fetch:600ms, build:500ms, join:300ms}, probe:2s")
+	require.Equal(t, "inner:{total:10s, concurrency:5, task:32, construct:200ms, fetch:600ms, build:500ms, join:300ms}, probe:2s", stats.String())
 }

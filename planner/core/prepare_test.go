@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -1308,6 +1307,60 @@ func TestPlanCacheUnionScan(t *testing.T) {
 	require.Equal(t, float64(6), cnt)
 }
 
+func TestPlanCacheSwitchDB(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer core.SetPreparedPlanCache(orgEnable)
+	core.SetPreparedPlanCache(true)
+	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	require.NoError(t, err)
+	tk := testkit.NewTestKitWithSession(t, store, se)
+
+	// create a table in test
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a int)`)
+	tk.MustExec(`insert into t values (-1)`)
+	tk.MustExec(`prepare stmt from 'select * from t'`)
+
+	// DB is not specified
+	se2, err := session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	require.NoError(t, err)
+	tk2 := testkit.NewTestKitWithSession(t, store, se2)
+	require.Equal(t, tk2.ExecToErr(`prepare stmt from 'select * from t'`).Error(), "[planner:1046]No database selected")
+	require.Equal(t, tk2.ExecToErr(`prepare stmt from 'select * from test.t'`), nil)
+
+	// switch to a new DB
+	tk.MustExec(`drop database if exists plan_cache`)
+	tk.MustExec(`create database plan_cache`)
+	tk.MustExec(`use plan_cache`)
+	tk.MustExec(`create table t(a int)`)
+	tk.MustExec(`insert into t values (1)`)
+	tk.MustQuery(`execute stmt`).Check(testkit.Rows("-1")) // read test.t
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`execute stmt`).Check(testkit.Rows("-1")) // read test.t
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	// prepare again
+	tk.MustExec(`prepare stmt from 'select * from t'`)
+	tk.MustQuery(`execute stmt`).Check(testkit.Rows("1")) // read plan_cache.t
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`execute stmt`).Check(testkit.Rows("1")) // read plan_cache.t
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	// specify DB in the query
+	tk.MustExec(`prepare stmt from 'select * from test.t'`)
+	tk.MustQuery(`execute stmt`).Check(testkit.Rows("-1")) // read test.t
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`execute stmt`).Check(testkit.Rows("-1")) // read test.t
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
 func TestPlanCacheHitInfo(t *testing.T) {
 	t.Skip("unstable, skip it and fix it before 20210705")
 	store, clean := testkit.CreateMockStore(t)
@@ -1541,7 +1594,7 @@ func TestParamMarker4FastPlan(t *testing.T) {
 	require.NoError(t, err)
 	tk := testkit.NewTestKitWithSession(t, store, se)
 
-	// test handle
+	// test handle for point get
 	tk.MustExec(`use test`)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(pk int primary key)")
@@ -1565,7 +1618,7 @@ func TestParamMarker4FastPlan(t *testing.T) {
 	tk.MustQuery(`execute stmt using @a1`).Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
-	// test indexValues
+	// test indexValues for point get
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(pk int, unique index idx(pk))")
 	tk.MustExec("insert into t values(1)")
@@ -1588,7 +1641,7 @@ func TestParamMarker4FastPlan(t *testing.T) {
 	tk.MustQuery(`execute stmt using @a1`).Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
-	// test _tidb_rowid
+	// test _tidb_rowid for point get
 	tk.MustExec(`use test`)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int);")
@@ -1598,6 +1651,46 @@ func TestParamMarker4FastPlan(t *testing.T) {
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1 8"))
 	tk.MustExec(`set @a=1`)
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1 7"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// test handle for batch point get
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int primary key)")
+	tk.MustExec("insert into t values (1), (2), (3), (4), (5)")
+	tk.MustExec(`prepare stmt from 'select * from t where pk in (1, ?, ?)'`)
+	tk.MustExec(`set @a0=0, @a1=1, @a2=2, @a3=3, @a1_1=1.1, @a4=4, @a5=5`)
+	tk.MustQuery(`execute stmt using @a2, @a3`).Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery(`execute stmt using @a2, @a3`).Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a0, @a4`).Sort().Check(testkit.Rows("1", "4"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a1_1, @a5`).Sort().Check(testkit.Rows("1", "5"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	// test indexValues for batch point get
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int, unique index idx(pk))")
+	tk.MustExec("insert into t values (1), (2), (3), (4), (5)")
+	tk.MustExec(`prepare stmt from 'select * from t where pk in (1, ?, ?)'`)
+	tk.MustExec(`set @a0=0, @a1=1, @a2=2, @a3=3, @a1_1=1.1, @a4=4, @a5=5`)
+	tk.MustQuery(`execute stmt using @a2, @a3`).Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery(`execute stmt using @a2, @a3`).Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a0, @a4`).Sort().Check(testkit.Rows("1", "4"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt using @a1_1, @a5`).Sort().Check(testkit.Rows("1", "5"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+	// test _tidb_rowid for batch point get
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert t values (1, 7), (1, 8), (1, 9), (1, 10);")
+	tk.MustExec(`prepare stmt from 'select * from t where _tidb_rowid in (1, ?, ?)'`)
+	tk.MustExec(`set @a2=2, @a3=3`)
+	tk.MustQuery("execute stmt using @a2, @a3;").Sort().Check(testkit.Rows("1 7", "1 8", "1 9"))
+	tk.MustExec(`set @a2=4, @a3=2`)
+	tk.MustQuery("execute stmt using @a2, @a3;").Sort().Check(testkit.Rows("1 10", "1 7", "1 8"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
 
@@ -1717,9 +1810,9 @@ func TestIssue18066(t *testing.T) {
 		testkit.Rows("2 1 1"))
 	tk.MustExec("prepare stmt from 'select * from t'")
 	tk.MustQuery("execute stmt").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	tk.MustQuery("select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`'").Check(
-		testkit.Rows("3 1 0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select EXEC_COUNT, plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`'").Check(
+		testkit.Rows("3 2 1"))
 }
 
 func TestPrepareForGroupByMultiItems(t *testing.T) {
@@ -1904,7 +1997,7 @@ func TestPlanCachePointGetAndTableDual(t *testing.T) {
 	tk.MustExec("set @a3=1,@b3=3")
 	// TableReader plan would be built, we should cache it.
 	tk.MustQuery("execute s3 using @b3,@a3").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustQuery("execute s3 using @a3,@b3").Check(testkit.Rows("2 1 1"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
@@ -1920,7 +2013,7 @@ func TestPlanCachePointGetAndTableDual(t *testing.T) {
 	tk.MustExec("prepare s4 from 'select /*+ use_index_merge(t4) */ * from t4 where (c1 >= ? and c1 <= ?) or c2 > 1'")
 	tk.MustExec("set @a4=1,@b4=3")
 	tk.MustQuery("execute s4 using @b4,@a4").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustQuery("execute s4 using @a4,@b4").Check(testkit.Rows("2 1 1"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
@@ -2125,7 +2218,7 @@ func TestIssue29993(t *testing.T) {
 	tk.MustQuery("execute stmt using @b").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @z").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // invalid since 'z' is not in enum('a', 'b')
 	tk.MustQuery("execute stmt using @z").Check(testkit.Rows())
 
 	// test PointGet + non cluster index
@@ -2153,7 +2246,7 @@ func TestIssue29993(t *testing.T) {
 	tk.MustQuery("execute stmt using @b").Check(testkit.Rows())
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @z").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // invalid since 'z' is not in enum('a', 'b')
 	tk.MustQuery("execute stmt using @z").Check(testkit.Rows())
 }
 
@@ -2186,10 +2279,6 @@ func TestIssue30100(t *testing.T) {
 }
 
 func TestPartitionTable(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	orgEnable := core.PreparedPlanCacheEnabled()
@@ -2322,10 +2411,6 @@ func TestPartitionTable(t *testing.T) {
 }
 
 func TestPartitionWithVariedDataSources(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	orgEnable := core.PreparedPlanCacheEnabled()
