@@ -939,6 +939,17 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		}
 	}
 
+	if cfg.CheckOnly != nil {
+		// in check-only, max-error not work
+		maxErr := atomic.NewInt64(math.MaxInt64)
+		cfg.App.MaxError = MaxError{
+			Syntax:   *maxErr,
+			Charset:  *maxErr,
+			Type:     *maxErr,
+			Conflict: *maxErr,
+		}
+	}
+
 	if err := cfg.CheckAndAdjustTiDBPort(ctx, mustHaveInternalConnections); err != nil {
 		return err
 	}

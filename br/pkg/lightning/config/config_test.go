@@ -19,6 +19,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -30,9 +31,10 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/stretchr/testify/require"
+
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/stretchr/testify/require"
 )
 
 func startMockServer(t *testing.T, statusCode int, content string) (*httptest.Server, string, int) {
@@ -774,6 +776,30 @@ func TestAdjustDiskQuota(t *testing.T) {
 	cfg.TiDB.DistSQLScanConcurrency = 1
 	require.NoError(t, cfg.Adjust(ctx))
 	require.Equal(t, int64(0), int64(cfg.TikvImporter.DiskQuota))
+}
+
+func TestAdjustMaxErrorOnCheckOnly(t *testing.T) {
+	cfg := config.NewConfig()
+	assignMinimalLegalValue(cfg)
+
+	base := t.TempDir()
+	ctx := context.Background()
+	cfg.TikvImporter.Backend = config.BackendLocal
+	cfg.TikvImporter.DiskQuota = 0
+	cfg.TikvImporter.SortedKVDir = base
+	cfg.TiDB.DistSQLScanConcurrency = 1
+	cfg.App.MaxError = config.MaxError{}
+	require.NoError(t, cfg.Adjust(ctx))
+	require.Zero(t, cfg.App.MaxError.Syntax.Load())
+	require.Zero(t, cfg.App.MaxError.Charset.Load())
+	require.Zero(t, cfg.App.MaxError.Type.Load())
+	require.Zero(t, cfg.App.MaxError.Conflict.Load())
+	cfg.CheckOnly = &config.CheckOnly{}
+	require.NoError(t, cfg.Adjust(ctx))
+	require.Equal(t, int64(math.MaxInt64), cfg.App.MaxError.Syntax.Load())
+	require.Equal(t, int64(math.MaxInt64), cfg.App.MaxError.Charset.Load())
+	require.Equal(t, int64(math.MaxInt64), cfg.App.MaxError.Type.Load())
+	require.Equal(t, int64(math.MaxInt64), cfg.App.MaxError.Conflict.Load())
 }
 
 func TestDataCharacterSet(t *testing.T) {
