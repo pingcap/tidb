@@ -16,7 +16,6 @@ package tables_test
 
 import (
 	"context"
-	"sync"
 	"testing"
 
 	mysql "github.com/pingcap/tidb/errno"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
@@ -424,23 +424,21 @@ func TestLocatePartition(t *testing.T) {
 	tk3 := testkit.NewTestKit(t, store)
 	tks := []*testkit.TestKit{tk1, tk2, tk3}
 
-	wg := sync.WaitGroup{}
+	wg := util.WaitGroupWrapper{}
 	exec := func(tk0 *testkit.TestKit) {
 		tk0.MustExec("use test")
 		tk0.MustQuery("desc select id, type from t where  type = 'WatchEvent';").Check(testkit.Rows("TableReader_7 10.00 root partition:watch_event data:Selection_6]\n[└─Selection_6 10.00 cop[tikv]  eq(test.t.type, \"WatchEvent\")]\n[  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	}
 
-	run := func(num int, e func(tk *testkit.TestKit)) {
-		wg.Add(1)
+	run := func(num int) {
 		tk := tks[num]
-		go func() {
-			defer wg.Done()
-			e(tk)
-		}()
+		wg.Run(func() {
+			exec(tk)
+		})
 	}
-	run(0, exec)
-	run(1, exec)
-	run(2, exec)
+	for i := 0; i < len(tks); i++ {
+		run(i)
+	}
 	wg.Wait()
 }
 
