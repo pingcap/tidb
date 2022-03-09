@@ -142,29 +142,6 @@ func checkHistoryJobArgs(t *testing.T, ctx sessionctx.Context, id int64, args *h
 	}
 }
 
-func checkHistoryJobArgsT(t *testing.T, ctx sessionctx.Context, id int64, args *historyJobArgs) {
-	txn, err := ctx.Txn(true)
-	require.NoError(t, err)
-	tt := meta.NewMeta(txn)
-	historyJob, err := tt.GetHistoryDDLJob(id)
-	require.NoError(t, err)
-	require.Greater(t, historyJob.BinlogInfo.FinishedTS, uint64(0))
-
-	if args.tbl != nil {
-		require.Equal(t, args.ver, historyJob.BinlogInfo.SchemaVersion)
-		checkEqualTableT(t, historyJob.BinlogInfo.TableInfo, args.tbl)
-		return
-	}
-
-	// for handling schema job
-	require.Equal(t, args.ver, historyJob.BinlogInfo.SchemaVersion)
-	require.EqualValues(t, args.db, historyJob.BinlogInfo.DBInfo)
-	// only for creating schema job
-	if args.db != nil && len(args.tblIDs) == 0 {
-		return
-	}
-}
-
 func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
 	return &model.Job{
 		SchemaID:   dbInfo.ID,
