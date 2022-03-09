@@ -1017,5 +1017,5 @@ func CancelConcurrencyJobs(sess sessionctx.Context, ids []int64) ([]error, error
 	for id, idx := range jobSet {
 		errs[idx] = admin.ErrDDLJobNotFound.GenWithStackByArgs(id)
 	}
-	return nil, nil
+	return errs, nil
 }
