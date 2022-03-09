@@ -558,11 +558,11 @@ func testCancelDropIndex(c *C, store kv.Storage, d ddl.DDL, idxName, addIdxSQL, 
 // TestCancelTruncateTable tests cancel ddl job which type is truncate table.
 func (s *testDBSuite5) TestCancelTruncateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	s.mustExec(tk, c, "use test_db")
-	s.mustExec(tk, c, "create database if not exists test_truncate_table")
-	s.mustExec(tk, c, "drop table if exists t")
-	s.mustExec(tk, c, "create table t(c1 int, c2 int)")
-	defer s.mustExec(tk, c, "drop table t;")
+	tk.MustExec("use test_db")
+	tk.MustExec("create database if not exists test_truncate_table")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c1 int, c2 int)")
+	defer tk.MustExec("drop table t;")
 	var checkErr error
 	hook := &ddl.TestDDLCallback{Do: s.dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
@@ -603,9 +603,9 @@ func (s *testDBSuite5) TestCancelTruncateTable(c *C) {
 
 func (s *testDBSuite5) TestParallelDropSchemaAndDropTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	s.mustExec(tk, c, "create database if not exists test_drop_schema_table")
-	s.mustExec(tk, c, "use test_drop_schema_table")
-	s.mustExec(tk, c, "create table t(c1 int, c2 int)")
+	tk.MustExec("create database if not exists test_drop_schema_table")
+	tk.MustExec("use test_drop_schema_table")
+	tk.MustExec("create table t(c1 int, c2 int)")
 	var checkErr error
 	hook := &ddl.TestDDLCallback{Do: s.dom}
 	dbInfo := testGetSchemaByName(c, tk.Se, "test_drop_schema_table")
@@ -627,7 +627,7 @@ func (s *testDBSuite5) TestParallelDropSchemaAndDropTable(c *C) {
 	}
 	originalHook := s.dom.DDL().GetHook()
 	s.dom.DDL().SetHook(hook)
-	s.mustExec(tk, c, "drop database test_drop_schema_table")
+	tk.MustExec("drop database test_drop_schema_table")
 	s.dom.DDL().SetHook(originalHook)
 	wg.Wait()
 	c.Assert(done, IsTrue)
@@ -659,15 +659,15 @@ func (s *testDBSuite5) TestParallelDropSchemaAndDropTable(c *C) {
 // TestCancelRenameIndex tests cancel ddl job which type is rename index.
 func (s *testDBSuite1) TestCancelRenameIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	s.mustExec(tk, c, "use test_db")
-	s.mustExec(tk, c, "create database if not exists test_rename_index")
-	s.mustExec(tk, c, "drop table if exists t")
-	s.mustExec(tk, c, "create table t(c1 int, c2 int)")
-	defer s.mustExec(tk, c, "drop table t;")
+	tk.MustExec("use test_db")
+	tk.MustExec("create database if not exists test_rename_index")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c1 int, c2 int)")
+	defer tk.MustExec("drop table t;")
 	for i := 0; i < 100; i++ {
-		s.mustExec(tk, c, "insert into t values (?, ?)", i, i)
+		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
-	s.mustExec(tk, c, "alter table t add index idx_c2(c2)")
+	tk.MustExec("alter table t add index idx_c2(c2)")
 	var checkErr error
 	hook := &ddl.TestDDLCallback{Do: s.dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
@@ -711,7 +711,7 @@ func (s *testDBSuite1) TestCancelRenameIndex(c *C) {
 	for _, idx := range t.Indices() {
 		c.Assert(strings.EqualFold(idx.Meta().Name.L, "idx_c3"), IsFalse)
 	}
-	s.mustExec(tk, c, "alter table t rename index idx_c2 to idx_c3")
+	tk.MustExec("alter table t rename index idx_c2 to idx_c3")
 }
 
 // TestCancelDropTable tests cancel ddl job which type is drop table.
@@ -739,7 +739,7 @@ func (s *testDBSuite2) TestCancelDropTableAndSchema(c *C) {
 	hook := &ddl.TestDDLCallback{Do: s.dom}
 	var jobID int64
 	testCase := &testCases[0]
-	s.mustExec(tk, c, "create database if not exists test_drop_db")
+	tk.MustExec("create database if not exists test_drop_db")
 	dbInfo := s.testGetDB(c, "test_drop_db")
 
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
@@ -778,9 +778,9 @@ func (s *testDBSuite2) TestCancelDropTableAndSchema(c *C) {
 	for i := range testCases {
 		testCase = &testCases[i]
 		if testCase.needAddTableOrDB {
-			s.mustExec(tk, c, "create database if not exists test_drop_db")
-			s.mustExec(tk, c, "use test_drop_db")
-			s.mustExec(tk, c, "create table if not exists t(c1 int, c2 int)")
+			tk.MustExec("create database if not exists test_drop_db")
+			tk.MustExec("use test_drop_db")
+			tk.MustExec("create table if not exists t(c1 int, c2 int)")
 		}
 
 		dbInfo = s.testGetDB(c, "test_drop_db")
@@ -796,7 +796,7 @@ func (s *testDBSuite2) TestCancelDropTableAndSchema(c *C) {
 			c.Assert(checkErr, IsNil)
 			c.Assert(err, NotNil)
 			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
-			s.mustExec(tk, c, "insert into t values (?, ?)", i, i)
+			tk.MustExec("insert into t values (?, ?)", i, i)
 		} else {
 			c.Assert(err, IsNil)
 			c.Assert(checkErr, NotNil)
@@ -810,8 +810,8 @@ func (s *testDBSuite2) TestCancelDropTableAndSchema(c *C) {
 func (s *testDBSuite4) TestAlterLock(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use " + s.schemaName)
-	s.mustExec(tk, c, "create table t_index_lock (c1 int, c2 int, C3 int)")
-	s.mustExec(tk, c, "alter table t_index_lock add index (c1, c2), lock=none")
+	tk.MustExec("create table t_index_lock (c1 int, c2 int, C3 int)")
+	tk.MustExec("alter table t_index_lock add index (c1, c2), lock=none")
 }
 
 func (s *testDBSuite5) TestAddMultiColumnsIndex(c *C) {
@@ -858,18 +858,18 @@ func (s *testDBSuite6) TestAddMultiColumnsIndexClusterIndex(c *C) {
 // TestCancelAddTableAndDropTablePartition tests cancel ddl job which type is add/drop table partition.
 func (s *testDBSuite1) TestCancelAddTableAndDropTablePartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	s.mustExec(tk, c, "create database if not exists test_partition_table")
-	s.mustExec(tk, c, "use test_partition_table")
-	s.mustExec(tk, c, "drop table if exists t_part")
-	s.mustExec(tk, c, `create table t_part (a int key)
+	tk.MustExec("create database if not exists test_partition_table")
+	tk.MustExec("use test_partition_table")
+	tk.MustExec("drop table if exists t_part")
+	tk.MustExec(`create table t_part (a int key)
 		partition by range(a) (
 		partition p0 values less than (10),
 		partition p1 values less than (20)
 	);`)
-	defer s.mustExec(tk, c, "drop table t_part;")
+	defer tk.MustExec("drop table t_part;")
 	base := 10
 	for i := 0; i < base; i++ {
-		s.mustExec(tk, c, "insert into t_part values (?)", i)
+		tk.MustExec("insert into t_part values (?)", i)
 	}
 
 	testCases := []struct {
@@ -934,7 +934,7 @@ func (s *testDBSuite1) TestCancelAddTableAndDropTablePartition(c *C) {
 			c.Assert(checkErr, IsNil)
 			c.Assert(err, NotNil)
 			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
-			s.mustExec(tk, c, "insert into t_part values (?)", i+base)
+			tk.MustExec("insert into t_part values (?)", i+base)
 
 			ctx := s.s.(sessionctx.Context)
 			is := domain.GetDomain(ctx).InfoSchema()
@@ -1146,10 +1146,6 @@ func (s *testDBSuite7) TestSelectInViewFromAnotherDB(c *C) {
 	tk.MustExec("create sql security invoker view v as select * from " + s.schemaName + ".t")
 	tk.MustExec("use " + s.schemaName)
 	tk.MustExec("select test_db2.v.a from test_db2.v")
-}
-
-func (s *testDBSuite) mustExec(tk *testkit.TestKit, c *C, query string, args ...interface{}) {
-	tk.MustExec(query, args...)
 }
 
 // TestCreateTableWithLike2 tests create table with like when refer table have non-public column/index.
@@ -2621,11 +2617,11 @@ func (s *testDBSuite5) TestCheckConvertToCharacter(c *C) {
 
 func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	s.mustExec(tk, c, "use test_db")
-	s.mustExec(tk, c, "drop table if exists t1")
-	s.mustExec(tk, c, "create table t1 (a int, b int);")
-	s.mustExec(tk, c, "create table t2 (a int, b int);")
-	s.mustExec(tk, c, "insert into t2 values (2,0)")
+	tk.MustExec("use test_db")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b int);")
+	tk.MustExec("create table t2 (a int, b int);")
+	tk.MustExec("insert into t2 values (2,0)")
 
 	transactions := [][]string{
 		{
@@ -2673,7 +2669,7 @@ func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(checkErr, IsNil)
 	tk.MustQuery("select a,b from t1 order by a").Check(testkit.Rows("1 1", "1 1", "1 1", "2 2", "2 2", "2 2"))
-	s.mustExec(tk, c, "delete from t1")
+	tk.MustExec("delete from t1")
 
 	// test transaction on drop column.
 	go backgroundExec(s.store, "alter table t1 drop column c", done)
@@ -2685,10 +2681,10 @@ func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 
 func (s *testDBSuite3) TestIssue22307(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	s.mustExec(tk, c, "use test_db")
-	s.mustExec(tk, c, "drop table if exists t")
-	s.mustExec(tk, c, "create table t (a int, b int)")
-	s.mustExec(tk, c, "insert into t values(1, 1);")
+	tk.MustExec("use test_db")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values(1, 1);")
 
 	originHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().SetHook(originHook)
@@ -2713,9 +2709,9 @@ func (s *testDBSuite3) TestIssue22307(c *C) {
 
 func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	s.mustExec(tk, c, "use test_db")
-	s.mustExec(tk, c, "drop table if exists t1")
-	s.mustExec(tk, c, "create table t1 (a int key);")
+	tk.MustExec("use test_db")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int key);")
 
 	transactions := [][]string{
 		{
@@ -2757,7 +2753,7 @@ func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(checkErr, IsNil)
 	tk.MustQuery("select a from t1").Check(testkit.Rows("2"))
-	s.mustExec(tk, c, "delete from t1")
+	tk.MustExec("delete from t1")
 
 	// test transaction on drop column.
 	go backgroundExec(s.store, "alter table t1 drop column c", done)
@@ -2769,10 +2765,10 @@ func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {
 
 func (s *testDBSuite4) TestAddColumn2(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	s.mustExec(tk, c, "use test_db")
-	s.mustExec(tk, c, "drop table if exists t1")
-	s.mustExec(tk, c, "create table t1 (a int key, b int);")
-	defer s.mustExec(tk, c, "drop table if exists t1, t2")
+	tk.MustExec("use test_db")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int key, b int);")
+	defer tk.MustExec("drop table if exists t1, t2")
 
 	originHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().SetHook(originHook)
@@ -2790,7 +2786,7 @@ func (s *testDBSuite4) TestAddColumn2(c *C) {
 	err := <-done
 	c.Assert(err, IsNil)
 
-	s.mustExec(tk, c, "insert into t1 values (1,1,1)")
+	tk.MustExec("insert into t1 values (1,1,1)")
 	tk.MustQuery("select a,b,c from t1").Check(testkit.Rows("1 1 1"))
 
 	// mock for outdated tidb update record.
@@ -2813,17 +2809,17 @@ func (s *testDBSuite4) TestAddColumn2(c *C) {
 
 	// Test for _tidb_rowid
 	var re *testkit.Result
-	s.mustExec(tk, c, "create table t2 (a int);")
+	tk.MustExec("create table t2 (a int);")
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState != model.StateWriteOnly {
 			return
 		}
 		// allow write _tidb_rowid first
-		s.mustExec(tk, c, "set @@tidb_opt_write_row_id=1")
-		s.mustExec(tk, c, "begin")
-		s.mustExec(tk, c, "insert into t2 (a,_tidb_rowid) values (1,2);")
+		tk.MustExec("set @@tidb_opt_write_row_id=1")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t2 (a,_tidb_rowid) values (1,2);")
 		re = tk.MustQuery(" select a,_tidb_rowid from t2;")
-		s.mustExec(tk, c, "commit")
+		tk.MustExec("commit")
 
 	}
 	s.dom.DDL().SetHook(hook)
@@ -2838,39 +2834,39 @@ func (s *testDBSuite4) TestAddColumn2(c *C) {
 func (s *testDBSuite4) TestIfNotExists(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
-	s.mustExec(tk, c, "drop table if exists t1")
-	s.mustExec(tk, c, "create table t1 (a int key);")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int key);")
 
 	// ADD COLUMN
 	sql := "alter table t1 add column b int"
-	s.mustExec(tk, c, sql)
+	tk.MustExec(sql)
 	tk.MustGetErrCode(sql, errno.ErrDupFieldName)
-	s.mustExec(tk, c, "alter table t1 add column if not exists b int")
+	tk.MustExec("alter table t1 add column if not exists b int")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1060|Duplicate column name 'b'"))
 
 	// ADD INDEX
 	sql = "alter table t1 add index idx_b (b)"
-	s.mustExec(tk, c, sql)
+	tk.MustExec(sql)
 	tk.MustGetErrCode(sql, errno.ErrDupKeyName)
-	s.mustExec(tk, c, "alter table t1 add index if not exists idx_b (b)")
+	tk.MustExec("alter table t1 add index if not exists idx_b (b)")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1061|index already exist idx_b"))
 
 	// CREATE INDEX
 	sql = "create index idx_b on t1 (b)"
 	tk.MustGetErrCode(sql, errno.ErrDupKeyName)
-	s.mustExec(tk, c, "create index if not exists idx_b on t1 (b)")
+	tk.MustExec("create index if not exists idx_b on t1 (b)")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1061|index already exist idx_b"))
 
 	// ADD PARTITION
-	s.mustExec(tk, c, "drop table if exists t2")
-	s.mustExec(tk, c, "create table t2 (a int key) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 (a int key) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
 	sql = "alter table t2 add partition (partition p2 values less than (30))"
-	s.mustExec(tk, c, sql)
+	tk.MustExec(sql)
 	tk.MustGetErrCode(sql, errno.ErrSameNamePartition)
-	s.mustExec(tk, c, "alter table t2 add partition if not exists (partition p2 values less than (30))")
+	tk.MustExec("alter table t2 add partition if not exists (partition p2 values less than (30))")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1517|Duplicate partition name p2"))
 }
@@ -2878,49 +2874,49 @@ func (s *testDBSuite4) TestIfNotExists(c *C) {
 func (s *testDBSuite4) TestIfExists(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
-	s.mustExec(tk, c, "drop table if exists t1")
-	s.mustExec(tk, c, "create table t1 (a int key, b int);")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int key, b int);")
 
 	// DROP COLUMN
 	sql := "alter table t1 drop column b"
-	s.mustExec(tk, c, sql)
+	tk.MustExec(sql)
 	tk.MustGetErrCode(sql, errno.ErrCantDropFieldOrKey)
-	s.mustExec(tk, c, "alter table t1 drop column if exists b") // only `a` exists now
+	tk.MustExec("alter table t1 drop column if exists b") // only `a` exists now
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1091|Can't DROP 'b'; check that column/key exists"))
 
 	// CHANGE COLUMN
 	sql = "alter table t1 change column b c int"
 	tk.MustGetErrCode(sql, errno.ErrBadField)
-	s.mustExec(tk, c, "alter table t1 change column if exists b c int")
+	tk.MustExec("alter table t1 change column if exists b c int")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1054|Unknown column 'b' in 't1'"))
-	s.mustExec(tk, c, "alter table t1 change column if exists a c int") // only `c` exists now
+	tk.MustExec("alter table t1 change column if exists a c int") // only `c` exists now
 
 	// MODIFY COLUMN
 	sql = "alter table t1 modify column a bigint"
 	tk.MustGetErrCode(sql, errno.ErrBadField)
-	s.mustExec(tk, c, "alter table t1 modify column if exists a bigint")
+	tk.MustExec("alter table t1 modify column if exists a bigint")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1054|Unknown column 'a' in 't1'"))
-	s.mustExec(tk, c, "alter table t1 modify column if exists c bigint") // only `c` exists now
+	tk.MustExec("alter table t1 modify column if exists c bigint") // only `c` exists now
 
 	// DROP INDEX
-	s.mustExec(tk, c, "alter table t1 add index idx_c (c)")
+	tk.MustExec("alter table t1 add index idx_c (c)")
 	sql = "alter table t1 drop index idx_c"
-	s.mustExec(tk, c, sql)
+	tk.MustExec(sql)
 	tk.MustGetErrCode(sql, errno.ErrCantDropFieldOrKey)
-	s.mustExec(tk, c, "alter table t1 drop index if exists idx_c")
+	tk.MustExec("alter table t1 drop index if exists idx_c")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1091|index idx_c doesn't exist"))
 
 	// DROP PARTITION
-	s.mustExec(tk, c, "drop table if exists t2")
-	s.mustExec(tk, c, "create table t2 (a int key) partition by range(a) (partition pNeg values less than (0), partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 (a int key) partition by range(a) (partition pNeg values less than (0), partition p0 values less than (10), partition p1 values less than (20))")
 	sql = "alter table t2 drop partition p1"
-	s.mustExec(tk, c, sql)
+	tk.MustExec(sql)
 	tk.MustGetErrCode(sql, errno.ErrDropPartitionNonExistent)
-	s.mustExec(tk, c, "alter table t2 drop partition if exists p1")
+	tk.MustExec("alter table t2 drop partition if exists p1")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1507|Error in list of partitions to DROP"))
 }
@@ -3118,7 +3114,7 @@ func (s *testSerialDBSuite) TestProcessColumnFlags(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	tk.MustExec("create table t(a year(4) comment 'xxx', b year, c bit)")
-	defer s.mustExec(tk, c, "drop table t;")
+	defer tk.MustExec("drop table t;")
 
 	check := func(n string, f func(uint) bool) {
 		t := testGetTableByName(c, tk.Se, "test_db", "t")
@@ -3156,9 +3152,9 @@ func (s *testSerialDBSuite) TestSetTableFlashReplica(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
-	s.mustExec(tk, c, "drop table if exists t_flash;")
+	tk.MustExec("drop table if exists t_flash;")
 	tk.MustExec("create table t_flash(a int, b int)")
-	defer s.mustExec(tk, c, "drop table t_flash;")
+	defer tk.MustExec("drop table t_flash;")
 
 	t := s.testGetTable(c, "t_flash")
 	c.Assert(t.Meta().TiFlashReplica, IsNil)
@@ -3174,7 +3170,7 @@ func (s *testSerialDBSuite) TestSetTableFlashReplica(c *C) {
 	c.Assert(t.Meta().TiFlashReplica, IsNil)
 
 	// Test set tiflash replica for partition table.
-	s.mustExec(tk, c, "drop table if exists t_flash;")
+	tk.MustExec("drop table if exists t_flash;")
 	tk.MustExec("create table t_flash(a int, b int) partition by hash(a) partitions 3")
 	tk.MustExec("alter table t_flash set tiflash replica 2 location labels 'a','b';")
 	t = s.testGetTable(c, "t_flash")
@@ -3247,7 +3243,7 @@ func (s *testSerialDBSuite) TestSetTableFlashReplica(c *C) {
 	c.Assert(err, IsNil)
 
 	// Test for set replica count more than the tiflash store count.
-	s.mustExec(tk, c, "drop table if exists t_flash;")
+	tk.MustExec("drop table if exists t_flash;")
 	tk.MustExec("create table t_flash(a int, b int)")
 	_, err = tk.Exec("alter table t_flash set tiflash replica 2 location labels 'a','b';")
 	c.Assert(err, NotNil)
