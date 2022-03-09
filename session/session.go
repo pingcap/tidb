@@ -1352,7 +1352,7 @@ func (s *session) SetGlobalSysVarOnly(name, value string) (err error) {
 	if err = sv.SetGlobalFromHook(s.sessionVars, value, true); err != nil {
 		return err
 	}
-	if !sv.HasInstanceScope() { // skip for INSTANCE scope
+	if sv.HasInstanceScope() { // skip for INSTANCE scope
 		return nil
 	}
 	return s.replaceGlobalVariablesTableValue(context.TODO(), sv.Name, value)
