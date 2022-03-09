@@ -27,22 +27,22 @@ import (
 
 // SessionHandle is used to handle all session sql bind operations.
 type SessionHandle struct {
-	ch     cache
+	ch     *bindCache
 	parser *parser.Parser
 }
 
 // NewSessionBindHandle creates a new SessionBindHandle.
 func NewSessionBindHandle(parser *parser.Parser) *SessionHandle {
 	sessionHandle := &SessionHandle{parser: parser}
-	sessionHandle.ch = make(cache)
+	sessionHandle.ch = newBindCache()
 	return sessionHandle
 }
 
 // appendBindRecord adds the BindRecord to the cache, all the stale bindMetas are
 // removed from the cache after this operation.
 func (h *SessionHandle) appendBindRecord(hash string, meta *BindRecord) {
-	oldRecord := h.ch.getBindRecord(hash, meta.OriginalSQL, meta.Db)
-	h.ch.setBindRecord(hash, meta)
+	oldRecord := h.ch.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
+	h.ch.SetBindRecord(hash, meta)
 	updateMetrics(metrics.ScopeSession, oldRecord, meta, false)
 }
 
@@ -80,36 +80,25 @@ func (h *SessionHandle) DropBindRecord(originalSQL, db string, binding *Binding)
 	} else {
 		newRecord = record
 	}
-	h.ch.setBindRecord(hash, newRecord)
+	h.ch.SetBindRecord(hash, newRecord)
 	updateMetrics(metrics.ScopeSession, oldRecord, newRecord, false)
 	return nil
 }
 
 // GetBindRecord return the BindMeta of the (normdOrigSQL,db) if BindMeta exist.
 func (h *SessionHandle) GetBindRecord(hash, normdOrigSQL, db string) *BindRecord {
-	bindRecords := h.ch[hash]
-	for _, bindRecord := range bindRecords {
-		if bindRecord.OriginalSQL == normdOrigSQL {
-			return bindRecord
-		}
-	}
-	return nil
+	return h.ch.GetBindRecord(hash, normdOrigSQL, db)
 }
 
 // GetAllBindRecord return all session bind info.
 func (h *SessionHandle) GetAllBindRecord() (bindRecords []*BindRecord) {
-	for _, bindRecord := range h.ch {
-		bindRecords = append(bindRecords, bindRecord...)
-	}
-	return bindRecords
+	return h.ch.GetAllBindRecords()
 }
 
 // Close closes the session handle.
 func (h *SessionHandle) Close() {
-	for _, bindRecords := range h.ch {
-		for _, bindRecord := range bindRecords {
-			updateMetrics(metrics.ScopeSession, bindRecord, nil, false)
-		}
+	for _, bindRecord := range h.ch.GetAllBindRecords() {
+		updateMetrics(metrics.ScopeSession, bindRecord, nil, false)
 	}
 }
 
