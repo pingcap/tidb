@@ -270,10 +270,7 @@ func (h *Handle) gcHistoricalStats() (err error) {
 	if err != nil {
 		return err
 	}
-	if err := h.DeleteElderHistoricalStatsFromKV(historicalMaxDuration); err != nil {
-		return err
-	}
-	return nil
+	return h.DeleteElderHistoricalStatsFromKV(historicalMaxDuration)
 }
 
 // DeleteElderHistoricalStatsFromKV delete historical stats which are older than NOW()-maxDuration
