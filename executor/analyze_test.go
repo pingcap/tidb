@@ -2643,3 +2643,166 @@ func TestRecordHistoryStatsMetaAfterAnalyze(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta_history where table_id = '%d' order by create_time", tableInfo.Meta().ID)).Sort().Check(
 		testkit.Rows("18 18", "21 21", "24 24", "27 27", "30 30"))
 }
+
+func checkAnalyzeStatus(t *testing.T, tk *testkit.TestKit, expectedJobInfo, expectedStatus, comment string, timeLimit int64) {
+	rows := tk.MustQuery("show analyze status where table_schema = 'test' and table_name = 't' and partition_name = ''").Rows()
+	require.Equal(t, 1, len(rows), comment)
+	require.Equal(t, expectedJobInfo, rows[0][3], comment)
+	require.Equal(t, expectedStatus, rows[0][7], comment)
+	if timeLimit <= 0 {
+		return
+	}
+	const layout = "2006-01-02 15:04:05"
+	startTime, err := time.Parse(layout, rows[0][5].(string))
+	require.NoError(t, err, comment)
+	endTime, err := time.Parse(layout, rows[0][6].(string))
+	require.NoError(t, err, comment)
+	require.Less(t, endTime.Sub(startTime), time.Duration(timeLimit)*time.Second, comment)
+}
+
+func testKillAutoAnalyze(t *testing.T, ver int) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
+	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
+	handle.AutoAnalyzeMinCnt = 0
+	defer func() {
+		handle.AutoAnalyzeMinCnt = 1000
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
+	}()
+	tk.MustExec(fmt.Sprintf("set @@tidb_analyze_version = %v", ver))
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values (1,2), (3,4)")
+	is := dom.InfoSchema()
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	tk.MustExec("analyze table t")
+	tk.MustExec("insert into t values (5,6), (7,8), (9, 10)")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.Update(is))
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	lastVersion := h.GetTableStats(tableInfo).Version
+	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
+	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
+	jobInfo := "auto analyze "
+	if ver == 1 {
+		jobInfo += "columns"
+	} else {
+		jobInfo += "table"
+	}
+	// kill auto analyze when it is pending/running/finished
+	for _, status := range []string{"pending", "running", "finished"} {
+		func() {
+			comment := fmt.Sprintf("kill %v analyze job", status)
+			statistics.ClearHistoryJobs()
+			mockAnalyzeStatus := "github.com/pingcap/tidb/executor/mockKill" + strings.Title(status)
+			if status == "running" {
+				mockAnalyzeStatus += "V" + strconv.Itoa(ver)
+			}
+			mockAnalyzeStatus += "AnalyzeJob"
+			require.NoError(t, failpoint.Enable(mockAnalyzeStatus, "return"))
+			defer func() {
+				require.NoError(t, failpoint.Disable(mockAnalyzeStatus))
+			}()
+			if status == "pending" || status == "running" {
+				mockSlowAnalyze := "github.com/pingcap/tidb/executor/mockSlowAnalyzeV" + strconv.Itoa(ver)
+				require.NoError(t, failpoint.Enable(mockSlowAnalyze, "return"))
+				defer func() {
+					require.NoError(t, failpoint.Disable(mockSlowAnalyze))
+				}()
+			}
+			require.True(t, h.HandleAutoAnalyze(is), comment)
+			currentVersion := h.GetTableStats(tableInfo).Version
+			if status == "finished" {
+				// If we kill a finished job, after kill command the status is still finished and the table stats are updated.
+				checkAnalyzeStatus(t, tk, jobInfo, "finished", comment, -1)
+				require.Greater(t, currentVersion, lastVersion, comment)
+			} else {
+				// If we kill a pending/running job, after kill command the status is failed and the table stats are not updated.
+				// We expect the killed analyze stops quickly. Specifically, end_time - start_time < 10s.
+				checkAnalyzeStatus(t, tk, jobInfo, "failed", comment, 10)
+				require.Equal(t, currentVersion, lastVersion, comment)
+			}
+		}()
+	}
+}
+
+func TestKillAutoAnalyzeV1(t *testing.T) {
+	testKillAutoAnalyze(t, 1)
+}
+
+func TestKillAutoAnalyzeV2(t *testing.T) {
+	testKillAutoAnalyze(t, 2)
+}
+
+func TestKillAutoAnalyzeIndex(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
+	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
+	handle.AutoAnalyzeMinCnt = 0
+	defer func() {
+		handle.AutoAnalyzeMinCnt = 1000
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
+	}()
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values (1,2), (3,4)")
+	is := dom.InfoSchema()
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	tk.MustExec("analyze table t")
+	tk.MustExec("alter table t add index idx(b)")
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	lastVersion := h.GetTableStats(tblInfo).Version
+	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
+	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
+	const jobInfo = "auto analyze index idx"
+	// kill auto analyze when it is pending/running/finished
+	for _, status := range []string{"pending", "running", "finished"} {
+		func() {
+			comment := fmt.Sprintf("kill %v analyze job", status)
+			statistics.ClearHistoryJobs()
+			mockAnalyzeStatus := "github.com/pingcap/tidb/executor/mockKill" + strings.Title(status)
+			if status == "running" {
+				mockAnalyzeStatus += "AnalyzeIndexJob"
+			} else {
+				mockAnalyzeStatus += "AnalyzeJob"
+			}
+			require.NoError(t, failpoint.Enable(mockAnalyzeStatus, "return"))
+			defer func() {
+				require.NoError(t, failpoint.Disable(mockAnalyzeStatus))
+			}()
+			if status == "pending" || status == "running" {
+				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockSlowAnalyzeIndex", "return"))
+				defer func() {
+					require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockSlowAnalyzeIndex"))
+				}()
+			}
+			require.True(t, h.HandleAutoAnalyze(dom.InfoSchema()), comment)
+			currentVersion := h.GetTableStats(tblInfo).Version
+			if status == "finished" {
+				// If we kill a finished job, after kill command the status is still finished and the index stats are updated.
+				checkAnalyzeStatus(t, tk, jobInfo, "finished", comment, -1)
+				require.Greater(t, currentVersion, lastVersion, comment)
+			} else {
+				// If we kill a pending/running job, after kill command the status is failed and the index stats are not updated.
+				// We expect the killed analyze stops quickly. Specifically, end_time - start_time < 10s.
+				checkAnalyzeStatus(t, tk, jobInfo, "failed", comment, 10)
+				require.Equal(t, currentVersion, lastVersion, comment)
+			}
+		}()
+	}
+}
