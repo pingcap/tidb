@@ -105,16 +105,6 @@ func checkEqualTable(t *testing.T, t1, t2 *model.TableInfo) {
 	require.Equal(t, t1.AutoIncID, t2.AutoIncID)
 }
 
-func checkEqualTableT(t *testing.T, t1, t2 *model.TableInfo) {
-	require.Equal(t, t1.ID, t2.ID)
-	require.Equal(t, t1.Name, t2.Name)
-	require.Equal(t, t1.Charset, t2.Charset)
-	require.Equal(t, t1.Collate, t2.Collate)
-	require.EqualValues(t, t1.PKIsHandle, t2.PKIsHandle)
-	require.EqualValues(t, t1.Comment, t2.Comment)
-	require.EqualValues(t, t1.AutoIncID, t2.AutoIncID)
-}
-
 func checkHistoryJob(t *testing.T, job *model.Job) {
 	require.Equal(t, job.State, model.JobStateSynced)
 }
