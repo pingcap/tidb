@@ -23,6 +23,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -33,6 +35,8 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -430,4 +434,209 @@ func TestRenameColumn(t *testing.T) {
 
 	tk.MustExec("drop view test_rename_column_view")
 	tk.MustExec("drop table test_rename_column")
+}
+
+// TestCancelDropColumn tests cancel ddl job which type is drop column.
+func TestCancelDropColumn(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table test_drop_column(c1 int, c2 int)")
+	defer tk.MustExec("drop table test_drop_column;")
+	testCases := []struct {
+		needAddColumn  bool
+		jobState       model.JobState
+		JobSchemaState model.SchemaState
+		cancelSucc     bool
+	}{
+		{true, model.JobStateNone, model.StateNone, true},
+		{false, model.JobStateRunning, model.StateWriteOnly, false},
+		{true, model.JobStateRunning, model.StateDeleteOnly, false},
+		{true, model.JobStateRunning, model.StateDeleteReorganization, false},
+	}
+	var checkErr error
+	hook := &ddl.TestDDLCallback{Do: dom}
+	var jobID int64
+	testCase := &testCases[0]
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionDropColumn && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
+			jobIDs := []int64{job.ID}
+			jobID = job.ID
+			hookCtx := mock.NewContext()
+			hookCtx.Store = store
+			err := hookCtx.NewTxn(context.TODO())
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			txn, err := hookCtx.Txn(true)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			errs, err := admin.CancelJobs(txn, jobIDs)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			if errs[0] != nil {
+				checkErr = errors.Trace(errs[0])
+				return
+			}
+			checkErr = txn.Commit(context.Background())
+		}
+	}
+
+	originalHook := dom.DDL().GetHook()
+	dom.DDL().SetHook(hook)
+	for i := range testCases {
+		var c3IdxID int64
+		testCase = &testCases[i]
+		if testCase.needAddColumn {
+			tk.MustExec("alter table test_drop_column add column c3 int")
+			tk.MustExec("alter table test_drop_column add index idx_c3(c3)")
+			c3IdxID = testGetIndexIDT(t, tk.Session(), "test", "test_drop_column", "idx_c3")
+		}
+
+		err := tk.ExecToErr("alter table test_drop_column drop column c3")
+		var col1 *table.Column
+		var idx1 table.Index
+		tbl := tk.GetTableByName("test", "test_drop_column")
+		for _, col := range tbl.Cols() {
+			if strings.EqualFold(col.Name.L, "c3") {
+				col1 = col
+				break
+			}
+		}
+		for _, idx := range tbl.Indices() {
+			if strings.EqualFold(idx.Meta().Name.L, "idx_c3") {
+				idx1 = idx
+				break
+			}
+		}
+		if testCase.cancelSucc {
+			require.NoError(t, checkErr)
+			require.NotNil(t, col1)
+			require.Equal(t, "c3", col1.Name.L)
+			require.NotNil(t, idx1)
+			require.Equal(t, "idx_c3", idx1.Meta().Name.L)
+			require.EqualError(t, err, "[ddl:8214]Cancelled DDL job")
+		} else {
+			require.Nil(t, col1)
+			require.Nil(t, col1)
+			require.NoError(t, err)
+			require.EqualError(t, checkErr, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
+			if c3IdxID != 0 {
+				// Check index is deleted
+				checkDelRangeAddedN(tk, jobID, c3IdxID)
+			}
+		}
+	}
+	dom.DDL().SetHook(originalHook)
+	tk.MustExec("alter table test_drop_column add column c3 int")
+	tk.MustExec("alter table test_drop_column drop column c3")
+}
+
+// TestCancelDropColumns tests cancel ddl job which type is drop multi-columns.
+func TestCancelDropColumns(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table test_drop_column(c1 int, c2 int)")
+	defer tk.MustExec("drop table test_drop_column;")
+	testCases := []struct {
+		needAddColumn  bool
+		jobState       model.JobState
+		JobSchemaState model.SchemaState
+		cancelSucc     bool
+	}{
+		{true, model.JobStateNone, model.StateNone, true},
+		{false, model.JobStateRunning, model.StateWriteOnly, false},
+		{true, model.JobStateRunning, model.StateDeleteOnly, false},
+		{true, model.JobStateRunning, model.StateDeleteReorganization, false},
+	}
+	var checkErr error
+	hook := &ddl.TestDDLCallback{Do: dom}
+	var jobID int64
+	testCase := &testCases[0]
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionDropColumns && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
+			jobIDs := []int64{job.ID}
+			jobID = job.ID
+			hookCtx := mock.NewContext()
+			hookCtx.Store = store
+			err := hookCtx.NewTxn(context.TODO())
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			txn, err := hookCtx.Txn(true)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			errs, err := admin.CancelJobs(txn, jobIDs)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			if errs[0] != nil {
+				checkErr = errors.Trace(errs[0])
+				return
+			}
+			checkErr = txn.Commit(context.Background())
+		}
+	}
+
+	originalHook := dom.DDL().GetHook()
+	dom.DDL().SetHook(hook)
+	for i := range testCases {
+		var c3IdxID int64
+		testCase = &testCases[i]
+		if testCase.needAddColumn {
+			tk.MustExec("alter table test_drop_column add column c3 int, add column c4 int")
+			tk.MustExec("alter table test_drop_column add index idx_c3(c3)")
+			c3IdxID = testGetIndexIDT(t, tk.Session(), "test", "test_drop_column", "idx_c3")
+		}
+		err := tk.ExecToErr("alter table test_drop_column drop column c3, drop column c4")
+		tbl := tk.GetTableByName("test", "test_drop_column")
+		col3 := table.FindCol(tbl.Cols(), "c3")
+		col4 := table.FindCol(tbl.Cols(), "c4")
+		var idx3 table.Index
+		for _, idx := range tbl.Indices() {
+			if strings.EqualFold(idx.Meta().Name.L, "idx_c3") {
+				idx3 = idx
+				break
+			}
+		}
+		if testCase.cancelSucc {
+			require.NoError(t, checkErr)
+			require.NotNil(t, col3)
+			require.NotNil(t, col4)
+			require.NotNil(t, idx3)
+			require.Equal(t, "c3", col3.Name.L)
+			require.Equal(t, "c4", col4.Name.L)
+			require.Equal(t, "idx_c3", idx3.Meta().Name.L)
+			require.EqualError(t, err, "[ddl:8214]Cancelled DDL job")
+		} else {
+			require.Nil(t, col3)
+			require.Nil(t, col4)
+			require.Nil(t, idx3)
+			require.NoError(t, err)
+			require.EqualError(t, checkErr, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
+			if c3IdxID != 0 {
+				// Check index is deleted
+				checkDelRangeAddedN(tk, jobID, c3IdxID)
+			}
+		}
+	}
+	dom.DDL().SetHook(originalHook)
+	tk.MustExec("alter table test_drop_column add column c3 int, add column c4 int")
+	tk.MustExec("alter table test_drop_column drop column c3, drop column c4")
 }
