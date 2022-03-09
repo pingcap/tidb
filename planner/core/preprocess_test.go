@@ -18,7 +18,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
@@ -126,8 +126,8 @@ func TestValidator(t *testing.T) {
 			errors.New("[types:1074]Column length too big for column 'c' (max = 16383); use BLOB or TEXT instead")},
 		{"alter table t add column c varchar(4294967295) CHARACTER SET ascii", true,
 			errors.New("[types:1074]Column length too big for column 'c' (max = 65535); use BLOB or TEXT instead")},
-		{"create table t", false, ddl.ErrTableMustHaveColumns},
-		{"create table t (unique(c))", false, ddl.ErrTableMustHaveColumns},
+		{"create table t", false, dbterror.ErrTableMustHaveColumns},
+		{"create table t (unique(c))", false, dbterror.ErrTableMustHaveColumns},
 
 		{"create table `t ` (a int)", true, errors.New("[ddl:1103]Incorrect table name 't '")},
 		{"create table `` (a int)", true, errors.New("[ddl:1103]Incorrect table name ''")},
@@ -223,7 +223,7 @@ func TestValidator(t *testing.T) {
 		{"select * from (select 1 ) a , (select 2) b, (select * from (select 3) a join (select 4) b) c;", false, nil},
 
 		{"CREATE VIEW V (a,b,c) AS SELECT 1,1,3;", false, nil},
-		{"CREATE VIEW V AS SELECT 5 INTO OUTFILE 'ttt'", true, ddl.ErrViewSelectClause.GenWithStackByArgs("INFO")},
+		{"CREATE VIEW V AS SELECT 5 INTO OUTFILE 'ttt'", true, dbterror.ErrViewSelectClause.GenWithStackByArgs("INFO")},
 		{"CREATE VIEW V AS SELECT 5 FOR UPDATE", false, nil},
 		{"CREATE VIEW V AS SELECT 5 LOCK IN SHARE MODE", false, nil},
 
@@ -250,11 +250,11 @@ func TestValidator(t *testing.T) {
 		{"CREATE INDEX `` on t ((lower(a)));", true, errors.New("[ddl:1280]Incorrect index name ''")},
 
 		// issue 21082
-		{"CREATE TABLE t (a int) ENGINE=Unknown;", false, ddl.ErrUnknownEngine},
+		{"CREATE TABLE t (a int) ENGINE=Unknown;", false, dbterror.ErrUnknownEngine},
 		{"CREATE TABLE t (a int) ENGINE=InnoDB;", false, nil},
 		{"CREATE TABLE t (a int);", false, nil},
 		{"ALTER TABLE t ENGINE=InnoDB;", false, nil},
-		{"ALTER TABLE t ENGINE=Unknown;", false, ddl.ErrUnknownEngine},
+		{"ALTER TABLE t ENGINE=Unknown;", false, dbterror.ErrUnknownEngine},
 
 		// issue 20295
 		// issue 11193
@@ -361,6 +361,6 @@ func TestLargeVarcharAutoConv(t *testing.T) {
 	require.Equal(t, uint16(3), warnCnt)
 	warns := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 	for i := range warns {
-		require.True(t, terror.ErrorEqual(warns[i].Err, ddl.ErrAutoConvert))
+		require.True(t, terror.ErrorEqual(warns[i].Err, dbterror.ErrAutoConvert))
 	}
 }
