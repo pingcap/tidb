@@ -2393,7 +2393,7 @@
       {
         "SQL": "explain format = 'verbose' select count(*) from t2 group by a",
         "Plan": [
-          "TableReader_24 3.00 3.33 root  data:ExchangeSender_23",
+          "TableReader_24 3.00 4.22 root  data:ExchangeSender_23",
           "└─ExchangeSender_23 3.00 77.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "  └─Projection_22 3.00 0.00 batchCop[tiflash]  Column#4",
           "    └─HashAgg_8 3.00 77.00 batchCop[tiflash]  group by:test.t2.a, funcs:count(1)->Column#4",
@@ -2443,8 +2443,8 @@
       {
         "SQL": "explain format = 'verbose' select count(*) from t1 join t2 on t1.a = t2.a",
         "Plan": [
-          "StreamAgg_12 1.00 18.93 root  funcs:count(1)->Column#7",
-          "└─TableReader_45 3.00 9.93 root  data:ExchangeSender_44",
+          "StreamAgg_12 1.00 20.84 root  funcs:count(1)->Column#7",
+          "└─TableReader_45 3.00 11.84 root  data:ExchangeSender_44",
           "  └─ExchangeSender_44 3.00 235.38 cop[tiflash]  ExchangeType: PassThrough",
           "    └─HashJoin_41 3.00 235.38 cop[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
           "      ├─ExchangeReceiver_20(Build) 3.00 77.00 cop[tiflash]  ",
@@ -2458,11 +2458,11 @@
       {
         "SQL": "explain format = 'verbose' select count(*) from t1 join t2 on t1.a = t2.a join t3 on t1.b = t3.b",
         "Plan": [
-          "StreamAgg_15 1.00 60.60 root  funcs:count(1)->Column#10",
-          "└─HashJoin_65 3.00 51.60 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
+          "StreamAgg_15 1.00 63.52 root  funcs:count(1)->Column#10",
+          "└─HashJoin_65 3.00 54.52 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
           "  ├─IndexReader_53(Build) 3.00 11.66 root  index:IndexFullScan_52",
           "  │ └─IndexFullScan_52 3.00 150.50 cop[tikv] table:t3, index:c(b) keep order:false",
-          "  └─TableReader_39(Probe) 3.00 11.14 root  data:ExchangeSender_38",
+          "  └─TableReader_39(Probe) 3.00 14.06 root  data:ExchangeSender_38",
           "    └─ExchangeSender_38 3.00 264.38 cop[tiflash]  ExchangeType: PassThrough",
           "      └─HashJoin_29 3.00 264.38 cop[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
           "        ├─ExchangeReceiver_35(Build) 3.00 106.00 cop[tiflash]  ",
@@ -2476,19 +2476,19 @@
       {
         "SQL": "explain format = 'verbose' select (2) in (select count(*) from t1) from (select t.b < (select t.b from t2 limit 1 )  from t3 t) t",
         "Plan": [
-          "HashJoin_19 3.00 127.40 root  CARTESIAN left outer semi join",
+          "HashJoin_19 3.00 130.32 root  CARTESIAN left outer semi join",
           "├─Selection_39(Build) 0.80 11.18 root  eq(2, Column#18)",
           "│ └─StreamAgg_60 1.00 69.50 root  funcs:count(Column#32)->Column#18",
           "│   └─TableReader_61 1.00 5.17 root  data:StreamAgg_44",
           "│     └─StreamAgg_44 1.00 8.18 batchCop[tiflash]  funcs:count(1)->Column#32",
           "│       └─TableFullScan_59 3.00 60.50 batchCop[tiflash] table:t1 keep order:false",
-          "└─Projection_20(Probe) 3.00 95.82 root  1->Column#28",
-          "  └─Apply_22 3.00 76.02 root  CARTESIAN left outer join",
+          "└─Projection_20(Probe) 3.00 98.74 root  1->Column#28",
+          "  └─Apply_22 3.00 78.94 root  CARTESIAN left outer join",
           "    ├─TableReader_24(Build) 3.00 10.16 root  data:TableFullScan_23",
           "    │ └─TableFullScan_23 3.00 128.00 cop[tikv] table:t keep order:false",
-          "    └─Projection_27(Probe) 1.00 21.95 root  1->Column#26",
-          "      └─Limit_30 1.00 3.35 root  offset:0, count:1",
-          "        └─TableReader_38 1.00 3.35 root  data:ExchangeSender_37",
+          "    └─Projection_27(Probe) 1.00 22.93 root  1->Column#26",
+          "      └─Limit_30 1.00 4.33 root  offset:0, count:1",
+          "        └─TableReader_38 1.00 4.33 root  data:ExchangeSender_37",
           "          └─ExchangeSender_37 1.00 79.50 cop[tiflash]  ExchangeType: PassThrough",
           "            └─Limit_36 1.00 79.50 cop[tiflash]  offset:0, count:1",
           "              └─TableFullScan_35 1.00 79.50 cop[tiflash] table:t2 keep order:false"
