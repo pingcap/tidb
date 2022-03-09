@@ -214,12 +214,12 @@ func getBatchPendingTiFlashCount(ctx sessionctx.Context) uint32 {
 }
 
 // getPendingTiFlashTableCount counts unavailable TiFlash replica by iterating all tables in infoCache.
-func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion *int64, pendingCount *uint32) {
+func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion int64, pendingCount uint32) (int64, uint32) {
 	is := d.GetInfoSchemaWithInterceptor(sctx)
 	dbInfos := is.AllSchemas()
 	// If there are no schema change since last time(can be weird).
-	if is.SchemaMetaVersion() == *originVersion {
-		return
+	if is.SchemaMetaVersion() == originVersion {
+		return originVersion, pendingCount
 	}
 	cnt := uint32(0)
 	for _, dbInfo := range dbInfos {
@@ -232,8 +232,7 @@ func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion
 			}
 		}
 	}
-	*originVersion = is.SchemaMetaVersion()
-	*pendingCount = cnt
+	return is.SchemaMetaVersion(), cnt
 }
 
 func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
@@ -328,7 +327,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 				if isDone() {
 					return true
 				}
-				d.getPendingTiFlashTableCount(sctx, &originVersion, &pendingCount)
+				originVersion, pendingCount = d.getPendingTiFlashTableCount(sctx, originVersion, pendingCount)
 				delay := time.Duration(0)
 				if pendingCount >= threshold {
 					logutil.BgLogger().Info("too many unavailable tables, wait", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount), zap.Int64("tableID", tbl.ID), zap.Duration("time", configWaitTime))
