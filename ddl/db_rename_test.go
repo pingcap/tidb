@@ -62,7 +62,7 @@ func TestCancelRenameIndex(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test_db")
+	tk.MustExec("use test")
 	tk.MustExec("create database if not exists test_rename_index")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(c1 int, c2 int)")
