@@ -437,18 +437,6 @@ func (s *testSerialDBSuite) TestDropTableOnTiKVDiskFull(c *C) {
 	tk.MustExec("drop table test_disk_full_drop_table;")
 }
 
-// TODO: replace with batchInsert when migrating test to testify
-func batchInsertLegacy(tk *testkit.TestKit, tbl string, start, end int) {
-	dml := fmt.Sprintf("insert into %s values", tbl)
-	for i := start; i < end; i++ {
-		dml += fmt.Sprintf("(%d, %d, %d)", i, i, i)
-		if i != end-1 {
-			dml += ","
-		}
-	}
-	tk.MustExec(dml)
-}
-
 // TestCancelDropIndex tests cancel ddl job which type is drop primary key.
 func (s *testDBSuite4) TestCancelDropPrimaryKey(c *C) {
 	idxName := "primary"
