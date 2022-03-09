@@ -174,8 +174,8 @@ func ShowCreateView(tctx *tcontext.Context, db *BaseConn, database, view string)
 	return createTableSQL.String(), createViewSQL.String(), nil
 }
 
-// ShowCreateTable constructs the create table SQL for a specified table
-// returns (createTableSQL, error)
+// ShowCreateSequence constructs the create sequence SQL for a specified sequence
+// returns (createSequenceSQL, error)
 func ShowCreateSequence(tctx *tcontext.Context, db *BaseConn, database, sequence string) (string, error) {
 	var oneRow [2]string
 	handleOneRow := func(rows *sql.Rows) error {

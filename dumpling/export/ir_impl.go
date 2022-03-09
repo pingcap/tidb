@@ -257,9 +257,9 @@ type tableMeta struct {
 	specCmts           []string
 	showCreateTable    string
 	showCreateView     string
+	showCreateSequence string
 	avgRowLength       uint64
 	hasImplicitRowID   bool
-	showCreateSequence string
 }
 
 func (tm *tableMeta) ColumnTypes() []string {
