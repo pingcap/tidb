@@ -27,7 +27,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
@@ -47,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
@@ -1813,7 +1813,7 @@ func assertWarningExec(tk *testkit.TestKit, t *testing.T, sql string, expectedWa
 }
 
 func assertAlterWarnExec(tk *testkit.TestKit, t *testing.T, sql string) {
-	assertWarningExec(tk, t, sql, ddl.ErrAlterOperationNotSupported)
+	assertWarningExec(tk, t, sql, dbterror.ErrAlterOperationNotSupported)
 }
 
 func TestAlterAlgorithm(t *testing.T) {
@@ -1921,8 +1921,8 @@ func TestFulltextIndexIgnore(t *testing.T) {
 	tk.MustExec("drop table if exists t_ft")
 	defer tk.MustExec("drop table if exists t_ft")
 	// Make sure that creating and altering to add a fulltext key gives the correct warning
-	assertWarningExec(tk, t, "create table t_ft (a text, fulltext key (a))", ddl.ErrTableCantHandleFt)
-	assertWarningExec(tk, t, "alter table t_ft add fulltext key (a)", ddl.ErrTableCantHandleFt)
+	assertWarningExec(tk, t, "create table t_ft (a text, fulltext key (a))", dbterror.ErrTableCantHandleFt)
+	assertWarningExec(tk, t, "alter table t_ft add fulltext key (a)", dbterror.ErrTableCantHandleFt)
 
 	// Make sure table t_ft still has no indexes even after it was created and altered
 	r := tk.MustQuery("show index from t_ft")
@@ -3908,16 +3908,16 @@ func TestInvalidPartitionNameWhenCreateTable(t *testing.T) {
 
 	_, err := tk.Exec("create table t(a int) partition by range (a) (partition p0 values less than (0), partition `p1 ` values less than (3))")
 	require.Error(t, err)
-	require.Truef(t, terror.ErrorEqual(err, ddl.ErrWrongPartitionName), "err %v", err)
+	require.Truef(t, terror.ErrorEqual(err, dbterror.ErrWrongPartitionName), "err %v", err)
 
 	_, err = tk.Exec("create table t(a int) partition by range (a) (partition `` values less than (0), partition `p1` values less than (3))")
 	require.Error(t, err)
-	require.Truef(t, terror.ErrorEqual(err, ddl.ErrWrongPartitionName), "err %v", err)
+	require.Truef(t, terror.ErrorEqual(err, dbterror.ErrWrongPartitionName), "err %v", err)
 
 	tk.MustExec("create table t(a int) partition by range (a) (partition `p0` values less than (0), partition `p1` values less than (3))")
 	_, err = tk.Exec("alter table t add partition (partition `p2 ` values less than (5))")
 	require.Error(t, err)
-	require.Truef(t, terror.ErrorEqual(err, ddl.ErrWrongPartitionName), "err %v", err)
+	require.Truef(t, terror.ErrorEqual(err, dbterror.ErrWrongPartitionName), "err %v", err)
 }
 
 func TestDDLLastInfo(t *testing.T) {
