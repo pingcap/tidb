@@ -34,7 +34,7 @@ func (g gener) gen() interface{} {
 	if _, ok := result.(string); ok {
 		dg := newDefaultGener(0, types.ETDuration)
 		d := dg.gen().(types.Duration)
-		if int8(d.Duration)%2 == 0 {
+		if d.Duration%2 == 0 {
 			d.Fsp = 0
 		} else {
 			d.Fsp = 1

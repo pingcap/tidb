@@ -26,8 +26,9 @@ import (
 )
 
 func TestDDLAfterLoad(t *testing.T) {
-	testKit, do, clean := createTestKitAndDom(t)
+	store, do, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
 	testKit.MustExec("analyze table t")
@@ -59,8 +60,9 @@ func TestDDLAfterLoad(t *testing.T) {
 }
 
 func TestDDLTable(t *testing.T) {
-	testKit, do, clean := createTestKitAndDom(t)
+	store, do, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
 	is := do.InfoSchema()
@@ -98,8 +100,9 @@ func TestDDLTable(t *testing.T) {
 }
 
 func TestDDLHistogram(t *testing.T) {
-	testKit, do, clean := createTestKitAndDom(t)
+	store, do, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+	testKit := testkit.NewTestKit(t, store)
 	h := do.StatsHandle()
 
 	testKit.MustExec("use test")
@@ -185,8 +188,9 @@ func TestDDLHistogram(t *testing.T) {
 }
 
 func TestDDLPartition(t *testing.T) {
-	testKit, do, clean := createTestKitAndDom(t)
+	store, do, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+	testKit := testkit.NewTestKit(t, store)
 	testkit.WithPruneMode(testKit, variable.Static, func() {
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t")

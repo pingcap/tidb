@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -85,12 +84,11 @@ func TestDefaultValueInEnum(t *testing.T) {
 }
 
 func TestDDLStatementsBackFill(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	needReorg := false
-	dom := domain.GetDomain(tk.Session())
 	dom.DDL().SetHook(&ddl.TestDDLCallback{
 		Do: dom,
 		OnJobUpdatedExported: func(job *model.Job) {
@@ -118,4 +116,11 @@ func TestDDLStatementsBackFill(t *testing.T) {
 		tk.MustExec(tc.ddlSQL)
 		require.Equal(t, tc.expectedNeedReorg, needReorg, tc)
 	}
+}
+
+func TestSchema(t *testing.T) {
+	_, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	ddl.ExportTestSchema(t)
 }

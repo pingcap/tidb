@@ -258,7 +258,7 @@ func NewLocalBackend(
 	if err != nil {
 		return backend.MakeBackend(nil), errors.Annotate(err, "construct pd client failed")
 	}
-	splitCli := split.NewSplitClient(pdCtl.GetPDClient(), tls.TLSConfig())
+	splitCli := split.NewSplitClient(pdCtl.GetPDClient(), tls.TLSConfig(), false)
 
 	shouldCreate := true
 	if cfg.Checkpoint.Enable {
@@ -592,7 +592,7 @@ func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, e
 		return errors.Trace(err)
 	}
 	if !common.IsDirExists(sstDir) {
-		if err := os.Mkdir(sstDir, 0o755); err != nil {
+		if err := os.Mkdir(sstDir, 0o750); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -1526,7 +1526,7 @@ func (local *local) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error
 		localEngine.db = db
 		localEngine.engineMeta = engineMeta{}
 		if !common.IsDirExists(localEngine.sstDir) {
-			if err := os.Mkdir(localEngine.sstDir, 0o755); err != nil {
+			if err := os.Mkdir(localEngine.sstDir, 0o750); err != nil {
 				return errors.Trace(err)
 			}
 		}

@@ -131,7 +131,7 @@ type Config struct {
 	CompatibleKillQuery        bool               `toml:"compatible-kill-query" json:"compatible-kill-query"`
 	Plugin                     Plugin             `toml:"plugin" json:"plugin"`
 	PessimisticTxn             PessimisticTxn     `toml:"pessimistic-txn" json:"pessimistic-txn"`
-	CheckMb4ValueInUTF8        bool               `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	CheckMb4ValueInUTF8        AtomicBool         `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
 	MaxIndexLength             int                `toml:"max-index-length" json:"max-index-length"`
 	IndexLimit                 int                `toml:"index-limit" json:"index-limit"`
 	TableColumnCountLimit      uint32             `toml:"table-column-count-limit" json:"table-column-count-limit"`
@@ -569,6 +569,8 @@ type PessimisticTxn struct {
 	DeadlockHistoryCapacity uint `toml:"deadlock-history-capacity" json:"deadlock-history-capacity"`
 	// Whether retryable deadlocks (in-statement deadlocks) are collected to the information_schema.deadlocks table.
 	DeadlockHistoryCollectRetryable bool `toml:"deadlock-history-collect-retryable" json:"deadlock-history-collect-retryable"`
+	// PessimisticAutoCommit represents if true it means the auto-commit transactions will be in pessimistic mode.
+	PessimisticAutoCommit AtomicBool `toml:"pessimistic-auto-commit" json:"pessimistic-auto-commit"`
 }
 
 // DefaultPessimisticTxn returns the default configuration for PessimisticTxn
@@ -577,6 +579,7 @@ func DefaultPessimisticTxn() PessimisticTxn {
 		MaxRetryCount:                   256,
 		DeadlockHistoryCapacity:         10,
 		DeadlockHistoryCollectRetryable: false,
+		PessimisticAutoCommit:           *NewAtomicBool(false),
 	}
 }
 
@@ -629,7 +632,7 @@ var defaultConf = Config{
 	MemQuotaQuery:                1 << 30,
 	EnableStreaming:              false,
 	EnableBatchDML:               false,
-	CheckMb4ValueInUTF8:          true,
+	CheckMb4ValueInUTF8:          *NewAtomicBool(true),
 	MaxIndexLength:               3072,
 	IndexLimit:                   64,
 	TableColumnCountLimit:        1017,
@@ -744,10 +747,11 @@ var defaultConf = Config{
 		AutoTLS:                     false,
 		RSAKeySize:                  4096,
 	},
-	DeprecateIntegerDisplayWidth: false,
-	EnableEnumLengthLimit:        true,
-	StoresRefreshInterval:        defTiKVCfg.StoresRefreshInterval,
-	EnableForwarding:             defTiKVCfg.EnableForwarding,
+	DeprecateIntegerDisplayWidth:         false,
+	EnableEnumLengthLimit:                true,
+	StoresRefreshInterval:                defTiKVCfg.StoresRefreshInterval,
+	EnableForwarding:                     defTiKVCfg.EnableForwarding,
+	NewCollationsEnabledOnFirstBootstrap: true,
 }
 
 var (
@@ -1060,7 +1064,7 @@ func initByLDFlags(edition, checkBeforeDropLDFlag string) {
 }
 
 // The following constants represents the valid action configurations for OOMAction.
-// NOTE: Although the values is case insensitive, we should use lower-case
+// NOTE: Although the values is case-insensitive, we should use lower-case
 // strings because the configuration value will be transformed to lower-case
 // string and compared with these constants in the further usage.
 const (

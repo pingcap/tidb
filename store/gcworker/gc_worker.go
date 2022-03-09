@@ -1914,6 +1914,16 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (err error) {
 	for _, id := range physicalTableIDs {
 		bundles = append(bundles, placement.NewBundle(id))
 	}
+
+	for _, id := range physicalTableIDs {
+		// Delete pd rule
+		logutil.BgLogger().Info("try delete TiFlash pd rule", zap.String("endKey", string(dr.EndKey)))
+		ruleID := fmt.Sprintf("table-%v-r", id)
+		if err := infosync.DeleteTiFlashPlacementRule(context.Background(), "tiflash", ruleID); err != nil {
+			// If DeletePlacementRule fails here, the rule will be deleted in `HandlePlacementRuleRoutine`.
+			logutil.BgLogger().Error("delete TiFlash pd rule failed when gc", zap.Error(err), zap.String("ruleID", ruleID))
+		}
+	}
 	return infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
 }
 

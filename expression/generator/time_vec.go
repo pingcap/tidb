@@ -242,7 +242,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 		{{ end }}
 	{{ else if or (eq .SigName "builtinAddStringAndDurationSig") (eq .SigName "builtinSubStringAndDurationSig") }}
 		sc := b.ctx.GetSessionVars().StmtCtx
-		fsp1 := int8(b.args[1].GetType().Decimal)
+		fsp1 := b.args[1].GetType().Decimal
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		var output string
 		var isNull bool
@@ -309,8 +309,8 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 			}
 		}
 	{{ else if or (eq .SigName "builtinAddDateAndDurationSig") (eq .SigName "builtinSubDateAndDurationSig") }}
-		fsp0 := int8(b.args[0].GetType().Decimal)
-		fsp1 := int8(b.args[1].GetType().Decimal)
+		fsp0 := b.args[0].GetType().Decimal
+		fsp1 := b.args[1].GetType().Decimal
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		{{ if eq $.FuncName "AddTime" }}
 		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
@@ -323,7 +323,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 		output := sum.String()
 	{{ else if or (eq .SigName "builtinAddDateAndStringSig") (eq .SigName "builtinSubDateAndStringSig") }}
 		{{ template "ConvertStringToDuration" . }}
-		fsp0 := int8(b.args[0].GetType().Decimal)
+		fsp0 := b.args[0].GetType().Decimal
 		{{ if eq $.FuncName "AddTime" }}
 		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
 		{{ else }}
@@ -436,7 +436,7 @@ func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column)
 			{{ if $BIsDuration }} lhsDur, _, lhsIsDuration,
 			{{- else if $BIsTime }} _, lhsTime, lhsIsDuration,
 			{{- else if $BIsString }} lhsDur, lhsTime, lhsIsDuration,
-			{{- end }}  err := convertStringToDuration(stmtCtx, buf0.GetString(i), int8(b.tp.Decimal))
+			{{- end }}  err := convertStringToDuration(stmtCtx, buf0.GetString(i), b.tp.Decimal)
 			if err != nil  {
 				return err
 			}
@@ -462,7 +462,7 @@ func (b *{{.SigName}}) vecEvalDuration(input *chunk.Chunk, result *chunk.Column)
 			{{ if $AIsDuration }} rhsDur, _, rhsIsDuration,
 			{{- else if $AIsTime }}_, rhsTime, rhsIsDuration,
 			{{- else if $AIsString }} rhsDur, rhsTime, rhsIsDuration,
-			{{- end}}  err := convertStringToDuration(stmtCtx, buf1.GetString(i), int8(b.tp.Decimal))
+			{{- end}}  err := convertStringToDuration(stmtCtx, buf1.GetString(i), b.tp.Decimal)
 			if err != nil  {
 				return err
 			}
@@ -739,7 +739,7 @@ func (g gener) gen() interface{} {
 	if _, ok := result.(string); ok {
 		dg := newDefaultGener(0, types.ETDuration)
 		d := dg.gen().(types.Duration)
-		if int8(d.Duration)%2 == 0 {
+		if d.Duration%2 == 0 {
 			d.Fsp = 0
 		} else {
 			d.Fsp = 1

@@ -16,20 +16,15 @@ package ddltest
 
 import (
 	"fmt"
-	"io"
 	"math"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 	goctx "golang.org/x/net/context"
 )
@@ -44,90 +39,12 @@ func getIndex(t table.Table, name string) table.Index {
 	return nil
 }
 
-func (s *ddlSuite) checkAddIndex(t *testing.T, indexInfo *model.IndexInfo) {
-	ctx := s.ctx
-	err := ctx.NewTxn(goctx.Background())
-	require.NoError(t, err)
-	tbl := s.getTable(t, "test_index")
-
-	// read handles form table
-	handles := kv.NewHandleMap()
-	err = tables.IterRecords(tbl, ctx, tbl.Cols(),
-		func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-			handles.Set(h, struct{}{})
-			return true, nil
-		})
-	require.NoError(t, err)
-
-	// read handles from index
-	idx := tables.NewIndex(tbl.Meta().ID, tbl.Meta(), indexInfo)
-	err = ctx.NewTxn(goctx.Background())
-	require.NoError(t, err)
-	txn, err := ctx.Txn(false)
-	require.NoError(t, err)
-	defer func() {
-		err = txn.Rollback()
-		require.NoError(t, err)
-	}()
-
-	it, err := idx.SeekFirst(txn)
-	require.NoError(t, err)
-	defer it.Close()
-
-	for {
-		_, h, err := it.Next()
-		if terror.ErrorEqual(err, io.EOF) {
-			break
-		}
-
-		require.NoError(t, err)
-		_, ok := handles.Get(h)
-		require.True(t, ok)
-		handles.Delete(h)
-	}
-
-	require.Equal(t, 0, handles.Len())
-}
-
 func (s *ddlSuite) checkDropIndex(t *testing.T, indexInfo *model.IndexInfo) {
 	gcWorker, err := gcworker.NewMockGCWorker(s.store)
 	require.NoError(t, err)
 	err = gcWorker.DeleteRanges(goctx.Background(), uint64(math.MaxInt32))
 	require.NoError(t, err)
-
-	ctx := s.ctx
-	err = ctx.NewTxn(goctx.Background())
-	require.NoError(t, err)
-	tbl := s.getTable(t, "test_index")
-
-	// read handles from index
-	idx := tables.NewIndex(tbl.Meta().ID, tbl.Meta(), indexInfo)
-	err = ctx.NewTxn(goctx.Background())
-	require.NoError(t, err)
-	txn, err := ctx.Txn(false)
-	require.NoError(t, err)
-	defer func() {
-		err := txn.Rollback()
-		require.NoError(t, err)
-	}()
-
-	it, err := idx.SeekFirst(txn)
-	require.NoError(t, err)
-	defer it.Close()
-
-	handles := kv.NewHandleMap()
-	for {
-		_, h, err := it.Next()
-		if terror.ErrorEqual(err, io.EOF) {
-			break
-		}
-
-		require.NoError(t, err)
-		handles.Set(h, struct{}{})
-	}
-
-	// TODO: Uncomment this after apply pool is finished
-	// c.Assert(handles.Len(), Equals, 0)
+	s.mustExec(fmt.Sprintf("admin check table %s", indexInfo.Table.String()))
 }
 
 // TestIndex operations on table test_index (c int, c1 bigint, c2 double, c3 varchar(256), primary key(c)).
@@ -194,7 +111,7 @@ func TestIndex(t *testing.T) {
 			if col.Add {
 				require.NotNil(t, index)
 				oldIndex = index
-				s.checkAddIndex(t, index.Meta())
+				s.mustExec("admin check table test_index")
 			} else {
 				require.Nil(t, index)
 				s.checkDropIndex(t, oldIndex.Meta())

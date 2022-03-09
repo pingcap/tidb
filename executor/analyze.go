@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
@@ -99,6 +100,9 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	for _, task := range e.tasks {
 		statistics.AddNewAnalyzeJob(task.job)
 	}
+	failpoint.Inject("mockKillPendingAnalyzeJob", func() {
+		domain.GetDomain(e.ctx).SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
+	})
 	for _, task := range e.tasks {
 		taskCh <- task
 	}
@@ -178,11 +182,18 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			finishJobWithLogFn(ctx, results.Job, true)
 		} else {
 			finishJobWithLogFn(ctx, results.Job, false)
+			// Dump stats to historical storage.
+			if err := e.recordHistoricalStats(results.TableID.TableID); err != nil {
+				logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
+			}
 		}
 	}
 	for _, task := range e.tasks {
 		statistics.MoveToHistory(task.job)
 	}
+	failpoint.Inject("mockKillFinishedAnalyzeJob", func() {
+		domain.GetDomain(e.ctx).SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
+	})
 	if err != nil {
 		return err
 	}
@@ -209,6 +220,10 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				err = statsHandle.SaveStatsToStorage(globalStatsID.tableID, globalStats.Count, info.isIndex, hg, cms, topN, fms, info.statsVersion, 1, false, true)
 				if err != nil {
 					logutil.Logger(ctx).Error("save global-level stats to storage failed", zap.Error(err))
+				}
+				// Dump stats to historical storage.
+				if err := e.recordHistoricalStats(globalStatsID.tableID); err != nil {
+					logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
 				}
 			}
 		}
@@ -251,13 +266,35 @@ func (e *AnalyzeExec) saveAnalyzeOptsV2() error {
 		idx += 1
 	}
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(context.TODO(), true, sql.String())
+	_, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, sql.String())
 	if err != nil {
 		return err
 	}
-	_, _, err = exec.ExecRestrictedStmt(context.TODO(), stmt)
+	return nil
+}
+
+func (e *AnalyzeExec) recordHistoricalStats(tableID int64) error {
+	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
+	historicalStatsEnabled, err := statsHandle.CheckHistoricalStatsEnable()
 	if err != nil {
-		return err
+		return errors.Errorf("check tidb_enable_historical_stats failed: %v", err)
+	}
+	if !historicalStatsEnabled {
+		return nil
+	}
+
+	is := domain.GetDomain(e.ctx).InfoSchema()
+	tbl, existed := is.TableByID(tableID)
+	if !existed {
+		return errors.Errorf("cannot get table by id %d", tableID)
+	}
+	tblInfo := tbl.Meta()
+	dbInfo, existed := is.SchemaByTable(tblInfo)
+	if !existed {
+		return errors.Errorf("cannot get DBInfo by TableID %d", tableID)
+	}
+	if _, err := statsHandle.RecordHistoricalStatsToStorage(dbInfo.Name.O, tblInfo); err != nil {
+		return errors.Errorf("record table %s.%s's historical stats failed", dbInfo.Name.O, tblInfo.Name.O)
 	}
 	return nil
 }
@@ -545,6 +582,15 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 		statsVer = int(*e.analyzePB.IdxReq.Version)
 	}
 	for {
+		failpoint.Inject("mockKillRunningAnalyzeIndexJob", func() {
+			domain.GetDomain(e.ctx).SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
+		})
+		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
+			return nil, nil, nil, nil, errors.Trace(ErrQueryInterrupted)
+		}
+		failpoint.Inject("mockSlowAnalyzeIndex", func() {
+			time.Sleep(1000 * time.Second)
+		})
 		data, err := result.NextRaw(context.TODO())
 		if err != nil {
 			return nil, nil, nil, nil, err
@@ -860,9 +906,18 @@ func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 	return nil
 }
 
-func readDataAndSendTask(handler *tableResultHandler, mergeTaskCh chan []byte) error {
+func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, mergeTaskCh chan []byte) error {
 	defer close(mergeTaskCh)
 	for {
+		failpoint.Inject("mockKillRunningV2AnalyzeJob", func() {
+			domain.GetDomain(ctx).SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
+		})
+		if atomic.LoadUint32(&ctx.GetSessionVars().Killed) == 1 {
+			return errors.Trace(ErrQueryInterrupted)
+		}
+		failpoint.Inject("mockSlowAnalyzeV2", func() {
+			time.Sleep(1000 * time.Second)
+		})
 		data, err := handler.nextRaw(context.TODO())
 		if err != nil {
 			return errors.Trace(err)
@@ -914,7 +969,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	for i := 0; i < statsConcurrency; i++ {
 		go e.subMergeWorker(mergeResultCh, mergeTaskCh, l, i == 0)
 	}
-	if err = readDataAndSendTask(e.resultHandler, mergeTaskCh); err != nil {
+	if err = readDataAndSendTask(e.ctx, e.resultHandler, mergeTaskCh); err != nil {
 		return 0, nil, nil, nil, nil, err
 	}
 
@@ -1426,6 +1481,15 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		}
 	}
 	for {
+		failpoint.Inject("mockKillRunningV1AnalyzeJob", func() {
+			domain.GetDomain(e.ctx).SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
+		})
+		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
+			return nil, nil, nil, nil, nil, errors.Trace(ErrQueryInterrupted)
+		}
+		failpoint.Inject("mockSlowAnalyzeV1", func() {
+			time.Sleep(1000 * time.Second)
+		})
 		data, err1 := e.resultHandler.nextRaw(context.TODO())
 		if err1 != nil {
 			return nil, nil, nil, nil, nil, err1
@@ -1622,13 +1686,7 @@ type AnalyzeFastExec struct {
 
 func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-	var stmt ast.StmtNode
-	stmt, err = exec.ParseWithParams(context.TODO(), true, "select flag from mysql.stats_histograms where table_id = %?", e.tableID.GetStatisticsID())
-	if err != nil {
-		return
-	}
-	var rows []chunk.Row
-	rows, _, err = exec.ExecRestrictedStmt(context.TODO(), stmt)
+	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, "select flag from mysql.stats_histograms where table_id = %?", e.tableID.GetStatisticsID())
 	if err != nil {
 		return
 	}

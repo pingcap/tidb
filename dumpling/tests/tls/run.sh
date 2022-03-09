@@ -15,7 +15,7 @@ run_sql 'grant all on tls.* to dumper;'
 # make some sample data.
 export DUMPLING_TEST_USER=dumper
 run_sql 'drop database if exists tls;' $WITH_TLS
-run_sql 'create database tls;' $WITH_TLS
+run_sql 'create database tls DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;' $WITH_TLS
 export DUMPLING_TEST_DATABASE=tls
 run_sql 'create table t (a int);' $WITH_TLS
 run_sql 'insert into t values (1), (2), (3);' $WITH_TLS

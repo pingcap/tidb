@@ -149,6 +149,38 @@ func TestToInt64(t *testing.T) {
 	testDatumToInt64(t, v, int64(3))
 }
 
+func testDatumToUInt32(t *testing.T, val interface{}, expect uint32, hasError bool) {
+	d := NewDatum(val)
+	sc := new(stmtctx.StatementContext)
+	sc.IgnoreTruncate = true
+
+	ft := NewFieldType(mysql.TypeLong)
+	ft.Flag |= mysql.UnsignedFlag
+	converted, err := d.ConvertTo(sc, ft)
+
+	if hasError {
+		require.Error(t, err)
+	} else {
+		require.NoError(t, err)
+	}
+
+	require.Equal(t, KindUint64, converted.Kind())
+	require.Equal(t, uint64(expect), converted.GetUint64())
+}
+
+func TestToUint32(t *testing.T) {
+	// test overflow
+	testDatumToUInt32(t, 5000000000, 4294967295, true)
+	testDatumToUInt32(t, int64(-1), 4294967295, true)
+	testDatumToUInt32(t, "5000000000", 4294967295, true)
+
+	testDatumToUInt32(t, 12345, 12345, false)
+	testDatumToUInt32(t, int64(0), 0, false)
+	testDatumToUInt32(t, 2147483648, 2147483648, false)
+	testDatumToUInt32(t, Enum{Name: "a", Value: 1}, 1, false)
+	testDatumToUInt32(t, Set{Name: "a", Value: 1}, 1, false)
+}
+
 func TestConvertToFloat(t *testing.T) {
 	testCases := []struct {
 		d      Datum
@@ -192,7 +224,7 @@ func TestConvertToFloat(t *testing.T) {
 }
 
 // mustParseTimeIntoDatum is similar to ParseTime but panic if any error occurs.
-func mustParseTimeIntoDatum(s string, tp byte, fsp int8) (d Datum) {
+func mustParseTimeIntoDatum(s string, tp byte, fsp int) (d Datum) {
 	t, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, s, tp, fsp)
 	if err != nil {
 		panic("ParseTime fail")

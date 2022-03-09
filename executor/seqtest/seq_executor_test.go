@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -51,9 +50,8 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util/gcutil"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
@@ -62,7 +60,7 @@ import (
 
 func TestEarlyClose(t *testing.T) {
 	var cluster testutils.Cluster
-	store, clean := testkit.CreateMockStore(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
 		mockstore.BootstrapWithSingleStore(c)
 		cluster = c
 	}))
@@ -81,7 +79,6 @@ func TestEarlyClose(t *testing.T) {
 	tk.MustExec("insert earlyclose values " + strings.Join(values, ","))
 
 	// Get table ID for split.
-	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("earlyclose"))
 	require.NoError(t, err)
@@ -274,7 +271,7 @@ func TestShow(t *testing.T) {
 	tk.MustExec(`create index idx9 on show_index (id) invisible;`)
 	tk.MustExec(`create index expr_idx on show_index ((id*2+1))`)
 	testSQL = "SHOW index from show_index;"
-	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(testSQL).Check(testkit.RowsWithSep("|",
 		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|YES",
 		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx|YES|<nil>|NO",
 		"show_index|1|idx1|1|id|A|0|<nil>|<nil>||HASH| |YES|<nil>|NO",
@@ -327,11 +324,11 @@ func TestShow(t *testing.T) {
 	testSQL = `create database show_test_DB`
 	tk.MustExec(testSQL)
 	testSQL = "show create database show_test_DB;"
-	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(testSQL).Check(testkit.RowsWithSep("|",
 		"show_test_DB|CREATE DATABASE `show_test_DB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
 	))
 	testSQL = "show create database if not exists show_test_DB;"
-	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(testSQL).Check(testkit.RowsWithSep("|",
 		"show_test_DB|CREATE DATABASE /*!32312 IF NOT EXISTS*/ `show_test_DB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
 	))
 
@@ -343,7 +340,7 @@ func TestShow(t *testing.T) {
 	// for issue https://github.com/pingcap/tidb/issues/4224
 	tk.MustExec(`drop table if exists show_test_comment`)
 	tk.MustExec(`create table show_test_comment (id int not null default 0 comment "show_test_comment_id")`)
-	tk.MustQuery(`show full columns from show_test_comment`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show full columns from show_test_comment`).Check(testkit.RowsWithSep("|",
 		"id|int(11)|<nil>|NO||0||select,insert,update,references|show_test_comment_id",
 	))
 
@@ -351,7 +348,7 @@ func TestShow(t *testing.T) {
 	// for issue https://github.com/pingcap/tidb/issues/3747
 	tk.MustExec(`drop table if exists show_auto_increment`)
 	tk.MustExec(`create table show_auto_increment (id int key auto_increment) auto_increment=4`)
-	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table show_auto_increment`).Check(testkit.RowsWithSep("|",
 		""+
 			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
@@ -362,7 +359,7 @@ func TestShow(t *testing.T) {
 	autoIDStep := autoid.GetStep()
 	tk.MustExec("insert into show_auto_increment values(20)")
 	autoID := autoIDStep + 21
-	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table show_auto_increment`).Check(testkit.RowsWithSep("|",
 		""+
 			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
@@ -371,7 +368,7 @@ func TestShow(t *testing.T) {
 	))
 	tk.MustExec(`drop table show_auto_increment`)
 	tk.MustExec(`create table show_auto_increment (id int primary key auto_increment)`)
-	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table show_auto_increment`).Check(testkit.RowsWithSep("|",
 		""+
 			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
@@ -380,7 +377,7 @@ func TestShow(t *testing.T) {
 	))
 	tk.MustExec("insert into show_auto_increment values(10)")
 	autoID = autoIDStep + 11
-	tk.MustQuery(`show create table show_auto_increment`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table show_auto_increment`).Check(testkit.RowsWithSep("|",
 		""+
 			"show_auto_increment CREATE TABLE `show_auto_increment` (\n"+
 			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
@@ -392,7 +389,7 @@ func TestShow(t *testing.T) {
 	// for issue https://github.com/pingcap/tidb/issues/4411
 	tk.MustExec(`drop table if exists show_escape_character`)
 	tk.MustExec(`create table show_escape_character(id int comment 'a\rb\nc\td\0ef')`)
-	tk.MustQuery(`show create table show_escape_character`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table show_escape_character`).Check(testkit.RowsWithSep("|",
 		""+
 			"show_escape_character CREATE TABLE `show_escape_character` (\n"+
 			"  `id` int(11) DEFAULT NULL COMMENT 'a\\rb\\nc	d\\0ef'\n"+
@@ -482,7 +479,7 @@ func TestShow(t *testing.T) {
 	// Test get default collate for a specified charset.
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t (a int) default charset=utf8mb4`)
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
@@ -494,7 +491,7 @@ func TestShow(t *testing.T) {
  	PARTITION p0 VALUES LESS THAN (10),
  	PARTITION p1 VALUES LESS THAN (20),
  	PARTITION p2 VALUES LESS THAN (MAXVALUE))`)
-	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"+"\nPARTITION BY RANGE (`a`)\n(PARTITION `p0` VALUES LESS THAN (10),\n PARTITION `p1` VALUES LESS THAN (20),\n PARTITION `p2` VALUES LESS THAN (MAXVALUE))",
@@ -514,7 +511,7 @@ func TestShow(t *testing.T) {
  	PARTITION p1 VALUES LESS THAN (10,20,'mmm'),
  	PARTITION p2 VALUES LESS THAN (15,30,'sss'),
         PARTITION p3 VALUES LESS THAN (50,MAXVALUE,MAXVALUE))`)
-	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL,\n"+
 			"  `b` int(11) DEFAULT NULL,\n"+
@@ -526,7 +523,7 @@ func TestShow(t *testing.T) {
 	// Test hash partition
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`CREATE TABLE t (a int) PARTITION BY HASH(a) PARTITIONS 4`)
-	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
@@ -535,7 +532,7 @@ func TestShow(t *testing.T) {
 	// Test show create table compression type.
 	tk.MustExec(`drop table if exists t1`)
 	tk.MustExec(`CREATE TABLE t1 (c1 INT) COMPRESSION="zlib";`)
-	tk.MustQuery("show create table t1").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table t1").Check(testkit.RowsWithSep("|",
 		"t1 CREATE TABLE `t1` (\n"+
 			"  `c1` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMPRESSION='zlib'",
@@ -544,7 +541,7 @@ func TestShow(t *testing.T) {
 	// Test show create table year type
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(y year unsigned signed zerofill zerofill, x int, primary key(y));`)
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `y` year(4) NOT NULL,\n"+
 			"  `x` int(11) DEFAULT NULL,\n"+
@@ -554,7 +551,7 @@ func TestShow(t *testing.T) {
 	// Test show create table with zerofill flag
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(id int primary key, val tinyint(10) zerofill);`)
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `id` int(11) NOT NULL,\n"+
 			"  `val` tinyint(10) unsigned zerofill DEFAULT NULL,\n"+
@@ -576,7 +573,7 @@ func TestShow(t *testing.T) {
 		c9 year default '2014',
 		c10 enum('2', '3', '4') default 2
 	);`)
-	tk.MustQuery(`show columns from t`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show columns from t`).Check(testkit.RowsWithSep("|",
 		"c0|int(11)|YES||1|",
 		"c1|int(11)|YES||2|",
 		"c2|bigint(20)|YES||167|",
@@ -1196,8 +1193,6 @@ func TestCoprocessorPriority(t *testing.T) {
 }
 
 func TestShowForNewCollations(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -1222,9 +1217,6 @@ func TestShowForNewCollations(t *testing.T) {
 func TestForbidUnsupportedCollations(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 
 	tk := testkit.NewTestKit(t, store)
 	mustGetUnsupportedCollation := func(sql string, coll string) {

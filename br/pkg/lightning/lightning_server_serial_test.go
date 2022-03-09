@@ -24,13 +24,18 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/stretchr/testify/require"
 )
+
+// initProgressOnce is used to ensure init progress once to avoid data race.
+var initProgressOnce sync.Once
 
 type lightningServerSuite struct {
 	lightning *Lightning
@@ -39,6 +44,8 @@ type lightningServerSuite struct {
 }
 
 func createSuite(t *testing.T) (s *lightningServerSuite, clean func()) {
+	initProgressOnce.Do(web.EnableCurrentProgress)
+
 	cfg := config.NewGlobalConfig()
 	cfg.TiDB.Host = "test.invalid"
 	cfg.TiDB.Port = 4000

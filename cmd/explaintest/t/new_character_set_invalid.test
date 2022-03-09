@@ -2,11 +2,11 @@ set @@sql_mode = 'strict_trans_tables';
 drop table if exists t;
 create table t (a varchar(255) charset gbk, b varchar(255) charset ascii, c varchar(255) charset utf8);
 insert into t values ('中文', 'asdf', '字符集');
--- error 1366: Incorrect string value '\xC3\x80' for column 'a'
+-- error 1366
 insert into t values ('À', 'ø', '😂');
--- error 1366: Incorrect string value '\xC3\x80\xE4\xB8\xAD\xE6...' for column 'a'
+-- error 1366
 insert into t values ('中文À中文', 'asdføfdsa', '字符集😂字符集');
--- error 1366: Incorrect string value '\xFF\xFF' for column 'a'
+-- error 1366
 insert into t values (0x4040ffff, 0x4040ffff, 0x4040ffff);
 select * from t;
 

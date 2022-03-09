@@ -17,6 +17,8 @@ package expression
 import (
 	"bytes"
 	"fmt"
+	"strings"
+	"unicode"
 
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/ast"
@@ -172,9 +174,10 @@ func (b *builtinInternalFromBinarySig) evalString(row chunk.Row) (res string, is
 		return val, isNull, err
 	}
 	enc := charset.FindEncoding(b.tp.Charset)
-	ret, err := enc.Transform(nil, hack.Slice(val), charset.OpDecode)
+	valBytes := hack.Slice(val)
+	ret, err := enc.Transform(nil, valBytes, charset.OpDecode)
 	if err != nil {
-		strHex := fmt.Sprintf("%X", val)
+		strHex := formatInvalidChars(valBytes)
 		err = errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.Charset)
 	}
 	return string(ret), false, err
@@ -205,7 +208,7 @@ func (b *builtinInternalFromBinarySig) vecEvalString(input *chunk.Chunk, result 
 		str := buf.GetBytes(i)
 		val, err := enc.Transform(encodedBuf, str, charset.OpDecode)
 		if err != nil {
-			strHex := fmt.Sprintf("%X", str)
+			strHex := formatInvalidChars(str)
 			return errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.Charset)
 		}
 		result.AppendBytes(val)
@@ -333,4 +336,21 @@ func isLegacyCharset(chs string) bool {
 		return true
 	}
 	return false
+}
+
+func formatInvalidChars(src []byte) string {
+	var sb strings.Builder
+	const maxBytesToShow = 5
+	for i := 0; i < len(src); i++ {
+		if i > maxBytesToShow {
+			sb.WriteString("...")
+			break
+		}
+		if src[i] > unicode.MaxASCII {
+			sb.WriteString(fmt.Sprintf("\\x%X", src[i]))
+		} else {
+			sb.Write([]byte{src[i]})
+		}
+	}
+	return sb.String()
 }

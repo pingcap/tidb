@@ -971,7 +971,7 @@ func TestWalkDir(t *testing.T) {
 		},
 	)
 	require.NoError(t, err)
-	require.Equal(t, len(contents), i)
+	require.Len(t, contents, i)
 
 	// test with empty subDir
 	i = 0
@@ -986,7 +986,7 @@ func TestWalkDir(t *testing.T) {
 		},
 	)
 	require.NoError(t, err)
-	require.Equal(t, len(contents), i)
+	require.Len(t, contents, i)
 }
 
 // TestWalkDirBucket checks WalkDir retrieves all directory content under a bucket.
@@ -1058,7 +1058,7 @@ func TestWalkDirWithEmptyPrefix(t *testing.T) {
 		},
 	)
 	require.NoError(t, err)
-	require.Equal(t, len(contents), i)
+	require.Len(t, contents, i)
 
 	// test with non-empty sub-dir
 	i = 0

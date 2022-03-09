@@ -13,3 +13,40 @@ coercibility(convert('a' using utf8mb4))
 select coercibility(convert('a' using utf8mb4) collate utf8mb4_general_ci);
 coercibility(convert('a' using utf8mb4) collate utf8mb4_general_ci)
 0
+drop table if exists t;
+create table t (a char(20), b blob(100), c text, d json, e timestamp, f set('a一','b二','c三','d四'), g text, h enum('a一','b二','c三','d四') default 'c三');
+insert into t values ('你好', '你好', '你好', '{\"测试\": \"你好\"}', '2018-10-13', 1, '你好', 'a一');
+select coercibility(a), coercibility(b), coercibility(c), coercibility(d), coercibility(e), coercibility(f), coercibility(g), coercibility(h) from t;
+coercibility(a)	coercibility(b)	coercibility(c)	coercibility(d)	coercibility(e)	coercibility(f)	coercibility(g)	coercibility(h)
+2	2	2	2	5	2	2	2
+select collation(d), collation(upper(d)), collation(elt(1, d, 0x12)), collation(elt(1, elt(1, d, 0x12), 0x12)), collation(elt(1, d, b)) from t;
+collation(d)	collation(upper(d))	collation(elt(1, d, 0x12))	collation(elt(1, elt(1, d, 0x12), 0x12))	collation(elt(1, d, b))
+binary	utf8mb4_bin	utf8mb4_bin	utf8mb4_bin	binary
+drop table t;
+create table t(a binary, b json, c char charset gbk);
+insert into t values ('a', '{"a":"b"}', 'a');
+select collation(concat(a, b)), collation(concat(b, a)), collation(concat(0x61, b)), collation(concat(b, 0x61)), collation(concat(c, b)), collation(concat(b, c)) from t;
+collation(concat(a, b))	collation(concat(b, a))	collation(concat(0x61, b))	collation(concat(b, 0x61))	collation(concat(c, b))	collation(concat(b, c))
+binary	binary	utf8mb4_bin	utf8mb4_bin	utf8mb4_bin	utf8mb4_bin
+DROP TABLE IF EXISTS t2;
+CREATE TABLE t2 (
+id INT NOT NULL PRIMARY KEY auto_increment,
+`col_91` char(47) CHARACTER SET utf8 COLLATE utf8_bin NOT NULL,
+`col_92` int(10) unsigned DEFAULT '2478966067',
+`col_97` char(32) COLLATE utf8mb4_bin NOT NULL
+) collate utf8mb4_general_ci;
+INSERT INTO `t2` VALUES (17,'UUtJeaV',497551109,'snRXXCZHBPW');
+SET names utf8mb4 collate utf8mb4_bin;
+SELECT greatest( col_91 , col_97 ) as expr1 FROM t2 ORDER BY id;
+expr1
+snRXXCZHBPW
+SELECT least( col_91 , col_97 ) as expr1 FROM t2 ORDER BY id;
+expr1
+UUtJeaV
+SET names utf8mb4 collate utf8mb4_general_ci;
+SELECT greatest( col_91 , col_97 ) as expr1 FROM t2 ORDER BY id;
+expr1
+snRXXCZHBPW
+SELECT least( col_91 , col_97 ) as expr1 FROM t2 ORDER BY id;
+expr1
+UUtJeaV

@@ -117,7 +117,7 @@ func genRowDatas(table *table, count int) ([]string, error) {
 }
 
 func genRowData(table *table) (string, error) {
-	var values []byte
+	var values []byte // nolint: prealloc
 	for _, column := range table.columns {
 		data, err := genColumnData(table, column)
 		if err != nil {

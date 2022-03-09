@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
@@ -61,7 +61,7 @@ func TestRowDecoder(t *testing.T) {
 		decodeColsMap2[col.ID] = tpExpr
 		if col.GeneratedExprString != "" {
 			expr, err := expression.ParseSimpleExprCastWithTableInfo(ctx, col.GeneratedExprString, tblInfo, &col.FieldType)
-			require.Nil(t, err)
+			require.NoError(t, err)
 			tpExpr.GenExpr = expr
 		}
 		decodeColsMap[col.ID] = tpExpr
@@ -69,8 +69,6 @@ func TestRowDecoder(t *testing.T) {
 	de := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap)
 	deWithNoGenCols := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap2)
 
-	timeZoneIn8, err := time.LoadLocation("Asia/Shanghai")
-	require.Nil(t, err)
 	time1 := types.NewTime(types.FromDate(2019, 01, 01, 8, 01, 01, 0), mysql.TypeTimestamp, types.DefaultFsp)
 	t1 := types.NewTimeDatum(time1)
 	d1 := types.NewDurationDatum(types.Duration{
@@ -79,13 +77,9 @@ func TestRowDecoder(t *testing.T) {
 
 	time2, err := time1.Add(sc, d1.GetMysqlDuration())
 	require.Nil(t, err)
-	err = time2.ConvertTimeZone(timeZoneIn8, time.UTC)
-	require.Nil(t, err)
 	t2 := types.NewTimeDatum(time2)
 
 	time3, err := time1.Add(sc, types.Duration{Duration: time.Hour*2 + time.Second*2})
-	require.Nil(t, err)
-	err = time3.ConvertTimeZone(timeZoneIn8, time.UTC)
 	require.Nil(t, err)
 	t3 := types.NewTimeDatum(time3)
 
@@ -117,10 +111,10 @@ func TestRowDecoder(t *testing.T) {
 			c7.Flag |= mysql.UnsignedFlag
 		}
 		bs, err := tablecodec.EncodeRow(sc, row.input, row.cols, nil, nil, &rd)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.NotNil(t, bs)
 
-		r, err := de.DecodeAndEvalRowWithMap(ctx, kv.IntHandle(i), bs, time.UTC, timeZoneIn8, nil)
+		r, err := de.DecodeAndEvalRowWithMap(ctx, kv.IntHandle(i), bs, time.UTC, nil)
 		require.Nil(t, err)
 		// Last column is primary-key column, and the table primary-key is handle, then the primary-key value won't be
 		// stored in raw data, but store in the raw key.
@@ -138,7 +132,7 @@ func TestRowDecoder(t *testing.T) {
 			}
 		}
 		// test decode with no generated column.
-		r2, err := deWithNoGenCols.DecodeAndEvalRowWithMap(ctx, kv.IntHandle(i), bs, time.UTC, timeZoneIn8, nil)
+		r2, err := deWithNoGenCols.DecodeAndEvalRowWithMap(ctx, kv.IntHandle(i), bs, time.UTC, nil)
 		require.Nil(t, err)
 		for k, v := range r2 {
 			v1, ok := r[k]
@@ -177,9 +171,6 @@ func TestClusterIndexRowDecoder(t *testing.T) {
 	}
 	de := decoder.NewRowDecoder(tbl, tbl.Cols(), decodeColsMap)
 
-	timeZoneIn8, err := time.LoadLocation("Asia/Shanghai")
-	require.Nil(t, err)
-
 	testRows := []struct {
 		cols   []int64
 		input  []types.Datum
@@ -194,10 +185,10 @@ func TestClusterIndexRowDecoder(t *testing.T) {
 	rd := rowcodec.Encoder{Enable: true}
 	for _, row := range testRows {
 		bs, err := tablecodec.EncodeRow(sc, row.input, row.cols, nil, nil, &rd)
-		require.Nil(t, err)
+		require.NoError(t, err)
 		require.NotNil(t, bs)
 
-		r, err := de.DecodeAndEvalRowWithMap(ctx, testkit.MustNewCommonHandle(t, 100, "abc"), bs, time.UTC, timeZoneIn8, nil)
+		r, err := de.DecodeAndEvalRowWithMap(ctx, testutil.MustNewCommonHandle(t, 100, "abc"), bs, time.UTC, nil)
 		require.Nil(t, err)
 
 		for i, col := range cols {

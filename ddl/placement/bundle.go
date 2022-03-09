@@ -419,7 +419,7 @@ func (b *Bundle) GetLeaderDC(dcLabelKey string) (string, bool) {
 // If table is a partitioned table, it also contains the rules that inherited from table for every partition.
 // The bundle does not contain the rules specified independently by each partition
 func NewTableBundle(t *meta.Meta, tbInfo *model.TableInfo) (*Bundle, error) {
-	bundle, err := newBundleFromPolicyOrDirectOptions(t, tbInfo.PlacementPolicyRef, tbInfo.DirectPlacementOpts)
+	bundle, err := newBundleFromPolicy(t, tbInfo.PlacementPolicyRef)
 	if err != nil {
 		return nil, err
 	}
@@ -442,7 +442,7 @@ func NewTableBundle(t *meta.Meta, tbInfo *model.TableInfo) (*Bundle, error) {
 // It only contains the rules specified independently by the partition.
 // That is to say the inherited rules from table is not included.
 func NewPartitionBundle(t *meta.Meta, def model.PartitionDefinition) (*Bundle, error) {
-	bundle, err := newBundleFromPolicyOrDirectOptions(t, def.PlacementPolicyRef, def.DirectPlacementOpts)
+	bundle, err := newBundleFromPolicy(t, def.PlacementPolicyRef)
 	if err != nil {
 		return nil, err
 	}
@@ -494,11 +494,7 @@ func NewFullTableBundles(t *meta.Meta, tbInfo *model.TableInfo) ([]*Bundle, erro
 	return bundles, nil
 }
 
-func newBundleFromPolicyOrDirectOptions(t *meta.Meta, ref *model.PolicyRefInfo, directOpts *model.PlacementSettings) (*Bundle, error) {
-	if directOpts != nil {
-		return NewBundleFromOptions(directOpts)
-	}
-
+func newBundleFromPolicy(t *meta.Meta, ref *model.PolicyRefInfo) (*Bundle, error) {
 	if ref != nil {
 		policy, err := t.GetPolicy(ref.ID)
 		if err != nil {

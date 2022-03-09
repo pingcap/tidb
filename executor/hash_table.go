@@ -143,6 +143,7 @@ func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx 
 }
 
 // alreadySpilledSafeForTest indicates that records have spilled out into disk. It's thread-safe.
+// nolint: unused
 func (c *hashRowContainer) alreadySpilledSafeForTest() bool {
 	return c.rowContainer.AlreadySpilledSafeForTest()
 }

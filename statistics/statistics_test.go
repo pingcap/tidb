@@ -200,7 +200,7 @@ func TestPseudoTable(t *testing.T) {
 	}
 	ti.Columns = append(ti.Columns, colInfo)
 	tbl := PseudoTable(ti)
-	require.Equal(t, len(tbl.Columns), 1)
+	require.Len(t, tbl.Columns, 1)
 	require.Greater(t, tbl.Count, int64(0))
 	sctx := mock.NewContext()
 	count := tbl.ColumnLessRowCount(sctx, types.NewIntDatum(100), colInfo.ID)
