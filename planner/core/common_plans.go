@@ -955,7 +955,7 @@ const (
 	OpEvolveBindings
 	// OpReloadBindings is used to reload plan binding.
 	OpReloadBindings
-	// OpSetBindingEnabled is used to set binding status.
+	// OpSetBindingStatus is used to set binding status.
 	OpSetBindingStatus
 )
 
