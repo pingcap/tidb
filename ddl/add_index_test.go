@@ -26,18 +26,22 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -878,4 +882,136 @@ func TestCancelAddIndex1(t *testing.T) {
 	}
 	tk.MustExec("alter table t add index idx_c2(c2)")
 	tk.MustExec("alter table t drop index idx_c2")
+}
+
+func TestAddGlobalIndex(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, addIndexLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test_t1 (a int, b int) partition by range (b)" +
+		" (partition p0 values less than (10), " +
+		"  partition p1 values less than (maxvalue));")
+	tk.MustExec("insert test_t1 values (1, 1)")
+	tk.MustExec("alter table test_t1 add unique index p_a (a);")
+	tk.MustExec("insert test_t1 values (2, 11)")
+	tbl := tk.GetTableByName("test", "test_t1")
+	tblInfo := tbl.Meta()
+	indexInfo := tblInfo.FindIndexByName("p_a")
+	require.NotNil(t, indexInfo)
+	require.True(t, indexInfo.Global)
+
+	require.NoError(t, tk.Session().NewTxn(context.Background()))
+	txn, err := tk.Session().Txn(true)
+	require.NoError(t, err)
+
+	// check row 1
+	pid := tblInfo.Partition.Definitions[0].ID
+	idxVals := []types.Datum{types.NewDatum(1)}
+	rowVals := []types.Datum{types.NewDatum(1), types.NewDatum(1)}
+	checkGlobalIndexRow(t, tk.Session(), tblInfo, indexInfo, pid, idxVals, rowVals)
+
+	// check row 2
+	pid = tblInfo.Partition.Definitions[1].ID
+	idxVals = []types.Datum{types.NewDatum(2)}
+	rowVals = []types.Datum{types.NewDatum(2), types.NewDatum(11)}
+	checkGlobalIndexRow(t, tk.Session(), tblInfo, indexInfo, pid, idxVals, rowVals)
+	require.NoError(t, txn.Commit(context.Background()))
+
+	// Test add global Primary Key index
+	tk.MustExec("create table test_t2 (a int, b int) partition by range (b)" +
+		" (partition p0 values less than (10), " +
+		"  partition p1 values less than (maxvalue));")
+	tk.MustExec("insert test_t2 values (1, 1)")
+	tk.MustExec("alter table test_t2 add primary key (a) nonclustered;")
+	tk.MustExec("insert test_t2 values (2, 11)")
+	tbl = tk.GetTableByName("test", "test_t2")
+	tblInfo = tbl.Meta()
+	indexInfo = tblInfo.FindIndexByName("primary")
+	require.NotNil(t, indexInfo)
+	require.True(t, indexInfo.Global)
+
+	require.NoError(t, tk.Session().NewTxn(context.Background()))
+	txn, err = tk.Session().Txn(true)
+	require.NoError(t, err)
+
+	// check row 1
+	pid = tblInfo.Partition.Definitions[0].ID
+	idxVals = []types.Datum{types.NewDatum(1)}
+	rowVals = []types.Datum{types.NewDatum(1), types.NewDatum(1)}
+	checkGlobalIndexRow(t, tk.Session(), tblInfo, indexInfo, pid, idxVals, rowVals)
+
+	// check row 2
+	pid = tblInfo.Partition.Definitions[1].ID
+	idxVals = []types.Datum{types.NewDatum(2)}
+	rowVals = []types.Datum{types.NewDatum(2), types.NewDatum(11)}
+	checkGlobalIndexRow(t, tk.Session(), tblInfo, indexInfo, pid, idxVals, rowVals)
+
+	require.NoError(t, txn.Commit(context.Background()))
+}
+
+// checkGlobalIndexRow reads one record from global index and check. Only support int handle.
+func checkGlobalIndexRow(
+	t *testing.T,
+	ctx sessionctx.Context,
+	tblInfo *model.TableInfo,
+	indexInfo *model.IndexInfo,
+	pid int64,
+	idxVals []types.Datum,
+	rowVals []types.Datum,
+) {
+	require.NoError(t, ctx.NewTxn(context.Background()))
+	txn, err := ctx.Txn(true)
+	require.NoError(t, err)
+	sc := ctx.GetSessionVars().StmtCtx
+
+	tblColMap := make(map[int64]*types.FieldType, len(tblInfo.Columns))
+	for _, col := range tblInfo.Columns {
+		tblColMap[col.ID] = &col.FieldType
+	}
+
+	// Check local index entry does not exist.
+	localPrefix := tablecodec.EncodeTableIndexPrefix(pid, indexInfo.ID)
+	it, err := txn.Iter(localPrefix, nil)
+	require.NoError(t, err)
+	// no local index entry.
+	require.False(t, it.Valid() && it.Key().HasPrefix(localPrefix))
+	it.Close()
+
+	// Check global index entry.
+	encodedValue, err := codec.EncodeKey(sc, nil, idxVals...)
+	require.NoError(t, err)
+	key := tablecodec.EncodeIndexSeekKey(tblInfo.ID, indexInfo.ID, encodedValue)
+	require.NoError(t, err)
+	value, err := txn.Get(context.Background(), key)
+	require.NoError(t, err)
+	idxColInfos := tables.BuildRowcodecColInfoForIndexColumns(indexInfo, tblInfo)
+	colVals, err := tablecodec.DecodeIndexKV(key, value, len(indexInfo.Columns), tablecodec.HandleDefault, idxColInfos)
+	require.NoError(t, err)
+	require.Len(t, colVals, len(idxVals)+2)
+	for i, val := range idxVals {
+		_, d, err := codec.DecodeOne(colVals[i])
+		require.NoError(t, err)
+		require.Equal(t, val, d)
+	}
+	_, d, err := codec.DecodeOne(colVals[len(idxVals)+1]) // pid
+	require.NoError(t, err)
+	require.Equal(t, pid, d.GetInt64())
+
+	_, d, err = codec.DecodeOne(colVals[len(idxVals)]) // handle
+	require.NoError(t, err)
+	h := kv.IntHandle(d.GetInt64())
+	rowKey := tablecodec.EncodeRowKey(pid, h.Encoded())
+	rowValue, err := txn.Get(context.Background(), rowKey)
+	require.NoError(t, err)
+	rowValueDatums, err := tablecodec.DecodeRowToDatumMap(rowValue, tblColMap, time.UTC)
+	require.NoError(t, err)
+	require.NotNil(t, rowValueDatums)
+	for i, val := range rowVals {
+		require.Equal(t, val, rowValueDatums[tblInfo.Columns[i].ID])
+	}
 }
