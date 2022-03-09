@@ -78,7 +78,6 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []*joinNode, tracer *joinR
 	for isPropagated := true; isPropagated; {
 		isPropagated = false
 		for idx, nodeBitSet := range s.directGraph {
-			baseV := 0
 			for k1 := range nodeBitSet {
 				for i := 0; i < 8; i++ {
 					mask := nodeBitSet[k1] & (1 << i)
@@ -90,7 +89,6 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []*joinNode, tracer *joinR
 						}
 					}
 				}
-				baseV += 8
 			}
 		}
 	}
@@ -138,14 +136,13 @@ func (s *joinReorderGreedySolver) merge(dest []byte, src []byte) (isChange bool)
 func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorderTrace) (*jrNode, error) {
 	curJoinTree := s.curJoinGroup[0]
 	s.curJoinGroup = s.curJoinGroup[1:]
-	s.remainJoinGroup = s.remainJoinGroup[:0]
-	s.remainJoinGroup = append(s.remainJoinGroup, s.curJoinGroup...)
 	for {
 		bestCost := math.MaxFloat64
 		bestIdx := -1
 		var finalRemainOthers []expression.Expression
 		var bestJoin LogicalPlan
-		for i, node := range s.curJoinGroup {
+		for i := range s.curJoinGroup {
+			node := s.curJoinGroup[i]
 			newJoin, remainOthers := s.checkConnectionAndMakeJoin(curJoinTree.p, node.p)
 			if newJoin == nil {
 				continue
@@ -171,9 +168,11 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 			p:       bestJoin,
 			cumCost: bestCost,
 		}
-		s.curJoinGroup = append(s.curJoinGroup[:bestIdx], s.curJoinGroup[bestIdx+1:]...)
+		s.curJoinGroup[bestIdx] = curJoinTree
+		// s.curJoinGroup = append(s.curJoinGroup[:bestIdx], s.curJoinGroup[bestIdx+1:]...)
+		curJoinTree = s.curJoinGroup[0]
+		s.curJoinGroup = s.curJoinGroup[1:]
 		s.otherConds = finalRemainOthers
-		s.remainJoinGroup = append(s.remainJoinGroup[0:bestIdx], s.remainJoinGroup[bestIdx+1:]...)
 	}
 	return curJoinTree, nil
 }

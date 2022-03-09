@@ -2812,18 +2812,17 @@
         "Plan": [
           "TableReader 1.25 root  data:ExchangeSender",
           "└─ExchangeSender 1.25 batchCop[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection 1.25 batchCop[tiflash]  Column#5, test.employee.empid, test.employee.deptid, test.employee.salary",
-          "    └─HashJoin 1.25 batchCop[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#5)]",
-          "      ├─ExchangeReceiver(Build) 1.00 batchCop[tiflash]  ",
-          "      │ └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: Broadcast",
-          "      │   └─Projection 1.00 batchCop[tiflash]  Column#5",
-          "      │     └─HashAgg 1.00 batchCop[tiflash]  funcs:count(distinct test.employee.deptid)->Column#5",
-          "      │       └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
-          "      │         └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "      │           └─HashAgg 1.00 batchCop[tiflash]  group by:test.employee.deptid, ",
-          "      │             └─TableFullScan 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo",
-          "      └─Selection(Probe) 9990.00 batchCop[tiflash]  not(isnull(test.employee.deptid))",
-          "        └─TableFullScan 10000.00 batchCop[tiflash] table:e2 keep order:false, stats:pseudo"
+          "  └─HashJoin 1.25 batchCop[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#5)]",
+          "    ├─ExchangeReceiver(Build) 1.00 batchCop[tiflash]  ",
+          "    │ └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: Broadcast",
+          "    │   └─Projection 1.00 batchCop[tiflash]  Column#5",
+          "    │     └─HashAgg 1.00 batchCop[tiflash]  funcs:count(distinct test.employee.deptid)->Column#5",
+          "    │       └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "    │         └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "    │           └─HashAgg 1.00 batchCop[tiflash]  group by:test.employee.deptid, ",
+          "    │             └─TableFullScan 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo",
+          "    └─Selection(Probe) 9990.00 batchCop[tiflash]  not(isnull(test.employee.deptid))",
+          "      └─TableFullScan 10000.00 batchCop[tiflash] table:e2 keep order:false, stats:pseudo"
         ]
       },
       {

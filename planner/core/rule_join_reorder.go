@@ -270,10 +270,9 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 
 // nolint:structcheck
 type baseSingleGroupJoinOrderSolver struct {
-	ctx             sessionctx.Context
-	curJoinGroup    []*jrNode
-	remainJoinGroup []*jrNode
-	otherConds      []expression.Expression
+	ctx          sessionctx.Context
+	curJoinGroup []*jrNode
+	otherConds   []expression.Expression
 	// A map maintain plan and plans which must join after the plan
 	directGraph [][]byte
 }
