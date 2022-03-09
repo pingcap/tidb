@@ -696,7 +696,7 @@ func TestSettersandGetters(t *testing.T) {
 			require.Nil(t, sv.SetSession)
 			require.Nil(t, sv.GetSession)
 		}
-		if !sv.HasGlobalScope() {
+		if !sv.HasGlobalScope() && !sv.HasInstanceScope() {
 			require.Nil(t, sv.SetGlobal)
 			if sv.Name == Timestamp {
 				// The Timestamp sysvar will have GetGlobal func even though it does not have global scope.
