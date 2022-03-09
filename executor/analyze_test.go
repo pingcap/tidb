@@ -2746,8 +2746,8 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 				require.Greater(t, currentVersion, lastVersion, comment)
 			} else {
 				// If we kill a pending/running job, after kill command the status is failed and the table stats are not updated.
-				// We expect the killed analyze stops quickly. Specifically, end_time - start_time < 1s.
-				checkAnalyzeStatus(t, tk, jobInfo, "failed", comment, 1)
+				// We expect the killed analyze stops quickly. Specifically, end_time - start_time < 3s.
+				checkAnalyzeStatus(t, tk, jobInfo, "failed", comment, 3)
 				require.Equal(t, currentVersion, lastVersion, comment)
 			}
 		}()
@@ -2828,8 +2828,8 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 				require.Greater(t, currentVersion, lastVersion, comment)
 			} else {
 				// If we kill a pending/running job, after kill command the status is failed and the index stats are not updated.
-				// We expect the killed analyze stops quickly. Specifically, end_time - start_time < 1s.
-				checkAnalyzeStatus(t, tk, jobInfo, "failed", comment, 1)
+				// We expect the killed analyze stops quickly. Specifically, end_time - start_time < 3s.
+				checkAnalyzeStatus(t, tk, jobInfo, "failed", comment, 3)
 				require.Equal(t, currentVersion, lastVersion, comment)
 			}
 		}()
