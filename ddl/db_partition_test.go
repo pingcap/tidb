@@ -2736,7 +2736,7 @@ func testPartitionDropIndex(t *testing.T, store kv.Storage, lease time.Duration,
 	tk.MustExec(addIdxSQL)
 
 	ctx := tk.Session()
-	indexID := testGetIndexIDT(t, ctx, "test", "partition_drop_idx", idxName)
+	indexID := testGetIndexID(t, ctx, "test", "partition_drop_idx", idxName)
 
 	jobIDExt, reset := setupJobIDExtCallback(ctx)
 	defer reset()
@@ -2762,7 +2762,7 @@ LOOP:
 			num += step
 		}
 	}
-	checkDelRangeAddedN(tk, jobIDExt.jobID, indexID)
+	checkDelRangeAdded(tk, jobIDExt.jobID, indexID)
 	tk.MustExec("drop table partition_drop_idx;")
 }
 
@@ -2855,7 +2855,7 @@ LOOP:
 			times++
 		}
 	}
-	checkDelRangeAddedN(tk, jobIDExt.jobID, c3IdxInfo.ID)
+	checkDelRangeAdded(tk, jobIDExt.jobID, c3IdxInfo.ID)
 	tk.MustExec("drop table t1")
 }
 
