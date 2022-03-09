@@ -687,11 +687,6 @@ func onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return updateColumnDefaultValue(t, job, newCol, &newCol.Name)
 }
 
-// it is used for plugins
-func convertBetweenCharAndVarchar(oldCol, newCol byte) bool {
-	return types.ConvertBetweenCharAndVarchar(oldCol, newCol)
-}
-
 func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	toUnsigned := mysql.HasUnsignedFlag(newCol.Flag)
 	originUnsigned := mysql.HasUnsignedFlag(oldCol.Flag)
