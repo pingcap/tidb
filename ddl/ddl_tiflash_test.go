@@ -21,6 +21,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util"
 	"math"
 	"sync/atomic"
 	"testing"
@@ -911,21 +912,21 @@ func TestTiFlashBatchKill(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("set SESSION tidb_batch_pending_tiflash_count=%v", threshold))
 	tk.MustExec(fmt.Sprintf("create table tiflash_ddl_limit.t%v(z int)", threshold+1))
 
-	go func() {
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
 		time.Sleep(time.Millisecond * 100)
 		sessVars := tk.Session().GetSessionVars()
 		atomic.StoreUint32(&sessVars.Killed, 1)
-		logutil.BgLogger().Info("session killed")
-	}()
+	})
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/FastFailCheckTiFlashPendingTables", `return(2)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/FastFailCheckTiFlashPendingTables"))
 	}()
-	timeOut, err := execWithTimeout(t, tk, time.Second*2000, fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
+	timeOut, err := execWithTimeout(t, tk, time.Second*2000, "alter database tiflash_ddl_limit set tiflash replica 1")
 	require.Error(t, err, "[executor:1317]Query execution was interrupted")
 	require.False(t, timeOut)
-	time.Sleep(time.Second * 2)
+	wg.Wait()
 }
 
 func TestTiFlashBatchUnsupported(t *testing.T) {
