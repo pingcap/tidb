@@ -765,7 +765,6 @@ func (s *testSessionSuite) TestUpgradeSysvars(c *C) {
 	v, err = se.GetGlobalSysVar("tidb_enable_noop_functions")
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, "OFF") // the default value is restored.
-
 }
 
 func (s *testSessionSuite) TestMatchIdentity(c *C) {
