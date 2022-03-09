@@ -18,7 +18,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/ddl"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -27,6 +26,8 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
@@ -400,6 +401,47 @@ func TestLocatePartitionSingleColumn(t *testing.T) {
 	require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
 }
 
+func TestLocatePartition(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON;")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	tk.MustExec("drop table if exists t;")
+
+	tk.MustExec(`CREATE TABLE t (
+    	id bigint(20) DEFAULT NULL,
+    	type varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL
+    	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    	PARTITION BY LIST COLUMNS(type)
+    	(PARTITION push_event VALUES IN ("PushEvent"),
+    	PARTITION watch_event VALUES IN ("WatchEvent")
+    );`)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+	tks := []*testkit.TestKit{tk1, tk2, tk3}
+
+	wg := util.WaitGroupWrapper{}
+	exec := func(tk0 *testkit.TestKit) {
+		tk0.MustExec("use test")
+		tk0.MustQuery("desc select id, type from t where  type = 'WatchEvent';").Check(testkit.Rows("TableReader_7 10.00 root partition:watch_event data:Selection_6]\n[└─Selection_6 10.00 cop[tikv]  eq(test.t.type, \"WatchEvent\")]\n[  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	}
+
+	run := func(num int) {
+		tk := tks[num]
+		wg.Run(func() {
+			exec(tk)
+		})
+	}
+	for i := 0; i < len(tks); i++ {
+		run(i)
+	}
+	wg.Wait()
+}
+
 func TestTimeZoneChange(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -465,13 +507,13 @@ func TestCreatePartitionTableNotSupport(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	_, err := tk.Exec(`create table t7 (a int) partition by range (mod((select * from t), 5)) (partition p1 values less than (1));`)
-	require.True(t, ddl.ErrPartitionFunctionIsNotAllowed.Equal(err))
+	require.True(t, dbterror.ErrPartitionFunctionIsNotAllowed.Equal(err))
 	_, err = tk.Exec(`create table t7 (a int) partition by range (1 + (select * from t)) (partition p1 values less than (1));`)
-	require.True(t, ddl.ErrPartitionFunctionIsNotAllowed.Equal(err))
+	require.True(t, dbterror.ErrPartitionFunctionIsNotAllowed.Equal(err))
 	_, err = tk.Exec(`create table t7 (a int) partition by range (a + row(1, 2, 3)) (partition p1 values less than (1));`)
-	require.True(t, ddl.ErrPartitionFunctionIsNotAllowed.Equal(err))
+	require.True(t, dbterror.ErrPartitionFunctionIsNotAllowed.Equal(err))
 	_, err = tk.Exec(`create table t7 (a int) partition by range (-(select * from t)) (partition p1 values less than (1));`)
-	require.True(t, ddl.ErrPartitionFunctionIsNotAllowed.Equal(err))
+	require.True(t, dbterror.ErrPartitionFunctionIsNotAllowed.Equal(err))
 }
 
 func TestRangePartitionUnderNoUnsigned(t *testing.T) {

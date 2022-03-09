@@ -433,10 +433,10 @@ IndexReader	10.00	root		index:IndexRangeScan
 └─IndexRangeScan	10.00	cop[tikv]	table:t, index:idx(a, b)	range:[1,1], keep order:false, stats:pseudo
 explain format = 'brief' select * from t where a = 1 and a = 2;
 id	estRows	task	access object	operator info
-TableDual	8000.00	root		rows:0
+TableDual	0.00	root		rows:0
 explain format = 'brief' select * from t where b = 1 and b = 2;
 id	estRows	task	access object	operator info
-TableDual	8000.00	root		rows:0
+TableDual	0.00	root		rows:0
 explain format = 'brief' select * from t t1 join t t2 where t1.b = t2.b and t2.b is null;
 id	estRows	task	access object	operator info
 Projection	0.00	root		test.t.a, test.t.b, test.t.a, test.t.b
@@ -458,7 +458,7 @@ drop table if exists t;
 create table t(a bigint primary key);
 explain format = 'brief' select * from t where a = 1 and a = 2;
 id	estRows	task	access object	operator info
-TableDual	8000.00	root		rows:0
+TableDual	0.00	root		rows:0
 explain format = 'brief' select null or a > 1 from t;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		or(<nil>, gt(test.t.a, 1))->Column#2
@@ -506,17 +506,17 @@ PRIMARY KEY (`id`)
 explain format = 'brief' SELECT COUNT(1) FROM (SELECT COALESCE(b.region_name, '不详') region_name, SUM(a.registration_num) registration_num FROM (SELECT stat_date, show_date, region_id, 0 registration_num FROM test01 WHERE period = 1 AND stat_date >= 20191202 AND stat_date <= 20191202 UNION ALL SELECT stat_date, show_date, region_id, registration_num registration_num FROM test01 WHERE period = 1 AND stat_date >= 20191202 AND stat_date <= 20191202) a LEFT JOIN test02 b ON a.region_id = b.id WHERE registration_num > 0 AND a.stat_date >= '20191202' AND a.stat_date <= '20191202' GROUP BY a.stat_date , a.show_date , COALESCE(b.region_name, '不详') ) JLS;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(1)->Column#22
-└─HashAgg	8000.00	root		group by:Column#32, Column#33, Column#34, funcs:count(1)->Column#31
-  └─Projection	10000.01	root		Column#14, Column#15, coalesce(test.test02.region_name, 不详)->Column#34
-    └─HashJoin	10000.01	root		left outer join, equal:[eq(Column#16, test.test02.id)]
-      ├─TableReader(Build)	10000.00	root		data:TableFullScan
-      │ └─TableFullScan	10000.00	cop[tikv]	table:b	keep order:false, stats:pseudo
-      └─Union(Probe)	8000.01	root		
-        ├─TableDual	8000.00	root		rows:0
-        └─Projection	0.01	root		test.test01.stat_date, test.test01.show_date, test.test01.region_id
-          └─TableReader	0.01	root		data:Selection
-            └─Selection	0.01	cop[tikv]		eq(test.test01.period, 1), ge(test.test01.stat_date, 20191202), gt(cast(test.test01.registration_num, bigint(20) BINARY), 0), le(test.test01.stat_date, 20191202)
-              └─TableFullScan	10000.00	cop[tikv]	table:test01	keep order:false, stats:pseudo
+└─HashAgg	1.00	root		group by:Column#32, Column#33, Column#34, funcs:count(1)->Column#31
+  └─Projection	0.01	root		Column#14, Column#15, coalesce(test.test02.region_name, 不详)->Column#34
+    └─IndexJoin	0.01	root		left outer join, inner:TableReader, outer key:Column#16, inner key:test.test02.id, equal cond:eq(Column#16, test.test02.id)
+      ├─Union(Build)	0.01	root		
+      │ ├─TableDual	0.00	root		rows:0
+      │ └─Projection	0.01	root		test.test01.stat_date, test.test01.show_date, test.test01.region_id
+      │   └─TableReader	0.01	root		data:Selection
+      │     └─Selection	0.01	cop[tikv]		eq(test.test01.period, 1), ge(test.test01.stat_date, 20191202), gt(cast(test.test01.registration_num, bigint(20) BINARY), 0), le(test.test01.stat_date, 20191202)
+      │       └─TableFullScan	10000.00	cop[tikv]	table:test01	keep order:false, stats:pseudo
+      └─TableReader(Probe)	1.00	root		data:TableRangeScan
+        └─TableRangeScan	1.00	cop[tikv]	table:b	range: decided by [Column#16], keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, nb int not null, nc int not null);
 explain format = 'brief' select ifnull(a, 0) from t;

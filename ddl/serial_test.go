@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -265,7 +266,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec("create global temporary table shard_row_id_temporary_table_plus (a int) on commit delete rows")
 	defer tk.MustExec("drop table if exists shard_row_id_table, shard_row_id_temporary_table, shard_row_id_table_plus, shard_row_id_temporary_table_plus")
 	err = tk.ExecToErr("alter table shard_row_id_temporary_table_plus shard_row_id_bits = 4")
-	require.Equal(t, ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error(), err.Error())
+	require.Equal(t, dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error(), err.Error())
 
 	// Test partition.
 	tk.MustExec("drop table if exists global_partition_table")
@@ -481,9 +482,7 @@ func TestCancelAddIndexPanic(t *testing.T) {
 			checkErr = txn.Commit(context.Background())
 		}
 	}
-	origHook := dom.DDL().GetHook()
-	defer dom.DDL().(ddl.DDLForTest).SetHook(origHook)
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 	rs, err := tk.Exec("alter table t add index idx_c2(c2)")
 	if rs != nil {
 		require.NoError(t, rs.Close())
@@ -664,9 +663,7 @@ func TestRecoverTableByJobIDFail(t *testing.T) {
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `return(true)`))
 		}
 	}
-	origHook := dom.DDL().GetHook()
-	defer dom.DDL().(ddl.DDLForTest).SetHook(origHook)
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 
 	// do recover table.
 	tk.MustExec(fmt.Sprintf("recover table by job %d", jobID))
@@ -726,9 +723,7 @@ func TestRecoverTableByTableNameFail(t *testing.T) {
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `return(true)`))
 		}
 	}
-	origHook := dom.DDL().GetHook()
-	defer dom.DDL().(ddl.DDLForTest).SetHook(origHook)
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 
 	// do recover table.
 	tk.MustExec("recover table t_recover")
@@ -812,9 +807,7 @@ func TestCanceledJobTakeTime(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
-	origHook := dom.DDL().GetHook()
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
-	defer dom.DDL().(ddl.DDLForTest).SetHook(origHook)
+	dom.DDL().SetHook(hook)
 
 	originalWT := ddl.GetWaitTimeWhenErrorOccurred()
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Second)
@@ -871,7 +864,7 @@ func TestAutoRandom(t *testing.T) {
 
 	assertInvalidAutoRandomErr := func(sql string, errMsg string, args ...interface{}) {
 		err := tk.ExecToErr(sql)
-		require.EqualError(t, err, ddl.ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(errMsg, args...)).Error())
+		require.EqualError(t, err, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(errMsg, args...)).Error())
 	}
 
 	assertPKIsNotHandle := func(sql, errCol string) {
@@ -1291,13 +1284,13 @@ func TestLocalTemporaryTableBlockedDDL(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int)")
 	tk.MustExec("create temporary table tmp1 (id int primary key, a int unique, b int)")
-	require.ErrorIs(t, tk.ExecToErr("rename table tmp1 to tmp2"), ddl.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("alter table tmp1 add column c int"), ddl.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("alter table tmp1 add index b(b)"), ddl.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("create index a on tmp1(b)"), ddl.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("drop index a on tmp1"), ddl.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("lock tables tmp1 read"), ddl.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("lock tables tmp1 write"), ddl.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("lock tables t1 read, tmp1 read"), ddl.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("admin cleanup table lock tmp1"), ddl.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("rename table tmp1 to tmp2"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("alter table tmp1 add column c int"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("alter table tmp1 add index b(b)"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("create index a on tmp1(b)"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("drop index a on tmp1"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("lock tables tmp1 read"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("lock tables tmp1 write"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("lock tables t1 read, tmp1 read"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("admin cleanup table lock tmp1"), dbterror.ErrUnsupportedLocalTempTableDDL)
 }

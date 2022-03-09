@@ -143,6 +143,8 @@ type Context interface {
 	GetBuiltinFunctionUsage() map[string]uint32
 	// GetStmtStats returns stmtstats.StatementStats owned by implementation.
 	GetStmtStats() *stmtstats.StatementStats
+	// ShowProcess returns ProcessInfo running in current Context
+	ShowProcess() *util.ProcessInfo
 }
 
 type basicCtxType int
@@ -205,4 +207,12 @@ func ValidateStaleReadTS(ctx context.Context, sctx Context, readTS uint64) error
 		return errors.Errorf("cannot set read timestamp to a future time")
 	}
 	return nil
+}
+
+// SysProcTracker is used to track background sys processes
+type SysProcTracker interface {
+	Track(id uint64, proc Context) error
+	UnTrack(id uint64)
+	GetSysProcessList() map[uint64]*util.ProcessInfo
+	KillSysProcess(id uint64)
 }

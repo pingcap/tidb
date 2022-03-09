@@ -111,9 +111,6 @@ func checkCollation(vars *SessionVars, normalizedValue string, originalValue str
 }
 
 func checkCharacterSet(normalizedValue string, argName string) (string, error) {
-	if normalizedValue == "" {
-		return normalizedValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(argName, "NULL"))
-	}
 	cs, err := charset.GetCharsetInfo(normalizedValue)
 	if err != nil {
 		return normalizedValue, errors.Trace(err)

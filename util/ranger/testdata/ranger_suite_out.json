@@ -123,7 +123,7 @@
       {
         "SQL": "select * from t where a = 1 and (b = 1 or b = 2) and b = 3 and c > 1;",
         "Plan": [
-          "TableDual_5 8000.00 root  rows:0"
+          "TableDual_5 0.00 root  rows:0"
         ],
         "Result": null
       },
@@ -169,7 +169,7 @@
       {
         "SQL": "select * from t where a = 1 and b is null and b = 1 and c > 1;",
         "Plan": [
-          "TableDual_5 8000.00 root  rows:0"
+          "TableDual_5 0.00 root  rows:0"
         ],
         "Result": null
       }

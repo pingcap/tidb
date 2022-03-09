@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 func onCreatePlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -62,7 +63,7 @@ func onCreatePlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64
 		return ver, nil
 	default:
 		// We can't enter here.
-		return ver, ErrInvalidDDLState.GenWithStackByArgs("policy", policyInfo.State)
+		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("policy", policyInfo.State)
 	}
 }
 
@@ -158,7 +159,7 @@ func onDropPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 
 	err = checkPlacementPolicyNotInUse(d, t, policyInfo)
 	if err != nil {
-		if ErrPlacementPolicyInUse.Equal(err) {
+		if dbterror.ErrPlacementPolicyInUse.Equal(err) {
 			job.State = model.JobStateCancelled
 		}
 		return ver, errors.Trace(err)
@@ -203,7 +204,7 @@ func onDropPlacementPolicy(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		// Finish this job. By now policy don't consider the binlog sync.
 		job.FinishDBJob(model.JobStateDone, model.StateNone, ver, nil)
 	default:
-		err = ErrInvalidDDLState.GenWithStackByArgs("policy", policyInfo.State)
+		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("policy", policyInfo.State)
 	}
 	return ver, errors.Trace(err)
 }
@@ -295,7 +296,7 @@ func checkPlacementPolicyNotInUse(d *ddlCtx, t *meta.Meta, policy *model.PolicyI
 func checkPlacementPolicyNotInUseFromInfoSchema(is infoschema.InfoSchema, policy *model.PolicyInfo) error {
 	for _, dbInfo := range is.AllSchemas() {
 		if ref := dbInfo.PlacementPolicyRef; ref != nil && ref.ID == policy.ID {
-			return ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
+			return dbterror.ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
 		}
 
 		for _, tbl := range is.SchemaTables(dbInfo.Name) {
@@ -349,7 +350,7 @@ func checkPlacementPolicyNotInUseFromMeta(t *meta.Meta, policy *model.PolicyInfo
 
 	for _, dbInfo := range schemas {
 		if ref := dbInfo.PlacementPolicyRef; ref != nil && ref.ID == policy.ID {
-			return ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
+			return dbterror.ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
 		}
 
 		tables, err := t.ListTables(dbInfo.ID)
@@ -368,13 +369,13 @@ func checkPlacementPolicyNotInUseFromMeta(t *meta.Meta, policy *model.PolicyInfo
 
 func checkPlacementPolicyNotUsedByTable(tblInfo *model.TableInfo, policy *model.PolicyInfo) error {
 	if ref := tblInfo.PlacementPolicyRef; ref != nil && ref.ID == policy.ID {
-		return ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
+		return dbterror.ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
 	}
 
 	if tblInfo.Partition != nil {
 		for _, partition := range tblInfo.Partition.Definitions {
 			if ref := partition.PlacementPolicyRef; ref != nil && ref.ID == policy.ID {
-				return ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
+				return dbterror.ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
 			}
 		}
 	}

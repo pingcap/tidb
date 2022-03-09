@@ -389,7 +389,7 @@ func TestAddIndexWorkerNum(t *testing.T) {
 				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum"))
 			}()
 
-			testutil.SessionExecInGoroutine(s.store, "create index c3_index on test_add_index (c3)", done)
+			testutil.SessionExecInGoroutine(s.store, "test_db", "create index c3_index on test_add_index (c3)", done)
 			checkNum := 0
 
 			running := true

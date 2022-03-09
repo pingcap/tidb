@@ -73,7 +73,7 @@ func PreparedPlanCacheEnabled() bool {
 type planCacheKey struct {
 	database             string
 	connID               uint64
-	pstmtID              uint32
+	stmtText             string
 	schemaVersion        int64
 	sqlMode              mysql.SQLMode
 	timezoneOffset       int
@@ -95,7 +95,7 @@ func (key *planCacheKey) Hash() []byte {
 		}
 		key.hash = append(key.hash, dbBytes...)
 		key.hash = codec.EncodeInt(key.hash, int64(key.connID))
-		key.hash = codec.EncodeInt(key.hash, int64(key.pstmtID))
+		key.hash = append(key.hash, hack.Slice(key.stmtText)...)
 		key.hash = codec.EncodeInt(key.hash, key.schemaVersion)
 		key.hash = codec.EncodeInt(key.hash, int64(key.sqlMode))
 		key.hash = codec.EncodeInt(key.hash, int64(key.timezoneOffset))
@@ -115,12 +115,12 @@ func (key *planCacheKey) Hash() []byte {
 
 // SetPstmtIDSchemaVersion implements PstmtCacheKeyMutator interface to change pstmtID and schemaVersion of cacheKey.
 // so we can reuse Key instead of new every time.
-func SetPstmtIDSchemaVersion(key kvcache.Key, pstmtID uint32, schemaVersion int64, isolationReadEngines map[kv.StoreType]struct{}) {
+func SetPstmtIDSchemaVersion(key kvcache.Key, stmtText string, schemaVersion int64, isolationReadEngines map[kv.StoreType]struct{}) {
 	psStmtKey, isPsStmtKey := key.(*planCacheKey)
 	if !isPsStmtKey {
 		return
 	}
-	psStmtKey.pstmtID = pstmtID
+	psStmtKey.stmtText = stmtText
 	psStmtKey.schemaVersion = schemaVersion
 	psStmtKey.isolationReadEngines = make(map[kv.StoreType]struct{})
 	for k, v := range isolationReadEngines {
@@ -130,15 +130,21 @@ func SetPstmtIDSchemaVersion(key kvcache.Key, pstmtID uint32, schemaVersion int6
 }
 
 // NewPlanCacheKey creates a new planCacheKey object.
-func NewPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, schemaVersion int64) kvcache.Key {
+func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion int64) (kvcache.Key, error) {
+	if stmtText == "" {
+		return nil, errors.New("no statement text")
+	}
+	if stmtDB == "" {
+		stmtDB = sessionVars.CurrentDB
+	}
 	timezoneOffset := 0
 	if sessionVars.TimeZone != nil {
 		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
 	}
 	key := &planCacheKey{
-		database:             sessionVars.CurrentDB,
+		database:             stmtDB,
 		connID:               sessionVars.ConnectionID,
-		pstmtID:              pstmtID,
+		stmtText:             stmtText,
 		schemaVersion:        schemaVersion,
 		sqlMode:              sessionVars.SQLMode,
 		timezoneOffset:       timezoneOffset,
@@ -148,7 +154,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, schemaVe
 	for k, v := range sessionVars.IsolationReadEngines {
 		key.isolationReadEngines[k] = v
 	}
-	return key
+	return key, nil
 }
 
 // FieldSlice is the slice of the types.FieldType
@@ -207,6 +213,7 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 // CachedPrepareStmt store prepared ast from PrepareExec and other related fields
 type CachedPrepareStmt struct {
 	PreparedAst         *ast.Prepared
+	StmtDB              string // which DB the statement will be processed over
 	VisitInfos          []visitInfo
 	ColumnInfos         interface{}
 	Executor            interface{}
@@ -218,6 +225,13 @@ type CachedPrepareStmt struct {
 	SnapshotTSEvaluator func(sessionctx.Context) (uint64, error)
 	NormalizedSQL4PC    string
 	SQLDigest4PC        string
+
+	// the different between NormalizedSQL, NormalizedSQL4PC and StmtText:
+	//  for the query `select * from t where a>1 and b<?`, then
+	//  NormalizedSQL: select * from `t` where `a` > ? and `b` < ? --> constants are normalized to '?',
+	//  NormalizedSQL4PC: select * from `test` . `t` where `a` > ? and `b` < ? --> schema name is added,
+	//  StmtText: select * from t where a>1 and b <? --> just format the original query;
+	StmtText string
 }
 
 // GetPreparedStmt extract the prepared statement from the execute statement.

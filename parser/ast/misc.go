@@ -1687,8 +1687,8 @@ type BindingStatusType int8
 
 // Binding status types.
 const (
-	BindingStatusTypeEnable BindingStatusType = iota
-	BindingStatusTypeDisable
+	BindingStatusTypeEnabled BindingStatusType = iota
+	BindingStatusTypeDisabled
 )
 
 // SetBindingStmt sets sql binding status.
@@ -1704,10 +1704,10 @@ func (n *SetBindingStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("SET ")
 	ctx.WriteKeyWord("BINDING ")
 	switch n.BindingStatusType {
-	case BindingStatusTypeEnable:
-		ctx.WriteKeyWord("ENABLE ")
-	case BindingStatusTypeDisable:
-		ctx.WriteKeyWord("DISABLE ")
+	case BindingStatusTypeEnabled:
+		ctx.WriteKeyWord("ENABLED ")
+	case BindingStatusTypeDisabled:
+		ctx.WriteKeyWord("DISABLED ")
 	}
 	ctx.WriteKeyWord("FOR ")
 	if err := n.OriginNode.Restore(ctx); err != nil {

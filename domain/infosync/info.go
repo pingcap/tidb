@@ -237,6 +237,7 @@ func initTiFlashPlacementManager(addrs []string) TiFlashPlacementManager {
 		m := mockTiFlashPlacementManager{}
 		return &m
 	}
+	logutil.BgLogger().Warn("init TiFlashPlacementManager", zap.Strings("pd addrs", addrs))
 	return &TiFlashPDPlacementManager{addrs: addrs}
 }
 

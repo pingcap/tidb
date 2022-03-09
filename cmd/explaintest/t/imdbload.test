@@ -281,6 +281,8 @@ load stats 's/imdbload_stats/cast_info.json';
 
 -- Actual row count: 1
 explain select * from char_name where ((imdb_index = 'I') and (surname_pcode < 'E436')) or ((imdb_index = 'L') and (surname_pcode < 'E436'));
+explain select * from char_name use index (itest2) where ((imdb_index = 'I') and (surname_pcode < 'E436')) or ((imdb_index = 'L') and (surname_pcode < 'E436'));
+trace plan target = 'estimation' select * from char_name where ((imdb_index = 'I') and (surname_pcode < 'E436')) or ((imdb_index = 'L') and (surname_pcode < 'E436'));
 
 -- Actual row count: 0
 explain select * from char_name where ((imdb_index = 'V') and (surname_pcode < 'L3416'));

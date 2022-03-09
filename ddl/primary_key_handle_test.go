@@ -15,110 +15,54 @@
 package ddl_test
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"strconv"
 	"strings"
-	"time"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testutil"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
 
-type testMaxTableRowIDContext struct {
-	c   *C
-	d   ddl.DDL
-	tbl table.Table
-}
-
-func newTestMaxTableRowIDContext(c *C, d ddl.DDL, tbl table.Table) *testMaxTableRowIDContext {
-	return &testMaxTableRowIDContext{
-		c:   c,
-		d:   d,
-		tbl: tbl,
-	}
-}
-
-func getMaxTableHandle(ctx *testMaxTableRowIDContext, store kv.Storage) (kv.Handle, bool) {
-	c := ctx.c
-	d := ctx.d
-	tbl := ctx.tbl
-	curVer, err := store.CurrentVersion(kv.GlobalTxnScope)
-	c.Assert(err, IsNil)
-	maxHandle, emptyTable, err := d.GetTableMaxHandle(curVer.Ver, tbl.(table.PhysicalTable))
-	c.Assert(err, IsNil)
+func getTableMaxHandle(t *testing.T, d ddl.DDL, tbl table.Table, store kv.Storage) (kv.Handle, bool) {
+	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	maxHandle, emptyTable, err := d.GetTableMaxHandle(ver.Ver, tbl.(table.PhysicalTable))
+	require.NoError(t, err)
 	return maxHandle, emptyTable
 }
 
-func checkGetMaxTableRowID(ctx *testMaxTableRowIDContext, store kv.Storage, expectEmpty bool, expectMaxHandle kv.Handle) {
-	c := ctx.c
-	maxHandle, emptyTable := getMaxTableHandle(ctx, store)
-	c.Assert(emptyTable, Equals, expectEmpty)
-	c.Assert(maxHandle, testutil.HandleEquals, expectMaxHandle)
+func checkTableMaxHandle(t *testing.T, d ddl.DDL, tbl table.Table, store kv.Storage, expectedEmpty bool, expectedMaxHandle kv.Handle) {
+	maxHandle, emptyHandle := getTableMaxHandle(t, d, tbl, store)
+	require.Equal(t, expectedEmpty, emptyHandle)
+	if expectedEmpty {
+		require.True(t, emptyHandle)
+		require.Nil(t, maxHandle)
+	} else {
+		require.False(t, emptyHandle)
+		testutil.HandleEqual(t, expectedMaxHandle, maxHandle)
+	}
 }
 
-var _ = Suite(&testIntegrationSuite7{&testIntegrationSuite{}})
-
-type testIntegrationSuite7 struct{ *testIntegrationSuite }
-
-type testIntegrationSuite struct {
-	lease   time.Duration
-	cluster testutils.Cluster
-	store   kv.Storage
-	dom     *domain.Domain
-	ctx     sessionctx.Context
-}
-
-func (s *testIntegrationSuite) SetUpSuite(c *C) {
-	var err error
-	s.lease = 50 * time.Millisecond
-	ddl.SetWaitTimeWhenErrorOccurred(0)
-
-	s.store, err = mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c testutils.Cluster) {
-			mockstore.BootstrapWithSingleStore(c)
-			s.cluster = c
-		}),
-	)
-	c.Assert(err, IsNil)
-	session.SetSchemaLease(s.lease)
-	session.DisableStats4Test()
-	s.dom, err = session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-
-	se, err := session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	s.ctx = se.(sessionctx.Context)
-	_, err = se.Execute(context.Background(), "create database test_db")
-	c.Assert(err, IsNil)
-}
-
-func (s *testIntegrationSuite) TearDownSuite(c *C) {
-	s.dom.Close()
-	c.Assert(s.store.Close(), IsNil)
-}
-
-func (s *testIntegrationSuite7) TestPrimaryKey(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("drop database if exists test_primary_key;")
-	tk.MustExec("create database test_primary_key;")
-	tk.MustExec("use test_primary_key;")
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+func TestPrimaryKey(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 
 	// Test add/drop primary key on a plain table.
 	tk.MustExec("drop table if exists t;")
@@ -178,239 +122,218 @@ func (s *testIntegrationSuite7) TestPrimaryKey(c *C) {
 	tk.MustExec("drop table t;")
 }
 
-func (s *testIntegrationSuite7) TestDropAutoIncrementIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestMultiRegionGetTableEndHandle(t *testing.T) {
+	var cluster testutils.Cluster
+	store, clean := testkit.CreateMockStore(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
+		mockstore.BootstrapWithSingleStore(c)
+		cluster = c
+	}))
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (a int(11) not null auto_increment key, b int(11), c bigint, unique key (a, b, c))")
-	tk.MustExec("alter table t1 drop index a")
-}
-
-func (s *testIntegrationSuite7) TestMultiRegionGetTableEndHandle(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("drop database if exists test_get_endhandle")
-	tk.MustExec("create database test_get_endhandle")
-	tk.MustExec("use test_get_endhandle")
-
 	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
 	var builder strings.Builder
-	fmt.Fprintf(&builder, "insert into t values ")
+	_, _ = fmt.Fprintf(&builder, "insert into t values ")
 	for i := 0; i < 1000; i++ {
-		fmt.Fprintf(&builder, "(%v, %v),", i, i)
+		_, _ = fmt.Fprintf(&builder, "(%v, %v),", i, i)
 	}
 	sql := builder.String()
 	tk.MustExec(sql[:len(sql)-1])
 
 	// Get table ID for split.
-	dom := domain.GetDomain(tk.Se)
+	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tblID := tbl.Meta().ID
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
 
-	d := s.dom.DDL()
-	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
+	d := dom.DDL()
 
 	// Split the table.
-	tableStart := tablecodec.GenTableRecordPrefix(tblID)
-	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 100)
-
-	maxHandle, emptyTable := getMaxTableHandle(testCtx, s.store)
-	c.Assert(emptyTable, IsFalse)
-	c.Assert(maxHandle, Equals, kv.IntHandle(999))
+	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
+	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 100)
+	checkTableMaxHandle(t, d, tbl, store, false, kv.IntHandle(999))
 
 	tk.MustExec("insert into t values(10000, 1000)")
-	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
-	c.Assert(emptyTable, IsFalse)
-	c.Assert(maxHandle, Equals, kv.IntHandle(10000))
+	checkTableMaxHandle(t, d, tbl, store, false, kv.IntHandle(10000))
 
 	tk.MustExec("insert into t values(-1, 1000)")
-	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
-	c.Assert(emptyTable, IsFalse)
-	c.Assert(maxHandle, Equals, kv.IntHandle(10000))
+	checkTableMaxHandle(t, d, tbl, store, false, kv.IntHandle(10000))
 }
 
-func (s *testIntegrationSuite7) TestGetTableEndHandle(c *C) {
+func TestGetTableEndHandle(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
 	// TestGetTableEndHandle test ddl.GetTableMaxHandle method, which will return the max row id of the table.
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("drop database if exists test_get_endhandle")
-	tk.MustExec("create database test_get_endhandle")
-	tk.MustExec("use test_get_endhandle")
-	// Test PK is handle.
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// PK is handle.
 	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
 
-	is := s.dom.InfoSchema()
-	d := s.dom.DDL()
-	tbl, err := is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
+	is := dom.InfoSchema()
+	d := dom.DDL()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
 
-	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
 	// test empty table
-	checkGetMaxTableRowID(testCtx, s.store, true, nil)
+	checkTableMaxHandle(t, d, tbl, store, true, nil)
 
 	tk.MustExec("insert into t values(-1, 1)")
-	checkGetMaxTableRowID(testCtx, s.store, false, kv.IntHandle(-1))
+	checkTableMaxHandle(t, d, tbl, store, false, kv.IntHandle(-1))
 
 	tk.MustExec("insert into t values(9223372036854775806, 1)")
-	checkGetMaxTableRowID(testCtx, s.store, false, kv.IntHandle(9223372036854775806))
+	checkTableMaxHandle(t, d, tbl, store, false, kv.IntHandle(9223372036854775806))
 
 	tk.MustExec("insert into t values(9223372036854775807, 1)")
-	checkGetMaxTableRowID(testCtx, s.store, false, kv.IntHandle(9223372036854775807))
+	checkTableMaxHandle(t, d, tbl, store, false, kv.IntHandle(9223372036854775807))
 
 	tk.MustExec("insert into t values(10, 1)")
 	tk.MustExec("insert into t values(102149142, 1)")
-	checkGetMaxTableRowID(testCtx, s.store, false, kv.IntHandle(9223372036854775807))
+	checkTableMaxHandle(t, d, tbl, store, false, kv.IntHandle(9223372036854775807))
 
 	tk.MustExec("create table t1(a bigint PRIMARY KEY, b int)")
 
 	var builder strings.Builder
-	fmt.Fprintf(&builder, "insert into t1 values ")
+	_, _ = fmt.Fprintf(&builder, "insert into t1 values ")
 	for i := 0; i < 1000; i++ {
-		fmt.Fprintf(&builder, "(%v, %v),", i, i)
+		_, _ = fmt.Fprintf(&builder, "(%v, %v),", i, i)
 	}
 	sql := builder.String()
 	tk.MustExec(sql[:len(sql)-1])
 
-	is = s.dom.InfoSchema()
-	testCtx.tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
-	checkGetMaxTableRowID(testCtx, s.store, false, kv.IntHandle(999))
+	is = dom.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	checkTableMaxHandle(t, d, tbl, store, false, kv.IntHandle(999))
 
 	// Test PK is not handle
 	tk.MustExec("create table t2(a varchar(255))")
 
-	is = s.dom.InfoSchema()
-	testCtx.tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t2"))
-	c.Assert(err, IsNil)
-	checkGetMaxTableRowID(testCtx, s.store, true, nil)
+	is = dom.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+	checkTableMaxHandle(t, d, tbl, store, true, nil)
 
 	builder.Reset()
-	fmt.Fprintf(&builder, "insert into t2 values ")
+	_, _ = fmt.Fprintf(&builder, "insert into t2 values ")
 	for i := 0; i < 1000; i++ {
-		fmt.Fprintf(&builder, "(%v),", i)
+		_, _ = fmt.Fprintf(&builder, "(%v),", i)
 	}
 	sql = builder.String()
 	tk.MustExec(sql[:len(sql)-1])
 
 	result := tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxHandle, emptyTable := getMaxTableHandle(testCtx, s.store)
+	maxHandle, emptyTable := getTableMaxHandle(t, d, tbl, store)
 	result.Check(testkit.Rows(fmt.Sprintf("%v", maxHandle.IntValue())))
-	c.Assert(emptyTable, IsFalse)
+	require.False(t, emptyTable)
 
 	tk.MustExec("insert into t2 values(100000)")
 	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
+	maxHandle, emptyTable = getTableMaxHandle(t, d, tbl, store)
 	result.Check(testkit.Rows(fmt.Sprintf("%v", maxHandle.IntValue())))
-	c.Assert(emptyTable, IsFalse)
+	require.False(t, emptyTable)
 
 	tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", math.MaxInt64-1))
 	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
+	maxHandle, emptyTable = getTableMaxHandle(t, d, tbl, store)
 	result.Check(testkit.Rows(fmt.Sprintf("%v", maxHandle.IntValue())))
-	c.Assert(emptyTable, IsFalse)
+	require.False(t, emptyTable)
 
 	tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", math.MaxInt64))
 	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
+	maxHandle, emptyTable = getTableMaxHandle(t, d, tbl, store)
 	result.Check(testkit.Rows(fmt.Sprintf("%v", maxHandle.IntValue())))
-	c.Assert(emptyTable, IsFalse)
+	require.False(t, emptyTable)
 
 	tk.MustExec("insert into t2 values(100)")
 	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
+	maxHandle, emptyTable = getTableMaxHandle(t, d, tbl, store)
 	result.Check(testkit.Rows(fmt.Sprintf("%v", maxHandle.IntValue())))
-	c.Assert(emptyTable, IsFalse)
+	require.False(t, emptyTable)
 }
 
-func (s *testIntegrationSuite7) TestMultiRegionGetTableEndCommonHandle(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("drop database if exists test_get_endhandle")
-	tk.MustExec("create database test_get_endhandle")
-	tk.MustExec("use test_get_endhandle")
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+func TestMultiRegionGetTableEndCommonHandle(t *testing.T) {
+	var cluster testutils.Cluster
+	store, clean := testkit.CreateMockStore(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
+		mockstore.BootstrapWithSingleStore(c)
+		cluster = c
+	}))
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
 	tk.MustExec("create table t(a varchar(20), b int, c float, d bigint, primary key (a, b, c))")
 	var builder strings.Builder
-	fmt.Fprintf(&builder, "insert into t values ")
+	_, _ = fmt.Fprintf(&builder, "insert into t values ")
 	for i := 0; i < 1000; i++ {
-		fmt.Fprintf(&builder, "('%v', %v, %v, %v),", i, i, i, i)
+		_, _ = fmt.Fprintf(&builder, "('%v', %v, %v, %v),", i, i, i, i)
 	}
 	sql := builder.String()
 	tk.MustExec(sql[:len(sql)-1])
 
 	// Get table ID for split.
-	dom := domain.GetDomain(tk.Se)
+	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tblID := tbl.Meta().ID
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
 
-	d := s.dom.DDL()
-	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
+	d := dom.DDL()
 
 	// Split the table.
-	tableStart := tablecodec.GenTableRecordPrefix(tblID)
-	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 100)
-
-	maxHandle, emptyTable := getMaxTableHandle(testCtx, s.store)
-	c.Assert(emptyTable, IsFalse)
-	c.Assert(maxHandle, testutil.HandleEquals, testutil.MustNewCommonHandle(c, "999", 999, 999))
+	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
+	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 100)
+	checkTableMaxHandle(t, d, tbl, store, false, testutil.MustNewCommonHandle(t, "999", 999, 999))
 
 	tk.MustExec("insert into t values('a', 1, 1, 1)")
-	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
-	c.Assert(emptyTable, IsFalse)
-	c.Assert(maxHandle, testutil.HandleEquals, testutil.MustNewCommonHandle(c, "a", 1, 1))
+	checkTableMaxHandle(t, d, tbl, store, false, testutil.MustNewCommonHandle(t, "a", 1, 1))
 
 	tk.MustExec("insert into t values('0000', 1, 1, 1)")
-	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
-	c.Assert(emptyTable, IsFalse)
-	c.Assert(maxHandle, testutil.HandleEquals, testutil.MustNewCommonHandle(c, "a", 1, 1))
+	checkTableMaxHandle(t, d, tbl, store, false, testutil.MustNewCommonHandle(t, "a", 1, 1))
 }
 
-func (s *testIntegrationSuite7) TestGetTableEndCommonHandle(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("drop database if exists test_get_endhandle")
-	tk.MustExec("create database test_get_endhandle")
-	tk.MustExec("use test_get_endhandle")
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+func TestGetTableEndCommonHandle(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
 	tk.MustExec("create table t(a varchar(15), b bigint, c int, primary key (a, b))")
 	tk.MustExec("create table t1(a varchar(15), b bigint, c int, primary key (a(2), b))")
 
-	is := s.dom.InfoSchema()
-	d := s.dom.DDL()
-	tbl, err := is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
+	is := dom.InfoSchema()
+	d := dom.DDL()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
 
 	// test empty table
-	checkGetMaxTableRowID(testCtx, s.store, true, nil)
+	checkTableMaxHandle(t, d, tbl, store, true, nil)
+
 	tk.MustExec("insert into t values('abc', 1, 10)")
-	expectedHandle := testutil.MustNewCommonHandle(c, "abc", 1)
-	checkGetMaxTableRowID(testCtx, s.store, false, expectedHandle)
+	checkTableMaxHandle(t, d, tbl, store, false, testutil.MustNewCommonHandle(t, "abc", 1))
+
 	tk.MustExec("insert into t values('abchzzzzzzzz', 1, 10)")
-	expectedHandle = testutil.MustNewCommonHandle(c, "abchzzzzzzzz", 1)
-	checkGetMaxTableRowID(testCtx, s.store, false, expectedHandle)
+	checkTableMaxHandle(t, d, tbl, store, false, testutil.MustNewCommonHandle(t, "abchzzzzzzzz", 1))
 	tk.MustExec("insert into t values('a', 1, 10)")
 	tk.MustExec("insert into t values('ab', 1, 10)")
-	checkGetMaxTableRowID(testCtx, s.store, false, expectedHandle)
+	checkTableMaxHandle(t, d, tbl, store, false, testutil.MustNewCommonHandle(t, "abchzzzzzzzz", 1))
 
 	// Test MaxTableRowID with prefixed primary key.
-	tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
-	d = s.dom.DDL()
-	testCtx = newTestMaxTableRowIDContext(c, d, tbl)
-	checkGetMaxTableRowID(testCtx, s.store, true, nil)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	require.NoError(t, err)
+	d = dom.DDL()
+	checkTableMaxHandle(t, d, tbl, store, true, nil)
 	tk.MustExec("insert into t1 values('abccccc', 1, 10)")
-	expectedHandle = testutil.MustNewCommonHandle(c, "ab", 1)
-	checkGetMaxTableRowID(testCtx, s.store, false, expectedHandle)
+	checkTableMaxHandle(t, d, tbl, store, false, testutil.MustNewCommonHandle(t, "ab", 1))
 	tk.MustExec("insert into t1 values('azzzz', 1, 10)")
-	expectedHandle = testutil.MustNewCommonHandle(c, "az", 1)
-	checkGetMaxTableRowID(testCtx, s.store, false, expectedHandle)
+	checkTableMaxHandle(t, d, tbl, store, false, testutil.MustNewCommonHandle(t, "az", 1))
 }
 
-func (s *testIntegrationSuite7) TestAutoRandomChangeFromAutoInc(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestAutoRandomChangeFromAutoInc(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("set @@tidb_allow_remove_auto_inc = 1;")
 
@@ -421,9 +344,9 @@ func (s *testIntegrationSuite7) TestAutoRandomChangeFromAutoInc(c *C) {
 	tk.MustExec("alter table t modify column a bigint auto_random(3);")
 	tk.MustExec("insert into t values (), (), ();")
 	rows := tk.MustQuery("show table t next_row_id;").Rows()
-	c.Assert(len(rows), Equals, 1, Commentf("query result: %v", rows))
-	c.Assert(len(rows[0]), Equals, 5, Commentf("query result: %v", rows))
-	c.Assert(rows[0][4], Equals, "AUTO_RANDOM")
+	require.Len(t, rows, 1, fmt.Sprintf("query result: %v", rows))
+	require.Len(t, rows[0], 5, fmt.Sprintf("query result: %v", rows))
+	require.Equal(t, "AUTO_RANDOM", rows[0][4])
 
 	// Changing from auto_inc unique key is not allowed.
 	tk.MustExec("drop table if exists t;")
@@ -465,8 +388,10 @@ func (s *testIntegrationSuite7) TestAutoRandomChangeFromAutoInc(c *C) {
 	tk.MustExec("alter table t modify column a bigint auto_random(4);")
 }
 
-func (s *testIntegrationSuite7) TestAutoRandomExchangePartition(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestAutoRandomExchangePartition(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists auto_random_db")
 	defer tk.MustExec("drop database if exists auto_random_db")
 
@@ -499,8 +424,10 @@ func (s *testIntegrationSuite7) TestAutoRandomExchangePartition(c *C) {
 	tk.MustQuery("select count(*) from e4").Check(testkit.Rows("4"))
 }
 
-func (s *testIntegrationSuite7) TestAutoRandomIncBitsIncrementAndOffset(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestAutoRandomIncBitsIncrementAndOffset(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists auto_random_db")
 	defer tk.MustExec("drop database if exists auto_random_db")
 	tk.MustExec("use auto_random_db")
@@ -547,8 +474,8 @@ func (s *testIntegrationSuite7) TestAutoRandomIncBitsIncrementAndOffset(c *C) {
 		case truncate:
 			truncateTable()
 		}
-		tk.Se.GetSessionVars().AutoIncrementIncrement = tc.increment
-		tk.Se.GetSessionVars().AutoIncrementOffset = tc.offset
+		tk.Session().GetSessionVars().AutoIncrementIncrement = tc.increment
+		tk.Session().GetSessionVars().AutoIncrementOffset = tc.offset
 		for range tc.results {
 			insertTable()
 		}
@@ -556,8 +483,10 @@ func (s *testIntegrationSuite7) TestAutoRandomIncBitsIncrementAndOffset(c *C) {
 	}
 }
 
-func (s *testIntegrationSuite7) TestInvisibleIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestInvisibleIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t,t1,t2,t3,t4,t5,t6")
@@ -630,56 +559,58 @@ func (s *testIntegrationSuite7) TestInvisibleIndex(c *C) {
 	tk.MustQuery("select * from t6").Check(testkit.Rows("1 2"))
 	tk.MustGetErrCode("alter table t6 drop primary key", errno.ErrPKIndexCantBeInvisible)
 	res := tk.MustQuery("show index from t6 where Key_name='PRIMARY';")
-	c.Check(len(res.Rows()), Equals, 1)
+	require.Len(t, res.Rows(), 1)
 }
 
-func (s *testIntegrationSuite7) TestCreateClusteredIndex(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+func TestCreateClusteredIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("CREATE TABLE t1 (a int primary key, b int)")
 	tk.MustExec("CREATE TABLE t2 (a varchar(255) primary key, b int)")
 	tk.MustExec("CREATE TABLE t3 (a int, b int, c int, primary key (a, b))")
 	tk.MustExec("CREATE TABLE t4 (a int, b int, c int)")
-	ctx := tk.Se.(sessionctx.Context)
-	is := domain.GetDomain(ctx).InfoSchema()
+	is := domain.GetDomain(tk.Session()).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
-	c.Assert(tbl.Meta().PKIsHandle, IsTrue)
-	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
+	require.NoError(t, err)
+	require.True(t, tbl.Meta().PKIsHandle)
+	require.False(t, tbl.Meta().IsCommonHandle)
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
-	c.Assert(err, IsNil)
-	c.Assert(tbl.Meta().IsCommonHandle, IsTrue)
+	require.NoError(t, err)
+	require.True(t, tbl.Meta().IsCommonHandle)
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
-	c.Assert(err, IsNil)
-	c.Assert(tbl.Meta().IsCommonHandle, IsTrue)
+	require.NoError(t, err)
+	require.True(t, tbl.Meta().IsCommonHandle)
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
-	c.Assert(err, IsNil)
-	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
+	require.NoError(t, err)
+	require.False(t, tbl.Meta().IsCommonHandle)
 
 	tk.MustExec("CREATE TABLE t5 (a varchar(255) primary key nonclustered, b int)")
 	tk.MustExec("CREATE TABLE t6 (a int, b int, c int, primary key (a, b) nonclustered)")
-	is = domain.GetDomain(ctx).InfoSchema()
+	is = domain.GetDomain(tk.Session()).InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t5"))
-	c.Assert(err, IsNil)
-	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
+	require.NoError(t, err)
+	require.False(t, tbl.Meta().IsCommonHandle)
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t6"))
-	c.Assert(err, IsNil)
-	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
+	require.NoError(t, err)
+	require.False(t, tbl.Meta().IsCommonHandle)
 
 	tk.MustExec("CREATE TABLE t21 like t2")
 	tk.MustExec("CREATE TABLE t31 like t3")
-	is = domain.GetDomain(ctx).InfoSchema()
+	is = domain.GetDomain(tk.Session()).InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t21"))
-	c.Assert(err, IsNil)
-	c.Assert(tbl.Meta().IsCommonHandle, IsTrue)
+	require.NoError(t, err)
+	require.True(t, tbl.Meta().IsCommonHandle)
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t31"))
-	c.Assert(err, IsNil)
-	c.Assert(tbl.Meta().IsCommonHandle, IsTrue)
+	require.NoError(t, err)
+	require.True(t, tbl.Meta().IsCommonHandle)
 
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("CREATE TABLE t7 (a varchar(255) primary key, b int)")
-	is = domain.GetDomain(ctx).InfoSchema()
+	is = domain.GetDomain(tk.Session()).InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t7"))
-	c.Assert(err, IsNil)
-	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
+	require.NoError(t, err)
+	require.False(t, tbl.Meta().IsCommonHandle)
 }
