@@ -100,7 +100,7 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets() []*LocationKeyRanges {
 					break
 				}
 			}
-			// All rest ranges belong to the same region.
+			// All rest ranges belong to the same bucket.
 			if i == ranges.Len() {
 				res = append(res, &LocationKeyRanges{l.Location, ranges})
 				break
@@ -181,16 +181,15 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 	return res, nil
 }
 
-// SplitKeyRangesByBuckets splits the KeyRanges by buckets information in the cache. If regions don't have bucket,
+// SplitKeyRangesByBuckets splits the KeyRanges by buckets information in the cache. If regions don't have buckets,
 // it's equal to SplitKeyRangesByLocations.
 //
-// TODO(youjiali1995): Try to do it in one round.
+// TODO(youjiali1995): Try to do it in one round and reduce allocations if bucket is not enabled.
 func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges) ([]*LocationKeyRanges, error) {
 	locs, err := c.SplitKeyRangesByLocations(bo, ranges)
 	if err != nil {
 		return nil, derr.ToTiDBErr(err)
 	}
-	// TODO(youjiali1995): reduce allocations if bucket is not enabled.
 	res := make([]*LocationKeyRanges, 0, len(locs))
 	for _, loc := range locs {
 		res = append(res, loc.splitKeyRangesByBuckets()...)
