@@ -243,7 +243,7 @@ func (ib *innerTxnStartTsBox) getMinStartTs(now time.Time, startTSLowerLimit uin
 	for _, innerTS := range ib.innerTxnStartTsMap {
 		innerTxnStartTime := oracle.GetTimeFromTS(innerTS)
 		if now.Sub(innerTxnStartTime) > TimeToPrintLongTimeInternalTxn {
-			logutil.BgLogger().Info("An trasanction running by RunInNewTxn lasts more than 1 minute")
+			logutil.BgLogger().Info("An internal transaction running by RunInNewTxn lasts more than 1 minute")
 		}
 
 		if innerTS > startTSLowerLimit && innerTS < minStartTS {
