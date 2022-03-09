@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
@@ -99,8 +100,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	for _, task := range e.tasks {
 		statistics.AddNewAnalyzeJob(task.job)
 	}
-	failpoint.Inject("mockAnalyzeJobPending", func() {
-		time.Sleep(100 * time.Millisecond)
+	failpoint.Inject("mockKillPendingAnalyzeJob", func() {
+		domain.GetDomain(e.ctx).SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
 	})
 	for _, task := range e.tasks {
 		taskCh <- task
@@ -190,8 +191,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	for _, task := range e.tasks {
 		statistics.MoveToHistory(task.job)
 	}
-	failpoint.Inject("mockAnalyzeJobFinished", func() {
-		time.Sleep(100 * time.Millisecond)
+	failpoint.Inject("mockKillFinishedAnalyzeJob", func() {
+		domain.GetDomain(e.ctx).SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
 	})
 	if err != nil {
 		return err
@@ -581,14 +582,14 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 		statsVer = int(*e.analyzePB.IdxReq.Version)
 	}
 	for {
-		failpoint.Inject("mockAnalyzeJobRunningIndex", func() {
-			time.Sleep(100 * time.Millisecond)
+		failpoint.Inject("mockKillRunningAnalyzeIndexJob", func() {
+			domain.GetDomain(e.ctx).SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
 		})
 		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
 			return nil, nil, nil, nil, errors.Trace(ErrQueryInterrupted)
 		}
 		failpoint.Inject("mockSlowAnalyzeIndex", func() {
-			time.Sleep(5 * time.Second)
+			time.Sleep(1000 * time.Second)
 		})
 		data, err := result.NextRaw(context.TODO())
 		if err != nil {
@@ -908,14 +909,14 @@ func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, mergeTaskCh chan []byte) error {
 	defer close(mergeTaskCh)
 	for {
-		failpoint.Inject("mockAnalyzeJobRunningV2", func() {
-			time.Sleep(100 * time.Millisecond)
+		failpoint.Inject("mockKillRunningV2AnalyzeJob", func() {
+			domain.GetDomain(ctx).SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
 		})
 		if atomic.LoadUint32(&ctx.GetSessionVars().Killed) == 1 {
 			return errors.Trace(ErrQueryInterrupted)
 		}
 		failpoint.Inject("mockSlowAnalyzeV2", func() {
-			time.Sleep(5 * time.Second)
+			time.Sleep(1000 * time.Second)
 		})
 		data, err := handler.nextRaw(context.TODO())
 		if err != nil {
@@ -1480,14 +1481,14 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		}
 	}
 	for {
-		failpoint.Inject("mockAnalyzeJobRunningV1", func() {
-			time.Sleep(100 * time.Millisecond)
+		failpoint.Inject("mockKillRunningV1AnalyzeJob", func() {
+			domain.GetDomain(e.ctx).SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
 		})
 		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
 			return nil, nil, nil, nil, nil, errors.Trace(ErrQueryInterrupted)
 		}
 		failpoint.Inject("mockSlowAnalyzeV1", func() {
-			time.Sleep(5 * time.Second)
+			time.Sleep(1000 * time.Second)
 		})
 		data, err1 := e.resultHandler.nextRaw(context.TODO())
 		if err1 != nil {

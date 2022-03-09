@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
@@ -2713,10 +2712,11 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 		func() {
 			comment := fmt.Sprintf("kill %v analyze job", status)
 			statistics.ClearHistoryJobs()
-			mockAnalyzeStatus := "github.com/pingcap/tidb/executor/mockAnalyzeJob" + strings.Title(status)
+			mockAnalyzeStatus := "github.com/pingcap/tidb/executor/mockKill" + strings.Title(status)
 			if status == "running" {
 				mockAnalyzeStatus += "V" + strconv.Itoa(ver)
 			}
+			mockAnalyzeStatus += "AnalyzeJob"
 			require.NoError(t, failpoint.Enable(mockAnalyzeStatus, "return"))
 			defer func() {
 				require.NoError(t, failpoint.Disable(mockAnalyzeStatus))
@@ -2728,17 +2728,7 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 					require.NoError(t, failpoint.Disable(mockSlowAnalyze))
 				}()
 			}
-			ch := make(chan bool)
-			go func() {
-				analyzed := h.HandleAutoAnalyze(is)
-				ch <- analyzed
-			}()
-			// wait 60ms to make auto-analyze launch
-			time.Sleep(60 * time.Millisecond)
-			checkAnalyzeStatus(t, tk, jobInfo, status, comment, -1)
-			dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
-			analyzed := <-ch
-			require.True(t, analyzed, comment)
+			require.True(t, h.HandleAutoAnalyze(is), comment)
 			currentVersion := h.GetTableStats(tableInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the table stats are updated.
@@ -2746,8 +2736,8 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 				require.Greater(t, currentVersion, lastVersion, comment)
 			} else {
 				// If we kill a pending/running job, after kill command the status is failed and the table stats are not updated.
-				// We expect the killed analyze stops quickly. Specifically, end_time - start_time < 3s.
-				checkAnalyzeStatus(t, tk, jobInfo, "failed", comment, 3)
+				// We expect the killed analyze stops quickly. Specifically, end_time - start_time < 10s.
+				checkAnalyzeStatus(t, tk, jobInfo, "failed", comment, 10)
 				require.Equal(t, currentVersion, lastVersion, comment)
 			}
 		}()
@@ -2796,9 +2786,11 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 		func() {
 			comment := fmt.Sprintf("kill %v analyze job", status)
 			statistics.ClearHistoryJobs()
-			mockAnalyzeStatus := "github.com/pingcap/tidb/executor/mockAnalyzeJob" + strings.Title(status)
+			mockAnalyzeStatus := "github.com/pingcap/tidb/executor/mockKill" + strings.Title(status)
 			if status == "running" {
-				mockAnalyzeStatus += "Index"
+				mockAnalyzeStatus += "AnalyzeIndexJob"
+			} else {
+				mockAnalyzeStatus += "AnalyzeJob"
 			}
 			require.NoError(t, failpoint.Enable(mockAnalyzeStatus, "return"))
 			defer func() {
@@ -2810,17 +2802,7 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 					require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockSlowAnalyzeIndex"))
 				}()
 			}
-			ch := make(chan bool)
-			go func() {
-				analyzed := h.HandleAutoAnalyze(dom.InfoSchema())
-				ch <- analyzed
-			}()
-			// wait 60ms to make auto-analyze launch
-			time.Sleep(60 * time.Millisecond)
-			checkAnalyzeStatus(t, tk, jobInfo, status, comment, -1)
-			dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
-			analyzed := <-ch
-			require.True(t, analyzed, comment)
+			require.True(t, h.HandleAutoAnalyze(dom.InfoSchema()), comment)
 			currentVersion := h.GetTableStats(tblInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the index stats are updated.
@@ -2828,8 +2810,8 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 				require.Greater(t, currentVersion, lastVersion, comment)
 			} else {
 				// If we kill a pending/running job, after kill command the status is failed and the index stats are not updated.
-				// We expect the killed analyze stops quickly. Specifically, end_time - start_time < 3s.
-				checkAnalyzeStatus(t, tk, jobInfo, "failed", comment, 3)
+				// We expect the killed analyze stops quickly. Specifically, end_time - start_time < 10s.
+				checkAnalyzeStatus(t, tk, jobInfo, "failed", comment, 10)
 				require.Equal(t, currentVersion, lastVersion, comment)
 			}
 		}()
