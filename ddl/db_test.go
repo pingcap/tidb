@@ -326,3 +326,38 @@ func TestIssue23473(t *testing.T) {
 	tbl := tk.GetTableByName("test", "t_23473")
 	require.True(t, mysql.HasNoDefaultValueFlag(tbl.Cols()[0].Flag))
 }
+
+func TestDropCheck(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists drop_check")
+	tk.MustExec("create table drop_check (pk int primary key)")
+	defer tk.MustExec("drop table if exists drop_check")
+	tk.MustExec("alter table drop_check drop check crcn")
+	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|8231|DROP CHECK is not supported"))
+}
+
+func TestAlterOrderBy(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ob (pk int primary key, c int default 1, c1 int default 1, KEY cl(c1))")
+
+	// Test order by with primary key
+	tk.MustExec("alter table ob order by c")
+	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1105|ORDER BY ignored as there is a user-defined clustered index in the table 'ob'"))
+
+	// Test order by with no primary key
+	tk.MustExec("drop table if exists ob")
+	tk.MustExec("create table ob (c int default 1, c1 int default 1, KEY cl(c1))")
+	tk.MustExec("alter table ob order by c")
+	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustExec("drop table if exists ob")
+}
