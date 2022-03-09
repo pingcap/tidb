@@ -369,7 +369,6 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 	for _, store := range pollTiFlashContext.TiFlashStores {
 		s := store
 		if err := d.UpdateTiFlashHTTPAddress(&s); err != nil {
-			// We issue no log in tests, since there are no etcd.
 		}
 	}
 
