@@ -723,7 +723,6 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 }
 
 func (s *testSessionSuite) TestUpgradeSysvars(c *C) {
-
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	se := tk.Se.(variable.GlobalVarAccessor)
 
