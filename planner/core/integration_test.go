@@ -2736,12 +2736,12 @@ func TestSysdatePushDown(t *testing.T) {
 	}
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
 		CheckAt([]int{0, 3, 6}, rows)
-	// assert sysdate isn't now after set global sysdate_is_now in the same session
-	tk.MustExec("set global sysdate_is_now='1'")
+	// assert sysdate isn't now after set global tidb_sysdate_is_now in the same session
+	tk.MustExec("set global tidb_sysdate_is_now='1'")
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
 		CheckAt([]int{0, 3, 6}, rows)
 
-	// assert sysdate is now after set global sysdate_is_now in the new session
+	// assert sysdate is now after set global tidb_sysdate_is_now in the new session
 	tk = testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	now := time.Now()
@@ -2751,8 +2751,8 @@ func TestSysdatePushDown(t *testing.T) {
 		CheckAt([]int{0, 3, 6}, rows)
 	failpoint.Disable("github.com/pingcap/tidb/expression/injectNow")
 
-	// assert sysdate isn't now after set session sysdate_is_now false in the same session
-	tk.MustExec("set sysdate_is_now='0'")
+	// assert sysdate isn't now after set session tidb_sysdate_is_now false in the same session
+	tk.MustExec("set tidb_sysdate_is_now='0'")
 	rows[1][2] = "gt(test.t.d, sysdate())"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
 		CheckAt([]int{0, 3, 6}, rows)
