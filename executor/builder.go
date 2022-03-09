@@ -362,14 +362,6 @@ func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) Execu
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		jobIDs:       v.JobIDs,
 	}
-	// Run within a new transaction. If it runs within the session transaction, commit failure won't be reported to the user.
-	errInTxn := kv.RunInNewTxn(context.Background(), e.ctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) (err error) {
-		e.errs, err = admin.CancelJobs(txn, e.jobIDs)
-		return
-	})
-	if errInTxn != nil {
-		b.err = errInTxn
-	}
 	return e
 }
 
