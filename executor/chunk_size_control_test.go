@@ -37,12 +37,14 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
+// nolint: unused, deadcode
 type testSlowClient struct {
 	sync.RWMutex
 	tikv.Client
 	regionDelay map[uint64]time.Duration
 }
 
+// nolint: unused, deadcode
 func (c *testSlowClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
 	regionID := req.RegionId
 	delay := c.GetDelay(regionID)
@@ -52,12 +54,14 @@ func (c *testSlowClient) SendRequest(ctx context.Context, addr string, req *tikv
 	return c.Client.SendRequest(ctx, addr, req, timeout)
 }
 
+// nolint: unused, deadcode
 func (c *testSlowClient) SetDelay(regionID uint64, dur time.Duration) {
 	c.Lock()
 	defer c.Unlock()
 	c.regionDelay[regionID] = dur
 }
 
+// nolint: unused, deadcode
 func (c *testSlowClient) GetDelay(regionID uint64) time.Duration {
 	c.RLock()
 	defer c.RUnlock()
@@ -211,6 +215,7 @@ func TestLimitAndIndexScan(t *testing.T) {
 	require.GreaterOrEqual(t, cost, delayThreshold) // have to wait
 }
 
+// nolint: unused, deadcode
 func parseTimeCost(t *testing.T, line []interface{}) time.Duration {
 	lineStr := fmt.Sprintf("%v", line)
 	idx := strings.Index(lineStr, "time:")
