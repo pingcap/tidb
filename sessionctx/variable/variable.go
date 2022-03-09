@@ -136,8 +136,6 @@ type SysVar struct {
 	// If the global variable has the global config name,
 	// it should store the global config into PD(etcd) too when set global variable.
 	GlobalConfigName string
-	// NotNull means that special value "null" is not acceptable
-	NotNull bool
 }
 
 // GetGlobalFromHook calls the GetSession func if it exists.
