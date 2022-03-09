@@ -527,7 +527,7 @@ func (iw *indexHashJoinInnerWorker) getNewJoinResult(ctx context.Context) (*inde
 	select {
 	case joinResult.chk, ok = <-iw.joinChkResourceCh:
 	case <-ctx.Done():
-		return nil, false
+		return joinResult, false
 	}
 	return joinResult, ok
 }

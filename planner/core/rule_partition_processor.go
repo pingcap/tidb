@@ -43,6 +43,7 @@ import (
 const FullRange = -1
 
 // partitionProcessor rewrites the ast for table partition.
+// Used by static partition prune mode.
 //
 // create table t (id int) partition by range (id)
 //   (partition p1 values less than (10),
@@ -307,6 +308,15 @@ func (s *partitionProcessor) reconstructTableColNames(ds *DataSource) ([]*types.
 				TblName:     ds.tableInfo.Name,
 				ColName:     model.ExtraPartitionIdName,
 				OrigColName: model.ExtraPartitionIdName,
+			})
+			continue
+		}
+		if colExpr.ID == model.ExtraPhysTblID {
+			names = append(names, &types.FieldName{
+				DBName:      ds.DBName,
+				TblName:     ds.tableInfo.Name,
+				ColName:     model.ExtraPhysTblIdName,
+				OrigColName: model.ExtraPhysTblIdName,
 			})
 			continue
 		}
@@ -640,7 +650,7 @@ func (s *partitionProcessor) prune(ds *DataSource, opt *logicalOptimizeOp) (Logi
 		return s.processListPartition(ds, pi, opt)
 	}
 
-	// We haven't implement partition by list and so on.
+	// We haven't implement partition by key and so on.
 	return s.makeUnionAllChildren(ds, pi, fullRange(len(pi.Definitions)), opt)
 }
 
@@ -930,7 +940,7 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 		monotonous = getMonotoneMode(raw.FuncName.L)
 		// Check the partitionExpr is in the form: fn(col, ...)
 		// There should be only one column argument, and it should be the first parameter.
-		if expression.ExtractColumnSet(args).Len() == 1 {
+		if expression.ExtractColumnSet(args...).Len() == 1 {
 			if col1, ok := args[0].(*expression.Column); ok {
 				col = col1
 			}

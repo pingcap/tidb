@@ -341,3 +341,26 @@ func TestErrKeyPart0(t *testing.T) {
 	err = tk.ExecToErr("alter table t add index (b(0))")
 	require.EqualError(t, err, "[planner:1391]Key part 'b' length cannot be 0")
 }
+
+// For issue #30328
+func TestLargeVarcharAutoConv(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
+	runSQL(t, tk.Session(), is, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000))", false,
+		errors.New("[types:1074]Column length too big for column 'a' (max = 65535); use BLOB or TEXT instead"))
+
+	tk.MustExec("SET sql_mode = 'NO_ENGINE_SUBSTITUTION'")
+	runSQL(t, tk.Session(), is, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000));", false, nil)
+	runSQL(t, tk.Session(), is, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000) charset utf8mb4);", false, nil)
+	warnCnt := tk.Session().GetSessionVars().StmtCtx.WarningCount()
+	// It is only 3. For the first stmt, charset of column b is not resolved, so ddl will append a warning for it
+	require.Equal(t, uint16(3), warnCnt)
+	warns := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	for i := range warns {
+		require.True(t, terror.ErrorEqual(warns[i].Err, ddl.ErrAutoConvert))
+	}
+}

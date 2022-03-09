@@ -92,14 +92,6 @@ func testDropSchema(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.
 	return job, ver
 }
 
-func testDropSchemaT(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) (*model.Job, int64) {
-	job := buildDropSchemaJob(dbInfo)
-	err := d.doDDLJob(ctx, job)
-	require.NoError(t, err)
-	ver := getSchemaVerT(t, ctx)
-	return job, ver
-}
-
 func isDDLJobDone(test *testing.T, t *meta.Meta) bool {
 	job, err := t.GetDDLJobByIdx(0)
 	require.NoError(test, err)
@@ -142,7 +134,7 @@ func testCheckSchemaState(test *testing.T, d *ddl, dbInfo *model.DBInfo, state m
 }
 
 func ExportTestSchema(t *testing.T) {
-	store := testCreateStore(t, "test_schema")
+	store := createMockStore(t)
 	defer func() {
 		err := store.Close()
 		require.NoError(t, err)
@@ -217,7 +209,7 @@ func ExportTestSchema(t *testing.T) {
 }
 
 func TestSchemaWaitJob(t *testing.T) {
-	store := testCreateStore(t, "test_schema_wait")
+	store := createMockStore(t)
 	defer func() {
 		err := store.Close()
 		require.NoError(t, err)

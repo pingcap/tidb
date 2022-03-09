@@ -234,6 +234,12 @@ const ExtraHandleID = -1
 // ExtraPidColID is the column ID of column which store the partitionID decoded in global index values.
 const ExtraPidColID = -2
 
+// ExtraPhysTblID is the column ID of column that should be filled in with the physical table id.
+// Primarily used for table partition dynamic prune mode, to return which partition (physical table id) the row came from.
+// Using a dedicated id for this, since in the future ExtraPidColID and ExtraPhysTblID may be used for the same request.
+// Must be after ExtraPidColID!
+const ExtraPhysTblID = -3
+
 const (
 	// TableInfoVersion0 means the table info version is 0.
 	// Upgrade from v2.1.1 or v2.1.2 to v2.1.3 and later, and then execute a "change/modify column" statement
@@ -274,6 +280,9 @@ var ExtraHandleName = NewCIStr("_tidb_rowid")
 
 // ExtraPartitionIdName is the name of ExtraPartitionId Column.
 var ExtraPartitionIdName = NewCIStr("_tidb_pid")
+
+// ExtraPhysTblIdName is the name of ExtraPhysTblID Column.
+var ExtraPhysTblIdName = NewCIStr("_tidb_tid")
 
 // TableInfo provides meta data describing a DB table.
 type TableInfo struct {
@@ -646,6 +655,17 @@ func NewExtraPartitionIDColInfo() *ColumnInfo {
 	colInfo := &ColumnInfo{
 		ID:   ExtraPidColID,
 		Name: ExtraPartitionIdName,
+	}
+	colInfo.Tp = mysql.TypeLonglong
+	colInfo.Flen, colInfo.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	return colInfo
+}
+
+// NewExtraPhysTblIDColInfo mocks a column info for extra partition id column.
+func NewExtraPhysTblIDColInfo() *ColumnInfo {
+	colInfo := &ColumnInfo{
+		ID:   ExtraPhysTblID,
+		Name: ExtraPhysTblIdName,
 	}
 	colInfo.Tp = mysql.TypeLonglong
 	colInfo.Flen, colInfo.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)

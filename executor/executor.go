@@ -462,6 +462,7 @@ type DDLJobRetriever struct {
 	is             infoschema.InfoSchema
 	activeRoles    []*auth.RoleIdentity
 	cacheJobs      []*model.Job
+	TZLoc          *time.Location
 }
 
 func (e *DDLJobRetriever) initial(txn kv.Transaction) error {
@@ -510,9 +511,9 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		tableName = getTableName(e.is, job.TableID)
 	}
 
-	createTime := ts2Time(job.StartTS)
-	startTime := ts2Time(job.RealStartTS)
-	finishTime := ts2Time(finishTS)
+	createTime := ts2Time(job.StartTS, e.TZLoc)
+	startTime := ts2Time(job.RealStartTS, e.TZLoc)
+	finishTime := ts2Time(finishTS, e.TZLoc)
 
 	// Check the privilege.
 	if checker != nil && !checker.RequestVerification(e.activeRoles, strings.ToLower(schemaName), strings.ToLower(tableName), "", mysql.AllPrivMask) {
@@ -541,11 +542,11 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 	req.AppendString(11, job.State.String())
 }
 
-func ts2Time(timestamp uint64) types.Time {
+func ts2Time(timestamp uint64, loc *time.Location) types.Time {
 	duration := time.Duration(math.Pow10(9-types.DefaultFsp)) * time.Nanosecond
 	t := model.TSConvert2Time(timestamp)
 	t.Truncate(duration)
-	return types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, types.DefaultFsp)
+	return types.NewTime(types.FromGoTime(t.In(loc)), mysql.TypeDatetime, types.DefaultFsp)
 }
 
 // ShowDDLJobQueriesExec represents a show DDL job queries executor.
@@ -929,21 +930,47 @@ type SelectLockExec struct {
 	Lock *ast.SelectLockInfo
 	keys []kv.Key
 
+	// The children may be a join of multiple tables, so we need a map.
 	tblID2Handle map[int64][]plannercore.HandleCols
 
-	// All the partition tables in the children of this executor.
-	partitionedTable []table.PartitionedTable
+	// When SelectLock work on a partition table, we need the partition ID
+	// (Physical Table ID) instead of the 'logical' table ID to calculate
+	// the lock KV. In that case, the Physical Table ID is extracted
+	// from the row key in the store and as an extra column in the chunk row.
 
-	// When SelectLock work on the partition table, we need the partition ID
-	// instead of table ID to calculate the lock KV. In that case, partition ID is store as an
-	// extra column in the chunk row.
-	// tblID2PIDColumnIndex stores the column index in the chunk row. The children may be join
-	// of multiple tables, so the map struct is used.
-	tblID2PIDColumnIndex map[int64]int
+	// tblID2PhyTblIDCol is used for partitioned tables.
+	// The child executor need to return an extra column containing
+	// the Physical Table ID (i.e. from which partition the row came from)
+	// Used during building
+	tblID2PhysTblIDCol map[int64]*expression.Column
+
+	// Used during execution
+	// Map from logic tableID to column index where the physical table id is stored
+	// For dynamic prune mode, model.ExtraPhysTblID columns are requested from
+	// storage and used for physical table id
+	// For static prune mode, model.ExtraPhysTblID is still sent to storage/Protobuf
+	// but could be filled in by the partitions TableReaderExecutor
+	// due to issues with chunk handling between the TableReaderExecutor and the
+	// SelectReader result.
+	tblID2PhysTblIDColIdx map[int64]int
 }
 
 // Open implements the Executor Open interface.
 func (e *SelectLockExec) Open(ctx context.Context) error {
+	if len(e.tblID2PhysTblIDCol) > 0 {
+		e.tblID2PhysTblIDColIdx = make(map[int64]int)
+		cols := e.Schema().Columns
+		for i := len(cols) - 1; i >= 0; i-- {
+			if cols[i].ID == model.ExtraPhysTblID {
+				for tblID, col := range e.tblID2PhysTblIDCol {
+					if cols[i].UniqueID == col.UniqueID {
+						e.tblID2PhysTblIDColIdx[tblID] = i
+						break
+					}
+				}
+			}
+		}
+	}
 	return e.baseExecutor.Open(ctx)
 }
 
@@ -962,23 +989,17 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if req.NumRows() > 0 {
 		iter := chunk.NewIterator4Chunk(req)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-
-			for id, cols := range e.tblID2Handle {
-				physicalID := id
-				if len(e.partitionedTable) > 0 {
-					// Replace the table ID with partition ID.
-					// The partition ID is returned as an extra column from the table reader.
-					if offset, ok := e.tblID2PIDColumnIndex[id]; ok {
-						physicalID = row.GetInt64(offset)
-					}
-				}
-
+			for tblID, cols := range e.tblID2Handle {
 				for _, col := range cols {
 					handle, err := col.BuildHandle(row)
 					if err != nil {
 						return err
 					}
-					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physicalID, handle))
+					physTblID := tblID
+					if physTblColIdx, ok := e.tblID2PhysTblIDColIdx[tblID]; ok {
+						physTblID = row.GetInt64(physTblColIdx)
+					}
+					e.keys = append(e.keys, tablecodec.EncodeRowKeyWithHandle(physTblID, handle))
 				}
 			}
 		}
@@ -991,16 +1012,8 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		lockWaitTime = int64(e.Lock.WaitSec) * 1000
 	}
 
-	if len(e.tblID2Handle) > 0 {
-		for id := range e.tblID2Handle {
-			e.updateDeltaForTableID(id)
-		}
-	}
-	if len(e.partitionedTable) > 0 {
-		for _, p := range e.partitionedTable {
-			pid := p.Meta().ID
-			e.updateDeltaForTableID(pid)
-		}
+	for id := range e.tblID2Handle {
+		e.updateDeltaForTableID(id)
 	}
 
 	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime, len(e.keys)), e.keys...)
