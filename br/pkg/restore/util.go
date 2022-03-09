@@ -41,6 +41,38 @@ type AppliedFile interface {
 	GetEndKey() []byte
 }
 
+// getTableIDMap creates a map maping old tableID to new tableID.
+func getTableIDMap(newTable, oldTable *model.TableInfo) map[int64]int64 {
+	tableIDMap := make(map[int64]int64)
+
+	tableIDMap[oldTable.ID] = newTable.ID
+	if oldTable.Partition != nil {
+		for _, srcPart := range oldTable.Partition.Definitions {
+			for _, destPart := range newTable.Partition.Definitions {
+				if srcPart.Name == destPart.Name {
+					tableIDMap[srcPart.ID] = destPart.ID
+				}
+			}
+		}
+	}
+
+	return tableIDMap
+}
+
+// getIndexIDMap creates a map maping old indexID to new indexID.
+func getIndexIDMap(newTable, oldTable *model.TableInfo) map[int64]int64 {
+	indexIDMap := make(map[int64]int64)
+	for _, srcIndex := range oldTable.Indices {
+		for _, destIndex := range newTable.Indices {
+			if srcIndex.Name == destIndex.Name {
+				indexIDMap[srcIndex.ID] = destIndex.ID
+			}
+		}
+	}
+
+	return indexIDMap
+}
+
 // GetRewriteRules returns the rewrite rule of the new table and the old table.
 // getDetailRule is used for normal backup & restore.
 // if set to true, means we collect the rules like tXXX_r, tYYY_i.
@@ -48,25 +80,8 @@ type AppliedFile interface {
 func GetRewriteRules(
 	newTable, oldTable *model.TableInfo, newTimeStamp uint64, getDetailRule bool,
 ) *RewriteRules {
-	tableIDs := make(map[int64]int64)
-	tableIDs[oldTable.ID] = newTable.ID
-	if oldTable.Partition != nil {
-		for _, srcPart := range oldTable.Partition.Definitions {
-			for _, destPart := range newTable.Partition.Definitions {
-				if srcPart.Name == destPart.Name {
-					tableIDs[srcPart.ID] = destPart.ID
-				}
-			}
-		}
-	}
-	indexIDs := make(map[int64]int64)
-	for _, srcIndex := range oldTable.Indices {
-		for _, destIndex := range newTable.Indices {
-			if srcIndex.Name == destIndex.Name {
-				indexIDs[srcIndex.ID] = destIndex.ID
-			}
-		}
-	}
+	tableIDs := getTableIDMap(newTable, oldTable)
+	indexIDs := getIndexIDMap(newTable, oldTable)
 
 	dataRules := make([]*import_sstpb.RewriteRule, 0)
 	for oldTableID, newTableID := range tableIDs {
