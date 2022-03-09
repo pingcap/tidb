@@ -2817,17 +2817,17 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 			}()
 			// wait 60ms to make auto-analyze launch
 			time.Sleep(60 * time.Millisecond)
-			//checkAnalyzeStatus(t, tk, jobInfo, status, comment, -1)
+			checkAnalyzeStatus(t, tk, jobInfo, status, comment, -1)
 			dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
 			analyzed := <-ch
 			require.True(t, analyzed, comment)
 			currentVersion := h.GetTableStats(tblInfo).Version
 			if status == "finished" {
-				// If we kill a finished job, after kill command the status is still finished and the table stats are updated.
+				// If we kill a finished job, after kill command the status is still finished and the index stats are updated.
 				checkAnalyzeStatus(t, tk, jobInfo,"finished", comment, -1)
 				require.Greater(t, currentVersion, lastVersion, comment)
 			} else {
-				// If we kill a pending/running job, after kill command the status is failed and the table stats are not updated.
+				// If we kill a pending/running job, after kill command the status is failed and the index stats are not updated.
 				// We expect the killed analyze stops quickly. Specifically, end_time - start_time < 1s.
 				checkAnalyzeStatus(t, tk, jobInfo, "failed", comment, 1)
 				require.Equal(t, currentVersion, lastVersion, comment)
