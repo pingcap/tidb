@@ -33,8 +33,6 @@ import (
 )
 
 type DDLForTest interface {
-	// SetHook sets the hook.
-	SetHook(h Callback)
 	// SetInterceptor sets the interceptor.
 	SetInterceptor(h Interceptor)
 }
