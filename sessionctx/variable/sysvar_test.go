@@ -854,7 +854,48 @@ func TestInstanceScope(t *testing.T) {
 
 	for _, sv := range GetSysVars() {
 		require.False(t, sv.HasGlobalScope() && sv.HasInstanceScope(), "sysvar %s has both instance and global scope", sv.Name)
+		if sv.HasInstanceScope() {
+			require.NotNil(t, sv.GetGlobal)
+			require.NotNil(t, sv.SetGlobal)
+		}
 	}
+
+	count := len(GetSysVars())
+	sv := SysVar{Scope: ScopeInstance, Name: "newinstancesysvar", Value: On, Type: TypeBool,
+		SetGlobal: func(s *SessionVars, val string) error {
+			return fmt.Errorf("set should fail")
+		},
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return "", fmt.Errorf("get should fail")
+		},
+	}
+
+	RegisterSysVar(&sv)
+	require.Len(t, GetSysVars(), count+1)
+
+	sysVar := GetSysVar("newinstancesysvar")
+	require.NotNil(t, sysVar)
+
+	vars := NewSessionVars()
+
+	// It is a boolean, try to set it to a bogus value
+	_, err := sysVar.Validate(vars, "ABCD", ScopeInstance)
+	require.Error(t, err)
+
+	// Boolean oN or 1 converts to canonical ON or OFF
+	normalizedVal, err := sysVar.Validate(vars, "oN", ScopeInstance)
+	require.Equal(t, "ON", normalizedVal)
+	require.NoError(t, err)
+	normalizedVal, err = sysVar.Validate(vars, "0", ScopeInstance)
+	require.Equal(t, "OFF", normalizedVal)
+	require.NoError(t, err)
+
+	err = sysVar.SetGlobalFromHook(vars, "OFF", true) // default is on
+	require.Equal(t, "set should fail", err.Error())
+
+	// Test unregistration restores previous count
+	UnregisterSysVar("newinstancesysvar")
+	require.Equal(t, len(GetSysVars()), count)
 }
 
 func TestIndexMergeSwitcher(t *testing.T) {
