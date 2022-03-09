@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -160,4 +161,30 @@ func TestGCColumnStatsUsage(t *testing.T) {
 	testKit.MustQuery("select count(*) from mysql.column_stats_usage").Check(testkit.Rows("2"))
 	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select count(*) from mysql.column_stats_usage").Check(testkit.Rows("0"))
+}
+
+func TestDeleteElderHistoricalStatsFromKV(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	h := dom.StatsHandle()
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	defer tk.MustExec("set global tidb_enable_historical_stats = 0")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("analyze table test.t")
+	for i := 0; i < 5; i++ {
+		tk.MustExec("insert into test.t (a,b) values (1,1), (2,2), (3,3)")
+		err := h.DumpStatsDeltaToKV(handle.DumpDelta)
+		require.NoError(t, err)
+	}
+	tk.MustQuery("select count(*) from mysql.stats_meta_history").Check(testkit.Rows("6"))
+	tk.MustQuery("select count(*) from mysql.stats_history").Check(testkit.Rows("1"))
+	interval := time.Second * 2
+	time.Sleep(interval)
+	require.NoError(t, h.DeleteElderHistoricalStatsFromKV(interval))
+	tk.MustQuery("select count(*) from mysql.stats_meta_history").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from mysql.stats_history").Check(testkit.Rows("0"))
 }

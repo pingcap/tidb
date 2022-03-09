@@ -1991,7 +1991,7 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-	ts := time.Now().Format("2006-01-02 15:04:05.999999")
+	ts := time.Now().Local().Format("2006-01-02 15:04:05.999999")
 
 	const sql = "INSERT INTO mysql.stats_history(table_id, stats_data, seq_no, version, create_time) VALUES (%?, %?, %?, %?, %?)"
 	for i := 0; i < len(blocks); i++ {
@@ -2046,8 +2046,9 @@ func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64) error 
 		err = finishTransaction(ctx, exec, err)
 	}()
 
-	const sql = "REPLACE INTO mysql.stats_meta_history(table_id, modify_count, count, version, create_time) VALUES (%?, %?, %?, %?, NOW())"
-	if _, err := exec.ExecuteInternal(ctx, sql, tableID, modifyCount, count, version); err != nil {
+	ts := time.Now().Local().Format("2006-01-02 15:04:05.999999")
+	const sql = "REPLACE INTO mysql.stats_meta_history(table_id, modify_count, count, version, create_time) VALUES (%?, %?, %?, %?, %?)"
+	if _, err := exec.ExecuteInternal(ctx, sql, tableID, modifyCount, count, version, ts); err != nil {
 		return errors.Trace(err)
 	}
 	return nil

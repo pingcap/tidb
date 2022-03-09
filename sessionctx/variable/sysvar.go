@@ -1217,6 +1217,11 @@ var defaultSysVars = []*SysVar{
 	}, SetGlobal: func(s *SessionVars, val string) error {
 		return setTiDBTableValue(s, "tidb_enable_historical_stats", val, "Current historical statistics enable status")
 	}},
+	{Scope: ScopeGlobal, Name: TiDBHistoricalStatsMaxDuration, Value: "10m0s", Type: TypeDuration, MinValue: int64(time.Minute * 10), MaxValue: uint64(time.Hour * 24 * 365), GetGlobal: func(s *SessionVars) (string, error) {
+		return getTiDBTableValue(s, "tidb_historical_stats_max_duration", "10m0s")
+	}, SetGlobal: func(s *SessionVars, val string) error {
+		return setTiDBTableValue(s, "tidb_historical_stats_max_duration", val, "Max duration which historical stats reserved, at least 10m, in Go format.")
+	}},
 	/* tikv gc metrics */
 	{Scope: ScopeGlobal, Name: TiDBGCEnable, Value: On, Type: TypeBool, GetGlobal: func(s *SessionVars) (string, error) {
 		return getTiDBTableValue(s, "tikv_gc_enable", On)
