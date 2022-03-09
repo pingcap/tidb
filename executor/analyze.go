@@ -93,9 +93,10 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	taskCh := make(chan *analyzeTask, len(e.tasks))
 	resultsCh := make(chan *statistics.AnalyzeResults, len(e.tasks))
+	exitCh := make(chan struct{})
 	e.wg.Add(concurrency)
 	for i := 0; i < concurrency; i++ {
-		go e.analyzeWorker(taskCh, resultsCh, i == 0)
+		go e.analyzeWorker(taskCh, resultsCh, exitCh)
 	}
 	for _, task := range e.tasks {
 		statistics.AddNewAnalyzeJob(task.job)
@@ -106,7 +107,10 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	for _, task := range e.tasks {
 		taskCh <- task
 	}
+	close(exitCh)
+	e.wg.Wait()
 	close(taskCh)
+	defer close(resultsCh)
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	panicCnt := 0
 
@@ -139,53 +143,55 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				zap.String("cost", job.EndTime.Sub(job.StartTime).String()))
 		}
 	}
+LOOP:
 	for panicCnt < concurrency {
-		results, ok := <-resultsCh
-		if !ok {
-			break
-		}
-		if results.Err != nil {
-			err = results.Err
-			if err == errAnalyzeWorkerPanic {
-				panicCnt++
-			} else {
-				logutil.Logger(ctx).Error("analyze failed", zap.Error(err))
-			}
-			finishJobWithLogFn(ctx, results.Job, true)
-			continue
-		}
-		if results.TableID.IsPartitionTable() && needGlobalStats {
-			for _, result := range results.Ars {
-				if result.IsIndex == 0 {
-					// If it does not belong to the statistics of index, we need to set it to -1 to distinguish.
-					globalStatsID := globalStatsKey{tableID: results.TableID.TableID, indexID: int64(-1)}
-					histIDs := make([]int64, 0, len(result.Hist))
-					for _, hg := range result.Hist {
-						// It's normal virtual column, skip.
-						if hg == nil {
-							continue
-						}
-						histIDs = append(histIDs, hg.ID)
-					}
-					globalStatsMap[globalStatsID] = globalStatsInfo{isIndex: result.IsIndex, histIDs: histIDs, statsVersion: results.StatsVer}
+		select {
+		case results := <-resultsCh:
+			if results.Err != nil {
+				err = results.Err
+				if err == errAnalyzeWorkerPanic {
+					panicCnt++
 				} else {
-					for _, hg := range result.Hist {
-						globalStatsID := globalStatsKey{tableID: results.TableID.TableID, indexID: hg.ID}
-						globalStatsMap[globalStatsID] = globalStatsInfo{isIndex: result.IsIndex, histIDs: []int64{hg.ID}, statsVersion: results.StatsVer}
+					logutil.Logger(ctx).Error("analyze failed", zap.Error(err))
+				}
+				finishJobWithLogFn(ctx, results.Job, true)
+				continue
+			}
+			if results.TableID.IsPartitionTable() && needGlobalStats {
+				for _, result := range results.Ars {
+					if result.IsIndex == 0 {
+						// If it does not belong to the statistics of index, we need to set it to -1 to distinguish.
+						globalStatsID := globalStatsKey{tableID: results.TableID.TableID, indexID: int64(-1)}
+						histIDs := make([]int64, 0, len(result.Hist))
+						for _, hg := range result.Hist {
+							// It's normal virtual column, skip.
+							if hg == nil {
+								continue
+							}
+							histIDs = append(histIDs, hg.ID)
+						}
+						globalStatsMap[globalStatsID] = globalStatsInfo{isIndex: result.IsIndex, histIDs: histIDs, statsVersion: results.StatsVer}
+					} else {
+						for _, hg := range result.Hist {
+							globalStatsID := globalStatsKey{tableID: results.TableID.TableID, indexID: hg.ID}
+							globalStatsMap[globalStatsID] = globalStatsInfo{isIndex: result.IsIndex, histIDs: []int64{hg.ID}, statsVersion: results.StatsVer}
+						}
 					}
 				}
 			}
-		}
-		if err1 := statsHandle.SaveTableStatsToStorage(results, results.TableID.IsPartitionTable() && needGlobalStats); err1 != nil {
-			err = err1
-			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
-			finishJobWithLogFn(ctx, results.Job, true)
-		} else {
-			finishJobWithLogFn(ctx, results.Job, false)
-			// Dump stats to historical storage.
-			if err := e.recordHistoricalStats(results.TableID.TableID); err != nil {
-				logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
+			if err1 := statsHandle.SaveTableStatsToStorage(results, results.TableID.IsPartitionTable() && needGlobalStats); err1 != nil {
+				err = err1
+				logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
+				finishJobWithLogFn(ctx, results.Job, true)
+			} else {
+				finishJobWithLogFn(ctx, results.Job, false)
+				// Dump stats to historical storage.
+				if err := e.recordHistoricalStats(results.TableID.TableID); err != nil {
+					logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
+				}
 			}
+		default:
+			break LOOP
 		}
 	}
 	for _, task := range e.tasks {
@@ -331,7 +337,7 @@ type analyzeTask struct {
 
 var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
 
-func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults, isCloseChanThread bool) {
+func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults, exitCh chan struct{}) {
 	var task *analyzeTask
 	defer func() {
 		if r := recover(); r != nil {
@@ -346,30 +352,32 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 			}
 		}
 		e.wg.Done()
-		if isCloseChanThread {
-			e.wg.Wait()
-			close(resultsCh)
-		}
 	}()
 	for {
-		var ok bool
-		task, ok = <-taskCh
-		if !ok {
-			break
+		select {
+		case task := <-taskCh:
+			task.job.Start()
+			switch task.taskType {
+			case colTask:
+				resultsCh <- analyzeColumnsPushdown(task.colExec)
+			case idxTask:
+				resultsCh <- analyzeIndexPushdown(task.idxExec)
+			case fastTask:
+				resultsCh <- analyzeFastExec(task.fastExec)
+			case pkIncrementalTask:
+				resultsCh <- analyzePKIncremental(task.colIncrementalExec)
+			case idxIncrementalTask:
+				resultsCh <- analyzeIndexIncremental(task.idxIncrementalExec)
+			}
+		default:
+			select {
+			case <-exitCh:
+				return
+			default:
+
+			}
 		}
-		task.job.Start()
-		switch task.taskType {
-		case colTask:
-			resultsCh <- analyzeColumnsPushdown(task.colExec)
-		case idxTask:
-			resultsCh <- analyzeIndexPushdown(task.idxExec)
-		case fastTask:
-			resultsCh <- analyzeFastExec(task.fastExec)
-		case pkIncrementalTask:
-			resultsCh <- analyzePKIncremental(task.colIncrementalExec)
-		case idxIncrementalTask:
-			resultsCh <- analyzeIndexIncremental(task.idxIncrementalExec)
-		}
+
 	}
 }
 
@@ -704,9 +712,11 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) *statistics.AnalyzeResu
 		// report unexpected/unreasonable data race error on subIndexWorkerWg when running TestAnalyzeVirtualCol test
 		// case with `-race` flag now.
 		colExec.subIndexWorkerWg = &util.WaitGroupWrapper{}
-		colExec.subIndexWorkerWg.Run(func() {
+		var wg util.WaitGroupWrapper
+		wg.Run(func() {
 			colExec.handleNDVForSpecialIndexes(specialIndexes, idxNDVPushDownCh)
 		})
+		defer wg.Wait()
 		count, hists, topns, fmSketches, extStats, err := colExec.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
 		if err != nil {
 			return &statistics.AnalyzeResults{Err: err, Job: colExec.job}
@@ -966,7 +976,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	}
 	mergeResultCh := make(chan *samplingMergeResult, statsConcurrency)
 	mergeTaskCh := make(chan []byte, statsConcurrency)
-	e.samplingMergeWg = &sync.WaitGroup{}
+	e.samplingMergeWg = &util.WaitGroupWrapper{}
 	e.samplingMergeWg.Add(statsConcurrency)
 	for i := 0; i < statsConcurrency; i++ {
 		go e.subMergeWorker(mergeResultCh, mergeTaskCh, l, i == 0)
@@ -1039,13 +1049,16 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	fmSketches = make([]*statistics.FMSketch, 0, totalLen)
 	buildResultChan := make(chan error, totalLen)
 	buildTaskChan := make(chan *samplingBuildTask, totalLen)
-	e.samplingBuilderWg = &sync.WaitGroup{}
+	if totalLen < statsConcurrency {
+		statsConcurrency = totalLen
+	}
+	e.samplingBuilderWg = &util.WaitGroupWrapper{}
 	e.samplingBuilderWg.Add(statsConcurrency)
 	sampleCollectors := make([]*statistics.SampleCollector, len(e.colsInfo))
+	exitCh := make(chan struct{})
 	for i := 0; i < statsConcurrency; i++ {
-		go e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, sampleCollectors, i == 0)
+		go e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, sampleCollectors, exitCh)
 	}
-
 	for i, col := range e.colsInfo {
 		buildTaskChan <- &samplingBuildTask{
 			id:               col.ID,
@@ -1059,6 +1072,8 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 
 	indexPushedDownResult := <-idxNDVPushDownCh
 	if indexPushedDownResult.err != nil {
+		close(exitCh)
+		e.samplingBuilderWg.Wait()
 		return 0, nil, nil, nil, nil, indexPushedDownResult.err
 	}
 	for _, offset := range indexesWithVirtualColOffsets {
@@ -1078,19 +1093,24 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		}
 		fmSketches = append(fmSketches, rootRowCollector.Base().FMSketches[colLen+i])
 	}
-	close(buildTaskChan)
+	close(exitCh)
+	e.samplingBuilderWg.Wait()
+	defer close(buildResultChan)
+	defer close(buildTaskChan)
 	panicCnt := 0
+LOOP:
 	for panicCnt < statsConcurrency {
-		err1, ok := <-buildResultChan
-		if !ok {
-			break
-		}
-		if err1 != nil {
-			err = err1
-			if err1 == errAnalyzeWorkerPanic {
-				panicCnt++
+		select {
+		case err1 := <-buildResultChan:
+			if err1 != nil {
+				err = err1
+				if err1 == errAnalyzeWorkerPanic {
+					panicCnt++
+				}
+				continue
 			}
-			continue
+		default:
+			break LOOP
 		}
 	}
 	if err != nil {
@@ -1133,34 +1153,44 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.Inde
 		statistics.AddNewAnalyzeJob(task.job)
 	}
 	resultsCh := make(chan *statistics.AnalyzeResults, len(tasks))
+	exitCh := make(chan struct{})
 	e.subIndexWorkerWg.Add(statsConcurrncy)
 	for i := 0; i < statsConcurrncy; i++ {
-		go e.subIndexWorkerForNDV(taskCh, resultsCh, i == 0)
+		go e.subIndexWorkerForNDV(taskCh, resultsCh, exitCh)
 	}
 	for _, task := range tasks {
 		taskCh <- task
 	}
+	close(exitCh)
+	e.subIndexWorkerWg.Wait()
 	close(taskCh)
+	defer close(resultsCh)
 	panicCnt := 0
 	totalResult := analyzeIndexNDVTotalResult{
 		results: make(map[int64]*statistics.AnalyzeResults, len(indexInfos)),
 	}
+LOOP:
 	for panicCnt < statsConcurrncy {
-		results, ok := <-resultsCh
-		if !ok {
-			break
-		}
-		if results.Err != nil {
-			results.Job.Finish(true)
-			err = results.Err
-			if err == errAnalyzeWorkerPanic {
-				panicCnt++
+		select {
+		case results := <-resultsCh:
+			if results.Err != nil {
+				results.Job.Finish(true)
+				err = results.Err
+				if err == errAnalyzeWorkerPanic {
+					panicCnt++
+				}
+				continue
 			}
-			continue
+			results.Job.Finish(false)
+			statistics.MoveToHistory(results.Job)
+			totalResult.results[results.Ars[0].Hist[0].ID] = results
+		default:
+			select {
+			case <-exitCh:
+				break LOOP
+			default:
+			}
 		}
-		results.Job.Finish(false)
-		statistics.MoveToHistory(results.Job)
-		totalResult.results[results.Ars[0].Hist[0].ID] = results
 	}
 	if err != nil {
 		totalResult.err = err
@@ -1169,7 +1199,7 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.Inde
 }
 
 // subIndexWorker receive the task for each index and return the result for them.
-func (e *AnalyzeColumnsExec) subIndexWorkerForNDV(taskCh chan *analyzeTask, resultsCh chan *statistics.AnalyzeResults, isFirstToCloseCh bool) {
+func (e *AnalyzeColumnsExec) subIndexWorkerForNDV(taskCh chan *analyzeTask, resultsCh chan *statistics.AnalyzeResults, exitCh chan struct{}) {
 	var task *analyzeTask
 	defer func() {
 		if r := recover(); r != nil {
@@ -1184,27 +1214,27 @@ func (e *AnalyzeColumnsExec) subIndexWorkerForNDV(taskCh chan *analyzeTask, resu
 			}
 		}
 		e.subIndexWorkerWg.Done()
-		if isFirstToCloseCh {
-			e.subIndexWorkerWg.Wait()
-			close(resultsCh)
-		}
 	}()
 	for {
-		var ok bool
-		task, ok = <-taskCh
-		if !ok {
-			break
-		}
-		task.job.Start()
-		if task.taskType != idxTask {
-			resultsCh <- &statistics.AnalyzeResults{
-				Err: errors.Errorf("incorrect analyze type"),
-				Job: task.job,
+		select {
+		case task := <-taskCh:
+			task.job.Start()
+			if task.taskType != idxTask {
+				resultsCh <- &statistics.AnalyzeResults{
+					Err: errors.Errorf("incorrect analyze type"),
+					Job: task.job,
+				}
+				continue
 			}
-			continue
+			task.idxExec.job = task.job
+			resultsCh <- analyzeIndexNDVPushDown(task.idxExec)
+		default:
+			select {
+			case <-exitCh:
+				return
+			default:
+			}
 		}
-		task.idxExec.job = task.job
-		resultsCh <- analyzeIndexNDVPushDown(task.idxExec)
 	}
 }
 
@@ -1334,21 +1364,17 @@ type samplingBuildTask struct {
 	slicePos         int
 }
 
-func (e *AnalyzeColumnsExec) subBuildWorker(resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, collectors []*statistics.SampleCollector, isClosedChanThread bool) {
+func (e *AnalyzeColumnsExec) subBuildWorker(resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, collectors []*statistics.SampleCollector, exitCh chan struct{}) {
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
-			logutil.BgLogger().Error("analyze worker panicked", zap.String("stack", string(buf)))
+			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover()", r), zap.String("stack", string(buf)))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultCh <- errAnalyzeWorkerPanic
 		}
 		e.samplingBuilderWg.Done()
-		if isClosedChanThread {
-			e.samplingBuilderWg.Wait()
-			close(resultCh)
-		}
 	}()
 	failpoint.Inject("mockAnalyzeSamplingBuildWorkerPanic", func() {
 		panic("failpoint triggered")
@@ -1356,93 +1382,98 @@ func (e *AnalyzeColumnsExec) subBuildWorker(resultCh chan error, taskCh chan *sa
 	colLen := len(e.colsInfo)
 workLoop:
 	for {
-		task, ok := <-taskCh
-		if !ok {
-			break
-		}
-		var collector *statistics.SampleCollector
-		if task.isColumn {
-			if e.colsInfo[task.slicePos].IsGenerated() && !e.colsInfo[task.slicePos].GeneratedStored {
-				hists[task.slicePos] = nil
-				topns[task.slicePos] = nil
-				continue
-			}
-			sampleItems := make([]*statistics.SampleItem, 0, task.rootRowCollector.Base().Samples.Len())
-			for j, row := range task.rootRowCollector.Base().Samples {
-				if row.Columns[task.slicePos].IsNull() {
+		select {
+		case task := <-taskCh:
+			var collector *statistics.SampleCollector
+			if task.isColumn {
+				if e.colsInfo[task.slicePos].IsGenerated() && !e.colsInfo[task.slicePos].GeneratedStored {
+					hists[task.slicePos] = nil
+					topns[task.slicePos] = nil
 					continue
 				}
-				val := row.Columns[task.slicePos]
-				ft := e.colsInfo[task.slicePos].FieldType
-				// When it's new collation data, we need to use its collate key instead of original value because only
-				// the collate key can ensure the correct ordering.
-				// This is also corresponding to similar operation in (*statistics.Column).GetColumnRowCount().
-				if ft.EvalType() == types.ETString && ft.Tp != mysql.TypeEnum && ft.Tp != mysql.TypeSet {
-					val.SetBytes(collate.GetCollator(ft.Collate).Key(val.GetString()))
+				sampleItems := make([]*statistics.SampleItem, 0, task.rootRowCollector.Base().Samples.Len())
+				for j, row := range task.rootRowCollector.Base().Samples {
+					if row.Columns[task.slicePos].IsNull() {
+						continue
+					}
+					val := row.Columns[task.slicePos]
+					ft := e.colsInfo[task.slicePos].FieldType
+					// When it's new collation data, we need to use its collate key instead of original value because only
+					// the collate key can ensure the correct ordering.
+					// This is also corresponding to similar operation in (*statistics.Column).GetColumnRowCount().
+					if ft.EvalType() == types.ETString && ft.Tp != mysql.TypeEnum && ft.Tp != mysql.TypeSet {
+						val.SetBytes(collate.GetCollator(ft.Collate).Key(val.GetString()))
+					}
+					sampleItems = append(sampleItems, &statistics.SampleItem{
+						Value:   val,
+						Ordinal: j,
+					})
 				}
-				sampleItems = append(sampleItems, &statistics.SampleItem{
-					Value:   val,
-					Ordinal: j,
-				})
-			}
-			collector = &statistics.SampleCollector{
-				Samples:   sampleItems,
-				NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
-				Count:     task.rootRowCollector.Base().Count - task.rootRowCollector.Base().NullCount[task.slicePos],
-				FMSketch:  task.rootRowCollector.Base().FMSketches[task.slicePos],
-				TotalSize: task.rootRowCollector.Base().TotalSizes[task.slicePos],
-			}
-		} else {
-			var tmpDatum types.Datum
-			var err error
-			idx := e.indexes[task.slicePos-colLen]
-			sampleItems := make([]*statistics.SampleItem, 0, task.rootRowCollector.Base().Samples.Len())
-			for _, row := range task.rootRowCollector.Base().Samples {
-				if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
-					continue
+				collector = &statistics.SampleCollector{
+					Samples:   sampleItems,
+					NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
+					Count:     task.rootRowCollector.Base().Count - task.rootRowCollector.Base().NullCount[task.slicePos],
+					FMSketch:  task.rootRowCollector.Base().FMSketches[task.slicePos],
+					TotalSize: task.rootRowCollector.Base().TotalSizes[task.slicePos],
 				}
+			} else {
+				var tmpDatum types.Datum
+				var err error
+				idx := e.indexes[task.slicePos-colLen]
+				sampleItems := make([]*statistics.SampleItem, 0, task.rootRowCollector.Base().Samples.Len())
+				for _, row := range task.rootRowCollector.Base().Samples {
+					if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
+						continue
+					}
 
-				b := make([]byte, 0, 8)
-				for _, col := range idx.Columns {
-					if col.Length != types.UnspecifiedLength {
-						row.Columns[col.Offset].Copy(&tmpDatum)
-						ranger.CutDatumByPrefixLen(&tmpDatum, col.Length, &e.colsInfo[col.Offset].FieldType)
-						b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, b, tmpDatum)
+					b := make([]byte, 0, 8)
+					for _, col := range idx.Columns {
+						if col.Length != types.UnspecifiedLength {
+							row.Columns[col.Offset].Copy(&tmpDatum)
+							ranger.CutDatumByPrefixLen(&tmpDatum, col.Length, &e.colsInfo[col.Offset].FieldType)
+							b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, b, tmpDatum)
+							if err != nil {
+								resultCh <- err
+								continue workLoop
+							}
+							continue
+						}
+						b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, b, row.Columns[col.Offset])
 						if err != nil {
 							resultCh <- err
 							continue workLoop
 						}
-						continue
 					}
-					b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, b, row.Columns[col.Offset])
-					if err != nil {
-						resultCh <- err
-						continue workLoop
-					}
+					sampleItems = append(sampleItems, &statistics.SampleItem{
+						Value: types.NewBytesDatum(b),
+					})
 				}
-				sampleItems = append(sampleItems, &statistics.SampleItem{
-					Value: types.NewBytesDatum(b),
-				})
+				collector = &statistics.SampleCollector{
+					Samples:   sampleItems,
+					NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
+					Count:     task.rootRowCollector.Base().Count - task.rootRowCollector.Base().NullCount[task.slicePos],
+					FMSketch:  task.rootRowCollector.Base().FMSketches[task.slicePos],
+					TotalSize: task.rootRowCollector.Base().TotalSizes[task.slicePos],
+				}
 			}
-			collector = &statistics.SampleCollector{
-				Samples:   sampleItems,
-				NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
-				Count:     task.rootRowCollector.Base().Count - task.rootRowCollector.Base().NullCount[task.slicePos],
-				FMSketch:  task.rootRowCollector.Base().FMSketches[task.slicePos],
-				TotalSize: task.rootRowCollector.Base().TotalSizes[task.slicePos],
+			if task.isColumn {
+				collectors[task.slicePos] = collector
+			}
+			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn)
+			if err != nil {
+				resultCh <- err
+				continue
+			}
+			hists[task.slicePos] = hist
+			topns[task.slicePos] = topn
+			resultCh <- nil
+		default:
+			select {
+			case <-exitCh:
+				return
+			default:
 			}
 		}
-		if task.isColumn {
-			collectors[task.slicePos] = collector
-		}
-		hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn)
-		if err != nil {
-			resultCh <- err
-			continue
-		}
-		hists[task.slicePos] = hist
-		topns[task.slicePos] = topn
-		resultCh <- nil
 	}
 }
 
