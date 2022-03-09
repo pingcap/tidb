@@ -3670,40 +3670,6 @@ func TestAddPartitionReplicaBiggerThanTiFlashStores(t *testing.T) {
 	require.Equal(t, "[ddl:-1]DDL job rollback, error msg: [ddl] add partition wait for tiflash replica to complete", err.Error())
 }
 
-func TestDropAndTruncatePartition(t *testing.T) {
-	// Useless, but is required to initialize the global infoSync
-	// Otherwise this test throw a "infoSyncer is not initialized" error
-	_, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	ddl.ExportTestDropAndTruncatePartition(t)
-}
-
-func TestTable(t *testing.T) {
-	// Useless, but is required to initialize the global infoSync
-	// Otherwise this test throw a "infoSyncer is not initialized" error
-	_, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	ddl.ExportTestTable(t)
-}
-
-func TestRenameTables(t *testing.T) {
-	// Useless, but is required to initialize the global infoSync
-	// Otherwise this test throw a "infoSyncer is not initialized" error
-	_, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	ddl.ExportTestRenameTables(t)
-}
-
-func TestCreateTables(t *testing.T) {
-	_, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	ddl.ExportTestRenameTables(t)
-}
-
 func TestDuplicatePartitionNames(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
