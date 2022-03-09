@@ -151,17 +151,15 @@ func checkOperateSameColumn(info *model.MultiSchemaInfo) error {
 		name := col.Name.L
 		if _, ok := modifyCols[name]; ok {
 			return errOperateSameColumn.GenWithStackByArgs(name)
-		} else {
-			modifyCols[name] = struct{}{}
 		}
+		modifyCols[name] = struct{}{}
 	}
 	for _, col := range info.DropColumns {
 		name := col.Name.L
 		if _, ok := modifyCols[name]; ok {
 			return errOperateSameColumn.GenWithStackByArgs(name)
-		} else {
-			modifyCols[name] = struct{}{}
 		}
+		modifyCols[name] = struct{}{}
 	}
 	return nil
 }

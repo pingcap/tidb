@@ -40,6 +40,11 @@ func TestMultiSchemaChangeAddColumns(t *testing.T) {
 	tk.MustExec("alter table t add column (b int default 2, c int default 3);")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3"))
 
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int);")
+	tk.MustGetErrCode("alter table t add column b int after a, add column c int after b", errno.ErrBadField)
+	tk.MustGetErrCode("alter table t add column c int after b, add column b int", errno.ErrBadField)
+
 	// Test add multiple columns with different position.
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a int, b int, c int);")
