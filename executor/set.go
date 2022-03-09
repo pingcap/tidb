@@ -302,7 +302,8 @@ func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.
 	if err != nil {
 		return "", err
 	}
-	// Setting NULL for system variables is not allowed, See https://github.com/pingcap/tidb/issues/32850
+	// Setting NULL for system variables is not allowed,
+	// See https://github.com/pingcap/tidb/issues/32850#issuecomment-1062527091
 	if nativeVal.IsNull() {
 		return "", variable.ErrWrongValueForVar.GenWithStackByArgs(v.Name, "NULL")
 	}
