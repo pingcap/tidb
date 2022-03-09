@@ -106,5 +106,19 @@ echo ">>> check-only for ignored column"
 run_lightning --config "tests/$TEST_NAME/config_gbk_ignore_columns.toml" -d "tests/$TEST_NAME/data_csv" --check-only 1,3 > $out_file_name
 check_contains "Total sample of 3 rows of data checked, 1 errors found."
 check_contains "Some checks failed, please check the log for more information."
-run_sql "select count(1) s from test_check.tbl1"
+run_sql "$check_db_sql"
 check_contains "s: 0"
+
+# only test whether it works for parquet files, we use csv/sql to test error cases
+echo ">>> check-only for parquet data"
+run_sql 'DROP DATABASE IF EXISTS test'
+run_sql 'CREATE DATABASE test'
+run_sql "source tests/$TEST_NAME/parquet-schema.sql;" -D test
+run_lightning --config "tests/$TEST_NAME/config_parquet.toml" -d "tests/$TEST_NAME/data_parquet" --check-only 1,-1 > $out_file_name
+check_contains "Total sample of 20 rows of data checked, 0 errors found."
+check_contains "All checks have been passed"
+run_sql "$check_db_sql"
+check_contains "s: 0"
+run_sql "select count(1) s from test.customer"
+check_contains "s: 0"
+run_sql "drop database test"

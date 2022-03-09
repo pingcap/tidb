@@ -1,0 +1,126 @@
+{
+  "perTableStatus": [
+    {
+      "tableStatistics": {
+        "extractionStartTime": "Sep 10, 2020 7:13:10 AM",
+        "extractionEndTime": "Sep 10, 2020 7:13:20 AM",
+        "partitioningInfo": {
+          "numberOfPartitions": 1,
+          "numberOfCompletedPartitions": 1
+        }
+      },
+      "schemaMetadata": {
+        "originalTypeMappings": [
+          {
+            "columnName": "c_id",
+            "originalType": "int",
+            "expectedExportedType": "int32"
+          },
+          {
+            "columnName": "c_d_id",
+            "originalType": "int",
+            "expectedExportedType": "int32"
+          },
+          {
+            "columnName": "c_w_id",
+            "originalType": "int",
+            "expectedExportedType": "int32"
+          },
+          {
+            "columnName": "c_first",
+            "originalType": "varchar",
+            "expectedExportedType": "binary (UTF8)"
+          },
+          {
+            "columnName": "c_middle",
+            "originalType": "char",
+            "expectedExportedType": "binary (UTF8)"
+          },
+          {
+            "columnName": "c_last",
+            "originalType": "varchar",
+            "expectedExportedType": "binary (UTF8)"
+          },
+          {
+            "columnName": "c_street_1",
+            "originalType": "varchar",
+            "expectedExportedType": "binary (UTF8)"
+          },
+          {
+            "columnName": "c_street_2",
+            "originalType": "varchar",
+            "expectedExportedType": "binary (UTF8)"
+          },
+          {
+            "columnName": "c_city",
+            "originalType": "varchar",
+            "expectedExportedType": "binary (UTF8)"
+          },
+          {
+            "columnName": "c_state",
+            "originalType": "char",
+            "expectedExportedType": "binary (UTF8)"
+          },
+          {
+            "columnName": "c_zip",
+            "originalType": "char",
+            "expectedExportedType": "binary (UTF8)"
+          },
+          {
+            "columnName": "c_phone",
+            "originalType": "char",
+            "expectedExportedType": "binary (UTF8)"
+          },
+          {
+            "columnName": "c_since",
+            "originalType": "datetime",
+            "expectedExportedType": "int64 (TIMESTAMP_MICRO)"
+          },
+          {
+            "columnName": "c_credit",
+            "originalType": "char",
+            "expectedExportedType": "binary (UTF8)"
+          },
+          {
+            "columnName": "c_credit_lim",
+            "originalType": "decimal",
+            "expectedExportedType": "int64 (DECIMAL(12,2))"
+          },
+          {
+            "columnName": "c_discount",
+            "originalType": "decimal",
+            "expectedExportedType": "int32 (DECIMAL(4,4))"
+          },
+          {
+            "columnName": "c_balance",
+            "originalType": "decimal",
+            "expectedExportedType": "int64 (DECIMAL(12,2))"
+          },
+          {
+            "columnName": "c_ytd_payment",
+            "originalType": "decimal",
+            "expectedExportedType": "int64 (DECIMAL(12,2))"
+          },
+          {
+            "columnName": "c_payment_cnt",
+            "originalType": "int",
+            "expectedExportedType": "int32"
+          },
+          {
+            "columnName": "c_delivery_cnt",
+            "originalType": "int",
+            "expectedExportedType": "int32"
+          },
+          {
+            "columnName": "c_data",
+            "originalType": "varchar",
+            "expectedExportedType": "binary (UTF8)"
+          }
+        ]
+      },
+      "status": "COMPLETE",
+      "sizeGB": 1.52587890625E-5,
+      "target": "test.test.customer"
+    }
+  ]
+}
