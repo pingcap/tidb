@@ -6055,6 +6055,6 @@ func (s *testSessionSuite) TestSysdateIsNow(c *C) {
 	tk.MustQuery("show variables like '%tidb_sysdate_is_now%'").Check(testkit.Rows("sysdate_is_now OFF"))
 	c.Assert(tk.Se.GetSessionVars().SysdateIsNow, IsFalse)
 	tk.MustExec("set @@sysdate_is_now=true")
-	tk.MustQuery("show variables like 'tidb_%sysdate_is_now%'").Check(testkit.Rows("sysdate_is_now ON"))
+	tk.MustQuery("show variables like '%tidb_sysdate_is_now%'").Check(testkit.Rows("sysdate_is_now ON"))
 	c.Assert(tk.Se.GetSessionVars().SysdateIsNow, IsTrue)
 }
