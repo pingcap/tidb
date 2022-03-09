@@ -581,6 +581,15 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 		statsVer = int(*e.analyzePB.IdxReq.Version)
 	}
 	for {
+		failpoint.Inject("mockAnalyzeJobRunningIndex", func() {
+			time.Sleep(100 * time.Millisecond)
+		})
+		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
+			return nil, nil, nil, nil, errors.Trace(ErrQueryInterrupted)
+		}
+		failpoint.Inject("mockSlowAnalyzeIndex", func() {
+			time.Sleep(5 * time.Second)
+		})
 		data, err := result.NextRaw(context.TODO())
 		if err != nil {
 			return nil, nil, nil, nil, err
@@ -899,13 +908,13 @@ func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, mergeTaskCh chan []byte) error {
 	defer close(mergeTaskCh)
 	for {
-		failpoint.Inject("mockAnalyzeJobRunning", func() {
+		failpoint.Inject("mockAnalyzeJobRunningV2", func() {
 			time.Sleep(100 * time.Millisecond)
 		})
 		if atomic.LoadUint32(&ctx.GetSessionVars().Killed) == 1 {
 			return errors.Trace(ErrQueryInterrupted)
 		}
-		failpoint.Inject("mockSlowAnalyze", func() {
+		failpoint.Inject("mockSlowAnalyzeV2", func() {
 			time.Sleep(5 * time.Second)
 		})
 		data, err := handler.nextRaw(context.TODO())
@@ -1471,9 +1480,15 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		}
 	}
 	for {
+		failpoint.Inject("mockAnalyzeJobRunningV1", func() {
+			time.Sleep(100 * time.Millisecond)
+		})
 		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
 			return nil, nil, nil, nil, nil, errors.Trace(ErrQueryInterrupted)
 		}
+		failpoint.Inject("mockSlowAnalyzeV1", func() {
+			time.Sleep(5 * time.Second)
+		})
 		data, err1 := e.resultHandler.nextRaw(context.TODO())
 		if err1 != nil {
 			return nil, nil, nil, nil, nil, err1
