@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
@@ -262,7 +263,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec("create global temporary table shard_row_id_temporary_table_plus (a int) on commit delete rows")
 	defer tk.MustExec("drop table if exists shard_row_id_table, shard_row_id_temporary_table, shard_row_id_table_plus, shard_row_id_temporary_table_plus")
 	err = tk.ExecToErr("alter table shard_row_id_temporary_table_plus shard_row_id_bits = 4")
-	require.Equal(t, ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error(), err.Error())
+	require.Equal(t, dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error(), err.Error())
 
 	// Test partition.
 	tk.MustExec("drop table if exists global_partition_table")
@@ -834,7 +835,7 @@ func TestAutoRandom(t *testing.T) {
 
 	assertInvalidAutoRandomErr := func(sql string, errMsg string, args ...interface{}) {
 		err := tk.ExecToErr(sql)
-		require.EqualError(t, err, ddl.ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(errMsg, args...)).Error())
+		require.EqualError(t, err, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(errMsg, args...)).Error())
 	}
 
 	assertPKIsNotHandle := func(sql, errCol string) {
@@ -1254,13 +1255,13 @@ func TestLocalTemporaryTableBlockedDDL(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int)")
 	tk.MustExec("create temporary table tmp1 (id int primary key, a int unique, b int)")
-	require.ErrorIs(t, tk.ExecToErr("rename table tmp1 to tmp2"), ddl.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("alter table tmp1 add column c int"), ddl.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("alter table tmp1 add index b(b)"), ddl.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("create index a on tmp1(b)"), ddl.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("drop index a on tmp1"), ddl.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("lock tables tmp1 read"), ddl.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("lock tables tmp1 write"), ddl.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("lock tables t1 read, tmp1 read"), ddl.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("admin cleanup table lock tmp1"), ddl.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("rename table tmp1 to tmp2"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("alter table tmp1 add column c int"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("alter table tmp1 add index b(b)"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("create index a on tmp1(b)"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("drop index a on tmp1"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("lock tables tmp1 read"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("lock tables tmp1 write"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("lock tables t1 read, tmp1 read"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("admin cleanup table lock tmp1"), dbterror.ErrUnsupportedLocalTempTableDDL)
 }
