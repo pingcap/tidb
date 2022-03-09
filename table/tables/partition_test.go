@@ -19,7 +19,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/pingcap/tidb/ddl"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
@@ -509,13 +509,13 @@ func TestCreatePartitionTableNotSupport(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	_, err := tk.Exec(`create table t7 (a int) partition by range (mod((select * from t), 5)) (partition p1 values less than (1));`)
-	require.True(t, ddl.ErrPartitionFunctionIsNotAllowed.Equal(err))
+	require.True(t, dbterror.ErrPartitionFunctionIsNotAllowed.Equal(err))
 	_, err = tk.Exec(`create table t7 (a int) partition by range (1 + (select * from t)) (partition p1 values less than (1));`)
-	require.True(t, ddl.ErrPartitionFunctionIsNotAllowed.Equal(err))
+	require.True(t, dbterror.ErrPartitionFunctionIsNotAllowed.Equal(err))
 	_, err = tk.Exec(`create table t7 (a int) partition by range (a + row(1, 2, 3)) (partition p1 values less than (1));`)
-	require.True(t, ddl.ErrPartitionFunctionIsNotAllowed.Equal(err))
+	require.True(t, dbterror.ErrPartitionFunctionIsNotAllowed.Equal(err))
 	_, err = tk.Exec(`create table t7 (a int) partition by range (-(select * from t)) (partition p1 values less than (1));`)
-	require.True(t, ddl.ErrPartitionFunctionIsNotAllowed.Equal(err))
+	require.True(t, dbterror.ErrPartitionFunctionIsNotAllowed.Equal(err))
 }
 
 func TestRangePartitionUnderNoUnsigned(t *testing.T) {

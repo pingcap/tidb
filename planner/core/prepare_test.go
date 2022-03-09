@@ -1307,6 +1307,60 @@ func TestPlanCacheUnionScan(t *testing.T) {
 	require.Equal(t, float64(6), cnt)
 }
 
+func TestPlanCacheSwitchDB(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer core.SetPreparedPlanCache(orgEnable)
+	core.SetPreparedPlanCache(true)
+	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	require.NoError(t, err)
+	tk := testkit.NewTestKitWithSession(t, store, se)
+
+	// create a table in test
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a int)`)
+	tk.MustExec(`insert into t values (-1)`)
+	tk.MustExec(`prepare stmt from 'select * from t'`)
+
+	// DB is not specified
+	se2, err := session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	require.NoError(t, err)
+	tk2 := testkit.NewTestKitWithSession(t, store, se2)
+	require.Equal(t, tk2.ExecToErr(`prepare stmt from 'select * from t'`).Error(), "[planner:1046]No database selected")
+	require.Equal(t, tk2.ExecToErr(`prepare stmt from 'select * from test.t'`), nil)
+
+	// switch to a new DB
+	tk.MustExec(`drop database if exists plan_cache`)
+	tk.MustExec(`create database plan_cache`)
+	tk.MustExec(`use plan_cache`)
+	tk.MustExec(`create table t(a int)`)
+	tk.MustExec(`insert into t values (1)`)
+	tk.MustQuery(`execute stmt`).Check(testkit.Rows("-1")) // read test.t
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`execute stmt`).Check(testkit.Rows("-1")) // read test.t
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	// prepare again
+	tk.MustExec(`prepare stmt from 'select * from t'`)
+	tk.MustQuery(`execute stmt`).Check(testkit.Rows("1")) // read plan_cache.t
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`execute stmt`).Check(testkit.Rows("1")) // read plan_cache.t
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	// specify DB in the query
+	tk.MustExec(`prepare stmt from 'select * from test.t'`)
+	tk.MustQuery(`execute stmt`).Check(testkit.Rows("-1")) // read test.t
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`execute stmt`).Check(testkit.Rows("-1")) // read test.t
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
 func TestPlanCacheHitInfo(t *testing.T) {
 	t.Skip("unstable, skip it and fix it before 20210705")
 	store, clean := testkit.CreateMockStore(t)
@@ -1756,9 +1810,9 @@ func TestIssue18066(t *testing.T) {
 		testkit.Rows("2 1 1"))
 	tk.MustExec("prepare stmt from 'select * from t'")
 	tk.MustQuery("execute stmt").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-	tk.MustQuery("select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`'").Check(
-		testkit.Rows("3 1 0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select EXEC_COUNT, plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`'").Check(
+		testkit.Rows("3 2 1"))
 }
 
 func TestPrepareForGroupByMultiItems(t *testing.T) {
@@ -1943,7 +1997,7 @@ func TestPlanCachePointGetAndTableDual(t *testing.T) {
 	tk.MustExec("set @a3=1,@b3=3")
 	// TableReader plan would be built, we should cache it.
 	tk.MustQuery("execute s3 using @b3,@a3").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustQuery("execute s3 using @a3,@b3").Check(testkit.Rows("2 1 1"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
@@ -1959,7 +2013,7 @@ func TestPlanCachePointGetAndTableDual(t *testing.T) {
 	tk.MustExec("prepare s4 from 'select /*+ use_index_merge(t4) */ * from t4 where (c1 >= ? and c1 <= ?) or c2 > 1'")
 	tk.MustExec("set @a4=1,@b4=3")
 	tk.MustQuery("execute s4 using @b4,@a4").Check(testkit.Rows())
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustQuery("execute s4 using @a4,@b4").Check(testkit.Rows("2 1 1"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
