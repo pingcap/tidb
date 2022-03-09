@@ -1568,3 +1568,20 @@ func TestSetTopSQLVariables(t *testing.T) {
 	tk.MustQuery("show variables like '%top_sql%'").Check(testkit.Rows("tidb_enable_top_sql OFF", "tidb_top_sql_max_meta_count 5000", "tidb_top_sql_max_time_series_count 20"))
 	tk.MustQuery("show global variables like '%top_sql%'").Check(testkit.Rows("tidb_enable_top_sql OFF", "tidb_top_sql_max_meta_count 5000", "tidb_top_sql_max_time_series_count 20"))
 }
+
+func TestInstanceScopeSwitching(t *testing.T) {
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// enable 'switching' to SESSION variables
+	tk.MustExec("set tidb_enable_legacy_instance_scope = 1")
+	tk.MustExec("set tidb_general_log = 1")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 8142 allowing variable tidb_general_log with INSTANCE scope change to SESSION scope while setting for now, but its deprecated"))
+
+	// disable 'switching' to SESSION variables
+	tk.MustExec("set tidb_enable_legacy_instance_scope = 0")
+	tk.MustGetErrCode("set tidb_general_log = 1", errno.ErrGlobalVariable)
+}

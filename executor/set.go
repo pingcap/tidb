@@ -120,7 +120,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		// For backward compatibility we will change the v.IsGlobal to true,
 		// and append a warning saying this will not be supported in future.
 		v.IsGlobal = true
-		sessionVars.StmtCtx.AppendWarning(errors.New("allowing scope change for now, but its deprecated"))
+		sessionVars.StmtCtx.AppendWarning(ErrInstanceScope.GenWithStackByArgs(sysVar.Name))
 	}
 
 	if v.IsGlobal {
