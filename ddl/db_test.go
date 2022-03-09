@@ -954,21 +954,7 @@ func (s *testDBSuite1) TestCancelAddTableAndDropTablePartition(c *C) {
 	s.dom.DDL().SetHook(originalHook)
 }
 
-func testGetIndexID(c *C, ctx sessionctx.Context, dbName, tblName, idxName string) int64 {
-	is := domain.GetDomain(ctx).InfoSchema()
-	t, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
-	c.Assert(err, IsNil)
-
-	for _, idx := range t.Indices() {
-		if idx.Meta().Name.L == idxName {
-			return idx.Meta().ID
-		}
-	}
-	c.Fatalf("index %s not found(db: %s, tbl: %s)", idxName, dbName, tblName)
-	return -1
-}
-
-func testGetIndexIDT(t *testing.T, ctx sessionctx.Context, dbName, tblName, idxName string) int64 {
+func testGetIndexID(t *testing.T, ctx sessionctx.Context, dbName, tblName, idxName string) int64 {
 	is := domain.GetDomain(ctx).InfoSchema()
 	tt, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
 	require.NoError(t, err)
@@ -978,7 +964,7 @@ func testGetIndexIDT(t *testing.T, ctx sessionctx.Context, dbName, tblName, idxN
 			return idx.Meta().ID
 		}
 	}
-	t.Fatalf("index %s not found(db: %s, tbl: %s)", idxName, dbName, tblName)
+	require.FailNowf(t, "index %s not found(db: %s, tbl: %s)", idxName, dbName, tblName)
 	return -1
 }
 
@@ -1013,14 +999,7 @@ func setupJobIDExtCallback(ctx sessionctx.Context) (jobExt *testDDLJobIDCallback
 	}
 }
 
-func checkDelRangeAdded(tk *testkit.TestKit, jobID int64, elemID int64) {
-	query := `select sum(cnt) from
-	(select count(1) cnt from mysql.gc_delete_range where job_id = ? and element_id = ? union
-	select count(1) cnt from mysql.gc_delete_range_done where job_id = ? and element_id = ?) as gdr;`
-	tk.MustQuery(query, jobID, elemID, jobID, elemID).Check(testkit.Rows("1"))
-}
-
-func checkDelRangeAddedN(tk *ntestkit.TestKit, jobID int64, elemID int64) {
+func checkDelRangeAdded(tk *ntestkit.TestKit, jobID int64, elemID int64) {
 	query := `select sum(cnt) from
 	(select count(1) cnt from mysql.gc_delete_range where job_id = ? and element_id = ? union
 	select count(1) cnt from mysql.gc_delete_range_done where job_id = ? and element_id = ?) as gdr;`

@@ -754,7 +754,7 @@ LOOP:
 			times++
 		}
 	}
-	checkDelRangeAddedN(tk, jobIDExt.jobID, c3IdxInfo.ID)
+	checkDelRangeAdded(tk, jobIDExt.jobID, c3IdxInfo.ID)
 	d.SetHook(originalHook)
 }
 
@@ -1054,7 +1054,7 @@ func testDropIndexes(t *testing.T, store kv.Storage, createSQL, dropIdxSQL strin
 	}
 	idxIDs := make([]int64, 0, 3)
 	for _, idxName := range idxNames {
-		idxIDs = append(idxIDs, testGetIndexIDT(t, tk.Session(), "test", "test_drop_indexes", idxName))
+		idxIDs = append(idxIDs, testGetIndexID(t, tk.Session(), "test", "test_drop_indexes", idxName))
 	}
 	jobIDExt, reset := setupJobIDExtCallback(tk.Session())
 	defer reset()
@@ -1082,7 +1082,7 @@ LOOP:
 		}
 	}
 	for _, idxID := range idxIDs {
-		checkDelRangeAddedN(tk, jobIDExt.jobID, idxID)
+		checkDelRangeAdded(tk, jobIDExt.jobID, idxID)
 	}
 }
 
@@ -1252,7 +1252,7 @@ func testDropIndex(t *testing.T, store kv.Storage, createSQL, dropIdxSQL, idxNam
 	for i := 0; i < num; i++ {
 		tk.MustExec("insert into test_drop_index values (?, ?, ?)", i, i, i)
 	}
-	indexID := testGetIndexIDT(t, tk.Session(), "test", "test_drop_index", idxName)
+	indexID := testGetIndexID(t, tk.Session(), "test", "test_drop_index", idxName)
 	jobIDExt, reset := setupJobIDExtCallback(tk.Session())
 	defer reset()
 	testddlutil.SessionExecInGoroutine(store, "test", dropIdxSQL, done)
@@ -1282,6 +1282,6 @@ LOOP:
 	rows := tk.MustQuery("explain select c1 from test_drop_index where c3 >= 0")
 	require.NotContains(t, fmt.Sprintf("%v", rows), idxName)
 
-	checkDelRangeAddedN(tk, jobIDExt.jobID, indexID)
+	checkDelRangeAdded(tk, jobIDExt.jobID, indexID)
 	tk.MustExec("drop table test_drop_index")
 }

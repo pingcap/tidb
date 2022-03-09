@@ -498,7 +498,7 @@ func TestCancelDropColumn(t *testing.T) {
 		if testCase.needAddColumn {
 			tk.MustExec("alter table test_drop_column add column c3 int")
 			tk.MustExec("alter table test_drop_column add index idx_c3(c3)")
-			c3IdxID = testGetIndexIDT(t, tk.Session(), "test", "test_drop_column", "idx_c3")
+			c3IdxID = testGetIndexID(t, tk.Session(), "test", "test_drop_column", "idx_c3")
 		}
 
 		err := tk.ExecToErr("alter table test_drop_column drop column c3")
@@ -531,7 +531,7 @@ func TestCancelDropColumn(t *testing.T) {
 			require.EqualError(t, checkErr, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
 			if c3IdxID != 0 {
 				// Check index is deleted
-				checkDelRangeAddedN(tk, jobID, c3IdxID)
+				checkDelRangeAdded(tk, jobID, c3IdxID)
 			}
 		}
 	}
@@ -602,7 +602,7 @@ func TestCancelDropColumns(t *testing.T) {
 		if testCase.needAddColumn {
 			tk.MustExec("alter table test_drop_column add column c3 int, add column c4 int")
 			tk.MustExec("alter table test_drop_column add index idx_c3(c3)")
-			c3IdxID = testGetIndexIDT(t, tk.Session(), "test", "test_drop_column", "idx_c3")
+			c3IdxID = testGetIndexID(t, tk.Session(), "test", "test_drop_column", "idx_c3")
 		}
 		err := tk.ExecToErr("alter table test_drop_column drop column c3, drop column c4")
 		tbl := tk.GetTableByName("test", "test_drop_column")
@@ -632,7 +632,7 @@ func TestCancelDropColumns(t *testing.T) {
 			require.EqualError(t, checkErr, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
 			if c3IdxID != 0 {
 				// Check index is deleted
-				checkDelRangeAddedN(tk, jobID, c3IdxID)
+				checkDelRangeAdded(tk, jobID, c3IdxID)
 			}
 		}
 	}
