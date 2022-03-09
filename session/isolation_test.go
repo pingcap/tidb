@@ -33,6 +33,8 @@ func TestP0DirtyWrite(t *testing.T) {
 	session2 := testkit.NewTestKit(t, store)
 	session1.MustExec("use test;")
 	session2.MustExec("use test;")
+	session1.MustExec("set tidb_txn_mode = 'optimistic'")
+	session2.MustExec("set tidb_txn_mode = 'optimistic'")
 
 	session1.MustExec("drop table if exists x;")
 	session1.MustExec("create table x (id int primary key, c int);")
@@ -90,6 +92,8 @@ func TestP1DirtyRead(t *testing.T) {
 	session2 := testkit.NewTestKit(t, store)
 	session1.MustExec("use test;")
 	session2.MustExec("use test;")
+	session1.MustExec("set tidb_txn_mode = 'optimistic'")
+	session2.MustExec("set tidb_txn_mode = 'optimistic'")
 
 	session1.MustExec("drop table if exists x;")
 	session1.MustExec("create table x (id int primary key, c int);")
@@ -138,6 +142,8 @@ func TestP2NonRepeatableRead(t *testing.T) {
 	session2 := testkit.NewTestKit(t, store)
 	session1.MustExec("use test;")
 	session2.MustExec("use test;")
+	session1.MustExec("set tidb_txn_mode = 'optimistic'")
+	session2.MustExec("set tidb_txn_mode = 'optimistic'")
 
 	session1.MustExec("drop table if exists x;")
 	session1.MustExec("drop table if exists y;")
@@ -207,6 +213,8 @@ func TestP3Phantom(t *testing.T) {
 	session2 := testkit.NewTestKit(t, store)
 	session1.MustExec("use test;")
 	session2.MustExec("use test;")
+	session1.MustExec("set tidb_txn_mode = 'optimistic'")
+	session2.MustExec("set tidb_txn_mode = 'optimistic'")
 
 	session1.MustExec("drop table if exists x;")
 	session1.MustExec("drop table if exists z;")
@@ -273,6 +281,8 @@ func TestP4LostUpdate(t *testing.T) {
 	session2 := testkit.NewTestKit(t, store)
 	session1.MustExec("use test;")
 	session2.MustExec("use test;")
+	session1.MustExec("set tidb_txn_mode = 'optimistic'")
+	session2.MustExec("set tidb_txn_mode = 'optimistic'")
 
 	session1.MustExec("drop table if exists x;")
 	session1.MustExec("create table x (id int primary key, c int);")
@@ -332,6 +342,8 @@ func TestA3Phantom(t *testing.T) {
 	session2 := testkit.NewTestKit(t, store)
 	session1.MustExec("use test;")
 	session2.MustExec("use test;")
+	session1.MustExec("set tidb_txn_mode = 'optimistic'")
+	session2.MustExec("set tidb_txn_mode = 'optimistic'")
 
 	session1.MustExec("drop table if exists x;")
 	session1.MustExec("create table x (id int primary key, c int);")
@@ -383,6 +395,8 @@ func TestA5AReadSkew(t *testing.T) {
 	session2 := testkit.NewTestKit(t, store)
 	session1.MustExec("use test;")
 	session2.MustExec("use test;")
+	session1.MustExec("set tidb_txn_mode = 'optimistic'")
+	session2.MustExec("set tidb_txn_mode = 'optimistic'")
 
 	session1.MustExec("drop table if exists x;")
 	session1.MustExec("drop table if exists y;")
@@ -446,6 +460,8 @@ func TestA5BWriteSkew(t *testing.T) {
 	session2 := testkit.NewTestKit(t, store)
 	session1.MustExec("use test;")
 	session2.MustExec("use test;")
+	session1.MustExec("set tidb_txn_mode = 'optimistic'")
+	session2.MustExec("set tidb_txn_mode = 'optimistic'")
 
 	session1.MustExec("drop table if exists x;")
 	session1.MustExec("drop table if exists y;")
@@ -541,6 +557,8 @@ func TestReadAfterWrite(t *testing.T) {
 	session2 := testkit.NewTestKit(t, store)
 	session1.MustExec("use test;")
 	session2.MustExec("use test;")
+	session1.MustExec("set tidb_txn_mode = 'optimistic'")
+	session2.MustExec("set tidb_txn_mode = 'optimistic'")
 
 	session1.MustExec("drop table if exists x;")
 	session1.MustExec("create table x (id int primary key, c int);")
@@ -592,6 +610,8 @@ func TestPhantomReadInInnodb(t *testing.T) {
 	session2 := testkit.NewTestKit(t, store)
 	session1.MustExec("use test;")
 	session2.MustExec("use test;")
+	session1.MustExec("set tidb_txn_mode = 'optimistic'")
+	session2.MustExec("set tidb_txn_mode = 'optimistic'")
 
 	session1.MustExec("drop table if exists x;")
 	session1.MustExec("create table x (id int primary key, c int);")
