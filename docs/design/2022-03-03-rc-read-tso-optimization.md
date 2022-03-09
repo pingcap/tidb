@@ -1,4 +1,4 @@
-# Read-Consistency Read With Tso Check
+# Read-Consistency Read With Timestamp Check
 
 - Author(s): cfzjywxk
 - Last updated: March. 3, 2022
@@ -6,15 +6,15 @@
 
 ## Motivation
 
-For the read-consistency isolation level read requests in a single transaction, each will need to fetch a new `tso` to read the latest committed data.
-If the workload is a read-heavy one or the read `qps` is large, fetching tso each time will increase the query lantecy.
+For the read-consistency isolation level read requests in a single transaction, each will need to fetch a new `ts` to read the latest committed data.
+If the workload is a read-heavy one or the read `qps` is large, fetching ts each time will increase the query lantecy.
 
-The new tso itself is used to ensure the most recent data will be returned, if the data version does not change frequently then it's unnecessary to fetch tso every time.
-That is the `rc-read` could be processed in an optimistic way, the tso could be updated only when a new version data is met, then the tso cost will be saved a lot for this case.
+The new ts itself is used to ensure the most recent data will be returned, if the data version does not change frequently then it's unnecessary to fetch tso every time.
+That is the `rc-read` could be processed in an optimistic way, the ts could be updated only when a new version data is met, then the ts cost will be saved a lot for this case.
 
 ## Detailed Design
 
-Introduce another system variable `tidb_rc_read_check_ts` to enable the "lazy tso update" read mode. It will take effect for all the in-transaction select stataments and the
+Introduce another system variable `tidb_rc_read_check_ts` to enable the "lazy ts update" read mode. It will take effect for all the in-transaction select stataments and the
 transaction isolation level is `read-consistency`.
 
 The execution flow is like this:
