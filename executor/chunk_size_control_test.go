@@ -72,9 +72,9 @@ func manipulateCluster(cluster testutils.Cluster, splitKeys [][]byte) []uint64 {
 	if len(splitKeys) == 0 {
 		return nil
 	}
-	region, _ := cluster.GetRegionByKey(splitKeys[0])
+	region, _, _ := cluster.GetRegionByKey(splitKeys[0])
 	for _, key := range splitKeys {
-		if r, _ := cluster.GetRegionByKey(key); r.Id != region.Id {
+		if r, _, _ := cluster.GetRegionByKey(key); r.Id != region.Id {
 			panic("all split keys should belong to the same region")
 		}
 	}
