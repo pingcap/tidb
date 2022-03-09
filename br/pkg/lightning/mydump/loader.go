@@ -21,8 +21,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	regexprrouter "github.com/pingcap/tidb-tools/pkg/regexpr-router"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
-	router "github.com/pingcap/tidb-tools/pkg/table-router"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -91,10 +91,11 @@ func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStora
 	Mydumper File Loader
 */
 type MDLoader struct {
-	store      storage.ExternalStorage
-	dbs        []*MDDatabaseMeta
-	filter     filter.Filter
-	router     *router.Table
+	store  storage.ExternalStorage
+	dbs    []*MDDatabaseMeta
+	filter filter.Filter
+	// router     *router.Table
+	router     *regexprrouter.RouteTable
 	fileRouter FileRouter
 	charSet    string
 }
@@ -123,7 +124,7 @@ func NewMyDumpLoader(ctx context.Context, cfg *config.Config) (*MDLoader, error)
 }
 
 func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store storage.ExternalStorage) (*MDLoader, error) {
-	var r *router.Table
+	var r *regexprrouter.RouteTable
 	var err error
 
 	if len(cfg.Routes) > 0 && len(cfg.Mydumper.FileRouters) > 0 {
@@ -131,7 +132,7 @@ func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store sto
 	}
 
 	if len(cfg.Routes) > 0 {
-		r, err = router.NewTableRouter(cfg.Mydumper.CaseSensitive, cfg.Routes)
+		r, err = regexprrouter.NewRegExprRouter(cfg.Mydumper.CaseSensitive, cfg.Routes)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

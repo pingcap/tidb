@@ -364,6 +364,16 @@ func TestRouter(t *testing.T) {
 			TargetSchema:  "v",
 			TargetTable:   "vv",
 		},
+		{
+			SchemaPattern: "~.*regexpr[1-9]+",
+			TablePattern:  "~.*regexprtable",
+			TargetSchema:  "downstream_db",
+			TargetTable:   "downstream_table",
+		},
+		{
+			SchemaPattern: "~.bdb.*",
+			TargetSchema:  "db",
+		},
 	}
 
 	/*
@@ -387,6 +397,12 @@ func TestRouter(t *testing.T) {
 			e0-schema-create.sql
 			e0.f0-schema.sql
 			e0.f0-schema-view.sql
+			test_regexpr1-schema-create.sql
+			test_regexpr1.test_regexprtable-schema.sql
+			test_regexpr1.test_regexprtable.1.sql
+			zbdb-schema-create.sql
+			zbdb.table-schema.sql
+			zbdb.table.1.sql
 	*/
 
 	s.touch(t, "a0-schema-create.sql")
@@ -412,6 +428,14 @@ func TestRouter(t *testing.T) {
 	s.touch(t, "e0-schema-create.sql")
 	s.touch(t, "e0.f0-schema.sql")
 	s.touch(t, "e0.f0-schema-view.sql")
+
+	s.touch(t, "test_regexpr1-schema-create.sql")
+	s.touch(t, "test_regexpr1.test_regexprtable-schema.sql")
+	s.touch(t, "test_regexpr1.test_regexprtable.1.sql")
+
+	s.touch(t, "zbdb-schema-create.sql")
+	s.touch(t, "zbdb.table-schema.sql")
+	s.touch(t, "zbdb.table.1.sql")
 
 	mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
 	require.NoError(t, err)
@@ -501,6 +525,35 @@ func TestRouter(t *testing.T) {
 					DB:           "v",
 					Name:         "vv",
 					SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "v", Name: "vv"}, FileMeta: md.SourceFileMeta{Path: "e0.f0-schema-view.sql", Type: md.SourceTypeViewSchema}},
+					IndexRatio:   0.0,
+					IsRowOrdered: true,
+				},
+			},
+		},
+
+		{
+			Name:       "downstream_db",
+			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "downstream_db", Name: ""}, FileMeta: md.SourceFileMeta{Path: "test_regexpr1-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+			Tables: []*md.MDTableMeta{
+				{
+					DB:           "downstream_db",
+					Name:         "downstream_table",
+					SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "downstream_db", Name: "downstream_table"}, FileMeta: md.SourceFileMeta{Path: "test_regexpr1.test_regexprtable-schema.sql", Type: md.SourceTypeTableSchema}},
+					DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "downstream_db", Name: "downstream_table"}, FileMeta: md.SourceFileMeta{Path: "test_regexpr1.test_regexprtable.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}}},
+					IndexRatio:   0.0,
+					IsRowOrdered: true,
+				},
+			},
+		},
+		{
+			Name:       "db",
+			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "db", Name: ""}, FileMeta: md.SourceFileMeta{Path: "zbdb-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+			Tables: []*md.MDTableMeta{
+				{
+					DB:           "db",
+					Name:         "table",
+					SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "db", Name: "table"}, FileMeta: md.SourceFileMeta{Path: "zbdb.table-schema.sql", Type: md.SourceTypeTableSchema}},
+					DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "db", Name: "table"}, FileMeta: md.SourceFileMeta{Path: "zbdb.table.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}}},
 					IndexRatio:   0.0,
 					IsRowOrdered: true,
 				},
