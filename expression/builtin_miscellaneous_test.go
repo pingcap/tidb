@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -55,7 +56,10 @@ func TestInetAton(t *testing.T) {
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
+		if err != nil {
+			d.SetNull()
+			require.True(t, terror.ErrorEqual(err, errWrongValueForType))
+		}
 		testutil.DatumEqual(t, tt["Expected"][0], d)
 	}
 }
@@ -295,7 +299,10 @@ func TestInet6AtoN(t *testing.T) {
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
 		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
-		require.NoError(t, err)
+		if err != nil {
+			result.SetNull()
+			require.True(t, terror.ErrorEqual(err, errWrongValueForType))
+		}
 		testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 
