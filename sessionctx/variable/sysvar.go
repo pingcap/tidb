@@ -395,9 +395,9 @@ var defaultSysVars = []*SysVar{
 	}},
 	{
 		Scope: ScopeGlobal | ScopeSession, Name: TiDBOptLimitPushDownThreshold, Value: strconv.Itoa(DefOptLimitPushDownThreshold), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
-			s.LimitPushDownThreshold = TidbOptInt64(val, DefOptLimitPushDownThreshold)
-			return nil
-		}},
+		s.LimitPushDownThreshold = TidbOptInt64(val, DefOptLimitPushDownThreshold)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptCorrelationThreshold, Value: strconv.FormatFloat(DefOptCorrelationThreshold, 'f', -1, 64), Type: TypeFloat, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
 		s.CorrelationThreshold = tidbOptFloat64(val, DefOptCorrelationThreshold)
 		return nil
@@ -1405,9 +1405,9 @@ var defaultSysVars = []*SysVar{
 		}
 		return string(info), nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBIgnoreCloseStmtCmd, Value: BoolToOnOff(DefTiDBIgnoreCloseStmtCmd), Type: TypeBool,
-		SetGlobal: func(s *SessionVars, val string) error {
-			OptIgnoreCloseStmtCmd.Store(TiDBOptOn(val))
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBIgnoreCloseStmtCmd, Value: BoolToOnOff(DefTiDBIgnoreCloseStmtCmd), Type: TypeBool,
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.IgnoreCloseStmtCmd = TiDBOptOn(s)
 			return nil
 		},
 	},

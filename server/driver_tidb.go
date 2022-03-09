@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -170,7 +169,7 @@ func (ts *TiDBStatement) Close() error {
 			if err != nil {
 				return err
 			}
-			if !variable.OptIgnoreCloseStmtCmd.Load() { // keep the plan in cache if this flag is true
+			if !ts.ctx.GetSessionVars().IgnoreCloseStmtCmd { // keep the plan in cache if this flag is true
 				ts.ctx.PreparedPlanCache().Delete(cacheKey)
 			}
 		}

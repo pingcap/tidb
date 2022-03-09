@@ -865,5 +865,4 @@ var (
 	StatsLoadSyncWait                     = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
 	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
 	MemQuotaBindCache                     = atomic.NewInt64(DefTiDBMemQuotaBindCache)
-	OptIgnoreCloseStmtCmd                 = atomic.NewBool(DefTiDBIgnoreCloseStmtCmd)
 )

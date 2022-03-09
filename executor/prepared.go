@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -337,7 +336,7 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if err != nil {
 			return err
 		}
-		if !variable.OptIgnoreCloseStmtCmd.Load() { // keep the plan in cache if this flag is true
+		if !vars.IgnoreCloseStmtCmd { // keep the plan in cache if this flag is true
 			e.ctx.PreparedPlanCache().Delete(cacheKey)
 		}
 	}

@@ -342,7 +342,7 @@ func (s *session) cleanRetryInfo() {
 			if i > 0 && preparedAst != nil {
 				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtText, preparedAst.SchemaVersion, s.sessionVars.IsolationReadEngines)
 			}
-			if !variable.OptIgnoreCloseStmtCmd.Load() { // keep the plan in cache if this flag is true
+			if !s.sessionVars.IgnoreCloseStmtCmd { // keep the plan in cache if this flag is true
 				s.PreparedPlanCache().Delete(cacheKey)
 			}
 		}
