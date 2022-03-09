@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -293,7 +294,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 	logutil.BgLogger().Info("[ddl] backfill worker start", zap.Int("workerID", w.id))
 	defer func() {
-		w.resultCh <- &backfillResult{err: errReorgPanic}
+		w.resultCh <- &backfillResult{err: dbterror.ErrReorgPanic}
 	}()
 	defer util.Recover(metrics.LabelDDL, "backfillWorker.run", nil, false)
 	for {
@@ -349,7 +350,7 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 	}
 	if len(ranges) == 0 {
 		errMsg := fmt.Sprintf("cannot find region in range [%s, %s]", startKey.String(), endKey.String())
-		return nil, errors.Trace(errInvalidSplitRegionRanges.GenWithStackByArgs(errMsg))
+		return nil, errors.Trace(dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg))
 	}
 	return ranges, nil
 }
