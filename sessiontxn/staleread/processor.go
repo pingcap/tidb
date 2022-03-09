@@ -92,7 +92,7 @@ func (p *baseProcessor) setAsNonStaleRead() error {
 	return p.setEvaluatedValues(0, nil, nil)
 }
 
-func (p *baseProcessor) setEvaluatedTS(ts uint64, setEvaluator bool) (err error) {
+func (p *baseProcessor) setEvaluatedTS(ts uint64) (err error) {
 	is, err := domain.GetDomain(p.sctx).GetSnapshotInfoSchema(ts)
 	if err != nil {
 		return err
@@ -168,7 +168,7 @@ func (p *staleReadProcessor) OnSelectTable(tn *ast.TableName) error {
 		}
 		return nil
 	}
-	return p.evaluateFromStmtTSOrSysVariable(stmtAsOfTS, true)
+	return p.evaluateFromStmtTSOrSysVariable(stmtAsOfTS)
 }
 
 func (p *staleReadProcessor) OnExecutePreparedStmt(preparedTSEvaluator StalenessTSEvaluator) (err error) {
@@ -190,7 +190,7 @@ func (p *staleReadProcessor) OnExecutePreparedStmt(preparedTSEvaluator Staleness
 			return err
 		}
 	}
-	return p.evaluateFromStmtTSOrSysVariable(stmtTS, false)
+	return p.evaluateFromStmtTSOrSysVariable(stmtTS)
 }
 
 func (p *staleReadProcessor) evaluateFromTxn() error {
@@ -208,10 +208,10 @@ func (p *staleReadProcessor) evaluateFromTxn() error {
 	return p.setAsNonStaleRead()
 }
 
-func (p *staleReadProcessor) evaluateFromStmtTSOrSysVariable(stmtTS uint64, setEvaluator bool) error {
+func (p *staleReadProcessor) evaluateFromStmtTSOrSysVariable(stmtTS uint64) error {
 	// If `txnReadTS` is not 0, it means  we meet following situation:
-	// start transaction read only as of timestamp ...
-	// select from table
+	// set transaction read only as of timestamp ...
+	// select from table or execute prepared statement
 	txnReadTS := p.sctx.GetSessionVars().TxnReadTS.UseTxnReadTS()
 	if txnReadTS > 0 && stmtTS > 0 {
 		// `as of` and `@@tx_read_ts` cannot be set in the same time
@@ -220,11 +220,11 @@ func (p *staleReadProcessor) evaluateFromStmtTSOrSysVariable(stmtTS uint64, setE
 
 	if stmtTS > 0 {
 		p.stmtTS = stmtTS
-		return p.setEvaluatedTS(stmtTS, setEvaluator)
+		return p.setEvaluatedTS(stmtTS)
 	}
 
 	if txnReadTS > 0 {
-		return p.setEvaluatedTS(txnReadTS, setEvaluator)
+		return p.setEvaluatedTS(txnReadTS)
 	}
 
 	if evaluator := getTsEvaluatorFromReadStaleness(p.sctx); evaluator != nil {
