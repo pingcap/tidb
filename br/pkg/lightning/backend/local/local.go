@@ -1277,11 +1277,10 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 			var err error
 			// max retry backoff time: 2+4+8+16+30*26=810s
 			backOffTime := time.Second
-		loop:
 			for i := 0; i < maxWriteAndIngestRetryTimes; i++ {
 				err = local.writeAndIngestByRange(ctx, engine, startKey, endKey, regionSplitSize, regionSplitKeys)
 				if err == nil || common.IsContextCanceledError(err) {
-					break
+					return
 				}
 				log.L().Warn("write and ingest by range failed",
 					zap.Int("retry time", i+1), log.ShortError(err))
@@ -1292,15 +1291,14 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 				select {
 				case <-time.After(backOffTime):
 				case <-ctx.Done():
-					err = ctx.Err()
-					break loop
+					return
 				}
 			}
 
+			allErrLock.Lock()
+			allErr = multierr.Append(allErr, err)
+			allErrLock.Unlock()
 			if err != nil {
-				allErrLock.Lock()
-				allErr = multierr.Append(allErr, err)
-				allErrLock.Unlock()
 				metErr.Store(true)
 			}
 		}(w)
@@ -1309,6 +1307,9 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 	// wait for all sub tasks finish to avoid panic. if we return on the first error,
 	// the outer tasks may close the pebble db but some sub tasks still read from the db
 	wg.Wait()
+	if allErr == nil {
+		return ctx.Err()
+	}
 	return allErr
 }
 
