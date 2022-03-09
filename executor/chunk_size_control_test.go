@@ -37,19 +37,6 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
-func parseTimeCost(t *testing.T, line []interface{}) time.Duration {
-	lineStr := fmt.Sprintf("%v", line)
-	idx := strings.Index(lineStr, "time:")
-	require.NotEqual(t, -1, idx)
-	lineStr = lineStr[idx+len("time:"):]
-	idx = strings.Index(lineStr, ",")
-	require.NotEqual(t, -1, idx)
-	timeStr := lineStr[:idx]
-	d, err := time.ParseDuration(timeStr)
-	require.NoError(t, err)
-	return d
-}
-
 type testSlowClient struct {
 	sync.RWMutex
 	tikv.Client
@@ -222,4 +209,17 @@ func TestLimitAndIndexScan(t *testing.T) {
 	results = kit.tk.MustQuery("explain analyze select * from t where t.a > 0 and t.a < 200 limit 2")
 	cost = parseTimeCost(t, results.Rows()[0])
 	require.GreaterOrEqual(t, cost, delayThreshold) // have to wait
+}
+
+func parseTimeCost(t *testing.T, line []interface{}) time.Duration {
+	lineStr := fmt.Sprintf("%v", line)
+	idx := strings.Index(lineStr, "time:")
+	require.NotEqual(t, -1, idx)
+	lineStr = lineStr[idx+len("time:"):]
+	idx = strings.Index(lineStr, ",")
+	require.NotEqual(t, -1, idx)
+	timeStr := lineStr[:idx]
+	d, err := time.ParseDuration(timeStr)
+	require.NoError(t, err)
+	return d
 }
