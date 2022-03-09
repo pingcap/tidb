@@ -179,6 +179,9 @@ func (s *gcsStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	if opt == nil {
 		opt = &WalkOption{}
 	}
+	if len(opt.ObjPrefix) != 0 {
+		return errors.New("gcs storage not support ObjPrefix for now")
+	}
 
 	prefix := path.Join(s.gcs.Prefix, opt.SubDir)
 	if len(prefix) > 0 && !strings.HasSuffix(prefix, "/") {
