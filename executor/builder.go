@@ -3682,20 +3682,6 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			}
 			return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
 		}
-<<<<<<< HEAD
-
-		tbl, _ := builder.is.TableByID(tbInfo.ID)
-		pt := tbl.(table.PartitionedTable)
-		pe, err := tbl.(interface {
-			PartitionExpr() (*tables.PartitionExpr, error)
-		}).PartitionExpr()
-		if err != nil {
-			return nil, err
-		}
-		var kvRanges []kv.KeyRange
-		if keyColumnsIncludeAllPartitionColumns(lookUpContents[0].keyCols, pe) {
-			// In this case we can use dynamic partition pruning.
-=======
 		handles, _ := dedupHandles(lookUpContents)
 		return builder.buildTableReaderFromHandles(ctx, e, handles, canReorderHandles)
 	}
@@ -3719,7 +3705,6 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	var kvRanges []kv.KeyRange
 	if v.IsCommonHandle {
 		if len(lookUpContents) > 0 && keyColumnsIncludeAllPartitionColumns(lookUpContents[0].keyCols, pe) {
->>>>>>> b9bd5a7d7... *: add explicit partition pruning to index joins (#32007) (#32093)
 			locateKey := make([]types.Datum, e.Schema().Len())
 			kvRanges = make([]kv.KeyRange, 0, len(lookUpContents))
 			for _, content := range lookUpContents {
@@ -3755,20 +3740,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 
 	handles, lookUpContents := dedupHandles(lookUpContents)
 
-<<<<<<< HEAD
-	tbl, _ := builder.is.TableByID(tbInfo.ID)
-	pt := tbl.(table.PartitionedTable)
-	pe, err := tbl.(interface {
-		PartitionExpr() (*tables.PartitionExpr, error)
-	}).PartitionExpr()
-	if err != nil {
-		return nil, err
-	}
-	var kvRanges []kv.KeyRange
-	if keyColumnsIncludeAllPartitionColumns(lookUpContents[0].keyCols, pe) {
-=======
 	if len(lookUpContents) > 0 && keyColumnsIncludeAllPartitionColumns(lookUpContents[0].keyCols, pe) {
->>>>>>> b9bd5a7d7... *: add explicit partition pruning to index joins (#32007) (#32093)
 		locateKey := make([]types.Datum, e.Schema().Len())
 		kvRanges = make([]kv.KeyRange, 0, len(lookUpContents))
 		for _, content := range lookUpContents {
