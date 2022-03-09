@@ -424,7 +424,7 @@ func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareSt
 	return ""
 }
 
-func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) error {
+func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) (err error) {
 	var cacheKey kvcache.Key
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -434,7 +434,9 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	var bindSQL string
 	if prepared.UseCache {
 		bindSQL = GetBindSQL4PlanCache(sctx, preparedStmt)
-		cacheKey = NewPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
+		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), preparedStmt.StmtText, preparedStmt.StmtDB, prepared.SchemaVersion); err != nil {
+			return err
+		}
 	}
 	tps := make([]*types.FieldType, len(e.UsingVars))
 	varsNum := len(e.UsingVars)
@@ -551,7 +553,9 @@ REBUILD:
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
-			cacheKey = NewPlanCacheKey(sessVars, e.ExecID, prepared.SchemaVersion)
+			if cacheKey, err = NewPlanCacheKey(sessVars, preparedStmt.StmtText, preparedStmt.StmtDB, prepared.SchemaVersion); err != nil {
+				return err
+			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
 		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps, sessVars.StmtCtx.BindSQL)
@@ -769,8 +773,11 @@ func (e *Execute) rebuildRange(p Plan) error {
 		}
 		for i, param := range x.HandleParams {
 			if param != nil {
-				var iv int64
-				iv, err = param.Datum.ToInt64(sc)
+				dVal, err := convertConstant2Datum(sc, param, x.HandleType)
+				if err != nil {
+					return err
+				}
+				iv, err := dVal.ToInt64(sc)
 				if err != nil {
 					return err
 				}
@@ -783,7 +790,11 @@ func (e *Execute) rebuildRange(p Plan) error {
 			}
 			for j, param := range params {
 				if param != nil {
-					x.IndexValues[i][j] = param.Datum
+					dVal, err := convertConstant2Datum(sc, param, x.IndexColTypes[j])
+					if err != nil {
+						return err
+					}
+					x.IndexValues[i][j] = *dVal
 				}
 			}
 		}

@@ -26,6 +26,7 @@ import (
 
 var testDataMap = make(testdata.BookKeeper)
 var indexMergeSuiteData testdata.TestData
+var planSuiteUnexportedData testdata.TestData
 
 func TestMain(m *testing.M) {
 	testbridge.SetupForCommonTest()
@@ -42,8 +43,12 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "expression_rewriter_suite")
 	testDataMap.LoadTestSuiteData("testdata", "partition_pruner")
 	testDataMap.LoadTestSuiteData("testdata", "plan_suite")
+	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
+	testDataMap.LoadTestSuiteData("testdata", "analyze_suite")
+	testDataMap.LoadTestSuiteData("testdata", "plan_suite_unexported")
 
 	indexMergeSuiteData = testDataMap["index_merge_suite"]
+	planSuiteUnexportedData = testDataMap["plan_suite_unexported"]
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
@@ -92,4 +97,12 @@ func GetPartitionPrunerData() testdata.TestData {
 
 func GetPlanSuiteData() testdata.TestData {
 	return testDataMap["plan_suite"]
+}
+
+func GetIntegrationSuiteData() testdata.TestData {
+	return testDataMap["integration_suite"]
+}
+
+func GetAnalyzeSuiteData() testdata.TestData {
+	return testDataMap["analyze_suite"]
 }

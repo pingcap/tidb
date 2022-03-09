@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/spf13/cobra"
 )
@@ -111,9 +112,8 @@ func Init(cmd *cobra.Command) (err error) {
 			// otherwise the info will be print in stdout...
 			tidbLogCfg.File.Filename = timestampLogFileName()
 		} else {
-			// Disable annoying TiDB Log.
-			// TODO: some error logs outputs randomly, we need to fix them in TiDB.
-			tidbLogCfg.Level = "fatal"
+			// Don't print slow log in br
+			config.GetGlobalConfig().Log.EnableSlowLog.Store(false)
 		}
 		e = logutil.InitLogger(&tidbLogCfg)
 		if e != nil {

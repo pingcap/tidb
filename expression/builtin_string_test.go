@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/testkit/trequire"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/mock"
@@ -728,7 +728,7 @@ func TestReverse(t *testing.T) {
 		require.NotNil(t, f)
 		d, err = evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, c["Expect"][0], d)
+		testutil.DatumEqual(t, c["Expect"][0], d)
 	}
 }
 
@@ -1428,7 +1428,7 @@ func TestChar(t *testing.T) {
 		require.NotNil(t, f, i)
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err, i)
-		trequire.DatumEqual(t, types.NewDatum(result), r, i)
+		testutil.DatumEqual(t, types.NewDatum(result), r, i)
 		if warnCnt != 0 {
 			warnings := ctx.GetSessionVars().StmtCtx.TruncateWarnings(0)
 			require.Equal(t, warnCnt, len(warnings), fmt.Sprintf("%d: %v", i, warnings))
@@ -1462,7 +1462,7 @@ func TestCharLength(t *testing.T) {
 		require.NoError(t, err)
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(v.result), r)
+		testutil.DatumEqual(t, types.NewDatum(v.result), r)
 	}
 
 	// Test binary string
@@ -1489,7 +1489,7 @@ func TestCharLength(t *testing.T) {
 		require.NoError(t, err)
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(v.result), r)
+		testutil.DatumEqual(t, types.NewDatum(v.result), r)
 	}
 }
 
@@ -1517,7 +1517,7 @@ func TestFindInSet(t *testing.T) {
 		require.NoError(t, err)
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(c.ret), r, fmt.Sprintf("FindInSet(%s, %s)", c.str, c.strlst))
+		testutil.DatumEqual(t, types.NewDatum(c.ret), r, fmt.Sprintf("FindInSet(%s, %s)", c.str, c.strlst))
 	}
 }
 
@@ -1552,7 +1552,7 @@ func TestField(t *testing.T) {
 		require.NotNil(t, f)
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(c.ret), r)
+		testutil.DatumEqual(t, types.NewDatum(c.ret), r)
 	}
 }
 
@@ -1860,7 +1860,7 @@ func TestMakeSet(t *testing.T) {
 		require.NotNil(t, f)
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(c.ret), r)
+		testutil.DatumEqual(t, types.NewDatum(c.ret), r)
 	}
 }
 
@@ -1991,7 +1991,7 @@ func TestFormat(t *testing.T) {
 		require.NotNil(t, f)
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(tt.ret), r)
+		testutil.DatumEqual(t, types.NewDatum(tt.ret), r)
 	}
 
 	origConfig := ctx.GetSessionVars().StmtCtx.TruncateAsWarning
@@ -2002,7 +2002,7 @@ func TestFormat(t *testing.T) {
 		require.NotNil(t, f)
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(tt.ret), r, fmt.Sprintf("test %v", tt))
+		testutil.DatumEqual(t, types.NewDatum(tt.ret), r, fmt.Sprintf("test %v", tt))
 		if tt.warnings > 0 {
 			warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 			require.Lenf(t, warnings, tt.warnings, "test %v", tt)
@@ -2018,22 +2018,22 @@ func TestFormat(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, f2)
 	r2, err := evalBuiltinFunc(f2, chunk.Row{})
-	trequire.DatumEqual(t, types.NewDatum(errors.New("not implemented")), types.NewDatum(err))
-	trequire.DatumEqual(t, types.NewDatum(formatTests2.ret), r2)
+	testutil.DatumEqual(t, types.NewDatum(errors.New("not implemented")), types.NewDatum(err))
+	testutil.DatumEqual(t, types.NewDatum(formatTests2.ret), r2)
 
 	f3, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(formatTests3.number, formatTests3.precision, formatTests3.locale)))
 	require.NoError(t, err)
 	require.NotNil(t, f3)
 	r3, err := evalBuiltinFunc(f3, chunk.Row{})
-	trequire.DatumEqual(t, types.NewDatum(errors.New("not support for the specific locale")), types.NewDatum(err))
-	trequire.DatumEqual(t, types.NewDatum(formatTests3.ret), r3)
+	testutil.DatumEqual(t, types.NewDatum(errors.New("not support for the specific locale")), types.NewDatum(err))
+	testutil.DatumEqual(t, types.NewDatum(formatTests3.ret), r3)
 
 	f4, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(formatTests4.number, formatTests4.precision, formatTests4.locale)))
 	require.NoError(t, err)
 	require.NotNil(t, f4)
 	r4, err := evalBuiltinFunc(f4, chunk.Row{})
 	require.NoError(t, err)
-	trequire.DatumEqual(t, types.NewDatum(formatTests4.ret), r4)
+	testutil.DatumEqual(t, types.NewDatum(formatTests4.ret), r4)
 	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 	require.Equal(t, 3, len(warnings))
 	for i := 0; i < 3; i++ {
@@ -2253,7 +2253,7 @@ func TestElt(t *testing.T) {
 		require.NoError(t, err)
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(c.ret), r)
+		testutil.DatumEqual(t, types.NewDatum(c.ret), r)
 	}
 }
 
@@ -2314,7 +2314,7 @@ func TestBin(t *testing.T) {
 		require.NotNil(t, f)
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(c["Expected"][0]), r)
+		testutil.DatumEqual(t, types.NewDatum(c["Expected"][0]), r)
 	}
 }
 
@@ -2343,7 +2343,7 @@ func TestQuote(t *testing.T) {
 		require.NotNil(t, f)
 		r, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(c.ret), r)
+		testutil.DatumEqual(t, types.NewDatum(c.ret), r)
 	}
 }
 
