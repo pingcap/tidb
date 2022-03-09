@@ -187,12 +187,15 @@ type Prepare struct {
 type Execute struct {
 	baseSchemaProducer
 
-	Name             string
-	UsingVars        []expression.Expression
-	PrepareParams    []types.Datum
-	ExecID           uint32
-	SnapshotTS       uint64
-	IsStaleness      bool
+	Name          string
+	UsingVars     []expression.Expression
+	PrepareParams []types.Datum
+	ExecID        uint32
+	// Deprecated: SnapshotTS now is only used for asserting after refactoring stale read, it will be removed later.
+	SnapshotTS uint64
+	// Deprecated: IsStaleness now is only used for asserting after refactoring stale read, it will be removed later.
+	IsStaleness bool
+	// Deprecated: ReadReplicaScope now is only used for asserting after refactoring stale read, it will be removed later.
 	ReadReplicaScope string
 	Stmt             ast.StmtNode
 	StmtType         string
@@ -267,10 +270,16 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 			vars.PreparedParams = append(vars.PreparedParams, val)
 		}
 	}
-	snapshotTS, readReplicaScope, isStaleness, err := e.handleExecuteBuilderOption(sctx, preparedObj)
+
+	// Just setting `e.SnapshotTS`, `e.ReadReplicaScope` and `e.IsStaleness` with the return value of `handleExecuteBuilderOption`
+	// for asserting the stale read context after refactoring is exactly the same with the previous logic.
+	snapshotTS, readReplicaScope, isStaleness, err := handleExecuteBuilderOption(sctx, preparedObj)
 	if err != nil {
 		return err
 	}
+	e.SnapshotTS = snapshotTS
+	e.ReadReplicaScope = readReplicaScope
+	e.IsStaleness = isStaleness
 
 	failpoint.Inject("assertStaleReadForOptimizePreparedPlan", func() {
 		if isStaleness != sctx.GetSessionVars().StmtCtx.IsStaleness {
@@ -322,15 +331,12 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	if err != nil {
 		return err
 	}
-	e.SnapshotTS = snapshotTS
-	e.ReadReplicaScope = readReplicaScope
-	e.IsStaleness = isStaleness
 	e.Stmt = prepared.Stmt
 	return nil
 }
 
-// Deprecated: it will be removed later
-func (e *Execute) handleExecuteBuilderOption(sctx sessionctx.Context,
+// Deprecated: it will be removed later. Now it is only used for asserting
+func handleExecuteBuilderOption(sctx sessionctx.Context,
 	preparedObj *CachedPrepareStmt) (snapshotTS uint64, readReplicaScope string, isStaleness bool, err error) {
 	snapshotTS = 0
 	readReplicaScope = oracle.GlobalTxnScope

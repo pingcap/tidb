@@ -790,6 +790,8 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 	}
 
 	failpoint.Inject("assertStaleReadValuesSameWithExecuteAndBuilder", func() {
+		// This fail point is used to assert the behavior after refactoring is exactly the same with the previous implement.
+		// Some variables in `plannercore.Execute` is deprecated and only be used for asserting now.
 		if b.snapshotTS != v.SnapshotTS {
 			panic(fmt.Sprintf("%d != %d", b.snapshotTS, v.SnapshotTS))
 		}
