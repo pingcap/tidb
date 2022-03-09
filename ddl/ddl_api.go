@@ -3777,10 +3777,6 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 	if err != nil {
 		return err
 	}
-	var multiSchemaInfo *model.MultiSchemaInfo
-	if ctx.GetSessionVars().EnableChangeMultiSchema {
-		multiSchemaInfo = &model.MultiSchemaInfo{}
-	}
 
 	job := &model.Job{
 		SchemaID:        schema.ID,
@@ -3788,7 +3784,7 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 		SchemaName:      schema.Name.L,
 		Type:            model.ActionDropColumn,
 		BinlogInfo:      &model.HistoryInfo{},
-		MultiSchemaInfo: multiSchemaInfo,
+		MultiSchemaInfo: nil,
 		Args:            []interface{}{colName},
 	}
 
@@ -3915,7 +3911,7 @@ func checkDropVisibleColumnCnt(t table.Table, columnCnt int) error {
 			return nil
 		}
 	}
-	return ErrTableMustHaveColumns
+	return ErrCantRemoveAllFields
 }
 
 // checkModifyCharsetAndCollation returns error when the charset or collation is not modifiable.
