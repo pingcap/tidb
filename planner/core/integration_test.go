@@ -19,8 +19,10 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -2720,6 +2722,42 @@ func TestBitColumnPushDown(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
 }
 
+func TestSysdatePushDown(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int signed, id2 int unsigned, c varchar(11), d datetime, b double, e bit(10))")
+	tk.MustExec("insert into t(id, id2, c, d) values (-1, 1, 'abc', '2021-12-12')")
+	rows := [][]interface{}{
+		{"TableReader_7", "root", "data:Selection_6"},
+		{"└─Selection_6", "cop[tikv]", "gt(test.t.d, sysdate())"},
+		{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
+	}
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
+		CheckAt([]int{0, 3, 6}, rows)
+	// assert sysdate isn't now after set global sysdate_is_now in the same session
+	tk.MustExec("set global sysdate_is_now='1'")
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
+		CheckAt([]int{0, 3, 6}, rows)
+
+	// assert sysdate is now after set global sysdate_is_now in the new session
+	tk = testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	now := time.Now()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/expression/injectNow", fmt.Sprintf(`return(%d)`, now.Unix())))
+	rows[1][2] = fmt.Sprintf("gt(test.t.d, %v)", now.Format("2006-01-02 15:04:05"))
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
+		CheckAt([]int{0, 3, 6}, rows)
+	failpoint.Disable("github.com/pingcap/tidb/expression/injectNow")
+
+	// assert sysdate isn't now after set session sysdate_is_now false in the same session
+	tk.MustExec("set sysdate_is_now='0'")
+	rows[1][2] = "gt(test.t.d, sysdate())"
+	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
+		CheckAt([]int{0, 3, 6}, rows)
+}
+
 func TestScalarFunctionPushDown(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -3323,7 +3361,7 @@ func TestIssue14481(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int default null, b int default null, c int default null)")
 	plan := tk.MustQuery("explain format = 'brief' select * from t where a = 1 and a = 2")
-	plan.Check(testkit.Rows("TableDual 8000.00 root  rows:0"))
+	plan.Check(testkit.Rows("TableDual 0.00 root  rows:0"))
 	tk.MustExec("drop table t")
 }
 

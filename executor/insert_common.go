@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -888,7 +889,7 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
 		if !e.ctx.GetSessionVars().AllowAutoRandExplicitInsert {
-			return types.Datum{}, ddl.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExplicitInsertDisabledErrMsg)
+			return types.Datum{}, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExplicitInsertDisabledErrMsg)
 		}
 		err = e.rebaseAutoRandomID(ctx, recordID, &c.FieldType)
 		if err != nil {
