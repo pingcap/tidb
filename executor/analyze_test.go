@@ -2742,7 +2742,7 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 			currentVersion := h.GetTableStats(tableInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the table stats are updated.
-				checkAnalyzeStatus(t, tk, jobInfo,"finished", comment, -1)
+				checkAnalyzeStatus(t, tk, jobInfo, "finished", comment, -1)
 				require.Greater(t, currentVersion, lastVersion, comment)
 			} else {
 				// If we kill a pending/running job, after kill command the status is failed and the table stats are not updated.
@@ -2824,7 +2824,7 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 			currentVersion := h.GetTableStats(tblInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the index stats are updated.
-				checkAnalyzeStatus(t, tk, jobInfo,"finished", comment, -1)
+				checkAnalyzeStatus(t, tk, jobInfo, "finished", comment, -1)
 				require.Greater(t, currentVersion, lastVersion, comment)
 			} else {
 				// If we kill a pending/running job, after kill command the status is failed and the index stats are not updated.
