@@ -939,6 +939,7 @@ func TestModifyColumnRollBack(t *testing.T) {
 	done := make(chan error, 1)
 	go backgroundExecT(store, "alter table test.t1 change c2 c2 bigint not null;", done)
 
+	require.NoError(t, checkErr)
 	err := <-done
 	require.EqualError(t, err, "[ddl:8214]Cancelled DDL job")
 	tk.MustExec("insert into t1(c2) values (null);")
@@ -950,5 +951,4 @@ func TestModifyColumnRollBack(t *testing.T) {
 		}
 	}
 	require.False(t, mysql.HasNotNullFlag(c2.Flag))
-	tk.MustExec("drop table t1")
 }

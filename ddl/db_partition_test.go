@@ -2856,7 +2856,6 @@ LOOP:
 		}
 	}
 	checkDelRangeAdded(tk, jobIDExt.jobID, c3IdxInfo.ID)
-	tk.MustExec("drop table t1")
 }
 
 func backgroundExecOnJobUpdatedExportedT(tk *testkit.TestKit, store kv.Storage, hook *ddl.TestDDLCallback, idxName string, t *testing.T) (
