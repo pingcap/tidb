@@ -22,9 +22,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"go.uber.org/zap"
 )
 
 // bindCache uses the LRU cache to store the bindRecord.
@@ -148,7 +146,7 @@ func (c *bindCache) GetAllBindRecords() []*BindRecord {
 
 // SetBindRecord sets the BindRecord to the cache.
 // The function is thread-safe.
-func (c *bindCache) SetBindRecord(hash string, meta *BindRecord) {
+func (c *bindCache) SetBindRecord(hash string, meta *BindRecord) (err error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	cacheKey := bindCacheKey(hash)
@@ -158,13 +156,11 @@ func (c *bindCache) SetBindRecord(hash string, meta *BindRecord) {
 			metas[i] = meta
 		}
 	}
-	ok, err := c.set(cacheKey, []*BindRecord{meta})
-	if !ok {
-		logutil.BgLogger().Warn("[sql-bind] The binding is too large to be loaded into the cache")
-	}
+	_, err = c.set(cacheKey, []*BindRecord{meta})
 	if err != nil {
-		logutil.BgLogger().Warn("[sql-bind] ", zap.Error(err))
+		return
 	}
+	return
 }
 
 // RemoveBindRecord removes the BindRecord which has same originSQL with specified BindRecord.
@@ -213,14 +209,12 @@ func (c *bindCache) GetMemCapacity() int64 {
 
 // Copy copies a new bindCache from the origin cache.
 // The function is thread-safe.
-func (c *bindCache) Copy() *bindCache {
+func (c *bindCache) Copy() (newCache *bindCache, err error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	newCache := newBindCache()
+	newCache = newBindCache()
 	if c.memTracker.BytesConsumed() > newCache.GetMemCapacity() {
-		logutil.BgLogger().Warn("[sql-bind] During the cache copy operation, " +
-			"the memory capacity of the new cache is less than the memory consumption of the old cache, " +
-			"so there are bindings that are not loaded into the cache")
+		err = errors.New("The memory usage of the binding_cache exceeds its capacity")
 	}
 	keys := c.cache.Keys()
 	for _, key := range keys {
@@ -232,5 +226,5 @@ func (c *bindCache) Copy() *bindCache {
 		// So we don't need to handle the return value here.
 		_, _ = newCache.set(cacheKey, bindRecords)
 	}
-	return newCache
+	return newCache, err
 }
