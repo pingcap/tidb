@@ -943,6 +943,8 @@ func GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rul
 }
 
 // SetTiFlashPlacementRule is a helper function to set placement rule.
+// It is discouraged to use SetTiFlashPlacementRule directly,
+// use `ConfigureTiFlashPDForTable`/`ConfigureTiFlashPDForPartitions` instead.
 func SetTiFlashPlacementRule(ctx context.Context, rule placement.TiFlashRule) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
