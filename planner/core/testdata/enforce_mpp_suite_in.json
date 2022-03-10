@@ -51,7 +51,8 @@
       "set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1;",
       "set @@tidb_partition_prune_mode=static;",
       "EXPLAIN SELECT count(*) from t where a=1; -- 1. static partition prune",
-      "set @@tidb_partition_prune_mode=dynamic;"
+      "set @@tidb_partition_prune_mode=dynamic;",
+      "EXPLAIN SELECT count(*) from t where a=1; -- 2. dynamic partition prune"
 
     ]
   },
