@@ -27,7 +27,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
@@ -47,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
@@ -1231,15 +1231,14 @@ func TestBitDefaultValue(t *testing.T) {
 
 func TestBackwardCompatibility(t *testing.T) {
 	var cluster testutils.Cluster
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
-		mockstore.BootstrapWithSingleStore(c)
-		cluster = c
-	}))
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond,
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			cluster = c
+		}))
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database if not exists test_backward_compatibility")
-	defer tk.MustExec("drop database test_backward_compatibility")
-	tk.MustExec("use test_backward_compatibility")
+	tk.MustExec("use test")
 	tk.MustExec("create table t(a int primary key, b int)")
 	for i := 0; i < 200; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
@@ -1247,7 +1246,7 @@ func TestBackwardCompatibility(t *testing.T) {
 
 	// alter table t add index idx_b(b);
 	is := dom.InfoSchema()
-	schemaName := model.NewCIStr("test_backward_compatibility")
+	schemaName := model.NewCIStr("test")
 	tableName := model.NewCIStr("t")
 	schema, ok := is.SchemaByName(schemaName)
 	require.True(t, ok)
@@ -1258,7 +1257,6 @@ func TestBackwardCompatibility(t *testing.T) {
 	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
 	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 10)
 
-	unique := false
 	indexName := model.NewCIStr("idx_b")
 	indexPartSpecification := &ast.IndexPartSpecification{
 		Column: &ast.ColumnName{
@@ -1275,12 +1273,12 @@ func TestBackwardCompatibility(t *testing.T) {
 		TableID:    tbl.Meta().ID,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption},
+		Args:       []interface{}{false /* unique */, indexName, indexPartSpecifications, indexOption},
 	}
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	tt := meta.NewMeta(txn)
-	job.ID, err = tt.GenGlobalID()
+	m := meta.NewMeta(txn)
+	job.ID, err = m.GenGlobalID()
 	require.NoError(t, err)
 	job.Version = 1
 	job.StartTS = txn.StartTS()
@@ -1288,7 +1286,7 @@ func TestBackwardCompatibility(t *testing.T) {
 	// Simulate old TiDB init the add index job, old TiDB will not init the model.Job.ReorgMeta field,
 	// if we set job.SnapshotVer here, can simulate the behavior.
 	job.SnapshotVer = txn.StartTS()
-	err = tt.EnQueueDDLJob(job)
+	err = m.EnQueueDDLJob(job)
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
@@ -1815,7 +1813,7 @@ func assertWarningExec(tk *testkit.TestKit, t *testing.T, sql string, expectedWa
 }
 
 func assertAlterWarnExec(tk *testkit.TestKit, t *testing.T, sql string) {
-	assertWarningExec(tk, t, sql, ddl.ErrAlterOperationNotSupported)
+	assertWarningExec(tk, t, sql, dbterror.ErrAlterOperationNotSupported)
 }
 
 func TestAlterAlgorithm(t *testing.T) {
@@ -1923,8 +1921,8 @@ func TestFulltextIndexIgnore(t *testing.T) {
 	tk.MustExec("drop table if exists t_ft")
 	defer tk.MustExec("drop table if exists t_ft")
 	// Make sure that creating and altering to add a fulltext key gives the correct warning
-	assertWarningExec(tk, t, "create table t_ft (a text, fulltext key (a))", ddl.ErrTableCantHandleFt)
-	assertWarningExec(tk, t, "alter table t_ft add fulltext key (a)", ddl.ErrTableCantHandleFt)
+	assertWarningExec(tk, t, "create table t_ft (a text, fulltext key (a))", dbterror.ErrTableCantHandleFt)
+	assertWarningExec(tk, t, "alter table t_ft add fulltext key (a)", dbterror.ErrTableCantHandleFt)
 
 	// Make sure table t_ft still has no indexes even after it was created and altered
 	r := tk.MustQuery("show index from t_ft")
@@ -3910,16 +3908,16 @@ func TestInvalidPartitionNameWhenCreateTable(t *testing.T) {
 
 	_, err := tk.Exec("create table t(a int) partition by range (a) (partition p0 values less than (0), partition `p1 ` values less than (3))")
 	require.Error(t, err)
-	require.Truef(t, terror.ErrorEqual(err, ddl.ErrWrongPartitionName), "err %v", err)
+	require.Truef(t, terror.ErrorEqual(err, dbterror.ErrWrongPartitionName), "err %v", err)
 
 	_, err = tk.Exec("create table t(a int) partition by range (a) (partition `` values less than (0), partition `p1` values less than (3))")
 	require.Error(t, err)
-	require.Truef(t, terror.ErrorEqual(err, ddl.ErrWrongPartitionName), "err %v", err)
+	require.Truef(t, terror.ErrorEqual(err, dbterror.ErrWrongPartitionName), "err %v", err)
 
 	tk.MustExec("create table t(a int) partition by range (a) (partition `p0` values less than (0), partition `p1` values less than (3))")
 	_, err = tk.Exec("alter table t add partition (partition `p2 ` values less than (5))")
 	require.Error(t, err)
-	require.Truef(t, terror.ErrorEqual(err, ddl.ErrWrongPartitionName), "err %v", err)
+	require.Truef(t, terror.ErrorEqual(err, dbterror.ErrWrongPartitionName), "err %v", err)
 }
 
 func TestDDLLastInfo(t *testing.T) {
