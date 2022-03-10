@@ -948,6 +948,9 @@ func CancelConcurrencyJobs(sess sessionctx.Context, ids []int64) ([]error, error
 	}
 	var getJobSQL string
 	var jobSet = make(map[int64]int) // jobID -> error index
+
+	sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "BEGIN")
+	defer sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), "COMMIT")
 	if len(ids) == 1 {
 		getJobSQL = fmt.Sprintf("select job_meta from mysql.tidb_ddl_job where job_id = %d order by job_id", ids[0])
 		jobSet[ids[0]] = 0
