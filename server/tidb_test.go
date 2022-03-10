@@ -1452,7 +1452,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		dbt := testkit.NewDBTestKit(t, db)
 		for _, ca := range cases4 {
 			if ca.isQuery {
-				require.NoError(t, dbt.MustQuery(ca.sql).Close())
+				mustQuery(t, dbt, ca.sql)
 			} else {
 				dbt.MustExec(ca.sql)
 			}
@@ -1667,9 +1667,7 @@ func TestTopSQLStatementStats(t *testing.T) {
 			for n := 0; n < ExecCountPerSQL; n++ {
 				sqlStr := fmt.Sprintf(ca, n)
 				if strings.HasPrefix(strings.ToLower(sqlStr), "select") {
-					row := dbt.MustQuery(sqlStr)
-					err := row.Close()
-					require.NoError(t, err)
+					mustQuery(t, dbt, sqlStr)
 				} else {
 					dbt.MustExec(sqlStr)
 				}
@@ -1764,9 +1762,7 @@ func TestTopSQLStatementStats(t *testing.T) {
 					dbt.MustExec(setSQL)
 				}
 				if strings.HasPrefix(strings.ToLower(ca.execStmt), "select") {
-					row := dbt.MustQuery(ca.execSQL)
-					err := row.Close()
-					require.NoError(t, err)
+					mustQuery(t, dbt, ca.execSQL)
 				} else {
 					dbt.MustExec(ca.execSQL)
 				}
