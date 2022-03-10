@@ -63,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -345,7 +346,7 @@ func (e *ShowExec) fetchShowBind() error {
 func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT count(*) FROM mysql.bind_info where status = 'using' or status = 'enabled';`)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, fmt.Sprintf("SELECT count(*) FROM mysql.bind_info where status = '%s' or status = '%s';", bindinfo.Enabled, bindinfo.Using))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -367,8 +368,8 @@ func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 	e.appendRow([]interface{}{
 		rows[0].GetInt64(0),
 		numBindings,
-		memUsage,
-		memCapacity,
+		memory.FormatBytes(memUsage),
+		memory.FormatBytes(memCapacity),
 	})
 	return nil
 }
