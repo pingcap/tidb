@@ -794,7 +794,7 @@ func TestValidateSetVar(t *testing.T) {
 	tk.MustQuery("select @@tidb_constraint_check_in_place;").Check(testkit.Rows("1"))
 
 	tk.MustExec("set @@tidb_general_log=0;")
-	tk.MustQuery(`show warnings`).Check(testkit.Rows(fmt.Sprintf("Warning %d allowing variable tidb_general_log with INSTANCE scope change to SESSION scope while setting for now, but its deprecated", errno.ErrInstanceScope)))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(fmt.Sprintf("Warning %d modifying tidb_general_log will require SET GLOBAL in a future version of TiDB", errno.ErrInstanceScope)))
 	tk.MustQuery("select @@tidb_general_log;").Check(testkit.Rows("0"))
 
 	tk.MustExec("set @@tidb_pprof_sql_cpu=1;")
