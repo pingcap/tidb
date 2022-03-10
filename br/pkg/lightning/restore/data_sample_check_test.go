@@ -272,9 +272,9 @@ func TestDataSampleCheckDoCheck(t *testing.T) {
 	err = check.doCheck(ctx)
 	require.NoError(t, err)
 	require.False(t, check.controller.checkTemplate.Success())
-	require.Equal(t, int64(3), check.totalRows.Load())
+	require.Equal(t, int64(4), check.totalRows.Load())
 	require.Equal(t, int64(2), check.totalInvalidCharRows.Load())
-	require.Equal(t, int64(1), check.totalColumnCountMismatchRows.Load())
+	require.Equal(t, int64(2), check.totalColumnCountMismatchRows.Load())
 }
 
 func TestDataSampleCheckGetRandomDataFiles(t *testing.T) {
