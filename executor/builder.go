@@ -3101,7 +3101,10 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	if err != nil {
 		return nil, err
 	}
-	ts := v.GetTableScan()
+	ts, err := v.GetTableScan()
+	if err != nil {
+		return nil, err
+	}
 	if err = b.validCanReadTemporaryOrCacheTable(ts.Table); err != nil {
 		return nil, err
 	}
@@ -3205,7 +3208,11 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		return nil
 	}
 
-	ts := v.GetTableScan()
+	ts, err := v.GetTableScan()
+	if err != nil {
+		b.err = err
+		return nil
+	}
 	if err = b.validCanReadTemporaryOrCacheTable(ts.Table); err != nil {
 		b.err = err
 		return nil
