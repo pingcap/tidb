@@ -747,6 +747,10 @@ func (s *testSessionSuite) TestSetInstanceSysvarBySetGlobalSysVar(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, defaultValue)
 
+	// session.GetGlobalSysVar would not get the value which session.SetGlobalSysVar writes,
+	// because SetGlobalSysVar calls SetGlobalFromHook, which uses TiDBGeneralLog's SetGlobal,
+	// but GetGlobalSysVar could not access TiDBGeneralLog's GetGlobal.
+
 	// set to "1"
 	err = se.SetGlobalSysVar(varName, "ON")
 	v, err = se.GetGlobalSysVar(varName)
