@@ -1468,7 +1468,6 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	ts.testCase(t, mc, execFn, check)
 
 	// Test case for multi-statement.
-	dbt.MustExec("SET tidb_multi_statement_mode='ON'")
 	cases5 := []string{
 		"delete from t limit 1;",
 		"update t set b=1 where b is null limit 1;",
@@ -1477,6 +1476,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	multiStatement5 := strings.Join(cases5, "")
 	execFn = func(db *sql.DB) {
 		dbt := testkit.NewDBTestKit(t, db)
+		dbt.MustExec("SET tidb_multi_statement_mode='ON'")
 		dbt.MustExec(multiStatement5)
 	}
 	check = func() {
@@ -1493,6 +1493,8 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	}
 	multiStatement6 := strings.Join(cases6, "")
 	execFn = func(db *sql.DB) {
+		dbt := testkit.NewDBTestKit(t, db)
+		dbt.MustExec("SET tidb_multi_statement_mode='ON'")
 		_, err := db.Exec(multiStatement6)
 		require.NotNil(t, err)
 		require.Equal(t, "Error 1146: Table 'topsql.t_not_exist' doesn't exist", err.Error())
@@ -1513,6 +1515,8 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	}
 	multiStatement7 := strings.Join(cases7, "")
 	execFn = func(db *sql.DB) {
+		dbt := testkit.NewDBTestKit(t, db)
+		dbt.MustExec("SET tidb_multi_statement_mode='ON'")
 		_, err = db.Exec(multiStatement7)
 		require.NotNil(t, err)
 		require.Equal(t, "Error 1146: Table 'topsql.t_not_exist' doesn't exist", err.Error())
