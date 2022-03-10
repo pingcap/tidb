@@ -2315,6 +2315,50 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	return nil
 }
 
+func (d *ddl) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *model.PolicyInfo, onExist OnExist) error {
+	if checkIgnorePlacementDDL(ctx) {
+		return nil
+	}
+
+	policyName := policy.Name
+	if policyName.L == defaultPlacementPolicyName {
+		return errors.Trace(infoschema.ErrReservedSyntax.GenWithStackByArgs(policyName))
+	}
+
+	// Check policy existence.
+	_, ok := d.GetInfoSchemaWithInterceptor(ctx).PolicyByName(policyName)
+	if ok {
+		err := infoschema.ErrPlacementPolicyExists.GenWithStackByArgs(policyName)
+		switch onExist {
+		case OnExistIgnore:
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		case OnExistError:
+			return err
+		}
+	}
+
+	if err := checkPolicyValidation(policy.PlacementSettings); err != nil {
+		return err
+	}
+
+	policyID, err := d.genPlacementPolicyID()
+	if err != nil {
+		return err
+	}
+	policy.ID = policyID
+
+	job := &model.Job{
+		SchemaName: policy.Name.L,
+		Type:       model.ActionCreatePlacementPolicy,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{policy, onExist == OnExistReplace},
+	}
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
 // preSplitAndScatter performs pre-split and scatter of the table's regions.
 // If `pi` is not nil, will only split region for `pi`, this is used when add partition.
 func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo) {
@@ -6632,41 +6676,27 @@ func (d *ddl) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlac
 	if checkIgnorePlacementDDL(ctx) {
 		return nil
 	}
-	policyName := stmt.PolicyName
-	if policyName.L == defaultPlacementPolicyName {
-		return errors.Trace(infoschema.ErrReservedSyntax.GenWithStackByArgs(policyName))
+
+	if stmt.OrReplace && stmt.IfNotExists {
+		return dbterror.ErrWrongUsage.GenWithStackByArgs("OR REPLACE", "IF NOT EXISTS")
 	}
-	is := d.GetInfoSchemaWithInterceptor(ctx)
-	// Check policy existence.
-	_, ok := is.PolicyByName(policyName)
-	if ok {
-		err = infoschema.ErrPlacementPolicyExists.GenWithStackByArgs(policyName)
-		if stmt.IfNotExists {
-			ctx.GetSessionVars().StmtCtx.AppendNote(err)
-			return nil
-		}
-		return err
-	}
-	// Auto fill the policyID when it is inserted.
+
 	policyInfo, err := buildPolicyInfo(stmt.PolicyName, stmt.PlacementOptions)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = checkPolicyValidation(policyInfo.PlacementSettings)
-	if err != nil {
-		return err
+	var onExists OnExist
+	switch {
+	case stmt.IfNotExists:
+		onExists = OnExistIgnore
+	case stmt.OrReplace:
+		onExists = OnExistReplace
+	default:
+		onExists = OnExistError
 	}
 
-	job := &model.Job{
-		SchemaName: policyInfo.Name.L,
-		Type:       model.ActionCreatePlacementPolicy,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{policyInfo},
-	}
-	err = d.doDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
-	return errors.Trace(err)
+	return d.CreatePlacementPolicyWithInfo(ctx, policyInfo, onExists)
 }
 
 func (d *ddl) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) (err error) {
