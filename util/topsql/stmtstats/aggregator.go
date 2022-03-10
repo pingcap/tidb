@@ -38,7 +38,6 @@ type aggregator struct {
 	statsSet   sync.Map // map[*StatementStats]struct{}
 	collectors sync.Map // map[Collector]struct{}
 	running    *atomic.Bool
-	wg         sync.WaitGroup
 }
 
 // newAggregator creates an empty aggregator.
@@ -48,13 +47,6 @@ func newAggregator() *aggregator {
 
 // run will block the current goroutine and execute the main loop of aggregator.
 func (m *aggregator) run() {
-	m.ctx, m.cancel = context.WithCancel(context.Background())
-	m.running.Store(true)
-	m.wg.Add(1)
-	defer func() {
-		m.running.Store(false)
-		m.wg.Done()
-	}()
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
 	for {
@@ -122,8 +114,10 @@ func (m *aggregator) unregisterCollector(collector Collector) {
 
 // close ends the execution of the current aggregator.
 func (m *aggregator) close() {
-	m.cancel()
-	m.wg.Wait()
+	if m.cancel != nil {
+		m.cancel()
+	}
+	m.running.Store(false)
 }
 
 // closed returns whether the aggregator has been closed.
@@ -135,6 +129,8 @@ func (m *aggregator) closed() bool {
 // SetupAggregator is **not** thread-safe.
 func SetupAggregator() {
 	if globalAggregator.closed() {
+		globalAggregator.ctx, globalAggregator.cancel = context.WithCancel(context.Background())
+		globalAggregator.running.Store(true)
 		go globalAggregator.run()
 	}
 }
