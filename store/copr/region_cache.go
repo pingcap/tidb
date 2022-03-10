@@ -122,7 +122,7 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets() []*LocationKeyRanges {
 					EndKey:   r.EndKey,
 				}
 			} else {
-				// rs[i] is not in the bucket.
+				// ranges[i] is not in the bucket.
 				taskRanges := ranges.Slice(0, i)
 				res = append(res, &LocationKeyRanges{l.Location, taskRanges})
 				ranges = ranges.Slice(i, ranges.Len())
