@@ -201,17 +201,6 @@ func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
 	return testGetTableByName(c, ctx, s.schemaName, name)
 }
 
-func (s *testDBSuite) testGetDB(c *C, dbName string) *model.DBInfo {
-	ctx := s.s.(sessionctx.Context)
-	dom := domain.GetDomain(ctx)
-	// Make sure the table schema is the new schema.
-	err := dom.Reload()
-	c.Assert(err, IsNil)
-	db, ok := dom.InfoSchema().SchemaByName(model.NewCIStr(dbName))
-	c.Assert(ok, IsTrue)
-	return db
-}
-
 func backgroundExec(s kv.Storage, sql string, done chan error) {
 	se, err := session.CreateSession4Test(s)
 	if err != nil {
