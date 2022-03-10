@@ -846,7 +846,7 @@ func TestTiFlashBatchRateLimiter(t *testing.T) {
 	require.True(t, timeOut)
 
 	// There must be one table with no TiFlashReplica.
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
+	time.Sleep(ddl.PollTiFlashInterval)
 	check := func(expected int, total int) {
 		cnt := 0
 		for i := 0; i < total; i++ {
@@ -864,7 +864,7 @@ func TestTiFlashBatchRateLimiter(t *testing.T) {
 	// If we exec in another session, it will not trigger limit. Since DefTiDBBatchPendingTiFlashCount is more than 3.
 	tk2 := testkit.NewTestKit(t, s.store)
 	tk2.MustExec("alter database tiflash_ddl_limit set tiflash replica 1")
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
+	time.Sleep(ddl.PollTiFlashInterval)
 	check(3, 3)
 
 	loop := 3
