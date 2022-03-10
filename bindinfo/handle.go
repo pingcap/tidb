@@ -540,9 +540,14 @@ func (h *BindHandle) SetBindCacheCapacity(capacity int64) {
 
 // newBindRecord builds BindRecord from a tuple in storage.
 func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
+	status := row.GetString(3)
+	// For compatibility, the 'Using' status binding will be converted to the 'Enabled' status binding.
+	if status == Using {
+		status = Enabled
+	}
 	hint := Binding{
 		BindSQL:    row.GetString(1),
-		Status:     row.GetString(3),
+		Status:     status,
 		CreateTime: row.GetTime(4),
 		UpdateTime: row.GetTime(5),
 		Charset:    row.GetString(6),
@@ -749,7 +754,7 @@ func (h *BindHandle) CaptureBaselines() {
 		charset, collation := h.sctx.GetSessionVars().GetCharsetInfo()
 		binding := Binding{
 			BindSQL:   bindSQL,
-			Status:    Using,
+			Status:    Enabled,
 			Charset:   charset,
 			Collation: collation,
 			Source:    Capture,
@@ -1061,7 +1066,7 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context, adminEvolve b
 			zap.String("digestText", digestText),
 		)
 	} else {
-		binding.Status = Using
+		binding.Status = Enabled
 	}
 	// We don't need to pass the `sctx` because the BindSQL has been validated already.
 	return h.AddBindRecord(nil, &BindRecord{OriginalSQL: originalSQL, Db: db, Bindings: []Binding{binding}})
