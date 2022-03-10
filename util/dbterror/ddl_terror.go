@@ -115,8 +115,14 @@ var (
 	ErrJSONUsedAsKey = ClassDDL.NewStd(mysql.ErrJSONUsedAsKey)
 	// ErrBlobCantHaveDefault forbids to give not null default value to TEXT/BLOB/JSON.
 	ErrBlobCantHaveDefault = ClassDDL.NewStd(mysql.ErrBlobCantHaveDefault)
-	// ErrTooLongIndexComment is for comment is too long.
+	// ErrTooLongIndexComment means the comment for index is too long.
 	ErrTooLongIndexComment = ClassDDL.NewStd(mysql.ErrTooLongIndexComment)
+	// ErrTooLongTableComment means the comment for table is too long.
+	ErrTooLongTableComment = ClassDDL.NewStd(mysql.ErrTooLongTableComment)
+	// ErrTooLongFieldComment means the comment for field/column is too long.
+	ErrTooLongFieldComment = ClassDDL.NewStd(mysql.ErrTooLongFieldComment)
+	// ErrTooLongTablePartitionComment means the comment for table partition is too long.
+	ErrTooLongTablePartitionComment = ClassDDL.NewStd(mysql.ErrTooLongTablePartitionComment)
 	// ErrInvalidDefaultValue returns for invalid default value for columns.
 	ErrInvalidDefaultValue = ClassDDL.NewStd(mysql.ErrInvalidDefault)
 	// ErrGeneratedColumnRefAutoInc forbids to refer generated columns to auto-increment columns .
