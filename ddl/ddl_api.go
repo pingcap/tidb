@@ -3777,7 +3777,7 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 		return nil
 	}
 	colName := spec.OldColumnName.Name
-	err = checkDropVisibleColumnCnt(t, 1)
+	err = checkVisibleColumnCnt(t, 0, 1)
 	if err != nil {
 		return err
 	}
@@ -3850,7 +3850,7 @@ func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 		return ErrCantRemoveAllFields.GenWithStack("can't drop all columns in table %s",
 			tblInfo.Name)
 	}
-	err = checkDropVisibleColumnCnt(t, len(colNames))
+	err = checkVisibleColumnCnt(t, 0, len(colNames))
 	if err != nil {
 		return err
 	}
@@ -3904,14 +3904,14 @@ func checkIsDroppableColumn(ctx sessionctx.Context, t table.Table, spec *ast.Alt
 	return true, nil
 }
 
-func checkDropVisibleColumnCnt(t table.Table, columnCnt int) error {
+func checkVisibleColumnCnt(t table.Table, addCnt, dropCnt int) error {
 	tblInfo := t.Meta()
-	visibleColumCnt := 0
+	visibleColumCnt := addCnt
 	for _, column := range tblInfo.Columns {
 		if !column.Hidden {
 			visibleColumCnt++
 		}
-		if visibleColumCnt > columnCnt {
+		if visibleColumCnt > dropCnt {
 			return nil
 		}
 	}

@@ -170,7 +170,7 @@ func checkMultiSchemaInfo(info *model.MultiSchemaInfo, t table.Table) error {
 		return err
 	}
 
-	err = checkDropVisibleColumnCnt(t, len(info.DropColumns))
+	err = checkVisibleColumnCnt(t, len(info.AddColumns), len(info.DropColumns))
 	if err != nil {
 		return err
 	}
