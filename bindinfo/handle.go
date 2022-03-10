@@ -151,6 +151,10 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 	}()
 
 	for _, row := range rows {
+		// If the memory usage of the binding_cache exceeds its capacity, we will break and do not handle.
+		if memExceededErr != nil {
+			break
+		}
 		// Skip the builtin record which is designed for binding synchronization.
 		if row.GetString(0) == BuiltinPseudoSQL4BindLock {
 			continue
@@ -172,7 +176,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 		newRecord := merge(oldRecord, meta).removeDeletedBindings()
 		if len(newRecord.Bindings) > 0 {
 			err = newCache.SetBindRecord(hash, newRecord)
-			if err != nil && memExceededErr != nil {
+			if err != nil {
 				memExceededErr = err
 			}
 		} else {
