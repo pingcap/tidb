@@ -31,11 +31,15 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
@@ -1131,4 +1135,90 @@ func TestDDLWithInvalidTableInfo(t *testing.T) {
 	_, err = tk.Exec("alter table t add column d int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));")
 	require.Error(t, err)
 	require.Equal(t, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 94 near \"then (b / a) end));\" ", err.Error())
+}
+
+func TestAddColumn2(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int key, b int);")
+	defer tk.MustExec("drop table if exists t1, t2")
+
+	originHook := dom.DDL().GetHook()
+	defer dom.DDL().SetHook(originHook)
+	hook := &ddl.TestDDLCallback{}
+	var writeOnlyTable table.Table
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState == model.StateWriteOnly {
+			writeOnlyTable, _ = dom.InfoSchema().TableByID(job.TableID)
+		}
+	}
+	dom.DDL().SetHook(hook)
+	done := make(chan error, 1)
+	// test transaction on add column.
+	go backgroundExec(store, "alter table t1 add column c int not null", done)
+	err := <-done
+	require.NoError(t, err)
+
+	tk.MustExec("insert into t1 values (1,1,1)")
+	tk.MustQuery("select a,b,c from t1").Check(testkit.Rows("1 1 1"))
+
+	// mock for outdated tidb update record.
+	require.NotNil(t, writeOnlyTable)
+	ctx := context.Background()
+	err = tk.Session().NewTxn(ctx)
+	require.NoError(t, err)
+	oldRow, err := tables.RowWithCols(writeOnlyTable, tk.Session(), kv.IntHandle(1), writeOnlyTable.WritableCols())
+	require.NoError(t, err)
+	require.Equal(t, 3, len(oldRow))
+	err = writeOnlyTable.RemoveRecord(tk.Session(), kv.IntHandle(1), oldRow)
+	require.NoError(t, err)
+	_, err = writeOnlyTable.AddRecord(tk.Session(), types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()), table.IsUpdate)
+	require.NoError(t, err)
+	tk.Session().StmtCommit()
+	err = tk.Session().CommitTxn(ctx)
+	require.NoError(t, err)
+
+	tk.MustQuery("select a,b,c from t1").Check(testkit.Rows("1 2 1"))
+
+	// Test for _tidb_rowid
+	var re *testkit.Result
+	tk.MustExec("create table t2 (a int);")
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.SchemaState != model.StateWriteOnly {
+			return
+		}
+		// allow write _tidb_rowid first
+		tk.MustExec("set @@tidb_opt_write_row_id=1")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t2 (a,_tidb_rowid) values (1,2);")
+		re = tk.MustQuery(" select a,_tidb_rowid from t2;")
+		tk.MustExec("commit")
+
+	}
+	dom.DDL().SetHook(hook)
+
+	go backgroundExec(store, "alter table t2 add column b int not null default 3", done)
+	err = <-done
+	require.NoError(t, err)
+	re.Check(testkit.Rows("1 2"))
+	tk.MustQuery("select a,b,_tidb_rowid from t2").Check(testkit.Rows("1 3 2"))
+}
+
+func backgroundExec(s kv.Storage, sql string, done chan error) {
+	se, err := session.CreateSession4Test(s)
+	if err != nil {
+		done <- errors.Trace(err)
+		return
+	}
+	defer se.Close()
+	_, err = se.Execute(context.Background(), "use test")
+	if err != nil {
+		done <- errors.Trace(err)
+		return
+	}
+	_, err = se.Execute(context.Background(), sql)
+	done <- errors.Trace(err)
 }
