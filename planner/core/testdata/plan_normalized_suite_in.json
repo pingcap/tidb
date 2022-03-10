@@ -19,7 +19,7 @@
 			"select count(1) as num,a from t1 where a=1 group by a union select count(1) as num,a from t1 where a=3 group by a;",
 			"insert into t1 values (1,1,1)",
 			"insert into t1 select * from t2 where t2.a>0 and t2.b!=0",
-          	"update t1 set a=a+1",
+			"update t1 set a=a+1",
 			"update t1 set a=a+1 where a>0",
 			"delete from t1",
 			"delete from t1 where a>0 and b=1 and c!=2",

@@ -220,16 +220,16 @@
         "SQL": "select * from t4 where a=10",
         "Plan": [
           " IndexLookUp      root ",
-          " ├─IndexRangeScan cop  table:t4, partition:?, index:a(a), range:[?,?], keep order:false",
-          " └─TableRowIDScan cop  table:t4, partition:?, keep order:false"
+          " ├─IndexRangeScan cop  table:t4, index:a(a), range:[?,?], keep order:false",
+          " └─TableRowIDScan cop  table:t4, keep order:false"
         ]
       },
       {
         "SQL": "select * from t4 where a=20",
         "Plan": [
           " IndexLookUp      root ",
-          " ├─IndexRangeScan cop  table:t4, partition:?, index:a(a), range:[?,?], keep order:false",
-          " └─TableRowIDScan cop  table:t4, partition:?, keep order:false"
+          " ├─IndexRangeScan cop  table:t4, index:a(a), range:[?,?], keep order:false",
+          " └─TableRowIDScan cop  table:t4, keep order:false"
         ]
       }
     ]
