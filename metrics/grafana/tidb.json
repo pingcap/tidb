@@ -3180,22 +3180,14 @@
           "steppedLine": false,
           "targets": [
             {
-<<<<<<< HEAD
-              "expr": "rate(tidb_server_packet_io_bytes_sum{tidb_cluster=\"$tidb_cluster\"}[1m])",
-=======
-              "expr": "sum(rate(tidb_server_packet_io_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
->>>>>>> cc3c90501... metrics: Support multi k8s in grafana dashboards (#32546)
+              "expr": "rate(tidb_server_packet_io_bytes_sum{k8s_cluster=\"k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "{{instance}}-{{type}}-rate",
               "refId": "A"
             },
             {
-<<<<<<< HEAD
-              "expr": "tidb_server_packet_io_bytes_sum{tidb_cluster=\"$tidb_cluster\"}",
-=======
-              "expr": "sum(tidb_server_packet_io_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}) by (type)",
->>>>>>> cc3c90501... metrics: Support multi k8s in grafana dashboards (#32546)
+              "expr": "tidb_server_packet_io_bytes_sum{k8s_cluster=\"k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "{{instance}}-{{type}}-total",
@@ -9186,17 +9178,6 @@
               "legendFormat": "{{type}}",
               "refId": "A",
               "step": 10
-<<<<<<< HEAD
-=======
-            },
-            {
-              "expr": "histogram_quantile(0.95, sum(rate(tidb_ddl_batch_add_idx_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (le, type))",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "add index worker",
-              "refId": "B",
-              "step": 10
->>>>>>> cc3c90501... metrics: Support multi k8s in grafana dashboards (#32546)
             }
           ],
           "thresholds": [],
@@ -9283,11 +9264,7 @@
           "steppedLine": false,
           "targets": [
             {
-<<<<<<< HEAD
-              "expr": "histogram_quantile(1, sum(rate(tidb_ddl_batch_add_idx_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\"}[1m])) by (le, type))",
-=======
-              "expr": "sum(rate(tidb_ddl_add_index_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
->>>>>>> cc3c90501... metrics: Support multi k8s in grafana dashboards (#32546)
+              "expr": "histogram_quantile(1, sum(rate(tidb_ddl_batch_add_idx_duration_seconds_bucket{k8s_cluster=\"k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) by (le, type))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{type}}",
@@ -10008,23 +9985,14 @@
           "steppedLine": false,
           "targets": [
             {
-<<<<<<< HEAD
-              "expr": "irate(tidb_ddl_add_index_percentage_progress{tidb_cluster=\"$tidb_cluster\", type=\"add_index\"}[1m])",
-=======
-              "expr": "tidb_ddl_backfill_percentage_progress{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"add_index\"}",
->>>>>>> cc3c90501... metrics: Support multi k8s in grafana dashboards (#32546)
+              "expr": "irate(tidb_ddl_add_index_percentage_progress{k8s_cluster=\"k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"add_index\"}[1m])",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "{{instance}}",
               "refId": "A"
             },
             {
-<<<<<<< HEAD
-              "expr": "irate(tidb_ddl_add_index_percentage_progress{tidb_cluster=\"$tidb_cluster\", type=\"modify_column\"}[1m])",
-=======
-              "expr": "tidb_ddl_backfill_percentage_progress{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"modify_column\"}",
-
->>>>>>> cc3c90501... metrics: Support multi k8s in grafana dashboards (#32546)
+              "expr": "irate(tidb_ddl_add_index_percentage_progress{k8s_cluster=\"k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"modify_column\"}[1m])",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "{{instance}}",

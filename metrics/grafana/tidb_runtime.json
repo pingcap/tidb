@@ -1013,15 +1013,8 @@
           "reverseYBuckets": false,
           "targets": [
             {
-<<<<<<< HEAD
-              "expr": "sum(increase(tidb_tikvclient_batch_requests_bucket{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le)",
+              "expr": "sum(increase(tidb_tikvclient_batch_requests_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le)",
               "format": "heatmap",
-=======
-              "exemplar": true,
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_tikvclient_batch_requests_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le))",
-              "format": "time_series",
-              "interval": "",
->>>>>>> cc3c90501... metrics: Support multi k8s in grafana dashboards (#32546)
               "intervalFactor": 1,
               "legendFormat": "{{le}}",
               "refId": "A",
@@ -1086,12 +1079,7 @@
           "reverseYBuckets": false,
           "targets": [
             {
-<<<<<<< HEAD
-              "expr": "sum(increase(tidb_tikvclient_batch_pending_requests_bucket{tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le)",
-=======
-              "exemplar": true,
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_tikvclient_batch_pending_requests_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le))",
->>>>>>> cc3c90501... metrics: Support multi k8s in grafana dashboards (#32546)
+              "expr": "sum(increase(tidb_tikvclient_batch_pending_requests_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[30s])) by (le)",
               "format": "heatmap",
               "intervalFactor": 1,
               "legendFormat": "{{le}}",
