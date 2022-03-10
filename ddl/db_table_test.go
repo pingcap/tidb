@@ -1138,7 +1138,7 @@ func TestDDLWithInvalidTableInfo(t *testing.T) {
 }
 
 func TestAddColumn2(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, time.Microsecond*500)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1148,7 +1148,7 @@ func TestAddColumn2(t *testing.T) {
 
 	originHook := dom.DDL().GetHook()
 	defer dom.DDL().SetHook(originHook)
-	hook := &ddl.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: dom}
 	var writeOnlyTable table.Table
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
