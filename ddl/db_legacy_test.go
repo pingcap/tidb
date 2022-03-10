@@ -85,12 +85,8 @@ const (
 
 var _ = Suite(&testDBSuite1{&testDBSuite{}})
 var _ = Suite(&testDBSuite2{&testDBSuite{}})
-var _ = Suite(&testDBSuite3{&testDBSuite{}})
 var _ = Suite(&testDBSuite4{&testDBSuite{}})
 var _ = Suite(&testDBSuite5{&testDBSuite{}})
-var _ = SerialSuites(&testDBSuite6{&testDBSuite{}})
-var _ = Suite(&testDBSuite7{&testDBSuite{}})
-var _ = Suite(&testDBSuite8{&testDBSuite{}})
 var _ = SerialSuites(&testSerialDBSuite{&testDBSuite{}})
 
 const defaultBatchSize = 1024
@@ -156,12 +152,8 @@ func (s *testDBSuite) TearDownSuite(c *C) {
 
 type testDBSuite1 struct{ *testDBSuite }
 type testDBSuite2 struct{ *testDBSuite }
-type testDBSuite3 struct{ *testDBSuite }
 type testDBSuite4 struct{ *testDBSuite }
 type testDBSuite5 struct{ *testDBSuite }
-type testDBSuite6 struct{ *testDBSuite }
-type testDBSuite7 struct{ *testDBSuite }
-type testDBSuite8 struct{ *testDBSuite }
 type testSerialDBSuite struct{ *testDBSuite }
 
 func (s *testDBSuite5) TestAddIndexWithDupIndex(c *C) {
@@ -189,29 +181,6 @@ func (s *testDBSuite5) TestAddIndexWithDupIndex(c *C) {
 	c.Assert(errors.Cause(err2).Error() == err.Error(), IsTrue)
 
 	tk.MustExec("drop table test_add_index_with_dup")
-}
-
-func (s *testDBSuite1) TestRenameIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use " + s.schemaName)
-	tk.MustExec("create table t (pk int primary key, c int default 1, c1 int default 1, unique key k1(c), key k2(c1))")
-
-	// Test rename success
-	tk.MustExec("alter table t rename index k1 to k3")
-	tk.MustExec("admin check index t k3")
-
-	// Test rename to the same name
-	tk.MustExec("alter table t rename index k3 to k3")
-	tk.MustExec("admin check index t k3")
-
-	// Test rename on non-exists keys
-	tk.MustGetErrCode("alter table t rename index x to x", errno.ErrKeyDoesNotExist)
-
-	// Test rename on already-exists keys
-	tk.MustGetErrCode("alter table t rename index k3 to k2", errno.ErrDupKeyName)
-
-	tk.MustExec("alter table t rename index k2 to K2")
-	tk.MustGetErrCode("alter table t rename key k3 to K2", errno.ErrDupKeyName)
 }
 
 func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {
@@ -642,64 +611,6 @@ func (s *testDBSuite5) TestParallelDropSchemaAndDropTable(c *C) {
 	c.Assert(err, IsNil)
 }
 
-// TestCancelRenameIndex tests cancel ddl job which type is rename index.
-func (s *testDBSuite1) TestCancelRenameIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test_db")
-	tk.MustExec("create database if not exists test_rename_index")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(c1 int, c2 int)")
-	defer tk.MustExec("drop table t;")
-	for i := 0; i < 100; i++ {
-		tk.MustExec("insert into t values (?, ?)", i, i)
-	}
-	tk.MustExec("alter table t add index idx_c2(c2)")
-	var checkErr error
-	hook := &ddl.TestDDLCallback{Do: s.dom}
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == model.ActionRenameIndex && job.State == model.JobStateNone {
-			jobIDs := []int64{job.ID}
-			hookCtx := mock.NewContext()
-			hookCtx.Store = s.store
-			err := hookCtx.NewTxn(context.Background())
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
-				return
-			}
-			checkErr = txn.Commit(context.Background())
-		}
-	}
-	originalHook := s.dom.DDL().GetHook()
-	s.dom.DDL().SetHook(hook)
-	rs, err := tk.Exec("alter table t rename index idx_c2 to idx_c3")
-	if rs != nil {
-		rs.Close()
-	}
-	c.Assert(checkErr, IsNil)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
-	s.dom.DDL().SetHook(originalHook)
-	t := s.testGetTable(c, "t")
-	for _, idx := range t.Indices() {
-		c.Assert(strings.EqualFold(idx.Meta().Name.L, "idx_c3"), IsFalse)
-	}
-	tk.MustExec("alter table t rename index idx_c2 to idx_c3")
-}
-
 // TestCancelDropTable tests cancel ddl job which type is drop table.
 func (s *testDBSuite2) TestCancelDropTableAndSchema(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -819,26 +730,6 @@ func (s *testDBSuite5) TestAddMultiColumnsIndex(c *C) {
 	tk.MustExec("insert tidb.test values (6, 6);")
 	tk.MustExec("alter table tidb.test add index idx1 (a, b);")
 	tk.MustExec("admin check table test")
-}
-
-func (s *testDBSuite6) TestAddMultiColumnsIndexClusterIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("drop database if exists test_add_multi_col_index_clustered;")
-	tk.MustExec("create database test_add_multi_col_index_clustered;")
-	tk.MustExec("use test_add_multi_col_index_clustered;")
-
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
-	tk.MustExec("create table t (a int, b varchar(10), c int, primary key (a, b));")
-	tk.MustExec("insert into t values (1, '1', 1), (2, '2', NULL), (3, '3', 3);")
-	tk.MustExec("create index idx on t (a, c);")
-
-	tk.MustExec("admin check index t idx;")
-	tk.MustExec("admin check table t;")
-
-	tk.MustExec("insert into t values (5, '5', 5), (6, '6', NULL);")
-
-	tk.MustExec("admin check index t idx;")
-	tk.MustExec("admin check table t;")
 }
 
 // TestCancelAddTableAndDropTablePartition tests cancel ddl job which type is add/drop table partition.
@@ -1122,18 +1013,6 @@ func (s *testDBSuite5) TestCreateIndexType(c *C) {
 	tk.MustExec(sql)
 }
 
-func (s *testDBSuite7) TestSelectInViewFromAnotherDB(c *C) {
-	_, _ = s.s.Execute(context.Background(), "create database test_db2")
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use " + s.schemaName)
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("use test_db2")
-	tk.MustExec("create sql security invoker view v as select * from " + s.schemaName + ".t")
-	tk.MustExec("use " + s.schemaName)
-	tk.MustExec("select test_db2.v.a from test_db2.v")
-}
-
 // TestCreateTableWithLike2 tests create table with like when refer table have non-public column/index.
 func (s *testSerialDBSuite) TestCreateTableWithLike2(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -1398,115 +1277,6 @@ func (s *testDBSuite2) TestTemporaryTableForeignKey(c *C) {
 	tk.MustExec("drop table if exists t1,t2,t3, t4,t1_tmp,t2_tmp;")
 }
 
-func (s *testDBSuite8) TestFKOnGeneratedColumns(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	// test add foreign key to generated column
-
-	// foreign key constraint cannot be defined on a virtual generated column.
-	tk.MustExec("create table t1 (a int primary key);")
-	tk.MustGetErrCode("create table t2 (a int, b int as (a+1) virtual, foreign key (b) references t1(a));", errno.ErrCannotAddForeign)
-	tk.MustExec("create table t2 (a int, b int generated always as (a+1) virtual);")
-	tk.MustGetErrCode("alter table t2 add foreign key (b) references t1(a);", errno.ErrCannotAddForeign)
-	tk.MustExec("drop table t1, t2;")
-
-	// foreign key constraint can be defined on a stored generated column.
-	tk.MustExec("create table t2 (a int primary key);")
-	tk.MustExec("create table t1 (a int, b int as (a+1) stored, foreign key (b) references t2(a));")
-	tk.MustExec("create table t3 (a int, b int generated always as (a+1) stored);")
-	tk.MustExec("alter table t3 add foreign key (b) references t2(a);")
-	tk.MustExec("drop table t1, t2, t3;")
-
-	// foreign key constraint can reference a stored generated column.
-	tk.MustExec("create table t1 (a int, b int generated always as (a+1) stored primary key);")
-	tk.MustExec("create table t2 (a int, foreign key (a) references t1(b));")
-	tk.MustExec("create table t3 (a int);")
-	tk.MustExec("alter table t3 add foreign key (a) references t1(b);")
-	tk.MustExec("drop table t1, t2, t3;")
-
-	// rejected FK options on stored generated columns
-	tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (b) references t2(a) on update set null);", errno.ErrWrongFKOptionForGeneratedColumn)
-	tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (b) references t2(a) on update cascade);", errno.ErrWrongFKOptionForGeneratedColumn)
-	tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (b) references t2(a) on update set default);", errno.ErrWrongFKOptionForGeneratedColumn)
-	tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (b) references t2(a) on delete set null);", errno.ErrWrongFKOptionForGeneratedColumn)
-	tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (b) references t2(a) on delete set default);", errno.ErrWrongFKOptionForGeneratedColumn)
-	tk.MustExec("create table t2 (a int primary key);")
-	tk.MustExec("create table t1 (a int, b int generated always as (a+1) stored);")
-	tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on update set null;", errno.ErrWrongFKOptionForGeneratedColumn)
-	tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on update cascade;", errno.ErrWrongFKOptionForGeneratedColumn)
-	tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on update set default;", errno.ErrWrongFKOptionForGeneratedColumn)
-	tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on delete set null;", errno.ErrWrongFKOptionForGeneratedColumn)
-	tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on delete set default;", errno.ErrWrongFKOptionForGeneratedColumn)
-	tk.MustExec("drop table t1, t2;")
-	// column name with uppercase characters
-	tk.MustGetErrCode("create table t1 (A int, b int generated always as (a+1) stored, foreign key (b) references t2(a) on update set null);", errno.ErrWrongFKOptionForGeneratedColumn)
-	tk.MustExec("create table t2 (a int primary key);")
-	tk.MustExec("create table t1 (A int, b int generated always as (a+1) stored);")
-	tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on update set null;", errno.ErrWrongFKOptionForGeneratedColumn)
-	tk.MustExec("drop table t1, t2;")
-
-	// special case: TiDB error different from MySQL 8.0
-	// MySQL: ERROR 3104 (HY000): Cannot define foreign key with ON UPDATE SET NULL clause on a generated column.
-	// TiDB:  ERROR 1146 (42S02): Table 'test.t2' doesn't exist
-	tk.MustExec("create table t1 (a int, b int generated always as (a+1) stored);")
-	tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on update set null;", errno.ErrNoSuchTable)
-	tk.MustExec("drop table t1;")
-
-	// allowed FK options on stored generated columns
-	tk.MustExec("create table t1 (a int primary key, b char(5));")
-	tk.MustExec("create table t2 (a int, b int generated always as (a % 10) stored, foreign key (b) references t1(a) on update restrict);")
-	tk.MustExec("create table t3 (a int, b int generated always as (a % 10) stored, foreign key (b) references t1(a) on update no action);")
-	tk.MustExec("create table t4 (a int, b int generated always as (a % 10) stored, foreign key (b) references t1(a) on delete restrict);")
-	tk.MustExec("create table t5 (a int, b int generated always as (a % 10) stored, foreign key (b) references t1(a) on delete cascade);")
-	tk.MustExec("create table t6 (a int, b int generated always as (a % 10) stored, foreign key (b) references t1(a) on delete no action);")
-	tk.MustExec("drop table t2,t3,t4,t5,t6;")
-	tk.MustExec("create table t2 (a int, b int generated always as (a % 10) stored);")
-	tk.MustExec("alter table t2 add foreign key (b) references t1(a) on update restrict;")
-	tk.MustExec("create table t3 (a int, b int generated always as (a % 10) stored);")
-	tk.MustExec("alter table t3 add foreign key (b) references t1(a) on update no action;")
-	tk.MustExec("create table t4 (a int, b int generated always as (a % 10) stored);")
-	tk.MustExec("alter table t4 add foreign key (b) references t1(a) on delete restrict;")
-	tk.MustExec("create table t5 (a int, b int generated always as (a % 10) stored);")
-	tk.MustExec("alter table t5 add foreign key (b) references t1(a) on delete cascade;")
-	tk.MustExec("create table t6 (a int, b int generated always as (a % 10) stored);")
-	tk.MustExec("alter table t6 add foreign key (b) references t1(a) on delete no action;")
-	tk.MustExec("drop table t1,t2,t3,t4,t5,t6;")
-
-	// rejected FK options on the base columns of a stored generated columns
-	tk.MustExec("create table t2 (a int primary key);")
-	tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (a) references t2(a) on update set null);", errno.ErrCannotAddForeign)
-	tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (a) references t2(a) on update cascade);", errno.ErrCannotAddForeign)
-	tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (a) references t2(a) on update set default);", errno.ErrCannotAddForeign)
-	tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (a) references t2(a) on delete set null);", errno.ErrCannotAddForeign)
-	tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (a) references t2(a) on delete cascade);", errno.ErrCannotAddForeign)
-	tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (a) references t2(a) on delete set default);", errno.ErrCannotAddForeign)
-	tk.MustExec("create table t1 (a int, b int generated always as (a+1) stored);")
-	tk.MustGetErrCode("alter table t1 add foreign key (a) references t2(a) on update set null;", errno.ErrCannotAddForeign)
-	tk.MustGetErrCode("alter table t1 add foreign key (a) references t2(a) on update cascade;", errno.ErrCannotAddForeign)
-	tk.MustGetErrCode("alter table t1 add foreign key (a) references t2(a) on update set default;", errno.ErrCannotAddForeign)
-	tk.MustGetErrCode("alter table t1 add foreign key (a) references t2(a) on delete set null;", errno.ErrCannotAddForeign)
-	tk.MustGetErrCode("alter table t1 add foreign key (a) references t2(a) on delete cascade;", errno.ErrCannotAddForeign)
-	tk.MustGetErrCode("alter table t1 add foreign key (a) references t2(a) on delete set default;", errno.ErrCannotAddForeign)
-	tk.MustExec("drop table t1, t2;")
-
-	// allowed FK options on the base columns of a stored generated columns
-	tk.MustExec("create table t1 (a int primary key, b char(5));")
-	tk.MustExec("create table t2 (a int, b int generated always as (a % 10) stored, foreign key (a) references t1(a) on update restrict);")
-	tk.MustExec("create table t3 (a int, b int generated always as (a % 10) stored, foreign key (a) references t1(a) on update no action);")
-	tk.MustExec("create table t4 (a int, b int generated always as (a % 10) stored, foreign key (a) references t1(a) on delete restrict);")
-	tk.MustExec("create table t5 (a int, b int generated always as (a % 10) stored, foreign key (a) references t1(a) on delete no action);")
-	tk.MustExec("drop table t2,t3,t4,t5")
-	tk.MustExec("create table t2 (a int, b int generated always as (a % 10) stored);")
-	tk.MustExec("alter table t2 add foreign key (a) references t1(a) on update restrict;")
-	tk.MustExec("create table t3 (a int, b int generated always as (a % 10) stored);")
-	tk.MustExec("alter table t3 add foreign key (a) references t1(a) on update no action;")
-	tk.MustExec("create table t4 (a int, b int generated always as (a % 10) stored);")
-	tk.MustExec("alter table t4 add foreign key (a) references t1(a) on delete restrict;")
-	tk.MustExec("create table t5 (a int, b int generated always as (a % 10) stored);")
-	tk.MustExec("alter table t5 add foreign key (a) references t1(a) on delete no action;")
-	tk.MustExec("drop table t1,t2,t3,t4,t5;")
-}
-
 func (s *testSerialDBSuite) TestTruncateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1611,227 +1381,6 @@ func (s *testSerialDBSuite) TestTruncateTable(c *C) {
 
 }
 
-func (s *testDBSuite4) TestRenameTable(c *C) {
-	isAlterTable := false
-	s.testRenameTable(c, "rename table %s to %s", isAlterTable)
-}
-
-func (s *testDBSuite5) TestAlterTableRenameTable(c *C) {
-	isAlterTable := true
-	s.testRenameTable(c, "alter table %s rename to %s", isAlterTable)
-}
-
-func (s *testDBSuite) testRenameTable(c *C, sql string, isAlterTable bool) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustGetErrCode("rename table tb1 to tb2;", errno.ErrNoSuchTable)
-	// for different databases
-	tk.MustExec("create table t (c1 int, c2 int)")
-	tk.MustExec("insert t values (1, 1), (2, 2)")
-	ctx := tk.Se.(sessionctx.Context)
-	is := domain.GetDomain(ctx).InfoSchema()
-	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	oldTblID := oldTblInfo.Meta().ID
-	tk.MustExec("create database test1")
-	tk.MustExec("use test1")
-	tk.MustExec(fmt.Sprintf(sql, "test.t", "test1.t1"))
-	is = domain.GetDomain(ctx).InfoSchema()
-	newTblInfo, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
-	c.Assert(newTblInfo.Meta().ID, Equals, oldTblID)
-	tk.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2"))
-	tk.MustExec("use test")
-
-	// Make sure t doesn't exist.
-	tk.MustExec("create table t (c1 int, c2 int)")
-	tk.MustExec("drop table t")
-
-	// for the same database
-	tk.MustExec("use test1")
-	tk.MustExec(fmt.Sprintf(sql, "t1", "t2"))
-	is = domain.GetDomain(ctx).InfoSchema()
-	newTblInfo, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t2"))
-	c.Assert(err, IsNil)
-	c.Assert(newTblInfo.Meta().ID, Equals, oldTblID)
-	tk.MustQuery("select * from t2").Check(testkit.Rows("1 1", "2 2"))
-	isExist := is.TableExists(model.NewCIStr("test1"), model.NewCIStr("t1"))
-	c.Assert(isExist, IsFalse)
-	tk.MustQuery("show tables").Check(testkit.Rows("t2"))
-
-	// for failure case
-	failSQL := fmt.Sprintf(sql, "test_not_exist.t", "test_not_exist.t")
-	if isAlterTable {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	}
-	failSQL = fmt.Sprintf(sql, "test.test_not_exist", "test.test_not_exist")
-	if isAlterTable {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	}
-	failSQL = fmt.Sprintf(sql, "test.t_not_exist", "test_not_exist.t")
-	if isAlterTable {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	}
-	failSQL = fmt.Sprintf(sql, "test1.t2", "test_not_exist.t")
-	tk.MustGetErrCode(failSQL, errno.ErrErrorOnRename)
-
-	tk.MustExec("use test1")
-	tk.MustExec("create table if not exists t_exist (c1 int, c2 int)")
-	failSQL = fmt.Sprintf(sql, "test1.t2", "test1.t_exist")
-	tk.MustGetErrCode(failSQL, errno.ErrTableExists)
-	failSQL = fmt.Sprintf(sql, "test.t_not_exist", "test1.t_exist")
-	if isAlterTable {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrTableExists)
-	}
-	failSQL = fmt.Sprintf(sql, "test_not_exist.t", "test1.t_exist")
-	if isAlterTable {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrTableExists)
-	}
-	failSQL = fmt.Sprintf(sql, "test_not_exist.t", "test1.t_not_exist")
-	if isAlterTable {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	}
-
-	// for the same table name
-	tk.MustExec("use test1")
-	tk.MustExec("create table if not exists t (c1 int, c2 int)")
-	tk.MustExec("create table if not exists t1 (c1 int, c2 int)")
-	if isAlterTable {
-		tk.MustExec(fmt.Sprintf(sql, "test1.t", "t"))
-		tk.MustExec(fmt.Sprintf(sql, "test1.t1", "test1.T1"))
-	} else {
-		tk.MustGetErrCode(fmt.Sprintf(sql, "test1.t", "t"), errno.ErrTableExists)
-		tk.MustGetErrCode(fmt.Sprintf(sql, "test1.t1", "test1.T1"), errno.ErrTableExists)
-	}
-
-	// Test rename table name too long.
-	tk.MustGetErrCode("rename table test1.t1 to test1.txxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", errno.ErrTooLongIdent)
-	tk.MustGetErrCode("alter  table test1.t1 rename to test1.txxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", errno.ErrTooLongIdent)
-
-	tk.MustExec("drop database test1")
-}
-
-func (s *testDBSuite1) TestRenameMultiTables(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1(id int)")
-	tk.MustExec("create table t2(id int)")
-	sql := "rename table t1 to t3, t2 to t4"
-	_, err := tk.Exec(sql)
-	c.Assert(err, IsNil)
-
-	tk.MustExec("drop table t3, t4")
-
-	tk.MustExec("create table t1 (c1 int, c2 int)")
-	tk.MustExec("create table t2 (c1 int, c2 int)")
-	tk.MustExec("insert t1 values (1, 1), (2, 2)")
-	tk.MustExec("insert t2 values (1, 1), (2, 2)")
-	ctx := tk.Se.(sessionctx.Context)
-	is := domain.GetDomain(ctx).InfoSchema()
-	oldTblInfo1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
-	oldTblID1 := oldTblInfo1.Meta().ID
-	oldTblInfo2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
-	c.Assert(err, IsNil)
-	oldTblID2 := oldTblInfo2.Meta().ID
-	tk.MustExec("create database test1")
-	tk.MustExec("use test1")
-	tk.MustExec("rename table test.t1 to test1.t1, test.t2 to test1.t2")
-	is = domain.GetDomain(ctx).InfoSchema()
-	newTblInfo1, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
-	c.Assert(newTblInfo1.Meta().ID, Equals, oldTblID1)
-	newTblInfo2, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t2"))
-	c.Assert(err, IsNil)
-	c.Assert(newTblInfo2.Meta().ID, Equals, oldTblID2)
-	tk.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2"))
-	tk.MustQuery("select * from t2").Check(testkit.Rows("1 1", "2 2"))
-
-	// Make sure t1,t2 doesn't exist.
-	isExist := is.TableExists(model.NewCIStr("test"), model.NewCIStr("t1"))
-	c.Assert(isExist, IsFalse)
-	isExist = is.TableExists(model.NewCIStr("test"), model.NewCIStr("t2"))
-	c.Assert(isExist, IsFalse)
-
-	// for the same database
-	tk.MustExec("use test1")
-	tk.MustExec("rename table test1.t1 to test1.t3, test1.t2 to test1.t4")
-	is = domain.GetDomain(ctx).InfoSchema()
-	newTblInfo1, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t3"))
-	c.Assert(err, IsNil)
-	c.Assert(newTblInfo1.Meta().ID, Equals, oldTblID1)
-	newTblInfo2, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t4"))
-	c.Assert(err, IsNil)
-	c.Assert(newTblInfo2.Meta().ID, Equals, oldTblID2)
-	tk.MustQuery("select * from t3").Check(testkit.Rows("1 1", "2 2"))
-	isExist = is.TableExists(model.NewCIStr("test1"), model.NewCIStr("t1"))
-	c.Assert(isExist, IsFalse)
-	tk.MustQuery("select * from t4").Check(testkit.Rows("1 1", "2 2"))
-	isExist = is.TableExists(model.NewCIStr("test1"), model.NewCIStr("t2"))
-	c.Assert(isExist, IsFalse)
-	tk.MustQuery("show tables").Check(testkit.Rows("t3", "t4"))
-
-	// for multi tables same database
-	tk.MustExec("create table t5 (c1 int, c2 int)")
-	tk.MustExec("insert t5 values (1, 1), (2, 2)")
-	is = domain.GetDomain(ctx).InfoSchema()
-	oldTblInfo3, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t5"))
-	c.Assert(err, IsNil)
-	oldTblID3 := oldTblInfo3.Meta().ID
-	tk.MustExec("rename table test1.t3 to test1.t1, test1.t4 to test1.t2, test1.t5 to test1.t3")
-	is = domain.GetDomain(ctx).InfoSchema()
-	newTblInfo1, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
-	c.Assert(newTblInfo1.Meta().ID, Equals, oldTblID1)
-	newTblInfo2, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t2"))
-	c.Assert(err, IsNil)
-	c.Assert(newTblInfo2.Meta().ID, Equals, oldTblID2)
-	newTblInfo3, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t3"))
-	c.Assert(err, IsNil)
-	c.Assert(newTblInfo3.Meta().ID, Equals, oldTblID3)
-	tk.MustQuery("show tables").Check(testkit.Rows("t1", "t2", "t3"))
-
-	// for multi tables different databases
-	tk.MustExec("use test")
-	tk.MustExec("rename table test1.t1 to test.t2, test1.t2 to test.t3, test1.t3 to test.t4")
-	is = domain.GetDomain(ctx).InfoSchema()
-	newTblInfo1, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
-	c.Assert(err, IsNil)
-	c.Assert(newTblInfo1.Meta().ID, Equals, oldTblID1)
-	newTblInfo2, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
-	c.Assert(err, IsNil)
-	c.Assert(newTblInfo2.Meta().ID, Equals, oldTblID2)
-	newTblInfo3, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
-	c.Assert(err, IsNil)
-	c.Assert(newTblInfo3.Meta().ID, Equals, oldTblID3)
-	tk.MustQuery("show tables").Check(testkit.Rows("t2", "t3", "t4"))
-
-	// for failure case
-	failSQL := "rename table test_not_exist.t to test_not_exist.t, test_not_exist.t to test_not_exist.t"
-	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	failSQL = "rename table test.test_not_exist to test.test_not_exist, test.test_not_exist to test.test_not_exist"
-	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	failSQL = "rename table test.t_not_exist to test_not_exist.t, test.t_not_exist to test_not_exist.t"
-	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	failSQL = "rename table test1.t2 to test_not_exist.t, test1.t2 to test_not_exist.t"
-	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-
-	tk.MustExec("drop database test1")
-	tk.MustExec("drop database test")
-}
-
 func (s *testDBSuite2) TestAddNotNullColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
@@ -1861,182 +1410,6 @@ out:
 	tk.MustQuery("select c2, c3 from tnn where c1 = 99").Check(testkit.Rows(expected))
 
 	tk.MustExec("drop table tnn")
-}
-
-func (s *testDBSuite3) TestVirtualColumnDDL(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists test_gv_ddl")
-	tk.MustExec(`create global temporary table test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored) on commit delete rows;`)
-	defer tk.MustExec("drop table if exists test_gv_ddl")
-	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_gv_ddl"))
-	c.Assert(err, IsNil)
-	testCases := []struct {
-		generatedExprString string
-		generatedStored     bool
-	}{
-		{"", false},
-		{"`a` + 8", false},
-		{"`b` + 2", true},
-	}
-	for i, column := range table.Meta().Columns {
-		c.Assert(column.GeneratedExprString, Equals, testCases[i].generatedExprString)
-		c.Assert(column.GeneratedStored, Equals, testCases[i].generatedStored)
-	}
-	result := tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
-	tk.MustExec("begin;")
-	tk.MustExec("insert into test_gv_ddl values (1, default, default)")
-	tk.MustQuery("select * from test_gv_ddl").Check(testkit.Rows("1 9 11"))
-	_, err = tk.Exec("commit")
-	c.Assert(err, IsNil)
-
-	// for local temporary table
-	tk.MustExec(`create temporary table test_local_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored);`)
-	defer tk.MustExec("drop table if exists test_local_gv_ddl")
-	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
-	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_local_gv_ddl"))
-	c.Assert(err, IsNil)
-	for i, column := range table.Meta().Columns {
-		c.Assert(column.GeneratedExprString, Equals, testCases[i].generatedExprString)
-		c.Assert(column.GeneratedStored, Equals, testCases[i].generatedStored)
-	}
-	result = tk.MustQuery(`DESC test_local_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
-	tk.MustExec("begin;")
-	tk.MustExec("insert into test_local_gv_ddl values (1, default, default)")
-	tk.MustQuery("select * from test_local_gv_ddl").Check(testkit.Rows("1 9 11"))
-	_, err = tk.Exec("commit")
-	c.Assert(err, IsNil)
-	tk.MustQuery("select * from test_local_gv_ddl").Check(testkit.Rows("1 9 11"))
-}
-
-func (s *testDBSuite3) TestGeneratedColumnDDL(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-
-	// Check create table with virtual and stored generated columns.
-	tk.MustExec(`CREATE TABLE test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored)`)
-
-	// Check desc table with virtual and stored generated columns.
-	result := tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
-
-	// Check show create table with virtual and stored generated columns.
-	result = tk.MustQuery(`show create table test_gv_ddl`)
-	result.Check(testkit.Rows(
-		"test_gv_ddl CREATE TABLE `test_gv_ddl` (\n  `a` int(11) DEFAULT NULL,\n  `b` int(11) GENERATED ALWAYS AS (`a` + 8) VIRTUAL,\n  `c` int(11) GENERATED ALWAYS AS (`b` + 2) STORED\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
-
-	// Check generated expression with blanks.
-	tk.MustExec("create table table_with_gen_col_blanks (a int, b char(20) as (cast( \r\n\t a \r\n\tas  char)), c int as (a+100))")
-	result = tk.MustQuery(`show create table table_with_gen_col_blanks`)
-	result.Check(testkit.Rows("table_with_gen_col_blanks CREATE TABLE `table_with_gen_col_blanks` (\n" +
-		"  `a` int(11) DEFAULT NULL,\n" +
-		"  `b` char(20) GENERATED ALWAYS AS (cast(`a` as char)) VIRTUAL,\n" +
-		"  `c` int(11) GENERATED ALWAYS AS (`a` + 100) VIRTUAL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-
-	// Check generated expression with charset latin1 ("latin1" != mysql.DefaultCharset).
-	tk.MustExec("create table table_with_gen_col_latin1 (a int, b char(20) as (cast( \r\n\t a \r\n\tas  char charset latin1)), c int as (a+100))")
-	result = tk.MustQuery(`show create table table_with_gen_col_latin1`)
-	result.Check(testkit.Rows("table_with_gen_col_latin1 CREATE TABLE `table_with_gen_col_latin1` (\n" +
-		"  `a` int(11) DEFAULT NULL,\n" +
-		"  `b` char(20) GENERATED ALWAYS AS (cast(`a` as char charset latin1)) VIRTUAL,\n" +
-		"  `c` int(11) GENERATED ALWAYS AS (`a` + 100) VIRTUAL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-
-	// Check generated expression with string (issue 9457).
-	tk.MustExec("create table table_with_gen_col_string (first_name varchar(10), last_name varchar(10), full_name varchar(255) AS (CONCAT(first_name,' ',last_name)))")
-	result = tk.MustQuery(`show create table table_with_gen_col_string`)
-	result.Check(testkit.Rows("table_with_gen_col_string CREATE TABLE `table_with_gen_col_string` (\n" +
-		"  `first_name` varchar(10) DEFAULT NULL,\n" +
-		"  `last_name` varchar(10) DEFAULT NULL,\n" +
-		"  `full_name` varchar(255) GENERATED ALWAYS AS (concat(`first_name`, _utf8mb4' ', `last_name`)) VIRTUAL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-
-	tk.MustExec("alter table table_with_gen_col_string modify column full_name varchar(255) GENERATED ALWAYS AS (CONCAT(last_name,' ' ,first_name) ) VIRTUAL")
-	result = tk.MustQuery(`show create table table_with_gen_col_string`)
-	result.Check(testkit.Rows("table_with_gen_col_string CREATE TABLE `table_with_gen_col_string` (\n" +
-		"  `first_name` varchar(10) DEFAULT NULL,\n" +
-		"  `last_name` varchar(10) DEFAULT NULL,\n" +
-		"  `full_name` varchar(255) GENERATED ALWAYS AS (concat(`last_name`, _utf8mb4' ', `first_name`)) VIRTUAL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-
-	// Test incorrect parameter count.
-	tk.MustGetErrCode("create table test_gv_incorrect_pc(a double, b int as (lower(a, 2)))", errno.ErrWrongParamcountToNativeFct)
-	tk.MustGetErrCode("create table test_gv_incorrect_pc(a double, b int as (lower(a, 2)) stored)", errno.ErrWrongParamcountToNativeFct)
-
-	genExprTests := []struct {
-		stmt string
-		err  int
-	}{
-		// Drop/rename columns dependent by other column.
-		{`alter table test_gv_ddl drop column a`, errno.ErrDependentByGeneratedColumn},
-		{`alter table test_gv_ddl change column a anew int`, errno.ErrBadField},
-
-		// Modify/change stored status of generated columns.
-		{`alter table test_gv_ddl modify column b bigint`, errno.ErrUnsupportedOnGeneratedColumn},
-		{`alter table test_gv_ddl change column c cnew bigint as (a+100)`, errno.ErrUnsupportedOnGeneratedColumn},
-
-		// Modify/change generated columns breaking prior.
-		{`alter table test_gv_ddl modify column b int as (c+100)`, errno.ErrGeneratedColumnNonPrior},
-		{`alter table test_gv_ddl change column b bnew int as (c+100)`, errno.ErrGeneratedColumnNonPrior},
-
-		// Refer not exist columns in generation expression.
-		{`create table test_gv_ddl_bad (a int, b int as (c+8))`, errno.ErrBadField},
-
-		// Refer generated columns non prior.
-		{`create table test_gv_ddl_bad (a int, b int as (c+1), c int as (a+1))`, errno.ErrGeneratedColumnNonPrior},
-
-		// Virtual generated columns cannot be primary key.
-		{`create table test_gv_ddl_bad (a int, b int, c int as (a+b) primary key)`, errno.ErrUnsupportedOnGeneratedColumn},
-		{`create table test_gv_ddl_bad (a int, b int, c int as (a+b), primary key(c))`, errno.ErrUnsupportedOnGeneratedColumn},
-		{`create table test_gv_ddl_bad (a int, b int, c int as (a+b), primary key(a, c))`, errno.ErrUnsupportedOnGeneratedColumn},
-
-		// Add stored generated column through alter table.
-		{`alter table test_gv_ddl add column d int as (b+2) stored`, errno.ErrUnsupportedOnGeneratedColumn},
-		{`alter table test_gv_ddl modify column b int as (a + 8) stored`, errno.ErrUnsupportedOnGeneratedColumn},
-
-		// Add generated column with incorrect parameter count.
-		{`alter table test_gv_ddl add column z int as (lower(a, 2))`, errno.ErrWrongParamcountToNativeFct},
-		{`alter table test_gv_ddl add column z int as (lower(a, 2)) stored`, errno.ErrWrongParamcountToNativeFct},
-
-		// Modify generated column with incorrect parameter count.
-		{`alter table test_gv_ddl modify column b int as (lower(a, 2))`, errno.ErrWrongParamcountToNativeFct},
-		{`alter table test_gv_ddl change column b b int as (lower(a, 2))`, errno.ErrWrongParamcountToNativeFct},
-	}
-	for _, tt := range genExprTests {
-		tk.MustGetErrCode(tt.stmt, tt.err)
-	}
-
-	// Check alter table modify/change generated column.
-	modStoredColErrMsg := "[ddl:3106]'modifying a stored column' is not supported for generated columns."
-	_, err := tk.Exec(`alter table test_gv_ddl modify column c bigint as (b+200) stored`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, modStoredColErrMsg)
-
-	result = tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
-
-	tk.MustExec(`alter table test_gv_ddl change column b b bigint as (a+100) virtual`)
-	result = tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(20) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
-
-	tk.MustExec(`alter table test_gv_ddl change column c cnew bigint`)
-	result = tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(20) YES  <nil> VIRTUAL GENERATED`, `cnew bigint(20) YES  <nil> `))
-
-	// Test generated column `\\`.
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("CREATE TABLE t(c0 TEXT AS ('\\\\'));")
-	tk.MustExec("insert into t values ()")
-	tk.MustQuery("select * from t").Check(testkit.Rows("\\"))
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("CREATE TABLE t(c0 TEXT AS ('a\\\\b\\\\c\\\\'))")
-	tk.MustExec("insert into t values ()")
-	tk.MustQuery("select * from t").Check(testkit.Rows("a\\b\\c\\"))
 }
 
 func (s *testDBSuite4) TestComment(c *C) {
@@ -2206,32 +1579,6 @@ func (s *testDBSuite2) TestAddNotNullColumnWhileInsertOnDupUpdate(c *C) {
 	tk1.MustQuery("select * from nn").Check(testkit.Rows("1 3 2"))
 }
 
-func (s *testDBSuite3) TestColumnModifyingDefinition(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists test2;")
-	tk.MustExec("create table test2 (c1 int, c2 int, c3 int default 1, index (c1));")
-	tk.MustExec("alter table test2 change c2 a int not null;")
-	ctx := tk.Se.(sessionctx.Context)
-	is := domain.GetDomain(ctx).InfoSchema()
-	t, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test2"))
-	c.Assert(err, IsNil)
-	var c2 *table.Column
-	for _, col := range t.Cols() {
-		if col.Name.L == "a" {
-			c2 = col
-		}
-	}
-	c.Assert(mysql.HasNotNullFlag(c2.Flag), IsTrue)
-
-	tk.MustExec("drop table if exists test2;")
-	tk.MustExec("create table test2 (c1 int, c2 int, c3 int default 1, index (c1));")
-	tk.MustExec("insert into test2(c2) values (null);")
-	_, err = tk.Exec("alter table test2 change c2 a int not null")
-	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a' at row 1")
-	tk.MustGetErrCode("alter table test2 change c1 a1 bigint not null;", mysql.WarnDataTruncated)
-}
-
 func (s *testDBSuite4) TestCheckTooBigFieldLength(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -2336,62 +1683,6 @@ func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(checkErr, IsNil)
 	tk.MustQuery("select a,b from t1 order by a").Check(testkit.Rows("1 1", "1 1", "1 1", "2 2", "2 2", "2 2"))
-}
-
-func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test_db")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (a int key);")
-
-	transactions := [][]string{
-		{
-			"begin",
-			"insert into t1 set a=1",
-			"update t1 set a=2 where a=1",
-			"commit",
-		},
-	}
-
-	originHook := s.dom.DDL().GetHook()
-	defer s.dom.DDL().SetHook(originHook)
-	hook := &ddl.TestDDLCallback{Do: s.dom}
-	var checkErr error
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if checkErr != nil {
-			return
-		}
-		switch job.SchemaState {
-		case model.StateWriteOnly:
-		default:
-			return
-		}
-		// do transaction.
-		for _, transaction := range transactions {
-			for _, sql := range transaction {
-				if _, checkErr = tk.Exec(sql); checkErr != nil {
-					checkErr = errors.Errorf("err: %s, sql: %s, job schema state: %s", checkErr.Error(), sql, job.SchemaState)
-					return
-				}
-			}
-		}
-	}
-	s.dom.DDL().SetHook(hook)
-	done := make(chan error, 1)
-	// test transaction on add column.
-	go backgroundExec(s.store, "alter table t1 add column c int not null", done)
-	err := <-done
-	c.Assert(err, IsNil)
-	c.Assert(checkErr, IsNil)
-	tk.MustQuery("select a from t1").Check(testkit.Rows("2"))
-	tk.MustExec("delete from t1")
-
-	// test transaction on drop column.
-	go backgroundExec(s.store, "alter table t1 drop column c", done)
-	err = <-done
-	c.Assert(err, IsNil)
-	c.Assert(checkErr, IsNil)
-	tk.MustQuery("select a from t1").Check(testkit.Rows("2"))
 }
 
 func (s *testDBSuite4) TestAddColumn2(c *C) {
@@ -3165,36 +2456,6 @@ func (s *testSerialDBSuite) TestSkipSchemaChecker(c *C) {
 	c.Assert(terror.ErrorEqual(domain.ErrInfoSchemaChanged, err), IsTrue)
 }
 
-// See issue: https://github.com/pingcap/tidb/issues/29752
-// Ref https://dev.mysql.com/doc/refman/8.0/en/rename-table.html
-func (s *testDBSuite2) TestRenameTableWithLocked(c *C) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableTableLock = true
-	})
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("create database renamedb")
-	tk.MustExec("create database renamedb2")
-	tk.MustExec("use renamedb")
-	tk.MustExec("DROP TABLE IF EXISTS t1;")
-	tk.MustExec("CREATE TABLE t1 (a int);")
-
-	tk.MustExec("LOCK TABLES t1 WRITE;")
-	tk.MustGetErrCode("drop database renamedb2;", errno.ErrLockOrActiveTransaction)
-	tk.MustExec("RENAME TABLE t1 TO t2;")
-	tk.MustQuery("select * from renamedb.t2").Check(testkit.Rows())
-	tk.MustExec("UNLOCK TABLES")
-	tk.MustExec("RENAME TABLE t2 TO t1;")
-	tk.MustQuery("select * from renamedb.t1").Check(testkit.Rows())
-
-	tk.MustExec("LOCK TABLES t1 READ;")
-	tk.MustGetErrCode("RENAME TABLE t1 TO t2;", errno.ErrTableNotLockedForWrite)
-	tk.MustExec("UNLOCK TABLES")
-
-	tk.MustExec("drop database renamedb")
-}
-
 func (s *testDBSuite2) TestLockTables(c *C) {
 	if israce.RaceEnabled {
 		c.Skip("skip race test")
@@ -3692,59 +2953,6 @@ func (s *testDBSuite5) TestAlterCheck(c *C) {
 	tk.MustExec("alter table alter_check alter check crcn ENFORCED")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8231|ALTER CHECK is not supported"))
-}
-
-func (s *testDBSuite6) TestDropCheck(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use " + s.schemaName)
-	tk.MustExec("drop table if exists drop_check")
-	tk.MustExec("create table drop_check (pk int primary key)")
-	defer tk.MustExec("drop table if exists drop_check")
-	tk.MustExec("alter table drop_check drop check crcn")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8231|DROP CHECK is not supported"))
-}
-
-func (s *testDBSuite7) TestAddConstraintCheck(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use " + s.schemaName)
-	tk.MustExec("drop table if exists add_constraint_check")
-	tk.MustExec("create table add_constraint_check (pk int primary key, a int)")
-	defer tk.MustExec("drop table if exists add_constraint_check")
-	tk.MustExec("alter table add_constraint_check add constraint crn check (a > 1)")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8231|ADD CONSTRAINT CHECK is not supported"))
-}
-
-func (s *testDBSuite7) TestCreateTableIngoreCheckConstraint(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use " + s.schemaName)
-	tk.MustExec("drop table if exists table_constraint_check")
-	tk.MustExec("CREATE TABLE admin_user (enable bool, CHECK (enable IN (0, 1)));")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8231|CONSTRAINT CHECK is not supported"))
-	tk.MustQuery("show create table admin_user").Check(testutil.RowsWithSep("|", ""+
-		"admin_user CREATE TABLE `admin_user` (\n"+
-		"  `enable` tinyint(1) DEFAULT NULL\n"+
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-}
-
-func (s *testDBSuite6) TestAlterOrderBy(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use " + s.schemaName)
-	tk.MustExec("create table ob (pk int primary key, c int default 1, c1 int default 1, KEY cl(c1))")
-
-	// Test order by with primary key
-	tk.MustExec("alter table ob order by c")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1105|ORDER BY ignored as there is a user-defined clustered index in the table 'ob'"))
-
-	// Test order by with no primary key
-	tk.MustExec("drop table if exists ob")
-	tk.MustExec("create table ob (c int default 1, c1 int default 1, KEY cl(c1))")
-	tk.MustExec("alter table ob order by c")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
-	tk.MustExec("drop table if exists ob")
 }
 
 func (s *testSerialDBSuite) TestDDLJobErrorCount(c *C) {
