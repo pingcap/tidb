@@ -85,8 +85,8 @@ type inFunctionClass struct {
 }
 
 func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
-	args = c.validateConstArgByType(args)
-	if err := c.verifyArgs(args); err != nil {
+	args, err = c.verifyArgs(args)
+	if err != nil {
 		return nil, err
 	}
 	argTps := make([]types.EvalType, len(args))
@@ -157,8 +157,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	return sig, nil
 }
 
-// validateConstArgByType will discard invalid args according to column type and constant type
-func (c *inFunctionClass) validateConstArgByType(args []Expression) []Expression {
+func (c *inFunctionClass) verifyArgs(args []Expression) ([]Expression, error) {
 	columnType := args[0].GetType()
 	validatedArgs := make([]Expression, 0, len(args))
 	for _, arg := range args {
@@ -172,7 +171,8 @@ func (c *inFunctionClass) validateConstArgByType(args []Expression) []Expression
 		}
 		validatedArgs = append(validatedArgs, arg)
 	}
-	return validatedArgs
+	err := c.baseFunctionClass.verifyArgs(args)
+	return validatedArgs, err
 }
 
 // nolint:structcheck
