@@ -85,7 +85,6 @@ const (
 
 var _ = Suite(&testDBSuite1{&testDBSuite{}})
 var _ = Suite(&testDBSuite2{&testDBSuite{}})
-var _ = Suite(&testDBSuite3{&testDBSuite{}})
 var _ = Suite(&testDBSuite4{&testDBSuite{}})
 var _ = Suite(&testDBSuite5{&testDBSuite{}})
 var _ = SerialSuites(&testSerialDBSuite{&testDBSuite{}})
@@ -153,7 +152,6 @@ func (s *testDBSuite) TearDownSuite(c *C) {
 
 type testDBSuite1 struct{ *testDBSuite }
 type testDBSuite2 struct{ *testDBSuite }
-type testDBSuite3 struct{ *testDBSuite }
 type testDBSuite4 struct{ *testDBSuite }
 type testDBSuite5 struct{ *testDBSuite }
 type testSerialDBSuite struct{ *testDBSuite }
@@ -1414,182 +1412,6 @@ out:
 	tk.MustExec("drop table tnn")
 }
 
-func (s *testDBSuite3) TestVirtualColumnDDL(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists test_gv_ddl")
-	tk.MustExec(`create global temporary table test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored) on commit delete rows;`)
-	defer tk.MustExec("drop table if exists test_gv_ddl")
-	is := tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_gv_ddl"))
-	c.Assert(err, IsNil)
-	testCases := []struct {
-		generatedExprString string
-		generatedStored     bool
-	}{
-		{"", false},
-		{"`a` + 8", false},
-		{"`b` + 2", true},
-	}
-	for i, column := range table.Meta().Columns {
-		c.Assert(column.GeneratedExprString, Equals, testCases[i].generatedExprString)
-		c.Assert(column.GeneratedStored, Equals, testCases[i].generatedStored)
-	}
-	result := tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
-	tk.MustExec("begin;")
-	tk.MustExec("insert into test_gv_ddl values (1, default, default)")
-	tk.MustQuery("select * from test_gv_ddl").Check(testkit.Rows("1 9 11"))
-	_, err = tk.Exec("commit")
-	c.Assert(err, IsNil)
-
-	// for local temporary table
-	tk.MustExec(`create temporary table test_local_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored);`)
-	defer tk.MustExec("drop table if exists test_local_gv_ddl")
-	is = tk.Se.(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
-	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_local_gv_ddl"))
-	c.Assert(err, IsNil)
-	for i, column := range table.Meta().Columns {
-		c.Assert(column.GeneratedExprString, Equals, testCases[i].generatedExprString)
-		c.Assert(column.GeneratedStored, Equals, testCases[i].generatedStored)
-	}
-	result = tk.MustQuery(`DESC test_local_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
-	tk.MustExec("begin;")
-	tk.MustExec("insert into test_local_gv_ddl values (1, default, default)")
-	tk.MustQuery("select * from test_local_gv_ddl").Check(testkit.Rows("1 9 11"))
-	_, err = tk.Exec("commit")
-	c.Assert(err, IsNil)
-	tk.MustQuery("select * from test_local_gv_ddl").Check(testkit.Rows("1 9 11"))
-}
-
-func (s *testDBSuite3) TestGeneratedColumnDDL(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-
-	// Check create table with virtual and stored generated columns.
-	tk.MustExec(`CREATE TABLE test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored)`)
-
-	// Check desc table with virtual and stored generated columns.
-	result := tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
-
-	// Check show create table with virtual and stored generated columns.
-	result = tk.MustQuery(`show create table test_gv_ddl`)
-	result.Check(testkit.Rows(
-		"test_gv_ddl CREATE TABLE `test_gv_ddl` (\n  `a` int(11) DEFAULT NULL,\n  `b` int(11) GENERATED ALWAYS AS (`a` + 8) VIRTUAL,\n  `c` int(11) GENERATED ALWAYS AS (`b` + 2) STORED\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
-
-	// Check generated expression with blanks.
-	tk.MustExec("create table table_with_gen_col_blanks (a int, b char(20) as (cast( \r\n\t a \r\n\tas  char)), c int as (a+100))")
-	result = tk.MustQuery(`show create table table_with_gen_col_blanks`)
-	result.Check(testkit.Rows("table_with_gen_col_blanks CREATE TABLE `table_with_gen_col_blanks` (\n" +
-		"  `a` int(11) DEFAULT NULL,\n" +
-		"  `b` char(20) GENERATED ALWAYS AS (cast(`a` as char)) VIRTUAL,\n" +
-		"  `c` int(11) GENERATED ALWAYS AS (`a` + 100) VIRTUAL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-
-	// Check generated expression with charset latin1 ("latin1" != mysql.DefaultCharset).
-	tk.MustExec("create table table_with_gen_col_latin1 (a int, b char(20) as (cast( \r\n\t a \r\n\tas  char charset latin1)), c int as (a+100))")
-	result = tk.MustQuery(`show create table table_with_gen_col_latin1`)
-	result.Check(testkit.Rows("table_with_gen_col_latin1 CREATE TABLE `table_with_gen_col_latin1` (\n" +
-		"  `a` int(11) DEFAULT NULL,\n" +
-		"  `b` char(20) GENERATED ALWAYS AS (cast(`a` as char charset latin1)) VIRTUAL,\n" +
-		"  `c` int(11) GENERATED ALWAYS AS (`a` + 100) VIRTUAL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-
-	// Check generated expression with string (issue 9457).
-	tk.MustExec("create table table_with_gen_col_string (first_name varchar(10), last_name varchar(10), full_name varchar(255) AS (CONCAT(first_name,' ',last_name)))")
-	result = tk.MustQuery(`show create table table_with_gen_col_string`)
-	result.Check(testkit.Rows("table_with_gen_col_string CREATE TABLE `table_with_gen_col_string` (\n" +
-		"  `first_name` varchar(10) DEFAULT NULL,\n" +
-		"  `last_name` varchar(10) DEFAULT NULL,\n" +
-		"  `full_name` varchar(255) GENERATED ALWAYS AS (concat(`first_name`, _utf8mb4' ', `last_name`)) VIRTUAL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-
-	tk.MustExec("alter table table_with_gen_col_string modify column full_name varchar(255) GENERATED ALWAYS AS (CONCAT(last_name,' ' ,first_name) ) VIRTUAL")
-	result = tk.MustQuery(`show create table table_with_gen_col_string`)
-	result.Check(testkit.Rows("table_with_gen_col_string CREATE TABLE `table_with_gen_col_string` (\n" +
-		"  `first_name` varchar(10) DEFAULT NULL,\n" +
-		"  `last_name` varchar(10) DEFAULT NULL,\n" +
-		"  `full_name` varchar(255) GENERATED ALWAYS AS (concat(`last_name`, _utf8mb4' ', `first_name`)) VIRTUAL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-
-	// Test incorrect parameter count.
-	tk.MustGetErrCode("create table test_gv_incorrect_pc(a double, b int as (lower(a, 2)))", errno.ErrWrongParamcountToNativeFct)
-	tk.MustGetErrCode("create table test_gv_incorrect_pc(a double, b int as (lower(a, 2)) stored)", errno.ErrWrongParamcountToNativeFct)
-
-	genExprTests := []struct {
-		stmt string
-		err  int
-	}{
-		// Drop/rename columns dependent by other column.
-		{`alter table test_gv_ddl drop column a`, errno.ErrDependentByGeneratedColumn},
-		{`alter table test_gv_ddl change column a anew int`, errno.ErrBadField},
-
-		// Modify/change stored status of generated columns.
-		{`alter table test_gv_ddl modify column b bigint`, errno.ErrUnsupportedOnGeneratedColumn},
-		{`alter table test_gv_ddl change column c cnew bigint as (a+100)`, errno.ErrUnsupportedOnGeneratedColumn},
-
-		// Modify/change generated columns breaking prior.
-		{`alter table test_gv_ddl modify column b int as (c+100)`, errno.ErrGeneratedColumnNonPrior},
-		{`alter table test_gv_ddl change column b bnew int as (c+100)`, errno.ErrGeneratedColumnNonPrior},
-
-		// Refer not exist columns in generation expression.
-		{`create table test_gv_ddl_bad (a int, b int as (c+8))`, errno.ErrBadField},
-
-		// Refer generated columns non prior.
-		{`create table test_gv_ddl_bad (a int, b int as (c+1), c int as (a+1))`, errno.ErrGeneratedColumnNonPrior},
-
-		// Virtual generated columns cannot be primary key.
-		{`create table test_gv_ddl_bad (a int, b int, c int as (a+b) primary key)`, errno.ErrUnsupportedOnGeneratedColumn},
-		{`create table test_gv_ddl_bad (a int, b int, c int as (a+b), primary key(c))`, errno.ErrUnsupportedOnGeneratedColumn},
-		{`create table test_gv_ddl_bad (a int, b int, c int as (a+b), primary key(a, c))`, errno.ErrUnsupportedOnGeneratedColumn},
-
-		// Add stored generated column through alter table.
-		{`alter table test_gv_ddl add column d int as (b+2) stored`, errno.ErrUnsupportedOnGeneratedColumn},
-		{`alter table test_gv_ddl modify column b int as (a + 8) stored`, errno.ErrUnsupportedOnGeneratedColumn},
-
-		// Add generated column with incorrect parameter count.
-		{`alter table test_gv_ddl add column z int as (lower(a, 2))`, errno.ErrWrongParamcountToNativeFct},
-		{`alter table test_gv_ddl add column z int as (lower(a, 2)) stored`, errno.ErrWrongParamcountToNativeFct},
-
-		// Modify generated column with incorrect parameter count.
-		{`alter table test_gv_ddl modify column b int as (lower(a, 2))`, errno.ErrWrongParamcountToNativeFct},
-		{`alter table test_gv_ddl change column b b int as (lower(a, 2))`, errno.ErrWrongParamcountToNativeFct},
-	}
-	for _, tt := range genExprTests {
-		tk.MustGetErrCode(tt.stmt, tt.err)
-	}
-
-	// Check alter table modify/change generated column.
-	modStoredColErrMsg := "[ddl:3106]'modifying a stored column' is not supported for generated columns."
-	_, err := tk.Exec(`alter table test_gv_ddl modify column c bigint as (b+200) stored`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, modStoredColErrMsg)
-
-	result = tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
-
-	tk.MustExec(`alter table test_gv_ddl change column b b bigint as (a+100) virtual`)
-	result = tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(20) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
-
-	tk.MustExec(`alter table test_gv_ddl change column c cnew bigint`)
-	result = tk.MustQuery(`DESC test_gv_ddl`)
-	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(20) YES  <nil> VIRTUAL GENERATED`, `cnew bigint(20) YES  <nil> `))
-
-	// Test generated column `\\`.
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("CREATE TABLE t(c0 TEXT AS ('\\\\'));")
-	tk.MustExec("insert into t values ()")
-	tk.MustQuery("select * from t").Check(testkit.Rows("\\"))
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("CREATE TABLE t(c0 TEXT AS ('a\\\\b\\\\c\\\\'))")
-	tk.MustExec("insert into t values ()")
-	tk.MustQuery("select * from t").Check(testkit.Rows("a\\b\\c\\"))
-}
-
 func (s *testDBSuite4) TestComment(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use " + s.schemaName)
@@ -1757,32 +1579,6 @@ func (s *testDBSuite2) TestAddNotNullColumnWhileInsertOnDupUpdate(c *C) {
 	tk1.MustQuery("select * from nn").Check(testkit.Rows("1 3 2"))
 }
 
-func (s *testDBSuite3) TestColumnModifyingDefinition(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists test2;")
-	tk.MustExec("create table test2 (c1 int, c2 int, c3 int default 1, index (c1));")
-	tk.MustExec("alter table test2 change c2 a int not null;")
-	ctx := tk.Se.(sessionctx.Context)
-	is := domain.GetDomain(ctx).InfoSchema()
-	t, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test2"))
-	c.Assert(err, IsNil)
-	var c2 *table.Column
-	for _, col := range t.Cols() {
-		if col.Name.L == "a" {
-			c2 = col
-		}
-	}
-	c.Assert(mysql.HasNotNullFlag(c2.Flag), IsTrue)
-
-	tk.MustExec("drop table if exists test2;")
-	tk.MustExec("create table test2 (c1 int, c2 int, c3 int default 1, index (c1));")
-	tk.MustExec("insert into test2(c2) values (null);")
-	_, err = tk.Exec("alter table test2 change c2 a int not null")
-	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a' at row 1")
-	tk.MustGetErrCode("alter table test2 change c1 a1 bigint not null;", mysql.WarnDataTruncated)
-}
-
 func (s *testDBSuite4) TestCheckTooBigFieldLength(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1887,62 +1683,6 @@ func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(checkErr, IsNil)
 	tk.MustQuery("select a,b from t1 order by a").Check(testkit.Rows("1 1", "1 1", "1 1", "2 2", "2 2", "2 2"))
-}
-
-func (s *testDBSuite3) TestTransactionWithWriteOnlyColumn(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test_db")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (a int key);")
-
-	transactions := [][]string{
-		{
-			"begin",
-			"insert into t1 set a=1",
-			"update t1 set a=2 where a=1",
-			"commit",
-		},
-	}
-
-	originHook := s.dom.DDL().GetHook()
-	defer s.dom.DDL().SetHook(originHook)
-	hook := &ddl.TestDDLCallback{Do: s.dom}
-	var checkErr error
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if checkErr != nil {
-			return
-		}
-		switch job.SchemaState {
-		case model.StateWriteOnly:
-		default:
-			return
-		}
-		// do transaction.
-		for _, transaction := range transactions {
-			for _, sql := range transaction {
-				if _, checkErr = tk.Exec(sql); checkErr != nil {
-					checkErr = errors.Errorf("err: %s, sql: %s, job schema state: %s", checkErr.Error(), sql, job.SchemaState)
-					return
-				}
-			}
-		}
-	}
-	s.dom.DDL().SetHook(hook)
-	done := make(chan error, 1)
-	// test transaction on add column.
-	go backgroundExec(s.store, "alter table t1 add column c int not null", done)
-	err := <-done
-	c.Assert(err, IsNil)
-	c.Assert(checkErr, IsNil)
-	tk.MustQuery("select a from t1").Check(testkit.Rows("2"))
-	tk.MustExec("delete from t1")
-
-	// test transaction on drop column.
-	go backgroundExec(s.store, "alter table t1 drop column c", done)
-	err = <-done
-	c.Assert(err, IsNil)
-	c.Assert(checkErr, IsNil)
-	tk.MustQuery("select a from t1").Check(testkit.Rows("2"))
 }
 
 func (s *testDBSuite4) TestAddColumn2(c *C) {
