@@ -515,7 +515,7 @@ func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (DB, error) {
 
 	switch cfg.Checkpoint.Driver {
 	case config.CheckpointDriverMySQL:
-		db, err := sql.Open("mysql", cfg.Checkpoint.DSN)
+		db, err := common.ConnectMySQL(cfg.Checkpoint.DSN)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
