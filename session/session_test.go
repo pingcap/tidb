@@ -691,15 +691,51 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	_, err = tk.Exec("set global time_zone = 'timezone'")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, variable.ErrUnknownTimeZone), IsTrue)
+}
+
+func (s *testSessionSuite) TestUpgradeSysvars(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	se := tk.Se.(variable.GlobalVarAccessor)
 
 	// Set the global var to a non canonical form of the value
 	// i.e. implying that it was set from an earlier version of TiDB.
 
 	tk.MustExec(`REPLACE INTO mysql.global_variables (variable_name, variable_value) VALUES ('tidb_enable_noop_functions', '0')`)
 	domain.GetDomain(tk.Se).NotifyUpdateSysVarCache() // update cache
-	v, err = se.GetGlobalSysVar("tidb_enable_noop_functions")
+	v, err := se.GetGlobalSysVar("tidb_enable_noop_functions")
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, "OFF")
+
+	// Set the global var to ""  which is the invalid version of this from TiDB 4.0.16
+	// the err is quashed by the GetGlobalSysVar, and the default value is restored.
+	// This helps callers of GetGlobalSysVar(), which can't individually be expected
+	// to handle upgrade/downgrade issues correctly.
+
+	tk.MustExec(`REPLACE INTO mysql.global_variables (variable_name, variable_value) VALUES ('rpl_semi_sync_slave_enabled', '')`)
+	domain.GetDomain(tk.Se).NotifyUpdateSysVarCache() // update cache
+	v, err = se.GetGlobalSysVar("rpl_semi_sync_slave_enabled")
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, "OFF") // the default value is restored.
+	result := tk.MustQuery("SHOW VARIABLES LIKE 'rpl_semi_sync_slave_enabled'")
+	result.Check(testkit.Rows("rpl_semi_sync_slave_enabled OFF"))
+
+	// Ensure variable out of range is converted to in range after upgrade.
+	// This further helps for https://github.com/pingcap/tidb/pull/28842
+
+	tk.MustExec(`REPLACE INTO mysql.global_variables (variable_name, variable_value) VALUES ('tidb_executor_concurrency', '999')`)
+	domain.GetDomain(tk.Se).NotifyUpdateSysVarCache() // update cache
+	v, err = se.GetGlobalSysVar("tidb_executor_concurrency")
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, "256") // the max value is restored.
+
+	// Handle the case of a completely bogus value from an earlier version of TiDB.
+	// This could be the case if an ENUM sysvar removes a value.
+
+	tk.MustExec(`REPLACE INTO mysql.global_variables (variable_name, variable_value) VALUES ('tidb_enable_noop_functions', 'SOMEVAL')`)
+	domain.GetDomain(tk.Se).NotifyUpdateSysVarCache() // update cache
+	v, err = se.GetGlobalSysVar("tidb_enable_noop_functions")
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, "OFF") // the default value is restored.
 }
 
 func (s *testSessionSuite) TestMatchIdentity(c *C) {

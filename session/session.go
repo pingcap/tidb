@@ -1253,7 +1253,13 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 	}
 	// It might have been written from an earlier TiDB version, so we should do type validation
 	// See https://github.com/pingcap/tidb/issues/30255 for why we don't do full validation.
-	return sv.ValidateFromType(s.GetSessionVars(), sysVar, variable.ScopeGlobal)
+	// If validation fails, we should return the default value:
+	// See: https://github.com/pingcap/tidb/pull/31566
+	sysVar, err = sv.ValidateFromType(s.GetSessionVars(), sysVar, variable.ScopeGlobal)
+	if err != nil {
+		return sv.Value, nil
+	}
+	return sysVar, nil
 }
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.

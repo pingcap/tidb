@@ -872,6 +872,7 @@ func TestIndexMergeSwitcher(t *testing.T) {
 	require.Equal(t, BoolToOnOff(DefTiDBEnableIndexMerge), val)
 }
 
+<<<<<<< HEAD
 func TestNoValidateForNoop(t *testing.T) {
 	vars := NewSessionVars()
 
@@ -883,4 +884,20 @@ func TestNoValidateForNoop(t *testing.T) {
 	// for other variables, error
 	_, err = GetSysVar(TiDBAllowBatchCop).ValidateFromType(vars, "", ScopeGlobal)
 	require.Error(t, err)
+=======
+func TestNetBufferLength(t *testing.T) {
+	netBufferLength := GetSysVar(NetBufferLength)
+	vars := NewSessionVars()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
+
+	val, err := netBufferLength.Validate(vars, "1", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "1024", val) // converts it to min value
+	val, err = netBufferLength.Validate(vars, "10485760", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "1048576", val) // converts it to max value
+	val, err = netBufferLength.Validate(vars, "524288", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "524288", val) // unchanged
+>>>>>>> 22f4c33d4... *: better handle sysvar upgrades from older versions (#31583)
 }
