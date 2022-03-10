@@ -1771,16 +1771,25 @@ func TestApproxCountDistinctInPartitionTable(t *testing.T) {
 	tk.MustExec("create table t(a int(11), b int) partition by range (a) (partition p0 values less than (3), partition p1 values less than maxvalue);")
 	tk.MustExec("insert into t values(1, 1), (2, 1), (3, 1), (4, 2), (4, 2)")
 	tk.MustExec("set session tidb_opt_agg_push_down=1")
-	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
-	tk.MustQuery("explain format = 'brief' select approx_count_distinct(a), b from t group by b order by b desc").Check(testkit.Rows("Sort 16000.00 root  test.t.b:desc",
-		"└─HashAgg 16000.00 root  group by:test.t.b, funcs:approx_count_distinct(Column#5)->Column#4, funcs:firstrow(Column#6)->test.t.b",
-		"  └─PartitionUnion 16000.00 root  ",
-		"    ├─HashAgg 8000.00 root  group by:test.t.b, funcs:approx_count_distinct(test.t.a)->Column#5, funcs:firstrow(test.t.b)->Column#6, funcs:firstrow(test.t.b)->test.t.b",
-		"    │ └─TableReader 10000.00 root  data:TableFullScan",
-		"    │   └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-		"    └─HashAgg 8000.00 root  group by:test.t.b, funcs:approx_count_distinct(test.t.a)->Column#5, funcs:firstrow(test.t.b)->Column#6, funcs:firstrow(test.t.b)->test.t.b",
-		"      └─TableReader 10000.00 root  data:TableFullScan",
-		"        └─TableFullScan 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo"))
+	/*
+		tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
+		tk.MustQuery("explain format = 'brief' select approx_count_distinct(a), b from t group by b order by b desc").Check(testkit.Rows("Sort 16000.00 root  test.t.b:desc",
+			"└─HashAgg 16000.00 root  group by:test.t.b, funcs:approx_count_distinct(Column#5)->Column#4, funcs:firstrow(Column#6)->test.t.b",
+			"  └─PartitionUnion 16000.00 root  ",
+			"    ├─HashAgg 8000.00 root  group by:test.t.b, funcs:approx_count_distinct(test.t.a)->Column#5, funcs:firstrow(test.t.b)->Column#6, funcs:firstrow(test.t.b)->test.t.b",
+			"    │ └─TableReader 10000.00 root  data:TableFullScan",
+			"    │   └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
+			"    └─HashAgg 8000.00 root  group by:test.t.b, funcs:approx_count_distinct(test.t.a)->Column#5, funcs:firstrow(test.t.b)->Column#6, funcs:firstrow(test.t.b)->test.t.b",
+			"      └─TableReader 10000.00 root  data:TableFullScan",
+			"        └─TableFullScan 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo"))
+		tk.MustQuery("select approx_count_distinct(a), b from t group by b order by b desc").Check(testkit.Rows("1 2", "3 1"))
+	*/
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Dynamic) + `'`)
+	tk.MustQuery("explain format = 'brief' select approx_count_distinct(a), b from t group by b order by b desc").Check(testkit.Rows(
+		"Sort 8000.00 root  test.t.b:desc",
+		"└─HashAgg 8000.00 root  group by:test.t.b, funcs:approx_count_distinct(test.t.a)->Column#4, funcs:firstrow(test.t.b)->test.t.b",
+		"  └─TableReader 10000.00 root partition:all data:TableFullScan",
+		"    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("select approx_count_distinct(a), b from t group by b order by b desc").Check(testkit.Rows("1 2", "3 1"))
 }
 
