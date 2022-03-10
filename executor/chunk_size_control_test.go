@@ -96,60 +96,6 @@ func generateTableSplitKeyForInt(tid int64, splitNum []int) [][]byte {
 	return results
 }
 
-func generateIndexSplitKeyForInt(tid, idx int64, splitNum []int) [][]byte {
-	results := make([][]byte, 0, len(splitNum))
-	for _, num := range splitNum {
-		d := new(types.Datum)
-		d.SetInt64(int64(num))
-		b, err := codec.EncodeKey(nil, nil, *d)
-		if err != nil {
-			panic(err)
-		}
-		results = append(results, tablecodec.EncodeIndexSeekKey(tid, idx, b))
-	}
-	return results
-}
-
-type chunkSizeControlKit struct {
-	store   kv.Storage
-	dom     *domain.Domain
-	tk      *testkit.TestKit
-	client  *testSlowClient
-	cluster testutils.Cluster
-}
-
-func createChunkSizeControlKit(t *testing.T, sql string) (*chunkSizeControlKit, func()) {
-	// BootstrapSession is not thread-safe, so we have to prepare all resources in SetUp.
-	kit := new(chunkSizeControlKit)
-	kit.client = &testSlowClient{regionDelay: make(map[uint64]time.Duration)}
-
-	var err error
-	kit.store, err = mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c testutils.Cluster) {
-			mockstore.BootstrapWithSingleStore(c)
-			kit.cluster = c
-		}),
-		mockstore.WithClientHijacker(func(c tikv.Client) tikv.Client {
-			kit.client.Client = c
-			return kit.client
-		}),
-	)
-	require.NoError(t, err)
-
-	// init domain
-	kit.dom, err = session.BootstrapSession(kit.store)
-	require.NoError(t, err)
-
-	// create the test table
-	kit.tk = testkit.NewTestKit(t, kit.store)
-	kit.tk.MustExec("use test")
-	kit.tk.MustExec(sql)
-	return kit, func() {
-		kit.dom.Close()
-		require.NoError(t, kit.store.Close())
-	}
-}
-
 func TestLimitAndTableScan(t *testing.T) {
 	t.Skip("not stable because coprocessor may result in goroutine leak")
 	kit, clean := createChunkSizeControlKit(t, "create table t (a int, primary key (a))")
@@ -227,4 +173,58 @@ func parseTimeCost(t *testing.T, line []interface{}) time.Duration {
 	d, err := time.ParseDuration(timeStr)
 	require.NoError(t, err)
 	return d
+}
+
+func generateIndexSplitKeyForInt(tid, idx int64, splitNum []int) [][]byte {
+	results := make([][]byte, 0, len(splitNum))
+	for _, num := range splitNum {
+		d := new(types.Datum)
+		d.SetInt64(int64(num))
+		b, err := codec.EncodeKey(nil, nil, *d)
+		if err != nil {
+			panic(err)
+		}
+		results = append(results, tablecodec.EncodeIndexSeekKey(tid, idx, b))
+	}
+	return results
+}
+
+type chunkSizeControlKit struct {
+	store   kv.Storage
+	dom     *domain.Domain
+	tk      *testkit.TestKit
+	client  *testSlowClient
+	cluster testutils.Cluster
+}
+
+func createChunkSizeControlKit(t *testing.T, sql string) (*chunkSizeControlKit, func()) {
+	// BootstrapSession is not thread-safe, so we have to prepare all resources in SetUp.
+	kit := new(chunkSizeControlKit)
+	kit.client = &testSlowClient{regionDelay: make(map[uint64]time.Duration)}
+
+	var err error
+	kit.store, err = mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			kit.cluster = c
+		}),
+		mockstore.WithClientHijacker(func(c tikv.Client) tikv.Client {
+			kit.client.Client = c
+			return kit.client
+		}),
+	)
+	require.NoError(t, err)
+
+	// init domain
+	kit.dom, err = session.BootstrapSession(kit.store)
+	require.NoError(t, err)
+
+	// create the test table
+	kit.tk = testkit.NewTestKit(t, kit.store)
+	kit.tk.MustExec("use test")
+	kit.tk.MustExec(sql)
+	return kit, func() {
+		kit.dom.Close()
+		require.NoError(t, kit.store.Close())
+	}
 }
