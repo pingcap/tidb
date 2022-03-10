@@ -865,7 +865,7 @@ func TestWriteLocal(t *testing.T) {
 }
 
 func TestLockTables(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Microsecond*500)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
