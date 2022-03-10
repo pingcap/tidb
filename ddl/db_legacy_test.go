@@ -1419,16 +1419,81 @@ func (s *testDBSuite4) TestComment(c *C) {
 
 	validComment := strings.Repeat("a", 1024)
 	invalidComment := strings.Repeat("b", 1025)
+	validTableComment := strings.Repeat("a", 2048)
+	invalidTableComment := strings.Repeat("b", 2049)
 
+	// test table comment
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("CREATE TABLE t (c integer) COMMENT = '" + validTableComment + "'")
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("CREATE TABLE t (c integer)")
+	tk.MustExec("ALTER TABLE t COMMENT = '" + validTableComment + "'")
+
+	// test column comment
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("CREATE TABLE t (c integer NOT NULL COMMENT '" + validComment + "')")
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("CREATE TABLE t (c integer)")
+	tk.MustExec("ALTER TABLE t ADD COLUMN c1 integer COMMENT '" + validComment + "'")
+
+	// test index comment
 	tk.MustExec("create table ct (c int, d int, e int, key (c) comment '" + validComment + "')")
 	tk.MustExec("create index i on ct (d) comment '" + validComment + "'")
 	tk.MustExec("alter table ct add key (e) comment '" + validComment + "'")
 
+	// test table partition comment
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("CREATE TABLE t (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (0) COMMENT '" + validComment + "')")
+	tk.MustExec("ALTER TABLE t ADD PARTITION (PARTITION p1 VALUES LESS THAN (1000000) COMMENT '" + validComment + "')")
+
+	// test table comment
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustGetErrCode("CREATE TABLE t (c integer) COMMENT = '"+invalidTableComment+"'", errno.ErrTooLongTableComment)
+	tk.MustExec("CREATE TABLE t (c integer)")
+	tk.MustGetErrCode("ALTER TABLE t COMMENT = '"+invalidTableComment+"'", errno.ErrTooLongTableComment)
+
+	// test column comment
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustGetErrCode("CREATE TABLE t (c integer NOT NULL COMMENT '"+invalidComment+"')", errno.ErrTooLongFieldComment)
+	tk.MustExec("CREATE TABLE t (c integer)")
+	tk.MustGetErrCode("ALTER TABLE t ADD COLUMN c1 integer COMMENT '"+invalidComment+"'", errno.ErrTooLongFieldComment)
+
+	// test index comment
 	tk.MustGetErrCode("create table ct1 (c int, key (c) comment '"+invalidComment+"')", errno.ErrTooLongIndexComment)
-	tk.MustGetErrCode("create index i1 on ct (d) comment '"+invalidComment+"b"+"'", errno.ErrTooLongIndexComment)
+	tk.MustGetErrCode("create index i1 on ct (d) comment '"+invalidComment+"'", errno.ErrTooLongIndexComment)
 	tk.MustGetErrCode("alter table ct add key (e) comment '"+invalidComment+"'", errno.ErrTooLongIndexComment)
 
+	// test table partition comment
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustGetErrCode("CREATE TABLE t (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (0) COMMENT '"+invalidComment+"')", errno.ErrTooLongTablePartitionComment)
+	tk.MustExec("CREATE TABLE t (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (0) COMMENT '" + validComment + "')")
+	tk.MustGetErrCode("ALTER TABLE t ADD PARTITION (PARTITION p1 VALUES LESS THAN (1000000) COMMENT '"+invalidComment+"')", errno.ErrTooLongTablePartitionComment)
+
 	tk.MustExec("set @@sql_mode=''")
+
+	// test table comment
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("CREATE TABLE t (c integer) COMMENT = '" + invalidTableComment + "'")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1628|Comment for table 't' is too long (max = 2048)"))
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("CREATE TABLE t (c integer)")
+	tk.MustExec("ALTER TABLE t COMMENT = '" + invalidTableComment + "'")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1628|Comment for table 't' is too long (max = 2048)"))
+
+	// test column comment
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("CREATE TABLE t (c integer NOT NULL COMMENT '" + invalidComment + "')")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1629|Comment for field 'c' is too long (max = 1024)"))
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("CREATE TABLE t (c integer)")
+	tk.MustExec("ALTER TABLE t ADD COLUMN c1 integer COMMENT '" + invalidComment + "'")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1629|Comment for field 'c1' is too long (max = 1024)"))
+
+	// test index comment
 	tk.MustExec("create table ct1 (c int, d int, e int, key (c) comment '" + invalidComment + "')")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1688|Comment for index 'c' is too long (max = 1024)"))

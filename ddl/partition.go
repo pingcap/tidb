@@ -595,7 +595,11 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 			}
 		}
 		comment, _ := def.Comment()
-		err := checkTooLongTable(def.Name)
+		comment, err := validateCommentLength(ctx.GetSessionVars(), def.Name.L, &comment, dbterror.ErrTooLongTablePartitionComment)
+		if err != nil {
+			return nil, err
+		}
+		err = checkTooLongTable(def.Name)
 		if err != nil {
 			return nil, err
 		}
