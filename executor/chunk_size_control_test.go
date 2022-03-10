@@ -175,6 +175,7 @@ func parseTimeCost(t *testing.T, line []interface{}) time.Duration {
 	return d
 }
 
+// nolint: unused, deadcode
 func generateIndexSplitKeyForInt(tid, idx int64, splitNum []int) [][]byte {
 	results := make([][]byte, 0, len(splitNum))
 	for _, num := range splitNum {
@@ -189,6 +190,7 @@ func generateIndexSplitKeyForInt(tid, idx int64, splitNum []int) [][]byte {
 	return results
 }
 
+// nolint: unused, deadcode
 type chunkSizeControlKit struct {
 	store   kv.Storage
 	dom     *domain.Domain
@@ -197,6 +199,7 @@ type chunkSizeControlKit struct {
 	cluster testutils.Cluster
 }
 
+// nolint: unused, deadcode
 func createChunkSizeControlKit(t *testing.T, sql string) (*chunkSizeControlKit, func()) {
 	// BootstrapSession is not thread-safe, so we have to prepare all resources in SetUp.
 	kit := new(chunkSizeControlKit)
