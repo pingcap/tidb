@@ -285,14 +285,9 @@
       {
         "SQL": "explain format = 'brief' select * from t order by a",
         "Result": [
-          "Sort 10005.00 root  test.t.a",
-          "└─PartitionUnion 10005.00 root  ",
-          "  ├─TableReader 10000.00 root  data:TableFullScan",
-          "  │ └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "  ├─TableReader 1.00 root  data:TableFullScan",
-          "  │ └─TableFullScan 1.00 cop[tikv] table:t, partition:p1 keep order:false",
-          "  └─TableReader 4.00 root  data:TableFullScan",
-          "    └─TableFullScan 4.00 cop[tikv] table:t, partition:p2 keep order:false"
+          "Sort 10000.00 root  test.t.a",
+          "└─TableReader 10000.00 root partition:all data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -309,18 +304,9 @@
         "SQL": "explain format = 'brief' select * from t order by a limit 3",
         "Result": [
           "TopN 3.00 root  test.t.a, offset:0, count:3",
-          "└─PartitionUnion 7.00 root  ",
-          "  ├─TopN 3.00 root  test.t.a, offset:0, count:3",
-          "  │ └─TableReader 3.00 root  data:TopN",
-          "  │   └─TopN 3.00 cop[tikv]  test.t.a, offset:0, count:3",
-          "  │     └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "  ├─TopN 1.00 root  test.t.a, offset:0, count:3",
-          "  │ └─TableReader 1.00 root  data:TableFullScan",
-          "  │   └─TableFullScan 1.00 cop[tikv] table:t, partition:p1 keep order:false",
-          "  └─TopN 3.00 root  test.t.a, offset:0, count:3",
-          "    └─TableReader 3.00 root  data:TopN",
-          "      └─TopN 3.00 cop[tikv]  test.t.a, offset:0, count:3",
-          "        └─TableFullScan 4.00 cop[tikv] table:t, partition:p2 keep order:false"
+          "└─TableReader 3.00 root partition:all data:TopN",
+          "  └─TopN 3.00 cop[tikv]  test.t.a, offset:0, count:3",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
