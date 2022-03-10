@@ -249,7 +249,7 @@ func (d *ddl) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64,
 	configWaitTime := tiflashCheckPendingTablesWaitTime
 	failpoint.Inject("FastFailCheckTiFlashPendingTables", func(value failpoint.Value) {
 		configRetry = value.(int)
-		configWaitTime = time.Second
+		configWaitTime = time.Millisecond * 200
 	})
 
 	for retry := 0; retry < configRetry; retry += 1 {

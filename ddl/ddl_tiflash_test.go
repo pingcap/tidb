@@ -841,12 +841,12 @@ func TestTiFlashBatchRateLimiter(t *testing.T) {
 	tk.MustExec("alter database tiflash_ddl_limit set tiflash replica 1")
 	tk.MustExec(fmt.Sprintf("create table tiflash_ddl_limit.t%v(z int)", threshold))
 	// The following statement shall fail, because it reaches limit
-	timeOut, err := execWithTimeout(t, tk, time.Second*3, "alter database tiflash_ddl_limit set tiflash replica 1")
+	timeOut, err := execWithTimeout(t, tk, time.Second*1, "alter database tiflash_ddl_limit set tiflash replica 1")
 	require.NoError(t, err)
 	require.True(t, timeOut)
 
 	// There must be one table with no TiFlashReplica.
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 2)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
 	check := func(expected int, total int) {
 		cnt := 0
 		for i := 0; i < total; i++ {
@@ -860,34 +860,31 @@ func TestTiFlashBatchRateLimiter(t *testing.T) {
 	}
 	check(2, 3)
 	// Wait until timed context quit
-	time.Sleep(time.Second * 2)
 
 	// If we exec in another session, it will not trigger limit. Since DefTiDBBatchPendingTiFlashCount is more than 3.
 	tk2 := testkit.NewTestKit(t, s.store)
 	tk2.MustExec("alter database tiflash_ddl_limit set tiflash replica 1")
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 1)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
 	check(3, 3)
-	time.Sleep(time.Second * 2)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/FastFailCheckTiFlashPendingTables", `return(2)`))
+	loop := 3
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/FastFailCheckTiFlashPendingTables", fmt.Sprintf("return(%v)", loop)))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/FastFailCheckTiFlashPendingTables"))
 	}()
-	// This DDL can finish in 3 seconds, since we will force trigger its DDL to update schema cache.
+	// We will force trigger its DDL to update schema cache.
 	tk.MustExec(fmt.Sprintf("create table tiflash_ddl_limit.t%v(z int)", threshold+1))
-	timeOut, err = execWithTimeout(t, tk, time.Second*4, "alter database tiflash_ddl_limit set tiflash replica 1")
+	timeOut, err = execWithTimeout(t, tk, time.Millisecond*time.Duration(200*(loop+1)), "alter database tiflash_ddl_limit set tiflash replica 1")
 	require.NoError(t, err)
 	require.False(t, timeOut)
 	check(4, 4)
-	time.Sleep(time.Second * 2)
 
-	// However, we still have force check next time.
+	// However, forceCheck is true, so we will still enter try loop.
 	tk.MustExec(fmt.Sprintf("create table tiflash_ddl_limit.t%v(z int)", threshold+2))
-	timeOut, err = execWithTimeout(t, tk, time.Millisecond*500, "alter database tiflash_ddl_limit set tiflash replica 1")
+	timeOut, err = execWithTimeout(t, tk, time.Millisecond*200, "alter database tiflash_ddl_limit set tiflash replica 1")
 	require.NoError(t, err)
 	require.True(t, timeOut)
 	check(4, 5)
-	time.Sleep(time.Second * 2)
 
 	// Retrigger, but close session before the whole job ends.
 	var wg util.WaitGroupWrapper
@@ -896,7 +893,7 @@ func TestTiFlashBatchRateLimiter(t *testing.T) {
 		tk.Session().Close()
 		logutil.BgLogger().Info("session closed")
 	})
-	timeOut, err = execWithTimeout(t, tk, time.Second*4, "alter database tiflash_ddl_limit set tiflash replica 1")
+	timeOut, err = execWithTimeout(t, tk, time.Second*2, "alter database tiflash_ddl_limit set tiflash replica 1")
 	require.NoError(t, err)
 	require.False(t, timeOut)
 	check(5, 5)
