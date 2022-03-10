@@ -977,7 +977,7 @@ func PostTiFlashAccelerateSchedule(ctx context.Context, tableID int64) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	logutil.BgLogger().Info("PostTiFlashAccelerateSchedule", zap.String("tableID", tableID))
+	logutil.BgLogger().Info("PostTiFlashAccelerateSchedule", zap.Int64("tableID", tableID))
 	return is.tiflashPlacementManager.PostAccelerateSchedule(ctx, tableID)
 }
 
