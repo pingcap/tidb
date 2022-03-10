@@ -38,9 +38,9 @@ type TableReplace struct {
 }
 
 type SchemasReplace struct {
-	DbMap      map[OldID]NewID
-	TableIDMap map[OldID]TableReplace
-	RewriteTS  uint64
+	DbMap     map[OldID]NewID
+	TableMap  map[OldID]TableReplace
+	RewriteTS uint64
 }
 
 // NewSchemasReplace creates a SchemasReplace struct.
@@ -50,9 +50,9 @@ func NewSchemasReplace(
 	restoreTS uint64,
 ) *SchemasReplace {
 	return &SchemasReplace{
-		DbMap:      dbMap,
-		TableIDMap: tblMap,
-		RewriteTS:  restoreTS,
+		DbMap:     dbMap,
+		TableMap:  tblMap,
+		RewriteTS: restoreTS,
 	}
 }
 
@@ -136,7 +136,7 @@ func (sr *SchemasReplace) rewriteKeyForTable(key []byte, cf string) ([]byte, err
 		return nil, nil
 	}
 
-	tableReplace, exist := sr.TableIDMap[tableID]
+	tableReplace, exist := sr.TableMap[tableID]
 	if !exist {
 		// It represents new created table if not exist in map.
 		return nil, nil
@@ -157,7 +157,7 @@ func (sr *SchemasReplace) rewriteTable(value []byte) ([]byte, error) {
 	}
 
 	// update table ID
-	tableReplace, exist := sr.TableIDMap[tableInfo.ID]
+	tableReplace, exist := sr.TableMap[tableInfo.ID]
 	if !exist {
 		return nil, nil
 	}
@@ -181,7 +181,7 @@ func (sr *SchemasReplace) rewriteTable(value []byte) ([]byte, error) {
 	partitions := tableInfo.GetPartitionInfo()
 	if partitions != nil {
 		for i, tbl := range partitions.Definitions {
-			tableReplace, exist := sr.TableIDMap[tbl.ID]
+			tableReplace, exist := sr.TableMap[tbl.ID]
 			if !exist {
 				continue
 			}

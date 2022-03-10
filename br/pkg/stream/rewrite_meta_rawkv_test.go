@@ -39,5 +39,4 @@ func (s *testRewriteMetaRawKvSuite) TestRewriteValueForTable(c *C) {
 	v, err = ProduceValue(tableName, int64(newTableID))
 	c.Assert(err, Equals, nil)
 	log.Info("new-value", zap.Int("value-len", len(v)), zap.ByteString("new-value", v), logutil.Key("new-value", v))
-	c.Assert(1, Equals, 2)
 }

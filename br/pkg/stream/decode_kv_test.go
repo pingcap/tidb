@@ -21,8 +21,10 @@ var _ = Suite(&testDecodeKVSuite{})
 func (s *testDecodeKVSuite) TestDecodeKVEntry(c *C) {
 	var (
 		pairs = map[string]string{
-			"db": "tidb",
-			"kv": "tikv",
+			"db":       "tidb",
+			"kv":       "tikv",
+			"company":  "PingCAP",
+			"employee": "Zak",
 		}
 		buff = make([]byte, 0)
 	)

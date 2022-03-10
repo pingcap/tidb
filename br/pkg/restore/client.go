@@ -1539,19 +1539,6 @@ func (rc *Client) initSchemasReplaceForDDL(tables *map[int64]*metautil.Table) (*
 		tableIDmap[t.Info.ID] = stream.TableReplace{TableID: newTableInfo.ID, IndexMap: indexMap}
 	}
 
-	// for id, db := range oldDBs {
-	// 	log.Info("old db", zap.Int64("id", id), zap.String("dbname", db.Name.String()), zap.Int64("dbID", db.ID))
-	// }
-	// for id, table := range oldTables {
-	// 	log.Info("old table", zap.Int64("id", id), zap.String("tabletame", table.Name.String()), zap.Int64("tableID", table.ID))
-	// }
-	// for dbname, db := range newSchemas {
-	// 	log.Info("new db", zap.String("dbname", dbname), zap.String("dbname", db.DbInfo.Name.String()), zap.Int64("dbID", db.DbInfo.ID))
-	// 	for tablename, table := range db.Tables {
-	// 		log.Info("new table", zap.String("tablename", tablename), zap.String("tablename", table.Name.String()), zap.Int64("tableID", table.ID))
-	// 	}
-	// }
-
 	return stream.NewSchemasReplace(dbIDmap, tableIDmap, rc.currentTS), nil
 }
 
