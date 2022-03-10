@@ -1,3 +1,4 @@
+set @@sql_mode='';
 drop table if exists t;
 set names utf8mb4;
 create table t (a varchar(255) charset utf8mb4);
@@ -23,10 +24,6 @@ drop table if exists t;
 set names utf8mb4;
 create table t (a varchar(255) charset gbk, b varchar(255) charset utf8mb4, c varchar(255) charset binary);
 insert into t values ('一', '一', '一');
-set @@character_set_results = null;
-select * from t;
-a	b	c
-һ	一	一
 set @@character_set_results = BINARY;
 select * from t;
 a	b	c
@@ -40,6 +37,8 @@ select * from t;
 a	b	c
 一	一	一
 set @@character_set_results = 'utf8mb4';
+set @@character_set_results = null;
+Error 1231: Variable 'character_set_results' can't be set to the value of 'NULL'
 drop table if exists t;
 create table t (a varchar(255) charset utf8mb4);
 set @@character_set_client = 'gbk';

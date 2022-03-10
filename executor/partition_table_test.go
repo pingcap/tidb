@@ -1828,13 +1828,20 @@ func TestPartitionPruningInTransaction(t *testing.T) {
 	tk.MustExec("create database test_pruning_transaction")
 	defer tk.MustExec(`drop database test_pruning_transaction`)
 	tk.MustExec("use test_pruning_transaction")
-	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec(`create table t(a int, b int) partition by range(a) (partition p0 values less than(3), partition p1 values less than (5), partition p2 values less than(11))`)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
 	tk.MustExec(`begin`)
 	tk.MustPartitionByList(`select * from t`, []string{"p0", "p1", "p2"})
 	tk.MustPartitionByList(`select * from t where a > 3`, []string{"p1", "p2"}) // partition pruning can work in transactions
 	tk.MustPartitionByList(`select * from t where a > 7`, []string{"p2"})
 	tk.MustExec(`rollback`)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec(`begin`)
+	tk.MustPartition(`select * from t`, "all")
+	tk.MustPartition(`select * from t where a > 3`, "p1,p2") // partition pruning can work in transactions
+	tk.MustPartition(`select * from t where a > 7`, "p2")
+	tk.MustExec(`rollback`)
+	tk.MustExec("set @@tidb_partition_prune_mode = default")
 }
 
 func TestIssue25253(t *testing.T) {
@@ -2983,8 +2990,8 @@ partition p2 values less than (11))`)
 	}
 
 	partitionModes := []string{
-		"'dynamic-only'",
-		"'static-only'",
+		"'dynamic'",
+		"'static'",
 	}
 	testCases := []func(){
 		optimisticTableReader,
@@ -3261,4 +3268,333 @@ func TestIssue26251(t *testing.T) {
 	// Clean up
 	<-ch
 	tk2.MustExec("rollback")
+}
+
+func TestLeftJoinForUpdate(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("create database TestLeftJoinForUpdate")
+	defer tk1.MustExec("drop database TestLeftJoinForUpdate")
+	tk1.MustExec("use TestLeftJoinForUpdate")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use TestLeftJoinForUpdate")
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use TestLeftJoinForUpdate")
+
+	tk1.MustExec("drop table if exists nt, pt")
+	tk1.MustExec("create table nt (id int, col varchar(32), primary key (id))")
+	tk1.MustExec("create table pt (id int, col varchar(32), primary key (id)) partition by hash(id) partitions 4")
+
+	resetData := func() {
+		tk1.MustExec("truncate table nt")
+		tk1.MustExec("truncate table pt")
+		tk1.MustExec("insert into nt values (1, 'hello')")
+		tk1.MustExec("insert into pt values (2, 'test')")
+	}
+
+	// ========================== First round of test ==================
+	// partition table left join normal table.
+	// =================================================================
+	resetData()
+	ch := make(chan int, 10)
+	tk1.MustExec("begin pessimistic")
+	// No union scan
+	tk1.MustQuery("select * from pt left join nt on pt.id = nt.id for update").Check(testkit.Rows("2 test <nil> <nil>"))
+	go func() {
+		// Check the key is locked.
+		tk2.MustExec("update pt set col = 'xxx' where id = 2")
+		ch <- 2
+	}()
+
+	// Union scan
+	tk1.MustExec("insert into pt values (1, 'world')")
+	tk1.MustQuery("select * from pt left join nt on pt.id = nt.id for update").Sort().Check(testkit.Rows("1 world 1 hello", "2 test <nil> <nil>"))
+	go func() {
+		// Check the key is locked.
+		tk3.MustExec("update nt set col = 'yyy' where id = 1")
+		ch <- 3
+	}()
+
+	// Give chance for the goroutines to run first.
+	time.Sleep(80 * time.Millisecond)
+	ch <- 1
+	tk1.MustExec("rollback")
+
+	checkOrder := func() {
+		require.Equal(t, <-ch, 1)
+		v1 := <-ch
+		v2 := <-ch
+		require.True(t, (v1 == 2 && v2 == 3) || (v1 == 3 && v2 == 2))
+	}
+	checkOrder()
+
+	// ========================== Another round of test ==================
+	// normal table left join partition table.
+	// ===================================================================
+	resetData()
+	tk1.MustExec("begin pessimistic")
+	// No union scan
+	tk1.MustQuery("select * from nt left join pt on pt.id = nt.id for update").Check(testkit.Rows("1 hello <nil> <nil>"))
+
+	// Union scan
+	tk1.MustExec("insert into pt values (1, 'world')")
+	tk1.MustQuery("select * from nt left join pt on pt.id = nt.id for update").Check(testkit.Rows("1 hello 1 world"))
+	go func() {
+		tk2.MustExec("replace into pt values (1, 'aaa')")
+		ch <- 2
+	}()
+	go func() {
+		tk3.MustExec("update nt set col = 'bbb' where id = 1")
+		ch <- 3
+	}()
+	time.Sleep(80 * time.Millisecond)
+	ch <- 1
+	tk1.MustExec("rollback")
+	checkOrder()
+}
+
+func TestIssue31024(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("create database TestIssue31024")
+	defer tk1.MustExec("drop database TestIssue31024")
+	tk1.MustExec("use TestIssue31024")
+	tk1.MustExec("create table t1 (c_datetime datetime, c1 int, c2 int, primary key (c_datetime), key(c1), key(c2))" +
+		" partition by range (to_days(c_datetime)) " +
+		"( partition p0 values less than (to_days('2020-02-01'))," +
+		" partition p1 values less than (to_days('2020-04-01'))," +
+		" partition p2 values less than (to_days('2020-06-01'))," +
+		" partition p3 values less than maxvalue)")
+	tk1.MustExec("create table t2 (c_datetime datetime, unique key(c_datetime))")
+	tk1.MustExec("insert into t1 values ('2020-06-26 03:24:00', 1, 1), ('2020-02-21 07:15:33', 2, 2), ('2020-04-27 13:50:58', 3, 3)")
+	tk1.MustExec("insert into t2 values ('2020-01-10 09:36:00'), ('2020-02-04 06:00:00'), ('2020-06-12 03:45:18')")
+	tk1.MustExec("SET GLOBAL tidb_txn_mode = 'pessimistic'")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use TestIssue31024")
+
+	ch := make(chan int, 10)
+	tk1.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk1.MustExec("begin pessimistic")
+	tk1.MustQuery("select /*+ use_index_merge(t1) */ * from t1 join t2 on t1.c_datetime >= t2.c_datetime where t1.c1 < 10 or t1.c2 < 10 for update")
+
+	go func() {
+		// Check the key is locked.
+		tk2.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+		tk2.MustExec("begin pessimistic")
+		tk2.MustExec("update t1 set c_datetime = '2020-06-26 03:24:00' where c1 = 1")
+		ch <- 2
+	}()
+
+	// Give chance for the goroutines to run first.
+	time.Sleep(80 * time.Millisecond)
+	ch <- 1
+	tk1.MustExec("rollback")
+
+	require.Equal(t, <-ch, 1)
+	require.Equal(t, <-ch, 2)
+
+	tk2.MustExec("rollback")
+}
+
+func TestIssue27346(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("create database TestIssue27346")
+	defer tk1.MustExec("drop database TestIssue27346")
+	tk1.MustExec("use TestIssue27346")
+
+	tk1.MustExec("set @@tidb_enable_index_merge=1,@@tidb_partition_prune_mode='dynamic'")
+
+	tk1.MustExec("DROP TABLE IF EXISTS `tbl_18`")
+	tk1.MustExec("CREATE TABLE `tbl_18` (`col_119` binary(16) NOT NULL DEFAULT 'skPoKiwYUi',`col_120` int(10) unsigned NOT NULL,`col_121` timestamp NOT NULL,`col_122` double NOT NULL DEFAULT '3937.1887880628115',`col_123` bigint(20) NOT NULL DEFAULT '3550098074891542725',PRIMARY KEY (`col_123`,`col_121`,`col_122`,`col_120`) CLUSTERED,UNIQUE KEY `idx_103` (`col_123`,`col_119`,`col_120`),UNIQUE KEY `idx_104` (`col_122`,`col_120`),UNIQUE KEY `idx_105` (`col_119`,`col_120`),KEY `idx_106` (`col_121`,`col_120`,`col_122`,`col_119`),KEY `idx_107` (`col_121`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci PARTITION BY HASH( `col_120` ) PARTITIONS 3")
+	tk1.MustExec("INSERT INTO tbl_18 (`col_119`, `col_120`, `col_121`, `col_122`, `col_123`) VALUES (X'736b506f4b6977595569000000000000', 672436701, '1974-02-24 00:00:00', 3937.1887880628115e0, -7373106839136381229), (X'736b506f4b6977595569000000000000', 2637316689, '1993-10-29 00:00:00', 3937.1887880628115e0, -4522626077860026631), (X'736b506f4b6977595569000000000000', 831809724, '1995-11-20 00:00:00', 3937.1887880628115e0, -4426441253940231780), (X'736b506f4b6977595569000000000000', 1588592628, '2001-03-28 00:00:00', 3937.1887880628115e0, 1329207475772244999), (X'736b506f4b6977595569000000000000', 3908038471, '2031-06-06 00:00:00', 3937.1887880628115e0, -6562815696723135786), (X'736b506f4b6977595569000000000000', 1674237178, '2001-10-24 00:00:00', 3937.1887880628115e0, -6459065549188938772), (X'736b506f4b6977595569000000000000', 3507075493, '2010-03-25 00:00:00', 3937.1887880628115e0, -4329597025765326929), (X'736b506f4b6977595569000000000000', 1276461709, '2019-07-20 00:00:00', 3937.1887880628115e0, 3550098074891542725)")
+
+	tk1.MustQuery("select col_120,col_122,col_123 from tbl_18 where tbl_18.col_122 = 4763.320888074281 and not( tbl_18.col_121 in ( '2032-11-01' , '1975-05-21' , '1994-05-16' , '1984-01-15' ) ) or not( tbl_18.col_121 >= '2008-10-24' ) order by tbl_18.col_119,tbl_18.col_120,tbl_18.col_121,tbl_18.col_122,tbl_18.col_123 limit 919 for update").Sort().Check(testkit.Rows(
+		"1588592628 3937.1887880628115 1329207475772244999",
+		"1674237178 3937.1887880628115 -6459065549188938772",
+		"2637316689 3937.1887880628115 -4522626077860026631",
+		"672436701 3937.1887880628115 -7373106839136381229",
+		"831809724 3937.1887880628115 -4426441253940231780"))
+	tk1.MustQuery("select /*+ use_index_merge( tbl_18 ) */ col_120,col_122,col_123 from tbl_18 where tbl_18.col_122 = 4763.320888074281 and not( tbl_18.col_121 in ( '2032-11-01' , '1975-05-21' , '1994-05-16' , '1984-01-15' ) ) or not( tbl_18.col_121 >= '2008-10-24' ) order by tbl_18.col_119,tbl_18.col_120,tbl_18.col_121,tbl_18.col_122,tbl_18.col_123 limit 919 for update").Sort().Check(testkit.Rows(
+		"1588592628 3937.1887880628115 1329207475772244999",
+		"1674237178 3937.1887880628115 -6459065549188938772",
+		"2637316689 3937.1887880628115 -4522626077860026631",
+		"672436701 3937.1887880628115 -7373106839136381229",
+		"831809724 3937.1887880628115 -4426441253940231780"))
+}
+
+func TestPartitionTableExplain(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database TestPartitionTableExplain")
+	tk.MustExec("use TestPartitionTableExplain")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	tk.MustExec(`create table t (a int primary key, b int, key (b)) partition by hash(a) (partition P0, partition p1, partition P2)`)
+	tk.MustExec(`create table t2 (a int, b int)`)
+	tk.MustExec(`insert into t values (1,1),(2,2),(3,3)`)
+	tk.MustExec(`insert into t2 values (1,1),(2,2),(3,3)`)
+	tk.MustExec(`analyze table t`)
+	tk.MustExec(`analyze table t2`)
+	tk.MustQuery(`explain format = 'brief' select * from t`).Check(testkit.Rows(
+		"PartitionUnion 3.00 root  ",
+		"├─TableReader 1.00 root  data:TableFullScan",
+		"│ └─TableFullScan 1.00 cop[tikv] table:t, partition:P0 keep order:false",
+		"├─TableReader 1.00 root  data:TableFullScan",
+		"│ └─TableFullScan 1.00 cop[tikv] table:t, partition:p1 keep order:false",
+		"└─TableReader 1.00 root  data:TableFullScan",
+		"  └─TableFullScan 1.00 cop[tikv] table:t, partition:P2 keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t partition(P0,p1)`).Check(testkit.Rows(
+		"PartitionUnion 2.00 root  ",
+		"├─TableReader 1.00 root  data:TableFullScan",
+		"│ └─TableFullScan 1.00 cop[tikv] table:t, partition:P0 keep order:false",
+		"└─TableReader 1.00 root  data:TableFullScan",
+		"  └─TableFullScan 1.00 cop[tikv] table:t, partition:p1 keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 1`).Check(testkit.Rows("Point_Get 1.00 root table:t, partition:p1 handle:1"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 2`).Check(testkit.Rows("Point_Get 1.00 root table:t, partition:P2 handle:2"))
+	// above ^^ is enough for Issue32719, the below vv for completeness
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 1 OR a = 2`).Check(testkit.Rows(
+		"PartitionUnion 2.00 root  ",
+		"├─Batch_Point_Get 1.00 root table:t handle:[1 2], keep order:false, desc:false",
+		"└─Batch_Point_Get 1.00 root table:t handle:[1 2], keep order:false, desc:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a IN (2,3,4)`).Check(testkit.Rows("Batch_Point_Get 3.00 root table:t handle:[2 3 4], keep order:false, desc:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a IN (2,3)`).Check(testkit.Rows("Batch_Point_Get 2.00 root table:t handle:[2 3], keep order:false, desc:false"))
+	// above ^^ is for completeness, the below vv is enough for Issue32719
+	tk.MustQuery(`explain format = 'brief' select * from t where b = 1`).Check(testkit.Rows(
+		"PartitionUnion 1.00 root  ",
+		"├─IndexReader 1.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:P0, index:b(b) range:[1,1], keep order:false",
+		"├─IndexReader 1.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:b(b) range:[1,1], keep order:false",
+		"└─IndexReader 1.00 root  index:IndexRangeScan",
+		"  └─IndexRangeScan 1.00 cop[tikv] table:t, partition:P2, index:b(b) range:[1,1], keep order:false"))
+	// The below vvv is for completeness
+	tk.MustQuery(`explain format = 'brief' select * from t where b = 2`).Check(testkit.Rows(
+		"PartitionUnion 1.00 root  ",
+		"├─IndexReader 1.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:P0, index:b(b) range:[2,2], keep order:false",
+		"├─IndexReader 1.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:b(b) range:[2,2], keep order:false",
+		"└─IndexReader 1.00 root  index:IndexRangeScan",
+		"  └─IndexRangeScan 1.00 cop[tikv] table:t, partition:P2, index:b(b) range:[2,2], keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where b = 1 OR b = 2`).Check(testkit.Rows(
+		"PartitionUnion 2.00 root  ",
+		"├─IndexReader 1.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:P0, index:b(b) range:[1,2], keep order:false",
+		"├─IndexReader 1.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:b(b) range:[1,2], keep order:false",
+		"└─IndexReader 1.00 root  index:IndexRangeScan",
+		"  └─IndexRangeScan 1.00 cop[tikv] table:t, partition:P2, index:b(b) range:[1,2], keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where b IN (2,3,4)`).Check(testkit.Rows(
+		"PartitionUnion 2.00 root  ",
+		"├─IndexReader 1.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:P0, index:b(b) range:[2,2], [3,3], [4,4], keep order:false",
+		"├─IndexReader 1.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:b(b) range:[2,2], [3,3], [4,4], keep order:false",
+		"└─IndexReader 1.00 root  index:IndexRangeScan",
+		"  └─IndexRangeScan 1.00 cop[tikv] table:t, partition:P2, index:b(b) range:[2,2], [3,3], [4,4], keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where b IN (2,3)`).Check(testkit.Rows(
+		"PartitionUnion 2.00 root  ",
+		"├─IndexReader 1.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:P0, index:b(b) range:[2,2], [3,3], keep order:false",
+		"├─IndexReader 1.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:b(b) range:[2,2], [3,3], keep order:false",
+		"└─IndexReader 1.00 root  index:IndexRangeScan",
+		"  └─IndexRangeScan 1.00 cop[tikv] table:t, partition:P2, index:b(b) range:[2,2], [3,3], keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t,t2 where t2.a = 1 and t2.b = t.b`).Check(testkit.Rows(
+		"Projection 1.00 root  testpartitiontableexplain.t.a, testpartitiontableexplain.t.b, testpartitiontableexplain.t2.a, testpartitiontableexplain.t2.b",
+		"└─HashJoin 1.00 root  inner join, equal:[eq(testpartitiontableexplain.t2.b, testpartitiontableexplain.t.b)]",
+		"  ├─TableReader(Build) 1.00 root  data:Selection",
+		"  │ └─Selection 1.00 cop[tikv]  eq(testpartitiontableexplain.t2.a, 1), not(isnull(testpartitiontableexplain.t2.b))",
+		"  │   └─TableFullScan 3.00 cop[tikv] table:t2 keep order:false",
+		"  └─PartitionUnion(Probe) 3.00 root  ",
+		"    ├─IndexReader 1.00 root  index:IndexFullScan",
+		"    │ └─IndexFullScan 1.00 cop[tikv] table:t, partition:P0, index:b(b) keep order:false",
+		"    ├─IndexReader 1.00 root  index:IndexFullScan",
+		"    │ └─IndexFullScan 1.00 cop[tikv] table:t, partition:p1, index:b(b) keep order:false",
+		"    └─IndexReader 1.00 root  index:IndexFullScan",
+		"      └─IndexFullScan 1.00 cop[tikv] table:t, partition:P2, index:b(b) keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t partition (p1),t2 where t2.a = 1 and t2.b = t.b`).Check(testkit.Rows(
+		"IndexJoin 1.00 root  inner join, inner:IndexReader, outer key:testpartitiontableexplain.t2.b, inner key:testpartitiontableexplain.t.b, equal cond:eq(testpartitiontableexplain.t2.b, testpartitiontableexplain.t.b)",
+		"├─TableReader(Build) 1.00 root  data:Selection",
+		"│ └─Selection 1.00 cop[tikv]  eq(testpartitiontableexplain.t2.a, 1), not(isnull(testpartitiontableexplain.t2.b))",
+		"│   └─TableFullScan 3.00 cop[tikv] table:t2 keep order:false",
+		"└─IndexReader(Probe) 1.00 root  index:Selection",
+		"  └─Selection 1.00 cop[tikv]  not(isnull(testpartitiontableexplain.t.b))",
+		"    └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:b(b) range: decided by [eq(testpartitiontableexplain.t.b, testpartitiontableexplain.t2.b)], keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t,t2 where t2.a = 1 and t2.b = t.b and t.a = 1`).Check(testkit.Rows(
+		"HashJoin 1.00 root  inner join, equal:[eq(testpartitiontableexplain.t.b, testpartitiontableexplain.t2.b)]",
+		"├─TableReader(Build) 1.00 root  data:Selection",
+		"│ └─Selection 1.00 cop[tikv]  eq(testpartitiontableexplain.t2.a, 1), not(isnull(testpartitiontableexplain.t2.b))",
+		"│   └─TableFullScan 3.00 cop[tikv] table:t2 keep order:false",
+		"└─Selection(Probe) 1.00 root  not(isnull(testpartitiontableexplain.t.b))",
+		"  └─Point_Get 1.00 root table:t, partition:p1 handle:1"))
+
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec(`analyze table t`)
+	tk.MustQuery(`explain format = 'brief' select * from t`).Check(testkit.Rows(
+		"TableReader 3.00 root partition:all data:TableFullScan",
+		"└─TableFullScan 3.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t partition(P0,p1)`).Check(testkit.Rows(
+		"TableReader 3.00 root partition:P0,p1 data:TableFullScan",
+		"└─TableFullScan 3.00 cop[tikv] table:t keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 1`).Check(testkit.Rows("Point_Get 1.00 root table:t, partition:p1 handle:1"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 2`).Check(testkit.Rows("Point_Get 1.00 root table:t, partition:P2 handle:2"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a = 1 OR a = 2`).Check(testkit.Rows(
+		"TableReader 2.00 root partition:p1,P2 data:TableRangeScan",
+		"└─TableRangeScan 2.00 cop[tikv] table:t range:[1,1], [2,2], keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a IN (2,3,4)`).Check(testkit.Rows("Batch_Point_Get 3.00 root table:t handle:[2 3 4], keep order:false, desc:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where a IN (2,3)`).Check(testkit.Rows("Batch_Point_Get 2.00 root table:t handle:[2 3], keep order:false, desc:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where b = 1`).Check(testkit.Rows(
+		"IndexReader 1.00 root partition:all index:IndexRangeScan",
+		"└─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t partition (P0,p1) where b = 1`).Check(testkit.Rows(
+		"IndexReader 1.00 root partition:P0,p1 index:IndexRangeScan",
+		"└─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where b = 1 OR b = 2`).Check(testkit.Rows(
+		"IndexReader 2.00 root partition:all index:IndexRangeScan",
+		"└─IndexRangeScan 2.00 cop[tikv] table:t, index:b(b) range:[1,2], keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t partition (p1,P2) where b = 1 OR b = 2`).Check(testkit.Rows(
+		"IndexReader 2.00 root partition:p1,P2 index:IndexRangeScan",
+		"└─IndexRangeScan 2.00 cop[tikv] table:t, index:b(b) range:[1,2], keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where b IN (2,3,4)`).Check(testkit.Rows(
+		"IndexReader 2.00 root partition:all index:IndexRangeScan",
+		"└─IndexRangeScan 2.00 cop[tikv] table:t, index:b(b) range:[2,2], [3,3], [4,4], keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t where b IN (2,3)`).Check(testkit.Rows(
+		"IndexReader 2.00 root partition:all index:IndexRangeScan",
+		"└─IndexRangeScan 2.00 cop[tikv] table:t, index:b(b) range:[2,2], [3,3], keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t,t2 where t2.a = 1 and t2.b = t.b`).Check(testkit.Rows(
+		"Projection 1.00 root  testpartitiontableexplain.t.a, testpartitiontableexplain.t.b, testpartitiontableexplain.t2.a, testpartitiontableexplain.t2.b",
+		"└─IndexJoin 1.00 root  inner join, inner:IndexReader, outer key:testpartitiontableexplain.t2.b, inner key:testpartitiontableexplain.t.b, equal cond:eq(testpartitiontableexplain.t2.b, testpartitiontableexplain.t.b)",
+		"  ├─TableReader(Build) 1.00 root  data:Selection",
+		"  │ └─Selection 1.00 cop[tikv]  eq(testpartitiontableexplain.t2.a, 1), not(isnull(testpartitiontableexplain.t2.b))",
+		"  │   └─TableFullScan 3.00 cop[tikv] table:t2 keep order:false",
+		"  └─IndexReader(Probe) 1.00 root partition:all index:Selection",
+		"    └─Selection 1.00 cop[tikv]  not(isnull(testpartitiontableexplain.t.b))",
+		"      └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range: decided by [eq(testpartitiontableexplain.t.b, testpartitiontableexplain.t2.b)], keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t partition (p1),t2 where t2.a = 1 and t2.b = t.b`).Check(testkit.Rows(
+		"Projection 1.00 root  testpartitiontableexplain.t.a, testpartitiontableexplain.t.b, testpartitiontableexplain.t2.a, testpartitiontableexplain.t2.b",
+		"└─IndexJoin 1.00 root  inner join, inner:IndexReader, outer key:testpartitiontableexplain.t2.b, inner key:testpartitiontableexplain.t.b, equal cond:eq(testpartitiontableexplain.t2.b, testpartitiontableexplain.t.b)",
+		"  ├─TableReader(Build) 1.00 root  data:Selection",
+		"  │ └─Selection 1.00 cop[tikv]  eq(testpartitiontableexplain.t2.a, 1), not(isnull(testpartitiontableexplain.t2.b))",
+		"  │   └─TableFullScan 3.00 cop[tikv] table:t2 keep order:false",
+		"  └─IndexReader(Probe) 1.00 root partition:p1 index:Selection",
+		"    └─Selection 1.00 cop[tikv]  not(isnull(testpartitiontableexplain.t.b))",
+		"      └─IndexRangeScan 1.00 cop[tikv] table:t, index:b(b) range: decided by [eq(testpartitiontableexplain.t.b, testpartitiontableexplain.t2.b)], keep order:false"))
+	tk.MustQuery(`explain format = 'brief' select * from t,t2 where t2.a = 1 and t2.b = t.b and t.a = 1`).Check(testkit.Rows(
+		"HashJoin 1.00 root  inner join, equal:[eq(testpartitiontableexplain.t.b, testpartitiontableexplain.t2.b)]",
+		"├─TableReader(Build) 1.00 root  data:Selection",
+		"│ └─Selection 1.00 cop[tikv]  eq(testpartitiontableexplain.t2.a, 1), not(isnull(testpartitiontableexplain.t2.b))",
+		"│   └─TableFullScan 3.00 cop[tikv] table:t2 keep order:false",
+		"└─TableReader(Probe) 1.00 root partition:p1 data:Selection",
+		"  └─Selection 1.00 cop[tikv]  not(isnull(testpartitiontableexplain.t.b))",
+		"    └─TableRangeScan 1.00 cop[tikv] table:t range:[1,1], keep order:false"))
 }

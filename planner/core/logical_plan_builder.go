@@ -27,7 +27,6 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -55,6 +54,7 @@ import (
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
 )
@@ -2190,6 +2190,20 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 	return havingAggMapper, extractor.aggMapper, nil
 }
 
+func (b *PlanBuilder) extractAggFuncsInExprs(exprs []ast.ExprNode) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int) {
+	extractor := &AggregateFuncExtractor{skipAggMap: b.correlatedAggMapper}
+	for _, expr := range exprs {
+		expr.Accept(extractor)
+	}
+	aggList := extractor.AggFuncs
+	totalAggMapper := make(map[*ast.AggregateFuncExpr]int, len(aggList))
+
+	for i, agg := range aggList {
+		totalAggMapper[agg] = i
+	}
+	return aggList, totalAggMapper
+}
+
 func (b *PlanBuilder) extractAggFuncsInSelectFields(fields []*ast.SelectField) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int) {
 	extractor := &AggregateFuncExtractor{skipAggMap: b.correlatedAggMapper}
 	for _, f := range fields {
@@ -3166,7 +3180,7 @@ func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column [
 		}
 		if (dbName.L == "" || dbName.L == name.DBName.L) &&
 			(tblName.L == "" || tblName.L == name.TblName.L) &&
-			col.ID != model.ExtraHandleID {
+			col.ID != model.ExtraHandleID && col.ID != model.ExtraPidColID && col.ID != model.ExtraPhysTblID {
 			colName := &ast.ColumnNameExpr{
 				Name: &ast.ColumnName{
 					Schema: name.DBName,
@@ -3761,30 +3775,36 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 	}
 }
 
-// addExtraPIDColumn add an extra PID column for partition table.
+// AddExtraPhysTblIDColumn for partition table.
 // 'select ... for update' on a partition table need to know the partition ID
 // to construct the lock key, so this column is added to the chunk row.
-func (ds *DataSource) addExtraPIDColumn(info *extraPIDInfo) {
+// Also needed for checking against the sessions transaction buffer
+func (ds *DataSource) AddExtraPhysTblIDColumn() *expression.Column {
+	// Avoid adding multiple times (should never happen!)
+	cols := ds.TblCols
+	for i := len(cols) - 1; i >= 0; i-- {
+		if cols[i].ID == model.ExtraPhysTblID {
+			return cols[i]
+		}
+	}
 	pidCol := &expression.Column{
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
-		ID:       model.ExtraPidColID,
-		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraPartitionIdName),
+		ID:       model.ExtraPhysTblID,
+		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraPhysTblIdName),
 	}
 
-	ds.Columns = append(ds.Columns, model.NewExtraPartitionIDColInfo())
+	ds.Columns = append(ds.Columns, model.NewExtraPhysTblIDColInfo())
 	schema := ds.Schema()
 	schema.Append(pidCol)
 	ds.names = append(ds.names, &types.FieldName{
 		DBName:      ds.DBName,
 		TblName:     ds.TableInfo().Name,
-		ColName:     model.ExtraPartitionIdName,
-		OrigColName: model.ExtraPartitionIdName,
+		ColName:     model.ExtraPhysTblIdName,
+		OrigColName: model.ExtraPhysTblIdName,
 	})
 	ds.TblCols = append(ds.TblCols, pidCol)
-
-	info.Columns = append(info.Columns, pidCol)
-	info.TblIDs = append(info.TblIDs, ds.TableInfo().ID)
+	return pidCol
 }
 
 var (
@@ -3994,6 +4014,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if err != nil {
 		return nil, err
 	}
+	if tableHasDirtyContent(b.ctx, tableInfo) && tableInfo.Partition != nil && b.optFlag&flagPartitionProcessor == 0 {
+		// if partition table has dirty content and the partition prune mode is dynamic, do not read
+		// from TiFlash because TiFlash does not support virtual column `ExtraPhysTblID` yet
+		b.ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because partition table `" + tableInfo.Name.O + "` has uncommitted data when partition prune mode is dynamic.")
+		possiblePaths = filterOutTiFlashPaths(possiblePaths)
+	}
 	// Skip storage engine check for CreateView.
 	if b.capFlag&canExpandAST == 0 {
 		possiblePaths, err = filterPathByIsolationRead(b.ctx, possiblePaths, tblName, dbName)
@@ -4187,11 +4213,19 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	var result LogicalPlan = ds
 	dirty := tableHasDirtyContent(b.ctx, tableInfo)
-	if dirty || tableInfo.TempTableType == model.TempTableLocal {
+	if dirty || tableInfo.TempTableType == model.TempTableLocal || tableInfo.TableCacheStatusType == model.TableCacheStatusEnable {
 		us := LogicalUnionScan{handleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
+		if tableInfo.Partition != nil && b.optFlag&flagPartitionProcessor == 0 {
+			// Adding ExtraPhysTblIDCol for UnionScan (transaction buffer handling)
+			// Not using old static prune mode
+			// Single TableReader for all partitions, needs the PhysTblID from storage
+			_ = ds.AddExtraPhysTblIDColumn()
+		}
 		result = us
 	}
+
+	// Adding ExtraPhysTblIDCol for SelectLock (SELECT FOR UPDATE) is done when building SelectLock
 
 	if sessionVars.StmtCtx.TblInfo2UnionScan == nil {
 		sessionVars.StmtCtx.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
@@ -6392,7 +6426,7 @@ func (b *PlanBuilder) adjustCTEPlanOutputName(p LogicalPlan, def *ast.CommonTabl
 	}
 	if len(def.ColNameList) > 0 {
 		if len(def.ColNameList) != len(p.OutputNames()) {
-			return nil, ddl.ErrViewWrongList
+			return nil, dbterror.ErrViewWrongList
 		}
 		for i, n := range def.ColNameList {
 			outPutNames[i].ColName = n

@@ -116,15 +116,6 @@ const (
 	TiDBMemQuotaQuery      = "tidb_mem_quota_query" // Bytes.
 	TiDBMemQuotaApplyCache = "tidb_mem_quota_apply_cache"
 
-	// TODO: remove them below sometime, it should have only one Quota(TiDBMemQuotaQuery).
-
-	TiDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
-	TiDBMemQuotaMergeJoin         = "tidb_mem_quota_mergejoin"         // Bytes.
-	TiDBMemQuotaSort              = "tidb_mem_quota_sort"              // Bytes.
-	TiDBMemQuotaTopn              = "tidb_mem_quota_topn"              // Bytes.
-	TiDBMemQuotaIndexLookupReader = "tidb_mem_quota_indexlookupreader" // Bytes.
-	TiDBMemQuotaIndexLookupJoin   = "tidb_mem_quota_indexlookupjoin"   // Bytes.
-
 	// TiDBGeneralLog is used to log every query in the server in info level.
 	TiDBGeneralLog = "tidb_general_log"
 
@@ -420,10 +411,6 @@ const (
 	// TiDBEnablePointGetCache is used to control whether to enable the point get cache for special scenario.
 	TiDBEnablePointGetCache = "tidb_enable_point_get_cache"
 
-	// TiDBEnableAlterPlacement is used to control whether to enable alter table partition.
-	// Deprecated: It is removed and do not use it again
-	TiDBEnableAlterPlacement = "tidb_enable_alter_placement"
-
 	// TiDBPlacementMode is used to control the mode for placement
 	TiDBPlacementMode = "tidb_placement_mode"
 
@@ -534,10 +521,6 @@ const (
 	// TiDBPartitionPruneMode indicates the partition prune mode used.
 	TiDBPartitionPruneMode = "tidb_partition_prune_mode"
 
-	// TiDBSlowLogMasking is deprecated and a alias of TiDBRedactLog.
-	// Deprecated: use TiDBRedactLog instead.
-	TiDBSlowLogMasking = "tidb_slow_log_masking"
-
 	// TiDBRedactLog indicates that whether redact log.
 	TiDBRedactLog = "tidb_redact_log"
 
@@ -595,8 +578,6 @@ const (
 	// TiDBTopSQLMaxMetaCount indicates the max capacity of the collect meta per second.
 	TiDBTopSQLMaxMetaCount = "tidb_top_sql_max_meta_count"
 
-	// TiDBEnableGlobalTemporaryTable indicates whether to enable global temporary table
-	TiDBEnableGlobalTemporaryTable = "tidb_enable_global_temporary_table"
 	// TiDBEnableLocalTxn indicates whether to enable Local Txn.
 	TiDBEnableLocalTxn = "tidb_enable_local_txn"
 	// TiDBTSOClientBatchMaxWaitTime indicates the max value of the TSO Batch Wait interval time of PD client.
@@ -718,13 +699,6 @@ const (
 	DefWaitTimeout                        = 28800
 	DefTiDBMemQuotaApplyCache             = 32 << 20 // 32MB.
 	DefTiDBMemQuotaBindCache              = 64 << 20 // 64MB.
-	DefTiDBMemQuotaHashJoin               = 32 << 30 // 32GB.
-	DefTiDBMemQuotaMergeJoin              = 32 << 30 // 32GB.
-	DefTiDBMemQuotaSort                   = 32 << 30 // 32GB.
-	DefTiDBMemQuotaTopn                   = 32 << 30 // 32GB.
-	DefTiDBMemQuotaIndexLookupReader      = 32 << 30 // 32GB.
-	DefTiDBMemQuotaIndexLookupJoin        = 32 << 30 // 32GB.
-	DefTiDBMemQuotaDistSQL                = 32 << 30 // 32GB.
 	DefTiDBGeneralLog                     = false
 	DefTiDBPProfSQLCPU                    = 0
 	DefTiDBRetryLimit                     = 10
@@ -860,6 +834,5 @@ var (
 	EnableColumnTracking                  = atomic.NewBool(DefTiDBEnableColumnTracking)
 	StatsLoadSyncWait                     = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
 	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
-	GlobalSysdateIsNow                    = atomic.NewBool(DefSysdateIsNow)
 	MemQuotaBindCache                     = atomic.NewInt64(DefTiDBMemQuotaBindCache)
 )
