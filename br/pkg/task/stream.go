@@ -310,6 +310,7 @@ func (s *streamMgr) getTS(ctx context.Context) (uint64, error) {
 func (s *streamMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, error) {
 	dRanges, err := stream.BuildObserveDataRanges(
 		s.mgr.GetStorage(),
+		s.Cfg.FilterStr,
 		s.Cfg.TableFilter,
 		s.Cfg.StartTS,
 	)
