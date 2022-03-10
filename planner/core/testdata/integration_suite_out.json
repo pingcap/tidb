@@ -803,89 +803,55 @@
       {
         "SQL": "select /*+ use_index(t) */ * from t",
         "Plan": [
-          "PartitionUnion 30000.00 root  ",
-          "├─TableReader 10000.00 root  data:TableFullScan",
-          "│ └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "├─TableReader 10000.00 root  data:TableFullScan",
-          "│ └─TableFullScan 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tikv] table:t, partition:p2 keep order:false, stats:pseudo"
+          "TableReader 10000.00 root partition:all data:TableFullScan",
+          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "select /*+ use_index(t partition(p0, p1) b, c) */ * from t partition(p1,p2)",
         "Plan": [
-          "PartitionUnion 20000.00 root  ",
-          "├─IndexLookUp 10000.00 root  ",
-          "│ ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, partition:p1, index:b(b) keep order:false, stats:pseudo",
-          "│ └─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
+          "IndexLookUp 10000.00 root partition:p1,p2 ",
+          "├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, index:b(b) keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "Warning 1105 Unknown partitions (p0) in optimizer hint /*+ USE_INDEX(t PARTITION(p0, p1) b, c) */"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ use_index(t partition(p_non_exist)) */ * from t partition(p1,p2)",
         "Plan": [
-          "PartitionUnion 20000.00 root  ",
-          "├─TableReader 10000.00 root  data:TableFullScan",
-          "│ └─TableFullScan 10000.00 cop[tiflash] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
+          "TableReader 10000.00 root partition:p1,p2 data:TableFullScan",
+          "└─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "Warning 1105 Unknown partitions (p_non_exist) in optimizer hint /*+ USE_INDEX(t PARTITION(p_non_exist)) */"
-        ]
+        "Warn": null
       },
       {
         "SQL": "select /*+ use_index(t partition(p0, p1) b, c) */ * from t",
         "Plan": [
-          "PartitionUnion 30000.00 root  ",
-          "├─IndexLookUp 10000.00 root  ",
-          "│ ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, partition:p0, index:b(b) keep order:false, stats:pseudo",
-          "│ └─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "├─IndexLookUp 10000.00 root  ",
-          "│ ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, partition:p1, index:b(b) keep order:false, stats:pseudo",
-          "│ └─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
+          "IndexLookUp 10000.00 root partition:all ",
+          "├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, index:b(b) keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "select /*+ ignore_index(t partition(p0, p1) b, c) */ * from t",
         "Plan": [
-          "PartitionUnion 30000.00 root  ",
-          "├─TableReader 10000.00 root  data:TableFullScan",
-          "│ └─TableFullScan 10000.00 cop[tiflash] table:t, partition:p0 keep order:false, stats:pseudo",
-          "├─TableReader 10000.00 root  data:TableFullScan",
-          "│ └─TableFullScan 10000.00 cop[tiflash] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
+          "TableReader 10000.00 root partition:all data:TableFullScan",
+          "└─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "select /*+ hash_join(t1, t2 partition(p0)) */ * from t t1 join t t2 on t1.a = t2.a",
         "Plan": [
-          "HashJoin 37500.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "├─PartitionUnion(Build) 30000.00 root  ",
-          "│ ├─TableReader 10000.00 root  data:TableFullScan",
-          "│ │ └─TableFullScan 10000.00 cop[tiflash] table:t2, partition:p0 keep order:false, stats:pseudo",
-          "│ ├─TableReader 10000.00 root  data:TableFullScan",
-          "│ │ └─TableFullScan 10000.00 cop[tiflash] table:t2, partition:p1 keep order:false, stats:pseudo",
-          "│ └─TableReader 10000.00 root  data:TableFullScan",
-          "│   └─TableFullScan 10000.00 cop[tiflash] table:t2, partition:p2 keep order:false, stats:pseudo",
-          "└─PartitionUnion(Probe) 30000.00 root  ",
-          "  ├─TableReader 10000.00 root  data:TableFullScan",
-          "  │ └─TableFullScan 10000.00 cop[tiflash] table:t1, partition:p0 keep order:false, stats:pseudo",
-          "  ├─TableReader 10000.00 root  data:TableFullScan",
-          "  │ └─TableFullScan 10000.00 cop[tiflash] table:t1, partition:p1 keep order:false, stats:pseudo",
-          "  └─TableReader 10000.00 root  data:TableFullScan",
-          "    └─TableFullScan 10000.00 cop[tiflash] table:t1, partition:p2 keep order:false, stats:pseudo"
+          "TableReader 12500.00 root partition:all of t1, partition:all of t2 data:ExchangeSender",
+          "└─ExchangeSender 12500.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 12500.00 cop[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "    ├─ExchangeReceiver(Build) 10000.00 cop[tiflash]  ",
+          "    │ └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: Broadcast",
+          "    │   └─TableFullScan 10000.00 cop[tiflash] table:t1 keep order:false, stats:pseudo",
+          "    └─TableFullScan(Probe) 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
           "Warning 1105 Optimizer Hint /*+ HASH_JOIN(t1, t2 PARTITION(p0)) */ is inapplicable on specified partitions"
@@ -894,47 +860,29 @@
       {
         "SQL": "select /*+ use_index_merge(t partition(p0)) */ * from t where t.b = 1 or t.c = \"8\"",
         "Plan": [
-          "PartitionUnion 59.97 root  ",
-          "├─IndexMerge 19.99 root  ",
-          "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p0, index:b(b) range:[1,1], keep order:false, stats:pseudo",
-          "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p0, index:c(c) range:[\"8\",\"8\"], keep order:false, stats:pseudo",
-          "│ └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "├─TableReader 19.99 root  data:Selection",
-          "│ └─Selection 19.99 cop[tiflash]  or(eq(test.t.b, 1), eq(test.t.c, \"8\"))",
-          "│   └─TableFullScan 10000.00 cop[tiflash] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 19.99 root  data:Selection",
-          "  └─Selection 19.99 cop[tiflash]  or(eq(test.t.b, 1), eq(test.t.c, \"8\"))",
-          "    └─TableFullScan 10000.00 cop[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
+          "IndexMerge 19.99 root partition:all ",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:c(c) range:[\"8\",\"8\"], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 19.99 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "select /*+ use_index_merge(t partition(p0, p1) primary, b) */ * from t where t.a = 1 or t.b = 2",
         "Plan": [
-          "PartitionUnion 33.00 root  ",
-          "├─IndexMerge 11.00 root  ",
-          "│ ├─TableRangeScan(Build) 1.00 cop[tikv] table:t, partition:p0 range:[1,1], keep order:false, stats:pseudo",
-          "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p0, index:b(b) range:[2,2], keep order:false, stats:pseudo",
-          "│ └─TableRowIDScan(Probe) 11.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "├─IndexMerge 11.00 root  ",
-          "│ ├─TableRangeScan(Build) 1.00 cop[tikv] table:t, partition:p1 range:[1,1], keep order:false, stats:pseudo",
-          "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p1, index:b(b) range:[2,2], keep order:false, stats:pseudo",
-          "│ └─TableRowIDScan(Probe) 11.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 11.00 root  data:Selection",
-          "  └─Selection 11.00 cop[tiflash]  or(eq(test.t.a, 1), eq(test.t.b, 2))",
-          "    └─TableFullScan 10000.00 cop[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
+          "IndexMerge 11.00 root partition:all ",
+          "├─TableRangeScan(Build) 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:b(b) range:[2,2], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 11.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "select /*+ use_index(t partition(p0) b) */ * from t partition(p0, p1)",
         "Plan": [
-          "PartitionUnion 20000.00 root  ",
-          "├─IndexLookUp 10000.00 root  ",
-          "│ ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, partition:p0, index:b(b) keep order:false, stats:pseudo",
-          "│ └─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "└─TableReader 10000.00 root  data:TableFullScan",
-          "  └─TableFullScan 10000.00 cop[tiflash] table:t, partition:p1 keep order:false, stats:pseudo"
+          "IndexLookUp 10000.00 root partition:p0,p1 ",
+          "├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, index:b(b) keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       }
