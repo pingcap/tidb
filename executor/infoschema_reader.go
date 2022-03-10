@@ -655,7 +655,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 	return nil
 }
 
-func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sessionctx.Context) error {
+func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sessionctx.Context, extractor *plannercore.ColumnsTableExtractor) error {
 	checker := privilege.GetPrivilegeManager(sctx)
 	e.rows = e.rows[:0]
 	batch := 1024
@@ -678,7 +678,7 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 				}
 			}
 
-			e.dataForColumnsInTable(ctx, sctx, schema, table, priv)
+			e.dataForColumnsInTable(ctx, sctx, schema, table, priv, extractor)
 			if len(e.rows) >= batch {
 				return nil
 			}
@@ -688,15 +688,73 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sess
 	return nil
 }
 
-func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx sessionctx.Context, schema *model.DBInfo, tbl *model.TableInfo, priv mysql.PrivilegeType) {
+func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx sessionctx.Context, schema *model.DBInfo, tbl *model.TableInfo, priv mysql.PrivilegeType, extractor *plannercore.ColumnsTableExtractor) {
 	if err := tryFillViewColumnType(ctx, sctx, sctx.GetInfoSchema().(infoschema.InfoSchema), schema.Name, tbl); err != nil {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return
 	}
+	var tableSchemaRegexp, tableNameRegexp, columnsRegexp []collate.WildcardPattern
+	var tableSchemaFilterEnable,
+		tableNameFilterEnable, columnsFilterEnable bool
+	if !extractor.SkipRequest {
+		tableSchemaFilterEnable = extractor.TableSchema.Count() > 0
+		tableNameFilterEnable = extractor.TableName.Count() > 0
+		columnsFilterEnable = extractor.ColumnName.Count() > 0
+		if len(extractor.TableSchemaPatterns) > 0 {
+			tableSchemaRegexp = make([]collate.WildcardPattern, len(extractor.TableSchemaPatterns))
+			for i, pattern := range extractor.TableSchemaPatterns {
+				tableSchemaRegexp[i] = collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
+				tableSchemaRegexp[i].Compile(pattern, byte('\\'))
+			}
+		}
+		if len(extractor.TableNamePatterns) > 0 {
+			tableNameRegexp = make([]collate.WildcardPattern, len(extractor.TableNamePatterns))
+			for i, pattern := range extractor.TableNamePatterns {
+				tableNameRegexp[i] = collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
+				tableNameRegexp[i].Compile(pattern, byte('\\'))
+			}
+		}
+		if len(extractor.ColumnNamePatterns) > 0 {
+			columnsRegexp = make([]collate.WildcardPattern, len(extractor.ColumnNamePatterns))
+			for i, pattern := range extractor.ColumnNamePatterns {
+				columnsRegexp[i] = collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
+				columnsRegexp[i].Compile(pattern, byte('\\'))
+			}
+		}
+	}
+ForColumnsTag:
 	for i, col := range tbl.Columns {
 		if col.Hidden {
 			continue
 		}
+
+		if !extractor.SkipRequest {
+			if tableSchemaFilterEnable && !extractor.TableSchema.Exist(schema.Name.L) {
+				continue
+			}
+			if tableNameFilterEnable && !extractor.TableName.Exist(tbl.Name.L) {
+				continue
+			}
+			if columnsFilterEnable && !extractor.ColumnName.Exist(col.Name.L) {
+				continue
+			}
+			for _, re := range tableSchemaRegexp {
+				if !re.DoMatch(schema.Name.L) {
+					continue ForColumnsTag
+				}
+			}
+			for _, re := range tableNameRegexp {
+				if !re.DoMatch(tbl.Name.L) {
+					continue ForColumnsTag
+				}
+			}
+			for _, re := range columnsRegexp {
+				if !re.DoMatch(col.Name.L) {
+					continue ForColumnsTag
+				}
+			}
+		}
+
 		var charMaxLen, charOctLen, numericPrecision, numericScale, datetimePrecision interface{}
 		colLen, decimal := col.Flen, col.Decimal
 		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(col.Tp)
@@ -2512,6 +2570,7 @@ func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.
 
 type hugeMemTableRetriever struct {
 	dummyCloser
+	extractor   *plannercore.ColumnsTableExtractor
 	table       *model.TableInfo
 	columns     []*model.ColumnInfo
 	retrieved   bool
@@ -2540,7 +2599,7 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 	var err error
 	switch e.table.Name.O {
 	case infoschema.TableColumns:
-		err = e.setDataForColumns(ctx, sctx)
+		err = e.setDataForColumns(ctx, sctx, e.extractor)
 	}
 	if err != nil {
 		return nil, err

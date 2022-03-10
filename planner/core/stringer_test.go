@@ -42,7 +42,11 @@ func TestPlanStringer(t *testing.T) {
 		},
 		{
 			sql:  "show columns from t like 'a%'",
+<<<<<<< HEAD
 			plan: "Show(field_pattern:[(?i)a.*])",
+=======
+			plan: "Show(field_pattern:[a%])",
+>>>>>>> b4ebd44127 (cherry pick #32490 to release-5.4)
 		},
 		{
 			sql:  "show columns from t where field = 'a'",
@@ -66,11 +70,19 @@ func TestPlanStringer(t *testing.T) {
 		},
 		{
 			sql:  "show tables in test like 't%'",
+<<<<<<< HEAD
 			plan: "Show(table_pattern:[(?i)t.*])",
 		},
 		{
 			sql:  "show tables in test like '%T%'",
 			plan: "Show(table_pattern:[(?i).*T.*])",
+=======
+			plan: "Show(table_pattern:[t%])",
+		},
+		{
+			sql:  "show tables in test like '%T%'",
+			plan: "Show(table_pattern:[%t%])",
+>>>>>>> b4ebd44127 (cherry pick #32490 to release-5.4)
 		},
 	}
 	parser := parser.New()
