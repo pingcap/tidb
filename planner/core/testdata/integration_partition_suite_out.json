@@ -1045,115 +1045,71 @@
       {
         "SQL": "explain format='brief' select a from tlist where a>=0 and a<=10",
         "Plan": [
-          "PartitionUnion 500.00 root  ",
-          "├─TableReader 250.00 root  data:Selection",
-          "│ └─Selection 250.00 cop[tikv]  ge(list_push_down.tlist.a, 0), le(list_push_down.tlist.a, 10)",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
-          "└─TableReader 250.00 root  data:Selection",
-          "  └─Selection 250.00 cop[tikv]  ge(list_push_down.tlist.a, 0), le(list_push_down.tlist.a, 10)",
-          "    └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo"
+          "TableReader 250.00 root partition:all data:Selection",
+          "└─Selection 250.00 cop[tikv]  ge(list_push_down.tlist.a, 0), le(list_push_down.tlist.a, 10)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain format='brief' select avg(a) from tlist",
         "Plan": [
-          "HashAgg 1.00 root  funcs:avg(Column#4, Column#5)->Column#3",
-          "└─PartitionUnion 2.00 root  ",
-          "  ├─StreamAgg 1.00 root  funcs:count(Column#8)->Column#4, funcs:sum(Column#9)->Column#5",
-          "  │ └─TableReader 1.00 root  data:StreamAgg",
-          "  │   └─StreamAgg 1.00 cop[tikv]  funcs:count(list_push_down.tlist.a)->Column#8, funcs:sum(list_push_down.tlist.a)->Column#9",
-          "  │     └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
-          "  └─StreamAgg 1.00 root  funcs:count(Column#12)->Column#4, funcs:sum(Column#13)->Column#5",
-          "    └─TableReader 1.00 root  data:StreamAgg",
-          "      └─StreamAgg 1.00 cop[tikv]  funcs:count(list_push_down.tlist.a)->Column#12, funcs:sum(list_push_down.tlist.a)->Column#13",
-          "        └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:avg(Column#6, Column#7)->Column#3",
+          "└─TableReader 1.00 root partition:all data:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(list_push_down.tlist.a)->Column#6, funcs:sum(list_push_down.tlist.a)->Column#7",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain format='brief' select a from tlist limit 10",
         "Plan": [
           "Limit 10.00 root  offset:0, count:10",
-          "└─PartitionUnion 10.00 root  ",
-          "  ├─Limit 10.00 root  offset:0, count:10",
-          "  │ └─TableReader 10.00 root  data:Limit",
-          "  │   └─Limit 10.00 cop[tikv]  offset:0, count:10",
-          "  │     └─TableFullScan 10.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
-          "  └─Limit 10.00 root  offset:0, count:10",
-          "    └─TableReader 10.00 root  data:Limit",
-          "      └─Limit 10.00 cop[tikv]  offset:0, count:10",
-          "        └─TableFullScan 10.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo"
+          "└─TableReader 10.00 root partition:all data:Limit",
+          "  └─Limit 10.00 cop[tikv]  offset:0, count:10",
+          "    └─TableFullScan 10.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain format='brief' select a from tlist order by a limit 10",
         "Plan": [
           "TopN 10.00 root  list_push_down.tlist.a, offset:0, count:10",
-          "└─PartitionUnion 20.00 root  ",
-          "  ├─TopN 10.00 root  list_push_down.tlist.a, offset:0, count:10",
-          "  │ └─TableReader 10.00 root  data:TopN",
-          "  │   └─TopN 10.00 cop[tikv]  list_push_down.tlist.a, offset:0, count:10",
-          "  │     └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p0 keep order:false, stats:pseudo",
-          "  └─TopN 10.00 root  list_push_down.tlist.a, offset:0, count:10",
-          "    └─TableReader 10.00 root  data:TopN",
-          "      └─TopN 10.00 cop[tikv]  list_push_down.tlist.a, offset:0, count:10",
-          "        └─TableFullScan 10000.00 cop[tikv] table:tlist, partition:p1 keep order:false, stats:pseudo"
+          "└─TableReader 10.00 root partition:all data:TopN",
+          "  └─TopN 10.00 cop[tikv]  list_push_down.tlist.a, offset:0, count:10",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tlist keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain format='brief' select a from tcollist where a>=0 and a<=10",
         "Plan": [
-          "PartitionUnion 500.00 root  ",
-          "├─TableReader 250.00 root  data:Selection",
-          "│ └─Selection 250.00 cop[tikv]  ge(list_push_down.tcollist.a, 0), le(list_push_down.tcollist.a, 10)",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo",
-          "└─TableReader 250.00 root  data:Selection",
-          "  └─Selection 250.00 cop[tikv]  ge(list_push_down.tcollist.a, 0), le(list_push_down.tcollist.a, 10)",
-          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p1 keep order:false, stats:pseudo"
+          "TableReader 250.00 root partition:p0,p1 data:Selection",
+          "└─Selection 250.00 cop[tikv]  ge(list_push_down.tcollist.a, 0), le(list_push_down.tcollist.a, 10)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain format='brief' select avg(a) from tcollist",
         "Plan": [
-          "HashAgg 1.00 root  funcs:avg(Column#4, Column#5)->Column#3",
-          "└─PartitionUnion 2.00 root  ",
-          "  ├─StreamAgg 1.00 root  funcs:count(Column#8)->Column#4, funcs:sum(Column#9)->Column#5",
-          "  │ └─TableReader 1.00 root  data:StreamAgg",
-          "  │   └─StreamAgg 1.00 cop[tikv]  funcs:count(list_push_down.tcollist.a)->Column#8, funcs:sum(list_push_down.tcollist.a)->Column#9",
-          "  │     └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo",
-          "  └─StreamAgg 1.00 root  funcs:count(Column#12)->Column#4, funcs:sum(Column#13)->Column#5",
-          "    └─TableReader 1.00 root  data:StreamAgg",
-          "      └─StreamAgg 1.00 cop[tikv]  funcs:count(list_push_down.tcollist.a)->Column#12, funcs:sum(list_push_down.tcollist.a)->Column#13",
-          "        └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p1 keep order:false, stats:pseudo"
+          "StreamAgg 1.00 root  funcs:avg(Column#6, Column#7)->Column#3",
+          "└─TableReader 1.00 root partition:all data:StreamAgg",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(list_push_down.tcollist.a)->Column#6, funcs:sum(list_push_down.tcollist.a)->Column#7",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain format='brief' select a from tcollist limit 10",
         "Plan": [
           "Limit 10.00 root  offset:0, count:10",
-          "└─PartitionUnion 10.00 root  ",
-          "  ├─Limit 10.00 root  offset:0, count:10",
-          "  │ └─TableReader 10.00 root  data:Limit",
-          "  │   └─Limit 10.00 cop[tikv]  offset:0, count:10",
-          "  │     └─TableFullScan 10.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo",
-          "  └─Limit 10.00 root  offset:0, count:10",
-          "    └─TableReader 10.00 root  data:Limit",
-          "      └─Limit 10.00 cop[tikv]  offset:0, count:10",
-          "        └─TableFullScan 10.00 cop[tikv] table:tcollist, partition:p1 keep order:false, stats:pseudo"
+          "└─TableReader 10.00 root partition:all data:Limit",
+          "  └─Limit 10.00 cop[tikv]  offset:0, count:10",
+          "    └─TableFullScan 10.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "explain format='brief' select a from tcollist order by a limit 10",
         "Plan": [
           "TopN 10.00 root  list_push_down.tcollist.a, offset:0, count:10",
-          "└─PartitionUnion 20.00 root  ",
-          "  ├─TopN 10.00 root  list_push_down.tcollist.a, offset:0, count:10",
-          "  │ └─TableReader 10.00 root  data:TopN",
-          "  │   └─TopN 10.00 cop[tikv]  list_push_down.tcollist.a, offset:0, count:10",
-          "  │     └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p0 keep order:false, stats:pseudo",
-          "  └─TopN 10.00 root  list_push_down.tcollist.a, offset:0, count:10",
-          "    └─TableReader 10.00 root  data:TopN",
-          "      └─TopN 10.00 cop[tikv]  list_push_down.tcollist.a, offset:0, count:10",
-          "        └─TableFullScan 10000.00 cop[tikv] table:tcollist, partition:p1 keep order:false, stats:pseudo"
+          "└─TableReader 10.00 root partition:all data:TopN",
+          "  └─TopN 10.00 cop[tikv]  list_push_down.tcollist.a, offset:0, count:10",
+          "    └─TableFullScan 10000.00 cop[tikv] table:tcollist keep order:false, stats:pseudo"
         ]
       }
     ]
