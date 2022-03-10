@@ -26,6 +26,7 @@ import (
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
@@ -673,9 +674,9 @@ func TestPlacementTiflashCheck(t *testing.T) {
 	tk.MustExec("alter table tp set tiflash replica 1")
 
 	err := tk.ExecToErr("alter table tp placement policy p1")
-	require.True(t, ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err))
+	require.True(t, dbterror.ErrIncompatibleTiFlashAndPlacement.Equal(err))
 	err = tk.ExecToErr("alter table tp partition p0 placement policy p1")
-	require.True(t, ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err))
+	require.True(t, dbterror.ErrIncompatibleTiFlashAndPlacement.Equal(err))
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
@@ -690,7 +691,7 @@ func TestPlacementTiflashCheck(t *testing.T) {
 	  PARTITION p1 VALUES LESS THAN (1000)
 	)`)
 	err = tk.ExecToErr("alter table tp set tiflash replica 1")
-	require.True(t, ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err))
+	require.True(t, dbterror.ErrIncompatibleTiFlashAndPlacement.Equal(err))
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
@@ -705,7 +706,7 @@ func TestPlacementTiflashCheck(t *testing.T) {
       PARTITION p1 VALUES LESS THAN (1000)
 	)`)
 	err = tk.ExecToErr("alter table tp set tiflash replica 1")
-	require.True(t, ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err))
+	require.True(t, dbterror.ErrIncompatibleTiFlashAndPlacement.Equal(err))
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
@@ -720,7 +721,7 @@ func TestPlacementTiflashCheck(t *testing.T) {
 	  PARTITION p1 VALUES LESS THAN (1000)
 	)`)
 	err = tk.ExecToErr("alter table tp set tiflash replica 1")
-	require.True(t, ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err))
+	require.True(t, dbterror.ErrIncompatibleTiFlashAndPlacement.Equal(err))
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
@@ -735,7 +736,7 @@ func TestPlacementTiflashCheck(t *testing.T) {
       PARTITION p1 VALUES LESS THAN (1000)
 	)`)
 	err = tk.ExecToErr("alter table tp set tiflash replica 1")
-	require.True(t, ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err))
+	require.True(t, dbterror.ErrIncompatibleTiFlashAndPlacement.Equal(err))
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
