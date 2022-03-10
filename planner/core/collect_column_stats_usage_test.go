@@ -309,11 +309,13 @@ func TestCollectHistNeededColumns(t *testing.T) {
 			sql: "select * from t2 where t2.b in (select b from t where t.c > 2)",
 			res: []string{"t.c"},
 		},
-		{
-			pruneMode: "static",
-			sql:       "select * from pt1 where ptn < 20 and b > 1",
-			res:       []string{"pt1.p1.b", "pt1.p1.ptn", "pt1.p2.b", "pt1.p2.ptn"},
-		},
+		/*
+			{
+				pruneMode: "static",
+				sql:       "select * from pt1 where ptn < 20 and b > 1",
+				res:       []string{"pt1.p1.b", "pt1.p1.ptn", "pt1.p2.b", "pt1.p2.ptn"},
+			},
+		*/
 		{
 			pruneMode: "dynamic",
 			sql:       "select * from pt1 where ptn < 20 and b > 1",
