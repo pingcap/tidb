@@ -801,9 +801,6 @@ func TestValidateSetVar(t *testing.T) {
 	tk.MustExec("set @@tidb_pprof_sql_cpu=0;")
 	tk.MustQuery("select @@tidb_pprof_sql_cpu;").Check(testkit.Rows("0"))
 
-	tk.MustExec("set @@tidb_enable_streaming=1;")
-	tk.MustQuery("select @@tidb_enable_streaming;").Check(testkit.Rows("1"))
-
 	err = tk.ExecToErr("set @@tidb_batch_delete=3;")
 	require.True(t, terror.ErrorEqual(err, variable.ErrWrongValueForVar), fmt.Sprintf("err %v", err))
 

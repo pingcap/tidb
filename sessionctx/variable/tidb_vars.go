@@ -127,9 +127,6 @@ const (
 	// TiDBDisableTxnAutoRetry disables transaction auto retry.
 	TiDBDisableTxnAutoRetry = "tidb_disable_txn_auto_retry"
 
-	// Deprecated: tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
-	TiDBEnableStreaming = "tidb_enable_streaming"
-
 	// TiDBEnableChunkRPC enables TiDB to use Chunk format for coprocessor requests.
 	TiDBEnableChunkRPC = "tidb_enable_chunk_rpc"
 
