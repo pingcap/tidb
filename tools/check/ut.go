@@ -639,8 +639,8 @@ func (n *numa) worker(wg *sync.WaitGroup, ch chan task) {
 	for t := range ch {
 		res := n.runTestCase(t.pkg, t.test, t.old)
 		if res.Failure != nil {
-			fmt.Println("[FAIL] ", t.pkg, t.test, t.old)
-			fmt.Fprintf(os.Stderr, "%s", res.Failure.Contents)
+			fmt.Println("[FAIL] ", t.pkg, t.test)
+			fmt.Fprintf(os.Stderr, "err=%s\n%s", res.err, res.Failure.Contents)
 			n.Fail = true
 		}
 		n.results = append(n.results, res)
@@ -649,7 +649,8 @@ func (n *numa) worker(wg *sync.WaitGroup, ch chan task) {
 
 type testResult struct {
 	JUnitTestCase
-	d time.Duration
+	d   time.Duration
+	err error
 }
 
 func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
@@ -671,6 +672,7 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
 			Message:  "Failed",
 			Contents: buf.String(),
 		}
+		res.err = err
 	}
 	res.d = time.Since(start)
 	res.Time = formatDurationAsSeconds(res.d)

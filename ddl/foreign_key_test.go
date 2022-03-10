@@ -21,7 +21,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -76,8 +75,8 @@ func testDropForeignKey(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *mo
 	}
 	err := d.doDDLJob(ctx, job)
 	require.NoError(t, err)
-	v := getSchemaVerT(t, ctx)
-	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	v := getSchemaVer(t, ctx)
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
@@ -95,12 +94,7 @@ func getForeignKey(t table.Table, name string) *model.FKInfo {
 }
 
 func TestForeignKey(t *testing.T) {
-	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	store := testCreateStoreT(t, "test_foreign")
+	store := createMockStore(t)
 	defer func() {
 		err := store.Close()
 		require.NoError(t, err)
@@ -120,14 +114,14 @@ func TestForeignKey(t *testing.T) {
 	dbInfo, err := testSchemaInfo(d, "test_foreign")
 	require.NoError(t, err)
 	ctx := testNewContext(d)
-	testCreateSchemaT(t, ctx, d, dbInfo)
+	testCreateSchema(t, ctx, d, dbInfo)
 	tblInfo, err := testTableInfo(d, "t", 3)
 	require.NoError(t, err)
 
 	err = ctx.NewTxn(context.Background())
 	require.NoError(t, err)
 
-	testCreateTableT(t, ctx, d, dbInfo, tblInfo)
+	testCreateTable(t, ctx, d, dbInfo, tblInfo)
 
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
@@ -163,7 +157,7 @@ func TestForeignKey(t *testing.T) {
 	d.SetHook(tc)
 
 	job := testCreateForeignKey(t, d, ctx, dbInfo, tblInfo, "c1_fk", []string{"c1"}, "t2", []string{"c1"}, ast.ReferOptionCascade, ast.ReferOptionSetNull)
-	testCheckJobDoneT(t, d, job, true)
+	testCheckJobDone(t, d, job, true)
 	txn, err = ctx.Txn(true)
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
@@ -174,8 +168,8 @@ func TestForeignKey(t *testing.T) {
 	mu.Unlock()
 	require.NoError(t, hErr)
 	require.True(t, ok)
-	v := getSchemaVerT(t, ctx)
-	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	v := getSchemaVer(t, ctx)
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 
 	mu.Lock()
 	checkOK = false
@@ -204,7 +198,7 @@ func TestForeignKey(t *testing.T) {
 	d.SetHook(tc2)
 
 	job = testDropForeignKey(t, ctx, d, dbInfo, tblInfo, "c1_fk")
-	testCheckJobDoneT(t, d, job, false)
+	testCheckJobDone(t, d, job, false)
 	mu.Lock()
 	hErr = hookErr
 	ok = checkOK
@@ -215,8 +209,8 @@ func TestForeignKey(t *testing.T) {
 	err = ctx.NewTxn(context.Background())
 	require.NoError(t, err)
 
-	job = testDropTableT(t, ctx, d, dbInfo, tblInfo)
-	testCheckJobDoneT(t, d, job, false)
+	job = testDropTable(t, ctx, d, dbInfo, tblInfo)
+	testCheckJobDone(t, d, job, false)
 
 	txn, err = ctx.Txn(true)
 	require.NoError(t, err)

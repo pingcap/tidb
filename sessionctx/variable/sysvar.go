@@ -542,48 +542,6 @@ var defaultSysVars = []*SysVar{
 		s.MemQuotaQuery = TidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
 		return nil
 	}},
-	{Scope: ScopeSession, Name: TiDBMemQuotaHashJoin, Value: strconv.FormatInt(DefTiDBMemQuotaHashJoin, 10), skipInit: true, Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
-		s.MemQuotaHashJoin = TidbOptInt64(val, DefTiDBMemQuotaHashJoin)
-		return nil
-	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		appendDeprecationWarning(vars, TiDBMemQuotaHashJoin, TiDBMemQuotaQuery)
-		return normalizedValue, nil
-	}},
-	{Scope: ScopeSession, Name: TiDBMemQuotaMergeJoin, Value: strconv.FormatInt(DefTiDBMemQuotaMergeJoin, 10), skipInit: true, Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
-		s.MemQuotaMergeJoin = TidbOptInt64(val, DefTiDBMemQuotaMergeJoin)
-		return nil
-	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		appendDeprecationWarning(vars, TiDBMemQuotaMergeJoin, TiDBMemQuotaQuery)
-		return normalizedValue, nil
-	}},
-	{Scope: ScopeSession, Name: TiDBMemQuotaSort, Value: strconv.FormatInt(DefTiDBMemQuotaSort, 10), skipInit: true, Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
-		s.MemQuotaSort = TidbOptInt64(val, DefTiDBMemQuotaSort)
-		return nil
-	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		appendDeprecationWarning(vars, TiDBMemQuotaSort, TiDBMemQuotaQuery)
-		return normalizedValue, nil
-	}},
-	{Scope: ScopeSession, Name: TiDBMemQuotaTopn, Value: strconv.FormatInt(DefTiDBMemQuotaTopn, 10), skipInit: true, Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
-		s.MemQuotaTopn = TidbOptInt64(val, DefTiDBMemQuotaTopn)
-		return nil
-	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		appendDeprecationWarning(vars, TiDBMemQuotaTopn, TiDBMemQuotaQuery)
-		return normalizedValue, nil
-	}},
-	{Scope: ScopeSession, Name: TiDBMemQuotaIndexLookupReader, Value: strconv.FormatInt(DefTiDBMemQuotaIndexLookupReader, 10), skipInit: true, Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
-		s.MemQuotaIndexLookupReader = TidbOptInt64(val, DefTiDBMemQuotaIndexLookupReader)
-		return nil
-	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		appendDeprecationWarning(vars, TiDBMemQuotaIndexLookupReader, TiDBMemQuotaQuery)
-		return normalizedValue, nil
-	}},
-	{Scope: ScopeSession, Name: TiDBMemQuotaIndexLookupJoin, Value: strconv.FormatInt(DefTiDBMemQuotaIndexLookupJoin, 10), skipInit: true, Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
-		s.MemQuotaIndexLookupJoin = TidbOptInt64(val, DefTiDBMemQuotaIndexLookupJoin)
-		return nil
-	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-		appendDeprecationWarning(vars, TiDBMemQuotaIndexLookupJoin, TiDBMemQuotaQuery)
-		return normalizedValue, nil
-	}},
 	// Deprecated: tidb_enable_streaming
 	{Scope: ScopeSession, Name: TiDBEnableStreaming, Value: Off, Type: TypeBool, skipInit: true, Hidden: true, SetSession: func(s *SessionVars, val string) error {
 		s.EnableStreaming = TiDBOptOn(val)
@@ -664,6 +622,12 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBMemQuotaApplyCache, Value: strconv.Itoa(DefTiDBMemQuotaApplyCache), Type: TypeUnsigned, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 		s.MemQuotaApplyCache = TidbOptInt64(val, DefTiDBMemQuotaApplyCache)
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBMemQuotaBindCache, Value: strconv.FormatInt(DefTiDBMemQuotaBindCache, 10), Type: TypeUnsigned, MaxValue: math.MaxInt32, GetGlobal: func(sv *SessionVars) (string, error) {
+		return strconv.FormatInt(MemQuotaBindCache.Load(), 10), nil
+	}, SetGlobal: func(s *SessionVars, val string) error {
+		MemQuotaBindCache.Store(TidbOptInt64(val, DefTiDBMemQuotaBindCache))
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBBackoffLockFast, Value: strconv.Itoa(tikvstore.DefBackoffLockFast), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
@@ -1375,16 +1339,9 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal | ScopeSession, Name: SysdateIsNow, Value: BoolToOnOff(DefSysdateIsNow), skipInit: true, Type: TypeBool,
+	{Scope: ScopeGlobal | ScopeSession, Name: SysdateIsNow, Value: BoolToOnOff(DefSysdateIsNow), Type: TypeBool,
 		SetSession: func(vars *SessionVars, s string) error {
 			vars.SysdateIsNow = TiDBOptOn(s)
-			return nil
-		},
-		GetGlobal: func(vars *SessionVars) (s string, err error) {
-			return strconv.FormatBool(GlobalSysdateIsNow.Load()), nil
-		},
-		SetGlobal: func(vars *SessionVars, s string) error {
-			GlobalSysdateIsNow.Store(TiDBOptOn(s))
 			return nil
 		},
 	},
@@ -1500,9 +1457,6 @@ const (
 	SkipNameResolve = "skip_name_resolve"
 	// ForeignKeyChecks is the name for 'foreign_key_checks' system variable.
 	ForeignKeyChecks = "foreign_key_checks"
-	// PlacementChecks is the name for 'placement_checks' system variable.
-	// Deprecated: use tidb_placement_mode instead
-	PlacementChecks = "placement_checks"
 	// SQLSafeUpdates is the name for 'sql_safe_updates' system variable.
 	SQLSafeUpdates = "sql_safe_updates"
 	// WarningCount is the name for 'warning_count' system variable.
