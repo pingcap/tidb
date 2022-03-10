@@ -8499,3 +8499,12 @@ func (s *testSerialSuite) TestEncodingSet(c *C) {
 	tk.MustQuery("select `set` from `enum-set` use index(PRIMARY)").Check(testkit.Rows("x00,x59"))
 	tk.MustExec("admin check table `enum-set`")
 }
+
+// fix issue https://github.com/pingcap/tidb/issues/32871
+func (s *testSuite1) TestBitColumnIn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id bit(16), key id(id))")
+	tk.MustExec("insert into t values (65)")
+	tk.MustQuery("select * from t where id not in (-1,2)").Check(testkit.Rows("\x00A"))
+}
