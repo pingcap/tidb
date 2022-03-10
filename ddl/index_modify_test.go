@@ -1285,3 +1285,25 @@ LOOP:
 	checkDelRangeAdded(tk, jobIDExt.jobID, indexID)
 	tk.MustExec("drop table test_drop_index")
 }
+
+func TestAddMultiColumnsIndexClusterIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists test_add_multi_col_index_clustered;")
+	tk.MustExec("create database test_add_multi_col_index_clustered;")
+	tk.MustExec("use test_add_multi_col_index_clustered;")
+
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.MustExec("create table t (a int, b varchar(10), c int, primary key (a, b));")
+	tk.MustExec("insert into t values (1, '1', 1), (2, '2', NULL), (3, '3', 3);")
+	tk.MustExec("create index idx on t (a, c);")
+
+	tk.MustExec("admin check index t idx;")
+	tk.MustExec("admin check table t;")
+
+	tk.MustExec("insert into t values (5, '5', 5), (6, '6', NULL);")
+
+	tk.MustExec("admin check index t idx;")
+	tk.MustExec("admin check table t;")
+}
