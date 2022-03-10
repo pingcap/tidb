@@ -140,7 +140,8 @@ func CheckVersionForBR(s *metapb.Store, tikvVersion *semver.Version) error {
 			s.Address, tikvVersion, build.ReleaseVersion)
 	}
 
-	if tikvVersion.Major > BRVersion.Major {
+	// BR 6.x works with TiKV 5.x and not guarantee works with 4.x
+	if BRVersion.Major < tikvVersion.Major || BRVersion.Major-tikvVersion.Major > 1 {
 		return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s and BR %s major version mismatch, please use the same version of BR",
 			s.Address, tikvVersion, build.ReleaseVersion)
 	}
