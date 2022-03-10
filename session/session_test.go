@@ -753,6 +753,7 @@ func (s *testSessionSuite) TestSetInstanceSysvarBySetGlobalSysVar(c *C) {
 
 	// set to "1"
 	err = se.SetGlobalSysVar(varName, "ON")
+	c.Assert(err, IsNil)
 	v, err = se.GetGlobalSysVar(varName)
 	tk.MustQuery("select @@global.tidb_general_log").Check(testkit.Rows("1"))
 	c.Assert(err, IsNil)
@@ -760,6 +761,7 @@ func (s *testSessionSuite) TestSetInstanceSysvarBySetGlobalSysVar(c *C) {
 
 	// set back to "0"
 	err = se.SetGlobalSysVar(varName, defaultValue)
+	c.Assert(err, IsNil)
 	v, err = se.GetGlobalSysVar(varName)
 	tk.MustQuery("select @@global.tidb_general_log").Check(testkit.Rows("0"))
 	c.Assert(err, IsNil)
