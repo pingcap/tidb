@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl
+package ddl_test
 
 import (
 	"context"
@@ -22,6 +22,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/util/testbridge"
@@ -33,9 +35,12 @@ func TestMain(m *testing.M) {
 	testbridge.SetupForCommonTest()
 	tikv.EnableFailpoints()
 
+	domain.SchemaOutOfDateRetryInterval.Store(50 * time.Millisecond)
+	domain.SchemaOutOfDateRetryTimes.Store(50)
+
 	autoid.SetStep(5000)
-	ReorgWaitTimeout = 30 * time.Millisecond
-	batchInsertDeleteRangeSize = 2
+	ddl.ReorgWaitTimeout = 30 * time.Millisecond
+	ddl.SetBatchInsertDeleteRangeSize(2)
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		// Test for table lock.
