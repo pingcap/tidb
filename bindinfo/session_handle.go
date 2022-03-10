@@ -15,8 +15,6 @@
 package bindinfo
 
 import (
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 	"strings"
 	"time"
 
@@ -25,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // SessionHandle is used to handle all session sql bind operations.
