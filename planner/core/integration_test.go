@@ -2720,6 +2720,17 @@ func TestBitColumnPushDown(t *testing.T) {
 		{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
+
+	// test collation
+	tk.MustExec("update mysql.tidb set VARIABLE_VALUE='True' where VARIABLE_NAME='new_collation_enabled'")
+	tk.MustQuery("SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME='new_collation_enabled';").Check(
+		testkit.Rows("True"))
+	tk.MustExec("create table t3 (a bit(8));")
+	tk.MustExec("insert into t3 values (65)")
+	tk.MustExec("SET NAMES utf8mb4 COLLATE utf8mb4_bin")
+	tk.MustQuery("select a from t3 where cast(a as char) = 'a'").Check(testkit.Rows())
+	tk.MustExec("SET NAMES utf8mb4 COLLATE utf8mb4_general_ci")
+	tk.MustQuery("select a from t3 where cast(a as char) = 'a'").Check(testkit.Rows("A"))
 }
 
 func TestSysdatePushDown(t *testing.T) {
