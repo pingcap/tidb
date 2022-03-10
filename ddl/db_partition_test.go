@@ -3618,9 +3618,9 @@ func TestTruncatePartitionMultipleTimes(t *testing.T) {
 		}
 	}
 	done1 := make(chan error, 1)
-	go backgroundExec(store, "alter table test.t truncate partition p0;", done1)
+	go backgroundExecT(store, "alter table test.t truncate partition p0;", done1)
 	done2 := make(chan error, 1)
-	go backgroundExec(store, "alter table test.t truncate partition p0;", done2)
+	go backgroundExecT(store, "alter table test.t truncate partition p0;", done2)
 	<-done1
 	<-done2
 	require.LessOrEqual(t, errCount, int32(1))
@@ -3668,40 +3668,6 @@ func TestAddPartitionReplicaBiggerThanTiFlashStores(t *testing.T) {
 	err = tk.ExecToErr("alter table t1 add partition (partition p3 values less than (300));")
 	require.Error(t, err)
 	require.Equal(t, "[ddl:-1]DDL job rollback, error msg: [ddl] add partition wait for tiflash replica to complete", err.Error())
-}
-
-func TestDropAndTruncatePartition(t *testing.T) {
-	// Useless, but is required to initialize the global infoSync
-	// Otherwise this test throw a "infoSyncer is not initialized" error
-	_, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	ddl.ExportTestDropAndTruncatePartition(t)
-}
-
-func TestTable(t *testing.T) {
-	// Useless, but is required to initialize the global infoSync
-	// Otherwise this test throw a "infoSyncer is not initialized" error
-	_, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	ddl.ExportTestTable(t)
-}
-
-func TestRenameTables(t *testing.T) {
-	// Useless, but is required to initialize the global infoSync
-	// Otherwise this test throw a "infoSyncer is not initialized" error
-	_, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	ddl.ExportTestRenameTables(t)
-}
-
-func TestCreateTables(t *testing.T) {
-	_, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	ddl.ExportTestRenameTables(t)
 }
 
 func TestDuplicatePartitionNames(t *testing.T) {
