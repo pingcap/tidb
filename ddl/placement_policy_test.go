@@ -226,6 +226,7 @@ PARTITION p1 VALUES LESS THAN (1000))
 		require.NoError(t, err)
 		// old policy should not be changed
 		found, ok := dom.InfoSchema().PolicyByName(model.NewCIStr("p"))
+		require.True(t, ok)
 		checkPolicyEquals(t, oldPolicy, found)
 		checkExistTableBundlesInPD(t, dom, "test", "tp")
 
