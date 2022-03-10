@@ -1446,21 +1446,13 @@
           "explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from tt t1, tt t2 where t1.a = t2.a"
         ],
         "Plan": [
-          "HashJoin 25000.00 root  inner join, equal:[eq(test.tt.a, test.tt.a)]",
-          "├─PartitionUnion(Build) 20000.00 root  ",
-          "│ ├─UnionScan 10000.00 root  ",
-          "│ │ └─TableReader 10000.00 root  data:TableFullScan",
-          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p0 keep order:false, stats:pseudo",
-          "│ └─UnionScan 10000.00 root  ",
-          "│   └─TableReader 10000.00 root  data:TableFullScan",
-          "│     └─TableFullScan 10000.00 cop[tikv] table:t2, partition:p1 keep order:false, stats:pseudo",
-          "└─PartitionUnion(Probe) 20000.00 root  ",
-          "  ├─UnionScan 10000.00 root  ",
-          "  │ └─TableReader 10000.00 root  data:TableFullScan",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p0 keep order:false, stats:pseudo",
-          "  └─UnionScan 10000.00 root  ",
-          "    └─TableReader 10000.00 root  data:TableFullScan",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t1, partition:p1 keep order:false, stats:pseudo"
+          "IndexJoin 12500.00 root  inner join, inner:UnionScan, outer key:test.tt.a, inner key:test.tt.a, equal cond:eq(test.tt.a, test.tt.a)",
+          "├─UnionScan(Build) 10000.00 root  ",
+          "│ └─TableReader 10000.00 root partition:all data:TableFullScan",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─UnionScan(Probe) 1.00 root  ",
+          "  └─TableReader 1.00 root partition:all data:TableRangeScan",
+          "    └─TableRangeScan 1.00 cop[tikv] table:t2 range: decided by [test.tt.a], keep order:false, stats:pseudo"
         ]
       }
     ]
