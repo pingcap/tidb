@@ -210,10 +210,6 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 	return errors.Trace(err)
 }
 
-func getBatchPendingTiFlashCount(ctx sessionctx.Context) uint32 {
-	return uint32(ctx.GetSessionVars().BatchPendingTiFlashCount)
-}
-
 // getPendingTiFlashTableCount counts unavailable TiFlash replica by iterating all tables in infoCache.
 func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion int64, pendingCount uint32) (int64, uint32) {
 	is := d.GetInfoSchemaWithInterceptor(sctx)
@@ -265,7 +261,7 @@ func (d *ddl) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64,
 		originVersion, pendingCount = d.getPendingTiFlashTableCount(sctx, originVersion, pendingCount)
 		delay := time.Duration(0)
 		if pendingCount >= threshold {
-			logutil.BgLogger().Info("too many unavailable tables, wait", zap.Uint32("threshold", threshold), zap.Uint32("current", pendingCount), zap.Int64("schemaID", schemaID), zap.Int64("tableID", tableID), zap.Duration("time", configWaitTime))
+			logutil.BgLogger().Info("too many unavailable tables, wait", zap.Uint32("threshold", threshold), zap.Uint32("currentPendingCount", pendingCount), zap.Int64("schemaID", schemaID), zap.Int64("tableID", tableID), zap.Duration("time", configWaitTime))
 			delay = configWaitTime
 		} else {
 			// If there are not many unavailable tables, we don't need a force check.
@@ -309,7 +305,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.A
 	forceCheck := false
 
 	logutil.BgLogger().Info("start batch add TiFlash replicas", zap.Int("total", total), zap.Int64("schemaID", dbInfo.ID))
-	threshold := getBatchPendingTiFlashCount(sctx)
+	threshold := uint32(ctx.GetSessionVars().BatchPendingTiFlashCount)
 
 	for _, tbl := range dbInfo.Tables {
 		done, killed := isSessionDone(sctx)

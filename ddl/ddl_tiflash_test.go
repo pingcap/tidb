@@ -908,10 +908,9 @@ func TestTiFlashBatchKill(t *testing.T) {
 	defer teardown()
 	tk := testkit.NewTestKit(t, s.store)
 
-	threshold := 0
 	tk.MustExec("create database tiflash_ddl_limit")
-	tk.MustExec(fmt.Sprintf("set SESSION tidb_batch_pending_tiflash_count=%v", threshold))
-	tk.MustExec(fmt.Sprintf("create table tiflash_ddl_limit.t%v(z int)", threshold+1))
+	tk.MustExec("set SESSION tidb_batch_pending_tiflash_count=0")
+	tk.MustExec("create table tiflash_ddl_limit.t0(z int)")
 
 	var wg util.WaitGroupWrapper
 	wg.Run(func() {
