@@ -731,6 +731,37 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	c.Assert(v, Equals, "OFF")
 }
 
+func (s *testSessionSuite) TestSetInstanceSysvarBySetGlobalSysVar(c *C) {
+
+	varName := "tidb_general_log"
+	defaultValue := "OFF" // This is the default value for tidb_general_log
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	se := tk.Se.(variable.GlobalVarAccessor)
+
+	// Get globalSysVar twice and get the same default value
+	v, err := se.GetGlobalSysVar(varName)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, defaultValue)
+	v, err = se.GetGlobalSysVar(varName)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, defaultValue)
+
+	// set to "1"
+	err = se.SetGlobalSysVar(varName, "ON")
+	v, err = se.GetGlobalSysVar(varName)
+	tk.MustQuery("select @@global.tidb_general_log").Check(testkit.Rows("1"))
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, defaultValue)
+
+	// set back to "0"
+	err = se.SetGlobalSysVar(varName, defaultValue)
+	v, err = se.GetGlobalSysVar(varName)
+	tk.MustQuery("select @@global.tidb_general_log").Check(testkit.Rows("0"))
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, defaultValue)
+}
+
 func (s *testSessionSuite) TestMatchIdentity(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("CREATE USER `useridentity`@`%`")
