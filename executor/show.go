@@ -366,8 +366,8 @@ func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 	memUsage := handle.GetMemUsage()
 	memCapacity := handle.GetMemCapacity()
 	e.appendRow([]interface{}{
-		rows[0].GetInt64(0),
 		numBindings,
+		rows[0].GetInt64(0),
 		memory.FormatBytes(memUsage),
 		memory.FormatBytes(memCapacity),
 	})

@@ -1791,14 +1791,14 @@ func TestShowBindingCacheStatus(t *testing.T) {
 	rows = result.Rows()
 	require.Equal(t, len(rows), 1)
 	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
-		"2 1 187 Bytes 250 Bytes"))
+		"1 2 187 Bytes 250 Bytes"))
 
 	tk.MustExec("drop global binding for select * from t where a > 1")
 	result = tk.MustQuery("show global bindings")
 	rows = result.Rows()
 	require.Equal(t, len(rows), 0)
 	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
-		"1 0 0 Bytes 250 Bytes"))
+		"0 1 0 Bytes 250 Bytes"))
 
 	tk.MustExec("admin reload bindings")
 	result = tk.MustQuery("show global bindings")
