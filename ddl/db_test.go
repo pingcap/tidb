@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/ddl"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/testkit"
@@ -325,4 +326,196 @@ func TestIssue23473(t *testing.T) {
 
 	tbl := tk.GetTableByName("test", "t_23473")
 	require.True(t, mysql.HasNoDefaultValueFlag(tbl.Cols()[0].Flag))
+}
+
+func TestDropCheck(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists drop_check")
+	tk.MustExec("create table drop_check (pk int primary key)")
+	defer tk.MustExec("drop table if exists drop_check")
+	tk.MustExec("alter table drop_check drop check crcn")
+	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|8231|DROP CHECK is not supported"))
+}
+
+func TestAlterOrderBy(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table ob (pk int primary key, c int default 1, c1 int default 1, KEY cl(c1))")
+
+	// Test order by with primary key
+	tk.MustExec("alter table ob order by c")
+	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1105|ORDER BY ignored as there is a user-defined clustered index in the table 'ob'"))
+
+	// Test order by with no primary key
+	tk.MustExec("drop table if exists ob")
+	tk.MustExec("create table ob (c int default 1, c1 int default 1, KEY cl(c1))")
+	tk.MustExec("alter table ob order by c")
+	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustExec("drop table if exists ob")
+}
+
+func TestFKOnGeneratedColumns(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// test add foreign key to generated column
+
+	// foreign key constraint cannot be defined on a virtual generated column.
+	tk.MustExec("create table t1 (a int primary key);")
+	tk.MustGetErrCode("create table t2 (a int, b int as (a+1) virtual, foreign key (b) references t1(a));", errno.ErrCannotAddForeign)
+	tk.MustExec("create table t2 (a int, b int generated always as (a+1) virtual);")
+	tk.MustGetErrCode("alter table t2 add foreign key (b) references t1(a);", errno.ErrCannotAddForeign)
+	tk.MustExec("drop table t1, t2;")
+
+	// foreign key constraint can be defined on a stored generated column.
+	tk.MustExec("create table t2 (a int primary key);")
+	tk.MustExec("create table t1 (a int, b int as (a+1) stored, foreign key (b) references t2(a));")
+	tk.MustExec("create table t3 (a int, b int generated always as (a+1) stored);")
+	tk.MustExec("alter table t3 add foreign key (b) references t2(a);")
+	tk.MustExec("drop table t1, t2, t3;")
+
+	// foreign key constraint can reference a stored generated column.
+	tk.MustExec("create table t1 (a int, b int generated always as (a+1) stored primary key);")
+	tk.MustExec("create table t2 (a int, foreign key (a) references t1(b));")
+	tk.MustExec("create table t3 (a int);")
+	tk.MustExec("alter table t3 add foreign key (a) references t1(b);")
+	tk.MustExec("drop table t1, t2, t3;")
+
+	// rejected FK options on stored generated columns
+	tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (b) references t2(a) on update set null);", errno.ErrWrongFKOptionForGeneratedColumn)
+	tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (b) references t2(a) on update cascade);", errno.ErrWrongFKOptionForGeneratedColumn)
+	tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (b) references t2(a) on update set default);", errno.ErrWrongFKOptionForGeneratedColumn)
+	tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (b) references t2(a) on delete set null);", errno.ErrWrongFKOptionForGeneratedColumn)
+	tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (b) references t2(a) on delete set default);", errno.ErrWrongFKOptionForGeneratedColumn)
+	tk.MustExec("create table t2 (a int primary key);")
+	tk.MustExec("create table t1 (a int, b int generated always as (a+1) stored);")
+	tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on update set null;", errno.ErrWrongFKOptionForGeneratedColumn)
+	tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on update cascade;", errno.ErrWrongFKOptionForGeneratedColumn)
+	tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on update set default;", errno.ErrWrongFKOptionForGeneratedColumn)
+	tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on delete set null;", errno.ErrWrongFKOptionForGeneratedColumn)
+	tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on delete set default;", errno.ErrWrongFKOptionForGeneratedColumn)
+	tk.MustExec("drop table t1, t2;")
+	// column name with uppercase characters
+	tk.MustGetErrCode("create table t1 (A int, b int generated always as (a+1) stored, foreign key (b) references t2(a) on update set null);", errno.ErrWrongFKOptionForGeneratedColumn)
+	tk.MustExec("create table t2 (a int primary key);")
+	tk.MustExec("create table t1 (A int, b int generated always as (a+1) stored);")
+	tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on update set null;", errno.ErrWrongFKOptionForGeneratedColumn)
+	tk.MustExec("drop table t1, t2;")
+
+	// special case: TiDB error different from MySQL 8.0
+	// MySQL: ERROR 3104 (HY000): Cannot define foreign key with ON UPDATE SET NULL clause on a generated column.
+	// TiDB:  ERROR 1146 (42S02): Table 'test.t2' doesn't exist
+	tk.MustExec("create table t1 (a int, b int generated always as (a+1) stored);")
+	tk.MustGetErrCode("alter table t1 add foreign key (b) references t2(a) on update set null;", errno.ErrNoSuchTable)
+	tk.MustExec("drop table t1;")
+
+	// allowed FK options on stored generated columns
+	tk.MustExec("create table t1 (a int primary key, b char(5));")
+	tk.MustExec("create table t2 (a int, b int generated always as (a % 10) stored, foreign key (b) references t1(a) on update restrict);")
+	tk.MustExec("create table t3 (a int, b int generated always as (a % 10) stored, foreign key (b) references t1(a) on update no action);")
+	tk.MustExec("create table t4 (a int, b int generated always as (a % 10) stored, foreign key (b) references t1(a) on delete restrict);")
+	tk.MustExec("create table t5 (a int, b int generated always as (a % 10) stored, foreign key (b) references t1(a) on delete cascade);")
+	tk.MustExec("create table t6 (a int, b int generated always as (a % 10) stored, foreign key (b) references t1(a) on delete no action);")
+	tk.MustExec("drop table t2,t3,t4,t5,t6;")
+	tk.MustExec("create table t2 (a int, b int generated always as (a % 10) stored);")
+	tk.MustExec("alter table t2 add foreign key (b) references t1(a) on update restrict;")
+	tk.MustExec("create table t3 (a int, b int generated always as (a % 10) stored);")
+	tk.MustExec("alter table t3 add foreign key (b) references t1(a) on update no action;")
+	tk.MustExec("create table t4 (a int, b int generated always as (a % 10) stored);")
+	tk.MustExec("alter table t4 add foreign key (b) references t1(a) on delete restrict;")
+	tk.MustExec("create table t5 (a int, b int generated always as (a % 10) stored);")
+	tk.MustExec("alter table t5 add foreign key (b) references t1(a) on delete cascade;")
+	tk.MustExec("create table t6 (a int, b int generated always as (a % 10) stored);")
+	tk.MustExec("alter table t6 add foreign key (b) references t1(a) on delete no action;")
+	tk.MustExec("drop table t1,t2,t3,t4,t5,t6;")
+
+	// rejected FK options on the base columns of a stored generated columns
+	tk.MustExec("create table t2 (a int primary key);")
+	tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (a) references t2(a) on update set null);", errno.ErrCannotAddForeign)
+	tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (a) references t2(a) on update cascade);", errno.ErrCannotAddForeign)
+	tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (a) references t2(a) on update set default);", errno.ErrCannotAddForeign)
+	tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (a) references t2(a) on delete set null);", errno.ErrCannotAddForeign)
+	tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (a) references t2(a) on delete cascade);", errno.ErrCannotAddForeign)
+	tk.MustGetErrCode("create table t1 (a int, b int generated always as (a+1) stored, foreign key (a) references t2(a) on delete set default);", errno.ErrCannotAddForeign)
+	tk.MustExec("create table t1 (a int, b int generated always as (a+1) stored);")
+	tk.MustGetErrCode("alter table t1 add foreign key (a) references t2(a) on update set null;", errno.ErrCannotAddForeign)
+	tk.MustGetErrCode("alter table t1 add foreign key (a) references t2(a) on update cascade;", errno.ErrCannotAddForeign)
+	tk.MustGetErrCode("alter table t1 add foreign key (a) references t2(a) on update set default;", errno.ErrCannotAddForeign)
+	tk.MustGetErrCode("alter table t1 add foreign key (a) references t2(a) on delete set null;", errno.ErrCannotAddForeign)
+	tk.MustGetErrCode("alter table t1 add foreign key (a) references t2(a) on delete cascade;", errno.ErrCannotAddForeign)
+	tk.MustGetErrCode("alter table t1 add foreign key (a) references t2(a) on delete set default;", errno.ErrCannotAddForeign)
+	tk.MustExec("drop table t1, t2;")
+
+	// allowed FK options on the base columns of a stored generated columns
+	tk.MustExec("create table t1 (a int primary key, b char(5));")
+	tk.MustExec("create table t2 (a int, b int generated always as (a % 10) stored, foreign key (a) references t1(a) on update restrict);")
+	tk.MustExec("create table t3 (a int, b int generated always as (a % 10) stored, foreign key (a) references t1(a) on update no action);")
+	tk.MustExec("create table t4 (a int, b int generated always as (a % 10) stored, foreign key (a) references t1(a) on delete restrict);")
+	tk.MustExec("create table t5 (a int, b int generated always as (a % 10) stored, foreign key (a) references t1(a) on delete no action);")
+	tk.MustExec("drop table t2,t3,t4,t5")
+	tk.MustExec("create table t2 (a int, b int generated always as (a % 10) stored);")
+	tk.MustExec("alter table t2 add foreign key (a) references t1(a) on update restrict;")
+	tk.MustExec("create table t3 (a int, b int generated always as (a % 10) stored);")
+	tk.MustExec("alter table t3 add foreign key (a) references t1(a) on update no action;")
+	tk.MustExec("create table t4 (a int, b int generated always as (a % 10) stored);")
+	tk.MustExec("alter table t4 add foreign key (a) references t1(a) on delete restrict;")
+	tk.MustExec("create table t5 (a int, b int generated always as (a % 10) stored);")
+	tk.MustExec("alter table t5 add foreign key (a) references t1(a) on delete no action;")
+	tk.MustExec("drop table t1,t2,t3,t4,t5;")
+}
+
+func TestSelectInViewFromAnotherDB(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create database test_db2")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("use test_db2")
+	tk.MustExec("create sql security invoker view v as select * from test.t")
+	tk.MustExec("use test")
+	tk.MustExec("select test_db2.v.a from test_db2.v")
+}
+
+func TestAddConstraintCheck(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists add_constraint_check")
+	tk.MustExec("create table add_constraint_check (pk int primary key, a int)")
+	defer tk.MustExec("drop table if exists add_constraint_check")
+	tk.MustExec("alter table add_constraint_check add constraint crn check (a > 1)")
+	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|8231|ADD CONSTRAINT CHECK is not supported"))
+}
+
+func TestCreateTableIgnoreCheckConstraint(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists table_constraint_check")
+	tk.MustExec("CREATE TABLE admin_user (enable bool, CHECK (enable IN (0, 1)));")
+	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|8231|CONSTRAINT CHECK is not supported"))
+	tk.MustQuery("show create table admin_user").Check(testkit.RowsWithSep("|", ""+
+		"admin_user CREATE TABLE `admin_user` (\n"+
+		"  `enable` tinyint(1) DEFAULT NULL\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
