@@ -144,8 +144,6 @@ type Config struct {
 	Cron         Cron                `toml:"cron" json:"cron"`
 	Routes       []*router.TableRule `toml:"routes" json:"routes"`
 	Security     Security            `toml:"security" json:"security"`
-	CheckOnly    *CheckOnly          `toml:"-" json:"-"`
-	LogCfg       log.Config          `toml:"-" json:"-"`
 
 	BWList filter.MySQLReplicationRules `toml:"black-white-list" json:"black-white-list"`
 }
@@ -173,6 +171,8 @@ type Lightning struct {
 
 	MaxError           MaxError `toml:"max-error" json:"max-error"`
 	TaskInfoSchemaName string   `toml:"task-info-schema-name" json:"task-info-schema-name"`
+
+	CheckOnly *CheckOnly `toml:"-" json:"-"`
 }
 
 type PostOpLevel int
@@ -741,8 +741,7 @@ func (cfg *Config) LoadFromGlobal(global *GlobalConfig) error {
 	cfg.App.CheckRequirements = global.App.CheckRequirements
 	cfg.Security = global.Security
 	cfg.Mydumper.IgnoreColumns = global.Mydumper.IgnoreColumns
-	cfg.CheckOnly = global.CheckOnly
-	cfg.LogCfg = global.App.Config
+	cfg.App.CheckOnly = global.App.CheckOnly
 	return nil
 }
 
@@ -939,7 +938,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		}
 	}
 
-	if cfg.CheckOnly != nil {
+	if cfg.App.CheckOnly != nil {
 		// in check-only, max-error not work
 		maxErr := atomic.NewInt64(math.MaxInt64)
 		cfg.App.MaxError = MaxError{

@@ -794,7 +794,7 @@ func TestAdjustMaxErrorOnCheckOnly(t *testing.T) {
 	require.Zero(t, cfg.App.MaxError.Charset.Load())
 	require.Zero(t, cfg.App.MaxError.Type.Load())
 	require.Zero(t, cfg.App.MaxError.Conflict.Load())
-	cfg.CheckOnly = &config.CheckOnly{}
+	cfg.App.CheckOnly = &config.CheckOnly{}
 	require.NoError(t, cfg.Adjust(ctx))
 	require.Equal(t, int64(math.MaxInt64), cfg.App.MaxError.Syntax.Load())
 	require.Equal(t, int64(math.MaxInt64), cfg.App.MaxError.Charset.Load())

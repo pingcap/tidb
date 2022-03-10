@@ -47,6 +47,8 @@ type GlobalLightning struct {
 	// The legacy alias for setting "status-addr". The value should always the
 	// same as StatusAddr, and will not be published in the JSON encoding.
 	PProfPort int `toml:"pprof-port" json:"-"`
+
+	CheckOnly *CheckOnly `toml:"-" json:"-"`
 }
 
 type GlobalTiDB struct {
@@ -81,7 +83,6 @@ type GlobalConfig struct {
 	TikvImporter GlobalImporter    `toml:"tikv-importer" json:"tikv-importer"`
 	PostRestore  GlobalPostRestore `toml:"post-restore" json:"post-restore"`
 	Security     Security          `toml:"security" json:"security"`
-	CheckOnly    *CheckOnly        `toml:"-" json:"-"`
 
 	ConfigFileContent []byte
 }
@@ -298,7 +299,7 @@ func LoadGlobalConfig(args []string, extraFlags func(*flag.FlagSet)) (*GlobalCon
 		if err != nil {
 			return nil, err
 		}
-		cfg.CheckOnly = checkOnlyConfig
+		cfg.App.CheckOnly = checkOnlyConfig
 	}
 
 	if cfg.App.StatusAddr == "" && cfg.App.ServerMode {

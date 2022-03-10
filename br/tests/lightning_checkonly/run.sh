@@ -53,7 +53,6 @@ check_contains "All checks have been passed"
 run_lightning -d "tests/$TEST_NAME/data_sql" --check-only 1,2 > $out_file_name
 check_contains "Total sample of 2 rows of data checked, 1 errors found."
 check_contains "Some checks failed, please check the log for more information."
-check_contains "Log file location: /tmp/backup_restore_test/lightning.log"
 run_lightning -d "tests/$TEST_NAME/data_sql" --check-only 1,3 > $out_file_name
 check_contains "Total sample of 3 rows of data checked, 2 errors found."
 check_contains "Some checks failed, please check the log for more information."
@@ -76,7 +75,6 @@ check_contains "All checks have been passed"
 run_lightning --config "tests/$TEST_NAME/config_gbk.toml" -d "tests/$TEST_NAME/data_csv" --check-only 1,2 > $out_file_name
 check_contains "Total sample of 2 rows of data checked, 1 errors found."
 check_contains "Some checks failed, please check the log for more information."
-check_contains "Log file location: /tmp/backup_restore_test/lightning.log"
 run_lightning --config "tests/$TEST_NAME/config_gbk.toml" -d "tests/$TEST_NAME/data_csv" --check-only 1,3 > $out_file_name
 check_contains "Total sample of 3 rows of data checked, 2 errors found."
 check_contains "Some checks failed, please check the log for more information."

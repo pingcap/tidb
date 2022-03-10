@@ -439,7 +439,7 @@ func (rc *Controller) Close() {
 func (rc *Controller) Run(ctx context.Context) error {
 	type processFunc func(context.Context) error
 	var opts []processFunc
-	if rc.cfg.CheckOnly == nil {
+	if rc.cfg.App.CheckOnly == nil {
 		opts = []processFunc{
 			rc.setGlobalVariables,
 			rc.restoreSchema,
@@ -2037,7 +2037,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		}
 	}
 
-	if rc.cfg.CheckOnly != nil {
+	if rc.cfg.App.CheckOnly != nil {
 		// check only, keep running and let sample check print the result
 		return nil
 	}

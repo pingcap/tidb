@@ -50,7 +50,7 @@ type dataSampleCheck struct {
 func newDataSampleCheck(controller *Controller) *dataSampleCheck {
 	return &dataSampleCheck{
 		controller: controller,
-		checkCfg:   controller.cfg.CheckOnly,
+		checkCfg:   controller.cfg.App.CheckOnly,
 	}
 }
 
@@ -238,7 +238,6 @@ func (d *dataSampleCheck) doCheck(ctx context.Context) error {
 			fmt.Println("All checks have been passed, but there may still be other types of errors that can only be found during the actual insertion of data.")
 		} else {
 			fmt.Println("Some checks failed, please check the log for more information.")
-			fmt.Printf("Log file location: %s\n", rc.cfg.LogCfg.File)
 		}
 	}
 

@@ -44,7 +44,7 @@ func TestDataSampleCheckDoCheck(t *testing.T) {
 	cfg.Mydumper.CharacterSet = "utf8mb4"
 	cfg.Mydumper.ReadBlockSize = 1024
 	cfg.App.RegionConcurrency = 8
-	cfg.CheckOnly = &config.CheckOnly{
+	cfg.App.CheckOnly = &config.CheckOnly{
 		Rate: 0.01,
 		Rows: 1,
 	}
@@ -104,7 +104,7 @@ func TestDataSampleCheckDoCheck(t *testing.T) {
 	require.Equal(t, int64(0), check.totalInvalidCharRows.Load())
 	require.Equal(t, int64(0), check.totalColumnCountMismatchRows.Load())
 
-	cfg.CheckOnly.Rows = 2
+	cfg.App.CheckOnly.Rows = 2
 	rc.checkTemplate = NewSimpleTemplate()
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
@@ -114,7 +114,7 @@ func TestDataSampleCheckDoCheck(t *testing.T) {
 	require.Equal(t, int64(1), check.totalInvalidCharRows.Load())
 	require.Equal(t, int64(0), check.totalColumnCountMismatchRows.Load())
 
-	cfg.CheckOnly.Rows = 3
+	cfg.App.CheckOnly.Rows = 3
 	rc.checkTemplate = NewSimpleTemplate()
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
@@ -125,7 +125,7 @@ func TestDataSampleCheckDoCheck(t *testing.T) {
 	require.Equal(t, int64(1), check.totalColumnCountMismatchRows.Load())
 
 	// more lines than file
-	cfg.CheckOnly.Rows = 1000
+	cfg.App.CheckOnly.Rows = 1000
 	rc.checkTemplate = NewSimpleTemplate()
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
@@ -146,7 +146,7 @@ func TestDataSampleCheckDoCheck(t *testing.T) {
 	err = rc.loadSchemaForCheckOnly(ctx)
 	require.NoError(t, err)
 
-	rc.cfg.CheckOnly.Rate = 1
+	rc.cfg.App.CheckOnly.Rate = 1
 	rc.checkTemplate = NewSimpleTemplate()
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
@@ -171,7 +171,7 @@ func TestDataSampleCheckDoCheck(t *testing.T) {
 	err = rc.loadSchemaForCheckOnly(ctx)
 	require.NoError(t, err)
 
-	cfg.CheckOnly.Rows = 1
+	cfg.App.CheckOnly.Rows = 1
 	rc.checkTemplate = NewSimpleTemplate()
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
@@ -181,7 +181,7 @@ func TestDataSampleCheckDoCheck(t *testing.T) {
 	require.Equal(t, int64(0), check.totalInvalidCharRows.Load())
 	require.Equal(t, int64(0), check.totalColumnCountMismatchRows.Load())
 
-	cfg.CheckOnly.Rows = 2
+	cfg.App.CheckOnly.Rows = 2
 	rc.checkTemplate = NewSimpleTemplate()
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
@@ -191,7 +191,7 @@ func TestDataSampleCheckDoCheck(t *testing.T) {
 	require.Equal(t, int64(1), check.totalInvalidCharRows.Load())
 	require.Equal(t, int64(0), check.totalColumnCountMismatchRows.Load())
 
-	cfg.CheckOnly.Rows = 3
+	cfg.App.CheckOnly.Rows = 3
 	rc.checkTemplate = NewSimpleTemplate()
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
@@ -201,7 +201,7 @@ func TestDataSampleCheckDoCheck(t *testing.T) {
 	require.Equal(t, int64(1), check.totalInvalidCharRows.Load())
 	require.Equal(t, int64(0), check.totalColumnCountMismatchRows.Load())
 
-	cfg.CheckOnly.Rows = 4
+	cfg.App.CheckOnly.Rows = 4
 	rc.checkTemplate = NewSimpleTemplate()
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
@@ -211,7 +211,7 @@ func TestDataSampleCheckDoCheck(t *testing.T) {
 	require.Equal(t, int64(1), check.totalInvalidCharRows.Load())
 	require.Equal(t, int64(1), check.totalColumnCountMismatchRows.Load())
 
-	cfg.CheckOnly.Rows = -1
+	cfg.App.CheckOnly.Rows = -1
 	rc.checkTemplate = NewSimpleTemplate()
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
@@ -236,7 +236,7 @@ func TestDataSampleCheckDoCheck(t *testing.T) {
 	err = rc.loadSchemaForCheckOnly(ctx)
 	require.NoError(t, err)
 
-	cfg.CheckOnly.Rows = 1
+	cfg.App.CheckOnly.Rows = 1
 	rc.checkTemplate = NewSimpleTemplate()
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
@@ -246,7 +246,7 @@ func TestDataSampleCheckDoCheck(t *testing.T) {
 	require.Equal(t, int64(0), check.totalInvalidCharRows.Load())
 	require.Equal(t, int64(0), check.totalColumnCountMismatchRows.Load())
 
-	cfg.CheckOnly.Rows = 2
+	cfg.App.CheckOnly.Rows = 2
 	rc.checkTemplate = NewSimpleTemplate()
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
@@ -256,7 +256,7 @@ func TestDataSampleCheckDoCheck(t *testing.T) {
 	require.Equal(t, int64(1), check.totalInvalidCharRows.Load())
 	require.Equal(t, int64(0), check.totalColumnCountMismatchRows.Load())
 
-	cfg.CheckOnly.Rows = 3
+	cfg.App.CheckOnly.Rows = 3
 	rc.checkTemplate = NewSimpleTemplate()
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
@@ -266,7 +266,7 @@ func TestDataSampleCheckDoCheck(t *testing.T) {
 	require.Equal(t, int64(2), check.totalInvalidCharRows.Load())
 	require.Equal(t, int64(1), check.totalColumnCountMismatchRows.Load())
 
-	cfg.CheckOnly.Rows = -1
+	cfg.App.CheckOnly.Rows = -1
 	rc.checkTemplate = NewSimpleTemplate()
 	check = newDataSampleCheck(rc)
 	err = check.doCheck(ctx)
@@ -279,7 +279,7 @@ func TestDataSampleCheckDoCheck(t *testing.T) {
 
 func TestDataSampleCheckGetRandomDataFiles(t *testing.T) {
 	cfg := config.NewConfig()
-	cfg.CheckOnly = &config.CheckOnly{
+	cfg.App.CheckOnly = &config.CheckOnly{
 		Rate: 0.01,
 		Rows: 100,
 	}
