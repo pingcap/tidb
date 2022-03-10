@@ -948,6 +948,7 @@ func SetTiFlashPlacementRule(ctx context.Context, rule placement.TiFlashRule) er
 	if err != nil {
 		return errors.Trace(err)
 	}
+	logutil.BgLogger().Info("SetTiFlashPlacementRule", zap.String("ruleID", rule.ID))
 	return is.tiflashPlacementManager.SetPlacementRule(ctx, rule)
 }
 
@@ -957,6 +958,7 @@ func DeleteTiFlashPlacementRule(ctx context.Context, group string, ruleID string
 	if err != nil {
 		return errors.Trace(err)
 	}
+	logutil.BgLogger().Info("DeleteTiFlashPlacementRule", zap.String("ruleID", ruleID))
 	return is.tiflashPlacementManager.DeletePlacementRule(ctx, group, ruleID)
 }
 
@@ -975,6 +977,7 @@ func PostTiFlashAccelerateSchedule(ctx context.Context, tableID int64) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	logutil.BgLogger().Info("PostTiFlashAccelerateSchedule", zap.String("tableID", tableID))
 	return is.tiflashPlacementManager.PostAccelerateSchedule(ctx, tableID)
 }
 
