@@ -63,7 +63,6 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, DefExecutorConcurrency, vars.IndexLookupJoinConcurrency())
 	require.Equal(t, DefExecutorConcurrency, vars.HashJoinConcurrency())
 	require.Equal(t, DefTiDBAllowBatchCop, vars.AllowBatchCop)
-	require.Equal(t, DefOptBCJ, vars.AllowBCJ)
 	require.Equal(t, ConcurrencyUnset, vars.projectionConcurrency)
 	require.Equal(t, ConcurrencyUnset, vars.hashAggPartialConcurrency)
 	require.Equal(t, ConcurrencyUnset, vars.hashAggFinalConcurrency)
@@ -82,12 +81,6 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, DefMaxChunkSize, vars.MaxChunkSize)
 	require.Equal(t, DefDMLBatchSize, vars.DMLBatchSize)
 	require.Equal(t, config.GetGlobalConfig().MemQuotaQuery, vars.MemQuotaQuery)
-	require.Equal(t, int64(DefTiDBMemQuotaHashJoin), vars.MemQuotaHashJoin)
-	require.Equal(t, int64(DefTiDBMemQuotaMergeJoin), vars.MemQuotaMergeJoin)
-	require.Equal(t, int64(DefTiDBMemQuotaSort), vars.MemQuotaSort)
-	require.Equal(t, int64(DefTiDBMemQuotaTopn), vars.MemQuotaTopn)
-	require.Equal(t, int64(DefTiDBMemQuotaIndexLookupReader), vars.MemQuotaIndexLookupReader)
-	require.Equal(t, int64(DefTiDBMemQuotaIndexLookupJoin), vars.MemQuotaIndexLookupJoin)
 	require.Equal(t, int64(DefTiDBMemQuotaApplyCache), vars.MemQuotaApplyCache)
 	require.Equal(t, DefOptWriteRowID, vars.AllowWriteRowID)
 	require.Equal(t, DefTiDBOptJoinReorderThreshold, vars.TiDBOptJoinReorderThreshold)
@@ -207,17 +200,6 @@ func TestVarsutil(t *testing.T) {
 		}
 		require.Equal(t, mode, v.SQLMode)
 	}
-
-	err = SetSessionSystemVar(v, "tidb_opt_broadcast_join", "1")
-	require.NoError(t, err)
-	err = SetSessionSystemVar(v, "tidb_allow_batch_cop", "0")
-	require.True(t, terror.ErrorEqual(err, ErrWrongValueForVar))
-	err = SetSessionSystemVar(v, "tidb_opt_broadcast_join", "0")
-	require.NoError(t, err)
-	err = SetSessionSystemVar(v, "tidb_allow_batch_cop", "0")
-	require.NoError(t, err)
-	err = SetSessionSystemVar(v, "tidb_opt_broadcast_join", "1")
-	require.True(t, terror.ErrorEqual(err, ErrWrongValueForVar))
 
 	// Combined sql_mode
 	err = SetSessionSystemVar(v, "sql_mode", "REAL_AS_FLOAT,ANSI_QUOTES")

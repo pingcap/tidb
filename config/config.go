@@ -115,6 +115,9 @@ type Config struct {
 	EnableBatchDML             bool                    `toml:"enable-batch-dml" json:"enable-batch-dml"`
 	TxnLocalLatches            tikvcfg.TxnLocalLatches `toml:"-" json:"-"`
 	ServerVersion              string                  `toml:"server-version" json:"server-version"`
+	VersionComment             string                  `toml:"version-comment" json:"version-comment"`
+	TiDBEdition                string                  `toml:"tidb-edition" json:"tidb-edition"`
+	TiDBReleaseVersion         string                  `toml:"tidb-release-version" json:"tidb-release-version"`
 	Log                        Log                     `toml:"log" json:"log"`
 	Security                   Security                `toml:"security" json:"security"`
 	Status                     Status                  `toml:"status" json:"status"`
@@ -644,6 +647,9 @@ var defaultConf = Config{
 	TxnLocalLatches:              defTiKVCfg.TxnLocalLatches,
 	GracefulWaitBeforeShutdown:   0,
 	ServerVersion:                "",
+	TiDBEdition:                  "",
+	VersionComment:               "",
+	TiDBReleaseVersion:           "",
 	Log: Log{
 		Level:               "info",
 		Format:              "text",
