@@ -743,7 +743,7 @@ func TestColumnCharsetAndCollate(t *testing.T) {
 			collates:    "",
 			exptCharset: "",
 			exptCollate: "",
-			errMsg:      "Unknown charset 'utf16'",
+			errMsg:      "Unknown charset utf16",
 		},
 		{
 			colType:     "varchar(10)",
