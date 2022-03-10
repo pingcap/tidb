@@ -110,13 +110,13 @@ func TestInvalidReadTemporaryTable(t *testing.T) {
 	tk.MustExec("commit")
 
 	for _, query := range queries {
-		tk.MustExec(query.sql)
+		tk.MustQuery(query.sql)
 	}
 
 	// Test normal table when local temporary exits.
 	tk.MustExec("insert into tmp6 values(1);")
+	time.Sleep(100 * time.Millisecond)
 	tk.MustExec("set @a=now(6);")
-	time.Sleep(time.Microsecond)
 	tk.MustExec("drop table tmp6")
 	tk.MustExec("create table tmp6 (id int primary key);")
 	tk.MustQuery("select * from tmp6 as of timestamp(@a) where id=1;").Check(testkit.Rows("1"))
