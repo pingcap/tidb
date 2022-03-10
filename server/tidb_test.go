@@ -1327,7 +1327,8 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		{sql: "select * from t where a=1;", planRegexp: ".*Point_Get.*"},
 		{sql: "select * from t where a in (1,2,3,4)", planRegexp: ".*Batch_Point_Get.*"},
 	}
-	execFn := func() {
+	execFn := func(db *sql.DB) {
+		dbt := testkit.NewDBTestKit(t, db)
 		for _, ca := range cases1 {
 			sqlStr := ca.sql
 			if strings.HasPrefix(sqlStr, "select") {
@@ -1342,7 +1343,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 			checkFn(ca.sql, ca.planRegexp)
 		}
 	}
-	ts.testCase(mc, execFn, check)
+	ts.testCase(t, mc, execFn, check)
 
 	// Test case 2: prepare/execute sql
 	cases2 := []struct {
@@ -1362,7 +1363,8 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		{prepare: "select * from t1 where a=?;", args: []interface{}{1}, planRegexp: ".*Point_Get.*"},
 		{prepare: "select * from t1 where a in (?,?,?,?)", args: []interface{}{1, 2, 3, 4}, planRegexp: ".*Batch_Point_Get.*"},
 	}
-	execFn = func() {
+	execFn = func(db *sql.DB) {
+		dbt := testkit.NewDBTestKit(t, db)
 		for _, ca := range cases2 {
 			prepare, args := ca.prepare, ca.args
 			stmt := dbt.MustPrepare(prepare)
@@ -1381,7 +1383,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 			checkFn(ca.prepare, ca.planRegexp)
 		}
 	}
-	ts.testCase(mc, execFn, check)
+	ts.testCase(t, mc, execFn, check)
 
 	// Test case 3: prepare, execute stmt using @val...
 	cases3 := []struct {
@@ -1400,7 +1402,8 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		{prepare: "select * from t2 where a=?;", args: []interface{}{1}, planRegexp: ".*Point_Get.*"},
 		{prepare: "select * from t2 where a in (?,?,?,?)", args: []interface{}{1, 2, 3, 4}, planRegexp: ".*Batch_Point_Get.*"},
 	}
-	execFn = func() {
+	execFn = func(db *sql.DB) {
+		dbt := testkit.NewDBTestKit(t, db)
 		for _, ca := range cases3 {
 			prepare, args := ca.prepare, ca.args
 			dbt.MustExec(fmt.Sprintf("prepare stmt from '%v'", prepare))
@@ -1429,7 +1432,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 			checkFn(ca.prepare, ca.planRegexp)
 		}
 	}
-	ts.testCase(mc, execFn, check)
+	ts.testCase(t, mc, execFn, check)
 
 	// Test case for other statements
 	cases4 := []struct {
@@ -1445,7 +1448,8 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		{"trace select sum(b*a), sum(a+b) from t", "", true},
 		{"set global tidb_stmt_summary_history_size=5;", "", false},
 	}
-	execFn = func() {
+	execFn = func(db *sql.DB) {
+		dbt := testkit.NewDBTestKit(t, db)
 		for _, ca := range cases4 {
 			if ca.isQuery {
 				require.NoError(t, dbt.MustQuery(ca.sql).Close())
@@ -1461,7 +1465,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		// check for internal SQL.
 		checkFn("replace into mysql.global_variables (variable_name,variable_value) values ('tidb_stmt_summary_history_size', '5')", "")
 	}
-	ts.testCase(mc, execFn, check)
+	ts.testCase(t, mc, execFn, check)
 
 	// Test case for multi-statement.
 	dbt.MustExec("SET tidb_multi_statement_mode='ON'")
@@ -1471,7 +1475,8 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		"select sum(a+b*2) from t;",
 	}
 	multiStatement5 := strings.Join(cases5, "")
-	execFn = func() {
+	execFn = func(db *sql.DB) {
+		dbt := testkit.NewDBTestKit(t, db)
 		dbt.MustExec(multiStatement5)
 	}
 	check = func() {
@@ -1479,7 +1484,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 			checkFn(sqlStr, ".*TableReader.*")
 		}
 	}
-	ts.testCase(mc, execFn, check)
+	ts.testCase(t, mc, execFn, check)
 
 	// Test case for multi-statement, but first statements execute failed
 	cases6 := []string{
@@ -1487,7 +1492,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		"update t set a=1 where a is null limit 1;",
 	}
 	multiStatement6 := strings.Join(cases6, "")
-	execFn = func() {
+	execFn = func(db *sql.DB) {
 		_, err := db.Exec(multiStatement6)
 		require.NotNil(t, err)
 		require.Equal(t, "Error 1146: Table 'topsql.t_not_exist' doesn't exist", err.Error())
@@ -1499,7 +1504,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 			require.Equal(t, 0, len(stats), sqlStr)
 		}
 	}
-	ts.testCase(mc, execFn, check)
+	ts.testCase(t, mc, execFn, check)
 
 	// Test case for multi-statement, the first statements execute success but the second statement execute failed.
 	cases7 := []string{
@@ -1507,7 +1512,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		"delete from t_not_exist;",
 	}
 	multiStatement7 := strings.Join(cases7, "")
-	execFn = func() {
+	execFn = func(db *sql.DB) {
 		_, err = db.Exec(multiStatement7)
 		require.NotNil(t, err)
 		require.Equal(t, "Error 1146: Table 'topsql.t_not_exist' doesn't exist", err.Error())
@@ -1515,11 +1520,11 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	check = func() {
 		checkFn(cases7[0], "") // the first statement execute success, should have topsql data.
 	}
-	ts.testCase(mc, execFn, check)
+	ts.testCase(t, mc, execFn, check)
 
 	// Test case for statement with wrong syntax.
 	wrongSyntaxSQL := "select * froms t"
-	execFn = func() {
+	execFn = func(db *sql.DB) {
 		_, err = db.Exec(wrongSyntaxSQL)
 		require.NotNil(t, err)
 		require.Regexp(t, "Error 1064: You have an error in your SQL syntax...", err.Error())
@@ -1528,14 +1533,15 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		stats := mc.GetSQLStatsBySQL(wrongSyntaxSQL, false)
 		require.Equal(t, 0, len(stats), wrongSyntaxSQL)
 	}
-	ts.testCase(mc, execFn, check)
+	ts.testCase(t, mc, execFn, check)
 
 	// Test case for high cost of plan optimize.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/mockHighLoadForOptimize", "return"))
 	selectSQL := "select sum(a+b), count(distinct b) from t where a+b >0"
 	updateSQL := "update t set a=a+100 where a > 10000000"
 	selectInPlanSQL := "select * from t where exists (select 1 from t1 where t1.a = 1);"
-	execFn = func() {
+	execFn = func(db *sql.DB) {
+		dbt := testkit.NewDBTestKit(t, db)
 		mustQuery(t, dbt, selectSQL)
 		dbt.MustExec(updateSQL)
 		mustQuery(t, dbt, selectInPlanSQL)
@@ -1548,14 +1554,15 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		require.Less(t, updateCPUTime, selectCPUTime)
 		checkFn(selectInPlanSQL, "")
 	}
-	ts.testCase(mc, execFn, check)
+	ts.testCase(t, mc, execFn, check)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/mockHighLoadForOptimize"))
 
 	// Test case for DDL execute failed but should still have CPU data.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockHighLoadForAddIndex", "return"))
 	dbt.MustExec(fmt.Sprintf("insert into t values (%v,%v), (%v, %v);", 2000, 1, 2001, 1))
 	addIndexStr := "alter table t add unique index idx_b (b)"
-	execFn = func() {
+	execFn = func(db *sql.DB) {
+		dbt := testkit.NewDBTestKit(t, db)
 		dbt.MustExec("alter table t drop index if exists idx_b")
 		_, err := db.Exec(addIndexStr)
 		require.NotNil(t, err)
@@ -1564,13 +1571,13 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	check = func() {
 		checkFn(addIndexStr, "")
 	}
-	ts.testCase(mc, execFn, check)
+	ts.testCase(t, mc, execFn, check)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockHighLoadForAddIndex"))
 
 	// Test case for execute failed cause by storage error.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/copr/handleTaskOnceError", `return(true)`))
 	execFailedQuery := "select * from t where a*b < 1000"
-	execFn = func() {
+	execFn = func(db *sql.DB) {
 		_, err = db.Query(execFailedQuery)
 		require.NotNil(t, err)
 		require.Equal(t, "Error 1105: mock handleTaskOnce error", err.Error())
@@ -1578,17 +1585,17 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	check = func() {
 		checkFn(execFailedQuery, "")
 	}
-	ts.testCase(mc, execFn, check)
+	ts.testCase(t, mc, execFn, check)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/copr/handleTaskOnceError"))
 }
 
-func (ts *tidbTestTopSQLSuite) testCase(mc *mockTopSQLTraceCPU.TopSQLCollector, execFn func(), checkFn func()) {
+func (ts *tidbTestTopSQLSuite) testCase(t *testing.T, mc *mockTopSQLTraceCPU.TopSQLCollector, execFn func(db *sql.DB), checkFn func()) {
 	var wg sync.WaitGroup
 	ctx, cancel := context.WithCancel(context.Background())
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		ts.loopExec(ctx, execFn)
+		ts.loopExec(ctx, t, execFn)
 	}()
 
 	checkFn()
@@ -2187,14 +2194,22 @@ func TestTopSQLStatementStats4(t *testing.T) {
 	}
 }
 
-func (ts *tidbTestTopSQLSuite) loopExec(ctx context.Context, fn func()) {
+func (ts *tidbTestTopSQLSuite) loopExec(ctx context.Context, t *testing.T, fn func(db *sql.DB)) {
+	db, err := sql.Open("mysql", ts.getDSN())
+	require.NoError(t, err, "Error connecting")
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+	dbt := testkit.NewDBTestKit(t, db)
+	dbt.MustExec("use topsql;")
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
 		}
-		fn()
+		fn(db)
 	}
 }
 
