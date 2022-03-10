@@ -6093,3 +6093,18 @@ func (s *testSessionSuite) TestSysdateIsNow(c *C) {
 	tk.MustQuery("show variables like '%sysdate_is_now%'").Check(testkit.Rows("sysdate_is_now ON"))
 	c.Assert(tk.Se.GetSessionVars().SysdateIsNow, IsTrue)
 }
+
+func (s *testSessionSuite) TestEnableLegacyInstanceScope(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// enable 'switching' to SESSION variables
+	tk.MustExec("set tidb_enable_legacy_instance_scope = 1")
+	tk.MustExec("set tidb_general_log = 1")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(fmt.Sprintf("Warning %d allowing variable tidb_general_log with INSTANCE scope change to SESSION scope while setting for now, but its deprecated", errno.ErrInstanceScope)))
+	c.Assert(tk.Se.GetSessionVars().EnableLegacyInstanceScope, IsTrue)
+
+	// disable 'switching' to SESSION variables
+	tk.MustExec("set tidb_enable_legacy_instance_scope = 0")
+	tk.MustGetErrCode("set tidb_general_log = 1", errno.ErrGlobalVariable)
+	c.Assert(tk.Se.GetSessionVars().EnableLegacyInstanceScope, IsFalse)
+}
