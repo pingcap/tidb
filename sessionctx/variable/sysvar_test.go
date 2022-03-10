@@ -246,22 +246,32 @@ func TestScope(t *testing.T) {
 	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
 	require.True(t, sv.HasSessionScope())
 	require.True(t, sv.HasGlobalScope())
+	require.False(t, sv.HasInstanceScope())
 	require.False(t, sv.HasNoneScope())
 
 	sv = SysVar{Scope: ScopeGlobal, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
 	require.False(t, sv.HasSessionScope())
 	require.True(t, sv.HasGlobalScope())
+	require.False(t, sv.HasInstanceScope())
 	require.False(t, sv.HasNoneScope())
 
 	sv = SysVar{Scope: ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
 	require.True(t, sv.HasSessionScope())
 	require.False(t, sv.HasGlobalScope())
+	require.False(t, sv.HasInstanceScope())
 	require.False(t, sv.HasNoneScope())
 
 	sv = SysVar{Scope: ScopeNone, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
 	require.False(t, sv.HasSessionScope())
 	require.False(t, sv.HasGlobalScope())
+	require.False(t, sv.HasInstanceScope())
 	require.True(t, sv.HasNoneScope())
+
+	sv = SysVar{Scope: ScopeInstance, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	require.False(t, sv.HasSessionScope())
+	require.False(t, sv.HasGlobalScope())
+	require.True(t, sv.HasInstanceScope())
+	require.False(t, sv.HasNoneScope())
 }
 
 func TestBuiltInCase(t *testing.T) {
