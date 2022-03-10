@@ -69,7 +69,7 @@ var _ Executor = &AnalyzeExec{}
 type AnalyzeExec struct {
 	baseExecutor
 	tasks      []*analyzeTask
-	wg         *sync.WaitGroup
+	wg         util.WaitGroupWrapper
 	opts       map[ast.AnalyzeOptionType]uint64
 	OptionsMap map[int64]core.V2AnalyzeOptions
 }
@@ -94,9 +94,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	taskCh := make(chan *analyzeTask, len(e.tasks))
 	resultsCh := make(chan *statistics.AnalyzeResults, len(e.tasks))
 	exitCh := make(chan struct{})
-	e.wg.Add(concurrency)
 	for i := 0; i < concurrency; i++ {
-		go e.analyzeWorker(taskCh, resultsCh, exitCh)
+		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh, exitCh) })
 	}
 	for _, task := range e.tasks {
 		statistics.AddNewAnalyzeJob(task.job)
@@ -351,7 +350,6 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 				Job: task.job,
 			}
 		}
-		e.wg.Done()
 	}()
 	for {
 		select {
