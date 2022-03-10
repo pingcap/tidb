@@ -1510,12 +1510,21 @@ func TestListPartition4PlanCache(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int, b int) PARTITION BY LIST (a) ( PARTITION p0 VALUES IN (1, 2, 3), PARTITION p1 VALUES IN (4, 5, 6));")
 
-	tk.MustExec("set @@tidb_partition_prune_mode='static';")
+	/*
+		tk.MustExec("set @@tidb_partition_prune_mode='static';")
+		tk.MustExec("prepare stmt from 'select * from t;';")
+		tk.MustQuery("execute stmt;").Check(testkit.Rows())
+		tk.MustQuery("execute stmt;").Check(testkit.Rows())
+		// The list partition plan can not be cached.
+		tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	*/
+
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic';")
 	tk.MustExec("prepare stmt from 'select * from t;';")
 	tk.MustQuery("execute stmt;").Check(testkit.Rows())
 	tk.MustQuery("execute stmt;").Check(testkit.Rows())
-	// The list partition plan can not be cached.
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	// The list partition plan can be cached with dynamic prune mode.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 }
 
 func TestMoreSessions4PlanCache(t *testing.T) {
