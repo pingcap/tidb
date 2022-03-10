@@ -330,16 +330,18 @@ func TestGlobalStats(t *testing.T) {
 		"IndexReader 2.00 root partition:p1 index:IndexRangeScan",
 		"└─IndexRangeScan 2.00 cop[tikv] table:t, index:a(a) range:(15,+inf], keep order:false"))
 
-	// Even if we have global-stats, we will not use it when the switch is set to `static`.
-	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
-	tk.MustQuery("explain format = 'brief' select a from t where a > 5").Check(testkit.Rows(
-		"PartitionUnion 4.00 root  ",
-		"├─IndexReader 0.00 root  index:IndexRangeScan",
-		"│ └─IndexRangeScan 0.00 cop[tikv] table:t, partition:p0, index:a(a) range:(5,+inf], keep order:false",
-		"├─IndexReader 2.00 root  index:IndexRangeScan",
-		"│ └─IndexRangeScan 2.00 cop[tikv] table:t, partition:p1, index:a(a) range:(5,+inf], keep order:false",
-		"└─IndexReader 2.00 root  index:IndexRangeScan",
-		"  └─IndexRangeScan 2.00 cop[tikv] table:t, partition:p2, index:a(a) range:(5,+inf], keep order:false"))
+	/*
+		// Even if we have global-stats, we will not use it when the switch is set to `static`.
+		tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
+		tk.MustQuery("explain format = 'brief' select a from t where a > 5").Check(testkit.Rows(
+			"PartitionUnion 4.00 root  ",
+			"├─IndexReader 0.00 root  index:IndexRangeScan",
+			"│ └─IndexRangeScan 0.00 cop[tikv] table:t, partition:p0, index:a(a) range:(5,+inf], keep order:false",
+			"├─IndexReader 2.00 root  index:IndexRangeScan",
+			"│ └─IndexRangeScan 2.00 cop[tikv] table:t, partition:p1, index:a(a) range:(5,+inf], keep order:false",
+			"└─IndexReader 2.00 root  index:IndexRangeScan",
+			"  └─IndexRangeScan 2.00 cop[tikv] table:t, partition:p2, index:a(a) range:(5,+inf], keep order:false"))
+	*/
 
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
 	tk.MustExec("drop table t;")
@@ -352,12 +354,14 @@ func TestGlobalStats(t *testing.T) {
 	require.Len(t, result.Rows(), 2)
 	require.Equal(t, "2", result.Rows()[0][5])
 	require.Equal(t, "3", result.Rows()[1][5])
-	tk.MustQuery("explain format = 'brief' select a from t where a > 3;").Check(testkit.Rows(
-		"PartitionUnion 2.00 root  ",
-		"├─IndexReader 1.00 root  index:IndexRangeScan",
-		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p0, index:a(a) range:(3,+inf], keep order:false",
-		"└─IndexReader 1.00 root  index:IndexRangeScan",
-		"  └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:a(a) range:(3,+inf], keep order:false"))
+	/*
+		tk.MustQuery("explain format = 'brief' select a from t where a > 3;").Check(testkit.Rows(
+			"PartitionUnion 2.00 root  ",
+			"├─IndexReader 1.00 root  index:IndexRangeScan",
+			"│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p0, index:a(a) range:(3,+inf], keep order:false",
+			"└─IndexReader 1.00 root  index:IndexRangeScan",
+			"  └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:a(a) range:(3,+inf], keep order:false"))
+	*/
 
 	// When we turned on the switch, we found that pseudo-stats will be used in the plan instead of `Union`.
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
