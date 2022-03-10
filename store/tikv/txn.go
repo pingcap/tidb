@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/kv/memdb"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -87,11 +88,13 @@ type tikvTxn struct {
 	schemaAmender SchemaAmender
 	// commitCallback is called after current transaction gets committed
 	commitCallback func(info kv.TxnInfo, err error)
-	//
+	// The times are used for lock related log
 	lockAcquiredTime  *time.Time
 	commitStartTime   *time.Time
 	rollbackStartTime *time.Time
 	lockReleasedTime  *time.Time
+	// record the locked keys during transaction execution
+	lockedKeys []kv.LockedKeys
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
@@ -285,15 +288,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 
 	start := time.Now()
 	if len(txn.lockKeys) > 0 && txn.committer != nil && txn.committer.connID > 0 && txn.IsPessimistic() {
-		startCommitTime := time.Now()
-		txn.commitStartTime = &startCommitTime
-		if txn.lockAcquiredTime != nil {
-			logutil.Logger(ctx).Info("[pessimistic lock keys] txn try to commit",
-				zap.Uint64("start_ts", txn.startTS),
-				zap.Stringer("lock_time", txn.lockAcquiredTime),
-				zap.Stringer("start_commit_time", txn.commitStartTime),
-				zap.Int64("key_lock_time_to_commit_start[in ms]", txn.commitStartTime.Sub(*txn.lockAcquiredTime).Milliseconds()))
-		}
+		txn.commitStartTime = &start
 	}
 
 	var err error
@@ -301,6 +296,10 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		tikvTxnCmdHistogramWithCommit.Observe(time.Since(start).Seconds())
 		lockReleaseTime := time.Now()
 		txn.lockReleasedTime = &lockReleaseTime
+		// reduce log
+		if lockReleaseTime.Sub(start) < time.Duration(atomic.LoadInt64(&variable.SlowReleasePessimisticLock))*time.Millisecond {
+			return
+		}
 		if len(txn.lockKeys) > 0 && txn.committer != nil && txn.committer.connID > 0 && txn.IsPessimistic() &&
 			txn.lockAcquiredTime != nil && txn.commitStartTime != nil {
 			logutil.Logger(ctx).Info("[pessimistic lock keys] finish to commit",
@@ -309,9 +308,9 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 				zap.Stringer("lock_time", txn.lockAcquiredTime),
 				zap.Stringer("start_commit_time", txn.commitStartTime),
 				zap.Stringer("lock_released_time", txn.lockReleasedTime),
+				zap.Duration("commit duration", lockReleaseTime.Sub(start)),
 				zap.Int64("key_lock_time_to_commit_start[in ms]", txn.commitStartTime.Sub(*txn.lockAcquiredTime).Milliseconds()),
-				zap.Int64("key_lock_time_to_release[in ms]", txn.lockReleasedTime.Sub(*txn.lockAcquiredTime).Milliseconds()),
-				zap.Strings("locked keys", HexKeys(txn.lockKeys)))
+				zap.Int64("key_lock_time_to_release[in ms]", txn.lockReleasedTime.Sub(*txn.lockAcquiredTime).Milliseconds()))
 		}
 	}()
 
@@ -331,7 +330,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		}
 	}
 	defer committer.ttlManager.close()
-	if err := committer.initKeysAndMutations(); err != nil {
+	if err = committer.initKeysAndMutations(); err != nil {
 		return errors.Trace(err)
 	}
 	if committer.mutations.len() == 0 {
@@ -371,7 +370,8 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}
 	defer txn.store.txnLatches.UnLock(lock)
 	if lock.IsStale() {
-		return kv.ErrWriteConflictInTiDB.FastGenByArgs(txn.startTS)
+		err = kv.ErrWriteConflictInTiDB.FastGenByArgs(txn.startTS)
+		return err
 	}
 	err = committer.execute(ctx)
 	if val == nil || connID > 0 {
@@ -386,14 +386,6 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 
 func (txn *tikvTxn) close() {
 	txn.valid = false
-}
-
-func HexKeys(keys [][]byte) []string {
-	resKeys := make([]string, 0, len(keys))
-	for _, key := range keys {
-		resKeys = append(resKeys, kv.Key(key).String())
-	}
-	return resKeys
 }
 
 func (txn *tikvTxn) Rollback() error {
@@ -417,8 +409,7 @@ func (txn *tikvTxn) Rollback() error {
 				zap.Stringer("start_to_rollback_time", txn.rollbackStartTime),
 				zap.Stringer("lock_released_time", txn.lockReleasedTime),
 				zap.Int64("key_lock_time_to_rollback_start[in ms]", txn.rollbackStartTime.Sub(*txn.lockAcquiredTime).Milliseconds()),
-				zap.Int64("key_lock_time_to_release[in ms]", txn.lockReleasedTime.Sub(*txn.lockAcquiredTime).Milliseconds()),
-				zap.Strings("locked keys", HexKeys(txn.lockKeys)))
+				zap.Int64("key_lock_time_to_release[in ms]", txn.lockReleasedTime.Sub(*txn.lockAcquiredTime).Milliseconds()))
 		}
 		txn.committer.ttlManager.close()
 		if err != nil {
@@ -506,15 +497,15 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 		return nil
 	}
 	keys = deduplicateKeys(keys)
+	// connID is used for log.
+	var connID uint64
+	val := ctx.Value(sessionctx.ConnID)
+	if val != nil {
+		connID = val.(uint64)
+	}
 	if txn.IsPessimistic() && lockCtx.ForUpdateTS > 0 {
 		if txn.committer == nil {
-			// connID is used for log.
-			var connID uint64
 			var err error
-			val := ctx.Value(sessionctx.ConnID)
-			if val != nil {
-				connID = val.(uint64)
-			}
 			txn.committer, err = newTwoPhaseCommitter(txn, connID)
 			if err != nil {
 				return err
@@ -573,18 +564,26 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			return err
 		}
 		if len(keys) > 0 && txn.committer != nil && txn.committer.connID > 0 {
-			if txn.lockAcquiredTime == nil {
-				now := time.Now()
-				txn.lockAcquiredTime = &now
+			now := time.Now()
+			if now.Sub(startTime) > time.Duration(atomic.LoadInt64(&variable.SlowAcquirePessimisticLock))*time.Millisecond || txn.lockAcquiredTime != nil {
+				if txn.lockAcquiredTime == nil {
+					txn.lockAcquiredTime = &now
+				}
+				logutil.Logger(ctx).Info("[pessimistic lock keys] txn locked keys",
+					zap.Uint64("start_ts", txn.startTS), zap.Int("key numbers", len(keys)),
+					zap.Duration("acquire lock duration", now.Sub(startTime)))
 			}
-			logutil.Logger(ctx).Info("[pessimistic lock keys] txn locked keys",
-				zap.Uint64("start_ts", txn.startTS), zap.Int("key numbers", len(keys)),
-				zap.Strings("keys", HexKeys(keys)),
-				zap.Time("lockAcquiredTime", *txn.lockAcquiredTime))
 		}
 		if assignedPrimaryKey {
 			txn.committer.ttlManager.run(txn.committer, lockCtx)
 		}
+	}
+	if connID > 0 {
+		txn.lockedKeys = append(txn.lockedKeys, kv.LockedKeys{
+			LocalTime:   startTime,
+			ForUpdateTS: lockCtx.ForUpdateTS,
+			Keys:        len(keys),
+		})
 	}
 	txn.lockKeys = append(txn.lockKeys, keys...)
 	for _, key := range keys {
@@ -695,4 +694,8 @@ func (txn *tikvTxn) ResetStmtKeyExistErrs() {
 
 func (txn *tikvTxn) MergeStmtKeyExistErrs() {
 	txn.us.MergeStmtKeyExistErrs()
+}
+
+func (txn *tikvTxn) GetLockedKeys() []kv.LockedKeys {
+	return txn.lockedKeys
 }

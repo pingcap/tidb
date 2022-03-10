@@ -264,3 +264,71 @@ func (*testSessionSuite) TestIsolationRead(c *C) {
 	_, ok = sessVars.IsolationReadEngines[kv.TiFlash]
 	c.Assert(ok, Equals, true)
 }
+
+// Suppose we have the following case:
+// │   stmt1   │       │   stmt2&lock1  │             │   stmt3&lock2  │     │   commit  │
+// ├──────────►│       ├───────────────►│             ├───────────────►│     ├──────────►│
+// │   exec1   │ idle1 │      exec2     │    idle2    │      exec3     │idle3│   exec4   │
+// now       +5ms    +8ms             +18ms         +25ms            +34ms +36ms        +42ms
+// The txn-level durations should be:
+//   - LockIdleDuration  = idle2 + idle3 = 9ms
+//   - LockExecDuration  = exec3 + exec4 = 15ms
+//   - TotalIdleDuration = idle1 + idle2 + idle3 = 12ms
+//   - TotalExecDuration = exec1 + exec3 + exec3 + exec4 = 30ms
+// The lock-level durations are:
+//   - lock2
+//     - IdleDuration = idle3 = 2ms
+//     - ExecDuration = exec4 = 6ms
+//   - lock1
+//     - IdleDuration = idle2 + idle3 = 9ms
+//     - ExecDuration = exec3 + exec4 = 15ms
+func (*testSessionSuite) TestCalcLockDurations(c *C) {
+	sessVars := variable.NewSessionVars()
+	now := time.Now()
+	afterMilliseconds := func(n int) time.Time {
+		return now.Add(time.Duration(n) * time.Millisecond)
+	}
+	endTime := afterMilliseconds(42)
+	sessVars.StartTimes = []time.Time{
+		now,
+		afterMilliseconds(8),
+		afterMilliseconds(25),
+		afterMilliseconds(36),
+	}
+	sessVars.EndTimes = []time.Time{
+		afterMilliseconds(5),
+		afterMilliseconds(18),
+		afterMilliseconds(34),
+	}
+	lockedKeys := []kv.LockedKeys{
+		{
+			LocalTime:   afterMilliseconds(11), // the locked local time should between +8ms and +18ms
+			ForUpdateTS: 10,
+			Keys:        1,
+		},
+		{
+			LocalTime:   afterMilliseconds(29), // the locked local time should between +25ms and +34ms
+			ForUpdateTS: 20,
+			Keys:        2,
+		},
+	}
+	lockedKeysDurations, txnRes, err := variable.CalcLockDurations(lockedKeys, sessVars.StartTimes, sessVars.EndTimes, endTime)
+	c.Assert(err, IsNil)
+	c.Assert(txnRes.LockIdleDuration, Equals, 9*time.Millisecond)
+	c.Assert(txnRes.LockExecDuration, Equals, 15*time.Millisecond)
+	c.Assert(txnRes.TotalIdleDuration, Equals, 12*time.Millisecond)
+	c.Assert(txnRes.TotalExecDuration, Equals, 30*time.Millisecond)
+	c.Assert(len(lockedKeysDurations), Equals, 2)
+	c.Assert(lockedKeysDurations[0].IdleDuration, Equals, 9*time.Millisecond)
+	c.Assert(lockedKeysDurations[0].ExecDuration, Equals, 15*time.Millisecond)
+	c.Assert(lockedKeysDurations[1].IdleDuration, Equals, 2*time.Millisecond)
+	c.Assert(lockedKeysDurations[1].ExecDuration, Equals, 6*time.Millisecond)
+	sessVars.ResetTxnTimes()
+	// invalid input
+	_, _, err = variable.CalcLockDurations(lockedKeys, sessVars.StartTimes, sessVars.EndTimes, endTime)
+	c.Assert(err, NotNil)
+	// empty endTimes input
+	sessVars.StartTimes = append(sessVars.StartTimes, time.Now())
+	_, _, err = variable.CalcLockDurations(lockedKeys, sessVars.StartTimes, sessVars.EndTimes, endTime)
+	c.Assert(err, NotNil)
+}

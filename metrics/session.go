@@ -118,6 +118,24 @@ var (
 			Help:      "Keys locking for a single statement",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 21), // 1 ~ 1048576
 		})
+
+	TxnDurationHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "txn_duration_seconds",
+			Help:      "Bucketed histogram of execution and idle time (s) in a transaction.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
+		}, []string{LblLock, LblType})
+
+	LockDurationBucket = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "lock_duration_seconds",
+			Help:      "Bucketed histogram of execution and idle time (s) after a lock is acquired in a transaction.",
+			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
+		}, []string{LblType})
 )
 
 // Label constants.
@@ -146,4 +164,9 @@ const (
 	LblInTxn       = "in_txn"
 	LblVersion     = "version"
 	LblHash        = "hash"
+	LblExec        = "execution"
+	LblIdle        = "idle"
+	LblLock        = "lock"
+	LblLockObtain  = "obtain"
+	LblLockNone    = "none"
 )

@@ -228,6 +228,9 @@ type Transaction interface {
 	IsPessimistic() bool
 	ResetStmtKeyExistErrs()
 	MergeStmtKeyExistErrs()
+	// GetLockedKeys returns the locked keys and the local time and the ForUpdateTS of them.
+	// Can be used as idle and execution duration analyze after fetching locks.
+	GetLockedKeys() []LockedKeys
 }
 
 // LockCtx contains information for LockKeys method.
@@ -245,6 +248,13 @@ type LockCtx struct {
 	LockExpired           *uint32
 	CheckKeyExists        map[string]struct{}
 	Stats                 *execdetails.LockKeysDetails
+}
+
+// LockedKeys record the lock keys count and their lock time.
+type LockedKeys struct {
+	LocalTime   time.Time
+	ForUpdateTS uint64
+	Keys        int
 }
 
 // ReturnedValue pairs the Value and AlreadyLocked flag for PessimisticLock return values result.

@@ -151,6 +151,10 @@ func (t *mockTxn) GetFlags(ctx context.Context, k Key) memdb.KeyFlags {
 	return 0
 }
 
+func (t *mockTxn) GetLockedKeys() []LockedKeys {
+	return nil
+}
+
 // NewMockTxn new a mockTxn.
 func NewMockTxn() Transaction {
 	return &mockTxn{

@@ -228,6 +228,9 @@ func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql s
 	}
 
 	if !sessVars.InTxn() {
+		if sessVars.ConnectionID > 0 && se.txn.Valid() {
+			defer sessVars.ReportTxnAndLockDuration(se.txn.StartTS(), se.txn.GetLockedKeys())
+		}
 		if err := se.CommitTxn(ctx); err != nil {
 			if _, ok := sql.(*executor.ExecStmt).StmtNode.(*ast.CommitStmt); ok {
 				err = errors.Annotatef(err, "previous statement: %s", se.GetSessionVars().PrevStmt)
@@ -299,6 +302,18 @@ func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) 
 
 	se := sctx.(*session)
 	sessVars := se.GetSessionVars()
+
+	// record client's connections only
+	if sessVars.ConnectionID > 0 {
+		if !sessVars.InTxn() {
+			sessVars.ResetTxnTimes()
+		}
+		sessVars.StartTimes = append(sessVars.StartTimes, sessVars.StartTime)
+		defer func() {
+			sessVars.EndTimes = append(sessVars.EndTimes, time.Now())
+		}()
+	}
+
 	// Save origTxnCtx here to avoid it reset in the transaction retry.
 	origTxnCtx := sessVars.TxnCtx
 	err = se.checkTxnAborted(s)

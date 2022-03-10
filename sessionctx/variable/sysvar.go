@@ -743,6 +743,9 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBEnableAmendPessimisticTxn, boolToOnOff(DefTiDBEnableAmendPessimisticTxn)},
 	{ScopeGlobal | ScopeSession, TiDBMultiStatementMode, Warn},
 	{ScopeGlobal | ScopeSession, TiDBEnableOrderedResultMode, boolToOnOff(DefTiDBEnableOrderedResultMode)},
+	{ScopeGlobal, TiDBLongTxnThreshold, strconv.Itoa(int(atomic.LoadInt64(&LongTxnThreshold)))},
+	{ScopeGlobal, TiDBSlowAcquirePessimisticLock, strconv.Itoa(int(atomic.LoadInt64(&SlowAcquirePessimisticLock)))},
+	{ScopeGlobal, TiDBSlowReleasePessimisticLock, strconv.Itoa(int(atomic.LoadInt64(&SlowReleasePessimisticLock)))},
 }
 
 // SynonymsSysVariables is synonyms of system variables.

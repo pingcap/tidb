@@ -186,6 +186,15 @@ const (
 
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	TiDBAllowAutoRandExplicitInsert = "allow_auto_random_explicit_insert"
+
+	// TiDBLongTxnThreshold indicates the log threshold for long transaction
+	TiDBLongTxnThreshold = "tidb_long_txn_threshold"
+
+	// TiDBSlowAcquirePessimisticLock indicates the log threshold for slow acquiring pessimistic locks
+	TiDBSlowAcquirePessimisticLock = "tidb_slow_acquire_pessimistic_lock_threshold"
+
+	// TiDBSlowReleasePessimisticLock indicates the log threshold for slow releasing pessimistic locks
+	TiDBSlowReleasePessimisticLock = "tidb_slow_release_pessimistic_lock_threshold"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -562,4 +571,7 @@ var (
 	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
 	CapturePlanBaseline                   = serverGlobalVariable{globalVal: "0"}
 	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
+	LongTxnThreshold               int64  = 300
+	SlowAcquirePessimisticLock     int64  = 50
+	SlowReleasePessimisticLock     int64  = 20
 )

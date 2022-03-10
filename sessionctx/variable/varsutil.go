@@ -822,6 +822,24 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 			return Warn, nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case TiDBLongTxnThreshold:
+		threshold := tidbOptInt64(value, -1)
+		if threshold < 0 {
+			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		atomic.StoreInt64(&LongTxnThreshold, threshold)
+	case TiDBSlowAcquirePessimisticLock:
+		threshold := tidbOptInt64(value, -1)
+		if threshold < 0 {
+			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		atomic.StoreInt64(&SlowAcquirePessimisticLock, threshold)
+	case TiDBSlowReleasePessimisticLock:
+		threshold := tidbOptInt64(value, -1)
+		if threshold < 0 {
+			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+		}
+		atomic.StoreInt64(&SlowReleasePessimisticLock, threshold)
 	}
 	return value, nil
 }

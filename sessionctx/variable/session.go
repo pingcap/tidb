@@ -48,6 +48,16 @@ import (
 	"github.com/pingcap/tidb/util/storeutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/timeutil"
+	"go.uber.org/zap"
+)
+
+var (
+	sessionTxnObtainLockExecDuration = metrics.TxnDurationHistogram.WithLabelValues(metrics.LblLockObtain, metrics.LblExec)
+	sessionTxnObtainLockIdleDuration = metrics.TxnDurationHistogram.WithLabelValues(metrics.LblLockObtain, metrics.LblIdle)
+	sessionTxnNoneLockExecDuration   = metrics.TxnDurationHistogram.WithLabelValues(metrics.LblLockNone, metrics.LblExec)
+	sessionTxnNoneLockIdleDuration   = metrics.TxnDurationHistogram.WithLabelValues(metrics.LblLockNone, metrics.LblIdle)
+	sessionLockExecDuration          = metrics.LockDurationBucket.WithLabelValues(metrics.LblExec)
+	sessionLockIdleDuration          = metrics.LockDurationBucket.WithLabelValues(metrics.LblIdle)
 )
 
 // PreparedStmtCount is exported for test.
@@ -677,6 +687,11 @@ type SessionVars struct {
 
 	// EnableStableResultMode if stabilize query results.
 	EnableStableResultMode bool
+
+	// the start times of statements in a transaction
+	StartTimes []time.Time
+	// the end times of statements in a transaction
+	EndTimes []time.Time
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -1911,4 +1926,132 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 // writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"
 func writeSlowLogItem(buf *bytes.Buffer, key, value string) {
 	buf.WriteString(SlowLogRowPrefixStr + key + SlowLogSpaceMarkStr + value + "\n")
+}
+
+// ResetTxnTimes reset the record times for session.
+func (s *SessionVars) ResetTxnTimes() {
+	s.StartTimes = s.StartTimes[:0]
+	s.EndTimes = s.EndTimes[:0]
+}
+
+// ReportTxnAndLockDuration reports txn and the pessimistic locks' idle and duration to metric server.
+// Run this function in another goroutine to avoid it blocks the Commit or Rollback statements.
+func (s *SessionVars) ReportTxnAndLockDuration(startTS uint64, keysArr []kv.LockedKeys) {
+	if len(s.EndTimes) == 0 {
+		return
+	}
+	// copy the slice because it may be cleaned in other goroutines
+	startTimes := make([]time.Time, len(s.StartTimes))
+	copy(startTimes, s.StartTimes)
+	endTimes := make([]time.Time, len(s.EndTimes))
+	copy(endTimes, s.EndTimes)
+	// the rest works can be executed in another goroutine, so that it won't block the session goroutine.
+	go func() {
+		now := time.Now()
+		lockedKeysDurations, txnRes, err := CalcLockDurations(keysArr, startTimes, endTimes, now)
+		if err != nil {
+			logutil.BgLogger().Info("[long-txn] calc lock duration error", zap.Error(err))
+			return
+		}
+
+		// observe the lock duration of the transaction
+		sessionTxnObtainLockIdleDuration.Observe(txnRes.LockIdleDuration.Seconds())
+		sessionTxnObtainLockExecDuration.Observe(txnRes.LockExecDuration.Seconds())
+		// observe the total duration of the transaction
+		sessionTxnNoneLockIdleDuration.Observe(txnRes.TotalIdleDuration.Seconds())
+		sessionTxnNoneLockExecDuration.Observe(txnRes.TotalExecDuration.Seconds())
+		// observe durations for each lock
+		for _, locksDuration := range lockedKeysDurations {
+			for i := 0; i < locksDuration.Keys; i++ {
+				sessionLockIdleDuration.Observe(locksDuration.IdleDuration.Seconds())
+				sessionLockExecDuration.Observe(locksDuration.ExecDuration.Seconds())
+			}
+		}
+
+		threshold := time.Duration(atomic.LoadInt64(&LongTxnThreshold)) * time.Millisecond
+		if now.Sub(startTimes[0]) < threshold {
+			return
+		}
+		var (
+			lockCnt            = 0
+			forUpdateTSBuilder strings.Builder
+		)
+		for i, locksDuration := range lockedKeysDurations {
+			lockCnt += locksDuration.Keys
+			fmt.Fprintf(&forUpdateTSBuilder, "[%s, %d]",
+				locksDuration.LocalTime.Format("2006-01-02 15:04:05.000 -0700"),
+				locksDuration.ForUpdateTS)
+			if i != 0 {
+				fmt.Fprint(&forUpdateTSBuilder, ", ")
+			}
+		}
+		// print long-txn log
+		logutil.BgLogger().Info("[long-txn] long transaction detected",
+			zap.Uint64("conn", s.ConnectionID),
+			zap.Int("lockCnt", lockCnt),
+			zap.Duration("total idle duration", txnRes.TotalIdleDuration),
+			zap.Duration("total exec duration", txnRes.TotalExecDuration),
+			zap.Duration("lock idle duration", txnRes.LockIdleDuration),
+			zap.Duration("lock exec duration", txnRes.LockExecDuration),
+			zap.Uint64("txnStartTS", startTS),
+			zap.Stringer("forUpdateTS", &forUpdateTSBuilder))
+	}()
+}
+
+type lockedKeysDuration struct {
+	kv.LockedKeys
+	IdleDuration time.Duration
+	ExecDuration time.Duration
+}
+
+type txnDurationResult struct {
+	LockIdleDuration  time.Duration
+	LockExecDuration  time.Duration
+	TotalIdleDuration time.Duration
+	TotalExecDuration time.Duration
+}
+
+// CalcLockDurations calculates the lock durations.
+func CalcLockDurations(keysArr []kv.LockedKeys, startTimes, endTimes []time.Time, now time.Time) ([]lockedKeysDuration, txnDurationResult, error) {
+	res := txnDurationResult{}
+	if len(startTimes) != len(endTimes)+1 {
+		return nil, res, errors.Errorf("incorrect log durations, startTimes: %v, endTimes: %v", startTimes, endTimes)
+	}
+	if len(endTimes) == 0 {
+		return nil, res, errors.New("endTimes should not be empty")
+	}
+	var (
+		keysDurations = make([]lockedKeysDuration, len(keysArr))
+		index         = len(endTimes) - 1
+		// record idle duration since last statement's end to commit/rollback statement
+		idleDuration = startTimes[index+1].Sub(endTimes[index])
+		// this function is called after commit/rollback is executed, so we can calc the commit/rollback duration
+		execDuration = now.Sub(startTimes[index+1])
+	)
+	for i := len(keysArr) - 1; i >= 0; i-- {
+		lockedKeys := keysArr[i]
+		for index >= 1 && lockedKeys.LocalTime.Before(startTimes[index]) {
+			idleDuration += startTimes[index].Sub(endTimes[index-1])
+			execDuration += endTimes[index].Sub(startTimes[index])
+			index--
+		}
+		// keep the same order with input
+		keysDurations[i] = lockedKeysDuration{
+			LockedKeys:   lockedKeys,
+			IdleDuration: idleDuration,
+			ExecDuration: execDuration,
+		}
+	}
+	res.LockIdleDuration, res.LockExecDuration = idleDuration, execDuration
+	// the idle and execution durations before acquiring any pessimistic locks
+	for index >= 1 {
+		idleDuration += startTimes[index].Sub(endTimes[index-1])
+		execDuration += endTimes[index].Sub(startTimes[index])
+		index--
+	}
+	if len(endTimes) > 0 {
+		execDuration += endTimes[0].Sub(startTimes[0])
+	}
+	res.TotalIdleDuration, res.TotalExecDuration = idleDuration, execDuration
+	return keysDurations, res, nil
 }

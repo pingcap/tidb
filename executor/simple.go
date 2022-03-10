@@ -670,6 +670,9 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 			transactionDurationOptimisticRollback.Observe(duration)
 		}
 		sessVars.TxnCtx.ClearDelta()
+		if sessVars.ConnectionID > 0 {
+			defer sessVars.ReportTxnAndLockDuration(txn.StartTS(), txn.GetLockedKeys())
+		}
 		return txn.Rollback()
 	}
 	return nil
