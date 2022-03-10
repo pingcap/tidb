@@ -196,7 +196,7 @@ func (h *Handle) HandleOneTask(lastTask *NeededColumnTask, readerCtx *StatsReade
 		return nil, nil
 	}
 	c, ok := tbl.Columns[col.ColumnID]
-	if !ok || c.Len() > 0 {
+	if !ok || c.IsLoaded() {
 		h.writeToResultChan(task.ResultCh, col)
 		return nil, nil
 	}
@@ -375,7 +375,7 @@ func (h *Handle) updateCachedColumn(col model.TableColumnID, colHist *statistics
 		return true
 	}
 	c, ok := tbl.Columns[col.ColumnID]
-	if !ok || c.Len() > 0 {
+	if !ok || c.IsLoaded() {
 		return true
 	}
 	tbl = tbl.Copy()
