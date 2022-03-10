@@ -838,10 +838,10 @@ func TestTiFlashBatchRateLimiter(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue"))
 	}()
 
-	tk.MustExec(fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
+	tk.MustExec("alter database tiflash_ddl_limit set tiflash replica 1")
 	tk.MustExec(fmt.Sprintf("create table tiflash_ddl_limit.t%v(z int)", threshold))
 	// The following statement shall fail, because it reaches limit
-	timeOut, err := execWithTimeout(t, tk, time.Second*3, fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
+	timeOut, err := execWithTimeout(t, tk, time.Second*3, "alter database tiflash_ddl_limit set tiflash replica 1")
 	require.NoError(t, err)
 	require.True(t, timeOut)
 
@@ -864,7 +864,7 @@ func TestTiFlashBatchRateLimiter(t *testing.T) {
 
 	// If we exec in another session, it will not trigger limit. Since DefTiDBBatchPendingTiFlashCount is more than 3.
 	tk2 := testkit.NewTestKit(t, s.store)
-	tk2.MustExec(fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
+	tk2.MustExec("alter database tiflash_ddl_limit set tiflash replica 1")
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 1)
 	check(3, 3)
 	time.Sleep(time.Second * 2)
@@ -875,7 +875,7 @@ func TestTiFlashBatchRateLimiter(t *testing.T) {
 	}()
 	// This DDL can finish in 3 seconds, since we will force trigger its DDL to update schema cache.
 	tk.MustExec(fmt.Sprintf("create table tiflash_ddl_limit.t%v(z int)", threshold+1))
-	timeOut, err = execWithTimeout(t, tk, time.Second*4, fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
+	timeOut, err = execWithTimeout(t, tk, time.Second*4, "alter database tiflash_ddl_limit set tiflash replica 1")
 	require.NoError(t, err)
 	require.False(t, timeOut)
 	check(4, 4)
@@ -883,7 +883,7 @@ func TestTiFlashBatchRateLimiter(t *testing.T) {
 
 	// However, we still have force check next time.
 	tk.MustExec(fmt.Sprintf("create table tiflash_ddl_limit.t%v(z int)", threshold+2))
-	timeOut, err = execWithTimeout(t, tk, time.Millisecond*500, fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
+	timeOut, err = execWithTimeout(t, tk, time.Millisecond*500, "alter database tiflash_ddl_limit set tiflash replica 1")
 	require.NoError(t, err)
 	require.True(t, timeOut)
 	check(4, 5)
@@ -896,7 +896,7 @@ func TestTiFlashBatchRateLimiter(t *testing.T) {
 		tk.Session().Close()
 		logutil.BgLogger().Info("session closed")
 	})
-	timeOut, err = execWithTimeout(t, tk, time.Second*4, fmt.Sprintf("alter database tiflash_ddl_limit set tiflash replica %v", 1))
+	timeOut, err = execWithTimeout(t, tk, time.Second*4, "alter database tiflash_ddl_limit set tiflash replica 1")
 	require.NoError(t, err)
 	require.False(t, timeOut)
 	check(5, 5)
