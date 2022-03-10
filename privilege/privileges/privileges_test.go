@@ -2889,7 +2889,6 @@ func TestIncorrectUsageDBGrant(t *testing.T) {
 
 	err := tk.ExecToErr(`GRANT CREATE TEMPORARY TABLES,DELETE,EXECUTE,INSERT,SELECT,SHOW VIEW,TRIGGER,UPDATE ON test.* TO uincorrect;`)
 	require.EqualError(t, err, "[executor:1410]You are not allowed to create a user with GRANT")
-
 }
 
 func TestIssue29823(t *testing.T) {
