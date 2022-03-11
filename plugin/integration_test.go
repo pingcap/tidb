@@ -701,6 +701,10 @@ func TestAuditLogNormal(t *testing.T) {
 		resultCount := test.resCnt
 		if resultCount == 0 {
 			resultCount = 2
+			// TODO: Please fix it
+			if variable.AllowConcurrencyDDL.Load() {
+				resultCount = resultCount + 1
+			}
 		}
 		require.Equal(t, resultCount, len(testResults), errMsg)
 
