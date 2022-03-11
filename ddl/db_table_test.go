@@ -19,12 +19,10 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
@@ -323,115 +321,6 @@ func TestTransactionOnAddDropColumn(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, checkErr)
 	tk.MustQuery("select a,b from t1 order by a").Check(testkit.Rows("1 1", "1 1", "1 1", "2 2", "2 2", "2 2"))
-}
-
-// TestCreateTableWithLike2 tests create table with like when refer table have non-public column/index.
-func TestCreateTableWithLike2(t *testing.T) {
-	t.Skip("unstable test")
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, time.Second)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1,t2;")
-	defer tk.MustExec("drop table if exists t1,t2;")
-	tk.MustExec("create table t1 (a int, b int, c int, index idx1(c));")
-
-	tbl1 := tk.GetTableByName("test", "t1")
-	doneCh := make(chan error, 2)
-	hook := &ddl.TestDDLCallback{Do: dom}
-	var onceChecker sync.Map
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type != model.ActionAddColumn && job.Type != model.ActionDropColumn &&
-			job.Type != model.ActionAddColumns && job.Type != model.ActionDropColumns &&
-			job.Type != model.ActionAddIndex && job.Type != model.ActionDropIndex {
-			return
-		}
-		if job.TableID != tbl1.Meta().ID {
-			return
-		}
-
-		if job.SchemaState == model.StateDeleteOnly {
-			if _, ok := onceChecker.Load(job.ID); ok {
-				return
-			}
-
-			onceChecker.Store(job.ID, true)
-			go backgroundExec(store, "create table t2 like t1", doneCh)
-		}
-	}
-	//originalHook := dom.DDL().GetHook()
-	//defer dom.DDL().SetHook(originalHook)
-	dom.DDL().SetHook(hook)
-
-	// create table when refer table add column
-	tk.MustExec("alter table t1 add column d int")
-	checkTbl2 := func() {
-		err := <-doneCh
-		require.NoError(t, err)
-		tk.MustExec("alter table t2 add column e int")
-		t2Info := tk.GetTableByName("test", "t2")
-		require.Equal(t, len(t2Info.Cols()), len(t2Info.Meta().Columns))
-	}
-	checkTbl2()
-
-	// create table when refer table drop column
-	tk.MustExec("drop table t2;")
-	tk.MustExec("alter table t1 drop column b;")
-	checkTbl2()
-
-	// create table when refer table add index
-	tk.MustExec("drop table t2;")
-	tk.MustExec("alter table t1 add index idx2(a);")
-	checkTbl2 = func() {
-		err := <-doneCh
-		require.NoError(t, err)
-		tk.MustExec("alter table t2 add column e int")
-		tbl2 := tk.GetTableByName("test", "t2")
-		require.Equal(t, len(tbl2.Cols()), len(tbl2.Meta().Columns))
-
-		for i := 0; i < len(tbl2.Meta().Indices); i++ {
-			require.Equal(t, model.StatePublic, tbl2.Meta().Indices[i].State)
-		}
-	}
-	checkTbl2()
-
-	// create table when refer table drop index.
-	tk.MustExec("drop table t2;")
-	tk.MustExec("alter table t1 drop index idx2;")
-	checkTbl2()
-
-	// Test for table has tiflash  replica.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
-	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount"))
-
-	//dom.DDL().SetHook(originalHook)
-	tk.MustExec("drop table if exists t1,t2;")
-	tk.MustExec("create table t1 (a int) partition by hash(a) partitions 2;")
-	tk.MustExec("alter table t1 set tiflash replica 3 location labels 'a','b';")
-	t1 := tk.GetTableByName("test", "t1")
-	// Mock for all partitions replica was available.
-	partition := t1.Meta().Partition
-	require.Equal(t, 2, len(partition.Definitions))
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, true)
-	require.NoError(t, err)
-	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[1].ID, true)
-	require.NoError(t, err)
-	t1 = tk.GetTableByName("test", "t1")
-	require.NotNil(t, t1.Meta().TiFlashReplica)
-	require.True(t, t1.Meta().TiFlashReplica.Available)
-	require.Equal(t, []int64{partition.Definitions[0].ID, partition.Definitions[1].ID}, t1.Meta().TiFlashReplica.AvailablePartitionIDs)
-
-	tk.MustExec("create table t2 like t1")
-	t2 := tk.GetTableByName("test", "t2")
-	require.Equal(t, t1.Meta().TiFlashReplica.Count, t2.Meta().TiFlashReplica.Count)
-	require.Equal(t, t1.Meta().TiFlashReplica.LocationLabels, t2.Meta().TiFlashReplica.LocationLabels)
-	require.False(t, t2.Meta().TiFlashReplica.Available)
-	require.Len(t, t2.Meta().TiFlashReplica.AvailablePartitionIDs, 0)
-	// Test for not affecting the original table.
-	t1 = tk.GetTableByName("test", "t1")
-	require.NotNil(t, t1.Meta().TiFlashReplica)
-	require.True(t, t1.Meta().TiFlashReplica.Available)
-	require.Equal(t, []int64{partition.Definitions[0].ID, partition.Definitions[1].ID}, t1.Meta().TiFlashReplica.AvailablePartitionIDs)
 }
 
 func TestCreateTableWithSetCol(t *testing.T) {
