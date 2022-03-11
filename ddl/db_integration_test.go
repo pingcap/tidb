@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
@@ -41,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
@@ -49,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/testutils"
 )
 
 func TestNoZeroDateMode(t *testing.T) {
@@ -1227,86 +1224,6 @@ func TestBitDefaultValue(t *testing.T) {
     field_34 datetime null default null,
     field_35 timestamp null default null
 	);`)
-}
-
-func TestBackwardCompatibility(t *testing.T) {
-	var cluster testutils.Cluster
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond,
-		mockstore.WithClusterInspector(func(c testutils.Cluster) {
-			mockstore.BootstrapWithSingleStore(c)
-			cluster = c
-		}))
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int primary key, b int)")
-	for i := 0; i < 200; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
-	}
-
-	// alter table t add index idx_b(b);
-	is := dom.InfoSchema()
-	schemaName := model.NewCIStr("test")
-	tableName := model.NewCIStr("t")
-	schema, ok := is.SchemaByName(schemaName)
-	require.True(t, ok)
-	tbl, err := is.TableByName(schemaName, tableName)
-	require.NoError(t, err)
-
-	// Split the table.
-	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
-	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 10)
-
-	indexName := model.NewCIStr("idx_b")
-	indexPartSpecification := &ast.IndexPartSpecification{
-		Column: &ast.ColumnName{
-			Schema: schemaName,
-			Table:  tableName,
-			Name:   model.NewCIStr("b"),
-		},
-		Length: types.UnspecifiedLength,
-	}
-	indexPartSpecifications := []*ast.IndexPartSpecification{indexPartSpecification}
-	var indexOption *ast.IndexOption
-	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tbl.Meta().ID,
-		Type:       model.ActionAddIndex,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{false /* unique */, indexName, indexPartSpecifications, indexOption},
-	}
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMeta(txn)
-	job.ID, err = m.GenGlobalID()
-	require.NoError(t, err)
-	job.Version = 1
-	job.StartTS = txn.StartTS()
-
-	// Simulate old TiDB init the add index job, old TiDB will not init the model.Job.ReorgMeta field,
-	// if we set job.SnapshotVer here, can simulate the behavior.
-	job.SnapshotVer = txn.StartTS()
-	err = m.EnQueueDDLJob(job)
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-	ticker := time.NewTicker(50 * time.Millisecond)
-	defer ticker.Stop()
-	for range ticker.C {
-		historyJob, err := getHistoryDDLJob(store, job.ID)
-		require.NoError(t, err)
-		if historyJob == nil {
-			continue
-		}
-		require.Nil(t, historyJob.Error)
-
-		if historyJob.IsSynced() {
-			break
-		}
-	}
-
-	// finished add index
-	tk.MustExec("admin check index t idx_b")
 }
 
 func getHistoryDDLJob(store kv.Storage, id int64) (*model.Job, error) {

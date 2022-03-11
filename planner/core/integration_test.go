@@ -2707,6 +2707,17 @@ func TestBitColumnPushDown(t *testing.T) {
 		{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
+
+	// test collation
+	tk.MustExec("update mysql.tidb set VARIABLE_VALUE='True' where VARIABLE_NAME='new_collation_enabled'")
+	tk.MustQuery("SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME='new_collation_enabled';").Check(
+		testkit.Rows("True"))
+	tk.MustExec("create table t3 (a bit(8));")
+	tk.MustExec("insert into t3 values (65)")
+	tk.MustExec("SET NAMES utf8mb4 COLLATE utf8mb4_bin")
+	tk.MustQuery("select a from t3 where cast(a as char) = 'a'").Check(testkit.Rows())
+	tk.MustExec("SET NAMES utf8mb4 COLLATE utf8mb4_general_ci")
+	tk.MustQuery("select a from t3 where cast(a as char) = 'a'").Check(testkit.Rows("A"))
 }
 
 func TestSysdatePushDown(t *testing.T) {
@@ -2723,12 +2734,12 @@ func TestSysdatePushDown(t *testing.T) {
 	}
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
 		CheckAt([]int{0, 3, 6}, rows)
-	// assert sysdate isn't now after set global sysdate_is_now in the same session
-	tk.MustExec("set global sysdate_is_now='1'")
+	// assert sysdate isn't now after set global tidb_sysdate_is_now in the same session
+	tk.MustExec("set global tidb_sysdate_is_now='1'")
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
 		CheckAt([]int{0, 3, 6}, rows)
 
-	// assert sysdate is now after set global sysdate_is_now in the new session
+	// assert sysdate is now after set global tidb_sysdate_is_now in the new session
 	tk = testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	now := time.Now()
@@ -2738,8 +2749,8 @@ func TestSysdatePushDown(t *testing.T) {
 		CheckAt([]int{0, 3, 6}, rows)
 	failpoint.Disable("github.com/pingcap/tidb/expression/injectNow")
 
-	// assert sysdate isn't now after set session sysdate_is_now false in the same session
-	tk.MustExec("set sysdate_is_now='0'")
+	// assert sysdate isn't now after set session tidb_sysdate_is_now false in the same session
+	tk.MustExec("set tidb_sysdate_is_now='0'")
 	rows[1][2] = "gt(test.t.d, sysdate())"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
 		CheckAt([]int{0, 3, 6}, rows)
