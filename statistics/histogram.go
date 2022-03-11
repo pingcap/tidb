@@ -1238,8 +1238,10 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 		cnt := c.BetweenRowCount(sctx, lowVal, highVal, lowEncoded, highEncoded)
 		// `betweenRowCount` returns count for [l, h) range, we adjust cnt for boundaries here.
 		// Note that, `cnt` does not include null values, we need specially handle cases
-		// where null is the lower bound.
-		if rg.LowExclude && !lowVal.IsNull() {
+		//   where null is the lower bound.
+		// And because we use (2, MaxValue] to represent expressions like a > 2 and use [MinNotNull, 3) to represent
+		//   expressions like b < 3, we need to exclude the special values.
+		if rg.LowExclude && !lowVal.IsNull() && lowVal.Kind() != types.KindMaxValue && lowVal.Kind() != types.KindMinNotNull {
 			lowCnt, err := c.equalRowCount(sctx, lowVal, lowEncoded, realtimeRowCount)
 			if err != nil {
 				return 0, errors.Trace(err)
@@ -1250,7 +1252,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 		if !rg.LowExclude && lowVal.IsNull() {
 			cnt += float64(c.NullCount)
 		}
-		if !rg.HighExclude {
+		if !rg.HighExclude && highVal.Kind() != types.KindMaxValue && highVal.Kind() != types.KindMinNotNull {
 			highCnt, err := c.equalRowCount(sctx, highVal, highEncoded, realtimeRowCount)
 			if err != nil {
 				return 0, errors.Trace(err)
