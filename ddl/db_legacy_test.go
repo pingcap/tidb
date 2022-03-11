@@ -15,7 +15,6 @@
 package ddl_test
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -28,9 +27,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
-	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
@@ -50,10 +47,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	ntestkit "github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -83,8 +78,6 @@ const (
 	waitForCleanDataInterval = time.Millisecond * 100
 )
 
-var _ = Suite(&testDBSuite1{&testDBSuite{}})
-var _ = Suite(&testDBSuite2{&testDBSuite{}})
 var _ = Suite(&testDBSuite4{&testDBSuite{}})
 var _ = Suite(&testDBSuite5{&testDBSuite{}})
 var _ = SerialSuites(&testSerialDBSuite{&testDBSuite{}})
@@ -150,8 +143,6 @@ func (s *testDBSuite) TearDownSuite(c *C) {
 	tearDownSuite(s, c)
 }
 
-type testDBSuite1 struct{ *testDBSuite }
-type testDBSuite2 struct{ *testDBSuite }
 type testDBSuite4 struct{ *testDBSuite }
 type testDBSuite5 struct{ *testDBSuite }
 type testSerialDBSuite struct{ *testDBSuite }
@@ -206,33 +197,6 @@ func testGetSchemaByName(c *C, ctx sessionctx.Context, db string) *model.DBInfo 
 func (s *testDBSuite) testGetTable(c *C, name string) table.Table {
 	ctx := s.s.(sessionctx.Context)
 	return testGetTableByName(c, ctx, s.schemaName, name)
-}
-
-func (s *testDBSuite) testGetDB(c *C, dbName string) *model.DBInfo {
-	ctx := s.s.(sessionctx.Context)
-	dom := domain.GetDomain(ctx)
-	// Make sure the table schema is the new schema.
-	err := dom.Reload()
-	c.Assert(err, IsNil)
-	db, ok := dom.InfoSchema().SchemaByName(model.NewCIStr(dbName))
-	c.Assert(ok, IsTrue)
-	return db
-}
-
-func backgroundExec(s kv.Storage, sql string, done chan error) {
-	se, err := session.CreateSession4Test(s)
-	if err != nil {
-		done <- errors.Trace(err)
-		return
-	}
-	defer se.Close()
-	_, err = se.Execute(context.Background(), "use test_db")
-	if err != nil {
-		done <- errors.Trace(err)
-		return
-	}
-	_, err = se.Execute(context.Background(), sql)
-	done <- errors.Trace(err)
 }
 
 func backgroundExecT(s kv.Storage, sql string, done chan error) {
@@ -611,99 +575,6 @@ func (s *testDBSuite5) TestParallelDropSchemaAndDropTable(c *C) {
 	c.Assert(err, IsNil)
 }
 
-// TestCancelDropTable tests cancel ddl job which type is drop table.
-func (s *testDBSuite2) TestCancelDropTableAndSchema(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	testCases := []struct {
-		needAddTableOrDB bool
-		action           model.ActionType
-		jobState         model.JobState
-		JobSchemaState   model.SchemaState
-		cancelSucc       bool
-	}{
-		// Check drop table.
-		// model.JobStateNone means the jobs is canceled before the first run.
-		{true, model.ActionDropTable, model.JobStateNone, model.StateNone, true},
-		{false, model.ActionDropTable, model.JobStateRunning, model.StateWriteOnly, false},
-		{true, model.ActionDropTable, model.JobStateRunning, model.StateDeleteOnly, false},
-
-		// Check drop database.
-		{true, model.ActionDropSchema, model.JobStateNone, model.StateNone, true},
-		{false, model.ActionDropSchema, model.JobStateRunning, model.StateWriteOnly, false},
-		{true, model.ActionDropSchema, model.JobStateRunning, model.StateDeleteOnly, false},
-	}
-	var checkErr error
-	hook := &ddl.TestDDLCallback{Do: s.dom}
-	var jobID int64
-	testCase := &testCases[0]
-	tk.MustExec("create database if not exists test_drop_db")
-	dbInfo := s.testGetDB(c, "test_drop_db")
-
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == testCase.action && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState && job.SchemaID == dbInfo.ID {
-			jobIDs := []int64{job.ID}
-			jobID = job.ID
-			hookCtx := mock.NewContext()
-			hookCtx.Store = s.store
-			err := hookCtx.NewTxn(context.TODO())
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
-				return
-			}
-			checkErr = txn.Commit(context.Background())
-		}
-	}
-	originHook := s.dom.DDL().GetHook()
-	defer s.dom.DDL().SetHook(originHook)
-	s.dom.DDL().SetHook(hook)
-	var err error
-	sql := ""
-	for i := range testCases {
-		testCase = &testCases[i]
-		if testCase.needAddTableOrDB {
-			tk.MustExec("create database if not exists test_drop_db")
-			tk.MustExec("use test_drop_db")
-			tk.MustExec("create table if not exists t(c1 int, c2 int)")
-		}
-
-		dbInfo = s.testGetDB(c, "test_drop_db")
-
-		if testCase.action == model.ActionDropTable {
-			sql = "drop table t;"
-		} else if testCase.action == model.ActionDropSchema {
-			sql = "drop database test_drop_db;"
-		}
-
-		_, err = tk.Exec(sql)
-		if testCase.cancelSucc {
-			c.Assert(checkErr, IsNil)
-			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
-			tk.MustExec("insert into t values (?, ?)", i, i)
-		} else {
-			c.Assert(err, IsNil)
-			c.Assert(checkErr, NotNil)
-			c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
-			_, err = tk.Exec("insert into t values (?, ?)", i, i)
-			c.Assert(err, NotNil)
-		}
-	}
-}
-
 func (s *testDBSuite4) TestAlterLock(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use " + s.schemaName)
@@ -730,105 +601,6 @@ func (s *testDBSuite5) TestAddMultiColumnsIndex(c *C) {
 	tk.MustExec("insert tidb.test values (6, 6);")
 	tk.MustExec("alter table tidb.test add index idx1 (a, b);")
 	tk.MustExec("admin check table test")
-}
-
-// TestCancelAddTableAndDropTablePartition tests cancel ddl job which type is add/drop table partition.
-func (s *testDBSuite1) TestCancelAddTableAndDropTablePartition(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("create database if not exists test_partition_table")
-	tk.MustExec("use test_partition_table")
-	tk.MustExec("drop table if exists t_part")
-	tk.MustExec(`create table t_part (a int key)
-		partition by range(a) (
-		partition p0 values less than (10),
-		partition p1 values less than (20)
-	);`)
-	defer tk.MustExec("drop table t_part;")
-	base := 10
-	for i := 0; i < base; i++ {
-		tk.MustExec("insert into t_part values (?)", i)
-	}
-
-	testCases := []struct {
-		action         model.ActionType
-		jobState       model.JobState
-		JobSchemaState model.SchemaState
-		cancelSucc     bool
-	}{
-		{model.ActionAddTablePartition, model.JobStateNone, model.StateNone, true},
-		{model.ActionDropTablePartition, model.JobStateNone, model.StateNone, true},
-		// Add table partition now can be cancelled in ReplicaOnly state.
-		{model.ActionAddTablePartition, model.JobStateRunning, model.StateReplicaOnly, true},
-	}
-	var checkErr error
-	hook := &ddl.TestDDLCallback{Do: s.dom}
-	testCase := &testCases[0]
-	var jobID int64
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == testCase.action && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
-			jobIDs := []int64{job.ID}
-			jobID = job.ID
-			hookCtx := mock.NewContext()
-			hookCtx.Store = s.store
-			err := hookCtx.NewTxn(context.Background())
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			if errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
-				return
-			}
-			checkErr = txn.Commit(context.Background())
-		}
-	}
-	originalHook := s.dom.DDL().GetHook()
-	s.dom.DDL().SetHook(hook)
-
-	var err error
-	sql := ""
-	for i := range testCases {
-		testCase = &testCases[i]
-		if testCase.action == model.ActionAddTablePartition {
-			sql = `alter table t_part add partition (
-				partition p2 values less than (30)
-				);`
-		} else if testCase.action == model.ActionDropTablePartition {
-			sql = "alter table t_part drop partition p1;"
-		}
-		_, err = tk.Exec(sql)
-		if testCase.cancelSucc {
-			c.Assert(checkErr, IsNil)
-			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
-			tk.MustExec("insert into t_part values (?)", i+base)
-
-			ctx := s.s.(sessionctx.Context)
-			is := domain.GetDomain(ctx).InfoSchema()
-			tbl, err := is.TableByName(model.NewCIStr("test_partition_table"), model.NewCIStr("t_part"))
-			c.Assert(err, IsNil)
-			partitionInfo := tbl.Meta().GetPartitionInfo()
-			c.Assert(partitionInfo, NotNil)
-			c.Assert(len(partitionInfo.AddingDefinitions), Equals, 0)
-		} else {
-			c.Assert(err, IsNil, Commentf("err:%v", err))
-			c.Assert(checkErr, NotNil)
-			c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
-			_, err = tk.Exec("insert into t_part values (?)", i)
-			c.Assert(err, NotNil)
-		}
-	}
-	s.dom.DDL().SetHook(originalHook)
 }
 
 func testGetIndexID(t *testing.T, ctx sessionctx.Context, dbName, tblName, idxName string) int64 {
@@ -1013,6 +785,22 @@ func (s *testDBSuite5) TestCreateIndexType(c *C) {
 	tk.MustExec(sql)
 }
 
+func oldBackgroundExec(s kv.Storage, sql string, done chan error) {
+	se, err := session.CreateSession4Test(s)
+	if err != nil {
+		done <- errors.Trace(err)
+		return
+	}
+	defer se.Close()
+	_, err = se.Execute(context.Background(), "use test_db")
+	if err != nil {
+		done <- errors.Trace(err)
+		return
+	}
+	_, err = se.Execute(context.Background(), sql)
+	done <- errors.Trace(err)
+}
+
 // TestCreateTableWithLike2 tests create table with like when refer table have non-public column/index.
 func (s *testSerialDBSuite) TestCreateTableWithLike2(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -1041,7 +829,7 @@ func (s *testSerialDBSuite) TestCreateTableWithLike2(c *C) {
 			}
 
 			onceChecker.Store(job.ID, true)
-			go backgroundExec(s.store, "create table t2 like t1", doneCh)
+			go oldBackgroundExec(s.store, "create table t2 like t1", doneCh)
 		}
 	}
 	originalHook := s.dom.DDL().GetHook()
@@ -1120,161 +908,6 @@ func (s *testSerialDBSuite) TestCreateTableWithLike2(c *C) {
 	c.Assert(t1.Meta().TiFlashReplica, NotNil)
 	c.Assert(t1.Meta().TiFlashReplica.Available, IsTrue)
 	c.Assert(t1.Meta().TiFlashReplica.AvailablePartitionIDs, DeepEquals, []int64{partition.Definitions[0].ID, partition.Definitions[1].ID})
-}
-
-func (s *testDBSuite2) TestCreateTableWithSetCol(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("create table t_set (a int, b set('e') default '');")
-	tk.MustQuery("show create table t_set").Check(testkit.Rows("t_set CREATE TABLE `t_set` (\n" +
-		"  `a` int(11) DEFAULT NULL,\n" +
-		"  `b` set('e') DEFAULT ''\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustExec("drop table t_set")
-	tk.MustExec("create table t_set (a set('a', 'b', 'c', 'd') default 'a,c,c');")
-	tk.MustQuery("show create table t_set").Check(testkit.Rows("t_set CREATE TABLE `t_set` (\n" +
-		"  `a` set('a','b','c','d') DEFAULT 'a,c'\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-
-	// It's for failure cases.
-	// The type of default value is string.
-	tk.MustExec("drop table t_set")
-	failedSQL := "create table t_set (a set('1', '4', '10') default '3');"
-	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
-	failedSQL = "create table t_set (a set('1', '4', '10') default '1,4,11');"
-	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
-	// Success when the new collation is enabled.
-	tk.MustExec("create table t_set (a set('1', '4', '10') default '1 ,4');")
-	// The type of default value is int.
-	failedSQL = "create table t_set (a set('1', '4', '10') default 0);"
-	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
-	failedSQL = "create table t_set (a set('1', '4', '10') default 8);"
-	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
-
-	// The type of default value is int.
-	// It's for successful cases
-	tk.MustExec("drop table if exists t_set")
-	tk.MustExec("create table t_set (a set('1', '4', '10', '21') default 1);")
-	tk.MustQuery("show create table t_set").Check(testkit.Rows("t_set CREATE TABLE `t_set` (\n" +
-		"  `a` set('1','4','10','21') DEFAULT '1'\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustExec("drop table t_set")
-	tk.MustExec("create table t_set (a set('1', '4', '10', '21') default 2);")
-	tk.MustQuery("show create table t_set").Check(testkit.Rows("t_set CREATE TABLE `t_set` (\n" +
-		"  `a` set('1','4','10','21') DEFAULT '4'\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustExec("drop table t_set")
-	tk.MustExec("create table t_set (a set('1', '4', '10', '21') default 3);")
-	tk.MustQuery("show create table t_set").Check(testkit.Rows("t_set CREATE TABLE `t_set` (\n" +
-		"  `a` set('1','4','10','21') DEFAULT '1,4'\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustExec("drop table t_set")
-	tk.MustExec("create table t_set (a set('1', '4', '10', '21') default 15);")
-	tk.MustQuery("show create table t_set").Check(testkit.Rows("t_set CREATE TABLE `t_set` (\n" +
-		"  `a` set('1','4','10','21') DEFAULT '1,4,10,21'\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustExec("insert into t_set value()")
-	tk.MustQuery("select * from t_set").Check(testkit.Rows("1,4,10,21"))
-}
-
-func (s *testDBSuite2) TestCreateTableWithEnumCol(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	// It's for failure cases.
-	// The type of default value is string.
-	tk.MustExec("drop table if exists t_enum")
-	failedSQL := "create table t_enum (a enum('1', '4', '10') default '3');"
-	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
-	failedSQL = "create table t_enum (a enum('1', '4', '10') default '');"
-	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
-	// The type of default value is int.
-	failedSQL = "create table t_enum (a enum('1', '4', '10') default 0);"
-	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
-	failedSQL = "create table t_enum (a enum('1', '4', '10') default 8);"
-	tk.MustGetErrCode(failedSQL, errno.ErrInvalidDefault)
-
-	// The type of default value is int.
-	// It's for successful cases
-	tk.MustExec("drop table if exists t_enum")
-	tk.MustExec("create table t_enum (a enum('2', '3', '4') default 2);")
-	ret := tk.MustQuery("show create table t_enum").Rows()[0][1]
-	c.Assert(strings.Contains(ret.(string), "`a` enum('2','3','4') DEFAULT '3'"), IsTrue)
-	tk.MustExec("drop table t_enum")
-	tk.MustExec("create table t_enum (a enum('a', 'c', 'd') default 2);")
-	ret = tk.MustQuery("show create table t_enum").Rows()[0][1]
-	c.Assert(strings.Contains(ret.(string), "`a` enum('a','c','d') DEFAULT 'c'"), IsTrue)
-	tk.MustExec("insert into t_enum value()")
-	tk.MustQuery("select * from t_enum").Check(testkit.Rows("c"))
-}
-
-func (s *testDBSuite2) TestTableForeignKey(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (a int, b int);")
-	// test create table with foreign key.
-	failSQL := "create table t2 (c int, foreign key (a) references t1(a));"
-	tk.MustGetErrCode(failSQL, errno.ErrKeyColumnDoesNotExits)
-	// test add foreign key.
-	tk.MustExec("create table t3 (a int, b int);")
-	failSQL = "alter table t1 add foreign key (c) REFERENCES t3(a);"
-	tk.MustGetErrCode(failSQL, errno.ErrKeyColumnDoesNotExits)
-	// test origin key not match error
-	failSQL = "alter table t1 add foreign key (a) REFERENCES t3(a, b);"
-	tk.MustGetErrCode(failSQL, errno.ErrWrongFkDef)
-	// Test drop column with foreign key.
-	tk.MustExec("create table t4 (c int,d int,foreign key (d) references t1 (b));")
-	failSQL = "alter table t4 drop column d"
-	tk.MustGetErrCode(failSQL, errno.ErrFkColumnCannotDrop)
-	// Test change column with foreign key.
-	failSQL = "alter table t4 change column d e bigint;"
-	tk.MustGetErrCode(failSQL, errno.ErrFKIncompatibleColumns)
-	// Test modify column with foreign key.
-	failSQL = "alter table t4 modify column d bigint;"
-	tk.MustGetErrCode(failSQL, errno.ErrFKIncompatibleColumns)
-	tk.MustQuery("select count(*) from information_schema.KEY_COLUMN_USAGE;")
-	tk.MustExec("alter table t4 drop foreign key d")
-	tk.MustExec("alter table t4 modify column d bigint;")
-	tk.MustExec("drop table if exists t1,t2,t3,t4;")
-}
-
-func (s *testDBSuite2) TestDuplicateForeignKey(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	// Foreign table.
-	tk.MustExec("create table t(id int key)")
-	// Create target table with duplicate fk.
-	tk.MustGetErrCode("create table t1(id int, id_fk int, CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`), CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`))", mysql.ErrFkDupName)
-	tk.MustGetErrCode("create table t1(id int, id_fk int, CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`), CONSTRAINT `fk_aaA` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`))", mysql.ErrFkDupName)
-
-	tk.MustExec("create table t1(id int, id_fk int, CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`))")
-	// Alter target table with duplicate fk.
-	tk.MustGetErrCode("alter table t1 add CONSTRAINT `fk_aaa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`)", mysql.ErrFkDupName)
-	tk.MustGetErrCode("alter table t1 add CONSTRAINT `fk_aAa` FOREIGN KEY (`id_fk`) REFERENCES `t` (`id`)", mysql.ErrFkDupName)
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-}
-
-func (s *testDBSuite2) TestTemporaryTableForeignKey(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1 (a int, b int);")
-	tk.MustExec("drop table if exists t1_tmp;")
-	tk.MustExec("create global temporary table t1_tmp (a int, b int) on commit delete rows;")
-	tk.MustExec("create temporary table t2_tmp (a int, b int)")
-	// test add foreign key.
-	tk.MustExec("drop table if exists t2;")
-	tk.MustExec("create table t2 (a int, b int);")
-	failSQL := "alter table t1_tmp add foreign key (c) REFERENCES t2(a);"
-	tk.MustGetErrCode(failSQL, mysql.ErrCannotAddForeign)
-	failSQL = "alter table t2_tmp add foreign key (c) REFERENCES t2(a);"
-	tk.MustGetErrCode(failSQL, errno.ErrUnsupportedDDLOperation)
-	// Test drop column with foreign key.
-	failSQL = "create global temporary table t3 (c int,d int,foreign key (d) references t1 (b)) on commit delete rows;"
-	tk.MustGetErrCode(failSQL, mysql.ErrCannotAddForeign)
-	failSQL = "create temporary table t4(c int,d int,foreign key (d) references t1 (b));"
-	tk.MustGetErrCode(failSQL, mysql.ErrCannotAddForeign)
-	tk.MustExec("drop table if exists t1,t2,t3, t4,t1_tmp,t2_tmp;")
 }
 
 func (s *testSerialDBSuite) TestTruncateTable(c *C) {
@@ -1379,37 +1012,6 @@ func (s *testSerialDBSuite) TestTruncateTable(c *C) {
 	c.Assert(t2.Meta().TiFlashReplica.Available, IsFalse)
 	c.Assert(t2.Meta().TiFlashReplica.AvailablePartitionIDs, DeepEquals, []int64{partition.Definitions[1].ID})
 
-}
-
-func (s *testDBSuite2) TestAddNotNullColumn(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test_db")
-	// for different databases
-	tk.MustExec("create table tnn (c1 int primary key auto_increment, c2 int)")
-	tk.MustExec("insert tnn (c2) values (0)" + strings.Repeat(",(0)", 99))
-	done := make(chan error, 1)
-	testddlutil.SessionExecInGoroutine(s.store, "test_db", "alter table tnn add column c3 int not null default 3", done)
-	updateCnt := 0
-out:
-	for {
-		select {
-		case err := <-done:
-			c.Assert(err, IsNil)
-			break out
-		default:
-			// Close issue #14636
-			// Because add column action is not amendable now, it causes an error when the schema is changed
-			// in the process of an insert statement.
-			_, err := tk.Exec("update tnn set c2 = c2 + 1 where c1 = 99")
-			if err == nil {
-				updateCnt++
-			}
-		}
-	}
-	expected := fmt.Sprintf("%d %d", updateCnt, 3)
-	tk.MustQuery("select c2, c3 from tnn where c1 = 99").Check(testkit.Rows(expected))
-
-	tk.MustExec("drop table tnn")
 }
 
 func (s *testDBSuite4) TestComment(c *C) {
@@ -1525,60 +1127,6 @@ func (s *testDBSuite5) TestCheckColumnDefaultValue(c *C) {
 	c.Assert(tblInfo.Meta().Columns[0].DefaultValue, Equals, `null`)
 }
 
-func (s *testDBSuite1) TestCharacterSetInColumns(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("create database varchar_test;")
-	defer tk.MustExec("drop database varchar_test;")
-	tk.MustExec("use varchar_test")
-	tk.MustExec("create table t (c1 int, s1 varchar(10), s2 text)")
-	tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'varchar_test' and character_set_name != 'utf8mb4'").Check(testkit.Rows("0"))
-	tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'varchar_test' and character_set_name = 'utf8mb4'").Check(testkit.Rows("2"))
-
-	tk.MustExec("create table t1(id int) charset=UTF8;")
-	tk.MustExec("create table t2(id int) charset=BINARY;")
-	tk.MustExec("create table t3(id int) charset=LATIN1;")
-	tk.MustExec("create table t4(id int) charset=ASCII;")
-	tk.MustExec("create table t5(id int) charset=UTF8MB4;")
-
-	tk.MustExec("create table t11(id int) charset=utf8;")
-	tk.MustExec("create table t12(id int) charset=binary;")
-	tk.MustExec("create table t13(id int) charset=latin1;")
-	tk.MustExec("create table t14(id int) charset=ascii;")
-	tk.MustExec("create table t15(id int) charset=utf8mb4;")
-}
-
-func (s *testDBSuite2) TestAddNotNullColumnWhileInsertOnDupUpdate(c *C) {
-	tk1 := testkit.NewTestKit(c, s.store)
-	tk1.MustExec("use " + s.schemaName)
-	tk2 := testkit.NewTestKit(c, s.store)
-	tk2.MustExec("use " + s.schemaName)
-	closeCh := make(chan bool)
-	wg := new(sync.WaitGroup)
-	wg.Add(1)
-	tk1.MustExec("create table nn (a int primary key, b int)")
-	tk1.MustExec("insert nn values (1, 1)")
-	var tk2Err error
-	go func() {
-		defer wg.Done()
-		for {
-			select {
-			case <-closeCh:
-				return
-			default:
-			}
-			_, tk2Err = tk2.Exec("insert nn (a, b) values (1, 1) on duplicate key update a = 1, b = values(b) + 1")
-			if tk2Err != nil {
-				return
-			}
-		}
-	}()
-	tk1.MustExec("alter table nn add column c int not null default 3 after a")
-	close(closeCh)
-	wg.Wait()
-	c.Assert(tk2Err, IsNil)
-	tk1.MustQuery("select * from nn").Check(testkit.Rows("1 3 2"))
-}
-
 func (s *testDBSuite4) TestCheckTooBigFieldLength(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1619,138 +1167,6 @@ func (s *testDBSuite5) TestCheckConvertToCharacter(c *C) {
 	tk.MustGetErrCode("alter table t modify column a varchar(10) charset utf8mb4 collate utf8mb4_bin", errno.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t modify column a varchar(10) charset latin1 collate latin1_bin", errno.ErrUnsupportedDDLOperation)
 	c.Assert(t.Cols()[0].Charset, Equals, "binary")
-}
-
-func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test_db")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (a int, b int);")
-	tk.MustExec("create table t2 (a int, b int);")
-	tk.MustExec("insert into t2 values (2,0)")
-
-	transactions := [][]string{
-		{
-			"begin",
-			"insert into t1 set a=1",
-			"update t1 set b=1 where a=1",
-			"commit",
-		},
-		{
-			"begin",
-			"insert into t1 select a,b from t2",
-			"update t1 set b=2 where a=2",
-			"commit",
-		},
-	}
-
-	originHook := s.dom.DDL().GetHook()
-	defer s.dom.DDL().SetHook(originHook)
-	hook := &ddl.TestDDLCallback{Do: s.dom}
-	var checkErr error
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if checkErr != nil {
-			return
-		}
-		switch job.SchemaState {
-		case model.StateWriteOnly, model.StateWriteReorganization, model.StateDeleteOnly, model.StateDeleteReorganization:
-		default:
-			return
-		}
-		// do transaction.
-		for _, transaction := range transactions {
-			for _, sql := range transaction {
-				if _, checkErr = tk.Exec(sql); checkErr != nil {
-					checkErr = errors.Errorf("err: %s, sql: %s, job schema state: %s", checkErr.Error(), sql, job.SchemaState)
-					return
-				}
-			}
-		}
-	}
-	s.dom.DDL().SetHook(hook)
-	done := make(chan error, 1)
-	// test transaction on add column.
-	go backgroundExec(s.store, "alter table t1 add column c int not null after a", done)
-	err := <-done
-	c.Assert(err, IsNil)
-	c.Assert(checkErr, IsNil)
-	tk.MustQuery("select a,b from t1 order by a").Check(testkit.Rows("1 1", "1 1", "1 1", "2 2", "2 2", "2 2"))
-	tk.MustExec("delete from t1")
-
-	// test transaction on drop column.
-	go backgroundExec(s.store, "alter table t1 drop column c", done)
-	err = <-done
-	c.Assert(err, IsNil)
-	c.Assert(checkErr, IsNil)
-	tk.MustQuery("select a,b from t1 order by a").Check(testkit.Rows("1 1", "1 1", "1 1", "2 2", "2 2", "2 2"))
-}
-
-func (s *testDBSuite4) TestAddColumn2(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test_db")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (a int key, b int);")
-	defer tk.MustExec("drop table if exists t1, t2")
-
-	originHook := s.dom.DDL().GetHook()
-	defer s.dom.DDL().SetHook(originHook)
-	hook := &ddl.TestDDLCallback{}
-	var writeOnlyTable table.Table
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.SchemaState == model.StateWriteOnly {
-			writeOnlyTable, _ = s.dom.InfoSchema().TableByID(job.TableID)
-		}
-	}
-	s.dom.DDL().SetHook(hook)
-	done := make(chan error, 1)
-	// test transaction on add column.
-	go backgroundExec(s.store, "alter table t1 add column c int not null", done)
-	err := <-done
-	c.Assert(err, IsNil)
-
-	tk.MustExec("insert into t1 values (1,1,1)")
-	tk.MustQuery("select a,b,c from t1").Check(testkit.Rows("1 1 1"))
-
-	// mock for outdated tidb update record.
-	c.Assert(writeOnlyTable, NotNil)
-	ctx := context.Background()
-	err = tk.Se.NewTxn(ctx)
-	c.Assert(err, IsNil)
-	oldRow, err := tables.RowWithCols(writeOnlyTable, tk.Se, kv.IntHandle(1), writeOnlyTable.WritableCols())
-	c.Assert(err, IsNil)
-	c.Assert(len(oldRow), Equals, 3)
-	err = writeOnlyTable.RemoveRecord(tk.Se, kv.IntHandle(1), oldRow)
-	c.Assert(err, IsNil)
-	_, err = writeOnlyTable.AddRecord(tk.Se, types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()), table.IsUpdate)
-	c.Assert(err, IsNil)
-	tk.Se.StmtCommit()
-	err = tk.Se.CommitTxn(ctx)
-	c.Assert(err, IsNil)
-
-	tk.MustQuery("select a,b,c from t1").Check(testkit.Rows("1 2 1"))
-
-	// Test for _tidb_rowid
-	var re *testkit.Result
-	tk.MustExec("create table t2 (a int);")
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.SchemaState != model.StateWriteOnly {
-			return
-		}
-		// allow write _tidb_rowid first
-		tk.MustExec("set @@tidb_opt_write_row_id=1")
-		tk.MustExec("begin")
-		tk.MustExec("insert into t2 (a,_tidb_rowid) values (1,2);")
-		re = tk.MustQuery(" select a,_tidb_rowid from t2;")
-		tk.MustExec("commit")
-
-	}
-	s.dom.DDL().SetHook(hook)
-
-	go backgroundExec(s.store, "alter table t2 add column b int not null default 3", done)
-	err = <-done
-	c.Assert(err, IsNil)
-	re.Check(testkit.Rows("1 2"))
-	tk.MustQuery("select a,b,_tidb_rowid from t2").Check(testkit.Rows("1 3 2"))
 }
 
 func (s *testDBSuite4) TestIfNotExists(c *C) {
@@ -2291,134 +1707,6 @@ func (s *testSerialDBSuite) TestShardRowIDBitsOnTemporaryTable(c *C) {
 	c.Assert(err.Error(), Equals, dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ALTER TABLE").Error())
 }
 
-// port from mysql
-// https://github.com/mysql/mysql-server/blob/124c7ab1d6f914637521fd4463a993aa73403513/mysql-test/t/lock.test
-func (s *testDBSuite2) TestLock(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-
-	/* Testing of table locking */
-	tk.MustExec("DROP TABLE IF EXISTS t1")
-	tk.MustExec("CREATE TABLE t1 (  `id` int(11) NOT NULL default '0', `id2` int(11) NOT NULL default '0', `id3` int(11) NOT NULL default '0', `dummy1` char(30) default NULL, PRIMARY KEY  (`id`,`id2`), KEY `index_id3` (`id3`))")
-	tk.MustExec("insert into t1 (id,id2) values (1,1),(1,2),(1,3)")
-	tk.MustExec("LOCK TABLE t1 WRITE")
-	tk.MustExec("select dummy1,count(distinct id) from t1 group by dummy1")
-	tk.MustExec("update t1 set id=-1 where id=1")
-	tk.MustExec("LOCK TABLE t1 READ")
-	_, err := tk.Exec("update t1 set id=1 where id=1")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLockedForWrite), IsTrue)
-	tk.MustExec("unlock tables")
-	tk.MustExec("update t1 set id=1 where id=-1")
-	tk.MustExec("drop table t1")
-}
-
-// port from mysql
-// https://github.com/mysql/mysql-server/blob/4f1d7cf5fcb11a3f84cff27e37100d7295e7d5ca/mysql-test/t/tablelock.test
-func (s *testDBSuite2) TestTableLock(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1,t2")
-
-	/* Test of lock tables */
-	tk.MustExec("create table t1 ( n int auto_increment primary key)")
-	tk.MustExec("lock tables t1 write")
-	tk.MustExec("insert into t1 values(NULL)")
-	tk.MustExec("unlock tables")
-	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
-
-	tk.MustExec("lock tables t1 write")
-	tk.MustExec("insert into t1 values(NULL)")
-	tk.MustExec("unlock tables")
-	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
-
-	tk.MustExec("drop table if exists t1")
-
-	/* Test of locking and delete of files */
-	tk.MustExec("drop table if exists t1,t2")
-	tk.MustExec("CREATE TABLE t1 (a int)")
-	tk.MustExec("CREATE TABLE t2 (a int)")
-	tk.MustExec("lock tables t1 write, t2 write")
-	tk.MustExec("drop table t1,t2")
-
-	tk.MustExec("CREATE TABLE t1 (a int)")
-	tk.MustExec("CREATE TABLE t2 (a int)")
-	tk.MustExec("lock tables t1 write, t2 write")
-	tk.MustExec("drop table t2,t1")
-}
-
-// port from mysql
-// https://github.com/mysql/mysql-server/blob/4f1d7cf5fcb11a3f84cff27e37100d7295e7d5ca/mysql-test/t/lock_tables_lost_commit.test
-func (s *testDBSuite2) TestTableLocksLostCommit(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk2 := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk2.MustExec("use test")
-
-	tk.MustExec("DROP TABLE IF EXISTS t1")
-	tk.MustExec("CREATE TABLE t1(a INT)")
-	tk.MustExec("LOCK TABLES t1 WRITE")
-	tk.MustExec("INSERT INTO t1 VALUES(10)")
-
-	_, err := tk2.Exec("SELECT * FROM t1")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
-
-	tk.Se.Close()
-
-	tk2.MustExec("SELECT * FROM t1")
-	tk2.MustExec("DROP TABLE t1")
-
-	tk.MustExec("unlock tables")
-}
-
-// test write local lock
-func (s *testDBSuite2) TestWriteLocal(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk2 := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk2.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 ( n int auto_increment primary key)")
-
-	// Test: allow read
-	tk.MustExec("lock tables t1 write local")
-	tk.MustExec("insert into t1 values(NULL)")
-	tk2.MustQuery("select count(*) from t1")
-	tk.MustExec("unlock tables")
-	tk2.MustExec("unlock tables")
-
-	// Test: forbid write
-	tk.MustExec("lock tables t1 write local")
-	_, err := tk2.Exec("insert into t1 values(NULL)")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
-	tk.MustExec("unlock tables")
-	tk2.MustExec("unlock tables")
-
-	// Test mutex: lock write local first
-	tk.MustExec("lock tables t1 write local")
-	_, err = tk2.Exec("lock tables t1 write local")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
-	_, err = tk2.Exec("lock tables t1 write")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
-	_, err = tk2.Exec("lock tables t1 read")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
-	tk.MustExec("unlock tables")
-	tk2.MustExec("unlock tables")
-
-	// Test mutex: lock write first
-	tk.MustExec("lock tables t1 write")
-	_, err = tk2.Exec("lock tables t1 write local")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
-	tk.MustExec("unlock tables")
-	tk2.MustExec("unlock tables")
-
-	// Test mutex: lock read first
-	tk.MustExec("lock tables t1 read")
-	_, err = tk2.Exec("lock tables t1 write local")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
-	tk.MustExec("unlock tables")
-	tk2.MustExec("unlock tables")
-}
-
 func (s *testSerialDBSuite) TestSkipSchemaChecker(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
 	defer func() {
@@ -2454,250 +1742,6 @@ func (s *testSerialDBSuite) TestSkipSchemaChecker(c *C) {
 	tk2.MustExec("alter table t1 add column b int;")
 	_, err = tk.Exec("commit")
 	c.Assert(terror.ErrorEqual(domain.ErrInfoSchemaChanged, err), IsTrue)
-}
-
-func (s *testDBSuite2) TestLockTables(c *C) {
-	if israce.RaceEnabled {
-		c.Skip("skip race test")
-	}
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1,t2")
-	defer tk.MustExec("drop table if exists t1,t2")
-	tk.MustExec("create table t1 (a int)")
-	tk.MustExec("create table t2 (a int)")
-
-	// Test lock 1 table.
-	tk.MustExec("lock tables t1 write")
-	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
-	tk.MustExec("lock tables t1 read")
-	checkTableLock(c, tk.Se, "test", "t1", model.TableLockRead)
-	tk.MustExec("lock tables t1 write")
-	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
-
-	// Test lock multi tables.
-	tk.MustExec("lock tables t1 write, t2 read")
-	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
-	checkTableLock(c, tk.Se, "test", "t2", model.TableLockRead)
-	tk.MustExec("lock tables t1 read, t2 write")
-	checkTableLock(c, tk.Se, "test", "t1", model.TableLockRead)
-	checkTableLock(c, tk.Se, "test", "t2", model.TableLockWrite)
-	tk.MustExec("lock tables t2 write")
-	checkTableLock(c, tk.Se, "test", "t2", model.TableLockWrite)
-	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
-	tk.MustExec("lock tables t1 write")
-	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
-	checkTableLock(c, tk.Se, "test", "t2", model.TableLockNone)
-
-	tk2 := testkit.NewTestKit(c, s.store)
-	tk2.MustExec("use test")
-
-	// Test read lock.
-	tk.MustExec("lock tables t1 read")
-	tk.MustQuery("select * from t1")
-	tk2.MustQuery("select * from t1")
-	_, err := tk.Exec("insert into t1 set a=1")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLockedForWrite), IsTrue)
-	_, err = tk.Exec("update t1 set a=1")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLockedForWrite), IsTrue)
-	_, err = tk.Exec("delete from t1")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLockedForWrite), IsTrue)
-
-	_, err = tk2.Exec("insert into t1 set a=1")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
-	_, err = tk2.Exec("update t1 set a=1")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
-	_, err = tk2.Exec("delete from t1")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
-	tk2.MustExec("lock tables t1 read")
-	_, err = tk2.Exec("insert into t1 set a=1")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLockedForWrite), IsTrue)
-
-	// Test write lock.
-	_, err = tk.Exec("lock tables t1 write")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
-	tk2.MustExec("unlock tables")
-	tk.MustExec("lock tables t1 write")
-	tk.MustQuery("select * from t1")
-	tk.MustExec("delete from t1")
-	tk.MustExec("insert into t1 set a=1")
-
-	_, err = tk2.Exec("select * from t1")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
-	_, err = tk2.Exec("insert into t1 set a=1")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
-	_, err = tk2.Exec("lock tables t1 write")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
-
-	// Test write local lock.
-	tk.MustExec("lock tables t1 write local")
-	tk.MustQuery("select * from t1")
-	tk.MustExec("delete from t1")
-	tk.MustExec("insert into t1 set a=1")
-
-	tk2.MustQuery("select * from t1")
-	_, err = tk2.Exec("delete from t1")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
-	_, err = tk2.Exec("insert into t1 set a=1")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
-	_, err = tk2.Exec("lock tables t1 write")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
-	_, err = tk2.Exec("lock tables t1 read")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
-
-	// Test none unique table.
-	_, err = tk.Exec("lock tables t1 read, t1 write")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrNonuniqTable), IsTrue)
-
-	// Test lock table by other session in transaction and commit without retry.
-	tk.MustExec("unlock tables")
-	tk2.MustExec("unlock tables")
-	tk.MustExec("set @@session.tidb_disable_txn_auto_retry=1")
-	tk.MustExec("begin")
-	tk.MustExec("insert into t1 set a=1")
-	tk2.MustExec("lock tables t1 write")
-	_, err = tk.Exec("commit")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "previous statement: insert into t1 set a=1: [domain:8028]Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]")
-
-	// Test lock table by other session in transaction and commit with retry.
-	tk.MustExec("unlock tables")
-	tk2.MustExec("unlock tables")
-	tk.MustExec("set @@session.tidb_disable_txn_auto_retry=0")
-	tk.MustExec("begin")
-	tk.MustExec("insert into t1 set a=1")
-	tk2.MustExec("lock tables t1 write")
-	_, err = tk.Exec("commit")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue, Commentf("err: %v\n", err))
-
-	// Test for lock the same table multiple times.
-	tk2.MustExec("lock tables t1 write")
-	tk2.MustExec("lock tables t1 write, t2 read")
-
-	// Test lock tables and drop tables
-	tk.MustExec("unlock tables")
-	tk2.MustExec("unlock tables")
-	tk.MustExec("lock tables t1 write, t2 write")
-	tk.MustExec("drop table t1")
-	tk2.MustExec("create table t1 (a int)")
-	tk.MustExec("lock tables t1 write, t2 read")
-
-	// Test lock tables and drop database.
-	tk.MustExec("unlock tables")
-	tk.MustExec("create database test_lock")
-	tk.MustExec("create table test_lock.t3 (a int)")
-	tk.MustExec("lock tables t1 write, test_lock.t3 write")
-	tk2.MustExec("create table t3 (a int)")
-	tk.MustExec("lock tables t1 write, t3 write")
-	tk.MustExec("drop table t3")
-
-	// Test lock tables and truncate tables.
-	tk.MustExec("unlock tables")
-	tk.MustExec("lock tables t1 write, t2 read")
-	tk.MustExec("truncate table t1")
-	tk.MustExec("insert into t1 set a=1")
-	_, err = tk2.Exec("insert into t1 set a=1")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
-
-	// Test for lock unsupported schema tables.
-	_, err = tk2.Exec("lock tables performance_schema.global_status write")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrAccessDenied), IsTrue)
-	_, err = tk2.Exec("lock tables information_schema.tables write")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrAccessDenied), IsTrue)
-	_, err = tk2.Exec("lock tables mysql.db write")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrAccessDenied), IsTrue)
-
-	// Test create table/view when session is holding the table locks.
-	tk.MustExec("unlock tables")
-	tk.MustExec("lock tables t1 write, t2 read")
-	_, err = tk.Exec("create table t3 (a int)")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLocked), IsTrue)
-	_, err = tk.Exec("create view v1 as select * from t1;")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableNotLocked), IsTrue)
-
-	// Test for locking view was not supported.
-	tk.MustExec("unlock tables")
-	tk.MustExec("create view v1 as select * from t1;")
-	_, err = tk.Exec("lock tables v1 read")
-	c.Assert(terror.ErrorEqual(err, table.ErrUnsupportedOp), IsTrue)
-
-	// Test for locking sequence was not supported.
-	tk.MustExec("unlock tables")
-	tk.MustExec("create sequence seq")
-	_, err = tk.Exec("lock tables seq read")
-	c.Assert(terror.ErrorEqual(err, table.ErrUnsupportedOp), IsTrue)
-	tk.MustExec("drop sequence seq")
-
-	// Test for create/drop/alter database when session is holding the table locks.
-	tk.MustExec("unlock tables")
-	tk.MustExec("lock table t1 write")
-	_, err = tk.Exec("drop database test")
-	c.Assert(terror.ErrorEqual(err, table.ErrLockOrActiveTransaction), IsTrue)
-	_, err = tk.Exec("create database test_lock")
-	c.Assert(terror.ErrorEqual(err, table.ErrLockOrActiveTransaction), IsTrue)
-	_, err = tk.Exec("alter database test charset='utf8mb4'")
-	c.Assert(terror.ErrorEqual(err, table.ErrLockOrActiveTransaction), IsTrue)
-	// Test alter/drop database when other session is holding the table locks of the database.
-	tk2.MustExec("create database test_lock2")
-	_, err = tk2.Exec("drop database test")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
-	_, err = tk2.Exec("alter database test charset='utf8mb4'")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
-
-	// Test for admin cleanup table locks.
-	tk.MustExec("unlock tables")
-	tk.MustExec("lock table t1 write, t2 write")
-	_, err = tk2.Exec("lock tables t1 write, t2 read")
-	c.Assert(terror.ErrorEqual(err, infoschema.ErrTableLocked), IsTrue)
-	tk2.MustExec("admin cleanup table lock t1,t2")
-	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
-	checkTableLock(c, tk.Se, "test", "t2", model.TableLockNone)
-	// cleanup unlocked table.
-	tk2.MustExec("admin cleanup table lock t1,t2")
-	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
-	checkTableLock(c, tk.Se, "test", "t2", model.TableLockNone)
-	tk2.MustExec("lock tables t1 write, t2 read")
-	checkTableLock(c, tk2.Se, "test", "t1", model.TableLockWrite)
-	checkTableLock(c, tk2.Se, "test", "t2", model.TableLockRead)
-
-	tk.MustExec("unlock tables")
-	tk2.MustExec("unlock tables")
-}
-
-func (s *testDBSuite2) TestTablesLockDelayClean(c *C) {
-	if israce.RaceEnabled {
-		c.Skip("skip race test")
-	}
-	tk := testkit.NewTestKit(c, s.store)
-	tk2 := testkit.NewTestKit(c, s.store)
-	tk2.MustExec("use test")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1,t2")
-	defer tk.MustExec("drop table if exists t1,t2")
-	tk.MustExec("create table t1 (a int)")
-	tk.MustExec("create table t2 (a int)")
-
-	tk.MustExec("lock tables t1 write")
-	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.DelayCleanTableLock = 100
-	})
-	var wg sync.WaitGroup
-	wg.Add(1)
-	var startTime time.Time
-	go func() {
-		startTime = time.Now()
-		tk.Se.Close()
-		wg.Done()
-	}()
-	time.Sleep(50 * time.Millisecond)
-	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
-	wg.Wait()
-	c.Assert(time.Since(startTime).Seconds() > 0.1, IsTrue)
-	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.DelayCleanTableLock = 0
-	})
 }
 
 // TestConcurrentLockTables test concurrent lock/unlock tables.
@@ -2886,54 +1930,6 @@ func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 ses
 	f(c, err1, err2)
 }
 
-func checkTableLock(c *C, se session.Session, dbName, tableName string, lockTp model.TableLockType) {
-	tb := testGetTableByName(c, se, dbName, tableName)
-	dom := domain.GetDomain(se)
-	err := dom.Reload()
-	c.Assert(err, IsNil)
-	if lockTp != model.TableLockNone {
-		c.Assert(tb.Meta().Lock, NotNil)
-		c.Assert(tb.Meta().Lock.Tp, Equals, lockTp)
-		c.Assert(tb.Meta().Lock.State, Equals, model.TableLockStatePublic)
-		c.Assert(len(tb.Meta().Lock.Sessions) == 1, IsTrue)
-		c.Assert(tb.Meta().Lock.Sessions[0].ServerID, Equals, dom.DDL().GetID())
-		c.Assert(tb.Meta().Lock.Sessions[0].SessionID, Equals, se.GetSessionVars().ConnectionID)
-	} else {
-		c.Assert(tb.Meta().Lock, IsNil)
-	}
-}
-
-func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	defer tk.MustExec("drop table if exists t")
-	// Test create with invalid expression.
-	_, err := tk.Exec(`CREATE TABLE t (
-		c0 int(11) ,
-  		c1 int(11),
-    	c2 decimal(16,4) GENERATED ALWAYS AS ((case when (c0 = 0) then 0when (c0 > 0) then (c1 / c0) end))
-	);`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 4 column 88 near \"then (c1 / c0) end))\n\t);\" ")
-
-	tk.MustExec("create table t (a bigint, b int, c int generated always as (b+1)) partition by hash(a) partitions 4;")
-	// Test drop partition column.
-	_, err = tk.Exec("alter table t drop column a;")
-	c.Assert(err, NotNil)
-	// TODO: refine the error message to compatible with MySQL
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'a' in 'expression'")
-	// Test modify column with invalid expression.
-	_, err = tk.Exec("alter table t modify column c int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 97 near \"then (b / a) end));\" ")
-	// Test add column with invalid expression.
-	_, err = tk.Exec("alter table t add column d int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 94 near \"then (b / a) end));\" ")
-}
-
 func (s *testDBSuite4) TestColumnCheck(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use " + s.schemaName)
@@ -3008,25 +2004,6 @@ func (s *testSerialDBSuite) TestDDLJobErrorCount(c *C) {
 		kv.ErrEntryTooLarge.Equal(historyJob.Error)
 		break
 	}
-}
-
-func (s *testDBSuite1) TestAlterTableWithValidation(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	defer tk.MustExec("drop table if exists t1")
-
-	tk.MustExec("create table t1 (c1 int, c2 int as (c1 + 1));")
-
-	// Test for alter table with validation.
-	tk.MustExec("alter table t1 with validation")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8200|ALTER TABLE WITH VALIDATION is currently unsupported"))
-
-	// Test for alter table without validation.
-	tk.MustExec("alter table t1 without validation")
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8200|ALTER TABLE WITHOUT VALIDATION is currently unsupported"))
 }
 
 func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
@@ -3523,71 +2500,6 @@ func (s *testSerialDBSuite) TestCancelJobWriteConflict(c *C) {
 	c.Assert(cancelErr, IsNil)
 	result := tk1.ResultSetToResultWithCtx(context.Background(), rs[0], Commentf("cancel ddl job fails"))
 	result.Check(testkit.Rows(fmt.Sprintf("%d successful", jobID)))
-}
-
-func (s *testDBSuite2) TestBatchCreateTable(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists tables_1")
-	tk.MustExec("drop table if exists tables_2")
-	tk.MustExec("drop table if exists tables_3")
-
-	d := s.dom.DDL()
-	infos := []*model.TableInfo{}
-	infos = append(infos, &model.TableInfo{
-		Name: model.NewCIStr("tables_1"),
-	})
-	infos = append(infos, &model.TableInfo{
-		Name: model.NewCIStr("tables_2"),
-	})
-	infos = append(infos, &model.TableInfo{
-		Name: model.NewCIStr("tables_3"),
-	})
-
-	// correct name
-	err := d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), infos, ddl.OnExistError)
-	c.Check(err, IsNil)
-
-	tk.MustQuery("show tables like '%tables_%'").Check(testkit.Rows("tables_1", "tables_2", "tables_3"))
-	job := tk.MustQuery("admin show ddl jobs").Rows()[0]
-	c.Assert(job[1], Equals, "test")
-	c.Assert(job[2], Equals, "tables_1,tables_2,tables_3")
-	c.Assert(job[3], Equals, "create tables")
-	c.Assert(job[4], Equals, "public")
-	// FIXME: we must change column type to give multiple id
-	// c.Assert(job[6], Matches, "[^,]+,[^,]+,[^,]+")
-
-	// duplicated name
-	infos[1].Name = model.NewCIStr("tables_1")
-	err = d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), infos, ddl.OnExistError)
-	c.Check(terror.ErrorEqual(err, infoschema.ErrTableExists), IsTrue)
-
-	newinfo := &model.TableInfo{
-		Name: model.NewCIStr("tables_4"),
-	}
-	{
-		colNum := 2
-		cols := make([]*model.ColumnInfo, colNum)
-		viewCols := make([]model.CIStr, colNum)
-		var stmtBuffer bytes.Buffer
-		stmtBuffer.WriteString("SELECT ")
-		for i := range cols {
-			col := &model.ColumnInfo{
-				Name:   model.NewCIStr(fmt.Sprintf("c%d", i+1)),
-				Offset: i,
-				State:  model.StatePublic,
-			}
-			cols[i] = col
-			viewCols[i] = col.Name
-			stmtBuffer.WriteString(cols[i].Name.L + ",")
-		}
-		stmtBuffer.WriteString("1 FROM t")
-		newinfo.Columns = cols
-		newinfo.View = &model.ViewInfo{Cols: viewCols, Security: model.SecurityDefiner, Algorithm: model.AlgorithmMerge, SelectStmt: stmtBuffer.String(), CheckOption: model.CheckOptionCascaded, Definer: &auth.UserIdentity{CurrentUser: true}}
-	}
-
-	err = d.BatchCreateTableWithInfo(tk.Se, model.NewCIStr("test"), []*model.TableInfo{newinfo}, ddl.OnExistError)
-	c.Check(err, IsNil)
 }
 
 func (s *testSerialDBSuite) TestAddGeneratedColumnAndInsert(c *C) {
