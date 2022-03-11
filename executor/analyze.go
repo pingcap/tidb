@@ -109,8 +109,11 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		taskCh <- task
 	}
 	close(taskCh)
-	e.wg.Wait()
-	close(resultsCh)
+	go func() {
+		e.wg.Wait()
+		close(resultsCh)
+	}()
+
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	panicCnt := 0
 
@@ -820,7 +823,7 @@ type AnalyzeColumnsExec struct {
 	core.AnalyzeInfo
 
 	subIndexWorkerWg  *util.WaitGroupWrapper
-	samplingBuilderWg *util.WaitGroupWrapper
+	samplingBuilderWg *util.NotifyErrorWaitGroupWrapper
 	samplingMergeWg   *util.WaitGroupWrapper
 
 	schemaForVirtualColEval *expression.Schema
@@ -1043,7 +1046,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	if totalLen < statsConcurrency {
 		statsConcurrency = totalLen
 	}
-	e.samplingBuilderWg = &util.WaitGroupWrapper{}
+	e.samplingBuilderWg = util.NewNotifyErrorWaitGroupWrapper(buildResultChan)
 	sampleCollectors := make([]*statistics.SampleCollector, len(e.colsInfo))
 	exitCh := make(chan struct{})
 	for i := 0; i < statsConcurrency; i++ {
@@ -1084,8 +1087,6 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		fmSketches = append(fmSketches, rootRowCollector.Base().FMSketches[colLen+i])
 	}
 	close(buildTaskChan)
-	e.samplingBuilderWg.Wait()
-	close(buildResultChan)
 	panicCnt := 0
 	for panicCnt < statsConcurrency {
 		err1, ok := <-buildResultChan
@@ -1147,8 +1148,11 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.Inde
 		taskCh <- task
 	}
 	close(taskCh)
-	e.subIndexWorkerWg.Wait()
-	close(resultsCh)
+	go func() {
+		e.subIndexWorkerWg.Wait()
+		close(resultsCh)
+	}()
+
 	panicCnt := 0
 	totalResult := analyzeIndexNDVTotalResult{
 		results: make(map[int64]*statistics.AnalyzeResults, len(indexInfos)),
