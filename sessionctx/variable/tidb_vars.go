@@ -211,6 +211,9 @@ const (
 
 	// TiDBReadConsistency indicates whether the autocommit read statement goes through TiKV RC.
 	TiDBReadConsistency = "tidb_read_consistency"
+
+	// TiDBSysdateIsNow is the name of the `tidb_sysdate_is_now` system variable
+	TiDBSysdateIsNow = "tidb_sysdate_is_now"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -601,6 +604,9 @@ const (
 	// TiDBTxnAssertionLevel indicates how strict the assertion will be, which helps to detect and preventing data &
 	// index inconsistency problems.
 	TiDBTxnAssertionLevel = "tidb_txn_assertion_level"
+
+	// TiDBBatchPendingTiFlashCount indicates the maximum count of non-available TiFlash tables.
+	TiDBBatchPendingTiFlashCount = "tidb_batch_pending_tiflash_count"
 )
 
 // TiDB vars that have only global scope
@@ -794,6 +800,7 @@ const (
 	DefSysdateIsNow                       = false
 	DefTiDBEnableMutationChecker          = false
 	DefTiDBTxnAssertionLevel              = AssertionOffStr
+	DefTiDBBatchPendingTiFlashCount       = 4000
 )
 
 // Process global variables.
