@@ -1993,7 +1993,7 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 	}()
 	ts := time.Now().Local().Format("2006-01-02 15:04:05.999999")
 
-	const sql = "INSERT INTO mysql.stats_history(table_id, stats_data, seq_no, version, create_time) VALUES (%?, %?, %?, %?, %?)"
+	const sql = "REPLACE INTO mysql.stats_history(table_id, stats_data, seq_no, version, create_time) VALUES (%?, %?, %?, %?, %?)"
 	for i := 0; i < len(blocks); i++ {
 		if _, err := exec.ExecuteInternal(ctx, sql, tableInfo.ID, blocks[i], i, version, ts); err != nil {
 			return version, errors.Trace(err)
