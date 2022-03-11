@@ -1,4 +1,4 @@
-# optimize gc advance for internal transactions
+# Optimize GC Advance For Internal Transactions
 
 - Author(s): [Michael](https://github.com/TonsnakeLin) 
 - Tracking Issue: https://github.com/pingcap/tidb/issues/32725
@@ -23,7 +23,7 @@ Currently here are two kinds of internal transactions. one is run by internal se
 
 The design stores internal sessions to session manager and stores the internal transactions to `globalInnerTxnTsBox` so that it can get startTS of internal transactions when calculates gc safe point.
 
-#### calculate gc safe point
+#### Calculate GC Safe Point
 
 Currently, the processes TiDB calculates safe point is as bellow, it is implemented in `(is *InfoSyncer) ReportMinStartTS`
 
@@ -41,15 +41,15 @@ This design add extra processes  in `(is *InfoSyncer) ReportMinStartTS` to take 
 - Traverse `InnerSessionStartTSList` to get startTS and compare with `minStartTS` to get the minimum time stamp which is after `startTSLowerLimit` , save it also as `minStartTS`.
 - Traverse `innerTxnStartTsMap` to get startTS and compare with `minStartTS` to get the minimum time stamp which is after `startTSLowerLimit` , save it also as `minStartTS` which is gc safe point.
 
-#### store and delete internal sessions
+#### Store And Delete Internal Sessions
 
 TiDB gets an internal session from a session pool implemented in `(s *session) getInternalSession`, when the transaction finished,it puts the session to the pool. It stores the session to session manager when gets an internal session, delete the session from session manager when returns the session to a pool.
 
-#### store and delete internal transactions
+#### Store And Delete Internal Transactions
 
 The internal transactions here are executed by function `RunInNewTxn`. It stores the transaction to  `globalInnerTxnTsBox`  at transaction begin and deletes the transaction at end.
 
-### data structure design
+### Data Structure Design
 
 #### SessionManager 
 
@@ -101,7 +101,7 @@ type innerTxnStartTsBox struct {
 
 ### Functional design
 
-#### Initialize internal transaction global management box
+#### Initialize Internal Transaction Global Management Box
 
 This design initializes the global variable `globalInnerTxnTsBox` and starts 3 goroutines in the `main()` function to manage internal transactions run by function `RunInNewTxn()`. The initialization is wrapped in the function `InitInnerTxnStartTsBox()`. It closes the relevant goroutines in the function `cleanup()`
 
@@ -141,7 +141,7 @@ func InitInnerTxnStartTsBox() {
 
 
 
-#### store and delete internal sessions
+#### Store And Delete Internal Sessions
 
 TiDB gets an internal session from a session pool implemented in `(s *session) getInternalSession`, when the transaction finished,it puts the session to the pool. This design stores the internal session to session manger and deletes the internal session from session manager in the function  `(s *session) getInternalSession`. It calls the function `infosync.DeleteInternalSession()` to delete the internal session from session manager and calls the function `infosync.StoreInternalSession` to add the internal session to session manger.
 
@@ -161,7 +161,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 
 
 
-#### store and delete internal transactions
+#### Store And Delete Internal Transactions
 
 The internal transactions here are executed by function `RunInNewTxn`. It stores the internal transaction startTS by function  `wrapStoreInterTxnTS()` and deletes the transaction startTS by function `wrapDeleteInterTxnTS()`.
 
@@ -183,7 +183,7 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 }
 ```
 
-#### calculate gc safe point
+#### Calculate GC Safe Point
 
 Currently, TiDB calculates gc safe point in the function `(is *InfoSyncer) ReportMinStartTS`. This design add some code in the 
 
