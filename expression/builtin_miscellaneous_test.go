@@ -304,7 +304,7 @@ func TestInet6AtoN(t *testing.T) {
 			result.SetNull()
 			require.True(t, terror.ErrorEqual(err, errWrongValueForType))
 		}
-		testutil.DatumEqual(t, types.NewDatum(test.expect), result)
+		testutil.DatumEqual(t, expect, result)
 	}
 
 	var argNull types.Datum
