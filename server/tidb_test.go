@@ -1332,7 +1332,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		for _, ca := range cases1 {
 			sqlStr := ca.sql
 			if strings.HasPrefix(sqlStr, "select") {
-				require.NoError(t, dbt.MustQuery(sqlStr).Close())
+				mustQuery(t, dbt, sqlStr)
 			} else {
 				dbt.MustExec(sqlStr)
 			}
@@ -1371,6 +1371,8 @@ func TestTopSQLCPUProfile(t *testing.T) {
 			if strings.HasPrefix(prepare, "select") {
 				rows, err := stmt.Query(args...)
 				require.NoError(t, err)
+				for rows.Next() {
+				}
 				require.NoError(t, rows.Close())
 			} else {
 				_, err = stmt.Exec(args...)
@@ -1421,7 +1423,7 @@ func TestTopSQLCPUProfile(t *testing.T) {
 				sqlStr += strings.Join(params, ",")
 			}
 			if strings.HasPrefix(prepare, "select") {
-				require.NoError(t, dbt.MustQuery(sqlStr).Close())
+				mustQuery(t, dbt, sqlStr)
 			} else {
 				dbt.MustExec(sqlStr)
 			}
