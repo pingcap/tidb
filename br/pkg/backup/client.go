@@ -160,13 +160,14 @@ func (bc *Client) GetGCTTL() int64 {
 	return bc.gcTTL
 }
 
+// GetStorageBackend gets storage backupend field in client.
+func (bc *Client) GetStorageBackend() *backuppb.StorageBackend {
+	return bc.backend
+}
+
 // GetStorage gets storage for this backup.
 func (bc *Client) GetStorage() storage.ExternalStorage {
 	return bc.storage
-}
-
-func (bc *Client) GetStorageBackend() *backuppb.StorageBackend {
-	return bc.backend
 }
 
 // SetStorage set ExternalStorage for client.
@@ -662,9 +663,9 @@ func (bc *Client) fineGrainedBackup(
 			go func(boFork *tikv.Backoffer) {
 				defer wg.Done()
 				for rg := range retry {
-					req.StartKey, req.EndKey = rg.StartKey, rg.EndKey
-					backoffMs, err :=
-						bc.handleFineGrained(ctx, boFork, req, respCh)
+					subReq := req
+					subReq.StartKey, subReq.EndKey = rg.StartKey, rg.EndKey
+					backoffMs, err := bc.handleFineGrained(ctx, boFork, subReq, respCh)
 					if err != nil {
 						errCh <- err
 						return
