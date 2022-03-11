@@ -854,19 +854,6 @@ func TestIndexMergeSwitcher(t *testing.T) {
 	require.Equal(t, BoolToOnOff(DefTiDBEnableIndexMerge), val)
 }
 
-func TestNoValidateForNoop(t *testing.T) {
-	vars := NewSessionVars()
-
-	// for noop variables, no error
-	val, err := GetSysVar("rpl_semi_sync_slave_enabled").ValidateFromType(vars, "", ScopeGlobal)
-	require.NoError(t, err)
-	require.Equal(t, val, "")
-
-	// for other variables, error
-	_, err = GetSysVar(TiDBAllowBatchCop).ValidateFromType(vars, "", ScopeGlobal)
-	require.Error(t, err)
-}
-
 func TestNetBufferLength(t *testing.T) {
 	netBufferLength := GetSysVar(NetBufferLength)
 	vars := NewSessionVars()
