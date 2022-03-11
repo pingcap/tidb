@@ -613,7 +613,6 @@ func (c *pdClient) getPDAPIAddr() string {
 func (c *pdClient) InvalidateStoreCache(storeID uint64) {
 	c.mu.Lock()
 	delete(c.storeCache, storeID)
-	c.storeCache = make(map[uint64]*metapb.Store)
 	c.mu.Unlock()
 }
 
