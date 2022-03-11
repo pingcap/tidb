@@ -684,10 +684,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-len(dependentHiddenCols)]
 		failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
 			if val.(bool) {
-				// TODO: remove
-				if !variable.AllowConcurrencyDDL.Load() {
-					panic("panic test in cancelling add index")
-				}
+				panic("panic test in cancelling add index")
 			}
 		})
 
