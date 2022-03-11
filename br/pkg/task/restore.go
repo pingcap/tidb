@@ -225,6 +225,7 @@ func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *Re
 	}
 	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
 	client.SetBatchDdlSize(cfg.DdlBatchSize)
+	client.SetPolicyMode(cfg.WithPlacementPolicy)
 	err = client.LoadRestoreStores(ctx)
 	if err != nil {
 		return errors.Trace(err)

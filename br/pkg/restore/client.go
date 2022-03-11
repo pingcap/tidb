@@ -137,6 +137,29 @@ func NewRestoreClient(
 	}, nil
 }
 
+// SetPolicyMode to set rateLimit.
+func (rc *Client) SetPolicyMode(withPlacementPolicy bool) {
+	// correspond to --tidb-placement-mode config.
+	// STRICT(default) means policy related SQL can be executed in tidb.
+	// IGNORE means policy related SQL will be ignored.
+	var mode string
+	if withPlacementPolicy {
+		mode = "STRICT"
+	} else {
+		mode = "IGNORE"
+	}
+	// Set placement mode for handle placement policy.
+	err := rc.db.se.Execute(context.Background(), fmt.Sprintf("set tidb_placement_mode='%s';", mode))
+	if err != nil {
+		// There are two reason reach here
+		// if tidb version doesn't support placement mode, we can just ignore it.
+		// if set failed. the default mode in tidb is 'STRICT', so the behaviour works as default.
+		log.Warn("execute set tidb_placement_mode sql failed, ignore create policies", zap.Error(err))
+	} else {
+		log.Info("set tidb_placement_mode success", zap.String("mode", mode))
+	}
+}
+
 // SetRateLimit to set rateLimit.
 func (rc *Client) SetRateLimit(rateLimit uint64) {
 	rc.rateLimit = rateLimit

@@ -50,7 +50,7 @@ run_sql "DROP DATABASE $DB;"
 
 # restore with tidb-placement-policy
 echo "restore with tidb-placement start..."
-run_br restore --db $DB -s "local://$TEST_DIR/${DB}v2" --pd $PD_ADDR
+run_br restore db --db $DB -s "local://$TEST_DIR/${DB}v2" --pd $PD_ADDR
 
 policy_count=$(run_sql "use $DB; show placement;" | grep "POLICY" | wc -l)
 if [ "$policy_count" -ne "1" ];then
@@ -58,16 +58,17 @@ if [ "$policy_count" -ne "1" ];then
     exit 1
 fi
 
-# clear data
+# clear data and policy
 run_sql "DROP DATABASE $DB;"
+run_sql "DROP PLACEMENT POLICY fivereplicas;"
 
 # restore without tidb-placement-policy
 echo "restore without tidb-placement start..."
-run_br restore --db $DB -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --with-tidb-placement-policy=false
+run_br restore db --db $DB -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --with-tidb-placement-policy=false
 
 policy_count=$(run_sql "use $DB; show placement;" | grep "POLICY" | wc -l)
 if [ "$policy_count" -ne "0" ];then
-    echo "TEST: [$TEST_NAME] failed! due to policy restore failed"
+    echo "TEST: [$TEST_NAME] failed! due to policy should be ignore"
     exit 1
 fi
 
