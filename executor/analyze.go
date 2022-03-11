@@ -93,9 +93,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	taskCh := make(chan *analyzeTask, len(e.tasks))
 	resultsCh := make(chan *statistics.AnalyzeResults, len(e.tasks))
-	exitCh := make(chan struct{})
 	for i := 0; i < concurrency; i++ {
-		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh, exitCh) })
+		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
 	}
 	for _, task := range e.tasks {
 		statistics.AddNewAnalyzeJob(task.job)
@@ -106,9 +105,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	for _, task := range e.tasks {
 		taskCh <- task
 	}
-	close(exitCh)
-	e.wg.Wait()
 	close(taskCh)
+	e.wg.Wait()
 	defer close(resultsCh)
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	panicCnt := 0
@@ -336,7 +334,7 @@ type analyzeTask struct {
 
 var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
 
-func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults, exitCh chan struct{}) {
+func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults) {
 	var task *analyzeTask
 	defer func() {
 		if r := recover(); r != nil {
@@ -352,30 +350,24 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		}
 	}()
 	for {
-		select {
-		case task := <-taskCh:
-			task.job.Start()
-			switch task.taskType {
-			case colTask:
-				resultsCh <- analyzeColumnsPushdown(task.colExec)
-			case idxTask:
-				resultsCh <- analyzeIndexPushdown(task.idxExec)
-			case fastTask:
-				resultsCh <- analyzeFastExec(task.fastExec)
-			case pkIncrementalTask:
-				resultsCh <- analyzePKIncremental(task.colIncrementalExec)
-			case idxIncrementalTask:
-				resultsCh <- analyzeIndexIncremental(task.idxIncrementalExec)
-			}
-		default:
-			select {
-			case <-exitCh:
-				return
-			default:
-
-			}
+		var ok bool
+		task, ok = <-taskCh
+		if !ok {
+			break
 		}
-
+		task.job.Start()
+		switch task.taskType {
+		case colTask:
+			resultsCh <- analyzeColumnsPushdown(task.colExec)
+		case idxTask:
+			resultsCh <- analyzeIndexPushdown(task.idxExec)
+		case fastTask:
+			resultsCh <- analyzeFastExec(task.fastExec)
+		case pkIncrementalTask:
+			resultsCh <- analyzePKIncremental(task.colIncrementalExec)
+		case idxIncrementalTask:
+			resultsCh <- analyzeIndexIncremental(task.idxIncrementalExec)
+		}
 	}
 }
 
