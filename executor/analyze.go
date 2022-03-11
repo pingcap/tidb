@@ -109,10 +109,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		taskCh <- task
 	}
 	close(taskCh)
-	go func() {
-		e.wg.Wait()
-		close(resultsCh)
-	}()
+	e.wg.Wait()
+	close(resultsCh)
 
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	panicCnt := 0
