@@ -352,6 +352,19 @@ func (rc *Client) GetDatabase(name string) *utils.Database {
 	return rc.databases[name]
 }
 
+// GetPolicies returns policies.
+func (rc *Client) GetPolicies() ([]*model.PolicyInfo, error) {
+	policies := make([]*model.PolicyInfo, 0, len(rc.backupMeta.Policies))
+	for _, p := range rc.backupMeta.Policies {
+		policyInfo := model.PolicyInfo{}
+		err := json.Unmarshal(p.Info, &policyInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return policies, nil
+}
+
 // GetDDLJobs returns ddl jobs.
 func (rc *Client) GetDDLJobs() []*model.Job {
 	return rc.ddlJobs
@@ -369,6 +382,11 @@ func (rc *Client) GetTableSchema(
 		return nil, errors.Trace(err)
 	}
 	return table.Meta(), nil
+}
+
+// CreatePolicies creates policies to db.
+func (rc *Client) CreatePolicies(ctx context.Context, policies []*model.PolicyInfo) error {
+	return rc.db.CreatePolicies(ctx, policies)
 }
 
 // CreateDatabase creates a database.

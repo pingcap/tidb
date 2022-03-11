@@ -115,6 +115,21 @@ func (db *DB) UpdateStatsMeta(ctx context.Context, tableID int64, restoreTS uint
 	return nil
 }
 
+// CreatePolicies check whether cluster support policy and create the policy.
+func (db *DB) CreatePolicies(ctx context.Context, policies []*model.PolicyInfo) error {
+	if err := db.se.Execute(ctx, "set tidb_placement_mode='STRICT';"); err != nil {
+		log.Warn("execute set tidb_placement_mode sql failed, ignore create policies", zap.Error(err))
+		return nil
+	}
+	for _, p := range policies {
+		err := db.se.CreatePolicy(ctx, p)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
 // CreateDatabase executes a CREATE DATABASE SQL.
 func (db *DB) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
 	err := db.se.CreateDatabase(ctx, schema)

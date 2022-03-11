@@ -39,8 +39,10 @@ const (
 	FlagPDConcurrency = "pd-concurrency"
 	// FlagBatchFlushInterval controls after how long the restore batch would be auto sended.
 	FlagBatchFlushInterval = "batch-flush-interval"
-	// flagDdlBatchSize controls batch ddl size to create a batch of tables
+	// FlagDdlBatchSize controls batch ddl size to create a batch of tables
 	FlagDdlBatchSize = "ddl-batch-size"
+	// FlagWithPlacementPolicy controls whether restore policy to tidb or not.
+	FlagWithPlacementPolicy = "with-tidb-placement-policy"
 
 	defaultRestoreConcurrency = 128
 	maxRestoreBatchSizeLimit  = 10240
@@ -122,6 +124,8 @@ type RestoreConfig struct {
 	BatchFlushInterval time.Duration `json:"batch-flush-interval" toml:"batch-flush-interval"`
 	// DdlBatchSize use to define the size of batch ddl to create tables
 	DdlBatchSize uint `json:"ddl-batch-size" toml:"ddl-batch-size"`
+
+	WithPlacementPolicy bool `json:"with-tidb-placement-policy" toml:"with-tidb-placement-policy"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -129,6 +133,7 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagNoSchema, false, "skip creating schemas and tables, reuse existing empty ones")
 	// Do not expose this flag
 	_ = flags.MarkHidden(flagNoSchema)
+	flags.Bool(FlagWithPlacementPolicy, true, "restore policy to tidb and make tidb-placement-mode = true")
 
 	DefineRestoreCommonFlags(flags)
 }
@@ -164,6 +169,10 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	cfg.DdlBatchSize, err = flags.GetUint(FlagDdlBatchSize)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagDdlBatchSize)
+	}
+	cfg.WithPlacementPolicy, err = flags.GetBool(FlagWithPlacementPolicy)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagWithPlacementPolicy)
 	}
 	return nil
 }
@@ -375,6 +384,18 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		// even nothing to restore, we show a success message since there is no failure.
 		summary.SetSuccessStatus(true)
 		return nil
+	}
+
+	if cfg.WithPlacementPolicy {
+		// create policy if backupMeta has policies.
+		policies, err := client.GetPolicies()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = client.CreatePolicies(ctx, policies)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	for _, db := range dbs {
