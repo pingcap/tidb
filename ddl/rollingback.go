@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -100,7 +101,7 @@ func convertNotStartAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, occuredE
 	indexInfo := tblInfo.FindIndexByName(indexName.L)
 	if indexInfo == nil {
 		job.State = model.JobStateCancelled
-		return ver, errCancelledDDLJob
+		return ver, dbterror.ErrCancelledDDLJob
 	}
 	return convertAddIdxJob2RollbackJob(t, job, tblInfo, indexInfo, occuredErr)
 }
@@ -115,7 +116,7 @@ func rollingbackModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job)
 		// column type change workers are started. we have to ask them to exit.
 		logutil.Logger(w.logCtx).Info("[ddl] run the cancelling DDL job", zap.String("job", job.String()))
 		w.reorgCtx.notifyReorgCancel()
-		// Give the this kind of ddl one more round to run, the errCancelledDDLJob should be fetched from the bottom up.
+		// Give the this kind of ddl one more round to run, the dbterror.ErrCancelledDDLJob should be fetched from the bottom up.
 		return w.onModifyColumn(d, t, job)
 	}
 	_, tblInfo, oldCol, jp, err := getModifyColumnInfo(t, job)
@@ -129,11 +130,11 @@ func rollingbackModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job)
 			// To roll back this kind of normal job, it is necessary to mark the state as JobStateRollingback to restore the old col's flag.
 			if jp.modifyColumnTp == mysql.TypeNull && tblInfo.Columns[oldCol.Offset].Flag|mysql.PreventNullInsertFlag != 0 {
 				job.State = model.JobStateRollingback
-				return ver, errCancelledDDLJob
+				return ver, dbterror.ErrCancelledDDLJob
 			}
 			// Normal job with stateNone can be cancelled directly.
 			job.State = model.JobStateCancelled
-			return ver, errCancelledDDLJob
+			return ver, dbterror.ErrCancelledDDLJob
 		}
 		// StatePublic couldn't be cancelled.
 		job.State = model.JobStateRunning
@@ -143,11 +144,11 @@ func rollingbackModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job)
 	if jp.changingCol == nil {
 		// The job hasn't been handled and we cancel it directly.
 		job.State = model.JobStateCancelled
-		return ver, errCancelledDDLJob
+		return ver, dbterror.ErrCancelledDDLJob
 	}
 	// The job has been in its middle state (but the reorg worker hasn't started) and we roll it back here.
 	job.State = model.JobStateRollingback
-	return ver, errCancelledDDLJob
+	return ver, dbterror.ErrCancelledDDLJob
 }
 
 func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
@@ -157,7 +158,7 @@ func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	}
 	if columnInfo == nil {
 		job.State = model.JobStateCancelled
-		return ver, errCancelledDDLJob
+		return ver, dbterror.ErrCancelledDDLJob
 	}
 
 	originalState := columnInfo.State
@@ -171,7 +172,7 @@ func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	}
 
 	job.State = model.JobStateRollingback
-	return ver, errCancelledDDLJob
+	return ver, dbterror.ErrCancelledDDLJob
 }
 
 func rollingbackAddColumns(t *meta.Meta, job *model.Job) (ver int64, err error) {
@@ -181,7 +182,7 @@ func rollingbackAddColumns(t *meta.Meta, job *model.Job) (ver int64, err error) 
 	}
 	if len(columnInfos) == 0 {
 		job.State = model.JobStateCancelled
-		return ver, errCancelledDDLJob
+		return ver, dbterror.ErrCancelledDDLJob
 	}
 
 	colNames := make([]model.CIStr, len(columnInfos))
@@ -199,7 +200,7 @@ func rollingbackAddColumns(t *meta.Meta, job *model.Job) (ver int64, err error) 
 		return ver, errors.Trace(err)
 	}
 	job.State = model.JobStateRollingback
-	return ver, errCancelledDDLJob
+	return ver, dbterror.ErrCancelledDDLJob
 }
 
 func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
@@ -219,14 +220,14 @@ func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) 
 			return ver, nil
 		case model.StatePublic:
 		default:
-			return ver, ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
+			return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
 		}
 	}
 
 	// StatePublic means when the job is not running yet.
 	if colInfo.State == model.StatePublic {
 		job.State = model.JobStateCancelled
-		return ver, errCancelledDDLJob
+		return ver, dbterror.ErrCancelledDDLJob
 	}
 	// In the state of drop column `write only -> delete only -> reorganization`,
 	// We can not rollback now, so just continue to drop column.
@@ -251,14 +252,14 @@ func rollingbackDropColumns(t *meta.Meta, job *model.Job) (ver int64, err error)
 			return ver, nil
 		case model.StatePublic:
 		default:
-			return ver, ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
+			return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
 		}
 	}
 
 	// StatePublic means when the job is not running yet.
 	if colInfos[0].State == model.StatePublic {
 		job.State = model.JobStateCancelled
-		return ver, errCancelledDDLJob
+		return ver, dbterror.ErrCancelledDDLJob
 	}
 	// In the state of drop columns `write only -> delete only -> reorganization`,
 	// We can not rollback now, so just continue to drop columns.
@@ -280,9 +281,9 @@ func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
 		return ver, nil
 	case model.StatePublic:
 		job.State = model.JobStateCancelled
-		return ver, errCancelledDDLJob
+		return ver, dbterror.ErrCancelledDDLJob
 	default:
-		return ver, ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
+		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
 	}
 }
 
@@ -311,7 +312,7 @@ func rollingbackDropIndexes(t *meta.Meta, job *model.Job) (ver int64, err error)
 			indexInfo.State = model.StatePublic
 		}
 	default:
-		return ver, ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
+		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
 	}
 
 	job.SchemaState = indexInfo.State
@@ -320,7 +321,7 @@ func rollingbackDropIndexes(t *meta.Meta, job *model.Job) (ver int64, err error)
 		return ver, errors.Trace(err)
 	}
 	job.FinishTableJob(model.JobStateRollbackDone, model.StatePublic, ver, tblInfo)
-	return ver, errCancelledDDLJob
+	return ver, dbterror.ErrCancelledDDLJob
 }
 
 func rollingbackAddIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
@@ -332,7 +333,7 @@ func rollingbackAddIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, isP
 		ver, err = w.onCreateIndex(d, t, job, isPK)
 	} else {
 		// add index workers are not started, remove the indexInfo in tableInfo.
-		ver, err = convertNotStartAddIdxJob2RollbackJob(t, job, errCancelledDDLJob)
+		ver, err = convertNotStartAddIdxJob2RollbackJob(t, job, dbterror.ErrCancelledDDLJob)
 	}
 	return
 }
@@ -360,10 +361,10 @@ func rollingbackAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, err 
 	// addingDefinitions' len = 0 means the job hasn't reached the replica-only state.
 	if len(addingDefinitions) == 0 {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(errCancelledDDLJob)
+		return ver, errors.Trace(dbterror.ErrCancelledDDLJob)
 	}
 	// addingDefinitions is also in tblInfo, here pass the tblInfo as parameter directly.
-	return convertAddTablePartitionJob2RollbackJob(t, job, errCancelledDDLJob, tblInfo)
+	return convertAddTablePartitionJob2RollbackJob(t, job, dbterror.ErrCancelledDDLJob, tblInfo)
 }
 
 func rollingbackDropTableOrView(t *meta.Meta, job *model.Job) error {
@@ -375,7 +376,7 @@ func rollingbackDropTableOrView(t *meta.Meta, job *model.Job) error {
 	// Normally won't fetch here, because there is check when cancel ddl jobs. see function: isJobRollbackable.
 	if tblInfo.State == model.StatePublic {
 		job.State = model.JobStateCancelled
-		return errCancelledDDLJob
+		return dbterror.ErrCancelledDDLJob
 	}
 	job.State = model.JobStateRunning
 	return nil
@@ -398,7 +399,7 @@ func rollingbackDropSchema(t *meta.Meta, job *model.Job) error {
 	// Normally won't fetch here, because there is check when cancel ddl jobs. see function: isJobRollbackable.
 	if dbInfo.State == model.StatePublic {
 		job.State = model.JobStateCancelled
-		return errCancelledDDLJob
+		return dbterror.ErrCancelledDDLJob
 	}
 	job.State = model.JobStateRunning
 	return nil
@@ -413,7 +414,7 @@ func rollingbackRenameIndex(t *meta.Meta, job *model.Job) (ver int64, err error)
 	idx := tblInfo.FindIndexByName(from.L)
 	if idx.State == model.StatePublic {
 		job.State = model.JobStateCancelled
-		return ver, errCancelledDDLJob
+		return ver, dbterror.ErrCancelledDDLJob
 	}
 	job.State = model.JobStateRunning
 	return ver, errors.Trace(err)
@@ -423,7 +424,7 @@ func cancelOnlyNotHandledJob(job *model.Job) (ver int64, err error) {
 	// We can only cancel the not handled job.
 	if job.SchemaState == model.StateNone {
 		job.State = model.JobStateCancelled
-		return ver, errCancelledDDLJob
+		return ver, dbterror.ErrCancelledDDLJob
 	}
 
 	job.State = model.JobStateRunning
@@ -480,7 +481,7 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = cancelOnlyNotHandledJob(job)
 	default:
 		job.State = model.JobStateCancelled
-		err = errCancelledDDLJob
+		err = dbterror.ErrCancelledDDLJob
 	}
 
 	if err != nil {
@@ -489,9 +490,9 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		}
 		job.ErrorCount++
 
-		if errCancelledDDLJob.Equal(err) {
+		if dbterror.ErrCancelledDDLJob.Equal(err) {
 			// The job is normally cancelled.
-			if !job.Error.Equal(errCancelledDDLJob) {
+			if !job.Error.Equal(dbterror.ErrCancelledDDLJob) {
 				job.Error = terror.GetErrClass(job.Error).Synthesize(terror.ErrCode(job.Error.Code()),
 					fmt.Sprintf("DDL job rollback, error msg: %s", terror.ToSQLError(job.Error).Message))
 			}

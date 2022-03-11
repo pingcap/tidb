@@ -52,7 +52,6 @@ func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty)
 	us := PhysicalUnionScan{
 		Conditions: p.conditions,
 		HandleCols: p.handleCols,
-		CacheTable: p.cacheTable,
 	}.Init(p.ctx, p.stats, p.blockOffset, childProp)
 	return []PhysicalPlan{us}, true, nil
 }
@@ -988,6 +987,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
 	}
+	ts.PartitionInfo = copTask.partitionInfo
 	selStats := ts.stats.Scale(selectivity)
 	ts.addPushedDownSelection(copTask, selStats)
 	t := copTask.convertToRootTask(ds.ctx)
@@ -1802,12 +1802,6 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 			mppJoins := p.tryToGetMppHashJoin(prop, false)
 			joins = append(joins, mppJoins...)
 		}
-	} else if p.ctx.GetSessionVars().AllowBCJ && canPushToTiFlash {
-		broadCastJoins := p.tryToGetBroadCastJoin(prop)
-		if (p.preferJoinType & preferBCJoin) > 0 {
-			return broadCastJoins, true, nil
-		}
-		joins = append(joins, broadCastJoins...)
 	}
 	if prop.IsFlashProp() {
 		return joins, true, nil
@@ -2012,99 +2006,6 @@ func choosePartitionKeys(keys []*property.MPPPartitionColumn, matches []int) []*
 		newKeys = append(newKeys, keys[id])
 	}
 	return newKeys
-}
-
-func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []PhysicalPlan {
-	if !prop.IsEmpty() {
-		return nil
-	}
-	if prop.TaskTp != property.RootTaskType && !prop.IsFlashProp() {
-		return nil
-	}
-	if !canExprsInJoinPushdown(p, kv.TiFlash) {
-		return nil
-	}
-
-	// Disable broadcast join on partition table for TiFlash.
-	for _, child := range p.children {
-		if ds, isDataSource := child.(*DataSource); isDataSource {
-			if ds.tableInfo.GetPartitionInfo() != nil {
-				return nil
-			}
-		}
-	}
-
-	if (p.JoinType != InnerJoin && p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin && p.JoinType != SemiJoin && p.JoinType != AntiSemiJoin) || len(p.EqualConditions) == 0 {
-		return nil
-	}
-
-	// for left/semi/anti-semi join the global idx must be 1, and for right join the global idx must be 0
-	if hasPrefer, idx := p.getPreferredBCJLocalIndex(); hasPrefer {
-		if (idx == 0 && p.JoinType == RightOuterJoin) || (idx == 1 && (p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin)) {
-			return nil
-		}
-		return p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 1-idx)
-	}
-	if p.JoinType == InnerJoin {
-		results := p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 0)
-		results = append(results, p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 1)...)
-		return results
-	} else if p.JoinType == LeftOuterJoin || p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
-		return p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 1)
-	}
-	return p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 0)
-}
-
-func (p *LogicalJoin) tryToGetBroadCastJoinByPreferGlobalIdx(prop *property.PhysicalProperty, preferredGlobalIndex int) []PhysicalPlan {
-	lkeys, rkeys, _, _ := p.GetJoinKeys()
-	baseJoin := basePhysicalJoin{
-		JoinType:        p.JoinType,
-		LeftConditions:  p.LeftConditions,
-		RightConditions: p.RightConditions,
-		OtherConditions: p.OtherConditions,
-		DefaultValues:   p.DefaultValues,
-		LeftJoinKeys:    lkeys,
-		RightJoinKeys:   rkeys,
-	}
-
-	preferredBuildIndex := 0
-	if p.children[0].statsInfo().Count() > p.children[1].statsInfo().Count() {
-		preferredBuildIndex = 1
-	}
-	if p.JoinType == SemiJoin || p.JoinType == AntiSemiJoin {
-		preferredBuildIndex = 1
-	}
-	// TiFlash does not support Right out join with other conditions, if the join
-	// has other conditions, need to set the build side to make sure it will be
-	// executed as left join in TiFlash(In TiFlash the build side is always the right side)
-	if len(p.OtherConditions) != 0 {
-		if p.JoinType == RightOuterJoin {
-			preferredBuildIndex = 0
-		} else if p.JoinType == LeftOuterJoin {
-			preferredBuildIndex = 1
-		}
-	}
-	baseJoin.InnerChildIdx = preferredBuildIndex
-	childrenReqProps := make([]*property.PhysicalProperty, 2)
-	childrenReqProps[preferredGlobalIndex] = &property.PhysicalProperty{TaskTp: property.CopTiFlashGlobalReadTaskType, ExpectedCnt: math.MaxFloat64}
-	if prop.TaskTp == property.CopTiFlashGlobalReadTaskType {
-		childrenReqProps[1-preferredGlobalIndex] = &property.PhysicalProperty{TaskTp: property.CopTiFlashGlobalReadTaskType, ExpectedCnt: math.MaxFloat64}
-	} else {
-		childrenReqProps[1-preferredGlobalIndex] = &property.PhysicalProperty{TaskTp: property.CopTiFlashLocalReadTaskType, ExpectedCnt: math.MaxFloat64}
-	}
-	if prop.ExpectedCnt < p.stats.RowCount {
-		expCntScale := prop.ExpectedCnt / p.stats.RowCount
-		childrenReqProps[1-baseJoin.InnerChildIdx].ExpectedCnt = p.children[1-baseJoin.InnerChildIdx].statsInfo().RowCount * expCntScale
-	}
-
-	join := PhysicalHashJoin{
-		basePhysicalJoin: baseJoin,
-		Concurrency:      uint(p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor),
-		EqualConditions:  p.EqualConditions,
-		storeTp:          kv.TiFlash,
-		globalChildIndex: preferredGlobalIndex,
-	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childrenReqProps...)
-	return []PhysicalPlan{join}
 }
 
 // TryToGetChildProp will check if this sort property can be pushed or not.
@@ -2504,11 +2405,8 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 		} else if !la.aggHints.preferAggToCop {
 			taskTypes = append(taskTypes, property.RootTaskType)
 		}
-		if !la.canPushToCop(kv.TiKV) {
+		if !la.canPushToCop(kv.TiKV) && !la.canPushToCop(kv.TiFlash) {
 			taskTypes = []property.TaskType{property.RootTaskType}
-			if la.canPushToCop(kv.TiFlash) {
-				taskTypes = append(taskTypes, property.CopTiFlashLocalReadTaskType)
-			}
 		}
 		for _, taskTp := range taskTypes {
 			copiedChildProperty := new(property.PhysicalProperty)
@@ -2628,9 +2526,6 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	}
 	hashAggs := make([]PhysicalPlan, 0, len(prop.GetAllPossibleChildTaskTypes()))
 	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
-	if la.ctx.GetSessionVars().AllowBCJ {
-		taskTypes = append(taskTypes, property.CopTiFlashLocalReadTaskType)
-	}
 	canPushDownToTiFlash := la.canPushToCop(kv.TiFlash)
 	canPushDownToMPP := canPushDownToTiFlash && la.ctx.GetSessionVars().IsMPPAllowed() && la.checkCanPushDownToMPP()
 	if la.HasDistinct() {
@@ -2641,11 +2536,8 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	} else if !la.aggHints.preferAggToCop {
 		taskTypes = append(taskTypes, property.RootTaskType)
 	}
-	if !la.canPushToCop(kv.TiKV) {
+	if !la.canPushToCop(kv.TiKV) && !canPushDownToTiFlash {
 		taskTypes = []property.TaskType{property.RootTaskType}
-		if canPushDownToTiFlash {
-			taskTypes = append(taskTypes, property.CopTiFlashLocalReadTaskType)
-		}
 	}
 	if canPushDownToMPP {
 		taskTypes = append(taskTypes, property.MppTaskType)
