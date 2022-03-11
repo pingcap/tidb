@@ -1956,54 +1956,28 @@ func (s *testSerialDBSuite) TestDDLJobErrorCount(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddl_error_table, new_ddl_error_table")
 	tk.MustExec("create table ddl_error_table(a int)")
-	is := s.dom.InfoSchema()
-	schemaName := model.NewCIStr("test")
-	tableName := model.NewCIStr("ddl_error_table")
-	schema, ok := is.SchemaByName(schemaName)
-	c.Assert(ok, IsTrue)
-	tbl, err := is.TableByName(schemaName, tableName)
-	c.Assert(err, IsNil)
-
-	newTableName := model.NewCIStr("new_ddl_error_table")
-	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tbl.Meta().ID,
-		SchemaName: schema.Name.L,
-		Type:       model.ActionRenameTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{schema.ID, newTableName},
-	}
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockErrEntrySizeTooLarge", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockErrEntrySizeTooLarge"), IsNil)
 	}()
 
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	t := meta.NewMeta(txn)
-	job.ID, err = t.GenGlobalID()
-	c.Assert(err, IsNil)
-	job.Version = 1
-	job.StartTS = txn.StartTS()
-
-	err = t.EnQueueDDLJob(job)
-	c.Assert(err, IsNil)
-	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-
-	ticker := time.NewTicker(s.lease)
-	defer ticker.Stop()
-	for range ticker.C {
-		historyJob, err := getHistoryDDLJob(s.store, job.ID)
-		c.Assert(err, IsNil)
-		if historyJob == nil {
-			continue
-		}
-		c.Assert(historyJob.ErrorCount, Equals, int64(1), Commentf("%v", historyJob))
-		kv.ErrEntryTooLarge.Equal(historyJob.Error)
-		break
+	var jobID int64
+	hook := &ddl.TestDDLCallback{}
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		jobID = job.ID
 	}
+	originHook := s.dom.DDL().GetHook()
+	s.dom.DDL().SetHook(hook)
+	defer s.dom.DDL().SetHook(originHook)
+
+	tk.MustGetErrCode("rename table ddl_error_table to new_ddl_error_table", errno.ErrEntryTooLarge)
+
+	historyJob, err := getHistoryDDLJob(s.store, jobID)
+	c.Assert(err, IsNil)
+	c.Assert(historyJob, NotNil)
+	c.Assert(historyJob.ErrorCount, Equals, int64(1), Commentf("%v", historyJob))
+	kv.ErrEntryTooLarge.Equal(historyJob.Error)
 }
 
 func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
