@@ -85,15 +85,14 @@ type innerTxnStartTsBox struct {
 	innerTSLock        sync.Mutex
 	innerTxnStartTsMap map[uint64]uint64
 	
-	// `storeInnerTxnStartTsLoop` and `deleteInnerTxnStartTsLoop` run asynchronously,It can't ensure  
-    //`storeInnerTxnStartTsLoop` receives startTS before `deleteInnerTxnStartTsLoop`,though 
-    // `RunInNewTxn`send startTS to `storeInnerTxnStartTsLoop` firstly. If `deleteInnerTxnStartTsLoop`
+	// `storeInnerTxnStartTsLoop` and `deleteInnerTxnStartTsLoop` run asynchronously,It can't ensure
+	//`storeInnerTxnStartTsLoop` receives startTS before `deleteInnerTxnStartTsLoop`,though 
+	// `RunInNewTxn`send startTS to `storeInnerTxnStartTsLoop` firstly. If `deleteInnerTxnStartTsLoop`
 	// recevied startTS before `storeInnerTxnStartTsLoop`, the `startTS` couldn't be deleted from 
-    // `innerTxnStartTsMap`,and GC safepoint can't be advanced properly.
+	// `innerTxnStartTsMap`,and GC safepoint can't be advanced properly.
 	undeletedTsLock        sync.Mutex
 	chanToProcUndelStartTS chan uint64
 	undeletedStartTsMap    map[uint64]uint64
-
 }
 ```
 
@@ -108,7 +107,7 @@ This design initializes the global variable `globalInnerTxnTsBox` and starts 3 g
 ```go
 func main() {
 	kv.InitInnerTxnStartTsBox()
-    signal.SetupSignalHandler(func(graceful bool) {
+	signal.SetupSignalHandler(func(graceful bool) {
         svr.Close()
         cleanup(svr, storage, dom, graceful)
         cpuprofile.StopCPUProfiler()
@@ -155,7 +154,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 		// Delete the internal session to the map of SessionManager
 		infosync.DeleteInternalSession(unsafe.Pointer(se))
 		s.sysSessionPool().Put(tmp)
-    }
+	}
 }
 ```
 
@@ -178,20 +177,17 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 			wrapStoreInterTxnTS(originalTxnTS)
 		}
 		err = txn.Commit(ctx)
-        ..........................................
+        ...
     }
 }
 ```
 
 #### Calculate GC Safe Point
 
-Currently, TiDB calculates gc safe point in the function `(is *InfoSyncer) ReportMinStartTS`. This design add some code in the 
-
-function `ReportMinStartTS` to consider internal transactions when calculates gc safe point.
+Currently, TiDB calculates gc safe point in the function `(is *InfoSyncer) ReportMinStartTS`. This design add some code in the  function `ReportMinStartTS` to consider internal transactions when calculates gc safe point.
 
 ```go
-func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
-}
+func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {}
 ```
 
 
