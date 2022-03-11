@@ -282,15 +282,34 @@ func BuildBackupRangeAndSchema(
 	storage kv.Storage,
 	tableFilter filter.Filter,
 	backupTS uint64,
-) ([]rtree.Range, *Schemas, error) {
+	isFullBackup bool,
+) ([]rtree.Range, *Schemas, []*backuppb.Policy, error) {
 	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
 	m := meta.NewSnapshotMeta(snapshot)
+
+	var policies []*backuppb.Policy
+	if isFullBackup {
+		// according to https://github.com/pingcap/tidb/issues/32290
+		// only full backup will record policies in backupMeta.
+		policyList, err := m.ListPolicies()
+		if err != nil {
+			return nil, nil, nil, errors.Trace(err)
+		}
+		policies = make([]*backuppb.Policy, 0, len(policies))
+		for _, policyInfo := range policyList {
+			p, err := json.Marshal(policyInfo)
+			if err != nil {
+				return nil, nil, nil, errors.Trace(err)
+			}
+			policies = append(policies, &backuppb.Policy{Info: p})
+		}
+	}
 
 	ranges := make([]rtree.Range, 0)
 	backupSchemas := newBackupSchemas()
 	dbs, err := m.ListDatabases()
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
 
 	for _, dbInfo := range dbs {
@@ -301,7 +320,7 @@ func BuildBackupRangeAndSchema(
 
 		tables, err := m.ListTables(dbInfo.ID)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, nil, errors.Trace(err)
 		}
 
 		if len(tables) == 0 {
@@ -336,7 +355,7 @@ func BuildBackupRangeAndSchema(
 				globalAutoID, err = idAlloc.NextGlobalAutoID()
 			}
 			if err != nil {
-				return nil, nil, errors.Trace(err)
+				return nil, nil, nil, errors.Trace(err)
 			}
 			tableInfo.AutoIncID = globalAutoID
 
@@ -345,7 +364,7 @@ func BuildBackupRangeAndSchema(
 				var globalAutoRandID int64
 				globalAutoRandID, err = randAlloc.NextGlobalAutoID()
 				if err != nil {
-					return nil, nil, errors.Trace(err)
+					return nil, nil, nil, errors.Trace(err)
 				}
 				tableInfo.AutoRandID = globalAutoRandID
 				logger.Debug("change table AutoRandID",
@@ -368,7 +387,7 @@ func BuildBackupRangeAndSchema(
 
 			tableRanges, err := BuildTableRanges(tableInfo)
 			if err != nil {
-				return nil, nil, errors.Trace(err)
+				return nil, nil, nil, errors.Trace(err)
 			}
 			for _, r := range tableRanges {
 				ranges = append(ranges, rtree.Range{
@@ -381,9 +400,9 @@ func BuildBackupRangeAndSchema(
 
 	if backupSchemas.Len() == 0 {
 		log.Info("nothing to backup")
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
-	return ranges, backupSchemas, nil
+	return ranges, backupSchemas, policies, nil
 }
 
 func skipUnsupportedDDLJob(job *model.Job) bool {
