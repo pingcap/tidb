@@ -559,7 +559,12 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 
 		elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
-		reorgInfo, err := w.getReorgInfo(d, t, job, tbl, elements)
+		var reorgInfo *reorgInfo
+		if variable.AllowConcurrencyDDL.Load() {
+			reorgInfo, err = w.getReorgInfo(d, t, job, tbl, elements)
+		} else {
+			reorgInfo, err = getReorgInfo(d, t, job, tbl, elements, nil)
+		}
 		if err != nil || reorgInfo.first {
 			// If we run reorg firstly, we should update the job snapshot version
 			// and then run the reorg next time.
