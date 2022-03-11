@@ -1370,7 +1370,7 @@ workLoop:
 		select {
 		case task, ok := <-taskCh:
 			if !ok {
-				break
+				break workLoop
 			}
 			var collector *statistics.SampleCollector
 			if task.isColumn {
