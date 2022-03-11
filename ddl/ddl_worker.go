@@ -76,8 +76,6 @@ const (
 	generalWorker workerType = 0
 	// addIdxWorker is the worker who handles the operation of adding indexes.
 	addIdxWorker workerType = 1
-	// adminWorker is the worker who handles all admin statements.
-	adminWorker workerType = 2
 	// waitDependencyJobInterval is the interval when the dependency job doesn't be done.
 	waitDependencyJobInterval = 200 * time.Millisecond
 	// noneDependencyJob means a job has no dependency-job.
@@ -148,8 +146,6 @@ func (w *worker) typeStr() string {
 		str = "general"
 	case addIdxWorker:
 		str = "add index"
-	case adminWorker:
-		str = "admin"
 	default:
 		str = "unknown"
 	}
