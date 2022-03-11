@@ -15,6 +15,8 @@
 package session
 
 import (
+	"errors"
+
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
@@ -50,6 +52,20 @@ func (m *txnManager) GetTxnInfoSchema() infoschema.InfoSchema {
 		return nil
 	}
 	return m.ctxProvider.GetTxnInfoSchema()
+}
+
+func (m *txnManager) GetReadTS() (uint64, error) {
+	if m.ctxProvider == nil {
+		return 0, errors.New("context provider not set")
+	}
+	return m.ctxProvider.GetReadTS()
+}
+
+func (m *txnManager) GetForUpdateTS() (uint64, error) {
+	if m.ctxProvider == nil {
+		return 0, errors.New("context provider not set")
+	}
+	return m.ctxProvider.GetForUpdateTS()
 }
 
 func (m *txnManager) GetContextProvider() sessiontxn.TxnContextProvider {

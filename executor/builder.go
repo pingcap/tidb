@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
@@ -117,7 +118,7 @@ type CTEStorages struct {
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, isStaleness bool, replicaReadScope string) *executorBuilder {
-	return &executorBuilder{
+	b := &executorBuilder{
 		ctx:              ctx,
 		is:               is,
 		Ti:               ti,
@@ -125,6 +126,19 @@ func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *Te
 		isStaleness:      isStaleness,
 		readReplicaScope: replicaReadScope,
 	}
+
+	txnManager := sessiontxn.GetTxnManager(ctx)
+	if provider, ok := txnManager.GetContextProvider().(*sessiontxn.SimpleTxnContextProvider); ok {
+		provider.GetReadTSFunc = b.getReadTS
+		provider.GetForUpdateTSFunc = func() (uint64, error) {
+			if b.forUpdateTS != 0 {
+				return b.forUpdateTS, nil
+			}
+			return b.getReadTS()
+		}
+	}
+
+	return b
 }
 
 // MockPhysicalPlan is used to return a specified executor in when build.
@@ -1515,11 +1529,11 @@ func (b *executorBuilder) getSnapshotTS() (uint64, error) {
 		return b.dataReaderTS, nil
 	}
 
-	if (b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt) && b.forUpdateTS != 0 {
-		return b.forUpdateTS, nil
+	txnManager := sessiontxn.GetTxnManager(b.ctx)
+	if b.inInsertStmt || b.inUpdateStmt || b.inDeleteStmt || b.inSelectLockStmt {
+		return txnManager.GetForUpdateTS()
 	}
-
-	return b.getReadTS()
+	return txnManager.GetReadTS()
 }
 
 // getReadTS returns the ts used by select (without for-update clause). The return value is affected by the isolation level
