@@ -29,7 +29,7 @@ type UniqueTableName struct {
 }
 
 // NewDB returns a new DB.
-func NewDB(g glue.Glue, store kv.Storage) (*DB, error) {
+func NewDB(g glue.Glue, store kv.Storage, policyMode string) (*DB, error) {
 	se, err := g.CreateSession(store)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -42,6 +42,21 @@ func NewDB(g glue.Glue, store kv.Storage) (*DB, error) {
 	err = se.Execute(context.Background(), "set @@sql_mode=''")
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	if len(policyMode) == 0 {
+		return nil, errors.New("policy mode must be set")
+	}
+
+	// Set placement mode for handle placement policy.
+	err = se.Execute(context.Background(), fmt.Sprintf("set @@tidb_placement_mode='%s';", policyMode))
+	if err != nil {
+		// There are two reason reach here
+		// if tidb version doesn't support placement mode, we can just ignore it.
+		// if set failed. the default mode in tidb is 'STRICT', so the behaviour works as default.
+		log.Warn("execute set tidb_placement_mode sql failed, ignore create policies", zap.Error(err))
+	} else {
+		log.Info("set tidb_placement_mode success", zap.String("mode", policyMode))
 	}
 	return &DB{
 		se: se,

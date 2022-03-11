@@ -226,6 +226,7 @@ func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *Re
 	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
 	client.SetBatchDdlSize(cfg.DdlBatchSize)
 	client.SetPolicyMode(cfg.WithPlacementPolicy)
+
 	err = client.LoadRestoreStores(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -303,7 +304,12 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	if err != nil {
 		return errors.Trace(err)
 	}
-
+	// setDB must happen after set PolicyMode.
+	// we will use policyMode to set session variables.
+	err = client.SetDB(g, mgr.GetStorage())
+	if err != nil {
+		return errors.Trace(err)
+	}
 	u, s, backupMeta, err := ReadBackupMeta(ctx, metautil.MetaFile, &cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
@@ -418,7 +424,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		// Only in binary we can use multi-thread sessions to create tables.
 		// so use OwnStorage() to tell whether we are use binary or SQL.
 		dbPool, err = restore.MakeDBPool(defaultDDLConcurrency, func() (*restore.DB, error) {
-			return restore.NewDB(g, mgr.GetStorage())
+			return restore.NewDB(g, mgr.GetStorage(), client.GetPolicyMode())
 		})
 	}
 	if err != nil {

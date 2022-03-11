@@ -81,7 +81,7 @@ func TestRestoreAutoIncID(t *testing.T) {
 	require.Equal(t, uint64(globalAutoID), autoIncID)
 	// Alter AutoIncID to the next AutoIncID + 100
 	table.Info.AutoIncID = globalAutoID + 100
-	db, err := restore.NewDB(gluetidb.New(), s.mock.Storage)
+	db, err := restore.NewDB(gluetidb.New(), s.mock.Storage, "STRICT")
 	require.NoErrorf(t, err, "Error create DB")
 	tk.MustExec("drop database if exists test;")
 	// Test empty collate value
@@ -157,7 +157,7 @@ func TestCreateTablesInDb(t *testing.T) {
 		}
 		ddlJobMap[restore.UniqueTableName{dbSchema.Name.String(), tables[i].Info.Name.String()}] = false
 	}
-	db, err := restore.NewDB(gluetidb.New(), s.mock.Storage)
+	db, err := restore.NewDB(gluetidb.New(), s.mock.Storage, "STRICT")
 	require.NoError(t, err)
 
 	err = db.CreateTables(context.Background(), tables, ddlJobMap)
