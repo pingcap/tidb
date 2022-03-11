@@ -867,5 +867,11 @@
       "desc format = 'brief' select * from ((select count(*) from (select id,name from t order by id)a group by name,id order by id)  union all (select id+1 from t order by 1))c",
       "desc format = 'brief' select * from (select * from t order by id)a order by name"
     ]
+  },
+  {
+    "name": "TestIssue32632",
+    "cases": [
+      "explain format = 'brief' select sum(ps_supplycost) from partsupp, supplier where ps_suppkey = s_suppkey;"
+    ]
   }
 ]

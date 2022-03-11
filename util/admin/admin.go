@@ -140,51 +140,52 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 		return nil, errors.Trace(err)
 	}
 	jobs := append(generalJobs, addIdxJobs...)
-
+	jobsMap := make(map[int64]int)
 	for i, id := range ids {
-		found := false
-		for j, job := range jobs {
-			if id != job.ID {
-				logutil.BgLogger().Debug("the job that needs to be canceled isn't equal to current job",
-					zap.Int64("need to canceled job ID", id),
-					zap.Int64("current job ID", job.ID))
-				continue
-			}
-			found = true
-			// These states can't be cancelled.
-			if job.IsDone() || job.IsSynced() {
-				errs[i] = ErrCancelFinishedDDLJob.GenWithStackByArgs(id)
-				continue
-			}
-			// If the state is rolling back, it means the work is cleaning the data after cancelling the job.
-			if job.IsCancelled() || job.IsRollingback() || job.IsRollbackDone() {
-				continue
-			}
-			if !IsJobRollbackable(job) {
-				errs[i] = ErrCannotCancelDDLJob.GenWithStackByArgs(job.ID)
-				continue
-			}
+		jobsMap[id] = i
+	}
+	for j, job := range jobs {
+		i, ok := jobsMap[job.ID]
+		if !ok {
+			logutil.BgLogger().Debug("the job that needs to be canceled isn't equal to current job",
+				zap.Int64("need to canceled job ID", job.ID),
+				zap.Int64("current job ID", job.ID))
+			continue
+		}
+		delete(jobsMap, job.ID)
+		// These states can't be cancelled.
+		if job.IsDone() || job.IsSynced() {
+			errs[i] = ErrCancelFinishedDDLJob.GenWithStackByArgs(job.ID)
+			continue
+		}
+		// If the state is rolling back, it means the work is cleaning the data after cancelling the job.
+		if job.IsCancelled() || job.IsRollingback() || job.IsRollbackDone() {
+			continue
+		}
+		if !IsJobRollbackable(job) {
+			errs[i] = ErrCannotCancelDDLJob.GenWithStackByArgs(job.ID)
+			continue
+		}
 
-			job.State = model.JobStateCancelling
-			// Make sure RawArgs isn't overwritten.
-			err := json.Unmarshal(job.RawArgs, &job.Args)
-			if err != nil {
-				errs[i] = errors.Trace(err)
-				continue
-			}
-			if j >= len(generalJobs) {
-				offset := int64(j - len(generalJobs))
-				err = t.UpdateDDLJob(offset, job, true, meta.AddIndexJobListKey)
-			} else {
-				err = t.UpdateDDLJob(int64(j), job, true)
-			}
-			if err != nil {
-				errs[i] = errors.Trace(err)
-			}
+		job.State = model.JobStateCancelling
+		// Make sure RawArgs isn't overwritten.
+		err := json.Unmarshal(job.RawArgs, &job.Args)
+		if err != nil {
+			errs[i] = errors.Trace(err)
+			continue
 		}
-		if !found {
-			errs[i] = ErrDDLJobNotFound.GenWithStackByArgs(id)
+		if j >= len(generalJobs) {
+			offset := int64(j - len(generalJobs))
+			err = t.UpdateDDLJob(offset, job, true, meta.AddIndexJobListKey)
+		} else {
+			err = t.UpdateDDLJob(int64(j), job, true)
 		}
+		if err != nil {
+			errs[i] = errors.Trace(err)
+		}
+	}
+	for id, i := range jobsMap {
+		errs[i] = ErrDDLJobNotFound.GenWithStackByArgs(id)
 	}
 	return errs, nil
 }
