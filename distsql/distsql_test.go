@@ -152,36 +152,6 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 	require.Equal(t, expect, s1.String())
 }
 
-func TestSelectStreaming(t *testing.T) {
-	response, colTypes := createSelectStreaming(t, 1, 2)
-	// Test Next.
-	chk := chunk.New(colTypes, 32, 32)
-	numAllRows := 0
-	for {
-		err := response.Next(context.TODO(), chk)
-		require.NoError(t, err)
-		numAllRows += chk.NumRows()
-		if chk.NumRows() == 0 {
-			break
-		}
-	}
-	require.Equal(t, 2, numAllRows)
-	require.NoError(t, response.Close())
-}
-
-func TestSelectStreamingWithNextRaw(t *testing.T) {
-	response, _ := createSelectStreaming(t, 1, 2)
-	data, err := response.NextRaw(context.TODO())
-	require.NoError(t, err)
-	require.Len(t, data, 16)
-}
-
-func TestSelectStreamingChunkSize(t *testing.T) {
-	response, colTypes := createSelectStreaming(t, 100, 1000000)
-	testChunkSize(t, response, colTypes)
-	require.NoError(t, response.Close())
-}
-
 func TestAnalyze(t *testing.T) {
 	sctx := newMockSessionContext()
 	sctx.GetSessionVars().EnableChunkRPC = false
@@ -470,46 +440,5 @@ func createSelectNormal(t *testing.T, batch, totalRows int, planIDs []int, sctx 
 	resp.total = totalRows
 	resp.batch = batch
 
-	return result, colTypes
-}
-
-func createSelectStreaming(t *testing.T, batch, totalRows int) (*streamResult, []*types.FieldType) {
-	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
-		SetDAGRequest(&tipb.DAGRequest{}).
-		SetDesc(false).
-		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars()).
-		SetStreaming(true).
-		Build()
-	require.NoError(t, err)
-
-	// 4 int64 types.
-	colTypes := []*types.FieldType{
-		{
-			Tp:      mysql.TypeLonglong,
-			Flen:    mysql.MaxIntWidth,
-			Decimal: 0,
-			Flag:    mysql.BinaryFlag,
-			Charset: charset.CharsetBin,
-			Collate: charset.CollationBin,
-		},
-	}
-	colTypes = append(colTypes, colTypes[0])
-	colTypes = append(colTypes, colTypes[0])
-	colTypes = append(colTypes, colTypes[0])
-
-	sctx := newMockSessionContext()
-	sctx.GetSessionVars().EnableStreaming = true
-
-	response, err := Select(context.TODO(), sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
-	require.NoError(t, err)
-	result, ok := response.(*streamResult)
-	require.True(t, ok)
-	require.Len(t, colTypes, result.rowLen)
-
-	resp, ok := result.resp.(*mockResponse)
-	require.True(t, ok)
-	resp.total = totalRows
-	resp.batch = batch
 	return result, colTypes
 }
