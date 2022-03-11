@@ -2043,9 +2043,10 @@ func hasCurrentDatetimeDefault(col *table.Column) bool {
 }
 
 func decodeKeyFromString(ctx sessionctx.Context, s string) string {
+	sc := ctx.GetSessionVars().StmtCtx
 	key, err := hex.DecodeString(s)
 	if err != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", key))
+		sc.AppendWarning(errors.Errorf("invalid key: %X", key))
 		return s
 	}
 	// Auto decode byte if needed.
@@ -2055,39 +2056,48 @@ func decodeKeyFromString(ctx sessionctx.Context, s string) string {
 	}
 	tableID := tablecodec.DecodeTableID(key)
 	if tableID == 0 {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", key))
+		sc.AppendWarning(errors.Errorf("invalid key: %X", key))
 		return s
 	}
 	dm := domain.GetDomain(ctx)
 	if dm == nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("domain not found when decoding record/index key: %X", key))
+		sc.AppendWarning(errors.Errorf("domain not found when decoding key: %X", key))
 		return s
 	}
-	tbl, _ := dm.InfoSchema().TableByID(tableID)
+	is := dm.InfoSchema()
+	if is == nil {
+		sc.AppendWarning(errors.Errorf("infoschema not found when decoding key: %X", key))
+		return s
+	}
+	tbl, _ := is.TableByID(tableID)
+	if tbl == nil {
+		sc.AppendWarning(errors.Errorf("table not found when decoding key: %X, tableID: %d", key, tableID))
+		return s
+	}
 	loc := ctx.GetSessionVars().Location()
 	if tablecodec.IsRecordKey(key) {
 		ret, err := decodeRecordKey(key, tableID, tbl, loc)
 		if err != nil {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			sc.AppendWarning(err)
 			return s
 		}
 		return ret
 	} else if tablecodec.IsIndexKey(key) {
 		ret, err := decodeIndexKey(key, tableID, tbl, loc)
 		if err != nil {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			sc.AppendWarning(err)
 			return s
 		}
 		return ret
 	} else if tablecodec.IsTableKey(key) {
 		ret, err := decodeTableKey(key, tableID, tbl, loc)
 		if err != nil {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			sc.AppendWarning(err)
 			return s
 		}
 		return ret
 	}
-	ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", key))
+	sc.AppendWarning(errors.Errorf("invalid key: %X", key))
 	return s
 }
 
