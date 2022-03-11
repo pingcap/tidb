@@ -211,6 +211,9 @@ const (
 
 	// TiDBReadConsistency indicates whether the autocommit read statement goes through TiKV RC.
 	TiDBReadConsistency = "tidb_read_consistency"
+
+	// TiDBSysdateIsNow is the name of the `tidb_sysdate_is_now` system variable
+	TiDBSysdateIsNow = "tidb_sysdate_is_now"
 )
 
 // TiDB system variable names that both in session and global scope.
