@@ -147,6 +147,7 @@ func handleRevertibleException(job *model.Job, res model.JobState, idx int) {
 
 func checkOperateSameColumn(info *model.MultiSchemaInfo) error {
 	modifyCols := make(map[string]struct{})
+	modifyIdx := make(map[string]struct{})
 	for _, col := range info.AddColumns {
 		name := col.Name.L
 		if _, ok := modifyCols[name]; ok {
@@ -160,6 +161,26 @@ func checkOperateSameColumn(info *model.MultiSchemaInfo) error {
 			return errOperateSameColumn.GenWithStackByArgs(name)
 		}
 		modifyCols[name] = struct{}{}
+	}
+	for _, index := range info.AddIndexes {
+		idxName := index.Name.L
+		if _, ok := modifyIdx[idxName]; ok {
+			return errOperateSameIndex.GenWithStackByArgs(idxName)
+		}
+		modifyIdx[idxName] = struct{}{}
+		for _, col := range index.Columns {
+			colName := col.Name.L
+			if _, ok := modifyCols[colName]; ok {
+				return errOperateSameColumn.GenWithStackByArgs(colName)
+			}
+		}
+	}
+	for _, index := range info.DropIndexes {
+		idxName := index.Name.L
+		if _, ok := modifyIdx[idxName]; ok {
+			return errOperateSameIndex.GenWithStackByArgs(idxName)
+		}
+		modifyIdx[idxName] = struct{}{}
 	}
 	return nil
 }

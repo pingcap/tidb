@@ -5679,6 +5679,14 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		Priority: ctx.GetSessionVars().DDLReorgPriority,
 	}
 
+	if info := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; info != nil {
+		info.AddIndexes = append(info.AddIndexes, &model.IndexInfo{
+			Name:    indexName,
+			Columns: indexColumns,
+			State:   model.StateNone,
+		})
+	}
+
 	err = d.doDDLJob(ctx, job)
 	// key exists, but if_not_exists flags is true, so we ignore this error.
 	if ErrDupKeyName.Equal(err) && ifNotExists {
@@ -5880,6 +5888,9 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		Args:       []interface{}{indexName},
 	}
 
+	if info := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; info != nil {
+		info.DropIndexes = append(info.DropIndexes, indexInfo)
+	}
 	err = d.doDDLJob(ctx, job)
 	// index not exists, but if_exists flags is true, so we ignore this error.
 	if ErrCantDropFieldOrKey.Equal(err) && ifExists {
@@ -5922,6 +5933,9 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 
 		indexNames = append(indexNames, indexName)
 		ifExists = append(ifExists, spec.IfExists)
+		if info := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; info != nil {
+			info.DropIndexes = append(info.DropIndexes, indexInfo)
+		}
 	}
 
 	job := &model.Job{

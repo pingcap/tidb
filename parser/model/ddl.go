@@ -263,6 +263,8 @@ type MultiSchemaInfo struct {
 
 	AddColumns  []*ColumnInfo `json:"add_columns"`
 	DropColumns []*ColumnInfo `json:"drop_columns"`
+	AddIndexes  []*IndexInfo  `json:"add_indexes"`
+	DropIndexes []*IndexInfo  `json:"drop_indexes"`
 }
 
 func NewMultiSchemaInfo() *MultiSchemaInfo {

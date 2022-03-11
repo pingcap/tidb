@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/stretchr/testify/require"
 )
 
 func TestMultiSchemaChangeAddColumns(t *testing.T) {
@@ -36,20 +35,20 @@ func TestMultiSchemaChangeAddColumns(t *testing.T) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3"))
 
 	// Test add multiple columns in one spec.
-	tk.MustExec("drop table t;")
+	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("insert into t values (1);")
 	tk.MustExec("alter table t add column (b int default 2, c int default 3);")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3"))
 
 	// Test referencing previous column in multi-schema change is not supported.
-	tk.MustExec("drop table t;")
+	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int);")
 	tk.MustGetErrCode("alter table t add column b int after a, add column c int after b", errno.ErrBadField)
 	tk.MustGetErrCode("alter table t add column c int after b, add column b int", errno.ErrBadField)
 
 	// Test add multiple columns with different position.
-	tk.MustExec("drop table t;")
+	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b int, c int);")
 	tk.MustExec("insert into t values (1, 2, 3);")
 	tk.MustExec(`alter table t
@@ -65,6 +64,11 @@ func TestMultiSchemaChangeAddColumns(t *testing.T) {
 	tk.MustExec("alter table t add column b int default 2, add column if not exists a int;")
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1060 Duplicate column name 'a'"))
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2"))
+
+	// Test add columns with same name
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int default 1, c int default 4);")
+	tk.MustGetErrCode("alter table t add column b int default 2, add column b int default 3", errno.ErrUnsupportedDDLOperation)
 }
 
 func TestMultiSchemaChangeDropColumns(t *testing.T) {
@@ -74,14 +78,21 @@ func TestMultiSchemaChangeDropColumns(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
 
+	// Test drop all columns
 	tk.MustExec("create table t (a int, b int);")
 	tk.MustGetErrCode("alter table t drop column a, drop column b;", errno.ErrCantRemoveAllFields)
 
+	// Test drop multiple columns in multiple specs
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b int, c int, d int, e int);")
 	tk.MustExec("insert into t values (1, 2, 3, 4, 5);")
 	tk.MustExec("alter table t drop column a, drop column d, drop column b;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("3 5"))
+
+	// Test drop same column
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int default 1, c int default 4);")
+	tk.MustGetErrCode("alter table t drop column a, drop column a", errno.ErrUnsupportedDDLOperation)
 }
 
 func TestMultiSchemaChangeAddDropColumns(t *testing.T) {
@@ -115,16 +126,69 @@ func TestMultiSchemaChangeAddDropColumns(t *testing.T) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("4 3"))
 }
 
-func TestMultiSchemaChangeOperateSameColumn(t *testing.T) {
+func TestMultiSchemaChangeAddIndexes(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
 
-	tk.MustExec("create table t (a int, c int)")
-	_, err := tk.Exec("alter table t add column b int default 2, add column b int default 3")
-	require.Equal(t, err.Error(), "[ddl:8200]Unsupported operate same column 'b'")
-	_, err = tk.Exec("alter table t drop column a, drop column a")
-	require.Equal(t, err.Error(), "[ddl:8200]Unsupported operate same column 'a'")
+	// Test add multiple indexes with same column.
+	/*
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a int, b int, c int)")
+		tk.MustExec("alter table t add index t(a, b), add index t1(a)")
+		tk.MustExec("alter table t add index t2(a), add index t3(a, b)")
+	*/
+
+	// Test add multiple indexes with same name.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int)")
+	tk.MustGetErrCode("alter table t add index t(a), add index t(b)", errno.ErrUnsupportedDDLOperation)
+
+	// Test add indexes with drop column.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int)")
+	tk.MustGetErrCode("alter table t add index t(a), drop column a", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t add index t(a, b), drop column a", errno.ErrUnsupportedDDLOperation)
+}
+
+func TestMultiSchemaChangeDropIndexes(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
+
+	// Test drop same index.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int, index t(a))")
+	tk.MustGetErrCode("alter table t drop index t, drop index t", errno.ErrUnsupportedDDLOperation)
+
+	// Test drop index with drop column.
+	/*
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (a int default 1, b int default 2, c int default 3, index t(a))")
+		tk.MustExec("insert into t values ();")
+		tk.MustExec("alter table t drop index t, drop column a")
+		tk.MustGetErrCode("select * from t force index(t)", errno.ErrKeyDoesNotExist)
+	*/
+}
+
+func TestMultiSchemaChangeAddDropIndexes(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
+
+	// Test add and drop same index.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int, index t(a))")
+	tk.MustGetErrCode("alter table t drop index t, add index t(b)", errno.ErrUnsupportedDDLOperation)
+
+	// Test add and drop same index.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int, index t(a))")
+	tk.MustGetErrCode("alter table t add index t1(b), drop index t1", errno.ErrUnsupportedDDLOperation)
 }
