@@ -322,7 +322,7 @@ func (s *streamMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, erro
 	return rs, nil
 }
 
-// RunStreamCommand run all kinds of `stream task``
+// RunStreamCommand run all kinds of `stream task`.
 func RunStreamCommand(
 	ctx context.Context,
 	g glue.Glue,
