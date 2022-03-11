@@ -1560,7 +1560,8 @@ func (rc *Client) RestoreMetaKVFiles(
 			continue
 		}
 
-		log.Info("restore mfile", zap.String("file", f.Path), zap.String("cf", f.Cf), zap.Int64(("kv-count"), f.NumberOfEntries))
+		log.Info("restore meta kv events", zap.String("file", f.Path),
+			zap.String("cf", f.Cf), zap.Int64(("kv-count"), f.NumberOfEntries))
 		err := rc.RestoreMetaKVFile(ctx, rawkvClient, f, schemasReplace)
 		if err != nil {
 			return errors.Trace(err)
@@ -1597,19 +1598,19 @@ func (rc *Client) RestoreMetaKVFile(
 			break
 		}
 
-		log.Info("rewrite txn entry",
+		log.Debug("rewrite txn entry",
 			zap.Int("txnKey-len", len(txnEntry.Key)), zap.ByteString("txnKey", txnEntry.Key))
 
 		newEntry, err := sr.RewriteKvEntry(&txnEntry, file.Cf)
 		if err != nil {
-			log.Info("rewrite txn entry failed", zap.Int("klen", len(txnEntry.Key)),
+			log.Error("rewrite txn entry failed", zap.Int("klen", len(txnEntry.Key)),
 				logutil.Key("txn-key", txnEntry.Key))
 			return errors.Trace(err)
 		} else if newEntry == nil {
 			continue
 		}
 
-		log.Info("rewrite txn entry",
+		log.Debug("rewrite txn entry",
 			zap.Int("newKey-len", len(newEntry.Key)), zap.ByteString("newkey", newEntry.Key))
 
 		// to do...
