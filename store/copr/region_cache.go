@@ -93,9 +93,10 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets() []*LocationKeyRanges {
 			ranges = ranges.Slice(i, ranges.Len())
 		} else {
 			// Iterate to the first range that is not complete in the bucket.
+			var r kv.KeyRange
 			var i int
 			for ; i < ranges.Len(); i++ {
-				r := ranges.At(i)
+				r = ranges.At(i)
 				if !(bucket.Contains(r.EndKey) || bytes.Equal(bucket.EndKey, r.EndKey)) {
 					break
 				}
@@ -106,7 +107,6 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets() []*LocationKeyRanges {
 				break
 			}
 
-			r := ranges.At(i)
 			if bucket.Contains(r.StartKey) {
 				// Part of r is not in the bucket. We need to split it.
 				taskRanges := ranges.Slice(0, i)
@@ -142,9 +142,10 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 		}
 
 		// Iterate to the first range that is not complete in the region.
+		var r kv.KeyRange
 		var i int
 		for ; i < ranges.Len(); i++ {
-			r := ranges.At(i)
+			r = ranges.At(i)
 			if !(loc.Contains(r.EndKey) || bytes.Equal(loc.EndKey, r.EndKey)) {
 				break
 			}
@@ -155,7 +156,6 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 			break
 		}
 
-		r := ranges.At(i)
 		if loc.Contains(r.StartKey) {
 			// Part of r is not in the region. We need to split it.
 			taskRanges := ranges.Slice(0, i)

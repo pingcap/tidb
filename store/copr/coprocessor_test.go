@@ -238,7 +238,7 @@ func TestBuildTasksByBuckets(t *testing.T) {
 	}
 
 	// cross bucket ranges
-	// buckets: nil---- c-------g---------k---n----t------x-----------nil
+	// buckets: nil-----c-------g---------k---n----t------x-----------nil
 	// ranges:  nil-------d   e---h i---j
 	// tasks:   nil-----c
 	//                  c-d   e-g
