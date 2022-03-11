@@ -455,7 +455,7 @@ func (b *builtinInetAtonSig) evalInt(row chunk.Row) (int64, bool, error) {
 			result = (result << 8) + byteResult
 			byteResult = 0
 		} else {
-			return 0, true, nil
+			return 0, false, errWrongValueForType.GenWithStackByArgs("string", val, "inet_aton")
 		}
 	}
 	// 127 		-> 0.0.0.127

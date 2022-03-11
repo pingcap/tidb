@@ -56,7 +56,7 @@ func TestInetAton(t *testing.T) {
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
-		if err != nil {
+		if tt["Expected"][0].IsNull() && !tt["Input"][0].IsNull() {
 			d.SetNull()
 			require.True(t, terror.ErrorEqual(err, errWrongValueForType))
 		}
@@ -299,7 +299,8 @@ func TestInet6AtoN(t *testing.T) {
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
 		require.NoError(t, err)
 		result, err := evalBuiltinFunc(f, chunk.Row{})
-		if err != nil {
+		expect := types.NewDatum(test.expect)
+		if expect.IsNull() {
 			result.SetNull()
 			require.True(t, terror.ErrorEqual(err, errWrongValueForType))
 		}
