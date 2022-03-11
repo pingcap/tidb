@@ -2975,20 +2975,13 @@ func (s *testSerialDBSuite) TestDDLJobErrorCount(c *C) {
 	s.dom.DDL().SetHook(hook)
 	defer s.dom.DDL().SetHook(originHook)
 
-	tk.Exec("rename table ddl_error_table to new_ddl_error_table")
+	tk.MustGetErrCode("rename table ddl_error_table to new_ddl_error_table", errno.ErrEntryTooLarge)
 
-	ticker := time.NewTicker(s.lease)
-	defer ticker.Stop()
-	for range ticker.C {
-		historyJob, err := getHistoryDDLJob(s.store, jobID)
-		c.Assert(err, IsNil)
-		if historyJob == nil {
-			continue
-		}
-		c.Assert(historyJob.ErrorCount, Equals, int64(1), Commentf("%v", historyJob))
-		kv.ErrEntryTooLarge.Equal(historyJob.Error)
-		break
-	}
+	historyJob, err := getHistoryDDLJob(s.store, jobID)
+	c.Assert(err, IsNil)
+	c.Assert(historyJob, NotNil)
+	c.Assert(historyJob.ErrorCount, Equals, int64(1), Commentf("%v", historyJob))
+	kv.ErrEntryTooLarge.Equal(historyJob.Error)
 }
 
 func (s *testDBSuite1) TestAlterTableWithValidation(c *C) {
