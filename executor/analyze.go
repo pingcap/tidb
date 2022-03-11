@@ -1138,44 +1138,35 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.Inde
 		statistics.AddNewAnalyzeJob(task.job)
 	}
 	resultsCh := make(chan *statistics.AnalyzeResults, len(tasks))
-	exitCh := make(chan struct{})
-	e.subIndexWorkerWg.Add(statsConcurrncy)
 	for i := 0; i < statsConcurrncy; i++ {
-		go e.subIndexWorkerForNDV(taskCh, resultsCh, exitCh)
+		e.subIndexWorkerWg.Run(func() { e.subIndexWorkerForNDV(taskCh, resultsCh) })
 	}
 	for _, task := range tasks {
 		taskCh <- task
 	}
-	close(exitCh)
-	e.subIndexWorkerWg.Wait()
 	close(taskCh)
-	defer close(resultsCh)
+	e.subIndexWorkerWg.Wait()
+	close(resultsCh)
 	panicCnt := 0
 	totalResult := analyzeIndexNDVTotalResult{
 		results: make(map[int64]*statistics.AnalyzeResults, len(indexInfos)),
 	}
-LOOP:
 	for panicCnt < statsConcurrncy {
-		select {
-		case results := <-resultsCh:
-			if results.Err != nil {
-				results.Job.Finish(true)
-				err = results.Err
-				if err == errAnalyzeWorkerPanic {
-					panicCnt++
-				}
-				continue
-			}
-			results.Job.Finish(false)
-			statistics.MoveToHistory(results.Job)
-			totalResult.results[results.Ars[0].Hist[0].ID] = results
-		default:
-			select {
-			case <-exitCh:
-				break LOOP
-			default:
-			}
+		results, ok := <-resultsCh
+		if !ok {
+			break
 		}
+		if results.Err != nil {
+			results.Job.Finish(true)
+			err = results.Err
+			if err == errAnalyzeWorkerPanic {
+				panicCnt++
+			}
+			continue
+		}
+		results.Job.Finish(false)
+		statistics.MoveToHistory(results.Job)
+		totalResult.results[results.Ars[0].Hist[0].ID] = results
 	}
 	if err != nil {
 		totalResult.err = err
@@ -1184,7 +1175,7 @@ LOOP:
 }
 
 // subIndexWorker receive the task for each index and return the result for them.
-func (e *AnalyzeColumnsExec) subIndexWorkerForNDV(taskCh chan *analyzeTask, resultsCh chan *statistics.AnalyzeResults, exitCh chan struct{}) {
+func (e *AnalyzeColumnsExec) subIndexWorkerForNDV(taskCh chan *analyzeTask, resultsCh chan *statistics.AnalyzeResults) {
 	var task *analyzeTask
 	defer func() {
 		if r := recover(); r != nil {
@@ -1198,28 +1189,23 @@ func (e *AnalyzeColumnsExec) subIndexWorkerForNDV(taskCh chan *analyzeTask, resu
 				Job: task.job,
 			}
 		}
-		e.subIndexWorkerWg.Done()
 	}()
 	for {
-		select {
-		case task := <-taskCh:
-			task.job.Start()
-			if task.taskType != idxTask {
-				resultsCh <- &statistics.AnalyzeResults{
-					Err: errors.Errorf("incorrect analyze type"),
-					Job: task.job,
-				}
-				continue
-			}
-			task.idxExec.job = task.job
-			resultsCh <- analyzeIndexNDVPushDown(task.idxExec)
-		default:
-			select {
-			case <-exitCh:
-				return
-			default:
-			}
+		var ok bool
+		task, ok = <-taskCh
+		if !ok {
+			break
 		}
+		task.job.Start()
+		if task.taskType != idxTask {
+			resultsCh <- &statistics.AnalyzeResults{
+				Err: errors.Errorf("incorrect analyze type"),
+				Job: task.job,
+			}
+			continue
+		}
+		task.idxExec.job = task.job
+		resultsCh <- analyzeIndexNDVPushDown(task.idxExec)
 	}
 }
 
