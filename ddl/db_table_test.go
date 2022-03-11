@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
@@ -308,7 +307,7 @@ func TestTransactionOnAddDropColumn(t *testing.T) {
 	dom.DDL().SetHook(hook)
 	done := make(chan error, 1)
 	// test transaction on add column.
-	go backgroundExec(store, "alter table t1 add column c int not null after a", done)
+	go backgroundExecT(store, "alter table t1 add column c int not null after a", done)
 	err := <-done
 	require.NoError(t, err)
 	require.Nil(t, checkErr)
@@ -316,7 +315,7 @@ func TestTransactionOnAddDropColumn(t *testing.T) {
 	tk.MustExec("delete from t1")
 
 	// test transaction on drop column.
-	go backgroundExec(store, "alter table t1 drop column c", done)
+	go backgroundExecT(store, "alter table t1 drop column c", done)
 	err = <-done
 	require.NoError(t, err)
 	require.Nil(t, checkErr)
@@ -1048,7 +1047,7 @@ func TestAddColumn2(t *testing.T) {
 	dom.DDL().SetHook(hook)
 	done := make(chan error, 1)
 	// test transaction on add column.
-	go backgroundExec(store, "alter table t1 add column c int not null", done)
+	go backgroundExecT(store, "alter table t1 add column c int not null", done)
 	err := <-done
 	require.NoError(t, err)
 
@@ -1090,25 +1089,9 @@ func TestAddColumn2(t *testing.T) {
 	}
 	dom.DDL().SetHook(hook)
 
-	go backgroundExec(store, "alter table t2 add column b int not null default 3", done)
+	go backgroundExecT(store, "alter table t2 add column b int not null default 3", done)
 	err = <-done
 	require.NoError(t, err)
 	re.Check(testkit.Rows("1 2"))
 	tk.MustQuery("select a,b,_tidb_rowid from t2").Check(testkit.Rows("1 3 2"))
-}
-
-func backgroundExec(s kv.Storage, sql string, done chan error) {
-	se, err := session.CreateSession4Test(s)
-	if err != nil {
-		done <- errors.Trace(err)
-		return
-	}
-	defer se.Close()
-	_, err = se.Execute(context.Background(), "use test")
-	if err != nil {
-		done <- errors.Trace(err)
-		return
-	}
-	_, err = se.Execute(context.Background(), sql)
-	done <- errors.Trace(err)
 }
