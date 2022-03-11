@@ -43,7 +43,6 @@ func NewDB(g glue.Glue, store kv.Storage) (*DB, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	return &DB{
 		se: se,
 	}, nil

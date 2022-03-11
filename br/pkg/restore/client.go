@@ -149,7 +149,7 @@ func (rc *Client) SetPolicyMode(withPlacementPolicy bool) {
 		mode = "IGNORE"
 	}
 	// Set placement mode for handle placement policy.
-	err := rc.db.se.Execute(context.Background(), fmt.Sprintf("set tidb_placement_mode='%s';", mode))
+	err := rc.db.se.Execute(context.Background(), fmt.Sprintf("set @@tidb_placement_mode='%s';", mode))
 	if err != nil {
 		// There are two reason reach here
 		// if tidb version doesn't support placement mode, we can just ignore it.
