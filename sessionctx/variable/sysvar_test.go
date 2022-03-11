@@ -869,3 +869,19 @@ func TestNetBufferLength(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "524288", val) // unchanged
 }
+
+func TestTiDBBatchPendingTiFlashCount(t *testing.T) {
+	sv := GetSysVar(TiDBBatchPendingTiFlashCount)
+	vars := NewSessionVars()
+	val, err := sv.Validate(vars, "-10", ScopeSession)
+	require.NoError(t, err) // it has autoconvert out of range.
+	require.Equal(t, "0", val)
+
+	val, err = sv.Validate(vars, "9999", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "9999", val)
+
+	_, err = sv.Validate(vars, "1.5", ScopeSession)
+	require.Error(t, err)
+	require.EqualError(t, err, "[variable:1232]Incorrect argument type to variable 'tidb_batch_pending_tiflash_count'")
+}
