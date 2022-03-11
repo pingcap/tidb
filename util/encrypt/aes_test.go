@@ -28,7 +28,6 @@ func toHex(buf []byte) string {
 }
 
 func TestPad(t *testing.T) {
-	t.Parallel()
 	p := []byte{0x0A, 0x0B, 0x0C, 0x0D}
 	p, err := PKCS7Pad(p, 8)
 	require.NoError(t, err)
@@ -46,7 +45,6 @@ func TestPad(t *testing.T) {
 }
 
 func TestUnpad(t *testing.T) {
-	t.Parallel()
 	// Valid paddings.
 	p := []byte{0x0A, 0x0B, 0x0C, 0x0D, 0x04, 0x04, 0x04, 0x04}
 	p, err := PKCS7Unpad(p, 8)
@@ -112,7 +110,6 @@ func TestUnpad(t *testing.T) {
 }
 
 func TestAESECB(t *testing.T) {
-	t.Parallel()
 	var commonInput = []byte{
 		0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96, 0xe9, 0x3d, 0x7e, 0x11, 0x73, 0x93, 0x17, 0x2a,
 		0xae, 0x2d, 0x8a, 0x57, 0x1e, 0x03, 0xac, 0x9c, 0x9e, 0xb7, 0x6f, 0xac, 0x45, 0xaf, 0x8e, 0x51,
@@ -189,7 +186,6 @@ func TestAESECB(t *testing.T) {
 }
 
 func TestAESEncryptWithECB(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		str     string
 		key     string
@@ -201,7 +197,7 @@ func TestAESEncryptWithECB(t *testing.T) {
 		{"pingcap123", "1234567890123456", "CEC348F4EF5F84D3AA6C4FA184C65766", false},
 		// 192 bits key
 		{"pingcap", "123456789012345678901234", "E435438AC6798B4718533096436EC342", false}, // 192 bit
-		// negtive cases: invalid key length
+		// negative cases: invalid key length
 		{"pingcap", "12345678901234567", "", true},
 		{"pingcap", "123456789012345", "", true},
 	}
@@ -222,7 +218,6 @@ func TestAESEncryptWithECB(t *testing.T) {
 }
 
 func TestAESDecryptWithECB(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		expect      string
 		key         string
@@ -234,10 +229,10 @@ func TestAESDecryptWithECB(t *testing.T) {
 		{"pingcap123", "1234567890123456", "CEC348F4EF5F84D3AA6C4FA184C65766", false},
 		// 192 bits key
 		{"pingcap", "123456789012345678901234", "E435438AC6798B4718533096436EC342", false}, // 192 bit
-		// negtive cases: invalid key length
+		// negative cases: invalid key length
 		{"pingcap", "12345678901234567", "", true},
 		{"pingcap", "123456789012345", "", true},
-		// negtive cases: invalid padding / padding size
+		// negative cases: invalid padding / padding size
 		{"", "1234567890123456", "11223344556677112233", true},
 		{"", "1234567890123456", "11223344556677112233112233445566", true},
 		{"", "1234567890123456", "1122334455667711223311223344556611", true},
@@ -258,7 +253,6 @@ func TestAESDecryptWithECB(t *testing.T) {
 }
 
 func TestAESEncryptWithCBC(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		str     string
 		key     string
@@ -271,7 +265,7 @@ func TestAESEncryptWithCBC(t *testing.T) {
 		{"pingcap123", "1234567890123456", "1234567890123456", "042962D340F2F95BCC07B56EAC378D3A", false},
 		// 192 bits key
 		{"pingcap", "123456789012345678901234", "1234567890123456", "EDECE05D9FE662E381130F7F19BA67F7", false}, // 192 bit
-		// negtive cases: invalid key length
+		// negative cases: invalid key length
 		{"pingcap", "12345678901234567", "1234567890123456", "", true},
 		{"pingcap", "123456789012345", "1234567890123456", "", true},
 	}
@@ -293,7 +287,6 @@ func TestAESEncryptWithCBC(t *testing.T) {
 }
 
 func TestAESEncryptWithOFB(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		str     string
 		key     string
@@ -306,7 +299,7 @@ func TestAESEncryptWithOFB(t *testing.T) {
 		{"pingcap123", "1234567890123456", "1234567890123456", "0515A36BBF3DE0DBE9DD", false},
 		// 192 bits key
 		{"pingcap", "123456789012345678901234", "1234567890123456", "45A57592449893", false}, // 192 bit
-		// negtive cases: invalid key length
+		// negative cases: invalid key length
 		{"pingcap", "12345678901234567", "1234567890123456", "", true},
 		{"pingcap", "123456789012345", "1234567890123456", "", true},
 	}
@@ -328,7 +321,6 @@ func TestAESEncryptWithOFB(t *testing.T) {
 }
 
 func TestAESDecryptWithOFB(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		str     string
 		key     string
@@ -341,7 +333,7 @@ func TestAESDecryptWithOFB(t *testing.T) {
 		{"0515A36BBF3DE0DBE9DD", "1234567890123456", "1234567890123456", "pingcap123", false},
 		// 192 bits key
 		{"45A57592449893", "123456789012345678901234", "1234567890123456", "pingcap", false}, // 192 bit
-		// negtive cases: invalid key length
+		// negative cases: invalid key length
 		{"pingcap", "12345678901234567", "1234567890123456", "", true},
 		{"pingcap", "123456789012345", "1234567890123456", "", true},
 	}
@@ -361,8 +353,74 @@ func TestAESDecryptWithOFB(t *testing.T) {
 	}
 }
 
+func TestAESEncryptWithCTR(t *testing.T) {
+	tests := []struct {
+		str     string
+		key     string
+		iv      string
+		expect  string
+		isError bool
+	}{
+		// 128 bits key
+		{"pingcap", "1234567890123456", "1234567890123456", "0515A36BBF3DE0", false},
+		{"pingcap123", "1234567890123456", "1234567890123456", "0515A36BBF3DE0DBE9DD", false},
+		// 192 bits key
+		{"pingcap", "123456789012345678901234", "1234567890123456", "45A57592449893", false}, // 192 bit
+		// negative cases: invalid key length
+		{"pingcap", "12345678901234567", "1234567890123456", "", true},
+		{"pingcap", "123456789012345", "1234567890123456", "", true},
+	}
+
+	for _, tt := range tests {
+		str := []byte(tt.str)
+		key := []byte(tt.key)
+		iv := []byte(tt.iv)
+
+		crypted, err := AESEncryptWithCTR(str, key, iv)
+		if tt.isError {
+			require.Errorf(t, err, "%v", tt)
+			continue
+		}
+		require.NoErrorf(t, err, "%v", tt)
+		result := toHex(crypted)
+		require.Equalf(t, tt.expect, result, "%v", tt)
+	}
+}
+
+func TestAESDecryptWithCTR(t *testing.T) {
+	tests := []struct {
+		str     string
+		key     string
+		iv      string
+		expect  string
+		isError bool
+	}{
+		// 128 bits key
+		{"0515A36BBF3DE0", "1234567890123456", "1234567890123456", "pingcap", false},
+		{"0515A36BBF3DE0DBE9DD", "1234567890123456", "1234567890123456", "pingcap123", false},
+		// 192 bits key
+		{"45A57592449893", "123456789012345678901234", "1234567890123456", "pingcap", false}, // 192 bit
+		// negative cases: invalid key length
+		{"pingcap", "12345678901234567", "1234567890123456", "", true},
+		{"pingcap", "123456789012345", "1234567890123456", "", true},
+	}
+
+	for _, tt := range tests {
+		str, _ := hex.DecodeString(tt.str)
+		key := []byte(tt.key)
+		iv := []byte(tt.iv)
+
+		plainText, err := AESDecryptWithCTR(str, key, iv)
+		if tt.isError {
+			require.Errorf(t, err, "%v", tt)
+			continue
+		}
+		require.NoErrorf(t, err, "%v", tt)
+		require.Equalf(t, tt.expect, string(plainText), "%v", tt)
+	}
+}
+
 func TestAESDecryptWithCBC(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		expect      string
 		key         string
@@ -375,10 +433,10 @@ func TestAESDecryptWithCBC(t *testing.T) {
 		{"pingcap123", "1234567890123456", "1234567890123456", "042962D340F2F95BCC07B56EAC378D3A", false},
 		// 192 bits key
 		{"pingcap", "123456789012345678901234", "1234567890123456", "EDECE05D9FE662E381130F7F19BA67F7", false}, // 192 bit
-		// negtive cases: invalid key length
+		// negative cases: invalid key length
 		{"pingcap", "12345678901234567", "1234567890123456", "", true},
 		{"pingcap", "123456789012345", "1234567890123456", "", true},
-		// negtive cases: invalid padding / padding size
+		// negative cases: invalid padding / padding size
 		{"", "1234567890123456", "1234567890123456", "11223344556677112233", true},
 		{"", "1234567890123456", "1234567890123456", "11223344556677112233112233445566", true},
 		{"", "1234567890123456", "1234567890123456", "1122334455667711223311223344556611", true},
@@ -400,7 +458,6 @@ func TestAESDecryptWithCBC(t *testing.T) {
 }
 
 func TestAESEncryptWithCFB(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		str     string
 		key     string
@@ -413,7 +470,7 @@ func TestAESEncryptWithCFB(t *testing.T) {
 		{"pingcap123", "1234567890123456", "1234567890123456", "0515A36BBF3DE0DBE9DD", false},
 		// 192 bits key
 		{"pingcap", "123456789012345678901234", "1234567890123456", "45A57592449893", false}, // 192 bit
-		// negtive cases: invalid key length
+		// negative cases: invalid key length
 		{"pingcap", "12345678901234567", "1234567890123456", "", true},
 		{"pingcap", "123456789012345", "1234567890123456", "", true},
 	}
@@ -435,7 +492,6 @@ func TestAESEncryptWithCFB(t *testing.T) {
 }
 
 func TestAESDecryptWithCFB(t *testing.T) {
-	t.Parallel()
 	tests := []struct {
 		str     string
 		key     string
@@ -448,7 +504,7 @@ func TestAESDecryptWithCFB(t *testing.T) {
 		{"0515A36BBF3DE0DBE9DD", "1234567890123456", "1234567890123456", "pingcap123", false},
 		// 192 bits key
 		{"45A57592449893", "123456789012345678901234", "1234567890123456", "pingcap", false}, // 192 bit
-		// negtive cases: invalid key length
+		// negative cases: invalid key length
 		{"pingcap", "12345678901234567", "1234567890123456", "", true},
 		{"pingcap", "123456789012345", "1234567890123456", "", true},
 	}
@@ -469,7 +525,6 @@ func TestAESDecryptWithCFB(t *testing.T) {
 }
 
 func TestDeriveKeyMySQL(t *testing.T) {
-	t.Parallel()
 	p := []byte("MySQL=insecure! MySQL=insecure! ")
 	p = DeriveKeyMySQL(p, 16)
 	require.Equal(t, "00000000000000000000000000000000", toHex(p))

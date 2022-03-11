@@ -24,6 +24,6 @@ import (
 const benchStr = `{"a":[1,"2",{"aa":"bb"},4,null],"b":true,"c":null}`
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 	goleak.VerifyTestMain(m)
 }

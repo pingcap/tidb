@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/badger"
 	"github.com/pingcap/badger/y"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/mockstore/unistore/config"
@@ -50,20 +51,23 @@ func (ts *TestStore) newReqCtx() *requestCtx {
 }
 
 func (ts *TestStore) newReqCtxWithKeys(rawStartKey, rawEndKey []byte) *requestCtx {
+	epoch := &metapb.RegionEpoch{ConfVer: 1, Version: 1}
+	peer := &metapb.Peer{Id: 1, StoreId: 1, Role: metapb.PeerRole_Voter}
 	return &requestCtx{
 		regCtx: &regionCtx{
+			meta: &metapb.Region{
+				Id:          1,
+				RegionEpoch: epoch,
+				Peers:       []*metapb.Peer{peer},
+			},
 			latches:     newLatches(),
 			rawStartKey: rawStartKey,
 			rawEndKey:   rawEndKey,
 		},
 		rpcCtx: &kvrpcpb.Context{
 			RegionId:    1,
-			RegionEpoch: &metapb.RegionEpoch{Version: 1, ConfVer: 1},
-			Peer: &metapb.Peer{
-				Id:      1,
-				StoreId: 1,
-				Role:    metapb.PeerRole_Voter,
-			},
+			RegionEpoch: epoch,
+			Peer:        peer,
 		},
 		svr: ts.Svr,
 	}
@@ -87,10 +91,8 @@ func CreateTestDB(dbPath, LogPath string) (*badger.DB, error) {
 }
 
 func NewTestStore(dbPrefix string, logPrefix string, t *testing.T) (*TestStore, func()) {
-	dbPath, err := os.MkdirTemp("", dbPrefix)
-	require.NoError(t, err)
-	LogPath, err := os.MkdirTemp("", logPrefix)
-	require.NoError(t, err)
+	dbPath := t.TempDir()
+	LogPath := t.TempDir()
 	safePoint := &SafePoint{}
 	db, err := CreateTestDB(dbPath, LogPath)
 	require.NoError(t, err)
@@ -153,28 +155,54 @@ func PessimisticLock(pk []byte, key []byte, startTs uint64, lockTTL uint64, forU
 // PrewriteOptimistic raises optimistic prewrite requests on store
 func PrewriteOptimistic(pk []byte, key []byte, value []byte, startTs uint64, lockTTL uint64,
 	minCommitTs uint64, useAsyncCommit bool, secondaries [][]byte, store *TestStore) error {
+	return PrewriteOptimisticWithAssertion(pk, key, value, startTs, lockTTL, minCommitTs, useAsyncCommit, secondaries,
+		kvrpcpb.Assertion_None, kvrpcpb.AssertionLevel_Off, store)
+}
+
+// PrewriteOptimisticWithAssertion raises optimistic prewrite requests on store, with specified assertion config
+func PrewriteOptimisticWithAssertion(pk []byte, key []byte, value []byte, startTs uint64, lockTTL uint64,
+	minCommitTs uint64, useAsyncCommit bool, secondaries [][]byte, assertion kvrpcpb.Assertion,
+	assertionLevel kvrpcpb.AssertionLevel, store *TestStore) error {
+	op := kvrpcpb.Op_Put
+	if value == nil {
+		op = kvrpcpb.Op_Del
+	}
+	mutation := newMutation(op, key, value)
+	mutation.Assertion = assertion
 	prewriteReq := &kvrpcpb.PrewriteRequest{
-		Mutations:      []*kvrpcpb.Mutation{newMutation(kvrpcpb.Op_Put, key, value)},
+		Mutations:      []*kvrpcpb.Mutation{mutation},
 		PrimaryLock:    pk,
 		StartVersion:   startTs,
 		LockTtl:        lockTTL,
 		MinCommitTs:    minCommitTs,
 		UseAsyncCommit: useAsyncCommit,
 		Secondaries:    secondaries,
+		AssertionLevel: assertionLevel,
 	}
 	return store.MvccStore.prewriteOptimistic(store.newReqCtx(), prewriteReq.Mutations, prewriteReq)
 }
 
-// PrewritePessimistic raises pessmistic prewrite requests
+// PrewritePessimistic raises pessimistic prewrite requests
 func PrewritePessimistic(pk []byte, key []byte, value []byte, startTs uint64, lockTTL uint64,
 	isPessimisticLock []bool, forUpdateTs uint64, store *TestStore) error {
+	return PrewritePessimisticWithAssertion(pk, key, value, startTs, lockTTL, isPessimisticLock, forUpdateTs,
+		kvrpcpb.Assertion_None, kvrpcpb.AssertionLevel_Off, store)
+}
+
+// PrewritePessimisticWithAssertion raises pessimistic prewrite requests, with specified assertion config
+func PrewritePessimisticWithAssertion(pk []byte, key []byte, value []byte, startTs uint64, lockTTL uint64,
+	isPessimisticLock []bool, forUpdateTs uint64, assertion kvrpcpb.Assertion, assertionLevel kvrpcpb.AssertionLevel,
+	store *TestStore) error {
+	mutation := newMutation(kvrpcpb.Op_Put, key, value)
+	mutation.Assertion = assertion
 	prewriteReq := &kvrpcpb.PrewriteRequest{
-		Mutations:         []*kvrpcpb.Mutation{newMutation(kvrpcpb.Op_Put, key, value)},
+		Mutations:         []*kvrpcpb.Mutation{mutation},
 		PrimaryLock:       pk,
 		StartVersion:      startTs,
 		LockTtl:           lockTTL,
 		IsPessimisticLock: isPessimisticLock,
 		ForUpdateTs:       forUpdateTs,
+		AssertionLevel:    assertionLevel,
 	}
 	return store.MvccStore.prewritePessimistic(store.newReqCtx(), prewriteReq.Mutations, prewriteReq)
 }
@@ -416,21 +444,19 @@ func MustGetVal(key, val []byte, startTs uint64, store *TestStore) {
 }
 
 func MustGetErr(key []byte, startTs uint64, store *TestStore) {
-	_, err := kvGet(key, startTs, store)
+	_, err := kvGet(key, startTs, nil, nil, store)
 	require.Error(store.t, err)
 }
 
-func kvGet(key []byte, readTs uint64, store *TestStore) ([]byte, error) {
-	err := store.MvccStore.CheckKeysLock(readTs, nil, key)
-	if err != nil {
-		return nil, err
-	}
-	getVal, err := store.newReqCtx().getDBReader().Get(key, readTs)
-	return getVal, err
+func kvGet(key []byte, readTs uint64, resolved, committed []uint64, store *TestStore) ([]byte, error) {
+	reqCtx := store.newReqCtx()
+	reqCtx.rpcCtx.ResolvedLocks = resolved
+	reqCtx.rpcCtx.CommittedLocks = committed
+	return store.MvccStore.Get(reqCtx, key, readTs)
 }
 
 func MustGet(key []byte, readTs uint64, store *TestStore) (val []byte) {
-	val, err := kvGet(key, readTs, store)
+	val, err := kvGet(key, readTs, nil, nil, store)
 	require.NoError(store.t, err)
 	return val
 }
@@ -481,9 +507,8 @@ func MustGetRollback(key []byte, ts uint64, store *TestStore) {
 }
 
 func TestBasicOptimistic(t *testing.T) {
-	t.Parallel()
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	key1 := []byte("key1")
 	val1 := []byte("val1")
@@ -496,10 +521,9 @@ func TestBasicOptimistic(t *testing.T) {
 }
 
 func TestPessimiticTxnTTL(t *testing.T) {
-	t.Parallel()
 	var err error
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	// Pessimisitc lock key1
 	key1 := []byte("key1")
@@ -526,9 +550,8 @@ func TestPessimiticTxnTTL(t *testing.T) {
 }
 
 func TestRollback(t *testing.T) {
-	t.Parallel()
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	key := []byte("tkey")
 	val := []byte("value")
@@ -561,10 +584,9 @@ func TestRollback(t *testing.T) {
 }
 
 func TestOverwritePessimisitcLock(t *testing.T) {
-	t.Parallel()
 	var err error
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	key := []byte("key")
 	startTs := uint64(1)
@@ -590,10 +612,9 @@ func TestOverwritePessimisitcLock(t *testing.T) {
 }
 
 func TestCheckTxnStatus(t *testing.T) {
-	t.Parallel()
 	var err error
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	var resTTL, resCommitTs uint64
 	var action kvrpcpb.Action
@@ -693,9 +714,8 @@ func TestCheckTxnStatus(t *testing.T) {
 }
 
 func TestCheckSecondaryLocksStatus(t *testing.T) {
-	t.Parallel()
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	pk := []byte("pk")
 	secondary := []byte("secondary")
@@ -760,10 +780,9 @@ func TestCheckSecondaryLocksStatus(t *testing.T) {
 }
 
 func TestMvccGet(t *testing.T) {
-	t.Parallel()
 	var err error
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	lockTTL := uint64(100)
 	pk := []byte("t1_r1")
@@ -875,9 +894,8 @@ func TestMvccGet(t *testing.T) {
 }
 
 func TestPrimaryKeyOpLock(t *testing.T) {
-	t.Parallel()
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	pk := func() []byte { return []byte("tpk") }
 	val2 := []byte("val2")
@@ -927,9 +945,8 @@ func TestPrimaryKeyOpLock(t *testing.T) {
 }
 
 func TestMvccTxnRead(t *testing.T) {
-	t.Parallel()
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	// nothing at start
 	k1 := []byte("tk1")
@@ -999,9 +1016,8 @@ func TestMvccTxnRead(t *testing.T) {
 }
 
 func TestTxnPrewrite(t *testing.T) {
-	t.Parallel()
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	// nothing at start
 	k := []byte("tk")
@@ -1035,9 +1051,8 @@ func TestTxnPrewrite(t *testing.T) {
 }
 
 func TestPrewriteInsert(t *testing.T) {
-	t.Parallel()
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	// nothing at start
 	k1 := []byte("tk1")
@@ -1072,9 +1087,8 @@ func TestPrewriteInsert(t *testing.T) {
 }
 
 func TestRollbackKey(t *testing.T) {
-	t.Parallel()
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	k := []byte("tk")
 	v := []byte("v")
@@ -1098,9 +1112,8 @@ func TestRollbackKey(t *testing.T) {
 }
 
 func TestCleanup(t *testing.T) {
-	t.Parallel()
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	k := []byte("tk")
 	v := []byte("v")
@@ -1121,9 +1134,8 @@ func TestCleanup(t *testing.T) {
 }
 
 func TestCommit(t *testing.T) {
-	t.Parallel()
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	k := []byte("tk")
 	v := []byte("v")
@@ -1173,9 +1185,8 @@ func TestCommit(t *testing.T) {
 }
 
 func TestMinCommitTs(t *testing.T) {
-	t.Parallel()
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	k := []byte("tk")
 	v := []byte("v")
@@ -1195,9 +1206,8 @@ func TestMinCommitTs(t *testing.T) {
 }
 
 func TestPessimisticLock(t *testing.T) {
-	t.Parallel()
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	k := []byte("tk")
 	v := []byte("v")
@@ -1361,9 +1371,8 @@ func TestPessimisticLock(t *testing.T) {
 }
 
 func TestResolveCommit(t *testing.T) {
-	t.Parallel()
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	pk := []byte("tpk")
 	v := []byte("v")
@@ -1427,9 +1436,8 @@ func MustLoad(startTS, commitTS uint64, store *TestStore, pairs ...string) {
 }
 
 func TestBatchGet(t *testing.T) {
-	t.Parallel()
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 	MustLoad(100, 101, store, "ta:1", "tb:2", "tc:3")
 	MustPrewritePut([]byte("ta"), []byte("ta"), []byte("0"), 103, store)
 	keys := [][]byte{[]byte("ta"), []byte("tb"), []byte("tc")}
@@ -1441,9 +1449,8 @@ func TestBatchGet(t *testing.T) {
 }
 
 func TestCommitPessimisticLock(t *testing.T) {
-	t.Parallel()
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 	k := []byte("ta")
 	MustAcquirePessimisticLock(k, k, 10, 10, store)
 	MustCommitErr(k, 20, 30, store)
@@ -1452,9 +1459,8 @@ func TestCommitPessimisticLock(t *testing.T) {
 }
 
 func TestOpCheckNotExist(t *testing.T) {
-	t.Parallel()
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	k := []byte("ta")
 	v := []byte("v")
@@ -1470,9 +1476,8 @@ func TestOpCheckNotExist(t *testing.T) {
 }
 
 func TestPessimisticLockForce(t *testing.T) {
-	t.Parallel()
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	k := []byte("ta")
 	v := []byte("v")
@@ -1488,9 +1493,8 @@ func TestPessimisticLockForce(t *testing.T) {
 }
 
 func TestScanSampleStep(t *testing.T) {
-	t.Parallel()
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 	for i := 0; i < 1000; i++ {
 		k := genScanSampleStepKey(i)
 		MustPrewritePut(k, k, k, 1, store)
@@ -1522,9 +1526,8 @@ func genScanSampleStepKey(i int) []byte {
 }
 
 func TestAsyncCommitPrewrite(t *testing.T) {
-	t.Parallel()
-	store, close := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	defer close()
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
 
 	pk := []byte("tpk")
 	pkVal := []byte("tpkVal")
@@ -1549,4 +1552,251 @@ func TestAsyncCommitPrewrite(t *testing.T) {
 	require.True(t, secLock.UseAsyncCommit)
 	require.Greater(t, secLock.MinCommitTS, uint64(0))
 	require.Equal(t, 0, bytes.Compare(secLock.Value, secVal2))
+}
+
+func TestAccessCommittedLocks(t *testing.T) {
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
+
+	k0 := []byte("t0")
+	v0 := []byte("v0")
+	MustLoad(10, 20, store, "t0:v0")
+	// delete
+	MustPrewriteDelete(k0, k0, 30, store)
+	MustGetErr(k0, 40, store)
+	// meet lock
+	val, err := kvGet(k0, 40, []uint64{20}, nil, store)
+	require.Error(store.t, err)
+	require.Nil(store.t, val)
+	val, err = kvGet(k0, 40, []uint64{20}, []uint64{20}, store)
+	require.Error(store.t, err)
+	require.Nil(store.t, val)
+	// ignore lock
+	val, err = kvGet(k0, 40, []uint64{30}, nil, store)
+	require.NoError(store.t, err)
+	require.Equal(store.t, v0, val)
+	// access lock
+	val, err = kvGet(k0, 40, nil, []uint64{30}, store)
+	require.NoError(store.t, err)
+	require.Nil(store.t, val)
+
+	k1 := []byte("t1")
+	v1 := []byte("v1")
+	// put
+	MustPrewritePut(k1, k1, v1, 50, store)
+	// ignore lock
+	val, err = kvGet(k1, 60, []uint64{50}, nil, store)
+	require.NoError(store.t, err)
+	require.Len(store.t, val, 0)
+	// access lock
+	val, err = kvGet(k1, 60, nil, []uint64{50}, store)
+	require.NoError(store.t, err)
+	require.Equal(store.t, v1, val)
+
+	// locked
+	k2 := []byte("t2")
+	v2 := []byte("v2")
+	MustPrewritePut(k2, k2, v2, 70, store)
+
+	// lock for ingore
+	k3 := []byte("t3")
+	v3 := []byte("v3")
+	MustPrewritePut(k3, k3, v3, 80, store)
+
+	// No lock
+	k4 := []byte("t4")
+	v4 := []byte("v4")
+	MustLoad(80, 90, store, "t4:v4")
+
+	keys := [][]byte{k0, k1, k2, k3, k4}
+	expected := []struct {
+		key []byte
+		val []byte
+		err bool
+	}{{k1, v1, false}, {k2, nil, true}, {k4, v4, false}}
+	reqCtx := store.newReqCtx()
+	reqCtx.rpcCtx.ResolvedLocks = []uint64{80}
+	reqCtx.rpcCtx.CommittedLocks = []uint64{30, 50}
+	pairs := store.MvccStore.BatchGet(reqCtx, keys, 100)
+	require.Equal(store.t, len(expected), len(pairs))
+	for i, pair := range pairs {
+		e := expected[i]
+		require.Equal(store.t, pair.Key, e.key)
+		require.Equal(store.t, pair.Value, e.val)
+		if e.err {
+			require.NotNil(store.t, pair.Error)
+		} else {
+			require.Nil(store.t, pair.Error)
+		}
+	}
+
+	scanReq := &kvrpcpb.ScanRequest{
+		StartKey: []byte("t0"),
+		EndKey:   []byte("t5"),
+		Limit:    100,
+		Version:  100,
+	}
+	pairs = store.MvccStore.Scan(reqCtx, scanReq)
+	require.Equal(store.t, len(expected), len(pairs))
+	for i, pair := range pairs {
+		e := expected[i]
+		require.Equal(store.t, pair.Key, e.key)
+		require.Equal(store.t, pair.Value, e.val)
+		if e.err {
+			require.NotNil(store.t, pair.Error)
+		} else {
+			require.Nil(store.t, pair.Error)
+		}
+	}
+}
+
+func TestTiKVRCRead(t *testing.T) {
+	store, clean := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
+	defer clean()
+
+	k1 := []byte("t1")
+	k2, v2 := []byte("t2"), []byte("v2")
+	k3, v3 := []byte("t3"), []byte("v3")
+	k4, v4 := []byte("t4"), []byte("v4")
+	MustLoad(10, 20, store, "t1:v1", "t2:v2", "t3:v3")
+	// write to be read
+	MustPrewritePut(k1, k1, []byte("v11"), 30, store)
+	MustCommit(k1, 30, 40, store)
+	// lock to be ignored
+	MustPrewritePut(k2, k2, v2, 50, store)
+	MustPrewriteDelete(k3, k3, 60, store)
+	MustPrewritePut(k4, k4, v4, 70, store)
+
+	expected := map[string][]byte{string(k1): []byte("v11"), string(k2): v2, string(k3): v3, string(k4): nil}
+
+	reqCtx := store.newReqCtx()
+	reqCtx.rpcCtx.IsolationLevel = kvrpcpb.IsolationLevel_RC
+	// get
+	for k, v := range expected {
+		res, err := store.MvccStore.Get(reqCtx, []byte(k), 80)
+		require.NoError(t, err)
+		require.Equal(t, res, v)
+	}
+	// batch get
+	pairs := store.MvccStore.BatchGet(reqCtx, [][]byte{k1, k2, k3, k4}, 80)
+	require.Equal(t, len(pairs), 3)
+	for _, pair := range pairs {
+		v, ok := expected[string(pair.Key)]
+		require.True(t, ok)
+		require.Nil(t, pair.Error)
+		require.Equal(t, pair.Value, v)
+	}
+	// scan
+	pairs = store.MvccStore.Scan(reqCtx, &kvrpcpb.ScanRequest{
+		StartKey: []byte("t1"),
+		EndKey:   []byte("t4"),
+		Limit:    100,
+		Version:  80,
+	})
+	require.Equal(t, len(pairs), 3)
+	for _, pair := range pairs {
+		v, ok := expected[string(pair.Key)]
+		require.True(t, ok)
+		require.Nil(t, pair.Error)
+		require.Equal(t, pair.Value, v)
+	}
+}
+
+func TestAssertion(t *testing.T) {
+	store, clean := NewTestStore("TestAssertion", "TestAssertion", t)
+	defer clean()
+
+	// Prepare
+	MustPrewriteOptimistic([]byte("k1"), []byte("k1"), []byte("v1"), 1, 100, 0, store)
+	MustPrewriteOptimistic([]byte("k1"), []byte("k2"), []byte("v2"), 1, 100, 0, store)
+	MustPrewriteOptimistic([]byte("k1"), []byte("k3"), []byte("v3"), 1, 100, 0, store)
+	MustCommit([]byte("k1"), 1, 2, store)
+	MustCommit([]byte("k2"), 1, 2, store)
+	MustCommit([]byte("k3"), 1, 2, store)
+
+	checkAssertionFailedError := func(err error, disable bool, startTs uint64, key []byte, assertion kvrpcpb.Assertion, existingStartTs uint64, existingCommitTs uint64) {
+		t.Logf("Check error: %+q", err)
+		if disable {
+			require.Nil(t, err)
+			return
+		}
+		require.NotNil(t, err)
+		e, ok := errors.Cause(err).(*ErrAssertionFailed)
+		require.True(t, ok)
+		require.Equal(t, startTs, e.StartTS)
+		require.Equal(t, key, e.Key)
+		require.Equal(t, assertion, e.Assertion)
+		require.Equal(t, existingStartTs, e.ExistingStartTS)
+		require.Equal(t, existingCommitTs, e.ExistingCommitTS)
+	}
+
+	for _, disable := range []bool{false, true} {
+		level := kvrpcpb.AssertionLevel_Strict
+		if disable {
+			level = kvrpcpb.AssertionLevel_Off
+		}
+		// Test with optimistic transaction
+		err := PrewriteOptimisticWithAssertion([]byte("k1"), []byte("k1"), []byte("v1"), 10, 100, 0, false, nil,
+			kvrpcpb.Assertion_NotExist, level, store)
+		checkAssertionFailedError(err, disable, 10, []byte("k1"), kvrpcpb.Assertion_NotExist, 1, 2)
+		err = PrewriteOptimisticWithAssertion([]byte("k11"), []byte("k11"), []byte("v11"), 10, 100, 0, false, nil,
+			kvrpcpb.Assertion_Exist, level, store)
+		checkAssertionFailedError(err, disable, 10, []byte("k11"), kvrpcpb.Assertion_Exist, 0, 0)
+
+		// Test with pessimistic transaction
+		MustAcquirePessimisticLock([]byte("k2"), []byte("k2"), 10, 10, store)
+		err = PrewritePessimisticWithAssertion([]byte("k2"), []byte("k2"), []byte("v2"), 10, 100, []bool{true}, 10,
+			kvrpcpb.Assertion_NotExist, level, store)
+		checkAssertionFailedError(err, disable, 10, []byte("k2"), kvrpcpb.Assertion_NotExist, 1, 2)
+		MustAcquirePessimisticLock([]byte("k22"), []byte("k22"), 10, 10, store)
+		err = PrewritePessimisticWithAssertion([]byte("k22"), []byte("k22"), []byte("v22"), 10, 100, []bool{true}, 10,
+			kvrpcpb.Assertion_Exist, level, store)
+		checkAssertionFailedError(err, disable, 10, []byte("k22"), kvrpcpb.Assertion_Exist, 0, 0)
+
+		// Test with pessimistic transaction (non-pessimistic-lock)
+		err = PrewritePessimisticWithAssertion([]byte("pk"), []byte("k3"), []byte("v3"), 10, 100, []bool{false}, 10,
+			kvrpcpb.Assertion_NotExist, level, store)
+		checkAssertionFailedError(err, disable, 10, []byte("k3"), kvrpcpb.Assertion_NotExist, 1, 2)
+		err = PrewritePessimisticWithAssertion([]byte("pk"), []byte("k33"), []byte("v33"), 10, 100, []bool{false}, 10,
+			kvrpcpb.Assertion_Exist, level, store)
+		checkAssertionFailedError(err, disable, 10, []byte("k33"), kvrpcpb.Assertion_Exist, 0, 0)
+	}
+
+	for _, k := range [][]byte{
+		[]byte("k1"),
+		[]byte("k11"),
+		[]byte("k2"),
+		[]byte("k22"),
+		[]byte("k3"),
+		[]byte("k33"),
+	} {
+		MustRollbackKey(k, 10, store)
+	}
+
+	// Test assertion passes
+	// Test with optimistic transaction
+	err := PrewriteOptimisticWithAssertion([]byte("k1"), []byte("k1"), []byte("v1"), 20, 100, 0, false, nil,
+		kvrpcpb.Assertion_Exist, kvrpcpb.AssertionLevel_Strict, store)
+	require.Nil(t, err)
+	err = PrewriteOptimisticWithAssertion([]byte("k11"), []byte("k11"), []byte("v11"), 20, 100, 0, false, nil,
+		kvrpcpb.Assertion_NotExist, kvrpcpb.AssertionLevel_Strict, store)
+	require.Nil(t, err)
+
+	// Test with pessimistic transaction
+	MustAcquirePessimisticLock([]byte("k2"), []byte("k2"), 20, 10, store)
+	err = PrewritePessimisticWithAssertion([]byte("k2"), []byte("k2"), []byte("v2"), 20, 100, []bool{true}, 10,
+		kvrpcpb.Assertion_Exist, kvrpcpb.AssertionLevel_Strict, store)
+	require.Nil(t, err)
+	MustAcquirePessimisticLock([]byte("k22"), []byte("k22"), 20, 10, store)
+	err = PrewritePessimisticWithAssertion([]byte("k22"), []byte("k22"), []byte("v22"), 20, 100, []bool{true}, 10,
+		kvrpcpb.Assertion_NotExist, kvrpcpb.AssertionLevel_Strict, store)
+	require.Nil(t, err)
+
+	// Test with pessimistic transaction (non-pessimistic-lock)
+	err = PrewritePessimisticWithAssertion([]byte("pk"), []byte("k3"), []byte("v3"), 20, 100, []bool{false}, 10,
+		kvrpcpb.Assertion_Exist, kvrpcpb.AssertionLevel_Strict, store)
+	require.Nil(t, err)
+	err = PrewritePessimisticWithAssertion([]byte("pk"), []byte("k33"), []byte("v33"), 20, 100, []bool{false}, 10,
+		kvrpcpb.Assertion_NotExist, kvrpcpb.AssertionLevel_Strict, store)
+	require.Nil(t, err)
 }

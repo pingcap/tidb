@@ -21,14 +21,7 @@ import (
 	"strconv"
 	"strings"
 
-	tmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/format"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -36,6 +29,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/format"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"go.uber.org/zap"
 )
 
@@ -43,7 +41,6 @@ import (
 // variables from downstream which may affect KV encode result. The values record the default
 // values if missing.
 var defaultImportantVariables = map[string]string{
-	"tidb_row_format_version": "1",
 	"max_allowed_packet":      "67108864",
 	"div_precision_increment": "4",
 	"time_zone":               "SYSTEM",
@@ -53,30 +50,19 @@ var defaultImportantVariables = map[string]string{
 	"group_concat_max_len":    "1024",
 }
 
+// defaultImportVariablesTiDB is used in ObtainImportantVariables to retrieve the system
+// variables from downstream in local/importer backend. The values record the default
+// values if missing.
+var defaultImportVariablesTiDB = map[string]string{
+	"tidb_row_format_version": "1",
+}
+
 type TiDBManager struct {
 	db     *sql.DB
 	parser *parser.Parser
 }
 
-// getSQLErrCode returns error code if err is a mysql error
-func getSQLErrCode(err error) (terror.ErrCode, bool) {
-	mysqlErr, ok := errors.Cause(err).(*tmysql.MySQLError)
-	if !ok {
-		return -1, false
-	}
-
-	return terror.ErrCode(mysqlErr.Number), true
-}
-
-func isUnknownSystemVariableErr(err error) bool {
-	code, ok := getSQLErrCode(err)
-	if !ok {
-		return strings.Contains(err.Error(), "Unknown system variable")
-	}
-	return code == mysql.ErrUnknownSystemVariable
-}
-
-func DBFromConfig(dsn config.DBStore) (*sql.DB, error) {
+func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 	param := common.MySQLConnectParam{
 		Host:             dsn.Host,
 		Port:             dsn.Port,
@@ -85,39 +71,53 @@ func DBFromConfig(dsn config.DBStore) (*sql.DB, error) {
 		SQLMode:          dsn.StrSQLMode,
 		MaxAllowedPacket: dsn.MaxAllowedPacket,
 		TLS:              dsn.TLS,
-		Vars: map[string]string{
-			"tidb_build_stats_concurrency":       strconv.Itoa(dsn.BuildStatsConcurrency),
-			"tidb_distsql_scan_concurrency":      strconv.Itoa(dsn.DistSQLScanConcurrency),
-			"tidb_index_serial_scan_concurrency": strconv.Itoa(dsn.IndexSerialScanConcurrency),
-			"tidb_checksum_table_concurrency":    strconv.Itoa(dsn.ChecksumTableConcurrency),
-
-			// after https://github.com/pingcap/tidb/pull/17102 merge,
-			// we need set session to true for insert auto_random value in TiDB Backend
-			"allow_auto_random_explicit_insert": "1",
-			// allow use _tidb_rowid in sql statement
-			"tidb_opt_write_row_id": "1",
-			// always set auto-commit to ON
-			"autocommit": "1",
-		},
 	}
+
 	db, err := param.Connect()
 	if err != nil {
-		if isUnknownSystemVariableErr(err) {
-			// not support allow_auto_random_explicit_insert, retry connect
-			delete(param.Vars, "allow_auto_random_explicit_insert")
-			db, err = param.Connect()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		} else {
-			return nil, errors.Trace(err)
+		return nil, errors.Trace(err)
+	}
+
+	vars := map[string]string{
+		"tidb_build_stats_concurrency":       strconv.Itoa(dsn.BuildStatsConcurrency),
+		"tidb_distsql_scan_concurrency":      strconv.Itoa(dsn.DistSQLScanConcurrency),
+		"tidb_index_serial_scan_concurrency": strconv.Itoa(dsn.IndexSerialScanConcurrency),
+		"tidb_checksum_table_concurrency":    strconv.Itoa(dsn.ChecksumTableConcurrency),
+
+		// after https://github.com/pingcap/tidb/pull/17102 merge,
+		// we need set session to true for insert auto_random value in TiDB Backend
+		"allow_auto_random_explicit_insert": "1",
+		// allow use _tidb_rowid in sql statement
+		"tidb_opt_write_row_id": "1",
+		// always set auto-commit to ON
+		"autocommit": "1",
+		// alway set transaction mode to optimistic
+		"tidb_txn_mode": "optimistic",
+	}
+
+	if dsn.Vars != nil {
+		for k, v := range dsn.Vars {
+			vars[k] = v
 		}
 	}
-	return db, nil
+
+	for k, v := range vars {
+		q := fmt.Sprintf("SET SESSION %s = '%s';", k, v)
+		if _, err1 := db.ExecContext(ctx, q); err1 != nil {
+			log.L().Warn("set session variable failed, will skip this query", zap.String("query", q),
+				zap.Error(err1))
+			delete(vars, k)
+		}
+	}
+	_ = db.Close()
+
+	param.Vars = vars
+	db, err = param.Connect()
+	return db, errors.Trace(err)
 }
 
-func NewTiDBManager(dsn config.DBStore, tls *common.TLS) (*TiDBManager, error) {
-	db, err := DBFromConfig(dsn)
+func NewTiDBManager(ctx context.Context, dsn config.DBStore, tls *common.TLS) (*TiDBManager, error) {
+	db, err := DBFromConfig(ctx, dsn)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -159,7 +159,7 @@ loopCreate:
 	for tbl, sqlCreateTable := range tablesSchema {
 		task.Debug("create table", zap.String("schema", sqlCreateTable))
 
-		sqlCreateStmts, err = createTableIfNotExistsStmt(g.GetParser(), sqlCreateTable, database, tbl)
+		sqlCreateStmts, err = createIfNotExistsStmt(g.GetParser(), sqlCreateTable, database, tbl)
 		if err != nil {
 			break
 		}
@@ -182,15 +182,8 @@ loopCreate:
 	return errors.Trace(err)
 }
 
-func createDatabaseIfNotExistStmt(dbName string) string {
-	var createDatabase strings.Builder
-	createDatabase.WriteString("CREATE DATABASE IF NOT EXISTS ")
-	common.WriteMySQLIdentifier(&createDatabase, dbName)
-	return createDatabase.String()
-}
-
-func createTableIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
-	stmts, _, err := p.Parse(createTable, "", "")
+func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
+	stmts, _, err := p.ParseSQL(createTable)
 	if err != nil {
 		return []string{}, err
 	}
@@ -201,6 +194,9 @@ func createTableIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName s
 	retStmts := make([]string, 0, len(stmts))
 	for _, stmt := range stmts {
 		switch node := stmt.(type) {
+		case *ast.CreateDatabaseStmt:
+			node.Name = dbName
+			node.IfNotExists = true
 		case *ast.CreateTableStmt:
 			node.Table.Schema = model.NewCIStr(dbName)
 			node.Table.Name = model.NewCIStr(tblName)
@@ -269,13 +265,15 @@ func LoadSchemaInfo(
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			// Table names are case-sensitive in mydump.MDTableMeta.
+			// We should always use the original tbl.Name in checkpoints.
 			tableInfo := &checkpoints.TidbTableInfo{
 				ID:   tblInfo.ID,
 				DB:   schema.Name,
-				Name: tableName,
+				Name: tbl.Name,
 				Core: tblInfo,
 			}
-			dbInfo.Tables[tableName] = tableInfo
+			dbInfo.Tables[tbl.Name] = tableInfo
 		}
 
 		result[schema.Name] = dbInfo
@@ -305,7 +303,7 @@ func UpdateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error 
 	)
 }
 
-func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor) map[string]string {
+func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor, needTiDBVars bool) map[string]string {
 	var query strings.Builder
 	query.WriteString("SHOW VARIABLES WHERE Variable_name IN ('")
 	first := true
@@ -317,6 +315,12 @@ func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor) map[strin
 		}
 		query.WriteString(k)
 	}
+	if needTiDBVars {
+		for k := range defaultImportVariablesTiDB {
+			query.WriteString("','")
+			query.WriteString(k)
+		}
+	}
 	query.WriteString("')")
 	kvs, err := g.QueryStringsWithLog(ctx, query.String(), "obtain system variables", log.L())
 	if err != nil {
@@ -325,20 +329,27 @@ func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor) map[strin
 	}
 
 	// convert result into a map. fill in any missing variables with default values.
-	result := make(map[string]string, len(defaultImportantVariables))
+	result := make(map[string]string, len(defaultImportantVariables)+len(defaultImportVariablesTiDB))
 	for _, kv := range kvs {
 		result[kv[0]] = kv[1]
 	}
-	for k, defV := range defaultImportantVariables {
-		if _, ok := result[k]; !ok {
-			result[k] = defV
+
+	setDefaultValue := func(res map[string]string, vars map[string]string) {
+		for k, defV := range vars {
+			if _, ok := res[k]; !ok {
+				res[k] = defV
+			}
 		}
+	}
+	setDefaultValue(result, defaultImportantVariables)
+	if needTiDBVars {
+		setDefaultValue(result, defaultImportVariablesTiDB)
 	}
 
 	return result
 }
 
-func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) bool {
+func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) (bool, error) {
 	newCollationEnabled := false
 	newCollationVal, err := g.ObtainStringWithLog(
 		ctx,
@@ -348,9 +359,13 @@ func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) bool {
 	)
 	if err == nil && newCollationVal == "True" {
 		newCollationEnabled = true
+	} else if errors.ErrorEqual(err, sql.ErrNoRows) {
+		// ignore if target variable is not found, this may happen if tidb < v4.0
+		newCollationEnabled = false
+		err = nil
 	}
 
-	return newCollationEnabled
+	return newCollationEnabled, errors.Trace(err)
 }
 
 // AlterAutoIncrement rebase the table auto increment id

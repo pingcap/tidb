@@ -21,6 +21,6 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 	goleak.VerifyTestMain(m)
 }

@@ -17,18 +17,16 @@ package domain
 import (
 	"testing"
 
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/stretchr/testify/require"
 )
 
 func TestErrorCode(t *testing.T) {
-	t.Parallel()
 	require.Equal(t, errno.ErrInfoSchemaExpired, int(terror.ToSQLError(ErrInfoSchemaExpired).Code))
 	require.Equal(t, errno.ErrInfoSchemaChanged, int(terror.ToSQLError(ErrInfoSchemaChanged).Code))
 }
 
 func TestServerIDConstant(t *testing.T) {
-	t.Parallel()
 	require.Less(t, lostConnectionToPDTimeout, serverIDTTL)
 }

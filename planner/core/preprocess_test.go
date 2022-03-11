@@ -15,71 +15,39 @@
 package core_test
 
 import (
-	"context"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testValidatorSuite{})
-
-type testValidatorSuite struct {
-	store kv.Storage
-	dom   *domain.Domain
-	se    session.Session
-	ctx   sessionctx.Context
-	is    infoschema.InfoSchema
-}
-
-func (s *testValidatorSuite) SetUpTest(c *C) {
-	var err error
-	s.store, s.dom, err = newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-
-	s.se, err = session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-
-	s.ctx = s.se.(sessionctx.Context)
-
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
-}
-
-func (s *testValidatorSuite) TearDownTest(c *C) {
-	s.dom.Close()
-	err := s.store.Close()
-	c.Assert(err, IsNil)
-	testleak.AfterTest(c)()
-}
-
-func (s *testValidatorSuite) runSQL(c *C, sql string, inPrepare bool, terr error) {
-	stmts, err1 := session.Parse(s.ctx, sql)
-	c.Assert(err1, IsNil, Commentf("sql: %s", sql))
-	c.Assert(stmts, HasLen, 1)
+func runSQL(t *testing.T, ctx sessionctx.Context, is infoschema.InfoSchema, sql string, inPrepare bool, terr error) {
+	stmts, err := session.Parse(ctx, sql)
+	require.NoErrorf(t, err, "sql: %s", sql)
+	require.Len(t, stmts, 1)
 	stmt := stmts[0]
 	var opts []core.PreprocessOpt
 	if inPrepare {
 		opts = append(opts, core.InPrepare)
 	}
-	err := core.Preprocess(s.ctx, stmt, append(opts, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: s.is}))...)
-	c.Assert(terror.ErrorEqual(err, terr), IsTrue, Commentf("sql: %s, err:%v", sql, err))
+	err = core.Preprocess(ctx, stmt, append(opts, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))...)
+	require.Truef(t, terror.ErrorEqual(err, terr), "sql: %s, err:%v", sql, err)
 }
 
-func (s *testValidatorSuite) TestValidator(c *C) {
+func TestValidator(t *testing.T) {
 	tests := []struct {
 		sql       string
 		inPrepare bool
@@ -158,8 +126,8 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 			errors.New("[types:1074]Column length too big for column 'c' (max = 16383); use BLOB or TEXT instead")},
 		{"alter table t add column c varchar(4294967295) CHARACTER SET ascii", true,
 			errors.New("[types:1074]Column length too big for column 'c' (max = 65535); use BLOB or TEXT instead")},
-		{"create table t", false, ddl.ErrTableMustHaveColumns},
-		{"create table t (unique(c))", false, ddl.ErrTableMustHaveColumns},
+		{"create table t", false, dbterror.ErrTableMustHaveColumns},
+		{"create table t (unique(c))", false, dbterror.ErrTableMustHaveColumns},
 
 		{"create table `t ` (a int)", true, errors.New("[ddl:1103]Incorrect table name 't '")},
 		{"create table `` (a int)", true, errors.New("[ddl:1103]Incorrect table name ''")},
@@ -255,7 +223,7 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"select * from (select 1 ) a , (select 2) b, (select * from (select 3) a join (select 4) b) c;", false, nil},
 
 		{"CREATE VIEW V (a,b,c) AS SELECT 1,1,3;", false, nil},
-		{"CREATE VIEW V AS SELECT 5 INTO OUTFILE 'ttt'", true, ddl.ErrViewSelectClause.GenWithStackByArgs("INFO")},
+		{"CREATE VIEW V AS SELECT 5 INTO OUTFILE 'ttt'", true, dbterror.ErrViewSelectClause.GenWithStackByArgs("INFO")},
 		{"CREATE VIEW V AS SELECT 5 FOR UPDATE", false, nil},
 		{"CREATE VIEW V AS SELECT 5 LOCK IN SHARE MODE", false, nil},
 
@@ -282,11 +250,11 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"CREATE INDEX `` on t ((lower(a)));", true, errors.New("[ddl:1280]Incorrect index name ''")},
 
 		// issue 21082
-		{"CREATE TABLE t (a int) ENGINE=Unknown;", false, ddl.ErrUnknownEngine},
+		{"CREATE TABLE t (a int) ENGINE=Unknown;", false, dbterror.ErrUnknownEngine},
 		{"CREATE TABLE t (a int) ENGINE=InnoDB;", false, nil},
 		{"CREATE TABLE t (a int);", false, nil},
 		{"ALTER TABLE t ENGINE=InnoDB;", false, nil},
-		{"ALTER TABLE t ENGINE=Unknown;", false, ddl.ErrUnknownEngine},
+		{"ALTER TABLE t ENGINE=Unknown;", false, dbterror.ErrUnknownEngine},
 
 		// issue 20295
 		// issue 11193
@@ -297,10 +265,6 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"select CONVERT( 2, DECIMAL(30,65) )", true, types.ErrMBiggerThanD.GenWithStackByArgs("2")},
 		{"select CONVERT( 2, DECIMAL(66,99) )", true, types.ErrMBiggerThanD.GenWithStackByArgs("2")},
 
-		// https://github.com/pingcap/parser/issues/609
-		{"CREATE TEMPORARY TABLE t (a INT);", false, expression.ErrFunctionsNoopImpl.GenWithStackByArgs("CREATE TEMPORARY TABLE")},
-		{"DROP TEMPORARY TABLE t;", false, expression.ErrFunctionsNoopImpl.GenWithStackByArgs("DROP TEMPORARY TABLE")},
-
 		// TABLESAMPLE
 		{"select * from t tablesample bernoulli();", false, expression.ErrInvalidTableSample},
 		{"select * from t tablesample bernoulli(10 rows);", false, expression.ErrInvalidTableSample},
@@ -308,65 +272,95 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"select * from t tablesample system() repeatable (10);", false, expression.ErrInvalidTableSample},
 	}
 
-	_, err := s.se.Execute(context.Background(), "use test")
-	c.Assert(err, IsNil)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 
+	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
 	for _, tt := range tests {
-		s.runSQL(c, tt.sql, tt.inPrepare, tt.err)
+		runSQL(t, tk.Session(), is, tt.sql, tt.inPrepare, tt.err)
 	}
 }
 
-func (s *testValidatorSuite) TestForeignKey(c *C) {
-	_, err := s.se.Execute(context.Background(), "create table test.t1(a int, b int, c int)")
-	c.Assert(err, IsNil)
+func TestForeignKey(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create table test.t1(a int, b int, c int)")
+	tk.MustExec("create table test.t2(d int)")
+	tk.MustExec("create database test2")
+	tk.MustExec("create table test2.t(e int)")
 
-	_, err = s.se.Execute(context.Background(), "create table test.t2(d int)")
-	c.Assert(err, IsNil)
+	is := dom.InfoSchema()
+	runSQL(t, tk.Session(), is, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES t2 (d)", false, nil)
 
-	_, err = s.se.Execute(context.Background(), "create database test2")
-	c.Assert(err, IsNil)
-
-	_, err = s.se.Execute(context.Background(), "create table test2.t(e int)")
-	c.Assert(err, IsNil)
-
-	s.is = s.dom.InfoSchema()
-
-	s.runSQL(c, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES t2 (d)", false, nil)
-
-	_, err = s.se.Execute(context.Background(), "use test")
-	c.Assert(err, IsNil)
-
-	s.runSQL(c, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (b) REFERENCES t2 (d)", false, nil)
-
-	s.runSQL(c, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (c) REFERENCES test2.t (e)", false, nil)
+	tk.MustExec("use test")
+	runSQL(t, tk.Session(), is, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (b) REFERENCES t2 (d)", false, nil)
+	runSQL(t, tk.Session(), is, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (c) REFERENCES test2.t (e)", false, nil)
 }
 
-func (s *testValidatorSuite) TestDropGlobalTempTable(c *C) {
-	ctx := context.Background()
-	execSQLList := []string{
-		"use test",
-		"set tidb_enable_global_temporary_table=true",
-		"set tidb_enable_noop_functions=true",
-		"create table tb(id int);",
-		"create global temporary table temp(id int) on commit delete rows;",
-		"create global temporary table temp1(id int) on commit delete rows;",
-		"create temporary table ltemp1(id int);",
-		"create database test2",
-		"create global temporary table test2.temp2(id int) on commit delete rows;",
+func TestDropGlobalTempTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tb(id int);")
+	tk.MustExec("create global temporary table temp(id int) on commit delete rows;")
+	tk.MustExec("create global temporary table temp1(id int) on commit delete rows;")
+	tk.MustExec("create temporary table ltemp1(id int);")
+	tk.MustExec("create database test2")
+	tk.MustExec("create global temporary table test2.temp2(id int) on commit delete rows;")
+
+	is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
+	runSQL(t, tk.Session(), is, "drop global temporary table tb;", false, core.ErrDropTableOnTemporaryTable)
+	runSQL(t, tk.Session(), is, "drop global temporary table temp", false, nil)
+	runSQL(t, tk.Session(), is, "drop global temporary table test.tb;", false, core.ErrDropTableOnTemporaryTable)
+	runSQL(t, tk.Session(), is, "drop global temporary table test.temp1", false, nil)
+	runSQL(t, tk.Session(), is, "drop global temporary table ltemp1", false, core.ErrDropTableOnTemporaryTable)
+	runSQL(t, tk.Session(), is, "drop global temporary table test.ltemp1", false, core.ErrDropTableOnTemporaryTable)
+	runSQL(t, tk.Session(), is, "drop global temporary table temp, temp1", false, nil)
+	runSQL(t, tk.Session(), is, "drop global temporary table temp, tb", false, core.ErrDropTableOnTemporaryTable)
+	runSQL(t, tk.Session(), is, "drop global temporary table temp, ltemp1", false, core.ErrDropTableOnTemporaryTable)
+	runSQL(t, tk.Session(), is, "drop global temporary table test2.temp2, temp1", false, nil)
+}
+
+func TestErrKeyPart0(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database TestErrKeyPart")
+	tk.MustExec("use TestErrKeyPart")
+	err := tk.ExecToErr("CREATE TABLE `tbl11`(`a` INT(11) NOT NULL, `b` INT(11), PRIMARY KEY (`a`(0))) CHARSET UTF8MB4 COLLATE UTF8MB4_BIN")
+	require.EqualError(t, err, "[planner:1391]Key part 'a' length cannot be 0")
+	err = tk.ExecToErr("create table t (a int, b varchar(255), key (b(0)))")
+	require.EqualError(t, err, "[planner:1391]Key part 'b' length cannot be 0")
+	err = tk.ExecToErr("create table t (a int, b varchar(255))")
+	require.NoError(t, err)
+	err = tk.ExecToErr("alter table t add index (b(0))")
+	require.EqualError(t, err, "[planner:1391]Key part 'b' length cannot be 0")
+}
+
+// For issue #30328
+func TestLargeVarcharAutoConv(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
+	runSQL(t, tk.Session(), is, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000))", false,
+		errors.New("[types:1074]Column length too big for column 'a' (max = 65535); use BLOB or TEXT instead"))
+
+	tk.MustExec("SET sql_mode = 'NO_ENGINE_SUBSTITUTION'")
+	runSQL(t, tk.Session(), is, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000));", false, nil)
+	runSQL(t, tk.Session(), is, "CREATE TABLE t1(a varbinary(70000), b varchar(70000000) charset utf8mb4);", false, nil)
+	warnCnt := tk.Session().GetSessionVars().StmtCtx.WarningCount()
+	// It is only 3. For the first stmt, charset of column b is not resolved, so ddl will append a warning for it
+	require.Equal(t, uint16(3), warnCnt)
+	warns := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	for i := range warns {
+		require.True(t, terror.ErrorEqual(warns[i].Err, dbterror.ErrAutoConvert))
 	}
-	for _, execSQL := range execSQLList {
-		_, err := s.se.Execute(ctx, execSQL)
-		c.Assert(err, IsNil)
-	}
-	s.is = s.se.GetInfoSchema().(infoschema.InfoSchema)
-	s.runSQL(c, "drop global temporary table tb;", false, core.ErrDropTableOnTemporaryTable)
-	s.runSQL(c, "drop global temporary table temp", false, nil)
-	s.runSQL(c, "drop global temporary table test.tb;", false, core.ErrDropTableOnTemporaryTable)
-	s.runSQL(c, "drop global temporary table test.temp1", false, nil)
-	s.runSQL(c, "drop global temporary table ltemp1", false, core.ErrDropTableOnTemporaryTable)
-	s.runSQL(c, "drop global temporary table test.ltemp1", false, core.ErrDropTableOnTemporaryTable)
-	s.runSQL(c, "drop global temporary table temp, temp1", false, nil)
-	s.runSQL(c, "drop global temporary table temp, tb", false, core.ErrDropTableOnTemporaryTable)
-	s.runSQL(c, "drop global temporary table temp, ltemp1", false, core.ErrDropTableOnTemporaryTable)
-	s.runSQL(c, "drop global temporary table test2.temp2, temp1", false, nil)
 }

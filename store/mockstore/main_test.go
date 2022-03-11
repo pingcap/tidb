@@ -24,7 +24,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 	callback := func(i int) int {
 		// wait for leveldb to close, leveldb will be closed in one second
 		time.Sleep(time.Second)

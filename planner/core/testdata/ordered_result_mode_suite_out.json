@@ -401,7 +401,7 @@
         "Plan": [
           "Projection_8 10000.00 root  Column#6",
           "└─Sort_9 10000.00 root  test.t1.b, test.t1.a, Column#6",
-          "  └─Window_11 10000.00 root  sum(cast(test.t1.b, decimal(32,0) BINARY))->Column#6 over(partition by test.t1.a)",
+          "  └─Window_11 10000.00 root  sum(cast(test.t1.b, decimal(10,0) BINARY))->Column#6 over(partition by test.t1.a)",
           "    └─TableReader_13 10000.00 root  data:TableFullScan_12",
           "      └─TableFullScan_12 10000.00 cop[tikv] table:t1 keep order:true, stats:pseudo"
         ]

@@ -167,27 +167,13 @@ func (p *LogicalProjection) PreparePossibleProperties(schema *expression.Schema,
 	return newProperties
 }
 
-func clonePossibleProperties(props [][]*expression.Column) [][]*expression.Column {
-	res := make([][]*expression.Column, len(props))
-	for i, prop := range props {
-		clonedProp := make([]*expression.Column, len(prop))
-		for j, col := range prop {
-			clonedProp[j] = col.Clone().(*expression.Column)
-		}
-		res[i] = clonedProp
-	}
-	return res
-}
-
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
 func (p *LogicalJoin) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
 	leftProperties := childrenProperties[0]
 	rightProperties := childrenProperties[1]
 	// TODO: We should consider properties propagation.
-	// Clone the Columns in the property before saving them, otherwise the upper Projection may
-	// modify them and lead to unexpected results.
-	p.leftProperties = clonePossibleProperties(leftProperties)
-	p.rightProperties = clonePossibleProperties(rightProperties)
+	p.leftProperties = leftProperties
+	p.rightProperties = rightProperties
 	if p.JoinType == LeftOuterJoin || p.JoinType == LeftOuterSemiJoin {
 		rightProperties = nil
 	} else if p.JoinType == RightOuterJoin {
@@ -216,22 +202,14 @@ func (la *LogicalAggregation) PreparePossibleProperties(schema *expression.Schem
 		return nil
 	}
 	resultProperties := make([][]*expression.Column, 0, len(childProps))
-	clonedProperties := make([][]*expression.Column, 0, len(childProps))
 	groupByCols := la.GetGroupByCols()
 	for _, possibleChildProperty := range childProps {
 		sortColOffsets := getMaxSortPrefix(possibleChildProperty, groupByCols)
 		if len(sortColOffsets) == len(groupByCols) {
 			prop := possibleChildProperty[:len(groupByCols)]
 			resultProperties = append(resultProperties, prop)
-			// Clone the Columns in the property before saving them, otherwise the upper Projection may
-			// modify them and lead to unexpected results.
-			clonedProp := make([]*expression.Column, len(prop))
-			for i, col := range prop {
-				clonedProp[i] = col.Clone().(*expression.Column)
-			}
-			clonedProperties = append(clonedProperties, clonedProp)
 		}
 	}
-	la.possibleProperties = clonedProperties
+	la.possibleProperties = resultProperties
 	return resultProperties
 }

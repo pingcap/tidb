@@ -29,8 +29,6 @@ import (
 )
 
 func TestUpdateCopRuntimeStats(t *testing.T) {
-	t.Parallel()
-
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx = new(stmtctx.StatementContext)
 	sr := selectResult{ctx: ctx, storeType: kv.TiKV}

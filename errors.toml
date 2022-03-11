@@ -21,6 +21,11 @@ error = '''
 backup no leader
 '''
 
+["BR:Common:ErrEnvNotSpecified"]
+error = '''
+environment variable not found
+'''
+
 ["BR:Common:ErrFailedToConnect"]
 error = '''
 failed to make gRPC channels
@@ -44,6 +49,11 @@ undefined restore databases or tables
 ["BR:Common:ErrUnknown"]
 error = '''
 internal error
+'''
+
+["BR:Common:ErrUnsupportedOperation"]
+error = '''
+the operation is not supported
 '''
 
 ["BR:Common:ErrVersionMismatch"]
@@ -223,7 +233,7 @@ TiDB admin check table failed.
 
 ["admin:8223"]
 error = '''
-index:%#v != record:%#v
+data inconsistency in table: %s, index: %s, handle: %s, index-values:%#v != record-values:%#v
 '''
 
 ["admin:8224"]
@@ -291,6 +301,26 @@ error = '''
 Invalid default value for '%-.192s'
 '''
 
+["ddl:1069"]
+error = '''
+Too many keys specified; max %d keys allowed
+'''
+
+["ddl:1071"]
+error = '''
+Specified key was too long; max key length is %d bytes
+'''
+
+["ddl:1072"]
+error = '''
+Key column '%-.192s' doesn't exist in table
+'''
+
+["ddl:1089"]
+error = '''
+Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+'''
+
 ["ddl:1090"]
 error = '''
 You can't delete all columns with ALTER TABLE; use DROP TABLE instead
@@ -299,6 +329,11 @@ You can't delete all columns with ALTER TABLE; use DROP TABLE instead
 ["ddl:1091"]
 error = '''
 Can't DROP '%-.192s'; check that column/key exists
+'''
+
+["ddl:1101"]
+error = '''
+BLOB/TEXT/JSON column '%-.192s' can't have a default value
 '''
 
 ["ddl:1102"]
@@ -326,9 +361,29 @@ error = '''
 Unknown character set: '%-.64s'
 '''
 
+["ddl:1117"]
+error = '''
+Too many columns
+'''
+
+["ddl:1138"]
+error = '''
+Invalid use of NULL value
+'''
+
 ["ddl:1166"]
 error = '''
 Incorrect column name '%-.100s'
+'''
+
+["ddl:1167"]
+error = '''
+The used storage engine can't index column '%-.192s'
+'''
+
+["ddl:1170"]
+error = '''
+BLOB/TEXT column '%-.192s' used in key specification without a key length
 '''
 
 ["ddl:1171"]
@@ -341,9 +396,24 @@ error = '''
 Can't open table
 '''
 
+["ddl:1205"]
+error = '''
+Timeout waiting for data reorganization
+'''
+
 ["ddl:1214"]
 error = '''
 The used table type doesn't support FULLTEXT indexes
+'''
+
+["ddl:1221"]
+error = '''
+Incorrect usage of %s and %s
+'''
+
+["ddl:1246"]
+error = '''
+Converting column '%s' from %s to %s
 '''
 
 ["ddl:1248"]
@@ -411,6 +481,11 @@ error = '''
 In definition of view, derived table or common table expression, SELECT list and column names list have different column counts
 '''
 
+["ddl:1391"]
+error = '''
+Key part '%-.192s' length cannot be 0
+'''
+
 ["ddl:1481"]
 error = '''
 MAXVALUE can only be used in last partition definition
@@ -471,6 +546,11 @@ error = '''
 COALESCE PARTITION can only be used on HASH/KEY partitions
 '''
 
+["ddl:1512"]
+error = '''
+%-.64s PARTITION can only be used on RANGE/LIST partitions
+'''
+
 ["ddl:1517"]
 error = '''
 Duplicate partition name %-.192s
@@ -491,6 +571,16 @@ error = '''
 This partition function is not allowed
 '''
 
+["ddl:1567"]
+error = '''
+Incorrect partition name
+'''
+
+["ddl:1652"]
+error = '''
+Duplicate partition field name '%-.192s'
+'''
+
 ["ddl:1654"]
 error = '''
 Partition column values of incorrect type
@@ -499,6 +589,11 @@ Partition column values of incorrect type
 ["ddl:1659"]
 error = '''
 Field '%-.192s' is of a not allowed type for this type of partitioning
+'''
+
+["ddl:1688"]
+error = '''
+Comment for index '%-.64s' is too long (max = %d)
 '''
 
 ["ddl:1697"]
@@ -536,6 +631,11 @@ error = '''
 Duplicate foreign key constraint name '%s'
 '''
 
+["ddl:1828"]
+error = '''
+Cannot drop column '%-.192s': needed in a foreign key constraint '%-.192s'
+'''
+
 ["ddl:1846"]
 error = '''
 %s is not supported. Reason: %s. Try %s.
@@ -546,14 +646,34 @@ error = '''
 Expression of generated column '%s' contains a disallowed function.
 '''
 
+["ddl:3104"]
+error = '''
+Cannot define foreign key with %s clause on a generated column.
+'''
+
 ["ddl:3106"]
 error = '''
 '%s' is not supported for generated columns.
 '''
 
+["ddl:3107"]
+error = '''
+Generated column can refer only to generated columns defined prior to it.
+'''
+
+["ddl:3108"]
+error = '''
+Column '%s' has a generated column dependency.
+'''
+
 ["ddl:3109"]
 error = '''
 Generated column '%s' cannot refer to auto-increment column.
+'''
+
+["ddl:3152"]
+error = '''
+JSON column '%-.192s' cannot be used in key specification.
 '''
 
 ["ddl:3505"]
@@ -566,6 +686,16 @@ error = '''
 A primary key index cannot be invisible
 '''
 
+["ddl:3593"]
+error = '''
+You cannot use the window function '%s' in this context.'
+'''
+
+["ddl:3753"]
+error = '''
+Cannot create an expression index on a function that returns a JSON or GEOMETRY value
+'''
+
 ["ddl:3754"]
 error = '''
 Expression index '%s' cannot refer to an auto-increment column
@@ -576,9 +706,19 @@ error = '''
 The primary key cannot be an expression index
 '''
 
+["ddl:3757"]
+error = '''
+Cannot create an expression index on an expression that returns a BLOB or TEXT. Please consider using CAST
+'''
+
 ["ddl:3758"]
 error = '''
 Expression of expression index '%s' contains a disallowed function
+'''
+
+["ddl:3761"]
+error = '''
+The used storage engine cannot index the expression '%s'
 '''
 
 ["ddl:3762"]
@@ -591,9 +731,19 @@ error = '''
 Expression of generated column '%s' cannot refer to a row value
 '''
 
+["ddl:3780"]
+error = '''
+Referencing column '%s' in foreign key constraint '%s' are incompatible
+'''
+
 ["ddl:3800"]
 error = '''
 Expression of expression index '%s' cannot refer to a row value
+'''
+
+["ddl:3837"]
+error = '''
+Column '%s' has an expression index dependency and cannot be dropped or renamed
 '''
 
 ["ddl:4135"]
@@ -628,12 +778,57 @@ error = '''
 
 ["ddl:8200"]
 error = '''
-Unsupported partition by range columns
+Unsupported shard_row_id_bits for table with primary key as row id
+'''
+
+["ddl:8201"]
+error = '''
+TiDB server is not a DDL owner
+'''
+
+["ddl:8202"]
+error = '''
+Cannot decode %s value, because %v
+'''
+
+["ddl:8203"]
+error = '''
+Invalid DDL worker
+'''
+
+["ddl:8204"]
+error = '''
+Invalid DDL job
+'''
+
+["ddl:8207"]
+error = '''
+Invalid storage current version: %d
 '''
 
 ["ddl:8210"]
 error = '''
 Invalid %!s(MISSING) state: %!v(MISSING)
+'''
+
+["ddl:8211"]
+error = '''
+Reorg worker panic
+'''
+
+["ddl:8212"]
+error = '''
+Failed to split region ranges: %s
+'''
+
+["ddl:8213"]
+error = '''
+Version %d of DDL job is greater than current one: %d
+'''
+
+["ddl:8214"]
+error = '''
+Cancelled DDL job
 '''
 
 ["ddl:8215"]
@@ -676,11 +871,6 @@ error = '''
 CREATE/ALTER table with insert method option is not supported
 '''
 
-["ddl:8234"]
-error = '''
-Invalid placement policy '%s': %s
-'''
-
 ["ddl:8236"]
 error = '''
 Placement policy didn't meet the constraint, reason: %s
@@ -688,7 +878,7 @@ Placement policy didn't meet the constraint, reason: %s
 
 ["ddl:8237"]
 error = '''
-Invalid attributes '%s': %s
+Invalid attributes: %s
 '''
 
 ["ddl:8240"]
@@ -701,6 +891,11 @@ error = '''
 Placement policy '%-.192s' is still in use
 '''
 
+["ddl:8242"]
+error = '''
+'%s' is unsupported on cache tables.
+'''
+
 ["domain:8027"]
 error = '''
 Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV
@@ -709,6 +904,11 @@ Information schema is out of date: schema failed to update in 1 lease, please ma
 ["domain:8028"]
 error = '''
 Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]
+'''
+
+["domain:8243"]
+error = '''
+HTTP request failed with status %s
 '''
 
 ["domain:9009"]
@@ -751,6 +951,11 @@ error = '''
 Incorrect usage of %s and %s
 '''
 
+["executor:1235"]
+error = '''
+%-.32s is not supported. To enable this experimental feature, set '%-.32s' in the configuration file.
+'''
+
 ["executor:1242"]
 error = '''
 Subquery returns more than 1 row
@@ -791,9 +996,19 @@ error = '''
 You are not allowed to create a user with GRANT
 '''
 
+["executor:1524"]
+error = '''
+Plugin '%-.192s' is not loaded
+'''
+
 ["executor:1568"]
 error = '''
 Transaction characteristics can't be changed while a transaction is in progress
+'''
+
+["executor:1699"]
+error = '''
+SET PASSWORD has no significance for user '%-.48s'@'%-.255s' as authentication plugin does not support it.
 '''
 
 ["executor:1827"]
@@ -883,12 +1098,12 @@ Export failed: %s
 
 ["executor:8133"]
 error = '''
-handle %#v, index:%#v != record:%#v
+data inconsistency in table: %s, index: %s, index-count:%d != record-count:%d
 '''
 
 ["executor:8134"]
 error = '''
-col %s, handle %#v, index:%#v != record:%#v, compare err:%#v
+data inconsistency in table: %s, index: %s, col: %s, handle: %#v, index-values:%#v != record-values:%#v, compare err:%#v
 '''
 
 ["executor:8212"]
@@ -969,6 +1184,11 @@ Invalid JSON text: %-.192s
 ["json:3143"]
 error = '''
 Invalid JSON path expression %s.
+'''
+
+["json:3144"]
+error = '''
+Cannot create a JSON value from a string with CHARACTER SET '%s'.
 '''
 
 ["json:3149"]
@@ -1206,6 +1426,11 @@ error = '''
 Operand should contain %d column(s)
 '''
 
+["planner:1242"]
+error = '''
+Subquery returns more than 1 row
+'''
+
 ["planner:1247"]
 error = '''
 Reference '%-.64s' not supported (%s)
@@ -1234,6 +1459,11 @@ View's SELECT refers to a temporary table '%-.192s'
 ["planner:1356"]
 error = '''
 View '%-.192s.%-.192s' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+'''
+
+["planner:1391"]
+error = '''
+Key part '%-.192s' length cannot be 0
 '''
 
 ["planner:1462"]
@@ -1486,6 +1716,16 @@ error = '''
 invalid as of timestamp: %s
 '''
 
+["planner:8137"]
+error = '''
+Column '%s' in ANALYZE column option does not exist in table '%s'
+'''
+
+["planner:8242"]
+error = '''
+'%s' is unsupported on cache tables.
+'''
+
 ["privilege:1141"]
 error = '''
 There is no such grant defined for user '%-.48s' on host '%-.255s'
@@ -1493,7 +1733,7 @@ There is no such grant defined for user '%-.48s' on host '%-.255s'
 
 ["privilege:3530"]
 error = '''
-%s is is not granted to %s
+%s is not granted to %s
 '''
 
 ["schema:1007"]
@@ -1594,6 +1834,11 @@ Incorrect foreign key definition for '%-.192s': %s
 ["schema:1347"]
 error = '''
 '%-.192s.%-.192s' is not %s
+'''
+
+["schema:1382"]
+error = '''
+The '%-.64s' syntax is reserved for purposes internal to the MySQL server
 '''
 
 ["schema:1831"]
@@ -1751,6 +1996,21 @@ error = '''
 column %s can't be in none state
 '''
 
+["table:8138"]
+error = '''
+writing inconsistent data in table: %s, expected-values:{%s} != record-values:{%s}
+'''
+
+["table:8139"]
+error = '''
+writing inconsistent data in table: %s, index: %s, index-handle:%#v != record-handle:%#v, index: %#v, record: %#v
+'''
+
+["table:8140"]
+error = '''
+writing inconsistent data in table: %s, index: %s, col: %s, indexed-value:{%s} != record-value:{%s}
+'''
+
 ["tikv:1105"]
 error = '''
 Unknown error
@@ -1769,6 +2029,11 @@ Query execution was interrupted
 ["tikv:3572"]
 error = '''
 Statement aborted because lock(s) could not be acquired immediately and NOWAIT is set.
+'''
+
+["tikv:8141"]
+error = '''
+assertion failed: key: %s, assertion: %s, start_ts: %v, existing start ts: %v, existing commit ts: %v
 '''
 
 ["tikv:8229"]
@@ -2024,5 +2289,10 @@ The isolation level '%s' is not supported. Set tidb_skip_isolation_level_check=1
 ["variable:8055"]
 error = '''
 snapshot is older than GC safe point %s
+'''
+
+["variable:8136"]
+error = '''
+option '%s' is no longer supported. Reason: %s
 '''
 

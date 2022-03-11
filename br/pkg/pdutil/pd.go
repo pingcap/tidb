@@ -24,9 +24,9 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/util/codec"
 	pd "github.com/tikv/pd/client"
-	pdapi "github.com/tikv/pd/server/api"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -118,14 +118,13 @@ var (
 	}
 
 	// defaultPDCfg find by https://github.com/tikv/pd/blob/master/conf/config.toml.
+	// only use for debug command.
 	defaultPDCfg = map[string]interface{}{
 		"max-merge-region-keys":       200000,
 		"max-merge-region-size":       20,
 		"leader-schedule-limit":       4,
 		"region-schedule-limit":       2048,
-		"max-snapshot-count":          3,
 		"enable-location-replacement": "true",
-		"max-pending-peer-count":      16,
 	}
 )
 
@@ -156,14 +155,17 @@ func pdRequest(
 		if count > pdRequestRetryTime || resp.StatusCode < 500 {
 			break
 		}
-		resp.Body.Close()
-		time.Sleep(time.Second)
+		_ = resp.Body.Close()
+		time.Sleep(pdRequestRetryInterval())
 		resp, err = cli.Do(req)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
 	if resp.StatusCode != http.StatusOK {
 		res, _ := io.ReadAll(resp.Body)
 		return nil, errors.Annotatef(berrors.ErrPDInvalidResponse, "[%d] %s %s", resp.StatusCode, res, reqURL)
@@ -174,6 +176,15 @@ func pdRequest(
 		return nil, errors.Trace(err)
 	}
 	return r, nil
+}
+
+func pdRequestRetryInterval() time.Duration {
+	failpoint.Inject("FastRetry", func(v failpoint.Value) {
+		if v.(bool) {
+			failpoint.Return(0)
+		}
+	})
+	return time.Second
 }
 
 // PdController manage get/update config from pd.
@@ -339,12 +350,12 @@ func (p *PdController) getRegionCountWith(
 }
 
 // GetStoreInfo returns the info of store with the specified id.
-func (p *PdController) GetStoreInfo(ctx context.Context, storeID uint64) (*pdapi.StoreInfo, error) {
+func (p *PdController) GetStoreInfo(ctx context.Context, storeID uint64) (*pdtypes.StoreInfo, error) {
 	return p.getStoreInfoWith(ctx, pdRequest, storeID)
 }
 
 func (p *PdController) getStoreInfoWith(
-	ctx context.Context, get pdHTTPRequest, storeID uint64) (*pdapi.StoreInfo, error) {
+	ctx context.Context, get pdHTTPRequest, storeID uint64) (*pdtypes.StoreInfo, error) {
 	var err error
 	for _, addr := range p.addrs {
 		query := fmt.Sprintf(
@@ -355,7 +366,7 @@ func (p *PdController) getStoreInfoWith(
 			err = e
 			continue
 		}
-		store := pdapi.StoreInfo{}
+		store := pdtypes.StoreInfo{}
 		err = json.Unmarshal(v, &store)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -692,7 +703,9 @@ func (p *PdController) doRemoveSchedulersWith(
 // Close close the connection to pd.
 func (p *PdController) Close() {
 	p.pdClient.Close()
-	close(p.schedulerPauseCh)
+	if p.schedulerPauseCh != nil {
+		close(p.schedulerPauseCh)
+	}
 }
 
 // FetchPDVersion get pd version

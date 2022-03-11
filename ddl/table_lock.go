@@ -16,9 +16,10 @@ package ddl
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 func onLockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
@@ -92,7 +93,7 @@ func onLockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
 			}
 		default:
 			job.State = model.JobStateCancelled
-			return ver, ErrInvalidDDLState.GenWithStackByArgs("table lock", tbInfo.Lock.State)
+			return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table lock", tbInfo.Lock.State)
 		}
 	}
 

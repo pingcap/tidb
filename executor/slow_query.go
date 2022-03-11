@@ -21,21 +21,21 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
@@ -263,7 +263,7 @@ func getOneLine(reader *bufio.Reader) ([]byte, error) {
 	var tempLine []byte
 	for isPrefix {
 		tempLine, isPrefix, err = reader.ReadLine()
-		resByte = append(resByte, tempLine...)
+		resByte = append(resByte, tempLine...) // nozero
 		// Use the max value of max_allowed_packet to check the single line length.
 		if len(resByte) > int(variable.MaxOfMaxAllowedPacket) {
 			return resByte, errors.Errorf("single line length exceeds limit: %v", variable.MaxOfMaxAllowedPacket)
@@ -412,7 +412,7 @@ func decomposeToSlowLogTasks(logs []slowLogBlock, num int) [][]string {
 
 func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int) {
 	defer close(e.taskList)
-	var wg sync.WaitGroup
+	var wg util.WaitGroupWrapper
 	offset := offset{offset: 0, length: 0}
 	// To limit the num of go routine
 	concurrent := sctx.GetSessionVars().Concurrency.DistSQLScanConcurrency()
@@ -446,20 +446,29 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		if e.stats != nil {
 			e.stats.readFile += time.Since(startTime)
 		}
+		failpoint.Inject("mockReadSlowLogSlow", func(val failpoint.Value) {
+			if val.(bool) {
+				signals := ctx.Value("signals").([]chan int)
+				signals[0] <- 1
+				<-signals[1]
+			}
+		})
 		for i := range logs {
 			log := logs[i]
 			t := slowLogTask{}
 			t.resultCh = make(chan parsedSlowLog, 1)
 			start := offset
-			wg.Add(1)
 			ch <- 1
-			e.taskList <- t
-			go func() {
-				defer wg.Done()
+			select {
+			case <-ctx.Done():
+				return
+			case e.taskList <- t:
+			}
+			wg.Run(func() {
 				result, err := e.parseLog(ctx, sctx, log, start)
 				e.sendParsedSlowLogCh(ctx, t, parsedSlowLog{result, err})
 				<-ch
-			}()
+			})
 			offset.offset = e.fileLine
 			offset.length = 0
 			select {
@@ -488,6 +497,36 @@ func getLineIndex(offset offset, index int) int {
 		fileLine = offset.offset + index + 1
 	}
 	return fileLine
+}
+
+// kvSplitRegex: it was just for split "field: value field: value..."
+var kvSplitRegex = regexp.MustCompile(`\w+: `)
+
+// splitByColon split a line like "field: value field: value..."
+func splitByColon(line string) (fields []string, values []string) {
+	matches := kvSplitRegex.FindAllStringIndex(line, -1)
+	fields = make([]string, 0, len(matches))
+	values = make([]string, 0, len(matches))
+
+	beg := 0
+	end := 0
+	for _, match := range matches {
+		// trim ": "
+		fields = append(fields, line[match[0]:match[1]-2])
+
+		end = match[0]
+		if beg != 0 {
+			// trim " "
+			values = append(values, line[beg:end-1])
+		}
+		beg = match[1]
+	}
+
+	if end != len(line) {
+		// " " does not exist in the end
+		values = append(values, line[beg:])
+	}
+	return fields, values
 }
 
 func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Context, log []string, offset offset) (data [][]types.Datum, err error) {
@@ -554,10 +593,9 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 				} else if strings.HasPrefix(line, variable.SlowLogCopBackoffPrefix) {
 					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogBackoffDetail, line, e.checker, fileLine)
 				} else {
-					fieldValues := strings.Split(line, " ")
-					for i := 0; i < len(fieldValues)-1; i += 2 {
-						field := strings.TrimSuffix(fieldValues[i], ":")
-						valid := e.setColumnValue(sctx, row, tz, field, fieldValues[i+1], e.checker, fileLine)
+					fields, values := splitByColon(line)
+					for i := 0; i < len(fields); i++ {
+						valid := e.setColumnValue(sctx, row, tz, fields[i], values[i], e.checker, fileLine)
 						if !valid {
 							startFlag = false
 							break
@@ -698,7 +736,7 @@ func getColumnValueFactoryByName(sctx sessionctx.Context, colName string, column
 			row[columnIdx] = types.NewStringDatum(value)
 			return true, nil
 		}, nil
-	case variable.SlowLogMemMax, variable.SlowLogDiskMax:
+	case variable.SlowLogMemMax, variable.SlowLogDiskMax, variable.SlowLogResultRows:
 		return func(row []types.Datum, value string, tz *time.Location, checker *slowLogChecker) (valid bool, err error) {
 			v, err := strconv.ParseInt(value, 10, 64)
 			if err != nil {
@@ -708,7 +746,7 @@ func getColumnValueFactoryByName(sctx sessionctx.Context, colName string, column
 			return true, nil
 		}, nil
 	case variable.SlowLogPrepared, variable.SlowLogSucc, variable.SlowLogPlanFromCache, variable.SlowLogPlanFromBinding,
-		variable.SlowLogIsInternalStr:
+		variable.SlowLogIsInternalStr, variable.SlowLogIsExplicitTxn, variable.SlowLogIsWriteCacheTable:
 		return func(row []types.Datum, value string, tz *time.Location, checker *slowLogChecker) (valid bool, err error) {
 			v, err := strconv.ParseBool(value)
 			if err != nil {
@@ -1020,7 +1058,7 @@ func readLastLines(ctx context.Context, file *os.File, endCursor int64) ([]strin
 		if err != nil {
 			return nil, 0, err
 		}
-		lines = append(chars, lines...)
+		lines = append(chars, lines...) // nozero
 
 		// find first '\n' or '\r'
 		for i := 0; i < len(chars); i++ {

@@ -53,8 +53,6 @@ func getChk(isLast3ColTheSame bool) (*Chunk, *Chunk, []bool) {
 }
 
 func TestCopySelectedJoinRows(t *testing.T) {
-	t.Parallel()
-
 	srcChk, dstChk, selected := getChk(true)
 	numRows := srcChk.NumRows()
 	for i := 0; i < numRows; i++ {
@@ -80,8 +78,6 @@ func TestCopySelectedJoinRows(t *testing.T) {
 }
 
 func TestCopySelectedJoinRowsWithoutSameOuters(t *testing.T) {
-	t.Parallel()
-
 	srcChk, dstChk, selected := getChk(false)
 	numRows := srcChk.NumRows()
 	for i := 0; i < numRows; i++ {
@@ -107,8 +103,6 @@ func TestCopySelectedJoinRowsWithoutSameOuters(t *testing.T) {
 }
 
 func TestCopySelectedJoinRowsDirect(t *testing.T) {
-	t.Parallel()
-
 	srcChk, dstChk, selected := getChk(false)
 	numRows := srcChk.NumRows()
 	for i := 0; i < numRows; i++ {
@@ -138,8 +132,6 @@ func TestCopySelectedJoinRowsDirect(t *testing.T) {
 }
 
 func TestCopySelectedVirtualNum(t *testing.T) {
-	t.Parallel()
-
 	// srcChk does not contain columns
 	srcChk := newChunk()
 	srcChk.TruncateTo(3)

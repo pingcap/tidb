@@ -20,15 +20,14 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -69,6 +68,11 @@ var (
 	_ PhysicalPlan = &PhysicalTableSample{}
 )
 
+type tableScanAndPartitionInfo struct {
+	tableScan     *PhysicalTableScan
+	partitionInfo PartitionInfo
+}
+
 // PhysicalTableReader is the table reader in tidb.
 type PhysicalTableReader struct {
 	physicalSchemaProducer
@@ -87,6 +91,8 @@ type PhysicalTableReader struct {
 
 	// Used by partition table.
 	PartitionInfo PartitionInfo
+	// Used by MPP, because MPP plan may contain join/union/union all, it is possible that a physical table reader contains more than 1 table scan
+	PartitionInfos []tableScanAndPartitionInfo
 }
 
 // PartitionInfo indicates partition helper info in physical plan.
@@ -102,23 +108,25 @@ func (p *PhysicalTableReader) GetTablePlan() PhysicalPlan {
 	return p.tablePlan
 }
 
-// GetTableScan exports the tableScan that contained in tablePlan.
-func (p *PhysicalTableReader) GetTableScan() *PhysicalTableScan {
-	curPlan := p.tablePlan
-	for {
-		chCnt := len(curPlan.Children())
-		if chCnt == 0 {
-			return curPlan.(*PhysicalTableScan)
-		} else if chCnt == 1 {
-			curPlan = curPlan.Children()[0]
-		} else {
-			join, ok := curPlan.(*PhysicalHashJoin)
-			if !ok {
-				return nil
-			}
-			curPlan = join.children[1-join.globalChildIndex]
+// GetTableScans exports the tableScan that contained in tablePlans.
+func (p *PhysicalTableReader) GetTableScans() []*PhysicalTableScan {
+	tableScans := make([]*PhysicalTableScan, 0, 1)
+	for _, tablePlan := range p.TablePlans {
+		tableScan, ok := tablePlan.(*PhysicalTableScan)
+		if ok {
+			tableScans = append(tableScans, tableScan)
 		}
 	}
+	return tableScans
+}
+
+// GetTableScan exports the tableScan that contained in tablePlans and return error when the count of table scan != 1.
+func (p *PhysicalTableReader) GetTableScan() (*PhysicalTableScan, error) {
+	tableScans := p.GetTableScans()
+	if len(tableScans) != 1 {
+		return nil, errors.New("the count of table scan != 1")
+	}
+	return tableScans[0], nil
 }
 
 // GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
@@ -264,6 +272,7 @@ type PhysicalIndexLookUpReader struct {
 	TablePlans []PhysicalPlan
 	indexPlan  PhysicalPlan
 	tablePlan  PhysicalPlan
+	Paging     bool
 
 	ExtraHandleCol *expression.Column
 	// PushedLimit is used to avoid unnecessary table scan tasks of IndexLookUpReader.
@@ -452,7 +461,6 @@ type PhysicalTableScan struct {
 	Columns []*model.ColumnInfo
 	DBName  model.CIStr
 	Ranges  []*ranger.Range
-	PkCols  []*expression.Column
 
 	TableAsName *model.CIStr
 
@@ -469,8 +477,6 @@ type PhysicalTableScan struct {
 	HandleCols HandleCols
 
 	StoreType kv.StoreType
-
-	IsGlobalRead bool
 
 	// The table scan may be a partition, rather than a real table.
 	// TODO: clean up this field. After we support dynamic partitioning, table scan
@@ -503,7 +509,6 @@ func (ts *PhysicalTableScan) Clone() (PhysicalPlan, error) {
 	}
 	clonedScan.Columns = cloneColInfos(ts.Columns)
 	clonedScan.Ranges = cloneRanges(ts.Ranges)
-	clonedScan.PkCols = cloneCols(ts.PkCols)
 	clonedScan.TableAsName = ts.TableAsName
 	if ts.Hist != nil {
 		clonedScan.Hist = ts.Hist.Copy()
@@ -550,7 +555,7 @@ func (ts *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error)
 	} else {
 		var err error
 		pkTP := ts.Table.GetPkColInfo().FieldType
-		ts.Ranges, err = ranger.BuildTableRange(access, ts.SCtx().GetSessionVars().StmtCtx, &pkTP)
+		ts.Ranges, err = ranger.BuildTableRange(access, ts.SCtx(), &pkTP)
 		if err != nil {
 			return nil, err
 		}
@@ -581,13 +586,13 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 		for _, baseCol := range baseCols {
 			if !schema.Contains(baseCol) {
 				schema.Columns = append(schema.Columns, baseCol)
-				copyColumn = append(copyColumn, FindColumnInfoByID(colsInfo, baseCol.ID))
+				copyColumn = append(copyColumn, FindColumnInfoByID(colsInfo, baseCol.ID)) // nozero
 			}
 		}
 	}
 	if extraColumn != nil {
 		schema.Columns = append(schema.Columns, extraColumn)
-		copyColumn = append(copyColumn, extraColumnModel)
+		copyColumn = append(copyColumn, extraColumnModel) // nozero
 	}
 	return copyColumn
 }
@@ -765,9 +770,8 @@ type PhysicalHashJoin struct {
 	UseOuterToBuild bool
 
 	// on which store the join executes.
-	storeTp          kv.StoreType
-	globalChildIndex int
-	mppShuffleJoin   bool
+	storeTp        kv.StoreType
+	mppShuffleJoin bool
 }
 
 // Clone implements PhysicalPlan interface.
@@ -834,7 +838,7 @@ type PhysicalIndexJoin struct {
 	innerTask task
 
 	// Ranges stores the IndexRanges when the inner plan is index scan.
-	Ranges []*ranger.Range
+	Ranges ranger.MutableRanges
 	// KeyOff2IdxOff maps the offsets in join key to the offsets in the index.
 	KeyOff2IdxOff []int
 	// IdxColLens stores the length of each index column.
@@ -954,9 +958,8 @@ type PhysicalLock struct {
 
 	Lock *ast.SelectLockInfo
 
-	TblID2Handle     map[int64][]HandleCols
-	PartitionedTable []table.PartitionedTable
-	ExtraPIDInfo     extraPIDInfo
+	TblID2Handle       map[int64][]HandleCols
+	TblID2PhysTblIDCol map[int64]*expression.Column
 }
 
 // PhysicalLimit is the physical operator of Limit.
@@ -1198,11 +1201,11 @@ func (p *PhysicalIndexScan) IsPartition() (bool, int64) {
 }
 
 // IsPointGetByUniqueKey checks whether is a point get by unique key.
-func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sc *stmtctx.StatementContext) bool {
+func (p *PhysicalIndexScan) IsPointGetByUniqueKey(sctx sessionctx.Context) bool {
 	return len(p.Ranges) == 1 &&
 		p.Index.Unique &&
 		len(p.Ranges[0].LowVal) == len(p.Index.Columns) &&
-		p.Ranges[0].IsPoint(sc)
+		p.Ranges[0].IsPointNonNullable(sctx)
 }
 
 // PhysicalSelection represents a filter.
@@ -1326,8 +1329,10 @@ const (
 type PhysicalShuffleReceiverStub struct {
 	physicalSchemaProducer
 
-	// Worker points to `executor.shuffleReceiver`.
+	// Receiver points to `executor.shuffleReceiver`.
 	Receiver unsafe.Pointer
+	// DataSource is the PhysicalPlan of the Receiver.
+	DataSource PhysicalPlan
 }
 
 // CollectPlanStatsVersion uses to collect the statistics version of the plan.
@@ -1358,6 +1363,8 @@ type PhysicalShow struct {
 	physicalSchemaProducer
 
 	ShowContents
+
+	Extractor ShowPredicateExtractor
 }
 
 // PhysicalShowDDLJobs is for showing DDL job list.

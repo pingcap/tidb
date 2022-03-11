@@ -19,45 +19,39 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"testing"
 
 	"github.com/golang/mock/gomock"
-	. "github.com/pingcap/check"
 	. "github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	mockstorage "github.com/pingcap/tidb/br/pkg/mock/storage"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testMydumpReaderSuite{})
-
-type testMydumpReaderSuite struct{}
-
-func (s *testMydumpReaderSuite) SetUpSuite(c *C)    {}
-func (s *testMydumpReaderSuite) TearDownSuite(c *C) {}
-
-func (s *testMydumpReaderSuite) TestExportStatementNoTrailingNewLine(c *C) {
-	dir := c.MkDir()
+func TestExportStatementNoTrailingNewLine(t *testing.T) {
+	dir := t.TempDir()
 	file, err := os.Create(filepath.Join(dir, "tidb_lightning_test_reader"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer os.Remove(file.Name())
 
 	store, err := storage.NewLocalStorage(dir)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	_, err = file.Write([]byte("CREATE DATABASE whatever;"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	stat, err := file.Stat()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = file.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name(), FileSize: stat.Size()}}
 	data, err := ExportStatement(context.TODO(), store, f, "auto")
-	c.Assert(err, IsNil)
-	c.Assert(data, DeepEquals, []byte("CREATE DATABASE whatever;"))
+	require.NoError(t, err)
+	require.Equal(t, []byte("CREATE DATABASE whatever;"), data)
 }
 
-func (s *testMydumpReaderSuite) TestExportStatementWithComment(c *C) {
-	s.exportStatmentShouldBe(c, `
+func TestExportStatementWithComment(t *testing.T) {
+	exportStatmentShouldBe(t, `
 		/* whatever blabla
 			multiple lines comment
 			multiple lines comment
@@ -69,8 +63,8 @@ func (s *testMydumpReaderSuite) TestExportStatementWithComment(c *C) {
 `, "CREATE DATABASE whatever;")
 }
 
-func (s *testMydumpReaderSuite) TestExportStatementWithCommentNoTrailingNewLine(c *C) {
-	s.exportStatmentShouldBe(c, `
+func TestExportStatementWithCommentNoTrailingNewLine(t *testing.T) {
+	exportStatmentShouldBe(t, `
 		/* whatever blabla
 			multiple lines comment
 			multiple lines comment
@@ -81,73 +75,73 @@ func (s *testMydumpReaderSuite) TestExportStatementWithCommentNoTrailingNewLine(
 		CREATE DATABASE whatever;`, "CREATE DATABASE whatever;")
 }
 
-func (s *testMydumpReaderSuite) exportStatmentShouldBe(c *C, stmt string, expected string) {
-	dir := c.MkDir()
+func exportStatmentShouldBe(t *testing.T, stmt string, expected string) {
+	dir := t.TempDir()
 	file, err := os.Create(filepath.Join(dir, "tidb_lightning_test_reader"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer os.Remove(file.Name())
 
 	_, err = file.Write([]byte(stmt))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	stat, err := file.Stat()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = file.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	store, err := storage.NewLocalStorage(dir)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name(), FileSize: stat.Size()}}
 	data, err := ExportStatement(context.TODO(), store, f, "auto")
-	c.Assert(err, IsNil)
-	c.Assert(data, DeepEquals, []byte(expected))
+	require.NoError(t, err)
+	require.Equal(t, []byte(expected), data)
 }
 
-func (s *testMydumpReaderSuite) TestExportStatementGBK(c *C) {
-	dir := c.MkDir()
+func TestExportStatementGBK(t *testing.T) {
+	dir := t.TempDir()
 	file, err := os.Create(filepath.Join(dir, "tidb_lightning_test_reader"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer os.Remove(file.Name())
 
 	_, err = file.Write([]byte("CREATE TABLE a (b int(11) COMMENT '"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	// "D7 DC B0 B8 C0 FD" is the GBK encoding of "总案例".
 	_, err = file.Write([]byte{0xD7, 0xDC, 0xB0, 0xB8, 0xC0, 0xFD})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, err = file.Write([]byte("');\n"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	stat, err := file.Stat()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = file.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	store, err := storage.NewLocalStorage(dir)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name(), FileSize: stat.Size()}}
 	data, err := ExportStatement(context.TODO(), store, f, "auto")
-	c.Assert(err, IsNil)
-	c.Assert(data, DeepEquals, []byte("CREATE TABLE a (b int(11) COMMENT '总案例');"))
+	require.NoError(t, err)
+	require.Equal(t, []byte("CREATE TABLE a (b int(11) COMMENT '总案例');"), data)
 }
 
-func (s *testMydumpReaderSuite) TestExportStatementGibberishError(c *C) {
-	dir := c.MkDir()
+func TestExportStatementGibberishError(t *testing.T) {
+	dir := t.TempDir()
 	file, err := os.Create(filepath.Join(dir, "tidb_lightning_test_reader"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer os.Remove(file.Name())
 
 	_, err = file.Write([]byte("\x9e\x02\xdc\xfbZ/=n\xf3\xf2N8\xc1\xf2\xe9\xaa\xd0\x85\xc5}\x97\x07\xae6\x97\x99\x9c\x08\xcb\xe8;"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	stat, err := file.Stat()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = file.Close()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	store, err := storage.NewLocalStorage(dir)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name(), FileSize: stat.Size()}}
 	data, err := ExportStatement(context.TODO(), store, f, "auto")
-	c.Assert(data, HasLen, 0)
-	c.Assert(err, ErrorMatches, `failed to decode \w* as auto: invalid schema encoding`)
+	require.Len(t, data, 0)
+	require.Regexp(t, `failed to decode \w* as auto: invalid schema encoding`, err.Error())
 }
 
 type AlwaysErrorReadSeekCloser struct{}
@@ -164,8 +158,8 @@ func (AlwaysErrorReadSeekCloser) Close() error {
 	return nil
 }
 
-func (s *testMydumpReaderSuite) TestExportStatementHandleNonEOFError(c *C) {
-	controller := gomock.NewController(c)
+func TestExportStatementHandleNonEOFError(t *testing.T) {
+	controller := gomock.NewController(t)
 	defer controller.Finish()
 
 	ctx := context.TODO()
@@ -177,5 +171,5 @@ func (s *testMydumpReaderSuite) TestExportStatementHandleNonEOFError(c *C) {
 
 	f := FileInfo{FileMeta: SourceFileMeta{Path: "no-perm-file", FileSize: 1}}
 	_, err := ExportStatement(ctx, mockStorage, f, "auto")
-	c.Assert(err, ErrorMatches, "read error")
+	require.Contains(t, err.Error(), "read error")
 }

@@ -17,13 +17,11 @@ package types
 import (
 	"testing"
 
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/stretchr/testify/require"
 )
 
 func TestError(t *testing.T) {
-	t.Parallel()
-
 	kvErrs := []*terror.Error{
 		ErrInvalidDefault,
 		ErrDataTooLong,

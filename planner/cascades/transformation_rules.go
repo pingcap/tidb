@@ -17,11 +17,11 @@ package cascades
 import (
 	"math"
 
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/planner/util"
@@ -106,6 +106,9 @@ var TiDBLayerOptimizationBatch = TransformationRuleBatch{
 	},
 	memo.OperandJoin: {
 		NewRuleTransformJoinCondToSel(),
+	},
+	memo.OperandWindow: {
+		NewRuleMergeAdjacentWindow(),
 	},
 }
 
@@ -439,7 +442,7 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 	gbyItems := make([]expression.Expression, len(agg.GroupByItems))
 	copy(gbyItems, agg.GroupByItems)
 
-	partialPref, finalPref, funcMap := plannercore.BuildFinalModeAggregation(agg.SCtx(),
+	partialPref, finalPref, firstRowFuncMap := plannercore.BuildFinalModeAggregation(agg.SCtx(),
 		&plannercore.AggInfo{
 			AggFuncs:     aggFuncs,
 			GroupByItems: gbyItems,
@@ -450,7 +453,7 @@ func (r *PushAggDownGather) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 	}
 	// Remove unnecessary FirstRow.
 	partialPref.AggFuncs =
-		plannercore.RemoveUnnecessaryFirstRow(agg.SCtx(), finalPref.AggFuncs, finalPref.GroupByItems, partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, funcMap)
+		plannercore.RemoveUnnecessaryFirstRow(agg.SCtx(), finalPref.GroupByItems, partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, firstRowFuncMap)
 
 	partialAgg := plannercore.LogicalAggregation{
 		AggFuncs:     partialPref.AggFuncs,
@@ -917,7 +920,7 @@ func (r *pushDownJoin) predicatePushDown(
 			leftCond = append(join.LeftConditions, derivedLeftJoinCond...)
 			join.LeftConditions = nil
 			remainCond = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
-			remainCond = append(remainCond, leftPushCond...)
+			remainCond = append(remainCond, leftPushCond...) // nozero
 		} else {
 			remainCond = expression.ExtractFiltersFromDNFs(join.SCtx(), remainCond)
 			// Only derive left where condition, because right where condition cannot be pushed down
@@ -928,7 +931,7 @@ func (r *pushDownJoin) predicatePushDown(
 			rightCond = append(join.RightConditions, derivedRightJoinCond...)
 			join.RightConditions = nil
 			remainCond = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
-			remainCond = append(remainCond, rightPushCond...)
+			remainCond = append(remainCond, rightPushCond...) // nozero
 		}
 	default:
 		// TODO: Enhance this rule to deal with Semi/SmiAnti Joins.
@@ -2505,4 +2508,81 @@ func (r *PullSelectionUpApply) OnTransform(old *memo.ExprIter) (newExprs []*memo
 	newApplyGroupExpr := memo.NewGroupExpr(newApply)
 	newApplyGroupExpr.SetChildren(outerChildGroup, old.Children[1].GetExpr().Children[0])
 	return []*memo.GroupExpr{newApplyGroupExpr}, false, false, nil
+}
+
+// MergeAdjacentWindow merge adjacent Window.
+type MergeAdjacentWindow struct {
+	baseRule
+}
+
+// NewRuleMergeAdjacentWindow creates a new Transformation MergeAdjacentWindow.
+// The pattern of this rule is `Window -> Window`.
+func NewRuleMergeAdjacentWindow() Transformation {
+	rule := &MergeAdjacentWindow{}
+	rule.pattern = memo.BuildPattern(
+		memo.OperandWindow,
+		memo.EngineAll,
+		memo.NewPattern(memo.OperandWindow, memo.EngineAll),
+	)
+	return rule
+}
+
+// Match implements Transformation interface.
+func (r *MergeAdjacentWindow) Match(expr *memo.ExprIter) bool {
+	curWinPlan := expr.GetExpr().ExprNode.(*plannercore.LogicalWindow)
+	nextGroupExpr := expr.Children[0].GetExpr()
+	nextWinPlan := nextGroupExpr.ExprNode.(*plannercore.LogicalWindow)
+	nextGroupChildren := nextGroupExpr.Children
+	ctx := expr.GetExpr().ExprNode.SCtx()
+
+	// Whether Partition, OrderBy and Frame parts are the same.
+	if !(curWinPlan.EqualPartitionBy(ctx, nextWinPlan) &&
+		curWinPlan.EqualOrderBy(ctx, nextWinPlan) &&
+		curWinPlan.EqualFrame(ctx, nextWinPlan)) {
+		return false
+	}
+
+	// Whether the first window uses the unsettled columns in the next window.
+
+	// `select a, b, sum(bb) over (partition by a) as 'sum_bb' from (select a, b, max(b) over (partition by a) as 'bb' from t) as tt`
+	// The adjacent windows in the above sql statement cannot be merged.
+	// The reason is that the first one uses an unsettled column `bb` from the second one.
+	nextWindowChildrenExistedCols := make(map[int64]struct{})
+	for _, ngc := range nextGroupChildren {
+		for _, c := range ngc.Prop.Schema.Columns {
+			nextWindowChildrenExistedCols[c.UniqueID] = struct{}{}
+		}
+	}
+	for _, funDesc := range curWinPlan.WindowFuncDescs {
+		for _, arg := range funDesc.Args {
+			cols := expression.ExtractColumns(arg)
+			for _, c := range cols {
+				if _, ok := nextWindowChildrenExistedCols[c.UniqueID]; !ok {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
+// OnTransform implements Transformation interface.
+// This rule will transform `window -> window -> x` to `window -> x`
+func (r *MergeAdjacentWindow) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	curWinPlan := old.GetExpr().ExprNode.(*plannercore.LogicalWindow)
+	nextWinPlan := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalWindow)
+	ctx := old.GetExpr().ExprNode.SCtx()
+
+	newWindowFuncs := make([]*aggregation.WindowFuncDesc, 0, len(curWinPlan.WindowFuncDescs)+len(nextWinPlan.WindowFuncDescs))
+	newWindowFuncs = append(newWindowFuncs, curWinPlan.WindowFuncDescs...)
+	newWindowFuncs = append(newWindowFuncs, nextWinPlan.WindowFuncDescs...)
+	newWindowPlan := plannercore.LogicalWindow{
+		WindowFuncDescs: newWindowFuncs,
+		PartitionBy:     curWinPlan.PartitionBy,
+		OrderBy:         curWinPlan.OrderBy,
+		Frame:           curWinPlan.Frame,
+	}.Init(ctx, curWinPlan.SelectBlockOffset())
+	newWindowGroupExpr := memo.NewGroupExpr(newWindowPlan)
+	newWindowGroupExpr.SetChildren(old.Children[0].GetExpr().Children...)
+	return []*memo.GroupExpr{newWindowGroupExpr}, true, false, nil
 }

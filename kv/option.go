@@ -62,12 +62,25 @@ const (
 	IsStalenessReadOnly
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels
-	// ResourceGroupTag indicates the resource group of the kv request.
+	// ResourceGroupTag indicates the resource group tag of the kv request.
 	ResourceGroupTag
+	// ResourceGroupTagger can be used to set the ResourceGroupTag dynamically according to the request content. It will be used only when ResourceGroupTag is nil.
+	ResourceGroupTagger
 	// KVFilter indicates the filter to ignore key-values in the transaction's memory buffer.
 	KVFilter
 	// SnapInterceptor is used for setting the interceptor for snapshot
 	SnapInterceptor
+	// CommitTSUpperBoundChec is used by cached table
+	// The commitTS must be greater than all the write lock lease of the visited cached table.
+	CommitTSUpperBoundCheck
+	// RPCInterceptor is interceptor.RPCInterceptor on Transaction or Snapshot, used to decorate
+	// additional logic before and after the underlying client-go RPC request.
+	RPCInterceptor
+	// TableToColumnMaps is a map from tableID to a series of maps. The maps are needed when checking data consistency.
+	// Save them here to reduce redundant computations.
+	TableToColumnMaps
+	// AssertionLevel controls how strict the assertions on data during transactions should be.
+	AssertionLevel
 )
 
 // ReplicaReadType is the type of replica to read data from

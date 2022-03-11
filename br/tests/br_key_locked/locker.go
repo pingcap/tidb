@@ -28,16 +28,17 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/tikv/client-go/v2/oracle"
@@ -184,6 +185,7 @@ type Locker struct {
 }
 
 // generateLocks sends Prewrite requests to TiKV to generate locks, without committing and rolling back.
+//nolint:gosec
 func (c *Locker) generateLocks(pctx context.Context) error {
 	log.Info("genLock started")
 
@@ -339,11 +341,12 @@ func (c *Locker) lockBatch(ctx context.Context, keys [][]byte, primary []byte) (
 	}
 }
 
+//nolint:gosec
 func randStr() string {
 	length := rand.Intn(128)
 	res := ""
 	for i := 0; i < length; i++ {
-		res += fmt.Sprint(rand.Intn(10))
+		res += strconv.Itoa(rand.Intn(10))
 	}
 	return res
 }

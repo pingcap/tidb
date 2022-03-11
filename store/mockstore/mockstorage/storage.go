@@ -74,19 +74,14 @@ func (s *mockStorage) Describe() string {
 }
 
 // Begin a global transaction.
-func (s *mockStorage) Begin() (kv.Transaction, error) {
-	txn, err := s.KVStore.Begin()
+func (s *mockStorage) Begin(opts ...tikv.TxnOption) (kv.Transaction, error) {
+	txn, err := s.KVStore.Begin(opts...)
 	return newTiKVTxn(txn, err)
 }
 
 // ShowStatus returns the specified status of the storage
 func (s *mockStorage) ShowStatus(ctx context.Context, key string) (interface{}, error) {
 	return nil, kv.ErrNotImplemented
-}
-
-// BeginWithOption begins a transaction with given option
-func (s *mockStorage) BeginWithOption(option tikv.StartTSOption) (kv.Transaction, error) {
-	return newTiKVTxn(s.KVStore.BeginWithOption(option))
 }
 
 // GetSnapshot gets a snapshot that is able to read any data which data is <= ver.

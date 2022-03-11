@@ -5,32 +5,19 @@ package mock_test
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/br/pkg/mock"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 )
 
-func Test(t *testing.T) {
-	TestingT(t)
-}
-
-var _ = Suite(&testClusterSuite{})
-
-type testClusterSuite struct {
-	mock *mock.Cluster
-}
-
-func (s *testClusterSuite) SetUpSuite(c *C) {
-	var err error
-	s.mock, err = mock.NewCluster()
-	c.Assert(err, IsNil)
-}
-
-func (s *testClusterSuite) TearDownSuite(c *C) {
-	testleak.AfterTest(c)()
-}
-
-func (s *testClusterSuite) TestSmoke(c *C) {
-	c.Assert(s.mock.Start(), IsNil)
-	s.mock.Stop()
+func TestSmoke(t *testing.T) {
+	defer goleak.VerifyNone(
+		t,
+		goleak.IgnoreTopFunction("github.com/klauspost/compress/zstd.(*blockDec).startDecoder"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"))
+	m, err := mock.NewCluster()
+	require.NoError(t, err)
+	require.NoError(t, m.Start())
+	m.Stop()
 }

@@ -18,14 +18,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 )
 
 func TestSchemaCheckerSimple(t *testing.T) {
-	t.Parallel()
-
 	lease := 5 * time.Millisecond
 	validator := NewSchemaValidator(lease, nil)
 	checker := &SchemaChecker{SchemaValidator: validator}

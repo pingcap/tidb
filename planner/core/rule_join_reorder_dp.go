@@ -17,8 +17,8 @@ package core
 import (
 	"math/bits"
 
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
 )
 
 type joinReorderDPSolver struct {
@@ -37,16 +37,18 @@ type joinGroupNonEqEdge struct {
 	expr       expression.Expression
 }
 
-func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, eqConds []expression.Expression) (LogicalPlan, error) {
+func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, eqConds []expression.Expression, tracer *joinReorderTrace) (LogicalPlan, error) {
 	for _, node := range joinGroup {
 		_, err := node.recursiveDeriveStats(nil)
 		if err != nil {
 			return nil, err
 		}
+		cost := s.baseNodeCumCost(node)
 		s.curJoinGroup = append(s.curJoinGroup, &jrNode{
 			p:       node,
-			cumCost: s.baseNodeCumCost(node),
+			cumCost: cost,
 		})
+		tracer.appendLogicalJoinCost(node, cost)
 	}
 	adjacents := make([][]int, len(s.curJoinGroup))
 	totalEqEdges := make([]joinGroupEqEdge, 0, len(eqConds))
@@ -120,7 +122,7 @@ func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, eqConds []expressio
 			totalNonEqEdges = append(totalNonEqEdges[:i], totalNonEqEdges[i+1:]...)
 		}
 		// Do DP on each sub graph.
-		join, err := s.dpGraph(visitID2NodeID, nodeID2VisitID, joinGroup, totalEqEdges, subNonEqEdges)
+		join, err := s.dpGraph(visitID2NodeID, nodeID2VisitID, joinGroup, totalEqEdges, subNonEqEdges, tracer)
 		if err != nil {
 			return nil, err
 		}
@@ -135,14 +137,14 @@ func (s *joinReorderDPSolver) solve(joinGroup []LogicalPlan, eqConds []expressio
 }
 
 // bfsGraph bfs a sub graph starting at startPos. And relabel its label for future use.
-func (s *joinReorderDPSolver) bfsGraph(startNode int, visited []bool, adjacents [][]int, nodeID2VistID []int) []int {
+func (s *joinReorderDPSolver) bfsGraph(startNode int, visited []bool, adjacents [][]int, nodeID2VisitID []int) []int {
 	queue := []int{startNode}
 	visited[startNode] = true
 	var visitID2NodeID []int
 	for len(queue) > 0 {
 		curNodeID := queue[0]
 		queue = queue[1:]
-		nodeID2VistID[curNodeID] = len(visitID2NodeID)
+		nodeID2VisitID[curNodeID] = len(visitID2NodeID)
 		visitID2NodeID = append(visitID2NodeID, curNodeID)
 		for _, adjNodeID := range adjacents[curNodeID] {
 			if visited[adjNodeID] {
@@ -159,7 +161,7 @@ func (s *joinReorderDPSolver) bfsGraph(startNode int, visited []bool, adjacents 
 // It implements the traditional join reorder algorithm: DP by subset using the following formula:
 //   bestPlan[S:set of node] = the best one among Join(bestPlan[S1:subset of S], bestPlan[S2: S/S1])
 func (s *joinReorderDPSolver) dpGraph(visitID2NodeID, nodeID2VisitID []int, joinGroup []LogicalPlan,
-	totalEqEdges []joinGroupEqEdge, totalNonEqEdges []joinGroupNonEqEdge) (LogicalPlan, error) {
+	totalEqEdges []joinGroupEqEdge, totalNonEqEdges []joinGroupNonEqEdge, tracer *joinReorderTrace) (LogicalPlan, error) {
 	nodeCnt := uint(len(visitID2NodeID))
 	bestPlan := make([]*jrNode, 1<<nodeCnt)
 	// bestPlan[s] is nil can be treated as bestCost[s] = +inf.
@@ -192,6 +194,7 @@ func (s *joinReorderDPSolver) dpGraph(visitID2NodeID, nodeID2VisitID []int, join
 				return nil, err
 			}
 			curCost := s.calcJoinCumCost(join, bestPlan[sub], bestPlan[remain])
+			tracer.appendLogicalJoinCost(join, curCost)
 			if bestPlan[nodeBitmap] == nil {
 				bestPlan[nodeBitmap] = &jrNode{
 					p:       join,
@@ -208,7 +211,7 @@ func (s *joinReorderDPSolver) dpGraph(visitID2NodeID, nodeID2VisitID []int, join
 
 func (s *joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos2NewPos []int,
 	totalEqEdges []joinGroupEqEdge, totalNonEqEdges []joinGroupNonEqEdge) ([]joinGroupEqEdge, []expression.Expression) {
-	var (
+	var ( // nolint: prealloc
 		usedEqEdges []joinGroupEqEdge
 		otherConds  []expression.Expression
 	)

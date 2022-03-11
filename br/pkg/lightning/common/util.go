@@ -17,28 +17,25 @@ package common
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
-	stderrors "errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
-	"reflect"
-	"regexp"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	tmysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser/model"
 	"go.uber.org/zap"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 const (
@@ -65,19 +62,61 @@ func (param *MySQLConnectParam) ToDSN() string {
 		param.SQLMode, param.MaxAllowedPacket, param.TLS)
 
 	for k, v := range param.Vars {
-		dsn += fmt.Sprintf("&%s=%s", k, url.QueryEscape(v))
+		dsn += fmt.Sprintf("&%s='%s'", k, url.QueryEscape(v))
 	}
 
 	return dsn
 }
 
-func (param *MySQLConnectParam) Connect() (*sql.DB, error) {
-	db, err := sql.Open("mysql", param.ToDSN())
+func tryConnectMySQL(dsn string) (*sql.DB, error) {
+	driverName := "mysql"
+	failpoint.Inject("MockMySQLDriver", func(val failpoint.Value) {
+		driverName = val.(string)
+	})
+	db, err := sql.Open(driverName, dsn)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if err = db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, errors.Trace(err)
+	}
+	return db, nil
+}
 
-	return db, errors.Trace(db.Ping())
+// ConnectMySQL connects MySQL with the dsn. If access is denied and the password is a valid base64 encoding,
+// we will try to connect MySQL with the base64 decoding of the password.
+func ConnectMySQL(dsn string) (*sql.DB, error) {
+	cfg, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// Try plain password first.
+	db, firstErr := tryConnectMySQL(dsn)
+	if firstErr == nil {
+		return db, nil
+	}
+	// If access is denied and password is encoded by base64, try the decoded string as well.
+	if mysqlErr, ok := errors.Cause(firstErr).(*mysql.MySQLError); ok && mysqlErr.Number == tmysql.ErrAccessDenied {
+		// If password is encoded by base64, try the decoded string as well.
+		if password, decodeErr := base64.StdEncoding.DecodeString(cfg.Passwd); decodeErr == nil && string(password) != cfg.Passwd {
+			cfg.Passwd = string(password)
+			db, err = tryConnectMySQL(cfg.FormatDSN())
+			if err == nil {
+				return db, nil
+			}
+		}
+	}
+	// If we can't connect successfully, return the first error.
+	return nil, errors.Trace(firstErr)
+}
+
+func (param *MySQLConnectParam) Connect() (*sql.DB, error) {
+	db, err := ConnectMySQL(param.ToDSN())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return db, nil
 }
 
 // IsDirExists checks if dir exists.
@@ -98,21 +137,10 @@ func IsEmptyDir(name string) bool {
 	return len(entries) == 0
 }
 
-type QueryExecutor interface {
-	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
-}
-
-type DBExecutor interface {
-	QueryExecutor
-	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
-	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
-}
-
 // SQLWithRetry constructs a retryable transaction.
 type SQLWithRetry struct {
 	// either *sql.DB or *sql.Conn
-	DB           DBExecutor
+	DB           utils.DBExecutor
 	Logger       log.Logger
 	HideQueryLog bool
 }
@@ -140,7 +168,7 @@ outside:
 		// do not retry NotFound error
 		case errors.IsNotFound(err):
 			break outside
-		case IsRetryableError(err):
+		case utils.IsRetryableError(err):
 			logger.Warn(purpose+" failed but going to try again", log.ShortError(err))
 			continue
 		default:
@@ -201,61 +229,6 @@ func (t SQLWithRetry) Exec(ctx context.Context, purpose string, query string, ar
 		_, err := t.DB.ExecContext(ctx, query, args...)
 		return errors.Trace(err)
 	})
-}
-
-// sqlmock uses fmt.Errorf to produce expectation failures, which will cause
-// unnecessary retry if not specially handled >:(
-var stdFatalErrorsRegexp = regexp.MustCompile(
-	`^call to (?s:.*) was not expected|arguments do not match:|could not match actual sql|mock non-retryable error`,
-)
-var stdErrorType = reflect.TypeOf(stderrors.New(""))
-
-// IsRetryableError returns whether the error is transient (e.g. network
-// connection dropped) or irrecoverable (e.g. user pressing Ctrl+C). This
-// function returns `false` (irrecoverable) if `err == nil`.
-//
-// If the error is a multierr, returns true only if all suberrors are retryable.
-func IsRetryableError(err error) bool {
-	for _, singleError := range errors.Errors(err) {
-		if !isSingleRetryableError(singleError) {
-			return false
-		}
-	}
-	return true
-}
-
-func isSingleRetryableError(err error) bool {
-	err = errors.Cause(err)
-
-	switch err {
-	case nil, context.Canceled, context.DeadlineExceeded, io.EOF, sql.ErrNoRows:
-		return false
-	}
-
-	switch nerr := err.(type) {
-	case net.Error:
-		return nerr.Timeout()
-	case *mysql.MySQLError:
-		switch nerr.Number {
-		// ErrLockDeadlock can retry to commit while meet deadlock
-		case tmysql.ErrUnknown, tmysql.ErrLockDeadlock, tmysql.ErrWriteConflictInTiDB, tmysql.ErrPDServerTimeout, tmysql.ErrTiKVServerTimeout, tmysql.ErrTiKVServerBusy, tmysql.ErrResolveLockTimeout, tmysql.ErrRegionUnavailable:
-			return true
-		default:
-			return false
-		}
-	default:
-		switch status.Code(err) {
-		case codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss:
-			return true
-		case codes.Unknown:
-			if reflect.TypeOf(err) == stdErrorType {
-				return !stdFatalErrorsRegexp.MatchString(err.Error())
-			}
-			return true
-		default:
-			return false
-		}
-	}
 }
 
 // IsContextCanceledError returns whether the error is caused by context
@@ -388,8 +361,6 @@ type KvPair struct {
 	Val []byte
 	// RowID is the row id of the KV pair.
 	RowID int64
-	// Offset is the row's offset in file.
-	Offset int64
 }
 
 // TableHasAutoRowID return whether table has auto generated row id

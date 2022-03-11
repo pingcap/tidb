@@ -37,6 +37,15 @@ table-concurrency = 6
 # this config is only used in "local" and "importer" backend.
 # meta-schema-name = "lightning_metadata"
 
+# maximum number of non-fatal errors to tolerate before stopping Lightning.
+# Non-fatal errors are those that are localized to a few rows, and ignoring those rows allow the import process to continue.
+# Setting this to N means Lightning will stop as soon as possible when the (N+1)-th error is encountered.
+# The skipped rows will be inserted to tables inside the "task info" schema on the target TiDB, which can be configured below.
+max-error = 0
+# task-info-schema-name is the name of the schema/database storing human-readable Lightning execution result.
+# set this to empty string to disable error recording.
+#task-info-schema-name = 'lightning_task_info'
+
 # logging
 level = "info"
 # file path for log. If set to empty, log will be written to /tmp/lightning.log.{timestamp}
@@ -73,9 +82,12 @@ driver = "file"
 # For "mysql" driver, the DSN is a URL in the form "USER:PASS@tcp(HOST:PORT)/".
 # If not specified, the TiDB server from the [tidb] section will be used to store the checkpoints.
 #dsn = "/tmp/tidb_lightning_checkpoint.pb"
-# Whether to keep the checkpoints after all data are imported. If false, the checkpoints will be deleted. The schema
-# needs to be dropped manually, however.
-#keep-after-success = false
+# Whether to keep the checkpoints after all data are imported.
+# valid options:
+# - remove(default). the checkpoints will be deleted
+# - rename. the checkpoints data will be kept, but will change the checkpoint data schema name with `schema.{taskID}.bak`
+# - origin. keep the checkpoints data unchanged.
+#keep-after-success = "remove"
 
 [tikv-importer]
 # Delivery backend, can be "importer", "local" or "tidb".
@@ -85,8 +97,17 @@ addr = "127.0.0.1:8287"
 # What to do on duplicated record (unique key conflict) when the backend is 'tidb'. Possible values are:
 #  - replace: replace the old record by the new record (i.e. insert rows using "REPLACE INTO")
 #  - ignore: keep the old record and ignore the new record (i.e. insert rows using "INSERT IGNORE INTO")
-#  - error: stop Lightning and report an error (i.e. insert rows using "INSERT INTO")
+#  - error: produce an error (i.e. insert rows using "INSERT INTO"), which will count towards the max-error limit.
 #on-duplicate = "replace"
+# Whether to detect and resolve duplicate records (unique key conflict) when the backend is 'local'.
+# Current supports three resolution algorithms:
+#  - none: doesn't detect duplicate records, which has the best performance of the three algorithms, but probably leads to
+#    inconsistent data in the target TiDB.
+#  - record: only records duplicate records to `lightning_task_info.conflict_error_v1` table on the target TiDB. Note that this
+#    required the version of target TiKV version is no less than v5.2.0, otherwise it will fallback to 'none'.
+#  - remove: records all duplicate records like the 'record' algorithm and remove all duplicate records to ensure a consistent
+#    state in the target TiDB.
+#duplicate-resolution = 'none'
 # Maximum KV size of SST files produced in the 'local' backend. This should be the same as
 # the TiKV region size to avoid further region splitting. The default value is 96 MiB.
 #region-split-size = '96MiB'
@@ -136,7 +157,7 @@ batch-import-ratio = 0.75
 # mydumper local source data directory
 data-source-dir = "/tmp/export-20180328-200751"
 # if no-schema is set true, lightning will get schema information from tidb-server directly without creating them.
-no-schema=false
+no-schema = false
 # the character set of the schema files; only supports one of:
 #  - utf8mb4: the schema files must be encoded as UTF-8, otherwise will emit errors
 #  - gb18030: the schema files must be encoded as GB-18030, otherwise will emit errors
@@ -144,6 +165,22 @@ no-schema=false
 #  - binary:  do not try to decode the schema files
 # note that the *data* files are always parsed as binary regardless of schema encoding.
 #character-set = "auto"
+
+# Specifies the character set of the source data file. Lightning converts the source file from the specified character set to UTF-8 encoding when importing.
+# Currently, this configuration only specifies the character set of the CSV files with the following options supported:
+# - utf8mb4: Indicates that the source data file uses UTF-8 encoding.
+# - GB18030: Indicates that the source data file uses the GB-18030 encoding.
+# - GBK: The source data file uses GBK encoding (GBK encoding is an extension of the GB-2312 character set, also known as Code Page 936).
+# - binary: Indicates that Lightning does not convert the encoding (by default).
+# If left blank, the default value "binary" is used, that is to say, Lightning does not convert the encoding.
+# Note that Lightning does not predict about the character set of the source data file and only converts the source file and import the data based on this configuration.
+# If the value of this configuration is not the same as the actual encoding of the source data file, a failed import, data loss or data disorder might appear.
+data-character-set = "binary"
+# Specifies the replacement character in case of incompatible characters during the character set conversion of the source data file.
+# This configuration must not be duplicated with field separators, quote definers, and line breaks.
+# The default value is "\uFFFD", which is the "error" Rune or Unicode replacement character in UTF-8 encoding.
+# Changing the default value might result in potential degradation of parsing performance for the source data file.
+data-invalid-char-replace = "\uFFFD"
 
 # make table and database names case-sensitive, i.e. treats `DB`.`TBL` and `db`.`tbl` as two
 # different objects. Currently only affects [[routes]].

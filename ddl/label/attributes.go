@@ -125,7 +125,8 @@ func (labels *Labels) Restore() string {
 
 // Add will add a new attribute, with validation of all attributes.
 func (labels *Labels) Add(label Label) error {
-	for _, l := range *labels {
+	for i := range *labels {
+		l := (*labels)[i]
 		res := label.CompatibleWith(&l)
 		if res == AttributesCompatible {
 			continue
@@ -135,7 +136,7 @@ func (labels *Labels) Add(label Label) error {
 		}
 		s1 := label.Restore()
 		s2 := l.Restore()
-		return fmt.Errorf("%w: '%s' and '%s'", ErrConflictingAttributes, s1, s2)
+		return fmt.Errorf("'%s' and '%s' are conflicted", s1, s2)
 	}
 
 	*labels = append(*labels, label)

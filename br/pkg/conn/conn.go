@@ -90,10 +90,10 @@ func (p *Pool) Get(ctx context.Context) (*grpc.ClientConn, error) {
 }
 
 // NewConnPool creates a new Pool by the specified conn factory function and capacity.
-func NewConnPool(cap int, newConn func(ctx context.Context) (*grpc.ClientConn, error)) *Pool {
+func NewConnPool(capacity int, newConn func(ctx context.Context) (*grpc.ClientConn, error)) *Pool {
 	return &Pool{
-		cap:     cap,
-		conns:   make([]*grpc.ClientConn, 0, cap),
+		cap:     capacity,
+		conns:   make([]*grpc.ClientConn, 0, capacity),
 		newConn: newConn,
 
 		mu: sync.Mutex{},
@@ -181,6 +181,13 @@ func GetAllTiKVStoresWithRetry(ctx context.Context,
 				if val.(bool) {
 					logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-error injected.")
 					err = status.Error(codes.Unknown, "Retryable error")
+				}
+			})
+
+			failpoint.Inject("hint-GetAllTiKVStores-cancel", func(val failpoint.Value) {
+				if val.(bool) {
+					logutil.CL(ctx).Debug("failpoint hint-GetAllTiKVStores-cancel injected.")
+					err = status.Error(codes.Canceled, "Cancel Retry")
 				}
 			})
 

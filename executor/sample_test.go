@@ -15,59 +15,21 @@
 package executor_test
 
 import (
-	"flag"
 	"fmt"
 	"sync/atomic"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/tikv/client-go/v2/testutils"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = SerialSuites(&testTableSampleSuite{})
-
-type testTableSampleSuite struct {
-	cluster testutils.Cluster
-	store   kv.Storage
-	domain  *domain.Domain
-}
-
-func (s *testTableSampleSuite) SetUpSuite(c *C) {
-	flag.Lookup("mockTikv")
-	useMockTikv := *mockTikv
-	if useMockTikv {
-		store, err := mockstore.NewMockStore(
-			mockstore.WithClusterInspector(func(c testutils.Cluster) {
-				mockstore.BootstrapWithSingleStore(c)
-				s.cluster = c
-			}),
-		)
-		c.Assert(err, IsNil)
-		s.store = store
-		session.SetSchemaLease(0)
-		session.DisableStats4Test()
-	}
-	d, err := session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-	d.SetStatsUpdating(true)
-	s.domain = d
-}
-
-func (s *testTableSampleSuite) TearDownSuite(c *C) {
-	s.domain.Close()
-	c.Assert(s.store.Close(), IsNil)
-}
-
-func (s *testTableSampleSuite) initSampleTest(c *C) *testkit.TestKit {
+func createSampleTestkit(t *testing.T, store kv.Storage) *testkit.TestKit {
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test_table_sample;")
 	tk.MustExec("create database test_table_sample;")
 	tk.MustExec("use test_table_sample;")
@@ -75,10 +37,12 @@ func (s *testTableSampleSuite) initSampleTest(c *C) *testkit.TestKit {
 	return tk
 }
 
-func (s *testTableSampleSuite) TestTableSampleBasic(c *C) {
-	tk := s.initSampleTest(c)
+func TestTableSampleBasic(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int);")
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustQuery("select * from t tablesample regions();").Check(testkit.Rows())
 
 	tk.MustExec("insert into t values (0), (1000), (2000);")
@@ -88,7 +52,7 @@ func (s *testTableSampleSuite) TestTableSampleBasic(c *C) {
 	tk.MustExec("alter table t add column c int as (a + 1);")
 	tk.MustQuery("select c from t tablesample regions();").Check(testkit.Rows("1"))
 	tk.MustQuery("select c, _tidb_rowid from t tablesample regions();").Check(testkit.Rows("1 1"))
-	c.Assert(tk.HasPlan("select * from t tablesample regions();", "TableSample"), IsTrue)
+	require.True(t, tk.HasPlan("select * from t tablesample regions();", "TableSample"))
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a BIGINT PRIMARY KEY AUTO_RANDOM(3), b int auto_increment, key(b)) pre_split_regions=8;")
@@ -105,14 +69,16 @@ func (s *testTableSampleSuite) TestTableSampleBasic(c *C) {
 	tk.MustQuery("select a from t tablesample regions() limit 2;").Check(testkit.Rows("a", "b"))
 }
 
-func (s *testTableSampleSuite) TestTableSampleMultiRegions(c *C) {
-	tk := s.initSampleTest(c)
+func TestTableSampleMultiRegions(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int) shard_row_id_bits = 2 pre_split_regions = 2;")
 	for i := 0; i < 100; i++ {
 		tk.MustExec("insert into t values (?);", i)
 	}
 	rows := tk.MustQuery("select * from t tablesample regions();").Rows()
-	c.Assert(len(rows), Equals, 4)
+	require.Len(t, rows, 4)
 	tk.MustQuery("select a from t tablesample regions() order by a limit 1;").Check(testkit.Rows("0"))
 	tk.MustQuery("select a from t tablesample regions() where a = 0;").Check(testkit.Rows("0"))
 
@@ -121,13 +87,15 @@ func (s *testTableSampleSuite) TestTableSampleMultiRegions(c *C) {
 		tk.MustExec("insert into t2 values (?);", i)
 	}
 	rows = tk.MustQuery("select * from t tablesample regions(), t2 tablesample regions();").Rows()
-	c.Assert(len(rows), Equals, 16)
+	require.Len(t, rows, 16)
 	tk.MustQuery("select count(*) from t tablesample regions();").Check(testkit.Rows("4"))
 	tk.MustExec("drop table t2;")
 }
 
-func (s *testTableSampleSuite) TestTableSampleNoSplitTable(c *C) {
-	tk := s.initSampleTest(c)
+func TestTableSampleNoSplitTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := createSampleTestkit(t, store)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("drop table if exists t2;")
@@ -136,25 +104,29 @@ func (s *testTableSampleSuite) TestTableSampleNoSplitTable(c *C) {
 	tk.MustExec("insert into t2 values(1);")
 	rows := tk.MustQuery("select * from t1 tablesample regions();").Rows()
 	rows2 := tk.MustQuery("select * from t2 tablesample regions();").Rows()
-	c.Assert(len(rows), Equals, 0)
-	c.Assert(len(rows2), Equals, 1)
+	require.Len(t, rows, 0)
+	require.Len(t, rows2, 1)
 }
 
-func (s *testTableSampleSuite) TestTableSamplePlan(c *C) {
-	tk := s.initSampleTest(c)
+func TestTableSamplePlan(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := createSampleTestkit(t, store)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a bigint, b int default 10);")
 	tk.MustExec("split table t between (0) and (100000) regions 4;")
 	tk.MustExec("insert into t(a) values (1), (2), (3);")
 	rows := tk.MustQuery("explain analyze select a from t tablesample regions();").Rows()
-	c.Assert(len(rows), Equals, 2)
+	require.Len(t, rows, 2)
 	tableSample := fmt.Sprintf("%v", rows[1])
-	c.Assert(tableSample, Matches, ".*TableSample.*")
+	require.Regexp(t, ".*TableSample.*", tableSample)
 }
 
-func (s *testTableSampleSuite) TestTableSampleSchema(c *C) {
-	tk := s.initSampleTest(c)
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+func TestTableSampleSchema(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := createSampleTestkit(t, store)
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	// Clustered index
 	tk.MustExec("create table t (a varchar(255) primary key, b bigint);")
 	tk.MustExec("insert into t values ('b', 100), ('y', 100);")
@@ -182,8 +154,10 @@ func (s *testTableSampleSuite) TestTableSampleSchema(c *C) {
 	tk.MustQuery("select a from t tablesample regions();").Check(testkit.Rows("1"))
 }
 
-func (s *testTableSampleSuite) TestTableSampleInvalid(c *C) {
-	tk := s.initSampleTest(c)
+func TestTableSampleInvalid(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int, b varchar(255));")
 	tk.MustExec("insert into t values (1, 'abc');")
 	tk.MustExec("create view v as select * from t;")
@@ -196,8 +170,10 @@ func (s *testTableSampleSuite) TestTableSampleInvalid(c *C) {
 	tk.MustGetErrCode("select a from t tablesample ();", errno.ErrInvalidTableSample)
 }
 
-func (s *testTableSampleSuite) TestTableSampleWithTiDBRowID(c *C) {
-	tk := s.initSampleTest(c)
+func TestTableSampleWithTiDBRowID(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int, b varchar(255));")
 	tk.MustExec("insert into t values (1, 'abc');")
 	tk.MustQuery("select _tidb_rowid from t tablesample regions();").Check(testkit.Rows("1"))
@@ -206,19 +182,21 @@ func (s *testTableSampleSuite) TestTableSampleWithTiDBRowID(c *C) {
 	tk.MustQuery("select b, _tidb_rowid, a from t tablesample regions();").Check(testkit.Rows("abc 1 1"))
 }
 
-func (s *testTableSampleSuite) TestTableSampleWithPartition(c *C) {
-	tk := s.initSampleTest(c)
+func TestTableSampleWithPartition(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int, b varchar(255), primary key (a)) partition by hash(a) partitions 2;")
 	tk.MustExec("insert into t values (1, '1'), (2, '2'), (3, '3');")
 	rows := tk.MustQuery("select * from t tablesample regions();").Rows()
-	c.Assert(len(rows), Equals, 2)
+	require.Len(t, rows, 2)
 
 	tk.MustExec("delete from t;")
 	tk.MustExec("insert into t values (1, '1');")
 	rows = tk.MustQuery("select * from t partition (p0) tablesample regions();").Rows()
-	c.Assert(len(rows), Equals, 0)
+	require.Len(t, rows, 0)
 	rows = tk.MustQuery("select * from t partition (p1) tablesample regions();").Rows()
-	c.Assert(len(rows), Equals, 1)
+	require.Len(t, rows, 1)
 
 	// Test https://github.com/pingcap/tidb/issues/27349.
 	tk.MustExec("drop table if exists t;")
@@ -232,8 +210,10 @@ func (s *testTableSampleSuite) TestTableSampleWithPartition(c *C) {
 		Check(testkit.Rows("1", "2", "3")) // The order of _tidb_rowid should be correct.
 }
 
-func (s *testTableSampleSuite) TestTableSampleGeneratedColumns(c *C) {
-	tk := s.initSampleTest(c)
+func TestTableSampleGeneratedColumns(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int primary key, b int as (a + 1), c int as (b + 1), d int as (c + 1));")
 	tk.MustQuery("split table t between (0) and (10000) regions 4;").Check(testkit.Rows("3 1"))
 	tk.MustExec("insert into t(a) values (1), (2), (2999), (4999), (9999);")
@@ -247,8 +227,10 @@ func (s *testTableSampleSuite) TestTableSampleGeneratedColumns(c *C) {
 		testkit.Rows("1 4", "2999 3002", "9999 10002"))
 }
 
-func (s *testTableSampleSuite) TestTableSampleUnionScanIgnorePendingKV(c *C) {
-	tk := s.initSampleTest(c)
+func TestTableSampleUnionScanIgnorePendingKV(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int primary key);")
 	tk.MustQuery("split table t between (0) and (40000) regions 4;").Check(testkit.Rows("3 1"))
 	tk.MustExec("insert into t values (1), (1000), (10002);")
@@ -265,9 +247,12 @@ func (s *testTableSampleSuite) TestTableSampleUnionScanIgnorePendingKV(c *C) {
 	tk.MustQuery("select * from t tablesample regions();").Check(testkit.Rows("1000", "10002", "20006", "50000"))
 }
 
-func (s *testTableSampleSuite) TestTableSampleTransactionConsistency(c *C) {
-	tk := s.initSampleTest(c)
-	tk2 := s.initSampleTest(c)
+func TestTableSampleTransactionConsistency(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := createSampleTestkit(t, store)
+	tk2 := createSampleTestkit(t, store)
+
 	tk.MustExec("create table t (a int primary key);")
 	tk.MustQuery("split table t between (0) and (40000) regions 4;").Check(testkit.Rows("3 1"))
 	tk.MustExec("insert into t values (1), (1000), (10002);")
@@ -280,8 +265,10 @@ func (s *testTableSampleSuite) TestTableSampleTransactionConsistency(c *C) {
 	tk.MustQuery("select * from t tablesample regions();").Check(testkit.Rows("1", "10002", "20006", "50000"))
 }
 
-func (s *testTableSampleSuite) TestTableSampleNotSupportedPlanWarning(c *C) {
-	tk := s.initSampleTest(c)
+func TestTableSampleNotSupportedPlanWarning(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int primary key, b int, c varchar(255));")
 	tk.MustQuery("split table t between (0) and (10000) regions 5;").Check(testkit.Rows("4 1"))
 	tk.MustExec("insert into t values (1000, 1, '1'), (1001, 1, '1'), (2100, 2, '2'), (4500, 3, '3');")
@@ -294,13 +281,15 @@ func (s *testTableSampleSuite) TestTableSampleNotSupportedPlanWarning(c *C) {
 	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 8128 Invalid TABLESAMPLE: plan not supported"))
 }
 
-func (s *testTableSampleSuite) TestMaxChunkSize(c *C) {
-	tk := s.initSampleTest(c)
+func TestMaxChunkSize(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int) shard_row_id_bits = 2 pre_split_regions = 2;")
 	for i := 0; i < 100; i++ {
 		tk.MustExec("insert into t values (?);", i)
 	}
-	tk.Se.GetSessionVars().MaxChunkSize = 1
+	tk.Session().GetSessionVars().MaxChunkSize = 1
 	rows := tk.MustQuery("select * from t tablesample regions();").Rows()
-	c.Assert(len(rows), Equals, 4)
+	require.Len(t, rows, 4)
 }

@@ -21,13 +21,14 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/charset"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
@@ -62,9 +63,9 @@ func (e *ReplaceExec) Open(ctx context.Context) error {
 
 // removeRow removes the duplicate row and cleanup its keys in the key-value map,
 // but if the to-be-removed row equals to the to-be-added row, no remove or add things to do.
-func (e *ReplaceExec) removeRow(ctx context.Context, kvGetter kv.Getter, handle kv.Handle, r toBeCheckedRow) (bool, error) {
+func (e *ReplaceExec) removeRow(ctx context.Context, txn kv.Transaction, handle kv.Handle, r toBeCheckedRow) (bool, error) {
 	newRow := r.row
-	oldRow, err := getOldRow(ctx, e.ctx, kvGetter, r.t, handle, e.GenExprs)
+	oldRow, err := getOldRow(ctx, e.ctx, txn, r.t, handle, e.GenExprs)
 	if err != nil {
 		logutil.BgLogger().Error("get old row failed when replace",
 			zap.String("handle", handle.String()),
@@ -98,11 +99,7 @@ func (e *ReplaceExec) EqualDatumsAsBinary(sc *stmtctx.StatementContext, a []type
 		return false, nil
 	}
 	for i, ai := range a {
-		collation := ai.Collation()
-		// We should use binary collation to compare datum, otherwise the result will be incorrect
-		ai.SetCollation(charset.CollationBin)
-		v, err := ai.CompareDatum(sc, &b[i])
-		ai.SetCollation(collation)
+		v, err := ai.Compare(sc, &b[i], collate.GetBinaryCollator())
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -120,15 +117,14 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 		return err
 	}
 
-	txnValueGetter := e.txnValueGetter(txn)
 	if r.handleKey != nil {
 		handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
 		if err != nil {
 			return err
 		}
 
-		if _, err := txnValueGetter.Get(ctx, r.handleKey.newKey); err == nil {
-			rowUnchanged, err := e.removeRow(ctx, txnValueGetter, handle, r)
+		if _, err := txn.Get(ctx, r.handleKey.newKey); err == nil {
+			rowUnchanged, err := e.removeRow(ctx, txn, handle, r)
 			if err != nil {
 				return err
 			}
@@ -144,7 +140,7 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 
 	// Keep on removing duplicated rows.
 	for {
-		rowUnchanged, foundDupKey, err := e.removeIndexRow(ctx, txnValueGetter, r)
+		rowUnchanged, foundDupKey, err := e.removeIndexRow(ctx, txn, r)
 		if err != nil {
 			return err
 		}
@@ -171,9 +167,9 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 //     2. bool: true when found the duplicated key. This only means that duplicated key was found,
 //              and the row was removed.
 //     3. error: the error.
-func (e *ReplaceExec) removeIndexRow(ctx context.Context, kvGetter kv.Getter, r toBeCheckedRow) (bool, bool, error) {
+func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r toBeCheckedRow) (bool, bool, error) {
 	for _, uk := range r.uniqueKeys {
-		val, err := kvGetter.Get(ctx, uk.newKey)
+		val, err := txn.Get(ctx, uk.newKey)
 		if err != nil {
 			if kv.IsErrNotFound(err) {
 				continue
@@ -184,7 +180,7 @@ func (e *ReplaceExec) removeIndexRow(ctx context.Context, kvGetter kv.Getter, r 
 		if err != nil {
 			return false, true, err
 		}
-		rowUnchanged, err := e.removeRow(ctx, kvGetter, handle, r)
+		rowUnchanged, err := e.removeRow(ctx, txn, handle, r)
 		if err != nil {
 			return false, true, err
 		}
@@ -226,7 +222,8 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 			defer snapshot.SetOption(kv.CollectRuntimeStats, nil)
 		}
 	}
-	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, txn)
+	setResourceGroupTaggerForTxn(e.ctx.GetSessionVars().StmtCtx, txn)
+	setRPCInterceptorOfExecCounterForTxn(e.ctx.GetSessionVars(), txn)
 	prefetchStart := time.Now()
 	// Use BatchGet to fill cache.
 	// It's an optimization and could be removed without affecting correctness.
@@ -251,6 +248,10 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 // Next implements the Executor Next interface.
 func (e *ReplaceExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
+	if e.collectRuntimeStatsEnabled() {
+		ctx = context.WithValue(ctx, autoid.AllocatorRuntimeStatsCtxKey, e.stats.AllocatorRuntimeStats)
+	}
+
 	if len(e.children) > 0 && e.children[0] != nil {
 		return insertRowsFromSelect(ctx, e)
 	}

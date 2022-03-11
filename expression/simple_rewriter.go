@@ -18,9 +18,9 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -34,11 +34,11 @@ func ParseSimpleExprWithTableInfo(ctx sessionctx.Context, exprStr string, tableI
 	var err error
 	var warns []error
 	if p, ok := ctx.(interface {
-		ParseSQL(context.Context, string, string, string) ([]ast.StmtNode, []error, error)
+		ParseSQL(context.Context, string, ...parser.ParseParam) ([]ast.StmtNode, []error, error)
 	}); ok {
-		stmts, warns, err = p.ParseSQL(context.Background(), exprStr, "", "")
+		stmts, warns, err = p.ParseSQL(context.Background(), exprStr)
 	} else {
-		stmts, warns, err = parser.New().Parse(exprStr, "", "")
+		stmts, warns, err = parser.New().ParseSQL(exprStr)
 	}
 	for _, warn := range warns {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
@@ -84,11 +84,11 @@ func ParseSimpleExprsWithNames(ctx sessionctx.Context, exprStr string, schema *S
 	var err error
 	var warns []error
 	if p, ok := ctx.(interface {
-		ParseSQL(context.Context, string, string, string) ([]ast.StmtNode, []error, error)
+		ParseSQL(context.Context, string, ...parser.ParseParam) ([]ast.StmtNode, []error, error)
 	}); ok {
-		stmts, warns, err = p.ParseSQL(context.Background(), exprStr, "", "")
+		stmts, warns, err = p.ParseSQL(context.Background(), exprStr)
 	} else {
-		stmts, warns, err = parser.New().Parse(exprStr, "", "")
+		stmts, warns, err = parser.New().ParseSQL(exprStr)
 	}
 	if err != nil {
 		return nil, util.SyntaxWarn(err)

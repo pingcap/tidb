@@ -15,15 +15,16 @@
 package aggfuncs_test
 
 import (
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
+	"testing"
+
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 )
 
-func (s *testSuite) TestLeadLag(c *C) {
+func TestLeadLag(t *testing.T) {
 	zero := expression.NewZero()
 	one := expression.NewOne()
 	two := &expression.Constant{
@@ -111,12 +112,12 @@ func (s *testSuite) TestLeadLag(c *C) {
 			[]expression.Expression{million, defaultArg}, 0, numRows, 0, 1, 2),
 	}
 	for _, test := range tests {
-		s.testWindowFunc(c, test)
+		testWindowFunc(t, test)
 	}
 
 }
 
-func (s *testSuite) TestMemLeadLag(c *C) {
+func TestMemLeadLag(t *testing.T) {
 	zero := expression.NewZero()
 	one := expression.NewOne()
 	two := &expression.Constant{
@@ -160,7 +161,7 @@ func (s *testSuite) TestMemLeadLag(c *C) {
 	}
 
 	for _, test := range tests {
-		s.testWindowAggMemFunc(c, test)
+		testWindowAggMemFunc(t, test)
 	}
 
 }

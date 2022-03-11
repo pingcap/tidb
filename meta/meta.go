@@ -27,11 +27,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
@@ -165,6 +165,14 @@ func (m *Meta) GenGlobalIDs(n int) ([]int64, error) {
 	return ids, nil
 }
 
+// GenPlacementPolicyID generates next placement policy id globally.
+func (m *Meta) GenPlacementPolicyID() (int64, error) {
+	policyIDMutex.Lock()
+	defer policyIDMutex.Unlock()
+
+	return m.txn.Inc(mPolicyGlobalID, 1)
+}
+
 // GetGlobalID gets current global id.
 func (m *Meta) GetGlobalID() (int64, error) {
 	return m.txn.GetInt64(mNextGlobalIDKey)
@@ -222,41 +230,6 @@ func (m *Meta) GenAutoTableIDKeyValue(dbID, tableID, autoID int64) (key, value [
 // GetAutoIDAccessors gets the controller for auto IDs.
 func (m *Meta) GetAutoIDAccessors(dbID, tableID int64) AutoIDAccessors {
 	return NewAutoIDAccessors(m, dbID, tableID)
-}
-
-// GenSequenceValue adds step to the sequence value and returns the sum.
-func (m *Meta) GenSequenceValue(dbID, sequenceID, step int64) (int64, error) {
-	// Check if DB exists.
-	dbKey := m.dbKey(dbID)
-	if err := m.checkDBExists(dbKey); err != nil {
-		return 0, errors.Trace(err)
-	}
-	// Check if sequence exists.
-	tableKey := m.tableKey(sequenceID)
-	if err := m.checkTableExists(dbKey, tableKey); err != nil {
-		return 0, errors.Trace(err)
-	}
-	return m.txn.HInc(dbKey, m.sequenceKey(sequenceID), step)
-}
-
-// GetSequenceValue gets current sequence value with sequence id.
-func (m *Meta) GetSequenceValue(dbID int64, sequenceID int64) (int64, error) {
-	return m.txn.HGetInt64(m.dbKey(dbID), m.sequenceKey(sequenceID))
-}
-
-// SetSequenceValue sets start value when sequence in cycle.
-func (m *Meta) SetSequenceValue(dbID int64, sequenceID int64, start int64) error {
-	return m.txn.HSet(m.dbKey(dbID), m.sequenceKey(sequenceID), []byte(strconv.FormatInt(start, 10)))
-}
-
-// GetSequenceCycle gets current sequence cycle times with sequence id.
-func (m *Meta) GetSequenceCycle(dbID int64, sequenceID int64) (int64, error) {
-	return m.txn.HGetInt64(m.dbKey(dbID), m.sequenceCycleKey(sequenceID))
-}
-
-// SetSequenceCycle sets cycle times value when sequence in cycle.
-func (m *Meta) SetSequenceCycle(dbID int64, sequenceID int64, round int64) error {
-	return m.txn.HSet(m.dbKey(dbID), m.sequenceCycleKey(sequenceID), []byte(strconv.FormatInt(round, 10)))
 }
 
 // GetSchemaVersion gets current global schema version.
@@ -319,22 +292,15 @@ func (m *Meta) checkTableNotExists(dbKey []byte, tableKey []byte) error {
 
 // CreatePolicy creates a policy.
 func (m *Meta) CreatePolicy(policy *model.PolicyInfo) error {
-	if policy.ID != 0 {
-		policyKey := m.policyKey(policy.ID)
-		if err := m.checkPolicyNotExists(policyKey); err != nil {
-			return errors.Trace(err)
-		}
-	} else {
-		// Autofill the policy ID.
-		policyIDMutex.Lock()
-		genID, err := m.txn.Inc(mPolicyGlobalID, 1)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		policyIDMutex.Unlock()
-		policy.ID = genID
+	if policy.ID == 0 {
+		return errors.New("policy.ID is invalid")
 	}
+
 	policyKey := m.policyKey(policy.ID)
+	if err := m.checkPolicyNotExists(policyKey); err != nil {
+		return errors.Trace(err)
+	}
+
 	data, err := json.Marshal(policy)
 	if err != nil {
 		return errors.Trace(err)
@@ -953,6 +919,11 @@ func (m *Meta) GetAllHistoryDDLJobs() ([]*model.Job, error) {
 	return jobs, nil
 }
 
+// GetHistoryDDLCount the count of all history DDL jobs.
+func (m *Meta) GetHistoryDDLCount() (uint64, error) {
+	return m.txn.HGetLen(mDDLJobHistoryKey)
+}
+
 // GetLastNHistoryDDLJobs gets latest N history ddl jobs.
 func (m *Meta) GetLastNHistoryDDLJobs(num int) ([]*model.Job, error) {
 	pairs, err := m.txn.HGetLastN(mDDLJobHistoryKey, num)
@@ -1039,7 +1010,7 @@ func (m *Meta) GetBootstrapVersion() (int64, error) {
 
 // FinishBootstrap finishes bootstrap.
 func (m *Meta) FinishBootstrap(version int64) error {
-	err := m.txn.Set(mBootstrapKey, []byte(fmt.Sprintf("%d", version)))
+	err := m.txn.Set(mBootstrapKey, []byte(strconv.FormatInt(version, 10)))
 	return errors.Trace(err)
 }
 

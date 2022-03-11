@@ -14,7 +14,72 @@
 
 package collate
 
-// gbkBinCollator is collator for gbk_bin, use binCollator instead temporary.
+import (
+	"bytes"
+
+	"github.com/pingcap/tidb/util/hack"
+	"golang.org/x/text/encoding"
+)
+
+// gbkBinCollator is collator for gbk_bin.
 type gbkBinCollator struct {
-	binCollator
+	e *encoding.Encoder
+}
+
+// Compare implement Collator interface.
+func (g *gbkBinCollator) Compare(a, b string) int {
+	a = truncateTailingSpace(a)
+	b = truncateTailingSpace(b)
+
+	// compare the character one by one.
+	for len(a) > 0 && len(b) > 0 {
+		aLen, bLen := runeLen(a[0]), runeLen(b[0])
+		aGbk, err := g.e.Bytes(hack.Slice(a[:aLen]))
+		// if convert error happened, we use '?'(0x3F) replace it.
+		// It should not happen.
+		if err != nil {
+			aGbk = []byte{0x3F}
+		}
+		bGbk, err := g.e.Bytes(hack.Slice(b[:bLen]))
+		if err != nil {
+			bGbk = []byte{0x3F}
+		}
+
+		compare := bytes.Compare(aGbk, bGbk)
+		if compare != 0 {
+			return compare
+		}
+		a = a[aLen:]
+		b = b[bLen:]
+	}
+
+	return sign(len(a) - len(b))
+}
+
+// Key implement Collator interface.
+func (g *gbkBinCollator) Key(str string) []byte {
+	str = truncateTailingSpace(str)
+	buf := make([]byte, 0, len(str))
+	for len(str) > 0 {
+		l := runeLen(str[0])
+		gbk, err := g.e.Bytes(hack.Slice(str[:l]))
+		if err != nil {
+			buf = append(buf, byte('?'))
+		} else {
+			buf = append(buf, gbk...)
+		}
+		str = str[l:]
+	}
+
+	return buf
+}
+
+// Pattern implements Collator interface.
+func (g *gbkBinCollator) Pattern() WildcardPattern {
+	return &gbkBinPattern{}
+}
+
+// use binPattern directly, they are totally same.
+type gbkBinPattern struct {
+	binPattern
 }

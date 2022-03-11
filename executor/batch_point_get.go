@@ -23,11 +23,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	driver "github.com/pingcap/tidb/store/driver/txn"
@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil/consistency"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
@@ -78,8 +79,9 @@ type BatchPointGetExec struct {
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
-	snapshot kv.Snapshot
-	stats    *runtimeStatsWithSnapshot
+	snapshot   kv.Snapshot
+	stats      *runtimeStatsWithSnapshot
+	cacheTable kv.MemBuffer
 }
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
@@ -115,6 +117,9 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	} else {
 		snapshot = e.ctx.GetSnapshotWithTS(e.snapshotTS)
 	}
+	if e.cacheTable != nil {
+		snapshot = cacheTableSnapshot{snapshot, e.cacheTable}
+	}
 	if e.runtimeStats != nil {
 		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
 		e.stats = &runtimeStatsWithSnapshot{
@@ -130,12 +135,10 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	snapshot.SetOption(kv.TaskID, stmtCtx.TaskID)
 	snapshot.SetOption(kv.ReadReplicaScope, e.readReplicaScope)
 	snapshot.SetOption(kv.IsStalenessReadOnly, e.isStaleness)
-	failpoint.Inject("assertBatchPointStalenessOption", func(val failpoint.Value) {
+	failpoint.Inject("assertBatchPointReplicaOption", func(val failpoint.Value) {
 		assertScope := val.(string)
-		if len(assertScope) > 0 {
-			if e.isStaleness && assertScope != e.readReplicaScope {
-				panic("batch point get staleness option fail")
-			}
+		if replicaReadType.IsClosestRead() && assertScope != e.readReplicaScope {
+			panic("batch point get replica option fail")
 		}
 	})
 
@@ -147,7 +150,8 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 			},
 		})
 	}
-	setResourceGroupTagForTxn(stmtCtx, snapshot)
+	setResourceGroupTaggerForTxn(stmtCtx, snapshot)
+	setRPCInterceptorOfExecCounterForTxn(sessVars, snapshot)
 	var batchGetter kv.BatchGetter = snapshot
 	if txn.Valid() {
 		lock := e.tblInfo.Lock
@@ -162,6 +166,48 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	e.snapshot = snapshot
 	e.batchGetter = batchGetter
 	return nil
+}
+
+// CacheTable always use memBuffer in session as snapshot.
+// cacheTableSnapshot inherits kv.Snapshot and override the BatchGet methods and Get methods.
+type cacheTableSnapshot struct {
+	kv.Snapshot
+	memBuffer kv.MemBuffer
+}
+
+func (s cacheTableSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+	values := make(map[string][]byte)
+	if s.memBuffer == nil {
+		return values, nil
+	}
+
+	for _, key := range keys {
+		val, err := s.memBuffer.Get(ctx, key)
+		if kv.ErrNotExist.Equal(err) {
+			continue
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		if len(val) == 0 {
+			continue
+		}
+
+		values[string(key)] = val
+	}
+
+	return values, nil
+}
+
+func (s cacheTableSnapshot) Get(ctx context.Context, key kv.Key) ([]byte, error) {
+	return s.memBuffer.Get(ctx, key)
+}
+
+// MockNewCacheTableSnapShot only serves for test.
+func MockNewCacheTableSnapShot(snapshot kv.Snapshot, memBuffer kv.MemBuffer) *cacheTableSnapshot {
+	return &cacheTableSnapshot{snapshot, memBuffer}
 }
 
 // Close implements the Executor interface.
@@ -430,9 +476,24 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	for i, key := range keys {
 		val := values[string(key)]
 		if len(val) == 0 {
-			if e.idxInfo != nil && (!e.tblInfo.IsCommonHandle || !e.idxInfo.Primary) {
-				return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, handle %d not found in table",
-					e.idxInfo.Name.O, e.handles[i])
+			if e.idxInfo != nil && (!e.tblInfo.IsCommonHandle || !e.idxInfo.Primary) &&
+				!e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
+				return (&consistency.Reporter{
+					HandleEncode: func(_ kv.Handle) kv.Key {
+						return key
+					},
+					IndexEncode: func(_ *consistency.RecordData) kv.Key {
+						return indexKeys[i]
+					},
+					Tbl:  e.tblInfo,
+					Idx:  e.idxInfo,
+					Sctx: e.ctx,
+				}).ReportLookupInconsistent(ctx,
+					1, 0,
+					e.handles[i:i+1],
+					e.handles,
+					[]consistency.RecordData{{}},
+				)
 			}
 			continue
 		}
@@ -479,7 +540,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 // LockKeys locks the keys for pessimistic transaction.
 func LockKeys(ctx context.Context, seCtx sessionctx.Context, lockWaitTime int64, keys ...kv.Key) error {
 	txnCtx := seCtx.GetSessionVars().TxnCtx
-	lctx := newLockCtx(seCtx.GetSessionVars(), lockWaitTime)
+	lctx := newLockCtx(seCtx.GetSessionVars(), lockWaitTime, len(keys))
 	if txnCtx.IsPessimistic {
 		lctx.InitReturnValues(len(keys))
 	}

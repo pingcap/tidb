@@ -4,15 +4,12 @@ package utils
 
 import (
 	"os"
+	"testing"
 
-	"github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
-type envSuit struct{}
-
-var _ = check.Suite(&envSuit{})
-
-func (s *envSuit) TestProxyFields(c *check.C) {
+func TestProxyFields(t *testing.T) {
 	revIndex := map[string]int{
 		"http_proxy":  0,
 		"https_proxy": 1,
@@ -25,20 +22,20 @@ func (s *envSuit) TestProxyFields(c *check.C) {
 	// Each bit of the mask decided whether this index of `envs` would be set.
 	for mask := 0; mask <= 0b111; mask++ {
 		for _, env := range envs {
-			c.Assert(os.Unsetenv(env), check.IsNil)
+			require.NoError(t, os.Unsetenv(env))
 		}
 
 		for i := 0; i < 3; i++ {
 			if (1<<i)&mask != 0 {
-				c.Assert(os.Setenv(envs[i], envPreset[i]), check.IsNil)
+				require.NoError(t, os.Setenv(envs[i], envPreset[i]))
 			}
 		}
 
 		for _, field := range proxyFields() {
 			idx, ok := revIndex[field.Key]
-			c.Assert(ok, check.IsTrue)
-			c.Assert((1<<idx)&mask, check.Not(check.Equals), 0)
-			c.Assert(field.String, check.Equals, envPreset[idx])
+			require.True(t, ok)
+			require.NotZero(t, (1<<idx)&mask)
+			require.Equal(t, envPreset[idx], field.String)
 		}
 	}
 }

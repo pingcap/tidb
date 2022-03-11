@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,266 +19,284 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/stretchr/testify/require"
 )
 
-type testBootstrapSuite struct {
-	dbName          string
-	dbNameBootstrap string
-}
-
-func (s *testBootstrapSuite) SetUpSuite(c *C) {
-	s.dbName = "test_bootstrap"
-	s.dbNameBootstrap = "test_main_db_bootstrap"
-}
-
-func (s *testBootstrapSuite) TestBootstrap(c *C) {
-	defer testleak.AfterTest(c)()
-	store, dom := newStoreWithBootstrap(c, s.dbName)
-	defer store.Close()
+// This test file have many problem.
+// 1. Please use testkit to create dom, session and store.
+// 2. Don't use createStoreAndBootstrap and BootstrapSession together. It will cause data race.
+// Please do not add any test here. You can add test case at the bootstrap_update_test.go. After All problem fixed,
+// We will overwrite this file by update_test.go.
+func TestBootstrap(t *testing.T) {
+	store, dom := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
-	se := newSession(c, store, s.dbName)
-	mustExecSQL(c, se, "USE mysql;")
-	r := mustExecSQL(c, se, `select * from user;`)
-	c.Assert(r, NotNil)
-	ctx := context.Background()
-	req := r.NewChunk()
-	err := r.Next(ctx, req)
-	c.Assert(err, IsNil)
-	c.Assert(req.NumRows() == 0, IsFalse)
-	datums := statistics.RowToDatums(req.GetRow(0), r.Fields())
-	match(c, datums, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	se := createSessionAndSetID(t, store)
 
-	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte("")), IsTrue)
-	mustExecSQL(c, se, "USE test;")
+	mustExec(t, se, "use mysql")
+	r := mustExec(t, se, "select * from user")
+	require.NotNil(t, r)
+
+	ctx := context.Background()
+	req := r.NewChunk(nil)
+	err := r.Next(ctx, req)
+	require.NoError(t, err)
+	require.NotEqual(t, 0, req.NumRows())
+
+	rows := statistics.RowToDatums(req.GetRow(0), r.Fields())
+	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+
+	ok := se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte(""))
+	require.True(t, ok)
+
+	mustExec(t, se, "use test")
+
 	// Check privilege tables.
-	rs := mustExecSQL(c, se, "SELECT * from mysql.global_priv;")
-	c.Assert(rs.Close(), IsNil)
-	rs = mustExecSQL(c, se, "SELECT * from mysql.db;")
-	c.Assert(rs.Close(), IsNil)
-	rs = mustExecSQL(c, se, "SELECT * from mysql.tables_priv;")
-	c.Assert(rs.Close(), IsNil)
-	rs = mustExecSQL(c, se, "SELECT * from mysql.columns_priv;")
-	c.Assert(rs.Close(), IsNil)
+	rs := mustExec(t, se, "SELECT * from mysql.global_priv")
+	require.NoError(t, rs.Close())
+	rs = mustExec(t, se, "SELECT * from mysql.db")
+	require.NoError(t, rs.Close())
+	rs = mustExec(t, se, "SELECT * from mysql.tables_priv")
+	require.NoError(t, rs.Close())
+	rs = mustExec(t, se, "SELECT * from mysql.columns_priv")
+	require.NoError(t, rs.Close())
+	rs = mustExec(t, se, "SELECT * from mysql.global_grants")
+	require.NoError(t, rs.Close())
+
 	// Check privilege tables.
-	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
-	c.Assert(r, NotNil)
-	req = r.NewChunk()
+	r = mustExec(t, se, "SELECT COUNT(*) from mysql.global_variables")
+	require.NotNil(t, r)
+
+	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
-	c.Assert(err, IsNil)
-	c.Assert(req.GetRow(0).GetInt64(0), Equals, globalVarsCount())
+	require.NoError(t, err)
+	require.Equal(t, globalVarsCount(), req.GetRow(0).GetInt64(0))
 
 	// Check a storage operations are default autocommit after the second start.
-	mustExecSQL(c, se, "USE test;")
-	mustExecSQL(c, se, "drop table if exists t")
-	mustExecSQL(c, se, "create table t (id int)")
+	mustExec(t, se, "USE test")
+	mustExec(t, se, "drop table if exists t")
+	mustExec(t, se, "create table t (id int)")
 	unsetStoreBootstrapped(store.UUID())
 	se.Close()
-	se, err = CreateSession4Test(store)
-	c.Assert(err, IsNil)
-	mustExecSQL(c, se, "USE test;")
-	mustExecSQL(c, se, "insert t values (?)", 3)
-	se, err = CreateSession4Test(store)
-	c.Assert(err, IsNil)
-	mustExecSQL(c, se, "USE test;")
-	r = mustExecSQL(c, se, "select * from t")
-	c.Assert(r, NotNil)
 
-	req = r.NewChunk()
+	se, err = CreateSession4Test(store)
+	require.NoError(t, err)
+	mustExec(t, se, "USE test")
+	mustExec(t, se, "insert t values (?)", 3)
+
+	se, err = CreateSession4Test(store)
+	require.NoError(t, err)
+	mustExec(t, se, "USE test")
+	r = mustExec(t, se, "select * from t")
+	require.NotNil(t, r)
+
+	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
-	c.Assert(err, IsNil)
-	datums = statistics.RowToDatums(req.GetRow(0), r.Fields())
-	match(c, datums, 3)
-	mustExecSQL(c, se, "drop table if exists t")
+	require.NoError(t, err)
+	rows = statistics.RowToDatums(req.GetRow(0), r.Fields())
+	match(t, rows, 3)
+	mustExec(t, se, "drop table if exists t")
 	se.Close()
 
-	// Try to do bootstrap dml jobs on an already bootstraped TiDB system will not cause fatal.
+	// Try to do bootstrap dml jobs on an already bootstrapped TiDB system will not cause fatal.
 	// For https://github.com/pingcap/tidb/issues/1096
 	se, err = CreateSession4Test(store)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	doDMLWorks(se)
 }
 
 func globalVarsCount() int64 {
 	var count int64
 	for _, v := range variable.GetSysVars() {
-		if v.Scope != variable.ScopeSession {
+		if v.HasGlobalScope() {
 			count++
 		}
 	}
 	return count
 }
 
-// bootstrapWithOnlyDDLWork creates a new session on store but only do ddl works.
-func (s *testBootstrapSuite) bootstrapWithOnlyDDLWork(store kv.Storage, c *C) {
-	ss := &session{
-		store:       store,
-		sessionVars: variable.NewSessionVars(),
-	}
-	ss.txn.init()
-	ss.mu.values = make(map[fmt.Stringer]interface{})
-	ss.SetValue(sessionctx.Initing, true)
-	dom, err := domap.Get(store)
-	c.Assert(err, IsNil)
-	domain.BindDomain(ss, dom)
-	b, err := checkBootstrapped(ss)
-	c.Assert(b, IsFalse)
-	c.Assert(err, IsNil)
-	doDDLWorks(ss)
-	// Leave dml unfinished.
-}
-
 // testBootstrapWithError :
 // When a session failed in bootstrap process (for example, the session is killed after doDDLWorks()).
 // We should make sure that the following session could finish the bootstrap process.
-func (s *testBootstrapSuite) TestBootstrapWithError(c *C) {
+func TestBootstrapWithError(t *testing.T) {
 	ctx := context.Background()
-	defer testleak.AfterTest(c)()
-	store := newStore(c, s.dbNameBootstrap)
-	defer store.Close()
-	s.bootstrapWithOnlyDDLWork(store, c)
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	// bootstrap
+	{
+		se := &session{
+			store:       store,
+			sessionVars: variable.NewSessionVars(),
+		}
+		se.txn.init()
+		se.mu.values = make(map[fmt.Stringer]interface{})
+		se.SetValue(sessionctx.Initing, true)
+
+		dom, err := domap.Get(store)
+		require.NoError(t, err)
+		domain.BindDomain(se, dom)
+		b, err := checkBootstrapped(se)
+		require.False(t, b)
+		require.NoError(t, err)
+
+		doDDLWorks(se)
+	}
+
 	dom, err := domap.Get(store)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	domap.Delete(store)
 	dom.Close()
 
 	dom1, err := BootstrapSession(store)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer dom1.Close()
 
-	se := newSession(c, store, s.dbNameBootstrap)
-	mustExecSQL(c, se, "USE mysql;")
-	r := mustExecSQL(c, se, `select * from user;`)
-	req := r.NewChunk()
+	se := createSessionAndSetID(t, store)
+	mustExec(t, se, "USE mysql")
+	r := mustExec(t, se, `select * from user`)
+	req := r.NewChunk(nil)
 	err = r.Next(ctx, req)
-	c.Assert(err, IsNil)
-	c.Assert(req.NumRows() == 0, IsFalse)
+	require.NoError(t, err)
+	require.NotEqual(t, 0, req.NumRows())
+
 	row := req.GetRow(0)
-	datums := statistics.RowToDatums(row, r.Fields())
-	match(c, datums, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
-	c.Assert(r.Close(), IsNil)
+	rows := statistics.RowToDatums(row, r.Fields())
+	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", "Y", "Y")
+	require.NoError(t, r.Close())
 
-	mustExecSQL(c, se, "USE test;")
+	mustExec(t, se, "USE test")
 	// Check privilege tables.
-	mustExecSQL(c, se, "SELECT * from mysql.global_priv;")
-	mustExecSQL(c, se, "SELECT * from mysql.db;")
-	mustExecSQL(c, se, "SELECT * from mysql.tables_priv;")
-	mustExecSQL(c, se, "SELECT * from mysql.columns_priv;")
+	mustExec(t, se, "SELECT * from mysql.global_priv")
+	mustExec(t, se, "SELECT * from mysql.db")
+	mustExec(t, se, "SELECT * from mysql.tables_priv")
+	mustExec(t, se, "SELECT * from mysql.columns_priv")
 	// Check role tables.
-	mustExecSQL(c, se, "SELECT * from mysql.role_edges;")
-	mustExecSQL(c, se, "SELECT * from mysql.default_roles;")
+	mustExec(t, se, "SELECT * from mysql.role_edges")
+	mustExec(t, se, "SELECT * from mysql.default_roles")
 	// Check global variables.
-	r = mustExecSQL(c, se, "SELECT COUNT(*) from mysql.global_variables;")
-	req = r.NewChunk()
+	r = mustExec(t, se, "SELECT COUNT(*) from mysql.global_variables")
+	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	v := req.GetRow(0)
-	c.Assert(v.GetInt64(0), Equals, globalVarsCount())
-	c.Assert(r.Close(), IsNil)
+	require.Equal(t, globalVarsCount(), v.GetInt64(0))
+	require.NoError(t, r.Close())
 
-	r = mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="bootstrapped";`)
-	req = r.NewChunk()
+	r = mustExec(t, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="bootstrapped"`)
+	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
-	c.Assert(err, IsNil)
-	c.Assert(req.NumRows() == 0, IsFalse)
+	require.NoError(t, err)
+	require.NotEqual(t, 0, req.NumRows())
 	row = req.GetRow(0)
-	c.Assert(row.Len(), Equals, 1)
-	c.Assert(row.GetBytes(0), BytesEquals, []byte("True"))
-	c.Assert(r.Close(), IsNil)
+	require.Equal(t, 1, row.Len())
+	require.Equal(t, []byte("True"), row.GetBytes(0))
+	require.NoError(t, r.Close())
 }
 
 // TestUpgrade tests upgrading
-func (s *testBootstrapSuite) TestUpgrade(c *C) {
+func TestUpgrade(t *testing.T) {
+	oomAction := config.GetGlobalConfig().OOMAction
+	defer func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.OOMAction = oomAction
+		})
+	}()
+
 	ctx := context.Background()
-	defer testleak.AfterTest(c)()
-	store, _ := newStoreWithBootstrap(c, s.dbName)
-	defer store.Close()
-	se := newSession(c, store, s.dbName)
-	mustExecSQL(c, se, "USE mysql;")
+
+	store, dom := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	se := createSessionAndSetID(t, store)
+
+	mustExec(t, se, "USE mysql")
 
 	// bootstrap with currentBootstrapVersion
-	r := mustExecSQL(c, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
-	req := r.NewChunk()
+	r := mustExec(t, se, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version"`)
+	req := r.NewChunk(nil)
 	err := r.Next(ctx, req)
 	row := req.GetRow(0)
-	c.Assert(err, IsNil)
-	c.Assert(req.NumRows() == 0, IsFalse)
-	c.Assert(row.Len(), Equals, 1)
-	c.Assert(row.GetBytes(0), BytesEquals, []byte(fmt.Sprintf("%d", currentBootstrapVersion)))
-	c.Assert(r.Close(), IsNil)
+	require.NoError(t, err)
+	require.NotEqual(t, 0, req.NumRows())
+	require.Equal(t, 1, row.Len())
+	require.Equal(t, []byte(fmt.Sprintf("%d", currentBootstrapVersion)), row.GetBytes(0))
+	require.NoError(t, r.Close())
 
-	se1 := newSession(c, store, s.dbName)
+	se1 := createSessionAndSetID(t, store)
 	ver, err := getBootstrapVersion(se1)
-	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, currentBootstrapVersion)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
 
 	// Do something to downgrade the store.
 	// downgrade meta bootstrap version
 	txn, err := store.Begin()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	m := meta.NewMeta(txn)
 	err = m.FinishBootstrap(int64(1))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-	mustExecSQL(c, se1, `delete from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
-	mustExecSQL(c, se1, fmt.Sprintf(`delete from mysql.global_variables where VARIABLE_NAME="%s";`,
-		variable.TiDBDistSQLScanConcurrency))
-	mustExecSQL(c, se1, `commit;`)
+	require.NoError(t, err)
+	mustExec(t, se1, `delete from mysql.TiDB where VARIABLE_NAME="tidb_server_version"`)
+	mustExec(t, se1, fmt.Sprintf(`delete from mysql.global_variables where VARIABLE_NAME="%s"`, variable.TiDBDistSQLScanConcurrency))
+	mustExec(t, se1, `commit`)
 	unsetStoreBootstrapped(store.UUID())
 	// Make sure the version is downgraded.
-	r = mustExecSQL(c, se1, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
-	req = r.NewChunk()
+	r = mustExec(t, se1, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version"`)
+	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
-	c.Assert(err, IsNil)
-	c.Assert(req.NumRows() == 0, IsTrue)
-	c.Assert(r.Close(), IsNil)
+	require.NoError(t, err)
+	require.Equal(t, 0, req.NumRows())
+	require.NoError(t, r.Close())
 
 	ver, err = getBootstrapVersion(se1)
-	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, int64(0))
-
+	require.NoError(t, err)
+	require.Equal(t, int64(0), ver)
+	dom.Close()
 	// Create a new session then upgrade() will run automatically.
-	dom1, err := BootstrapSession(store)
-	c.Assert(err, IsNil)
-	defer dom1.Close()
-	se2 := newSession(c, store, s.dbName)
-	r = mustExecSQL(c, se2, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
-	req = r.NewChunk()
+	dom, err = BootstrapSession(store)
+	require.NoError(t, err)
+
+	se2 := createSessionAndSetID(t, store)
+	r = mustExec(t, se2, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version"`)
+	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
-	c.Assert(err, IsNil)
-	c.Assert(req.NumRows() == 0, IsFalse)
+	require.NoError(t, err)
+	require.NotEqual(t, 0, req.NumRows())
 	row = req.GetRow(0)
-	c.Assert(row.Len(), Equals, 1)
-	c.Assert(row.GetBytes(0), BytesEquals, []byte(fmt.Sprintf("%d", currentBootstrapVersion)))
-	c.Assert(r.Close(), IsNil)
+	require.Equal(t, 1, row.Len())
+	require.Equal(t, []byte(fmt.Sprintf("%d", currentBootstrapVersion)), row.GetBytes(0))
+	require.NoError(t, r.Close())
 
 	ver, err = getBootstrapVersion(se2)
-	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, currentBootstrapVersion)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
 
 	// Verify that 'new_collation_enabled' is false.
-	r = mustExecSQL(c, se2, fmt.Sprintf(`SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME='%s';`, tidbNewCollationEnabled))
-	req = r.NewChunk()
+	r = mustExec(t, se2, fmt.Sprintf(`SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME='%s'`, tidbNewCollationEnabled))
+	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
-	c.Assert(err, IsNil)
-	c.Assert(req.NumRows(), Equals, 1)
-	c.Assert(req.GetRow(0).GetString(0), Equals, "False")
-	c.Assert(r.Close(), IsNil)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	require.Equal(t, "False", req.GetRow(0).GetString(0))
+	require.NoError(t, r.Close())
+	dom.Close()
 }
 
-func (s *testBootstrapSuite) TestIssue17979_1(c *C) {
+func TestIssue17979_1(t *testing.T) {
 	oomAction := config.GetGlobalConfig().OOMAction
 	defer func() {
 		config.UpdateGlobal(func(conf *config.Config) {
@@ -286,42 +304,41 @@ func (s *testBootstrapSuite) TestIssue17979_1(c *C) {
 		})
 	}()
 	ctx := context.Background()
-	defer testleak.AfterTest(c)()
-	store, _ := newStoreWithBootstrap(c, s.dbName)
-	defer store.Close()
 
+	store, dom := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
 	// test issue 20900, upgrade from v3.0 to v4.0.11+
-	seV3 := newSession(c, store, s.dbName)
+	seV3 := createSessionAndSetID(t, store)
 	txn, err := store.Begin()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	m := meta.NewMeta(txn)
 	err = m.FinishBootstrap(int64(58))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-	mustExecSQL(c, seV3, "update mysql.tidb set variable_value='58' where variable_name='tidb_server_version'")
-	mustExecSQL(c, seV3, "delete from mysql.tidb where variable_name='default_oom_action'")
-	mustExecSQL(c, seV3, "commit")
+	require.NoError(t, err)
+	mustExec(t, seV3, "update mysql.tidb set variable_value='58' where variable_name='tidb_server_version'")
+	mustExec(t, seV3, "delete from mysql.tidb where variable_name='default_oom_action'")
+	mustExec(t, seV3, "commit")
 	unsetStoreBootstrapped(store.UUID())
 	ver, err := getBootstrapVersion(seV3)
-	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, int64(58))
-
+	require.NoError(t, err)
+	require.Equal(t, int64(58), ver)
+	dom.Close()
 	domV4, err := BootstrapSession(store)
-	c.Assert(err, IsNil)
-	defer domV4.Close()
-	seV4 := newSession(c, store, s.dbName)
+	require.NoError(t, err)
+	seV4 := createSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seV4)
-	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, currentBootstrapVersion)
-	r := mustExecSQL(c, seV4, "select variable_value from mysql.tidb where variable_name='default_oom_action'")
-	req := r.NewChunk()
-	r.Next(ctx, req)
-	c.Assert(req.GetRow(0).GetString(0), Equals, "log")
-	c.Assert(config.GetGlobalConfig().OOMAction, Equals, config.OOMActionLog)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+	r := mustExec(t, seV4, "select variable_value from mysql.tidb where variable_name='default_oom_action'")
+	req := r.NewChunk(nil)
+	require.NoError(t, r.Next(ctx, req))
+	require.Equal(t, "log", req.GetRow(0).GetString(0))
+	require.Equal(t, config.OOMActionLog, config.GetGlobalConfig().OOMAction)
+	domV4.Close()
 }
 
-func (s *testBootstrapSuite) TestIssue17979_2(c *C) {
+func TestIssue17979_2(t *testing.T) {
 	oomAction := config.GetGlobalConfig().OOMAction
 	defer func() {
 		config.UpdateGlobal(func(conf *config.Config) {
@@ -329,131 +346,144 @@ func (s *testBootstrapSuite) TestIssue17979_2(c *C) {
 		})
 	}()
 	ctx := context.Background()
-	defer testleak.AfterTest(c)()
-	store, _ := newStoreWithBootstrap(c, s.dbName)
-	defer store.Close()
+
+	store, dom := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
 
 	// test issue 20900, upgrade from v4.0.11 to v4.0.11
-	seV3 := newSession(c, store, s.dbName)
+	seV3 := createSessionAndSetID(t, store)
 	txn, err := store.Begin()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	m := meta.NewMeta(txn)
 	err = m.FinishBootstrap(int64(59))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-	mustExecSQL(c, seV3, "update mysql.tidb set variable_value=59 where variable_name='tidb_server_version'")
-	mustExecSQL(c, seV3, "delete from mysql.tidb where variable_name='default_iim_action'")
-	mustExecSQL(c, seV3, "commit")
+	require.NoError(t, err)
+	mustExec(t, seV3, "update mysql.tidb set variable_value=59 where variable_name='tidb_server_version'")
+	mustExec(t, seV3, "delete from mysql.tidb where variable_name='default_iim_action'")
+	mustExec(t, seV3, "commit")
 	unsetStoreBootstrapped(store.UUID())
 	ver, err := getBootstrapVersion(seV3)
-	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, int64(59))
-
+	require.NoError(t, err)
+	require.Equal(t, int64(59), ver)
+	dom.Close()
 	domV4, err := BootstrapSession(store)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer domV4.Close()
-	seV4 := newSession(c, store, s.dbName)
+	seV4 := createSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seV4)
-	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, currentBootstrapVersion)
-	r := mustExecSQL(c, seV4, "select variable_value from mysql.tidb where variable_name='default_oom_action'")
-	req := r.NewChunk()
-	r.Next(ctx, req)
-	c.Assert(req.NumRows(), Equals, 0)
-	c.Assert(config.GetGlobalConfig().OOMAction, Equals, config.OOMActionCancel)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+	r := mustExec(t, seV4, "select variable_value from mysql.tidb where variable_name='default_oom_action'")
+	req := r.NewChunk(nil)
+	require.NoError(t, r.Next(ctx, req))
+	require.Equal(t, 0, req.NumRows())
+	require.Equal(t, config.OOMActionCancel, config.GetGlobalConfig().OOMAction)
 }
 
-func (s *testBootstrapSuite) TestIssue20900_1(c *C) {
-	ctx := context.Background()
-	defer testleak.AfterTest(c)()
-	store, _ := newStoreWithBootstrap(c, s.dbName)
-	defer store.Close()
+func TestIssue20900_1(t *testing.T) {
+	oomAction := config.GetGlobalConfig().OOMAction
+	defer func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.OOMAction = oomAction
+		})
+	}()
 
+	ctx := context.Background()
+
+	store, dom := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
 	// test issue 20900, upgrade from v3.0 to v4.0.9+
-	seV3 := newSession(c, store, s.dbName)
+	seV3 := createSessionAndSetID(t, store)
 	txn, err := store.Begin()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	m := meta.NewMeta(txn)
 	err = m.FinishBootstrap(int64(38))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-	mustExecSQL(c, seV3, "update mysql.tidb set variable_value=38 where variable_name='tidb_server_version'")
-	mustExecSQL(c, seV3, "delete from mysql.tidb where variable_name='default_memory_quota_query'")
-	mustExecSQL(c, seV3, "commit")
+	require.NoError(t, err)
+	mustExec(t, seV3, "update mysql.tidb set variable_value=38 where variable_name='tidb_server_version'")
+	mustExec(t, seV3, "delete from mysql.tidb where variable_name='default_memory_quota_query'")
+	mustExec(t, seV3, "commit")
 	unsetStoreBootstrapped(store.UUID())
 	ver, err := getBootstrapVersion(seV3)
-	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, int64(38))
-
+	require.NoError(t, err)
+	require.Equal(t, int64(38), ver)
+	dom.Close()
 	domV4, err := BootstrapSession(store)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer domV4.Close()
-	seV4 := newSession(c, store, s.dbName)
+	seV4 := createSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seV4)
-	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, currentBootstrapVersion)
-	r := mustExecSQL(c, seV4, "select @@tidb_mem_quota_query")
-	req := r.NewChunk()
-	r.Next(ctx, req)
-	c.Assert(req.GetRow(0).GetString(0), Equals, "34359738368")
-	r = mustExecSQL(c, seV4, "select variable_value from mysql.tidb where variable_name='default_memory_quota_query'")
-	req = r.NewChunk()
-	r.Next(ctx, req)
-	c.Assert(req.GetRow(0).GetString(0), Equals, "34359738368")
-	c.Assert(seV4.GetSessionVars().MemQuotaQuery, Equals, int64(34359738368))
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+	r := mustExec(t, seV4, "select @@tidb_mem_quota_query")
+	req := r.NewChunk(nil)
+	require.NoError(t, r.Next(ctx, req))
+	require.Equal(t, "34359738368", req.GetRow(0).GetString(0))
+	r = mustExec(t, seV4, "select variable_value from mysql.tidb where variable_name='default_memory_quota_query'")
+	req = r.NewChunk(nil)
+	require.NoError(t, r.Next(ctx, req))
+	require.Equal(t, "34359738368", req.GetRow(0).GetString(0))
+	require.Equal(t, int64(34359738368), seV4.GetSessionVars().MemQuotaQuery)
 }
 
-func (s *testBootstrapSuite) TestIssue20900_2(c *C) {
+func TestIssue20900_2(t *testing.T) {
+	oomAction := config.GetGlobalConfig().OOMAction
+	defer func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.OOMAction = oomAction
+		})
+	}()
+
 	ctx := context.Background()
-	defer testleak.AfterTest(c)()
-	store, _ := newStoreWithBootstrap(c, s.dbName)
-	defer store.Close()
+
+	store, dom := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
 
 	// test issue 20900, upgrade from v4.0.8 to v4.0.9+
-	seV3 := newSession(c, store, s.dbName)
+	seV3 := createSessionAndSetID(t, store)
 	txn, err := store.Begin()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	m := meta.NewMeta(txn)
 	err = m.FinishBootstrap(int64(52))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-	mustExecSQL(c, seV3, "update mysql.tidb set variable_value=52 where variable_name='tidb_server_version'")
-	mustExecSQL(c, seV3, "delete from mysql.tidb where variable_name='default_memory_quota_query'")
-	mustExecSQL(c, seV3, "commit")
+	require.NoError(t, err)
+	mustExec(t, seV3, "update mysql.tidb set variable_value=52 where variable_name='tidb_server_version'")
+	mustExec(t, seV3, "delete from mysql.tidb where variable_name='default_memory_quota_query'")
+	mustExec(t, seV3, "commit")
 	unsetStoreBootstrapped(store.UUID())
 	ver, err := getBootstrapVersion(seV3)
-	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, int64(52))
-
+	require.NoError(t, err)
+	require.Equal(t, int64(52), ver)
+	dom.Close()
 	domV4, err := BootstrapSession(store)
-	c.Assert(err, IsNil)
-	defer domV4.Close()
-	seV4 := newSession(c, store, s.dbName)
+	require.NoError(t, err)
+	seV4 := createSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seV4)
-	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, currentBootstrapVersion)
-	r := mustExecSQL(c, seV4, "select @@tidb_mem_quota_query")
-	req := r.NewChunk()
-	r.Next(ctx, req)
-	c.Assert(req.GetRow(0).GetString(0), Equals, "1073741824")
-	c.Assert(seV4.GetSessionVars().MemQuotaQuery, Equals, int64(1073741824))
-	r = mustExecSQL(c, seV4, "select variable_value from mysql.tidb where variable_name='default_memory_quota_query'")
-	req = r.NewChunk()
-	r.Next(ctx, req)
-	c.Assert(req.NumRows(), Equals, 0)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+	r := mustExec(t, seV4, "select @@tidb_mem_quota_query")
+	req := r.NewChunk(nil)
+	require.NoError(t, r.Next(ctx, req))
+	require.Equal(t, "1073741824", req.GetRow(0).GetString(0))
+	require.Equal(t, int64(1073741824), seV4.GetSessionVars().MemQuotaQuery)
+	r = mustExec(t, seV4, "select variable_value from mysql.tidb where variable_name='default_memory_quota_query'")
+	req = r.NewChunk(nil)
+	require.NoError(t, r.Next(ctx, req))
+	require.Equal(t, 0, req.NumRows())
+	domV4.Close()
 }
 
-func (s *testBootstrapSuite) TestANSISQLMode(c *C) {
-	defer testleak.AfterTest(c)()
-	store, dom := newStoreWithBootstrap(c, s.dbName)
-	defer store.Close()
-	se := newSession(c, store, s.dbName)
-	mustExecSQL(c, se, "USE mysql;")
-	mustExecSQL(c, se, `set @@global.sql_mode="NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION,ANSI"`)
-	mustExecSQL(c, se, `delete from mysql.TiDB where VARIABLE_NAME="tidb_server_version";`)
+func TestANSISQLMode(t *testing.T) {
+	store, dom := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	se := createSessionAndSetID(t, store)
+
+	mustExec(t, se, "USE mysql")
+	mustExec(t, se, `set @@global.sql_mode="NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION,ANSI"`)
+	mustExec(t, se, `delete from mysql.TiDB where VARIABLE_NAME="tidb_server_version"`)
 	unsetStoreBootstrapped(store.UUID())
 	se.Close()
 
@@ -466,49 +496,48 @@ func (s *testBootstrapSuite) TestANSISQLMode(c *C) {
 	// select variable_value from mysql.tidb where variable_name = "system_tz"
 	// it fails to execute in the ANSI sql_mode, and makes TiDB cluster fail to bootstrap.
 	dom1, err := BootstrapSession(store)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer dom1.Close()
-	se = newSession(c, store, s.dbName)
-	mustExecSQL(c, se, "select @@global.sql_mode")
+	se = createSessionAndSetID(t, store)
+	mustExec(t, se, "select @@global.sql_mode")
 	se.Close()
 }
 
-func (s *testBootstrapSuite) TestOldPasswordUpgrade(c *C) {
+func TestOldPasswordUpgrade(t *testing.T) {
 	pwd := "abc"
 	oldpwd := fmt.Sprintf("%X", auth.Sha1Hash([]byte(pwd)))
 	newpwd, err := oldPasswordUpgrade(oldpwd)
-	c.Assert(err, IsNil)
-	c.Assert(newpwd, Equals, "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E")
+	require.NoError(t, err)
+	require.Equal(t, "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E", newpwd)
 }
 
-func (s *testBootstrapSuite) TestBootstrapInitExpensiveQueryHandle(c *C) {
-	defer testleak.AfterTest(c)()
-	store := newStore(c, s.dbName)
-	defer store.Close()
+func TestBootstrapInitExpensiveQueryHandle(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
 	se, err := createSession(store)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	dom := domain.GetDomain(se)
-	c.Assert(dom, NotNil)
+	require.NotNil(t, dom)
 	defer dom.Close()
-	c.Assert(dom.ExpensiveQueryHandle(), NotNil)
+	require.NotNil(t, dom.ExpensiveQueryHandle())
 }
 
-func (s *testBootstrapSuite) TestStmtSummary(c *C) {
-	defer testleak.AfterTest(c)()
+func TestStmtSummary(t *testing.T) {
 	ctx := context.Background()
-	store, dom := newStoreWithBootstrap(c, s.dbName)
-	defer store.Close()
+	store, dom := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
-	se := newSession(c, store, s.dbName)
-	mustExecSQL(c, se, `update mysql.global_variables set variable_value='' where variable_name='tidb_enable_stmt_summary'`)
-	writeStmtSummaryVars(se)
+	se := createSessionAndSetID(t, store)
 
-	r := mustExecSQL(c, se, "select variable_value from mysql.global_variables where variable_name='tidb_enable_stmt_summary'")
-	req := r.NewChunk()
-	c.Assert(r.Next(ctx, req), IsNil)
+	r := mustExec(t, se, "select variable_value from mysql.global_variables where variable_name='tidb_enable_stmt_summary'")
+	req := r.NewChunk(nil)
+	require.NoError(t, r.Next(ctx, req))
 	row := req.GetRow(0)
-	c.Assert(row.GetBytes(0), BytesEquals, []byte("ON"))
-	c.Assert(r.Close(), IsNil)
+	require.Equal(t, []byte("ON"), row.GetBytes(0))
+	require.NoError(t, r.Close())
 }
 
 type bindTestStruct struct {
@@ -520,7 +549,7 @@ type bindTestStruct struct {
 	deleteText   string
 }
 
-func (s *testBootstrapSuite) TestUpdateBindInfo(c *C) {
+func TestUpdateBindInfo(t *testing.T) {
 	bindCases := []bindTestStruct{
 		{
 			originText:   "select * from t where a > ?",
@@ -547,174 +576,165 @@ func (s *testBootstrapSuite) TestUpdateBindInfo(c *C) {
 			deleteText:   "select * from test.t where a = 'c'",
 		},
 	}
-	defer testleak.AfterTest(c)()
+
 	ctx := context.Background()
-	store, dom := newStoreWithBootstrap(c, s.dbName)
-	defer store.Close()
+	store, dom := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
-	se := newSession(c, store, s.dbName)
+	se := createSessionAndSetID(t, store)
 	for _, bindCase := range bindCases {
-		sql := fmt.Sprintf("insert into mysql.bind_info values('%s', '%s', '%s', 'using', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')",
+		sql := fmt.Sprintf("insert into mysql.bind_info values('%s', '%s', '%s', 'enabled', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')",
 			bindCase.originText,
 			bindCase.bindText,
 			bindCase.db,
 		)
-		mustExecSQL(c, se, sql)
+		mustExec(t, se, sql)
 
 		upgradeToVer67(se, version66)
-		r := mustExecSQL(c, se, `select original_sql, bind_sql, default_db, status from mysql.bind_info where source != 'builtin'`)
-		req := r.NewChunk()
-		c.Assert(r.Next(ctx, req), IsNil)
+		r := mustExec(t, se, `select original_sql, bind_sql, default_db, status from mysql.bind_info where source != 'builtin'`)
+		req := r.NewChunk(nil)
+		require.NoError(t, r.Next(ctx, req))
 		row := req.GetRow(0)
-		c.Assert(row.GetString(0), Equals, bindCase.originWithDB)
-		c.Assert(row.GetString(1), Equals, bindCase.bindWithDB)
-		c.Assert(row.GetString(2), Equals, "")
-		c.Assert(row.GetString(3), Equals, "using")
-		c.Assert(r.Close(), IsNil)
+		require.Equal(t, bindCase.originWithDB, row.GetString(0))
+		require.Equal(t, bindCase.bindWithDB, row.GetString(1))
+		require.Equal(t, "", row.GetString(2))
+		require.Equal(t, bindinfo.Enabled, row.GetString(3))
+		require.NoError(t, r.Close())
 		sql = fmt.Sprintf("drop global binding for %s", bindCase.deleteText)
-		mustExecSQL(c, se, sql)
-		r = mustExecSQL(c, se, `select original_sql, bind_sql, status from mysql.bind_info where source != 'builtin'`)
-		c.Assert(r.Next(ctx, req), IsNil)
+		mustExec(t, se, sql)
+		r = mustExec(t, se, `select original_sql, bind_sql, status from mysql.bind_info where source != 'builtin'`)
+		require.NoError(t, r.Next(ctx, req))
 		row = req.GetRow(0)
-		c.Assert(row.GetString(0), Equals, bindCase.originWithDB)
-		c.Assert(row.GetString(1), Equals, bindCase.bindWithDB)
-		c.Assert(row.GetString(2), Equals, "deleted")
-		c.Assert(r.Close(), IsNil)
+		require.Equal(t, bindCase.originWithDB, row.GetString(0))
+		require.Equal(t, bindCase.bindWithDB, row.GetString(1))
+		require.Equal(t, "deleted", row.GetString(2))
+		require.NoError(t, r.Close())
 		sql = fmt.Sprintf("delete from mysql.bind_info where original_sql = '%s'", bindCase.originWithDB)
-		mustExecSQL(c, se, sql)
+		mustExec(t, se, sql)
 	}
 }
 
-func (s *testBootstrapSuite) TestUpdateDuplicateBindInfo(c *C) {
-	defer testleak.AfterTest(c)()
+func TestUpdateDuplicateBindInfo(t *testing.T) {
 	ctx := context.Background()
-	store, dom := newStoreWithBootstrap(c, s.dbName)
-	defer store.Close()
+	store, dom := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
-	se := newSession(c, store, s.dbName)
-	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from t', 'select /*+ use_index(t, idx_a)*/ * from t', 'test', 'using', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
+	se := createSessionAndSetID(t, store)
+	mustExec(t, se, `insert into mysql.bind_info values('select * from t', 'select /*+ use_index(t, idx_a)*/ * from t', 'test', 'enabled', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
 	// The latest one.
-	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from test . t', 'select /*+ use_index(t, idx_b)*/ * from test.t', 'test', 'using', '2021-01-04 14:50:58.257', '2021-01-09 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
+	mustExec(t, se, `insert into mysql.bind_info values('select * from test . t', 'select /*+ use_index(t, idx_b)*/ * from test.t', 'test', 'enabled', '2021-01-04 14:50:58.257', '2021-01-09 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
 
-	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from t where a < ?', 'select * from t use index(idx) where a < 1', 'test', 'deleted', '2021-06-04 17:04:43.333', '2021-06-04 17:04:43.335', 'utf8', 'utf8_general_ci', 'manual')`)
-	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from t where a < ?', 'select * from t ignore index(idx) where a < 1', 'test', 'using', '2021-06-04 17:04:43.335', '2021-06-04 17:04:43.335', 'utf8', 'utf8_general_ci', 'manual')`)
-	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from test . t where a <= ?', 'select * from test.t use index(idx) where a <= 1', '', 'deleted', '2021-06-04 17:04:43.345', '2021-06-04 17:04:45.334', 'utf8', 'utf8_general_ci', 'manual')`)
-	mustExecSQL(c, se, `insert into mysql.bind_info values('select * from test . t where a <= ?', 'select * from test.t ignore index(idx) where a <= 1', '', 'using', '2021-06-04 17:04:45.334', '2021-06-04 17:04:45.334', 'utf8', 'utf8_general_ci', 'manual')`)
+	mustExec(t, se, `insert into mysql.bind_info values('select * from t where a < ?', 'select * from t use index(idx) where a < 1', 'test', 'deleted', '2021-06-04 17:04:43.333', '2021-06-04 17:04:43.335', 'utf8', 'utf8_general_ci', 'manual')`)
+	mustExec(t, se, `insert into mysql.bind_info values('select * from t where a < ?', 'select * from t ignore index(idx) where a < 1', 'test', 'enabled', '2021-06-04 17:04:43.335', '2021-06-04 17:04:43.335', 'utf8', 'utf8_general_ci', 'manual')`)
+	mustExec(t, se, `insert into mysql.bind_info values('select * from test . t where a <= ?', 'select * from test.t use index(idx) where a <= 1', '', 'deleted', '2021-06-04 17:04:43.345', '2021-06-04 17:04:45.334', 'utf8', 'utf8_general_ci', 'manual')`)
+	mustExec(t, se, `insert into mysql.bind_info values('select * from test . t where a <= ?', 'select * from test.t ignore index(idx) where a <= 1', '', 'enabled', '2021-06-04 17:04:45.334', '2021-06-04 17:04:45.334', 'utf8', 'utf8_general_ci', 'manual')`)
 
 	upgradeToVer67(se, version66)
 
-	r := mustExecSQL(c, se, `select original_sql, bind_sql, default_db, status, create_time from mysql.bind_info where source != 'builtin' order by create_time`)
-	req := r.NewChunk()
-	c.Assert(r.Next(ctx, req), IsNil)
-	c.Assert(req.NumRows(), Equals, 3)
+	r := mustExec(t, se, `select original_sql, bind_sql, default_db, status, create_time from mysql.bind_info where source != 'builtin' order by create_time`)
+	req := r.NewChunk(nil)
+	require.NoError(t, r.Next(ctx, req))
+	require.Equal(t, 3, req.NumRows())
 	row := req.GetRow(0)
-	c.Assert(row.GetString(0), Equals, "select * from `test` . `t`")
-	c.Assert(row.GetString(1), Equals, "SELECT /*+ use_index(`t` `idx_b`)*/ * FROM `test`.`t`")
-	c.Assert(row.GetString(2), Equals, "")
-	c.Assert(row.GetString(3), Equals, "using")
-	c.Assert(row.GetTime(4).String(), Equals, "2021-01-04 14:50:58.257")
+	require.Equal(t, "select * from `test` . `t`", row.GetString(0))
+	require.Equal(t, "SELECT /*+ use_index(`t` `idx_b`)*/ * FROM `test`.`t`", row.GetString(1))
+	require.Equal(t, "", row.GetString(2))
+	require.Equal(t, bindinfo.Enabled, row.GetString(3))
+	require.Equal(t, "2021-01-04 14:50:58.257", row.GetTime(4).String())
 	row = req.GetRow(1)
-	c.Assert(row.GetString(0), Equals, "select * from `test` . `t` where `a` < ?")
-	c.Assert(row.GetString(1), Equals, "SELECT * FROM `test`.`t` IGNORE INDEX (`idx`) WHERE `a` < 1")
-	c.Assert(row.GetString(2), Equals, "")
-	c.Assert(row.GetString(3), Equals, "using")
-	c.Assert(row.GetTime(4).String(), Equals, "2021-06-04 17:04:43.335")
+	require.Equal(t, "select * from `test` . `t` where `a` < ?", row.GetString(0))
+	require.Equal(t, "SELECT * FROM `test`.`t` IGNORE INDEX (`idx`) WHERE `a` < 1", row.GetString(1))
+	require.Equal(t, "", row.GetString(2))
+	require.Equal(t, bindinfo.Enabled, row.GetString(3))
+	require.Equal(t, "2021-06-04 17:04:43.335", row.GetTime(4).String())
 	row = req.GetRow(2)
-	c.Assert(row.GetString(0), Equals, "select * from `test` . `t` where `a` <= ?")
-	c.Assert(row.GetString(1), Equals, "SELECT * FROM `test`.`t` IGNORE INDEX (`idx`) WHERE `a` <= 1")
-	c.Assert(row.GetString(2), Equals, "")
-	c.Assert(row.GetString(3), Equals, "using")
-	c.Assert(row.GetTime(4).String(), Equals, "2021-06-04 17:04:45.334")
+	require.Equal(t, "select * from `test` . `t` where `a` <= ?", row.GetString(0))
+	require.Equal(t, "SELECT * FROM `test`.`t` IGNORE INDEX (`idx`) WHERE `a` <= 1", row.GetString(1))
+	require.Equal(t, "", row.GetString(2))
+	require.Equal(t, bindinfo.Enabled, row.GetString(3))
+	require.Equal(t, "2021-06-04 17:04:45.334", row.GetTime(4).String())
 
-	c.Assert(r.Close(), IsNil)
-	mustExecSQL(c, se, "delete from mysql.bind_info where original_sql = 'select * from test . t'")
+	require.NoError(t, r.Close())
+	mustExec(t, se, "delete from mysql.bind_info where original_sql = 'select * from test . t'")
 }
 
-func (s *testBootstrapSuite) TestUpgradeClusteredIndexDefaultValue(c *C) {
-	var err error
-	defer testleak.AfterTest(c)()
-	store, _ := newStoreWithBootstrap(c, s.dbName)
-	defer func() {
-		c.Assert(store.Close(), IsNil)
-	}()
+func TestUpgradeClusteredIndexDefaultValue(t *testing.T) {
+	store, dom := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
 
-	seV67 := newSession(c, store, s.dbName)
+	seV67 := createSessionAndSetID(t, store)
 	txn, err := store.Begin()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	m := meta.NewMeta(txn)
 	err = m.FinishBootstrap(int64(67))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-	mustExecSQL(c, seV67, "update mysql.tidb set variable_value='67' where variable_name='tidb_server_version'")
-	mustExecSQL(c, seV67, "UPDATE mysql.global_variables SET VARIABLE_VALUE = 'OFF' where VARIABLE_NAME = 'tidb_enable_clustered_index'")
-	c.Assert(seV67.GetSessionVars().StmtCtx.AffectedRows(), Equals, uint64(1))
-	mustExecSQL(c, seV67, "commit")
+	require.NoError(t, err)
+	mustExec(t, seV67, "update mysql.tidb set variable_value='67' where variable_name='tidb_server_version'")
+	mustExec(t, seV67, "UPDATE mysql.global_variables SET VARIABLE_VALUE = 'OFF' where VARIABLE_NAME = 'tidb_enable_clustered_index'")
+	require.Equal(t, uint64(1), seV67.GetSessionVars().StmtCtx.AffectedRows())
+	mustExec(t, seV67, "commit")
 	unsetStoreBootstrapped(store.UUID())
 	ver, err := getBootstrapVersion(seV67)
-	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, int64(67))
+	require.NoError(t, err)
+	require.Equal(t, int64(67), ver)
+	dom.Close()
 
 	domV68, err := BootstrapSession(store)
-	c.Assert(err, IsNil)
-	defer domV68.Close()
-	seV68 := newSession(c, store, s.dbName)
+	require.NoError(t, err)
+	seV68 := createSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seV68)
-	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, currentBootstrapVersion)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
 
-	r := mustExecSQL(c, seV68, `select @@global.tidb_enable_clustered_index, @@session.tidb_enable_clustered_index`)
-	req := r.NewChunk()
-	c.Assert(r.Next(context.Background(), req), IsNil)
-	c.Assert(req.NumRows(), Equals, 1)
+	r := mustExec(t, seV68, `select @@global.tidb_enable_clustered_index, @@session.tidb_enable_clustered_index`)
+	req := r.NewChunk(nil)
+	require.NoError(t, r.Next(context.Background(), req))
+	require.Equal(t, 1, req.NumRows())
 	row := req.GetRow(0)
-	c.Assert(row.GetString(0), Equals, "INT_ONLY")
-	c.Assert(row.GetString(1), Equals, "INT_ONLY")
+	require.Equal(t, "INT_ONLY", row.GetString(0))
+	require.Equal(t, "INT_ONLY", row.GetString(1))
+	domV68.Close()
 }
 
-func (s *testBootstrapSuite) TestUpgradeVersion66(c *C) {
-	var err error
-	defer testleak.AfterTest(c)()
+func TestUpgradeVersion66(t *testing.T) {
 	ctx := context.Background()
-	store, _ := newStoreWithBootstrap(c, s.dbName)
-	defer func() {
-		c.Assert(store.Close(), IsNil)
-	}()
-
-	seV65 := newSession(c, store, s.dbName)
+	store, dom := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	seV65 := createSessionAndSetID(t, store)
 	txn, err := store.Begin()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	m := meta.NewMeta(txn)
 	err = m.FinishBootstrap(int64(65))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-	mustExecSQL(c, seV65, "update mysql.tidb set variable_value='65' where variable_name='tidb_server_version'")
-	mustExecSQL(c, seV65, "set @@global.tidb_track_aggregate_memory_usage = 0")
-	mustExecSQL(c, seV65, "commit")
+	require.NoError(t, err)
+	mustExec(t, seV65, "update mysql.tidb set variable_value='65' where variable_name='tidb_server_version'")
+	mustExec(t, seV65, "set @@global.tidb_track_aggregate_memory_usage = 0")
+	mustExec(t, seV65, "commit")
 	unsetStoreBootstrapped(store.UUID())
 	ver, err := getBootstrapVersion(seV65)
-	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, int64(65))
-
+	require.NoError(t, err)
+	require.Equal(t, int64(65), ver)
+	dom.Close()
 	domV66, err := BootstrapSession(store)
-	c.Assert(err, IsNil)
-	defer domV66.Close()
-	seV66 := newSession(c, store, s.dbName)
+	require.NoError(t, err)
+
+	seV66 := createSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seV66)
-	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, currentBootstrapVersion)
-	r := mustExecSQL(c, seV66, `select @@global.tidb_track_aggregate_memory_usage, @@session.tidb_track_aggregate_memory_usage`)
-	req := r.NewChunk()
-	c.Assert(r.Next(ctx, req), IsNil)
-	c.Assert(req.NumRows(), Equals, 1)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+	r := mustExec(t, seV66, `select @@global.tidb_track_aggregate_memory_usage, @@session.tidb_track_aggregate_memory_usage`)
+	req := r.NewChunk(nil)
+	require.NoError(t, r.Next(ctx, req))
+	require.Equal(t, 1, req.NumRows())
 	row := req.GetRow(0)
-	c.Assert(row.GetInt64(0), Equals, int64(1))
-	c.Assert(row.GetInt64(1), Equals, int64(1))
+	require.Equal(t, int64(1), row.GetInt64(0))
+	require.Equal(t, int64(1), row.GetInt64(1))
+	domV66.Close()
 }
 
-func (s *testBootstrapSuite) TestUpgradeVersion74(c *C) {
-	defer testleak.AfterTest(c)()
+func TestUpgradeVersion74(t *testing.T) {
 	ctx := context.Background()
 
 	cases := []struct {
@@ -727,121 +747,326 @@ func (s *testBootstrapSuite) TestUpgradeVersion74(c *C) {
 	}
 
 	for _, ca := range cases {
-		store, _ := newStoreWithBootstrap(c, s.dbName)
-		defer func() {
-			c.Assert(store.Close(), IsNil)
+		func() {
+			store, dom := createStoreAndBootstrap(t)
+			defer func() { require.NoError(t, store.Close()) }()
+
+			seV73 := createSessionAndSetID(t, store)
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			m := meta.NewMeta(txn)
+			err = m.FinishBootstrap(int64(73))
+			require.NoError(t, err)
+			err = txn.Commit(context.Background())
+			require.NoError(t, err)
+			mustExec(t, seV73, "update mysql.tidb set variable_value='72' where variable_name='tidb_server_version'")
+			mustExec(t, seV73, "set @@global.tidb_stmt_summary_max_stmt_count = "+strconv.Itoa(ca.oldValue))
+			mustExec(t, seV73, "commit")
+			unsetStoreBootstrapped(store.UUID())
+			ver, err := getBootstrapVersion(seV73)
+			require.NoError(t, err)
+			require.Equal(t, int64(72), ver)
+			dom.Close()
+			domV74, err := BootstrapSession(store)
+			require.NoError(t, err)
+			defer domV74.Close()
+			seV74 := createSessionAndSetID(t, store)
+			ver, err = getBootstrapVersion(seV74)
+			require.NoError(t, err)
+			require.Equal(t, currentBootstrapVersion, ver)
+			r := mustExec(t, seV74, `SELECT @@global.tidb_stmt_summary_max_stmt_count`)
+			req := r.NewChunk(nil)
+			require.NoError(t, r.Next(ctx, req))
+			require.Equal(t, 1, req.NumRows())
+			row := req.GetRow(0)
+			require.Equal(t, strconv.Itoa(ca.newValue), row.GetString(0))
 		}()
-
-		seV73 := newSession(c, store, s.dbName)
-		txn, err := store.Begin()
-		c.Assert(err, IsNil)
-		m := meta.NewMeta(txn)
-		err = m.FinishBootstrap(int64(73))
-		c.Assert(err, IsNil)
-		err = txn.Commit(context.Background())
-		c.Assert(err, IsNil)
-		mustExecSQL(c, seV73, "update mysql.tidb set variable_value='72' where variable_name='tidb_server_version'")
-		mustExecSQL(c, seV73, "set @@global.tidb_stmt_summary_max_stmt_count = "+strconv.Itoa(ca.oldValue))
-		mustExecSQL(c, seV73, "commit")
-		unsetStoreBootstrapped(store.UUID())
-		ver, err := getBootstrapVersion(seV73)
-		c.Assert(err, IsNil)
-		c.Assert(ver, Equals, int64(72))
-
-		domV74, err := BootstrapSession(store)
-		c.Assert(err, IsNil)
-		defer domV74.Close()
-		seV74 := newSession(c, store, s.dbName)
-		ver, err = getBootstrapVersion(seV74)
-		c.Assert(err, IsNil)
-		c.Assert(ver, Equals, currentBootstrapVersion)
-		r := mustExecSQL(c, seV74, `select @@global.tidb_stmt_summary_max_stmt_count, @@session.tidb_stmt_summary_max_stmt_count`)
-		req := r.NewChunk()
-		c.Assert(r.Next(ctx, req), IsNil)
-		c.Assert(req.NumRows(), Equals, 1)
-		row := req.GetRow(0)
-		c.Assert(row.GetString(0), Equals, strconv.Itoa(ca.newValue))
-		c.Assert(row.GetString(1), Equals, strconv.Itoa(ca.newValue))
 	}
 }
 
-func (s *testBootstrapSuite) TestUpgradeVersion75(c *C) {
-	defer testleak.AfterTest(c)()
+func TestUpgradeVersion75(t *testing.T) {
 	ctx := context.Background()
 
-	store, _ := newStoreWithBootstrap(c, s.dbName)
-	defer func() {
-		c.Assert(store.Close(), IsNil)
-	}()
+	store, dom := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
 
-	seV74 := newSession(c, store, s.dbName)
+	seV74 := createSessionAndSetID(t, store)
 	txn, err := store.Begin()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	m := meta.NewMeta(txn)
 	err = m.FinishBootstrap(int64(74))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-	mustExecSQL(c, seV74, "update mysql.tidb set variable_value='74' where variable_name='tidb_server_version'")
-	mustExecSQL(c, seV74, "commit")
-	mustExecSQL(c, seV74, "ALTER TABLE mysql.user DROP PRIMARY KEY")
-	mustExecSQL(c, seV74, "ALTER TABLE mysql.user MODIFY COLUMN Host CHAR(64)")
-	mustExecSQL(c, seV74, "ALTER TABLE mysql.user ADD PRIMARY KEY(Host, User)")
+	require.NoError(t, err)
+	mustExec(t, seV74, "update mysql.tidb set variable_value='74' where variable_name='tidb_server_version'")
+	mustExec(t, seV74, "commit")
+	mustExec(t, seV74, "ALTER TABLE mysql.user DROP PRIMARY KEY")
+	mustExec(t, seV74, "ALTER TABLE mysql.user MODIFY COLUMN Host CHAR(64)")
+	mustExec(t, seV74, "ALTER TABLE mysql.user ADD PRIMARY KEY(Host, User)")
 	unsetStoreBootstrapped(store.UUID())
 	ver, err := getBootstrapVersion(seV74)
-	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, int64(74))
-	r := mustExecSQL(c, seV74, `desc mysql.user`)
-	req := r.NewChunk()
+	require.NoError(t, err)
+	require.Equal(t, int64(74), ver)
+	r := mustExec(t, seV74, `desc mysql.user`)
+	req := r.NewChunk(nil)
 	row := req.GetRow(0)
-	c.Assert(r.Next(ctx, req), IsNil)
-	c.Assert(strings.ToLower(row.GetString(0)), Equals, "host")
-	c.Assert(strings.ToLower(row.GetString(1)), Equals, "char(64)")
-
+	require.NoError(t, r.Next(ctx, req))
+	require.Equal(t, "host", strings.ToLower(row.GetString(0)))
+	require.Equal(t, "char(64)", strings.ToLower(row.GetString(1)))
+	dom.Close()
 	domV75, err := BootstrapSession(store)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer domV75.Close()
-	seV75 := newSession(c, store, s.dbName)
+	seV75 := createSessionAndSetID(t, store)
 	ver, err = getBootstrapVersion(seV75)
-	c.Assert(err, IsNil)
-	c.Assert(ver, Equals, currentBootstrapVersion)
-	r = mustExecSQL(c, seV75, `desc mysql.user`)
-	req = r.NewChunk()
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+	r = mustExec(t, seV75, `desc mysql.user`)
+	req = r.NewChunk(nil)
 	row = req.GetRow(0)
-	c.Assert(r.Next(ctx, req), IsNil)
-	c.Assert(strings.ToLower(row.GetString(0)), Equals, "host")
-	c.Assert(strings.ToLower(row.GetString(1)), Equals, "char(255)")
+	require.NoError(t, r.Next(ctx, req))
+	require.Equal(t, "host", strings.ToLower(row.GetString(0)))
+	require.Equal(t, "char(255)", strings.ToLower(row.GetString(1)))
 }
 
-func (s *testBootstrapSuite) TestForIssue23387(c *C) {
+func TestForIssue23387(t *testing.T) {
 	// For issue https://github.com/pingcap/tidb/issues/23387
 	saveCurrentBootstrapVersion := currentBootstrapVersion
 	currentBootstrapVersion = version57
 
 	// Bootstrap to an old version, create a user.
 	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
-	defer store.Close()
-	_, err = BootstrapSession(store)
-	// domain leaked here, Close() is not called. For testing, it's OK.
-	// If we close it and BootstrapSession again, we'll get an error "session pool is closed".
-	// The problem is caused by some the global level variable, domain map is not intended for multiple instances.
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
 
-	se := newSession(c, store, s.dbName)
-	mustExecSQL(c, se, "create user quatest")
-
+	se := createSessionAndSetID(t, store)
+	se.Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, []byte("012345678901234567890"))
+	mustExec(t, se, "create user quatest")
+	dom.Close()
 	// Upgrade to a newer version, check the user's privilege.
 	currentBootstrapVersion = saveCurrentBootstrapVersion
-	dom, err := BootstrapSession(store)
-	c.Assert(err, IsNil)
+	dom, err = BootstrapSession(store)
+	require.NoError(t, err)
 	defer dom.Close()
 
-	se = newSession(c, store, s.dbName)
+	se = createSessionAndSetID(t, store)
+	se.Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, []byte("012345678901234567890"))
 	rs, err := exec(se, "show grants for quatest")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	rows, err := ResultSetToStringSlice(context.Background(), se, rs)
-	c.Assert(err, IsNil)
-	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][0], Equals, "GRANT USAGE ON *.* TO 'quatest'@'%'")
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "GRANT USAGE ON *.* TO 'quatest'@'%'", rows[0][0])
+}
+
+func TestReferencesPrivilegeOnColumn(t *testing.T) {
+	store, dom := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+	se := createSessionAndSetID(t, store)
+
+	defer func() {
+		mustExec(t, se, "drop user if exists issue28531")
+		mustExec(t, se, "drop table if exists t1")
+	}()
+
+	mustExec(t, se, "create user if not exists issue28531")
+	mustExec(t, se, "use test")
+	mustExec(t, se, "drop table if exists t1")
+	mustExec(t, se, "create table t1 (a int)")
+	mustExec(t, se, "GRANT select (a), update (a),insert(a), references(a) on t1 to issue28531")
+}
+
+func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
+	ctx := context.Background()
+	store, dom := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// Upgrade from 3.0.0 to 5.1+ or above.
+	ver300 := 33
+	seV3 := createSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver300))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	mustExec(t, seV3, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver300))
+	mustExec(t, seV3, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBAnalyzeVersion))
+	mustExec(t, seV3, "commit")
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV3)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver300), ver)
+
+	// We are now in 3.0.0, check tidb_analyze_version should not exist.
+	res := mustExec(t, seV3, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBAnalyzeVersion))
+	chk := res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 0, chk.NumRows())
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := createSessionAndSetID(t, store)
+	ver, err = getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// We are now in version no lower than 5.x, tidb_enable_index_merge should be 1.
+	res = mustExec(t, seCurVer, "select @@tidb_analyze_version")
+	chk = res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	row := chk.GetRow(0)
+	require.Equal(t, 1, row.Len())
+	require.Equal(t, "1", row.GetString(0))
+}
+
+func TestIndexMergeInNewCluster(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	// Indicates we are in a new cluster.
+	require.Equal(t, int64(notBootstrapped), getStoreBootstrapVersion(store))
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+	se := createSessionAndSetID(t, store)
+
+	// In a new created cluster(above 5.4+), tidb_enable_index_merge is 1 by default.
+	mustExec(t, se, "use test;")
+	r := mustExec(t, se, "select @@tidb_enable_index_merge;")
+	require.NotNil(t, r)
+
+	ctx := context.Background()
+	chk := r.NewChunk(nil)
+	err = r.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	row := chk.GetRow(0)
+	require.Equal(t, 1, row.Len())
+	require.Equal(t, int64(1), row.GetInt64(0))
+}
+
+func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
+	ctx := context.Background()
+	store, dom := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// Upgrade from 3.0.0 to 5.4+.
+	ver300 := 33
+	seV3 := createSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver300))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	mustExec(t, seV3, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver300))
+	mustExec(t, seV3, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableIndexMerge))
+	mustExec(t, seV3, "commit")
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV3)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver300), ver)
+
+	// We are now in 3.0.0, check tidb_enable_index_merge shoudle not exist.
+	res := mustExec(t, seV3, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableIndexMerge))
+	chk := res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 0, chk.NumRows())
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := createSessionAndSetID(t, store)
+	ver, err = getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// We are now in 5.x, tidb_enable_index_merge should be off.
+	res = mustExec(t, seCurVer, "select @@tidb_enable_index_merge")
+	chk = res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	row := chk.GetRow(0)
+	require.Equal(t, 1, row.Len())
+	require.Equal(t, int64(0), row.GetInt64(0))
+}
+
+func TestIndexMergeUpgradeFrom400To540(t *testing.T) {
+	for i := 0; i < 2; i++ {
+		func() {
+			ctx := context.Background()
+			store, dom := createStoreAndBootstrap(t)
+			defer func() { require.NoError(t, store.Close()) }()
+
+			// upgrade from 4.0.0 to 5.4+.
+			ver400 := 46
+			seV4 := createSessionAndSetID(t, store)
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			m := meta.NewMeta(txn)
+			err = m.FinishBootstrap(int64(ver400))
+			require.NoError(t, err)
+			err = txn.Commit(context.Background())
+			require.NoError(t, err)
+			mustExec(t, seV4, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver400))
+			mustExec(t, seV4, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", variable.Off, variable.TiDBEnableIndexMerge))
+			mustExec(t, seV4, "commit")
+			unsetStoreBootstrapped(store.UUID())
+			ver, err := getBootstrapVersion(seV4)
+			require.NoError(t, err)
+			require.Equal(t, int64(ver400), ver)
+
+			// We are now in 4.0.0, tidb_enable_index_merge is off.
+			res := mustExec(t, seV4, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableIndexMerge))
+			chk := res.NewChunk(nil)
+			err = res.Next(ctx, chk)
+			require.NoError(t, err)
+			require.Equal(t, 1, chk.NumRows())
+			row := chk.GetRow(0)
+			require.Equal(t, 2, row.Len())
+			require.Equal(t, variable.Off, row.GetString(1))
+
+			if i == 0 {
+				// For the first time, We set tidb_enable_index_merge as on.
+				// And after upgrade to 5.x, tidb_enable_index_merge should remains to be on.
+				// For the second it should be off.
+				mustExec(t, seV4, "set global tidb_enable_index_merge = on")
+			}
+			dom.Close()
+			// Upgrade to 5.x.
+			domCurVer, err := BootstrapSession(store)
+			require.NoError(t, err)
+			defer domCurVer.Close()
+			seCurVer := createSessionAndSetID(t, store)
+			ver, err = getBootstrapVersion(seCurVer)
+			require.NoError(t, err)
+			require.Equal(t, currentBootstrapVersion, ver)
+
+			// We are now in 5.x, tidb_enable_index_merge should be on because we enable it in 4.0.0.
+			res = mustExec(t, seCurVer, "select @@tidb_enable_index_merge")
+			chk = res.NewChunk(nil)
+			err = res.Next(ctx, chk)
+			require.NoError(t, err)
+			require.Equal(t, 1, chk.NumRows())
+			row = chk.GetRow(0)
+			require.Equal(t, 1, row.Len())
+			if i == 0 {
+				require.Equal(t, int64(1), row.GetInt64(0))
+			} else {
+				require.Equal(t, int64(0), row.GetInt64(0))
+			}
+		}()
+	}
 }

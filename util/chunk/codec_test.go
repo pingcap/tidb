@@ -18,15 +18,13 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCodec(t *testing.T) {
-	t.Parallel()
-
 	numCols := 6
 	numRows := 10
 
@@ -77,8 +75,6 @@ func TestCodec(t *testing.T) {
 }
 
 func TestEstimateTypeWidth(t *testing.T) {
-	t.Parallel()
-
 	var colType *types.FieldType
 
 	colType = &types.FieldType{Tp: mysql.TypeLonglong}

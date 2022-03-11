@@ -19,12 +19,12 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAdminCheckTable(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -77,8 +77,6 @@ func TestAdminCheckTable(t *testing.T) {
 }
 
 func TestAdminCheckTableClusterIndex(t *testing.T) {
-	t.Parallel()
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -112,4 +110,37 @@ func TestAdminCheckTableClusterIndex(t *testing.T) {
 
 	tk.MustExec("insert into t values (1000, '1000', 1000, '1000', '1000');")
 	tk.MustExec("admin check table t;")
+}
+
+func TestAdminCheckTableCorrupted(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, v int, UNIQUE KEY i1(id, v))")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1, 1)")
+
+	txn, err := tk.Session().Txn(false)
+	require.NoError(t, err)
+	memBuffer := txn.GetMemBuffer()
+	it, err := memBuffer.Iter(nil, nil)
+	require.NoError(t, err)
+	for it.Valid() {
+		if tablecodec.IsRecordKey(it.Key()) && len(it.Value()) > 0 {
+			value := make([]byte, len(it.Value()))
+			key := make([]byte, len(it.Key()))
+			copy(key, it.Key())
+			copy(value, it.Value())
+			key[len(key)-1] += 1
+			memBuffer.Set(key, value)
+		}
+		err = it.Next()
+		require.NoError(t, err)
+	}
+
+	tk.MustExec("commit")
+	err = tk.ExecToErr("admin check table t")
+	require.Error(t, err)
 }

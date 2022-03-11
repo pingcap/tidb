@@ -15,11 +15,12 @@
 package ddl
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -58,7 +59,10 @@ func (sg *sessionPool) get() (sessionctx.Context, error) {
 		return nil, errors.Trace(err)
 	}
 
-	ctx := resource.(sessionctx.Context)
+	ctx, ok := resource.(sessionctx.Context)
+	if !ok {
+		return nil, fmt.Errorf("sessionPool resource get %v", ctx)
+	}
 	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
 	ctx.GetSessionVars().InRestrictedSQL = true
 	return ctx, nil

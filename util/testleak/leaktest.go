@@ -16,6 +16,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+//go:build leak
 // +build leak
 
 package testleak
@@ -60,14 +61,14 @@ func interestingGoroutines() (gs []string) {
 		"github.com/pingcap/goleveldb/leveldb/util.(*BufferPool).drain",
 		"github.com/pingcap/goleveldb/leveldb.(*DB).compactionError",
 		"github.com/pingcap/goleveldb/leveldb.(*DB).mpoolDrain",
-		"go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop",
+		"go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop",
 		"go.etcd.io/etcd/v3/pkg/logutil.(*MergeLogger).outputLoop",
 		"oracles.(*pdOracle).updateTS",
 		"tikv.(*KVStore).runSafePointChecker",
 		"tikv.(*RegionCache).asyncCheckAndResolveLoop",
 		"github.com/pingcap/badger",
 		"github.com/ngaut/unistore/tikv.(*MVCCStore).runUpdateSafePointLoop",
-		"github.com/tikv/client-go/v2/tikv.(*ttlManager).keepAlive", // See https://github.com/tikv/client-go/issues/174
+		"github.com/tikv/client-go/v2/txnkv/transaction.keepAlive", // See https://github.com/tikv/client-go/issues/174
 	}
 	shouldIgnore := func(stack string) bool {
 		if stack == "" {

@@ -25,11 +25,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -83,22 +84,22 @@ func TestSignedAutoid(t *testing.T) {
 	require.Equal(t, autoid.GetStep()+1, globalAutoID)
 
 	// rebase
-	err = alloc.Rebase(int64(1), true)
+	err = alloc.Rebase(context.Background(), int64(1), true)
 	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(3), id)
-	err = alloc.Rebase(int64(3), true)
+	err = alloc.Rebase(context.Background(), int64(3), true)
 	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(4), id)
-	err = alloc.Rebase(int64(10), true)
+	err = alloc.Rebase(context.Background(), int64(10), true)
 	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(11), id)
-	err = alloc.Rebase(int64(3010), true)
+	err = alloc.Rebase(context.Background(), int64(3010), true)
 	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
@@ -112,7 +113,7 @@ func TestSignedAutoid(t *testing.T) {
 
 	alloc = autoid.NewAllocator(store, 1, 2, false, autoid.RowIDAllocType)
 	require.NotNil(t, alloc)
-	err = alloc.Rebase(int64(1), false)
+	err = alloc.Rebase(context.Background(), int64(1), false)
 	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
@@ -120,27 +121,27 @@ func TestSignedAutoid(t *testing.T) {
 
 	alloc = autoid.NewAllocator(store, 1, 3, false, autoid.RowIDAllocType)
 	require.NotNil(t, alloc)
-	err = alloc.Rebase(int64(3210), false)
+	err = alloc.Rebase(context.Background(), int64(3210), false)
 	require.NoError(t, err)
 	alloc = autoid.NewAllocator(store, 1, 3, false, autoid.RowIDAllocType)
 	require.NotNil(t, alloc)
-	err = alloc.Rebase(int64(3000), false)
+	err = alloc.Rebase(context.Background(), int64(3000), false)
 	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(3211), id)
-	err = alloc.Rebase(int64(6543), false)
+	err = alloc.Rebase(context.Background(), int64(6543), false)
 	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(6544), id)
 
 	// Test the MaxInt64 is the upper bound of `alloc` function but not `rebase`.
-	err = alloc.Rebase(int64(math.MaxInt64-1), true)
+	err = alloc.Rebase(context.Background(), int64(math.MaxInt64-1), true)
 	require.NoError(t, err)
 	_, _, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.Error(t, err)
-	err = alloc.Rebase(int64(math.MaxInt64), true)
+	err = alloc.Rebase(context.Background(), int64(math.MaxInt64), true)
 	require.NoError(t, err)
 
 	// alloc N for signed
@@ -169,7 +170,7 @@ func TestSignedAutoid(t *testing.T) {
 		expected++
 	}
 
-	err = alloc.Rebase(int64(1000), false)
+	err = alloc.Rebase(context.Background(), int64(1000), false)
 	require.NoError(t, err)
 	min, max, err = alloc.Alloc(ctx, 3, 1, 1)
 	require.NoError(t, err)
@@ -179,7 +180,7 @@ func TestSignedAutoid(t *testing.T) {
 	require.Equal(t, int64(1003), max)
 
 	lastRemainOne := alloc.End()
-	err = alloc.Rebase(alloc.End()-2, false)
+	err = alloc.Rebase(context.Background(), alloc.End()-2, false)
 	require.NoError(t, err)
 	min, max, err = alloc.Alloc(ctx, 5, 1, 1)
 	require.NoError(t, err)
@@ -287,22 +288,22 @@ func TestUnsignedAutoid(t *testing.T) {
 	require.Equal(t, autoid.GetStep()+1, globalAutoID)
 
 	// rebase
-	err = alloc.Rebase(int64(1), true)
+	err = alloc.Rebase(context.Background(), int64(1), true)
 	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(3), id)
-	err = alloc.Rebase(int64(3), true)
+	err = alloc.Rebase(context.Background(), int64(3), true)
 	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(4), id)
-	err = alloc.Rebase(int64(10), true)
+	err = alloc.Rebase(context.Background(), int64(10), true)
 	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(11), id)
-	err = alloc.Rebase(int64(3010), true)
+	err = alloc.Rebase(context.Background(), int64(3010), true)
 	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
@@ -316,7 +317,7 @@ func TestUnsignedAutoid(t *testing.T) {
 
 	alloc = autoid.NewAllocator(store, 1, 2, true, autoid.RowIDAllocType)
 	require.NotNil(t, alloc)
-	err = alloc.Rebase(int64(1), false)
+	err = alloc.Rebase(context.Background(), int64(1), false)
 	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
@@ -324,16 +325,16 @@ func TestUnsignedAutoid(t *testing.T) {
 
 	alloc = autoid.NewAllocator(store, 1, 3, true, autoid.RowIDAllocType)
 	require.NotNil(t, alloc)
-	err = alloc.Rebase(int64(3210), false)
+	err = alloc.Rebase(context.Background(), int64(3210), false)
 	require.NoError(t, err)
 	alloc = autoid.NewAllocator(store, 1, 3, true, autoid.RowIDAllocType)
 	require.NotNil(t, alloc)
-	err = alloc.Rebase(int64(3000), false)
+	err = alloc.Rebase(context.Background(), int64(3000), false)
 	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(3211), id)
-	err = alloc.Rebase(int64(6543), false)
+	err = alloc.Rebase(context.Background(), int64(6543), false)
 	require.NoError(t, err)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
@@ -342,12 +343,12 @@ func TestUnsignedAutoid(t *testing.T) {
 	// Test the MaxUint64 is the upper bound of `alloc` func but not `rebase`.
 	var n uint64 = math.MaxUint64 - 1
 	un := int64(n)
-	err = alloc.Rebase(un, true)
+	err = alloc.Rebase(context.Background(), un, true)
 	require.NoError(t, err)
 	_, _, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.Error(t, err)
 	un = int64(n + 1)
-	err = alloc.Rebase(un, true)
+	err = alloc.Rebase(context.Background(), un, true)
 	require.NoError(t, err)
 
 	// alloc N for unsigned
@@ -363,7 +364,7 @@ func TestUnsignedAutoid(t *testing.T) {
 	require.Equal(t, int64(1), min+1)
 	require.Equal(t, int64(2), max)
 
-	err = alloc.Rebase(int64(500), true)
+	err = alloc.Rebase(context.Background(), int64(500), true)
 	require.NoError(t, err)
 	min, max, err = alloc.Alloc(ctx, 2, 1, 1)
 	require.NoError(t, err)
@@ -372,7 +373,7 @@ func TestUnsignedAutoid(t *testing.T) {
 	require.Equal(t, int64(502), max)
 
 	lastRemainOne := alloc.End()
-	err = alloc.Rebase(alloc.End()-2, false)
+	err = alloc.Rebase(context.Background(), alloc.End()-2, false)
 	require.NoError(t, err)
 	min, max, err = alloc.Alloc(ctx, 5, 1, 1)
 	require.NoError(t, err)
@@ -426,7 +427,7 @@ func TestConcurrentAlloc(t *testing.T) {
 	require.NoError(t, err)
 
 	var mu sync.Mutex
-	wg := sync.WaitGroup{}
+	var wg util.WaitGroupWrapper
 	m := map[int64]struct{}{}
 	count := 10
 	errCh := make(chan error, count)
@@ -476,12 +477,11 @@ func TestConcurrentAlloc(t *testing.T) {
 		}
 	}
 	for i := 0; i < count; i++ {
-		wg.Add(1)
-		go func(num int) {
-			defer wg.Done()
+		num := 1
+		wg.Run(func() {
 			time.Sleep(time.Duration(num%10) * time.Microsecond)
 			allocIDs()
-		}(i)
+		})
 	}
 	wg.Wait()
 
@@ -521,7 +521,7 @@ func TestRollbackAlloc(t *testing.T) {
 	require.Equal(t, int64(0), alloc.Base())
 	require.Equal(t, int64(0), alloc.End())
 
-	err = alloc.Rebase(100, true)
+	err = alloc.Rebase(context.Background(), 100, true)
 	require.Error(t, err)
 	require.Equal(t, int64(0), alloc.Base())
 	require.Equal(t, int64(0), alloc.End())
@@ -529,7 +529,6 @@ func TestRollbackAlloc(t *testing.T) {
 
 // TestNextStep tests generate next auto id step.
 func TestNextStep(t *testing.T) {
-	t.Parallel()
 	nextStep := autoid.NextStep(2000000, 1*time.Nanosecond)
 	require.Equal(t, int64(2000000), nextStep)
 	nextStep = autoid.NextStep(678910, 10*time.Second)
@@ -573,10 +572,10 @@ func TestAllocComputationIssue(t *testing.T) {
 	require.NotNil(t, signedAlloc2)
 
 	// the next valid two value must be 13 & 16, batch size = 6.
-	err = unsignedAlloc1.Rebase(10, false)
+	err = unsignedAlloc1.Rebase(context.Background(), 10, false)
 	require.NoError(t, err)
 	// the next valid two value must be 10 & 13, batch size = 6.
-	err = signedAlloc2.Rebase(7, false)
+	err = signedAlloc2.Rebase(context.Background(), 7, false)
 	require.NoError(t, err)
 	// Simulate the rest cache is not enough for next batch, assuming 10 & 13, batch size = 4.
 	autoid.TestModifyBaseAndEndInjection(unsignedAlloc1, 9, 9)

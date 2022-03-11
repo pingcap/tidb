@@ -24,9 +24,9 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -180,7 +180,7 @@ func ConvertConfigItem2JSON(ctx sessionctx.Context, key string, val expression.E
 		var s string
 		s, isNull, err = val.EvalString(ctx, chunk.Row{})
 		if err == nil && !isNull {
-			str = fmt.Sprintf(`"%s"`, s)
+			str = fmt.Sprintf("%q", s)
 		}
 	case types.ETInt:
 		var i int64

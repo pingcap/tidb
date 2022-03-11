@@ -18,7 +18,9 @@ import (
 	"context"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -45,40 +47,76 @@ type RestrictedSQLExecutor interface {
 	// One argument should be a standalone entity. It should not "concat" with other placeholders and characters.
 	// This function only saves you from processing potentially unsafe parameters.
 	ParseWithParams(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error)
-	// ExecRestrictedStmt run sql statement in ctx with some restriction.
+	// ExecRestrictedStmt run sql statement in ctx with some restrictions.
 	ExecRestrictedStmt(ctx context.Context, stmt ast.StmtNode, opts ...OptionFuncAlias) ([]chunk.Row, []*ast.ResultField, error)
+	// ExecRestrictedSQL run sql string in ctx with internal session.
+	ExecRestrictedSQL(ctx context.Context, opts []OptionFuncAlias, sql string, args ...interface{}) ([]chunk.Row, []*ast.ResultField, error)
 }
 
-// ExecOption is a struct defined for ExecRestrictedStmt option.
+// ExecOption is a struct defined for ExecRestrictedStmt/SQL option.
 type ExecOption struct {
-	IgnoreWarning bool
-	SnapshotTS    uint64
-	AnalyzeVer    int
+	IgnoreWarning  bool
+	SnapshotTS     uint64
+	AnalyzeVer     int
+	UseCurSession  bool
+	TrackSysProcID uint64
+	TrackSysProc   func(id uint64, ctx sessionctx.Context) error
+	UnTrackSysProc func(id uint64)
 }
 
-// OptionFuncAlias is defined for the optional paramater of ExecRestrictedStmt.
+// OptionFuncAlias is defined for the optional parameter of ExecRestrictedStmt/SQL.
 type OptionFuncAlias = func(option *ExecOption)
 
-// ExecOptionIgnoreWarning tells ExecRestrictedStmt to ignore the warnings.
+// ExecOptionIgnoreWarning tells ExecRestrictedStmt/SQL to ignore the warnings.
 var ExecOptionIgnoreWarning OptionFuncAlias = func(option *ExecOption) {
 	option.IgnoreWarning = true
 }
 
-// ExecOptionAnalyzeVer1 tells ExecRestrictedStmt to collect statistics with version1.
+// ExecOptionAnalyzeVer1 tells ExecRestrictedStmt/SQL to collect statistics with version1.
 var ExecOptionAnalyzeVer1 OptionFuncAlias = func(option *ExecOption) {
 	option.AnalyzeVer = 1
 }
 
+// ExecOptionAnalyzeVer2 tells ExecRestrictedStmt/SQL to collect statistics with version2.
 // ExecOptionAnalyzeVer2 tells ExecRestrictedStmt to collect statistics with version2.
 var ExecOptionAnalyzeVer2 OptionFuncAlias = func(option *ExecOption) {
 	option.AnalyzeVer = 2
 }
 
-// ExecOptionWithSnapshot tells ExecRestrictedStmt to use a snapshot.
+// ExecOptionUseCurSession tells ExecRestrictedStmt/SQL to use current session.
+var ExecOptionUseCurSession OptionFuncAlias = func(option *ExecOption) {
+	option.UseCurSession = true
+}
+
+// ExecOptionUseSessionPool tells ExecRestrictedStmt/SQL to use session pool.
+// UseCurSession is false by default, sometimes we set it explicitly for readability
+var ExecOptionUseSessionPool OptionFuncAlias = func(option *ExecOption) {
+	option.UseCurSession = false
+}
+
+// ExecOptionWithSnapshot tells ExecRestrictedStmt/SQL to use a snapshot.
 func ExecOptionWithSnapshot(snapshot uint64) OptionFuncAlias {
 	return func(option *ExecOption) {
 		option.SnapshotTS = snapshot
 	}
+}
+
+// ExecOptionWithSysProcTrack tells ExecRestrictedStmt/SQL to track sys process.
+func ExecOptionWithSysProcTrack(procID uint64, track func(id uint64, ctx sessionctx.Context) error, untrack func(id uint64)) OptionFuncAlias {
+	return func(option *ExecOption) {
+		option.TrackSysProcID = procID
+		option.TrackSysProc = track
+		option.UnTrackSysProc = untrack
+	}
+}
+
+// GetExecOption applies OptionFuncs and return ExecOption
+func GetExecOption(opts []OptionFuncAlias) ExecOption {
+	var execOption ExecOption
+	for _, opt := range opts {
+		opt(&execOption)
+	}
+	return execOption
 }
 
 // SQLExecutor is an interface provides executing normal sql statement.
@@ -102,7 +140,7 @@ type SQLExecutor interface {
 // But a session already has a parser bind in it, so we define this interface and use session as its implementation,
 // thus avoid allocating new parser. See session.SQLParser for more information.
 type SQLParser interface {
-	ParseSQL(ctx context.Context, sql, charset, collation string) ([]ast.StmtNode, []error, error)
+	ParseSQL(ctx context.Context, sql string, params ...parser.ParseParam) ([]ast.StmtNode, []error, error)
 }
 
 // Statement is an interface for SQL execution.
@@ -138,8 +176,8 @@ type RecordSet interface {
 	// Next reads records into chunk.
 	Next(ctx context.Context, req *chunk.Chunk) error
 
-	// NewChunk create a chunk.
-	NewChunk() *chunk.Chunk
+	// NewChunk create a chunk, if allocator is nil, the default one is used.
+	NewChunk(chunk.Allocator) *chunk.Chunk
 
 	// Close closes the underlying iterator, call Next after Close will
 	// restart the iteration.
@@ -163,7 +201,7 @@ type MultiQueryNoDelayResult interface {
 // DrainRecordSet fetches the rows in the RecordSet.
 func DrainRecordSet(ctx context.Context, rs RecordSet, maxChunkSize int) ([]chunk.Row, error) {
 	var rows []chunk.Row
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	for {
 		err := rs.Next(ctx, req)
 		if err != nil || req.NumRows() == 0 {

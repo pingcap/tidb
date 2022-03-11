@@ -17,14 +17,15 @@ package expression
 import (
 	"fmt"
 
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 // NewOne stands for a number 1.
@@ -226,6 +227,9 @@ func (c *Constant) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, 
 	} else if c.GetType().Hybrid() || dt.Kind() == types.KindString {
 		res, err := dt.ToInt64(ctx.GetSessionVars().StmtCtx)
 		return res, false, err
+	} else if dt.Kind() == types.KindMysqlBit {
+		uintVal, err := dt.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
+		return int64(uintVal), false, err
 	}
 	return dt.GetInt64(), false, nil
 }
@@ -345,7 +349,7 @@ func (c *Constant) Equal(ctx sessionctx.Context, b Expression) bool {
 	if err1 != nil || err2 != nil {
 		return false
 	}
-	con, err := c.Value.CompareDatum(ctx.GetSessionVars().StmtCtx, &y.Value)
+	con, err := c.Value.Compare(ctx.GetSessionVars().StmtCtx, &y.Value, collate.GetBinaryCollator())
 	if err != nil || con != 0 {
 		return false
 	}
@@ -372,15 +376,24 @@ func (c *Constant) HashCode(sc *stmtctx.StatementContext) []byte {
 	if len(c.hashcode) > 0 {
 		return c.hashcode
 	}
+
+	if c.DeferredExpr != nil {
+		c.hashcode = c.DeferredExpr.HashCode(sc)
+		return c.hashcode
+	}
+
+	if c.ParamMarker != nil {
+		c.hashcode = append(c.hashcode, parameterFlag)
+		c.hashcode = codec.EncodeInt(c.hashcode, int64(c.ParamMarker.order))
+		return c.hashcode
+	}
+
 	_, err := c.Eval(chunk.Row{})
 	if err != nil {
 		terror.Log(err)
 	}
 	c.hashcode = append(c.hashcode, constantFlag)
-	c.hashcode, err = codec.EncodeValue(sc, c.hashcode, c.Value)
-	if err != nil {
-		terror.Log(err)
-	}
+	c.hashcode = codec.HashCode(c.hashcode, c.Value)
 	return c.hashcode
 }
 
@@ -425,10 +438,8 @@ func (c *Constant) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rT
 
 // Coercibility returns the coercibility value which is used to check collations.
 func (c *Constant) Coercibility() Coercibility {
-	if c.HasCoercibility() {
-		return c.collationInfo.Coercibility()
+	if !c.HasCoercibility() {
+		c.SetCoercibility(deriveCoercibilityForConstant(c))
 	}
-
-	c.SetCoercibility(deriveCoercibilityForConstant(c))
 	return c.collationInfo.Coercibility()
 }

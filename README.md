@@ -22,9 +22,9 @@ TiDB ("Ti" stands for Titanium) is an open-source NewSQL database that supports 
 
     TiDB acts like it is a MySQL 5.7 server to your applications. You can continue to use all of the existing MySQL client libraries, and in many cases, you will not need to change a single line of code in your application. Because TiDB is built from scratch, not a MySQL fork, please check out the list of [known compatibility differences](https://docs.pingcap.com/tidb/stable/mysql-compatibility).
 
-- __Distributed Transactions with Strong Consistency__
+- __Distributed Transactions__
 
-    TiDB internally shards table into small range-based chunks that we refer to as "Regions". Each Region defaults to approximately 100 MiB in size, and TiDB uses a Two-phase commit internally to ensure that Regions are maintained in a transactionally consistent way.
+    TiDB internally shards table into small range-based chunks that we refer to as "Regions". Each Region defaults to approximately 100 MiB in size, and TiDB uses an [optimized](https://pingcap.com/blog/async-commit-the-accelerator-for-transaction-commit-in-tidb-5.0) Two-phase commit to ensure that Regions are maintained in a transactionally consistent way.
 
 - __Cloud Native__
 
@@ -60,9 +60,15 @@ For support, please contact [PingCAP](http://bit.ly/contact_us_via_github).
 
 ## Quick start
 
+### To start using TiDB Cloud
+
+We provide TiDB Cloud - a fully-managed Database as a Service for you.
+
+See [TiDB Cloud Quick Start](https://docs.pingcap.com/tidbcloud/public-preview/tidb-cloud-quickstart).
+
 ### To start using TiDB
 
-See [Quick Start Guide](https://pingcap.com/docs/stable/quick-start-with-tidb/).
+See [Quick Start Guide](https://docs.pingcap.com/tidb/stable/quick-start-with-tidb).
 
 ### To start developing TiDB
 

@@ -18,9 +18,9 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser/ast"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -89,7 +89,7 @@ func (e *SQLBindExec) createSQLBind() error {
 		BindSQL:   e.bindSQL,
 		Charset:   e.charset,
 		Collation: e.collation,
-		Status:    bindinfo.Using,
+		Status:    bindinfo.Enabled,
 		Source:    bindinfo.Manual,
 	}
 	record := &bindinfo.BindRecord{

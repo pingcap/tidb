@@ -173,31 +173,49 @@ func AESDecryptWithCBC(cryptStr, key []byte, iv []byte) ([]byte, error) {
 	return aesDecrypt(cryptStr, mode)
 }
 
-// AESEncryptWithOFB encrypts data using AES with OFB mode.
-func AESEncryptWithOFB(plainStr []byte, key []byte, iv []byte) ([]byte, error) {
+func aesCryptWithOFB(str []byte, key []byte, iv []byte) ([]byte, error) {
 	cb, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	mode := cipher.NewOFB(cb, iv)
-	crypted := make([]byte, len(plainStr))
-	mode.XORKeyStream(crypted, plainStr)
-	return crypted, nil
+	cryptStr := make([]byte, len(str))
+	mode.XORKeyStream(cryptStr, str)
+	return cryptStr, nil
+}
+
+// AESEncryptWithOFB encrypts data using AES with OFB mode.
+func AESEncryptWithOFB(plainStr []byte, key []byte, iv []byte) ([]byte, error) {
+	return aesCryptWithOFB(plainStr, key, iv)
 }
 
 // AESDecryptWithOFB decrypts data using AES with OFB mode.
 func AESDecryptWithOFB(cipherStr []byte, key []byte, iv []byte) ([]byte, error) {
-	cb, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	mode := cipher.NewOFB(cb, iv)
-	plainStr := make([]byte, len(cipherStr))
-	mode.XORKeyStream(plainStr, cipherStr)
-	return plainStr, nil
+	return aesCryptWithOFB(cipherStr, key, iv)
 }
 
-// AESEncryptWithCFB decrypts data using AES with CFB mode.
+func aesCryptWithCTR(str, key []byte, iv []byte) ([]byte, error) {
+	cb, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	mode := cipher.NewCTR(cb, iv)
+	cryptStr := make([]byte, len(str))
+	mode.XORKeyStream(cryptStr, str)
+	return cryptStr, nil
+}
+
+// AESEncryptWithCTR encrypts data using AES with CTR mode.
+func AESEncryptWithCTR(plainStr, key []byte, iv []byte) ([]byte, error) {
+	return aesCryptWithCTR(plainStr, key, iv)
+}
+
+// AESDecryptWithCTR decrypts data using AES with CTR mode.
+func AESDecryptWithCTR(cryptedStr, key []byte, iv []byte) ([]byte, error) {
+	return aesCryptWithCTR(cryptedStr, key, iv)
+}
+
+// AESEncryptWithCFB encrypts data using AES with CFB mode.
 func AESEncryptWithCFB(cryptStr, key []byte, iv []byte) ([]byte, error) {
 	cb, err := aes.NewCipher(key)
 	if err != nil {

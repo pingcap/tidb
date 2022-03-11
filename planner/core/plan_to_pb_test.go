@@ -15,23 +15,20 @@
 package core
 
 import (
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	"testing"
+
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = SerialSuites(&testDistsqlSuite{})
-
-type testDistsqlSuite struct{}
-
-func (s *testDistsqlSuite) TestColumnToProto(c *C) {
-	defer testleak.AfterTest(c)()
+func TestColumnToProto(t *testing.T) {
 	// Make sure the Flag is set in tipb.ColumnInfo
+	collate.SetNewCollationEnabledForTest(false)
 	tp := types.NewFieldType(mysql.TypeLong)
 	tp.Flag = 10
 	tp.Collate = "utf8_bin"
@@ -40,16 +37,16 @@ func (s *testDistsqlSuite) TestColumnToProto(c *C) {
 	}
 	pc := util.ColumnToProto(col)
 	expect := &tipb.ColumnInfo{ColumnId: 0, Tp: 3, Collation: 83, ColumnLen: -1, Decimal: -1, Flag: 10, Elems: []string(nil), DefaultVal: []uint8(nil), PkHandle: false, XXX_unrecognized: []uint8(nil)}
-	c.Assert(pc, DeepEquals, expect)
+	require.Equal(t, expect, pc)
 
 	cols := []*model.ColumnInfo{col, col}
 	pcs := util.ColumnsToProto(cols, false)
 	for _, v := range pcs {
-		c.Assert(v.GetFlag(), Equals, int32(10))
+		require.Equal(t, int32(10), v.GetFlag())
 	}
 	pcs = util.ColumnsToProto(cols, true)
 	for _, v := range pcs {
-		c.Assert(v.GetFlag(), Equals, int32(10))
+		require.Equal(t, int32(10), v.GetFlag())
 	}
 
 	// Make sure the collation ID is successfully set.
@@ -60,20 +57,19 @@ func (s *testDistsqlSuite) TestColumnToProto(c *C) {
 		FieldType: *tp,
 	}
 	pc = util.ColumnToProto(col1)
-	c.Assert(pc.Collation, Equals, int32(8))
+	require.Equal(t, int32(8), pc.Collation)
 
 	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 
 	pc = util.ColumnToProto(col)
 	expect = &tipb.ColumnInfo{ColumnId: 0, Tp: 3, Collation: -83, ColumnLen: -1, Decimal: -1, Flag: 10, Elems: []string(nil), DefaultVal: []uint8(nil), PkHandle: false, XXX_unrecognized: []uint8(nil)}
-	c.Assert(pc, DeepEquals, expect)
+	require.Equal(t, expect, pc)
 	pcs = util.ColumnsToProto(cols, true)
 	for _, v := range pcs {
-		c.Assert(v.Collation, Equals, int32(-83))
+		require.Equal(t, int32(-83), v.Collation)
 	}
 	pc = util.ColumnToProto(col1)
-	c.Assert(pc.Collation, Equals, int32(-8))
+	require.Equal(t, int32(-8), pc.Collation)
 
 	tp = types.NewFieldType(mysql.TypeEnum)
 	tp.Flag = 10
@@ -82,5 +78,5 @@ func (s *testDistsqlSuite) TestColumnToProto(c *C) {
 		FieldType: *tp,
 	}
 	pc = util.ColumnToProto(col2)
-	c.Assert(len(pc.Elems), Equals, 2)
+	require.Len(t, pc.Elems, 2)
 }

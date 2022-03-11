@@ -23,6 +23,7 @@ import (
 var (
 	ErrUnsupportedType                       = dbterror.ClassOptimizer.NewStd(mysql.ErrUnsupportedType)
 	ErrAnalyzeMissIndex                      = dbterror.ClassOptimizer.NewStd(mysql.ErrAnalyzeMissIndex)
+	ErrAnalyzeMissColumn                     = dbterror.ClassOptimizer.NewStd(mysql.ErrAnalyzeMissColumn)
 	ErrWrongParamCount                       = dbterror.ClassOptimizer.NewStd(mysql.ErrWrongParamCount)
 	ErrSchemaChanged                         = dbterror.ClassOptimizer.NewStd(mysql.ErrSchemaChanged)
 	ErrTablenameNotAllowedHere               = dbterror.ClassOptimizer.NewStd(mysql.ErrTablenameNotAllowedHere)
@@ -101,8 +102,11 @@ var (
 	ErrNotSupportedWithSem       = dbterror.ClassOptimizer.NewStd(mysql.ErrNotSupportedWithSem)
 	ErrAsOf                      = dbterror.ClassOptimizer.NewStd(mysql.ErrAsOf)
 	ErrOptOnTemporaryTable       = dbterror.ClassOptimizer.NewStd(mysql.ErrOptOnTemporaryTable)
+	ErrOptOnCacheTable           = dbterror.ClassOptimizer.NewStd(mysql.ErrOptOnCacheTable)
 	ErrDropTableOnTemporaryTable = dbterror.ClassOptimizer.NewStd(mysql.ErrDropTableOnTemporaryTable)
 	// ErrPartitionNoTemporary returns when partition at temporary mode
 	ErrPartitionNoTemporary     = dbterror.ClassOptimizer.NewStd(mysql.ErrPartitionNoTemporary)
 	ErrViewSelectTemporaryTable = dbterror.ClassOptimizer.NewStd(mysql.ErrViewSelectTmptable)
+	ErrSubqueryMoreThan1Row     = dbterror.ClassOptimizer.NewStd(mysql.ErrSubqueryNo1Row)
+	ErrKeyPart0                 = dbterror.ClassOptimizer.NewStd(mysql.ErrKeyPart0)
 )

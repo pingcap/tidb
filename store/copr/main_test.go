@@ -34,6 +34,6 @@ func (m *main) Run() int {
 }
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 	goleak.VerifyTestMain(&main{m: m})
 }

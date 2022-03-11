@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/benchdaily"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -43,7 +44,7 @@ var bigCount = 10000
 
 func prepareBenchSession() (Session, *domain.Domain, kv.Storage) {
 	config.UpdateGlobal(func(cfg *config.Config) {
-		cfg.Log.EnableSlowLog = false
+		cfg.Log.EnableSlowLog.Store(false)
 	})
 
 	store, err := mockstore.NewMockStore()
@@ -99,7 +100,7 @@ func prepareJoinBenchData(se Session, colType string, valueFormat string, valueC
 }
 
 func readResult(ctx context.Context, rs sqlexec.RecordSet, count int) {
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	for count > 0 {
 		err := rs.Next(ctx, req)
 		if err != nil {
@@ -263,15 +264,18 @@ func BenchmarkPointGet(b *testing.B) {
 	mustExecute(se, "create table t (pk int primary key)")
 	mustExecute(se, "insert t values (61),(62),(63),(64)")
 	b.ResetTimer()
+	alloc := chunk.NewAllocator()
 	for i := 0; i < b.N; i++ {
 		rs, err := se.Execute(ctx, "select * from t where pk = 64")
 		if err != nil {
 			b.Fatal(err)
 		}
-		_, err = drainRecordSet(ctx, se.(*session), rs[0])
+		_, err = drainRecordSet(ctx, se.(*session), rs[0], alloc)
 		if err != nil {
 			b.Fatal(err)
 		}
+
+		alloc.Reset()
 	}
 	b.StopTimer()
 }
@@ -286,16 +290,18 @@ func BenchmarkBatchPointGet(b *testing.B) {
 	}()
 	mustExecute(se, "create table t (pk int primary key)")
 	mustExecute(se, "insert t values (61),(62),(63),(64)")
+	alloc := chunk.NewAllocator()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rs, err := se.Execute(ctx, "select * from t where pk in (61, 64, 67)")
 		if err != nil {
 			b.Fatal(err)
 		}
-		_, err = drainRecordSet(ctx, se.(*session), rs[0])
+		_, err = drainRecordSet(ctx, se.(*session), rs[0], alloc)
 		if err != nil {
 			b.Fatal(err)
 		}
+		alloc.Reset()
 	}
 	b.StopTimer()
 }
@@ -316,16 +322,18 @@ func BenchmarkPreparedPointGet(b *testing.B) {
 		b.Fatal(err)
 	}
 
+	alloc := chunk.NewAllocator()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rs, err := se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(64)})
 		if err != nil {
 			b.Fatal(err)
 		}
-		_, err = drainRecordSet(ctx, se.(*session), rs)
+		_, err = drainRecordSet(ctx, se.(*session), rs, alloc)
 		if err != nil {
 			b.Fatal(err)
 		}
+		alloc.Reset()
 	}
 	b.StopTimer()
 }
@@ -437,6 +445,7 @@ func BenchmarkInsertWithIndex(b *testing.B) {
 		do.Close()
 		st.Close()
 	}()
+	mustExecute(se, `set @@tidb_enable_mutation_checker = 0`)
 	mustExecute(se, "drop table if exists t")
 	mustExecute(se, "create table t (pk int primary key, col int, index idx (col))")
 	b.ResetTimer()
@@ -1558,16 +1567,19 @@ partition p1021 values less than (738536),
 partition p1022 values less than (738537),
 partition p1023 values less than (738538)
 )`)
+
+	alloc := chunk.NewAllocator()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rs, err := se.Execute(ctx, "select * from t where dt > to_days('2019-04-01 21:00:00') and dt < to_days('2019-04-07 23:59:59')")
 		if err != nil {
 			b.Fatal(err)
 		}
-		_, err = drainRecordSet(ctx, se.(*session), rs[0])
+		_, err = drainRecordSet(ctx, se.(*session), rs[0], alloc)
 		if err != nil {
 			b.Fatal(err)
 		}
+		alloc.Reset()
 	}
 	b.StopTimer()
 }
@@ -1590,16 +1602,18 @@ func BenchmarkRangeColumnPartitionPruning(b *testing.B) {
 	}
 	build.WriteString("partition p1023 values less than maxvalue)")
 	mustExecute(se, build.String())
+	alloc := chunk.NewAllocator()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rs, err := se.Execute(ctx, "select * from t where dt > '2020-05-01' and dt < '2020-06-07'")
 		if err != nil {
 			b.Fatal(err)
 		}
-		_, err = drainRecordSet(ctx, se.(*session), rs[0])
+		_, err = drainRecordSet(ctx, se.(*session), rs[0], alloc)
 		if err != nil {
 			b.Fatal(err)
 		}
+		alloc.Reset()
 	}
 	b.StopTimer()
 }
@@ -1613,6 +1627,7 @@ func BenchmarkHashPartitionPruningPointSelect(b *testing.B) {
 		st.Close()
 	}()
 
+	alloc := chunk.NewAllocator()
 	mustExecute(se, `create table t (id int, dt datetime) partition by hash(id) partitions 1024;`)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -1620,10 +1635,11 @@ func BenchmarkHashPartitionPruningPointSelect(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		_, err = drainRecordSet(ctx, se.(*session), rs[0])
+		_, err = drainRecordSet(ctx, se.(*session), rs[0], alloc)
 		if err != nil {
 			b.Fatal(err)
 		}
+		alloc.Reset()
 	}
 	b.StopTimer()
 }
@@ -1637,6 +1653,7 @@ func BenchmarkHashPartitionPruningMultiSelect(b *testing.B) {
 		st.Close()
 	}()
 
+	alloc := chunk.NewAllocator()
 	mustExecute(se, `create table t (id int, dt datetime) partition by hash(id) partitions 1024;`)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -1644,7 +1661,7 @@ func BenchmarkHashPartitionPruningMultiSelect(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		_, err = drainRecordSet(ctx, se.(*session), rs[0])
+		_, err = drainRecordSet(ctx, se.(*session), rs[0], alloc)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1652,7 +1669,7 @@ func BenchmarkHashPartitionPruningMultiSelect(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		_, err = drainRecordSet(ctx, se.(*session), rs[0])
+		_, err = drainRecordSet(ctx, se.(*session), rs[0], alloc)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -1660,10 +1677,11 @@ func BenchmarkHashPartitionPruningMultiSelect(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		_, err = drainRecordSet(ctx, se.(*session), rs[0])
+		_, err = drainRecordSet(ctx, se.(*session), rs[0], alloc)
 		if err != nil {
 			b.Fatal(err)
 		}
+		alloc.Reset()
 	}
 	b.StopTimer()
 }
@@ -1675,8 +1693,7 @@ func BenchmarkInsertIntoSelect(b *testing.B) {
 		do.Close()
 		st.Close()
 	}()
-
-	mustExecute(se, `set @@tidb_enable_global_temporary_table = 1`)
+	mustExecute(se, `set @@tidb_enable_mutation_checker = 0`)
 	mustExecute(se, `set @@tmp_table_size = 1000000000`)
 	mustExecute(se, `create global temporary table tmp (id int, dt varchar(512)) on commit delete rows`)
 	mustExecute(se, `create table src (id int, dt varchar(512))`)

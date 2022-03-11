@@ -6,10 +6,14 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type fakePDClient struct {
@@ -21,9 +25,86 @@ func (c fakePDClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*me
 	return append([]*metapb.Store{}, c.stores...), nil
 }
 
-func TestCheckStoresAlive(t *testing.T) {
-	t.Parallel()
+func TestGetAllTiKVStoresWithRetryCancel(t *testing.T) {
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-cancel", "return(true)")
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-cancel")
+	}()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
+	stores := []*metapb.Store{
+		{
+			Id:    1,
+			State: metapb.StoreState_Up,
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "engine",
+					Value: "tiflash",
+				},
+			},
+		},
+		{
+			Id:    2,
+			State: metapb.StoreState_Offline,
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "engine",
+					Value: "tiflash",
+				},
+			},
+		},
+	}
+
+	fpdc := fakePDClient{
+		stores: stores,
+	}
+
+	_, err := GetAllTiKVStoresWithRetry(ctx, fpdc, SkipTiFlash)
+	require.Error(t, err)
+	require.Equal(t, codes.Canceled, status.Code(errors.Cause(err)))
+}
+
+func TestGetAllTiKVStoresWithUnknown(t *testing.T) {
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-error", "return(true)")
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-error")
+	}()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	stores := []*metapb.Store{
+		{
+			Id:    1,
+			State: metapb.StoreState_Up,
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "engine",
+					Value: "tiflash",
+				},
+			},
+		},
+		{
+			Id:    2,
+			State: metapb.StoreState_Offline,
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "engine",
+					Value: "tiflash",
+				},
+			},
+		},
+	}
+
+	fpdc := fakePDClient{
+		stores: stores,
+	}
+
+	_, err := GetAllTiKVStoresWithRetry(ctx, fpdc, SkipTiFlash)
+	require.Error(t, err)
+	require.Equal(t, codes.Unknown, status.Code(errors.Cause(err)))
+}
+func TestCheckStoresAlive(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -84,8 +165,6 @@ func TestCheckStoresAlive(t *testing.T) {
 }
 
 func TestGetAllTiKVStores(t *testing.T) {
-	t.Parallel()
-
 	testCases := []struct {
 		stores         []*metapb.Store
 		storeBehavior  StoreBehavior
@@ -120,7 +199,7 @@ func TestGetAllTiKVStores(t *testing.T) {
 				{Id: 2, Labels: []*metapb.StoreLabel{{Key: "engine", Value: "tiflash"}}},
 			},
 			storeBehavior: ErrorOnTiFlash,
-			expectedError: "cannot restore to a cluster with active TiFlash stores.*",
+			expectedError: "^cannot restore to a cluster with active TiFlash stores",
 		},
 		{
 			stores: []*metapb.Store{
@@ -144,7 +223,7 @@ func TestGetAllTiKVStores(t *testing.T) {
 				{Id: 6, Labels: []*metapb.StoreLabel{{Key: "else", Value: "tiflash"}, {Key: "engine", Value: "tikv"}}},
 			},
 			storeBehavior: ErrorOnTiFlash,
-			expectedError: "cannot restore to a cluster with active TiFlash stores.*",
+			expectedError: "^cannot restore to a cluster with active TiFlash stores",
 		},
 		{
 			stores: []*metapb.Store{
@@ -177,8 +256,6 @@ func TestGetAllTiKVStores(t *testing.T) {
 }
 
 func TestGetConnOnCanceledContext(t *testing.T) {
-	t.Parallel()
-
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -186,9 +263,9 @@ func TestGetConnOnCanceledContext(t *testing.T) {
 
 	_, err := mgr.GetBackupClient(ctx, 42)
 	require.Error(t, err)
-	require.Regexp(t, ".*context canceled.*", err.Error())
+	require.Contains(t, err.Error(), "context canceled")
 
 	_, err = mgr.ResetBackupClient(ctx, 42)
 	require.Error(t, err)
-	require.Regexp(t, ".*context canceled.*", err.Error())
+	require.Contains(t, err.Error(), "context canceled")
 }

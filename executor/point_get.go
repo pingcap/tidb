@@ -21,14 +21,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -37,13 +36,15 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil/consistency"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
-	if err := b.validCanReadTemporaryTable(p.TblInfo); err != nil {
+	if err := b.validCanReadTemporaryOrCacheTable(p.TblInfo); err != nil {
 		b.err = err
 		return nil
 	}
@@ -57,6 +58,10 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		baseExecutor:     newBaseExecutor(b.ctx, p.Schema(), p.ID()),
 		readReplicaScope: b.readReplicaScope,
 		isStaleness:      b.isStaleness,
+	}
+
+	if p.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+		e.cacheTable = b.getCacheTable(p.TblInfo, startTS)
 	}
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
@@ -96,7 +101,8 @@ type PointGetExecutor struct {
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
-	stats *runtimeStatsWithSnapshot
+	stats      *runtimeStatsWithSnapshot
+	cacheTable kv.MemBuffer
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
@@ -150,6 +156,9 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	} else {
 		e.snapshot = e.ctx.GetSnapshotWithTS(snapshotTS)
 	}
+	if e.cacheTable != nil {
+		e.snapshot = cacheTableSnapshot{e.snapshot, e.cacheTable}
+	}
 	if err := e.verifyTxnScope(); err != nil {
 		return err
 	}
@@ -176,15 +185,14 @@ func (e *PointGetExecutor) Open(context.Context) error {
 			},
 		})
 	}
-	failpoint.Inject("assertPointStalenessOption", func(val failpoint.Value) {
+	failpoint.Inject("assertPointReplicaOption", func(val failpoint.Value) {
 		assertScope := val.(string)
-		if len(assertScope) > 0 {
-			if e.isStaleness && assertScope != e.readReplicaScope {
-				panic("batch point get staleness option fail")
-			}
+		if readReplicaType.IsClosestRead() && assertScope != e.readReplicaScope {
+			panic("point get replica option fail")
 		}
 	})
-	setResourceGroupTagForTxn(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
+	setResourceGroupTaggerForTxn(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
+	setRPCInterceptorOfExecCounterForTxn(e.ctx.GetSessionVars(), e.snapshot)
 	return nil
 }
 
@@ -300,9 +308,24 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	if len(val) == 0 {
-		if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
-			return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, handle %d not found in table",
-				e.idxInfo.Name.O, e.handle)
+		if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) &&
+			!e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
+			return (&consistency.Reporter{
+				HandleEncode: func(handle kv.Handle) kv.Key {
+					return key
+				},
+				IndexEncode: func(idxRow *consistency.RecordData) kv.Key {
+					return e.idxKey
+				},
+				Tbl:  e.tblInfo,
+				Idx:  e.idxInfo,
+				Sctx: e.ctx,
+			}).ReportLookupInconsistent(ctx,
+				1, 0,
+				[]kv.Handle{e.handle},
+				[]kv.Handle{e.handle},
+				[]consistency.RecordData{{}},
+			)
 		}
 		return nil
 	}
@@ -356,7 +379,7 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 	}
 	if e.lock {
 		seVars := e.ctx.GetSessionVars()
-		lockCtx := newLockCtx(seVars, e.lockWaitTime)
+		lockCtx := newLockCtx(seVars, e.lockWaitTime, 1)
 		lockCtx.InitReturnValues(1)
 		err := doLockKeys(ctx, e.ctx, lockCtx, key)
 		if err != nil {
@@ -421,6 +444,8 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {
+	// Stale Read uses the calculated TSO for the read,
+	// so there is no need to check the TxnScope here.
 	if e.isStaleness {
 		return nil
 	}
@@ -447,10 +472,10 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 		return nil
 	}
 	if len(partName) > 0 {
-		return ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+		return dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
 			fmt.Sprintf("table %v's partition %v can not be read by %v txn_scope", tblName, partName, txnScope))
 	}
-	return ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+	return dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
 		fmt.Sprintf("table %v can not be read by %v txn_scope", tblName, txnScope))
 }
 
