@@ -191,6 +191,98 @@ func TestPlacementPolicy(t *testing.T) {
 	// TODO: privilege check & constraint syntax check.
 }
 
+func TestCreatePlacementPolicyWithInfo(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	// clearAllBundles(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tp")
+	tk.MustExec("drop placement policy if exists p")
+	tk.MustExec("create placement policy p " +
+		"LEARNERS=1 " +
+		"LEARNER_CONSTRAINTS=\"[+region=cn-west-1]\" " +
+		"FOLLOWERS=3 " +
+		"FOLLOWER_CONSTRAINTS=\"[+disk=ssd]\"")
+	defer tk.MustExec("drop placement policy if exists p")
+	defer tk.MustExec("drop placement policy if exists p2")
+	tk.MustExec(`CREATE TABLE tp(id int) placement policy p PARTITION BY RANGE (id) (
+PARTITION p0 VALUES LESS THAN (100) PLACEMENT POLICY p,
+PARTITION p1 VALUES LESS THAN (1000))
+`)
+	defer tk.MustExec("drop table if exists tp")
+
+	oldPolicy, ok := dom.InfoSchema().PolicyByName(model.NewCIStr("p"))
+	oldPolicy = oldPolicy.Clone()
+	require.True(t, ok)
+
+	// create a non exist policy
+	for _, onExist := range []ddl.OnExist{ddl.OnExistReplace, ddl.OnExistIgnore, ddl.OnExistError} {
+		newPolicy := oldPolicy.Clone()
+		newPolicy.Name = model.NewCIStr("p2")
+		newPolicy.Followers = 2
+		newPolicy.LearnerConstraints = "[+zone=z2]"
+		err := dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), onExist)
+		require.NoError(t, err)
+		// old policy should not be changed
+		found, ok := dom.InfoSchema().PolicyByName(model.NewCIStr("p"))
+		require.True(t, ok)
+		checkPolicyEquals(t, oldPolicy, found)
+		checkExistTableBundlesInPD(t, dom, "test", "tp")
+
+		// new created policy
+		found, ok = dom.InfoSchema().PolicyByName(model.NewCIStr("p2"))
+		require.True(t, ok)
+		// ID of the created policy should be reassigned
+		require.NotEqual(t, newPolicy.ID, found.ID)
+		newPolicy.ID = found.ID
+		checkPolicyEquals(t, newPolicy, found)
+		tk.MustExec("drop placement policy if exists p2")
+	}
+
+	// create same name policy with on exists error
+	newPolicy := oldPolicy.Clone()
+	newPolicy.ID = oldPolicy.ID + 1
+	err := dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistError)
+	require.Error(t, err)
+	require.True(t, infoschema.ErrPlacementPolicyExists.Equal(err))
+	found, ok := dom.InfoSchema().PolicyByName(model.NewCIStr("p"))
+	require.True(t, ok)
+	checkPolicyEquals(t, oldPolicy, found)
+	checkExistTableBundlesInPD(t, dom, "test", "tp")
+
+	// create same name policy with on exist ignore
+	newPolicy = oldPolicy.Clone()
+	newPolicy.ID = oldPolicy.ID + 1
+	err = dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistIgnore)
+	require.NoError(t, err)
+	found, ok = dom.InfoSchema().PolicyByName(model.NewCIStr("p"))
+	require.True(t, ok)
+	checkPolicyEquals(t, oldPolicy, found)
+	checkExistTableBundlesInPD(t, dom, "test", "tp")
+
+	// create same name policy with on exist replace
+	newPolicy = oldPolicy.Clone()
+	newPolicy.ID = oldPolicy.ID + 1
+	newPolicy.Followers = 1
+	newPolicy.LearnerConstraints = "[+zone=z1]"
+	err = dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistReplace)
+	require.NoError(t, err)
+	found, ok = dom.InfoSchema().PolicyByName(model.NewCIStr("p"))
+	require.True(t, ok)
+	// when replace a policy the old policy's id should not be changed
+	newPolicy.ID = oldPolicy.ID
+	checkPolicyEquals(t, newPolicy, found)
+	checkExistTableBundlesInPD(t, dom, "test", "tp")
+}
+
+func checkPolicyEquals(t *testing.T, expected *model.PolicyInfo, actual *model.PolicyInfo) {
+	require.Equal(t, expected.ID, actual.ID)
+	require.Equal(t, expected.Name, actual.Name)
+	require.Equal(t, *expected.PlacementSettings, *actual.PlacementSettings)
+	require.Equal(t, expected.State, actual.State)
+}
+
 func TestPlacementFollowers(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -354,20 +446,29 @@ func TestResetSchemaPlacement(t *testing.T) {
 }
 
 func TestCreateOrReplacePlacementPolicy(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists x")
+	tk.MustExec("drop table if exists tp")
 
 	// If the policy does not exist, CREATE OR REPLACE PLACEMENT POLICY is the same as CREATE PLACEMENT POLICY
 	tk.MustExec("create or replace placement policy x primary_region=\"cn-east-1\" regions=\"cn-east-1,cn-east\"")
 	defer tk.MustExec("drop placement policy if exists x")
 	tk.MustQuery("show create placement policy x").Check(testkit.Rows("x CREATE PLACEMENT POLICY `x` PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east\""))
 
+	// create a table refers the policy
+	tk.MustExec(`CREATE TABLE tp(id int) placement policy x PARTITION BY RANGE (id) (
+PARTITION p0 VALUES LESS THAN (100) PLACEMENT POLICY x,
+PARTITION p1 VALUES LESS THAN (1000))
+`)
+	defer tk.MustExec("drop table if exists tp")
+
 	// If the policy does exist, CREATE OR REPLACE PLACEMENT_POLICY is the same as ALTER PLACEMENT POLICY.
 	tk.MustExec("create or replace placement policy x primary_region=\"cn-east-1\" regions=\"cn-east-1\"")
 	tk.MustQuery("show create placement policy x").Check(testkit.Rows("x CREATE PLACEMENT POLICY `x` PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1\""))
+	checkExistTableBundlesInPD(t, dom, "test", "tp")
 
 	// Cannot be used together with the if not exists clause. Ref: https://mariadb.com/kb/en/create-view
 	tk.MustGetErrMsg("create or replace placement policy if not exists x primary_region=\"cn-east-1\" regions=\"cn-east-1\"", "[ddl:1221]Incorrect usage of OR REPLACE and IF NOT EXISTS")
