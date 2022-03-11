@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -63,19 +64,15 @@ func testNewDDLAndStart(ctx context.Context, options ...Option) (*ddl, error) {
 	options = append(options, WithInfoCache(ic))
 	d := newDDL(ctx, options...)
 	var err error
-	variable.AllowConcurrencyDDL.Store(false)
-	err = d.Start(nil)
-	/*
-		if variable.AllowConcurrencyDDL.Load() {
-			sysFac := func() (pools.Resource, error) {
-				return nil, nil
-			}
-			sysCtxPool := pools.NewResourcePool(sysFac, 200, 200, 3*time.Minute)
-			err = d.Start(sysCtxPool)
-		} else {
-			err = d.Start(nil)
+	if variable.AllowConcurrencyDDL.Load() {
+		sysFac := func() (pools.Resource, error) {
+			return nil, nil
 		}
-	*/
+		sysCtxPool := pools.NewResourcePool(sysFac, 200, 200, 3*time.Minute)
+		err = d.Start(sysCtxPool)
+	} else {
+		err = d.Start(nil)
+	}
 	return d, err
 }
 
