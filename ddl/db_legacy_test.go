@@ -785,10 +785,26 @@ func (s *testDBSuite5) TestCreateIndexType(c *C) {
 	tk.MustExec(sql)
 }
 
+func oldBackgroundExec(s kv.Storage, sql string, done chan error) {
+	se, err := session.CreateSession4Test(s)
+	if err != nil {
+		done <- errors.Trace(err)
+		return
+	}
+	defer se.Close()
+	_, err = se.Execute(context.Background(), "use test_db")
+	if err != nil {
+		done <- errors.Trace(err)
+		return
+	}
+	_, err = se.Execute(context.Background(), sql)
+	done <- errors.Trace(err)
+}
+
 // TestCreateTableWithLike2 tests create table with like when refer table have non-public column/index.
 func (s *testSerialDBSuite) TestCreateTableWithLike2(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
+	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists t1,t2;")
 	defer tk.MustExec("drop table if exists t1,t2;")
 	tk.MustExec("create table t1 (a int, b int, c int, index idx1(c));")
@@ -813,7 +829,7 @@ func (s *testSerialDBSuite) TestCreateTableWithLike2(c *C) {
 			}
 
 			onceChecker.Store(job.ID, true)
-			go backgroundExecT(s.store, "create table t2 like t1", doneCh)
+			go oldBackgroundExec(s.store, "create table t2 like t1", doneCh)
 		}
 	}
 	originalHook := s.dom.DDL().GetHook()
