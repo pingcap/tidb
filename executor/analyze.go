@@ -93,6 +93,9 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	taskCh := make(chan *analyzeTask, len(e.tasks))
 	resultsCh := make(chan *statistics.AnalyzeResults, len(e.tasks))
+	if len(e.tasks) < concurrency {
+		concurrency = len(e.tasks)
+	}
 	for i := 0; i < concurrency; i++ {
 		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
 	}
