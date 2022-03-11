@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/domainutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 )
@@ -305,7 +306,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.TableSource:
 		isModeOracle := p.ctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
 		if _, ok := node.Source.(*ast.SelectStmt); ok && !isModeOracle && len(node.AsName.L) == 0 {
-			p.err = ddl.ErrDerivedMustHaveAlias.GenWithStackByArgs()
+			p.err = dbterror.ErrDerivedMustHaveAlias.GenWithStackByArgs()
 		}
 		if v, ok := node.Source.(*ast.TableName); ok && v.TableSample != nil {
 			switch v.TableSample.SampleMethod {
@@ -473,7 +474,7 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 			return
 		}
 		if tbl.Meta().TempTableType != model.TempTableNone {
-			p.err = ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("create binding")
+			p.err = dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("create binding")
 			return
 		}
 		tableInfo := tbl.Meta()
@@ -710,20 +711,20 @@ func (p *preprocessor) checkSetOprSelectList(stmt *ast.SetOprSelectList) {
 
 func (p *preprocessor) checkCreateDatabaseGrammar(stmt *ast.CreateDatabaseStmt) {
 	if isIncorrectName(stmt.Name) {
-		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
+		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
 
 func (p *preprocessor) checkAlterDatabaseGrammar(stmt *ast.AlterDatabaseStmt) {
 	// for 'ALTER DATABASE' statement, database name can be empty to alter default database.
 	if isIncorrectName(stmt.Name) && !stmt.AlterDefaultDatabase {
-		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
+		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
 
 func (p *preprocessor) checkDropDatabaseGrammar(stmt *ast.DropDatabaseStmt) {
 	if isIncorrectName(stmt.Name) {
-		p.err = ddl.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
+		p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(stmt.Name)
 	}
 }
 
@@ -788,7 +789,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	}
 	tName := stmt.Table.Name.String()
 	if isIncorrectName(tName) {
-		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
+		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
 	countPrimaryKey := 0
@@ -820,7 +821,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 				return
 			}
 			if constraint.IsEmptyIndex {
-				p.err = ddl.ErrWrongNameForIndex.GenWithStackByArgs(constraint.Name)
+				p.err = dbterror.ErrWrongNameForIndex.GenWithStackByArgs(constraint.Name)
 				return
 			}
 		case ast.ConstraintPrimaryKey:
@@ -844,7 +845,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		p.err = errors.New("'CREATE TABLE ... SELECT' is not implemented yet")
 		return
 	} else if len(stmt.Cols) == 0 && stmt.ReferTable == nil {
-		p.err = ddl.ErrTableMustHaveColumns
+		p.err = dbterror.ErrTableMustHaveColumns
 		return
 	}
 
@@ -852,7 +853,7 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		for _, def := range stmt.Partition.Definitions {
 			pName := def.Name.String()
 			if isIncorrectName(pName) {
-				p.err = ddl.ErrWrongPartitionName.GenWithStackByArgs(pName)
+				p.err = dbterror.ErrWrongPartitionName.GenWithStackByArgs(pName)
 				return
 			}
 		}
@@ -862,12 +863,12 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 func (p *preprocessor) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
 	vName := stmt.ViewName.Name.String()
 	if isIncorrectName(vName) {
-		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(vName)
+		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(vName)
 		return
 	}
 	for _, col := range stmt.Cols {
 		if isIncorrectName(col.String()) {
-			p.err = ddl.ErrWrongColumnName.GenWithStackByArgs(col)
+			p.err = dbterror.ErrWrongColumnName.GenWithStackByArgs(col)
 			return
 		}
 	}
@@ -877,7 +878,7 @@ func (p *preprocessor) checkCreateViewWithSelect(stmt ast.Node) {
 	switch s := stmt.(type) {
 	case *ast.SelectStmt:
 		if s.SelectIntoOpt != nil {
-			p.err = ddl.ErrViewSelectClause.GenWithStackByArgs("INFO")
+			p.err = dbterror.ErrViewSelectClause.GenWithStackByArgs("INFO")
 			return
 		}
 		if s.LockInfo != nil && s.LockInfo.LockType != ast.SelectLockNone {
@@ -920,7 +921,7 @@ func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
 	currentDB := model.NewCIStr(p.ctx.GetSessionVars().CurrentDB)
 	for _, t := range stmt.Tables {
 		if isIncorrectName(t.Name.String()) {
-			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
+			p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
 			return
 		}
 
@@ -951,7 +952,7 @@ func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
 func (p *preprocessor) checkDropTableNames(tables []*ast.TableName) {
 	for _, t := range tables {
 		if isIncorrectName(t.Name.String()) {
-			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
+			p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
 			return
 		}
 	}
@@ -1024,11 +1025,11 @@ func checkColumnOptions(isTempTable bool, ops []*ast.ColumnOption) (int, error) 
 func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 	tName := stmt.Table.Name.String()
 	if isIncorrectName(tName) {
-		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
+		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
 	if stmt.IndexName == "" {
-		p.err = ddl.ErrWrongNameForIndex.GenWithStackByArgs(stmt.IndexName)
+		p.err = dbterror.ErrWrongNameForIndex.GenWithStackByArgs(stmt.IndexName)
 		return
 	}
 	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexPartSpecifications)
@@ -1058,12 +1059,12 @@ func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
 
 func (p *preprocessor) checkRenameTable(oldTable, newTable string) {
 	if isIncorrectName(oldTable) {
-		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(oldTable)
+		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(oldTable)
 		return
 	}
 
 	if isIncorrectName(newTable) {
-		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(newTable)
+		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(newTable)
 		return
 	}
 }
@@ -1071,11 +1072,11 @@ func (p *preprocessor) checkRenameTable(oldTable, newTable string) {
 func (p *preprocessor) checkRepairTableGrammar(stmt *ast.RepairTableStmt) {
 	// Check create table stmt whether it's is in REPAIR MODE.
 	if !domainutil.RepairInfo.InRepairMode() {
-		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("TiDB is not in REPAIR MODE")
+		p.err = dbterror.ErrRepairTableFail.GenWithStackByArgs("TiDB is not in REPAIR MODE")
 		return
 	}
 	if len(domainutil.RepairInfo.GetRepairTableList()) == 0 {
-		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("repair list is empty")
+		p.err = dbterror.ErrRepairTableFail.GenWithStackByArgs("repair list is empty")
 		return
 	}
 
@@ -1088,7 +1089,7 @@ func (p *preprocessor) checkRepairTableGrammar(stmt *ast.RepairTableStmt) {
 func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 	tName := stmt.Table.Name.String()
 	if isIncorrectName(tName) {
-		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tName)
+		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(tName)
 		return
 	}
 	specs := stmt.Specs
@@ -1096,7 +1097,7 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 		if spec.NewTable != nil {
 			ntName := spec.NewTable.Name.String()
 			if isIncorrectName(ntName) {
-				p.err = ddl.ErrWrongTableName.GenWithStackByArgs(ntName)
+				p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(ntName)
 				return
 			}
 		}
@@ -1131,7 +1132,7 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 			for _, def := range spec.PartDefinitions {
 				pName := def.Name.String()
 				if isIncorrectName(pName) {
-					p.err = ddl.ErrWrongPartitionName.GenWithStackByArgs(pName)
+					p.err = dbterror.ErrWrongPartitionName.GenWithStackByArgs(pName)
 					return
 				}
 			}
@@ -1159,7 +1160,7 @@ func checkDuplicateColumnName(IndexPartSpecifications []*ast.IndexPartSpecificat
 // checkIndexInfo checks index name, index column names and prefix lengths.
 func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSpecification) error {
 	if strings.EqualFold(indexName, mysql.PrimaryKeyName) {
-		return ddl.ErrWrongNameForIndex.GenWithStackByArgs(indexName)
+		return dbterror.ErrWrongNameForIndex.GenWithStackByArgs(indexName)
 	}
 	if len(IndexPartSpecifications) > mysql.MaxKeyParts {
 		return infoschema.ErrTooManyKeyParts.GenWithStackByArgs(mysql.MaxKeyParts)
@@ -1179,9 +1180,9 @@ func checkUnsupportedTableOptions(options []*ast.TableOption) error {
 	for _, option := range options {
 		switch option.Tp {
 		case ast.TableOptionUnion:
-			err = ddl.ErrTableOptionUnionUnsupported
+			err = dbterror.ErrTableOptionUnionUnsupported
 		case ast.TableOptionInsertMethod:
-			err = ddl.ErrTableOptionInsertMethodUnsupported
+			err = dbterror.ErrTableOptionInsertMethodUnsupported
 		case ast.TableOptionEngine:
 			err = checkTableEngine(option.StrValue)
 		}
@@ -1209,7 +1210,7 @@ var mysqlValidTableEngineNames = map[string]struct{}{
 
 func checkTableEngine(engineName string) error {
 	if _, have := mysqlValidTableEngineNames[strings.ToLower(engineName)]; !have {
-		return ddl.ErrUnknownEngine.GenWithStackByArgs(engineName)
+		return dbterror.ErrUnknownEngine.GenWithStackByArgs(engineName)
 	}
 	return nil
 }
@@ -1240,7 +1241,7 @@ func checkColumn(colDef *ast.ColumnDef) error {
 	// Check column name.
 	cName := colDef.Name.Name.String()
 	if isIncorrectName(cName) {
-		return ddl.ErrWrongColumnName.GenWithStackByArgs(cName)
+		return dbterror.ErrWrongColumnName.GenWithStackByArgs(cName)
 	}
 
 	if isInvalidDefaultValue(colDef) {
@@ -1383,11 +1384,11 @@ func (p *preprocessor) checkContainDotColumn(stmt *ast.CreateTableStmt) {
 	for _, colDef := range stmt.Cols {
 		// check schema and table names.
 		if colDef.Name.Schema.O != sName && len(colDef.Name.Schema.O) != 0 {
-			p.err = ddl.ErrWrongDBName.GenWithStackByArgs(colDef.Name.Schema.O)
+			p.err = dbterror.ErrWrongDBName.GenWithStackByArgs(colDef.Name.Schema.O)
 			return
 		}
 		if colDef.Name.Table.O != tName && len(colDef.Name.Table.O) != 0 {
-			p.err = ddl.ErrWrongTableName.GenWithStackByArgs(colDef.Name.Table.O)
+			p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(colDef.Name.Table.O)
 			return
 		}
 	}
@@ -1482,24 +1483,24 @@ func (p *preprocessor) checkNotInRepair(tn *ast.TableName) {
 		return
 	}
 	if tableInfo != nil {
-		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(tn.Name.L, "this table is in repair")
+		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(tn.Name.L, "this table is in repair")
 	}
 }
 
 func (p *preprocessor) handleRepairName(tn *ast.TableName) {
 	// Check the whether the repaired table is system table.
 	if util.IsMemOrSysDB(tn.Schema.L) {
-		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("memory or system database is not for repair")
+		p.err = dbterror.ErrRepairTableFail.GenWithStackByArgs("memory or system database is not for repair")
 		return
 	}
 	tableInfo, dbInfo := domainutil.RepairInfo.GetRepairedTableInfoByTableName(tn.Schema.L, tn.Name.L)
 	// tableName here only has the schema rather than DBInfo.
 	if dbInfo == nil {
-		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("database " + tn.Schema.L + " is not in repair")
+		p.err = dbterror.ErrRepairTableFail.GenWithStackByArgs("database " + tn.Schema.L + " is not in repair")
 		return
 	}
 	if tableInfo == nil {
-		p.err = ddl.ErrRepairTableFail.GenWithStackByArgs("table " + tn.Name.L + " is not in repair")
+		p.err = dbterror.ErrRepairTableFail.GenWithStackByArgs("table " + tn.Name.L + " is not in repair")
 		return
 	}
 	p.ctx.SetValue(domainutil.RepairedTable, tableInfo)
@@ -1580,7 +1581,7 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 func (p *preprocessor) resolveCreateSequenceStmt(stmt *ast.CreateSequenceStmt) {
 	sName := stmt.Name.Name.String()
 	if isIncorrectName(sName) {
-		p.err = ddl.ErrWrongTableName.GenWithStackByArgs(sName)
+		p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(sName)
 		return
 	}
 }
@@ -1690,9 +1691,9 @@ func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 	if !sessVars.SQLMode.HasStrictMode() && colDef.Tp.Tp == mysql.TypeVarchar {
 		colDef.Tp.Tp = mysql.TypeBlob
 		if colDef.Tp.Charset == charset.CharsetBin {
-			sessVars.StmtCtx.AppendWarning(ddl.ErrAutoConvert.GenWithStackByArgs(colDef.Name.Name.O, "VARBINARY", "BLOB"))
+			sessVars.StmtCtx.AppendWarning(dbterror.ErrAutoConvert.GenWithStackByArgs(colDef.Name.Name.O, "VARBINARY", "BLOB"))
 		} else {
-			sessVars.StmtCtx.AppendWarning(ddl.ErrAutoConvert.GenWithStackByArgs(colDef.Name.Name.O, "VARCHAR", "TEXT"))
+			sessVars.StmtCtx.AppendWarning(dbterror.ErrAutoConvert.GenWithStackByArgs(colDef.Name.Name.O, "VARCHAR", "TEXT"))
 		}
 		return true
 	}

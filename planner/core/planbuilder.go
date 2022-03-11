@@ -27,7 +27,6 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -55,6 +54,7 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
@@ -86,17 +86,16 @@ type indexNestedLoopJoinTables struct {
 
 type tableHintInfo struct {
 	indexNestedLoopJoinTables
-	sortMergeJoinTables         []hintTableInfo
-	broadcastJoinTables         []hintTableInfo
-	broadcastJoinPreferredLocal []hintTableInfo
-	hashJoinTables              []hintTableInfo
-	indexHintList               []indexHintInfo
-	tiflashTables               []hintTableInfo
-	tikvTables                  []hintTableInfo
-	aggHints                    aggHintInfo
-	indexMergeHintList          []indexHintInfo
-	timeRangeHint               ast.HintTimeRange
-	limitHints                  limitHintInfo
+	sortMergeJoinTables []hintTableInfo
+	broadcastJoinTables []hintTableInfo
+	hashJoinTables      []hintTableInfo
+	indexHintList       []indexHintInfo
+	tiflashTables       []hintTableInfo
+	tikvTables          []hintTableInfo
+	aggHints            aggHintInfo
+	indexMergeHintList  []indexHintInfo
+	timeRangeHint       ast.HintTimeRange
+	limitHints          limitHintInfo
 }
 
 type limitHintInfo struct {
@@ -196,22 +195,6 @@ func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTable
 		return nil
 	}
 	return hintTableInfos
-}
-
-// ifPreferAsLocalInBCJoin checks if there is a data source specified as local read by hint
-func (info *tableHintInfo) ifPreferAsLocalInBCJoin(p LogicalPlan, blockOffset int) bool {
-	alias := extractTableAlias(p, blockOffset)
-	if alias != nil {
-		tableNames := make([]*hintTableInfo, 1)
-		tableNames[0] = alias
-		return info.matchTableName(tableNames, info.broadcastJoinPreferredLocal)
-	}
-	for _, c := range p.Children() {
-		if info.ifPreferAsLocalInBCJoin(c, blockOffset) {
-			return true
-		}
-	}
-	return false
 }
 
 func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*hintTableInfo) bool {
@@ -1015,8 +998,8 @@ func isPrimaryIndex(indexName model.CIStr) bool {
 	return indexName.L == "primary"
 }
 
-func genTiFlashPath(tblInfo *model.TableInfo, isGlobalRead bool) *util.AccessPath {
-	tiFlashPath := &util.AccessPath{StoreType: kv.TiFlash, IsTiFlashGlobalRead: isGlobalRead}
+func genTiFlashPath(tblInfo *model.TableInfo) *util.AccessPath {
+	tiFlashPath := &util.AccessPath{StoreType: kv.TiFlash}
 	fillContentForTablePath(tiFlashPath, tblInfo)
 	return tiFlashPath
 }
@@ -1084,8 +1067,7 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	} else if !tblInfo.TiFlashReplica.Available {
 		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because tiflash replicas of table `" + tblInfo.Name.O + "` not ready.")
 	} else {
-		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, false))
-		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, true))
+		publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
 	}
 
 	optimizerUseInvisibleIndexes := ctx.GetSessionVars().OptimizerUseInvisibleIndexes
@@ -1827,7 +1809,7 @@ func GetPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		if len(partitionNames) != 0 {
-			return nil, nil, errors.Trace(ddl.ErrPartitionMgmtOnNonpartitioned)
+			return nil, nil, errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 		}
 		return []int64{tblInfo.ID}, []string{""}, nil
 	}
@@ -4270,7 +4252,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 			}
 		}
 		if len(v.Cols) != schema.Len() {
-			return nil, ddl.ErrViewWrongList
+			return nil, dbterror.ErrViewWrongList
 		}
 		if b.ctx.GetSessionVars().User != nil {
 			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", b.ctx.GetSessionVars().User.AuthUsername,
