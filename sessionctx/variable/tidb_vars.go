@@ -41,9 +41,6 @@ const (
 	// TiDBOptAggPushDown is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
-	// TiDBOptBCJ is used to enable/disable broadcast join in MPP mode
-	TiDBOptBCJ = "tidb_opt_broadcast_join"
-
 	// TiDBOptCartesianBCJ is used to disable/enable broadcast cartesian join in MPP mode
 	TiDBOptCartesianBCJ = "tidb_opt_broadcast_cartesian_join"
 
@@ -130,9 +127,6 @@ const (
 	// TiDBDisableTxnAutoRetry disables transaction auto retry.
 	TiDBDisableTxnAutoRetry = "tidb_disable_txn_auto_retry"
 
-	// Deprecated: tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
-	TiDBEnableStreaming = "tidb_enable_streaming"
-
 	// TiDBEnableChunkRPC enables TiDB to use Chunk format for coprocessor requests.
 	TiDBEnableChunkRPC = "tidb_enable_chunk_rpc"
 
@@ -217,6 +211,9 @@ const (
 
 	// TiDBReadConsistency indicates whether the autocommit read statement goes through TiKV RC.
 	TiDBReadConsistency = "tidb_read_consistency"
+
+	// TiDBSysdateIsNow is the name of the `tidb_sysdate_is_now` system variable
+	TiDBSysdateIsNow = "tidb_sysdate_is_now"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -607,6 +604,9 @@ const (
 	// TiDBTxnAssertionLevel indicates how strict the assertion will be, which helps to detect and preventing data &
 	// index inconsistency problems.
 	TiDBTxnAssertionLevel = "tidb_txn_assertion_level"
+
+	// TiDBBatchPendingTiFlashCount indicates the maximum count of non-available TiFlash tables.
+	TiDBBatchPendingTiFlashCount = "tidb_batch_pending_tiflash_count"
 )
 
 // TiDB vars that have only global scope
@@ -668,7 +668,6 @@ const (
 	DefSkipUTF8Check                      = false
 	DefSkipASCIICheck                     = false
 	DefOptAggPushDown                     = false
-	DefOptBCJ                             = false
 	DefOptCartesianBCJ                    = 1
 	DefOptMPPOuterJoinFixedBuildSide      = false
 	DefOptWriteRowID                      = false
@@ -801,6 +800,7 @@ const (
 	DefSysdateIsNow                       = false
 	DefTiDBEnableMutationChecker          = false
 	DefTiDBTxnAssertionLevel              = AssertionOffStr
+	DefTiDBBatchPendingTiFlashCount       = 4000
 )
 
 // Process global variables.
