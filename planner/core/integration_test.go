@@ -857,6 +857,10 @@ func TestMPPJoinWithCanNotFoundColumnInSchemaColumnsError(t *testing.T) {
 func TestJoinNotSupportedByTiFlash(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+
+	tk.MustExec("insert into mysql.expr_pushdown_blacklist values('dayofmonth', 'tiflash', '');")
+	tk.MustExec("admin reload expr_pushdown_blacklist;")
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists table_1")
