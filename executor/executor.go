@@ -325,8 +325,12 @@ type CancelDDLJobsExec struct {
 func (e *CancelDDLJobsExec) Open(ctx context.Context) error {
 	// We want to use a global transaction to execute the admin command, so we don't use e.ctx here.
 	if variable.AllowConcurrencyDDL.Load() {
-		var err error
-		e.errs, err = ddl.CancelConcurrencyJobs(e.ctx, e.jobIDs)
+		newSess, err := e.getSysSession()
+		if err != nil {
+			return err
+		}
+		e.errs, err = ddl.CancelConcurrencyJobs(newSess, e.jobIDs)
+		e.releaseSysSession(newSess)
 		return err
 	}
 	// We want to use a global transaction to execute the admin command, so we don't use e.ctx here.
