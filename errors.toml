@@ -576,6 +576,16 @@ error = '''
 Incorrect partition name
 '''
 
+["ddl:1628"]
+error = '''
+Comment for table '%-.64s' is too long (max = %d)
+'''
+
+["ddl:1629"]
+error = '''
+Comment for field '%-.64s' is too long (max = %d)
+'''
+
 ["ddl:1652"]
 error = '''
 Duplicate partition field name '%-.192s'
@@ -624,6 +634,11 @@ Found a row that does not match the partition
 ["ddl:1740"]
 error = '''
 Table to exchange with partition has foreign key references: '%-.64s'
+'''
+
+["ddl:1793"]
+error = '''
+Comment for table partition '%-.64s' is too long (max = %d)
 '''
 
 ["ddl:1826"]
