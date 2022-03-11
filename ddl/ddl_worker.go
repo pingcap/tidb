@@ -876,7 +876,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionDropPlacementPolicy:
 		ver, err = onDropPlacementPolicy(d, t, job)
 	case model.ActionAlterPlacementPolicy:
-		ver, err = onAlterPlacementPolicy(d, t, job)
+		ver, err = onAlterPlacementPolicy(t, job)
 	case model.ActionAlterTablePartitionPlacement:
 		ver, err = onAlterTablePartitionPlacement(t, job)
 	case model.ActionAlterTablePlacement:

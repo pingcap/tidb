@@ -750,10 +750,6 @@ type SessionVars struct {
 	// WaitSplitRegionTimeout defines the split region timeout.
 	WaitSplitRegionTimeout uint64
 
-	// EnableStreaming indicates whether the coprocessor request can use streaming API.
-	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
-	EnableStreaming bool
-
 	// EnableChunkRPC indicates whether the coprocessor request can use chunk API.
 	EnableChunkRPC bool
 
@@ -1008,6 +1004,8 @@ type SessionVars struct {
 	EnableMutationChecker bool
 	// AssertionLevel controls how strict the assertions on data mutations should be.
 	AssertionLevel AssertionLevel
+	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
+	BatchPendingTiFlashCount int
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1269,14 +1267,6 @@ func NewSessionVars() *SessionVars {
 		MaxChunkSize:       DefMaxChunkSize,
 	}
 	vars.DMLBatchSize = DefDMLBatchSize
-	var enableStreaming string
-	if config.GetGlobalConfig().EnableStreaming {
-		enableStreaming = "1"
-	} else {
-		enableStreaming = "0"
-	}
-	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
-
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
 	vars.allowMPPExecution = DefTiDBAllowMPPExecution
 	vars.HashExchangeWithNewCollation = DefTiDBHashExchangeWithNewCollation

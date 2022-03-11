@@ -528,11 +528,6 @@ var defaultSysVars = []*SysVar{
 		s.MemQuotaQuery = TidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
 		return nil
 	}},
-	// Deprecated: tidb_enable_streaming
-	{Scope: ScopeSession, Name: TiDBEnableStreaming, Value: Off, Type: TypeBool, skipInit: true, Hidden: true, SetSession: func(s *SessionVars, val string) error {
-		s.EnableStreaming = TiDBOptOn(val)
-		return nil
-	}},
 	{Scope: ScopeSession, Name: TiDBEnableChunkRPC, Value: On, Type: TypeBool, skipInit: true, SetSession: func(s *SessionVars, val string) error {
 		s.EnableChunkRPC = TiDBOptOn(val)
 		return nil
@@ -1325,7 +1320,7 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
-	{Scope: ScopeGlobal | ScopeSession, Name: SysdateIsNow, Value: BoolToOnOff(DefSysdateIsNow), Type: TypeBool,
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBSysdateIsNow, Value: BoolToOnOff(DefSysdateIsNow), Type: TypeBool,
 		SetSession: func(vars *SessionVars, s string) error {
 			vars.SysdateIsNow = TiDBOptOn(s)
 			return nil
@@ -1340,6 +1335,14 @@ var defaultSysVars = []*SysVar{
 	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTxnAssertionLevel, Value: DefTiDBTxnAssertionLevel, PossibleValues: []string{AssertionOffStr, AssertionFastStr, AssertionStrictStr}, Hidden: true, Type: TypeEnum, SetSession: func(s *SessionVars, val string) error {
 		s.AssertionLevel = tidbOptAssertionLevel(val)
+		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBBatchPendingTiFlashCount, Value: strconv.Itoa(DefTiDBBatchPendingTiFlashCount), MinValue: 0, MaxValue: math.MaxUint32, Hidden: false, Type: TypeUnsigned, SetSession: func(s *SessionVars, val string) error {
+		b, e := strconv.Atoi(val)
+		if e != nil {
+			b = DefTiDBBatchPendingTiFlashCount
+		}
+		s.BatchPendingTiFlashCount = b
 		return nil
 	}},
 	{Scope: ScopeSession, Name: TiDBLastDDLInfo, Value: strconv.Itoa(DefCurretTS), ReadOnly: true, skipInit: true, GetSession: func(s *SessionVars) (string, error) {
@@ -1655,6 +1658,4 @@ const (
 	RandSeed1 = "rand_seed1"
 	// RandSeed2 is the name of 'rand_seed2' system variable.
 	RandSeed2 = "rand_seed2"
-	// SysdateIsNow is the name of the `sysdate_is_now` system variable
-	SysdateIsNow = "sysdate_is_now"
 )

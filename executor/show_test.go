@@ -1591,9 +1591,6 @@ func TestShowVar(t *testing.T) {
 	// Test Hidden tx_read_ts
 	res = tk.MustQuery("show variables like '%tx_read_ts'")
 	require.Len(t, res.Rows(), 0)
-	// Test Hidden tidb_enable_streaming
-	res = tk.MustQuery("show variables like '%tidb_enable_streaming%';")
-	require.Len(t, res.Rows(), 0)
 
 	// Test versions' related variables
 	res = tk.MustQuery("show variables like 'version%'")
