@@ -107,7 +107,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	close(taskCh)
 	e.wg.Wait()
-	defer close(resultsCh)
+	close(resultsCh)
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	panicCnt := 0
 
@@ -140,55 +140,53 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 				zap.String("cost", job.EndTime.Sub(job.StartTime).String()))
 		}
 	}
-LOOP:
 	for panicCnt < concurrency {
-		select {
-		case results := <-resultsCh:
-			if results.Err != nil {
-				err = results.Err
-				if err == errAnalyzeWorkerPanic {
-					panicCnt++
-				} else {
-					logutil.Logger(ctx).Error("analyze failed", zap.Error(err))
-				}
-				finishJobWithLogFn(ctx, results.Job, true)
-				continue
+		results, ok := <-resultsCh
+		if !ok {
+			break
+		}
+		if results.Err != nil {
+			err = results.Err
+			if err == errAnalyzeWorkerPanic {
+				panicCnt++
+			} else {
+				logutil.Logger(ctx).Error("analyze failed", zap.Error(err))
 			}
-			if results.TableID.IsPartitionTable() && needGlobalStats {
-				for _, result := range results.Ars {
-					if result.IsIndex == 0 {
-						// If it does not belong to the statistics of index, we need to set it to -1 to distinguish.
-						globalStatsID := globalStatsKey{tableID: results.TableID.TableID, indexID: int64(-1)}
-						histIDs := make([]int64, 0, len(result.Hist))
-						for _, hg := range result.Hist {
-							// It's normal virtual column, skip.
-							if hg == nil {
-								continue
-							}
-							histIDs = append(histIDs, hg.ID)
+			finishJobWithLogFn(ctx, results.Job, true)
+			continue
+		}
+		if results.TableID.IsPartitionTable() && needGlobalStats {
+			for _, result := range results.Ars {
+				if result.IsIndex == 0 {
+					// If it does not belong to the statistics of index, we need to set it to -1 to distinguish.
+					globalStatsID := globalStatsKey{tableID: results.TableID.TableID, indexID: int64(-1)}
+					histIDs := make([]int64, 0, len(result.Hist))
+					for _, hg := range result.Hist {
+						// It's normal virtual column, skip.
+						if hg == nil {
+							continue
 						}
-						globalStatsMap[globalStatsID] = globalStatsInfo{isIndex: result.IsIndex, histIDs: histIDs, statsVersion: results.StatsVer}
-					} else {
-						for _, hg := range result.Hist {
-							globalStatsID := globalStatsKey{tableID: results.TableID.TableID, indexID: hg.ID}
-							globalStatsMap[globalStatsID] = globalStatsInfo{isIndex: result.IsIndex, histIDs: []int64{hg.ID}, statsVersion: results.StatsVer}
-						}
+						histIDs = append(histIDs, hg.ID)
+					}
+					globalStatsMap[globalStatsID] = globalStatsInfo{isIndex: result.IsIndex, histIDs: histIDs, statsVersion: results.StatsVer}
+				} else {
+					for _, hg := range result.Hist {
+						globalStatsID := globalStatsKey{tableID: results.TableID.TableID, indexID: hg.ID}
+						globalStatsMap[globalStatsID] = globalStatsInfo{isIndex: result.IsIndex, histIDs: []int64{hg.ID}, statsVersion: results.StatsVer}
 					}
 				}
 			}
-			if err1 := statsHandle.SaveTableStatsToStorage(results, results.TableID.IsPartitionTable() && needGlobalStats); err1 != nil {
-				err = err1
-				logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
-				finishJobWithLogFn(ctx, results.Job, true)
-			} else {
-				finishJobWithLogFn(ctx, results.Job, false)
-				// Dump stats to historical storage.
-				if err := e.recordHistoricalStats(results.TableID.TableID); err != nil {
-					logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
-				}
+		}
+		if err1 := statsHandle.SaveTableStatsToStorage(results, results.TableID.IsPartitionTable() && needGlobalStats); err1 != nil {
+			err = err1
+			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
+			finishJobWithLogFn(ctx, results.Job, true)
+		} else {
+			finishJobWithLogFn(ctx, results.Job, false)
+			// Dump stats to historical storage.
+			if err := e.recordHistoricalStats(results.TableID.TableID); err != nil {
+				logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
 			}
-		default:
-			break LOOP
 		}
 	}
 	for _, task := range e.tasks {
@@ -1083,24 +1081,21 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		}
 		fmSketches = append(fmSketches, rootRowCollector.Base().FMSketches[colLen+i])
 	}
-	close(exitCh)
+	close(buildTaskChan)
 	e.samplingBuilderWg.Wait()
-	defer close(buildResultChan)
-	defer close(buildTaskChan)
+	close(buildResultChan)
 	panicCnt := 0
-LOOP:
 	for panicCnt < statsConcurrency {
-		select {
-		case err1 := <-buildResultChan:
-			if err1 != nil {
-				err = err1
-				if err1 == errAnalyzeWorkerPanic {
-					panicCnt++
-				}
-				continue
+		err1, ok := <-buildResultChan
+		if !ok {
+			break
+		}
+		if err1 != nil {
+			err = err1
+			if err1 == errAnalyzeWorkerPanic {
+				panicCnt++
 			}
-		default:
-			break LOOP
+			continue
 		}
 	}
 	if err != nil {
@@ -1373,7 +1368,10 @@ func (e *AnalyzeColumnsExec) subBuildWorker(resultCh chan error, taskCh chan *sa
 workLoop:
 	for {
 		select {
-		case task := <-taskCh:
+		case task, ok := <-taskCh:
+			if !ok {
+				break
+			}
 			var collector *statistics.SampleCollector
 			if task.isColumn {
 				if e.colsInfo[task.slicePos].IsGenerated() && !e.colsInfo[task.slicePos].GeneratedStored {
@@ -1457,12 +1455,8 @@ workLoop:
 			hists[task.slicePos] = hist
 			topns[task.slicePos] = topn
 			resultCh <- nil
-		default:
-			select {
-			case <-exitCh:
-				return
-			default:
-			}
+		case <-exitCh:
+			return
 		}
 	}
 }
