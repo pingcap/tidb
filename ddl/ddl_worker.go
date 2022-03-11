@@ -716,7 +716,7 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 			log.Error("finishDDLJob", zap.Error(err))
 			return err
 		}
-		//w.sessForJob.StmtCommit()
+		w.sessForJob.StmtCommit()
 		err = w.sessForJob.CommitTxn(w.ctx)
 		if err != nil {
 			w.unlockSeqNum()
