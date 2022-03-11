@@ -17,8 +17,10 @@ package executor
 import (
 	"context"
 	"sort"
+	"time"
 
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -118,6 +120,10 @@ func (e *TableReaderExecutor) Table() table.Table {
 	return e.table
 }
 
+func (e *TableReaderExecutor) setDummy() {
+	e.dummy = true
+}
+
 // Open initializes necessary variables for using this executor.
 func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -125,6 +131,10 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	failpoint.Inject("mockSleepInTableReaderNext", func(v failpoint.Value) {
+		ms := v.(int)
+		time.Sleep(time.Millisecond * time.Duration(ms))
+	})
 
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)

@@ -71,6 +71,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/israce"
@@ -1892,7 +1893,7 @@ func (s *testSuiteP1) TestGeneratedColumnWrite(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	_, err := tk.Exec(`CREATE TABLE test_gc_write (a int primary key auto_increment, b int, c int as (a+8) virtual)`)
-	c.Assert(err.Error(), Equals, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("c").Error())
+	c.Assert(err.Error(), Equals, dbterror.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("c").Error())
 	tk.MustExec(`CREATE TABLE test_gc_write (a int primary key auto_increment, b int, c int as (b+8) virtual)`)
 	tk.MustExec(`CREATE TABLE test_gc_write_1 (a int primary key, b int, c int)`)
 
@@ -3999,19 +4000,6 @@ func (s *testSuite) TestLimit(c *C) {
 	))
 }
 
-func (s *testSuite) TestCoprocessorStreamingWarning(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a double)")
-	tk.MustExec("insert into t value(1.2)")
-	tk.MustExec("set @@session.tidb_enable_streaming = 1")
-
-	result := tk.MustQuery("select * from t where a/0 > 1")
-	result.Check(testkit.Rows())
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1365|Division by 0"))
-}
-
 func (s *testSuite3) TestYearTypeDeleteIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -5099,7 +5087,7 @@ func (s *testSplitTable) TestShowTableRegion(c *C) {
 	tk.MustExec("drop table if exists t_regions_temporary_table")
 	// Test pre split regions
 	_, err = tk.Exec("create global temporary table temporary_table_pre_split(id int ) pre_split_regions=2 ON COMMIT DELETE ROWS;")
-	c.Assert(err.Error(), Equals, ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions").Error())
+	c.Assert(err.Error(), Equals, dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions").Error())
 
 	// Test show table regions and split table on local temporary table
 	tk.MustExec("drop table if exists t_regions_local_temporary_table")
@@ -5115,7 +5103,7 @@ func (s *testSplitTable) TestShowTableRegion(c *C) {
 	tk.MustExec("drop table if exists t_regions_local_temporary_table")
 	// Test pre split regions
 	_, err = tk.Exec("create temporary table local_temporary_table_pre_split(id int ) pre_split_regions=2;")
-	c.Assert(err.Error(), Equals, ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions").Error())
+	c.Assert(err.Error(), Equals, dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions").Error())
 
 	rows := re.Rows()
 	// Table t_regions should have 5 regions now.
@@ -8497,4 +8485,13 @@ func (s *testSerialSuite) TestEncodingSet(c *C) {
 	tk.MustExec("INSERT INTO `enum-set` VALUES\n(\"x00,x59\");")
 	tk.MustQuery("select `set` from `enum-set` use index(PRIMARY)").Check(testkit.Rows("x00,x59"))
 	tk.MustExec("admin check table `enum-set`")
+}
+
+// fix issue https://github.com/pingcap/tidb/issues/32871
+func (s *testSuite1) TestBitColumnIn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id bit(16), key id(id))")
+	tk.MustExec("insert into t values (65)")
+	tk.MustQuery("select * from t where id not in (-1,2)").Check(testkit.Rows("\x00A"))
 }
