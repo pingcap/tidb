@@ -907,22 +907,6 @@ func TestJoinNotSupportedByTiFlash(t *testing.T) {
 		res := tk.MustQuery(tt)
 		res.Check(testkit.Rows(output[i].Plan...))
 	}
-
-	tk.MustExec("set @@session.tidb_allow_mpp = 0")
-	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
-	tk.MustExec("set @@session.tidb_allow_batch_cop = 1")
-	tk.MustExec("set @@session.tidb_opt_broadcast_join = 1")
-	// make cbo force choose broadcast join since sql hint does not work for semi/anti-semi join
-	tk.MustExec("set @@session.tidb_opt_cpu_factor=10000000;")
-	integrationSuiteData.GetTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		res := tk.MustQuery(tt)
-		res.Check(testkit.Rows(output[i].Plan...))
-	}
 }
 
 func TestMPPWithHashExchangeUnderNewCollation(t *testing.T) {
@@ -955,7 +939,6 @@ func TestMPPWithHashExchangeUnderNewCollation(t *testing.T) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_allow_mpp = 1")
-	tk.MustExec("set @@session.tidb_opt_broadcast_join = 0")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
 	tk.MustExec("set @@session.tidb_hash_exchange_with_new_collation = 1")
@@ -4012,8 +3995,6 @@ func TestPushDownProjectionForTiFlash(t *testing.T) {
 		}
 	}
 
-	tk.MustExec("set @@tidb_opt_broadcast_join=1;")
-
 	var input []string
 	var output []struct {
 		SQL  string
@@ -4054,7 +4035,7 @@ func TestPushDownProjectionForMPP(t *testing.T) {
 		}
 	}
 
-	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_opt_broadcast_join=0; set @@tidb_enforce_mpp=1;")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 
 	var input []string
 	var output []struct {
@@ -4189,7 +4170,7 @@ func TestPushDownAggForMPP(t *testing.T) {
 		}
 	}
 
-	tk.MustExec(" set @@tidb_allow_mpp=1; set @@tidb_opt_broadcast_join=0; set @@tidb_broadcast_join_threshold_count = 1; set @@tidb_broadcast_join_threshold_size=1;")
+	tk.MustExec(" set @@tidb_allow_mpp=1; set @@tidb_broadcast_join_threshold_count = 1; set @@tidb_broadcast_join_threshold_size=1;")
 
 	var input []string
 	var output []struct {
@@ -5627,7 +5608,7 @@ func TestRejectSortForMPP(t *testing.T) {
 		}
 	}
 
-	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_opt_broadcast_join=0; set @@tidb_enforce_mpp=1;")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 
 	var input []string
 	var output []struct {
