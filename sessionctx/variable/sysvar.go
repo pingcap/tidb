@@ -1337,6 +1337,14 @@ var defaultSysVars = []*SysVar{
 		s.AssertionLevel = tidbOptAssertionLevel(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBBatchPendingTiFlashCount, Value: strconv.Itoa(DefTiDBBatchPendingTiFlashCount), MinValue: 0, MaxValue: math.MaxUint32, Hidden: false, Type: TypeUnsigned, SetSession: func(s *SessionVars, val string) error {
+		b, e := strconv.Atoi(val)
+		if e != nil {
+			b = DefTiDBBatchPendingTiFlashCount
+		}
+		s.BatchPendingTiFlashCount = b
+		return nil
+	}},
 	{Scope: ScopeSession, Name: TiDBLastDDLInfo, Value: strconv.Itoa(DefCurretTS), ReadOnly: true, skipInit: true, GetSession: func(s *SessionVars) (string, error) {
 		info, err := json.Marshal(s.LastDDLInfo)
 		if err != nil {
