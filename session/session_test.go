@@ -89,7 +89,6 @@ var _ = Suite(&testSessionSuite{})
 var _ = Suite(&testSessionSuite2{})
 var _ = Suite(&testSessionSuite3{})
 var _ = Suite(&testSchemaSuite{})
-var _ = Suite(&testIsolationSuite{})
 var _ = SerialSuites(&testSchemaSerialSuite{})
 var _ = SerialSuites(&testSessionSerialSuite{})
 var _ = SerialSuites(&testBackupRestoreSuite{})
@@ -261,7 +260,7 @@ func (s *testSessionSuiteBase) TearDownTest(c *C) {
 	}
 }
 
-func createStorage(t *testing.T) (store kv.Storage, clean func()) {
+func createStorage(t *testing.T) (kv.Storage, func()) {
 	if *withTiKV {
 		initPdAddrs()
 		pdAddr := <-pdAddrChan
@@ -271,17 +270,15 @@ func createStorage(t *testing.T) (store kv.Storage, clean func()) {
 		})
 		store, err := d.Open(fmt.Sprintf("tikv://%s?disableGC=true", pdAddr))
 		require.NoError(t, err)
-		err = clearStorage(store)
-		require.NoError(t, err)
-		err = clearETCD(store.(kv.EtcdBackend))
-		require.NoError(t, err)
+		require.NoError(t, clearStorage(store))
+		require.NoError(t, clearETCD(store.(kv.EtcdBackend)))
 		session.ResetStoreForWithTiKVTest(store)
 		dom, err := session.BootstrapSession(store)
 		require.NoError(t, err)
 
 		return store, func() {
 			dom.Close()
-			store.Close()
+			require.NoError(t, store.Close())
 			pdAddrChan <- pdAddr
 		}
 	}
@@ -720,15 +717,51 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	_, err = tk.Exec("set global time_zone = 'timezone'")
 	c.Assert(err, NotNil)
 	c.Assert(terror.ErrorEqual(err, variable.ErrUnknownTimeZone), IsTrue)
+}
+
+func (s *testSessionSuite) TestUpgradeSysvars(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	se := tk.Se.(variable.GlobalVarAccessor)
 
 	// Set the global var to a non canonical form of the value
 	// i.e. implying that it was set from an earlier version of TiDB.
 
 	tk.MustExec(`REPLACE INTO mysql.global_variables (variable_name, variable_value) VALUES ('tidb_enable_noop_functions', '0')`)
 	domain.GetDomain(tk.Se).NotifyUpdateSysVarCache() // update cache
-	v, err = se.GetGlobalSysVar("tidb_enable_noop_functions")
+	v, err := se.GetGlobalSysVar("tidb_enable_noop_functions")
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, "OFF")
+
+	// Set the global var to ""  which is the invalid version of this from TiDB 4.0.16
+	// the err is quashed by the GetGlobalSysVar, and the default value is restored.
+	// This helps callers of GetGlobalSysVar(), which can't individually be expected
+	// to handle upgrade/downgrade issues correctly.
+
+	tk.MustExec(`REPLACE INTO mysql.global_variables (variable_name, variable_value) VALUES ('rpl_semi_sync_slave_enabled', '')`)
+	domain.GetDomain(tk.Se).NotifyUpdateSysVarCache() // update cache
+	v, err = se.GetGlobalSysVar("rpl_semi_sync_slave_enabled")
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, "OFF") // the default value is restored.
+	result := tk.MustQuery("SHOW VARIABLES LIKE 'rpl_semi_sync_slave_enabled'")
+	result.Check(testkit.Rows("rpl_semi_sync_slave_enabled OFF"))
+
+	// Ensure variable out of range is converted to in range after upgrade.
+	// This further helps for https://github.com/pingcap/tidb/pull/28842
+
+	tk.MustExec(`REPLACE INTO mysql.global_variables (variable_name, variable_value) VALUES ('tidb_executor_concurrency', '999')`)
+	domain.GetDomain(tk.Se).NotifyUpdateSysVarCache() // update cache
+	v, err = se.GetGlobalSysVar("tidb_executor_concurrency")
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, "256") // the max value is restored.
+
+	// Handle the case of a completely bogus value from an earlier version of TiDB.
+	// This could be the case if an ENUM sysvar removes a value.
+
+	tk.MustExec(`REPLACE INTO mysql.global_variables (variable_name, variable_value) VALUES ('tidb_enable_noop_functions', 'SOMEVAL')`)
+	domain.GetDomain(tk.Se).NotifyUpdateSysVarCache() // update cache
+	v, err = se.GetGlobalSysVar("tidb_enable_noop_functions")
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, "OFF") // the default value is restored.
 }
 
 func (s *testSessionSuite) TestMatchIdentity(c *C) {
@@ -2310,6 +2343,36 @@ func (s *testSchemaSerialSuite) TestSchemaCheckerSQL(c *C) {
 	tk.MustExec(`begin;`)
 	tk1.MustExec(`alter table t add index idx3(c);`)
 	tk.MustQuery(`select * from t for update`)
+	_, err = tk.Exec(`commit;`)
+	c.Assert(err, NotNil)
+
+	// Repeated tests for partitioned table
+	tk.MustExec(`create table pt (id int, c int) partition by hash (id) partitions 3`)
+	tk.MustExec(`insert into pt values(1, 1);`)
+	// The schema version is out of date in the first transaction, and the SQL can't be retried.
+	tk.MustExec(`begin;`)
+	tk1.MustExec(`alter table pt modify column c bigint;`)
+	tk.MustExec(`insert into pt values(3, 3);`)
+	_, err = tk.Exec(`commit;`)
+	c.Assert(terror.ErrorEqual(err, domain.ErrInfoSchemaChanged), IsTrue, Commentf("err %v", err))
+
+	// But the transaction related table IDs aren't in the updated table IDs.
+	tk.MustExec(`begin;`)
+	tk1.MustExec(`alter table pt add index idx2(c);`)
+	tk.MustExec(`insert into t1 values(4, 4);`)
+	tk.MustExec(`commit;`)
+
+	// Test for "select for update".
+	tk.MustExec(`begin;`)
+	tk1.MustExec(`alter table pt add index idx3(c);`)
+	tk.MustQuery(`select * from pt for update`)
+	_, err = tk.Exec(`commit;`)
+	c.Assert(err, NotNil)
+
+	// Test for "select for update".
+	tk.MustExec(`begin;`)
+	tk1.MustExec(`alter table pt add index idx4(c);`)
+	tk.MustQuery(`select * from pt partition (p1) for update`)
 	_, err = tk.Exec(`commit;`)
 	c.Assert(err, NotNil)
 }
@@ -6022,9 +6085,9 @@ func (s *testSessionSuite) TestForbidSettingBothTSVariable(c *C) {
 func (s *testSessionSuite) TestSysdateIsNow(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustQuery("show variables like '%sysdate_is_now%'").Check(testkit.Rows("sysdate_is_now OFF"))
+	tk.MustQuery("show variables like '%tidb_sysdate_is_now%'").Check(testkit.Rows("tidb_sysdate_is_now OFF"))
 	c.Assert(tk.Se.GetSessionVars().SysdateIsNow, IsFalse)
-	tk.MustExec("set @@sysdate_is_now=true")
-	tk.MustQuery("show variables like '%sysdate_is_now%'").Check(testkit.Rows("sysdate_is_now ON"))
+	tk.MustExec("set @@tidb_sysdate_is_now=true")
+	tk.MustQuery("show variables like '%tidb_sysdate_is_now%'").Check(testkit.Rows("tidb_sysdate_is_now ON"))
 	c.Assert(tk.Se.GetSessionVars().SysdateIsNow, IsTrue)
 }

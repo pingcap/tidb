@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/israce"
 	"github.com/stretchr/testify/require"
 )
 
@@ -169,7 +168,7 @@ func TestPreparedNullParam(t *testing.T) {
 		ps := []*util.ProcessInfo{tkProcess}
 		tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 		tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-			"TableDual_5 8000.00 root  rows:0"))
+			"TableDual_5 0.00 root  rows:0"))
 	}
 }
 
@@ -1287,9 +1286,6 @@ func TestTemporaryTable4PlanCache(t *testing.T) {
 }
 
 func TestPrepareStmtAfterIsolationReadChange(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("race test for this case takes too long time")
-	}
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	orgEnable := plannercore.PreparedPlanCacheEnabled()

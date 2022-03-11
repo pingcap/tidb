@@ -389,7 +389,7 @@ func TestAddIndexWorkerNum(t *testing.T) {
 				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum"))
 			}()
 
-			testutil.SessionExecInGoroutine(s.store, "create index c3_index on test_add_index (c3)", done)
+			testutil.SessionExecInGoroutine(s.store, "test_db", "create index c3_index on test_add_index (c3)", done)
 			checkNum := 0
 
 			running := true
@@ -398,11 +398,12 @@ func TestAddIndexWorkerNum(t *testing.T) {
 				case err = <-done:
 					require.NoError(t, err)
 					running = false
-				case <-ddl.TestCheckWorkerNumCh:
+				case wg := <-ddl.TestCheckWorkerNumCh:
 					lastSetWorkerCnt = int32(rand.Intn(8) + 8)
 					tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", lastSetWorkerCnt))
 					atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
 					checkNum++
+					wg.Done()
 				}
 			}
 

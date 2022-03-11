@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/israce"
 	"github.com/stretchr/testify/require"
 )
 
@@ -628,10 +627,6 @@ func TestPrefixClusteredIndexAddIndexAndRecover(t *testing.T) {
 }
 
 func TestPartitionTable(t *testing.T) {
-	if israce.RaceEnabled {
-		t.Skip("exhaustive types test, skip race test")
-	}
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 

@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
@@ -151,34 +152,34 @@ func checkOperateSameColumn(info *model.MultiSchemaInfo) error {
 	for _, col := range info.AddColumns {
 		name := col.Name.L
 		if _, ok := modifyCols[name]; ok {
-			return errOperateSameColumn.GenWithStackByArgs(name)
+			return dbterror.ErrOperateSameColumn.GenWithStackByArgs(name)
 		}
 		modifyCols[name] = struct{}{}
 	}
 	for _, col := range info.DropColumns {
 		name := col.Name.L
 		if _, ok := modifyCols[name]; ok {
-			return errOperateSameColumn.GenWithStackByArgs(name)
+			return dbterror.ErrOperateSameColumn.GenWithStackByArgs(name)
 		}
 		modifyCols[name] = struct{}{}
 	}
 	for _, index := range info.AddIndexes {
 		idxName := index.Name.L
 		if _, ok := modifyIdx[idxName]; ok {
-			return errOperateSameIndex.GenWithStackByArgs(idxName)
+			return dbterror.ErrOperateSameIndex.GenWithStackByArgs(idxName)
 		}
 		modifyIdx[idxName] = struct{}{}
 		for _, col := range index.Columns {
 			colName := col.Name.L
 			if _, ok := modifyCols[colName]; ok {
-				return errOperateSameColumn.GenWithStackByArgs(colName)
+				return dbterror.ErrOperateSameColumn.GenWithStackByArgs(colName)
 			}
 		}
 	}
 	for _, index := range info.DropIndexes {
 		idxName := index.Name.L
 		if _, ok := modifyIdx[idxName]; ok {
-			return errOperateSameIndex.GenWithStackByArgs(idxName)
+			return dbterror.ErrOperateSameIndex.GenWithStackByArgs(idxName)
 		}
 		modifyIdx[idxName] = struct{}{}
 	}
