@@ -1041,11 +1041,10 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		statsConcurrency = totalLen
 	}
 	e.samplingBuilderWg = &util.WaitGroupWrapper{}
-	e.samplingBuilderWg.Add(statsConcurrency)
 	sampleCollectors := make([]*statistics.SampleCollector, len(e.colsInfo))
 	exitCh := make(chan struct{})
 	for i := 0; i < statsConcurrency; i++ {
-		go e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, sampleCollectors, exitCh)
+		e.samplingBuilderWg.Run(func() { e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, sampleCollectors, exitCh) })
 	}
 	for i, col := range e.colsInfo {
 		buildTaskChan <- &samplingBuildTask{
@@ -1345,7 +1344,6 @@ func (e *AnalyzeColumnsExec) subBuildWorker(resultCh chan error, taskCh chan *sa
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultCh <- errAnalyzeWorkerPanic
 		}
-		e.samplingBuilderWg.Done()
 	}()
 	failpoint.Inject("mockAnalyzeSamplingBuildWorkerPanic", func() {
 		panic("failpoint triggered")
