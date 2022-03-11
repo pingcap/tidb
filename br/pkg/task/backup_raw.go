@@ -207,6 +207,7 @@ func RunBackupRaw(c context.Context, g glue.Glue, cmdName string, cfg *RawKvConf
 		EndVersion:       0,
 		RateLimit:        cfg.RateLimit,
 		Concurrency:      cfg.Concurrency,
+		StorageBackend:   client.GetStorageBackend(),
 		IsRawKv:          true,
 		Cf:               cfg.CF,
 		CompressionType:  cfg.CompressionType,

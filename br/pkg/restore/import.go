@@ -328,8 +328,8 @@ func (importer *FileImporter) Import(
 	regionLoop:
 		for _, regionInfo := range regionInfos {
 			info := regionInfo
-			downloadMetas, errDownload := importer.download(ctx, info, files, rewriteRules, cipher, apiVersion)
 			// Try to download file.
+			downloadMetas, errDownload := importer.download(ctx, info, files, rewriteRules, cipher, apiVersion)
 			if errDownload != nil {
 				for _, e := range multierr.Errors(errDownload) {
 					switch errors.Cause(e) { // nolint:errorlint
