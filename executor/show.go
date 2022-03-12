@@ -19,7 +19,6 @@ import (
 	"context"
 	gjson "encoding/json"
 	"fmt"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -429,15 +428,16 @@ func (e *ShowExec) fetchShowTables() error {
 	tableNames := make([]string, 0, len(schemaTables))
 	activeRoles := e.ctx.GetSessionVars().ActiveRoles
 	var (
-		tableTypes          = make(map[string]string)
-		fieldPatternsRegexp *regexp.Regexp
-		FieldFilterEnable   bool
-		fieldFilter         string
+		tableTypes        = make(map[string]string)
+		fieldPatternsLike collate.WildcardPattern
+		FieldFilterEnable bool
+		fieldFilter       string
 	)
 	if e.Extractor != nil {
 		extractor := (e.Extractor).(*plannercore.ShowTablesTableExtractor)
 		if extractor.FieldPatterns != "" {
-			fieldPatternsRegexp = regexp.MustCompile(extractor.FieldPatterns)
+			fieldPatternsLike = collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
+			fieldPatternsLike.Compile(extractor.FieldPatterns, byte('\\'))
 		}
 		FieldFilterEnable = extractor.Field != ""
 		fieldFilter = extractor.Field
@@ -449,7 +449,7 @@ func (e *ShowExec) fetchShowTables() error {
 			continue
 		} else if FieldFilterEnable && v.Meta().Name.L != fieldFilter {
 			continue
-		} else if fieldPatternsRegexp != nil && !fieldPatternsRegexp.MatchString(v.Meta().Name.L) {
+		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Meta().Name.L) {
 			continue
 		}
 		tableNames = append(tableNames, v.Meta().Name.O)
@@ -527,14 +527,15 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	var (
-		fieldPatternsRegexp *regexp.Regexp
-		FieldFilterEnable   bool
-		fieldFilter         string
+		fieldPatternsLike collate.WildcardPattern
+		FieldFilterEnable bool
+		fieldFilter       string
 	)
 	if e.Extractor != nil {
 		extractor := (e.Extractor).(*plannercore.ShowColumnsTableExtractor)
 		if extractor.FieldPatterns != "" {
-			fieldPatternsRegexp = regexp.MustCompile(extractor.FieldPatterns)
+			fieldPatternsLike = collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
+			fieldPatternsLike.Compile(extractor.FieldPatterns, byte('\\'))
 		}
 		FieldFilterEnable = extractor.Field != ""
 		fieldFilter = extractor.Field
@@ -560,7 +561,7 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	for _, col := range cols {
 		if FieldFilterEnable && col.Name.L != fieldFilter {
 			continue
-		} else if fieldPatternsRegexp != nil && !fieldPatternsRegexp.MatchString(col.Name.L) {
+		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(col.Name.L) {
 			continue
 		}
 		desc := table.NewColDesc(col)
