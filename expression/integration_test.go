@@ -2880,7 +2880,12 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 
 	// https://github.com/pingcap/tidb/issues/27434.
 	hexKey = "7480000000000100375F69800000000000000103800000000001D4C1023B6458"
-	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
+	sql = fmt.Sprintf("select tidb_decode_key('%s')", hexKey)
+	tk.MustQuery(sql).Check(testkit.Rows(hexKey))
+
+	// https://github.com/pingcap/tidb/issues/33015.
+	hexKey = "74800000000000012B5F72800000000000A5D3"
+	sql = fmt.Sprintf("select tidb_decode_key('%s')", hexKey)
 	tk.MustQuery(sql).Check(testkit.Rows(hexKey))
 
 	// Test the table with the nonclustered index.
