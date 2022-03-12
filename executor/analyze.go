@@ -123,11 +123,11 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	// The meaning of key in map is the structure that used to store the tableID and indexID.
 	// The meaning of value in map is some additional information needed to build global-level stats.
 	globalStatsMap := make(map[globalStatsKey]globalStatsInfo)
-	finishJobWithLogFn := func(ctx context.Context, job *statistics.AnalyzeJob, meetError bool) {
-		finishAnalyzeJob(e.ctx, job, meetError)
+	finishJobWithLogFn := func(ctx context.Context, job *statistics.AnalyzeJob, analyzeErr error) {
+		finishAnalyzeJob(e.ctx, job, analyzeErr)
 		if job != nil {
 			var state string
-			if meetError {
+			if analyzeErr != nil {
 				state = statistics.AnalyzeFailed
 			} else {
 				state = statistics.AnalyzeFinished
@@ -152,7 +152,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			} else {
 				logutil.Logger(ctx).Error("analyze failed", zap.Error(err))
 			}
-			finishJobWithLogFn(ctx, results.Job, true)
+			finishJobWithLogFn(ctx, results.Job, err)
 			continue
 		}
 		if results.TableID.IsPartitionTable() && needGlobalStats {
@@ -180,9 +180,9 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if err1 := statsHandle.SaveTableStatsToStorage(results, results.TableID.IsPartitionTable() && needGlobalStats); err1 != nil {
 			err = err1
 			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
-			finishJobWithLogFn(ctx, results.Job, true)
+			finishJobWithLogFn(ctx, results.Job, err)
 		} else {
-			finishJobWithLogFn(ctx, results.Job, false)
+			finishJobWithLogFn(ctx, results.Job, nil)
 			// Dump stats to historical storage.
 			if err := e.recordHistoricalStats(results.TableID.TableID); err != nil {
 				logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
@@ -1126,14 +1126,14 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.Inde
 			break
 		}
 		if results.Err != nil {
-			finishAnalyzeJob(e.ctx, results.Job, true)
 			err = results.Err
+			finishAnalyzeJob(e.ctx, results.Job, err)
 			if err == errAnalyzeWorkerPanic {
 				panicCnt++
 			}
 			continue
 		}
-		finishAnalyzeJob(e.ctx, results.Job, false)
+		finishAnalyzeJob(e.ctx, results.Job, nil)
 		totalResult.results[results.Ars[0].Hist[0].ID] = results
 	}
 	if err != nil {
@@ -2288,38 +2288,45 @@ func addNewAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
 		return
 	}
 	statsHandle := domain.GetDomain(ctx).StatsHandle()
-	err := statsHandle.RecordAnalyzeJob(job, ctx.GetSessionVars().ConnectionID)
+	err := statsHandle.InsertAnalyzeJob(job, ctx.GetSessionVars().ConnectionID)
 	if err != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		logutil.BgLogger().Error("failed to insert analyze job", zap.Error(err))
 	}
 }
 
 // startAnalyzeJob marks the state of the analyze job as running and sets the start time.
 func startAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
-	if job == nil {
+	if job == nil || job.ID == nil {
 		return
 	}
 	job.StartTime = time.Now()
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 	const sql = "UPDATE mysql.analyze_jobs SET start_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %? WHERE id = %?"
-	_, _, err := exec.ExecRestrictedSQL(context.TODO(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, job.StartTime.UTC().Format(types.TimeFormat), statistics.AnalyzeRunning, job.ID)
+	_, _, err := exec.ExecRestrictedSQL(context.TODO(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, job.StartTime.UTC().Format(types.TimeFormat), statistics.AnalyzeRunning, *job.ID)
 	if err != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzePending, statistics.AnalyzeRunning)), zap.Error(err))
 	}
 }
 
 // updateAnalyzeJob updates count of the processed rows when increment reaches a threshold.
 func updateAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, rowCount int64) {
-	const maxDelta = 1000000
-	if job == nil {
+	if job == nil || job.ID == nil {
 		return
 	}
+	const maxDelta int64 = 10000000
+	const dumpTimeInterval = 5 * time.Second
 	var delta int64
 	job.Delta.Lock()
 	job.Delta.Count += rowCount
-	if job.Delta.Count > maxDelta {
+	lastDumpTime := job.Delta.LastDumpTime
+	if lastDumpTime.IsZero() {
+		lastDumpTime = job.StartTime
+	}
+	t := time.Now()
+	if job.Delta.Count > maxDelta && t.Sub(lastDumpTime) > dumpTimeInterval {
 		delta = job.Delta.Count
 		job.Delta.Count = 0
+		job.Delta.LastDumpTime = t
 	}
 	job.Delta.Unlock()
 	if delta == 0 {
@@ -2327,28 +2334,36 @@ func updateAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, rowCou
 	}
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 	const sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %? WHERE id = %?"
-	_, _, err := exec.ExecRestrictedSQL(context.TODO(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, delta, job.ID)
+	_, _, err := exec.ExecRestrictedSQL(context.TODO(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, delta, *job.ID)
 	if err != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("process %v rows", delta)), zap.Error(err))
 	}
 }
 
 // finishAnalyzeJob updates the state of the analyze job to finished/failed according to `meetError` and sets the end time.
-func finishAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, meetError bool) {
-	if job == nil {
+func finishAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, analyzeErr error) {
+	if job == nil || job.ID == nil {
 		return
 	}
 	job.EndTime = time.Now()
-	var state string
-	if meetError {
-		state = statistics.AnalyzeFailed
+	var sql string
+	var args []interface{}
+	if analyzeErr != nil {
+		sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, fail_reason = %? WHERE id = %?"
+		args = []interface{}{job.Delta.Count, job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFailed, analyzeErr.Error(), *job.ID}
 	} else {
-		state = statistics.AnalyzeFinished
+		sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %? WHERE id = %?"
+		args = []interface{}{job.Delta.Count, job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
 	}
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
-	const sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %? WHERE id = %?"
-	_, _, err := exec.ExecRestrictedSQL(context.TODO(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, job.Delta.Count, job.EndTime.UTC().Format(types.TimeFormat), state, job.ID)
+	_, _, err := exec.ExecRestrictedSQL(context.TODO(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, args...)
 	if err != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		var state string
+		if analyzeErr != nil {
+			state = statistics.AnalyzeFailed
+		} else {
+			state = statistics.AnalyzeFinished
+		}
+		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzeRunning, state)), zap.Error(err))
 	}
 }

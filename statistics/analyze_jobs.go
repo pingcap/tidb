@@ -21,7 +21,7 @@ import (
 
 // AnalyzeJob is used to represent the status of one analyze job.
 type AnalyzeJob struct {
-	ID            uint64
+	ID            *uint64
 	DBName        string
 	TableName     string
 	PartitionName string
@@ -30,7 +30,8 @@ type AnalyzeJob struct {
 	EndTime       time.Time
 	Delta         struct {
 		sync.Mutex
-		Count int64
+		Count        int64
+		LastDumpTime time.Time
 	}
 }
 

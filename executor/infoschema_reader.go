@@ -1811,7 +1811,7 @@ func (e *memtableRetriever) setDataFromSessionVar(ctx sessionctx.Context) error 
 // dataForAnalyzeStatusHelper is a helper function which can be used in show_stats.go
 func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum, err error) {
 	const maxAnalyzeJobs = 30
-	const sql = "SELECT table_schema, table_name, partition_name, job_info, processed_rows, CONVERT_TZ(start_time, @@TIME_ZONE, '+00:00'), CONVERT_TZ(end_time, @@TIME_ZONE, '+00:00'), state, instance, process_id FROM mysql.analyze_jobs ORDER BY update_time DESC LIMIT %?"
+	const sql = "SELECT table_schema, table_name, partition_name, job_info, processed_rows, CONVERT_TZ(start_time, @@TIME_ZONE, '+00:00'), CONVERT_TZ(end_time, @@TIME_ZONE, '+00:00'), state, fail_reason, instance, process_id FROM mysql.analyze_jobs ORDER BY update_time DESC LIMIT %?"
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	chunkRows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, sql, maxAnalyzeJobs)
 	if err != nil {
@@ -1843,8 +1843,9 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum, 
 			endTime = types.NewTime(types.FromGoTime(t.In(sctx.GetSessionVars().TimeZone)), mysql.TypeDatetime, 0)
 		}
 		state := chunkRow.GetString(7)
-		instance := chunkRow.GetString(8)
-		procID := chunkRow.GetUint64(9)
+		failReason := chunkRow.GetString(8)
+		instance := chunkRow.GetString(9)
+		procID := chunkRow.GetUint64(10)
 		rows = append(rows, types.MakeDatums(
 			dbName,        // TABLE_SCHEMA
 			tableName,     // TABLE_NAME
@@ -1854,6 +1855,7 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum, 
 			startTime,     // START_TIME
 			endTime,       // END_TIME
 			state,         // STATE
+			failReason,    // FAIL_REASON
 			instance,      // INSTANCE
 			procID,        // PROCESS_ID
 		))

@@ -2054,8 +2054,8 @@ func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64) error 
 	return nil
 }
 
-// RecordAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
-func (h *Handle) RecordAnalyzeJob(job *statistics.AnalyzeJob, procID uint64) error {
+// InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
+func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, procID uint64) error {
 	serverInfo, err := infosync.GetServerInfo()
 	if err != nil {
 		return err
@@ -2075,7 +2075,8 @@ func (h *Handle) RecordAnalyzeJob(job *statistics.AnalyzeJob, procID uint64) err
 	if err != nil {
 		return err
 	}
-	job.ID = rows[0].GetUint64(0)
+	job.ID = new(uint64)
+	*job.ID = rows[0].GetUint64(0)
 	return nil
 }
 
