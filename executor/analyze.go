@@ -97,7 +97,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		go e.analyzeWorker(taskCh, resultsCh, i == 0)
 	}
 	for _, task := range e.tasks {
-		addNewAnalyzeJob(e.ctx, task.job)
+		AddNewAnalyzeJob(e.ctx, task.job)
 	}
 	failpoint.Inject("mockKillPendingAnalyzeJob", func() {
 		domain.GetDomain(e.ctx).SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
@@ -128,7 +128,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	// The meaning of value in map is some additional information needed to build global-level stats.
 	globalStatsMap := make(map[globalStatsKey]globalStatsInfo)
 	finishJobWithLogFn := func(ctx context.Context, job *statistics.AnalyzeJob, analyzeErr error) {
-		finishAnalyzeJob(e.ctx, job, analyzeErr)
+		FinishAnalyzeJob(e.ctx, job, analyzeErr)
 		if job != nil {
 			var state string
 			if analyzeErr != nil {
@@ -359,7 +359,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		if !ok {
 			break
 		}
-		startAnalyzeJob(e.ctx, task.job)
+		StartAnalyzeJob(e.ctx, task.job)
 		switch task.taskType {
 		case colTask:
 			resultsCh <- analyzeColumnsPushdown(task.colExec)
@@ -542,7 +542,7 @@ func updateIndexResult(
 	needCMS := cms != nil
 	respHist := statistics.HistogramFromProto(resp.Hist)
 	if job != nil {
-		updateAnalyzeJob(ctx, job, int64(respHist.TotalRowCount()))
+		UpdateAnalyzeJob(ctx, job, int64(respHist.TotalRowCount()))
 	}
 	hist, err = statistics.MergeHistograms(ctx.GetSessionVars().StmtCtx, hist, respHist, numBuckets, statsVer)
 	if err != nil {
@@ -1130,7 +1130,7 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.Inde
 	statsConcurrncy, err := getBuildStatsConcurrency(e.ctx)
 	taskCh := make(chan *analyzeTask, len(tasks))
 	for _, task := range tasks {
-		addNewAnalyzeJob(e.ctx, task.job)
+		AddNewAnalyzeJob(e.ctx, task.job)
 	}
 	resultsCh := make(chan *statistics.AnalyzeResults, len(tasks))
 	e.subIndexWorkerWg.Add(statsConcurrncy)
@@ -1152,13 +1152,13 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.Inde
 		}
 		if results.Err != nil {
 			err = results.Err
-			finishAnalyzeJob(e.ctx, results.Job, err)
+			FinishAnalyzeJob(e.ctx, results.Job, err)
 			if err == errAnalyzeWorkerPanic {
 				panicCnt++
 			}
 			continue
 		}
-		finishAnalyzeJob(e.ctx, results.Job, nil)
+		FinishAnalyzeJob(e.ctx, results.Job, nil)
 		totalResult.results[results.Ars[0].Hist[0].ID] = results
 	}
 	if err != nil {
@@ -1194,7 +1194,7 @@ func (e *AnalyzeColumnsExec) subIndexWorkerForNDV(taskCh chan *analyzeTask, resu
 		if !ok {
 			break
 		}
-		startAnalyzeJob(e.ctx, task.job)
+		StartAnalyzeJob(e.ctx, task.job)
 		if task.taskType != idxTask {
 			resultsCh <- &statistics.AnalyzeResults{
 				Err: errors.Errorf("incorrect analyze type"),
@@ -1319,7 +1319,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 		}
 		subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 		subCollector.Base().FromProto(colResp.RowCollector)
-		updateAnalyzeJob(e.ctx, e.job, subCollector.Base().Count)
+		UpdateAnalyzeJob(e.ctx, e.job, subCollector.Base().Count)
 		retCollector.MergeCollector(subCollector)
 	}
 	resultCh <- &samplingMergeResult{collector: retCollector}
@@ -1532,7 +1532,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			rowCount = respSample.Count + respSample.NullCount
 			collectors[i].MergeSampleCollector(sc, respSample)
 		}
-		updateAnalyzeJob(e.ctx, e.job, rowCount)
+		UpdateAnalyzeJob(e.ctx, e.job, rowCount)
 	}
 	timeZone := e.ctx.GetSessionVars().Location()
 	if hasPkHist(e.handleCols) {
@@ -2316,8 +2316,8 @@ func analyzePKIncremental(colExec *analyzePKIncrementalExec) *statistics.Analyze
 	}
 }
 
-// addNewAnalyzeJob records the new analyze job.
-func addNewAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
+// AddNewAnalyzeJob records the new analyze job.
+func AddNewAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	if job == nil {
 		return
 	}
@@ -2328,8 +2328,8 @@ func addNewAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	}
 }
 
-// startAnalyzeJob marks the state of the analyze job as running and sets the start time.
-func startAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
+// StartAnalyzeJob marks the state of the analyze job as running and sets the start time.
+func StartAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	if job == nil || job.ID == nil {
 		return
 	}
@@ -2342,8 +2342,8 @@ func startAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	}
 }
 
-// updateAnalyzeJob updates count of the processed rows when increment reaches a threshold.
-func updateAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, rowCount int64) {
+// UpdateAnalyzeJob updates count of the processed rows when increment reaches a threshold.
+func UpdateAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, rowCount int64) {
 	if job == nil || job.ID == nil {
 		return
 	}
@@ -2374,8 +2374,8 @@ func updateAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, rowCou
 	}
 }
 
-// finishAnalyzeJob updates the state of the analyze job to finished/failed according to `meetError` and sets the end time.
-func finishAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, analyzeErr error) {
+// FinishAnalyzeJob updates the state of the analyze job to finished/failed according to `meetError` and sets the end time.
+func FinishAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, analyzeErr error) {
 	if job == nil || job.ID == nil {
 		return
 	}

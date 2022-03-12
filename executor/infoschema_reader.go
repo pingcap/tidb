@@ -1844,8 +1844,11 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum, 
 			}
 			endTime = types.NewTime(types.FromGoTime(t.In(sctx.GetSessionVars().TimeZone)), mysql.TypeDatetime, 0)
 		}
-		state := chunkRow.GetString(7)
-		failReason := chunkRow.GetString(8)
+		state := chunkRow.GetEnum(7).String()
+		var failReason interface{}
+		if !chunkRow.IsNull(8) {
+			failReason = chunkRow.GetString(8)
+		}
 		instance := chunkRow.GetString(9)
 		procID := chunkRow.GetUint64(10)
 		rows = append(rows, types.MakeDatums(

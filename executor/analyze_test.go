@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
@@ -2655,11 +2656,12 @@ func TestRecordHistoryStatsMetaAfterAnalyze(t *testing.T) {
 		testkit.Rows("18 18", "21 21", "24 24", "27 27", "30 30"))
 }
 
-func checkAnalyzeStatus(t *testing.T, tk *testkit.TestKit, expectedJobInfo, expectedStatus, comment string, timeLimit int64) {
+func checkAnalyzeStatus(t *testing.T, tk *testkit.TestKit, jobInfo, status, failReason, comment string, timeLimit int64) {
 	rows := tk.MustQuery("show analyze status where table_schema = 'test' and table_name = 't' and partition_name = ''").Rows()
 	require.Equal(t, 1, len(rows), comment)
-	require.Equal(t, expectedJobInfo, rows[0][3], comment)
-	require.Equal(t, expectedStatus, rows[0][7], comment)
+	require.Equal(t, jobInfo, rows[0][3], comment)
+	require.Equal(t, status, rows[0][7], comment)
+	require.Equal(t, failReason, rows[0][8], comment)
 	if timeLimit <= 0 {
 		return
 	}
@@ -2705,13 +2707,13 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 	if ver == 1 {
 		jobInfo += "columns"
 	} else {
-		jobInfo += "table"
+		jobInfo += "table all columns with 256 buckets, 500 topn, 1 samplerate"
 	}
 	// kill auto analyze when it is pending/running/finished
 	for _, status := range []string{"pending", "running", "finished"} {
 		func() {
 			comment := fmt.Sprintf("kill %v analyze job", status)
-			statistics.ClearHistoryJobs()
+			tk.MustExec("delete from mysql.analyze_jobs")
 			mockAnalyzeStatus := "github.com/pingcap/tidb/executor/mockKill" + strings.Title(status)
 			if status == "running" {
 				mockAnalyzeStatus += "V" + strconv.Itoa(ver)
@@ -2732,12 +2734,12 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 			currentVersion := h.GetTableStats(tableInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the table stats are updated.
-				checkAnalyzeStatus(t, tk, jobInfo, "finished", comment, -1)
+				checkAnalyzeStatus(t, tk, jobInfo, "finished", "<nil>", comment, -1)
 				require.Greater(t, currentVersion, lastVersion, comment)
 			} else {
 				// If we kill a pending/running job, after kill command the status is failed and the table stats are not updated.
 				// We expect the killed analyze stops quickly. Specifically, end_time - start_time < 10s.
-				checkAnalyzeStatus(t, tk, jobInfo, "failed", comment, 10)
+				checkAnalyzeStatus(t, tk, jobInfo, "failed", executor.ErrQueryInterrupted.Error(), comment, 10)
 				require.Equal(t, currentVersion, lastVersion, comment)
 			}
 		}()
@@ -2785,7 +2787,7 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 	for _, status := range []string{"pending", "running", "finished"} {
 		func() {
 			comment := fmt.Sprintf("kill %v analyze job", status)
-			statistics.ClearHistoryJobs()
+			tk.MustExec("delete from mysql.analyze_jobs")
 			mockAnalyzeStatus := "github.com/pingcap/tidb/executor/mockKill" + strings.Title(status)
 			if status == "running" {
 				mockAnalyzeStatus += "AnalyzeIndexJob"
@@ -2806,14 +2808,50 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 			currentVersion := h.GetTableStats(tblInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the index stats are updated.
-				checkAnalyzeStatus(t, tk, jobInfo, "finished", comment, -1)
+				checkAnalyzeStatus(t, tk, jobInfo, "finished", "<nil>", comment, -1)
 				require.Greater(t, currentVersion, lastVersion, comment)
 			} else {
 				// If we kill a pending/running job, after kill command the status is failed and the index stats are not updated.
 				// We expect the killed analyze stops quickly. Specifically, end_time - start_time < 10s.
-				checkAnalyzeStatus(t, tk, jobInfo, "failed", comment, 10)
+				checkAnalyzeStatus(t, tk, jobInfo, "failed", executor.ErrQueryInterrupted.Error(), comment, 10)
 				require.Equal(t, currentVersion, lastVersion, comment)
 			}
 		}()
 	}
+}
+
+func TestAnalyzeJob(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	se := tk.Session()
+	job := &statistics.AnalyzeJob{
+		DBName: "test",
+		TableName: "t",
+		PartitionName: "",
+		JobInfo: "table all columns with 256 buckets, 500 topn, 1 samplerate",
+	}
+	executor.AddNewAnalyzeJob(se, job)
+	require.NotNil(t, job.ID)
+	rows := tk.MustQuery("show analyze status").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, job.DBName, rows[0][0])
+	require.Equal(t, job.TableName, rows[0][1])
+	require.Equal(t, job.PartitionName, rows[0][2])
+	require.Equal(t, job.JobInfo, rows[0][3])
+	require.Equal(t, "0", rows[0][4])
+	require.Equal(t, "<nil>", rows[0][5])
+	require.Equal(t, "<nil>", rows[0][6])
+	require.Equal(t, "pending", rows[0][7])
+	require.Equal(t, "<nil>", rows[0][8])
+	serverInfo, err := infosync.GetServerInfo()
+	require.NoError(t, err)
+	addr := fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
+	require.Equal(t, addr, rows[0][9])
+	connID := strconv.FormatUint(tk.Session().GetSessionVars().ConnectionID, 10)
+	require.Equal(t, connID, rows[0][10])
+
+	executor.StartAnalyzeJob(se, job)
+
+
 }

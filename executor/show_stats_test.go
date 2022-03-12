@@ -16,9 +16,11 @@ package executor_test
 
 import (
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
@@ -366,39 +368,55 @@ func TestShowAnalyzeStatus(t *testing.T) {
 
 	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("analyze table t")
-	result := tk.MustQuery("show analyze status").Sort()
-	require.Len(t, result.Rows(), 1)
-	require.Equal(t, "test", result.Rows()[0][0])
-	require.Equal(t, "t", result.Rows()[0][1])
-	require.Equal(t, "", result.Rows()[0][2])
-	require.Equal(t, "analyze table", result.Rows()[0][3])
-	require.Equal(t, "2", result.Rows()[0][4])
-	require.NotNil(t, result.Rows()[0][5])
-	require.NotNil(t, result.Rows()[0][6])
-	require.Equal(t, "finished", result.Rows()[0][7])
+	rows := tk.MustQuery("show analyze status").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "test", rows[0][0])
+	require.Equal(t, "t", rows[0][1])
+	require.Equal(t, "", rows[0][2])
+	require.Equal(t, "analyze table all columns with 256 buckets, 500 topn, 1 samplerate", rows[0][3])
+	require.Equal(t, "2", rows[0][4])
+	checkTime := func(val interface{}) {
+		str, ok := val.(string)
+		require.True(t, ok)
+		_, err := time.Parse("2006-01-02 15:04:05", str)
+		require.NoError(t, err)
+	}
+	checkTime(rows[0][5])
+	checkTime(rows[0][6])
+	require.Equal(t, "finished", rows[0][7])
+	require.Equal(t, "<nil>", rows[0][8])
+	serverInfo, err := infosync.GetServerInfo()
+	require.NoError(t, err)
+	addr := fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
+	require.Equal(t, addr, rows[0][9])
+	connID := strconv.FormatUint(tk.Session().GetSessionVars().ConnectionID, 10)
+	require.Equal(t, connID, rows[0][10])
 
 	tk.MustExec("delete from mysql.analyze_jobs")
-
 	tk.MustExec("set @@tidb_analyze_version=1")
 	tk.MustExec("analyze table t")
-	result = tk.MustQuery("show analyze status").Sort()
-	require.Len(t, result.Rows(), 2)
-	require.Equal(t, "test", result.Rows()[0][0])
-	require.Equal(t, "t", result.Rows()[0][1])
-	require.Equal(t, "", result.Rows()[0][2])
-	require.Equal(t, "analyze columns", result.Rows()[0][3])
-	require.Equal(t, "2", result.Rows()[0][4])
-	require.NotNil(t, result.Rows()[0][5])
-	require.NotNil(t, result.Rows()[0][6])
-	require.Equal(t, "finished", result.Rows()[0][7])
-
-	require.Len(t, result.Rows(), 2)
-	require.Equal(t, "test", result.Rows()[1][0])
-	require.Equal(t, "t", result.Rows()[1][1])
-	require.Equal(t, "", result.Rows()[1][2])
-	require.Equal(t, "analyze index idx", result.Rows()[1][3])
-	require.Equal(t, "2", result.Rows()[1][4])
-	require.NotNil(t, result.Rows()[1][5])
-	require.NotNil(t, result.Rows()[1][6])
-	require.Equal(t, "finished", result.Rows()[1][7])
+	rows = tk.MustQuery("show analyze status").Sort().Rows()
+	require.Len(t, rows, 2)
+	require.Equal(t, "test", rows[0][0])
+	require.Equal(t, "t", rows[0][1])
+	require.Equal(t, "", rows[0][2])
+	require.Equal(t, "analyze columns", rows[0][3])
+	require.Equal(t, "2", rows[0][4])
+	checkTime(rows[0][5])
+	checkTime(rows[0][6])
+	require.Equal(t, "finished", rows[0][7])
+	require.Equal(t, "test", rows[1][0])
+	require.Equal(t, "<nil>", rows[0][8])
+	require.Equal(t, addr, rows[0][9])
+	require.Equal(t, connID, rows[0][10])
+	require.Equal(t, "t", rows[1][1])
+	require.Equal(t, "", rows[1][2])
+	require.Equal(t, "analyze index idx", rows[1][3])
+	require.Equal(t, "2", rows[1][4])
+	checkTime(rows[1][5])
+	checkTime(rows[1][6])
+	require.Equal(t, "finished", rows[1][7])
+	require.Equal(t, "<nil>", rows[1][8])
+	require.Equal(t, addr, rows[1][9])
+	require.Equal(t, connID, rows[1][10])
 }
