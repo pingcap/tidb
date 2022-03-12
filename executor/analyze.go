@@ -1139,6 +1139,9 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.Inde
 		statistics.AddNewAnalyzeJob(task.job)
 	}
 	resultsCh := make(chan *statistics.AnalyzeResults, len(tasks))
+	if len(tasks) < statsConcurrncy {
+		statsConcurrncy = len(tasks)
+	}
 	for i := 0; i < statsConcurrncy; i++ {
 		e.subIndexWorkerWg.Run(func() { e.subIndexWorkerForNDV(taskCh, resultsCh) })
 	}
@@ -1146,10 +1149,8 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.Inde
 		taskCh <- task
 	}
 	close(taskCh)
-	go func() {
-		e.subIndexWorkerWg.Wait()
-		close(resultsCh)
-	}()
+	e.subIndexWorkerWg.Wait()
+	close(resultsCh)
 
 	panicCnt := 0
 	totalResult := analyzeIndexNDVTotalResult{
@@ -1345,7 +1346,7 @@ func (e *AnalyzeColumnsExec) subBuildWorker(resultCh chan error, taskCh chan *sa
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
-			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover()", r), zap.String("stack", string(buf)))
+			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.String("stack", string(buf)))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultCh <- errAnalyzeWorkerPanic
 		}
