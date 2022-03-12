@@ -506,7 +506,6 @@ func TestCancelAddTableAndDropTablePartition(t *testing.T) {
 			require.NoError(t, checkErr)
 			require.Equal(t, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error(), checkErr.Error())
 			tk.MustExec("insert into t_part values (?)", i)
-
 		}
 	}
 	dom.DDL().SetHook(originalHook)

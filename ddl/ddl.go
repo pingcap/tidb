@@ -53,6 +53,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -1000,7 +1001,11 @@ func CancelConcurrencyJobs(sess sessionctx.Context, ids []int64) ([]error, error
 			continue
 		}
 		// If the state is rolling back, it means the work is cleaning the data after cancelling the job.
-		if job.IsCancelled() || job.IsRollingback() || job.IsRollbackDone() {
+		if job.IsCancelled() {
+			errs[i] = dbterror.ErrCancelledDDLJob.GenWithStackByArgs(job.ID)
+			continue
+		}
+		if job.IsRollingback() || job.IsRollbackDone() {
 			continue
 		}
 		if !admin.IsJobRollbackable(job) {
