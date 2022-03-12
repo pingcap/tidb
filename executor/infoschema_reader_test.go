@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/domain"
@@ -545,8 +546,17 @@ func TestForAnalyzeStatus(t *testing.T) {
 	rows := tk.MustQuery("select * from information_schema.analyze_status where TABLE_NAME='t1'").Sort().Rows()
 	require.Greater(t, len(rows), 0)
 	for _, row := range rows {
-		require.Len(t, row, 8)    // test length of row
-		require.NotNil(t, row[6]) // test `End_time` field
+		require.Len(t, row, 11)    // test length of row
+		// test `End_time` field
+		str, ok := row[6].(string)
+		require.True(t, ok)
+		_, err := time.Parse("2006-01-02 15:04:05", str)
+		require.NoError(t, err)
+	}
+	rows2 := tk.MustQuery("show analyze status where TABLE_NAME='t1'").Sort().Rows()
+	require.Equal(t, len(rows), len(rows2))
+	for i, row2 := range rows2 {
+		require.Equal(t, rows[i], row2)
 	}
 }
 
