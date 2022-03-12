@@ -417,7 +417,7 @@ func (importer *FileImporter) download(
 				e = status.Error(codes.Unavailable, "the connection to TiKV has been cut by a neko, meow :3")
 			})
 			if isDecryptSstErr(e) {
-				log.Info("fail to decrypt when download sst, try again without no-crypt", logutil.File(f))
+				log.Info("fail to decrypt when download sst, try again with no-crypt", logutil.File(f))
 				if importer.isRawKvMode {
 					downloadMeta, e = importer.downloadRawKVSST(ctx, regionInfo, f, nil, apiVersion)
 				} else {
