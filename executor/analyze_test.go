@@ -2821,37 +2821,90 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 }
 
 func TestAnalyzeJob(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	se := tk.Session()
-	job := &statistics.AnalyzeJob{
-		DBName: "test",
-		TableName: "t",
-		PartitionName: "",
-		JobInfo: "table all columns with 256 buckets, 500 topn, 1 samplerate",
+	for _, result := range []string{statistics.AnalyzeFinished, statistics.AnalyzeFailed} {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("delete from mysql.analyze_jobs")
+		se := tk.Session()
+		job := &statistics.AnalyzeJob{
+			DBName:        "test",
+			TableName:     "t",
+			PartitionName: "",
+			JobInfo:       "table all columns with 256 buckets, 500 topn, 1 samplerate",
+		}
+		executor.AddNewAnalyzeJob(se, job)
+		require.NotNil(t, job.ID)
+		rows := tk.MustQuery("show analyze status").Rows()
+		require.Len(t, rows, 1)
+		require.Equal(t, job.DBName, rows[0][0])
+		require.Equal(t, job.TableName, rows[0][1])
+		require.Equal(t, job.PartitionName, rows[0][2])
+		require.Equal(t, job.JobInfo, rows[0][3])
+		require.Equal(t, "0", rows[0][4])
+		require.Equal(t, "<nil>", rows[0][5])
+		require.Equal(t, "<nil>", rows[0][6])
+		require.Equal(t, statistics.AnalyzePending, rows[0][7])
+		require.Equal(t, "<nil>", rows[0][8])
+		serverInfo, err := infosync.GetServerInfo()
+		require.NoError(t, err)
+		addr := fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
+		require.Equal(t, addr, rows[0][9])
+		connID := strconv.FormatUint(tk.Session().GetSessionVars().ConnectionID, 10)
+		require.Equal(t, connID, rows[0][10])
+
+		executor.StartAnalyzeJob(se, job)
+		rows = tk.MustQuery("show analyze status").Rows()
+		checkTime := func(val interface{}) {
+			str, ok := val.(string)
+			require.True(t, ok)
+			_, err := time.Parse("2006-01-02 15:04:05", str)
+			require.NoError(t, err)
+		}
+		checkTime(rows[0][5])
+		require.Equal(t, statistics.AnalyzeRunning, rows[0][7])
+
+		// UpdateAnalyzeJob requires the interval between two updates to mysql.analyze_jobs is more than 5 second.
+		// Hence we fake last dump time as 10 second ago in order to make update to mysql.analyze_jobs happen.
+		lastDumpTime := time.Now().Add(-10 * time.Second)
+		job.Delta.LastDumpTime = lastDumpTime
+		const smallCount int64 = 100
+		executor.UpdateAnalyzeJob(se, job, smallCount)
+		// Delta count doesn't reach threshold so we don't dump it to mysql.analyze_jobs
+		require.Equal(t, smallCount, job.Delta.Count)
+		require.Equal(t, lastDumpTime, job.Delta.LastDumpTime)
+		rows = tk.MustQuery("show analyze status").Rows()
+		require.Equal(t, "0", rows[0][4])
+
+		const largeCount int64 = 15000000
+		executor.UpdateAnalyzeJob(se, job, largeCount)
+		// Delta count reaches threshold so we dump it to mysql.analyze_jobs and update last dump time.
+		require.Equal(t, int64(0), job.Delta.Count)
+		require.True(t, job.Delta.LastDumpTime.After(lastDumpTime))
+		lastDumpTime = job.Delta.LastDumpTime
+		rows = tk.MustQuery("show analyze status").Rows()
+		require.Equal(t, strconv.FormatInt(smallCount+largeCount, 10), rows[0][4])
+
+		executor.UpdateAnalyzeJob(se, job, largeCount)
+		// We have just updated mysql.analyze_jobs in the previous step so we don't update it until 5 second passes or the analyze job is over.
+		require.Equal(t, largeCount, job.Delta.Count)
+		require.Equal(t, lastDumpTime, job.Delta.LastDumpTime)
+		rows = tk.MustQuery("show analyze status").Rows()
+		require.Equal(t, strconv.FormatInt(smallCount+largeCount, 10), rows[0][4])
+
+		var analyzeErr error
+		if result == statistics.AnalyzeFailed {
+			analyzeErr = errors.Errorf("analyze meets error")
+		}
+		executor.FinishAnalyzeJob(se, job, analyzeErr)
+		rows = tk.MustQuery("show analyze status").Rows()
+		require.Equal(t, strconv.FormatInt(smallCount+2*largeCount, 10), rows[0][4])
+		checkTime(rows[0][6])
+		require.Equal(t, result, rows[0][7])
+		if result == statistics.AnalyzeFailed {
+			require.Equal(t, analyzeErr.Error(), rows[0][8])
+		} else {
+			require.Equal(t, "<nil>", rows[0][8])
+		}
 	}
-	executor.AddNewAnalyzeJob(se, job)
-	require.NotNil(t, job.ID)
-	rows := tk.MustQuery("show analyze status").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, job.DBName, rows[0][0])
-	require.Equal(t, job.TableName, rows[0][1])
-	require.Equal(t, job.PartitionName, rows[0][2])
-	require.Equal(t, job.JobInfo, rows[0][3])
-	require.Equal(t, "0", rows[0][4])
-	require.Equal(t, "<nil>", rows[0][5])
-	require.Equal(t, "<nil>", rows[0][6])
-	require.Equal(t, "pending", rows[0][7])
-	require.Equal(t, "<nil>", rows[0][8])
-	serverInfo, err := infosync.GetServerInfo()
-	require.NoError(t, err)
-	addr := fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
-	require.Equal(t, addr, rows[0][9])
-	connID := strconv.FormatUint(tk.Session().GetSessionVars().ConnectionID, 10)
-	require.Equal(t, connID, rows[0][10])
-
-	executor.StartAnalyzeJob(se, job)
-
-
 }
