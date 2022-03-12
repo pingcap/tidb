@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,179 +16,57 @@ package session
 
 import (
 	"context"
-	"fmt"
-	"os"
-	"sync"
-	"sync/atomic"
 	"testing"
-	"time"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/testleak"
-	"github.com/tikv/client-go/v2/tikv"
+	"github.com/pingcap/tidb/util"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	logLevel := os.Getenv("log_level")
-	logutil.InitLogger(logutil.NewLogConfig(logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
-	CustomVerboseFlag = true
-	SetSchemaLease(20 * time.Millisecond)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.SafeWindow = 0
-		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
-	})
-	tikv.EnableFailpoints()
-	TestingT(t)
-}
-
-var _ = Suite(&testMainSuite{})
-var _ = SerialSuites(&testBootstrapSuite{})
-
-type testMainSuite struct {
-	dbName string
-	store  kv.Storage
-	dom    *domain.Domain
-}
-
-func (s *testMainSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
-	s.dbName = "test_main_db"
-	s.store = newStore(c, s.dbName)
-	dom, err := BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-	s.dom = dom
-}
-
-func (s *testMainSuite) TearDownSuite(c *C) {
-	defer testleak.AfterTest(c)()
-	s.dom.Close()
-	err := s.store.Close()
-	c.Assert(err, IsNil)
-	removeStore(c, s.dbName)
-}
-
-func (s *testMainSuite) TestSysSessionPoolGoroutineLeak(c *C) {
-	store, dom := newStoreWithBootstrap(c, s.dbName+"goroutine_leak")
-	defer store.Close()
+func TestSysSessionPoolGoroutineLeak(t *testing.T) {
+	store, dom := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
 	defer dom.Close()
+
 	se, err := createSession(store)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	count := 200
 	stmts := make([]ast.StmtNode, count)
 	for i := 0; i < count; i++ {
 		stmt, err := se.ParseWithParams(context.Background(), "select * from mysql.user limit 1")
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		stmts[i] = stmt
 	}
 	// Test an issue that sysSessionPool doesn't call session's Close, cause
 	// asyncGetTSWorker goroutine leak.
-	var wg sync.WaitGroup
-	wg.Add(count)
+	var wg util.WaitGroupWrapper
 	for i := 0; i < count; i++ {
-		go func(se *session, stmt ast.StmtNode) {
-			_, _, err := se.ExecRestrictedStmt(context.Background(), stmt)
-			c.Assert(err, IsNil)
-			wg.Done()
-		}(se, stmts[i])
+		s := stmts[i]
+		wg.Run(func() {
+			_, _, err := se.ExecRestrictedStmt(context.Background(), s)
+			require.NoError(t, err)
+		})
 	}
 	wg.Wait()
 }
 
-func (s *testMainSuite) TestParseErrorWarn(c *C) {
+func TestParseErrorWarn(t *testing.T) {
 	ctx := core.MockContext()
 
 	nodes, err := Parse(ctx, "select /*+ adf */ 1")
-	c.Assert(err, IsNil)
-	c.Assert(len(nodes), Equals, 1)
-	c.Assert(len(ctx.GetSessionVars().StmtCtx.GetWarnings()), Equals, 1)
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+	require.Len(t, ctx.GetSessionVars().StmtCtx.GetWarnings(), 1)
 
 	_, err = Parse(ctx, "select")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 }
 
-func newStore(c *C, dbPath string) kv.Storage {
-	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
-	return store
-}
-
-func newStoreWithBootstrap(c *C, dbPath string) (kv.Storage, *domain.Domain) {
-	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
-	dom, err := BootstrapSession(store)
-	c.Assert(err, IsNil)
-	return store, dom
-}
-
-var testConnID uint64
-
-func newSession(c *C, store kv.Storage, dbName string) Session {
-	se, err := CreateSession4Test(store)
-	id := atomic.AddUint64(&testConnID, 1)
-	se.SetConnectionID(id)
-	c.Assert(err, IsNil)
-	se.Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, []byte("012345678901234567890"))
-	mustExecSQL(c, se, "create database if not exists "+dbName)
-	mustExecSQL(c, se, "use "+dbName)
-	return se
-}
-
-func removeStore(c *C, dbPath string) {
-	os.RemoveAll(dbPath)
-}
-
-func exec(se Session, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
-	ctx := context.Background()
-	if len(args) == 0 {
-		rs, err := se.Execute(ctx, sql)
-		if err == nil && len(rs) > 0 {
-			return rs[0], nil
-		}
-		return nil, err
-	}
-	stmtID, _, _, err := se.PrepareStmt(sql)
-	if err != nil {
-		return nil, err
-	}
-	params := make([]types.Datum, len(args))
-	for i := 0; i < len(params); i++ {
-		params[i] = types.NewDatum(args[i])
-	}
-	rs, err := se.ExecutePreparedStmt(ctx, stmtID, params)
-	if err != nil {
-		return nil, err
-	}
-	return rs, nil
-}
-
-func mustExecSQL(c *C, se Session, sql string, args ...interface{}) sqlexec.RecordSet {
-	rs, err := exec(se, sql, args...)
-	c.Assert(err, IsNil)
-	return rs
-}
-
-func match(c *C, row []types.Datum, expected ...interface{}) {
-	c.Assert(len(row), Equals, len(expected))
-	for i := range row {
-		got := fmt.Sprintf("%v", row[i].GetValue())
-		need := fmt.Sprintf("%v", expected[i])
-		c.Assert(got, Equals, need)
-	}
-}
-
-func (s *testMainSuite) TestKeysNeedLock(c *C) {
+func TestKeysNeedLock(t *testing.T) {
 	rowKey := tablecodec.EncodeRowKeyWithHandle(1, kv.IntHandle(1))
 	indexKey := tablecodec.EncodeIndexSeekKey(1, 1, []byte{1})
 	uniqueValue := make([]byte, 8)
@@ -209,35 +88,12 @@ func (s *testMainSuite) TestKeysNeedLock(c *C) {
 		{indexKey, uniqueUntouched, false},
 		{indexKey, deleteVal, false},
 	}
-	for _, tt := range tests {
-		c.Assert(keyNeedToLock(tt.key, tt.val, 0), Equals, tt.need)
+
+	for _, test := range tests {
+		require.Equal(t, test.need, keyNeedToLock(test.key, test.val, 0))
 	}
+
 	flag := kv.KeyFlags(1)
-	c.Assert(flag.HasPresumeKeyNotExists(), IsTrue)
-	c.Assert(keyNeedToLock(indexKey, deleteVal, flag), IsTrue)
-}
-
-func (s *testMainSuite) TestIndexUsageSyncLease(c *C) {
-	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
-	do, err := BootstrapSession(store)
-	c.Assert(err, IsNil)
-	do.SetStatsUpdating(true)
-	st, err := CreateSessionWithOpt(store, nil)
-	c.Assert(err, IsNil)
-	se, ok := st.(*session)
-	c.Assert(ok, IsTrue)
-	c.Assert(se.idxUsageCollector, IsNil)
-
-	SetIndexUsageSyncLease(1)
-	defer SetIndexUsageSyncLease(0)
-	st, err = CreateSessionWithOpt(store, nil)
-	c.Assert(err, IsNil)
-	se, ok = st.(*session)
-	c.Assert(ok, IsTrue)
-	c.Assert(se.idxUsageCollector, NotNil)
-
-	do.Close()
-	err = store.Close()
-	c.Assert(err, IsNil)
+	require.True(t, flag.HasPresumeKeyNotExists())
+	require.True(t, keyNeedToLock(indexKey, deleteVal, flag))
 }

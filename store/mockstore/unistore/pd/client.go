@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -39,8 +40,8 @@ type Client interface {
 	IsBootstrapped(ctx context.Context) (bool, error)
 	PutStore(ctx context.Context, store *metapb.Store) error
 	GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error)
-	GetRegion(ctx context.Context, key []byte) (*pd.Region, error)
-	GetRegionByID(ctx context.Context, regionID uint64) (*pd.Region, error)
+	GetRegion(ctx context.Context, key []byte, opts ...pd.GetRegionOption) (*pd.Region, error)
+	GetRegionByID(ctx context.Context, regionID uint64, opts ...pd.GetRegionOption) (*pd.Region, error)
 	ReportRegion(*pdpb.RegionHeartbeatRequest)
 	AskSplit(ctx context.Context, region *metapb.Region) (*pdpb.AskSplitResponse, error)
 	AskBatchSplit(ctx context.Context, region *metapb.Region, count int) (*pdpb.AskBatchSplitResponse, error)
@@ -502,7 +503,7 @@ func (c *client) GetClusterConfig(ctx context.Context) (*metapb.Cluster, error) 
 	return resp.Cluster, nil
 }
 
-func (c *client) GetRegion(ctx context.Context, key []byte) (*pd.Region, error) {
+func (c *client) GetRegion(ctx context.Context, key []byte, opts ...pd.GetRegionOption) (*pd.Region, error) {
 	var resp *pdpb.GetRegionResponse
 	err := c.doRequest(ctx, func(ctx context.Context, client pdpb.PDClient) error {
 		var err1 error
@@ -529,7 +530,7 @@ func (c *client) GetRegion(ctx context.Context, key []byte) (*pd.Region, error) 
 	return r, nil
 }
 
-func (c *client) GetRegionByID(ctx context.Context, regionID uint64) (*pd.Region, error) {
+func (c *client) GetRegionByID(ctx context.Context, regionID uint64, opts ...pd.GetRegionOption) (*pd.Region, error) {
 	var resp *pdpb.GetRegionResponse
 	err := c.doRequest(ctx, func(ctx context.Context, client pdpb.PDClient) error {
 		var err1 error

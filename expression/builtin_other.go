@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,9 +19,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -84,7 +85,8 @@ type inFunctionClass struct {
 }
 
 func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
-	if err := c.verifyArgs(args); err != nil {
+	args, err = c.verifyArgs(args)
+	if err != nil {
 		return nil, err
 	}
 	argTps := make([]types.EvalType, len(args))
@@ -153,6 +155,24 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		sig.setPbCode(tipb.ScalarFuncSig_InJson)
 	}
 	return sig, nil
+}
+
+func (c *inFunctionClass) verifyArgs(args []Expression) ([]Expression, error) {
+	columnType := args[0].GetType()
+	validatedArgs := make([]Expression, 0, len(args))
+	for _, arg := range args {
+		if constant, ok := arg.(*Constant); ok {
+			switch {
+			case columnType.Tp == mysql.TypeBit && constant.Value.Kind() == types.KindInt64:
+				if constant.Value.GetInt64() < 0 {
+					continue
+				}
+			}
+		}
+		validatedArgs = append(validatedArgs, arg)
+	}
+	err := c.baseFunctionClass.verifyArgs(args)
+	return validatedArgs, err
 }
 
 // nolint:structcheck
@@ -1107,7 +1127,15 @@ func (c *getTimeVarFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err != nil {
 		return nil, err
 	}
-	bf.tp.Flen = c.tp.Flen
+	if c.tp.Tp == mysql.TypeDatetime {
+		fsp := c.tp.Flen - mysql.MaxDatetimeWidthNoFsp
+		if fsp > 0 {
+			fsp--
+		}
+		bf.setDecimalAndFlenForDatetime(fsp)
+	} else {
+		bf.setDecimalAndFlenForDate()
+	}
 	sig = &builtinGetTimeVarSig{bf}
 	return sig, nil
 }

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -21,6 +22,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -196,13 +198,13 @@ func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc
 	skipValue := proc.SkipValue()
 	iter := r.GetIter()
 	var cnt int
+	var err error
 	for iter.Seek(startKey); iter.Valid(); iter.Next() {
 		item := iter.Item()
 		key := item.Key()
 		if exceedEndKey(key, endKey) {
 			break
 		}
-		var err error
 		if item.IsEmpty() {
 			continue
 		}

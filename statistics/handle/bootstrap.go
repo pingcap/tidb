@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,14 +16,14 @@ package handle
 
 import (
 	"context"
-	"fmt"
+	"strconv"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -65,7 +66,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 	}
 	defer terror.Call(rc.Close)
 	tables := statsCache{tables: make(map[int64]*statistics.Table)}
-	req := rc.NewChunk()
+	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
 		err := rc.Next(context.TODO(), req)
@@ -162,7 +163,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache *statsCache
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	req := rc.NewChunk()
+	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
 		err := rc.Next(context.TODO(), req)
@@ -208,7 +209,7 @@ func (h *Handle) initStatsTopN(cache *statsCache) error {
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	req := rc.NewChunk()
+	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
 		err := rc.Next(context.TODO(), req)
@@ -256,7 +257,7 @@ func (h *Handle) initStatsFMSketch(cache *statsCache) error {
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	req := rc.NewChunk()
+	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
 		err := rc.Next(context.TODO(), req)
@@ -321,17 +322,17 @@ func (h *Handle) initTopNCountSum(tableID, colID int64) (int64, error) {
 	// Before stats ver 2, histogram represents all data in this column.
 	// In stats ver 2, histogram + TopN represent all data in this column.
 	// So we need to add TopN total count here.
-	selSQL := fmt.Sprintf("select sum(count) from mysql.stats_top_n where table_id = %d and is_index = 0 and hist_id = %d", tableID, colID)
-	rs, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), selSQL)
-	if len(rs) > 0 {
-		defer terror.Call(rs[0].Close)
+	selSQL := "select sum(count) from mysql.stats_top_n where table_id = %? and is_index = 0 and hist_id = %?"
+	rs, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), selSQL, tableID, colID)
+	if rs != nil {
+		defer terror.Call(rs.Close)
 	}
 	if err != nil {
 		return 0, err
 	}
-	req := rs[0].NewChunk()
+	req := rs.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
-	err = rs[0].Next(context.TODO(), req)
+	err = rs.Next(context.TODO(), req)
 	if err != nil {
 		return 0, err
 	}
@@ -348,7 +349,7 @@ func (h *Handle) initStatsBuckets(cache *statsCache) error {
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	req := rc.NewChunk()
+	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
 		err := rc.Next(context.TODO(), req)
@@ -427,5 +428,5 @@ func getFullTableName(is infoschema.InfoSchema, tblInfo *model.TableInfo) string
 			}
 		}
 	}
-	return fmt.Sprintf("%d", tblInfo.ID)
+	return strconv.FormatInt(tblInfo.ID, 10)
 }

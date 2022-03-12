@@ -1,12 +1,14 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
 //     http://www.apache.org/licenses/LICENSE-2.0
-// // Unless required by applicable law or agreed to in writing, software
+//
+// Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -22,7 +24,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -55,6 +57,8 @@ var (
 	_ functionClass = &vitessHashFunctionClass{}
 	_ functionClass = &uuidToBinFunctionClass{}
 	_ functionClass = &binToUUIDFunctionClass{}
+	_ functionClass = &isUUIDFunctionClass{}
+	_ functionClass = &tidbShardFunctionClass{}
 )
 
 var (
@@ -76,6 +80,7 @@ var (
 	_ builtinFunc = &builtinIsIPv4CompatSig{}
 	_ builtinFunc = &builtinIsIPv4MappedSig{}
 	_ builtinFunc = &builtinIsIPv6Sig{}
+	_ builtinFunc = &builtinIsUUIDSig{}
 	_ builtinFunc = &builtinUUIDSig{}
 	_ builtinFunc = &builtinVitessHashSig{}
 	_ builtinFunc = &builtinUUIDToBinSig{}
@@ -88,6 +93,11 @@ var (
 	_ builtinFunc = &builtinNameConstDurationSig{}
 	_ builtinFunc = &builtinNameConstStringSig{}
 	_ builtinFunc = &builtinNameConstJSONSig{}
+	_ builtinFunc = &builtinTidbShardSig{}
+)
+
+const (
+	tidbShardBucketCount = 256
 )
 
 type sleepFunctionClass struct {
@@ -127,7 +137,8 @@ func (b *builtinSleepSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 	sessVars := b.ctx.GetSessionVars()
 	if isNull || val < 0 {
-		if sessVars.StrictSQLMode {
+		// for insert ignore stmt, the StrictSQLMode and ignoreErr should both be considered.
+		if !sessVars.StmtCtx.BadNullAsWarning {
 			return 0, false, errIncorrectArgs.GenWithStackByArgs("sleep")
 		}
 		err := errIncorrectArgs.GenWithStackByArgs("sleep")
@@ -399,6 +410,7 @@ func (c *inetAtonFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	bf.tp.Flen = 21
 	bf.tp.Flag |= mysql.UnsignedFlag
 	sig := &builtinInetAtonSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_InetAton)
 	return sig, nil
 }
 
@@ -476,6 +488,7 @@ func (c *inetNtoaFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	bf.tp.Flen = 93
 	bf.tp.Decimal = 0
 	sig := &builtinInetNtoaSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_InetNtoa)
 	return sig, nil
 }
 
@@ -528,6 +541,7 @@ func (c *inet6AtonFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	types.SetBinChsClnFlag(bf.tp)
 	bf.tp.Decimal = 0
 	sig := &builtinInet6AtonSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Inet6Aton)
 	return sig, nil
 }
 
@@ -600,6 +614,7 @@ func (c *inet6NtoaFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	bf.tp.Flen = 117
 	bf.tp.Decimal = 0
 	sig := &builtinInet6NtoaSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_Inet6Ntoa)
 	return sig, nil
 }
 
@@ -654,6 +669,7 @@ func (c *isIPv4FunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	}
 	bf.tp.Flen = 1
 	sig := &builtinIsIPv4Sig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_IsIPv4)
 	return sig, nil
 }
 
@@ -721,6 +737,7 @@ func (c *isIPv4CompatFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	}
 	bf.tp.Flen = 1
 	sig := &builtinIsIPv4CompatSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_IsIPv4Compat)
 	return sig, nil
 }
 
@@ -769,6 +786,7 @@ func (c *isIPv4MappedFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	}
 	bf.tp.Flen = 1
 	sig := &builtinIsIPv4MappedSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_IsIPv4Mapped)
 	return sig, nil
 }
 
@@ -817,6 +835,7 @@ func (c *isIPv6FunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	}
 	bf.tp.Flen = 1
 	sig := &builtinIsIPv6Sig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_IsIPv6)
 	return sig, nil
 }
 
@@ -850,6 +869,47 @@ type isUsedLockFunctionClass struct {
 
 func (c *isUsedLockFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "IS_USED_LOCK")
+}
+
+type isUUIDFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *isUUIDFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.Flen = 1
+	sig := &builtinIsUUIDSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_IsUUID)
+	return sig, nil
+}
+
+type builtinIsUUIDSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinIsUUIDSig) Clone() builtinFunc {
+	newSig := &builtinIsUUIDSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals a builtinIsUUIDSig.
+// See https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_is-uuid
+func (b *builtinIsUUIDSig) evalInt(row chunk.Row) (int64, bool, error) {
+	val, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if err != nil || isNull {
+		return 0, isNull, err
+	}
+	if _, err = uuid.Parse(val); err != nil {
+		return 0, false, nil
+	}
+	return 1, false, nil
 }
 
 type masterPosWaitFunctionClass struct {
@@ -1250,4 +1310,50 @@ func swapStringUUID(str string) string {
 	copy(buf[14:18], str[0:4])
 	copy(buf[18:], str[18:])
 	return string(buf)
+}
+
+type tidbShardFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *tidbShardFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
+
+	bf.tp.Flen = 4 //64 bit unsigned
+	bf.tp.Flag |= mysql.UnsignedFlag
+	types.SetBinChsClnFlag(bf.tp)
+
+	sig := &builtinTidbShardSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_TiDBShard)
+	return sig, nil
+}
+
+type builtinTidbShardSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTidbShardSig) Clone() builtinFunc {
+	newSig := &builtinTidbShardSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals tidb_shard(int64).
+func (b *builtinTidbShardSig) evalInt(row chunk.Row) (int64, bool, error) {
+	shardKeyInt, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	if isNull || err != nil {
+		return 0, true, err
+	}
+	var hashed uint64
+	if hashed, err = vitess.HashUint64(uint64(shardKeyInt)); err != nil {
+		return 0, true, err
+	}
+	hashed = hashed % tidbShardBucketCount
+	return int64(hashed), false, nil
 }

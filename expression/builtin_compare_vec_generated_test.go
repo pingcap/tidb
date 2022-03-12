@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,8 +19,7 @@ package expression
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -154,12 +154,12 @@ var vecGeneratedBuiltinCompareCases = map[string][]vecExprBenchCase{
 	},
 }
 
-func (s *testEvaluatorSuite) TestVectorizedGeneratedBuiltinCompareEvalOneVec(c *C) {
-	testVectorizedEvalOneVec(c, vecGeneratedBuiltinCompareCases)
+func TestVectorizedGeneratedBuiltinCompareEvalOneVec(t *testing.T) {
+	testVectorizedEvalOneVec(t, vecGeneratedBuiltinCompareCases)
 }
 
-func (s *testEvaluatorSuite) TestVectorizedGeneratedBuiltinCompareFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecGeneratedBuiltinCompareCases)
+func TestVectorizedGeneratedBuiltinCompareFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecGeneratedBuiltinCompareCases)
 }
 
 func BenchmarkVectorizedGeneratedBuiltinCompareEvalOneVec(b *testing.B) {

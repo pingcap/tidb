@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -46,6 +47,25 @@ func RegisterStatistics(s Statistics) {
 	statisticsListLock.Lock()
 	statisticsList = append(statisticsList, s)
 	statisticsListLock.Unlock()
+}
+
+// UnregisterStatistics unregisters statistics.
+func UnregisterStatistics(s Statistics) {
+	statisticsListLock.Lock()
+	defer statisticsListLock.Unlock()
+	idx := -1
+	for i := range statisticsList {
+		if statisticsList[i] == s {
+			idx = i
+		}
+	}
+	if idx < 0 {
+		return
+	}
+	last := len(statisticsList) - 1
+	statisticsList[idx] = statisticsList[last]
+	statisticsList[last] = nil
+	statisticsList = statisticsList[:last]
 }
 
 // GetStatusVars gets registered statistics status variables.

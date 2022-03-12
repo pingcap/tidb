@@ -1,3 +1,17 @@
+// Copyright 2021 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package mock
 
 import (
@@ -20,7 +34,7 @@ type mockAgentServer struct {
 	grpcServer *grpc.Server
 	sqlMetas   map[string]tipb.SQLMeta
 	planMetas  map[string]string
-	records    [][]*tipb.CPUTimeRecord
+	records    [][]*tipb.TopSQLRecord
 	hang       struct {
 		beginTime atomic.Value // time.Time
 		endTime   atomic.Value // time.Time
@@ -71,8 +85,8 @@ func (svr *mockAgentServer) mayHang() {
 	}
 }
 
-func (svr *mockAgentServer) ReportCPUTimeRecords(stream tipb.TopSQLAgent_ReportCPUTimeRecordsServer) error {
-	records := make([]*tipb.CPUTimeRecord, 0, 10)
+func (svr *mockAgentServer) ReportTopSQLRecords(stream tipb.TopSQLAgent_ReportTopSQLRecordsServer) error {
+	records := make([]*tipb.TopSQLRecord, 0, 10)
 	for {
 		svr.mayHang()
 		req, err := stream.Recv()
@@ -121,14 +135,39 @@ func (svr *mockAgentServer) ReportPlanMeta(stream tipb.TopSQLAgent_ReportPlanMet
 	return stream.SendAndClose(&tipb.EmptyResponse{})
 }
 
-func (svr *mockAgentServer) WaitCollectCnt(cnt int, timeout time.Duration) {
-	start := time.Now()
+func (svr *mockAgentServer) RecordsCnt() int {
 	svr.Lock()
-	old := len(svr.records)
-	svr.Unlock()
+	defer svr.Unlock()
+	return len(svr.records)
+}
+
+func (svr *mockAgentServer) SQLMetaCnt() int {
+	svr.Lock()
+	defer svr.Unlock()
+	return len(svr.sqlMetas)
+}
+
+func (svr *mockAgentServer) WaitCollectCnt(old, cnt int, timeout time.Duration) {
+	start := time.Now()
 	for {
 		svr.Lock()
 		if len(svr.records)-old >= cnt {
+			svr.Unlock()
+			return
+		}
+		svr.Unlock()
+		if time.Since(start) > timeout {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func (svr *mockAgentServer) WaitCollectCntOfSQLMeta(old, cnt int, timeout time.Duration) {
+	start := time.Now()
+	for {
+		svr.Lock()
+		if len(svr.sqlMetas)-old >= cnt {
 			svr.Unlock()
 			return
 		}
@@ -166,16 +205,26 @@ func (svr *mockAgentServer) GetPlanMetaByDigestBlocking(digest []byte, timeout t
 	}
 }
 
-func (svr *mockAgentServer) GetLatestRecords() []*tipb.CPUTimeRecord {
+func (svr *mockAgentServer) GetLatestRecords() []*tipb.TopSQLRecord {
 	svr.Lock()
 	records := svr.records
-	svr.records = [][]*tipb.CPUTimeRecord{}
+	svr.records = [][]*tipb.TopSQLRecord{}
 	svr.Unlock()
 
 	if len(records) == 0 {
 		return nil
 	}
 	return records[len(records)-1]
+}
+
+func (svr *mockAgentServer) GetTotalSQLMetas() []tipb.SQLMeta {
+	svr.Lock()
+	defer svr.Unlock()
+	metas := make([]tipb.SQLMeta, 0, len(svr.sqlMetas))
+	for _, meta := range svr.sqlMetas {
+		metas = append(metas, meta)
+	}
+	return metas
 }
 
 func (svr *mockAgentServer) Address() string {

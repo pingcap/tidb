@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,7 +20,7 @@ import (
 	"time"
 
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
@@ -45,6 +46,16 @@ func calcFraction(lower, upper, value float64) float64 {
 
 func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 	switch value.Kind() {
+	case types.KindFloat32:
+		return float64(value.GetFloat32())
+	case types.KindFloat64:
+		return value.GetFloat64()
+	case types.KindInt64:
+		return float64(value.GetInt64())
+	case types.KindUint64:
+		return float64(value.GetUint64())
+	case types.KindMysqlDuration:
+		return float64(value.GetMysqlDuration().Duration)
 	case types.KindMysqlDecimal:
 		scalar, err := value.GetMysqlDecimal().ToFloat64()
 		if err != nil {
@@ -70,6 +81,10 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 			return 0
 		}
 		return convertBytesToScalar(bytes[commonPfxLen:])
+	case types.KindMinNotNull:
+		return -math.MaxFloat64
+	case types.KindMaxValue:
+		return math.MaxFloat64
 	default:
 		// do not know how to convert
 		return 0
@@ -81,22 +96,22 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 // of lower and upper equals to the common prefix of the lower, upper and the value. For some simple types like `Int64`,
 // we do not convert it because we can directly infer the scalar value.
 func (hg *Histogram) PreCalculateScalar() {
-	len := hg.Len()
-	if len == 0 {
+	l := hg.Len()
+	if l == 0 {
 		return
 	}
 	switch hg.GetLower(0).Kind() {
 	case types.KindMysqlDecimal, types.KindMysqlTime:
-		hg.scalars = make([]scalar, len)
-		for i := 0; i < len; i++ {
+		hg.scalars = make([]scalar, l)
+		for i := 0; i < l; i++ {
 			hg.scalars[i] = scalar{
 				lower: convertDatumToScalar(hg.GetLower(i), 0),
 				upper: convertDatumToScalar(hg.GetUpper(i), 0),
 			}
 		}
 	case types.KindBytes, types.KindString:
-		hg.scalars = make([]scalar, len)
-		for i := 0; i < len; i++ {
+		hg.scalars = make([]scalar, l)
+		for i := 0; i < l; i++ {
 			lower, upper := hg.GetLower(i), hg.GetUpper(i)
 			common := commonPrefixLength(lower.GetBytes(), upper.GetBytes())
 			hg.scalars[i] = scalar{
@@ -129,14 +144,22 @@ func (hg *Histogram) calcFraction(index int, value *types.Datum) float64 {
 	return 0.5
 }
 
-func commonPrefixLength(lower, upper []byte) int {
-	minLen := len(lower)
-	if minLen > len(upper) {
-		minLen = len(upper)
+func commonPrefixLength(strs ...[]byte) int {
+	if len(strs) == 0 {
+		return 0
+	}
+	minLen := len(strs[0])
+	for _, str := range strs {
+		if len(str) < minLen {
+			minLen = len(str)
+		}
 	}
 	for i := 0; i < minLen; i++ {
-		if lower[i] != upper[i] {
-			return i
+		a := strs[0][i]
+		for _, str := range strs {
+			if str[i] != a {
+				return i
+			}
 		}
 	}
 	return minLen
@@ -229,8 +252,8 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 		return values
 	case types.KindMysqlDuration:
 		lowDur, highDur := low.GetMysqlDuration(), high.GetMysqlDuration()
-		fsp := mathutil.MaxInt8(lowDur.Fsp, highDur.Fsp)
-		stepSize := int64(math.Pow10(int(types.MaxFsp-fsp))) * int64(time.Microsecond)
+		fsp := mathutil.Max(lowDur.Fsp, highDur.Fsp)
+		stepSize := int64(math.Pow10(types.MaxFsp-fsp)) * int64(time.Microsecond)
 		lowDur.Duration = lowDur.Duration.Round(time.Duration(stepSize))
 		remaining := int64(highDur.Duration-lowDur.Duration)/stepSize + 1 - int64(exclude)
 		if remaining <= 0 || remaining >= maxNumStep {
@@ -250,7 +273,7 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 		if lowTime.Type() != highTime.Type() {
 			return nil
 		}
-		fsp := mathutil.MaxInt8(lowTime.Fsp(), highTime.Fsp())
+		fsp := mathutil.Max(lowTime.Fsp(), highTime.Fsp())
 		var stepSize int64
 		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 		if lowTime.Type() == mysql.TypeDate {
@@ -262,7 +285,7 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 			if err != nil {
 				return nil
 			}
-			stepSize = int64(math.Pow10(int(types.MaxFsp-fsp))) * int64(time.Microsecond)
+			stepSize = int64(math.Pow10(types.MaxFsp-fsp)) * int64(time.Microsecond)
 		}
 		remaining := int64(highTime.Sub(sc, &lowTime).Duration)/stepSize + 1 - int64(exclude)
 		// When `highTime` is much larger than `lowTime`, `remaining` may be overflowed to a negative value.

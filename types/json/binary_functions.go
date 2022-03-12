@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -643,7 +644,7 @@ func (bm *binaryModifier) rebuildTo(buf []byte) ([]byte, TypeCode) {
 // floatEpsilon is the acceptable error quantity when comparing two float numbers.
 const floatEpsilon = 1.e-8
 
-// compareFloat64 returns an integer comparing the float64 x to y,
+// compareFloat64PrecisionLoss returns an integer comparing the float64 x to y,
 // allowing precision loss.
 func compareFloat64PrecisionLoss(x, y float64) int {
 	if x-y < floatEpsilon && y-x < floatEpsilon {
@@ -987,8 +988,8 @@ func ContainsBinary(obj, target BinaryJSON) bool {
 	switch obj.TypeCode {
 	case TypeCodeObject:
 		if target.TypeCode == TypeCodeObject {
-			len := target.GetElemCount()
-			for i := 0; i < len; i++ {
+			elemCount := target.GetElemCount()
+			for i := 0; i < elemCount; i++ {
 				key := target.objectGetKey(i)
 				val := target.objectGetVal(i)
 				if exp, exists := obj.objectSearchKey(key); !exists || !ContainsBinary(exp, val) {
@@ -1000,16 +1001,16 @@ func ContainsBinary(obj, target BinaryJSON) bool {
 		return false
 	case TypeCodeArray:
 		if target.TypeCode == TypeCodeArray {
-			len := target.GetElemCount()
-			for i := 0; i < len; i++ {
+			elemCount := target.GetElemCount()
+			for i := 0; i < elemCount; i++ {
 				if !ContainsBinary(obj, target.arrayGetElem(i)) {
 					return false
 				}
 			}
 			return true
 		}
-		len := obj.GetElemCount()
-		for i := 0; i < len; i++ {
+		elemCount := obj.GetElemCount()
+		for i := 0; i < elemCount; i++ {
 			if ContainsBinary(obj.arrayGetElem(i), target) {
 				return true
 			}
@@ -1033,9 +1034,9 @@ func ContainsBinary(obj, target BinaryJSON) bool {
 func (bj BinaryJSON) GetElemDepth() int {
 	switch bj.TypeCode {
 	case TypeCodeObject:
-		len := bj.GetElemCount()
+		elemCount := bj.GetElemCount()
 		maxDepth := 0
-		for i := 0; i < len; i++ {
+		for i := 0; i < elemCount; i++ {
 			obj := bj.objectGetVal(i)
 			depth := obj.GetElemDepth()
 			if depth > maxDepth {
@@ -1044,9 +1045,9 @@ func (bj BinaryJSON) GetElemDepth() int {
 		}
 		return maxDepth + 1
 	case TypeCodeArray:
-		len := bj.GetElemCount()
+		elemCount := bj.GetElemCount()
 		maxDepth := 0
-		for i := 0; i < len; i++ {
+		for i := 0; i < elemCount; i++ {
 			obj := bj.arrayGetElem(i)
 			depth := obj.GetElemDepth()
 			if depth > maxDepth {
@@ -1100,10 +1101,10 @@ func (bj BinaryJSON) Search(containType string, search string, escape byte, path
 
 }
 
-// extractCallbackFn: the type of CALLBACK function for extractToCallback
+// extractCallbackFn the type of CALLBACK function for extractToCallback
 type extractCallbackFn func(fullpath PathExpression, bj BinaryJSON) (stop bool, err error)
 
-// extractToCallback: callback alternative of extractTo
+// extractToCallback callback alternative of extractTo
 //     would be more effective when walk through the whole JSON is unnecessary
 // NOTICE: path [0] & [*] for JSON object other than array is INVALID, which is different from extractTo.
 func (bj BinaryJSON) extractToCallback(pathExpr PathExpression, callbackFn extractCallbackFn, fullpath PathExpression) (stop bool, err error) {

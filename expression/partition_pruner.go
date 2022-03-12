@@ -8,16 +8,18 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package expression
 
 import (
-	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/disjointset"
 )
 
@@ -59,8 +61,8 @@ func (p *hashPartitionPruner) reduceColumnEQ() bool {
 		father := p.unionSet.FindRoot(i)
 		if p.constantMap[i] != nil {
 			if p.constantMap[father] != nil {
-				// May has conflict here.
-				if !p.constantMap[father].Equal(p.ctx, p.constantMap[i]) {
+				// May has conflict here. We can choose collation from lhs or rhs, they should be equal. Exception is that `NULL` values.
+				if eq, err := p.constantMap[father].Value.Compare(p.ctx.GetSessionVars().StmtCtx, &p.constantMap[i].Value, collate.GetCollator(p.constantMap[i].GetType().Collate)); eq != 0 || err != nil {
 					return true
 				}
 			} else {
@@ -94,7 +96,8 @@ func (p *hashPartitionPruner) reduceConstantEQ() bool {
 		if col != nil {
 			id := p.getColID(col)
 			if p.constantMap[id] != nil {
-				if p.constantMap[id].Equal(p.ctx, cond) {
+				// We can choose collation from lhs or rhs, they should be equal. Exception is that `NULL` values.
+				if eq, err := p.constantMap[id].Value.Compare(p.ctx.GetSessionVars().StmtCtx, &cond.Value, collate.GetCollator(cond.GetType().Collate)); eq == 0 && err == nil {
 					continue
 				}
 				return true

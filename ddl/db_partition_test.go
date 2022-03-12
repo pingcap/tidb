@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,15 +21,11 @@ import (
 	"math/rand"
 	"strings"
 	"sync/atomic"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/testutil"
@@ -37,21 +34,60 @@ import (
 	tmysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/israce"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
-func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func checkGlobalIndexCleanUpDone(t *testing.T, ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, pid int64) int {
+	require.NoError(t, ctx.NewTxn(context.Background()))
+	txn, err := ctx.Txn(true)
+	require.NoError(t, err)
+	defer func() {
+		err := txn.Rollback()
+		require.NoError(t, err)
+	}()
+
+	cnt := 0
+	prefix := tablecodec.EncodeTableIndexPrefix(tblInfo.ID, idxInfo.ID)
+	it, err := txn.Iter(prefix, nil)
+	require.NoError(t, err)
+	for it.Valid() {
+		if !it.Key().HasPrefix(prefix) {
+			break
+		}
+		segs := tablecodec.SplitIndexValue(it.Value())
+		require.NotNil(t, segs.PartitionID)
+		_, pi, err := codec.DecodeInt(segs.PartitionID)
+		require.NoError(t, err)
+		require.NotEqual(t, pid, pi)
+		cnt++
+		err = it.Next()
+		require.NoError(t, err)
+	}
+	return cnt
+}
+
+func TestCreateTableWithPartition(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists tp;")
 	tk.MustExec(`CREATE TABLE tp (a int) PARTITION BY RANGE(a) (
@@ -59,24 +95,24 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 	PARTITION p1 VALUES LESS THAN (20),
 	PARTITION p2 VALUES LESS THAN (MAXVALUE)
 	);`)
-	ctx := tk.Se.(sessionctx.Context)
+	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tp"))
-	c.Assert(err, IsNil)
-	c.Assert(tbl.Meta().Partition, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, tbl.Meta().Partition)
 	part := tbl.Meta().Partition
-	c.Assert(part.Type, Equals, model.PartitionTypeRange)
-	c.Assert(part.Expr, Equals, "`a`")
+	require.Equal(t, model.PartitionTypeRange, part.Type)
+	require.Equal(t, "`a`", part.Expr)
 	for _, pdef := range part.Definitions {
-		c.Assert(pdef.ID, Greater, int64(0))
+		require.Greater(t, pdef.ID, int64(0))
 	}
-	c.Assert(part.Definitions, HasLen, 3)
-	c.Assert(part.Definitions[0].LessThan[0], Equals, "10")
-	c.Assert(part.Definitions[0].Name.L, Equals, "p0")
-	c.Assert(part.Definitions[1].LessThan[0], Equals, "20")
-	c.Assert(part.Definitions[1].Name.L, Equals, "p1")
-	c.Assert(part.Definitions[2].LessThan[0], Equals, "MAXVALUE")
-	c.Assert(part.Definitions[2].Name.L, Equals, "p2")
+	require.Len(t, part.Definitions, 3)
+	require.Equal(t, "10", part.Definitions[0].LessThan[0])
+	require.Equal(t, "p0", part.Definitions[0].Name.L)
+	require.Equal(t, "20", part.Definitions[1].LessThan[0])
+	require.Equal(t, "p1", part.Definitions[1].Name.L)
+	require.Equal(t, "MAXVALUE", part.Definitions[2].LessThan[0])
+	require.Equal(t, "p2", part.Definitions[2].Name.L)
 
 	tk.MustExec("drop table if exists employees;")
 	sql1 := `create table employees (
@@ -134,7 +170,7 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 	partition p3 values less than (65,30,13),
 	partition p4 values less than (maxvalue,30,40)
 	);`)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	sql6 := `create table employees (
 	id int not null,
@@ -187,7 +223,7 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 	partition p2 values less than (20),
 	partition p3 values less than (20)
 	);`)
-	c.Assert(ddl.ErrRangeNotIncreasing.Equal(err), IsTrue)
+	require.True(t, dbterror.ErrRangeNotIncreasing.Equal(err))
 
 	tk.MustGetErrCode(`create TABLE t10 (c1 int,c2 int) partition by range(c1 / c2 ) (partition p0 values less than (2));`, tmysql.ErrPartitionFunctionIsNotAllowed)
 
@@ -220,7 +256,7 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 			  partition p0 values less than (to_seconds('2004-01-01')),
 			  partition p1 values less than (to_seconds('2005-01-01')));`)
 	tk.MustQuery("show create table t26").Check(
-		testkit.Rows("t26 CREATE TABLE `t26` (\n  `a` date DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY RANGE ( TO_SECONDS(`a`) ) (\n  PARTITION `p0` VALUES LESS THAN (63240134400),\n  PARTITION `p1` VALUES LESS THAN (63271756800)\n)"))
+		testkit.Rows("t26 CREATE TABLE `t26` (\n  `a` date DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY RANGE (TO_SECONDS(`a`))\n(PARTITION `p0` VALUES LESS THAN (63240134400),\n PARTITION `p1` VALUES LESS THAN (63271756800))"))
 	tk.MustExec(`create table t27 (a bigint unsigned not null)
 		  partition by range(a) (
 		  partition p0 values less than (10),
@@ -246,7 +282,7 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 		  c varchar(30))
 		  partition by range columns (a, b)
 		  (partition p0 values less than (10, 10.0))`)
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8200 Unsupported partition type, treat as normal table"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8200 Unsupported partition type RANGE, treat as normal table"))
 
 	tk.MustGetErrCode(`create table t31 (a int not null) partition by range( a );`, tmysql.ErrPartitionsMustBeDefined)
 	tk.MustGetErrCode(`create table t32 (a int not null) partition by range columns( a );`, tmysql.ErrPartitionsMustBeDefined)
@@ -303,8 +339,10 @@ partition by range (a)
     partition p2 values less than maxvalue)`)
 }
 
-func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestCreateTableWithHashPartition(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists employees;")
 	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
@@ -360,10 +398,10 @@ func (s *testIntegrationSuite2) TestCreateTableWithHashPartition(c *C) {
 	tk.MustExec("create table t4 (a int, b int) partition by hash(floor(a-b)) partitions 10")
 }
 
-func (s *testSerialDBSuite1) TestCreateTableWithRangeColumnPartition(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-	tk := testkit.NewTestKit(c, s.store)
+func TestCreateTableWithRangeColumnPartition(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists log_message_1;")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -411,15 +449,15 @@ create table log_message_1 (
 		},
 		{
 			"create table t(a datetime) partition by range columns (a) (partition p1 values less than ('2000-02-01'), partition p2 values less than ('20000102'));",
-			ddl.ErrRangeNotIncreasing,
+			dbterror.ErrRangeNotIncreasing,
 		},
 		{
 			"create table t(a time) partition by range columns (a) (partition p1 values less than ('202020'), partition p2 values less than ('20:20:10'));",
-			ddl.ErrRangeNotIncreasing,
+			dbterror.ErrRangeNotIncreasing,
 		},
 		{
 			"create table t(a time) partition by range columns (a) (partition p1 values less than ('202090'));",
-			ddl.ErrWrongTypeColumnValue,
+			dbterror.ErrWrongTypeColumnValue,
 		},
 		{
 			"create table t (id int) partition by range columns (id) (partition p0 values less than (1, 2));",
@@ -431,15 +469,15 @@ create table log_message_1 (
 		},
 		{
 			"create table t (a int) partition by range columns (b) (partition p0 values less than (1));",
-			ddl.ErrFieldNotFoundPart,
+			dbterror.ErrFieldNotFoundPart,
 		},
 		{
 			"create table t (a date) partition by range (to_days(to_days(a))) (partition p0 values less than (1));",
-			ddl.ErrWrongExprInPartitionFunc,
+			dbterror.ErrWrongExprInPartitionFunc,
 		},
 		{
 			"create table t (id timestamp) partition by range columns (id) (partition p0 values less than ('2019-01-09 11:23:34'));",
-			ddl.ErrNotAllowedTypeInPartition,
+			dbterror.ErrNotAllowedTypeInPartition,
 		},
 		{
 			`create table t29 (
@@ -447,120 +485,120 @@ create table log_message_1 (
 			)
 			partition by range columns (a)
 			(partition p0 values less than (0));`,
-			ddl.ErrNotAllowedTypeInPartition,
+			dbterror.ErrNotAllowedTypeInPartition,
 		},
 		{
 			"create table t (id text) partition by range columns (id) (partition p0 values less than ('abc'));",
-			ddl.ErrNotAllowedTypeInPartition,
+			dbterror.ErrNotAllowedTypeInPartition,
 		},
 		// create as normal table, warning.
 		//	{
 		//		"create table t (a int, b varchar(64)) partition by range columns (a, b) (" +
 		//			"partition p0 values less than (1, 'a')," +
 		//			"partition p1 values less than (1, 'a'))",
-		//		ddl.ErrRangeNotIncreasing,
+		//		dbterror.ErrRangeNotIncreasing,
 		//	},
 		{
 			"create table t (a int, b varchar(64)) partition by range columns ( b) (" +
 				"partition p0 values less than ( 'a')," +
 				"partition p1 values less than ('a'))",
-			ddl.ErrRangeNotIncreasing,
+			dbterror.ErrRangeNotIncreasing,
 		},
 		// create as normal table, warning.
 		//	{
 		//		"create table t (a int, b varchar(64)) partition by range columns (a, b) (" +
 		//			"partition p0 values less than (1, 'b')," +
 		//			"partition p1 values less than (1, 'a'))",
-		//		ddl.ErrRangeNotIncreasing,
+		//		dbterror.ErrRangeNotIncreasing,
 		//	},
 		{
 			"create table t (a int, b varchar(64)) partition by range columns (b) (" +
 				"partition p0 values less than ('b')," +
 				"partition p1 values less than ('a'))",
-			ddl.ErrRangeNotIncreasing,
+			dbterror.ErrRangeNotIncreasing,
 		},
 		// create as normal table, warning.
 		//		{
 		//			"create table t (a int, b varchar(64)) partition by range columns (a, b) (" +
 		//				"partition p0 values less than (1, maxvalue)," +
 		//				"partition p1 values less than (1, 'a'))",
-		//			ddl.ErrRangeNotIncreasing,
+		//			dbterror.ErrRangeNotIncreasing,
 		//		},
 		{
 			"create table t (a int, b varchar(64)) partition by range columns ( b) (" +
 				"partition p0 values less than (  maxvalue)," +
 				"partition p1 values less than ('a'))",
-			ddl.ErrRangeNotIncreasing,
+			dbterror.ErrRangeNotIncreasing,
 		},
 		{
 			"create table t (col datetime not null default '2000-01-01')" +
 				"partition by range columns (col) (" +
 				"PARTITION p0 VALUES LESS THAN (20190905)," +
 				"PARTITION p1 VALUES LESS THAN (20190906));",
-			ddl.ErrWrongTypeColumnValue,
+			dbterror.ErrWrongTypeColumnValue,
 		},
 		{
 			"create table t(a char(10) collate utf8mb4_bin) " +
 				"partition by range columns (a) (" +
 				"partition p0 values less than ('a'), " +
 				"partition p1 values less than ('G'));",
-			ddl.ErrRangeNotIncreasing,
+			dbterror.ErrRangeNotIncreasing,
 		},
 		{
 			"CREATE TABLE t1(c0 INT) PARTITION BY HASH((NOT c0)) PARTITIONS 2;",
-			ddl.ErrPartitionFunctionIsNotAllowed,
+			dbterror.ErrPartitionFunctionIsNotAllowed,
 		},
 		{
 			"CREATE TABLE t1(c0 INT) PARTITION BY HASH((!c0)) PARTITIONS 2;",
-			ddl.ErrPartitionFunctionIsNotAllowed,
+			dbterror.ErrPartitionFunctionIsNotAllowed,
 		},
 		{
 			"CREATE TABLE t1(c0 INT) PARTITION BY LIST((NOT c0)) (partition p0 values in (0), partition p1 values in (1));",
-			ddl.ErrPartitionFunctionIsNotAllowed,
+			dbterror.ErrPartitionFunctionIsNotAllowed,
 		},
 		{
 			"CREATE TABLE t1(c0 INT) PARTITION BY LIST((!c0)) (partition p0 values in (0), partition p1 values in (1));",
-			ddl.ErrPartitionFunctionIsNotAllowed,
+			dbterror.ErrPartitionFunctionIsNotAllowed,
 		},
 		{
 			"CREATE TABLE t1 (a TIME, b DATE) PARTITION BY range(DATEDIFF(a, b)) (partition p1 values less than (20));",
-			ddl.ErrWrongExprInPartitionFunc,
+			dbterror.ErrWrongExprInPartitionFunc,
 		},
 		{
 			"CREATE TABLE t1 (a DATE, b VARCHAR(10)) PARTITION BY range(DATEDIFF(a, b)) (partition p1 values less than (20));",
-			ddl.ErrWrongExprInPartitionFunc,
+			dbterror.ErrWrongExprInPartitionFunc,
 		},
 		{
 			"create table t1 (a bigint unsigned) partition by list (a) (partition p0 values in (10, 20, 30, -1));",
-			ddl.ErrPartitionConstDomain,
+			dbterror.ErrPartitionConstDomain,
 		},
 		{
 			"create table t1 (a bigint unsigned) partition by range (a) (partition p0 values less than (-1));",
-			ddl.ErrPartitionConstDomain,
+			dbterror.ErrPartitionConstDomain,
 		},
 		{
 			"create table t1 (a int unsigned) partition by range (a) (partition p0 values less than (-1));",
-			ddl.ErrPartitionConstDomain,
+			dbterror.ErrPartitionConstDomain,
 		},
 		{
 			"create table t1 (a tinyint(20) unsigned) partition by range (a) (partition p0 values less than (-1));",
-			ddl.ErrPartitionConstDomain,
+			dbterror.ErrPartitionConstDomain,
 		},
 		{
 			"CREATE TABLE new (a TIMESTAMP NOT NULL PRIMARY KEY) PARTITION BY RANGE (a % 2) (PARTITION p VALUES LESS THAN (20080819));",
-			ddl.ErrWrongExprInPartitionFunc,
+			dbterror.ErrWrongExprInPartitionFunc,
 		},
 		{
 			"CREATE TABLE new (a TIMESTAMP NOT NULL PRIMARY KEY) PARTITION BY RANGE (a+2) (PARTITION p VALUES LESS THAN (20080819));",
-			ddl.ErrWrongExprInPartitionFunc,
+			dbterror.ErrWrongExprInPartitionFunc,
 		},
 	}
-	for i, t := range cases {
-		_, err := tk.Exec(t.sql)
-		c.Assert(t.err.Equal(err), IsTrue, Commentf(
+	for i, tt := range cases {
+		_, err := tk.Exec(tt.sql)
+		require.Truef(t, tt.err.Equal(err),
 			"case %d fail, sql = `%s`\nexpected error = `%v`\n  actual error = `%v`",
-			i, t.sql, t.err, err,
-		))
+			i, tt.sql, tt.err, err,
+		)
 	}
 
 	tk.MustExec("drop table if exists t1;")
@@ -590,14 +628,13 @@ create table log_message_1 (
 	tk.MustExec(`create table t(a binary) partition by range columns (a) (partition p0 values less than (X'0C'));`)
 	tk.MustExec(`alter table t add partition (partition p1 values less than (X'0D'), partition p2 values less than (X'0E'));`)
 	tk.MustExec(`insert into t values (X'0B'), (X'0C'), (X'0D')`)
-	tk.MustQuery(`select * from t where a < X'0D'`).Check(testkit.Rows("\x0B", "\x0C"))
+	tk.MustQuery(`select * from t where a < X'0D' order by a`).Check(testkit.Rows("\x0B", "\x0C"))
 }
 
-func (s *testIntegrationSuite1) TestDisableTablePartition(c *C) {
-	if israce.RaceEnabled {
-		c.Skip("skip race test")
-	}
-	tk := testkit.NewTestKit(c, s.store)
+func TestDisableTablePartition(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	for _, v := range []string{"'AUTO'", "'OFF'", "0", "'ON'"} {
 		tk.MustExec("set @@session.tidb_enable_table_partition = " + v)
@@ -605,19 +642,19 @@ func (s *testIntegrationSuite1) TestDisableTablePartition(c *C) {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec(`create table t (id int) partition by list  (id) (
 	    partition p0 values in (1,2),partition p1 values in (3,4));`)
-		tbl := testGetTableByName(c, tk.Se, "test", "t")
-		c.Assert(tbl.Meta().Partition, IsNil)
+		tbl := tk.GetTableByName("test", "t")
+		require.Nil(t, tbl.Meta().Partition)
 		_, err := tk.Exec(`alter table t add partition (
 		partition p4 values in (7),
 		partition p5 values in (8,9));`)
-		c.Assert(ddl.ErrPartitionMgmtOnNonpartitioned.Equal(err), IsTrue)
+		require.True(t, dbterror.ErrPartitionMgmtOnNonpartitioned.Equal(err))
 		tk.MustExec("insert into t values (1),(3),(5),(100),(null)")
 	}
 }
 
-func (s *testIntegrationSuite1) generatePartitionTableByNum(num int) string {
+func generatePartitionTableByNum(num int) string {
 	buf := bytes.NewBuffer(make([]byte, 0, 1024*1024))
-	buf.WriteString("create table t (id int) partition by list  (id) (")
+	buf.WriteString("create table gen_t (id int) partition by list  (id) (")
 	for i := 0; i < num; i++ {
 		if i > 0 {
 			buf.WriteString(",")
@@ -628,8 +665,10 @@ func (s *testIntegrationSuite1) generatePartitionTableByNum(num int) string {
 	return buf.String()
 }
 
-func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestCreateTableWithListPartition(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop table if exists t")
@@ -644,75 +683,75 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 		},
 		{
 			"create table t (a int) partition by list (b) (partition p0 values in (1));",
-			ddl.ErrBadField,
+			dbterror.ErrBadField,
 		},
 		{
 			"create table t (id timestamp) partition by list (id) (partition p0 values in ('2019-01-09 11:23:34'));",
-			ddl.ErrValuesIsNotIntType,
+			dbterror.ErrValuesIsNotIntType,
 		},
 		{
 			"create table t (id decimal) partition by list (id) (partition p0 values in ('2019-01-09 11:23:34'));",
-			ddl.ErrValuesIsNotIntType,
+			dbterror.ErrValuesIsNotIntType,
 		},
 		{
 			"create table t (id float) partition by list (id) (partition p0 values in (1));",
-			ddl.ErrNotAllowedTypeInPartition,
+			dbterror.ErrNotAllowedTypeInPartition,
 		},
 		{
 			"create table t (id double) partition by list (id) (partition p0 values in (1));",
-			ddl.ErrNotAllowedTypeInPartition,
+			dbterror.ErrNotAllowedTypeInPartition,
 		},
 		{
 			"create table t (id text) partition by list (id) (partition p0 values in ('abc'));",
-			ddl.ErrValuesIsNotIntType,
+			dbterror.ErrValuesIsNotIntType,
 		},
 		{
 			"create table t (id blob) partition by list (id) (partition p0 values in ('abc'));",
-			ddl.ErrValuesIsNotIntType,
+			dbterror.ErrValuesIsNotIntType,
 		},
 		{
 			"create table t (id enum('a','b')) partition by list (id) (partition p0 values in ('a'));",
-			ddl.ErrValuesIsNotIntType,
+			dbterror.ErrValuesIsNotIntType,
 		},
 		{
 			"create table t (id set('a','b')) partition by list (id) (partition p0 values in ('a'));",
-			ddl.ErrValuesIsNotIntType,
+			dbterror.ErrValuesIsNotIntType,
 		},
 		{
 			"create table t (a int) partition by list (a) (partition p0 values in (1), partition p0 values in (2));",
-			ddl.ErrSameNamePartition,
+			dbterror.ErrSameNamePartition,
 		},
 		{
 			"create table t (a int) partition by list (a) (partition p0 values in (1), partition P0 values in (2));",
-			ddl.ErrSameNamePartition,
+			dbterror.ErrSameNamePartition,
 		},
 		{
 			"create table t (id bigint) partition by list (cast(id as unsigned)) (partition p0 values in (1))",
-			ddl.ErrPartitionFunctionIsNotAllowed,
+			dbterror.ErrPartitionFunctionIsNotAllowed,
 		},
 		{
 			"create table t (id float) partition by list (ceiling(id)) (partition p0 values in (1))",
-			ddl.ErrPartitionFuncNotAllowed,
+			dbterror.ErrPartitionFuncNotAllowed,
 		},
 		{
 			"create table t(b char(10)) partition by range columns (b) (partition p1 values less than ('G' collate utf8mb4_unicode_ci));",
-			ddl.ErrPartitionFunctionIsNotAllowed,
+			dbterror.ErrPartitionFunctionIsNotAllowed,
 		},
 		{
 			"create table t (a date) partition by list (to_days(to_days(a))) (partition p0 values in (1), partition P1 values in (2));",
-			ddl.ErrWrongExprInPartitionFunc,
+			dbterror.ErrWrongExprInPartitionFunc,
 		},
 		{
 			"create table t (a int) partition by list (a) (partition p0 values in (1), partition p1 values in (1));",
-			ddl.ErrMultipleDefConstInListPart,
+			dbterror.ErrMultipleDefConstInListPart,
 		},
 		{
 			"create table t (a int) partition by list (a) (partition p0 values in (1), partition p1 values in (+1));",
-			ddl.ErrMultipleDefConstInListPart,
+			dbterror.ErrMultipleDefConstInListPart,
 		},
 		{
 			"create table t (a int) partition by list (a) (partition p0 values in (null), partition p1 values in (NULL));",
-			ddl.ErrMultipleDefConstInListPart,
+			dbterror.ErrMultipleDefConstInListPart,
 		},
 		{
 			`create table t1 (id int key, name varchar(10), unique index idx(name)) partition by list  (id) (
@@ -721,19 +760,19 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 				    partition p2 values in (4,12,13,14,18),
 				    partition p3 values in (7,8,15,16)
 				);`,
-			ddl.ErrUniqueKeyNeedAllFieldsInPf,
+			dbterror.ErrUniqueKeyNeedAllFieldsInPf,
 		},
 		{
-			s.generatePartitionTableByNum(ddl.PartitionCountLimit + 1),
-			ddl.ErrTooManyPartitions,
+			generatePartitionTableByNum(ddl.PartitionCountLimit + 1),
+			dbterror.ErrTooManyPartitions,
 		},
 	}
-	for i, t := range cases {
-		_, err := tk.Exec(t.sql)
-		c.Assert(t.err.Equal(err), IsTrue, Commentf(
+	for i, tt := range cases {
+		_, err := tk.Exec(tt.sql)
+		require.Truef(t, tt.err.Equal(err),
 			"case %d fail, sql = `%s`\nexpected error = `%v`\n  actual error = `%v`",
-			i, t.sql, t.err, err,
-		))
+			i, tt.sql, tt.err, err,
+		)
 	}
 
 	validCases := []string{
@@ -755,22 +794,28 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 		"create table t (a datetime) partition by list (to_seconds(a)) (partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')));",
 		"create table t (a int, b int generated always as (a+1) virtual) partition by list (b + 1) (partition p0 values in (1));",
 		"create table t(a binary) partition by list columns (a) (partition p0 values in (X'0C'));",
-		s.generatePartitionTableByNum(ddl.PartitionCountLimit),
+		generatePartitionTableByNum(ddl.PartitionCountLimit),
 	}
 
-	for _, sql := range validCases {
+	for id, sql := range validCases {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec(sql)
-		tbl := testGetTableByName(c, s.ctx, "test", "t")
+		tblName := "t"
+		if id == len(validCases)-1 {
+			tblName = "gen_t"
+		}
+		tbl := tk.GetTableByName("test", tblName)
 		tblInfo := tbl.Meta()
-		c.Assert(tblInfo.Partition, NotNil)
-		c.Assert(tblInfo.Partition.Enable, Equals, true)
-		c.Assert(tblInfo.Partition.Type == model.PartitionTypeList, IsTrue)
+		require.NotNil(t, tblInfo.Partition)
+		require.True(t, tblInfo.Partition.Enable)
+		require.Equal(t, model.PartitionTypeList, tblInfo.Partition.Type)
 	}
 }
 
-func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestCreateTableWithListColumnsPartition(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("drop table if exists t")
@@ -785,111 +830,119 @@ func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 		},
 		{
 			"create table t (a int) partition by list columns (b) (partition p0 values in (1));",
-			ddl.ErrFieldNotFoundPart,
+			dbterror.ErrFieldNotFoundPart,
 		},
 		{
 			"create table t (id timestamp) partition by list columns (id) (partition p0 values in ('2019-01-09 11:23:34'));",
-			ddl.ErrNotAllowedTypeInPartition,
+			dbterror.ErrNotAllowedTypeInPartition,
 		},
 		{
 			"create table t (id decimal) partition by list columns (id) (partition p0 values in ('2019-01-09 11:23:34'));",
-			ddl.ErrNotAllowedTypeInPartition,
+			dbterror.ErrNotAllowedTypeInPartition,
 		},
 		{
 			"create table t (id year) partition by list columns (id) (partition p0 values in (2000));",
-			ddl.ErrNotAllowedTypeInPartition,
+			dbterror.ErrNotAllowedTypeInPartition,
 		},
 		{
 			"create table t (id float) partition by list columns (id) (partition p0 values in (1));",
-			ddl.ErrNotAllowedTypeInPartition,
+			dbterror.ErrNotAllowedTypeInPartition,
 		},
 		{
 			"create table t (id double) partition by list columns (id) (partition p0 values in (1));",
-			ddl.ErrNotAllowedTypeInPartition,
+			dbterror.ErrNotAllowedTypeInPartition,
 		},
 		{
 			"create table t (id text) partition by list columns (id) (partition p0 values in ('abc'));",
-			ddl.ErrNotAllowedTypeInPartition,
+			dbterror.ErrNotAllowedTypeInPartition,
 		},
 		{
 			"create table t (id blob) partition by list columns (id) (partition p0 values in ('abc'));",
-			ddl.ErrNotAllowedTypeInPartition,
+			dbterror.ErrNotAllowedTypeInPartition,
 		},
 		{
 			"create table t (id enum('a','b')) partition by list columns (id) (partition p0 values in ('a'));",
-			ddl.ErrNotAllowedTypeInPartition,
+			dbterror.ErrNotAllowedTypeInPartition,
 		},
 		{
 			"create table t (id set('a','b')) partition by list columns (id) (partition p0 values in ('a'));",
-			ddl.ErrNotAllowedTypeInPartition,
+			dbterror.ErrNotAllowedTypeInPartition,
 		},
 		{
 			"create table t (a varchar(2)) partition by list columns (a) (partition p0 values in ('abc'));",
-			ddl.ErrWrongTypeColumnValue,
+			dbterror.ErrWrongTypeColumnValue,
 		},
 		{
 			"create table t (a tinyint) partition by list columns (a) (partition p0 values in (65536));",
-			ddl.ErrWrongTypeColumnValue,
+			dbterror.ErrWrongTypeColumnValue,
 		},
 		{
 			"create table t (a bigint) partition by list columns (a) (partition p0 values in (18446744073709551615));",
-			ddl.ErrWrongTypeColumnValue,
+			dbterror.ErrWrongTypeColumnValue,
 		},
 		{
 			"create table t (a bigint unsigned) partition by list columns (a) (partition p0 values in (-1));",
-			ddl.ErrWrongTypeColumnValue,
+			dbterror.ErrWrongTypeColumnValue,
 		},
 		{
 			"create table t (a char) partition by list columns (a) (partition p0 values in ('abc'));",
-			ddl.ErrWrongTypeColumnValue,
+			dbterror.ErrWrongTypeColumnValue,
 		},
 		{
 			"create table t (a datetime) partition by list columns (a) (partition p0 values in ('2020-11-31 12:00:00'));",
-			ddl.ErrWrongTypeColumnValue,
+			dbterror.ErrWrongTypeColumnValue,
 		},
 		{
 			"create table t (a int) partition by list columns (a) (partition p0 values in (1), partition p0 values in (2));",
-			ddl.ErrSameNamePartition,
+			dbterror.ErrSameNamePartition,
 		},
 		{
 			"create table t (a int) partition by list columns (a) (partition p0 values in (1), partition P0 values in (2));",
-			ddl.ErrSameNamePartition,
+			dbterror.ErrSameNamePartition,
 		},
 		{
 			"create table t (a int) partition by list columns (a) (partition p0 values in (1), partition p1 values in (1));",
-			ddl.ErrMultipleDefConstInListPart,
+			dbterror.ErrMultipleDefConstInListPart,
 		},
 		{
 			"create table t (a int) partition by list columns (a) (partition p0 values in (1), partition p1 values in (+1));",
-			ddl.ErrMultipleDefConstInListPart,
+			dbterror.ErrMultipleDefConstInListPart,
 		},
 		{
 			"create table t (a tinyint) partition by list columns (a) (partition p0 values in (1), partition p1 values in (+1));",
-			ddl.ErrMultipleDefConstInListPart,
+			dbterror.ErrMultipleDefConstInListPart,
 		},
 		{
 			"create table t (a mediumint) partition by list columns (a) (partition p0 values in (1), partition p1 values in (+1));",
-			ddl.ErrMultipleDefConstInListPart,
+			dbterror.ErrMultipleDefConstInListPart,
 		},
 		{
 			"create table t (a bigint) partition by list columns (a) (partition p0 values in (1), partition p1 values in (+1));",
-			ddl.ErrMultipleDefConstInListPart,
+			dbterror.ErrMultipleDefConstInListPart,
 		},
 		{
 			"create table t (a bigint) partition by list columns (a) (partition p0 values in (1,+1))",
-			ddl.ErrMultipleDefConstInListPart,
+			dbterror.ErrMultipleDefConstInListPart,
 		},
 		{
 			"create table t (a int) partition by list columns (a) (partition p0 values in (null), partition p1 values in (NULL));",
-			ddl.ErrMultipleDefConstInListPart,
+			dbterror.ErrMultipleDefConstInListPart,
 		},
 		{
 			"create table t (a bigint, b int) partition by list columns (a,b) (partition p0 values in ((1,2),(1,2)))",
-			ddl.ErrMultipleDefConstInListPart,
+			dbterror.ErrMultipleDefConstInListPart,
 		},
 		{
 			"create table t (a bigint, b int) partition by list columns (a,b) (partition p0 values in ((1,1),(2,2)), partition p1 values in ((+1,1)));",
-			ddl.ErrMultipleDefConstInListPart,
+			dbterror.ErrMultipleDefConstInListPart,
+		},
+		{
+			"create table t1 (a int, b int) partition by list columns(a,a) ( partition p values in ((1,1)));",
+			dbterror.ErrSameNamePartitionField,
+		},
+		{
+			"create table t1 (a int, b int) partition by list columns(a,b,b) ( partition p values in ((1,1,1)));",
+			dbterror.ErrSameNamePartitionField,
 		},
 		{
 			`create table t1 (id int key, name varchar(10), unique index idx(name)) partition by list columns (id) (
@@ -898,11 +951,11 @@ func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 				    partition p2 values in (4,12,13,14,18),
 				    partition p3 values in (7,8,15,16)
 				);`,
-			ddl.ErrUniqueKeyNeedAllFieldsInPf,
+			dbterror.ErrUniqueKeyNeedAllFieldsInPf,
 		},
 		{
 			"create table t (a date) partition by list columns (a) (partition p0 values in ('2020-02-02'), partition p1 values in ('20200202'));",
-			ddl.ErrMultipleDefConstInListPart,
+			dbterror.ErrMultipleDefConstInListPart,
 		},
 		{
 			"create table t (a int, b varchar(10)) partition by list columns (a,b) (partition p0 values in (1));",
@@ -910,7 +963,7 @@ func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 		},
 		{
 			"create table t (a int, b varchar(10)) partition by list columns (a,b) (partition p0 values in (('ab','ab')));",
-			ddl.ErrWrongTypeColumnValue,
+			dbterror.ErrWrongTypeColumnValue,
 		},
 		{
 			"create table t (a int, b datetime) partition by list columns (a,b) (partition p0 values in ((1)));",
@@ -918,15 +971,15 @@ func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 		},
 		{
 			"create table t(b int) partition by hash ( b ) partitions 3 (partition p1, partition p2, partition p2);",
-			ddl.ErrSameNamePartition,
+			dbterror.ErrSameNamePartition,
 		},
 	}
-	for i, t := range cases {
-		_, err := tk.Exec(t.sql)
-		c.Assert(t.err.Equal(err), IsTrue, Commentf(
+	for i, tt := range cases {
+		_, err := tk.Exec(tt.sql)
+		require.Truef(t, tt.err.Equal(err),
 			"case %d fail, sql = `%s`\nexpected error = `%v`\n  actual error = `%v`",
-			i, t.sql, t.err, err,
-		))
+			i, tt.sql, tt.err, err,
+		)
 	}
 
 	validCases := []string{
@@ -958,16 +1011,18 @@ func (s *testIntegrationSuite1) TestCreateTableWithListColumnsPartition(c *C) {
 	for _, sql := range validCases {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec(sql)
-		tbl := testGetTableByName(c, s.ctx, "test", "t")
+		tbl := tk.GetTableByName("test", "t")
 		tblInfo := tbl.Meta()
-		c.Assert(tblInfo.Partition, NotNil)
-		c.Assert(tblInfo.Partition.Enable, Equals, true)
-		c.Assert(tblInfo.Partition.Type == model.PartitionTypeList, IsTrue)
+		require.NotNil(t, tblInfo.Partition)
+		require.Equal(t, true, tblInfo.Partition.Enable)
+		require.True(t, tblInfo.Partition.Type == model.PartitionTypeList)
 	}
 }
 
-func (s *testIntegrationSuite5) TestAlterTableAddPartitionByList(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestAlterTableAddPartitionByList(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -980,57 +1035,57 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartitionByList(c *C) {
 		partition p4 values in (7),
 		partition p5 values in (8,9));`)
 
-	ctx := tk.Se.(sessionctx.Context)
+	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	c.Assert(tbl.Meta().Partition, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, tbl.Meta().Partition)
 	part := tbl.Meta().Partition
-	c.Assert(part.Type == model.PartitionTypeList, IsTrue)
+	require.True(t, part.Type == model.PartitionTypeList)
 
-	c.Assert(part.Expr, Equals, "`id`")
-	c.Assert(part.Definitions, HasLen, 5)
-	c.Assert(part.Definitions[0].InValues, DeepEquals, [][]string{{"1"}, {"2"}})
-	c.Assert(part.Definitions[0].Name, Equals, model.NewCIStr("p0"))
-	c.Assert(part.Definitions[1].InValues, DeepEquals, [][]string{{"3"}, {"4"}})
-	c.Assert(part.Definitions[1].Name, Equals, model.NewCIStr("p1"))
-	c.Assert(part.Definitions[2].InValues, DeepEquals, [][]string{{"5"}, {"NULL"}})
-	c.Assert(part.Definitions[2].Name, Equals, model.NewCIStr("p3"))
-	c.Assert(part.Definitions[3].InValues, DeepEquals, [][]string{{"7"}})
-	c.Assert(part.Definitions[3].Name, Equals, model.NewCIStr("p4"))
-	c.Assert(part.Definitions[4].InValues, DeepEquals, [][]string{{"8"}, {"9"}})
-	c.Assert(part.Definitions[4].Name, Equals, model.NewCIStr("p5"))
+	require.Equal(t, "`id`", part.Expr)
+	require.Len(t, part.Definitions, 5)
+	require.Equal(t, [][]string{{"1"}, {"2"}}, part.Definitions[0].InValues)
+	require.Equal(t, model.NewCIStr("p0"), part.Definitions[0].Name)
+	require.Equal(t, [][]string{{"3"}, {"4"}}, part.Definitions[1].InValues)
+	require.Equal(t, model.NewCIStr("p1"), part.Definitions[1].Name)
+	require.Equal(t, [][]string{{"5"}, {"NULL"}}, part.Definitions[2].InValues)
+	require.Equal(t, model.NewCIStr("p3"), part.Definitions[2].Name)
+	require.Equal(t, [][]string{{"7"}}, part.Definitions[3].InValues)
+	require.Equal(t, model.NewCIStr("p4"), part.Definitions[3].Name)
+	require.Equal(t, [][]string{{"8"}, {"9"}}, part.Definitions[4].InValues)
+	require.Equal(t, model.NewCIStr("p5"), part.Definitions[4].Name)
 
 	errorCases := []struct {
 		sql string
 		err *terror.Error
 	}{
 		{"alter table t add partition (partition p4 values in (7))",
-			ddl.ErrSameNamePartition,
+			dbterror.ErrSameNamePartition,
 		},
 		{"alter table t add partition (partition p6 values less than (7))",
 			ast.ErrPartitionWrongValues,
 		},
 		{"alter table t add partition (partition p6 values in (null))",
-			ddl.ErrMultipleDefConstInListPart,
+			dbterror.ErrMultipleDefConstInListPart,
 		},
 		{"alter table t add partition (partition p6 values in (7))",
-			ddl.ErrMultipleDefConstInListPart,
+			dbterror.ErrMultipleDefConstInListPart,
 		},
 		{"alter table t add partition (partition p6 values in ('a'))",
-			ddl.ErrValuesIsNotIntType,
+			dbterror.ErrValuesIsNotIntType,
 		},
 		{"alter table t add partition (partition p5 values in (10),partition p6 values in (7))",
-			ddl.ErrSameNamePartition,
+			dbterror.ErrSameNamePartition,
 		},
 	}
 
-	for i, t := range errorCases {
-		_, err := tk.Exec(t.sql)
-		c.Assert(t.err.Equal(err), IsTrue, Commentf(
+	for i, tt := range errorCases {
+		_, err := tk.Exec(tt.sql)
+		require.Truef(t, tt.err.Equal(err),
 			"case %d fail, sql = `%s`\nexpected error = `%v`\n  actual error = `%v`",
-			i, t.sql, t.err, err,
-		))
+			i, tt.sql, tt.err, err,
+		)
 	}
 
 	errorCases2 := []struct {
@@ -1041,48 +1096,50 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartitionByList(c *C) {
 		{
 			"create table t (a bigint unsigned) partition by list columns (a) (partition p0 values in (1));",
 			"alter table t add partition (partition p1 values in (-1))",
-			ddl.ErrWrongTypeColumnValue,
+			dbterror.ErrWrongTypeColumnValue,
 		},
 		{
 			"create table t (a varchar(2)) partition by list columns (a) (partition p0 values in ('a','b'));",
 			"alter table t add partition (partition p1 values in ('abc'))",
-			ddl.ErrWrongTypeColumnValue,
+			dbterror.ErrWrongTypeColumnValue,
 		},
 		{
 			"create table t (a tinyint) partition by list columns (a) (partition p0 values in (1,2,3));",
 			"alter table t add partition (partition p1 values in (65536))",
-			ddl.ErrWrongTypeColumnValue,
+			dbterror.ErrWrongTypeColumnValue,
 		},
 		{
 			"create table t (a bigint) partition by list columns (a) (partition p0 values in (1,2,3));",
 			"alter table t add partition (partition p1 values in (18446744073709551615))",
-			ddl.ErrWrongTypeColumnValue,
+			dbterror.ErrWrongTypeColumnValue,
 		},
 		{
 			"create table t (a char) partition by list columns (a) (partition p0 values in ('a','b'));",
 			"alter table t add partition (partition p1 values in ('abc'))",
-			ddl.ErrWrongTypeColumnValue,
+			dbterror.ErrWrongTypeColumnValue,
 		},
 		{
 			"create table t (a datetime) partition by list columns (a) (partition p0 values in ('2020-11-30 12:00:00'));",
 			"alter table t add partition (partition p1 values in ('2020-11-31 12:00:00'))",
-			ddl.ErrWrongTypeColumnValue,
+			dbterror.ErrWrongTypeColumnValue,
 		},
 	}
 
-	for i, t := range errorCases2 {
+	for i, tt := range errorCases2 {
 		tk.MustExec("drop table if exists t;")
-		tk.MustExec(t.create)
-		_, err := tk.Exec(t.alter)
-		c.Assert(t.err.Equal(err), IsTrue, Commentf(
+		tk.MustExec(tt.create)
+		_, err := tk.Exec(tt.alter)
+		require.Truef(t, tt.err.Equal(err),
 			"case %d fail, sql = `%s`\nexpected error = `%v`\n  actual error = `%v`",
-			i, t.alter, t.err, err,
-		))
+			i, tt.alter, tt.err, err,
+		)
 	}
 }
 
-func (s *testIntegrationSuite5) TestAlterTableAddPartitionByListColumns(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestAlterTableAddPartitionByListColumns(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -1095,61 +1152,63 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartitionByListColumns(c *C) {
 		partition p4 values in ((7,'a')),
 		partition p5 values in ((8,'a')));`)
 
-	ctx := tk.Se.(sessionctx.Context)
+	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	c.Assert(tbl.Meta().Partition, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, tbl.Meta().Partition)
 	part := tbl.Meta().Partition
-	c.Assert(part.Type == model.PartitionTypeList, IsTrue)
+	require.True(t, part.Type == model.PartitionTypeList)
 
-	c.Assert(part.Expr, Equals, "")
-	c.Assert(part.Columns[0].O, Equals, "id")
-	c.Assert(part.Columns[1].O, Equals, "name")
-	c.Assert(part.Definitions, HasLen, 5)
-	c.Assert(part.Definitions[0].InValues, DeepEquals, [][]string{{"1", `"a"`}, {"2", `"b"`}})
-	c.Assert(part.Definitions[0].Name, Equals, model.NewCIStr("p0"))
-	c.Assert(part.Definitions[1].InValues, DeepEquals, [][]string{{"3", `"a"`}, {"4", `"b"`}})
-	c.Assert(part.Definitions[1].Name, Equals, model.NewCIStr("p1"))
-	c.Assert(part.Definitions[2].InValues, DeepEquals, [][]string{{"5", `NULL`}})
-	c.Assert(part.Definitions[2].Name, Equals, model.NewCIStr("p3"))
-	c.Assert(part.Definitions[3].InValues, DeepEquals, [][]string{{"7", `"a"`}})
-	c.Assert(part.Definitions[3].Name, Equals, model.NewCIStr("p4"))
-	c.Assert(part.Definitions[4].InValues, DeepEquals, [][]string{{"8", `"a"`}})
-	c.Assert(part.Definitions[4].Name, Equals, model.NewCIStr("p5"))
+	require.Equal(t, "", part.Expr)
+	require.Equal(t, "id", part.Columns[0].O)
+	require.Equal(t, "name", part.Columns[1].O)
+	require.Len(t, part.Definitions, 5)
+	require.Equal(t, [][]string{{"1", `"a"`}, {"2", `"b"`}}, part.Definitions[0].InValues)
+	require.Equal(t, model.NewCIStr("p0"), part.Definitions[0].Name)
+	require.Equal(t, [][]string{{"3", `"a"`}, {"4", `"b"`}}, part.Definitions[1].InValues)
+	require.Equal(t, model.NewCIStr("p1"), part.Definitions[1].Name)
+	require.Equal(t, [][]string{{"5", `NULL`}}, part.Definitions[2].InValues)
+	require.Equal(t, model.NewCIStr("p3"), part.Definitions[2].Name)
+	require.Equal(t, [][]string{{"7", `"a"`}}, part.Definitions[3].InValues)
+	require.Equal(t, model.NewCIStr("p4"), part.Definitions[3].Name)
+	require.Equal(t, [][]string{{"8", `"a"`}}, part.Definitions[4].InValues)
+	require.Equal(t, model.NewCIStr("p5"), part.Definitions[4].Name)
 
 	errorCases := []struct {
 		sql string
 		err *terror.Error
 	}{
 		{"alter table t add partition (partition p4 values in ((7,'b')))",
-			ddl.ErrSameNamePartition,
+			dbterror.ErrSameNamePartition,
 		},
 		{"alter table t add partition (partition p6 values less than ((7,'a')))",
 			ast.ErrPartitionWrongValues,
 		},
 		{"alter table t add partition (partition p6 values in ((5,null)))",
-			ddl.ErrMultipleDefConstInListPart,
+			dbterror.ErrMultipleDefConstInListPart,
 		},
 		{"alter table t add partition (partition p6 values in ((7,'a')))",
-			ddl.ErrMultipleDefConstInListPart,
+			dbterror.ErrMultipleDefConstInListPart,
 		},
 		{"alter table t add partition (partition p6 values in (('a','a')))",
-			ddl.ErrWrongTypeColumnValue,
+			dbterror.ErrWrongTypeColumnValue,
 		},
 	}
 
-	for i, t := range errorCases {
-		_, err := tk.Exec(t.sql)
-		c.Assert(t.err.Equal(err), IsTrue, Commentf(
+	for i, tt := range errorCases {
+		_, err := tk.Exec(tt.sql)
+		require.Truef(t, tt.err.Equal(err),
 			"case %d fail, sql = `%s`\nexpected error = `%v`\n  actual error = `%v`",
-			i, t.sql, t.err, err,
-		))
+			i, tt.sql, tt.err, err,
+		)
 	}
 }
 
-func (s *testIntegrationSuite5) TestAlterTableDropPartitionByList(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestAlterTableDropPartitionByList(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -1161,19 +1220,19 @@ func (s *testIntegrationSuite5) TestAlterTableDropPartitionByList(c *C) {
 	tk.MustExec(`insert into t values (1),(3),(5),(null)`)
 	tk.MustExec(`alter table t drop partition p1`)
 	tk.MustQuery("select * from t").Check(testkit.Rows("1", "5", "<nil>"))
-	ctx := tk.Se.(sessionctx.Context)
+	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	c.Assert(tbl.Meta().Partition, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, tbl.Meta().Partition)
 	part := tbl.Meta().Partition
-	c.Assert(part.Type == model.PartitionTypeList, IsTrue)
-	c.Assert(part.Expr, Equals, "`id`")
-	c.Assert(part.Definitions, HasLen, 2)
-	c.Assert(part.Definitions[0].InValues, DeepEquals, [][]string{{"1"}, {"2"}})
-	c.Assert(part.Definitions[0].Name, Equals, model.NewCIStr("p0"))
-	c.Assert(part.Definitions[1].InValues, DeepEquals, [][]string{{"5"}, {"NULL"}})
-	c.Assert(part.Definitions[1].Name, Equals, model.NewCIStr("p3"))
+	require.True(t, part.Type == model.PartitionTypeList)
+	require.Equal(t, "`id`", part.Expr)
+	require.Len(t, part.Definitions, 2)
+	require.Equal(t, [][]string{{"1"}, {"2"}}, part.Definitions[0].InValues)
+	require.Equal(t, model.NewCIStr("p0"), part.Definitions[0].Name)
+	require.Equal(t, [][]string{{"5"}, {"NULL"}}, part.Definitions[1].InValues)
+	require.Equal(t, model.NewCIStr("p3"), part.Definitions[1].Name)
 
 	sql := "alter table t drop partition p10;"
 	tk.MustGetErrCode(sql, tmysql.ErrDropPartitionNonExistent)
@@ -1183,8 +1242,10 @@ func (s *testIntegrationSuite5) TestAlterTableDropPartitionByList(c *C) {
 	tk.MustGetErrCode(sql, tmysql.ErrDropLastPartition)
 }
 
-func (s *testIntegrationSuite5) TestAlterTableDropPartitionByListColumns(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestAlterTableDropPartitionByListColumns(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -1195,22 +1256,22 @@ func (s *testIntegrationSuite5) TestAlterTableDropPartitionByListColumns(c *C) {
 	);`)
 	tk.MustExec(`insert into t values (1,'a'),(3,'a'),(5,'a'),(null,null)`)
 	tk.MustExec(`alter table t drop partition p1`)
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 a", "5 a", "<nil> <nil>"))
-	ctx := tk.Se.(sessionctx.Context)
+	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 a", "5 a", "<nil> <nil>"))
+	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	c.Assert(tbl.Meta().Partition, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, tbl.Meta().Partition)
 	part := tbl.Meta().Partition
-	c.Assert(part.Type == model.PartitionTypeList, IsTrue)
-	c.Assert(part.Expr, Equals, "")
-	c.Assert(part.Columns[0].O, Equals, "id")
-	c.Assert(part.Columns[1].O, Equals, "name")
-	c.Assert(part.Definitions, HasLen, 2)
-	c.Assert(part.Definitions[0].InValues, DeepEquals, [][]string{{"1", `"a"`}, {"2", `"b"`}})
-	c.Assert(part.Definitions[0].Name, Equals, model.NewCIStr("p0"))
-	c.Assert(part.Definitions[1].InValues, DeepEquals, [][]string{{"5", `"a"`}, {"NULL", "NULL"}})
-	c.Assert(part.Definitions[1].Name, Equals, model.NewCIStr("p3"))
+	require.True(t, part.Type == model.PartitionTypeList)
+	require.Equal(t, "", part.Expr)
+	require.Equal(t, "id", part.Columns[0].O)
+	require.Equal(t, "name", part.Columns[1].O)
+	require.Len(t, part.Definitions, 2)
+	require.Equal(t, [][]string{{"1", `"a"`}, {"2", `"b"`}}, part.Definitions[0].InValues)
+	require.Equal(t, model.NewCIStr("p0"), part.Definitions[0].Name)
+	require.Equal(t, [][]string{{"5", `"a"`}, {"NULL", "NULL"}}, part.Definitions[1].InValues)
+	require.Equal(t, model.NewCIStr("p3"), part.Definitions[1].Name)
 
 	sql := "alter table t drop partition p10;"
 	tk.MustGetErrCode(sql, tmysql.ErrDropPartitionNonExistent)
@@ -1220,8 +1281,10 @@ func (s *testIntegrationSuite5) TestAlterTableDropPartitionByListColumns(c *C) {
 	tk.MustGetErrCode(sql, tmysql.ErrDropLastPartition)
 }
 
-func (s *testIntegrationSuite5) TestAlterTableTruncatePartitionByList(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestAlterTableTruncatePartitionByList(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -1231,17 +1294,17 @@ func (s *testIntegrationSuite5) TestAlterTableTruncatePartitionByList(c *C) {
 	    partition p3 values in (5,null)
 	);`)
 	tk.MustExec(`insert into t values (1),(3),(5),(null)`)
-	oldTbl := testGetTableByName(c, tk.Se, "test", "t")
+	oldTbl := tk.GetTableByName("test", "t")
 	tk.MustExec(`alter table t truncate partition p1`)
-	tk.MustQuery("select * from t").Check(testkit.Rows("1", "5", "<nil>"))
-	tbl := testGetTableByName(c, tk.Se, "test", "t")
-	c.Assert(tbl.Meta().Partition, NotNil)
+	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1", "5", "<nil>"))
+	tbl := tk.GetTableByName("test", "t")
+	require.NotNil(t, tbl.Meta().Partition)
 	part := tbl.Meta().Partition
-	c.Assert(part.Type == model.PartitionTypeList, IsTrue)
-	c.Assert(part.Definitions, HasLen, 3)
-	c.Assert(part.Definitions[1].InValues, DeepEquals, [][]string{{"3"}, {"4"}})
-	c.Assert(part.Definitions[1].Name, Equals, model.NewCIStr("p1"))
-	c.Assert(part.Definitions[1].ID == oldTbl.Meta().Partition.Definitions[1].ID, IsFalse)
+	require.True(t, part.Type == model.PartitionTypeList)
+	require.Len(t, part.Definitions, 3)
+	require.Equal(t, [][]string{{"3"}, {"4"}}, part.Definitions[1].InValues)
+	require.Equal(t, model.NewCIStr("p1"), part.Definitions[1].Name)
+	require.False(t, part.Definitions[1].ID == oldTbl.Meta().Partition.Definitions[1].ID)
 
 	sql := "alter table t truncate partition p10;"
 	tk.MustGetErrCode(sql, tmysql.ErrUnknownPartition)
@@ -1251,8 +1314,10 @@ func (s *testIntegrationSuite5) TestAlterTableTruncatePartitionByList(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows())
 }
 
-func (s *testIntegrationSuite5) TestAlterTableTruncatePartitionByListColumns(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestAlterTableTruncatePartitionByListColumns(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -1262,17 +1327,17 @@ func (s *testIntegrationSuite5) TestAlterTableTruncatePartitionByListColumns(c *
 	    partition p3 values in ((5,'a'),(null,null))
 	);`)
 	tk.MustExec(`insert into t values (1,'a'),(3,'a'),(5,'a'),(null,null)`)
-	oldTbl := testGetTableByName(c, tk.Se, "test", "t")
+	oldTbl := tk.GetTableByName("test", "t")
 	tk.MustExec(`alter table t truncate partition p1`)
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 a", "5 a", "<nil> <nil>"))
-	tbl := testGetTableByName(c, tk.Se, "test", "t")
-	c.Assert(tbl.Meta().Partition, NotNil)
+	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 a", "5 a", "<nil> <nil>"))
+	tbl := tk.GetTableByName("test", "t")
+	require.NotNil(t, tbl.Meta().Partition)
 	part := tbl.Meta().Partition
-	c.Assert(part.Type == model.PartitionTypeList, IsTrue)
-	c.Assert(part.Definitions, HasLen, 3)
-	c.Assert(part.Definitions[1].InValues, DeepEquals, [][]string{{"3", `"a"`}, {"4", `"b"`}})
-	c.Assert(part.Definitions[1].Name, Equals, model.NewCIStr("p1"))
-	c.Assert(part.Definitions[1].ID == oldTbl.Meta().Partition.Definitions[1].ID, IsFalse)
+	require.True(t, part.Type == model.PartitionTypeList)
+	require.Len(t, part.Definitions, 3)
+	require.Equal(t, [][]string{{"3", `"a"`}, {"4", `"b"`}}, part.Definitions[1].InValues)
+	require.Equal(t, model.NewCIStr("p1"), part.Definitions[1].Name)
+	require.False(t, part.Definitions[1].ID == oldTbl.Meta().Partition.Definitions[1].ID)
 
 	sql := "alter table t truncate partition p10;"
 	tk.MustGetErrCode(sql, tmysql.ErrUnknownPartition)
@@ -1282,8 +1347,10 @@ func (s *testIntegrationSuite5) TestAlterTableTruncatePartitionByListColumns(c *
 	tk.MustQuery("select * from t").Check(testkit.Rows())
 }
 
-func (s *testIntegrationSuite3) TestCreateTableWithKeyPartition(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestCreateTableWithKeyPartition(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists tm1;")
 	tk.MustExec(`create table tm1
@@ -1296,8 +1363,10 @@ func (s *testIntegrationSuite3) TestCreateTableWithKeyPartition(c *C) {
 	tk.MustExec(`create table tm2 (a char(5), unique key(a(5))) partition by key() partitions 5;`)
 }
 
-func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestAlterTableAddPartition(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists employees;")
 	tk.MustExec(`create table employees (
@@ -1314,26 +1383,26 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {
     partition p5 values less than MAXVALUE
 	);`)
 
-	ctx := tk.Se.(sessionctx.Context)
+	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("employees"))
-	c.Assert(err, IsNil)
-	c.Assert(tbl.Meta().Partition, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, tbl.Meta().Partition)
 	part := tbl.Meta().Partition
-	c.Assert(part.Type, Equals, model.PartitionTypeRange)
+	require.Equal(t, model.PartitionTypeRange, part.Type)
 
-	c.Assert(part.Expr, Equals, "YEAR(`hired`)")
-	c.Assert(part.Definitions, HasLen, 5)
-	c.Assert(part.Definitions[0].LessThan[0], Equals, "1991")
-	c.Assert(part.Definitions[0].Name, Equals, model.NewCIStr("p1"))
-	c.Assert(part.Definitions[1].LessThan[0], Equals, "1996")
-	c.Assert(part.Definitions[1].Name, Equals, model.NewCIStr("p2"))
-	c.Assert(part.Definitions[2].LessThan[0], Equals, "2001")
-	c.Assert(part.Definitions[2].Name, Equals, model.NewCIStr("p3"))
-	c.Assert(part.Definitions[3].LessThan[0], Equals, "2010")
-	c.Assert(part.Definitions[3].Name, Equals, model.NewCIStr("p4"))
-	c.Assert(part.Definitions[4].LessThan[0], Equals, "MAXVALUE")
-	c.Assert(part.Definitions[4].Name, Equals, model.NewCIStr("p5"))
+	require.Equal(t, "YEAR(`hired`)", part.Expr)
+	require.Len(t, part.Definitions, 5)
+	require.Equal(t, "1991", part.Definitions[0].LessThan[0])
+	require.Equal(t, model.NewCIStr("p1"), part.Definitions[0].Name)
+	require.Equal(t, "1996", part.Definitions[1].LessThan[0])
+	require.Equal(t, model.NewCIStr("p2"), part.Definitions[1].Name)
+	require.Equal(t, "2001", part.Definitions[2].LessThan[0])
+	require.Equal(t, model.NewCIStr("p3"), part.Definitions[2].Name)
+	require.Equal(t, "2010", part.Definitions[3].LessThan[0])
+	require.Equal(t, model.NewCIStr("p4"), part.Definitions[3].Name)
+	require.Equal(t, "MAXVALUE", part.Definitions[4].LessThan[0])
+	require.Equal(t, model.NewCIStr("p5"), part.Definitions[4].Name)
 
 	tk.MustExec("drop table if exists table1;")
 	tk.MustExec("create table table1(a int)")
@@ -1442,8 +1511,10 @@ func (s *testIntegrationSuite5) TestAlterTableAddPartition(c *C) {
 	tk.MustGetErrCode(sql, tmysql.ErrWrongTypeColumnValue)
 }
 
-func (s *testIntegrationSuite5) TestAlterTableDropPartition(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestAlterTableDropPartition(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists employees")
 	tk.MustExec(`create table employees (
@@ -1457,19 +1528,19 @@ func (s *testIntegrationSuite5) TestAlterTableDropPartition(c *C) {
 	);`)
 
 	tk.MustExec("alter table employees drop partition p3;")
-	ctx := tk.Se.(sessionctx.Context)
+	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("employees"))
-	c.Assert(err, IsNil)
-	c.Assert(tbl.Meta().GetPartitionInfo(), NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, tbl.Meta().GetPartitionInfo())
 	part := tbl.Meta().Partition
-	c.Assert(part.Type, Equals, model.PartitionTypeRange)
-	c.Assert(part.Expr, Equals, "`hired`")
-	c.Assert(part.Definitions, HasLen, 2)
-	c.Assert(part.Definitions[0].LessThan[0], Equals, "1991")
-	c.Assert(part.Definitions[0].Name, Equals, model.NewCIStr("p1"))
-	c.Assert(part.Definitions[1].LessThan[0], Equals, "1996")
-	c.Assert(part.Definitions[1].Name, Equals, model.NewCIStr("p2"))
+	require.Equal(t, model.PartitionTypeRange, part.Type)
+	require.Equal(t, "`hired`", part.Expr)
+	require.Len(t, part.Definitions, 2)
+	require.Equal(t, "1991", part.Definitions[0].LessThan[0])
+	require.Equal(t, model.NewCIStr("p1"), part.Definitions[0].Name)
+	require.Equal(t, "1996", part.Definitions[1].LessThan[0])
+	require.Equal(t, model.NewCIStr("p2"), part.Definitions[1].Name)
 
 	tk.MustExec("drop table if exists table1;")
 	tk.MustExec("create table table1 (a int);")
@@ -1512,16 +1583,16 @@ func (s *testIntegrationSuite5) TestAlterTableDropPartition(c *C) {
 	tk.MustExec("alter table table4 drop partition p2;")
 	is = domain.GetDomain(ctx).InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("table4"))
-	c.Assert(err, IsNil)
-	c.Assert(tbl.Meta().GetPartitionInfo(), NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, tbl.Meta().GetPartitionInfo())
 	part = tbl.Meta().Partition
-	c.Assert(part.Type, Equals, model.PartitionTypeRange)
-	c.Assert(part.Expr, Equals, "`id`")
-	c.Assert(part.Definitions, HasLen, 2)
-	c.Assert(part.Definitions[0].LessThan[0], Equals, "10")
-	c.Assert(part.Definitions[0].Name, Equals, model.NewCIStr("p1"))
-	c.Assert(part.Definitions[1].LessThan[0], Equals, "MAXVALUE")
-	c.Assert(part.Definitions[1].Name, Equals, model.NewCIStr("p3"))
+	require.Equal(t, model.PartitionTypeRange, part.Type)
+	require.Equal(t, "`id`", part.Expr)
+	require.Len(t, part.Definitions, 2)
+	require.Equal(t, "10", part.Definitions[0].LessThan[0])
+	require.Equal(t, model.NewCIStr("p1"), part.Definitions[0].Name)
+	require.Equal(t, "MAXVALUE", part.Definitions[1].LessThan[0])
+	require.Equal(t, model.NewCIStr("p3"), part.Definitions[1].Name)
 
 	tk.MustExec("drop table if exists tr;")
 	tk.MustExec(` create table tr(
@@ -1582,8 +1653,10 @@ func (s *testIntegrationSuite5) TestAlterTableDropPartition(c *C) {
 	tk.MustGetErrCode("alter table t1 drop partition p2", tmysql.ErrOnlyOnRangeListPartition)
 }
 
-func (s *testIntegrationSuite5) TestMultiPartitionDropAndTruncate(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestMultiPartitionDropAndTruncate(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists employees")
 	tk.MustExec(`create table employees (
@@ -1607,11 +1680,15 @@ func (s *testIntegrationSuite5) TestMultiPartitionDropAndTruncate(c *C) {
 	result.Check(testkit.Rows(`2010`))
 }
 
-func (s *testSerialDBSuite1) TestDropPartitionWithGlobalIndex(c *C) {
+func TestDropPartitionWithGlobalIndex(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableGlobalIndex = true
 	})
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test_global")
 	tk.MustExec(`create table test_global ( a int, b int, c int)
@@ -1619,8 +1696,8 @@ func (s *testSerialDBSuite1) TestDropPartitionWithGlobalIndex(c *C) {
 		partition p1 values less than (10),
 		partition p2 values less than (20)
 	);`)
-	t := testGetTableByName(c, s.ctx, "test", "test_global")
-	pid := t.Meta().Partition.Definitions[1].ID
+	tt := tk.GetTableByName("test", "test_global")
+	pid := tt.Meta().Partition.Definitions[1].ID
 
 	tk.MustExec("Alter Table test_global Add Unique Index idx_b (b);")
 	tk.MustExec("Alter Table test_global Add Unique Index idx_c (c);")
@@ -1630,23 +1707,25 @@ func (s *testSerialDBSuite1) TestDropPartitionWithGlobalIndex(c *C) {
 	result := tk.MustQuery("select * from test_global;")
 	result.Sort().Check(testkit.Rows(`1 1 1`, `2 2 2`))
 
-	t = testGetTableByName(c, s.ctx, "test", "test_global")
-	idxInfo := t.Meta().FindIndexByName("idx_b")
-	c.Assert(idxInfo, NotNil)
-	cnt := checkGlobalIndexCleanUpDone(c, s.ctx, t.Meta(), idxInfo, pid)
-	c.Assert(cnt, Equals, 2)
+	tt = tk.GetTableByName("test", "test_global")
+	idxInfo := tt.Meta().FindIndexByName("idx_b")
+	require.NotNil(t, idxInfo)
+	cnt := checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid)
+	require.Equal(t, 2, cnt)
 
-	idxInfo = t.Meta().FindIndexByName("idx_c")
-	c.Assert(idxInfo, NotNil)
-	cnt = checkGlobalIndexCleanUpDone(c, s.ctx, t.Meta(), idxInfo, pid)
-	c.Assert(cnt, Equals, 2)
+	idxInfo = tt.Meta().FindIndexByName("idx_c")
+	require.NotNil(t, idxInfo)
+	cnt = checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid)
+	require.Equal(t, 2, cnt)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableGlobalIndex = false
 	})
 }
 
-func (s *testSerialDBSuite1) TestAlterTableExchangePartition(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestAlterTableExchangePartition(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists e")
 	tk.MustExec("drop table if exists e2")
@@ -1800,10 +1879,10 @@ func (s *testSerialDBSuite1) TestAlterTableExchangePartition(c *C) {
 	tk.MustGetErrCode("alter table e12 exchange partition p0 with table e14", tmysql.ErrPartitionExchangeDifferentOption)
 
 	// test for tiflash replica
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
 	defer func() {
 		err := failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 
 	tk.MustExec("create table e15 (a int) partition by hash(a) partitions 1;")
@@ -1811,15 +1890,15 @@ func (s *testSerialDBSuite1) TestAlterTableExchangePartition(c *C) {
 	tk.MustExec("alter table e15 set tiflash replica 1;")
 	tk.MustExec("alter table e16 set tiflash replica 2;")
 
-	e15 := testGetTableByName(c, s.ctx, "test", "e15")
+	e15 := tk.GetTableByName("test", "e15")
 	partition := e15.Meta().Partition
 
-	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, partition.Definitions[0].ID, true)
-	c.Assert(err, IsNil)
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, true)
+	require.NoError(t, err)
 
-	e16 := testGetTableByName(c, s.ctx, "test", "e16")
-	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, e16.Meta().ID, true)
-	c.Assert(err, IsNil)
+	e16 := tk.GetTableByName("test", "e16")
+	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), e16.Meta().ID, true)
+	require.NoError(t, err)
 
 	tk.MustGetErrCode("alter table e15 exchange partition p0 with table e16", tmysql.ErrTablesDifferentMetadata)
 	tk.MustExec("drop table e15, e16")
@@ -1829,29 +1908,29 @@ func (s *testSerialDBSuite1) TestAlterTableExchangePartition(c *C) {
 	tk.MustExec("alter table e15 set tiflash replica 1;")
 	tk.MustExec("alter table e16 set tiflash replica 1;")
 
-	e15 = testGetTableByName(c, s.ctx, "test", "e15")
+	e15 = tk.GetTableByName("test", "e15")
 	partition = e15.Meta().Partition
 
-	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, partition.Definitions[0].ID, true)
-	c.Assert(err, IsNil)
+	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, true)
+	require.NoError(t, err)
 
-	e16 = testGetTableByName(c, s.ctx, "test", "e16")
-	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, e16.Meta().ID, true)
-	c.Assert(err, IsNil)
+	e16 = tk.GetTableByName("test", "e16")
+	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), e16.Meta().ID, true)
+	require.NoError(t, err)
 
 	tk.MustExec("alter table e15 exchange partition p0 with table e16")
 
-	e15 = testGetTableByName(c, s.ctx, "test", "e15")
+	e15 = tk.GetTableByName("test", "e15")
 
 	partition = e15.Meta().Partition
 
-	c.Assert(e15.Meta().TiFlashReplica, NotNil)
-	c.Assert(e15.Meta().TiFlashReplica.Available, IsTrue)
-	c.Assert(e15.Meta().TiFlashReplica.AvailablePartitionIDs, DeepEquals, []int64{partition.Definitions[0].ID})
+	require.NotNil(t, e15.Meta().TiFlashReplica)
+	require.True(t, e15.Meta().TiFlashReplica.Available)
+	require.Equal(t, []int64{partition.Definitions[0].ID}, e15.Meta().TiFlashReplica.AvailablePartitionIDs)
 
-	e16 = testGetTableByName(c, s.ctx, "test", "e16")
-	c.Assert(e16.Meta().TiFlashReplica, NotNil)
-	c.Assert(e16.Meta().TiFlashReplica.Available, IsTrue)
+	e16 = tk.GetTableByName("test", "e16")
+	require.NotNil(t, e16.Meta().TiFlashReplica)
+	require.True(t, e16.Meta().TiFlashReplica.Available)
 
 	tk.MustExec("drop table e15, e16")
 	tk.MustExec("create table e15 (a int) partition by hash(a) partitions 1;")
@@ -1864,20 +1943,22 @@ func (s *testSerialDBSuite1) TestAlterTableExchangePartition(c *C) {
 
 	tk.MustExec("alter table e16 set tiflash replica 1 location labels 'a', 'b';")
 
-	e15 = testGetTableByName(c, s.ctx, "test", "e15")
+	e15 = tk.GetTableByName("test", "e15")
 	partition = e15.Meta().Partition
 
-	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, partition.Definitions[0].ID, true)
-	c.Assert(err, IsNil)
+	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, true)
+	require.NoError(t, err)
 
-	e16 = testGetTableByName(c, s.ctx, "test", "e16")
-	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, e16.Meta().ID, true)
-	c.Assert(err, IsNil)
+	e16 = tk.GetTableByName("test", "e16")
+	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), e16.Meta().ID, true)
+	require.NoError(t, err)
 
 	tk.MustExec("alter table e15 exchange partition p0 with table e16")
 }
 
-func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
+func TestExchangePartitionTableCompatiable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	type testCase struct {
 		ptSQL       string
 		ntSQL       string
@@ -1895,37 +1976,37 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 			"create table pt1 (id int not null, fname varchar(3)) partition by hash (id) partitions 4;",
 			"create table nt1 (id int not null, fname varchar(4));",
 			"alter table pt1 exchange partition p0 with table nt1;",
-			ddl.ErrTablesDifferentMetadata,
+			dbterror.ErrTablesDifferentMetadata,
 		},
 		{
 			"create table pt2 (id int not null, salary decimal) partition by hash(id) partitions 4;",
 			"create table nt2 (id int not null, salary decimal(3,2));",
 			"alter table pt2 exchange partition p0 with table nt2;",
-			ddl.ErrTablesDifferentMetadata,
+			dbterror.ErrTablesDifferentMetadata,
 		},
 		{
 			"create table pt3 (id int not null, salary decimal) partition by hash(id) partitions 1;",
 			"create table nt3 (id int not null, salary decimal(10, 1));",
 			"alter table pt3 exchange partition p0 with table nt3",
-			ddl.ErrTablesDifferentMetadata,
+			dbterror.ErrTablesDifferentMetadata,
 		},
 		{
 			"create table pt4 (id int not null) partition by hash(id) partitions 1;",
 			"create table nt4 (id1 int not null);",
 			"alter table pt4 exchange partition p0 with table nt4;",
-			ddl.ErrTablesDifferentMetadata,
+			dbterror.ErrTablesDifferentMetadata,
 		},
 		{
 			"create table pt5 (id int not null, primary key (id)) partition by hash(id) partitions 1;",
 			"create table nt5 (id int not null);",
 			"alter table pt5 exchange partition p0 with table nt5;",
-			ddl.ErrTablesDifferentMetadata,
+			dbterror.ErrTablesDifferentMetadata,
 		},
 		{
 			"create table pt6 (id int not null, salary decimal, index idx (id, salary)) partition by hash(id) partitions 1;",
 			"create table nt6 (id int not null, salary decimal, index idx (salary, id));",
 			"alter table pt6 exchange partition p0 with table nt6;",
-			ddl.ErrTablesDifferentMetadata,
+			dbterror.ErrTablesDifferentMetadata,
 		},
 		{
 			"create table pt7 (id int not null, index idx (id) invisible) partition by hash(id) partitions 1;",
@@ -1937,7 +2018,7 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 			"create table pt8 (id int not null, index idx (id)) partition by hash(id) partitions 1;",
 			"create table nt8 (id int not null, index id_idx (id));",
 			"alter table pt8 exchange partition p0 with table nt8;",
-			ddl.ErrTablesDifferentMetadata,
+			dbterror.ErrTablesDifferentMetadata,
 		},
 		{
 			// foreign key test
@@ -1945,33 +2026,33 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 			"create table pt9 (id int not null primary key auto_increment,t_id int not null) partition by hash(id) partitions 1;",
 			"create table nt9 (id int not null primary key auto_increment, t_id int not null,foreign key fk_id (t_id) references pt5(id));",
 			"alter table pt9 exchange partition p0 with table nt9;",
-			ddl.ErrPartitionExchangeForeignKey,
+			dbterror.ErrPartitionExchangeForeignKey,
 		},
 		{
 			// Generated column (virtual)
 			"create table pt10 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname,' ')) virtual) partition by hash(id) partitions 1;",
 			"create table nt10 (id int not null, lname varchar(30), fname varchar(100));",
 			"alter table pt10 exchange partition p0 with table nt10;",
-			ddl.ErrUnsupportedOnGeneratedColumn,
+			dbterror.ErrUnsupportedOnGeneratedColumn,
 		},
 		{
 			"create table pt11 (id int not null, lname varchar(30), fname varchar(100)) partition by hash(id) partitions 1;",
 			"create table nt11 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual);",
 			"alter table pt11 exchange partition p0 with table nt11;",
-			ddl.ErrUnsupportedOnGeneratedColumn,
+			dbterror.ErrUnsupportedOnGeneratedColumn,
 		},
 		{
 
 			"create table pt12 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname,' ')) stored) partition by hash(id) partitions 1;",
 			"create table nt12 (id int not null, lname varchar(30), fname varchar(100));",
 			"alter table pt12 exchange partition p0 with table nt12;",
-			ddl.ErrTablesDifferentMetadata,
+			dbterror.ErrTablesDifferentMetadata,
 		},
 		{
 			"create table pt13 (id int not null, lname varchar(30), fname varchar(100)) partition by hash(id) partitions 1;",
 			"create table nt13 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) stored);",
 			"alter table pt13 exchange partition p0 with table nt13;",
-			ddl.ErrTablesDifferentMetadata,
+			dbterror.ErrTablesDifferentMetadata,
 		},
 		{
 			"create table pt14 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual) partition by hash(id) partitions 1;",
@@ -1984,14 +2065,14 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 			"create table pt15 (id int not null, unique index uk_id (id)) partition by hash(id) partitions 1;",
 			"create table nt15 (id int not null, index uk_id (id));",
 			"alter table pt15 exchange partition p0 with table nt15",
-			ddl.ErrTablesDifferentMetadata,
+			dbterror.ErrTablesDifferentMetadata,
 		},
 		{
 			// auto_increment
 			"create table pt16 (id int not null primary key auto_increment) partition by hash(id) partitions 1;",
 			"create table nt16 (id int not null primary key);",
 			"alter table pt16 exchange partition p0 with table nt16;",
-			ddl.ErrTablesDifferentMetadata,
+			dbterror.ErrTablesDifferentMetadata,
 		},
 		{
 			// default
@@ -2005,39 +2086,39 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 			"create table pt18 (id int not null) partition by hash(id) partitions 1;",
 			"create view nt18 as select id from nt17;",
 			"alter table pt18 exchange partition p0 with table nt18",
-			ddl.ErrCheckNoSuchTable,
+			dbterror.ErrCheckNoSuchTable,
 		},
 		{
 			"create table pt19 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) stored) partition by hash(id) partitions 1;",
 			"create table nt19 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual);",
 			"alter table pt19 exchange partition p0 with table nt19;",
-			ddl.ErrUnsupportedOnGeneratedColumn,
+			dbterror.ErrUnsupportedOnGeneratedColumn,
 		},
 		{
 			"create table pt20 (id int not null) partition by hash(id) partitions 1;",
 			"create table nt20 (id int default null);",
 			"alter table pt20 exchange partition p0 with table nt20;",
-			ddl.ErrTablesDifferentMetadata,
+			dbterror.ErrTablesDifferentMetadata,
 		},
 		{
 			// unsigned
 			"create table pt21 (id int unsigned) partition by hash(id) partitions 1;",
 			"create table nt21 (id int);",
 			"alter table pt21 exchange partition p0 with table nt21;",
-			ddl.ErrTablesDifferentMetadata,
+			dbterror.ErrTablesDifferentMetadata,
 		},
 		{
 			// zerofill
 			"create table pt22 (id int) partition by hash(id) partitions 1;",
 			"create table nt22 (id int zerofill);",
 			"alter table pt22 exchange partition p0 with table nt22;",
-			ddl.ErrTablesDifferentMetadata,
+			dbterror.ErrTablesDifferentMetadata,
 		},
 		{
 			"create table pt23 (id int, lname varchar(10) charset binary) partition by hash(id) partitions 1;",
 			"create table nt23 (id int, lname varchar(10));",
 			"alter table pt23 exchange partition p0 with table nt23;",
-			ddl.ErrTablesDifferentMetadata,
+			dbterror.ErrTablesDifferentMetadata,
 		},
 		{
 			"create table pt25 (id int, a datetime on update current_timestamp) partition by hash(id) partitions 1;",
@@ -2049,42 +2130,51 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 			"create table pt26 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(lname, ' ')) virtual) partition by hash(id) partitions 1;",
 			"create table nt26 (id int not null, lname varchar(30), fname varchar(100) generated always as (concat(id, ' ')) virtual);",
 			"alter table pt26 exchange partition p0 with table nt26;",
-			ddl.ErrTablesDifferentMetadata,
+			dbterror.ErrTablesDifferentMetadata,
 		},
 		{
 			"create table pt27 (a int key, b int, index(a)) partition by hash(a) partitions 1;",
 			"create table nt27 (a int not null, b int, index(a));",
 			"alter table pt27 exchange partition p0 with table nt27;",
-			ddl.ErrTablesDifferentMetadata,
+			dbterror.ErrTablesDifferentMetadata,
 		},
 	}
 
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	err := tk.Se.GetSessionVars().SetSystemVar("tidb_enable_exchange_partition", "1")
-	c.Assert(err, IsNil)
-	for i, t := range cases {
-		tk.MustExec(t.ptSQL)
-		tk.MustExec(t.ntSQL)
-		if t.err != nil {
-			_, err := tk.Exec(t.exchangeSQL)
-			c.Assert(terror.ErrorEqual(err, t.err), IsTrue, Commentf(
+	err := tk.Session().GetSessionVars().SetSystemVar("tidb_enable_exchange_partition", "1")
+	require.NoError(t, err)
+	for i, tt := range cases {
+		tk.MustExec(tt.ptSQL)
+		tk.MustExec(tt.ntSQL)
+		if tt.err != nil {
+			_, err := tk.Exec(tt.exchangeSQL)
+			require.Truef(t, terror.ErrorEqual(err, tt.err),
 				"case %d fail, sql = `%s`\nexpected error = `%v`\n  actual error = `%v`",
-				i, t.exchangeSQL, t.err, err,
-			))
+				i, tt.exchangeSQL, tt.err, err,
+			)
 		} else {
-			tk.MustExec(t.exchangeSQL)
+			tk.MustExec(tt.exchangeSQL)
 		}
 	}
-	err = tk.Se.GetSessionVars().SetSystemVar("tidb_enable_exchange_partition", "0")
-	c.Assert(err, IsNil)
+	err = tk.Session().GetSessionVars().SetSystemVar("tidb_enable_exchange_partition", "0")
+	require.NoError(t, err)
 }
 
-func (s *testSerialDBSuite1) TestExchangePartitionExpressIndex(c *C) {
+func TestExchangePartitionExpressIndex(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
+		// Test for table lock.
+		conf.EnableTableLock = true
+		conf.Log.SlowThreshold = 10000
+		conf.TiKVClient.AsyncCommit.SafeWindow = 0
+		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
 		conf.Experimental.AllowsExpressionIndex = true
 	})
-	tk := testkit.NewTestKit(c, s.store)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
 	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
@@ -2116,8 +2206,10 @@ func (s *testSerialDBSuite1) TestExchangePartitionExpressIndex(c *C) {
 
 }
 
-func (s *testIntegrationSuite4) TestAddPartitionTooManyPartitions(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestAddPartitionTooManyPartitions(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	count := ddl.PartitionCountLimit
 	tk.MustExec("drop table if exists p1;")
@@ -2148,33 +2240,59 @@ func (s *testIntegrationSuite4) TestAddPartitionTooManyPartitions(c *C) {
 	tk.MustGetErrCode(sql3, tmysql.ErrTooManyPartitions)
 }
 
-func checkPartitionDelRangeDone(c *C, s *testIntegrationSuite, partitionPrefix kv.Key) bool {
-	hasOldPartitionData := true
-	for i := 0; i < waitForCleanDataRound; i++ {
-		err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
-			it, err := txn.Iter(partitionPrefix, nil)
-			if err != nil {
-				return err
-			}
-			if !it.Valid() {
-				hasOldPartitionData = false
-			} else {
-				hasOldPartitionData = it.Key().HasPrefix(partitionPrefix)
-			}
-			it.Close()
-			return nil
-		})
-		c.Assert(err, IsNil)
-		if !hasOldPartitionData {
-			break
+func waitGCDeleteRangeDone(t *testing.T, tk *testkit.TestKit, physicalID int64) bool {
+	var i int
+	for i = 0; i < waitForCleanDataRound; i++ {
+		rs, err := tk.Exec("select count(1) from mysql.gc_delete_range_done where element_id = ?", physicalID)
+		require.NoError(t, err)
+		rows, err := session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
+		require.NoError(t, err)
+		val := rows[0][0]
+		if val != "0" {
+			return true
 		}
 		time.Sleep(waitForCleanDataInterval)
 	}
-	return hasOldPartitionData
+
+	return false
 }
 
-func (s *testIntegrationSuite4) TestTruncatePartitionAndDropTable(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func checkPartitionDelRangeDone(t *testing.T, tk *testkit.TestKit, store kv.Storage, oldPID int64) {
+	startTime := time.Now()
+	partitionPrefix := tablecodec.EncodeTablePrefix(oldPID)
+
+	done := waitGCDeleteRangeDone(t, tk, oldPID)
+	if !done {
+		// Takes too long, give up the check.
+		logutil.BgLogger().Info("truncate partition table",
+			zap.Int64("id", oldPID),
+			zap.Stringer("duration", time.Since(startTime)),
+		)
+		return
+	}
+
+	hasOldPartitionData := true
+	err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		it, err := txn.Iter(partitionPrefix, nil)
+		if err != nil {
+			return err
+		}
+		if !it.Valid() {
+			hasOldPartitionData = false
+		} else {
+			hasOldPartitionData = it.Key().HasPrefix(partitionPrefix)
+		}
+		it.Close()
+		return nil
+	})
+	require.NoError(t, err)
+	require.False(t, hasOldPartitionData)
+}
+
+func TestTruncatePartitionAndDropTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	// Test truncate common table.
 	tk.MustExec("drop table if exists t1;")
@@ -2226,16 +2344,14 @@ func (s *testIntegrationSuite4) TestTruncatePartitionAndDropTable(c *C) {
 	(10, 'lava lamp', '1998-12-25');`)
 	result = tk.MustQuery("select count(*) from t3;")
 	result.Check(testkit.Rows("10"))
-	ctx := tk.Se.(sessionctx.Context)
+	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	oldTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	// Only one partition id test is taken here.
-	oldPID := oldTblInfo.Meta().Partition.Definitions[0].ID
 	tk.MustExec("truncate table t3;")
-	partitionPrefix := tablecodec.EncodeTablePrefix(oldPID)
-	hasOldPartitionData := checkPartitionDelRangeDone(c, s.testIntegrationSuite, partitionPrefix)
-	c.Assert(hasOldPartitionData, IsFalse)
+	oldPID := oldTblInfo.Meta().Partition.Definitions[0].ID
+	checkPartitionDelRangeDone(t, tk, store, oldPID)
 
 	// Test drop table partition.
 	tk.MustExec("drop table if exists t4;")
@@ -2266,13 +2382,11 @@ func (s *testIntegrationSuite4) TestTruncatePartitionAndDropTable(c *C) {
 	result.Check(testkit.Rows("10"))
 	is = domain.GetDomain(ctx).InfoSchema()
 	oldTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	// Only one partition id test is taken here.
 	oldPID = oldTblInfo.Meta().Partition.Definitions[1].ID
 	tk.MustExec("drop table t4;")
-	partitionPrefix = tablecodec.EncodeTablePrefix(oldPID)
-	hasOldPartitionData = checkPartitionDelRangeDone(c, s.testIntegrationSuite, partitionPrefix)
-	c.Assert(hasOldPartitionData, IsFalse)
+	checkPartitionDelRangeDone(t, tk, store, oldPID)
 	tk.MustGetErrCode("select * from t4;", tmysql.ErrNoSuchTable)
 
 	// Test truncate table partition reassigns new partitionIDs.
@@ -2292,15 +2406,15 @@ func (s *testIntegrationSuite4) TestTruncatePartitionAndDropTable(c *C) {
    	);`)
 	is = domain.GetDomain(ctx).InfoSchema()
 	oldTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t5"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	oldPID = oldTblInfo.Meta().Partition.Definitions[0].ID
 
 	tk.MustExec("truncate table t5;")
 	is = domain.GetDomain(ctx).InfoSchema()
 	newTblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t5"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	newPID := newTblInfo.Meta().Partition.Definitions[0].ID
-	c.Assert(oldPID != newPID, IsTrue)
+	require.True(t, oldPID != newPID)
 
 	tk.MustExec("set @@session.tidb_enable_table_partition = 1;")
 	tk.MustExec("drop table if exists clients;")
@@ -2314,22 +2428,24 @@ func (s *testIntegrationSuite4) TestTruncatePartitionAndDropTable(c *C) {
 	partitions 12;`)
 	is = domain.GetDomain(ctx).InfoSchema()
 	oldTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("clients"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	oldDefs := oldTblInfo.Meta().Partition.Definitions
 
 	// Test truncate `hash partitioned table` reassigns new partitionIDs.
 	tk.MustExec("truncate table clients;")
 	is = domain.GetDomain(ctx).InfoSchema()
 	newTblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("clients"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	newDefs := newTblInfo.Meta().Partition.Definitions
 	for i := 0; i < len(oldDefs); i++ {
-		c.Assert(oldDefs[i].ID != newDefs[i].ID, IsTrue)
+		require.True(t, oldDefs[i].ID != newDefs[i].ID)
 	}
 }
 
-func (s *testIntegrationSuite5) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestPartitionUniqueKeyNeedAllFieldsInPf(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists part1;")
 	tk.MustExec(`create table part1 (
@@ -2580,24 +2696,28 @@ func (s *testIntegrationSuite5) TestPartitionUniqueKeyNeedAllFieldsInPf(c *C) {
 	tk.MustExec(sql13)
 }
 
-func (s *testIntegrationSuite2) TestPartitionDropPrimaryKey(c *C) {
+func TestPartitionDropPrimaryKey(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	idxName := "primary"
 	addIdxSQL := "alter table partition_drop_idx add primary key idx1 (c1);"
 	dropIdxSQL := "alter table partition_drop_idx drop primary key;"
-	testPartitionDropIndex(c, s.store, s.lease, idxName, addIdxSQL, dropIdxSQL)
+	testPartitionDropIndex(t, store, 50*time.Millisecond, idxName, addIdxSQL, dropIdxSQL)
 }
 
-func (s *testIntegrationSuite3) TestPartitionDropIndex(c *C) {
+func TestPartitionDropIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	idxName := "idx1"
 	addIdxSQL := "alter table partition_drop_idx add index idx1 (c1);"
 	dropIdxSQL := "alter table partition_drop_idx drop index idx1;"
-	testPartitionDropIndex(c, s.store, s.lease, idxName, addIdxSQL, dropIdxSQL)
+	testPartitionDropIndex(t, store, 50*time.Millisecond, idxName, addIdxSQL, dropIdxSQL)
 }
 
-func testPartitionDropIndex(c *C, store kv.Storage, lease time.Duration, idxName, addIdxSQL, dropIdxSQL string) {
-	tk := testkit.NewTestKit(c, store)
+func testPartitionDropIndex(t *testing.T, store kv.Storage, lease time.Duration, idxName, addIdxSQL, dropIdxSQL string) {
+	tk := testkit.NewTestKit(t, store)
 	done := make(chan error, 1)
-	tk.MustExec("use test_db")
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists partition_drop_idx;")
 	tk.MustExec(`create table partition_drop_idx (
 		c1 int, c2 int, c3 int
@@ -2618,31 +2738,22 @@ func testPartitionDropIndex(c *C, store kv.Storage, lease time.Duration, idxName
 	}
 	tk.MustExec(addIdxSQL)
 
-	ctx := tk.Se.(sessionctx.Context)
-	is := domain.GetDomain(ctx).InfoSchema()
-	t, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("partition_drop_idx"))
-	c.Assert(err, IsNil)
+	ctx := tk.Session()
+	indexID := testGetIndexID(t, ctx, "test", "partition_drop_idx", idxName)
 
-	var idx1 table.Index
-	for _, pidx := range t.Indices() {
-		if pidx.Meta().Name.L == idxName {
-			idx1 = pidx
-			break
-		}
-	}
-	c.Assert(idx1, NotNil)
-
-	testutil.SessionExecInGoroutine(c, store, dropIdxSQL, done)
+	jobIDExt, reset := setupJobIDExtCallback(ctx)
+	defer reset()
+	testutil.ExecMultiSQLInGoroutine(store, "test", []string{dropIdxSQL}, done)
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
 LOOP:
 	for {
 		select {
-		case err = <-done:
+		case err := <-done:
 			if err == nil {
 				break LOOP
 			}
-			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
+			require.NoError(t, err)
 		case <-ticker.C:
 			step := 10
 			rand.Seed(time.Now().Unix())
@@ -2654,42 +2765,41 @@ LOOP:
 			num += step
 		}
 	}
-
-	is = domain.GetDomain(ctx).InfoSchema()
-	t, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("partition_drop_idx"))
-	c.Assert(err, IsNil)
-	// Only one partition id test is taken here.
-	pid := t.Meta().Partition.Definitions[0].ID
-	var idxn table.Index
-	t.Indices()
-	for _, idx := range t.Indices() {
-		if idx.Meta().Name.L == idxName {
-			idxn = idx
-			break
-		}
-	}
-	c.Assert(idxn, IsNil)
-	idx := tables.NewIndex(pid, t.Meta(), idx1.Meta())
-	checkDelRangeDone(c, ctx, idx)
+	checkDelRangeAdded(tk, jobIDExt.jobID, indexID)
 	tk.MustExec("drop table partition_drop_idx;")
 }
 
-func (s *testIntegrationSuite2) TestPartitionCancelAddPrimaryKey(c *C) {
+func TestPartitionCancelAddPrimaryKey(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
 	idxName := "primary"
 	addIdxSQL := "alter table t1 add primary key c3_index (c1);"
-	testPartitionCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL)
+	testPartitionCancelAddIndex(t, store, dom.DDL(), 50*time.Millisecond, idxName, addIdxSQL)
 }
 
-func (s *testIntegrationSuite4) TestPartitionCancelAddIndex(c *C) {
-	idxName := "idx1"
+func TestPartitionCancelAddIndex(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	idxName := "c3_index"
 	addIdxSQL := "create unique index c3_index on t1 (c1)"
-	testPartitionCancelAddIndex(c, s.store, s.dom.DDL(), s.lease, idxName, addIdxSQL)
+	testPartitionCancelAddIndex(t, store, dom.DDL(), 50*time.Millisecond, idxName, addIdxSQL)
 }
 
-func testPartitionCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.Duration, idxName, addIdxSQL string) {
-	tk := testkit.NewTestKit(c, store)
+func batchInsertT(tk *testkit.TestKit, tbl string, start, end int) {
+	dml := fmt.Sprintf("insert into %s values", tbl)
+	for i := start; i < end; i++ {
+		dml += fmt.Sprintf("(%d, %d, %d)", i, i, i)
+		if i != end-1 {
+			dml += ","
+		}
+	}
+	tk.MustExec(dml)
+}
 
-	tk.MustExec("use test_db")
+func testPartitionCancelAddIndex(t *testing.T, store kv.Storage, d ddl.DDL, lease time.Duration, idxName, addIdxSQL string) {
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec(`create table t1 (
 		c1 int, c2 int, c3 int
@@ -2704,7 +2814,7 @@ func testPartitionCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.D
 	count := defaultBatchSize * 32
 	// add some rows
 	for i := 0; i < count; i += defaultBatchSize {
-		batchInsert(tk, "t1", i, i+defaultBatchSize)
+		batchInsertT(tk, "t1", i, i+defaultBatchSize)
 	}
 
 	var checkErr error
@@ -2713,14 +2823,14 @@ func testPartitionCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.D
 	originBatchSize := tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
 	// Set batch size to lower try to slow down add-index reorganization, This if for hook to cancel this ddl job.
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 32")
-	ctx := tk.Se.(sessionctx.Context)
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", originBatchSize.Rows()[0][0]))
-	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(c, store, ctx, hook, idxName)
+	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExportedT(tk, store, hook, idxName)
 	originHook := d.GetHook()
-	defer d.(ddl.DDLForTest).SetHook(originHook)
-	d.(ddl.DDLForTest).SetHook(hook)
+	defer d.SetHook(originHook)
+	jobIDExt := wrapJobIDExtCallback(hook)
+	d.SetHook(jobIDExt)
 	done := make(chan error, 1)
-	go backgroundExec(store, addIdxSQL, done)
+	go backgroundExecT(store, addIdxSQL, done)
 
 	times := 0
 	ticker := time.NewTicker(lease / 2)
@@ -2729,9 +2839,8 @@ LOOP:
 	for {
 		select {
 		case err := <-done:
-			c.Assert(checkErr, IsNil)
-			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+			require.Nil(t, checkErr)
+			require.EqualError(t, err, "[ddl:8214]Cancelled DDL job")
 			break LOOP
 		case <-ticker.C:
 			if times >= 10 {
@@ -2749,21 +2858,11 @@ LOOP:
 			times++
 		}
 	}
-
-	t := testGetTableByName(c, ctx, "test_db", "t1")
-	// Only one partition id test is taken here.
-	pid := t.Meta().Partition.Definitions[0].ID
-	for _, tidx := range t.Indices() {
-		c.Assert(strings.EqualFold(tidx.Meta().Name.L, "c3_index"), IsFalse)
-	}
-
-	idx := tables.NewIndex(pid, t.Meta(), c3IdxInfo)
-	checkDelRangeDone(c, ctx, idx)
-
+	checkDelRangeAdded(tk, jobIDExt.jobID, c3IdxInfo.ID)
 	tk.MustExec("drop table t1")
 }
 
-func backgroundExecOnJobUpdatedExported(c *C, store kv.Storage, ctx sessionctx.Context, hook *ddl.TestDDLCallback, idxName string) (
+func backgroundExecOnJobUpdatedExportedT(tk *testkit.TestKit, store kv.Storage, hook *ddl.TestDDLCallback, idxName string) (
 	func(*model.Job), *model.IndexInfo, error) {
 	var checkErr error
 	first := true
@@ -2775,16 +2874,16 @@ func backgroundExecOnJobUpdatedExported(c *C, store kv.Storage, ctx sessionctx.C
 		// When the job satisfies this case of addIndexNotFirstReorg, the worker will start to backfill indexes.
 		if !addIndexNotFirstReorg {
 			// Get the index's meta.
-			if c3IdxInfo != nil {
+			if c3IdxInfo.ID != 0 {
 				return
 			}
-			t := testGetTableByName(c, ctx, "test_db", "t1")
+			t := tk.GetTableByName("test", "t1")
 			for _, index := range t.Indices() {
 				if !tables.IsIndexWritable(index) {
 					continue
 				}
 				if index.Meta().Name.L == idxName {
-					c3IdxInfo = index.Meta()
+					*c3IdxInfo = *index.Meta()
 				}
 			}
 			return
@@ -2833,17 +2932,21 @@ func backgroundExecOnJobUpdatedExported(c *C, store kv.Storage, ctx sessionctx.C
 	return hook.OnJobUpdatedExported, c3IdxInfo, checkErr
 }
 
-func (s *testIntegrationSuite5) TestPartitionAddPrimaryKey(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	testPartitionAddIndexOrPK(c, tk, "primary key")
+func TestPartitionAddPrimaryKey(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	testPartitionAddIndexOrPK(t, tk, "primary key")
 }
 
-func (s *testIntegrationSuite1) TestPartitionAddIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	testPartitionAddIndexOrPK(c, tk, "index")
+func TestPartitionAddIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	testPartitionAddIndexOrPK(t, tk, "index")
 }
 
-func testPartitionAddIndexOrPK(c *C, tk *testkit.TestKit, key string) {
+func testPartitionAddIndexOrPK(t *testing.T, tk *testkit.TestKit, key string) {
 	tk.MustExec("use test")
 	tk.MustExec(`create table partition_add_idx (
 	id int not null,
@@ -2857,7 +2960,7 @@ func testPartitionAddIndexOrPK(c *C, tk *testkit.TestKit, key string) {
 	partition p6 values less than (2012),
 	partition p7 values less than (2018)
 	);`)
-	testPartitionAddIndex(tk, c, key)
+	testPartitionAddIndex(tk, t, key)
 
 	// test hash partition table.
 	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
@@ -2866,7 +2969,7 @@ func testPartitionAddIndexOrPK(c *C, tk *testkit.TestKit, key string) {
 	id int not null,
 	hired date not null
 	) partition by hash( year(hired) ) partitions 4;`)
-	testPartitionAddIndex(tk, c, key)
+	testPartitionAddIndex(tk, t, key)
 
 	// Test hash partition for pr 10475.
 	tk.MustExec("drop table if exists t1")
@@ -2885,7 +2988,7 @@ func testPartitionAddIndexOrPK(c *C, tk *testkit.TestKit, key string) {
 	tk.MustExec("admin check table t1;")
 }
 
-func testPartitionAddIndex(tk *testkit.TestKit, c *C, key string) {
+func testPartitionAddIndex(tk *testkit.TestKit, t *testing.T, key string) {
 	idxName1 := "idx1"
 
 	f := func(end int, isPK bool) string {
@@ -2914,18 +3017,18 @@ func testPartitionAddIndex(tk *testkit.TestKit, c *C, key string) {
 
 	tk.MustExec(fmt.Sprintf("alter table partition_add_idx add %s idx1 (hired)", key))
 	tk.MustExec("alter table partition_add_idx add index idx2 (id, hired)")
-	ctx := tk.Se.(sessionctx.Context)
+	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
-	t, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("partition_add_idx"))
-	c.Assert(err, IsNil)
+	tt, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("partition_add_idx"))
+	require.NoError(t, err)
 	var idx1 table.Index
-	for _, idx := range t.Indices() {
+	for _, idx := range tt.Indices() {
 		if idx.Meta().Name.L == idxName1 {
 			idx1 = idx
 			break
 		}
 	}
-	c.Assert(idx1, NotNil)
+	require.NotNil(t, idx1)
 
 	tk.MustQuery(fmt.Sprintf("select count(hired) from partition_add_idx use index(%s)", idxName1)).Check(testkit.Rows("500"))
 	tk.MustQuery("select count(id) from partition_add_idx use index(idx2)").Check(testkit.Rows("500"))
@@ -2934,8 +3037,10 @@ func testPartitionAddIndex(tk *testkit.TestKit, c *C, key string) {
 	tk.MustExec("drop table partition_add_idx")
 }
 
-func (s *testIntegrationSuite5) TestDropSchemaWithPartitionTable(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestDropSchemaWithPartitionTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test_db_with_partition")
 	tk.MustExec("create database test_db_with_partition")
 	tk.MustExec("use test_db_with_partition")
@@ -2945,67 +3050,81 @@ func (s *testIntegrationSuite5) TestDropSchemaWithPartitionTable(c *C) {
 		partition p1 values less than (20)
 		);`)
 	tk.MustExec("insert into t_part values (1),(2),(11),(12);")
-	ctx := s.ctx
-	tbl := testGetTableByName(c, ctx, "test_db_with_partition", "t_part")
+	ctx := tk.Session()
+	tbl := tk.GetTableByName("test_db_with_partition", "t_part")
 
 	// check records num before drop database.
-	recordsNum := getPartitionTableRecordsNum(c, ctx, tbl.(table.PartitionedTable))
-	c.Assert(recordsNum, Equals, 4)
+	recordsNum := getPartitionTableRecordsNum(t, ctx, tbl.(table.PartitionedTable))
+	require.Equal(t, 4, recordsNum)
 
 	tk.MustExec("drop database if exists test_db_with_partition")
 
 	// check job args.
 	rs, err := tk.Exec("admin show ddl jobs")
-	c.Assert(err, IsNil)
-	rows, err := session.GetRows4Test(context.Background(), tk.Se, rs)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+	rows, err := session.GetRows4Test(context.Background(), tk.Session(), rs)
+	require.NoError(t, err)
 	row := rows[0]
-	c.Assert(row.GetString(3), Equals, "drop schema")
+	require.Equal(t, "drop schema", row.GetString(3))
 	jobID := row.GetInt64(0)
-	err = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		historyJob, err := t.GetHistoryDDLJob(jobID)
-		c.Assert(err, IsNil)
-		var tableIDs []int64
+
+	var tableIDs []int64
+	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		tt := meta.NewMeta(txn)
+		historyJob, err := tt.GetHistoryDDLJob(jobID)
+		require.NoError(t, err)
 		err = historyJob.DecodeArgs(&tableIDs)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		// There is 2 partitions.
-		c.Assert(len(tableIDs), Equals, 3)
+		require.Equal(t, 3, len(tableIDs))
 		return nil
 	})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+
+	startTime := time.Now()
+	done := waitGCDeleteRangeDone(t, tk, tableIDs[2])
+	if !done {
+		// Takes too long, give up the check.
+		logutil.BgLogger().Info("drop schema",
+			zap.Int64("id", tableIDs[0]),
+			zap.Stringer("duration", time.Since(startTime)),
+		)
+		return
+	}
 
 	// check records num after drop database.
 	for i := 0; i < waitForCleanDataRound; i++ {
-		recordsNum = getPartitionTableRecordsNum(c, ctx, tbl.(table.PartitionedTable))
+		recordsNum = getPartitionTableRecordsNum(t, ctx, tbl.(table.PartitionedTable))
 		if recordsNum != 0 {
 			time.Sleep(waitForCleanDataInterval)
 		} else {
 			break
 		}
 	}
-	c.Assert(recordsNum, Equals, 0)
+	require.Equal(t, 0, recordsNum)
 }
 
-func getPartitionTableRecordsNum(c *C, ctx sessionctx.Context, tbl table.PartitionedTable) int {
+func getPartitionTableRecordsNum(t *testing.T, ctx sessionctx.Context, tbl table.PartitionedTable) int {
 	num := 0
 	info := tbl.Meta().GetPartitionInfo()
 	for _, def := range info.Definitions {
 		pid := def.ID
 		partition := tbl.GetPartition(pid)
-		c.Assert(ctx.NewTxn(context.Background()), IsNil)
+		require.Nil(t, ctx.NewTxn(context.Background()))
 		err := tables.IterRecords(partition, ctx, partition.Cols(),
 			func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 				num++
 				return true, nil
 			})
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 	return num
 }
 
-func (s *testIntegrationSuite3) TestPartitionErrorCode(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestPartitionErrorCode(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	// add partition
 	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	tk.MustExec("drop database if exists test_db_with_partition")
@@ -3023,10 +3142,10 @@ func (s *testIntegrationSuite3) TestPartitionErrorCode(c *C) {
 	partition by hash(store_id)
 	partitions 4;`)
 	_, err := tk.Exec("alter table employees add partition partitions 8;")
-	c.Assert(ddl.ErrUnsupportedAddPartition.Equal(err), IsTrue)
+	require.True(t, dbterror.ErrUnsupportedAddPartition.Equal(err))
 
 	_, err = tk.Exec("alter table employees add partition (partition p5 values less than (42));")
-	c.Assert(ddl.ErrUnsupportedAddPartition.Equal(err), IsTrue)
+	require.True(t, dbterror.ErrUnsupportedAddPartition.Equal(err))
 
 	// coalesce partition
 	tk.MustExec(`create table clients (
@@ -3038,7 +3157,7 @@ func (s *testIntegrationSuite3) TestPartitionErrorCode(c *C) {
 	partition by hash( month(signed) )
 	partitions 12;`)
 	_, err = tk.Exec("alter table clients coalesce partition 4;")
-	c.Assert(ddl.ErrUnsupportedCoalescePartition.Equal(err), IsTrue)
+	require.True(t, dbterror.ErrUnsupportedCoalescePartition.Equal(err))
 
 	tk.MustExec(`create table t_part (a int key)
 		partition by range(a) (
@@ -3046,7 +3165,7 @@ func (s *testIntegrationSuite3) TestPartitionErrorCode(c *C) {
 		partition p1 values less than (20)
 		);`)
 	_, err = tk.Exec("alter table t_part coalesce partition 4;")
-	c.Assert(ddl.ErrCoalesceOnlyOnHashPartition.Equal(err), IsTrue)
+	require.True(t, dbterror.ErrCoalesceOnlyOnHashPartition.Equal(err))
 
 	tk.MustGetErrCode(`alter table t_part reorganize partition p0, p1 into (
 			partition p0 values less than (1980));`, tmysql.ErrUnsupportedDDLOperation)
@@ -3058,7 +3177,7 @@ func (s *testIntegrationSuite3) TestPartitionErrorCode(c *C) {
 	tk.MustGetErrCode("alter table t_part repair partition p1;", tmysql.ErrUnsupportedDDLOperation)
 
 	// Reduce the impact on DML when executing partition DDL
-	tk1 := testkit.NewTestKit(c, s.store)
+	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	tk1.MustExec("drop table if exists t;")
 	tk1.MustExec(`create table t(id int primary key)
@@ -3066,16 +3185,18 @@ func (s *testIntegrationSuite3) TestPartitionErrorCode(c *C) {
 	tk1.MustExec("begin")
 	tk1.MustExec("insert into t values(1);")
 
-	tk2 := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 	tk2.MustExec("alter table t truncate partition p0;")
 
 	_, err = tk1.Exec("commit")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *testIntegrationSuite5) TestConstAndTimezoneDepent(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestConstAndTimezoneDepent(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	// add partition
 	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	tk.MustExec("drop database if exists test_db_with_partition_const")
@@ -3162,8 +3283,10 @@ func (s *testIntegrationSuite5) TestConstAndTimezoneDepent(c *C) {
 	tk.MustGetErrCode(sql14, tmysql.ErrWrongExprInPartitionFunc)
 }
 
-func (s *testIntegrationSuite5) TestConstAndTimezoneDepent2(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestConstAndTimezoneDepent2(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	// add partition
 	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	tk.MustExec("drop database if exists test_db_with_partition_const")
@@ -3192,8 +3315,10 @@ func (s *testIntegrationSuite5) TestConstAndTimezoneDepent2(c *C) {
 	);`)
 }
 
-func (s *testIntegrationSuite3) TestUnsupportedPartitionManagementDDLs(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestUnsupportedPartitionManagementDDLs(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists test_1465;")
 	tk.MustExec(`
@@ -3206,11 +3331,22 @@ func (s *testIntegrationSuite3) TestUnsupportedPartitionManagementDDLs(c *C) {
 	`)
 
 	_, err := tk.Exec("alter table test_1465 partition by hash(a)")
-	c.Assert(err, ErrorMatches, ".*alter table partition is unsupported")
+	require.Regexp(t, ".*alter table partition is unsupported", err.Error())
 }
 
-func (s *testSerialDBSuite1) TestCommitWhenSchemaChange(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestCommitWhenSchemaChange(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		// Test for table lock.
+		conf.EnableTableLock = true
+		conf.Log.SlowThreshold = 10000
+		conf.Experimental.AllowsExpressionIndex = true
+	})
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, time.Second)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_max_delta_schema_count= 4096")
 	tk.MustExec("use test")
 	tk.MustExec(`create table schema_change (a int, b timestamp)
 			partition by range(a) (
@@ -3218,7 +3354,7 @@ func (s *testSerialDBSuite1) TestCommitWhenSchemaChange(c *C) {
 			    partition p1 values less than (7),
 			    partition p2 values less than (11)
 			)`)
-	tk2 := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 	tk2.MustExec("set @@tidb_enable_exchange_partition=1")
 	defer tk2.MustExec("set @@tidb_enable_exchange_partition=0")
@@ -3235,8 +3371,9 @@ func (s *testSerialDBSuite1) TestCommitWhenSchemaChange(c *C) {
 	defer func() {
 		atomic.StoreUint32(&session.SchemaChangedWithoutRetry, 0)
 	}()
-	_, err := tk.Se.Execute(context.Background(), "commit")
-	c.Assert(domain.ErrInfoSchemaChanged.Equal(err), IsTrue)
+	_, err := tk.Exec("commit")
+	require.Error(t, err)
+	require.Truef(t, domain.ErrInfoSchemaChanged.Equal(err), err.Error())
 
 	// Cover a bug that schema validator does not prevent transaction commit when
 	// the schema has changed on the partitioned table.
@@ -3253,8 +3390,8 @@ func (s *testSerialDBSuite1) TestCommitWhenSchemaChange(c *C) {
 	tk.MustExec("insert into nt values (1), (3), (5);")
 	tk2.MustExec("alter table pt exchange partition p1 with table nt;")
 	tk.MustExec("insert into nt values (7), (9);")
-	_, err = tk.Se.Execute(context.Background(), "commit")
-	c.Assert(domain.ErrInfoSchemaChanged.Equal(err), IsTrue)
+	_, err = tk.Session().Execute(context.Background(), "commit")
+	require.True(t, domain.ErrInfoSchemaChanged.Equal(err))
 
 	tk.MustExec("admin check table pt")
 	tk.MustQuery("select * from pt").Check(testkit.Rows())
@@ -3265,8 +3402,8 @@ func (s *testSerialDBSuite1) TestCommitWhenSchemaChange(c *C) {
 	tk.MustExec("insert into pt values (1), (3), (5);")
 	tk2.MustExec("alter table pt exchange partition p1 with table nt;")
 	tk.MustExec("insert into pt values (7), (9);")
-	_, err = tk.Se.Execute(context.Background(), "commit")
-	c.Assert(domain.ErrInfoSchemaChanged.Equal(err), IsTrue)
+	_, err = tk.Session().Execute(context.Background(), "commit")
+	require.True(t, domain.ErrInfoSchemaChanged.Equal(err))
 
 	tk.MustExec("admin check table pt")
 	tk.MustQuery("select * from pt").Check(testkit.Rows())
@@ -3274,8 +3411,10 @@ func (s *testSerialDBSuite1) TestCommitWhenSchemaChange(c *C) {
 	tk.MustQuery("select * from nt").Check(testkit.Rows())
 }
 
-func (s *testSerialDBSuite1) TestCreatePartitionTableWithWrongType(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestCreatePartitionTableWithWrongType(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	var err error
@@ -3285,8 +3424,8 @@ func (s *testSerialDBSuite1) TestCreatePartitionTableWithWrongType(c *C) {
 		partition p0 values less than (0x10),
 		partition p3 values less than (0x20)
 	)`)
-	c.Assert(err, NotNil)
-	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
+	require.Error(t, err)
+	require.True(t, dbterror.ErrWrongTypeColumnValue.Equal(err))
 
 	_, err = tk.Exec(`create table t(
 	b int(10)
@@ -3294,8 +3433,8 @@ func (s *testSerialDBSuite1) TestCreatePartitionTableWithWrongType(c *C) {
 		partition p0 values less than ('g'),
 		partition p3 values less than ('k')
 	)`)
-	c.Assert(err, NotNil)
-	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
+	require.Error(t, err)
+	require.True(t, dbterror.ErrWrongTypeColumnValue.Equal(err))
 
 	_, err = tk.Exec(`create table t(
 	b char(10)
@@ -3303,8 +3442,8 @@ func (s *testSerialDBSuite1) TestCreatePartitionTableWithWrongType(c *C) {
 		partition p0 values less than (30),
 		partition p3 values less than (60)
 	)`)
-	c.Assert(err, NotNil)
-	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
+	require.Error(t, err)
+	require.True(t, dbterror.ErrWrongTypeColumnValue.Equal(err))
 
 	_, err = tk.Exec(`create table t(
 	b datetime
@@ -3312,11 +3451,13 @@ func (s *testSerialDBSuite1) TestCreatePartitionTableWithWrongType(c *C) {
 		partition p0 values less than ('g'),
 		partition p3 values less than ('m')
 	)`)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 }
 
-func (s *testSerialDBSuite1) TestAddPartitionForTableWithWrongType(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestAddPartitionForTableWithWrongType(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop tables if exists t_int, t_char, t_date")
 	tk.MustExec(`create table t_int(b int(10))
@@ -3337,36 +3478,38 @@ func (s *testSerialDBSuite1) TestAddPartitionForTableWithWrongType(c *C) {
 	var err error
 
 	_, err = tk.Exec("alter table t_int add partition (partition p1 values less than ('g'))")
-	c.Assert(err, NotNil)
-	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
+	require.Error(t, err)
+	require.True(t, dbterror.ErrWrongTypeColumnValue.Equal(err))
 
 	_, err = tk.Exec("alter table t_int add partition (partition p1 values less than (0x20))")
-	c.Assert(err, NotNil)
-	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
+	require.Error(t, err)
+	require.True(t, dbterror.ErrWrongTypeColumnValue.Equal(err))
 
 	_, err = tk.Exec("alter table t_char add partition (partition p1 values less than (0x20))")
-	c.Assert(err, NotNil)
-	c.Assert(ddl.ErrRangeNotIncreasing.Equal(err), IsTrue)
+	require.Error(t, err)
+	require.True(t, dbterror.ErrRangeNotIncreasing.Equal(err))
 
 	_, err = tk.Exec("alter table t_char add partition (partition p1 values less than (10))")
-	c.Assert(err, NotNil)
-	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
+	require.Error(t, err)
+	require.True(t, dbterror.ErrWrongTypeColumnValue.Equal(err))
 
 	_, err = tk.Exec("alter table t_date add partition (partition p1 values less than ('m'))")
-	c.Assert(err, NotNil)
-	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
+	require.Error(t, err)
+	require.True(t, dbterror.ErrWrongTypeColumnValue.Equal(err))
 
 	_, err = tk.Exec("alter table t_date add partition (partition p1 values less than (0x20))")
-	c.Assert(err, NotNil)
-	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
+	require.Error(t, err)
+	require.True(t, dbterror.ErrWrongTypeColumnValue.Equal(err))
 
 	_, err = tk.Exec("alter table t_date add partition (partition p1 values less than (20))")
-	c.Assert(err, NotNil)
-	c.Assert(ddl.ErrWrongTypeColumnValue.Equal(err), IsTrue)
+	require.Error(t, err)
+	require.True(t, dbterror.ErrWrongTypeColumnValue.Equal(err))
 }
 
-func (s *testSerialDBSuite1) TestPartitionListWithTimeType(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestPartitionListWithTimeType(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
 	tk.MustExec("create table t_list1(a date) partition by list columns (a) (partition p0 values in ('2010-02-02', '20180203'), partition p1 values in ('20200202'));")
@@ -3374,10 +3517,10 @@ func (s *testSerialDBSuite1) TestPartitionListWithTimeType(c *C) {
 	tk.MustQuery(`select * from t_list1 partition (p0);`).Check(testkit.Rows("2018-02-03"))
 }
 
-func (s *testSerialDBSuite1) TestPartitionListWithNewCollation(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestPartitionListWithNewCollation(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
@@ -3388,19 +3531,21 @@ func (s *testSerialDBSuite1) TestPartitionListWithNewCollation(c *C) {
 	tk.MustQuery(`select * from t11 partition (p0);`).Check(testkit.Rows("A", "B"))
 	tk.MustQuery(`select * from t11 partition (p1);`).Check(testkit.Rows("c", "C", "d"))
 	str := tk.MustQuery(`desc select * from t11 where a = 'b';`).Rows()[0][3].(string)
-	c.Assert(strings.Contains(str, "partition:p0"), IsTrue)
+	require.True(t, strings.Contains(str, "partition:p0"))
 }
 
-func (s *testSerialDBSuite1) TestAddTableWithPartition(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("set tidb_enable_global_temporary_table=true")
+func TestAddTableWithPartition(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	// for global temporary table
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists global_partition_table;")
 	tk.MustGetErrCode("create global temporary table global_partition_table (a int, b int) partition by hash(a) partitions 3 ON COMMIT DELETE ROWS;", errno.ErrPartitionNoTemporary)
 	tk.MustExec("drop table if exists global_partition_table;")
 	tk.MustExec("drop table if exists partition_table;")
 	_, err := tk.Exec("create table partition_table (a int, b int) partition by hash(a) partitions 3;")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tk.MustExec("drop table if exists partition_table;")
 	tk.MustExec("drop table if exists partition_range_table;")
 	tk.MustGetErrCode(`create global temporary table partition_range_table (c1 smallint(6) not null, c2 char(5) default null) partition by range ( c1 ) (
@@ -3418,15 +3563,43 @@ func (s *testSerialDBSuite1) TestAddTableWithPartition(c *C) {
 	    partition p3 values in (5,null)
 	) ON COMMIT DELETE ROWS;`, errno.ErrPartitionNoTemporary)
 	tk.MustExec("drop table if exists partition_list_table;")
+
+	// for local temporary table
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists local_partition_table;")
+	tk.MustGetErrCode("create temporary table local_partition_table (a int, b int) partition by hash(a) partitions 3;", errno.ErrPartitionNoTemporary)
+	tk.MustExec("drop table if exists local_partition_table;")
+	tk.MustExec("drop table if exists partition_table;")
+	_, err = tk.Exec("create table partition_table (a int, b int) partition by hash(a) partitions 3;")
+	require.NoError(t, err)
+	tk.MustExec("drop table if exists partition_table;")
+	tk.MustExec("drop table if exists local_partition_range_table;")
+	tk.MustGetErrCode(`create temporary table local_partition_range_table (c1 smallint(6) not null, c2 char(5) default null) partition by range ( c1 ) (
+			partition p0 values less than (10),
+			partition p1 values less than (20),
+			partition p2 values less than (30),
+			partition p3 values less than (MAXVALUE)
+	);`, errno.ErrPartitionNoTemporary)
+	tk.MustExec("drop table if exists local_partition_range_table;")
+	tk.MustExec("drop table if exists local_partition_list_table;")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
+	tk.MustGetErrCode(`create temporary table local_partition_list_table (id int) partition by list  (id) (
+	    partition p0 values in (1,2),
+	    partition p1 values in (3,4),
+	    partition p3 values in (5,null)
+	);`, errno.ErrPartitionNoTemporary)
+	tk.MustExec("drop table if exists local_partition_list_table;")
 }
 
-func (s *testSerialDBSuite1) TestTruncatePartitionMultipleTimes(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
+func TestTruncatePartitionMultipleTimes(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop table if exists test.t;")
 	tk.MustExec(`create table test.t (a int primary key) partition by range (a) (
 		partition p0 values less than (10),
 		partition p1 values less than (maxvalue));`)
-	dom := domain.GetDomain(tk.Se)
+	dom := domain.GetDomain(tk.Session())
 	originHook := dom.DDL().GetHook()
 	defer dom.DDL().SetHook(originHook)
 	hook := &ddl.TestDDLCallback{}
@@ -3445,10 +3618,93 @@ func (s *testSerialDBSuite1) TestTruncatePartitionMultipleTimes(c *C) {
 		}
 	}
 	done1 := make(chan error, 1)
-	go backgroundExec(s.store, "alter table test.t truncate partition p0;", done1)
+	go backgroundExecT(store, "alter table test.t truncate partition p0;", done1)
 	done2 := make(chan error, 1)
-	go backgroundExec(s.store, "alter table test.t truncate partition p0;", done2)
+	go backgroundExecT(store, "alter table test.t truncate partition p0;", done2)
 	<-done1
 	<-done2
-	c.Assert(errCount, LessEqual, int32(1))
+	require.LessOrEqual(t, errCount, int32(1))
+}
+
+func TestAddPartitionReplicaBiggerThanTiFlashStores(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists test_partition2")
+	tk.MustExec("use test_partition2")
+	tk.MustExec("drop table if exists t1")
+	// Build a tableInfo with replica count = 1 while there is no real tiFlash store.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
+	tk.MustExec(`create table t1 (c int) partition by range(c) (
+			partition p0 values less than (100),
+			partition p1 values less than (200))`)
+	tk.MustExec("alter table t1 set tiflash replica 1")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount"))
+	// Mock partitions replica as available.
+	t1 := tk.GetTableByName("test_partition2", "t1")
+	partition := t1.Meta().Partition
+	require.Equal(t, 2, len(partition.Definitions))
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, true)
+	require.NoError(t, err)
+	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[1].ID, true)
+	require.NoError(t, err)
+	t1 = tk.GetTableByName("test_partition2", "t1")
+	require.True(t, t1.Meta().TiFlashReplica.Available)
+	// Since there is no real TiFlash store (less than replica count), adding a partition will error here.
+	err = tk.ExecToErr("alter table t1 add partition (partition p2 values less than (300));")
+	require.Error(t, err)
+	require.EqualError(t, err, "[ddl:-1][ddl] the tiflash replica count: 1 should be less than the total tiflash server count: 0")
+	// Test `add partition` waiting TiFlash replica can exit when its retry count is beyond the limitation.
+	originErrCountLimit := variable.GetDDLErrorCountLimit()
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 3")
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", originErrCountLimit))
+	}()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockWaitTiFlashReplica", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockWaitTiFlashReplica"))
+	}()
+	require.True(t, t1.Meta().TiFlashReplica.Available)
+	err = tk.ExecToErr("alter table t1 add partition (partition p3 values less than (300));")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:-1]DDL job rollback, error msg: [ddl] add partition wait for tiflash replica to complete", err.Error())
+}
+
+func TestDuplicatePartitionNames(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("create database DuplicatePartitionNames")
+	defer tk.MustExec("drop database DuplicatePartitionNames")
+	tk.MustExec("use DuplicatePartitionNames")
+
+	tk.MustExec("set @@tidb_enable_list_partition=on")
+	tk.MustExec("create table t1 (a int) partition by list (a) (partition p1 values in (1), partition p2 values in (2), partition p3 values in (3))")
+	tk.MustExec("insert into t1 values (1),(2),(3)")
+	tk.MustExec("alter table t1 truncate partition p1,p1")
+	tk.MustQuery("select * from t1").Sort().Check(testkit.Rows("2", "3"))
+	tk.MustExec("insert into t1 values (1)")
+	err := tk.ExecToErr("alter table t1 drop partition p1,p1")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1507]Error in list of partitions to DROP", err.Error())
+	err = tk.ExecToErr("alter table t1 drop partition p1,p9")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1507]Error in list of partitions to DROP", err.Error())
+	err = tk.ExecToErr("alter table t1 drop partition p1,p1,p1")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1508]Cannot remove all partitions, use DROP TABLE instead", err.Error())
+	err = tk.ExecToErr("alter table t1 drop partition p1,p9,p1")
+	require.Error(t, err)
+	require.Equal(t, "[ddl:1508]Cannot remove all partitions, use DROP TABLE instead", err.Error())
+	tk.MustQuery("select * from t1").Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustExec("alter table t1 drop partition p1")
+	tk.MustQuery("select * from t1").Sort().Check(testkit.Rows("2", "3"))
+	tk.MustQuery("Show create table t1").Check(testkit.Rows("" +
+		"t1 CREATE TABLE `t1` (\n" +
+		"  `a` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY LIST (`a`)\n" +
+		"(PARTITION `p2` VALUES IN (2),\n" +
+		" PARTITION `p3` VALUES IN (3))"))
 }

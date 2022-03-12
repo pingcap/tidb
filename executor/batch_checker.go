@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,11 +19,11 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
@@ -258,8 +259,9 @@ func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction,
 				}
 			}
 		}
-		if col.IsGenerated() {
+		if col.IsGenerated() && col.State == model.StatePublic {
 			// only the virtual column needs fill back.
+			// Insert doesn't fill the generated columns at non-public state.
 			if !col.GeneratedStored {
 				val, err := genExprs[gIdx].Eval(chunk.MutRowFromDatums(oldRow).ToRow())
 				if err != nil {

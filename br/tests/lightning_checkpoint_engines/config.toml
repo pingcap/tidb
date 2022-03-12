@@ -1,0 +1,9 @@
+[lightning]
+table-concurrency = 1
+
+[checkpoint]
+enable = true
+driver = "file"
+
+[mydumper]
+batch-size = 50 # force splitting the data into 4 batches

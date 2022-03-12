@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,38 +18,35 @@ import (
 	"context"
 	"fmt"
 	"runtime"
-	"sync"
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/terror"
 	. "github.com/pingcap/tidb/ddl"
 	. "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/store/mockstore"
-	"go.etcd.io/etcd/clientv3"
-	"go.etcd.io/etcd/etcdserver"
-	"go.etcd.io/etcd/integration"
-	"go.etcd.io/etcd/mvcc/mvccpb"
-	goctx "golang.org/x/net/context"
+	"github.com/pingcap/tidb/util"
+	"github.com/stretchr/testify/require"
+	"go.etcd.io/etcd/api/v3/mvccpb"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/server/v3/etcdserver"
+	"go.etcd.io/etcd/tests/v3/integration"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
 const minInterval = 10 * time.Nanosecond // It's used to test timeout.
+const testLease = 5 * time.Millisecond
 
 func TestSyncerSimple(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
-	testLease := 5 * time.Millisecond
+	integration.BeforeTest(t)
+
 	origin := CheckVersFirstWaitTime
 	CheckVersFirstWaitTime = 0
 	defer func() {
@@ -56,20 +54,14 @@ func TestSyncerSimple(t *testing.T) {
 	}()
 
 	store, err := mockstore.NewMockStore()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		err := store.Close()
-		if err != nil {
-			t.Fatal(err)
-		}
-	}()
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
 
-	clus := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
-	defer clus.Terminate(t)
-	cli := clus.RandClient()
-	ctx := goctx.Background()
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+	cli := cluster.RandClient()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	ic := infoschema.NewCache(2)
 	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
 	d := NewDDL(
@@ -79,40 +71,27 @@ func TestSyncerSimple(t *testing.T) {
 		WithLease(testLease),
 		WithInfoCache(ic),
 	)
-	err = d.Start(nil)
-	if err != nil {
-		t.Fatalf("DDL start failed %v", err)
-	}
+	require.NoError(t, d.Start(nil))
 	defer func() {
-		err := d.Stop()
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, d.Stop())
 	}()
 
 	// for init function
-	if err = d.SchemaSyncer().Init(ctx); err != nil {
-		t.Fatalf("schema version syncer init failed %v", err)
-	}
+	require.NoError(t, d.SchemaSyncer().Init(ctx))
 	resp, err := cli.Get(ctx, DDLAllSchemaVersions, clientv3.WithPrefix())
-	if err != nil {
-		t.Fatalf("client get version failed %v", err)
-	}
+	require.NoError(t, err)
+
 	key := DDLAllSchemaVersions + "/" + d.OwnerManager().ID()
 	checkRespKV(t, 1, key, InitialVersion, resp.Kvs...)
 	// for MustGetGlobalVersion function
 	globalVer, err := d.SchemaSyncer().MustGetGlobalVersion(ctx)
-	if err != nil {
-		t.Fatalf("client get global version failed %v", err)
-	}
-	if InitialVersion != fmt.Sprintf("%d", globalVer) {
-		t.Fatalf("client get global version %d isn't equal to init version %s", globalVer, InitialVersion)
-	}
-	childCtx, _ := goctx.WithTimeout(ctx, minInterval)
+	require.NoError(t, err)
+	require.Equal(t, InitialVersion, fmt.Sprintf("%d", globalVer))
+
+	childCtx, cancel := context.WithTimeout(ctx, minInterval)
+	defer cancel()
 	_, err = d.SchemaSyncer().MustGetGlobalVersion(childCtx)
-	if !isTimeoutError(err) {
-		t.Fatalf("client get global version result not match, err %v", err)
-	}
+	require.True(t, isTimeoutError(err))
 
 	ic2 := infoschema.NewCache(2)
 	ic2.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
@@ -123,27 +102,17 @@ func TestSyncerSimple(t *testing.T) {
 		WithLease(testLease),
 		WithInfoCache(ic2),
 	)
-	err = d1.Start(nil)
-	if err != nil {
-		t.Fatalf("DDL start failed %v", err)
-	}
+	require.NoError(t, d1.Start(nil))
 	defer func() {
-		err := d.Stop()
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, d1.Stop())
 	}()
-	if err = d1.SchemaSyncer().Init(ctx); err != nil {
-		t.Fatalf("schema version syncer init failed %v", err)
-	}
+	require.NoError(t, d1.SchemaSyncer().Init(ctx))
 
 	// for watchCh
-	wg := sync.WaitGroup{}
-	wg.Add(1)
+	var wg util.WaitGroupWrapper
 	currentVer := int64(123)
 	var checkErr string
-	go func() {
-		defer wg.Done()
+	wg.Run(func() {
 		select {
 		case resp := <-d.SchemaSyncer().GlobalVersionCh():
 			if len(resp.Events) < 1 {
@@ -152,60 +121,40 @@ func TestSyncerSimple(t *testing.T) {
 			}
 			checkRespKV(t, 1, DDLGlobalSchemaVersion, fmt.Sprintf("%v", currentVer), resp.Events[0].Kv)
 		case <-time.After(3 * time.Second):
-			checkErr = "get udpate version failed"
+			checkErr = "get update version failed"
 			return
 		}
-	}()
+	})
 
 	// for update latestSchemaVersion
-	err = d.SchemaSyncer().OwnerUpdateGlobalVersion(ctx, currentVer)
-	if err != nil {
-		t.Fatalf("update latest schema version failed %v", err)
-	}
+	require.NoError(t, d.SchemaSyncer().OwnerUpdateGlobalVersion(ctx, currentVer))
 
 	wg.Wait()
 
-	if checkErr != "" {
-		t.Fatalf(checkErr)
-	}
+	require.Equal(t, "", checkErr)
 
 	// for CheckAllVersions
-	childCtx, cancel := goctx.WithTimeout(ctx, 200*time.Millisecond)
-	err = d.SchemaSyncer().OwnerCheckAllVersions(childCtx, currentVer)
-	if err == nil {
-		t.Fatalf("check result not match")
-	}
+	childCtx, cancel = context.WithTimeout(ctx, 200*time.Millisecond)
+	require.Error(t, d.SchemaSyncer().OwnerCheckAllVersions(childCtx, currentVer))
 	cancel()
 
 	// for UpdateSelfVersion
-	err = d.SchemaSyncer().UpdateSelfVersion(context.Background(), currentVer)
-	if err != nil {
-		t.Fatalf("update self version failed %v", errors.ErrorStack(err))
-	}
-	err = d1.SchemaSyncer().UpdateSelfVersion(context.Background(), currentVer)
-	if err != nil {
-		t.Fatalf("update self version failed %v", errors.ErrorStack(err))
-	}
-	childCtx, _ = goctx.WithTimeout(ctx, minInterval)
+	require.NoError(t, d.SchemaSyncer().UpdateSelfVersion(context.Background(), currentVer))
+	require.NoError(t, d1.SchemaSyncer().UpdateSelfVersion(context.Background(), currentVer))
+
+	childCtx, cancel = context.WithTimeout(ctx, minInterval)
+	defer cancel()
 	err = d1.SchemaSyncer().UpdateSelfVersion(childCtx, currentVer)
-	if !isTimeoutError(err) {
-		t.Fatalf("update self version result not match, err %v", err)
-	}
+	require.True(t, isTimeoutError(err))
 
 	// for CheckAllVersions
-	err = d.SchemaSyncer().OwnerCheckAllVersions(context.Background(), currentVer-1)
-	if err != nil {
-		t.Fatalf("check all versions failed %v", err)
-	}
-	err = d.SchemaSyncer().OwnerCheckAllVersions(context.Background(), currentVer)
-	if err != nil {
-		t.Fatalf("check all versions failed %v", err)
-	}
-	childCtx, _ = goctx.WithTimeout(ctx, minInterval)
+	require.NoError(t, d.SchemaSyncer().OwnerCheckAllVersions(context.Background(), currentVer-1))
+	require.NoError(t, d.SchemaSyncer().OwnerCheckAllVersions(context.Background(), currentVer))
+
+	childCtx, cancel = context.WithTimeout(ctx, minInterval)
+	defer cancel()
 	err = d.SchemaSyncer().OwnerCheckAllVersions(childCtx, currentVer)
-	if !isTimeoutError(err) {
-		t.Fatalf("check all versions result not match, err %v", err)
-	}
+	require.True(t, isTimeoutError(err))
 
 	// for StartCleanWork
 	ttl := 10
@@ -214,18 +163,12 @@ func TestSyncerSimple(t *testing.T) {
 	ttlKey := "session_ttl_key"
 	ttlVal := "session_ttl_val"
 	session, err := owner.NewSession(ctx, "", cli, owner.NewSessionDefaultRetryCnt, ttl)
-	if err != nil {
-		t.Fatalf("new session failed %v", err)
-	}
-	err = PutKVToEtcd(context.Background(), cli, 5, ttlKey, ttlVal, clientv3.WithLease(session.Lease()))
-	if err != nil {
-		t.Fatalf("put kv to etcd failed %v", err)
-	}
-	// Make sure the ttlKey is exist in etcd.
+	require.NoError(t, err)
+	require.NoError(t, PutKVToEtcd(context.Background(), cli, 5, ttlKey, ttlVal, clientv3.WithLease(session.Lease())))
+
+	// Make sure the ttlKey is existing in etcd.
 	resp, err = cli.Get(ctx, ttlKey)
-	if err != nil {
-		t.Fatalf("client get version failed %v", err)
-	}
+	require.NoError(t, err)
 	checkRespKV(t, 1, ttlKey, ttlVal, resp.Kvs...)
 	d.SchemaSyncer().NotifyCleanExpiredPaths()
 	// Make sure the clean worker is done.
@@ -242,55 +185,39 @@ func TestSyncerSimple(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if notifiedCnt != 3 {
-		t.Fatal("clean worker don't finish")
-	}
+	require.Equal(t, 3, notifiedCnt)
+
 	// Make sure the ttlKey is removed in etcd.
 	resp, err = cli.Get(ctx, ttlKey)
-	if err != nil {
-		t.Fatalf("client get version failed %v", err)
-	}
+	require.NoError(t, err)
 	checkRespKV(t, 0, ttlKey, "", resp.Kvs...)
 
 	// for Close
-	resp, err = cli.Get(goctx.Background(), key)
-	if err != nil {
-		t.Fatalf("get key %s failed %v", key, err)
-	}
+	resp, err = cli.Get(context.Background(), key)
+	require.NoError(t, err)
+
 	currVer := fmt.Sprintf("%v", currentVer)
 	checkRespKV(t, 1, key, currVer, resp.Kvs...)
 	d.SchemaSyncer().Close()
-	resp, err = cli.Get(goctx.Background(), key)
-	if err != nil {
-		t.Fatalf("get key %s failed %v", key, err)
-	}
-	if len(resp.Kvs) != 0 {
-		t.Fatalf("remove key %s failed %v", key, err)
-	}
+	resp, err = cli.Get(context.Background(), key)
+	require.NoError(t, err)
+	require.Len(t, resp.Kvs, 0)
 }
 
 func isTimeoutError(err error) bool {
-	if terror.ErrorEqual(err, goctx.DeadlineExceeded) || status.Code(errors.Cause(err)) == codes.DeadlineExceeded ||
-		terror.ErrorEqual(err, etcdserver.ErrTimeout) {
-		return true
-	}
-	return false
+	return terror.ErrorEqual(err, context.DeadlineExceeded) ||
+		status.Code(errors.Cause(err)) == codes.DeadlineExceeded ||
+		terror.ErrorEqual(err, etcdserver.ErrTimeout)
 }
 
-func checkRespKV(t *testing.T, kvCount int, key, val string,
-	kvs ...*mvccpb.KeyValue) {
-	if len(kvs) != kvCount {
-		t.Fatalf("resp key %s kvs %v length is != %d", key, kvs, kvCount)
-	}
+func checkRespKV(t *testing.T, kvCount int, key, val string, kvs ...*mvccpb.KeyValue) {
+	require.Len(t, kvs, kvCount)
+
 	if kvCount == 0 {
 		return
 	}
 
 	kv := kvs[0]
-	if string(kv.Key) != key {
-		t.Fatalf("key resp %s, exported %s", kv.Key, key)
-	}
-	if string(kv.Value) != val {
-		t.Fatalf("val resp %s, exported %s", kv.Value, val)
-	}
+	require.Equal(t, key, string(kv.Key))
+	require.Equal(t, val, string(kv.Value))
 }

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -93,4 +94,38 @@ var (
 			Help:      "Bucketed histogram of some stats in fast analyze.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 16),
 		}, []string{LblSQLType, LblType})
+
+	SyncLoadCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "sync_load_total",
+			Help:      "Counter of sync load.",
+		})
+
+	SyncLoadTimeoutCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "sync_load_timeout_total",
+			Help:      "Counter of sync load timeout.",
+		})
+
+	SyncLoadHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "sync_load_latency_millis",
+			Help:      "Bucketed histogram of latency time (ms) of sync load.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 22), // 1ms ~ 1h
+		})
+
+	ReadStatsHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "read_stats_latency_millis",
+			Help:      "Bucketed histogram of latency time (ms) of stats read during sync-load.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 22), // 1ms ~ 1h
+		})
 )

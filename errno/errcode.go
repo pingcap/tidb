@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -840,6 +841,7 @@ const (
 	ErrUnresolvedHintName                                    = 3128
 	ErrInvalidJSONText                                       = 3140
 	ErrInvalidJSONPath                                       = 3143
+	ErrInvalidJSONCharset                                    = 3144
 	ErrInvalidTypeForJSON                                    = 3146
 	ErrInvalidJSONPathWildcard                               = 3149
 	ErrInvalidJSONContainsPathType                           = 3150
@@ -890,7 +892,7 @@ const (
 	ErrFunctionalIndexRefAutoIncrement                       = 3754
 	ErrCannotDropColumnFunctionalIndex                       = 3755
 	ErrFunctionalIndexPrimaryKey                             = 3756
-	ErrFunctionalIndexOnLob                                  = 3757
+	ErrFunctionalIndexOnBlob                                 = 3757
 	ErrFunctionalIndexFunctionIsNotAllowed                   = 3758
 	ErrFulltextFunctionalIndex                               = 3759
 	ErrSpatialFunctionalIndex                                = 3760
@@ -900,6 +902,7 @@ const (
 	ErrFKIncompatibleColumns                                 = 3780
 	ErrFunctionalIndexRowValueIsNotAllowed                   = 3800
 	ErrDependentByFunctionalIndex                            = 3837
+	ErrCannotConvertString                                   = 3854
 	ErrInvalidJSONValueForFuncIndex                          = 3903
 	ErrJSONValueOutOfRangeForFuncIndex                       = 3904
 	ErrFunctionalIndexDataIsTooLong                          = 3907
@@ -1004,9 +1007,15 @@ const (
 	ErrMultiStatementDisabled              = 8130
 	ErrPartitionStatsMissing               = 8131
 	ErrNotSupportedWithSem                 = 8132
-	ErrDataInConsistentExtraIndex          = 8133
-	ErrDataInConsistentMisMatchIndex       = 8134
+	ErrDataInconsistentMismatchCount       = 8133
+	ErrDataInconsistentMismatchIndex       = 8134
 	ErrAsOf                                = 8135
+	ErrVariableNoLongerSupported           = 8136
+	ErrAnalyzeMissColumn                   = 8137
+	ErrInconsistentRowValue                = 8138
+	ErrInconsistentHandle                  = 8139
+	ErrInconsistentIndexedValue            = 8140
+	ErrAssertionFailed                     = 8141
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1032,7 +1041,7 @@ const (
 	ErrWriteOnSnapshot                    = 8220
 	ErrInvalidKey                         = 8221
 	ErrInvalidIndexKey                    = 8222
-	ErrDataInConsistent                   = 8223
+	ErrDataInconsistent                   = 8223
 	ErrDDLJobNotFound                     = 8224
 	ErrCancelFinishedDDLJob               = 8225
 	ErrCannotCancelDDLJob                 = 8226
@@ -1043,10 +1052,15 @@ const (
 	ErrUnsupportedConstraintCheck         = 8231
 	ErrTableOptionUnionUnsupported        = 8232
 	ErrTableOptionInsertMethodUnsupported = 8233
-	ErrInvalidPlacementSpec               = 8234
 	ErrDDLReorgElementNotExist            = 8235
 	ErrPlacementPolicyCheck               = 8236
-
+	ErrInvalidAttributesSpec              = 8237
+	ErrPlacementPolicyExists              = 8238
+	ErrPlacementPolicyNotExists           = 8239
+	ErrPlacementPolicyWithDirectOption    = 8240
+	ErrPlacementPolicyInUse               = 8241
+	ErrOptOnCacheTable                    = 8242
+	ErrHTTPServiceError                   = 8243
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
 	ErrTiKVServerTimeout         = 9002

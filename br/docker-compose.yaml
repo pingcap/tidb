@@ -1,0 +1,224 @@
+---
+# Source: tidb-docker-compose/templates/docker-compose.yml
+version: '3.2'
+
+services:
+  control:
+    image: control:nightly
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile
+    volumes:
+      - /tmp/br/docker/data:/data
+      - /tmp/br/docker/logs:/tmp
+      - /tmp/br/docker/logs:/logs
+      - ./bin:/go/src/github.com/pingcap/br/bin
+    command: -c "/usr/bin/tail -f /dev/null"
+    depends_on:
+      - "tidb"
+    restart: on-failure
+    env_file:
+      - ./docker/minio.env
+
+  pd0:
+    image: pingcap/pd:nightly
+    ports:
+      - "2379"
+    volumes:
+      - ./docker/config/pd.toml:/pd.toml:ro
+      - /tmp/br/docker/data:/data
+      - /tmp/br/docker/logs:/logs
+    command:
+      - --name=pd0
+      - --client-urls=http://0.0.0.0:2379
+      - --peer-urls=http://0.0.0.0:2380
+      - --advertise-client-urls=http://pd0:2379
+      - --advertise-peer-urls=http://pd0:2380
+      - --initial-cluster=pd0=http://pd0:2380
+      - --data-dir=/data/pd0
+      - --config=/pd.toml
+      - --log-file=/logs/pd0.log
+    # sysctls:
+    #   net.core.somaxconn: 32768
+    # ulimits:
+    #   nofile:
+    #     soft: 1000000
+    #     hard: 1000000
+    restart: on-failure
+
+  tikv0:
+    image: pingcap/tikv:nightly
+    volumes:
+      - ./docker/config/tikv.toml:/tikv.toml:ro
+      - /tmp/br/docker/data:/data
+      - /tmp/br/docker/logs:/logs
+    command:
+      - --addr=0.0.0.0:20160
+      - --advertise-addr=tikv0:20160
+      - --data-dir=/data/tikv0
+      - --pd=pd0:2379
+      - --config=/tikv.toml
+      - --log-file=/logs/tikv0.log
+    depends_on:
+      - "pd0"
+    # sysctls:
+    #   net.core.somaxconn: 32768
+    # ulimits:
+    #   nofile:
+    #     soft: 1000000
+    #     hard: 1000000
+    restart: on-failure
+    env_file:
+      - ./docker/minio.env
+
+  tikv1:
+    image: pingcap/tikv:nightly
+    volumes:
+      - ./docker/config/tikv.toml:/tikv.toml:ro
+      - /tmp/br/docker/data:/data
+      - /tmp/br/docker/logs:/logs
+    command:
+      - --addr=0.0.0.0:20160
+      - --advertise-addr=tikv1:20160
+      - --data-dir=/data/tikv1
+      - --pd=pd0:2379
+      - --config=/tikv.toml
+      - --log-file=/logs/tikv1.log
+    depends_on:
+      - "pd0"
+    # sysctls:
+    #   net.core.somaxconn: 32768
+    # ulimits:
+    #   nofile:
+    #     soft: 1000000
+    #     hard: 1000000
+    restart: on-failure
+    env_file:
+      - ./docker/minio.env
+
+  tikv2:
+    image: pingcap/tikv:nightly
+    volumes:
+      - ./docker/config/tikv.toml:/tikv.toml:ro
+      - /tmp/br/docker/data:/data
+      - /tmp/br/docker/logs:/logs
+    command:
+      - --addr=0.0.0.0:20160
+      - --advertise-addr=tikv2:20160
+      - --data-dir=/data/tikv2
+      - --pd=pd0:2379
+      - --config=/tikv.toml
+      - --log-file=/logs/tikv2.log
+    depends_on:
+      - "pd0"
+    # sysctls:
+    #   net.core.somaxconn: 32768
+    # ulimits:
+    #   nofile:
+    #     soft: 1000000
+    #     hard: 1000000
+    restart: on-failure
+    env_file:
+      - ./docker/minio.env
+
+  tikv3:
+    image: pingcap/tikv:nightly
+    volumes:
+      - ./docker/config/tikv.toml:/tikv.toml:ro
+      - /tmp/br/docker/data:/data
+      - /tmp/br/docker/logs:/logs
+    command:
+      - --addr=0.0.0.0:20160
+      - --advertise-addr=tikv3:20160
+      - --data-dir=/data/tikv3
+      - --pd=pd0:2379
+      - --config=/tikv.toml
+      - --log-file=/logs/tikv3.log
+    depends_on:
+      - "pd0"
+    # sysctls:
+    #   net.core.somaxconn: 32768
+    # ulimits:
+    #   nofile:
+    #     soft: 1000000
+    #     hard: 1000000
+    restart: on-failure
+    env_file:
+      - ./docker/minio.env
+
+  tikv4:
+    image: pingcap/tikv:nightly
+    volumes:
+      - ./docker/config/tikv.toml:/tikv.toml:ro
+      - /tmp/br/docker/data:/data
+      - /tmp/br/docker/logs:/logs
+    command:
+      - --addr=0.0.0.0:20160
+      - --advertise-addr=tikv4:20160
+      - --data-dir=/data/tikv4
+      - --pd=pd0:2379
+      - --config=/tikv.toml
+      - --log-file=/logs/tikv4.log
+    depends_on:
+      - "pd0"
+    # sysctls:
+    #   net.core.somaxconn: 32768
+    # ulimits:
+    #   nofile:
+    #     soft: 1000000
+    #     hard: 1000000
+    restart: on-failure
+    env_file:
+      - ./docker/minio.env
+
+  tidb:
+    image: pingcap/tidb:nightly
+    ports:
+      - "4000"
+      - "10080"
+    volumes:
+      - ./docker/config/tidb.toml:/tidb.toml:ro
+      - /tmp/br/docker/logs:/logs
+    command:
+      - --store=tikv
+      - --path=pd0:2379
+      - --config=/tidb.toml
+      - --log-file=/logs/tidb.log
+      - --advertise-address=tidb
+    depends_on:
+      - "tikv0"
+      - "tikv1"
+      - "tikv2"
+      - "tikv3"
+      - "tikv4"
+    # sysctls:
+    #   net.core.somaxconn: 32768
+    # ulimits:
+    #   nofile:
+    #     soft: 1000000
+    #     hard: 1000000
+    restart: on-failure
+
+  minio:
+    image: minio/minio
+    ports:
+      - 24927:24927
+    volumes:
+      - /tmp/br/docker/data/s3:/data/s3
+    command: server --address=:24927 /data/s3
+    env_file:
+      - ./docker/minio.env
+
+  gcs:
+    image: fsouza/fake-gcs-server
+    ports:
+      - 20818:20818
+    volumes:
+      - /tmp/br/docker/data/gcs:/data/gcs
+    command: -scheme http -host gcs -port 20818 -filesystem-root /data/gcs -public-host gcs:20818
+
+  # we need a oauth server for gcs test
+  oauth:
+    image: 3pointer/fake-gcs-oauth
+    ports:
+      - 5000:5000

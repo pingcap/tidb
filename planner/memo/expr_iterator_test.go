@@ -8,147 +8,139 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package memo
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testMemoSuite) TestNewExprIterFromGroupElem(c *C) {
-	g0 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx, 0)), s.schema)
-	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0)))
-	g0.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx, 0)))
-	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0)))
+func TestNewExprIterFromGroupElem(t *testing.T) {
+	ctx := plannercore.MockContext()
+	schema := expression.NewSchema()
 
-	g1 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalSelection{}.Init(s.sctx, 0)), s.schema)
-	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0)))
-	g1.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(s.sctx, 0)))
-	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(s.sctx, 0)))
+	g0 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalSelection{}.Init(ctx, 0)), schema)
+	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(ctx, 0)))
+	g0.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(ctx, 0)))
+	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(ctx, 0)))
 
-	expr := NewGroupExpr(plannercore.LogicalJoin{}.Init(s.sctx, 0))
+	g1 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalSelection{}.Init(ctx, 0)), schema)
+	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(ctx, 0)))
+	g1.Insert(NewGroupExpr(plannercore.LogicalProjection{}.Init(ctx, 0)))
+	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{}.Init(ctx, 0)))
+
+	expr := NewGroupExpr(plannercore.LogicalJoin{}.Init(ctx, 0))
 	expr.Children = append(expr.Children, g0)
 	expr.Children = append(expr.Children, g1)
-	g2 := NewGroupWithSchema(expr, s.schema)
+	g2 := NewGroupWithSchema(expr, schema)
 
 	pattern := BuildPattern(OperandJoin, EngineAll, BuildPattern(OperandProjection, EngineAll), BuildPattern(OperandSelection, EngineAll))
 	iter := NewExprIterFromGroupElem(g2.Equivalents.Front(), pattern)
 
-	c.Assert(iter, NotNil)
-	c.Assert(iter.Group, IsNil)
-	c.Assert(iter.Element, Equals, g2.Equivalents.Front())
-	c.Assert(iter.matched, Equals, true)
-	c.Assert(iter.Operand, Equals, OperandJoin)
-	c.Assert(len(iter.Children), Equals, 2)
+	require.NotNil(t, iter)
+	require.Nil(t, iter.Group)
+	require.Equal(t, g2.Equivalents.Front(), iter.Element)
+	require.True(t, iter.matched)
+	require.Equal(t, OperandJoin, iter.Operand)
+	require.Len(t, iter.Children, 2)
 
-	c.Assert(iter.Children[0].Group, Equals, g0)
-	c.Assert(iter.Children[0].Element, Equals, g0.GetFirstElem(OperandProjection))
-	c.Assert(iter.Children[0].matched, Equals, true)
-	c.Assert(iter.Children[0].Operand, Equals, OperandProjection)
-	c.Assert(len(iter.Children[0].Children), Equals, 0)
+	require.Equal(t, g0, iter.Children[0].Group)
+	require.Equal(t, g0.GetFirstElem(OperandProjection), iter.Children[0].Element)
+	require.True(t, iter.Children[0].matched)
+	require.Equal(t, OperandProjection, iter.Children[0].Operand)
+	require.Len(t, iter.Children[0].Children, 0)
 
-	c.Assert(iter.Children[1].Group, Equals, g1)
-	c.Assert(iter.Children[1].Element, Equals, g1.GetFirstElem(OperandSelection))
-	c.Assert(iter.Children[1].matched, Equals, true)
-	c.Assert(iter.Children[1].Operand, Equals, OperandSelection)
-	c.Assert(len(iter.Children[0].Children), Equals, 0)
+	require.Equal(t, g1, iter.Children[1].Group)
+	require.Equal(t, g1.GetFirstElem(OperandSelection), iter.Children[1].Element)
+	require.True(t, iter.Children[1].matched)
+	require.Equal(t, OperandSelection, iter.Children[1].Operand)
+	require.Len(t, iter.Children[0].Children, 0)
 }
 
-func (s *testMemoSuite) TestExprIterNext(c *C) {
-	g0 := NewGroupWithSchema(NewGroupExpr(
-		plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewZero()}}.Init(s.sctx, 0)), s.schema)
-	g0.Insert(NewGroupExpr(
-		plannercore.LogicalLimit{Count: 1}.Init(s.sctx, 0)))
-	g0.Insert(NewGroupExpr(
-		plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewOne()}}.Init(s.sctx, 0)))
-	g0.Insert(NewGroupExpr(
-		plannercore.LogicalLimit{Count: 2}.Init(s.sctx, 0)))
-	g0.Insert(NewGroupExpr(
-		plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewNull()}}.Init(s.sctx, 0)))
+func TestExprIterNext(t *testing.T) {
+	ctx := plannercore.MockContext()
+	schema := expression.NewSchema()
 
-	g1 := NewGroupWithSchema(NewGroupExpr(
-		plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewNull()}}.Init(s.sctx, 0)), s.schema)
-	g1.Insert(NewGroupExpr(
-		plannercore.LogicalLimit{Count: 3}.Init(s.sctx, 0)))
-	g1.Insert(NewGroupExpr(
-		plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewOne()}}.Init(s.sctx, 0)))
-	g1.Insert(NewGroupExpr(
-		plannercore.LogicalLimit{Count: 4}.Init(s.sctx, 0)))
-	g1.Insert(NewGroupExpr(
-		plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewZero()}}.Init(s.sctx, 0)))
+	g0 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewZero()}}.Init(ctx, 0)), schema)
+	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 1}.Init(ctx, 0)))
+	g0.Insert(NewGroupExpr(plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)))
+	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 2}.Init(ctx, 0)))
+	g0.Insert(NewGroupExpr(plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewNull()}}.Init(ctx, 0)))
 
-	expr := NewGroupExpr(plannercore.LogicalJoin{}.Init(s.sctx, 0))
+	g1 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewNull()}}.Init(ctx, 0)), schema)
+	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 3}.Init(ctx, 0)))
+	g1.Insert(NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)))
+	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 4}.Init(ctx, 0)))
+	g1.Insert(NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewZero()}}.Init(ctx, 0)))
+
+	expr := NewGroupExpr(plannercore.LogicalJoin{}.Init(ctx, 0))
 	expr.Children = append(expr.Children, g0)
 	expr.Children = append(expr.Children, g1)
-	g2 := NewGroupWithSchema(expr, s.schema)
+	g2 := NewGroupWithSchema(expr, schema)
 
 	pattern := BuildPattern(OperandJoin, EngineAll, BuildPattern(OperandProjection, EngineAll), BuildPattern(OperandSelection, EngineAll))
 	iter := NewExprIterFromGroupElem(g2.Equivalents.Front(), pattern)
-	c.Assert(iter, NotNil)
+	require.NotNil(t, iter)
 
 	count := 0
 	for ; iter.Matched(); iter.Next() {
 		count++
-		c.Assert(iter.Group, IsNil)
-		c.Assert(iter.matched, Equals, true)
-		c.Assert(iter.Operand, Equals, OperandJoin)
-		c.Assert(len(iter.Children), Equals, 2)
+		require.Nil(t, iter.Group)
+		require.True(t, iter.matched)
+		require.Equal(t, OperandJoin, iter.Operand)
+		require.Len(t, iter.Children, 2)
 
-		c.Assert(iter.Children[0].Group, Equals, g0)
-		c.Assert(iter.Children[0].matched, Equals, true)
-		c.Assert(iter.Children[0].Operand, Equals, OperandProjection)
-		c.Assert(len(iter.Children[0].Children), Equals, 0)
+		require.Equal(t, g0, iter.Children[0].Group)
+		require.True(t, iter.Children[0].matched)
+		require.Equal(t, OperandProjection, iter.Children[0].Operand)
+		require.Len(t, iter.Children[0].Children, 0)
 
-		c.Assert(iter.Children[1].Group, Equals, g1)
-		c.Assert(iter.Children[1].matched, Equals, true)
-		c.Assert(iter.Children[1].Operand, Equals, OperandSelection)
-		c.Assert(len(iter.Children[1].Children), Equals, 0)
+		require.Equal(t, g1, iter.Children[1].Group)
+		require.True(t, iter.Children[1].matched)
+		require.Equal(t, OperandSelection, iter.Children[1].Operand)
+		require.Len(t, iter.Children[1].Children, 0)
 	}
 
-	c.Assert(count, Equals, 9)
+	require.Equal(t, 9, count)
 }
 
-func (s *testMemoSuite) TestExprIterReset(c *C) {
-	g0 := NewGroupWithSchema(NewGroupExpr(
-		plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewZero()}}.Init(s.sctx, 0)), s.schema)
-	g0.Insert(NewGroupExpr(
-		plannercore.LogicalLimit{Count: 1}.Init(s.sctx, 0)))
-	g0.Insert(NewGroupExpr(
-		plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewOne()}}.Init(s.sctx, 0)))
-	g0.Insert(NewGroupExpr(
-		plannercore.LogicalLimit{Count: 2}.Init(s.sctx, 0)))
-	g0.Insert(NewGroupExpr(
-		plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewNull()}}.Init(s.sctx, 0)))
+func TestExprIterReset(t *testing.T) {
+	ctx := plannercore.MockContext()
+	schema := expression.NewSchema()
 
-	sel1 := NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewNull()}}.Init(s.sctx, 0))
-	sel2 := NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewOne()}}.Init(s.sctx, 0))
-	sel3 := NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewZero()}}.Init(s.sctx, 0))
-	g1 := NewGroupWithSchema(sel1, s.schema)
-	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 3}.Init(s.sctx, 0)))
+	g0 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewZero()}}.Init(ctx, 0)), schema)
+	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 1}.Init(ctx, 0)))
+	g0.Insert(NewGroupExpr(plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)))
+	g0.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 2}.Init(ctx, 0)))
+	g0.Insert(NewGroupExpr(plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewNull()}}.Init(ctx, 0)))
+
+	sel1 := NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewNull()}}.Init(ctx, 0))
+	sel2 := NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewOne()}}.Init(ctx, 0))
+	sel3 := NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewZero()}}.Init(ctx, 0))
+	g1 := NewGroupWithSchema(sel1, schema)
+	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 3}.Init(ctx, 0)))
 	g1.Insert(sel2)
-	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 4}.Init(s.sctx, 0)))
+	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 4}.Init(ctx, 0)))
 	g1.Insert(sel3)
 
-	g2 := NewGroupWithSchema(NewGroupExpr(
-		plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewNull()}}.Init(s.sctx, 0)), s.schema)
-	g2.Insert(NewGroupExpr(
-		plannercore.LogicalLimit{Count: 3}.Init(s.sctx, 0)))
-	g2.Insert(NewGroupExpr(
-		plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewOne()}}.Init(s.sctx, 0)))
-	g2.Insert(NewGroupExpr(
-		plannercore.LogicalLimit{Count: 4}.Init(s.sctx, 0)))
-	g2.Insert(NewGroupExpr(
-		plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewZero()}}.Init(s.sctx, 0)))
+	g2 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewNull()}}.Init(ctx, 0)), schema)
+	g2.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 3}.Init(ctx, 0)))
+	g2.Insert(NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)))
+	g2.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 4}.Init(ctx, 0)))
+	g2.Insert(NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewZero()}}.Init(ctx, 0)))
 
 	// link join with Group 0 and 1
-	expr := NewGroupExpr(plannercore.LogicalJoin{}.Init(s.sctx, 0))
+	expr := NewGroupExpr(plannercore.LogicalJoin{}.Init(ctx, 0))
 	expr.Children = append(expr.Children, g0)
 	expr.Children = append(expr.Children, g1)
-	g3 := NewGroupWithSchema(expr, s.schema)
+	g3 := NewGroupWithSchema(expr, schema)
 
 	// link sel 1~3 with Group 2
 	sel1.Children = append(sel1.Children, g2)
@@ -162,82 +154,60 @@ func (s *testMemoSuite) TestExprIterReset(c *C) {
 
 	// create expression iterator for the pattern on join
 	iter := NewExprIterFromGroupElem(g3.Equivalents.Front(), pattern)
-	c.Assert(iter, NotNil)
+	require.NotNil(t, iter)
 
 	count := 0
 	for ; iter.Matched(); iter.Next() {
 		count++
-		c.Assert(iter.Group, IsNil)
-		c.Assert(iter.matched, Equals, true)
-		c.Assert(iter.Operand, Equals, OperandJoin)
-		c.Assert(len(iter.Children), Equals, 2)
+		require.Nil(t, iter.Group)
+		require.True(t, iter.matched)
+		require.Equal(t, OperandJoin, iter.Operand)
+		require.Len(t, iter.Children, 2)
 
-		c.Assert(iter.Children[0].Group, Equals, g0)
-		c.Assert(iter.Children[0].matched, Equals, true)
-		c.Assert(iter.Children[0].Operand, Equals, OperandProjection)
-		c.Assert(len(iter.Children[0].Children), Equals, 0)
+		require.Equal(t, g0, iter.Children[0].Group)
+		require.True(t, iter.Children[0].matched)
+		require.Equal(t, OperandProjection, iter.Children[0].Operand)
+		require.Len(t, iter.Children[0].Children, 0)
 
-		c.Assert(iter.Children[1].Group, Equals, g1)
-		c.Assert(iter.Children[1].matched, Equals, true)
-		c.Assert(iter.Children[1].Operand, Equals, OperandSelection)
-		c.Assert(len(iter.Children[1].Children), Equals, 1)
+		require.Equal(t, g1, iter.Children[1].Group)
+		require.True(t, iter.Children[1].matched)
+		require.Equal(t, OperandSelection, iter.Children[1].Operand)
+		require.Len(t, iter.Children[1].Children, 1)
 
-		c.Assert(iter.Children[1].Children[0].Group, Equals, g2)
-		c.Assert(iter.Children[1].Children[0].matched, Equals, true)
-		c.Assert(iter.Children[1].Children[0].Operand, Equals, OperandLimit)
-		c.Assert(len(iter.Children[1].Children[0].Children), Equals, 0)
+		require.Equal(t, g2, iter.Children[1].Children[0].Group)
+		require.True(t, iter.Children[1].Children[0].matched)
+		require.Equal(t, OperandLimit, iter.Children[1].Children[0].Operand)
+		require.Len(t, iter.Children[1].Children[0].Children, 0)
 	}
 
-	c.Assert(count, Equals, 18)
+	require.Equal(t, 18, count)
 }
 
-func countMatchedIter(group *Group, pattern *Pattern) int {
-	count := 0
-	for elem := group.Equivalents.Front(); elem != nil; elem = elem.Next() {
-		iter := NewExprIterFromGroupElem(elem, pattern)
-		if iter == nil {
-			continue
-		}
-		for ; iter.Matched(); iter.Next() {
-			count++
-		}
-	}
-	return count
-}
+func TestExprIterWithEngineType(t *testing.T) {
+	ctx := plannercore.MockContext()
+	schema := expression.NewSchema()
 
-func (s *testMemoSuite) TestExprIterWithEngineType(c *C) {
-	g1 := NewGroupWithSchema(NewGroupExpr(
-		plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewOne()}}.Init(s.sctx, 0)), s.schema).SetEngineType(EngineTiFlash)
-	g1.Insert(NewGroupExpr(
-		plannercore.LogicalLimit{Count: 1}.Init(s.sctx, 0)))
-	g1.Insert(NewGroupExpr(
-		plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewOne()}}.Init(s.sctx, 0)))
-	g1.Insert(NewGroupExpr(
-		plannercore.LogicalLimit{Count: 2}.Init(s.sctx, 0)))
+	g1 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)), schema).SetEngineType(EngineTiFlash)
+	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 1}.Init(ctx, 0)))
+	g1.Insert(NewGroupExpr(plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)))
+	g1.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 2}.Init(ctx, 0)))
 
-	g2 := NewGroupWithSchema(NewGroupExpr(
-		plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewOne()}}.Init(s.sctx, 0)), s.schema).SetEngineType(EngineTiKV)
-	g2.Insert(NewGroupExpr(
-		plannercore.LogicalLimit{Count: 2}.Init(s.sctx, 0)))
-	g2.Insert(NewGroupExpr(
-		plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewOne()}}.Init(s.sctx, 0)))
-	g2.Insert(NewGroupExpr(
-		plannercore.LogicalLimit{Count: 3}.Init(s.sctx, 0)))
+	g2 := NewGroupWithSchema(NewGroupExpr(plannercore.LogicalSelection{Conditions: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)), schema).SetEngineType(EngineTiKV)
+	g2.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 2}.Init(ctx, 0)))
+	g2.Insert(NewGroupExpr(plannercore.LogicalProjection{Exprs: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)))
+	g2.Insert(NewGroupExpr(plannercore.LogicalLimit{Count: 3}.Init(ctx, 0)))
 
-	flashGather := NewGroupExpr(
-		plannercore.TiKVSingleGather{}.Init(s.sctx, 0))
+	flashGather := NewGroupExpr(plannercore.TiKVSingleGather{}.Init(ctx, 0))
 	flashGather.Children = append(flashGather.Children, g1)
-	g3 := NewGroupWithSchema(flashGather, s.schema).SetEngineType(EngineTiDB)
+	g3 := NewGroupWithSchema(flashGather, schema).SetEngineType(EngineTiDB)
 
-	tikvGather := NewGroupExpr(
-		plannercore.TiKVSingleGather{}.Init(s.sctx, 0))
+	tikvGather := NewGroupExpr(plannercore.TiKVSingleGather{}.Init(ctx, 0))
 	tikvGather.Children = append(tikvGather.Children, g2)
 	g3.Insert(tikvGather)
 
-	join := NewGroupExpr(
-		plannercore.LogicalJoin{}.Init(s.sctx, 0))
+	join := NewGroupExpr(plannercore.LogicalJoin{}.Init(ctx, 0))
 	join.Children = append(join.Children, g3, g3)
-	g4 := NewGroupWithSchema(join, s.schema).SetEngineType(EngineTiDB)
+	g4 := NewGroupWithSchema(join, schema).SetEngineType(EngineTiDB)
 
 	// The Groups look like this:
 	// Group 4
@@ -257,37 +227,36 @@ func (s *testMemoSuite) TestExprIterWithEngineType(c *C) {
 	//     Limit
 
 	p0 := BuildPattern(OperandTiKVSingleGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOnly))
-	c.Assert(countMatchedIter(g3, p0), Equals, 2)
+	require.Equal(t, 2, countMatchedIter(g3, p0))
 	p1 := BuildPattern(OperandTiKVSingleGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiFlashOnly))
-	c.Assert(countMatchedIter(g3, p1), Equals, 2)
+	require.Equal(t, 2, countMatchedIter(g3, p1))
 	p2 := BuildPattern(OperandTiKVSingleGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOrTiFlash))
-	c.Assert(countMatchedIter(g3, p2), Equals, 4)
+	require.Equal(t, 4, countMatchedIter(g3, p2))
 	p3 := BuildPattern(OperandTiKVSingleGather, EngineTiDBOnly, BuildPattern(OperandSelection, EngineTiFlashOnly))
-	c.Assert(countMatchedIter(g3, p3), Equals, 1)
+	require.Equal(t, 1, countMatchedIter(g3, p3))
 	p4 := BuildPattern(OperandTiKVSingleGather, EngineTiDBOnly, BuildPattern(OperandProjection, EngineTiKVOnly))
-	c.Assert(countMatchedIter(g3, p4), Equals, 1)
-
+	require.Equal(t, 1, countMatchedIter(g3, p4))
 	p5 := BuildPattern(
 		OperandJoin,
 		EngineTiDBOnly,
 		BuildPattern(OperandTiKVSingleGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOnly)),
 		BuildPattern(OperandTiKVSingleGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOnly)),
 	)
-	c.Assert(countMatchedIter(g4, p5), Equals, 4)
+	require.Equal(t, 4, countMatchedIter(g4, p5))
 	p6 := BuildPattern(
 		OperandJoin,
 		EngineTiDBOnly,
 		BuildPattern(OperandTiKVSingleGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiFlashOnly)),
 		BuildPattern(OperandTiKVSingleGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOnly)),
 	)
-	c.Assert(countMatchedIter(g4, p6), Equals, 4)
+	require.Equal(t, 4, countMatchedIter(g4, p6))
 	p7 := BuildPattern(
 		OperandJoin,
 		EngineTiDBOnly,
 		BuildPattern(OperandTiKVSingleGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOrTiFlash)),
 		BuildPattern(OperandTiKVSingleGather, EngineTiDBOnly, BuildPattern(OperandLimit, EngineTiKVOrTiFlash)),
 	)
-	c.Assert(countMatchedIter(g4, p7), Equals, 16)
+	require.Equal(t, 16, countMatchedIter(g4, p7))
 
 	// This is not a test case for EngineType. This case is to test
 	// the Pattern without a leaf AnyOperand. It is more efficient to
@@ -298,5 +267,19 @@ func (s *testMemoSuite) TestExprIterWithEngineType(c *C) {
 		BuildPattern(OperandTiKVSingleGather, EngineTiDBOnly),
 		BuildPattern(OperandTiKVSingleGather, EngineTiDBOnly),
 	)
-	c.Assert(countMatchedIter(g4, p8), Equals, 4)
+	require.Equal(t, 4, countMatchedIter(g4, p8))
+}
+
+func countMatchedIter(group *Group, pattern *Pattern) int {
+	count := 0
+	for elem := group.Equivalents.Front(); elem != nil; elem = elem.Next() {
+		iter := NewExprIterFromGroupElem(elem, pattern)
+		if iter == nil {
+			continue
+		}
+		for ; iter.Matched(); iter.Next() {
+			count++
+		}
+	}
+	return count
 }

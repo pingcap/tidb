@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -51,11 +52,11 @@ type CTEUsageCounter struct {
 
 // Sub returns the difference of two counters.
 func (c CTEUsageCounter) Sub(rhs CTEUsageCounter) CTEUsageCounter {
-	new := CTEUsageCounter{}
-	new.NonRecursiveCTEUsed = c.NonRecursiveCTEUsed - rhs.NonRecursiveCTEUsed
-	new.RecursiveUsed = c.RecursiveUsed - rhs.RecursiveUsed
-	new.NonCTEUsed = c.NonCTEUsed - rhs.NonCTEUsed
-	return new
+	return CTEUsageCounter{
+		NonRecursiveCTEUsed: c.NonRecursiveCTEUsed - rhs.NonRecursiveCTEUsed,
+		RecursiveUsed:       c.RecursiveUsed - rhs.RecursiveUsed,
+		NonCTEUsed:          c.NonCTEUsed - rhs.NonCTEUsed,
+	}
 }
 
 // GetCTECounter gets the TxnCommitCounter.

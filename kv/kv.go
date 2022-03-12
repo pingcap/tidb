@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,14 +19,19 @@ import (
 	"crypto/tls"
 	"time"
 
+	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/trxevents"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
+	pd "github.com/tikv/pd/client"
 )
 
 // UnCommitIndexKVFlag uses to indicate the index key/value is no need to commit.
@@ -66,6 +72,40 @@ type Retriever interface {
 	// If k is nil, the returned iterator will be positioned at the last key.
 	// TODO: Add lower bound limit
 	IterReverse(k Key) (Iterator, error)
+}
+
+// EmptyIterator is an iterator without any entry
+type EmptyIterator struct{}
+
+// Valid returns true if the current iterator is valid.
+func (i *EmptyIterator) Valid() bool { return false }
+
+// Key returns the current key. Always return nil for this iterator
+func (i *EmptyIterator) Key() Key { return nil }
+
+// Value returns the current value. Always return nil for this iterator
+func (i *EmptyIterator) Value() []byte { return nil }
+
+// Next goes the next position. Always return error for this iterator
+func (i *EmptyIterator) Next() error { return errors.New("iterator is invalid") }
+
+// Close closes the iterator.
+func (i *EmptyIterator) Close() {}
+
+// EmptyRetriever is a retriever without any entry
+type EmptyRetriever struct{}
+
+// Get gets the value for key k from kv store. Always return nil for this retriever
+func (r *EmptyRetriever) Get(_ context.Context, _ Key) ([]byte, error) {
+	return nil, ErrNotExist
+}
+
+// Iter creates an Iterator. Always return EmptyIterator for this retriever
+func (r *EmptyRetriever) Iter(_ Key, _ Key) (Iterator, error) { return &EmptyIterator{}, nil }
+
+// IterReverse creates a reversed Iterator. Always return EmptyIterator for this retriever
+func (r *EmptyRetriever) IterReverse(_ Key) (Iterator, error) {
+	return &EmptyIterator{}, nil
 }
 
 // Mutator is the interface wraps the basic Set and Delete methods.
@@ -131,6 +171,9 @@ type MemBuffer interface {
 
 	// Len returns the number of entries in the DB.
 	Len() int
+
+	// Size returns sum of keys and values length.
+	Size() int
 }
 
 // LockCtx contains information for LockKeys method.
@@ -140,6 +183,7 @@ type LockCtx = tikvstore.LockCtx
 // This is not thread safe.
 type Transaction interface {
 	RetrieverMutator
+	AssertionProto
 	// Size returns sum of keys and values length.
 	Size() int
 	// Len returns the number of entries in the DB.
@@ -186,15 +230,36 @@ type Transaction interface {
 	// GetIndexName returns the cached index name.
 	// If there is no such index already inserted through CacheIndexName, it will return UNKNOWN.
 	GetTableInfo(id int64) *model.TableInfo
+
+	// set allowed options of current operation in each TiKV disk usage level.
+	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
+	// clear allowed flag
+	ClearDiskFullOpt()
+}
+
+// AssertionProto is an interface defined for the assertion protocol.
+type AssertionProto interface {
+	// SetAssertion sets an assertion for an operation on the key.
+	// TODO: Use a special type instead of `FlagsOp`. Otherwise there's risk that the assertion flag is incorrectly used
+	// in other places like `MemBuffer.SetWithFlags`.
+	SetAssertion(key []byte, assertion ...FlagsOp) error
 }
 
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
-	Send(ctx context.Context, req *Request, vars interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool) Response
+	Send(ctx context.Context, req *Request, vars interface{}, option *ClientSendOption) Response
 
 	// IsRequestTypeSupported checks if reqType and subType is supported.
 	IsRequestTypeSupported(reqType, subType int64) bool
+}
+
+// ClientSendOption wraps options during Client Send
+type ClientSendOption struct {
+	SessionMemTracker          *memory.Tracker
+	EnabledRateLimitAction     bool
+	EventCb                    trxevents.EventCallback
+	EnableCollectExecutionInfo bool
 }
 
 // ReqTypes.
@@ -283,15 +348,22 @@ type Request struct {
 	TaskID uint64
 	// TiDBServerID is the specified TiDB serverID to execute request. `0` means all TiDB instances.
 	TiDBServerID uint64
-	// TxnScope is the scope of the current txn.
-	TxnScope string
+	// ReadReplicaScope is the scope of the read replica.
+	ReadReplicaScope string
 	// IsStaleness indicates whether the request read staleness data
 	IsStaleness bool
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels []*metapb.StoreLabel
-	// ResourceGroupTag indicates the kv request task group.
-	ResourceGroupTag []byte
+	// ResourceGroupTagger indicates the kv request task group tagger.
+	ResourceGroupTagger tikvrpc.ResourceGroupTagger
+	// Paging indicates whether the request is a paging request.
+	Paging bool
 }
+
+const (
+	// GlobalReplicaScope indicates the default replica scope for tidb to request
+	GlobalReplicaScope = oracle.GlobalTxnScope
+)
 
 // ResultSubset represents a result subset from a single storage unit.
 // TODO: Find a better interface for ResultSubset that can reuse bytes.
@@ -325,6 +397,18 @@ type Snapshot interface {
 	SetOption(opt int, val interface{})
 }
 
+// SnapshotInterceptor is used to intercept snapshot's read operation
+type SnapshotInterceptor interface {
+	// OnGet intercepts Get operation for Snapshot
+	OnGet(ctx context.Context, snap Snapshot, k Key) ([]byte, error)
+	// OnBatchGet intercepts BatchGet operation for Snapshot
+	OnBatchGet(ctx context.Context, snap Snapshot, keys []Key) (map[string][]byte, error)
+	// OnIter intercepts Iter operation for Snapshot
+	OnIter(snap Snapshot, k Key, upperBound Key) (Iterator, error)
+	// OnIterReverse intercepts IterReverse operation for Snapshot
+	OnIterReverse(snap Snapshot, k Key) (Iterator, error)
+}
+
 // BatchGetter is the interface for BatchGet.
 type BatchGetter interface {
 	// BatchGet gets a batch of values.
@@ -342,9 +426,7 @@ type Driver interface {
 // Isolation should be at least SI(SNAPSHOT ISOLATION)
 type Storage interface {
 	// Begin a global transaction
-	Begin() (Transaction, error)
-	// BeginWithOption begins a transaction with given option
-	BeginWithOption(option tikv.StartTSOption) (Transaction, error)
+	Begin(opts ...tikv.TxnOption) (Transaction, error)
 	// GetSnapshot gets a snapshot that is able to read any data which data is <= ver.
 	// if ver is MaxVersion or > current max committed version, we will use current version for this snapshot.
 	GetSnapshot(ver Version) Snapshot
@@ -381,6 +463,11 @@ type EtcdBackend interface {
 	EtcdAddrs() ([]string, error)
 	TLSConfig() *tls.Config
 	StartGCWorker() error
+}
+
+// StorageWithPD is used to get pd client.
+type StorageWithPD interface {
+	GetPDClient() pd.Client
 }
 
 // FnKeyCmp is the function for iterator the keys

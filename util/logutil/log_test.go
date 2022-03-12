@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func TestZapLoggerWithKeys(t *testing.T) {
@@ -96,4 +98,61 @@ func TestSetLevel(t *testing.T) {
 	err = SetLevel("DEBUG")
 	require.NoError(t, err)
 	require.Equal(t, zap.DebugLevel, log.GetLevel())
+}
+
+func TestGrpcLoggerCreation(t *testing.T) {
+	level := "info"
+	conf := NewLogConfig(level, DefaultLogFormat, "", EmptyFileLogConfig, false)
+	_, p, err := initGRPCLogger(conf)
+	// assert after init grpc logger, the original conf is not changed
+	require.Equal(t, conf.Level, level)
+	require.NoError(t, err)
+	require.Equal(t, p.Level.Level(), zap.ErrorLevel)
+	os.Setenv("GRPC_DEBUG", "1")
+	defer os.Unsetenv("GRPC_DEBUG")
+	_, newP, err := initGRPCLogger(conf)
+	require.NoError(t, err)
+	require.Equal(t, newP.Level.Level(), zap.DebugLevel)
+}
+
+func TestSlowQueryLoggerCreation(t *testing.T) {
+	level := "Error"
+	conf := NewLogConfig(level, DefaultLogFormat, "", EmptyFileLogConfig, false)
+	_, prop, err := newSlowQueryLogger(conf)
+	// assert after init slow query logger, the original conf is not changed
+	require.Equal(t, conf.Level, level)
+	require.NoError(t, err)
+	// slow query logger doesn't use the level of the global log config, and the
+	// level should be less than WarnLevel which is used by it to log slow query.
+	require.NotEqual(t, conf.Level, prop.Level.String())
+	require.True(t, prop.Level.Level() <= zapcore.WarnLevel)
+
+	level = "warn"
+	slowQueryFn := "slow-query.log"
+	fileConf := FileLogConfig{
+		log.FileLogConfig{
+			Filename:   slowQueryFn,
+			MaxSize:    10,
+			MaxDays:    10,
+			MaxBackups: 10,
+		},
+	}
+	conf = NewLogConfig(level, DefaultLogFormat, slowQueryFn, fileConf, false)
+	slowQueryConf := newSlowQueryLogConfig(conf)
+	// slowQueryConf.MaxDays/MaxSize/MaxBackups should be same with global config.
+	require.Equal(t, fileConf.FileLogConfig, slowQueryConf.File)
+}
+
+func TestGlobalLoggerReplace(t *testing.T) {
+	fileCfg := FileLogConfig{log.FileLogConfig{Filename: "zap_log", MaxDays: 0, MaxSize: 4096}}
+	conf := NewLogConfig("info", DefaultLogFormat, "", fileCfg, false)
+	err := InitLogger(conf)
+	require.NoError(t, err)
+
+	conf.Config.File.MaxDays = 14
+
+	err = ReplaceLogger(conf)
+	require.NoError(t, err)
+	err = os.Remove(fileCfg.Filename)
+	require.NoError(t, err)
 }

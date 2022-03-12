@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -23,9 +24,9 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -153,15 +154,15 @@ func (s *SetConfigExec) doRequest(url string) (retErr error) {
 }
 
 func isValidInstance(instance string) bool {
-	ip, port, err := net.SplitHostPort(instance)
+	host, port, err := net.SplitHostPort(instance)
 	if err != nil {
 		return false
 	}
 	if port == "" {
 		return false
 	}
-	v := net.ParseIP(ip)
-	return v != nil
+	_, err = net.LookupIP(host)
+	return err == nil
 }
 
 // ConvertConfigItem2JSON converts the config item specified by key and val to json.
@@ -179,7 +180,7 @@ func ConvertConfigItem2JSON(ctx sessionctx.Context, key string, val expression.E
 		var s string
 		s, isNull, err = val.EvalString(ctx, chunk.Row{})
 		if err == nil && !isNull {
-			str = fmt.Sprintf(`"%s"`, s)
+			str = fmt.Sprintf("%q", s)
 		}
 	case types.ETInt:
 		var i int64

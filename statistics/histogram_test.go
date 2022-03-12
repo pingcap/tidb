@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,18 +16,20 @@ package statistics
 
 import (
 	"fmt"
+	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testStatisticsSuite) TestNewHistogramBySelectivity(c *C) {
+func TestNewHistogramBySelectivity(t *testing.T) {
 	coll := &HistColl{
 		Count:   330,
 		Columns: make(map[int64]*Column),
@@ -44,12 +47,12 @@ func (s *testStatisticsSuite) TestNewHistogramBySelectivity(c *C) {
 	}
 	coll.Columns[1] = intCol
 	node := &StatsNode{ID: 1, Tp: PkType, Selectivity: 0.56}
-	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(nil), HighVal: types.MakeDatums(nil)})
-	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: types.MakeDatums(2)})
-	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(5), HighVal: types.MakeDatums(6)})
-	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(8), HighVal: types.MakeDatums(10)})
-	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(13), HighVal: types.MakeDatums(13)})
-	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(25), HighVal: []types.Datum{types.MaxValueDatum()}})
+	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(nil), HighVal: types.MakeDatums(nil), Collators: collate.GetBinaryCollatorSlice(1)})
+	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: types.MakeDatums(2), Collators: collate.GetBinaryCollatorSlice(1)})
+	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(5), HighVal: types.MakeDatums(6), Collators: collate.GetBinaryCollatorSlice(1)})
+	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(8), HighVal: types.MakeDatums(10), Collators: collate.GetBinaryCollatorSlice(1)})
+	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(13), HighVal: types.MakeDatums(13), Collators: collate.GetBinaryCollatorSlice(1)})
+	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(25), HighVal: []types.Datum{types.MaxValueDatum()}, Collators: collate.GetBinaryCollatorSlice(1)})
 	intColResult := `column:1 ndv:16 totColSize:0
 num: 30 lower_bound: 0 upper_bound: 2 repeats: 10 ndv: 0
 num: 11 lower_bound: 6 upper_bound: 8 repeats: 0 ndv: 0
@@ -77,12 +80,12 @@ num: 30 lower_bound: 27 upper_bound: 29 repeats: 0 ndv: 0`
 	stringCol.PreCalculateScalar()
 	coll.Columns[2] = stringCol
 	node2 := &StatsNode{ID: 2, Tp: ColType, Selectivity: 0.6}
-	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: types.MakeDatums(nil), HighVal: types.MakeDatums(nil)})
-	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: types.MakeDatums("aaa")})
-	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: types.MakeDatums("aaaaaaaaaaa"), HighVal: types.MakeDatums("aaaaaaaaaaaaaa")})
-	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: types.MakeDatums("bbb"), HighVal: types.MakeDatums("cccc")})
-	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: types.MakeDatums("ddd"), HighVal: types.MakeDatums("fff")})
-	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: types.MakeDatums("ggg"), HighVal: []types.Datum{types.MaxValueDatum()}})
+	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: types.MakeDatums(nil), HighVal: types.MakeDatums(nil), Collators: collate.GetBinaryCollatorSlice(1)})
+	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: types.MakeDatums("aaa"), Collators: collate.GetBinaryCollatorSlice(1)})
+	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: types.MakeDatums("aaaaaaaaaaa"), HighVal: types.MakeDatums("aaaaaaaaaaaaaa"), Collators: collate.GetBinaryCollatorSlice(1)})
+	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: types.MakeDatums("bbb"), HighVal: types.MakeDatums("cccc"), Collators: collate.GetBinaryCollatorSlice(1)})
+	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: types.MakeDatums("ddd"), HighVal: types.MakeDatums("fff"), Collators: collate.GetBinaryCollatorSlice(1)})
+	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: types.MakeDatums("ggg"), HighVal: []types.Datum{types.MaxValueDatum()}, Collators: collate.GetBinaryCollatorSlice(1)})
 	stringColResult := `column:2 ndv:9 totColSize:0
 num: 60 lower_bound: a upper_bound: aaaabbbb repeats: 0 ndv: 0
 num: 52 lower_bound: bbbb upper_bound: fdsfdsfds repeats: 0 ndv: 0
@@ -90,26 +93,26 @@ num: 54 lower_bound: kkkkk upper_bound: ooooo repeats: 0 ndv: 0
 num: 60 lower_bound: oooooo upper_bound: sssss repeats: 0 ndv: 0
 num: 60 lower_bound: ssssssu upper_bound: yyyyy repeats: 0 ndv: 0`
 
-	newColl := coll.NewHistCollBySelectivity(sc, []*StatsNode{node, node2})
-	c.Assert(newColl.Columns[1].String(), Equals, intColResult)
-	c.Assert(newColl.Columns[2].String(), Equals, stringColResult)
+	newColl := coll.NewHistCollBySelectivity(ctx, []*StatsNode{node, node2})
+	require.Equal(t, intColResult, newColl.Columns[1].String())
+	require.Equal(t, stringColResult, newColl.Columns[2].String())
 
 	idx := &Index{Info: &model.IndexInfo{Columns: []*model.IndexColumn{{Name: model.NewCIStr("a"), Offset: 0}}}}
 	coll.Indices[0] = idx
 	idx.Histogram = *NewHistogram(0, 15, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
 	for i := 0; i < 5; i++ {
 		low, err1 := codec.EncodeKey(sc, nil, types.NewIntDatum(int64(i*3)))
-		c.Assert(err1, IsNil, Commentf("Test failed: %v", err1))
+		require.NoError(t, err1)
 		high, err2 := codec.EncodeKey(sc, nil, types.NewIntDatum(int64(i*3+2)))
-		c.Assert(err2, IsNil, Commentf("Test failed: %v", err2))
+		require.NoError(t, err2)
 		idx.Bounds.AppendBytes(0, low)
 		idx.Bounds.AppendBytes(0, high)
 		idx.Buckets = append(idx.Buckets, Bucket{Repeat: 10, Count: int64(30*i + 30)})
 	}
 	idx.PreCalculateScalar()
 	node3 := &StatsNode{ID: 0, Tp: IndexType, Selectivity: 0.47}
-	node3.Ranges = append(node3.Ranges, &ranger.Range{LowVal: types.MakeDatums(2), HighVal: types.MakeDatums(3)})
-	node3.Ranges = append(node3.Ranges, &ranger.Range{LowVal: types.MakeDatums(10), HighVal: types.MakeDatums(13)})
+	node3.Ranges = append(node3.Ranges, &ranger.Range{LowVal: types.MakeDatums(2), HighVal: types.MakeDatums(3), Collators: collate.GetBinaryCollatorSlice(1)})
+	node3.Ranges = append(node3.Ranges, &ranger.Range{LowVal: types.MakeDatums(10), HighVal: types.MakeDatums(13), Collators: collate.GetBinaryCollatorSlice(1)})
 
 	idxResult := `index:0 ndv:7
 num: 30 lower_bound: 0 upper_bound: 2 repeats: 10 ndv: 0
@@ -117,29 +120,29 @@ num: 30 lower_bound: 3 upper_bound: 5 repeats: 10 ndv: 0
 num: 30 lower_bound: 9 upper_bound: 11 repeats: 10 ndv: 0
 num: 30 lower_bound: 12 upper_bound: 14 repeats: 10 ndv: 0`
 
-	newColl = coll.NewHistCollBySelectivity(sc, []*StatsNode{node3})
-	c.Assert(newColl.Indices[0].String(), Equals, idxResult)
+	newColl = coll.NewHistCollBySelectivity(ctx, []*StatsNode{node3})
+	require.Equal(t, idxResult, newColl.Indices[0].String())
 }
 
-func (s *testStatisticsSuite) TestTruncateHistogram(c *C) {
+func TestTruncateHistogram(t *testing.T) {
 	hist := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLonglong), 1, 0)
 	low, high := types.NewIntDatum(0), types.NewIntDatum(1)
 	hist.AppendBucket(&low, &high, 0, 1)
 	newHist := hist.TruncateHistogram(1)
-	c.Assert(HistogramEqual(hist, newHist, true), IsTrue)
+	require.True(t, HistogramEqual(hist, newHist, true))
 	newHist = hist.TruncateHistogram(0)
-	c.Assert(newHist.Len(), Equals, 0)
+	require.Equal(t, 0, newHist.Len())
 }
 
-func (s *testStatisticsSuite) TestValueToString4InvalidKey(c *C) {
+func TestValueToString4InvalidKey(t *testing.T) {
 	bytes, err := codec.EncodeKey(nil, nil, types.NewDatum(1), types.NewDatum(0.5))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	// Append invalid flag.
 	bytes = append(bytes, 20)
 	datum := types.NewDatum(bytes)
 	res, err := ValueToString(nil, &datum, 3, nil)
-	c.Assert(err, IsNil)
-	c.Assert(res, Equals, "(1, 0.5, \x14)")
+	require.NoError(t, err)
+	require.Equal(t, "(1, 0.5, \x14)", res)
 }
 
 type bucket4Test struct {
@@ -155,20 +158,20 @@ type topN4Test struct {
 	count int64
 }
 
-func genHist4Test(c *C, buckets []*bucket4Test, totColSize int64) *Histogram {
+func genHist4Test(t *testing.T, buckets []*bucket4Test, totColSize int64) *Histogram {
 	h := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), len(buckets), totColSize)
 	for _, bucket := range buckets {
 		lower, err := codec.EncodeKey(nil, nil, types.NewIntDatum(bucket.lower))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		upper, err := codec.EncodeKey(nil, nil, types.NewIntDatum(bucket.upper))
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		di, du := types.NewBytesDatum(lower), types.NewBytesDatum(upper)
 		h.AppendBucketWithNDV(&di, &du, bucket.count, bucket.repeat, bucket.ndv)
 	}
 	return h
 }
 
-func (s *testStatisticsSuite) TestMergePartitionLevelHist(c *C) {
+func TestMergePartitionLevelHist(t *testing.T) {
 	type testCase struct {
 		partitionHists  [][]*bucket4Test
 		totColSize      []int64
@@ -372,39 +375,39 @@ func (s *testStatisticsSuite) TestMergePartitionLevelHist(c *C) {
 		},
 	}
 
-	for _, t := range tests {
+	for _, tt := range tests {
 		var expTotColSize int64
-		hists := make([]*Histogram, 0, len(t.partitionHists))
-		for i := range t.partitionHists {
-			hists = append(hists, genHist4Test(c, t.partitionHists[i], t.totColSize[i]))
-			expTotColSize += t.totColSize[i]
+		hists := make([]*Histogram, 0, len(tt.partitionHists))
+		for i := range tt.partitionHists {
+			hists = append(hists, genHist4Test(t, tt.partitionHists[i], tt.totColSize[i]))
+			expTotColSize += tt.totColSize[i]
 		}
 		ctx := mock.NewContext()
 		sc := ctx.GetSessionVars().StmtCtx
-		poped := make([]TopNMeta, 0, len(t.popedTopN))
-		for _, top := range t.popedTopN {
+		poped := make([]TopNMeta, 0, len(tt.popedTopN))
+		for _, top := range tt.popedTopN {
 			b, err := codec.EncodeKey(sc, nil, types.NewIntDatum(top.data))
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			tmp := TopNMeta{
 				Encoded: b,
 				Count:   uint64(top.count),
 			}
 			poped = append(poped, tmp)
 		}
-		globalHist, err := MergePartitionHist2GlobalHist(sc, hists, poped, t.expBucketNumber, true)
-		c.Assert(err, IsNil)
-		for i, b := range t.expHist {
+		globalHist, err := MergePartitionHist2GlobalHist(sc, hists, poped, tt.expBucketNumber, true)
+		require.NoError(t, err)
+		for i, b := range tt.expHist {
 			lo, err := ValueToString(ctx.GetSessionVars(), globalHist.GetLower(i), 1, []byte{types.KindInt64})
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 			up, err := ValueToString(ctx.GetSessionVars(), globalHist.GetUpper(i), 1, []byte{types.KindInt64})
-			c.Assert(err, IsNil)
-			c.Assert(fmt.Sprintf("%v", b.lower), Equals, lo)
-			c.Assert(fmt.Sprintf("%v", b.upper), Equals, up)
-			c.Assert(b.count, Equals, globalHist.Buckets[i].Count)
-			c.Assert(b.repeat, Equals, globalHist.Buckets[i].Repeat)
-			c.Assert(b.ndv, Equals, globalHist.Buckets[i].NDV)
+			require.NoError(t, err)
+			require.Equal(t, lo, fmt.Sprintf("%v", b.lower))
+			require.Equal(t, up, fmt.Sprintf("%v", b.upper))
+			require.Equal(t, globalHist.Buckets[i].Count, b.count)
+			require.Equal(t, globalHist.Buckets[i].Repeat, b.repeat)
+			require.Equal(t, globalHist.Buckets[i].NDV, b.ndv)
 		}
-		c.Assert(globalHist.TotColSize, Equals, expTotColSize)
+		require.Equal(t, expTotColSize, globalHist.TotColSize)
 	}
 }
 
@@ -421,7 +424,7 @@ func genBucket4Merging4Test(lower, upper, ndv, disjointNDV int64) bucket4Merging
 	}
 }
 
-func (s *testStatisticsSuite) TestMergeBucketNDV(c *C) {
+func TestMergeBucketNDV(t *testing.T) {
 	type testData struct {
 		left   bucket4Merging
 		right  bucket4Merging
@@ -455,12 +458,12 @@ func (s *testStatisticsSuite) TestMergeBucketNDV(c *C) {
 		},
 	}
 	sc := mock.NewContext().GetSessionVars().StmtCtx
-	for _, t := range tests {
-		res, err := mergeBucketNDV(sc, &t.left, &t.right)
-		c.Assert(err, IsNil)
-		c.Assert(t.result.lower.GetInt64(), Equals, res.lower.GetInt64())
-		c.Assert(t.result.upper.GetInt64(), Equals, res.upper.GetInt64())
-		c.Assert(t.result.NDV, Equals, res.NDV)
-		c.Assert(t.result.disjointNDV, Equals, res.disjointNDV)
+	for _, tt := range tests {
+		res, err := mergeBucketNDV(sc, &tt.left, &tt.right)
+		require.NoError(t, err)
+		require.Equal(t, res.lower.GetInt64(), tt.result.lower.GetInt64())
+		require.Equal(t, res.upper.GetInt64(), tt.result.upper.GetInt64())
+		require.Equal(t, res.NDV, tt.result.NDV)
+		require.Equal(t, res.disjointNDV, tt.result.disjointNDV)
 	}
 }

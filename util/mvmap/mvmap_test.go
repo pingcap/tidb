@@ -8,84 +8,45 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package mvmap
 
 import (
-	"bytes"
-	"encoding/binary"
 	"fmt"
 	"hash/fnv"
 	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
 
 func TestMVMap(t *testing.T) {
 	m := NewMVMap()
-	var vals [][]byte
 	m.Put([]byte("abc"), []byte("abc1"))
 	m.Put([]byte("abc"), []byte("abc2"))
 	m.Put([]byte("def"), []byte("def1"))
 	m.Put([]byte("def"), []byte("def2"))
-	vals = m.Get([]byte("abc"), vals[:0])
-	if fmt.Sprintf("%s", vals) != "[abc1 abc2]" {
-		t.FailNow()
-	}
-	vals = m.Get([]byte("def"), vals[:0])
-	if fmt.Sprintf("%s", vals) != "[def1 def2]" {
-		t.FailNow()
-	}
 
-	if m.Len() != 4 {
-		t.FailNow()
-	}
+	var v [][]byte
+
+	v = m.Get([]byte("abc"), v[:0])
+	require.Equal(t, "[abc1 abc2]", fmt.Sprintf("%s", v))
+	v = m.Get([]byte("def"), v[:0])
+	require.Equal(t, "[def1 def2]", fmt.Sprintf("%s", v))
+	require.Equal(t, 4, m.Len())
 
 	results := []string{"abc abc1", "abc abc2", "def def1", "def def2"}
 	it := m.NewIterator()
 	for i := 0; i < 4; i++ {
 		key, val := it.Next()
-		if fmt.Sprintf("%s %s", key, val) != results[i] {
-			t.FailNow()
-		}
+		require.Equal(t, results[i], fmt.Sprintf("%s %s", key, val))
 	}
+
 	key, val := it.Next()
-	if key != nil || val != nil {
-		t.FailNow()
-	}
-}
-
-func BenchmarkMVMapPut(b *testing.B) {
-	m := NewMVMap()
-	buffer := make([]byte, 8)
-	for i := 0; i < b.N; i++ {
-		binary.BigEndian.PutUint64(buffer, uint64(i))
-		m.Put(buffer, buffer)
-	}
-}
-
-func BenchmarkMVMapGet(b *testing.B) {
-	m := NewMVMap()
-	buffer := make([]byte, 8)
-	for i := 0; i < b.N; i++ {
-		binary.BigEndian.PutUint64(buffer, uint64(i))
-		m.Put(buffer, buffer)
-	}
-	val := make([][]byte, 0, 8)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		binary.BigEndian.PutUint64(buffer, uint64(i))
-		val = m.Get(buffer, val[:0])
-		if len(val) != 1 || !bytes.Equal(val[0], buffer) {
-			b.FailNow()
-		}
-	}
+	require.Nil(t, key)
+	require.Nil(t, val)
 }
 
 func TestFNVHash(t *testing.T) {
@@ -93,12 +54,10 @@ func TestFNVHash(t *testing.T) {
 	sum1 := fnvHash64(b)
 	hash := fnv.New64()
 	hash.Reset()
+
 	_, err := hash.Write(b)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+
 	sum2 := hash.Sum64()
-	if sum1 != sum2 {
-		t.FailNow()
-	}
+	require.Equal(t, sum1, sum2)
 }

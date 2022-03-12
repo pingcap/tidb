@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,7 +20,7 @@ import (
 	"unsafe"
 
 	"github.com/cznic/mathutil"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -139,6 +140,9 @@ func (c *Codec) decodeColumn(buffer []byte, col *Column, ordinal int) (remained 
 
 	// decode data.
 	col.data = buffer[:numDataBytes:numDataBytes]
+	// The column reference the data of the grpc response, the memory of the grpc message cannot be GCed if we reuse
+	// this column. Thus, we set `avoidReusing` to true.
+	col.avoidReusing = true
 	return buffer[numDataBytes:]
 }
 

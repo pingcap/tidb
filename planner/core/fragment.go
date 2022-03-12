@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,13 +16,14 @@ package core
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -124,7 +126,8 @@ func (f *Fragment) init(p PhysicalPlan) error {
 		}
 		f.TableScan = x
 	case *PhysicalExchangeReceiver:
-		f.singleton = x.children[0].(*PhysicalExchangeSender).ExchangeType == tipb.ExchangeType_PassThrough
+		// TODO: after we support partial merge, we should check whether all the target exchangeReceiver is same.
+		f.singleton = f.singleton || x.children[0].(*PhysicalExchangeSender).ExchangeType == tipb.ExchangeType_PassThrough
 		f.ExchangeReceivers = append(f.ExchangeReceivers, x)
 	case *PhysicalUnionAll:
 		return errors.New("unexpected union all detected")
@@ -250,16 +253,13 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 		for _, r := range f.ExchangeReceivers {
 			childrenTasks = append(childrenTasks, r.Tasks...)
 		}
-		if f.singleton {
+		if f.singleton && len(childrenTasks) > 0 {
 			childrenTasks = childrenTasks[0:1]
 		}
 		tasks = e.constructMPPTasksByChildrenTasks(childrenTasks)
 	}
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-	if len(tasks) == 0 {
-		return nil, errors.New("cannot find mpp task")
 	}
 	for _, r := range f.ExchangeReceivers {
 		for _, frag := range r.frags {
@@ -345,8 +345,15 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 }
 
 func (e *mppTaskGenerator) constructMPPTasksForSinglePartitionTable(ctx context.Context, kvRanges []kv.KeyRange, tableID int64) ([]*kv.MPPTask, error) {
-	req := &kv.MPPBuildTasksRequest{KeyRanges: kvRanges}
-	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req)
+	req := &kv.MPPBuildTasksRequest{
+		KeyRanges: kvRanges,
+	}
+	ttl, err := time.ParseDuration(e.ctx.GetSessionVars().MPPStoreFailTTL)
+	if err != nil {
+		logutil.BgLogger().Warn("MPP store fail ttl is invalid", zap.Error(err))
+		ttl = 30 * time.Second
+	}
+	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, e.ctx.GetSessionVars().MPPStoreLastFailTime, ttl)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

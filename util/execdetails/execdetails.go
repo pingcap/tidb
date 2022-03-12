@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -414,16 +415,18 @@ const (
 	TpSelectResultRuntimeStats
 	// TpInsertRuntimeStat is the tp for InsertRuntimeStat
 	TpInsertRuntimeStat
-	// TpIndexLookUpRunTimeStats is the tp for TpIndexLookUpRunTimeStats
+	// TpIndexLookUpRunTimeStats is the tp for IndexLookUpRunTimeStats
 	TpIndexLookUpRunTimeStats
-	// TpSlowQueryRuntimeStat is the tp for TpSlowQueryRuntimeStat
+	// TpSlowQueryRuntimeStat is the tp for SlowQueryRuntimeStat
 	TpSlowQueryRuntimeStat
 	// TpHashAggRuntimeStat is the tp for HashAggRuntimeStat
 	TpHashAggRuntimeStat
-	// TpIndexMergeRunTimeStats is the tp for TpIndexMergeRunTimeStats
+	// TpIndexMergeRunTimeStats is the tp for IndexMergeRunTimeStats
 	TpIndexMergeRunTimeStats
-	// TpBasicCopRunTimeStats is the tp for TpBasicCopRunTimeStats
+	// TpBasicCopRunTimeStats is the tp for BasicCopRunTimeStats
 	TpBasicCopRunTimeStats
+	// TpUpdateRuntimeStats is the tp for UpdateRuntimeStats
+	TpUpdateRuntimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.
@@ -760,6 +763,7 @@ func (e *RuntimeStatsWithConcurrencyInfo) Merge(_ RuntimeStats) {
 // RuntimeStatsWithCommit is the RuntimeStats with commit detail.
 type RuntimeStatsWithCommit struct {
 	Commit   *util.CommitDetails
+	TxnCnt   int
 	LockKeys *util.LockKeysDetails
 }
 
@@ -768,12 +772,27 @@ func (e *RuntimeStatsWithCommit) Tp() int {
 	return TpRuntimeStatsWithCommit
 }
 
+// MergeCommitDetails merges the commit details.
+func (e *RuntimeStatsWithCommit) MergeCommitDetails(detail *util.CommitDetails) {
+	if detail == nil {
+		return
+	}
+	if e.Commit == nil {
+		e.Commit = detail
+		e.TxnCnt = 1
+		return
+	}
+	e.Commit.Merge(detail)
+	e.TxnCnt++
+}
+
 // Merge implements the RuntimeStats interface.
 func (e *RuntimeStatsWithCommit) Merge(rs RuntimeStats) {
 	tmp, ok := rs.(*RuntimeStatsWithCommit)
 	if !ok {
 		return
 	}
+	e.TxnCnt += tmp.TxnCnt
 	if tmp.Commit != nil {
 		if e.Commit == nil {
 			e.Commit = &util.CommitDetails{}
@@ -791,7 +810,9 @@ func (e *RuntimeStatsWithCommit) Merge(rs RuntimeStats) {
 
 // Clone implements the RuntimeStats interface.
 func (e *RuntimeStatsWithCommit) Clone() RuntimeStats {
-	newRs := RuntimeStatsWithCommit{}
+	newRs := RuntimeStatsWithCommit{
+		TxnCnt: e.TxnCnt,
+	}
 	if e.Commit != nil {
 		newRs.Commit = e.Commit.Clone()
 	}
@@ -806,6 +827,12 @@ func (e *RuntimeStatsWithCommit) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 32))
 	if e.Commit != nil {
 		buf.WriteString("commit_txn: {")
+		// Only print out when there are more than 1 transaction.
+		if e.TxnCnt > 1 {
+			buf.WriteString("count: ")
+			buf.WriteString(strconv.Itoa(e.TxnCnt))
+			buf.WriteString(", ")
+		}
 		if e.Commit.PrewriteTime > 0 {
 			buf.WriteString("prewrite:")
 			buf.WriteString(FormatDuration(e.Commit.PrewriteTime))
@@ -941,7 +968,7 @@ func FormatDuration(d time.Duration) string {
 	if unit == time.Nanosecond {
 		return d.String()
 	}
-	integer := (d / unit) * unit
+	integer := (d / unit) * unit //nolint:durationcheck
 	decimal := float64(d%unit) / float64(unit)
 	if d < 10*unit {
 		decimal = math.Round(decimal*100) / 100

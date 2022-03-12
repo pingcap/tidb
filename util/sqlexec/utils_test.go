@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -19,32 +20,24 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-var _ = Suite(&testUtilsSuite{})
-
-type testUtilsSuite struct{}
-
-func (s *testUtilsSuite) TestReserveBuffer(c *C) {
+func TestReserveBuffer(t *testing.T) {
 	res0 := reserveBuffer(nil, 0)
-	c.Assert(res0, HasLen, 0)
+	require.Len(t, res0, 0)
 
 	res1 := reserveBuffer(res0, 3)
-	c.Assert(res1, HasLen, 3)
+	require.Len(t, res1, 3)
 	res1[1] = 3
 
 	res2 := reserveBuffer(res1, 9)
-	c.Assert(res2, HasLen, 12)
-	c.Assert(cap(res2), Equals, 15)
-	c.Assert(res2[:3], DeepEquals, res1)
+	require.Len(t, res2, 12)
+	require.Equal(t, 15, cap(res2))
+	require.Equal(t, res1, res2[:3])
 }
 
-func (s *testUtilsSuite) TestEscapeBackslash(c *C) {
+func TestEscapeBackslash(t *testing.T) {
 	type TestCase struct {
 		name   string
 		input  []byte
@@ -102,14 +95,17 @@ func (s *testUtilsSuite) TestEscapeBackslash(c *C) {
 			output: []byte("中文?"),
 		},
 	}
-	for _, t := range tests {
-		commentf := Commentf("%s", t.name)
-		c.Assert(escapeBytesBackslash(nil, t.input), DeepEquals, t.output, commentf)
-		c.Assert(escapeStringBackslash(nil, string(t.input)), DeepEquals, t.output, commentf)
+	for _, v := range tests {
+		// copy iterator variable into a new variable, see issue #27779
+		v := v
+		t.Run(v.name, func(t *testing.T) {
+			require.Equal(t, v.output, escapeBytesBackslash(nil, v.input))
+			require.Equal(t, v.output, escapeStringBackslash(nil, string(v.input)))
+		})
 	}
 }
 
-func (s *testUtilsSuite) TestEscapeSQL(c *C) {
+func TestEscapeSQL(t *testing.T) {
 	type TestCase struct {
 		name   string
 		input  string
@@ -118,7 +114,7 @@ func (s *testUtilsSuite) TestEscapeSQL(c *C) {
 		err    string
 	}
 	time2, err := time.Parse("2006-01-02 15:04:05", "2018-01-23 04:03:05")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tests := []TestCase{
 		{
 			name:   "normal 1",
@@ -145,7 +141,7 @@ func (s *testUtilsSuite) TestEscapeSQL(c *C) {
 			name:   "%? missing arguments",
 			input:  "select %? from %?",
 			params: []interface{}{4},
-			err:    "missing arguments.*",
+			err:    "^missing arguments",
 		},
 		{
 			name:   "nil",
@@ -341,7 +337,7 @@ func (s *testUtilsSuite) TestEscapeSQL(c *C) {
 			name:   "identifier, wrong arg",
 			input:  "use %n",
 			params: []interface{}{3},
-			err:    "expect a string identifier.*",
+			err:    "^expect a string identifier",
 		},
 		{
 			name:   "identifier",
@@ -390,39 +386,43 @@ func (s *testUtilsSuite) TestEscapeSQL(c *C) {
 			output: "select 55.2,0.66",
 		},
 	}
-	for _, t := range tests {
-		comment := Commentf("%s", t.name)
-		r3 := new(strings.Builder)
-		r1, e1 := escapeSQL(t.input, t.params...)
-		r2, e2 := EscapeSQL(t.input, t.params...)
-		e3 := FormatSQL(r3, t.input, t.params...)
-		if t.err == "" {
-			c.Assert(e1, IsNil, comment)
-			c.Assert(string(r1), Equals, t.output, comment)
-			c.Assert(e2, IsNil, comment)
-			c.Assert(r2, Equals, t.output, comment)
-			c.Assert(e3, IsNil, comment)
-			c.Assert(r3.String(), Equals, t.output, comment)
-		} else {
-			c.Assert(e1, NotNil, comment)
-			c.Assert(e1, ErrorMatches, t.err, comment)
-			c.Assert(e2, NotNil, comment)
-			c.Assert(e2, ErrorMatches, t.err, comment)
-			c.Assert(e3, NotNil, comment)
-			c.Assert(e3, ErrorMatches, t.err, comment)
-		}
+	for _, v := range tests {
+		// copy iterator variable into a new variable, see issue #27779
+		v := v
+		t.Run(v.name, func(t *testing.T) {
+			r3 := new(strings.Builder)
+			r1, e1 := escapeSQL(v.input, v.params...)
+			r2, e2 := EscapeSQL(v.input, v.params...)
+			e3 := FormatSQL(r3, v.input, v.params...)
+			if v.err == "" {
+				require.NoError(t, e1)
+				require.Equal(t, v.output, string(r1))
+				require.NoError(t, e2)
+				require.Equal(t, v.output, r2)
+				require.NoError(t, e3)
+				require.Equal(t, v.output, r3.String())
+
+			} else {
+				require.Error(t, e1)
+				require.Regexp(t, v.err, e1.Error())
+				require.Error(t, e2)
+				require.Regexp(t, v.err, e2.Error())
+				require.Error(t, e3)
+				require.Regexp(t, v.err, e3.Error())
+			}
+		})
 	}
 }
 
-func (s *testUtilsSuite) TestMustUtils(c *C) {
-	c.Assert(func() {
+func TestMustUtils(t *testing.T) {
+	require.PanicsWithError(t, "missing arguments, need 1-th arg, but only got 0 args", func() {
 		MustEscapeSQL("%?")
-	}, PanicMatches, "missing arguments.*")
+	})
 
-	c.Assert(func() {
+	require.PanicsWithError(t, "missing arguments, need 1-th arg, but only got 0 args", func() {
 		sql := new(strings.Builder)
 		MustFormatSQL(sql, "%?")
-	}, PanicMatches, "missing arguments.*")
+	})
 
 	sql := new(strings.Builder)
 	MustFormatSQL(sql, "t")

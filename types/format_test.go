@@ -8,19 +8,22 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package types_test
 
 import (
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/mysql"
+	"testing"
+
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testTimeSuite) TestTimeFormatMethod(c *C) {
+func TestTimeFormatMethod(t *testing.T) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	tblDate := []struct {
@@ -65,18 +68,17 @@ func (s *testTimeSuite) TestTimeFormatMethod(c *C) {
 			`Jan January 01 1 0th 00 0 000 0 12 00 AM 12:00:00 AM 00:00:00 00 123456 00 00 00 52 Fri Friday 5 4294967295 4294967295 0000 00 %`,
 		},
 	}
-	for i, t := range tblDate {
-		tm, err := types.ParseTime(sc, t.Input, mysql.TypeDatetime, 6)
-		c.Assert(err, IsNil, Commentf("parse time fail: %s", t.Input))
+	for i, tt := range tblDate {
+		tm, err := types.ParseTime(sc, tt.Input, mysql.TypeDatetime, 6)
+		require.NoErrorf(t, err, "Parse time fail: %s", tt.Input)
 
-		str, err := tm.DateFormat(t.Format)
-		c.Assert(err, IsNil, Commentf("time format fail: %d", i))
-		c.Assert(str, Equals, t.Expect, Commentf("no.%d \nobtain:%v \nexpect:%v\n", i,
-			str, t.Expect))
+		str, err := tm.DateFormat(tt.Format)
+		require.NoErrorf(t, err, "time format fail: %d", i)
+		require.Equalf(t, tt.Expect, str, "no.%d \nobtain:%v \nexpect:%v\n", i, str, tt.Expect)
 	}
 }
 
-func (s *testTimeSuite) TestStrToDate(c *C) {
+func TestStrToDate(t *testing.T) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	tests := []struct {
@@ -86,6 +88,7 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 	}{
 		{`2004420`, `%x%v%w`, types.FromDate(2004, 10, 17, 0, 0, 0, 0)},
 		{`01,05,2013`, `%d,%m,%Y`, types.FromDate(2013, 5, 1, 0, 0, 0, 0)},
+		{`5 12 2021`, `%m%d%Y`, types.FromDate(2021, 5, 12, 0, 0, 0, 0)},
 		{`May 01, 2013`, `%M %d,%Y`, types.FromDate(2013, 5, 1, 0, 0, 0, 0)},
 		{`a09:30:17`, `a%h:%i:%s`, types.FromDate(0, 0, 0, 9, 30, 17, 0)},
 		{`09:30:17a`, `%h:%i:%s`, types.FromDate(0, 0, 0, 9, 30, 17, 0)},
@@ -129,6 +132,9 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{`200442 suNd`, `%x%v%W`, types.FromDate(2004, 10, 17, 0, 0, 0, 0)}, // Weird MySQL behavior, matched as sunday
 		{"2004421", "%Y%U%w", types.FromDate(2004, 10, 18, 0, 0, 0, 0)},     // %U,%u should be used with %Y and not %X or %x
 		{"69421", "%y%U%w", types.FromDate(2069, 10, 21, 0, 0, 0, 0)},       // %U,%u should be used with %Y and not %X or %x
+		{`09/10/1021`, `%d/%m/%y`, types.FromDate(2010, 10, 9, 0, 0, 0, 0)}, // '%y' only accept up to 2 digits for year
+		{`09/10/1021`, `%d/%m/%Y`, types.FromDate(1021, 10, 9, 0, 0, 0, 0)}, // '%Y' accept up to 4 digits for year
+		{`09/10/10`, `%d/%m/%Y`, types.FromDate(2010, 10, 9, 0, 0, 0, 0)},   // '%Y' will fix the year for only 2 digits
 		//'%b'/'%M' should be case insensitive
 		{"31/may/2016 12:34:56.1234", "%d/%b/%Y %H:%i:%S.%f", types.FromDate(2016, 5, 31, 12, 34, 56, 123400)},
 		{"30/april/2016 12:34:56.", "%d/%M/%Y %H:%i:%s.%f", types.FromDate(2016, 4, 30, 12, 34, 56, 0)},
@@ -163,9 +169,9 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 	}
 	for i, tt := range tests {
 		sc.AllowInvalidDate = true
-		var t types.Time
-		c.Assert(t.StrToDate(sc, tt.input, tt.format), IsTrue, Commentf("no.%d failed input=%s format=%s", i, tt.input, tt.format))
-		c.Assert(t.CoreTime(), Equals, tt.expect, Commentf("no.%d failed input=%s format=%s", i, tt.input, tt.format))
+		var time types.Time
+		require.Truef(t, time.StrToDate(sc, tt.input, tt.format), "no.%d failed input=%s format=%s", i, tt.input, tt.format)
+		require.Equalf(t, tt.expect, time.CoreTime(), "no.%d failed input=%s format=%s", i, tt.input, tt.format)
 	}
 
 	errTests := []struct {
@@ -175,6 +181,8 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		// invalid days when `AllowInvalidDate` is false
 		{`04/31/2004`, `%m/%d/%Y`},                        // not exists in the real world
 		{"29/Feb/2021 12:34:56.", "%d/%b/%Y %H:%i:%s.%f"}, // Feb 29 in non-leap-year
+
+		{`512 2021`, `%m%d %Y`}, // MySQL will try to parse '51' for '%m', fail
 
 		{`a09:30:17`, `%h:%i:%s`}, // format mismatch
 		{`12:43:24 a`, `%r`},      // followed by incomplete 'AM'/'PM'
@@ -203,7 +211,7 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 	}
 	for i, tt := range errTests {
 		sc.AllowInvalidDate = false
-		var t types.Time
-		c.Assert(t.StrToDate(sc, tt.input, tt.format), IsFalse, Commentf("no.%d failed input=%s format=%s", i, tt.input, tt.format))
+		var time types.Time
+		require.Falsef(t, time.StrToDate(sc, tt.input, tt.format), "no.%d failed input=%s format=%s", i, tt.input, tt.format)
 	}
 }

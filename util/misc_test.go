@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,10 +21,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/fastrand"
@@ -33,7 +34,6 @@ import (
 
 func TestRunWithRetry(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
-		t.Parallel()
 		cnt := 0
 		err := RunWithRetry(3, 1, func() (bool, error) {
 			cnt++
@@ -47,7 +47,6 @@ func TestRunWithRetry(t *testing.T) {
 	})
 
 	t.Run("retry exceeds", func(t *testing.T) {
-		t.Parallel()
 		cnt := 0
 		err := RunWithRetry(3, 1, func() (bool, error) {
 			cnt++
@@ -61,7 +60,6 @@ func TestRunWithRetry(t *testing.T) {
 	})
 
 	t.Run("failed result", func(t *testing.T) {
-		t.Parallel()
 		cnt := 0
 		err := RunWithRetry(3, 1, func() (bool, error) {
 			cnt++
@@ -76,8 +74,6 @@ func TestRunWithRetry(t *testing.T) {
 }
 
 func TestX509NameParseMatch(t *testing.T) {
-	t.Parallel()
-
 	assert.Equal(t, "", X509NameOnline(pkix.Name{}))
 
 	check := pkix.Name{
@@ -96,13 +92,11 @@ func TestX509NameParseMatch(t *testing.T) {
 }
 
 func TestBasicFuncGetStack(t *testing.T) {
-	t.Parallel()
 	b := GetStack()
 	assert.Less(t, len(b), 4096)
 }
 
 func TestBasicFuncWithRecovery(t *testing.T) {
-	t.Parallel()
 	var recovery interface{}
 	WithRecovery(func() {
 		panic("test")
@@ -113,20 +107,17 @@ func TestBasicFuncWithRecovery(t *testing.T) {
 }
 
 func TestBasicFuncSyntaxError(t *testing.T) {
-	t.Parallel()
 	assert.Nil(t, SyntaxError(nil))
 	assert.True(t, terror.ErrorEqual(SyntaxError(errors.New("test")), parser.ErrParse))
 	assert.True(t, terror.ErrorEqual(SyntaxError(parser.ErrSyntax.GenWithStackByArgs()), parser.ErrSyntax))
 }
 
 func TestBasicFuncSyntaxWarn(t *testing.T) {
-	t.Parallel()
 	assert.Nil(t, SyntaxWarn(nil))
 	assert.True(t, terror.ErrorEqual(SyntaxWarn(errors.New("test")), parser.ErrParse))
 }
 
 func TestBasicFuncProcessInfo(t *testing.T) {
-	t.Parallel()
 	pi := ProcessInfo{
 		ID:      1,
 		User:    "test",
@@ -160,7 +151,6 @@ func TestBasicFuncProcessInfo(t *testing.T) {
 }
 
 func TestBasicFuncRandomBuf(t *testing.T) {
-	t.Parallel()
 	buf := fastrand.Buf(5)
 	assert.Len(t, buf, 5)
 	assert.False(t, bytes.Contains(buf, []byte("$")))
@@ -168,7 +158,6 @@ func TestBasicFuncRandomBuf(t *testing.T) {
 }
 
 func TestToPB(t *testing.T) {
-	t.Parallel()
 	column := &model.ColumnInfo{
 		ID:           1,
 		Name:         model.NewCIStr("c"),
@@ -189,6 +178,16 @@ func TestToPB(t *testing.T) {
 	}
 	column2.Collate = "utf8mb4_bin"
 
-	assert.Equal(t, "column_id:1 collation:45 columnLen:-1 decimal:-1 ", ColumnToProto(column).String())
-	assert.Equal(t, "column_id:1 collation:45 columnLen:-1 decimal:-1 ", ColumnsToProto([]*model.ColumnInfo{column, column2}, false)[0].String())
+	assert.Equal(t, "column_id:1 collation:-45 columnLen:-1 decimal:-1 ", ColumnToProto(column).String())
+	assert.Equal(t, "column_id:1 collation:-45 columnLen:-1 decimal:-1 ", ColumnsToProto([]*model.ColumnInfo{column, column2}, false)[0].String())
+}
+
+func TestComposeURL(t *testing.T) {
+	// TODO Setup config for TLS and verify https protocol output
+	assert.Equal(t, ComposeURL("server.example.com", ""), "http://server.example.com")
+	assert.Equal(t, ComposeURL("httpserver.example.com", ""), "http://httpserver.example.com")
+	assert.Equal(t, ComposeURL("http://httpserver.example.com", "/"), "http://httpserver.example.com/")
+	assert.Equal(t, ComposeURL("https://httpserver.example.com", "/api/test"), "https://httpserver.example.com/api/test")
+	assert.Equal(t, ComposeURL("http://server.example.com", ""), "http://server.example.com")
+	assert.Equal(t, ComposeURL("https://server.example.com", ""), "https://server.example.com")
 }

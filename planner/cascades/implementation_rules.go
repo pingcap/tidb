@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -241,12 +242,14 @@ func (r *ImplShow) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) 
 func (r *ImplShow) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
 	logicProp := expr.Group.Prop
 	show := expr.ExprNode.(*plannercore.LogicalShow)
-
 	// TODO(zz-jason): unifying LogicalShow and PhysicalShow to a single
 	// struct. So that we don't need to create a new PhysicalShow object, which
 	// can help us to reduce the gc pressure of golang runtime and improve the
 	// overall performance.
-	showPhys := plannercore.PhysicalShow{ShowContents: show.ShowContents}.Init(show.SCtx())
+	showPhys := plannercore.PhysicalShow{
+		ShowContents: show.ShowContents,
+		Extractor:    show.Extractor,
+	}.Init(show.SCtx())
 	showPhys.SetSchema(logicProp.Schema)
 	return []memo.Implementation{impl.NewShowImpl(showPhys)}, nil
 }

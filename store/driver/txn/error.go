@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,14 +19,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -52,7 +54,7 @@ func extractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.Tabl
 	if handle.IsInt() {
 		if pkInfo := tblInfo.GetPkColInfo(); pkInfo != nil {
 			if mysql.HasUnsignedFlag(pkInfo.Flag) {
-				handleStr := fmt.Sprintf("%d", uint64(handle.IntValue()))
+				handleStr := strconv.FormatUint(uint64(handle.IntValue()), 10)
 				return genKeyExistsError(name, handleStr, nil)
 			}
 		}

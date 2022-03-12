@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,65 +18,34 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"os"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
-	. "github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
 
-func TestT(t *testing.T) {
-	CustomVerboseFlag = true
-	logLevel := os.Getenv("log_level")
-	err := logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
-	if err != nil {
-		t.Fatal(err)
-	}
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.AsyncCommit.SafeWindow = 0
-		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
-	})
-	testleak.BeforeTest()
-	TestingT(t)
-	testleak.AfterTestT(t)()
-}
-
-var _ = SerialSuites(&testFailDBSuite{})
-
-type testFailDBSuite struct {
+type failedSuite struct {
 	cluster testutils.Cluster
-	lease   time.Duration
 	store   kv.Storage
 	dom     *domain.Domain
-	se      session.Session
-	p       *parser.Parser
-
-	CommonHandleSuite
 }
 
-func (s *testFailDBSuite) SetUpSuite(c *C) {
-	s.lease = 200 * time.Millisecond
-	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
+func createFailDBSuite(t *testing.T) (s *failedSuite, clean func()) {
+	s = new(failedSuite)
 	var err error
 	s.store, err = mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
@@ -83,30 +53,28 @@ func (s *testFailDBSuite) SetUpSuite(c *C) {
 			s.cluster = c
 		}),
 	)
-	c.Assert(err, IsNil)
-	session.SetSchemaLease(s.lease)
+	require.NoError(t, err)
+	session.SetSchemaLease(200 * time.Millisecond)
 	s.dom, err = session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-	s.se, err = session.CreateSession4Test(s.store)
-	c.Assert(err, IsNil)
-	s.p = parser.New()
-}
+	require.NoError(t, err)
 
-func (s *testFailDBSuite) TearDownSuite(c *C) {
-	_, err := s.se.Execute(context.Background(), "drop database if exists test_db_state")
-	c.Assert(err, IsNil)
-	s.se.Close()
-	s.dom.Close()
-	s.store.Close()
+	clean = func() {
+		s.dom.Close()
+		require.NoError(t, s.store.Close())
+	}
+
+	return
 }
 
 // TestHalfwayCancelOperations tests the case that the schema is correct after the execution of operations are cancelled halfway.
-func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/truncateTableErr", `return(true)`), IsNil)
+func TestHalfwayCancelOperations(t *testing.T) {
+	s, clean := createFailDBSuite(t)
+	defer clean()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/truncateTableErr", `return(true)`))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/truncateTableErr"), IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/truncateTableErr"))
 	}()
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("create database cancel_job_db")
 	tk.MustExec("use cancel_job_db")
 
@@ -114,51 +82,51 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1)")
 	_, err := tk.Exec("truncate table t")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	// Make sure that the table's data has not been deleted.
 	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
 	// Execute ddl statement reload schema
 	tk.MustExec("alter table t comment 'test1'")
 	err = s.dom.DDL().GetHook().OnChanged(nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	tk = testkit.NewTestKit(c, s.store)
+	tk = testkit.NewTestKit(t, s.store)
 	tk.MustExec("use cancel_job_db")
 	// Test schema is correct.
 	tk.MustExec("select * from t")
 	// test for renaming table
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/renameTableErr", `return("ty")`), IsNil)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/renameTableErr", `return("ty")`))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/renameTableErr"), IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/renameTableErr"))
 	}()
 	tk.MustExec("create table tx(a int)")
 	tk.MustExec("insert into tx values(1)")
 	_, err = tk.Exec("rename table tx to ty")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	tk.MustExec("create table ty(a int)")
 	tk.MustExec("insert into ty values(2)")
 	_, err = tk.Exec("rename table ty to tz, tx to ty")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	_, err = tk.Exec("select * from tz")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	_, err = tk.Exec("rename table tx to ty, ty to tz")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	tk.MustQuery("select * from ty").Check(testkit.Rows("2"))
 	// Make sure that the table's data has not been deleted.
 	tk.MustQuery("select * from tx").Check(testkit.Rows("1"))
 	// Execute ddl statement reload schema.
 	tk.MustExec("alter table tx comment 'tx'")
 	err = s.dom.DDL().GetHook().OnChanged(nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	tk = testkit.NewTestKit(c, s.store)
+	tk = testkit.NewTestKit(t, s.store)
 	tk.MustExec("use cancel_job_db")
 	tk.MustExec("select * from tx")
 	// test for exchanging partition
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/exchangePartitionErr", `return(true)`), IsNil)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/exchangePartitionErr", `return(true)`))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/exchangePartitionErr"), IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/exchangePartitionErr"))
 	}()
 	tk.MustExec("create table pt(a int) partition by hash (a) partitions 2")
 	tk.MustExec("insert into pt values(1), (3), (5)")
@@ -167,16 +135,16 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 	tk.MustExec("set @@tidb_enable_exchange_partition=1")
 	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
 	_, err = tk.Exec("alter table pt exchange partition p1 with table nt")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	tk.MustQuery("select * from pt").Check(testkit.Rows("1", "3", "5"))
 	tk.MustQuery("select * from nt").Check(testkit.Rows("7"))
 	// Execute ddl statement reload schema.
 	tk.MustExec("alter table pt comment 'pt'")
 	err = s.dom.DDL().GetHook().OnChanged(nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
-	tk = testkit.NewTestKit(c, s.store)
+	tk = testkit.NewTestKit(t, s.store)
 	tk.MustExec("use cancel_job_db")
 	// Test schema is correct.
 	tk.MustExec("select * from pt")
@@ -187,23 +155,27 @@ func (s *testFailDBSuite) TestHalfwayCancelOperations(c *C) {
 
 // TestInitializeOffsetAndState tests the case that the column's offset and state don't be initialized in the file of ddl_api.go when
 // doing the operation of 'modify column'.
-func (s *testFailDBSuite) TestInitializeOffsetAndState(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestInitializeOffsetAndState(t *testing.T) {
+	s, clean := createFailDBSuite(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c int)")
 	defer tk.MustExec("drop table t")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/uninitializedOffsetAndState", `return(true)`), IsNil)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/uninitializedOffsetAndState", `return(true)`))
 	tk.MustExec("ALTER TABLE t MODIFY COLUMN b int FIRST;")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/uninitializedOffsetAndState"), IsNil)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/uninitializedOffsetAndState"))
 }
 
-func (s *testFailDBSuite) TestUpdateHandleFailed(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle", `1*return`), IsNil)
+func TestUpdateHandleFailed(t *testing.T) {
+	s, clean := createFailDBSuite(t)
+	defer clean()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle", `1*return`))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle"), IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/errorUpdateReorgHandle"))
 	}()
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("create database if not exists test_handle_failed")
 	defer tk.MustExec("drop database test_handle_failed")
 	tk.MustExec("use test_handle_failed")
@@ -215,12 +187,14 @@ func (s *testFailDBSuite) TestUpdateHandleFailed(c *C) {
 	tk.MustExec("admin check index t idx_b")
 }
 
-func (s *testFailDBSuite) TestAddIndexFailed(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockBackfillRunErr", `1*return`), IsNil)
+func TestAddIndexFailed(t *testing.T) {
+	s, clean := createFailDBSuite(t)
+	defer clean()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockBackfillRunErr", `1*return`))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockBackfillRunErr"), IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockBackfillRunErr"))
 	}()
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("create database if not exists test_add_index_failed")
 	defer tk.MustExec("drop database test_add_index_failed")
 	tk.MustExec("use test_add_index_failed")
@@ -231,10 +205,10 @@ func (s *testFailDBSuite) TestAddIndexFailed(c *C) {
 	}
 
 	// Get table ID for split.
-	dom := domain.GetDomain(tk.Se)
+	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test_add_index_failed"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	tblID := tbl.Meta().ID
 
 	// Split the table.
@@ -248,23 +222,25 @@ func (s *testFailDBSuite) TestAddIndexFailed(c *C) {
 
 // TestFailSchemaSyncer test when the schema syncer is done,
 // should prohibit DML executing until the syncer is restartd by loadSchemaInLoop.
-func (s *testFailDBSuite) TestFailSchemaSyncer(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestFailSchemaSyncer(t *testing.T) {
+	s, clean := createFailDBSuite(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	defer tk.MustExec("drop table if exists t")
-	originalRetryTimes := domain.SchemaOutOfDateRetryTimes
-	domain.SchemaOutOfDateRetryTimes = 1
+	originalRetryTimes := domain.SchemaOutOfDateRetryTimes.Load()
+	domain.SchemaOutOfDateRetryTimes.Store(1)
 	defer func() {
-		domain.SchemaOutOfDateRetryTimes = originalRetryTimes
+		domain.SchemaOutOfDateRetryTimes.Store(originalRetryTimes)
 	}()
-	c.Assert(s.dom.SchemaValidator.IsStarted(), IsTrue)
+	require.True(t, s.dom.SchemaValidator.IsStarted())
 	mockSyncer, ok := s.dom.DDL().SchemaSyncer().(*ddl.MockSchemaSyncer)
-	c.Assert(ok, IsTrue)
+	require.True(t, ok)
 
 	// make reload failed.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed", `return(true)`), IsNil)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed", `return(true)`))
 	mockSyncer.CloseSession()
 	// wait the schemaValidator is stopped.
 	for i := 0; i < 50; i++ {
@@ -274,11 +250,11 @@ func (s *testFailDBSuite) TestFailSchemaSyncer(c *C) {
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	c.Assert(s.dom.SchemaValidator.IsStarted(), IsFalse)
+	require.False(t, s.dom.SchemaValidator.IsStarted())
 	_, err := tk.Exec("insert into t values(1)")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[domain:8027]Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed"), IsNil)
+	require.Error(t, err)
+	require.EqualError(t, err, "[domain:8027]Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed"))
 	// wait the schemaValidator is started.
 	for i := 0; i < 50; i++ {
 		if s.dom.SchemaValidator.IsStarted() {
@@ -286,16 +262,18 @@ func (s *testFailDBSuite) TestFailSchemaSyncer(c *C) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	c.Assert(s.dom.SchemaValidator.IsStarted(), IsTrue)
+	require.True(t, s.dom.SchemaValidator.IsStarted())
 	_, err = tk.Exec("insert into t values(1)")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (s *testFailDBSuite) TestGenGlobalIDFail(c *C) {
+func TestGenGlobalIDFail(t *testing.T) {
+	s, clean := createFailDBSuite(t)
+	defer clean()
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockGenGlobalIDFail"), IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockGenGlobalIDFail"))
 	}()
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("create database if not exists gen_global_id_fail")
 	tk.MustExec("use gen_global_id_fail")
 
@@ -325,11 +303,11 @@ func (s *testFailDBSuite) TestGenGlobalIDFail(c *C) {
 
 	for idx, test := range testcases {
 		if test.mockErr {
-			c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockGenGlobalIDFail", `return(true)`), IsNil)
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockGenGlobalIDFail", `return(true)`))
 			_, err := tk.Exec(test.sql)
-			c.Assert(err, NotNil, Commentf("the %dth test case '%s' fail", idx, test.sql))
+			require.Errorf(t, err, "the %dth test case '%s' fail", idx, test.sql)
 		} else {
-			c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockGenGlobalIDFail", `return(false)`), IsNil)
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockGenGlobalIDFail", `return(false)`))
 			tk.MustExec(test.sql)
 			tk.MustExec(fmt.Sprintf("insert into %s values (%d, 42)", test.table, rand.Intn(65536)))
 			tk.MustExec(fmt.Sprintf("admin check table %s", test.table))
@@ -339,103 +317,123 @@ func (s *testFailDBSuite) TestGenGlobalIDFail(c *C) {
 	tk.MustExec("admin check table t2")
 }
 
-func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {
-	dml := fmt.Sprintf("insert into %s values", tbl)
-	for i := start; i < end; i++ {
-		dml += fmt.Sprintf("(%d, %d, %d)", i, i, i)
-		if i != end-1 {
-			dml += ","
-		}
-	}
-	tk.MustExec(dml)
-}
+func TestAddIndexWorkerNum(t *testing.T) {
+	s, clean := createFailDBSuite(t)
+	defer clean()
 
-func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("create database if not exists test_db")
-	tk.MustExec("use test_db")
-	tk.MustExec("drop table if exists test_add_index")
-	if s.IsCommonHandle {
-		tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
-		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1, c3))")
-	} else {
-		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
-	}
-
-	done := make(chan error, 1)
-	start := -10
-	// first add some rows
-	for i := start; i < 4090; i += 100 {
-		batchInsert(tk, "test_add_index", i, i+100)
+	tests := []struct {
+		name        string
+		createTable func(*testkit.TestKit)
+	}{
+		{
+			"EnableClusteredIndex",
+			func(tk *testkit.TestKit) {
+				tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+				tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1, c3))")
+			},
+		},
+		{
+			"DisableClusteredIndex",
+			func(tk *testkit.TestKit) {
+				tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
+			},
+		},
 	}
 
-	is := s.dom.InfoSchema()
-	schemaName := model.NewCIStr("test_db")
-	tableName := model.NewCIStr("test_add_index")
-	tbl, err := is.TableByName(schemaName, tableName)
-	c.Assert(err, IsNil)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, s.store)
+			tk.MustExec("create database if not exists test_db")
+			tk.MustExec("use test_db")
+			tk.MustExec("drop table if exists test_add_index")
 
-	splitCount := 100
-	// Split table to multi region.
-	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
-	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), splitCount)
+			test.createTable(tk)
 
-	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Se)
-	c.Assert(err, IsNil)
-	originDDLAddIndexWorkerCnt := variable.GetDDLReorgWorkerCounter()
-	lastSetWorkerCnt := originDDLAddIndexWorkerCnt
-	atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
-	ddl.TestCheckWorkerNumber = lastSetWorkerCnt
-	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", originDDLAddIndexWorkerCnt))
+			done := make(chan error, 1)
+			start := -10
 
-	if !s.IsCommonHandle { // only enable failpoint once
-		c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum", `return(true)`), IsNil)
-		defer func() {
-			c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum"), IsNil)
-		}()
-	}
-
-	testutil.SessionExecInGoroutine(c, s.store, "create index c3_index on test_add_index (c3)", done)
-	checkNum := 0
-
-LOOP:
-	for {
-		select {
-		case err = <-done:
-			if err == nil {
-				break LOOP
+			// first add some rows
+			for i := start; i < 4090; i += 100 {
+				dml := "insert into test_add_index values"
+				end := i + 100
+				for k := i; k < end; k++ {
+					dml += fmt.Sprintf("(%d, %d, %d)", k, k, k)
+					if k != end-1 {
+						dml += ","
+					}
+				}
+				tk.MustExec(dml)
 			}
-			c.Assert(err, IsNil, Commentf("err:%v", errors.ErrorStack(err)))
-		case <-ddl.TestCheckWorkerNumCh:
-			lastSetWorkerCnt = int32(rand.Intn(8) + 8)
-			tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", lastSetWorkerCnt))
-			atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
-			checkNum++
-		}
-	}
-	c.Assert(checkNum, Greater, 5)
-	tk.MustExec("admin check table test_add_index")
-	tk.MustExec("drop table test_add_index")
 
-	s.RerunWithCommonHandleEnabled(c, s.TestAddIndexWorkerNum)
+			is := s.dom.InfoSchema()
+			schemaName := model.NewCIStr("test_db")
+			tableName := model.NewCIStr("test_add_index")
+			tbl, err := is.TableByName(schemaName, tableName)
+			require.NoError(t, err)
+
+			splitCount := 100
+			// Split table to multi region.
+			tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
+			s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), splitCount)
+
+			err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
+			require.NoError(t, err)
+			originDDLAddIndexWorkerCnt := variable.GetDDLReorgWorkerCounter()
+			lastSetWorkerCnt := originDDLAddIndexWorkerCnt
+			atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
+			ddl.TestCheckWorkerNumber = lastSetWorkerCnt
+			defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", originDDLAddIndexWorkerCnt))
+
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum", `return(true)`))
+			defer func() {
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum"))
+			}()
+
+			testutil.SessionExecInGoroutine(s.store, "test_db", "create index c3_index on test_add_index (c3)", done)
+			checkNum := 0
+
+			running := true
+			for running {
+				select {
+				case err = <-done:
+					require.NoError(t, err)
+					running = false
+				case wg := <-ddl.TestCheckWorkerNumCh:
+					lastSetWorkerCnt = int32(rand.Intn(8) + 8)
+					tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", lastSetWorkerCnt))
+					atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
+					checkNum++
+					wg.Done()
+				}
+			}
+
+			require.Greater(t, checkNum, 5)
+			tk.MustExec("admin check table test_add_index")
+			tk.MustExec("drop table test_add_index")
+		})
+	}
 }
 
 // TestRunDDLJobPanic tests recover panic when run ddl job panic.
-func (s *testFailDBSuite) TestRunDDLJobPanic(c *C) {
+func TestRunDDLJobPanic(t *testing.T) {
+	s, clean := createFailDBSuite(t)
+	defer clean()
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockPanicInRunDDLJob"), IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockPanicInRunDDLJob"))
 	}()
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockPanicInRunDDLJob", `1*panic("panic test")`), IsNil)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockPanicInRunDDLJob", `1*panic("panic test")`))
 	_, err := tk.Exec("create table t(c1 int, c2 int)")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+	require.Error(t, err)
+	require.EqualError(t, err, "[ddl:8214]Cancelled DDL job")
 }
 
-func (s *testFailDBSuite) TestPartitionAddIndexGC(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestPartitionAddIndexGC(t *testing.T) {
+	s, clean := createFailDBSuite(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table partition_add_idx (
 	id int not null,
@@ -448,27 +446,29 @@ func (s *testFailDBSuite) TestPartitionAddIndexGC(c *C) {
 	);`)
 	tk.MustExec("insert into partition_add_idx values(1, '2010-01-01'), (2, '1990-01-01'), (3, '2001-01-01')")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockUpdateCachedSafePoint", `return(true)`), IsNil)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockUpdateCachedSafePoint", `return(true)`))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockUpdateCachedSafePoint"), IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockUpdateCachedSafePoint"))
 	}()
 	tk.MustExec("alter table partition_add_idx add index idx (id, hired)")
 }
 
-func (s *testFailDBSuite) TestModifyColumn(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestModifyColumn(t *testing.T) {
+	s, clean := createFailDBSuite(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 
 	tk.MustExec("create table t (a int not null default 1, b int default 2, c int not null default 0, primary key(c), index idx(b), index idx1(a), index idx2(b, c))")
 	tk.MustExec("insert into t values(1, 2, 3), (11, 22, 33)")
 	_, err := tk.Exec("alter table t change column c cc mediumint")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: this column has primary key flag")
+	require.EqualError(t, err, "[ddl:8200]Unsupported modify column: this column has primary key flag")
 	tk.MustExec("alter table t change column b bb mediumint first")
-	dom := domain.GetDomain(tk.Se)
+	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	cols := tbl.Meta().Columns
 	colsStr := ""
 	idxsStr := ""
@@ -478,8 +478,8 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 	for _, idx := range tbl.Meta().Indices {
 		idxsStr += idx.Name.L + " "
 	}
-	c.Assert(len(cols), Equals, 3)
-	c.Assert(len(tbl.Meta().Indices), Equals, 3)
+	require.Len(t, cols, 3)
+	require.Len(t, tbl.Meta().Indices, 3)
 	tk.MustQuery("select * from t").Check(testkit.Rows("2 1 3", "22 11 33"))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `bb` mediumint(9) DEFAULT NULL,\n" +
@@ -493,7 +493,7 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 	tk.MustExec("admin check table t")
 	tk.MustExec("insert into t values(111, 222, 333)")
 	_, err = tk.Exec("alter table t change column a aa tinyint after c")
-	c.Assert(err.Error(), Equals, "[types:1690]constant 222 overflows tinyint")
+	require.EqualError(t, err, "[types:1690]constant 222 overflows tinyint")
 	tk.MustExec("alter table t change column a aa mediumint after c")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `bb` mediumint(9) DEFAULT NULL,\n" +
@@ -507,19 +507,19 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("2 3 1", "22 33 11", "111 333 222"))
 	tk.MustExec("admin check table t")
 
-	// Test unsupport statements.
+	// Test unsupported statements.
 	tk.MustExec("create table t1(a int) partition by hash (a) partitions 2")
 	_, err = tk.Exec("alter table t1 modify column a mediumint")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: table is partition table")
+	require.EqualError(t, err, "[ddl:8200]Unsupported modify column: table is partition table")
 	tk.MustExec("create table t2(id int, a int, b int generated always as (abs(a)) virtual, c int generated always as (a+1) stored)")
 	_, err = tk.Exec("alter table t2 modify column b mediumint")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
+	require.EqualError(t, err, "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
 	_, err = tk.Exec("alter table t2 modify column c mediumint")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
+	require.EqualError(t, err, "[ddl:8200]Unsupported modify column: newCol IsGenerated false, oldCol IsGenerated true")
 	_, err = tk.Exec("alter table t2 modify column a mediumint generated always as(id+1) stored")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: newCol IsGenerated true, oldCol IsGenerated false")
+	require.EqualError(t, err, "[ddl:8200]Unsupported modify column: newCol IsGenerated true, oldCol IsGenerated false")
 	_, err = tk.Exec("alter table t2 modify column a mediumint")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: oldCol is a dependent column 'a' for generated column")
+	require.EqualError(t, err, "[ddl:8200]Unsupported modify column: oldCol is a dependent column 'a' for generated column")
 
 	// Test multiple rows of data.
 	tk.MustExec("create table t3(a int not null default 1, b int default 2, c int not null default 0, primary key(c), index idx(b), index idx1(a), index idx2(b, c))")
@@ -554,19 +554,21 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 	tk.MustExec("drop table t, t1, t2, t3, t4, t5")
 }
 
-func (s *testFailDBSuite) TestPartitionAddPanic(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestPartitionAddPanic(t *testing.T) {
+	s, clean := createFailDBSuite(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t (a int) partition by range(a) (partition p0 values less than (10));`)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/CheckPartitionByRangeErr", `return(true)`), IsNil)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/CheckPartitionByRangeErr", `return(true)`))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/CheckPartitionByRangeErr"), IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/CheckPartitionByRangeErr"))
 	}()
 
 	_, err := tk.Exec(`alter table t add partition (partition p1 values less than (20));`)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	result := tk.MustQuery("show create table t").Rows()[0][1]
-	c.Assert(result, Matches, `(?s).*PARTITION .p0. VALUES LESS THAN \(10\).*`)
-	c.Assert(result, Not(Matches), `(?s).*PARTITION .p0. VALUES LESS THAN \(20\).*`)
+	require.Regexp(t, `PARTITION .p0. VALUES LESS THAN \(10\)`, result)
+	require.NotRegexp(t, `PARTITION .p0. VALUES LESS THAN \(20\)`, result)
 }

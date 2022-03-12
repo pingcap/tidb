@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,9 +18,9 @@ import (
 	"context"
 	"errors"
 
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	m "github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
@@ -35,25 +36,27 @@ type featureUsage struct {
 	ClusterIndex   *ClusterIndexUsage `json:"clusterIndex"`
 	TemporaryTable bool               `json:"temporaryTable"`
 	CTE            *m.CTEUsageCounter `json:"cte"`
+	CachedTable    bool               `json:"cachedTable"`
 }
 
 func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
-
-	clusterIdxUsage, err := GetClusterIndexUsageInfo(ctx)
+	clusterIdxUsage, err := getClusterIndexUsageInfo(ctx)
 	if err != nil {
 		logutil.BgLogger().Info(err.Error())
 		return nil, err
 	}
 
 	// transaction related feature
-	txnUsage := GetTxnUsageInfo(ctx)
+	txnUsage := getTxnUsageInfo(ctx)
 
 	// Avoid the circle dependency.
-	temporaryTable := ctx.(TemporaryTableFeatureChecker).TemporaryTableExists()
+	temporaryTable := ctx.(TemporaryOrCacheTableFeatureChecker).TemporaryTableExists()
 
-	cteUsage := GetCTEUsageInfo(ctx)
+	cteUsage := getCTEUsageInfo()
 
-	return &featureUsage{txnUsage, clusterIdxUsage, temporaryTable, cteUsage}, nil
+	cachedTable := ctx.(TemporaryOrCacheTableFeatureChecker).CachedTableExists()
+
+	return &featureUsage{txnUsage, clusterIdxUsage, temporaryTable, cteUsage, cachedTable}, nil
 }
 
 // ClusterIndexUsage records the usage info of all the tables, no more than 10k tables
@@ -68,22 +71,18 @@ type TableClusteredInfo struct {
 	// NA means this field is no meaningful information
 }
 
-// GetClusterIndexUsageInfo gets the ClusterIndex usage information. It's exported for future test.
-func GetClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, err error) {
+// getClusterIndexUsageInfo gets the ClusterIndex usage information. It's exported for future test.
+func getClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, err error) {
 	usage := make(ClusterIndexUsage)
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 
 	// query INFORMATION_SCHEMA.tables to get the latest table information about ClusterIndex
-	stmt, err := exec.ParseWithParams(context.TODO(), `
+	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, `
 		SELECT left(sha2(TABLE_NAME, 256), 6) table_name_hash, TIDB_PK_TYPE, TABLE_SCHEMA, TABLE_NAME
 		FROM information_schema.tables
 		WHERE table_schema not in ('INFORMATION_SCHEMA', 'METRICS_SCHEMA', 'PERFORMANCE_SCHEMA', 'mysql')
 		ORDER BY table_name_hash
 		limit 10000`)
-	if err != nil {
-		return nil, err
-	}
-	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
 	if err != nil {
 		return nil, err
 	}
@@ -138,10 +137,11 @@ func GetClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, er
 	return &usage, nil
 }
 
-// TemporaryTableFeatureChecker is defined to avoid package circle dependency.
+// TemporaryOrCacheTableFeatureChecker is defined to avoid package circle dependency.
 // The session struct implements this interface.
-type TemporaryTableFeatureChecker interface {
+type TemporaryOrCacheTableFeatureChecker interface {
 	TemporaryTableExists() bool
+	CachedTableExists() bool
 }
 
 // TxnUsage records the usage info of transaction related features, including
@@ -155,8 +155,8 @@ type TxnUsage struct {
 var initialTxnCommitCounter metrics.TxnCommitCounter
 var initialCTECounter m.CTEUsageCounter
 
-// GetTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
-func GetTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
+// getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
+func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	asyncCommitUsed := false
 	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBEnableAsyncCommit); err == nil {
 		asyncCommitUsed = val == variable.On
@@ -179,8 +179,8 @@ func postReportCTEUsage() {
 	initialCTECounter = m.GetCTECounter()
 }
 
-// GetCTEUsageInfo gets the CTE usages.
-func GetCTEUsageInfo(ctx sessionctx.Context) *m.CTEUsageCounter {
+// getCTEUsageInfo gets the CTE usages.
+func getCTEUsageInfo() *m.CTEUsageCounter {
 	curr := m.GetCTECounter()
 	diff := curr.Sub(initialCTECounter)
 	return &diff

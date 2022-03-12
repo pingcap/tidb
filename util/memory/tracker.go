@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -551,4 +552,10 @@ const (
 	LabelForSimpleTask int = -18
 	// LabelForCTEStorage represents the label of CTE storage
 	LabelForCTEStorage int = -19
+	// LabelForIndexJoinInnerWorker represents the label of IndexJoin InnerWorker
+	LabelForIndexJoinInnerWorker int = -20
+	// LabelForIndexJoinOuterWorker represents the label of IndexJoin OuterWorker
+	LabelForIndexJoinOuterWorker int = -21
+	// LabelForBindCache represents the label of the bind cache
+	LabelForBindCache int = -22
 )

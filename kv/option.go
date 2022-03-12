@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -55,14 +56,31 @@ const (
 	GuaranteeLinearizability
 	// TxnScope indicates which @@txn_scope this transaction will work with.
 	TxnScope
+	// ReadReplicaScope
+	ReadReplicaScope
 	// StalenessReadOnly indicates whether the transaction is staleness read only transaction
 	IsStalenessReadOnly
 	// MatchStoreLabels indicates the labels the store should be matched
 	MatchStoreLabels
-	// ResourceGroupTag indicates the resource group of the kv request.
+	// ResourceGroupTag indicates the resource group tag of the kv request.
 	ResourceGroupTag
+	// ResourceGroupTagger can be used to set the ResourceGroupTag dynamically according to the request content. It will be used only when ResourceGroupTag is nil.
+	ResourceGroupTagger
 	// KVFilter indicates the filter to ignore key-values in the transaction's memory buffer.
 	KVFilter
+	// SnapInterceptor is used for setting the interceptor for snapshot
+	SnapInterceptor
+	// CommitTSUpperBoundChec is used by cached table
+	// The commitTS must be greater than all the write lock lease of the visited cached table.
+	CommitTSUpperBoundCheck
+	// RPCInterceptor is interceptor.RPCInterceptor on Transaction or Snapshot, used to decorate
+	// additional logic before and after the underlying client-go RPC request.
+	RPCInterceptor
+	// TableToColumnMaps is a map from tableID to a series of maps. The maps are needed when checking data consistency.
+	// Save them here to reduce redundant computations.
+	TableToColumnMaps
+	// AssertionLevel controls how strict the assertions on data during transactions should be.
+	AssertionLevel
 )
 
 // ReplicaReadType is the type of replica to read data from
@@ -73,11 +91,18 @@ const (
 	ReplicaReadLeader ReplicaReadType = iota
 	// ReplicaReadFollower stands for 'read from follower'.
 	ReplicaReadFollower
-	// ReplicaReadMixed stands for 'read from leader and follower and learner'.
+	// ReplicaReadMixed stands for 'read from leader and follower'.
 	ReplicaReadMixed
+	// ReplicaReadClosest stands for 'read from leader and follower which locates with the same zone'
+	ReplicaReadClosest
 )
 
 // IsFollowerRead checks if follower is going to be used to read data.
 func (r ReplicaReadType) IsFollowerRead() bool {
 	return r != ReplicaReadLeader
+}
+
+// IsClosestRead checks whether is going to request closet store to read
+func (r ReplicaReadType) IsClosestRead() bool {
+	return r == ReplicaReadClosest
 }

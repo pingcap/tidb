@@ -1,3 +1,17 @@
+// Copyright 2015 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // The MIT License (MIT)
 //
 // Copyright (c) 2014 wandoulabs
@@ -13,32 +27,19 @@
 // The above copyright notice and this permission notice shall be included in all
 // copies or substantial portions of the Software.
 
-// Copyright 2015 PingCAP, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package server
 
 import (
 	"context"
 	"crypto/tls"
-	"flag"
 	"fmt"
+	"io"
 	"math/rand"
 	"net"
 	"net/http"
 
 	// For pprof
-	_ "net/http/pprof"
+	_ "net/http/pprof" // #nosec G108
 	"os"
 	"os/user"
 	"sync"
@@ -48,13 +49,13 @@ import (
 
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -69,10 +70,11 @@ import (
 )
 
 var (
-	serverPID   int
-	osUser      string
-	osVersion   string
-	runInGoTest bool
+	serverPID int
+	osUser    string
+	osVersion string
+	// RunInGoTest represents whether we are run code in test.
+	RunInGoTest bool
 )
 
 func init() {
@@ -87,7 +89,6 @@ func init() {
 	if err != nil {
 		osVersion = ""
 	}
-	runInGoTest = flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil
 }
 
 var (
@@ -96,10 +97,12 @@ var (
 	errInvalidType             = dbterror.ClassServer.NewStd(errno.ErrInvalidType)
 	errNotAllowedCommand       = dbterror.ClassServer.NewStd(errno.ErrNotAllowedCommand)
 	errAccessDenied            = dbterror.ClassServer.NewStd(errno.ErrAccessDenied)
+	errAccessDeniedNoPassword  = dbterror.ClassServer.NewStd(errno.ErrAccessDeniedNoPassword)
 	errConCount                = dbterror.ClassServer.NewStd(errno.ErrConCount)
 	errSecureTransportRequired = dbterror.ClassServer.NewStd(errno.ErrSecureTransportRequired)
 	errMultiStatementDisabled  = dbterror.ClassServer.NewStd(errno.ErrMultiStatementDisabled)
 	errNewAbortingConnection   = dbterror.ClassServer.NewStd(errno.ErrNewAbortingConnection)
+	errNotSupportedAuthMode    = dbterror.ClassServer.NewStd(errno.ErrNotSupportedAuthMode)
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -160,10 +163,7 @@ func (s *Server) SetDomain(dom *domain.Domain) {
 
 // InitGlobalConnID initialize global connection id.
 func (s *Server) InitGlobalConnID(serverIDGetter func() uint64) {
-	s.globalConnID = util.GlobalConnID{
-		ServerIDGetter: serverIDGetter,
-		Is64bits:       true,
-	}
+	s.globalConnID = util.NewGlobalConnIDWithGetter(serverIDGetter, true)
 }
 
 // newConn creates a new *clientConn from a net.Conn.
@@ -190,29 +190,50 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint64]*clientConn),
-		globalConnID:      util.GlobalConnID{ServerID: 0, Is64bits: true},
+		globalConnID:      util.NewGlobalConnID(0, true),
 	}
+	s.capability = defaultCapability
 	setTxnScope()
-	tlsConfig, err := util.LoadTLSCertificates(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
+	setSystemTimeZoneVariable()
+
+	tlsConfig, autoReload, err := util.LoadTLSCertificates(
+		s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert,
+		s.cfg.Security.AutoTLS, s.cfg.Security.RSAKeySize)
+
+	// Automatically reload auto-generated certificates.
+	// The certificates are re-created every 30 days and are valid for 90 days.
+	if autoReload {
+		go func() {
+			for range time.Tick(time.Hour * 24 * 30) { // 30 days
+				logutil.BgLogger().Info("Rotating automatically created TLS Certificates")
+				tlsConfig, _, err = util.LoadTLSCertificates(
+					s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert,
+					s.cfg.Security.AutoTLS, s.cfg.Security.RSAKeySize)
+				if err != nil {
+					logutil.BgLogger().Warn("TLS Certificate rotation failed", zap.Error(err))
+				}
+				atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
+			}
+		}()
+	}
+
 	if err != nil {
 		logutil.BgLogger().Error("secure connection cert/key/ca load fail", zap.Error(err))
 	}
 	if tlsConfig != nil {
 		setSSLVariable(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
 		atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
-		logutil.BgLogger().Info("mysql protocol server secure connection is enabled", zap.Bool("client verification enabled", len(variable.GetSysVar("ssl_ca").Value) > 0))
+		logutil.BgLogger().Info("mysql protocol server secure connection is enabled",
+			zap.Bool("client verification enabled", len(variable.GetSysVar("ssl_ca").Value) > 0))
 	} else if cfg.Security.RequireSecureTransport {
 		return nil, errSecureTransportRequired.FastGenByArgs()
 	}
 
-	setSystemTimeZoneVariable()
-
-	s.capability = defaultCapability
 	if s.tlsConfig != nil {
 		s.capability |= mysql.ClientSSL
 	}
 
-	if s.cfg.Host != "" && (s.cfg.Port != 0 || runInGoTest) {
+	if s.cfg.Host != "" && (s.cfg.Port != 0 || RunInGoTest) {
 		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
 		tcpProto := "tcp"
 		if s.cfg.EnableTCP4Only {
@@ -222,12 +243,16 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 			return nil, errors.Trace(err)
 		}
 		logutil.BgLogger().Info("server is running MySQL protocol", zap.String("addr", addr))
-		if runInGoTest && s.cfg.Port == 0 {
+		if RunInGoTest && s.cfg.Port == 0 {
 			s.cfg.Port = uint(s.listener.Addr().(*net.TCPAddr).Port)
 		}
 	}
 
 	if s.cfg.Socket != "" {
+		if err := cleanupStaleSocket(s.cfg.Socket); err != nil {
+			return nil, errors.Trace(err)
+		}
+
 		if s.socket, err = net.Listen("unix", s.cfg.Socket); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -244,24 +269,23 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		if proxyTarget == nil {
 			proxyTarget = s.socket
 		}
-		pplistener, err := proxyprotocol.NewListener(proxyTarget, s.cfg.ProxyProtocol.Networks,
+		ppListener, err := proxyprotocol.NewListener(proxyTarget, s.cfg.ProxyProtocol.Networks,
 			int(s.cfg.ProxyProtocol.HeaderTimeout))
 		if err != nil {
 			logutil.BgLogger().Error("ProxyProtocol networks parameter invalid")
 			return nil, errors.Trace(err)
 		}
 		if s.listener != nil {
-			s.listener = pplistener
+			s.listener = ppListener
 			logutil.BgLogger().Info("server is running MySQL protocol (through PROXY protocol)", zap.String("host", s.cfg.Host))
 		} else {
-			s.socket = pplistener
+			s.socket = ppListener
 			logutil.BgLogger().Info("server is running MySQL protocol (through PROXY protocol)", zap.String("socket", s.cfg.Socket))
 		}
 	}
 
 	if s.cfg.Status.ReportStatus {
-		err = s.listenStatusHTTPServer()
-		if err != nil {
+		if err = s.listenStatusHTTPServer(); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
@@ -272,6 +296,29 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	variable.RegisterStatistics(s)
 
 	return s, nil
+}
+
+func cleanupStaleSocket(socket string) error {
+	sockStat, err := os.Stat(socket)
+	if err != nil {
+		return nil
+	}
+
+	if sockStat.Mode().Type() != os.ModeSocket {
+		return fmt.Errorf(
+			"the specified socket file %s is a %s instead of a socket file",
+			socket, sockStat.Mode().String())
+	}
+
+	if _, err = net.Dial("unix", socket); err == nil {
+		return fmt.Errorf("unix socket %s exists and is functional, not removing it", socket)
+	}
+
+	if err2 := os.Remove(socket); err2 != nil {
+		return fmt.Errorf("failed to cleanup stale Unix socket file %s: %w", socket, err)
+	}
+
+	return nil
 }
 
 func setSSLVariable(ca, key, cert string) {
@@ -311,7 +358,7 @@ func (s *Server) Run() error {
 		s.startStatusHTTP()
 	}
 	// If error should be reported and exit the server it can be sent on this
-	// channel. Otherwise end with sending a nil error to signal "done"
+	// channel. Otherwise, end with sending a nil error to signal "done"
 	errChan := make(chan error)
 	go s.startNetworkListener(s.listener, false, errChan)
 	go s.startNetworkListener(s.socket, true, errChan)
@@ -341,7 +388,7 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 				}
 			}
 
-			// If we got PROXY protocol error, we should continue accept.
+			// If we got PROXY protocol error, we should continue to accept.
 			if proxyprotocol.IsProxyProtocolError(err) {
 				logutil.BgLogger().Error("PROXY protocol failed", zap.Error(err))
 				continue
@@ -354,24 +401,37 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 
 		clientConn := s.newConn(conn)
 		if isUnixSocket {
+			uc, ok := conn.(*net.UnixConn)
+			if !ok {
+				logutil.BgLogger().Error("Expected UNIX socket, but got something else")
+				return
+			}
+
 			clientConn.isUnixSocket = true
+			clientConn.peerHost = "localhost"
+			clientConn.socketCredUID, err = linux.GetSockUID(*uc)
+			if err != nil {
+				logutil.BgLogger().Error("Failed to get UNIX socket peer credentials", zap.Error(err))
+				return
+			}
 		}
 
 		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 			authPlugin := plugin.DeclareAuditManifest(p.Manifest)
-			if authPlugin.OnConnectionEvent != nil {
-				host, _, err := clientConn.PeerHost("")
-				if err != nil {
-					logutil.BgLogger().Error("get peer host failed", zap.Error(err))
-					terror.Log(clientConn.Close())
-					return errors.Trace(err)
-				}
-				err = authPlugin.OnConnectionEvent(context.Background(), plugin.PreAuth, &variable.ConnectionInfo{Host: host})
-				if err != nil {
-					logutil.BgLogger().Info("do connection event failed", zap.Error(err))
-					terror.Log(clientConn.Close())
-					return errors.Trace(err)
-				}
+			if authPlugin.OnConnectionEvent == nil {
+				return nil
+			}
+			host, _, err := clientConn.PeerHost("")
+			if err != nil {
+				logutil.BgLogger().Error("get peer host failed", zap.Error(err))
+				terror.Log(clientConn.Close())
+				return errors.Trace(err)
+			}
+			if err = authPlugin.OnConnectionEvent(context.Background(), plugin.PreAuth,
+				&variable.ConnectionInfo{Host: host}); err != nil {
+				logutil.BgLogger().Info("do connection event failed", zap.Error(err))
+				terror.Log(clientConn.Close())
+				return errors.Trace(err)
 			}
 			return nil
 		})
@@ -447,11 +507,17 @@ func (s *Server) onConn(conn *clientConn) {
 			})
 			terror.Log(err)
 		}
-		// Some keep alive services will send request to TiDB and disconnect immediately.
-		// So we only record metrics.
-		metrics.HandShakeErrorCounter.Inc()
-		err = conn.Close()
-		terror.Log(errors.Trace(err))
+		if errors.Cause(err) == io.EOF {
+			// `EOF` means the connection is closed normally, we do not treat it as a noticeable error and log it in 'DEBUG' level.
+			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+				Debug("EOF", zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
+		} else {
+			metrics.HandShakeErrorCounter.Inc()
+			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+				Warn("Server.onConn handshake", zap.Error(err),
+					zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
+		}
+		terror.Log(conn.Close())
 		return
 	}
 
@@ -550,10 +616,26 @@ func (s *Server) checkConnectionCount() error {
 
 // ShowProcessList implements the SessionManager interface.
 func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
+	rs := make(map[uint64]*util.ProcessInfo)
+	for connID, pi := range s.getUserProcessList() {
+		rs[connID] = pi
+	}
+	if s.dom != nil {
+		for connID, pi := range s.dom.SysProcTracker().GetSysProcessList() {
+			rs[connID] = pi
+		}
+	}
+	return rs
+}
+
+func (s *Server) getUserProcessList() map[uint64]*util.ProcessInfo {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
-	rs := make(map[uint64]*util.ProcessInfo, len(s.clients))
+	rs := make(map[uint64]*util.ProcessInfo)
 	for _, client := range s.clients {
+		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
+			continue
+		}
 		if pi := client.ctx.ShowProcess(); pi != nil {
 			rs[pi.ID] = pi
 		}
@@ -596,7 +678,8 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
 	conn, ok := s.clients[connectionID]
-	if !ok {
+	if !ok && s.dom != nil {
+		s.dom.SysProcTracker().KillSysProcess(connectionID)
 		return
 	}
 

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,11 +19,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 )
@@ -48,61 +52,189 @@ func NewBundle(id int64) *Bundle {
 	}
 }
 
-// ApplyPlacementSpec will apply actions defined in PlacementSpec to the bundle.
-func (b *Bundle) ApplyPlacementSpec(specs []*ast.PlacementSpec) error {
-	for _, spec := range specs {
-		var role PeerRoleType
-		switch spec.Role {
-		case ast.PlacementRoleFollower:
-			role = Follower
-		case ast.PlacementRoleLeader:
-			if spec.Replicas == 0 {
-				spec.Replicas = 1
-			}
-			if spec.Replicas > 1 {
-				return ErrLeaderReplicasMustOne
-			}
-			role = Leader
-		case ast.PlacementRoleLearner:
-			role = Learner
-		case ast.PlacementRoleVoter:
-			role = Voter
-		default:
-			return ErrMissingRoleField
-		}
+// NewBundleFromConstraintsOptions will transform constraints options into the bundle.
+func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle, error) {
+	if options == nil {
+		return nil, fmt.Errorf("%w: options can not be nil", ErrInvalidPlacementOptions)
+	}
 
-		if spec.Tp == ast.PlacementAlter || spec.Tp == ast.PlacementDrop {
-			origLen := len(b.Rules)
-			newRules := b.Rules[:0]
-			for _, r := range b.Rules {
-				if r.Role != role {
-					newRules = append(newRules, r)
-				}
-			}
-			b.Rules = newRules
+	if len(options.PrimaryRegion) > 0 || len(options.Regions) > 0 || len(options.Schedule) > 0 {
+		return nil, fmt.Errorf("%w: should be [LEADER/VOTER/LEARNER/FOLLOWER]_CONSTRAINTS=.. [VOTERS/FOLLOWERS/LEARNERS]=.., mixed other sugar options %s", ErrInvalidPlacementOptions, options)
+	}
 
-			// alter == drop + add new rules
-			if spec.Tp == ast.PlacementDrop {
-				// error if no rules will be dropped
-				if len(b.Rules) == origLen {
-					return fmt.Errorf("%w: %s", ErrNoRulesToDrop, role)
-				}
-				continue
+	constraints := options.Constraints
+	leaderConstraints := options.LeaderConstraints
+	learnerConstraints := options.LearnerConstraints
+	followerConstraints := options.FollowerConstraints
+	followerCount := options.Followers
+	learnerCount := options.Learners
+
+	CommonConstraints, err := NewConstraintsFromYaml([]byte(constraints))
+	if err != nil {
+		return nil, fmt.Errorf("%w: 'Constraints' should be [constraint1, ...] or any yaml compatible array representation", err)
+	}
+
+	Rules := []*Rule{}
+
+	LeaderConstraints, err := NewConstraintsFromYaml([]byte(leaderConstraints))
+	if err != nil {
+		return nil, fmt.Errorf("%w: 'LeaderConstraints' should be [constraint1, ...] or any yaml compatible array representation", err)
+	}
+	for _, cnst := range CommonConstraints {
+		if err := LeaderConstraints.Add(cnst); err != nil {
+			return nil, fmt.Errorf("%w: LeaderConstraints conflicts with Constraints", err)
+		}
+	}
+	Rules = append(Rules, NewRule(Leader, 1, LeaderConstraints))
+
+	FollowerRules, err := NewRules(Voter, followerCount, followerConstraints)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid FollowerConstraints", err)
+	}
+	for _, rule := range FollowerRules {
+		// give a default of 2 followers
+		if rule.Count == 0 {
+			rule.Count = 2
+		}
+		for _, cnst := range CommonConstraints {
+			if err := rule.Constraints.Add(cnst); err != nil {
+				return nil, fmt.Errorf("%w: FollowerConstraints conflicts with Constraints", err)
 			}
 		}
+	}
+	Rules = append(Rules, FollowerRules...)
 
-		var newRules []*Rule
-		newRules, err := NewRules(spec.Replicas, spec.Constraints)
-		if err != nil {
-			return err
+	LearnerRules, err := NewRules(Learner, learnerCount, learnerConstraints)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid LearnerConstraints", err)
+	}
+	for _, rule := range LearnerRules {
+		if rule.Count == 0 {
+			if len(rule.Constraints) > 0 {
+				return nil, fmt.Errorf("%w: specify learner constraints without specify how many learners to be placed", ErrInvalidPlacementOptions)
+			}
 		}
-		for _, r := range newRules {
-			r.Role = role
-			b.Rules = append(b.Rules, r)
+		for _, cnst := range CommonConstraints {
+			if err := rule.Constraints.Add(cnst); err != nil {
+				return nil, fmt.Errorf("%w: LearnerConstraints conflicts with Constraints", err)
+			}
+		}
+		if rule.Count > 0 {
+			Rules = append(Rules, rule)
 		}
 	}
 
-	return nil
+	return &Bundle{Rules: Rules}, nil
+}
+
+// NewBundleFromSugarOptions will transform syntax sugar options into the bundle.
+func NewBundleFromSugarOptions(options *model.PlacementSettings) (*Bundle, error) {
+	if options == nil {
+		return nil, fmt.Errorf("%w: options can not be nil", ErrInvalidPlacementOptions)
+	}
+
+	if len(options.LeaderConstraints) > 0 || len(options.LearnerConstraints) > 0 || len(options.FollowerConstraints) > 0 || len(options.Constraints) > 0 || options.Learners > 0 {
+		return nil, fmt.Errorf("%w: should be PRIMARY_REGION=.. REGIONS=.. FOLLOWERS=.. SCHEDULE=.., mixed other constraints into options %s", ErrInvalidPlacementOptions, options)
+	}
+
+	primaryRegion := strings.TrimSpace(options.PrimaryRegion)
+
+	var regions []string
+	if k := strings.TrimSpace(options.Regions); len(k) > 0 {
+		regions = strings.Split(k, ",")
+		for i, r := range regions {
+			regions[i] = strings.TrimSpace(r)
+		}
+	}
+
+	followers := options.Followers
+	if followers == 0 {
+		followers = 2
+	}
+	schedule := options.Schedule
+
+	var Rules []*Rule
+
+	// in case empty primaryRegion and regions, just return an empty bundle
+	if primaryRegion == "" && len(regions) == 0 {
+		Rules = append(Rules, NewRule(Voter, followers+1, NewConstraintsDirect()))
+		return &Bundle{Rules: Rules}, nil
+	}
+
+	// regions must include the primary
+	sort.Strings(regions)
+	primaryIndex := sort.SearchStrings(regions, primaryRegion)
+	if primaryIndex >= len(regions) || regions[primaryIndex] != primaryRegion {
+		return nil, fmt.Errorf("%w: primary region must be included in regions", ErrInvalidPlacementOptions)
+	}
+
+	// primaryCount only makes sense when len(regions) > 0
+	// but we will compute it here anyway for reusing code
+	var primaryCount uint64
+	switch strings.ToLower(schedule) {
+	case "", "even":
+		primaryCount = uint64(math.Ceil(float64(followers+1) / float64(len(regions))))
+	case "majority_in_primary":
+		// calculate how many replicas need to be in the primary region for quorum
+		primaryCount = (followers+1)/2 + 1
+	default:
+		return nil, fmt.Errorf("%w: unsupported schedule %s", ErrInvalidPlacementOptions, schedule)
+	}
+
+	Rules = append(Rules, NewRule(Voter, primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, primaryRegion))))
+	if followers+1 > primaryCount {
+		// delete primary from regions
+		regions = regions[:primaryIndex+copy(regions[primaryIndex:], regions[primaryIndex+1:])]
+
+		if len(regions) > 0 {
+			Rules = append(Rules, NewRule(Follower, followers+1-primaryCount, NewConstraintsDirect(NewConstraintDirect("region", In, regions...))))
+		} else {
+			Rules = append(Rules, NewRule(Follower, followers+1-primaryCount, NewConstraintsDirect()))
+		}
+	}
+
+	return &Bundle{Rules: Rules}, nil
+}
+
+// Non-Exported functionality function, do not use it directly but NewBundleFromOptions
+// here is for only directly used in the test.
+func newBundleFromOptions(options *model.PlacementSettings) (bundle *Bundle, err error) {
+	if options == nil {
+		return nil, fmt.Errorf("%w: options can not be nil", ErrInvalidPlacementOptions)
+	}
+
+	if options.Followers > uint64(8) {
+		return nil, fmt.Errorf("%w: followers should be less than or equal to 8: %d", ErrInvalidPlacementOptions, options.Followers)
+	}
+
+	// always prefer the sugar syntax, which gives better schedule results most of the time
+	isSyntaxSugar := true
+	if len(options.LeaderConstraints) > 0 || len(options.LearnerConstraints) > 0 || len(options.FollowerConstraints) > 0 || len(options.Constraints) > 0 || options.Learners > 0 {
+		isSyntaxSugar = false
+	}
+
+	if isSyntaxSugar {
+		bundle, err = NewBundleFromSugarOptions(options)
+	} else {
+		bundle, err = NewBundleFromConstraintsOptions(options)
+	}
+	return bundle, err
+}
+
+// NewBundleFromOptions will transform options into the bundle.
+func NewBundleFromOptions(options *model.PlacementSettings) (bundle *Bundle, err error) {
+	bundle, err = newBundleFromOptions(options)
+	if err != nil {
+		return nil, err
+	}
+	if bundle == nil {
+		return nil, nil
+	}
+	err = bundle.Tidy()
+	if err != nil {
+		return nil, err
+	}
+	return bundle, err
 }
 
 // String implements fmt.Stringer.
@@ -173,15 +305,58 @@ func (b *Bundle) Tidy() error {
 }
 
 // Reset resets the bundle ID and keyrange of all rules.
-func (b *Bundle) Reset(newID int64) *Bundle {
-	b.ID = GroupID(newID)
-	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(newID)))
-	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTableRecordPrefix(newID+1)))
-	for _, rule := range b.Rules {
-		rule.GroupID = b.ID
-		rule.StartKeyHex = startKey
-		rule.EndKeyHex = endKey
+func (b *Bundle) Reset(ruleIndex int, newIDs []int64) *Bundle {
+	// eliminate the redundant rules.
+	var basicRules []*Rule
+	if len(b.Rules) != 0 {
+		// Make priority for rules with RuleIndexTable cause of duplication rules existence with RuleIndexPartition.
+		// If RuleIndexTable doesn't exist, bundle itself is a independent series of rules for a partition.
+		for _, rule := range b.Rules {
+			if rule.Index == RuleIndexTable {
+				basicRules = append(basicRules, rule)
+			}
+		}
+		if len(basicRules) == 0 {
+			basicRules = b.Rules
+		}
 	}
+
+	// extend and reset basic rules for all new ids, the first id should be the group id.
+	b.ID = GroupID(newIDs[0])
+	b.Index = ruleIndex
+	b.Override = true
+	newRules := make([]*Rule, 0, len(basicRules)*len(newIDs))
+	for i, newID := range newIDs {
+		// rule.id should be distinguished with each other, otherwise it will be de-duplicated in pd http api.
+		var ruleID string
+		if ruleIndex == RuleIndexPartition {
+			ruleID = "partition_rule_" + strconv.FormatInt(newID, 10)
+		} else {
+			if i == 0 {
+				ruleID = "table_rule_" + strconv.FormatInt(newID, 10)
+			} else {
+				ruleID = "partition_rule_" + strconv.FormatInt(newID, 10)
+			}
+		}
+		// Involve all the table level objects.
+		startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID)))
+		endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(newID+1)))
+		for j, rule := range basicRules {
+			clone := rule.Clone()
+			// for the rules of one element id, distinguishing the rule ids to avoid the PD's overlap.
+			clone.ID = ruleID + "_" + strconv.FormatInt(int64(j), 10)
+			clone.GroupID = b.ID
+			clone.StartKeyHex = startKey
+			clone.EndKeyHex = endKey
+			if i == 0 {
+				clone.Index = RuleIndexTable
+			} else {
+				clone.Index = RuleIndexPartition
+			}
+			newRules = append(newRules, clone)
+		}
+	}
+	b.Rules = newRules
 	return b
 }
 
@@ -238,4 +413,96 @@ func (b *Bundle) GetLeaderDC(dcLabelKey string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// NewTableBundle creates a bundle for table key range.
+// If table is a partitioned table, it also contains the rules that inherited from table for every partition.
+// The bundle does not contain the rules specified independently by each partition
+func NewTableBundle(t *meta.Meta, tbInfo *model.TableInfo) (*Bundle, error) {
+	bundle, err := newBundleFromPolicy(t, tbInfo.PlacementPolicyRef)
+	if err != nil {
+		return nil, err
+	}
+
+	if bundle == nil {
+		return nil, nil
+	}
+	ids := []int64{tbInfo.ID}
+	// build the default partition rules in the table-level bundle.
+	if tbInfo.Partition != nil {
+		for _, pDef := range tbInfo.Partition.Definitions {
+			ids = append(ids, pDef.ID)
+		}
+	}
+	bundle.Reset(RuleIndexTable, ids)
+	return bundle, nil
+}
+
+// NewPartitionBundle creates a bundle for partition key range.
+// It only contains the rules specified independently by the partition.
+// That is to say the inherited rules from table is not included.
+func NewPartitionBundle(t *meta.Meta, def model.PartitionDefinition) (*Bundle, error) {
+	bundle, err := newBundleFromPolicy(t, def.PlacementPolicyRef)
+	if err != nil {
+		return nil, err
+	}
+
+	if bundle != nil {
+		bundle.Reset(RuleIndexPartition, []int64{def.ID})
+	}
+
+	return bundle, nil
+}
+
+// NewPartitionListBundles creates a bundle list for a partition list
+func NewPartitionListBundles(t *meta.Meta, defs []model.PartitionDefinition) ([]*Bundle, error) {
+	bundles := make([]*Bundle, 0, len(defs))
+	// If the partition has the placement rules on their own, build the partition-level bundles additionally.
+	for _, def := range defs {
+		bundle, err := NewPartitionBundle(t, def)
+		if err != nil {
+			return nil, err
+		}
+
+		if bundle != nil {
+			bundles = append(bundles, bundle)
+		}
+	}
+	return bundles, nil
+}
+
+// NewFullTableBundles returns a bundle list with both table bundle and partition bundles
+func NewFullTableBundles(t *meta.Meta, tbInfo *model.TableInfo) ([]*Bundle, error) {
+	var bundles []*Bundle
+	tableBundle, err := NewTableBundle(t, tbInfo)
+	if err != nil {
+		return nil, err
+	}
+
+	if tableBundle != nil {
+		bundles = append(bundles, tableBundle)
+	}
+
+	if tbInfo.Partition != nil {
+		partitionBundles, err := NewPartitionListBundles(t, tbInfo.Partition.Definitions)
+		if err != nil {
+			return nil, err
+		}
+		bundles = append(bundles, partitionBundles...)
+	}
+
+	return bundles, nil
+}
+
+func newBundleFromPolicy(t *meta.Meta, ref *model.PolicyRefInfo) (*Bundle, error) {
+	if ref != nil {
+		policy, err := t.GetPolicy(ref.ID)
+		if err != nil {
+			return nil, err
+		}
+
+		return NewBundleFromOptions(policy.PlacementSettings)
+	}
+
+	return nil, nil
 }

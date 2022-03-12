@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,10 +21,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/model"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
@@ -32,12 +34,15 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
-var _ sessionctx.Context = (*Context)(nil)
-var _ sqlexec.SQLExecutor = (*Context)(nil)
+var (
+	_ sessionctx.Context  = (*Context)(nil)
+	_ sqlexec.SQLExecutor = (*Context)(nil)
+)
 
 // Context represents mocked sessionctx.Context.
 type Context struct {
@@ -83,9 +88,24 @@ func (c *Context) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	return nil, errors.Errorf("Not Supported.")
 }
 
+// SetDiskFullOpt sets allowed options of current operation in each TiKV disk usage level.
+func (c *Context) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {
+	c.txn.Transaction.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+}
+
+// ClearDiskFullOpt clears allowed options of current operation in each TiKV disk usage level.
+func (c *Context) ClearDiskFullOpt() {
+	c.txn.Transaction.ClearDiskFullOpt()
+}
+
 // ExecuteInternal implements sqlexec.SQLExecutor ExecuteInternal interface.
 func (c *Context) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
 	return nil, errors.Errorf("Not Supported.")
+}
+
+// ShowProcess implements sessionctx.Context ShowProcess interface.
+func (c *Context) ShowProcess() *util.ProcessInfo {
+	return &util.ProcessInfo{}
 }
 
 type mockDDLOwnerChecker struct{}
@@ -212,6 +232,11 @@ func (c *Context) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) er
 	return c.NewTxn(ctx)
 }
 
+// GetSnapshotWithTS return a snapshot with ts
+func (c *Context) GetSnapshotWithTS(ts uint64) kv.Snapshot {
+	return c.Store.GetSnapshot(kv.Version{Ver: ts})
+}
+
 // RefreshTxnCtx implements the sessionctx.Context interface.
 func (c *Context) RefreshTxnCtx(ctx context.Context) error {
 	return errors.Trace(c.NewTxn(ctx))
@@ -228,7 +253,7 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 		return nil
 	}
 	if c.Store != nil {
-		txn, err := c.Store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(kv.GlobalTxnScope).SetStartTS(startTS))
+		txn, err := c.Store.Begin(tikv.WithTxnScope(kv.GlobalTxnScope), tikv.WithStartTS(startTS))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -264,6 +289,9 @@ func (c *Context) GoCtx() context.Context {
 
 // StoreQueryFeedback stores the query feedback.
 func (c *Context) StoreQueryFeedback(_ interface{}) {}
+
+// UpdateColStatsUsage updates the column stats usage.
+func (c *Context) UpdateColStatsUsage(_ []model.TableColumnID) {}
 
 // StoreIndexUsage strores the index usage information.
 func (c *Context) StoreIndexUsage(_ int64, _ int64, _ int64) {}
@@ -320,6 +348,11 @@ func (c *Context) HasLockedTables() bool {
 func (c *Context) PrepareTSFuture(ctx context.Context) {
 }
 
+// GetStmtStats implements the sessionctx.Context interface.
+func (c *Context) GetStmtStats() *stmtstats.StatementStats {
+	return nil
+}
+
 // Close implements the sessionctx.Context interface.
 func (c *Context) Close() {
 }
@@ -340,6 +373,9 @@ func NewContext() *Context {
 	sctx.sessionVars.StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 	sctx.sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
+		panic(err)
+	}
+	if err := sctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, "utf8mb4"); err != nil {
 		panic(err)
 	}
 	return sctx

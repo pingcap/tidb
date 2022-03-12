@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -35,7 +36,6 @@ func TestSlice(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(fmt.Sprint(test.a), func(t *testing.T) {
-			t.Parallel()
 			even := func(i int) bool { return test.a[i]%2 == 0 }
 			require.Equal(t, test.anyOf, AnyOf(test.a, even))
 			require.Equal(t, test.noneOf, NoneOf(test.a, even))

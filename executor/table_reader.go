@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,13 +17,14 @@ package executor
 import (
 	"context"
 	"sort"
+	"time"
 
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
@@ -74,11 +76,11 @@ type TableReaderExecutor struct {
 	ranges []*ranger.Range
 
 	// kvRanges are only use for union scan.
-	kvRanges    []kv.KeyRange
-	dagPB       *tipb.DAGRequest
-	startTS     uint64
-	txnScope    string
-	isStaleness bool
+	kvRanges         []kv.KeyRange
+	dagPB            *tipb.DAGRequest
+	startTS          uint64
+	readReplicaScope string
+	isStaleness      bool
 	// columns are only required by union scan and virtual column.
 	columns []*model.ColumnInfo
 
@@ -108,23 +110,18 @@ type TableReaderExecutor struct {
 	// batchCop indicates whether use super batch coprocessor request, only works for TiFlash engine.
 	batchCop bool
 
-	// extraPIDColumnIndex is used for partition reader to add an extra partition ID column.
-	extraPIDColumnIndex offsetOptional
+	// If dummy flag is set, this is not a real TableReader, it just provides the KV ranges for UnionScan.
+	// Used by the temporary table, cached table.
+	dummy bool
 }
 
-// offsetOptional may be a positive integer, or invalid.
-type offsetOptional int
-
-func newOffset(i int) offsetOptional {
-	return offsetOptional(i + 1)
+// Table implements the dataSourceExecutor interface.
+func (e *TableReaderExecutor) Table() table.Table {
+	return e.table
 }
 
-func (i offsetOptional) valid() bool {
-	return i != 0
-}
-
-func (i offsetOptional) value() int {
-	return int(i - 1)
+func (e *TableReaderExecutor) setDummy() {
+	e.dummy = true
 }
 
 // Open initializes necessary variables for using this executor.
@@ -134,6 +131,10 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	failpoint.Inject("mockSleepInTableReaderNext", func(v failpoint.Value) {
+		ms := v.(int)
+		time.Sleep(time.Millisecond * time.Duration(ms))
+	})
 
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
@@ -178,7 +179,8 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 
 	// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 	// Calculate the kv ranges here, UnionScan rely on this kv ranges.
-	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
+	// cached table and temporary table are similar
+	if e.dummy {
 		kvReq, err := e.buildKVReq(ctx, firstPartRanges)
 		if err != nil {
 			return err
@@ -216,7 +218,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 // Next fills data into the chunk passed by its caller.
 // The task was actually done by tableReaderHandler.
 func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
-	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
+	if e.dummy {
 		// Treat temporary table as dummy table, avoid sending distsql request to TiKV.
 		req.Reset()
 		return nil
@@ -239,29 +241,12 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		return err
 	}
 
-	// When 'select ... for update' work on a partitioned table, the table reader should
-	// add the partition ID as an extra column. The SelectLockExec need this information
-	// to construct the lock key.
-	physicalID := getPhysicalTableID(e.table)
-	if e.extraPIDColumnIndex.valid() {
-		fillExtraPIDColumn(req, e.extraPIDColumnIndex.value(), physicalID)
-	}
-
 	return nil
-}
-
-func fillExtraPIDColumn(req *chunk.Chunk, extraPIDColumnIndex int, physicalID int64) {
-	numRows := req.NumRows()
-	pidColumn := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), numRows)
-	for i := 0; i < numRows; i++ {
-		pidColumn.AppendInt64(physicalID)
-	}
-	req.SetCol(extraPIDColumnIndex, pidColumn)
 }
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
-	if e.table.Meta() != nil && e.table.Meta().TempTableType != model.TempTableNone {
+	if e.dummy {
 		return nil
 	}
 
@@ -312,7 +297,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 	if err != nil {
 		return nil, err
 	}
-	var kvReqs []*kv.Request
+	kvReqs := make([]*kv.Request, 0, len(kvRanges))
 	for i, kvRange := range kvRanges {
 		e.kvRanges = append(e.kvRanges, kvRange...)
 		if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, pids[i], true); err != nil {
@@ -326,7 +311,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 			SetDesc(e.desc).
 			SetKeepOrder(e.keepOrder).
 			SetStreaming(e.streaming).
-			SetTxnScope(e.txnScope).
+			SetReadReplicaScope(e.readReplicaScope).
 			SetFromSessionVars(e.ctx.GetSessionVars()).
 			SetFromInfoSchema(e.ctx.GetInfoSchema()).
 			SetMemTracker(e.memTracker).
@@ -358,7 +343,7 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetStreaming(e.streaming).
-		SetTxnScope(e.txnScope).
+		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.ctx.GetSessionVars()).
 		SetFromInfoSchema(e.ctx.GetInfoSchema()).

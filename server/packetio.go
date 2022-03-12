@@ -1,3 +1,17 @@
+// Copyright 2015 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // Copyright 2013 The Go-MySQL-Driver Authors. All rights reserved.
 //
 // This Source Code Form is subject to the terms of the Mozilla Public
@@ -19,19 +33,6 @@
 // The above copyright notice and this permission notice shall be included in all
 // copies or substantial portions of the Software.
 
-// Copyright 2015 PingCAP, Inc.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package server
 
 import (
@@ -40,16 +41,16 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 )
 
 const defaultWriterSize = 16 * 1024
 
 var (
-	readPacketBytes  = metrics.PacketIOHistogram.WithLabelValues("read")
-	writePacketBytes = metrics.PacketIOHistogram.WithLabelValues("write")
+	readPacketBytes  = metrics.PacketIOCounter.WithLabelValues("read")
+	writePacketBytes = metrics.PacketIOCounter.WithLabelValues("write")
 )
 
 // packetIO is a helper to read and write data in packet format.
@@ -119,7 +120,7 @@ func (p *packetIO) readPacket() ([]byte, error) {
 	}
 
 	if len(data) < mysql.MaxPayloadLen {
-		readPacketBytes.Observe(float64(len(data)))
+		readPacketBytes.Add(float64(len(data)))
 		return data, nil
 	}
 
@@ -137,14 +138,14 @@ func (p *packetIO) readPacket() ([]byte, error) {
 		}
 	}
 
-	readPacketBytes.Observe(float64(len(data)))
+	readPacketBytes.Add(float64(len(data)))
 	return data, nil
 }
 
 // writePacket writes data that already have header
 func (p *packetIO) writePacket(data []byte) error {
 	length := len(data) - 4
-	writePacketBytes.Observe(float64(len(data)))
+	writePacketBytes.Add(float64(len(data)))
 
 	for length >= mysql.MaxPayloadLen {
 		data[0] = 0xff

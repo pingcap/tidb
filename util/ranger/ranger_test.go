@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,69 +19,26 @@ import (
 	"fmt"
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/errors"
-	"github.com/pingcap/parser"
-	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/stretchr/testify/require"
 )
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
+func TestTableRange(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
-var _ = SerialSuites(&testRangerSuite{})
-
-type testRangerSuite struct {
-	*parser.Parser
-	testData testutil.TestData
-}
-
-func (s *testRangerSuite) SetUpSuite(c *C) {
-	s.Parser = parser.New()
-	var err error
-	s.testData, err = testutil.LoadTestSuiteData("testdata", "ranger_suite")
-	c.Assert(err, IsNil)
-}
-
-func (s *testRangerSuite) TearDownSuite(c *C) {
-	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
-}
-
-func newDomainStoreWithBootstrap(c *C) (*domain.Domain, kv.Storage, error) {
-	store, err := mockstore.NewMockStore()
-	c.Assert(err, IsNil)
-	session.SetSchemaLease(0)
-	session.DisableStats4Test()
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	dom, err := session.BootstrapSession(store)
-	return dom, store, errors.Trace(err)
-}
-
-func (s *testRangerSuite) TestTableRange(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, c int unsigned)")
@@ -299,388 +257,43 @@ func (s *testRangerSuite) TestTableRange(c *C) {
 
 	ctx := context.Background()
 	for _, tt := range tests {
-		sql := "select * from t where " + tt.exprStr
-		sctx := testKit.Se.(sessionctx.Context)
-		stmts, err := session.Parse(sctx, sql)
-		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
-		c.Assert(stmts, HasLen, 1)
-		ret := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
-		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], ret.InfoSchema)
-		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
-		conds := make([]expression.Expression, len(selection.Conditions))
-		for i, cond := range selection.Conditions {
-			conds[i] = expression.PushDownNot(sctx, cond)
-		}
-		tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
-		col := expression.ColInfo2Col(selection.Schema().Columns, tbl.Columns[0])
-		c.Assert(col, NotNil)
-		var filter []expression.Expression
-		conds, filter = ranger.DetachCondsForColumn(sctx, conds, col)
-		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
-		c.Assert(fmt.Sprintf("%s", filter), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
-		result, err := ranger.BuildTableRange(conds, new(stmtctx.StatementContext), col.RetType)
-		c.Assert(err, IsNil, Commentf("failed to build table range for expr %s", tt.exprStr))
-		got := fmt.Sprintf("%v", result)
-		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
-	}
-}
-
-func (s *testRangerSuite) TestIndexRange(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	testKit.MustExec(`
-create table t(
-	a varchar(50),
-	b int,
-	c double,
-	d varchar(10),
-	e binary(10),
-	f varchar(10) collate utf8mb4_general_ci,
-	g enum('A','B','C') collate utf8mb4_general_ci,
-	index idx_ab(a(50), b),
-	index idx_cb(c, a),
-	index idx_d(d(2)),
-	index idx_e(e(2)),
-	index idx_f(f),
-	index idx_de(d(2), e),
-	index idx_g(g)
-)`)
-
-	tests := []struct {
-		indexPos    int
-		exprStr     string
-		accessConds string
-		filterConds string
-		resultStr   string
-	}{
-		{
-			indexPos:    0,
-			exprStr:     `a LIKE 'abc%'`,
-			accessConds: `[like(test.t.a, abc%, 92)]`,
-			filterConds: "[]",
-			resultStr:   "[[\"abc\",\"abd\")]",
-		},
-		{
-			indexPos:    0,
-			exprStr:     "a LIKE 'abc_'",
-			accessConds: "[like(test.t.a, abc_, 92)]",
-			filterConds: "[like(test.t.a, abc_, 92)]",
-			resultStr:   "[(\"abc\",\"abd\")]",
-		},
-		{
-			indexPos:    0,
-			exprStr:     "a LIKE 'abc'",
-			accessConds: "[like(test.t.a, abc, 92)]",
-			filterConds: "[]",
-			resultStr:   "[[\"abc\",\"abc\"]]",
-		},
-		{
-			indexPos:    0,
-			exprStr:     `a LIKE "ab\_c"`,
-			accessConds: "[like(test.t.a, ab\\_c, 92)]",
-			filterConds: "[]",
-			resultStr:   "[[\"ab_c\",\"ab_c\"]]",
-		},
-		{
-			indexPos:    0,
-			exprStr:     `a LIKE '%'`,
-			accessConds: "[]",
-			filterConds: `[like(test.t.a, %, 92)]`,
-			resultStr:   "[[NULL,+inf]]",
-		},
-		{
-			indexPos:    0,
-			exprStr:     `a LIKE '\%a'`,
-			accessConds: "[like(test.t.a, \\%a, 92)]",
-			filterConds: "[]",
-			resultStr:   `[["%a","%a"]]`,
-		},
-		{
-			indexPos:    0,
-			exprStr:     `a LIKE "\\"`,
-			accessConds: "[like(test.t.a, \\, 92)]",
-			filterConds: "[]",
-			resultStr:   "[[\"\\\",\"\\\"]]",
-		},
-		{
-			indexPos:    0,
-			exprStr:     `a LIKE "\\\\a%"`,
-			accessConds: `[like(test.t.a, \\a%, 92)]`,
-			filterConds: "[]",
-			resultStr:   "[[\"\\a\",\"\\b\")]",
-		},
-		{
-			indexPos:    0,
-			exprStr:     `a > NULL`,
-			accessConds: "[gt(test.t.a, <nil>)]",
-			filterConds: "[]",
-			resultStr:   `[]`,
-		},
-		{
-			indexPos:    0,
-			exprStr:     `a = 'a' and b in (1, 2, 3)`,
-			accessConds: "[eq(test.t.a, a) in(test.t.b, 1, 2, 3)]",
-			filterConds: "[]",
-			resultStr:   "[[\"a\" 1,\"a\" 1] [\"a\" 2,\"a\" 2] [\"a\" 3,\"a\" 3]]",
-		},
-		{
-			indexPos:    0,
-			exprStr:     `a = 'a' and b not in (1, 2, 3)`,
-			accessConds: "[eq(test.t.a, a) not(in(test.t.b, 1, 2, 3))]",
-			filterConds: "[]",
-			resultStr:   "[(\"a\" NULL,\"a\" 1) (\"a\" 3,\"a\" +inf]]",
-		},
-		{
-			indexPos:    0,
-			exprStr:     `a in ('a') and b in ('1', 2.0, NULL)`,
-			accessConds: "[eq(test.t.a, a) in(test.t.b, 1, 2, <nil>)]",
-			filterConds: "[]",
-			resultStr:   `[["a" 1,"a" 1] ["a" 2,"a" 2]]`,
-		},
-		{
-			indexPos:    1,
-			exprStr:     `c in ('1.1', 1, 1.1) and a in ('1', 'a', NULL)`,
-			accessConds: "[in(test.t.c, 1.1, 1, 1.1) in(test.t.a, 1, a, <nil>)]",
-			filterConds: "[]",
-			resultStr:   "[[1 \"1\",1 \"1\"] [1 \"a\",1 \"a\"] [1.1 \"1\",1.1 \"1\"] [1.1 \"a\",1.1 \"a\"]]",
-		},
-		{
-			indexPos:    1,
-			exprStr:     "c in (1, 1, 1, 1, 1, 1, 2, 1, 2, 3, 2, 3, 4, 4, 1, 2)",
-			accessConds: "[in(test.t.c, 1, 1, 1, 1, 1, 1, 2, 1, 2, 3, 2, 3, 4, 4, 1, 2)]",
-			filterConds: "[]",
-			resultStr:   "[[1,1] [2,2] [3,3] [4,4]]",
-		},
-		{
-			indexPos:    1,
-			exprStr:     "c not in (1, 2, 3)",
-			accessConds: "[not(in(test.t.c, 1, 2, 3))]",
-			filterConds: "[]",
-			resultStr:   "[(NULL,1) (1,2) (2,3) (3,+inf]]",
-		},
-		{
-			indexPos:    1,
-			exprStr:     "c in (1, 2) and c in (1, 3)",
-			accessConds: "[eq(test.t.c, 1)]",
-			filterConds: "[]",
-			resultStr:   "[[1,1]]",
-		},
-		{
-			indexPos:    1,
-			exprStr:     "c = 1 and c = 2",
-			accessConds: "[]",
-			filterConds: "[]",
-			resultStr:   "[]",
-		},
-		{
-			indexPos:    0,
-			exprStr:     "a in (NULL)",
-			accessConds: "[eq(test.t.a, <nil>)]",
-			filterConds: "[]",
-			resultStr:   "[]",
-		},
-		{
-			indexPos:    0,
-			exprStr:     "a not in (NULL, '1', '2', '3')",
-			accessConds: "[not(in(test.t.a, <nil>, 1, 2, 3))]",
-			filterConds: "[]",
-			resultStr:   "[]",
-		},
-		{
-			indexPos:    0,
-			exprStr:     "not (a not in (NULL, '1', '2', '3') and a > '2')",
-			accessConds: "[or(in(test.t.a, <nil>, 1, 2, 3), le(test.t.a, 2))]",
-			filterConds: "[]",
-			resultStr:   "[[-inf,\"2\"] [\"3\",\"3\"]]",
-		},
-		{
-			indexPos:    0,
-			exprStr:     "not (a not in (NULL) and a > '2')",
-			accessConds: "[or(eq(test.t.a, <nil>), le(test.t.a, 2))]",
-			filterConds: "[]",
-			resultStr:   "[[-inf,\"2\"]]",
-		},
-		{
-			indexPos:    0,
-			exprStr:     "not (a not in (NULL) or a > '2')",
-			accessConds: "[and(eq(test.t.a, <nil>), le(test.t.a, 2))]",
-			filterConds: "[]",
-			resultStr:   "[]",
-		},
-		{
-			indexPos:    0,
-			exprStr:     "(a > 'b' and a < 'bbb') or (a < 'cb' and a > 'a')",
-			accessConds: "[or(and(gt(test.t.a, b), lt(test.t.a, bbb)), and(lt(test.t.a, cb), gt(test.t.a, a)))]",
-			filterConds: "[]",
-			resultStr:   "[(\"a\",\"cb\")]",
-		},
-		{
-			indexPos:    0,
-			exprStr:     "(a > 'a' and a < 'b') or (a >= 'b' and a < 'c')",
-			accessConds: "[or(and(gt(test.t.a, a), lt(test.t.a, b)), and(ge(test.t.a, b), lt(test.t.a, c)))]",
-			filterConds: "[]",
-			resultStr:   "[(\"a\",\"c\")]",
-		},
-		{
-			indexPos:    0,
-			exprStr:     "(a > 'a' and a < 'b' and b < 1) or (a >= 'b' and a < 'c')",
-			accessConds: "[or(and(gt(test.t.a, a), lt(test.t.a, b)), and(ge(test.t.a, b), lt(test.t.a, c)))]",
-			filterConds: "[or(and(and(gt(test.t.a, a), lt(test.t.a, b)), lt(test.t.b, 1)), and(ge(test.t.a, b), lt(test.t.a, c)))]",
-			resultStr:   "[(\"a\",\"c\")]",
-		},
-		{
-			indexPos:    0,
-			exprStr:     "(a in ('a', 'b') and b < 1) or (a >= 'b' and a < 'c')",
-			accessConds: "[or(and(in(test.t.a, a, b), lt(test.t.b, 1)), and(ge(test.t.a, b), lt(test.t.a, c)))]",
-			filterConds: "[]",
-			resultStr:   `[["a" -inf,"a" 1) ["b","c")]`,
-		},
-		{
-			indexPos:    0,
-			exprStr:     "(a > 'a') or (c > 1)",
-			accessConds: "[]",
-			filterConds: "[or(gt(test.t.a, a), gt(test.t.c, 1))]",
-			resultStr:   "[[NULL,+inf]]",
-		},
-		{
-			indexPos:    2,
-			exprStr:     `d = "你好啊"`,
-			accessConds: "[eq(test.t.d, 你好啊)]",
-			filterConds: "[eq(test.t.d, 你好啊)]",
-			resultStr:   "[[\"你好\",\"你好\"]]",
-		},
-		{
-			indexPos:    3,
-			exprStr:     `e = "你好啊"`,
-			accessConds: "[eq(test.t.e, 你好啊)]",
-			filterConds: "[eq(test.t.e, 你好啊)]",
-			resultStr:   "[[0xE4BD,0xE4BD]]",
-		},
-		{
-			indexPos:    2,
-			exprStr:     `d in ("你好啊", "再见")`,
-			accessConds: "[in(test.t.d, 你好啊, 再见)]",
-			filterConds: "[in(test.t.d, 你好啊, 再见)]",
-			resultStr:   "[[\"你好\",\"你好\"] [\"再见\",\"再见\"]]",
-		},
-		{
-			indexPos:    2,
-			exprStr:     `d not in ("你好啊")`,
-			accessConds: "[]",
-			filterConds: "[ne(test.t.d, 你好啊)]",
-			resultStr:   "[[NULL,+inf]]",
-		},
-		{
-			indexPos:    2,
-			exprStr:     `d < "你好" || d > "你好"`,
-			accessConds: "[or(lt(test.t.d, 你好), gt(test.t.d, 你好))]",
-			filterConds: "[or(lt(test.t.d, 你好), gt(test.t.d, 你好))]",
-			resultStr:   "[[-inf,+inf]]",
-		},
-		{
-			indexPos:    2,
-			exprStr:     `not(d < "你好" || d > "你好")`,
-			accessConds: "[and(ge(test.t.d, 你好), le(test.t.d, 你好))]",
-			filterConds: "[and(ge(test.t.d, 你好), le(test.t.d, 你好))]",
-			resultStr:   "[[\"你好\",\"你好\"]]",
-		},
-		{
-			indexPos:    4,
-			exprStr:     "f >= 'a' and f <= 'B'",
-			accessConds: "[ge(test.t.f, a) le(test.t.f, B)]",
-			filterConds: "[]",
-			resultStr:   "[[\"a\",\"B\"]]",
-		},
-		{
-			indexPos:    4,
-			exprStr:     "f in ('a', 'B')",
-			accessConds: "[in(test.t.f, a, B)]",
-			filterConds: "[]",
-			resultStr:   "[[\"a\",\"a\"] [\"B\",\"B\"]]",
-		},
-		{
-			indexPos:    4,
-			exprStr:     "f = 'a' and f = 'B' collate utf8mb4_bin",
-			accessConds: "[eq(test.t.f, a)]",
-			filterConds: "[eq(test.t.f, B)]",
-			resultStr:   "[[\"a\",\"a\"]]",
-		},
-		{
-			indexPos:    4,
-			exprStr:     "f like '@%' collate utf8mb4_bin",
-			accessConds: "[]",
-			filterConds: "[like(test.t.f, @%, 92)]",
-			resultStr:   "[[NULL,+inf]]",
-		},
-		{
-			indexPos:    5,
-			exprStr:     "d in ('aab', 'aac') and e = 'a'",
-			accessConds: "[in(test.t.d, aab, aac) eq(test.t.e, a)]",
-			filterConds: "[in(test.t.d, aab, aac)]",
-			resultStr:   "[[\"aa\" 0x61,\"aa\" 0x61]]",
-		},
-		{
-			indexPos:    6,
-			exprStr:     "g = 'a'",
-			accessConds: "[eq(test.t.g, a)]",
-			filterConds: "[]",
-			resultStr:   "[[\"A\",\"A\"]]",
-		},
-	}
-
-	collate.SetNewCollationEnabledForTest(true)
-	defer func() { collate.SetNewCollationEnabledForTest(false) }()
-	ctx := context.Background()
-	for _, tt := range tests {
-		sql := "select * from t where " + tt.exprStr
-		sctx := testKit.Se.(sessionctx.Context)
-		stmts, err := session.Parse(sctx, sql)
-		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
-		c.Assert(stmts, HasLen, 1)
-		ret := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
-		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], ret.InfoSchema)
-		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
-		tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
-		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
-		conds := make([]expression.Expression, len(selection.Conditions))
-		for i, cond := range selection.Conditions {
-			conds[i] = expression.PushDownNot(sctx, cond)
-		}
-		cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
-		c.Assert(cols, NotNil)
-		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
-		c.Assert(err, IsNil)
-		c.Assert(fmt.Sprintf("%s", res.AccessConds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
-		c.Assert(fmt.Sprintf("%s", res.RemainedConds), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
-		got := fmt.Sprintf("%v", res.Ranges)
-		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
+		t.Run(tt.exprStr, func(t *testing.T) {
+			sql := "select * from t where " + tt.exprStr
+			sctx := testKit.Session().(sessionctx.Context)
+			stmts, err := session.Parse(sctx, sql)
+			require.NoError(t, err)
+			require.Len(t, stmts, 1)
+			ret := &plannercore.PreprocessorReturn{}
+			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			require.NoError(t, err)
+			p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
+			require.NoError(t, err)
+			selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+			conds := make([]expression.Expression, len(selection.Conditions))
+			for i, cond := range selection.Conditions {
+				conds[i] = expression.PushDownNot(sctx, cond)
+			}
+			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
+			col := expression.ColInfo2Col(selection.Schema().Columns, tbl.Columns[0])
+			require.NotNil(t, col)
+			var filter []expression.Expression
+			conds, filter = ranger.DetachCondsForColumn(sctx, conds, col)
+			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", conds))
+			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", filter))
+			result, err := ranger.BuildTableRange(conds, sctx, col.RetType)
+			require.NoError(t, err)
+			got := fmt.Sprintf("%v", result)
+			require.Equal(t, tt.resultStr, got)
+		})
 	}
 }
 
 // for issue #6661
-func (s *testRangerSuite) TestIndexRangeForUnsignedAndOverflow(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+func TestIndexRangeForUnsignedAndOverflow(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec(`
@@ -834,43 +447,41 @@ create table t(
 
 	ctx := context.Background()
 	for _, tt := range tests {
-		sql := "select * from t where " + tt.exprStr
-		sctx := testKit.Se.(sessionctx.Context)
-		stmts, err := session.Parse(sctx, sql)
-		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
-		c.Assert(stmts, HasLen, 1)
-		ret := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
-		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], ret.InfoSchema)
-		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
-		tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
-		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
-		conds := make([]expression.Expression, len(selection.Conditions))
-		for i, cond := range selection.Conditions {
-			conds[i] = expression.PushDownNot(sctx, cond)
-		}
-		cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
-		c.Assert(cols, NotNil)
-		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
-		c.Assert(err, IsNil)
-		c.Assert(fmt.Sprintf("%s", res.AccessConds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
-		c.Assert(fmt.Sprintf("%s", res.RemainedConds), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
-		got := fmt.Sprintf("%v", res.Ranges)
-		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
+		t.Run(tt.exprStr, func(t *testing.T) {
+			sql := "select * from t where " + tt.exprStr
+			sctx := testKit.Session().(sessionctx.Context)
+			stmts, err := session.Parse(sctx, sql)
+			require.NoError(t, err)
+			require.Len(t, stmts, 1)
+			ret := &plannercore.PreprocessorReturn{}
+			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			require.NoError(t, err)
+			p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
+			require.NoError(t, err)
+			selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
+			require.NotNil(t, selection)
+			conds := make([]expression.Expression, len(selection.Conditions))
+			for i, cond := range selection.Conditions {
+				conds[i] = expression.PushDownNot(sctx, cond)
+			}
+			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
+			require.NotNil(t, cols)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
+			require.NoError(t, err)
+			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", res.AccessConds))
+			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds))
+			got := fmt.Sprintf("%v", res.Ranges)
+			require.Equal(t, tt.resultStr, got)
+		})
 	}
 }
 
-func (s *testRangerSuite) TestColumnRange(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+func TestColumnRange(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b double, c float(3, 2), d varchar(3), e bigint unsigned)")
@@ -1198,46 +809,44 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 
 	ctx := context.Background()
 	for _, tt := range tests {
-		sql := "select * from t where " + tt.exprStr
-		sctx := testKit.Se.(sessionctx.Context)
-		stmts, err := session.Parse(sctx, sql)
-		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
-		c.Assert(stmts, HasLen, 1)
-		ret := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
-		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], ret.InfoSchema)
-		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
-		ds, ok := sel.Children()[0].(*plannercore.DataSource)
-		c.Assert(ok, IsTrue, Commentf("expr:%v", tt.exprStr))
-		conds := make([]expression.Expression, len(sel.Conditions))
-		for i, cond := range sel.Conditions {
-			conds[i] = expression.PushDownNot(sctx, cond)
-		}
-		col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[tt.colPos])
-		c.Assert(col, NotNil)
-		conds = ranger.ExtractAccessConditionsForColumn(conds, col.UniqueID)
-		c.Assert(fmt.Sprintf("%s", conds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
-		result, err := ranger.BuildColumnRange(conds, new(stmtctx.StatementContext), col.RetType, tt.length)
-		c.Assert(err, IsNil)
-		got := fmt.Sprintf("%v", result)
-		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s, col: %v", tt.exprStr, col))
+		t.Run(tt.exprStr, func(t *testing.T) {
+			sql := "select * from t where " + tt.exprStr
+			sctx := testKit.Session().(sessionctx.Context)
+			stmts, err := session.Parse(sctx, sql)
+			require.NoError(t, err)
+			require.Len(t, stmts, 1)
+			ret := &plannercore.PreprocessorReturn{}
+			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			require.NoError(t, err)
+			p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
+			require.NoError(t, err)
+			sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+			ds, ok := sel.Children()[0].(*plannercore.DataSource)
+			require.True(t, ok)
+			conds := make([]expression.Expression, len(sel.Conditions))
+			for i, cond := range sel.Conditions {
+				conds[i] = expression.PushDownNot(sctx, cond)
+			}
+			col := expression.ColInfo2Col(sel.Schema().Columns, ds.TableInfo().Columns[tt.colPos])
+			require.NotNil(t, col)
+			conds = ranger.ExtractAccessConditionsForColumn(conds, col)
+			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", conds))
+			result, err := ranger.BuildColumnRange(conds, sctx, col.RetType, tt.length)
+			require.NoError(t, err)
+			got := fmt.Sprintf("%v", result)
+			require.Equal(t, tt.resultStr, got)
+		})
 	}
 }
 
-func (s *testRangerSuite) TestIndexRangeElimininatedProjection(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+func TestIndexRangeEliminatedProjection(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	testKit.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	testKit.MustExec("create table t(a int not null, b int not null, primary key(a,b))")
 	testKit.MustExec("insert into t values(1,2)")
 	testKit.MustExec("analyze table t")
@@ -1254,15 +863,11 @@ func (s *testRangerSuite) TestIndexRangeElimininatedProjection(c *C) {
 	))
 }
 
-func (s *testRangerSuite) TestCompIndexInExprCorrCol(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+func TestCompIndexInExprCorrCol(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int primary key, b int, c int, d int, e int, index idx(b,c,d))")
@@ -1274,25 +879,21 @@ func (s *testRangerSuite) TestCompIndexInExprCorrCol(c *C) {
 		SQL    string
 		Result []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	rangerSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
-func (s *testRangerSuite) TestIndexStringIsTrueRange(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+func TestIndexStringIsTrueRange(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t0")
 	testKit.MustExec("CREATE TABLE t0(c0 TEXT(10));")
@@ -1305,26 +906,23 @@ func (s *testRangerSuite) TestIndexStringIsTrueRange(c *C) {
 		SQL    string
 		Result []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	rangerSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
-func (s *testRangerSuite) TestCompIndexDNFMatch(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+func TestCompIndexDNFMatch(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	testKit.MustExec(`set @@session.tidb_regard_null_as_point=false`)
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, c int, key(a,b,c));")
 	testKit.MustExec("insert into t values(1,2,2)")
@@ -1335,29 +933,25 @@ func (s *testRangerSuite) TestCompIndexDNFMatch(c *C) {
 		Plan   []string
 		Result []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	rangerSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
-			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
-func (s *testRangerSuite) TestCompIndexMultiColDNF1(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+func TestCompIndexMultiColDNF1(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	testKit.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	testKit.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a,b));")
 	testKit.MustExec("insert into t values(1,1,1),(2,2,3)")
@@ -1369,29 +963,25 @@ func (s *testRangerSuite) TestCompIndexMultiColDNF1(c *C) {
 		Plan   []string
 		Result []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	rangerSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
-			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
-func (s *testRangerSuite) TestCompIndexMultiColDNF2(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+func TestCompIndexMultiColDNF2(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
-	testKit.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	testKit.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a,b,c));")
 	testKit.MustExec("insert into t values(1,1,1),(2,2,3)")
@@ -1403,27 +993,23 @@ func (s *testRangerSuite) TestCompIndexMultiColDNF2(c *C) {
 		Plan   []string
 		Result []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	rangerSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
-			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
-func (s *testRangerSuite) TestPrefixIndexMultiColDNF(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+func TestPrefixIndexMultiColDNF(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test;")
 	testKit.MustExec("drop table if exists t2;")
 	testKit.MustExec("create table t2 (id int unsigned not null auto_increment primary key, t text, index(t(3)));")
@@ -1435,13 +1021,13 @@ func (s *testRangerSuite) TestPrefixIndexMultiColDNF(c *C) {
 		Plan   []string
 		Result []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	rangerSuiteData.GetTestCases(t, &input, &output)
 	inputLen := len(input)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
-			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
@@ -1451,15 +1037,11 @@ func (s *testRangerSuite) TestPrefixIndexMultiColDNF(c *C) {
 	}
 }
 
-func (s *testRangerSuite) TestIndexRangeForBit(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+func TestIndexRangeForBit(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test;")
 	testKit.MustExec("set @@tidb_partition_prune_mode = 'static';")
 	testKit.MustExec("set @@tidb_executor_concurrency = 1;")
@@ -1478,27 +1060,23 @@ func (s *testRangerSuite) TestIndexRangeForBit(c *C) {
 		Plan   []string
 		Result []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	rangerSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
-			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
-func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+func TestIndexRangeForYear(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	testKit := testkit.NewTestKit(t, store)
 
 	// for issue #20101: overflow when converting integer to year
 	testKit.MustExec("use test")
@@ -1622,44 +1200,42 @@ func (s *testRangerSuite) TestIndexRangeForYear(c *C) {
 
 	ctx := context.Background()
 	for _, tt := range tests {
-		sql := "select * from t where " + tt.exprStr
-		sctx := testKit.Se.(sessionctx.Context)
-		stmts, err := session.Parse(sctx, sql)
-		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
-		c.Assert(stmts, HasLen, 1)
-		ret := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
-		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], ret.InfoSchema)
-		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
-		tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
-		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
-		conds := make([]expression.Expression, len(selection.Conditions))
-		for i, cond := range selection.Conditions {
-			conds[i] = expression.PushDownNot(sctx, cond)
-		}
-		cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
-		c.Assert(cols, NotNil)
-		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
-		c.Assert(err, IsNil)
-		c.Assert(fmt.Sprintf("%s", res.AccessConds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
-		c.Assert(fmt.Sprintf("%s", res.RemainedConds), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
-		got := fmt.Sprintf("%v", res.Ranges)
-		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
+		t.Run(tt.exprStr, func(t *testing.T) {
+			sql := "select * from t where " + tt.exprStr
+			sctx := testKit.Session().(sessionctx.Context)
+			stmts, err := session.Parse(sctx, sql)
+			require.NoError(t, err)
+			require.Len(t, stmts, 1)
+			ret := &plannercore.PreprocessorReturn{}
+			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			require.NoError(t, err)
+			p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
+			require.NoError(t, err)
+			selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
+			require.NotNil(t, selection)
+			conds := make([]expression.Expression, len(selection.Conditions))
+			for i, cond := range selection.Conditions {
+				conds[i] = expression.PushDownNot(sctx, cond)
+			}
+			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
+			require.NotNil(t, cols)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
+			require.NoError(t, err)
+			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", res.AccessConds))
+			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds))
+			got := fmt.Sprintf("%v", res.Ranges)
+			require.Equal(t, tt.resultStr, got)
+		})
 	}
 }
 
 // For https://github.com/pingcap/tidb/issues/22032
-func (s *testRangerSuite) TestPrefixIndexRangeScan(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+func TestPrefixIndexRangeScan(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	testKit := testkit.NewTestKit(t, store)
 
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
@@ -1693,43 +1269,41 @@ func (s *testRangerSuite) TestPrefixIndexRangeScan(c *C) {
 
 	ctx := context.Background()
 	for _, tt := range tests {
-		sql := "select * from t where " + tt.exprStr
-		sctx := testKit.Se.(sessionctx.Context)
-		stmts, err := session.Parse(sctx, sql)
-		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt.exprStr))
-		c.Assert(stmts, HasLen, 1)
-		ret := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
-		c.Assert(err, IsNil, Commentf("error %v, for resolve name, expr %s", err, tt.exprStr))
-		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], ret.InfoSchema)
-		c.Assert(err, IsNil, Commentf("error %v, for build plan, expr %s", err, tt.exprStr))
-		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
-		tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
-		c.Assert(selection, NotNil, Commentf("expr:%v", tt.exprStr))
-		conds := make([]expression.Expression, len(selection.Conditions))
-		for i, cond := range selection.Conditions {
-			conds[i] = expression.PushDownNot(sctx, cond)
-		}
-		cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
-		c.Assert(cols, NotNil)
-		res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
-		c.Assert(err, IsNil)
-		c.Assert(fmt.Sprintf("%s", res.AccessConds), Equals, tt.accessConds, Commentf("wrong access conditions for expr: %s", tt.exprStr))
-		c.Assert(fmt.Sprintf("%s", res.RemainedConds), Equals, tt.filterConds, Commentf("wrong filter conditions for expr: %s", tt.exprStr))
-		got := fmt.Sprintf("%v", res.Ranges)
-		c.Assert(got, Equals, tt.resultStr, Commentf("different for expr %s", tt.exprStr))
+		t.Run(tt.exprStr, func(t *testing.T) {
+			sql := "select * from t where " + tt.exprStr
+			sctx := testKit.Session().(sessionctx.Context)
+			stmts, err := session.Parse(sctx, sql)
+			require.NoError(t, err)
+			require.Len(t, stmts, 1)
+			ret := &plannercore.PreprocessorReturn{}
+			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			require.NoError(t, err)
+			p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
+			require.NoError(t, err)
+			selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
+			require.NotNil(t, selection)
+			conds := make([]expression.Expression, len(selection.Conditions))
+			for i, cond := range selection.Conditions {
+				conds[i] = expression.PushDownNot(sctx, cond)
+			}
+			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
+			require.NotNil(t, cols)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
+			require.NoError(t, err)
+			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", res.AccessConds))
+			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds))
+			got := fmt.Sprintf("%v", res.Ranges)
+			require.Equal(t, tt.resultStr, got)
+		})
 	}
 }
 
-func (s *testRangerSuite) TestIndexRangeForDecimal(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+func TestIndexRangeForDecimal(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test;")
 	testKit.MustExec("drop table if exists t1, t2;")
 	testKit.MustExec("create table t1(a decimal unsigned, key(a));")
@@ -1743,27 +1317,23 @@ func (s *testRangerSuite) TestIndexRangeForDecimal(c *C) {
 		Plan   []string
 		Result []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	rangerSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + tt).Rows())
-			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
-func (s *testRangerSuite) TestPrefixIndexAppendPointRanges(c *C) {
-	defer testleak.AfterTest(c)()
-	dom, store, err := newDomainStoreWithBootstrap(c)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-	c.Assert(err, IsNil)
-	testKit := testkit.NewTestKit(c, store)
+func TestPrefixIndexAppendPointRanges(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("USE test")
 	testKit.MustExec("DROP TABLE IF EXISTS IDT_20755")
 	testKit.MustExec("CREATE TABLE `IDT_20755` (\n" +
@@ -1781,14 +1351,768 @@ func (s *testRangerSuite) TestPrefixIndexAppendPointRanges(c *C) {
 		Plan   []string
 		Result []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	rangerSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + tt).Rows())
-			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
 		testKit.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func TestIndexRange(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec(`
+create table t(
+	a varchar(50),
+	b int,
+	c double,
+	d varchar(10),
+	e binary(10),
+	f varchar(10) collate utf8mb4_general_ci,
+	g enum('A','B','C') collate utf8mb4_general_ci,
+	h varchar(10) collate utf8_bin,
+	index idx_ab(a(50), b),
+	index idx_cb(c, a),
+	index idx_d(d(2)),
+	index idx_e(e(2)),
+	index idx_f(f),
+	index idx_de(d(2), e),
+	index idx_g(g),
+	index idx_h(h(3))
+)`)
+
+	tests := []struct {
+		indexPos    int
+		exprStr     string
+		accessConds string
+		filterConds string
+		resultStr   string
+	}{
+		{
+			indexPos:    0,
+			exprStr:     `a LIKE 'abc%'`,
+			accessConds: `[like(test.t.a, abc%, 92)]`,
+			filterConds: "[]",
+			resultStr:   "[[\"abc\",\"abd\")]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "a LIKE 'abc_'",
+			accessConds: "[like(test.t.a, abc_, 92)]",
+			filterConds: "[like(test.t.a, abc_, 92)]",
+			resultStr:   "[(\"abc\",\"abd\")]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "a LIKE 'abc'",
+			accessConds: "[like(test.t.a, abc, 92)]",
+			filterConds: "[]",
+			resultStr:   "[[\"abc\",\"abc\"]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a LIKE "ab\_c"`,
+			accessConds: "[like(test.t.a, ab\\_c, 92)]",
+			filterConds: "[]",
+			resultStr:   "[[\"ab_c\",\"ab_c\"]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a LIKE '%'`,
+			accessConds: "[]",
+			filterConds: `[like(test.t.a, %, 92)]`,
+			resultStr:   "[[NULL,+inf]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a LIKE '\%a'`,
+			accessConds: "[like(test.t.a, \\%a, 92)]",
+			filterConds: "[]",
+			resultStr:   `[["%a","%a"]]`,
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a LIKE "\\"`,
+			accessConds: "[like(test.t.a, \\, 92)]",
+			filterConds: "[]",
+			resultStr:   "[[\"\\\",\"\\\"]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a LIKE "\\\\a%"`,
+			accessConds: `[like(test.t.a, \\a%, 92)]`,
+			filterConds: "[]",
+			resultStr:   "[[\"\\a\",\"\\b\")]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a > NULL`,
+			accessConds: "[gt(test.t.a, <nil>)]",
+			filterConds: "[]",
+			resultStr:   `[]`,
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a = 'a' and b in (1, 2, 3)`,
+			accessConds: "[eq(test.t.a, a) in(test.t.b, 1, 2, 3)]",
+			filterConds: "[]",
+			resultStr:   "[[\"a\" 1,\"a\" 1] [\"a\" 2,\"a\" 2] [\"a\" 3,\"a\" 3]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a = 'a' and b not in (1, 2, 3)`,
+			accessConds: "[eq(test.t.a, a) not(in(test.t.b, 1, 2, 3))]",
+			filterConds: "[]",
+			resultStr:   "[(\"a\" NULL,\"a\" 1) (\"a\" 3,\"a\" +inf]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     `a in ('a') and b in ('1', 2.0, NULL)`,
+			accessConds: "[eq(test.t.a, a) in(test.t.b, 1, 2, <nil>)]",
+			filterConds: "[]",
+			resultStr:   `[["a" 1,"a" 1] ["a" 2,"a" 2]]`,
+		},
+		{
+			indexPos:    1,
+			exprStr:     `c in ('1.1', 1, 1.1) and a in ('1', 'a', NULL)`,
+			accessConds: "[in(test.t.c, 1.1, 1, 1.1) in(test.t.a, 1, a, <nil>)]",
+			filterConds: "[]",
+			resultStr:   "[[1 \"1\",1 \"1\"] [1 \"a\",1 \"a\"] [1.1 \"1\",1.1 \"1\"] [1.1 \"a\",1.1 \"a\"]]",
+		},
+		{
+			indexPos:    1,
+			exprStr:     "c in (1, 1, 1, 1, 1, 1, 2, 1, 2, 3, 2, 3, 4, 4, 1, 2)",
+			accessConds: "[in(test.t.c, 1, 1, 1, 1, 1, 1, 2, 1, 2, 3, 2, 3, 4, 4, 1, 2)]",
+			filterConds: "[]",
+			resultStr:   "[[1,1] [2,2] [3,3] [4,4]]",
+		},
+		{
+			indexPos:    1,
+			exprStr:     "c not in (1, 2, 3)",
+			accessConds: "[not(in(test.t.c, 1, 2, 3))]",
+			filterConds: "[]",
+			resultStr:   "[(NULL,1) (1,2) (2,3) (3,+inf]]",
+		},
+		{
+			indexPos:    1,
+			exprStr:     "c in (1, 2) and c in (1, 3)",
+			accessConds: "[eq(test.t.c, 1)]",
+			filterConds: "[]",
+			resultStr:   "[[1,1]]",
+		},
+		{
+			indexPos:    1,
+			exprStr:     "c = 1 and c = 2",
+			accessConds: "[]",
+			filterConds: "[]",
+			resultStr:   "[]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "a in (NULL)",
+			accessConds: "[eq(test.t.a, <nil>)]",
+			filterConds: "[]",
+			resultStr:   "[]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "a not in (NULL, '1', '2', '3')",
+			accessConds: "[not(in(test.t.a, <nil>, 1, 2, 3))]",
+			filterConds: "[]",
+			resultStr:   "[]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "not (a not in (NULL, '1', '2', '3') and a > '2')",
+			accessConds: "[or(in(test.t.a, <nil>, 1, 2, 3), le(test.t.a, 2))]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,\"2\"] [\"3\",\"3\"]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "not (a not in (NULL) and a > '2')",
+			accessConds: "[or(eq(test.t.a, <nil>), le(test.t.a, 2))]",
+			filterConds: "[]",
+			resultStr:   "[[-inf,\"2\"]]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "not (a not in (NULL) or a > '2')",
+			accessConds: "[and(eq(test.t.a, <nil>), le(test.t.a, 2))]",
+			filterConds: "[]",
+			resultStr:   "[]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "(a > 'b' and a < 'bbb') or (a < 'cb' and a > 'a')",
+			accessConds: "[or(and(gt(test.t.a, b), lt(test.t.a, bbb)), and(lt(test.t.a, cb), gt(test.t.a, a)))]",
+			filterConds: "[]",
+			resultStr:   "[(\"a\",\"cb\")]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "(a > 'a' and a < 'b') or (a >= 'b' and a < 'c')",
+			accessConds: "[or(and(gt(test.t.a, a), lt(test.t.a, b)), and(ge(test.t.a, b), lt(test.t.a, c)))]",
+			filterConds: "[]",
+			resultStr:   "[(\"a\",\"c\")]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "(a > 'a' and a < 'b' and b < 1) or (a >= 'b' and a < 'c')",
+			accessConds: "[or(and(gt(test.t.a, a), lt(test.t.a, b)), and(ge(test.t.a, b), lt(test.t.a, c)))]",
+			filterConds: "[or(and(and(gt(test.t.a, a), lt(test.t.a, b)), lt(test.t.b, 1)), and(ge(test.t.a, b), lt(test.t.a, c)))]",
+			resultStr:   "[(\"a\",\"c\")]",
+		},
+		{
+			indexPos:    0,
+			exprStr:     "(a in ('a', 'b') and b < 1) or (a >= 'b' and a < 'c')",
+			accessConds: "[or(and(in(test.t.a, a, b), lt(test.t.b, 1)), and(ge(test.t.a, b), lt(test.t.a, c)))]",
+			filterConds: "[]",
+			resultStr:   `[["a" -inf,"a" 1) ["b","c")]`,
+		},
+		{
+			indexPos:    0,
+			exprStr:     "(a > 'a') or (c > 1)",
+			accessConds: "[]",
+			filterConds: "[or(gt(test.t.a, a), gt(test.t.c, 1))]",
+			resultStr:   "[[NULL,+inf]]",
+		},
+		{
+			indexPos:    2,
+			exprStr:     `d = "你好啊"`,
+			accessConds: "[eq(test.t.d, 你好啊)]",
+			filterConds: "[eq(test.t.d, 你好啊)]",
+			resultStr:   "[[\"你好\",\"你好\"]]",
+		},
+		{
+			indexPos:    3,
+			exprStr:     `e = "你好啊"`,
+			accessConds: "[eq(test.t.e, 你好啊)]",
+			filterConds: "[eq(test.t.e, 你好啊)]",
+			resultStr:   "[[0xE4BD,0xE4BD]]",
+		},
+		{
+			indexPos:    2,
+			exprStr:     `d in ("你好啊", "再见")`,
+			accessConds: "[in(test.t.d, 你好啊, 再见)]",
+			filterConds: "[in(test.t.d, 你好啊, 再见)]",
+			resultStr:   "[[\"你好\",\"你好\"] [\"再见\",\"再见\"]]",
+		},
+		{
+			indexPos:    2,
+			exprStr:     `d not in ("你好啊")`,
+			accessConds: "[]",
+			filterConds: "[ne(test.t.d, 你好啊)]",
+			resultStr:   "[[NULL,+inf]]",
+		},
+		{
+			indexPos:    2,
+			exprStr:     `d < "你好" || d > "你好"`,
+			accessConds: "[or(lt(test.t.d, 你好), gt(test.t.d, 你好))]",
+			filterConds: "[or(lt(test.t.d, 你好), gt(test.t.d, 你好))]",
+			resultStr:   "[[-inf,+inf]]",
+		},
+		{
+			indexPos:    2,
+			exprStr:     `not(d < "你好" || d > "你好")`,
+			accessConds: "[and(ge(test.t.d, 你好), le(test.t.d, 你好))]",
+			filterConds: "[and(ge(test.t.d, 你好), le(test.t.d, 你好))]",
+			resultStr:   "[[\"你好\",\"你好\"]]",
+		},
+		{
+			indexPos:    4,
+			exprStr:     "f >= 'a' and f <= 'B'",
+			accessConds: "[ge(test.t.f, a) le(test.t.f, B)]",
+			filterConds: "[]",
+			resultStr:   "[[\"a\",\"B\"]]",
+		},
+		{
+			indexPos:    4,
+			exprStr:     "f in ('a', 'B')",
+			accessConds: "[in(test.t.f, a, B)]",
+			filterConds: "[]",
+			resultStr:   "[[\"a\",\"a\"] [\"B\",\"B\"]]",
+		},
+		{
+			indexPos:    4,
+			exprStr:     "f = 'a' and f = 'B' collate utf8mb4_bin",
+			accessConds: "[eq(test.t.f, a)]",
+			filterConds: "[eq(test.t.f, B)]",
+			resultStr:   "[[\"a\",\"a\"]]",
+		},
+		{
+			indexPos:    4,
+			exprStr:     "f like '@%' collate utf8mb4_bin",
+			accessConds: "[]",
+			filterConds: "[like(test.t.f, @%, 92)]",
+			resultStr:   "[[NULL,+inf]]",
+		},
+		{
+			indexPos:    5,
+			exprStr:     "d in ('aab', 'aac') and e = 'a'",
+			accessConds: "[in(test.t.d, aab, aac) eq(test.t.e, a)]",
+			filterConds: "[in(test.t.d, aab, aac)]",
+			resultStr:   "[[\"aa\" 0x61,\"aa\" 0x61]]",
+		},
+		{
+			indexPos:    6,
+			exprStr:     "g = 'a'",
+			accessConds: "[eq(test.t.g, a)]",
+			filterConds: "[]",
+			resultStr:   "[[\"A\",\"A\"]]",
+		},
+		{
+			indexPos:    7,
+			exprStr:     `h LIKE 'ÿÿ%'`,
+			accessConds: `[like(test.t.h, ÿÿ%, 92)]`,
+			filterConds: "[like(test.t.h, ÿÿ%, 92)]",
+			resultStr:   "[[\"ÿÿ\",\"ÿ\xc3\xc0\")]", // The decoding error is ignored.
+		},
+	}
+
+	ctx := context.Background()
+	for _, tt := range tests {
+		t.Run(tt.exprStr, func(t *testing.T) {
+			sql := "select * from t where " + tt.exprStr
+			sctx := testKit.Session().(sessionctx.Context)
+			stmts, err := session.Parse(sctx, sql)
+			require.NoError(t, err)
+			require.Len(t, stmts, 1)
+			ret := &plannercore.PreprocessorReturn{}
+			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			require.NoError(t, err)
+			p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
+			require.NoError(t, err)
+			selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+			tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
+			require.NotNil(t, selection)
+			conds := make([]expression.Expression, len(selection.Conditions))
+			for i, cond := range selection.Conditions {
+				conds[i] = expression.PushDownNot(sctx, cond)
+			}
+			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
+			require.NotNil(t, cols)
+			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths)
+			require.NoError(t, err)
+			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", res.AccessConds))
+			require.Equal(t, tt.filterConds, fmt.Sprintf("%s", res.RemainedConds))
+			got := fmt.Sprintf("%v", res.Ranges)
+			require.Equal(t, tt.resultStr, got)
+		})
+	}
+}
+
+func TestTableShardIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	testKit := testkit.NewTestKit(t, store)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists test3")
+	testKit.MustExec("create table test3(id int primary key clustered, a int, b int, unique key uk_expr((tidb_shard(a)),a))")
+	testKit.MustExec("create table test33(id int primary key clustered, a int, b int, unique key a(a))")
+	testKit.MustExec("create table test4(id int primary key clustered, a int, b int, " +
+		"unique key uk_expr((tidb_shard(a)),a),unique key uk_b_expr((tidb_shard(b)),b))")
+	testKit.MustExec("create table test5(id int primary key clustered, a int, b int, " +
+		"unique key uk_expr((tidb_shard(a)),a,b))")
+	testKit.MustExec("create table test6(id int primary key clustered, a int, b int, c int, " +
+		"unique key uk_expr((tidb_shard(a)), a))")
+	testKit.MustExec("create table testx(id int primary key clustered, a int, b int, unique key a(a))")
+	testKit.MustExec("create table testy(id int primary key clustered, a int, b int, " +
+		"unique key uk_expr((tidb_shard(b)),a))")
+	testKit.MustExec("create table testz(id int primary key clustered, a int, b int, " +
+		"unique key uk_expr((tidb_shard(a+b)),a))")
+
+	tests := []struct {
+		exprStr     string
+		accessConds string
+		childLevel  int
+		tableName   string
+	}{
+		{
+			exprStr:     "a = 1",
+			accessConds: "[eq(tidb_shard(test.test3.a), 214) eq(test.test3.a, 1)]",
+			tableName:   "test3",
+		},
+		{
+			exprStr: "a=100 and (b = 100 or b = 200)",
+			accessConds: "[or(eq(test.test3.b, 100), eq(test.test3.b, 200)) eq(tidb_shard(test.test3.a), 8) " +
+				"eq(test.test3.a, 100)]",
+			tableName: "test3",
+		},
+		{
+			// don't add prefix
+			exprStr:     " tidb_shard(a) = 8",
+			accessConds: "[eq(tidb_shard(test.test3.a), 8)]",
+			tableName:   "test3",
+		},
+		{
+			exprStr: "a=100 or b = 200",
+			accessConds: "[or(and(eq(tidb_shard(test.test3.a), 8), eq(test.test3.a, 100)), " +
+				"eq(test.test3.b, 200))]",
+			tableName: "test3",
+		},
+		{
+			exprStr: "a=100 or b > 200",
+			accessConds: "[or(and(eq(tidb_shard(test.test3.a), 8), eq(test.test3.a, 100)), " +
+				"gt(test.test3.b, 200))]",
+			tableName: "test3",
+		},
+		{
+			exprStr: "a=100 or a = 200  or 1",
+			accessConds: "[or(and(eq(tidb_shard(test.test3.a), 8), eq(test.test3.a, 100)), " +
+				"or(and(eq(tidb_shard(test.test3.a), 161), eq(test.test3.a, 200)), 1))]",
+			tableName: "test3",
+		},
+		{
+			exprStr: "(a=100 and b = 100) or a = 300",
+			accessConds: "[or(and(eq(test.test3.b, 100), and(eq(tidb_shard(test.test3.a), 8), eq(test.test3.a, 100))), " +
+				"and(eq(tidb_shard(test.test3.a), 227), eq(test.test3.a, 300)))]",
+			tableName: "test3",
+		},
+		{
+			exprStr: "((a=100 and b = 100) or a = 200) or a = 300",
+			accessConds: "[or(and(eq(test.test3.b, 100), and(eq(tidb_shard(test.test3.a), 8), eq(test.test3.a, 100))), " +
+				"or(and(eq(tidb_shard(test.test3.a), 161), eq(test.test3.a, 200)), " +
+				"and(eq(tidb_shard(test.test3.a), 227), eq(test.test3.a, 300))))]",
+			tableName: "test3",
+		},
+		{
+			exprStr: "a IN (100, 200, 300)",
+			accessConds: "[or(or(and(eq(tidb_shard(test.test3.a), 8), eq(test.test3.a, 100)), " +
+				"and(eq(tidb_shard(test.test3.a), 161), eq(test.test3.a, 200))), and(eq(tidb_shard(test.test3.a), 227), eq(test.test3.a, 300)))]",
+			tableName: "test3",
+		},
+		{
+			exprStr:     "a IN (100)",
+			accessConds: "[eq(tidb_shard(test.test3.a), 8) eq(test.test3.a, 100)]",
+			tableName:   "test3",
+		},
+		{
+			exprStr: "a IN (100, 200, 300) or a = 400",
+			accessConds: "[or(or(or(and(eq(tidb_shard(test.test3.a), 8), eq(test.test3.a, 100)), " +
+				"and(eq(tidb_shard(test.test3.a), 161), eq(test.test3.a, 200))), and(eq(tidb_shard(test.test3.a), 227), eq(test.test3.a, 300))), and(eq(tidb_shard(test.test3.a), 85), eq(test.test3.a, 400)))]",
+			tableName: "test3",
+		},
+		{
+			// don't add prefix
+			exprStr: "((a=100 and b = 100) or a = 200) and b = 300",
+			accessConds: "[or(and(eq(test.test3.a, 100), eq(test.test3.b, 100)), eq(test.test3.a, 200)) " +
+				"eq(test.test3.b, 300)]",
+			tableName: "test3",
+		},
+		{
+			// don't add prefix
+			exprStr:     "a = b",
+			accessConds: "[eq(test.test3.a, test.test3.b)]",
+			tableName:   "test3",
+		},
+		{
+			// don't add prefix
+			exprStr:     "a = b and b = 100",
+			accessConds: "[eq(test.test3.a, test.test3.b) eq(test.test3.b, 100)]",
+			tableName:   "test3",
+		},
+		{
+			// don't add prefix
+			exprStr:     "a > 900",
+			accessConds: "[gt(test.test3.a, 900)]",
+			tableName:   "test3",
+		},
+		{
+			// add prefix
+			exprStr:     "a = 3 or a > 900",
+			accessConds: "[or(and(eq(tidb_shard(test.test3.a), 156), eq(test.test3.a, 3)), gt(test.test3.a, 900))]",
+			tableName:   "test3",
+		},
+		// two shard index in one table
+		{
+			exprStr:     "a = 100",
+			accessConds: "[eq(tidb_shard(test.test4.a), 8) eq(test.test4.a, 100)]",
+			tableName:   "test4",
+		},
+		{
+			exprStr:     "b = 100",
+			accessConds: "[eq(tidb_shard(test.test4.b), 8) eq(test.test4.b, 100)]",
+			tableName:   "test4",
+		},
+		{
+			exprStr: "a = 100 and b = 100",
+			accessConds: "[eq(tidb_shard(test.test4.a), 8) eq(test.test4.a, 100) " +
+				"eq(tidb_shard(test.test4.b), 8) eq(test.test4.b, 100)]",
+			tableName: "test4",
+		},
+		{
+			exprStr: "a = 100 or b = 100",
+			accessConds: "[or(and(eq(tidb_shard(test.test4.a), 8), eq(test.test4.a, 100)), " +
+				"and(eq(tidb_shard(test.test4.b), 8), eq(test.test4.b, 100)))]",
+			tableName: "test4",
+		},
+		// shard index cotans three fields
+		{
+			exprStr:     "a = 100 and b = 100",
+			accessConds: "[eq(tidb_shard(test.test5.a), 8) eq(test.test5.a, 100) eq(test.test5.b, 100)]",
+			tableName:   "test5",
+		},
+		{
+			exprStr: "(a=100 and b = 100) or  (a=200 and b = 200)",
+			accessConds: "[or(and(eq(tidb_shard(test.test5.a), 8), and(eq(test.test5.a, 100), eq(test.test5.b, 100))), " +
+				"and(eq(tidb_shard(test.test5.a), 161), and(eq(test.test5.a, 200), eq(test.test5.b, 200))))]",
+			tableName: "test5",
+		},
+		{
+			exprStr: "(a, b) in ((100, 100), (200, 200))",
+			accessConds: "[or(and(eq(tidb_shard(test.test5.a), 8), and(eq(test.test5.a, 100), eq(test.test5.b, 100))), " +
+				"and(eq(tidb_shard(test.test5.a), 161), and(eq(test.test5.a, 200), eq(test.test5.b, 200))))]",
+			tableName: "test5",
+		},
+		{
+			exprStr:     "(a, b) in ((100, 100))",
+			accessConds: "[eq(tidb_shard(test.test5.a), 8) eq(test.test5.a, 100) eq(test.test5.b, 100)]",
+			tableName:   "test5",
+		},
+		// don't add prefix
+		{
+			exprStr:     "a=100",
+			accessConds: "[eq(test.testy.a, 100)]",
+			tableName:   "testy",
+		},
+		// don't add prefix
+		{
+			exprStr:     "a=100",
+			accessConds: "[eq(test.testz.a, 100)]",
+			tableName:   "testz",
+		},
+		// test join
+		{
+			exprStr:     "test3.a = 100",
+			accessConds: "[eq(tidb_shard(test.test3.a), 8) eq(test.test3.a, 100)]",
+			childLevel:  4,
+			tableName:   "test3 JOIN test33 ON test3.b = test33.b",
+		},
+		{
+			exprStr:     "test3.a = 100 and test33.a > 10",
+			accessConds: "[gt(test.test33.a, 10) eq(tidb_shard(test.test3.a), 8) eq(test.test3.a, 100)]",
+			childLevel:  4,
+			tableName:   "test3 JOIN test33 ON test3.b = test33.b",
+		},
+		{
+			exprStr:     "test3.a = 100 AND test6.a = 10",
+			accessConds: "[eq(test.test6.a, 10) eq(tidb_shard(test.test3.a), 8) eq(test.test3.a, 100)]",
+			childLevel:  4,
+			tableName:   "test3 JOIN test6 ON test3.b = test6.b",
+		},
+		{
+			exprStr:     "test3.a = 100 or test6.a = 10",
+			accessConds: "[or(and(eq(tidb_shard(test.test3.a), 8), eq(test.test3.a, 100)), eq(test.test6.a, 10))]",
+			childLevel:  4,
+			tableName:   "test3 JOIN test6 ON test3.b = test6.b",
+		},
+	}
+
+	ctx := context.Background()
+	for _, tt := range tests {
+		t.Run(tt.exprStr, func(t *testing.T) {
+			sql := "select * from " + tt.tableName + " where " + tt.exprStr
+			sctx := testKit.Session().(sessionctx.Context)
+			stmts, err := session.Parse(sctx, sql)
+			require.NoError(t, err)
+			require.Len(t, stmts, 1)
+			ret := &plannercore.PreprocessorReturn{}
+			err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+			require.NoError(t, err)
+			p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
+			require.NoError(t, err)
+			selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+			conds := make([]expression.Expression, len(selection.Conditions))
+			for i, cond := range selection.Conditions {
+				conds[i] = expression.PushDownNot(sctx, cond)
+			}
+			ds, ok := selection.Children()[0].(*plannercore.DataSource)
+			if !ok {
+				if tt.childLevel == 4 {
+					ds = selection.Children()[0].Children()[0].Children()[0].(*plannercore.DataSource)
+				}
+			}
+			newConds := ds.AddPrefix4ShardIndexes(ds.SCtx(), conds)
+			require.Equal(t, tt.accessConds, fmt.Sprintf("%s", newConds))
+		})
+	}
+
+	// test update statement
+	t.Run("", func(t *testing.T) {
+		sql := "update test6 set c = 1000 where a=50 and b = 50"
+		sctx := testKit.Session().(sessionctx.Context)
+		stmts, err := session.Parse(sctx, sql)
+		require.NoError(t, err)
+		require.Len(t, stmts, 1)
+		ret := &plannercore.PreprocessorReturn{}
+		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+		require.NoError(t, err)
+		p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
+		require.NoError(t, err)
+		selection, ok := p.(*plannercore.Update).SelectPlan.(*plannercore.PhysicalSelection)
+		require.True(t, ok)
+		_, ok = selection.Children()[0].(*plannercore.PointGetPlan)
+		require.True(t, ok)
+	})
+
+	// test delete statement
+	t.Run("", func(t *testing.T) {
+		sql := "delete from test6 where a = 45 and b = 45;"
+		sctx := testKit.Session().(sessionctx.Context)
+		stmts, err := session.Parse(sctx, sql)
+		require.NoError(t, err)
+		require.Len(t, stmts, 1)
+		ret := &plannercore.PreprocessorReturn{}
+		err = plannercore.Preprocess(sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
+		require.NoError(t, err)
+		p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
+		require.NoError(t, err)
+		selection, ok := p.(*plannercore.Delete).SelectPlan.(*plannercore.PhysicalSelection)
+		require.True(t, ok)
+		_, ok = selection.Children()[0].(*plannercore.PointGetPlan)
+		require.True(t, ok)
+	})
+}
+
+func TestShardIndexFuncSuites(t *testing.T) {
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	testKit := testkit.NewTestKit(t, store)
+	sctx := testKit.Session().(sessionctx.Context)
+
+	// -------------------------------------------
+	// test IsValidShardIndex function
+	// -------------------------------------------
+	longlongType := types.NewFieldType(mysql.TypeLonglong)
+	col0 := &expression.Column{UniqueID: 0, ID: 0, RetType: longlongType}
+	col1 := &expression.Column{UniqueID: 1, ID: 1, RetType: longlongType}
+	// col2 is GC column and VirtualExpr = tidb_shard(col0)
+	col2 := &expression.Column{UniqueID: 2, ID: 2, RetType: longlongType}
+	col2.VirtualExpr = expression.NewFunctionInternal(sctx, ast.TiDBShard, col2.RetType, col0)
+	// col3 is GC column and VirtualExpr = abs(col0)
+	col3 := &expression.Column{UniqueID: 3, ID: 3, RetType: longlongType}
+	col3.VirtualExpr = expression.NewFunctionInternal(sctx, ast.Abs, col2.RetType, col0)
+	col4 := &expression.Column{UniqueID: 4, ID: 4, RetType: longlongType}
+
+	cols := []*expression.Column{col0, col1}
+
+	// input is nil
+	require.False(t, ranger.IsValidShardIndex(nil))
+	// only 1 column
+	require.False(t, ranger.IsValidShardIndex([]*expression.Column{col2}))
+	// first col is not expression
+	require.False(t, ranger.IsValidShardIndex(cols))
+	// field in tidb_shard is not the secondary column
+	require.False(t, ranger.IsValidShardIndex([]*expression.Column{col2, col1}))
+	// expressioin is abs that is not tidb_shard
+	require.False(t, ranger.IsValidShardIndex([]*expression.Column{col3, col0}))
+	// normal case
+	require.True(t, ranger.IsValidShardIndex([]*expression.Column{col2, col0}))
+
+	// -------------------------------------------
+	// test ExtractColumnsFromExpr function
+	// -------------------------------------------
+	// normal case
+	con1 := &expression.Constant{Value: types.NewDatum(1), RetType: longlongType}
+	con5 := &expression.Constant{Value: types.NewDatum(5), RetType: longlongType}
+	exprEq := expression.NewFunctionInternal(sctx, ast.EQ, col0.RetType, col0, con1)
+	exprIn := expression.NewFunctionInternal(sctx, ast.In, col0.RetType, col0, con1, con5)
+	require.NotNil(t, exprEq)
+	require.NotNil(t, exprIn)
+	// input is nil
+	require.Equal(t, len(ranger.ExtractColumnsFromExpr(nil)), 0)
+	// input is column
+	require.Equal(t, len(ranger.ExtractColumnsFromExpr(exprEq.(*expression.ScalarFunction))), 1)
+	// (col0 = 1 and col3 > 1) or (col4 < 5 and 5)
+	exprGt := expression.NewFunctionInternal(sctx, ast.GT, longlongType, col3, con1)
+	require.NotNil(t, exprGt)
+	andExpr1 := expression.NewFunctionInternal(sctx, ast.And, longlongType, exprEq, exprGt)
+	require.NotNil(t, andExpr1)
+	exprLt := expression.NewFunctionInternal(sctx, ast.LT, longlongType, col4, con5)
+	andExpr2 := expression.NewFunctionInternal(sctx, ast.And, longlongType, exprLt, con5)
+	orExpr2 := expression.NewFunctionInternal(sctx, ast.Or, longlongType, andExpr1, andExpr2)
+	require.Equal(t, len(ranger.ExtractColumnsFromExpr(orExpr2.(*expression.ScalarFunction))), 3)
+
+	// -------------------------------------------
+	// test NeedAddColumn4InCond function
+	// -------------------------------------------
+	// normal case
+	sfIn, ok := exprIn.(*expression.ScalarFunction)
+	require.True(t, ok)
+	accessCond := []expression.Expression{nil, exprIn}
+	shardIndexCols := []*expression.Column{col2, col0}
+	require.True(t, ranger.NeedAddColumn4InCond(shardIndexCols, accessCond, sfIn))
+
+	// input nil
+	require.False(t, ranger.NeedAddColumn4InCond(nil, accessCond, sfIn))
+	require.False(t, ranger.NeedAddColumn4InCond(shardIndexCols, nil, sfIn))
+	require.False(t, ranger.NeedAddColumn4InCond(shardIndexCols, accessCond, nil))
+
+	// col1 in (1, 5)
+	exprIn2 := expression.NewFunctionInternal(sctx, ast.In, col1.RetType, col1, con1, con5)
+	accessCond[1] = exprIn2
+	require.False(t, ranger.NeedAddColumn4InCond(shardIndexCols, accessCond, exprIn2.(*expression.ScalarFunction)))
+
+	// col0 in (1, col1)
+	exprIn3 := expression.NewFunctionInternal(sctx, ast.In, col0.RetType, col1, con1, col1)
+	accessCond[1] = exprIn3
+	require.False(t, ranger.NeedAddColumn4InCond(shardIndexCols, accessCond, exprIn3.(*expression.ScalarFunction)))
+
+	// -------------------------------------------
+	// test NeedAddColumn4EqCond function
+	// -------------------------------------------
+	// ranger.valueInfo is not export by package, we can.t test NeedAddColumn4EqCond
+	eqAccessCond := []expression.Expression{nil, exprEq}
+	require.False(t, ranger.NeedAddColumn4EqCond(shardIndexCols, eqAccessCond, nil))
+
+	// -------------------------------------------
+	// test NeedAddGcColumn4ShardIndex function
+	// -------------------------------------------
+	// ranger.valueInfo is not export by package, we can.t test NeedAddGcColumn4ShardIndex
+	require.False(t, ranger.NeedAddGcColumn4ShardIndex(shardIndexCols, nil, nil))
+
+	// -------------------------------------------
+	// test AddExpr4EqAndInCondition function
+	// -------------------------------------------
+	exprIn4 := expression.NewFunctionInternal(sctx, ast.In, col0.RetType, col0, con1)
+	test := []struct {
+		inputConds  []expression.Expression
+		outputConds string
+	}{
+		{
+			// col0 = 1 => tidb_shard(col0) = 214 and col0 = 1
+			inputConds:  []expression.Expression{exprEq},
+			outputConds: "[eq(Column#2, 214) eq(Column#0, 1)]",
+		},
+		{
+			// col0 in (1) => cols2 = 214 and col0 = 1
+			inputConds:  []expression.Expression{exprIn4},
+			outputConds: "[and(eq(Column#2, 214), eq(Column#0, 1))]",
+		},
+		{
+			// col0 in (1, 5) => (cols2 = 214 and col0 = 1) or (cols2 = 122 and col0 = 5)
+			inputConds: []expression.Expression{exprIn},
+			outputConds: "[or(and(eq(Column#2, 214), eq(Column#0, 1)), " +
+				"and(eq(Column#2, 122), eq(Column#0, 5)))]",
+		},
+	}
+
+	for _, tt := range test {
+		newConds, _ := ranger.AddExpr4EqAndInCondition(sctx, tt.inputConds, shardIndexCols)
+		require.Equal(t, fmt.Sprintf("%s", newConds), tt.outputConds)
 	}
 }

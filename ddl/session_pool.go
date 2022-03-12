@@ -8,17 +8,19 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package ddl
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
@@ -57,7 +59,10 @@ func (sg *sessionPool) get() (sessionctx.Context, error) {
 		return nil, errors.Trace(err)
 	}
 
-	ctx := resource.(sessionctx.Context)
+	ctx, ok := resource.(sessionctx.Context)
+	if !ok {
+		return nil, fmt.Errorf("sessionPool resource get %v", ctx)
+	}
 	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
 	ctx.GetSessionVars().InRestrictedSQL = true
 	return ctx, nil

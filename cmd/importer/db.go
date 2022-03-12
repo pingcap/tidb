@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -24,7 +25,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"go.uber.org/zap"
 )
 
@@ -85,7 +86,7 @@ func nextInt64Value(column *column, min int64, max int64) int64 {
 }
 
 func intToDecimalString(intValue int64, decimal int) string {
-	data := fmt.Sprintf("%d", intValue)
+	data := strconv.FormatInt(intValue, 10)
 
 	// add leading zero
 	if len(data) < decimal {
@@ -116,7 +117,7 @@ func genRowDatas(table *table, count int) ([]string, error) {
 }
 
 func genRowData(table *table) (string, error) {
-	var values []byte
+	var values []byte // nolint: prealloc
 	for _, column := range table.columns {
 		data, err := genColumnData(table, column)
 		if err != nil {
@@ -131,6 +132,7 @@ func genRowData(table *table) (string, error) {
 	return sql, nil
 }
 
+// #nosec G404
 func genColumnData(table *table, column *column) (string, error) {
 	tp := column.tp
 	incremental := column.incremental

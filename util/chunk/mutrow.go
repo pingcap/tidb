@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,7 +19,7 @@ import (
 	"math"
 	"unsafe"
 
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
@@ -210,12 +211,19 @@ func makeMutRowBytesColumn(bin []byte) *Column {
 	return col
 }
 
+func cleanColOfMutRow(col *Column) {
+	for i := range col.offsets {
+		col.offsets[i] = 0
+	}
+	col.nullBitmap[0] = 0
+}
+
 // SetRow sets the MutRow with Row.
 func (mr MutRow) SetRow(row Row) {
 	for colIdx, rCol := range row.c.columns {
 		mrCol := mr.c.columns[colIdx]
+		cleanColOfMutRow(mrCol)
 		if rCol.IsNull(row.idx) {
-			mrCol.nullBitmap[0] = 0
 			continue
 		}
 		elemLen := len(rCol.elemBuf)
@@ -238,8 +246,8 @@ func (mr MutRow) SetValues(vals ...interface{}) {
 // SetValue sets the MutRow with colIdx and value.
 func (mr MutRow) SetValue(colIdx int, val interface{}) {
 	col := mr.c.columns[colIdx]
+	cleanColOfMutRow(col)
 	if val == nil {
-		col.nullBitmap[0] = 0
 		return
 	}
 	switch x := val.(type) {
@@ -285,8 +293,8 @@ func (mr MutRow) SetDatums(datums ...types.Datum) {
 // SetDatum sets the MutRow with colIdx and datum.
 func (mr MutRow) SetDatum(colIdx int, d types.Datum) {
 	col := mr.c.columns[colIdx]
+	cleanColOfMutRow(col)
 	if d.IsNull() {
-		col.nullBitmap[0] = 0
 		return
 	}
 	switch d.Kind() {

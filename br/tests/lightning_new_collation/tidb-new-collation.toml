@@ -1,0 +1,10 @@
+# config of tidb
+new_collations_enabled_on_first_bootstrap = true
+
+[security]
+ssl-ca = "/tmp/backup_restore_test/certs/ca.pem"
+ssl-cert = "/tmp/backup_restore_test/certs/tidb.pem"
+ssl-key = "/tmp/backup_restore_test/certs/tidb.key"
+cluster-ssl-ca = "/tmp/backup_restore_test/certs/ca.pem"
+cluster-ssl-cert = "/tmp/backup_restore_test/certs/tidb.pem"
+cluster-ssl-key = "/tmp/backup_restore_test/certs/tidb.key"

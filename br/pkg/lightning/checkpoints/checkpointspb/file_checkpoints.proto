@@ -1,0 +1,73 @@
+// Copyright 2019 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+import "github.com/gogo/protobuf/gogoproto/gogo.proto";
+
+option go_package = "checkpointspb";
+option (gogoproto.goproto_getters_all) = false;
+
+message CheckpointsModel {
+    // key is table_name
+    map<string, TableCheckpointModel> checkpoints = 1;
+    TaskCheckpointModel task_checkpoint = 2;
+}
+
+message TaskCheckpointModel {
+    int64 task_id = 1;
+    string source_dir = 2;
+    string backend = 3;
+    string importer_addr = 4;
+    string tidb_host = 5;
+    int32 tidb_port = 6;
+    string pd_addr = 7;
+    string sorted_kv_dir = 8;
+    string lightning_ver = 9;
+}
+
+message TableCheckpointModel {
+    bytes hash = 1;
+    uint32 status = 3;
+    int64 alloc_base = 4;
+    map<sint32, EngineCheckpointModel> engines = 8;
+    int64 tableID = 9;
+    uint64 kv_bytes = 10;
+    uint64 kv_kvs = 11;
+    fixed64 kv_checksum = 12;
+}
+
+message EngineCheckpointModel {
+    uint32 status = 1;
+    // key is "$path:$offset"
+    map<string, ChunkCheckpointModel> chunks = 2;
+}
+
+message ChunkCheckpointModel {
+    string path = 1;
+    int64 offset = 2;
+    repeated int32 column_permutation = 12;
+    int64 end_offset = 5;
+    int64 pos = 6;
+    int64 prev_rowid_max = 7;
+    int64 rowid_max = 8;
+    uint64 kvc_bytes = 9;
+    uint64 kvc_kvs = 10;
+    fixed64 kvc_checksum = 11;
+    sfixed64 timestamp = 13;
+    int32 type = 14;
+    int32 compression = 15;
+    string sort_key = 16;
+    int64 file_size = 17;
+}

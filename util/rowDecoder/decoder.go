@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -17,10 +18,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -81,7 +81,7 @@ func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64
 }
 
 // DecodeAndEvalRowWithMap decodes a byte slice into datums and evaluates the generated column value.
-func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.Handle, b []byte, decodeLoc, sysLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.Handle, b []byte, decodeLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	var err error
 	if rowcodec.IsNewFormat(b) {
 		row, err = tablecodec.DecodeRowWithMapNew(b, rd.colTypes, decodeLoc, row)
@@ -113,7 +113,7 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 		}
 		rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
 	}
-	return rd.EvalRemainedExprColumnMap(ctx, sysLoc, row)
+	return rd.EvalRemainedExprColumnMap(ctx, row)
 }
 
 // BuildFullDecodeColMap builds a map that contains [columnID -> struct{*table.Column, expression.Expression}] from all columns.
@@ -174,7 +174,7 @@ func (rd *RowDecoder) DecodeTheExistedColumnMap(ctx sessionctx.Context, handle k
 
 // EvalRemainedExprColumnMap is used by ddl column-type-change first column reorg stage.
 // It is always called after DecodeTheExistedColumnMap to finish the generated column evaluation.
-func (rd *RowDecoder) EvalRemainedExprColumnMap(ctx sessionctx.Context, sysLoc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+func (rd *RowDecoder) EvalRemainedExprColumnMap(ctx sessionctx.Context, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	keys := make([]int, 0, len(rd.colMap))
 	ids := make(map[int]int, len(rd.colMap))
 	for k, col := range rd.colMap {
@@ -192,23 +192,12 @@ func (rd *RowDecoder) EvalRemainedExprColumnMap(ctx sessionctx.Context, sysLoc *
 		if err != nil {
 			return nil, err
 		}
-		val, err = table.CastValue(ctx, val, col.Col.ColumnInfo, false, true)
+		val, err = table.CastValue(ctx, *val.Clone(), col.Col.ColumnInfo, false, true)
 		if err != nil {
 			return nil, err
 		}
 
-		if val.Kind() == types.KindMysqlTime && sysLoc != time.UTC {
-			t := val.GetMysqlTime()
-			if t.Type() == mysql.TypeTimestamp {
-				err := t.ConvertTimeZone(sysLoc, time.UTC)
-				if err != nil {
-					return nil, err
-				}
-				val.SetMysqlTime(t)
-			}
-		}
 		rd.mutRow.SetValue(col.Col.Offset, val.GetValue())
-
 		row[int64(ids[id])] = val
 	}
 	// return the existed and evaluated column map here.

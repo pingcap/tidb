@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -95,7 +96,7 @@ func (ls *MemStore) writeItem(writer *bufio.Writer, data []byte) error {
 // DumpToFile dumps the meta to a file
 func (ls *MemStore) DumpToFile(fileName string, meta []byte) error {
 	tmpFileName := fileName + ".tmp"
-	f, err := os.OpenFile(tmpFileName, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0666)
+	f, err := os.OpenFile(tmpFileName, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0600)
 	if err != nil {
 		return errors.Trace(err)
 	}

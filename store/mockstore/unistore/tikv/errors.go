@@ -8,12 +8,14 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 package tikv
 
 import (
+	"encoding/hex"
 	"fmt"
 
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
@@ -130,4 +132,18 @@ type ErrTxnNotFound struct {
 
 func (e *ErrTxnNotFound) Error() string {
 	return "txn not found"
+}
+
+// ErrAssertionFailed is returned if any assertion fails on a transaction request.
+type ErrAssertionFailed struct {
+	StartTS          uint64
+	Key              []byte
+	Assertion        kvrpcpb.Assertion
+	ExistingStartTS  uint64
+	ExistingCommitTS uint64
+}
+
+func (e *ErrAssertionFailed) Error() string {
+	return fmt.Sprintf("AssertionFailed { StartTS: %v, Key: %v, Assertion: %v, ExistingStartTS: %v, ExistingCommitTS: %v }",
+		e.StartTS, hex.EncodeToString(e.Key), e.Assertion.String(), e.ExistingStartTS, e.ExistingCommitTS)
 }

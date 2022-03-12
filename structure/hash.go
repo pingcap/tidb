@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -163,6 +164,17 @@ func (t *TxStructure) HGetAll(key []byte) ([]HashPair, error) {
 	})
 
 	return res, errors.Trace(err)
+}
+
+// HGetLen gets the length of hash.
+func (t *TxStructure) HGetLen(key []byte) (uint64, error) {
+	hashLen := 0
+	err := t.iterateHash(key, func(field []byte, value []byte) error {
+		hashLen++
+		return nil
+	})
+
+	return uint64(hashLen), errors.Trace(err)
 }
 
 // HGetLastN gets latest N fields and values in hash.

@@ -8,13 +8,16 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+//go:build linux
 // +build linux
 
 package linux
 
 import (
+	"net"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -51,4 +54,24 @@ func SetAffinity(cpus []int) error {
 		cpuSet.Set(c)
 	}
 	return unix.SchedSetaffinity(unix.Getpid(), &cpuSet)
+}
+
+// GetSockUID gets the uid of the other end of the UNIX domain socket
+func GetSockUID(uc net.UnixConn) (uid uint32, err error) {
+	raw, err := uc.SyscallConn()
+	if err != nil {
+		return 0, err
+	}
+
+	var cred *unix.Ucred
+	err = raw.Control(func(fd uintptr) {
+		cred, err = unix.GetsockoptUcred(int(fd),
+			unix.SOL_SOCKET,
+			unix.SO_PEERCRED)
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	return cred.Uid, nil
 }

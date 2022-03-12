@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2021 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,32 +16,36 @@ package executor_test
 
 import (
 	"os"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
-func (s *testSuite1) TestIndexAdvise(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIndexAdvise(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 
 	_, err := tk.Exec("index advise infile '/tmp/nonexistence.sql'")
-	c.Assert(err.Error(), Equals, "Index Advise: don't support load file without local field")
+	require.EqualError(t, err, "Index Advise: don't support load file without local field")
 	_, err = tk.Exec("index advise local infile ''")
-	c.Assert(err.Error(), Equals, "Index Advise: infile path is empty")
+	require.EqualError(t, err, "Index Advise: infile path is empty")
 	_, err = tk.Exec("index advise local infile '/tmp/nonexistence.sql' lines terminated by ''")
-	c.Assert(err.Error(), Equals, "Index Advise: don't support advise index for SQL terminated by nil")
+	require.EqualError(t, err, "Index Advise: don't support advise index for SQL terminated by nil")
 
 	path := "/tmp/index_advise.sql"
 	fp, err := os.Create(path)
-	c.Assert(err, IsNil)
-	c.Assert(fp, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, fp)
 	defer func() {
 		err = fp.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		err = os.Remove(path)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 
 	_, err = fp.WriteString("\n" +
@@ -52,16 +57,15 @@ func (s *testSuite1) TestIndexAdvise(c *C) {
 		"\n" +
 		"select a,b from t1,t2 where t1.a = t2.b;\n" +
 		"\n")
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// TODO: Using "tastCase" to do more test when we finish the index advisor completely.
 	tk.MustExec("index advise local infile '/tmp/index_advise.sql' max_minutes 3 max_idxnum per_table 4 per_db 5")
-	ctx := tk.Se.(sessionctx.Context)
+	ctx := tk.Session().(sessionctx.Context)
 	ia, ok := ctx.Value(executor.IndexAdviseVarKey).(*executor.IndexAdviseInfo)
 	defer ctx.SetValue(executor.IndexAdviseVarKey, nil)
-	c.Assert(ok, IsTrue)
-	c.Assert(ia.MaxMinutes, Equals, uint64(3))
-	c.Assert(ia.MaxIndexNum.PerTable, Equals, uint64(4))
-	c.Assert(ia.MaxIndexNum.PerDB, Equals, uint64(5))
-
+	require.True(t, ok)
+	require.Equal(t, uint64(3), ia.MaxMinutes)
+	require.Equal(t, uint64(4), ia.MaxIndexNum.PerTable)
+	require.Equal(t, uint64(5), ia.MaxIndexNum.PerDB)
 }

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,15 +19,17 @@ import (
 	"fmt"
 	"runtime/trace"
 
-	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 // UnionScanExec merges the rows from dirty table and the rows from distsql request.
@@ -55,10 +58,24 @@ type UnionScanExec struct {
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
 	// to make sure we can compute the virtual column in right order.
 	virtualColumnIndex []int
+
+	// cacheTable not nil means it's reading from cached table.
+	cacheTable kv.MemBuffer
+	collators  []collate.Collator
+
+	// If partitioned table and the physical table id is encoded in the chuck at this column index
+	// used with dynamic prune mode
+	// < 0 if not used.
+	physTblIDIdx int
 }
 
 // Open implements the Executor Open interface.
 func (us *UnionScanExec) Open(ctx context.Context) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("UnionScanExec.Open", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
 	if err := us.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
@@ -81,6 +98,13 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 		return err
 	}
 
+	us.physTblIDIdx = -1
+	for i := len(us.columns) - 1; i >= 0; i-- {
+		if us.columns[i].ID == model.ExtraPhysTblID {
+			us.physTblIDIdx = i
+			break
+		}
+	}
 	mb := txn.GetMemBuffer()
 	mb.RLock()
 	defer mb.RUnlock()
@@ -92,11 +116,13 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 	// 2. build virtual columns and select with virtual columns
 	switch x := reader.(type) {
 	case *TableReaderExecutor:
-		us.addedRows, err = buildMemTableReader(us, x).getMemRows()
+		us.addedRows, err = buildMemTableReader(ctx, us, x).getMemRows(ctx)
 	case *IndexReaderExecutor:
-		us.addedRows, err = buildMemIndexReader(us, x).getMemRows()
+		us.addedRows, err = buildMemIndexReader(ctx, us, x).getMemRows(ctx)
 	case *IndexLookUpExecutor:
-		us.addedRows, err = buildMemIndexLookUpReader(us, x).getMemRows()
+		us.addedRows, err = buildMemIndexLookUpReader(ctx, us, x).getMemRows(ctx)
+	case *IndexMergeReaderExecutor:
+		us.addedRows, err = buildMemIndexMergeReader(ctx, us, x).getMemRows(ctx)
 	default:
 		err = fmt.Errorf("unexpected union scan children:%T", reader)
 	}
@@ -201,6 +227,10 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 }
 
 func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, error) {
+	if us.cacheTable != nil {
+		// From cache table, so the snapshot is nil
+		return nil, nil
+	}
 	if us.cursor4SnapshotRows < len(us.snapshotRows) {
 		return us.snapshotRows[us.cursor4SnapshotRows], nil
 	}
@@ -219,7 +249,13 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 			if err != nil {
 				return nil, err
 			}
-			checkKey := tablecodec.EncodeRecordKey(us.table.RecordPrefix(), snapshotHandle)
+			var checkKey kv.Key
+			if us.physTblIDIdx >= 0 {
+				tblID := row.GetInt64(us.physTblIDIdx)
+				checkKey = tablecodec.EncodeRowKeyWithHandle(tblID, snapshotHandle)
+			} else {
+				checkKey = tablecodec.EncodeRecordKey(us.table.RecordPrefix(), snapshotHandle)
+			}
 			if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
 				// If src handle appears in added rows, it means there is conflict and the transaction will fail to
 				// commit, but for simplicity, we don't handle it here.
@@ -265,7 +301,7 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 	for _, colOff := range us.usedIndex {
 		aColumn := a[colOff]
 		bColumn := b[colOff]
-		cmp, err := aColumn.CompareDatum(sc, &bColumn)
+		cmp, err := aColumn.Compare(sc, &bColumn, us.collators[colOff])
 		if err != nil {
 			return 0, err
 		}
@@ -273,5 +309,5 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 			return cmp, nil
 		}
 	}
-	return us.belowHandleCols.Compare(a, b)
+	return us.belowHandleCols.Compare(a, b, us.collators)
 }

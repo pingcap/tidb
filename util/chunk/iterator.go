@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -71,8 +72,8 @@ func (it *iterator4Slice) Begin() Row {
 
 // Next implements the Iterator interface.
 func (it *iterator4Slice) Next() Row {
-	if len := it.Len(); it.cursor >= len {
-		it.cursor = len + 1
+	if l := it.Len(); it.cursor >= l {
+		it.cursor = l + 1
 		return it.End()
 	}
 	row := it.rows[it.cursor]
@@ -273,8 +274,8 @@ func (it *iterator4RowPtr) Begin() Row {
 
 // Next implements the Iterator interface.
 func (it *iterator4RowPtr) Next() Row {
-	if len := it.Len(); it.cursor >= len {
-		it.cursor = len + 1
+	if l := it.Len(); it.cursor >= l {
+		it.cursor = l + 1
 		return it.End()
 	}
 	row := it.li.GetRow(it.ptrs[it.cursor])

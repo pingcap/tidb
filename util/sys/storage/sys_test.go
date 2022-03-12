@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,21 +17,14 @@ package storage_test
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/sys/storage"
+	"github.com/stretchr/testify/require"
 )
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
 
 func TestGetTargetDirectoryCapacity(t *testing.T) {
 	r, err := storage.GetTargetDirectoryCapacity(".")
-	if err != nil {
-		t.Fatal(err.Error())
-	}
-	if r < 1 {
-		t.Fatalf("couldn't get capacity")
-	}
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, r, uint64(1), "couldn't get capacity")
+
 	//TODO: check the value of r with `df` in linux
 }

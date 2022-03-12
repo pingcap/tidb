@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -26,19 +27,14 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.etcd.io/etcd/clientv3"
+	"github.com/stretchr/testify/require"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
-
-func TestGlobalKill(t *testing.T) {
-	CustomVerboseFlag = true
-	TestingT(t)
-}
 
 var (
 	logLevel       = flag.String("L", "info", "test log level")
@@ -62,11 +58,9 @@ const (
 	msgErrConnectPD = "connect PD err: %v. Establish a cluster with PD & TiKV, and provide PD client path by `--pd=<ip:port>[,<ip:port>]"
 )
 
-var _ = Suite(&TestGlobalKillSuite{})
-
-// TestGlobakKillSuite is used for automated test of "Global Kill" feature.
+// GlobakKillSuite is used for automated test of "Global Kill" feature.
 // See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md.
-type TestGlobalKillSuite struct {
+type GlobalKillSuite struct {
 	pdCli *clientv3.Client
 	pdErr error
 
@@ -75,27 +69,26 @@ type TestGlobalKillSuite struct {
 	tikvProc  *exec.Cmd
 }
 
-func (s *TestGlobalKillSuite) SetUpSuite(c *C) {
+func createGloabalKillSuite(t *testing.T) (s *GlobalKillSuite, clean func()) {
+	s = new(GlobalKillSuite)
 	err := logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: *logLevel}})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	s.clusterId = time.Now().Format(time.RFC3339Nano)
 	err = s.startCluster()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	s.pdCli, s.pdErr = s.connectPD()
-}
-
-func (s *TestGlobalKillSuite) TearDownSuite(c *C) {
-	var err error
-	if s.pdCli != nil {
-		err = s.pdCli.Close()
-		c.Assert(err, IsNil)
+	clean = func() {
+		if s.pdCli != nil {
+			require.NoError(t, err)
+		}
+		require.NoError(t, s.cleanCluster())
 	}
-	err = s.cleanCluster()
-	c.Assert(err, IsNil)
+
+	return
 }
 
-func (s *TestGlobalKillSuite) connectPD() (cli *clientv3.Client, err error) {
+func (s *GlobalKillSuite) connectPD() (cli *clientv3.Client, err error) {
 	etcdLogCfg := zap.NewProductionConfig()
 	etcdLogCfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
 	wait := 250 * time.Millisecond
@@ -131,7 +124,7 @@ func (s *TestGlobalKillSuite) connectPD() (cli *clientv3.Client, err error) {
 	return cli, nil
 }
 
-func (s *TestGlobalKillSuite) startTiKV(dataDir string) (err error) {
+func (s *GlobalKillSuite) startTiKV(dataDir string) (err error) {
 	s.tikvProc = exec.Command(*tikvBinaryPath,
 		fmt.Sprintf("--pd=%s", *pdClientPath),
 		fmt.Sprintf("--data-dir=tikv-%s", dataDir),
@@ -148,7 +141,7 @@ func (s *TestGlobalKillSuite) startTiKV(dataDir string) (err error) {
 	return nil
 }
 
-func (s *TestGlobalKillSuite) startPD(dataDir string) (err error) {
+func (s *GlobalKillSuite) startPD(dataDir string) (err error) {
 	s.pdProc = exec.Command(*pdBinaryPath,
 		"--name=pd",
 		"--log-file=pd.log",
@@ -163,7 +156,7 @@ func (s *TestGlobalKillSuite) startPD(dataDir string) (err error) {
 	return nil
 }
 
-func (s *TestGlobalKillSuite) startCluster() (err error) {
+func (s *GlobalKillSuite) startCluster() (err error) {
 	err = s.startPD(s.clusterId)
 	if err != nil {
 		return
@@ -177,7 +170,7 @@ func (s *TestGlobalKillSuite) startCluster() (err error) {
 	return
 }
 
-func (s *TestGlobalKillSuite) stopPD() (err error) {
+func (s *GlobalKillSuite) stopPD() (err error) {
 	if err = s.pdProc.Process.Kill(); err != nil {
 		return
 	}
@@ -187,7 +180,7 @@ func (s *TestGlobalKillSuite) stopPD() (err error) {
 	return nil
 }
 
-func (s *TestGlobalKillSuite) stopTiKV() (err error) {
+func (s *GlobalKillSuite) stopTiKV() (err error) {
 	if err = s.tikvProc.Process.Kill(); err != nil {
 		return
 	}
@@ -197,7 +190,7 @@ func (s *TestGlobalKillSuite) stopTiKV() (err error) {
 	return nil
 }
 
-func (s *TestGlobalKillSuite) cleanCluster() (err error) {
+func (s *GlobalKillSuite) cleanCluster() (err error) {
 	if err = s.stopPD(); err != nil {
 		return err
 	}
@@ -208,7 +201,7 @@ func (s *TestGlobalKillSuite) cleanCluster() (err error) {
 	return nil
 }
 
-func (s *TestGlobalKillSuite) startTiDBWithoutPD(port int, statusPort int) (cmd *exec.Cmd, err error) {
+func (s *GlobalKillSuite) startTiDBWithoutPD(port int, statusPort int) (cmd *exec.Cmd, err error) {
 	cmd = exec.Command(*tidbBinaryPath,
 		"--store=mocktikv",
 		fmt.Sprintf("-L=%s", *serverLogLevel),
@@ -226,7 +219,7 @@ func (s *TestGlobalKillSuite) startTiDBWithoutPD(port int, statusPort int) (cmd 
 	return cmd, nil
 }
 
-func (s *TestGlobalKillSuite) startTiDBWithPD(port int, statusPort int, pdPath string) (cmd *exec.Cmd, err error) {
+func (s *GlobalKillSuite) startTiDBWithPD(port int, statusPort int, pdPath string) (cmd *exec.Cmd, err error) {
 	cmd = exec.Command(*tidbBinaryPath,
 		"--store=tikv",
 		fmt.Sprintf("-L=%s", *serverLogLevel),
@@ -244,7 +237,7 @@ func (s *TestGlobalKillSuite) startTiDBWithPD(port int, statusPort int, pdPath s
 	return cmd, nil
 }
 
-func (s *TestGlobalKillSuite) stopService(name string, cmd *exec.Cmd, graceful bool) (err error) {
+func (s *GlobalKillSuite) stopService(name string, cmd *exec.Cmd, graceful bool) (err error) {
 	log.Info("stopping: " + cmd.String())
 	defer func() {
 		log.Info("stopped: " + cmd.String())
@@ -279,12 +272,12 @@ func (s *TestGlobalKillSuite) stopService(name string, cmd *exec.Cmd, graceful b
 	return nil
 }
 
-func (s *TestGlobalKillSuite) connectTiDB(port int) (db *sql.DB, err error) {
+func (s *GlobalKillSuite) connectTiDB(port int) (db *sql.DB, err error) {
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	dsn := fmt.Sprintf("root@(%s)/test", addr)
 	sleepTime := 250 * time.Millisecond
 	startTime := time.Now()
-	maxRetry := 5
+	maxRetry := 10
 	for i := 0; i < maxRetry; i++ {
 		db, err = sql.Open("mysql", dsn)
 		if err != nil {
@@ -334,7 +327,7 @@ type sleepResult struct {
 	err     error
 }
 
-func (s *TestGlobalKillSuite) killByCtrlC(c *C, port int, sleepTime int) time.Duration {
+func (s *GlobalKillSuite) killByCtrlC(t *testing.T, port int, sleepTime int) time.Duration {
 	cli := exec.Command("mysql",
 		"-h127.0.0.1",
 		fmt.Sprintf("-P%d", port),
@@ -358,10 +351,10 @@ func (s *TestGlobalKillSuite) killByCtrlC(c *C, port int, sleepTime int) time.Du
 
 	time.Sleep(waitToStartup)               // wait before mysql cli running.
 	err := cli.Process.Signal(os.Interrupt) // send "CTRL-C".
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	r := <-ch
-	c.Assert(r.err, IsNil)
+	require.NoError(t, err)
 	return r.elapsed
 }
 
@@ -395,16 +388,16 @@ func sleepRoutine(ctx context.Context, sleepTime int, conn *sql.Conn, connID uin
 }
 
 // NOTICE: db1 & db2 can be the same object, for getting conn1 & conn2 from the same TiDB instance.
-func (s *TestGlobalKillSuite) killByKillStatement(c *C, db1 *sql.DB, db2 *sql.DB, sleepTime int) time.Duration {
+func (s *GlobalKillSuite) killByKillStatement(t *testing.T, db1 *sql.DB, db2 *sql.DB, sleepTime int) time.Duration {
 	ctx := context.TODO()
 
 	conn1, err := db1.Conn(ctx)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer conn1.Close()
 
 	var connID1 uint64
 	err = conn1.QueryRowContext(ctx, "SELECT CONNECTION_ID();").Scan(&connID1)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	log.Info("connID1", zap.String("connID1", "0x"+strconv.FormatUint(connID1, 16)))
 
 	ch := make(chan sleepResult)
@@ -412,12 +405,12 @@ func (s *TestGlobalKillSuite) killByKillStatement(c *C, db1 *sql.DB, db2 *sql.DB
 
 	time.Sleep(waitToStartup) // wait go-routine to start.
 	conn2, err := db2.Conn(ctx)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer conn2.Close()
 
 	var connID2 uint64
 	err = conn2.QueryRowContext(ctx, "SELECT CONNECTION_ID();").Scan(&connID2)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	log.Info("connID2", zap.String("connID2", "0x"+strconv.FormatUint(connID2, 16)))
 
 	log.Info("exec: KILL QUERY",
@@ -425,54 +418,54 @@ func (s *TestGlobalKillSuite) killByKillStatement(c *C, db1 *sql.DB, db2 *sql.DB
 		zap.String("connID2", "0x"+strconv.FormatUint(connID2, 16)),
 	)
 	_, err = conn2.ExecContext(ctx, fmt.Sprintf("KILL QUERY %v", connID1))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	r := <-ch
-	c.Assert(r.err, IsNil)
+	require.NoError(t, err)
 	return r.elapsed
 }
 
 // [Test Scenario 1] A TiDB without PD, killed by Ctrl+C, and killed by KILL.
-func (s *TestGlobalKillSuite) TestWithoutPD(c *C) {
+func TestWithoutPD(t *testing.T) {
+	s, clean := createGloabalKillSuite(t)
+	defer clean()
 	var err error
 	port := *tidbStartPort
 	tidb, err := s.startTiDBWithoutPD(port, *tidbStatusPort)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer s.stopService("tidb", tidb, true)
 
 	db, err := s.connectTiDB(port)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer func() {
 		err := db.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
-
-	const sleepTime = 2
 
 	// Test mysql client CTRL-C
 	// mysql client "CTRL-C" truncate connection id to 32bits, and is ignored by TiDB.
-	elapsed := s.killByCtrlC(c, port, sleepTime)
-	c.Assert(elapsed, GreaterEqual, sleepTime*time.Second)
+	elapsed := s.killByCtrlC(t, port, 2)
+	require.GreaterOrEqual(t, elapsed, 2*time.Second)
 
 	// Test KILL statement
-	elapsed = s.killByKillStatement(c, db, db, sleepTime)
-	c.Assert(elapsed, Less, sleepTime*time.Second)
+	elapsed = s.killByKillStatement(t, db, db, 2)
+	require.Less(t, elapsed, 2*time.Second)
 }
 
 // [Test Scenario 2] One TiDB with PD, killed by Ctrl+C, and killed by KILL.
-func (s *TestGlobalKillSuite) TestOneTiDB(c *C) {
-	c.Assert(s.pdErr, IsNil, Commentf(msgErrConnectPD, s.pdErr))
-
+func TestOneTiDB(t *testing.T) {
+	s, clean := createGloabalKillSuite(t)
+	defer clean()
 	port := *tidbStartPort + 1
 	tidb, err := s.startTiDBWithPD(port, *tidbStatusPort+1, *pdClientPath)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer s.stopService("tidb", tidb, true)
 
 	db, err := s.connectTiDB(port)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer func() {
 		err := db.Close()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}()
 
 	const sleepTime = 2
@@ -480,40 +473,42 @@ func (s *TestGlobalKillSuite) TestOneTiDB(c *C) {
 	// Test mysql client CTRL-C
 	// mysql client "CTRL-C" truncate connection id to 32bits, and is ignored by TiDB.
 	// see TiDB's logging for the truncation warning.
-	elapsed := s.killByCtrlC(c, port, sleepTime)
-	c.Assert(elapsed, GreaterEqual, sleepTime*time.Second)
+	elapsed := s.killByCtrlC(t, port, sleepTime)
+	require.GreaterOrEqual(t, elapsed, sleepTime*time.Second)
 
 	// Test KILL statement
-	elapsed = s.killByKillStatement(c, db, db, sleepTime)
-	c.Assert(elapsed, Less, sleepTime*time.Second)
+	elapsed = s.killByKillStatement(t, db, db, sleepTime)
+	require.Less(t, elapsed, sleepTime*time.Second)
 }
 
 // [Test Scenario 3] Multiple TiDB nodes, killed {local,remote} by {Ctrl-C,KILL}.
-func (s *TestGlobalKillSuite) TestMultipleTiDB(c *C) {
-	c.Assert(s.pdErr, IsNil, Commentf(msgErrConnectPD, s.pdErr))
+func TestMultipleTiDB(t *testing.T) {
+	s, clean := createGloabalKillSuite(t)
+	defer clean()
+	require.NoErrorf(t, s.pdErr, msgErrConnectPD, s.pdErr)
 
 	// tidb1 & conn1a,conn1b
 	port1 := *tidbStartPort + 1
 	tidb1, err := s.startTiDBWithPD(port1, *tidbStatusPort+1, *pdClientPath)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer s.stopService("tidb1", tidb1, true)
 
 	db1a, err := s.connectTiDB(port1)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer db1a.Close()
 
 	db1b, err := s.connectTiDB(port1)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer db1b.Close()
 
 	// tidb2 & conn2
 	port2 := *tidbStartPort + 2
 	tidb2, err := s.startTiDBWithPD(port2, *tidbStatusPort+2, *pdClientPath)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer s.stopService("tidb2", tidb2, true)
 
 	db2, err := s.connectTiDB(port2)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer db2.Close()
 
 	const sleepTime = 2
@@ -522,49 +517,51 @@ func (s *TestGlobalKillSuite) TestMultipleTiDB(c *C) {
 	// kill local by CTRL-C
 	// mysql client "CTRL-C" truncate connection id to 32bits, and is ignored by TiDB.
 	// see TiDB's logging for the truncation warning.
-	elapsed = s.killByCtrlC(c, port1, sleepTime)
-	c.Assert(elapsed, GreaterEqual, sleepTime*time.Second)
+	elapsed = s.killByCtrlC(t, port1, sleepTime)
+	require.GreaterOrEqual(t, elapsed, sleepTime*time.Second)
 
 	// kill local by KILL
-	elapsed = s.killByKillStatement(c, db1a, db1b, sleepTime)
-	c.Assert(elapsed, Less, sleepTime*time.Second)
+	elapsed = s.killByKillStatement(t, db1a, db1b, sleepTime)
+	require.Less(t, elapsed, sleepTime*time.Second)
 
 	// kill remotely
-	elapsed = s.killByKillStatement(c, db1a, db2, sleepTime)
-	c.Assert(elapsed, Less, sleepTime*time.Second)
+	elapsed = s.killByKillStatement(t, db1a, db2, sleepTime)
+	require.Less(t, elapsed, sleepTime*time.Second)
 }
 
-func (s *TestGlobalKillSuite) TestLostConnection(c *C) {
-	c.Skip("unstable, skip race test")
-	c.Assert(s.pdErr, IsNil, Commentf(msgErrConnectPD, s.pdErr))
+func TestLostConnection(t *testing.T) {
+	t.Skip("unstable, skip race test")
+	s, clean := createGloabalKillSuite(t)
+	defer clean()
+	require.NoErrorf(t, s.pdErr, msgErrConnectPD, s.pdErr)
 
 	// tidb1
 	port1 := *tidbStartPort + 1
 	tidb1, err := s.startTiDBWithPD(port1, *tidbStatusPort+1, *pdClientPath)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer s.stopService("tidb1", tidb1, true)
 
 	db1, err := s.connectTiDB(port1)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer db1.Close()
 
 	// tidb2
 	port2 := *tidbStartPort + 2
 	tidb2, err := s.startTiDBWithPD(port2, *tidbStatusPort+2, *pdClientPath)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer s.stopService("tidb2", tidb2, true)
 
 	db2, err := s.connectTiDB(port2)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer db2.Close()
 
 	// verify it's working.
 	ctx := context.TODO()
 	conn1, err := db1.Conn(ctx)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	defer conn1.Close()
 	err = conn1.PingContext(ctx)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// a running sql
 	sqlTime := *lostConnectionToPDTimeout + 10
@@ -576,7 +573,7 @@ func (s *TestGlobalKillSuite) TestLostConnection(c *C) {
 	log.Info("shutdown PD to simulate lost connection to PD.")
 	err = s.stopPD()
 	log.Info(fmt.Sprintf("pd shutdown: %s", err))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// wait for "lostConnectionToPDTimeout" elapsed.
 	// delay additional 3 seconds for TiDB would have a small interval to detect lost connection more than "lostConnectionToPDTimeout".
@@ -588,22 +585,22 @@ func (s *TestGlobalKillSuite) TestLostConnection(c *C) {
 	// [Test Scenario 4] Existing connections are killed after PD lost connection for long time.
 	r := <-ch
 	log.Info("sleepRoutine err", zap.Error(r.err))
-	c.Assert(r.err, NotNil)
-	c.Assert(r.err.Error(), Equals, "invalid connection")
+	require.NoError(t, err)
+	require.Equal(t, r.err.Error(), "invalid connection")
 
 	// check new connection.
 	// [Test Scenario 5] New connections are not accepted after PD lost connection for long time.
 	log.Info("check connection after lost connection to PD.")
 	_, err = s.connectTiDB(port1)
 	log.Info("connectTiDB err", zap.Error(r.err))
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "driver: bad connection")
+	require.NoError(t, err)
+	require.Equal(t, err.Error(), "driver: bad connection")
 
 	err = s.stopTiKV()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	// restart cluster to restore connection.
 	err = s.startCluster()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// wait for "timeToCheckPDConnectionRestored" elapsed.
 	// delay additional 3 seconds for TiDB would have a small interval to detect lost connection restored more than "timeToCheckPDConnectionRestored".
@@ -615,25 +612,24 @@ func (s *TestGlobalKillSuite) TestLostConnection(c *C) {
 	{
 		// [Test Scenario 6] New connections are accepted after PD lost connection for long time and then recovered.
 		db1, err := s.connectTiDB(port1)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		defer func() {
 			err := db1.Close()
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 		}()
 
 		db2, err := s.connectTiDB(port2)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		defer func() {
 			err := db2.Close()
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 		}()
 
 		// [Test Scenario 7] Connections can be killed after PD lost connection for long time and then recovered.
-		sleepTime := 2
-		elapsed := s.killByKillStatement(c, db1, db1, sleepTime)
-		c.Assert(elapsed, Less, time.Duration(sleepTime)*time.Second)
+		elapsed := s.killByKillStatement(t, db1, db1, 2)
+		require.Less(t, elapsed, 2*time.Second)
 
-		elapsed = s.killByKillStatement(c, db1, db2, sleepTime)
-		c.Assert(elapsed, Less, time.Duration(sleepTime)*time.Second)
+		elapsed = s.killByKillStatement(t, db1, db2, 2)
+		require.Less(t, elapsed, 2*time.Second)
 	}
 }

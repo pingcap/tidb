@@ -1,0 +1,92 @@
+drop table if exists t;
+set names utf8mb4;
+create table t (a varchar(255) charset utf8mb4);
+insert into t values ('一二三四一');
+select hex(a) from t;
+hex(a)
+E4B880E4BA8CE4B889E59B9BE4B880
+select a from t;
+a
+一二三四一
+set @@character_set_results = 'gbk';
+select a from t;
+a
+һ������һ
+drop table if exists 一;
+create table 一 (二 char(20));
+show create table 一;
+Table	Create Table
+һ	CREATE TABLE `һ` (
+  `��` char(20) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t;
+set names utf8mb4;
+create table t (a varchar(255) charset gbk, b varchar(255) charset utf8mb4, c varchar(255) charset binary);
+insert into t values ('一', '一', '一');
+set @@character_set_results = null;
+select * from t;
+a	b	c
+һ	一	一
+set @@character_set_results = BINARY;
+select * from t;
+a	b	c
+һ	一	一
+set @@character_set_results = "BINARY";
+select * from t;
+a	b	c
+һ	一	一
+set names utf8mb4;
+select * from t;
+a	b	c
+一	一	一
+set @@character_set_results = 'utf8mb4';
+drop table if exists t;
+create table t (a varchar(255) charset utf8mb4);
+set @@character_set_client = 'gbk';
+insert into t values ('中文');
+set @@character_set_client = 'utf8mb4';
+insert into t values ('中文');
+set @@character_set_client = 'gbk';
+prepare p1 from "insert into t values ('中文');";
+execute p1;
+
+select a, hex(a) from t;
+a	hex(a)
+涓?枃	E6B6933FE69E83
+中文	E4B8ADE69687
+涓?枃	E6B6933FE69E83
+set @@character_set_client = 'utf8mb4';
+set names gbk;
+drop table if exists t;
+create table t (b blob, d json);
+insert into t values ('你好', '{"测试": "你好"}');
+select b, d from t;
+b	d
+你好	{"测试": "你好"}
+select hex(b), hex(d) from t;
+hex(b)	hex(d)
+E4BDA0E5A5BD	7B22E6B58BE8AF95223A2022E4BDA0E5A5BD227D
+set names utf8mb4;
+drop table if exists t;
+create table t(a blob, b char(10));
+insert into t values (0x61, '啊');
+insert into t values (0x61, '一');
+set names gbk;
+select * from t;
+a	b
+a	��
+a	һ
+drop table t;
+set names gbk;
+set character_set_connection = utf8mb4;
+create table t(j json, b blob, s1 varchar(255) collate binary, s2 varchar(255), st set('{"点赞": "你好"}'), en enum('{"点赞": "你好"}'));
+insert into t values('{"点赞": "你好"}', '{"点赞": "你好"}', '{"点赞": "你好"}', '{"点赞": "你好"}', '{"点赞": "你好"}', '{"点赞": "你好"}');
+select * from t;
+j	b	s1	s2	st	en
+{"点赞": "你好"}	{"鐐硅禐": "浣犲ソ"}	{"鐐硅禐": "浣犲ソ"}	{"点赞": "你好"}	{"点赞": "你好"}	{"点赞": "你好"}
+set names utf8mb4;
+set @@character_set_client=gbk;
+set @@character_set_connection=gbk;
+select hex('一a'), '一a';
+hex('涓?')	涓?
+E4B83F	涓?

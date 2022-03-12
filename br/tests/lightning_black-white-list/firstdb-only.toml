@@ -1,0 +1,5 @@
+[tikv-importer]
+backend = "local"
+
+[black-white-list]
+do-dbs = ["~^f"]

@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -204,4 +205,26 @@ func strToInt(str string) (int64, error) {
 		r = -r
 	}
 	return int64(r), err
+}
+
+// DecimalLength2Precision gets the precision.
+func DecimalLength2Precision(length int, scale int, hasUnsignedFlag bool) int {
+	if scale > 0 {
+		length--
+	}
+	if hasUnsignedFlag || length > 0 {
+		length--
+	}
+	return length
+}
+
+// Precision2LengthNoTruncation gets the length.
+func Precision2LengthNoTruncation(length int, scale int, hasUnsignedFlag bool) int {
+	if scale > 0 {
+		length++
+	}
+	if hasUnsignedFlag || length > 0 {
+		length++
+	}
+	return length
 }

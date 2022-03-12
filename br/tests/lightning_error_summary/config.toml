@@ -1,0 +1,7 @@
+[checkpoint]
+enable = true
+schema = "tidb_lightning_checkpoint_error_summary"
+driver = "mysql"
+
+[tikv-importer]
+backend = 'local'

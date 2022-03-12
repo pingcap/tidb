@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -29,9 +30,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
-	parsertypes "github.com/pingcap/parser/types"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
@@ -40,6 +38,9 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
+	parsertypes "github.com/pingcap/tidb/parser/types"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/privilege/privileges"
@@ -52,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/domainutil"
@@ -59,16 +61,17 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
-	"github.com/pingcap/tidb/util/profile"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/signal"
 	"github.com/pingcap/tidb/util/sys/linux"
 	storageSys "github.com/pingcap/tidb/util/sys/storage"
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/pingcap/tidb/util/topsql"
+	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
@@ -108,6 +111,9 @@ const (
 	nmProxyProtocolNetworks      = "proxy-protocol-networks"
 	nmProxyProtocolHeaderTimeout = "proxy-protocol-header-timeout"
 	nmAffinityCPU                = "affinity-cpus"
+
+	nmInitializeSecure   = "initialize-secure"
+	nmInitializeInsecure = "initialize-insecure"
 )
 
 var (
@@ -123,7 +129,7 @@ var (
 	advertiseAddress = flag.String(nmAdvertiseAddress, "", "tidb server advertise IP")
 	port             = flag.String(nmPort, "4000", "tidb server port")
 	cors             = flag.String(nmCors, "", "tidb server allow cors origin")
-	socket           = flag.String(nmSocket, "", "The socket file to use for connection.")
+	socket           = flag.String(nmSocket, "/tmp/tidb-{Port}.sock", "The socket file to use for connection.")
 	enableBinlog     = flagBoolean(nmEnableBinlog, false, "enable generate binlog")
 	runDDL           = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
 	ddlLease         = flag.String(nmDdlLease, "45s", "schema lease duration, very dangerous to change only if you know what you do")
@@ -150,6 +156,10 @@ var (
 	// PROXY Protocol
 	proxyProtocolNetworks      = flag.String(nmProxyProtocolNetworks, "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
 	proxyProtocolHeaderTimeout = flag.Uint(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second.")
+
+	// Security
+	initializeSecure   = flagBoolean(nmInitializeSecure, false, "bootstrap tidb-server in secure mode")
+	initializeInsecure = flagBoolean(nmInitializeInsecure, true, "bootstrap tidb-server in insecure mode")
 )
 
 func main() {
@@ -159,28 +169,33 @@ func main() {
 		flag.Usage()
 		os.Exit(0)
 	}
+	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig)
 	if *version {
+		setVersions()
 		fmt.Println(printer.GetTiDBInfo())
 		os.Exit(0)
 	}
 	registerStores()
 	registerMetrics()
-	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		config.GetGlobalConfig().UpdateTempStoragePath()
 		err := disk.InitializeTempDir()
 		terror.MustNil(err)
 		checkTempStorageQuota()
 	}
+	setupLog()
+	err := cpuprofile.StartCPUProfiler()
+	terror.MustNil(err)
+
 	// Enable failpoints in tikv/client-go if the test API is enabled.
 	// It appears in the main function to be set before any use of client-go to prevent data race.
 	if _, err := failpoint.Status("github.com/pingcap/tidb/server/enableTestAPI"); err == nil {
+		warnMsg := "tikv/client-go failpoint is enabled, this should NOT happen in the production environment"
+		logutil.BgLogger().Warn(warnMsg)
 		tikv.EnableFailpoints()
 	}
 	setGlobalVars()
 	setCPUAffinity()
-	setupLog()
-	setHeapProfileTracker()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()
@@ -189,21 +204,22 @@ func main() {
 	storage, dom := createStoreAndDomain()
 	svr := createServer(storage, dom)
 
+	// Register error API is not thread-safe, the caller MUST NOT register errors after initialization.
+	// To prevent misuse, set a flag to indicate that register new error will panic immediately.
+	// For regression of issue like https://github.com/pingcap/tidb/issues/28190
+	terror.RegisterFinish()
+
 	exited := make(chan struct{})
 	signal.SetupSignalHandler(func(graceful bool) {
 		svr.Close()
 		cleanup(svr, storage, dom, graceful)
+		cpuprofile.StopCPUProfiler()
 		close(exited)
 	})
 	topsql.SetupTopSQL()
 	terror.MustNil(svr.Run())
 	<-exited
 	syncLog()
-}
-
-func exit() {
-	syncLog()
-	os.Exit(0)
 }
 
 func syncLog() {
@@ -245,7 +261,7 @@ func setCPUAffinity() {
 			c, err := strconv.Atoi(af)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "wrong affinity cpu config: %s", *affinityCPU)
-				exit()
+				os.Exit(1)
 			}
 			cpu = append(cpu, c)
 		}
@@ -253,16 +269,10 @@ func setCPUAffinity() {
 	err := linux.SetAffinity(cpu)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "set cpu affinity failure: %v", err)
-		exit()
+		os.Exit(1)
 	}
 	runtime.GOMAXPROCS(len(cpu))
 	metrics.MaxProcs.Set(float64(runtime.GOMAXPROCS(0)))
-}
-
-func setHeapProfileTracker() {
-	c := config.GetGlobalConfig()
-	d := parseDuration(c.Performance.MemProfileInterval)
-	go profile.HeapProfileForGlobalMemTracker(d)
 }
 
 func registerStores() {
@@ -498,6 +508,41 @@ func overrideConfig(cfg *config.Config) {
 	if actualFlags[nmProxyProtocolHeaderTimeout] {
 		cfg.ProxyProtocol.HeaderTimeout = *proxyProtocolHeaderTimeout
 	}
+
+	// Sanity check: can't specify both options
+	if actualFlags[nmInitializeSecure] && actualFlags[nmInitializeInsecure] {
+		err = fmt.Errorf("the options --initialize-insecure and --initialize-secure are mutually exclusive")
+		terror.MustNil(err)
+	}
+	// The option --initialize-secure=true ensures that a secure bootstrap is used.
+	if actualFlags[nmInitializeSecure] {
+		cfg.Security.SecureBootstrap = *initializeSecure
+	}
+	// The option --initialize-insecure=true/false was used.
+	// Store the inverted value of this to the secure bootstrap cfg item
+	if actualFlags[nmInitializeInsecure] {
+		cfg.Security.SecureBootstrap = !*initializeInsecure
+	}
+	// Secure bootstrap initializes with Socket authentication
+	// which is not supported on windows. Only the insecure bootstrap
+	// method is supported.
+	if runtime.GOOS == "windows" && cfg.Security.SecureBootstrap {
+		err = fmt.Errorf("the option --initialize-secure is not supported on Windows")
+		terror.MustNil(err)
+	}
+}
+
+func setVersions() {
+	cfg := config.GetGlobalConfig()
+	if len(cfg.ServerVersion) > 0 {
+		mysql.ServerVersion = cfg.ServerVersion
+	}
+	if len(cfg.TiDBEdition) > 0 {
+		versioninfo.TiDBEdition = cfg.TiDBEdition
+	}
+	if len(cfg.TiDBReleaseVersion) > 0 {
+		mysql.TiDBReleaseVersion = cfg.TiDBReleaseVersion
+	}
 }
 
 func setGlobalVars() {
@@ -520,6 +565,8 @@ func setGlobalVars() {
 	session.SetStatsLease(statsLeaseDuration)
 	indexUsageSyncLeaseDuration := parseDuration(cfg.Performance.IndexUsageSyncLease)
 	session.SetIndexUsageSyncLease(indexUsageSyncLeaseDuration)
+	planReplayerGCLease := parseDuration(cfg.Performance.PlanReplayerGCLease)
+	session.SetPlanReplayerGCLease(planReplayerGCLease)
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	statistics.FeedbackProbability.Store(cfg.Performance.FeedbackProbability)
@@ -540,12 +587,29 @@ func setGlobalVars() {
 	priority := mysql.Str2Priority(cfg.Performance.ForcePriority)
 	variable.ForcePriority = int32(priority)
 
+	if len(cfg.ServerVersion) > 0 {
+		mysql.ServerVersion = cfg.ServerVersion
+		variable.SetSysVar(variable.Version, cfg.ServerVersion)
+	}
+
+	if len(cfg.TiDBEdition) > 0 {
+		versioninfo.TiDBEdition = cfg.TiDBEdition
+		variable.SetSysVar(variable.VersionComment, "TiDB Server (Apache License 2.0) "+versioninfo.TiDBEdition+" Edition, MySQL 5.7 compatible")
+	}
+	if len(cfg.VersionComment) > 0 {
+		variable.SetSysVar(variable.VersionComment, cfg.VersionComment)
+	}
+	if len(cfg.TiDBReleaseVersion) > 0 {
+		mysql.TiDBReleaseVersion = cfg.TiDBReleaseVersion
+	}
+
 	variable.SetSysVar(variable.TiDBForcePriority, mysql.Priority2Str[priority])
 	variable.SetSysVar(variable.TiDBOptDistinctAggPushDown, variable.BoolToOnOff(cfg.Performance.DistinctAggPushDown))
 	variable.SetSysVar(variable.TiDBMemQuotaQuery, strconv.FormatInt(cfg.MemQuotaQuery, 10))
 	variable.SetSysVar(variable.LowerCaseTableNames, strconv.Itoa(cfg.LowerCaseTableNames))
 	variable.SetSysVar(variable.LogBin, variable.BoolToOnOff(cfg.Binlog.Enable))
 	variable.SetSysVar(variable.Port, fmt.Sprintf("%d", cfg.Port))
+	cfg.Socket = strings.Replace(cfg.Socket, "{Port}", fmt.Sprintf("%d", cfg.Port), 1)
 	variable.SetSysVar(variable.Socket, cfg.Socket)
 	variable.SetSysVar(variable.DataDir, cfg.Path)
 	variable.SetSysVar(variable.TiDBSlowQueryFile, cfg.Log.SlowQueryFile)
@@ -555,6 +619,7 @@ func setGlobalVars() {
 	if hostname, err := os.Hostname(); err != nil {
 		variable.SetSysVar(variable.Hostname, hostname)
 	}
+	variable.GlobalLogMaxDays.Store(int32(config.GetGlobalConfig().Log.File.MaxDays))
 
 	if cfg.Security.EnableSEM {
 		sem.Enable()
@@ -576,7 +641,7 @@ func setGlobalVars() {
 		}
 	}
 
-	atomic.StoreUint64(&tikv.CommitMaxBackoff, uint64(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds()*1000))
+	atomic.StoreUint64(&transaction.CommitMaxBackoff, uint64(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds()*1000))
 	tikv.SetRegionCacheTTLSec(int64(cfg.TiKVClient.RegionCacheTTL))
 	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
@@ -673,7 +738,8 @@ func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 
 func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, graceful bool) {
 	if graceful {
-		svr.GracefulDown(context.Background(), nil)
+		done := make(chan struct{})
+		svr.GracefulDown(context.Background(), done)
 	} else {
 		svr.TryGracefulDown()
 	}

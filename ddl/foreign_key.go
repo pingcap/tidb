@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -15,9 +16,10 @@ package ddl
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/util/dbterror"
 )
 
 func onCreateForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -50,7 +52,7 @@ func onCreateForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		return ver, nil
 	default:
-		return ver, ErrInvalidDDLState.GenWithStack("foreign key", fkInfo.State)
+		return ver, dbterror.ErrInvalidDDLState.GenWithStack("foreign key", fkInfo.State)
 	}
 }
 
@@ -106,7 +108,7 @@ func onDropForeignKey(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		return ver, nil
 	default:
-		return ver, ErrInvalidDDLState.GenWithStackByArgs("foreign key", fkInfo.State)
+		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("foreign key", fkInfo.State)
 	}
 
 }

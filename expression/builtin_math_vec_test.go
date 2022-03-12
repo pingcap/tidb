@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -16,9 +17,8 @@ package expression
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -135,16 +135,16 @@ var vecBuiltinMathCases1 = map[string][]vecExprBenchCase{
 	},
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinMathEvalOneVec(c *C) {
-	testVectorizedEvalOneVec(c, vecBuiltinMathCases)
+func TestVectorizedBuiltinMathEvalOneVec(t *testing.T) {
+	testVectorizedEvalOneVec(t, vecBuiltinMathCases)
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinMathFunc(c *C) {
-	testVectorizedBuiltinFunc(c, vecBuiltinMathCases)
+func TestVectorizedBuiltinMathFunc(t *testing.T) {
+	testVectorizedBuiltinFunc(t, vecBuiltinMathCases)
 }
 
-func (s *testEvaluatorSuite) TestVectorizedBuiltinMathFuncForRand(c *C) {
-	testVectorizedBuiltinFuncForRand(c, vecBuiltinMathCases1)
+func TestVectorizedBuiltinMathFuncForRand(t *testing.T) {
+	testVectorizedBuiltinFuncForRand(t, vecBuiltinMathCases1)
 }
 
 func BenchmarkVectorizedBuiltinMathEvalOneVec(b *testing.B) {

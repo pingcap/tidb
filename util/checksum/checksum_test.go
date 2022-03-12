@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -20,30 +21,29 @@ import (
 	"testing"
 
 	encrypt2 "github.com/pingcap/tidb/util/encrypt"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestChecksumReadAt(t *testing.T) {
-	t.Parallel()
 	f := newFakeFile()
 
 	w := newTestBuff("0123456789", 510)
 
 	csw := NewWriter(NewWriter(NewWriter(NewWriter(f))))
 	n1, err := csw.Write(w.Bytes())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	n2, err := csw.Write(w.Bytes())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	err = csw.Close()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	assertReadAt := func(off int64, assertErr error, assertN int, assertString string) {
 		cs := NewReader(NewReader(NewReader(NewReader(f))))
 		r := make([]byte, 10)
 		n, err := cs.ReadAt(r, off)
-		assert.ErrorIs(t, err, assertErr)
-		assert.Equal(t, assertN, n)
-		assert.Equal(t, assertString, string(r))
+		require.ErrorIs(t, err, assertErr)
+		require.Equal(t, assertN, n)
+		require.Equal(t, assertString, string(r))
 	}
 
 	assertReadAt(0, nil, 10, "0123456789")
@@ -55,11 +55,9 @@ func TestChecksumReadAt(t *testing.T) {
 // both the current block and the following block have errors.
 func TestAddOneByte(t *testing.T) {
 	t.Run("unencrypted", func(t *testing.T) {
-		t.Parallel()
 		testAddOneByte(t, false)
 	})
 	t.Run("encrypted", func(t *testing.T) {
-		t.Parallel()
 		testAddOneByte(t, true)
 	})
 }
@@ -87,9 +85,9 @@ func testAddOneByte(t *testing.T, encrypt bool) {
 			break
 		}
 		if i < 5 {
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		} else {
-			assert.ErrorIs(t, err, errChecksumFail)
+			require.ErrorIs(t, err, errChecksumFail)
 		}
 	}
 }
@@ -98,11 +96,9 @@ func testAddOneByte(t *testing.T, encrypt bool) {
 // both the current block and the following block have errors.
 func TestDeleteOneByte(t *testing.T) {
 	t.Run("unencrypted", func(t *testing.T) {
-		t.Parallel()
 		testDeleteOneByte(t, false)
 	})
 	t.Run("encrypted", func(t *testing.T) {
-		t.Parallel()
 		testDeleteOneByte(t, true)
 	})
 }
@@ -130,9 +126,9 @@ func testDeleteOneByte(t *testing.T, encrypt bool) {
 			break
 		}
 		if i < 5 {
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		} else {
-			assert.ErrorIs(t, err, errChecksumFail)
+			require.ErrorIs(t, err, errChecksumFail)
 		}
 	}
 }
@@ -141,11 +137,9 @@ func testDeleteOneByte(t *testing.T, encrypt bool) {
 // only the current block has error.
 func TestModifyOneByte(t *testing.T) {
 	t.Run("unencrypted", func(t *testing.T) {
-		t.Parallel()
 		testModifyOneByte(t, false)
 	})
 	t.Run("encrypted", func(t *testing.T) {
-		t.Parallel()
 		testModifyOneByte(t, true)
 	})
 }
@@ -157,7 +151,7 @@ func testModifyOneByte(t *testing.T, encrypt bool) {
 	fc := func(b []byte, offset int) []byte {
 		if offset < modifyPos && offset+len(b) >= modifyPos {
 			pos := modifyPos - offset
-			b[pos-1] = 255
+			b[pos-1] = b[pos-1] - 1
 		}
 		return b
 	}
@@ -173,9 +167,9 @@ func testModifyOneByte(t *testing.T, encrypt bool) {
 			break
 		}
 		if i != 5 {
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		} else {
-			assert.ErrorIs(t, err, errChecksumFail)
+			require.ErrorIs(t, err, errChecksumFail)
 		}
 	}
 }
@@ -183,11 +177,9 @@ func testModifyOneByte(t *testing.T, encrypt bool) {
 // TestReadEmptyFile ensures that whether encrypted or not, no error will occur.
 func TestReadEmptyFile(t *testing.T) {
 	t.Run("unencrypted", func(t *testing.T) {
-		t.Parallel()
 		testReadEmptyFile(t, false)
 	})
 	t.Run("encrypted", func(t *testing.T) {
-		t.Parallel()
 		testReadEmptyFile(t, true)
 	})
 }
@@ -212,7 +204,7 @@ func testReadEmptyFile(t *testing.T, encrypt bool) {
 		underlying = NewReader(underlying)
 		r := make([]byte, 10)
 		_, err := underlying.ReadAt(r, int64(i*1020))
-		assert.ErrorIs(t, err, io.EOF)
+		require.ErrorIs(t, err, io.EOF)
 	}
 }
 
@@ -220,11 +212,9 @@ func testReadEmptyFile(t *testing.T, encrypt bool) {
 // only the current block has error.
 func TestModifyThreeBytes(t *testing.T) {
 	t.Run("unencrypted", func(t *testing.T) {
-		t.Parallel()
 		testModifyThreeBytes(t, false)
 	})
 	t.Run("encrypted", func(t *testing.T) {
-		t.Parallel()
 		testModifyThreeBytes(t, true)
 	})
 }
@@ -237,9 +227,9 @@ func testModifyThreeBytes(t *testing.T, encrypt bool) {
 		if offset < modifyPos && offset+len(b) >= modifyPos {
 			// modify 3 bytes
 			if len(b) == 1024 {
-				b[200] = 255
-				b[300] = 255
-				b[400] = 255
+				b[200] = b[200] - 1
+				b[300] = b[300] - 1
+				b[400] = b[400] - 1
 			}
 		}
 		return b
@@ -256,9 +246,9 @@ func testModifyThreeBytes(t *testing.T, encrypt bool) {
 			break
 		}
 		if i != 5 {
-			assert.NoError(t, err)
+			require.NoError(t, err)
 		} else {
-			assert.ErrorIs(t, err, errChecksumFail)
+			require.ErrorIs(t, err, errChecksumFail)
 		}
 	}
 }
@@ -269,11 +259,9 @@ func testModifyThreeBytes(t *testing.T, encrypt bool) {
 // 2. Read all data at once.
 func TestReadDifferentBlockSize(t *testing.T) {
 	t.Run("unencrypted", func(t *testing.T) {
-		t.Parallel()
 		testReadDifferentBlockSize(t, false)
 	})
 	t.Run("encrypted", func(t *testing.T) {
-		t.Parallel()
 		testReadDifferentBlockSize(t, true)
 	})
 }
@@ -295,11 +283,11 @@ func testReadDifferentBlockSize(t *testing.T, encrypt bool) {
 
 	w := newTestBuff("0123456789", 510)
 	_, err = underlying.Write(w.Bytes())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	_, err = underlying.Write(w.Bytes())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	err = underlying.Close()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	assertReadAt := assertReadAtFunc(t, encrypt, ctrCipher)
 
@@ -327,11 +315,9 @@ func testReadDifferentBlockSize(t *testing.T, encrypt bool) {
 // 2. Write some block and append some block.
 func TestWriteDifferentBlockSize(t *testing.T) {
 	t.Run("unencrypted", func(t *testing.T) {
-		t.Parallel()
 		testWriteDifferentBlockSize(t, false)
 	})
 	t.Run("encrypted", func(t *testing.T) {
-		t.Parallel()
 		testWriteDifferentBlockSize(t, true)
 	})
 }
@@ -362,28 +348,28 @@ func testWriteDifferentBlockSize(t *testing.T, encrypt bool) {
 
 	// Write all data.
 	_, err = underlying1.Write(w.Bytes())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	err = underlying1.Close()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Write data by 100 bytes one batch.
 	lastPos := 0
 	for i := 100; ; i += 100 {
 		if i < len(w.Bytes()) {
 			_, err = underlying2.Write(w.Bytes()[lastPos:i])
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			lastPos = i
 		} else {
 			_, err = underlying2.Write(w.Bytes()[lastPos:])
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			break
 		}
 	}
 	err = underlying2.Close()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// check two files is same
-	assert.EqualValues(t, f1.buf.Bytes(), f2.buf.Bytes())
+	require.EqualValues(t, f1.buf.Bytes(), f2.buf.Bytes())
 
 	// check data
 	assertReadAt := assertReadAtFunc(t, encrypt, ctrCipher)
@@ -392,42 +378,40 @@ func testWriteDifferentBlockSize(t *testing.T, encrypt bool) {
 }
 
 func TestChecksumWriter(t *testing.T) {
-	t.Parallel()
 	f := newFakeFile()
 
 	buf := newTestBuff("0123456789", 100)
 	// Write 1000 bytes and flush.
 	w := NewWriter(f)
 	n, err := w.Write(buf.Bytes())
-	assert.NoError(t, err)
-	assert.Equal(t, 1000, n)
+	require.NoError(t, err)
+	require.Equal(t, 1000, n)
 
 	err = w.Flush()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	checkFlushedData(t, f, 0, 1000, 1000, nil, buf.Bytes())
 
 	// All data flushed, so no data in cache.
 	cacheOff := w.GetCacheDataOffset()
-	assert.Equal(t, int64(1000), cacheOff)
+	require.Equal(t, int64(1000), cacheOff)
 }
 
 func TestChecksumWriterAutoFlush(t *testing.T) {
-	t.Parallel()
 	f := newFakeFile()
 
 	buf := newTestBuff("0123456789", 102)
 	w := NewWriter(f)
 	n, err := w.Write(buf.Bytes())
-	assert.NoError(t, err)
-	assert.Equal(t, len(buf.Bytes()), n)
+	require.NoError(t, err)
+	require.Equal(t, len(buf.Bytes()), n)
 
 	// This write will trigger flush.
 	n, err = w.Write([]byte("0"))
-	assert.NoError(t, err)
-	assert.Equal(t, 1, n)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
 	checkFlushedData(t, f, 0, 1020, 1020, nil, buf.Bytes())
 	cacheOff := w.GetCacheDataOffset()
-	assert.Equal(t, int64(len(buf.Bytes())), cacheOff)
+	require.Equal(t, int64(len(buf.Bytes())), cacheOff)
 }
 
 func newTestBuff(str string, n int) *bytes.Buffer {
@@ -486,16 +470,16 @@ func assertUnderlyingWrite(t *testing.T, encrypt bool, f io.WriteCloser, fc func
 
 	w := newTestBuff("0123456789", 510)
 	_, err = underlying.Write(w.Bytes())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	_, err = underlying.Write(w.Bytes())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	err = underlying.Close()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	return ctrCipher, false
 }
 
 func underlyingReadAt(f io.ReaderAt, encrypt bool, ctrCipher *encrypt2.CtrCipher, n, off int) error {
-	var underlying io.ReaderAt = f
+	var underlying = f
 	if encrypt {
 		underlying = encrypt2.NewReader(underlying, ctrCipher)
 	}
@@ -508,16 +492,16 @@ func underlyingReadAt(f io.ReaderAt, encrypt bool, ctrCipher *encrypt2.CtrCipher
 
 func assertReadAtFunc(t *testing.T, encrypt bool, ctrCipher *encrypt2.CtrCipher) func(off int64, r []byte, assertErr error, assertN int, assertString string, f io.ReaderAt) {
 	return func(off int64, r []byte, assertErr error, assertN int, assertString string, f io.ReaderAt) {
-		var underlying io.ReaderAt = f
+		var underlying = f
 		if encrypt {
 			underlying = encrypt2.NewReader(underlying, ctrCipher)
 		}
 
 		underlying = NewReader(underlying)
 		n, err := underlying.ReadAt(r, off)
-		assert.ErrorIs(t, err, assertErr)
-		assert.Equal(t, assertN, n)
-		assert.Equal(t, assertString, string(r))
+		require.ErrorIs(t, err, assertErr)
+		require.Equal(t, assertN, n)
+		require.Equal(t, assertString, string(r))
 	}
 }
 
@@ -525,9 +509,9 @@ var checkFlushedData = func(t *testing.T, f io.ReaderAt, off int64, readBufLen i
 	readBuf := make([]byte, readBufLen)
 	r := NewReader(f)
 	n, err := r.ReadAt(readBuf, off)
-	assert.ErrorIs(t, err, assertErr)
-	assert.Equal(t, assertN, n)
-	assert.Equal(t, 0, bytes.Compare(readBuf, assertRes))
+	require.ErrorIs(t, err, assertErr)
+	require.Equal(t, assertN, n)
+	require.Equal(t, 0, bytes.Compare(readBuf, assertRes))
 }
 
 func newFakeFile() *fakeFile {
