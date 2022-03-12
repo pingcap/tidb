@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
@@ -479,10 +480,16 @@ func TestCancelDropColumn(t *testing.T) {
 				checkErr = errors.Trace(err)
 				return
 			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
+			var errs []error
+			if variable.AllowConcurrencyDDL.Load() {
+				ddlTk := testkit.NewTestKit(t, store)
+				errs, err = ddl.CancelConcurrencyJobs(ddlTk.Session(), jobIDs)
+			} else {
+				errs, err = admin.CancelJobs(txn, jobIDs)
+				if err != nil {
+					checkErr = errors.Trace(err)
+					return
+				}
 			}
 			if errs[0] != nil {
 				checkErr = errors.Trace(errs[0])
@@ -583,10 +590,16 @@ func TestCancelDropColumns(t *testing.T) {
 				checkErr = errors.Trace(err)
 				return
 			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
+			var errs []error
+			if variable.AllowConcurrencyDDL.Load() {
+				ddlTk := testkit.NewTestKit(t, store)
+				errs, err = ddl.CancelConcurrencyJobs(ddlTk.Session(), jobIDs)
+			} else {
+				errs, err = admin.CancelJobs(txn, jobIDs)
+				if err != nil {
+					checkErr = errors.Trace(err)
+					return
+				}
 			}
 			if errs[0] != nil {
 				checkErr = errors.Trace(errs[0])
