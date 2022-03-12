@@ -2070,10 +2070,6 @@ func decodeKeyFromString(ctx sessionctx.Context, s string) string {
 		return s
 	}
 	tbl, _ := is.TableByID(tableID)
-	if tbl == nil {
-		sc.AppendWarning(errors.Errorf("table not found when decoding key: %X, tableID: %d", key, tableID))
-		return s
-	}
 	loc := ctx.GetSessionVars().Location()
 	if tablecodec.IsRecordKey(key) {
 		ret, err := decodeRecordKey(key, tableID, tbl, loc)
@@ -2090,7 +2086,7 @@ func decodeKeyFromString(ctx sessionctx.Context, s string) string {
 		}
 		return ret
 	} else if tablecodec.IsTableKey(key) {
-		ret, err := decodeTableKey(key, tableID, tbl, loc)
+		ret, err := decodeTableKey(key, tableID)
 		if err != nil {
 			sc.AppendWarning(err)
 			return s
@@ -2110,7 +2106,7 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 		ret := make(map[string]interface{})
 		ret["table_id"] = strconv.FormatInt(tableID, 10)
 		// When the clustered index is enabled, we should show the PK name.
-		if tbl.Meta().HasClusteredIndex() {
+		if tbl != nil && tbl.Meta().HasClusteredIndex() {
 			ret[tbl.Meta().GetPkName().String()] = handle.IntValue()
 		} else {
 			ret["_tidb_rowid"] = handle.IntValue()
@@ -2245,7 +2241,7 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 	return string(retStr), nil
 }
 
-func decodeTableKey(key []byte, tableID int64, tbl table.Table, loc *time.Location) (string, error) {
+func decodeTableKey(key []byte, tableID int64) (string, error) {
 	ret := map[string]int64{"table_id": tableID}
 	retStr, err := json.Marshal(ret)
 	if err != nil {

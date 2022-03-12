@@ -2886,7 +2886,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	// https://github.com/pingcap/tidb/issues/33015.
 	hexKey = "74800000000000012B5F72800000000000A5D3"
 	sql = fmt.Sprintf("select tidb_decode_key('%s')", hexKey)
-	tk.MustQuery(sql).Check(testkit.Rows(hexKey))
+	tk.MustQuery(sql).Check(testkit.Rows(`{"_tidb_rowid":42451,"table_id":"299"}`))
 
 	// Test the table with the nonclustered index.
 	const rowID = 10
