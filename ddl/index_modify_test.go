@@ -804,10 +804,15 @@ func backgroundExecOnJobUpdatedExported(tk *testkit.TestKit, store kv.Storage, h
 			checkErr = errors.Trace(err)
 			return
 		}
-		errs, err := admin.CancelJobs(txn, jobIDs)
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
+		var errs []error
+		if variable.AllowConcurrencyDDL.Load() {
+			errs, err = ddl.CancelConcurrencyJobs(tk.Session(), jobIDs)
+		} else {
+			errs, err = admin.CancelJobs(txn, jobIDs)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
 		}
 		// It only tests cancel one DDL job.
 		if errs[0] != nil {
@@ -855,12 +860,17 @@ func TestCancelAddIndex1(t *testing.T) {
 				checkErr = errors.Trace(err)
 				return
 			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
+			var errs []error
+			if variable.AllowConcurrencyDDL.Load() {
+				ddlTk := testkit.NewTestKit(t, store)
+				errs, err = ddl.CancelConcurrencyJobs(ddlTk.Session(), jobIDs)
+			} else {
+				errs, err = admin.CancelJobs(txn, jobIDs)
+				if err != nil {
+					checkErr = errors.Trace(err)
+					return
+				}
 			}
-
 			if errs[0] != nil {
 				checkErr = errors.Trace(errs[0])
 				return

@@ -166,6 +166,9 @@ func TestGetDDLJobsIsSort(t *testing.T) {
 }
 
 func TestCancelJobs(t *testing.T) {
+	if variable.AllowConcurrencyDDL.Load() {
+		t.Skip("this test case is for old ddl")
+	}
 	store, clean := newMockStore(t)
 	defer clean()
 
