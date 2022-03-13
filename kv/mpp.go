@@ -92,6 +92,5 @@ type MPPBuildTasksRequest struct {
 	KeyRanges []KeyRange
 	StartTS   uint64
 
-	KeyRangesForPartition [][]KeyRange
-	PartitionIDs          []int64
+	PartitionIDAndRanges []PartitionIDAndRanges
 }

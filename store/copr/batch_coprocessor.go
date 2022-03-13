@@ -523,7 +523,7 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 	return ret
 }
 
-func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, rangess []*KeyRanges, storeType kv.StoreType, mppStoreLastFailTime map[string]time.Time, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64, partitionIDs []int64) ([]*batchCopTask, error) {
+func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, rangesForEachPhysicalTable []*KeyRanges, storeType kv.StoreType, mppStoreLastFailTime map[string]time.Time, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64, partitionIDs []int64) ([]*batchCopTask, error) {
 	cache := store.GetRegionCache()
 	start := time.Now()
 	const cmdType = tikvrpc.CmdBatchCop
@@ -532,7 +532,7 @@ func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, rangess []*KeyRan
 	for {
 		var tasks []*copTask
 		rangesLen = 0
-		for i, ranges := range rangess {
+		for i, ranges := range rangesForEachPhysicalTable {
 			rangesLen += ranges.Len()
 			locations, err := cache.SplitKeyRangesByLocations(bo, ranges)
 			if err != nil {
@@ -540,11 +540,11 @@ func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, rangess []*KeyRan
 			}
 			for _, lo := range locations {
 				tasks = append(tasks, &copTask{
-					region:      lo.Location.Region,
-					ranges:      lo.Ranges,
-					cmdType:     cmdType,
-					storeType:   storeType,
-					partitionID: int64(i),
+					region:         lo.Location.Region,
+					ranges:         lo.Ranges,
+					cmdType:        cmdType,
+					storeType:      storeType,
+					partitionIndex: int64(i),
 				})
 			}
 		}
@@ -571,13 +571,13 @@ func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, rangess []*KeyRan
 			}
 			allStores := cache.GetAllValidTiFlashStores(task.region, rpcCtx.Store)
 			if batchCop, ok := storeTaskMap[rpcCtx.Addr]; ok {
-				batchCop.regionInfos = append(batchCop.regionInfos, RegionInfo{Region: task.region, Meta: rpcCtx.Meta, Ranges: task.ranges, AllStores: allStores, PartitionID: task.partitionID})
+				batchCop.regionInfos = append(batchCop.regionInfos, RegionInfo{Region: task.region, Meta: rpcCtx.Meta, Ranges: task.ranges, AllStores: allStores, PartitionIndex: task.partitionIndex})
 			} else {
 				batchTask := &batchCopTask{
 					storeAddr:   rpcCtx.Addr,
 					cmdType:     cmdType,
 					ctx:         rpcCtx,
-					regionInfos: []RegionInfo{{Region: task.region, Meta: rpcCtx.Meta, Ranges: task.ranges, AllStores: allStores, PartitionID: task.partitionID}},
+					regionInfos: []RegionInfo{{Region: task.region, Meta: rpcCtx.Meta, Ranges: task.ranges, AllStores: allStores, PartitionIndex: task.partitionIndex}},
 				}
 				storeTaskMap[rpcCtx.Addr] = batchTask
 			}
@@ -635,7 +635,7 @@ func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, rangess []*KeyRan
 				}
 				// fill region infos
 				for _, ri := range copTask.regionInfos {
-					tableRegions[ri.PartitionID].Regions = append(tableRegions[ri.PartitionID].Regions,
+					tableRegions[ri.PartitionIndex].Regions = append(tableRegions[ri.PartitionIndex].Regions,
 						ri.toCoprocessorRegionInfo())
 				}
 				// clear empty table region

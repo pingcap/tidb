@@ -3226,7 +3226,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		plannercore.SetMppOrBatchCopForTableScan(v.GetTablePlan())
 		return b.buildMPPGather(v)
 	}
-	if v.BatchCop && b.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+	if v.BatchCop {
 		v.GetTableScan().IsMPPOrBatchCop = true
 	}
 	ret, err := buildNoRangeTableReader(b, v)

@@ -129,23 +129,12 @@ func (p *PhysicalTableReader) GetTableScan() *PhysicalTableScan {
 
 // SetMppOrBatchCopForTableScan set IsMPPOrBatchCop for all TableScan.
 func SetMppOrBatchCopForTableScan(curPlan PhysicalPlan) {
-	for {
-		chCnt := len(curPlan.Children())
-		if chCnt == 0 {
-			if ts, ok := curPlan.(*PhysicalTableScan); ok {
-				ts.IsMPPOrBatchCop = true
-			}
-			return
-		} else if chCnt == 1 {
-			curPlan = curPlan.Children()[0]
-		} else {
-			join, ok := curPlan.(*PhysicalHashJoin)
-			if !ok {
-				return
-			}
-			SetMppOrBatchCopForTableScan(join.children[join.globalChildIndex])
-			curPlan = join.children[1-join.globalChildIndex]
-		}
+	if ts, ok := curPlan.(*PhysicalTableScan); ok {
+		ts.IsMPPOrBatchCop = true
+	}
+	children := curPlan.Children()
+	for _, child := range children {
+		SetMppOrBatchCopForTableScan(child)
 	}
 }
 

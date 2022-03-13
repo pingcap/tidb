@@ -278,7 +278,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		if err != nil {
 			return nil, err
 		}
-		return distsql.NewSerialSelectResults([]distsql.SelectResult{result}), nil
+		return result, nil
 	}
 
 	kvReq, err := e.buildKVReq(ctx, ranges)

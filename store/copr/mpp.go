@@ -64,12 +64,14 @@ func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
 func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest, mppStoreLastFailTime map[string]time.Time, ttl time.Duration) ([]kv.MPPTaskMeta, error) {
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTS)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
-	if req.KeyRangesForPartition != nil {
-		rangess := make([]*KeyRanges, len(req.KeyRangesForPartition))
-		for i, ranges := range req.KeyRangesForPartition {
-			rangess[i] = NewKeyRanges(ranges)
+	if req.PartitionIDAndRanges != nil {
+		rangesForEachPartition := make([]*KeyRanges, len(req.PartitionIDAndRanges))
+		partitionIDs := make([]int64, len(req.PartitionIDAndRanges))
+		for i, p := range req.PartitionIDAndRanges {
+			rangesForEachPartition[i] = NewKeyRanges(p.KeyRanges)
+			partitionIDs[i] = p.ID
 		}
-		tasks, err := buildBatchCopTasks(bo, c.store, rangess, kv.TiFlash, mppStoreLastFailTime, ttl, true, 20, req.PartitionIDs)
+		tasks, err := buildBatchCopTasks(bo, c.store, rangesForEachPartition, kv.TiFlash, mppStoreLastFailTime, ttl, true, 20, partitionIDs)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

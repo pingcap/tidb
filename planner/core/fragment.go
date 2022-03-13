@@ -361,21 +361,23 @@ func (e *mppTaskGenerator) constructMPPTasksForPartitionTable(ctx context.Contex
 	sort.Slice(partitions, func(i, j int) bool {
 		return partitions[i].GetPhysicalID() < partitions[j].GetPhysicalID()
 	})
-	allKVRanges := make([][]kv.KeyRange, 0, len(partitions))
-	allPartitionsIDs := make([]int64, 0, len(partitions))
+
+	partitionIDAndRanges := make([]kv.PartitionIDAndRanges, len(partitions))
+	allPartitionsIDs := make([]int64, len(partitions))
 	// Get region info for each partition
-	for _, p := range partitions {
+	for i, p := range partitions {
 		pid := p.GetPhysicalID()
 		meta := p.Meta()
 		kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && ts.Table.IsCommonHandle, splitedRanges, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		allPartitionsIDs = append(allPartitionsIDs, pid)
-		allKVRanges = append(allKVRanges, kvRanges)
+		partitionIDAndRanges[i].ID = pid
+		partitionIDAndRanges[i].KeyRanges = kvRanges
+		allPartitionsIDs[i] = pid
 	}
 
-	req := &kv.MPPBuildTasksRequest{KeyRangesForPartition: allKVRanges, PartitionIDs: allPartitionsIDs}
+	req := &kv.MPPBuildTasksRequest{PartitionIDAndRanges: partitionIDAndRanges}
 	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, e.ctx.GetSessionVars().MPPStoreLastFailTime, ttl)
 	if err != nil {
 		return nil, errors.Trace(err)
