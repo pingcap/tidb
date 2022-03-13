@@ -1128,12 +1128,7 @@ func testVectorizedEvalOneVec(t *testing.T, vecExprCases vecExprBenchCases) {
 			output2 := output.CopyConstruct()
 			require.NoErrorf(t, evalOneVec(ctx, expr, input, output, 0), "func: %v, case: %+v", funcName, testCase)
 			it := chunk.NewIterator4Chunk(input)
-			if err := evalOneColumn(ctx, expr, it, output2, 0); err == nil {
-				require.NoErrorf(t, evalOneColumn(ctx, expr, it, output2, 0), "func: %v, case: %+v", funcName, testCase)
-			} else {
-				require.True(t, terror.ErrorEqual(err, errWrongValueForType))
-				return
-			}
+			require.NoErrorf(t, evalOneColumn(ctx, expr, it, output2, 0), "func: %v, case: %+v", funcName, testCase)
 
 			c1, c2 := output.Column(0), output2.Column(0)
 			switch expr.GetType().EvalType() {
@@ -1387,11 +1382,6 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 				i64s := output.Int64s()
 				for row := it.Begin(); row != it.End(); row = it.Next() {
 					val, isNull, err := baseFunc.evalInt(row)
-					if err != nil {
-						i++
-						require.True(t, terror.ErrorEqual(err, errWrongValueForType))
-						continue
-					}
 					require.NoErrorf(t, err, commentf(i))
 					require.Equal(t, output.IsNull(i), isNull, commentf(i))
 					if !isNull {

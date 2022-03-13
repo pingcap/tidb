@@ -57,10 +57,11 @@ func TestInetAton(t *testing.T) {
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		if tt["Expected"][0].IsNull() && !tt["Input"][0].IsNull() {
-			d.SetNull()
 			require.True(t, terror.ErrorEqual(err, errWrongValueForType))
+		} else {
+			require.NoError(t, err)
+			testutil.DatumEqual(t, tt["Expected"][0], d)
 		}
-		testutil.DatumEqual(t, tt["Expected"][0], d)
 	}
 }
 
@@ -301,10 +302,11 @@ func TestInet6AtoN(t *testing.T) {
 		result, err := evalBuiltinFunc(f, chunk.Row{})
 		expect := types.NewDatum(test.expect)
 		if expect.IsNull() {
-			result.SetNull()
 			require.True(t, terror.ErrorEqual(err, errWrongValueForType))
+		} else {
+			require.NoError(t, err)
+			testutil.DatumEqual(t, expect, result)
 		}
-		testutil.DatumEqual(t, expect, result)
 	}
 
 	var argNull types.Datum
