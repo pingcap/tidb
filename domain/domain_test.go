@@ -46,6 +46,9 @@ import (
 )
 
 func TestInfo(t *testing.T) {
+	if variable.AllowConcurrencyDDL.Load() {
+		t.Skip("it is for old ddl, which is not safe for concurrent DDL")
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
@@ -156,6 +159,9 @@ func TestInfo(t *testing.T) {
 }
 
 func TestDomain(t *testing.T) {
+	if variable.AllowConcurrencyDDL.Load() {
+		t.Skip("it is for old ddl, which is not safe for concurrent DDL")
+	}
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 
