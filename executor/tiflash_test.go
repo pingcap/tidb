@@ -1142,15 +1142,17 @@ func TestForbidTiFlashIfExtraPhysTableIDIsNeeded(t *testing.T) {
 	tk.MustExec("rollback")
 }
 
-func (s *tiflashTestSuite) TestTiflashPartitionTableScan(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestTiflashPartitionTableScan(t *testing.T) {
+	store, clean := createTiFlashStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(\n    a int,\n    primary key(a)\n) partition by range(a) (\n    partition p1 values less than (10),\n    partition p2 values less than (20),\n    partition p3 values less than (30),\n    partition p4 values less than (40),\n    partition p5 values less than (50)\n);")
 	tk.MustExec("alter table t set tiflash replica 1")
-	tb := testGetTableByName(c, tk.Se, "test", "t")
-	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
-	c.Assert(err, IsNil)
+	tb := tk.GetTableByName("test", "t")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
 	time.Sleep(2 * time.Second)
 	tk.MustExec("insert into t values(1),(11),(21),(31),(41);")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
