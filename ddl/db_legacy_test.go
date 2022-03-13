@@ -510,10 +510,10 @@ func (s *testDBSuite5) TestCancelTruncateTable(c *C) {
 				errs, err = ddl.CancelConcurrencyJobs(ddlTk.Se, jobIDs)
 			} else {
 				errs, err = admin.CancelJobs(txn, jobIDs)
-				if err != nil {
-					checkErr = errors.Trace(err)
-					return
-				}
+			}
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
 			}
 			if errs[0] != nil {
 				checkErr = errors.Trace(errs[0])

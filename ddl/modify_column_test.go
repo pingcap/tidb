@@ -953,10 +953,10 @@ func TestModifyColumnRollBack(t *testing.T) {
 			errs, err = ddl.CancelConcurrencyJobs(ddlTk.Session(), jobIDs)
 		} else {
 			errs, err = admin.CancelJobs(txn, jobIDs)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
+		}
+		if err != nil {
+			checkErr = errors.Trace(err)
+			return
 		}
 		// It only tests cancel one DDL job.
 		if errs[0] != nil {

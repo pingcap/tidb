@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
@@ -88,7 +89,13 @@ func TestCancelRenameIndex(t *testing.T) {
 				checkErr = errors.Trace(err)
 				return
 			}
-			errs, err := admin.CancelJobs(txn, jobIDs)
+			var errs []error
+			if variable.AllowConcurrencyDDL.Load() {
+				ddlTk := testkit.NewTestKit(t, store)
+				errs, err = ddl.CancelConcurrencyJobs(ddlTk.Session(), jobIDs)
+			} else {
+				errs, err = admin.CancelJobs(txn, jobIDs)
+			}
 			if err != nil {
 				checkErr = errors.Trace(err)
 				return
