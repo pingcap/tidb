@@ -265,6 +265,7 @@ func (s *testSerialDBSuite) TestWriteReorgForColumnTypeChangeOnAmendTxn(c *C) {
 		if retErr == nil {
 			c.Assert(checkErr, IsNil)
 		} else {
+			c.Assert(checkErr, NotNil)
 			c.Assert(strings.Contains(checkErr.Error(), retErr.Error()), IsTrue)
 		}
 		tk.MustQuery("select * from t1;").Check(testkit.Rows(retStrs...))

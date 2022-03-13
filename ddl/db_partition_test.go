@@ -2909,7 +2909,12 @@ func backgroundExecOnJobUpdatedExportedT(tk *testkit.TestKit, store kv.Storage, 
 			checkErr = errors.Trace(err)
 			return
 		}
-		errs, err := admin.CancelJobs(txn, jobIDs)
+		var errs []error
+		if variable.AllowConcurrencyDDL.Load() {
+			errs, err = ddl.CancelConcurrencyJobs(tk.Session(), jobIDs)
+		} else {
+			errs, err = admin.CancelJobs(txn, jobIDs)
+		}
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return
