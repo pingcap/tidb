@@ -438,8 +438,12 @@ func testCancelDropIndex(c *C, store kv.Storage, d ddl.DDL, idxName, addIdxSQL, 
 			}
 			var errs []error
 			if variable.AllowConcurrencyDDL.Load() {
-				ddlTk := testkit.NewTestKit(c, store)
-				errs, err = ddl.CancelConcurrencyJobs(ddlTk.Se, jobIDs)
+				se, err := session.CreateSession4Test(store)
+				if err != nil {
+					checkErr = errors.Trace(err)
+					return
+				}
+				errs, err = ddl.CancelConcurrencyJobs(se, jobIDs)
 			} else {
 				errs, err = admin.CancelJobs(txn, jobIDs)
 			}
