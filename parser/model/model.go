@@ -860,7 +860,7 @@ func (pi *PartitionInfo) GetNameByID(id int64) string {
 	// see https://github.com/pingcap/parser/pull/1072 for the benchmark.
 	for i := range definitions {
 		if id == definitions[i].ID {
-			return definitions[i].Name.L
+			return definitions[i].Name.O
 		}
 	}
 	return ""
@@ -1200,6 +1200,13 @@ type PolicyInfo struct {
 	State SchemaState `json:"state"`
 }
 
+func (p *PolicyInfo) Clone() *PolicyInfo {
+	var cloned PolicyInfo
+	cloned = *p
+	cloned.PlacementSettings = p.PlacementSettings.Clone()
+	return &cloned
+}
+
 func writeSettingItemToBuilder(sb *strings.Builder, item string) {
 	if sb.Len() != 0 {
 		sb.WriteString(" ")
@@ -1254,6 +1261,12 @@ func (p *PlacementSettings) String() string {
 	}
 
 	return sb.String()
+}
+
+func (p *PlacementSettings) Clone() *PlacementSettings {
+	var cloned PlacementSettings
+	cloned = *p
+	return &cloned
 }
 
 type StatsOptions struct {

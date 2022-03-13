@@ -16,7 +16,6 @@ package core
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -186,17 +185,6 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 		tsExec.TableId = p.physicalTableID
 	}
 	executorID := ""
-	if storeType == kv.TiFlash && p.IsGlobalRead {
-		tsExec.NextReadEngine = tipb.EngineType_TiFlash
-		splitedRanges, _ := distsql.SplitRangesAcrossInt64Boundary(p.Ranges, false, false, p.Table.IsCommonHandle)
-		ranges, err := distsql.TableHandleRangesToKVRanges(ctx.GetSessionVars().StmtCtx, []int64{tsExec.TableId}, p.Table.IsCommonHandle, splitedRanges, nil)
-		if err != nil {
-			return nil, err
-		}
-		for _, keyRange := range ranges {
-			tsExec.Ranges = append(tsExec.Ranges, tipb.KeyRange{Low: keyRange.StartKey, High: keyRange.EndKey})
-		}
-	}
 	if storeType == kv.TiFlash {
 		executorID = p.ExplainID().String()
 	}

@@ -605,21 +605,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		}
 		var currentCandidate *candidatePath
 		if path.IsTablePath() {
-			if path.StoreType == kv.TiFlash {
-				if path.IsTiFlashGlobalRead && prop.TaskTp == property.CopTiFlashGlobalReadTaskType {
-					currentCandidate = ds.getTableCandidate(path, prop)
-				}
-				if !path.IsTiFlashGlobalRead && prop.TaskTp != property.CopTiFlashGlobalReadTaskType {
-					currentCandidate = ds.getTableCandidate(path, prop)
-				}
-			} else {
-				if !path.IsTiFlashGlobalRead && !prop.IsFlashProp() {
-					currentCandidate = ds.getTableCandidate(path, prop)
-				}
-			}
-			if currentCandidate == nil {
-				continue
-			}
+			currentCandidate = ds.getTableCandidate(path, prop)
 		} else {
 			if len(path.AccessConds) > 0 || !prop.IsEmpty() || path.Forced || path.IsSingleScan {
 				// We will use index to generate physical plan if any of the following conditions is satisfied:
@@ -2110,7 +2096,6 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		Ranges:          path.Ranges,
 		AccessCondition: path.AccessConds,
 		StoreType:       path.StoreType,
-		IsGlobalRead:    path.IsTiFlashGlobalRead,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.filterCondition = make([]expression.Expression, len(path.TableFilters))
 	copy(ts.filterCondition, path.TableFilters)
@@ -2160,9 +2145,6 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	}
 	sessVars := ds.ctx.GetSessionVars()
 	cost := rowCount * rowSize * sessVars.GetScanFactor(ds.tableInfo)
-	if ts.IsGlobalRead {
-		cost += rowCount * sessVars.GetNetworkFactor(ds.tableInfo) * rowSize
-	}
 	if isMatchProp {
 		ts.Desc = prop.SortItems[0].Desc
 		if prop.SortItems[0].Desc && prop.ExpectedCnt >= smallScanThreshold {
