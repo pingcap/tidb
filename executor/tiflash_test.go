@@ -142,7 +142,6 @@ func TestReadUnsigedPK(t *testing.T) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
-	tk.MustExec("set @@session.tidb_opt_broadcast_join=ON")
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
@@ -345,7 +344,6 @@ func TestTiFlashPartitionTableShuffledHashJoin(t *testing.T) {
 	}
 
 	tk.MustExec("SET tidb_enforce_mpp=1")
-	tk.MustExec("SET tidb_opt_broadcast_join=0")
 	tk.MustExec("SET tidb_broadcast_join_threshold_count=0")
 	tk.MustExec("SET tidb_broadcast_join_threshold_size=0")
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
@@ -489,7 +487,6 @@ func TestPartitionTable(t *testing.T) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
-	tk.MustExec("set @@session.tidb_opt_broadcast_join=ON")
 	// test if it is really work.
 	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(8)`)
 	tk.MustQuery("select count(*) from t1 , t where t1.a = t.a").Check(testkit.Rows("4"))
@@ -1025,7 +1022,6 @@ func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
 	}
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
 	tk.MustExec("set @@session.tidb_enforce_mpp=1")
-	tk.MustExec("set @@session.tidb_opt_broadcast_join=ON")
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
