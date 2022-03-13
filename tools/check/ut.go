@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -252,7 +253,11 @@ func cmdRun(args ...string) bool {
 		// filter the test case to run
 		tmp := tasks[:0]
 		for _, task := range tasks {
-			if strings.Contains(task.test, args[1]) {
+			r, err := regexp.Compile(args[1])
+			if err != nil {
+				fmt.Println("regex error", err)
+			}
+			if r.MatchString(task.test) {
 				tmp = append(tmp, task)
 			}
 		}
