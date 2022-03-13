@@ -61,7 +61,6 @@ import (
 
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -319,21 +318,28 @@ func (s *session) cleanRetryInfo() {
 
 	planCacheEnabled := plannercore.PreparedPlanCacheEnabled()
 	var cacheKey kvcache.Key
+	var err error
 	var preparedAst *ast.Prepared
+	var stmtText, stmtDB string
 	if planCacheEnabled {
 		firstStmtID := retryInfo.DroppedPreparedStmtIDs[0]
 		if preparedPointer, ok := s.sessionVars.PreparedStmts[firstStmtID]; ok {
 			preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
 			if ok {
 				preparedAst = preparedObj.PreparedAst
-				cacheKey = plannercore.NewPlanCacheKey(s.sessionVars, firstStmtID, preparedAst.SchemaVersion)
+				stmtText, stmtDB = preparedObj.StmtText, preparedObj.StmtDB
+				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedAst.SchemaVersion)
+				if err != nil {
+					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
+					return
+				}
 			}
 		}
 	}
 	for i, stmtID := range retryInfo.DroppedPreparedStmtIDs {
 		if planCacheEnabled {
 			if i > 0 && preparedAst != nil {
-				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtID, preparedAst.SchemaVersion, s.sessionVars.IsolationReadEngines)
+				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtText, preparedAst.SchemaVersion, s.sessionVars.IsolationReadEngines)
 			}
 			s.PreparedPlanCache().Delete(cacheKey)
 		}
@@ -1310,7 +1316,13 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 	}
 	// It might have been written from an earlier TiDB version, so we should do type validation
 	// See https://github.com/pingcap/tidb/issues/30255 for why we don't do full validation.
-	return sv.ValidateFromType(s.GetSessionVars(), sysVar, variable.ScopeGlobal)
+	// If validation fails, we should return the default value:
+	// See: https://github.com/pingcap/tidb/pull/31566
+	sysVar, err = sv.ValidateFromType(s.GetSessionVars(), sysVar, variable.ScopeGlobal)
+	if err != nil {
+		return sv.Value, nil
+	}
+	return sysVar, nil
 }
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
@@ -3300,7 +3312,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 					errMsg = fmt.Sprintf("table %v's partition %v doesn't have placement policies with txn_scope %v",
 						tableName, partitionName, txnScope)
 				}
-				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
+				err = dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
 				break
 			}
 			dcLocation, ok := bundle.GetLeaderDC(placement.DCLabelKey)
@@ -3309,7 +3321,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 				if len(partitionName) > 0 {
 					errMsg = fmt.Sprintf("table %v's partition %v's leader placement policy is not defined", tableName, partitionName)
 				}
-				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
+				err = dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
 				break
 			}
 			if dcLocation != txnScope {
@@ -3318,7 +3330,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 					errMsg = fmt.Sprintf("table %v's partition %v's leader location %v is out of txn_scope %v",
 						tableName, partitionName, dcLocation, txnScope)
 				}
-				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
+				err = dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
 				break
 			}
 			// FIXME: currently we assume the physicalTableID is the partition ID. In future, we should consider the situation
@@ -3329,7 +3341,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 				tblInfo := tbl.Meta()
 				state := tblInfo.Partition.GetStateByID(partitionID)
 				if state == model.StateGlobalTxnOnly {
-					err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+					err = dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
 						fmt.Sprintf("partition %s of table %s can not be written by local transactions when its placement policy is being altered",
 							tblInfo.Name, partitionDefInfo.Name))
 					break
