@@ -438,7 +438,8 @@ func testCancelDropIndex(c *C, store kv.Storage, d ddl.DDL, idxName, addIdxSQL, 
 			}
 			var errs []error
 			if variable.AllowConcurrencyDDL.Load() {
-				se, err := session.CreateSession4Test(store)
+				var se session.Session
+				se, err = session.CreateSession4Test(store)
 				if err != nil {
 					checkErr = errors.Trace(err)
 					return
@@ -518,7 +519,8 @@ func (s *testDBSuite5) TestCancelTruncateTable(c *C) {
 			}
 			var errs []error
 			if variable.AllowConcurrencyDDL.Load() {
-				se, err := session.CreateSession4Test(s.store)
+				var se session.Session
+				se, err = session.CreateSession4Test(s.store)
 				if err != nil {
 					checkErr = errors.Trace(err)
 					return
