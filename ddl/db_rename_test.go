@@ -105,7 +105,7 @@ func TestCancelRenameIndex(t *testing.T) {
 	tk.MustGetErrMsg("alter table t rename index idx_c2 to idx_c3", "[ddl:8214]Cancelled DDL job")
 	require.NoError(t, checkErr)
 	dom.DDL().SetHook(originalHook)
-	tt := tk.GetTableByName("test", "t")
+	tt := testutil.GetTableByName(t, tk, "test", "t")
 	for _, idx := range tt.Indices() {
 		require.False(t, strings.EqualFold(idx.Meta().Name.L, "idx_c3"))
 	}

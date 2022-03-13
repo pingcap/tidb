@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
@@ -324,7 +325,7 @@ func TestIssue23473(t *testing.T) {
 	tk.MustExec("create table t_23473 (k int primary key, v int)")
 	tk.MustExec("alter table t_23473 change column k k bigint")
 
-	tbl := tk.GetTableByName("test", "t_23473")
+	tbl := testutil.GetTableByName(t, tk, "test", "t_23473")
 	require.True(t, mysql.HasNoDefaultValueFlag(tbl.Cols()[0].Flag))
 }
 

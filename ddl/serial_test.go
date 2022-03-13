@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
@@ -171,7 +172,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	re := tk.MustQuery("show table t1 regions")
 	rows := re.Rows()
 	require.Len(t, rows, 3)
-	tbl := tk.GetTableByName("test", "t1")
+	tbl := testutil.GetTableByName(t, tk, "test", "t1")
 	partitionDef := tbl.Meta().GetPartitionInfo().Definitions
 	require.Regexp(t, fmt.Sprintf("t_%d_.*", partitionDef[0].ID), rows[0][1])
 	require.Regexp(t, fmt.Sprintf("t_%d_.*", partitionDef[1].ID), rows[1][1])
@@ -186,7 +187,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	rows = re.Rows()
 	// Table t2 which create like t_pre should have 4 regions now.
 	require.Len(t, rows, 4)
-	tbl = tk.GetTableByName("test", "t2")
+	tbl = testutil.GetTableByName(t, tk, "test", "t2")
 	require.Equal(t, fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID), rows[1][1])
 	require.Equal(t, fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID), rows[2][1])
 	require.Equal(t, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID), rows[3][1])
@@ -195,7 +196,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	re = tk.MustQuery("show table t2 regions")
 	rows = re.Rows()
 	require.Equal(t, 4, len(rows))
-	tbl = tk.GetTableByName("test", "t2")
+	tbl = testutil.GetTableByName(t, tk, "test", "t2")
 	require.Equal(t, fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID), rows[1][1])
 	require.Equal(t, fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID), rows[2][1])
 	require.Equal(t, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID), rows[3][1])
@@ -834,7 +835,7 @@ func TestTableLocksEnable(t *testing.T) {
 
 	tk.MustExec("lock tables t1 write")
 	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1235 LOCK TABLES is not supported. To enable this experimental feature, set 'enable-table-lock' in the configuration file."))
-	tbl := tk.GetTableByName("test", "t1")
+	tbl := testutil.GetTableByName(t, tk, "test", "t1")
 	dom := domain.GetDomain(tk.Session())
 	require.NoError(t, dom.Reload())
 	require.Nil(t, tbl.Meta().Lock)
@@ -1091,7 +1092,7 @@ func TestAutoRandomWithPreSplitRegion(t *testing.T) {
 	re := tk.MustQuery("show table t regions")
 	rows := re.Rows()
 	require.Len(t, rows, 4)
-	tbl := tk.GetTableByName("auto_random_db", "t")
+	tbl := testutil.GetTableByName(t, tk, "auto_random_db", "t")
 	require.Equal(t, fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID), rows[1][1])
 	require.Equal(t, fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID), rows[2][1])
 	require.Equal(t, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID), rows[3][1])

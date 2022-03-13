@@ -686,7 +686,7 @@ func TestTableLocksLostCommit(t *testing.T) {
 }
 
 func checkTableLock(t *testing.T, tk *testkit.TestKit, dbName, tableName string, lockTp model.TableLockType) {
-	tb := tk.GetTableByName(dbName, tableName)
+	tb := testutil.GetTableByName(t, tk, dbName, tableName)
 	dom := domain.GetDomain(tk.Session())
 	err := dom.Reload()
 	require.NoError(t, err)

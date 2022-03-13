@@ -24,14 +24,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/assert"
@@ -371,35 +367,7 @@ func (tk *TestKit) MustNoGlobalStats(table string) bool {
 	return true
 }
 
-// GetTableByName gets table by name for test.
-func (tk *TestKit) GetTableByName(db, table string) table.Table {
-	dom := domain.GetDomain(tk.Session())
-	// Make sure the table schema is the new schema.
-	tk.require.NoError(dom.Reload())
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
-	tk.require.NoError(err)
-	return tbl
-}
-
 // CheckLastMessage checks last message after executing MustExec
 func (tk *TestKit) CheckLastMessage(msg string) {
 	tk.require.Equal(tk.Session().LastMessage(), msg)
-}
-
-// GetModifyColumn is used to get the changed column name after ALTER TABLE.
-func (tk *TestKit) GetModifyColumn(db, tbl, colName string, allColumn bool) *table.Column {
-	t := tk.GetTableByName(db, tbl)
-	colName = strings.ToLower(colName)
-	var cols []*table.Column
-	if allColumn {
-		cols = t.(*tables.TableCommon).Columns
-	} else {
-		cols = t.Cols()
-	}
-	for _, col := range cols {
-		if col.Name.L == colName {
-			return col
-		}
-	}
-	return nil
 }
