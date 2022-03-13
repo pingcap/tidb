@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
-	"github.com/pingcap/tidb/ddl/util"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
@@ -158,15 +158,15 @@ func (s *tiflashContext) CheckFlashback(tk *testkit.TestKit, t *testing.T) {
 }
 
 func TempDisableEmulatorGC() func() {
-	ori := util.IsEmulatorGCEnable()
+	ori := ddlutil.IsEmulatorGCEnable()
 	f := func() {
 		if ori {
-			util.EmulatorGCEnable()
+			ddlutil.EmulatorGCEnable()
 		} else {
-			util.EmulatorGCDisable()
+			ddlutil.EmulatorGCDisable()
 		}
 	}
-	util.EmulatorGCDisable()
+	ddlutil.EmulatorGCDisable()
 	return f
 }
 
@@ -200,9 +200,8 @@ func TestTiFlashNoRedundantPDRules(t *testing.T) {
 	// Disable emulator GC, otherwise delete range will be automatically called.
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed", `return`))
-	defer func() {
-		failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed")
-	}()
+	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed"))
+
 	fCancelPD := s.SetPdLoop(10000)
 	defer fCancelPD()
 
