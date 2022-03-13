@@ -36,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/testutil"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/stretchr/testify/require"
 )
 
@@ -604,7 +604,7 @@ func TestCreateTableWithPlacementPolicy(t *testing.T) {
 	require.Equal(t, "y", policyY.Name.L)
 	require.Equal(t, true, policyY.ID != 0)
 
-	tbl := testutil.GetTableByName(t, tk, "test", "t")
+	tbl := external.GetTableByName(t, tk, "test", "t")
 	require.NotNil(t, tbl)
 	require.NotNil(t, tbl.Meta().PlacementPolicyRef)
 	require.Equal(t, "x", tbl.Meta().PlacementPolicyRef.Name.L)
@@ -612,7 +612,7 @@ func TestCreateTableWithPlacementPolicy(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 
 	checkPartitionTableFunc := func(tblName string) {
-		tbl = testutil.GetTableByName(t, tk, "test", tblName)
+		tbl = external.GetTableByName(t, tk, "test", tblName)
 		require.NotNil(t, tbl)
 		require.NotNil(t, tbl.Meta().PlacementPolicyRef)
 		require.Equal(t, "x", tbl.Meta().PlacementPolicyRef.Name.L)
@@ -639,7 +639,7 @@ func TestCreateTableWithPlacementPolicy(t *testing.T) {
 	checkPartitionTableFunc("t_list_p")
 	tk.MustExec("drop table if exists t_list_p")
 
-	tbl = testutil.GetTableByName(t, tk, "test", "t_hash_p")
+	tbl = external.GetTableByName(t, tk, "test", "t_hash_p")
 	require.NotNil(t, tbl)
 	require.NotNil(t, tbl.Meta().PlacementPolicyRef)
 	require.Equal(t, "x", tbl.Meta().PlacementPolicyRef.Name.L)
@@ -892,7 +892,7 @@ func TestPolicyCacheAndPolicyDependency(t *testing.T) {
 	tk.MustExec("create table t (a int) placement policy \"x\"")
 	defer tk.MustExec("drop table if exists t")
 	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, TIDB_PLACEMENT_POLICY_NAME FROM information_schema.Tables WHERE TABLE_SCHEMA='test' AND TABLE_NAME = 't'").Check(testkit.Rows(`def test t BASE TABLE x`))
-	tbl := testutil.GetTableByName(t, tk, "test", "t")
+	tbl := external.GetTableByName(t, tk, "test", "t")
 
 	// Test policy dependency cache.
 	dependencies := testGetPolicyDependency(store, "x")
@@ -904,7 +904,7 @@ func TestPolicyCacheAndPolicyDependency(t *testing.T) {
 	tk.MustExec("create table t2 (a int) placement policy \"x\"")
 	defer tk.MustExec("drop table if exists t2")
 	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, TIDB_PLACEMENT_POLICY_NAME FROM information_schema.Tables WHERE TABLE_SCHEMA='test' AND TABLE_NAME = 't'").Check(testkit.Rows(`def test t BASE TABLE x`))
-	tbl2 := testutil.GetTableByName(t, tk, "test", "t2")
+	tbl2 := external.GetTableByName(t, tk, "test", "t2")
 
 	dependencies = testGetPolicyDependency(store, "x")
 	require.NotNil(t, dependencies)

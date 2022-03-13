@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/testutil"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
@@ -745,7 +745,7 @@ func TestTiFlashFallback(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int not null primary key, b int not null)")
 	tk.MustExec("alter table t set tiflash replica 1")
-	tb := testutil.GetTableByName(t, tk, "test", "t")
+	tb := external.GetTableByName(t, tk, "test", "t")
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 

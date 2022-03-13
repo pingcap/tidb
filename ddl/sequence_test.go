@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/testutil"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
@@ -66,7 +66,7 @@ func TestCreateSequence(t *testing.T) {
 	_, err := tk.Exec("create sequence seq comment=\"test\"")
 	require.NoError(t, err)
 
-	sequenceTable := testutil.GetTableByName(t, tk, "test", "seq")
+	sequenceTable := external.GetTableByName(t, tk, "test", "seq")
 
 	require.Equal(t, true, sequenceTable.Meta().IsSequence())
 	require.Equal(t, model.DefaultSequenceIncrementValue, sequenceTable.Meta().Sequence.Increment)
@@ -476,7 +476,7 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustQuery("select setval(seq, 20)").Check(testkit.Rows("20"))
 	// the next value will not be base on next value.
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("25"))
-	sequenceTable := testutil.GetTableByName(t, tk, "test", "seq")
+	sequenceTable := external.GetTableByName(t, tk, "test", "seq")
 	tc, ok := sequenceTable.(*tables.TableCommon)
 	require.Equal(t, true, ok)
 	_, end, round := tc.GetSequenceCommon().GetSequenceBaseEndRound()
@@ -486,7 +486,7 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustQuery("select setval(seq, 95)").Check(testkit.Rows("95"))
 	// make sequence alloc the next batch.
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("1"))
-	sequenceTable = testutil.GetTableByName(t, tk, "test", "seq")
+	sequenceTable = external.GetTableByName(t, tk, "test", "seq")
 	tc, ok = sequenceTable.(*tables.TableCommon)
 	require.Equal(t, true, ok)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
@@ -501,7 +501,7 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustQuery("select setval(seq, -20)").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select setval(seq, 20)").Check(testkit.Rows("20"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("-10"))
-	sequenceTable = testutil.GetTableByName(t, tk, "test", "seq")
+	sequenceTable = external.GetTableByName(t, tk, "test", "seq")
 	tc, ok = sequenceTable.(*tables.TableCommon)
 	require.Equal(t, true, ok)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
@@ -512,7 +512,7 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq increment -3 start 5 maxvalue 10 minvalue -10 cache 3 cycle")
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("5"))
-	sequenceTable = testutil.GetTableByName(t, tk, "test", "seq")
+	sequenceTable = external.GetTableByName(t, tk, "test", "seq")
 	tc, ok = sequenceTable.(*tables.TableCommon)
 	require.Equal(t, true, ok)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
@@ -521,7 +521,7 @@ func TestSequenceFunction(t *testing.T) {
 	// exhausted the sequence first cache batch.
 	tk.MustQuery("select setval(seq, -2)").Check(testkit.Rows("-2"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("-4"))
-	sequenceTable = testutil.GetTableByName(t, tk, "test", "seq")
+	sequenceTable = external.GetTableByName(t, tk, "test", "seq")
 	tc, ok = sequenceTable.(*tables.TableCommon)
 	require.Equal(t, true, ok)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
@@ -530,7 +530,7 @@ func TestSequenceFunction(t *testing.T) {
 	// exhausted the sequence second cache batch.
 	tk.MustQuery("select setval(seq, -10)").Check(testkit.Rows("-10"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("10"))
-	sequenceTable = testutil.GetTableByName(t, tk, "test", "seq")
+	sequenceTable = external.GetTableByName(t, tk, "test", "seq")
 	tc, ok = sequenceTable.(*tables.TableCommon)
 	require.Equal(t, true, ok)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
@@ -547,7 +547,7 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustQuery("select setval(seq, 20)").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select setval(seq, -20)").Check(testkit.Rows("-20"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("10"))
-	sequenceTable = testutil.GetTableByName(t, tk, "test", "seq")
+	sequenceTable = external.GetTableByName(t, tk, "test", "seq")
 	tc, ok = sequenceTable.(*tables.TableCommon)
 	require.Equal(t, true, ok)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
@@ -575,7 +575,7 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustExec("create sequence seq increment 3 start 3 maxvalue 14 cache 3 cycle")
 	tk.MustQuery("select lastval(seq)").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("3"))
-	sequenceTable = testutil.GetTableByName(t, tk, "test", "seq")
+	sequenceTable = external.GetTableByName(t, tk, "test", "seq")
 	tc, ok = sequenceTable.(*tables.TableCommon)
 	require.Equal(t, true, ok)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
@@ -586,7 +586,7 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustQuery("select lastval(seq)").Check(testkit.Rows("3"))
 	// trigger the next sequence cache.
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("12"))
-	sequenceTable = testutil.GetTableByName(t, tk, "test", "seq")
+	sequenceTable = external.GetTableByName(t, tk, "test", "seq")
 	tc, ok = sequenceTable.(*tables.TableCommon)
 	require.Equal(t, true, ok)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
@@ -597,7 +597,7 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustQuery("select lastval(seq)").Check(testkit.Rows("12"))
 	// trigger the next sequence cache.
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("1"))
-	sequenceTable = testutil.GetTableByName(t, tk, "test", "seq")
+	sequenceTable = external.GetTableByName(t, tk, "test", "seq")
 	tc, ok = sequenceTable.(*tables.TableCommon)
 	require.Equal(t, true, ok)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
@@ -610,7 +610,7 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustExec("create sequence seq increment -3 start -2 maxvalue 10 minvalue -10 cache 3 cycle")
 	tk.MustQuery("select lastval(seq)").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("-2"))
-	sequenceTable = testutil.GetTableByName(t, tk, "test", "seq")
+	sequenceTable = external.GetTableByName(t, tk, "test", "seq")
 	tc, ok = sequenceTable.(*tables.TableCommon)
 	require.Equal(t, true, ok)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
@@ -620,7 +620,7 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustQuery("select setval(seq, -8)").Check(testkit.Rows("-8"))
 	tk.MustQuery("select lastval(seq)").Check(testkit.Rows("-2"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("10"))
-	sequenceTable = testutil.GetTableByName(t, tk, "test", "seq")
+	sequenceTable = external.GetTableByName(t, tk, "test", "seq")
 	tc, ok = sequenceTable.(*tables.TableCommon)
 	require.Equal(t, true, ok)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
@@ -633,7 +633,7 @@ func TestSequenceFunction(t *testing.T) {
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("1"))
 	tk.MustQuery("select setval(seq, -8)").Check(testkit.Rows("-8"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("-9"))
-	sequenceTable = testutil.GetTableByName(t, tk, "test", "seq")
+	sequenceTable = external.GetTableByName(t, tk, "test", "seq")
 	tc, ok = sequenceTable.(*tables.TableCommon)
 	require.Equal(t, true, ok)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
