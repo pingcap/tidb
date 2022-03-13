@@ -219,14 +219,6 @@ func (s FastIntSet) largeToSmall() (small uint64, otherValues bool) {
 	return s.small, s.large.Min() < 0 || s.large.Max() >= smallCutOff
 }
 
-// println is just used for debug.
-func (s FastIntSet) println() {
-	for i, ok := s.Next(0); ok; i, ok = s.Next(i + 1) {
-		fmt.Print(i, " ")
-	}
-	fmt.Println()
-}
-
 // *************************************************************************
 // *                            Logic Operators                            *
 // *************************************************************************
