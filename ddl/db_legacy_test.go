@@ -514,8 +514,12 @@ func (s *testDBSuite5) TestCancelTruncateTable(c *C) {
 			}
 			var errs []error
 			if variable.AllowConcurrencyDDL.Load() {
-				ddlTk := testkit.NewTestKit(c, s.store)
-				errs, err = ddl.CancelConcurrencyJobs(ddlTk.Se, jobIDs)
+				se, err := session.CreateSession4Test(s.store)
+				if err != nil {
+					checkErr = errors.Trace(err)
+					return
+				}
+				errs, err = ddl.CancelConcurrencyJobs(se, jobIDs)
 			} else {
 				errs, err = admin.CancelJobs(txn, jobIDs)
 			}
