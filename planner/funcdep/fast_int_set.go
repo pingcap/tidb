@@ -1,4 +1,4 @@
-package functional_dependency
+package funcdep
 
 import (
 	"bytes"
@@ -68,6 +68,7 @@ func (s FastIntSet) toLarge() *intsets.Sparse {
 	return large
 }
 
+// Next returns the next existing number in the Set. If there's no larger one than the given start val, return (MaxInt, false).
 func (s FastIntSet) Next(startVal int) (int, bool) {
 	if startVal < smallCutOff {
 		if startVal < 0 {
@@ -328,6 +329,7 @@ func (s *FastIntSet) Shift(delta int) FastIntSet {
 	return result
 }
 
+// AddRange adds the interval [from, to] to the Set.
 func (s *FastIntSet) AddRange(from, to int) {
 	if to < from {
 		panic("invalid range when adding range to FastIntSet")
