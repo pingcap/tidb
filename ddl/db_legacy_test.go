@@ -352,7 +352,14 @@ func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
 	txn, err := ctx.Txn(true)
 	c.Assert(err, IsNil)
 	m := meta.NewMeta(txn)
-	element, start, end, physicalID, err := m.GetDDLReorgHandle(currJob)
+	var element *meta.Element
+	var start, end kv.Key
+	var physicalID int64
+	if variable.AllowConcurrencyDDL.Load() {
+		element, start, end, physicalID, err = admin.GetDDLReorgHandle(currJob, ctx)
+	} else {
+		element, start, end, physicalID, err = m.GetDDLReorgHandle(currJob)
+	}
 	c.Assert(meta.ErrDDLReorgElementNotExist.Equal(err), IsTrue)
 	c.Assert(element, IsNil)
 	c.Assert(start, IsNil)
