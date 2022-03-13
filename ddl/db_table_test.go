@@ -163,6 +163,7 @@ func TestTransactionOnAddDropColumn(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, time.Microsecond*500)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_max_delta_schema_count= 4096")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int, b int);")
