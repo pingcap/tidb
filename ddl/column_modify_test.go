@@ -486,10 +486,10 @@ func TestCancelDropColumn(t *testing.T) {
 				errs, err = ddl.CancelConcurrencyJobs(ddlTk.Session(), jobIDs)
 			} else {
 				errs, err = admin.CancelJobs(txn, jobIDs)
-				if err != nil {
-					checkErr = errors.Trace(err)
-					return
-				}
+			}
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
 			}
 			if errs[0] != nil {
 				checkErr = errors.Trace(errs[0])
@@ -596,10 +596,10 @@ func TestCancelDropColumns(t *testing.T) {
 				errs, err = ddl.CancelConcurrencyJobs(ddlTk.Session(), jobIDs)
 			} else {
 				errs, err = admin.CancelJobs(txn, jobIDs)
-				if err != nil {
-					checkErr = errors.Trace(err)
-					return
-				}
+			}
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
 			}
 			if errs[0] != nil {
 				checkErr = errors.Trace(errs[0])

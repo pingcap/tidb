@@ -434,10 +434,10 @@ func testCancelDropIndex(c *C, store kv.Storage, d ddl.DDL, idxName, addIdxSQL, 
 				errs, err = ddl.CancelConcurrencyJobs(ddlTk.Se, jobIDs)
 			} else {
 				errs, err = admin.CancelJobs(txn, jobIDs)
-				if err != nil {
-					checkErr = errors.Trace(err)
-					return
-				}
+			}
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
 			}
 			if errs[0] != nil {
 				checkErr = errors.Trace(errs[0])
