@@ -164,7 +164,7 @@ func TestDecode(t *testing.T) {
 	h, err := decoder.DecodeHandleFromRowKey(p.Key)
 	require.NoError(t, err)
 	require.NotNil(t, p.Val)
-	rows, _, err := decoder.DecodeRawRowData(h, p.Val)
+	rows, err := decoder.DecodeRawRowData(h, p.Val)
 	require.NoError(t, err)
 	require.Equal(t, rows, []types.Datum{
 		types.NewIntDatum(1),
@@ -224,7 +224,7 @@ func TestDecodeIndex(t *testing.T) {
 	h2, err := decoder.DecodeHandleFromIndex(tbl.Indices()[0].Meta(), data.pairs[1].Key, data.pairs[1].Val)
 	require.NoError(t, err)
 	require.True(t, h1.Equal(h2))
-	rawData, _, err := decoder.DecodeRawRowData(h1, data.pairs[0].Val)
+	rawData, err := decoder.DecodeRawRowData(h1, data.pairs[0].Val)
 	require.NoError(t, err)
 	require.Equal(t, rawData, rows)
 }

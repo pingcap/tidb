@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+  "go.uber.org/zap"
 )
 
 type testColumnChangeSuiteToVerify struct {
@@ -111,6 +112,9 @@ func (s *testColumnChangeSuiteToVerify) TestColumnChange() {
 	var checkErr error
 	tc.onJobUpdated = func(job *model.Job) {
 		if job.SchemaState == prevState {
+			return
+		}
+		if checkErr != nil {
 			return
 		}
 		hookCtx := mock.NewContext()
@@ -364,7 +368,7 @@ func (s *testColumnChangeSuiteToVerify) checkAddWriteOnly(ctx sessionctx.Context
 		return errors.Trace(err)
 	}
 	got := fmt.Sprintf("%v", row)
-	expect := fmt.Sprintf("%v", []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(nil)})
+	expect := fmt.Sprintf("%v", []types.Datum{types.NewDatum(1), types.NewDatum(2), types.NewDatum(3)})
 	if got != expect {
 		return errors.Errorf("expect %v, got %v", expect, got)
 	}
@@ -498,7 +502,7 @@ func checkResult(ctx sessionctx.Context, t table.Table, cols []*table.Column, ro
 	got := fmt.Sprintf("%v", gotRows)
 	expect := fmt.Sprintf("%v", rows)
 	if got != expect {
-		return errors.Errorf("expect %v, got %v", expect, got)
+		return errors.Errorf("expect %v, got %v, stack %s", expect, got, Commentf(zap.Stack("").String))
 	}
 	return nil
 }

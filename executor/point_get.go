@@ -545,7 +545,6 @@ func DecodeRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tbl
 func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tblInfo *model.TableInfo, handle kv.Handle,
 	rowVal []byte, chk *chunk.Chunk) error {
 	pkCols := tables.TryGetCommonPkColumnIds(tblInfo)
-	prefixColIDs := tables.PrimaryPrefixColumnIDs(tblInfo)
 	colID2CutPos := make(map[int64]int, schema.Len())
 	for _, col := range schema.Columns {
 		if _, ok := colID2CutPos[col.ID]; !ok {
@@ -566,33 +565,34 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 			chk.AppendNull(i)
 			continue
 		}
-		ok, err := tryDecodeFromHandle(tblInfo, i, col, handle, chk, decoder, pkCols, prefixColIDs)
+		cutPos := colID2CutPos[col.ID]
+		if len(cutVals[cutPos]) != 0 {
+			_, err = decoder.DecodeOne(cutVals[cutPos], i, col.RetType)
+			if err != nil {
+				return err
+			}
+			continue
+		}
+
+		ok, err := tryDecodeFromHandle(tblInfo, i, col, handle, chk, decoder, pkCols)
 		if err != nil {
 			return err
 		}
 		if ok {
 			continue
 		}
-		cutPos := colID2CutPos[col.ID]
-		if len(cutVals[cutPos]) == 0 {
-			colInfo := getColInfoByID(tblInfo, col.ID)
-			d, err1 := table.GetColOriginDefaultValue(sctx, colInfo)
-			if err1 != nil {
-				return err1
-			}
-			chk.AppendDatum(i, &d)
-			continue
+
+		colInfo := getColInfoByID(tblInfo, col.ID)
+		d, err1 := table.GetColOriginDefaultValue(sctx, colInfo)
+		if err1 != nil {
+			return err1
 		}
-		_, err = decoder.DecodeOne(cutVals[cutPos], i, col.RetType)
-		if err != nil {
-			return err
-		}
+		chk.AppendDatum(i, &d)
 	}
 	return nil
 }
 
-func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expression.Column, handle kv.Handle, chk *chunk.Chunk,
-	decoder *codec.Decoder, pkCols []int64, prefixColIDs []int64) (bool, error) {
+func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expression.Column, handle kv.Handle, chk *chunk.Chunk, decoder *codec.Decoder, pkCols []int64) (bool, error) {
 	if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.Flag) {
 		chk.AppendInt64(schemaColIdx, handle.IntValue())
 		return true, nil
@@ -601,13 +601,10 @@ func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expres
 		chk.AppendInt64(schemaColIdx, handle.IntValue())
 		return true, nil
 	}
-	if types.NeedRestoredData(col.RetType) {
-		return false, nil
-	}
 	// Try to decode common handle.
 	if mysql.HasPriKeyFlag(col.RetType.Flag) {
 		for i, hid := range pkCols {
-			if col.ID == hid && notPKPrefixCol(hid, prefixColIDs) {
+			if col.ID == hid {
 				_, err := decoder.DecodeOne(handle.EncodedCol(i), schemaColIdx, col.RetType)
 				if err != nil {
 					return false, errors.Trace(err)
@@ -617,15 +614,6 @@ func tryDecodeFromHandle(tblInfo *model.TableInfo, schemaColIdx int, col *expres
 		}
 	}
 	return false, nil
-}
-
-func notPKPrefixCol(colID int64, prefixColIDs []int64) bool {
-	for _, pCol := range prefixColIDs {
-		if pCol == colID {
-			return false
-		}
-	}
-	return true
 }
 
 func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {

@@ -1088,7 +1088,7 @@ func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Han
 			idxVal[j] = idxColumnVal
 			continue
 		}
-		idxColumnVal, err = tables.GetColDefaultValue(w.sessCtx, col, w.defaultVals)
+		idxColumnVal, err = tables.GetColDefaultValue(w.sessCtx, col, w.defaultVals, false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

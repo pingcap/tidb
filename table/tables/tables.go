@@ -986,19 +986,18 @@ func RowWithCols(t table.Table, ctx sessionctx.Context, h kv.Handle, cols []*tab
 	if err != nil {
 		return nil, err
 	}
-	v, _, err := DecodeRawRowData(ctx, t.Meta(), h, cols, value)
+	v, err := DecodeRawRowData(ctx, t.Meta(), h, cols, value)
 	if err != nil {
 		return nil, err
 	}
 	return v, nil
 }
 
-func containFullColInHandle(meta *model.TableInfo, col *table.Column) (containFullCol bool, idxInHandle int) {
+func getOffsetInHandle(meta *model.TableInfo, col *table.Column) (idxInHandle int) {
 	pkIdx := FindPrimaryIndex(meta)
 	for i, idxCol := range pkIdx.Columns {
 		if meta.Columns[idxCol.Offset].ID == col.ID {
 			idxInHandle = i
-			containFullCol = idxCol.Length == types.UnspecifiedLength
 			return
 		}
 	}
@@ -1006,15 +1005,31 @@ func containFullColInHandle(meta *model.TableInfo, col *table.Column) (containFu
 }
 
 // DecodeRawRowData decodes raw row data into a datum slice and a (columnID:columnValue) map.
-func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle, cols []*table.Column,
-	value []byte) ([]types.Datum, map[int64]types.Datum, error) {
+func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle, cols []*table.Column, value []byte) ([]types.Datum, error) {
 	v := make([]types.Datum, len(cols))
 	colTps := make(map[int64]*types.FieldType, len(cols))
-	prefixCols := make(map[int64]struct{})
+	defaultVals := make([]types.Datum, len(cols))
+	// rowMap's datum is decoded from value.
+	for _, col := range cols {
+		colTps[col.ID] = &col.FieldType
+	}
+	rowMap, err := tablecodec.DecodeRowToDatumMap(value, colTps, ctx.GetSessionVars().Location())
+	if err != nil {
+		return nil, err
+	}
 	for i, col := range cols {
-		if col == nil {
+		// Skip the virtual generated column, decode it in the outer function.
+		if col.IsGenerated() && !col.GeneratedStored {
 			continue
 		}
+
+		// Try to get datum from the row first.
+		if dt, ok := rowMap[col.ID]; ok {
+			v[i] = dt
+			continue
+		}
+
+		// Try to get datum from handle.
 		if col.IsPKHandleColumn(meta) {
 			if mysql.HasUnsignedFlag(col.Flag) {
 				v[i].SetUint64(uint64(h.IntValue()))
@@ -1023,56 +1038,31 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 			}
 			continue
 		}
-		if col.IsCommonHandleColumn(meta) && !types.NeedRestoredData(&col.FieldType) {
-			if containFullCol, idxInHandle := containFullColInHandle(meta, col); containFullCol {
-				dtBytes := h.EncodedCol(idxInHandle)
-				_, dt, err := codec.DecodeOne(dtBytes)
-				if err != nil {
-					return nil, nil, err
-				}
-				dt, err = tablecodec.Unflatten(dt, &col.FieldType, ctx.GetSessionVars().Location())
-				if err != nil {
-					return nil, nil, err
-				}
-				v[i] = dt
-				continue
+		if col.IsCommonHandleColumn(meta) {
+			idxInHandle := getOffsetInHandle(meta, col)
+			dtBytes := h.EncodedCol(idxInHandle)
+			_, dt, err := codec.DecodeOne(dtBytes)
+			if err != nil {
+				return nil, err
 			}
-			prefixCols[col.ID] = struct{}{}
-		}
-		colTps[col.ID] = &col.FieldType
-	}
-	rowMap, err := tablecodec.DecodeRowToDatumMap(value, colTps, ctx.GetSessionVars().Location())
-	if err != nil {
-		return nil, rowMap, err
-	}
-	defaultVals := make([]types.Datum, len(cols))
-	for i, col := range cols {
-		if col == nil {
-			continue
-		}
-		if col.IsPKHandleColumn(meta) || (col.IsCommonHandleColumn(meta) && !types.NeedRestoredData(&col.FieldType)) {
-			if _, isPrefix := prefixCols[col.ID]; !isPrefix {
-				continue
+			dt, err = tablecodec.Unflatten(dt, &col.FieldType, ctx.GetSessionVars().Location())
+			if err != nil {
+				return nil, err
 			}
-		}
-		ri, ok := rowMap[col.ID]
-		if ok {
-			v[i] = ri
+			v[i] = dt
 			continue
 		}
-		if col.IsGenerated() && !col.GeneratedStored {
-			continue
-		}
+
 		if col.ChangeStateInfo != nil {
 			v[i], _, err = GetChangingColVal(ctx, cols, col, rowMap, defaultVals)
 		} else {
-			v[i], err = GetColDefaultValue(ctx, col, defaultVals)
+			v[i], err = GetColDefaultValue(ctx, col, defaultVals, true)
 		}
 		if err != nil {
-			return nil, rowMap, err
+			return nil, err
 		}
 	}
-	return v, rowMap, nil
+	return v, nil
 }
 
 // GetChangingColVal gets the changing column value when executing "modify/change column" statement.
@@ -1093,7 +1083,7 @@ func GetChangingColVal(ctx sessionctx.Context, cols []*table.Column, col *table.
 		return idxColumnVal, false, nil
 	}
 
-	idxColumnVal, err = GetColDefaultValue(ctx, col, defaultVals)
+	idxColumnVal, err = GetColDefaultValue(ctx, col, defaultVals, true)
 	if err != nil {
 		return idxColumnVal, false, errors.Trace(err)
 	}
@@ -1402,7 +1392,7 @@ func IterRecords(t table.Table, ctx sessionctx.Context, cols []*table.Column,
 				data[col.Offset] = rowMap[col.ID]
 				continue
 			}
-			data[col.Offset], err = GetColDefaultValue(ctx, col, defaultVals)
+			data[col.Offset], err = GetColDefaultValue(ctx, col, defaultVals, false)
 			if err != nil {
 				return err
 			}
@@ -1441,12 +1431,11 @@ func tryDecodeColumnFromCommonHandle(col *table.Column, handle kv.Handle, pkIds 
 
 // GetColDefaultValue gets a column default value.
 // The defaultVals is used to avoid calculating the default value multiple times.
-func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals []types.Datum) (
-	colVal types.Datum, err error) {
+func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals []types.Datum, handleNonPublicCol bool) (colVal types.Datum, err error) {
 	if col.GetOriginDefaultValue() == nil && mysql.HasNotNullFlag(col.Flag) {
 		return colVal, errors.New("Miss column")
 	}
-	if col.State != model.StatePublic {
+	if !handleNonPublicCol && col.State != model.StatePublic {
 		return colVal, nil
 	}
 	if defaultVals[col.Offset].IsNull() {
