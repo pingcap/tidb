@@ -75,7 +75,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 			zap.Stringer("stats lease", statisticLease),
 			zap.Stringer("index usage sync lease", idxUsageSyncLease))
 		factory := createSessionFunc(store)
-		sysFactory := CreateSessionWithDomainFunc(store)
+		sysFactory := createSessionWithDomainFunc(store)
 		onClose := func() {
 			dm.Delete(store)
 		}
