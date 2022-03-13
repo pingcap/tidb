@@ -55,9 +55,7 @@ func (is IntSet) Intersects(target IntSet) bool {
 // Difference is used to exclude the intersection sector away from itself.
 func (is IntSet) Difference(target IntSet) {
 	for i := range target {
-		if _, ok := is[i]; ok {
-			delete(is, i)
-		}
+		delete(is, i)
 	}
 }
 
@@ -163,6 +161,7 @@ func TestFastIntSetBasic(t *testing.T) {
 	require.Equal(t, n, 77)
 	n, ok = fis.Next(n + 1)
 	require.False(t, ok)
+	require.Equal(t, n, intsets.MaxInt)
 
 	// Test Clear and IsEmpty.
 	fis.Clear()
