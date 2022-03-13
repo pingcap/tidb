@@ -329,6 +329,11 @@ func (s *mdLoaderSetup) listFiles(ctx context.Context, store storage.ExternalSto
 		case SourceTypeViewSchema:
 			s.viewSchemas = append(s.viewSchemas, info)
 		case SourceTypeSQL, SourceTypeCSV, SourceTypeParquet:
+			// we will filter out all the data files with size of 0
+			if size <= 0 {
+				logger.Info("skip the data file with size of 0")
+				return nil
+			}
 			s.tableDatas = append(s.tableDatas, info)
 		}
 
