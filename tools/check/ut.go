@@ -102,7 +102,7 @@ func cmdList(args ...string) bool {
 	}
 
 	// list test case of a single package
-	if len(args) == 1 {
+	if len(args) == 1 || len(args) == 2 {
 		pkg := args[0]
 		pkgs = filter(pkgs, func(s string) bool { return s == pkg })
 		if len(pkgs) != 1 {
@@ -130,8 +130,22 @@ func cmdList(args ...string) bool {
 			fmt.Println("list test cases for package error", err)
 			return false
 		}
+		if len(args) == 1 {
+			// List all the tests.
+			for _, x := range res {
+				fmt.Println(x.test)
+			}
+			return true
+		}
+		regEx, err := regexp.Compile(args[1])
+		if err != nil {
+			fmt.Println("list test cases regex error", err)
+			return false
+		}
 		for _, x := range res {
-			fmt.Println(x.test)
+			if regEx.MatchString(x.test) {
+				fmt.Println(x.test)
+			}
 		}
 	}
 	return true
