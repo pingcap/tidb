@@ -390,7 +390,7 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 	if err = cc.writePacket(data); err != nil {
 		return err
 	}
-	return cc.flush(ctx)
+	return nil
 }
 
 func (cc *clientConn) readPacket() ([]byte, error) {
@@ -403,7 +403,7 @@ func (cc *clientConn) writePacket(data []byte) error {
 			failpoint.Return(nil)
 		}
 	})
-	return cc.pkt.writePacket(data)
+	return cc.pkt.writePacketDirect(cc.bufReadConn, data)
 }
 
 // getSessionVarsWaitTimeout get session variable wait_timeout
@@ -1440,7 +1440,7 @@ func (cc *clientConn) flush(ctx context.Context) error {
 			failpoint.Return(nil)
 		}
 	})
-	return cc.pkt.flush()
+	return nil
 }
 
 func (cc *clientConn) writeOK(ctx context.Context) error {
