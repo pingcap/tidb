@@ -92,8 +92,8 @@ func TestPrepareIgnoreCloseStmtCmd(t *testing.T) {
 	tk.MustExec(`create table t(a int, unique key(a))`)
 
 	// disable the ignore-stmt-cmd
-	tk.MustExec(`set @@tidb_ignore_close_stmt_cmd=0`)
-	tk.MustQuery(`select @@tidb_ignore_close_stmt_cmd`).Check(testkit.Rows("0"))
+	tk.MustExec(`set @@tidb_ignore_prepared_cache_close_stmt=0`)
+	tk.MustQuery(`select @@tidb_ignore_prepared_cache_close_stmt`).Check(testkit.Rows("0"))
 	tk.MustExec(`prepare stmt from 'select * from t'`)
 	tk.MustQuery(`execute stmt`).Check(testkit.Rows())
 	tk.MustQuery(`execute stmt`).Check(testkit.Rows())
@@ -104,8 +104,8 @@ func TestPrepareIgnoreCloseStmtCmd(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // cannot reuse last plan since it is closed
 
 	// enable the ignore-stmt-cmd
-	tk.MustExec(`set tidb_ignore_close_stmt_cmd=1`)
-	tk.MustQuery(`select @@tidb_ignore_close_stmt_cmd`).Check(testkit.Rows("1"))
+	tk.MustExec(`set tidb_ignore_prepared_cache_close_stmt=1`)
+	tk.MustQuery(`select @@tidb_ignore_prepared_cache_close_stmt`).Check(testkit.Rows("1"))
 	tk.MustExec(`prepare stmt from 'select * from t'`)
 	tk.MustQuery(`execute stmt`).Check(testkit.Rows())
 	tk.MustQuery(`execute stmt`).Check(testkit.Rows())
