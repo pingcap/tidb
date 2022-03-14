@@ -1193,3 +1193,31 @@ func TestIssue23567(t *testing.T) {
 	tk.MustQuery("select count(distinct b) from t")
 	failpoint.Disable("github.com/pingcap/tidb/statistics/feedbackNoNDVCollect")
 }
+
+func TestIssue33038(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t (id int, c int as (id))")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t(id) values (1),(2),(3),(4)")
+	tk.MustExec("insert into t(id) select id from t")
+	tk.MustExec("insert into t(id) select id from t")
+	tk.MustExec("insert into t(id) select id from t")
+	tk.MustExec("insert into t(id) select id from t")
+	tk.MustExec("insert into t(id) values (5)")
+	tk.MustQuery("select * from t where c = 5").Check(testkit.Rows("5 5"))
+
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_max_chunk_size=16")
+	tk.MustExec("create table t1 (id int, c int as (id))")
+	tk.MustExec("insert into t1(id) values (1),(2),(3),(4)")
+	tk.MustExec("insert into t1(id) select id from t1")
+	tk.MustExec("insert into t1(id) select id from t1")
+	tk.MustExec("insert into t1(id) values (5)")
+	tk.MustExec("alter table t1 cache")
+	tk.MustQuery("select * from t1 where c = 5").Check(testkit.Rows("5 5"))
+}
