@@ -451,22 +451,15 @@ func (rc *Client) CreateDatabase(ctx context.Context, db *model.DBInfo) error {
 		log.Info("skip create database", zap.Stringer("database", db.Name))
 		return nil
 	}
-	if db.PlacementPolicyRef != nil {
-		policy, ok := rc.policyMap.Load(db.PlacementPolicyRef.Name.L)
-		if !ok {
-			log.Warn("can't find policy from backup meta in create database, ignore the policy",
-				zap.Stringer("policy", db.PlacementPolicyRef.Name),
-				zap.Stringer("db", db.Name))
-			// Normally this shouldn't happen,
-			// if we are not backup policies. db.PlacementPolicyRef should be nil
-			db.PlacementPolicyRef = nil
+	if db.PlacementPolicyRef != nil && rc.policyMap != nil {
+		if policy, ok := rc.policyMap.Load(db.PlacementPolicyRef.Name.L); ok {
+			err := rc.db.CreatePlacementPolicy(ctx, policy.(*model.PolicyInfo))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			// delete policy in cache after restore succeed
+			rc.policyMap.Delete(db.PlacementPolicyRef.Name.L)
 		}
-		err := rc.db.CreatePlacementPolicy(ctx, policy.(*model.PolicyInfo))
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// delete policy in cache after restore succeed
-		rc.policyMap.Delete(db.PlacementPolicyRef.Name.L)
 	}
 	return rc.db.CreateDatabase(ctx, db)
 }
