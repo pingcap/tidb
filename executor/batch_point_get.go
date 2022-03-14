@@ -132,7 +132,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		stmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	replicaReadType := e.ctx.GetSessionVars().GetReplicaRead()
-	if replicaReadType.IsFollowerRead() {
+	if replicaReadType.IsFollowerRead() && !e.ctx.GetSessionVars().StmtCtx.RCCheckTS {
 		snapshot.SetOption(kv.ReplicaRead, replicaReadType)
 	}
 	snapshot.SetOption(kv.TaskID, stmtCtx.TaskID)

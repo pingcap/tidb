@@ -174,7 +174,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	readReplicaType := e.ctx.GetSessionVars().GetReplicaRead()
-	if readReplicaType.IsFollowerRead() {
+	if readReplicaType.IsFollowerRead() && !e.ctx.GetSessionVars().StmtCtx.RCCheckTS {
 		e.snapshot.SetOption(kv.ReplicaRead, readReplicaType)
 	}
 	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
