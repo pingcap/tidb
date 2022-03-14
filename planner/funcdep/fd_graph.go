@@ -271,7 +271,7 @@ func (s *FDSet) addFunctionalDependency(from, to FastIntSet, strict, equiv, laxU
 			// There's a strong one. No need to add.
 			if fd.implies(newFD) {
 				added = true
-			} else if fd.strict == true && fd.equiv == false && fd.from.Equals(from) {
+			} else if fd.strict && !fd.equiv && fd.from.Equals(from) {
 				// We can use the new FD to extend the current one.
 				// eg:  A -> BC, A -> CE, they couldn't be the subset of each other, union them.
 				// res: A -> BCE
