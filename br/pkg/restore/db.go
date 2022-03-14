@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -128,15 +129,13 @@ func (db *DB) UpdateStatsMeta(ctx context.Context, tableID int64, restoreTS uint
 	return nil
 }
 
-// CreatePlacementPolicies check whether cluster support policy and create the policy.
-func (db *DB) CreatePlacementPolicies(ctx context.Context, policies []*model.PolicyInfo) error {
-	for _, p := range policies {
-		err := db.se.CreatePlacementPolicy(ctx, p)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		log.Info("create placement policy succeed", zap.Stringer("name", p.Name))
+// CreatePlacementPolicy check whether cluster support policy and create the policy.
+func (db *DB) CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error {
+	err := db.se.CreatePlacementPolicy(ctx, policy)
+	if err != nil {
+		return errors.Trace(err)
 	}
+	log.Info("create placement policy succeed", zap.Stringer("name", policy.Name))
 	return nil
 }
 
@@ -253,11 +252,22 @@ func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table,
 }
 
 // CreateTables execute a internal CREATE TABLES.
-func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table, ddlTables map[UniqueTableName]bool) error {
+func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
+	ddlTables map[UniqueTableName]bool, policyMap *sync.Map) error {
 	if batchSession, ok := db.se.(glue.BatchCreateTableSession); ok {
 		m := map[string][]*model.TableInfo{}
 		for _, table := range tables {
 			m[table.DB.Name.L] = append(m[table.DB.Name.L], table.Info)
+			if table.Info.PlacementPolicyRef != nil && policyMap != nil {
+				if p, exists := policyMap.Load(table.Info.PlacementPolicyRef.Name.L); exists {
+					err := db.CreatePlacementPolicy(ctx, p.(*model.PolicyInfo))
+					if err != nil {
+						return errors.Trace(err)
+					}
+					// delete policy in cache after restore table succeed.
+					policyMap.Delete(table.Info.PlacementPolicyRef.Name.L)
+				}
+			}
 		}
 		if err := batchSession.CreateTables(ctx, m); err != nil {
 			return err
@@ -274,7 +284,18 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table, ddlTab
 }
 
 // CreateTable executes a CREATE TABLE SQL.
-func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, ddlTables map[UniqueTableName]bool) error {
+func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
+	ddlTables map[UniqueTableName]bool, policyMap *sync.Map) error {
+	if table.Info.PlacementPolicyRef != nil && policyMap != nil {
+		if p, exists := policyMap.Load(table.Info.PlacementPolicyRef.Name.L); exists {
+			err := db.CreatePlacementPolicy(ctx, p.(*model.PolicyInfo))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			// delete policy in cache after restore table succeed.
+			policyMap.Delete(table.Info.PlacementPolicyRef.Name.L)
+		}
+	}
 	err := db.se.CreateTable(ctx, table.DB.Name, table.Info)
 	if err != nil {
 		log.Error("create table failed",

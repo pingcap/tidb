@@ -51,6 +51,13 @@ const (
 	defaultFlagDdlBatchSize   = 128
 )
 
+const (
+	FullRestoreCmd  = "Full Restore"
+	DBRestoreCmd    = "DataBase Restore"
+	TableRestoreCmd = "Table Restore"
+	RawRestoreCmd   = "Raw Restore"
+)
+
 // RestoreCommonConfig is the common configuration for all BR restore tasks.
 type RestoreCommonConfig struct {
 	Online bool `json:"online" toml:"online"`
@@ -258,6 +265,10 @@ func CheckRestoreDBAndTable(client *restore.Client, cfg *RestoreConfig) error {
 	return nil
 }
 
+func isFullRestore(cmdName string) bool {
+	return cmdName == FullRestoreCmd
+}
+
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
 	cfg.adjustRestoreConfig()
@@ -368,10 +379,14 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Info("get policy from backup", zap.Int("count", len(policies)))
-	err = client.CreatePlacementPolicies(ctx, policies)
-	if err != nil {
-		return errors.Trace(err)
+	if isFullRestore(cmdName) {
+		// we should restore all policies during full restoration.
+		err = client.CreatePolicies(ctx, policies)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		client.SetPolicyMap(policies)
 	}
 
 	// execute DDL first

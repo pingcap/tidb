@@ -53,8 +53,8 @@ run_sql "DROP PLACEMENT POLICY fivereplicas;"
 echo "restore with tidb-placement start..."
 run_br restore db --db $DB -s "local://$TEST_DIR/${DB}v2" --pd $PD_ADDR
 
-policy_count=$(run_sql "use $DB; show placement;" | grep "POLICY" | wc -l)
-if [ "$policy_count" -ne "1" ];then
+policy_name=$(run_sql "use $DB; show placement;" | grep "POLICY" | awk '{print $2}')
+if [ "$policy_name" -ne "fivereplicas" ];then
     echo "TEST: [$TEST_NAME] failed! due to policy restore failed"
     exit 1
 fi
@@ -75,9 +75,8 @@ fi
 
 # clear data and policy
 run_sql "DROP DATABASE $DB;"
-run_sql "DROP PLACEMENT POLICY fivereplicas;"
 
-# test backup db can ignore placement policy
+echo "test backup db can ignore placement policy"
 run_sql "create schema $DB;"
 run_sql "create placement policy fivereplicas followers=4;"
 
@@ -96,6 +95,43 @@ run_br restore db --db $DB -s "local://$TEST_DIR/${DB}_db" --pd $PD_ADDR
 policy_count=$(run_sql "use $DB; show placement;" | grep "POLICY" | wc -l)
 if [ "$policy_count" -ne "0" ];then
     echo "TEST: [$TEST_NAME] failed! due to policy should be ignore"
+    exit 1
+fi
+
+run_sql "DROP DATABASE $DB;"
+
+echo "test only restore related placement policy..."
+run_sql "create schema $DB;"
+# we have two policies
+run_sql "create placement policy fivereplicas followers=4;"
+run_sql "create placement policy tworeplicas followers=1;"
+
+# generate one table with one row content with policy fivereplicas;.
+run_sql "create table $DB.sbtest(id int primary key, k int not null, c char(120) not null, pad char(60) not null) placement policy=fivereplicas;"
+run_sql "insert into $DB.sbtest values ($i, $i, '$i', '$i');"
+
+# backup table and policies
+run_br backup full -s "local://$TEST_DIR/${DB}_related" --pd $PD_ADDR
+
+# clear data and policies
+run_sql "DROP DATABASE $DB;"
+run_sql "DROP PLACEMENT POLICY fivereplicas;"
+run_sql "DROP PLACEMENT POLICY tworeplicas;"
+
+# restore table
+run_br restore table --db $DB --table sbtest -s "local://$TEST_DIR/${DB}_related" --pd $PD_ADDR
+
+# verify only one policy has been restored
+policy_count=$(run_sql "use $DB; show placement;" | grep "POLICY" | wc -l)
+if [ "$policy_count" -ne "0" ];then
+    echo "TEST: [$TEST_NAME] failed! due to policy should be ignore"
+    exit 1
+fi
+
+# which is fivereplicas
+policy_name=$(run_sql "use $DB; show placement;" | grep "POLICY" | awk '{print $2}')
+if [ "$policy_name" -ne "fivereplicas" ];then
+    echo "TEST: [$TEST_NAME] failed! due to policy restore failed"
     exit 1
 fi
 

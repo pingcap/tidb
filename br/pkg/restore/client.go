@@ -111,6 +111,9 @@ type Client struct {
 	// STRICT(default) means policy related SQL can be executed in tidb.
 	// IGNORE means policy related SQL will be ignored.
 	policyMode string
+
+	// policy name -> policy info
+	policyMap *sync.Map
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -188,6 +191,16 @@ func (rc *Client) SetRateLimit(rateLimit uint64) {
 
 func (rc *Client) SetCrypter(crypter *backuppb.CipherInfo) {
 	rc.cipher = crypter
+}
+
+// SetPolicyMap set policyMap.
+func (rc *Client) SetPolicyMap(p *sync.Map) {
+	rc.policyMap = p
+}
+
+// GetPolicyMap set policyMap.
+func (rc *Client) GetPolicyMap() *sync.Map {
+	return rc.policyMap
 }
 
 // GetPDClient returns a pd client.
@@ -386,15 +399,15 @@ func (rc *Client) GetDatabase(name string) *utils.Database {
 }
 
 // GetPlacementPolicies returns policies.
-func (rc *Client) GetPlacementPolicies() ([]*model.PolicyInfo, error) {
-	policies := make([]*model.PolicyInfo, 0, len(rc.backupMeta.Policies))
+func (rc *Client) GetPlacementPolicies() (*sync.Map, error) {
+	policies := &sync.Map{}
 	for _, p := range rc.backupMeta.Policies {
 		policyInfo := &model.PolicyInfo{}
 		err := json.Unmarshal(p.Info, policyInfo)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		policies = append(policies, policyInfo)
+		policies.Store(policyInfo.Name.L, policyInfo)
 	}
 	return policies, nil
 }
@@ -418,9 +431,18 @@ func (rc *Client) GetTableSchema(
 	return table.Meta(), nil
 }
 
-// CreatePlacementPolicies creates policies to db.
-func (rc *Client) CreatePlacementPolicies(ctx context.Context, policies []*model.PolicyInfo) error {
-	return rc.db.CreatePlacementPolicies(ctx, policies)
+// CreatePolicies creates all policies in full restore.
+func (rc *Client) CreatePolicies(ctx context.Context, policyMap *sync.Map) error {
+	var err error
+	policyMap.Range(func(key, value interface{}) bool {
+		e := rc.db.CreatePlacementPolicy(ctx, value.(*model.PolicyInfo))
+		if e != nil {
+			err = e
+			return false
+		}
+		return true
+	})
+	return err
 }
 
 // CreateDatabase creates a database.
@@ -428,6 +450,23 @@ func (rc *Client) CreateDatabase(ctx context.Context, db *model.DBInfo) error {
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create database", zap.Stringer("database", db.Name))
 		return nil
+	}
+	if db.PlacementPolicyRef != nil {
+		policy, ok := rc.policyMap.Load(db.PlacementPolicyRef.Name.L)
+		if !ok {
+			log.Warn("can't find policy from backup meta in create database, ignore the policy",
+				zap.Stringer("policy", db.PlacementPolicyRef.Name),
+				zap.Stringer("db", db.Name))
+			// Normally this shouldn't happen,
+			// if we are not backup policies. db.PlacementPolicyRef should be nil
+			db.PlacementPolicyRef = nil
+		}
+		err := rc.db.CreatePlacementPolicy(ctx, policy.(*model.PolicyInfo))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// delete policy in cache after restore succeed
+		rc.policyMap.Delete(db.PlacementPolicyRef.Name.L)
 	}
 	return rc.db.CreateDatabase(ctx, db)
 }
@@ -478,7 +517,7 @@ func (rc *Client) createTables(
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID")
 	} else {
-		err := db.CreateTables(ctx, tables, rc.GetDDLJobsMap())
+		err := db.CreateTables(ctx, tables, rc.GetDDLJobsMap(), rc.GetPolicyMap())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -518,7 +557,7 @@ func (rc *Client) createTable(
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID", zap.Stringer("table", table.Info.Name))
 	} else {
-		err := db.CreateTable(ctx, table, rc.GetDDLJobsMap())
+		err := db.CreateTable(ctx, table, rc.GetDDLJobsMap(), rc.GetPolicyMap())
 		if err != nil {
 			return CreatedTable{}, errors.Trace(err)
 		}

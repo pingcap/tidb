@@ -125,7 +125,7 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 	tk.MustExec("insert into t1 values (10);")
 	tk.MustExec("create placement policy fivereplicas followers=4;")
 
-	var policies []*backuppb.Policy
+	var policies []*backuppb.PlacementPolicy
 	_, backupSchemas, policies, err = backup.BuildBackupRangeAndSchema(
 		m.Storage, testFilter, math.MaxUint64, false)
 	require.NoError(t, err)
