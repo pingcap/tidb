@@ -1361,9 +1361,16 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 						break
 					}
 				}
-				name := errShowCol.OrigName
+				// better use the schema alias name firstly if any.
+				name := ""
+				for idx, schemaCol := range proj.Schema().Columns {
+					if schemaCol.UniqueID == errShowCol.UniqueID {
+						name = proj.names[idx].String()
+						break
+					}
+				}
 				if name == "" {
-					name = proj.names[offset].String()
+					name = errShowCol.OrigName
 				}
 				// Only1Zero is to judge whether it's no-group-by-items case.
 				if !fds.GroupByCols.Only1Zero() {

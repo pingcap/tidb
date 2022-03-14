@@ -23,7 +23,7 @@ func TestOnlyFullGroupByOldCases(t *testing.T) {
 	tk.MustExec("CREATE VIEW v1 AS  SELECT alias1.c4 AS field1  FROM t1 AS alias1  INNER JOIN t1 AS alias2  ON 1 GROUP BY field1 ORDER BY alias1.c5;")
 	_, err := tk.Exec("SELECT * FROM v1;")
 	require.NotNil(t, err)
-	require.Equal(t, err.Error(), "[planner:1055]Expression #2 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t1.c5' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
+	require.Equal(t, err.Error(), "[planner:1055]Expression #2 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.alias1.c5' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
 
 	// test case 2
 	tk.MustExec("drop table if exists t1")
@@ -59,17 +59,17 @@ func TestOnlyFullGroupByOldCases(t *testing.T) {
 	tk.MustQuery("SELECT t1.d FROM t as t1, t as t2 WHERE t2.d=t1.c GROUP BY t2.a;")
 	_, err = tk.Exec("SELECT t1.d FROM t as t1, t as t2 WHERE t2.d>t1.c GROUP BY t2.a;")
 	require.NotNil(t, err)
-	require.Equal(t, err.Error(), "[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t.d' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
+	require.Equal(t, err.Error(), "[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t1.d' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
 
 	// test case 6
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t ( a INT, c INT GENERATED ALWAYS AS (a+2), d INT GENERATED ALWAYS AS (c+2) );")
 	_, err = tk.Exec("SELECT t1.d FROM t as t1, t as t2 WHERE t2.d>t1.c GROUP BY t2.a;")
 	require.NotNil(t, err)
-	require.Equal(t, err.Error(), "[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t.d' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
+	require.Equal(t, err.Error(), "[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t1.d' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
 	_, err = tk.Exec("SELECT (SELECT t1.c FROM t as t1 GROUP BY -3) FROM t as t2;")
 	require.NotNil(t, err)
-	require.Equal(t, err.Error(), "[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t.c' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
+	require.Equal(t, err.Error(), "[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t1.c' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
 	_, err = tk.Exec("SELECT DISTINCT t1.a FROM t as t1 ORDER BY t1.d LIMIT 1;")
 	require.NotNil(t, err)
 	require.Equal(t, err.Error(), "[planner:3065]Expression #1 of ORDER BY clause is not in SELECT list, references column 'test.t.d' which is not in SELECT list; this is incompatible with DISTINCT")
@@ -189,11 +189,22 @@ func TestOnlyFullGroupByOldCases(t *testing.T) {
 	tk.MustExec("create table t2(c int, d int);")
 	err = tk.ExecToErr("select t4.d from t1 left join (t2 as t3 join t2 as t4 on t4.d=3) on t1.a=10 group by \"\";")
 	require.NotNil(t, err)
-	require.Equal(t, err.Error(), "[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t2.d' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
+	require.Equal(t, err.Error(), "[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t4.d' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
 	tk.MustExec("select t4.d from t1 join (t2 as t3 left join t2 as t4 on t4.d=3) on t1.a=10 group by \"\";")
 	//tk.MustExec("drop table t1")
 	//tk.MustExec("drop view v1")
 	//tk.MustExec("create table t1(a int not null, b int)")
 	//tk.MustExec("create view v1 as select a as a, 2*a as b, coalesce(a,3) as c from t1")
 	//tk.MustExec("select v1.b from t1 left join v1 on 1 group by v1.a")
+
+	// test issue #25196
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (i1 integer, c1 integer);")
+	tk.MustExec("insert into t1 values (2, 41), (1, 42), (3, 43), (0, null);")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 (i2 integer, c2 integer, f2 float);")
+	tk.MustExec("insert into t2 values (0, 43, null), (1, null, 0.1), (3, 42, 0.01), (2, 73, 0.12), (null, 41, -0.1), (null, null, null);")
+	err = tk.ExecToErr("SELECT * FROM t2 AS _tmp_1 JOIN (SELECT max(_tmp_3.f2) AS _tmp_4,min(_tmp_3.i2) AS _tmp_5 FROM t2 AS _tmp_3 WHERE _tmp_3.f2>=_tmp_3.c2 GROUP BY _tmp_3.c2 ORDER BY _tmp_3.i2) AS _tmp_2 WHERE _tmp_2._tmp_5=100;")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1055]Expression #3 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test._tmp_3.i2' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
 }
