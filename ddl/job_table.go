@@ -397,7 +397,7 @@ func (d *ddl) doReorgDDLJobWorker(job *model.Job) {
 
 const addDDLJobSQL = "insert into mysql.tidb_ddl_job values"
 
-func (d *ddl) addDDLJobs(job []*model.Job) error {
+func (d *ddl) addDDLjobsInternal(job []*model.job, level kvrpcpb.DiskFullOpt) error {
 	var sql string
 	for i, job := range job {
 		b, err := job.Encode(true)
@@ -416,12 +416,40 @@ func (d *ddl) addDDLJobs(job []*model.Job) error {
 		return err
 	}
 	defer d.sessPool.put(sess)
-	sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
+	sess.SetDiskFullOpt(level)
 	_, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), addDDLJobSQL+sql)
 	if err != nil {
 		logutil.BgLogger().Error("[ddl] add job to mysql.tidb_ddl_job table", zap.Error(err))
 	}
 	return err
+}
+func (d *ddl) addDDLJobs(jobs []*model.Job) error {
+	notAllowJobs := make([]*model.Job, len(jobs))
+	allowJobs := make([]*model.Job, len(jobs))
+	for _, job := range jobs {
+		switch job.Type {
+		case model.ActionDropSchema,
+			model.ActionDropTable,
+			model.ActionDropColumn,
+			model.ActionDropIndex,
+			model.ActionDropForeignKey,
+			model.ActionTruncateTable,
+			model.ActionDropView,
+			model.ActionDropPrimaryKey,
+			model.ActionDropSequence,
+			model.ActionDropColumns,
+			model.ActionDropCheckConstraint,
+			model.ActionDropIndexes,
+			model.ActionDropPlacementPolicy:
+			allowJobs = append(allowJobs, job)
+		default:
+			notAllowJobs = append(notAllowJobs, job)
+		}
+	}
+	if err := d.addDDLjobsInternal(allowJobs, kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull); err != nil {
+		return err
+	}
+	return d.addDDLjobsInternal(notAllowJobs, kvrpcpb.DiskFullOpt_NotAllowedOnFull)
 }
 
 func (w *worker) deleteDDLJob(job *model.Job) error {
