@@ -1217,7 +1217,14 @@ func TestIssue33038(t *testing.T) {
 	tk.MustExec("insert into t1(id) values (1),(2),(3),(4)")
 	tk.MustExec("insert into t1(id) select id from t1")
 	tk.MustExec("insert into t1(id) select id from t1")
+	tk.MustExec("insert into t1(id) select id from t1")
 	tk.MustExec("insert into t1(id) values (5)")
 	tk.MustExec("alter table t1 cache")
-	tk.MustQuery("select * from t1 where c = 5").Check(testkit.Rows("5 5"))
+
+	for {
+		tk.MustQuery("select * from t1 where c = 5").Check(testkit.Rows("5 5"))
+		if tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache {
+			break
+		}
+	}
 }
