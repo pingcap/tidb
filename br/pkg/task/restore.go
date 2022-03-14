@@ -17,7 +17,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
@@ -202,17 +201,6 @@ func (cfg *RestoreConfig) adjustRestoreConfig() {
 }
 
 func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *RestoreConfig) error {
-	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	opts := storage.ExternalStorageOptions{
-		NoCredentials:   cfg.NoCreds,
-		SendCredentials: cfg.SendCreds,
-	}
-	if err = client.SetStorage(ctx, u, &opts); err != nil {
-		return errors.Trace(err)
-	}
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetConcurrency(uint(cfg.Concurrency))
@@ -226,7 +214,7 @@ func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *Re
 	client.SetBatchDdlSize(cfg.DdlBatchSize)
 	client.SetPolicyMode(cfg.WithPlacementPolicy)
 
-	err = client.LoadRestoreStores(ctx)
+	err := client.LoadRestoreStores(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}

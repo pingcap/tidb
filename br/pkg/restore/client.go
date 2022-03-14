@@ -91,8 +91,6 @@ type Client struct {
 	restoreStores []uint64
 
 	cipher             *backuppb.CipherInfo
-	storage            storage.ExternalStorage
-	backend            *backuppb.StorageBackend
 	switchModeInterval time.Duration
 	switchCh           chan struct{}
 
@@ -181,17 +179,6 @@ func (rc *Client) SetRateLimit(rateLimit uint64) {
 
 func (rc *Client) SetCrypter(crypter *backuppb.CipherInfo) {
 	rc.cipher = crypter
-}
-
-// SetStorage set ExternalStorage for client.
-func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storage.ExternalStorageOptions) error {
-	var err error
-	rc.storage, err = storage.New(ctx, backend, opts)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	rc.backend = backend
-	return nil
 }
 
 // GetPDClient returns a pd client.
