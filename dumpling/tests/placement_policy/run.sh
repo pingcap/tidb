@@ -9,7 +9,7 @@ export DUMPLING_TEST_PORT=4000
 run_sql "drop database if exists policy"
 run_sql "drop placement policy if exists x"
 run_sql "drop placement policy if exists x1"
-run_sql "create database policy"
+run_sql "create database policy DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 
 export DUMPLING_TEST_DATABASE="policy"
 

@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"math"
+	"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
@@ -297,10 +298,29 @@ func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic
 }
 
 // refineCETrace will adjust the content of CETrace.
-// Currently, it will (1) deduplicate trace records and (2) fill in the table name.
+// Currently, it will (1) deduplicate trace records, (2) sort the trace records (to make it easier in the tests) and (3) fill in the table name.
 func refineCETrace(sctx sessionctx.Context) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	stmtCtx.OptimizerCETrace = tracing.DedupCETrace(stmtCtx.OptimizerCETrace)
+	sort.Slice(stmtCtx.OptimizerCETrace, func(i, j int) bool {
+		if stmtCtx.OptimizerCETrace[i] == nil && stmtCtx.OptimizerCETrace[j] != nil {
+			return true
+		}
+		if stmtCtx.OptimizerCETrace[i] == nil || stmtCtx.OptimizerCETrace[j] == nil {
+			return false
+		}
+
+		if stmtCtx.OptimizerCETrace[i].TableID != stmtCtx.OptimizerCETrace[j].TableID {
+			return stmtCtx.OptimizerCETrace[i].TableID < stmtCtx.OptimizerCETrace[j].TableID
+		}
+		if stmtCtx.OptimizerCETrace[i].Type != stmtCtx.OptimizerCETrace[j].Type {
+			return stmtCtx.OptimizerCETrace[i].Type < stmtCtx.OptimizerCETrace[j].Type
+		}
+		if stmtCtx.OptimizerCETrace[i].Expr != stmtCtx.OptimizerCETrace[j].Expr {
+			return stmtCtx.OptimizerCETrace[i].Expr < stmtCtx.OptimizerCETrace[j].Expr
+		}
+		return stmtCtx.OptimizerCETrace[i].RowCount < stmtCtx.OptimizerCETrace[j].RowCount
+	})
 	traceRecords := stmtCtx.OptimizerCETrace
 	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	for _, rec := range traceRecords {

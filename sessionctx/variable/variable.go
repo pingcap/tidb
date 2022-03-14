@@ -269,10 +269,6 @@ func (sv *SysVar) Validate(vars *SessionVars, value string, scope ScopeFlag) (st
 
 // ValidateFromType provides automatic validation based on the SysVar's type
 func (sv *SysVar) ValidateFromType(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
-	// TODO: this is a temporary solution for issue: https://github.com/pingcap/tidb/issues/31538, an elegant solution is needed.
-	if value == "" && sv.IsNoop {
-		return value, nil
-	}
 	// Some sysvars in TiDB have a special behavior where the empty string means
 	// "use the config file value". This needs to be cleaned up once the behavior
 	// for instance variables is determined.
@@ -563,12 +559,12 @@ func SetSysVar(name string, value string) {
 func GetSysVars() map[string]*SysVar {
 	sysVarsLock.RLock()
 	defer sysVarsLock.RUnlock()
-	copy := make(map[string]*SysVar, len(sysVars))
+	m := make(map[string]*SysVar, len(sysVars))
 	for name, sv := range sysVars {
 		tmp := *sv
-		copy[name] = &tmp
+		m[name] = &tmp
 	}
-	return copy
+	return m
 }
 
 func init() {

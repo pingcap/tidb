@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/mockstore/unistore/lockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/tablecodec"
@@ -293,9 +294,18 @@ func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) {
 
 	e.idxScanCtx.primaryColumnIds = idxScan.PrimaryColumnIds
 	lastColumn := e.columnInfos[len(e.columnInfos)-1]
-	if lastColumn.GetColumnId() == model.ExtraPidColID {
-		lastColumn = e.columnInfos[len(e.columnInfos)-2]
+
+	// Here it is required that ExtraPhysTblID is last
+	if lastColumn.GetColumnId() == model.ExtraPhysTblID {
 		e.idxScanCtx.columnLen--
+		lastColumn = e.columnInfos[e.idxScanCtx.columnLen-1]
+	}
+
+	// Here it is required that ExtraPidColID
+	// is after all other columns except ExtraPhysTblID
+	if lastColumn.GetColumnId() == model.ExtraPidColID {
+		e.idxScanCtx.columnLen--
+		lastColumn = e.columnInfos[e.idxScanCtx.columnLen-1]
 	}
 
 	if len(e.idxScanCtx.primaryColumnIds) == 0 {
@@ -604,7 +614,7 @@ func (e *closureExecutor) isPointGetRange(ran kv.KeyRange) bool {
 func (e *closureExecutor) checkRangeLock() error {
 	if !e.ignoreLock && !e.lockChecked {
 		for _, ran := range e.kvRanges {
-			err := e.checkRangeLockForRange(ran)
+			err := checkRangeLockForRange(e.lockStore, e.startTS, e.resolvedLocks, ran)
 			if err != nil {
 				return err
 			}
@@ -614,14 +624,14 @@ func (e *closureExecutor) checkRangeLock() error {
 	return nil
 }
 
-func (e *closureExecutor) checkRangeLockForRange(ran kv.KeyRange) error {
-	it := e.lockStore.NewIterator()
+func checkRangeLockForRange(store *lockstore.MemStore, startTS uint64, resolvedLocks []uint64, ran kv.KeyRange) error {
+	it := store.NewIterator()
 	for it.Seek(ran.StartKey); it.Valid(); it.Next() {
 		if exceedEndKey(it.Key(), ran.EndKey) {
 			break
 		}
 		lock := mvcc.DecodeLock(it.Value())
-		err := checkLock(lock, it.Key(), e.startTS, e.resolvedLocks)
+		err := checkLock(lock, it.Key(), startTS, resolvedLocks)
 		if err != nil {
 			return err
 		}
@@ -837,6 +847,12 @@ func (e *closureExecutor) tableScanProcessCore(key, value []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// Add ExtraPhysTblID if requested
+	// Assumes it is always last!
+	if e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraPhysTblID {
+		tblID := tablecodec.DecodeTableID(key)
+		e.scanCtx.chk.AppendInt64(len(e.columnInfos)-1, tblID)
+	}
 	incRow = true
 	return nil
 }
@@ -908,6 +924,12 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 				return errors.Trace(err)
 			}
 		}
+	}
+	// Add ExtraPhysTblID if requested
+	// Assumes it is always last!
+	if e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraPhysTblID {
+		tblID := tablecodec.DecodeTableID(key)
+		chk.AppendInt64(len(e.columnInfos)-1, tblID)
 	}
 	gotRow = true
 	return nil

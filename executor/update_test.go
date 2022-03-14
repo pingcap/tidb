@@ -15,80 +15,35 @@
 package executor_test
 
 import (
-	"flag"
-	"fmt"
+	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/tikv/client-go/v2/testutils"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
-type testUpdateSuite struct {
-	cluster testutils.Cluster
-	store   kv.Storage
-	domain  *domain.Domain
-	*parser.Parser
-}
-
-func (s *testUpdateSuite) SetUpSuite(c *C) {
-	s.Parser = parser.New()
-	flag.Lookup("mockTikv")
-	useMockTikv := *mockTikv
-	if useMockTikv {
-		store, err := mockstore.NewMockStore(
-			mockstore.WithClusterInspector(func(c testutils.Cluster) {
-				mockstore.BootstrapWithSingleStore(c)
-				s.cluster = c
-			}),
-		)
-		c.Assert(err, IsNil)
-		s.store = store
-		session.SetSchemaLease(0)
-		session.DisableStats4Test()
-	}
-	d, err := session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-	d.SetStatsUpdating(true)
-	s.domain = d
-}
-
-func (s *testUpdateSuite) TearDownSuite(c *C) {
-	s.domain.Close()
-	c.Assert(s.store.Close(), IsNil)
-}
-
-func (s *testUpdateSuite) TearDownTest(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	r := tk.MustQuery("show tables")
-	for _, tb := range r.Rows() {
-		tableName := tb[0]
-		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
-	}
-}
-
-func (s *testUpdateSuite) TestUpdateGenColInTxn(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestUpdateGenColInTxn(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t(a bigint, b bigint as (a+1));`)
 	tk.MustExec(`begin;`)
 	tk.MustExec(`insert into t(a) values(1);`)
 	err := tk.ExecToErr(`update t set b=6 where b=2;`)
-	c.Assert(err.Error(), Equals, "[planner:3105]The value specified for generated column 'b' in table 't' is not allowed.")
+	require.Equal(t, "[planner:3105]The value specified for generated column 'b' in table 't' is not allowed.", err.Error())
 	tk.MustExec(`commit;`)
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(
 		`1 2`))
 }
 
-func (s *testUpdateSuite) TestUpdateWithAutoidSchema(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestUpdateWithAutoidSchema(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t1(id int primary key auto_increment, n int);`)
 	tk.MustExec(`create table t2(id int primary key, n float auto_increment, key I_n(n));`)
@@ -212,21 +167,25 @@ func (s *testUpdateSuite) TestUpdateWithAutoidSchema(c *C) {
 	}
 }
 
-func (s *testUpdateSuite) TestUpdateSchemaChange(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestUpdateSchemaChange(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t(a bigint, b bigint as (a+1));`)
 	tk.MustExec(`begin;`)
 	tk.MustExec(`insert into t(a) values(1);`)
 	err := tk.ExecToErr(`update t set b=6 where b=2;`)
-	c.Assert(err.Error(), Equals, "[planner:3105]The value specified for generated column 'b' in table 't' is not allowed.")
+	require.Equal(t, "[planner:3105]The value specified for generated column 'b' in table 't' is not allowed.", err.Error())
 	tk.MustExec(`commit;`)
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(
 		`1 2`))
 }
 
-func (s *testUpdateSuite) TestUpdateMultiDatabaseTable(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestUpdateMultiDatabaseTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop database if exists test2")
 	tk.MustExec("create database test2")
@@ -235,8 +194,10 @@ func (s *testUpdateSuite) TestUpdateMultiDatabaseTable(c *C) {
 	tk.MustExec("update t, test2.t set test.t.a=1")
 }
 
-func (s *testUpdateSuite) TestUpdateSwapColumnValues(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestUpdateSwapColumnValues(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1 (c_str varchar(40))")
@@ -271,8 +232,10 @@ func (s *testUpdateSuite) TestUpdateSwapColumnValues(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("10 30 -10 -30", "20 30 -20 -30"))
 }
 
-func (s *testUpdateSuite) TestMultiUpdateOnSameTable(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestMultiUpdateOnSameTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(x int, y int)")
@@ -328,16 +291,13 @@ func (s *testUpdateSuite) TestMultiUpdateOnSameTable(c *C) {
 		`[planner:1706]Primary key/partition key update is not allowed since the table is updated both as 'm' and 'n'.`)
 }
 
-var _ = SerialSuites(&testSuite11{&baseTestSuite{}})
+func TestUpdateClusterIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
-type testSuite11 struct {
-	*baseTestSuite
-}
-
-func (s *testSuite11) TestUpdateClusterIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(id varchar(200) primary key, v int)`)
@@ -386,10 +346,13 @@ func (s *testSuite11) TestUpdateClusterIndex(c *C) {
 	tk.MustQuery("select * from s").Check(testkit.Rows("3 3 10", "5 5 5"))
 }
 
-func (s *testSuite11) TestDeleteClusterIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestDeleteClusterIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(id varchar(200) primary key, v int)`)
@@ -421,10 +384,13 @@ func (s *testSuite11) TestDeleteClusterIndex(c *C) {
 	tk.MustQuery("select * from s1").Check(testkit.Rows("5 5 5"))
 }
 
-func (s *testSuite11) TestReplaceClusterIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestReplaceClusterIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 
 	tk.MustExec(`drop table if exists rt1pk`)
 	tk.MustExec(`create table rt1pk(id varchar(200) primary key, v int)`)
@@ -448,38 +414,42 @@ func (s *testSuite11) TestReplaceClusterIndex(c *C) {
 	tk.MustQuery(`select * from rt1pk1u`).Check(testkit.Rows("aaa 2 11"))
 }
 
-func (s *testSuite11) TestPessimisticUpdatePKLazyCheck(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	s.testUpdatePKLazyCheck(c, tk, variable.ClusteredIndexDefModeOn)
-	s.testUpdatePKLazyCheck(c, tk, variable.ClusteredIndexDefModeOff)
-	s.testUpdatePKLazyCheck(c, tk, variable.ClusteredIndexDefModeIntOnly)
+func TestPessimisticUpdatePKLazyCheck(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	testUpdatePKLazyCheck(t, tk, variable.ClusteredIndexDefModeOn)
+	testUpdatePKLazyCheck(t, tk, variable.ClusteredIndexDefModeOff)
+	testUpdatePKLazyCheck(t, tk, variable.ClusteredIndexDefModeIntOnly)
 }
 
-func (s *testSuite11) testUpdatePKLazyCheck(c *C, tk *testkit.TestKit, clusteredIndex variable.ClusteredIndexDefMode) {
-	tk.Se.GetSessionVars().EnableClusteredIndex = clusteredIndex
+func testUpdatePKLazyCheck(t *testing.T, tk *testkit.TestKit, clusteredIndex variable.ClusteredIndexDefMode) {
+	tk.Session().GetSessionVars().EnableClusteredIndex = clusteredIndex
 	tk.MustExec(`drop table if exists upk`)
 	tk.MustExec(`create table upk (a int, b int, c int, primary key (a, b))`)
 	tk.MustExec(`insert upk values (1, 1, 1), (2, 2, 2), (3, 3, 3)`)
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("update upk set b = b + 1 where a between 1 and 2")
-	c.Assert(getPresumeExistsCount(c, tk.Se), Equals, 2)
+	require.Equal(t, 2, getPresumeExistsCount(t, tk.Session()))
 	_, err := tk.Exec("update upk set a = 3, b = 3 where a between 1 and 2")
-	c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
+	require.True(t, kv.ErrKeyExists.Equal(err))
 	tk.MustExec("commit")
 }
 
-func getPresumeExistsCount(c *C, se session.Session) int {
+func getPresumeExistsCount(t *testing.T, se session.Session) int {
 	txn, err := se.Txn(false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	buf := txn.GetMemBuffer()
 	it, err := buf.Iter(nil, nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	presumeNotExistsCnt := 0
 	for it.Valid() {
 		flags, err1 := buf.GetFlags(it.Key())
-		c.Assert(err1, IsNil)
+		require.Nil(t, err1)
 		err = it.Next()
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		if flags.HasPresumeKeyNotExists() {
 			presumeNotExistsCnt++
 		}
@@ -487,18 +457,23 @@ func getPresumeExistsCount(c *C, se session.Session) int {
 	return presumeNotExistsCnt
 }
 
-func (s *testSuite11) TestOutOfRangeWithUnsigned(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestOutOfRangeWithUnsigned(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(ts int(10) unsigned NULL DEFAULT NULL)`)
 	tk.MustExec(`insert into t values(1)`)
 	_, err := tk.Exec("update t set ts = IF(ts < (0 - ts), 1,1) where ts>0")
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(0 - test.t.ts)'")
+	require.Equal(t, "[types:1690]BIGINT UNSIGNED value is out of range in '(0 - test.t.ts)'", err.Error())
 }
 
-func (s *testPointGetSuite) TestIssue21447(c *C) {
-	tk1, tk2 := testkit.NewTestKit(c, s.store), testkit.NewTestKit(c, s.store)
+func TestIssue21447(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk1, tk2 := testkit.NewTestKit(t, store), testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 	tk2.MustExec("use test")
 
@@ -521,8 +496,10 @@ func (s *testPointGetSuite) TestIssue21447(c *C) {
 	tk1.MustExec("commit")
 }
 
-func (s *testSuite11) TestIssue23553(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestIssue23553(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists tt`)
 	tk.MustExec(`create table tt (m0 varchar(64), status tinyint not null)`)

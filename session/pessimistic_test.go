@@ -258,10 +258,10 @@ func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
 	tableStart := tablecodec.GenTableRecordPrefix(tblID)
 	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 2)
 	region1Key := codec.EncodeBytes(nil, tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(1)))
-	region1, _ := s.cluster.GetRegionByKey(region1Key)
+	region1, _, _ := s.cluster.GetRegionByKey(region1Key)
 	region1ID := region1.Id
 	region2Key := codec.EncodeBytes(nil, tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(3)))
-	region2, _ := s.cluster.GetRegionByKey(region2Key)
+	region2, _, _ := s.cluster.GetRegionByKey(region2Key)
 	region2ID := region2.Id
 
 	syncCh := make(chan bool)
@@ -2360,7 +2360,7 @@ func (s *testPessimisticSuite) TestIssue21498(c *C) {
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1")
 
 	for _, partition := range []bool{false, true} {
-		//RC test
+		// RC test
 		tk.MustExec("drop table if exists t, t1")
 		createTable := "create table t (id int primary key, v int, index iv (v))"
 		if partition {
@@ -2465,6 +2465,7 @@ func (s *testPessimisticSuite) TestIssue21498(c *C) {
 		tk.MustQuery("select * from t s, t t1 where s.v = 23 and s.id = t1.id").Check(testkit.Rows("2 23 200 2 23 200"))
 		tk.MustQuery("select * from t s, t t1 where s.v = 24 and s.id = t1.id").Check(testkit.Rows())
 		tk.MustQuery("select * from t s, t t1 where s.v = 23 and s.id = t1.id for update").Check(testkit.Rows())
+		// TODO: Do the same with Partitioned Table!!! Since this query leads to two columns in SelectLocExec.tblID2Handle!!!
 		tk.MustQuery("select * from t s, t t1 where s.v = 24 and s.id = t1.id for update").Check(testkit.Rows("2 24 200 2 24 200"))
 		tk.MustExec("delete from t where v = 24")
 		tk.CheckExecResult(1, 0)
@@ -2529,7 +2530,7 @@ func (s *testPessimisticSuite) TestPlanCacheSchemaChange(c *C) {
 	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1")
 	tk2.MustExec("set tidb_enable_amend_pessimistic_txn = 1")
 
-	//generate plan cache
+	// generate plan cache
 	tk.MustExec("prepare update_stmt from 'update t set vv = vv + 1 where v = ?'")
 	tk.MustExec("set @v = 1")
 	tk.MustExec("execute update_stmt using @v")
@@ -2835,4 +2836,30 @@ func (s *testPessimisticSuite) TestAmendForColumnChange(c *C) {
 	}
 
 	tk2.MustExec("drop database test_db")
+}
+
+func (s *testPessimisticSuite) TestPessimisticAutoCommitTxn(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
+	tk.MustExec("drop database if exists test_db")
+	tk.MustExec("create database test_db")
+	tk.MustExec("use test_db")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (i int)")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("set autocommit = on")
+
+	rows := tk.MustQuery("explain update t set i = -i").Rows()
+	explain := fmt.Sprintf("%v", rows[1])
+	c.Assert(explain, Not(Matches), ".*SelectLock.*")
+
+	originCfg := config.GetGlobalConfig()
+	defer config.StoreGlobalConfig(originCfg)
+	newCfg := *originCfg
+	newCfg.PessimisticTxn.PessimisticAutoCommit.Store(true)
+	config.StoreGlobalConfig(&newCfg)
+
+	rows = tk.MustQuery("explain update t set i = -i").Rows()
+	explain = fmt.Sprintf("%v", rows[1])
+	c.Assert(explain, Matches, ".*SelectLock.*")
 }
