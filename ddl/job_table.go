@@ -425,8 +425,7 @@ func (d *ddl) addDDLJobsInternal(jobs []*model.Job, level kvrpcpb.DiskFullOpt) e
 }
 
 func (d *ddl) addDDLJobs(jobs []*model.Job) error {
-	notAllowJobs := make([]*model.Job, len(jobs), len(jobs))
-	allowJobs := make([]*model.Job, len(jobs), len(jobs))
+	var notAllowJobs, allowJobs []*model.Job
 	for _, job := range jobs {
 		if mayNeedReorg(job) {
 			notAllowJobs = append(notAllowJobs, job)
