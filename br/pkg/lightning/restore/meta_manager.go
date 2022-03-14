@@ -156,7 +156,7 @@ func parseMetaStatus(s string) (metaStatus, error) {
 	case "finish":
 		return metaStatusFinished, nil
 	default:
-		return metaStatusInitial, errors.Errorf("invalid meta status '%s'", s)
+		return metaStatusInitial, common.ErrInvalidMetaStatus.GenWithStackByArgs(s)
 	}
 }
 
@@ -200,7 +200,7 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 			}
 			status, err := parseMetaStatus(statusValue)
 			if err != nil {
-				return errors.Annotatef(err, "invalid meta status '%s'", statusValue)
+				return err
 			}
 
 			// skip finished meta
@@ -209,7 +209,7 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 			}
 
 			if status == metaStatusChecksuming {
-				return errors.New("target table is calculating checksum, please wait unit the checksum is finished and try again.")
+				return common.ErrAllocTableRowIDs.GenWithStack("target table is calculating checksum, please wait unit the checksum is finished and try again.")
 			}
 
 			if metaTaskID == m.taskID {
@@ -219,7 +219,7 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 				baseTotalBytes = totalBytes
 				if status >= metaStatusRowIDAllocated {
 					if rowIDMax-rowIDBase != rawRowIDMax {
-						return errors.Errorf("verify allocator base failed. local: '%d', meta: '%d'", rawRowIDMax, rowIDMax-rowIDBase)
+						return common.ErrAllocTableRowIDs.GenWithStack("verify allocator base failed. local: '%d', meta: '%d'", rawRowIDMax, rowIDMax-rowIDBase)
 					}
 					newRowIDBase = rowIDBase
 					newRowIDMax = rowIDMax
@@ -260,7 +260,7 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 					autoIDField = model.ExtraHandleName.L
 				}
 				if len(autoIDField) == 0 {
-					return errors.Errorf("table %s contains auto increment id or _tidb_rowid, but target field not found", m.tr.tableName)
+					return common.ErrAllocTableRowIDs.GenWithStack("table %s contains auto increment id or _tidb_rowid, but target field not found", m.tr.tableName)
 				}
 
 				autoIDInfos, err := tidb.FetchTableAutoIDInfos(ctx, tx, m.tr.tableName)
@@ -276,7 +276,7 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 					}
 				}
 				if !found {
-					return errors.Errorf("can't fetch previous auto id base for table %s field '%s'", m.tr.tableName, autoIDField)
+					return common.ErrAllocTableRowIDs.GenWithStack("can't fetch previous auto id base for table %s field '%s'", m.tr.tableName, autoIDField)
 				}
 			}
 			newRowIDBase = maxRowIDMax
@@ -408,7 +408,7 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 			}
 			status, err := parseMetaStatus(statusValue)
 			if err != nil {
-				return errors.Annotatef(err, "invalid meta status '%s'", statusValue)
+				return err
 			}
 
 			if taskHasDuplicates {
@@ -437,7 +437,7 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 				needRemoteDupe = false
 				break
 			} else if status == metaStatusChecksuming {
-				return errors.New("another task is checksuming, there must be something wrong!")
+				return common.ErrTableIsChecksuming.GenWithStackByArgs(m.tableName)
 			}
 
 			totalBytes += baseTotalBytes
@@ -562,7 +562,7 @@ func parseTaskMetaStatus(s string) (taskMetaStatus, error) {
 	case "switched":
 		return taskMetaStatusSwitchBack, nil
 	default:
-		return taskMetaStatusInitial, errors.Errorf("invalid meta status '%s'", s)
+		return taskMetaStatusInitial, common.ErrInvalidMetaStatus.GenWithStackByArgs(s)
 	}
 }
 
@@ -661,7 +661,7 @@ func (m *dbTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(t
 			}
 			status, err := parseTaskMetaStatus(statusValue)
 			if err != nil {
-				return errors.Annotatef(err, "invalid task meta status '%s'", statusValue)
+				return err
 			}
 			task.status = status
 			tasks = append(tasks, task)
@@ -731,7 +731,7 @@ func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.U
 			}
 			status, err := parseTaskMetaStatus(statusValue)
 			if err != nil {
-				return errors.Annotatef(err, "invalid task meta status '%s'", statusValue)
+				return err
 			}
 
 			if status == taskMetaStatusInitial {
@@ -856,7 +856,7 @@ func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool
 			}
 			status, err := parseTaskMetaStatus(statusValue)
 			if err != nil {
-				return errors.Annotatef(err, "invalid task meta status '%s'", statusValue)
+				return err
 			}
 
 			if taskID == m.taskID {
