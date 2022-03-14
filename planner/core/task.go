@@ -2285,6 +2285,7 @@ func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot bool, isMPP bool) fl
 
 func (p *PhysicalWindow) attach2Task(tasks ...task) task {
 	if mpp, ok := tasks[0].copy().(*mppTask); ok && p.storeTp == kv.TiFlash {
+		// TODO: check whether we need this check.
 		if len(p.PartitionBy) == 0 {
 			prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.SinglePartitionType}
 			mpp = mpp.enforceExchanger(prop)
