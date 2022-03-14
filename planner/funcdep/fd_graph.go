@@ -295,9 +295,8 @@ func (e *fdEdge) implies(otherEdge *fdEdge) bool {
 	if lhsIsLax && rhsIsLax {
 		if e.from.SubsetOf(otherEdge.from) && e.to.Equals(otherEdge.to) {
 			return true
-		} else {
-			return false
 		}
+		return false
 	}
 	if e.from.SubsetOf(otherEdge.from) && otherEdge.to.SubsetOf(e.to) {
 		// The given one should be weaker than the current one.
