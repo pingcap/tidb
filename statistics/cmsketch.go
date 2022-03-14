@@ -695,6 +695,9 @@ var EmptyTopNMemUsage = int64(8) // TODO
 
 // MemoryUsage returns the total memory usage of a topn.
 func (c *TopN) MemoryUsage() (sum int64) {
+	if c == nil {
+		return
+	}
 	for _, meta := range c.TopN {
 		sum += int64(cap(meta.Encoded)) + 8
 	}

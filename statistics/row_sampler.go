@@ -296,6 +296,9 @@ func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector) {
 }
 
 func (s *baseCollector) MemoryUsage() (sum int64) {
+	if s == nil {
+		return
+	}
 	sum += int64(cap(s.NullCount)*8) + int64(cap(s.TotalSizes)*8) + 8
 	for _, fmSketch := range s.FMSketches {
 		sum += int64(unsafe.Sizeof(*fmSketch)) + fmSketch.MemoryUsage()
