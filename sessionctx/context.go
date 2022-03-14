@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
@@ -49,6 +50,8 @@ type Context interface {
 	NewTxn(context.Context) error
 	// NewStaleTxnWithStartTS initializes a staleness transaction with the given StartTS.
 	NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) error
+
+	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
 
 	RollbackTxn(ctx context.Context)
 

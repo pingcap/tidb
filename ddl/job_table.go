@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -415,6 +416,7 @@ func (d *ddl) addDDLJobs(job []*model.Job) error {
 		return err
 	}
 	defer d.sessPool.put(sess)
+	sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
 	_, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), addDDLJobSQL+sql)
 	if err != nil {
 		logutil.BgLogger().Error("[ddl] add job to mysql.tidb_ddl_job table", zap.Error(err))
