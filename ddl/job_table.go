@@ -425,8 +425,8 @@ func (d *ddl) addDDLJobsInternal(jobs []*model.Job, level kvrpcpb.DiskFullOpt) e
 	return err
 }
 func (d *ddl) addDDLJobs(jobs []*model.Job) error {
-	notAllowJobs := make([]*model.Job, len(jobs))
-	allowJobs := make([]*model.Job, len(jobs))
+	notAllowJobs := make([]*model.Job, 0, len(jobs))
+	allowJobs := make([]*model.Job, 0, len(jobs))
 	for _, job := range jobs {
 		if util.IsAllowedOnAlreadyFull(job) {
 			allowJobs = append(allowJobs, job)
