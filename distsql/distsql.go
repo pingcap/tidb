@@ -16,6 +16,7 @@ package distsql
 
 import (
 	"context"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"unsafe"
 
 	"github.com/opentracing/opentracing-go"
@@ -165,7 +166,7 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars inte
 	ctx = WithSQLKvExecCounterInterceptor(ctx, stmtCtx)
 	option := &kv.ClientSendOption{
 		EnableCollectExecutionInfo: config.GetGlobalConfig().EnableCollectExecutionInfo,
-		EnableRateLimitV2:          true,
+		EnableRateLimitV2:          variable.EnableAnalyzeRateLimit.Load(),
 		CapMemTracker:              kvReq.MemTracker.FindAncestor(memory.LabelForAnalyzeSharedMemory),
 	}
 	resp := client.Send(ctx, kvReq, vars, option)
