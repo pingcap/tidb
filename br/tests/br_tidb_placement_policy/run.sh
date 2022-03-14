@@ -65,7 +65,7 @@ run_sql "DROP PLACEMENT POLICY fivereplicas;"
 
 # restore without tidb-placement-policy
 echo "restore without tidb-placement start..."
-run_br restore db --db $DB -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --with-tidb-placement-policy=false
+run_br restore db --db $DB -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --with-tidb-placement-mode "ignore"
 
 policy_count=$(run_sql "use $DB; show placement;" | grep "POLICY" | wc -l)
 if [ "$policy_count" -ne "0" ];then
@@ -73,4 +73,29 @@ if [ "$policy_count" -ne "0" ];then
     exit 1
 fi
 
+# clear data and policy
 run_sql "DROP DATABASE $DB;"
+run_sql "DROP PLACEMENT POLICY fivereplicas;"
+
+# test backup db can ignore placement policy
+run_sql "create schema $DB;"
+run_sql "create placement policy fivereplicas followers=4;"
+
+# generate one table with one row content with policy fivereplicas;.
+run_sql "create table $DB.sbtest(id int primary key, k int not null, c char(120) not null, pad char(60) not null) placement policy=fivereplicas;"
+run_sql "insert into $DB.sbtest values ($i, $i, '$i', '$i');"
+
+run_br backup db --db $DB -s "local://$TEST_DIR/${DB}_db" --pd $PD_ADDR
+
+run_sql "DROP DATABASE $DB;"
+run_sql "DROP PLACEMENT POLICY fivereplicas;"
+
+# restore should success and no policy have been restored.
+run_br restore db --db $DB -s "local://$TEST_DIR/${DB}_db" --pd $PD_ADDR
+
+policy_count=$(run_sql "use $DB; show placement;" | grep "POLICY" | wc -l)
+if [ "$policy_count" -ne "0" ];then
+    echo "TEST: [$TEST_NAME] failed! due to policy should be ignore"
+    exit 1
+fi
+

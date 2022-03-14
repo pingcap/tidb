@@ -329,6 +329,12 @@ func BuildBackupRangeAndSchema(
 			continue
 		}
 
+		if !isFullBackup {
+			// according to https://github.com/pingcap/tidb/issues/32290.
+			// ignore placement policy when not in full backup
+			dbInfo.PlacementPolicyRef = nil
+		}
+
 		for _, tableInfo := range tables {
 			if !tableFilter.MatchTable(dbInfo.Name.O, tableInfo.Name.O) {
 				// Skip tables other than the given table.
