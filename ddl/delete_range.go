@@ -20,7 +20,6 @@ import (
 	"math"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -45,9 +44,6 @@ const (
 )
 
 var (
-	// enableEmulatorGC means whether to enable emulator GC. The default is enable.
-	// In some unit tests, we want to stop emulator GC, then wen can set enableEmulatorGC to 0.
-	emulatorGCEnable = int32(1)
 	// batchInsertDeleteRangeSize is the maximum size for each batch insert statement in the delete-range.
 	batchInsertDeleteRangeSize = 256
 )
@@ -146,26 +142,11 @@ func (dr *delRange) startEmulator() {
 		case <-dr.quitCh:
 			return
 		}
-		if IsEmulatorGCEnable() {
+		if util.IsEmulatorGCEnable() {
 			err := dr.doDelRangeWork()
 			terror.Log(errors.Trace(err))
 		}
 	}
-}
-
-// EmulatorGCEnable enables emulator gc. It exports for testing.
-func EmulatorGCEnable() {
-	atomic.StoreInt32(&emulatorGCEnable, 1)
-}
-
-// EmulatorGCDisable disables emulator gc. It exports for testing.
-func EmulatorGCDisable() {
-	atomic.StoreInt32(&emulatorGCEnable, 0)
-}
-
-// IsEmulatorGCEnable indicates whether emulator GC enabled. It exports for testing.
-func IsEmulatorGCEnable() bool {
-	return atomic.LoadInt32(&emulatorGCEnable) == 1
 }
 
 func (dr *delRange) doDelRangeWork() error {
