@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikv"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -703,7 +704,6 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) *statistics.AnalyzeResu
 		// subIndexWorkerWg is better to be initialized in handleNDVForSpecialIndexes, however if we do so, golang would
 		// report unexpected/unreasonable data race error on subIndexWorkerWg when running TestAnalyzeVirtualCol test
 		// case with `-race` flag now.
-		colExec.subIndexWorkerWg = &util.WaitGroupWrapper{}
 		var wg util.WaitGroupWrapper
 		wg.Run(func() {
 			colExec.handleNDVForSpecialIndexes(specialIndexes, idxNDVPushDownCh)
@@ -820,7 +820,7 @@ type AnalyzeColumnsExec struct {
 	indexes       []*model.IndexInfo
 	core.AnalyzeInfo
 
-	subIndexWorkerWg  *util.WaitGroupWrapper
+	subIndexWorkerWg  *analyzeResultsNotifyWaitGroupWrapper
 	samplingBuilderWg *util.NotifyErrorWaitGroupWrapper
 	samplingMergeWg   *util.WaitGroupWrapper
 
@@ -1142,6 +1142,7 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.Inde
 	if len(tasks) < statsConcurrncy {
 		statsConcurrncy = len(tasks)
 	}
+	e.subIndexWorkerWg = NewAnalyzeResultsNotifyWaitGroupWrapper(resultsCh)
 	for i := 0; i < statsConcurrncy; i++ {
 		e.subIndexWorkerWg.Run(func() { e.subIndexWorkerForNDV(taskCh, resultsCh) })
 	}
@@ -1149,9 +1150,6 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.Inde
 		taskCh <- task
 	}
 	close(taskCh)
-	e.subIndexWorkerWg.Wait()
-	close(resultsCh)
-
 	panicCnt := 0
 	totalResult := analyzeIndexNDVTotalResult{
 		results: make(map[int64]*statistics.AnalyzeResults, len(indexInfos)),
@@ -2320,4 +2318,37 @@ func analyzePKIncremental(colExec *analyzePKIncrementalExec) *statistics.Analyze
 		Count:    cnt,
 		Snapshot: colExec.snapshot,
 	}
+}
+
+// analyzeResultsNotifyWaitGroupWrapper is a wrapper for sync.WaitGroup
+type analyzeResultsNotifyWaitGroupWrapper struct {
+	sync.WaitGroup
+	notify chan *statistics.AnalyzeResults
+	cnt    atomicutil.Uint64
+}
+
+// analyzeResultsNotifyWaitGroupWrapper is to create analyzeResultsNotifyWaitGroupWrapper
+func NewAnalyzeResultsNotifyWaitGroupWrapper(notify chan *statistics.AnalyzeResults) *analyzeResultsNotifyWaitGroupWrapper {
+	return &analyzeResultsNotifyWaitGroupWrapper{
+		notify: notify,
+		cnt:    *atomicutil.NewUint64(0),
+	}
+}
+
+// Run runs a function in a goroutine, adds 1 to WaitGroup
+// and calls done when function returns. Please DO NOT use panic
+// in the cb function.
+func (w *analyzeResultsNotifyWaitGroupWrapper) Run(exec func()) {
+	w.Add(1)
+	old := w.cnt.Inc() - 1
+	go func(cnt uint64) {
+		defer func() {
+			w.Done()
+			if cnt == 0 {
+				w.Wait()
+				close(w.notify)
+			}
+		}()
+		exec()
+	}(old)
 }
