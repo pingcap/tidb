@@ -1011,8 +1011,8 @@ type SessionVars struct {
 	EnableMutationChecker bool
 	// AssertionLevel controls how strict the assertions on data mutations should be.
 	AssertionLevel AssertionLevel
-	// IgnoreCloseStmtCmd controls if ignore the close-prepared-stmt command.
-	IgnoreCloseStmtCmd bool
+	// IgnorePreparedCacheCloseStmt controls if ignore the close-stmt command for prepared statement.
+	IgnorePreparedCacheCloseStmt bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.

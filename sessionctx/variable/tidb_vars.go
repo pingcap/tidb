@@ -608,8 +608,8 @@ const (
 	// index inconsistency problems.
 	TiDBTxnAssertionLevel = "tidb_txn_assertion_level"
 
-	// TiDBIgnoreClosePreparedStmt indicates whether to ignore close-stmt commands for prepared statements.
-	TiDBIgnoreCloseStmtCmd = "tidb_ignore_close_stmt_cmd"
+	// TiDBIgnorePreparedCacheCloseStmt indicates whether to ignore close-stmt commands for prepared statements.
+	TiDBIgnorePreparedCacheCloseStmt = "tidb_ignore_prepared_cache_close_stmt"
 )
 
 // TiDB vars that have only global scope
@@ -804,7 +804,7 @@ const (
 	DefSysdateIsNow                       = false
 	DefTiDBEnableMutationChecker          = false
 	DefTiDBTxnAssertionLevel              = AssertionOffStr
-	DefTiDBIgnoreCloseStmtCmd             = false
+	DefTiDBIgnorePreparedCacheCloseStmt   = false
 )
 
 // Process global variables.

@@ -336,7 +336,7 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if err != nil {
 			return err
 		}
-		if !vars.IgnoreCloseStmtCmd { // keep the plan in cache if this flag is true
+		if !vars.IgnorePreparedCacheCloseStmt { // keep the plan in cache
 			e.ctx.PreparedPlanCache().Delete(cacheKey)
 		}
 	}
