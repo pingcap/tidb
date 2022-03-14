@@ -11,12 +11,8 @@
 * [Detailed Design](#detailed-design)
 * [Test Design](#test-design)
     * [Functional Tests](#functional-tests)
-    * [Scenario Tests](#scenario-tests)
     * [Compatibility Tests](#compatibility-tests)
     * [Benchmark Tests](#benchmark-tests)
-* [Impacts & Risks](#impacts--risks)
-* [Investigation & Alternatives](#investigation--alternatives)
-* [Unresolved Questions](#unresolved-questions)
 
 ## Introduction
 
@@ -43,56 +39,81 @@ for _, t := range tables {
 }
 
 the new design will introduce a new batch create table api
-waitSchemaToSync() // <- only one time of waiting. 
+BatchCreateTableWithInfo
 
-Explain the design in enough detail that: it is reasonably clear how the feature would be implemented, corner cases are dissected by example, how the feature is used, etc.
+for _, info := range tableInfo {
+		job, err := d.createTableWithInfoJob(ctx, dbName, info, onExist, true)
+		if err != nil {
+			return errors.Trace(err)
+		}
 
-It's better to describe the pseudo-code of the key algorithm, API interfaces, the UML graph, what components are needed to be changed in this section.
+		// if jobs.Type == model.ActionCreateTables, it is initialized
+		// if not, initialize jobs by job.XXXX
+		if jobs.Type != model.ActionCreateTables {
+			jobs.Type = model.ActionCreateTables
+			jobs.SchemaID = job.SchemaID
+			jobs.SchemaName = job.SchemaName
+		}
 
-Compatibility is important, please also take into consideration, a checklist:
-- Compatibility with other features, like partition table, security&privilege, collation&charset, clustered index, async commit, etc.
-- Compatibility with other internal components, like parser, DDL, planner, statistics, executor, etc.
-- Compatibility with other external components, like PD, TiKV, TiFlash, BR, TiCDC, Dumpling, TiUP, K8s, etc.
-- Upgrade compatibility
-- Downgrade compatibility
+		// append table job args
+		info, ok := job.Args[0].(*model.TableInfo)
+		if !ok {
+			return errors.Trace(fmt.Errorf("except table info"))
+		}
+		args = append(args, info)
+	}
+
+	jobs.Args = append(jobs.Args, args)
+
+	err = d.doDDLJob(ctx, jobs)
+
+	for j := range args {
+		if err = d.createTableWithInfoPost(ctx, args[j], jobs.SchemaID); err != nil {
+			return errors.Trace(d.callHookOnChanged(err))
+		}
+	}
+
+
+For ddl work, introduce a new job type ActionCreateTables
+	case model.ActionCreateTables:
+		tableInfos := []*model.TableInfo{}
+		err = job.DecodeArgs(&tableInfos)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		diff.AffectedOpts = make([]*model.AffectedOption, len(tableInfos))
+		for i := range tableInfos {
+			diff.AffectedOpts[i] = &model.AffectedOption{
+				SchemaID:    job.SchemaID,
+				OldSchemaID: job.SchemaID,
+				TableID:     tableInfos[i].ID,
+				OldTableID:  tableInfos[i].ID,
+			}
+		}
+
+for each job ActionCreateTables, only one schema change, so one schema version for one batch of create table, it greatly improve the performance of create tables.
+
+
+The feature auto enabled with batch size 128 to batch create table. User can disable the feature by specify --ddl-batch-size=0. The max batch size depends on the txn message size, currently it configure 8MB by default. 
 
 ## Test Design
+UT: see PRs https://github.com/pingcap/tidb/pull/28763, https://github.com/pingcap/tics/pull/4201, https://github.com/pingcap/tidb/pull/29380
 
-A brief description of how the implementation will be tested. Both the integration test and the unit test should be considered.
+Integration test also coverred amoung CDC, BR, TiDB, binlog, TiFlash etc.
 
-### Functional Tests
-
-It's used to ensure the basic feature function works as expected. Both the integration test and the unit test should be considered.
-
-### Scenario Tests
-
-It's used to ensure this feature works as expected in some common scenarios.
 
 ### Compatibility Tests
 
-A checklist to test compatibility:
-- Compatibility with other features, like partition table, security & privilege, charset & collation, clustered index, async commit, etc.
-- Compatibility with other internal components, like parser, DDL, planner, statistics, executor, etc.
-- Compatibility with other external components, like PD, TiKV, TiFlash, BR, TiCDC, Dumpling, TiUP, K8s, etc.
-- Upgrade compatibility
-- Downgrade compatibility
+- Compatibility with binlog, please refer to https://github.com/pingcap/tidb-binlog/pull/1114.
+- Compatibility with CDC, a regression test made for cdc work with br test. since CDC has whitelist for unrecognize ddl job and pull data from tikv directly, so that we did not found regression issue.
+- Compatibility with TiFlash https://github.com/pingcap/tics/pull/4201.
+- Upgrade compatibility: BR + tidb without interface BatchCreateTableWithInfo, the restore fall back to old legacy way that create table one by one.
+- Downgrade compatibility: old BR + new tidb with BatchCreateTableWithInfo, the restore using legacy way to create table.
 
 ### Benchmark Tests
+- 61259 tables restore takes 4 minute 50 seconds, 200+ tables/per seconds with following configuration:
+TiDB x 1: 16 CPU, 32 GB
+PD x 1: 16 CPU, 32 GB
+TiKV x 3: 16 CPU, 32 GB
 
-The following two parts need to be measured:
-- The performance of this feature under different parameters
-- The performance influence on the online workload
 
-## Impacts & Risks
-
-Describe the potential impacts & risks of the design on overall performance, security, k8s, and other aspects. List all the risks or unknowns by far.
-
-Please describe impacts and risks in two sections: Impacts could be positive or negative, and intentional. Risks are usually negative, unintentional, and may or may not happen. E.g., for performance, we might expect a new feature to improve latency by 10% (expected impact), there is a risk that latency in scenarios X and Y could degrade by 50%.
-
-## Investigation & Alternatives
-
-How do other systems solve this issue? What other designs have been considered and what is the rationale for not choosing them?
-
-## Unresolved Questions
-
-What parts of the design are still to be determined?
