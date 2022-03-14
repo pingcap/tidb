@@ -1448,10 +1448,12 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 				if idx.Len() > 0 {
 					_, lowerBkt, _, _ := idx.locateBucket(l)
 					_, upperBkt, _, _ := idx.locateBucket(r)
+					// Use Count of the Bucket before l as the lower bound.
 					preCount := float64(0)
 					if lowerBkt > 0 {
 						preCount = float64(idx.Buckets[lowerBkt-1].Count)
 					}
+					// Use Count of the Bucket where r exists as the upper bound.
 					upperCnt := float64(idx.Buckets[upperBkt].Count)
 					upperLimit = upperCnt - preCount
 					upperLimit += float64(idx.TopN.BetweenCount(lb, rb))
