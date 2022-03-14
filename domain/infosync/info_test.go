@@ -262,7 +262,7 @@ func TestTiFlashManager(t *testing.T) {
 			Name:     model.NewCIStr("p"),
 			LessThan: []string{},
 		},
-	}, 3, &[]string{})
+	}, 3, &[]string{}, 100)
 	rules, err = GetTiFlashGroupRules(ctx, "tiflash")
 	require.NoError(t, err)
 	// Have table 1 and 2
