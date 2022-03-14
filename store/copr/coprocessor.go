@@ -146,8 +146,9 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 
 // copTask contains a related Region and KeyRange for a kv.Request.
 type copTask struct {
-	region tikv.RegionVerID
-	ranges *KeyRanges
+	region     tikv.RegionVerID
+	bucketsVer uint64
+	ranges     *KeyRanges
 
 	respChan  chan *copResponse
 	storeAddr string
@@ -180,7 +181,8 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 
 	rangesLen := ranges.Len()
 
-	locs, err := cache.SplitKeyRangesByLocations(bo, ranges)
+	// TODO(youjiali1995): is there any request type that needn't be splitted by buckets?
+	locs, err := cache.SplitKeyRangesByBuckets(bo, ranges)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -208,6 +210,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 			}
 			tasks = append(tasks, &copTask{
 				region:     loc.Location.Region,
+				bucketsVer: loc.getBucketVersion(),
 				ranges:     loc.Ranges.Slice(i, nextI),
 				respChan:   make(chan *copResponse, chanSize),
 				cmdType:    cmdType,
@@ -319,7 +322,6 @@ type copIteratorWorker struct {
 
 	replicaReadSeed uint32
 
-	actionOnExceed             *rateLimitAction
 	enableCollectExecutionInfo bool
 }
 
@@ -441,7 +443,6 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 			kvclient:                   txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, &it.committedLocks, false),
 			memTracker:                 it.memTracker,
 			replicaReadSeed:            it.replicaReadSeed,
-			actionOnExceed:             it.actionOnExceed,
 			enableCollectExecutionInfo: enableCollectExecutionInfo,
 		}
 		go worker.run(ctx)
@@ -931,6 +932,9 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 // if we're handling streaming coprocessor response, lastRange is the range of last
 // successful response, otherwise it's nil.
 func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, ch chan<- *copResponse, lastRange *coprocessor.KeyRange, costTime time.Duration) ([]*copTask, error) {
+	if ver := resp.pbResp.GetLatestBucketsVersion(); task.bucketsVer < ver {
+		worker.store.GetRegionCache().UpdateBucketsIfNeeded(task.region, ver)
+	}
 	if regionErr := resp.pbResp.GetRegionError(); regionErr != nil {
 		if rpcCtx != nil && task.storeType == kv.TiDB {
 			resp.err = errors.Errorf("error: %v", regionErr)
