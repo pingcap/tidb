@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -621,11 +622,9 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Drop Index"))
 	}
 
-	dependentHiddenCols := make([]*model.ColumnInfo, 0)
-	for _, indexColumn := range indexInfo.Columns {
-		if tblInfo.Columns[indexColumn.Offset].Hidden {
-			dependentHiddenCols = append(dependentHiddenCols, tblInfo.Columns[indexColumn.Offset])
-		}
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+		job.MarkNonRevertible()
+		return updateVersionAndTableInfo(t, job, tblInfo, false)
 	}
 
 	originalState := indexInfo.State
@@ -656,25 +655,11 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.SchemaState = model.StateDeleteReorganization
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
-		if len(dependentHiddenCols) > 0 {
-			firstHiddenOffset := dependentHiddenCols[0].Offset
-			for i := 0; i < len(dependentHiddenCols); i++ {
-				// Set this column's offset to the last and reset all following columns' offsets.
-				adjustColumnInfoInDropColumn(tblInfo, firstHiddenOffset)
-			}
-		}
-
-		newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
-		for _, idx := range tblInfo.Indices {
-			if idx.Name.L != indexInfo.Name.L {
-				newIndices = append(newIndices, idx)
-			}
-		}
-		tblInfo.Indices = newIndices
 		// Set column index flag.
 		dropIndexColumnFlag(tblInfo, indexInfo)
+		removeDependentHiddenColumns(tblInfo, indexInfo)
+		removeIndexInfo(tblInfo, indexInfo)
 
-		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-len(dependentHiddenCols)]
 		failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
 			if val.(bool) {
 				panic("panic test in cancelling add index")
@@ -700,6 +685,44 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
 	}
 	return ver, errors.Trace(err)
+}
+
+func removeDependentHiddenColumns(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
+	hiddenColOffs := make([]int, 0)
+	for _, indexColumn := range idxInfo.Columns {
+		col := tblInfo.Columns[indexColumn.Offset]
+		if col.Hidden {
+			hiddenColOffs = append(hiddenColOffs, col.Offset)
+		}
+	}
+	// Sort the offset in descending order.
+	sort.Slice(hiddenColOffs, func(i, j int) bool {
+		return hiddenColOffs[i] > hiddenColOffs[j]
+	})
+	// Move all the dependent hidden columns to the end.
+	endOffset := len(tblInfo.Columns) - 1
+	for _, offset := range hiddenColOffs {
+		tblInfo.MoveColumnInfo(offset, endOffset)
+	}
+	tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-len(hiddenColOffs)]
+}
+
+func removeIndexInfo(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
+	indices := tblInfo.Indices
+	offset := -1
+	for i, idx := range indices {
+		if idxInfo.ID == idx.ID {
+			offset = i
+			break
+		}
+	}
+	if offset == -1 {
+		// The target index has been removed.
+		return
+	}
+	// Swap the target index to the end and remove it.
+	indices[offset], indices[len(indices)-1] = indices[len(indices)-1], indices[offset]
+	tblInfo.Indices = tblInfo.Indices[:len(tblInfo.Indices)-1]
 }
 
 func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.IndexInfo, error) {

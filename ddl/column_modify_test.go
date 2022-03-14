@@ -568,7 +568,10 @@ func TestCancelDropColumns(t *testing.T) {
 	var jobID int64
 	testCase := &testCases[0]
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == model.ActionDropColumns && job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
+		isDropColTp := job.Type == model.ActionMultiSchemaChange &&
+			job.MultiSchemaInfo.SubJobs[0].Type == model.ActionDropColumn
+		if isDropColTp && job.MultiSchemaInfo.SubJobs[0].State == testCase.jobState &&
+			job.MultiSchemaInfo.SubJobs[0].SchemaState == testCase.JobSchemaState {
 			jobIDs := []int64{job.ID}
 			jobID = job.ID
 			hookCtx := mock.NewContext()

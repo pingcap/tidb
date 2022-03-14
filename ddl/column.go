@@ -217,6 +217,9 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 }
 
 func locateOffsetForColumn(pos *ast.ColumnPosition, tblInfo *model.TableInfo) (offset int, err error) {
+	if pos == nil {
+		return -1, nil
+	}
 	// Get column offset.
 	switch pos.Tp {
 	case ast.ColumnPositionFirst:
@@ -362,7 +365,7 @@ func onAddColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		// Adjust table column offsets.
-		for i, newCol := range tblInfo.Columns[:len(tblInfo.Columns)-len(positions)] {
+		for i, newCol := range tblInfo.Columns[len(tblInfo.Columns)-len(positions):] {
 			offset, err := locateOffsetForColumn(positions[i], tblInfo)
 			if err != nil {
 				return ver, errors.Trace(err)
@@ -540,10 +543,7 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
 		job.MarkNonRevertible()
-		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, false)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
+		return updateVersionAndTableInfoWithCheck(t, job, tblInfo, false)
 	}
 
 	originalState := colInfo.State
@@ -590,6 +590,7 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		// All reorganization jobs are done, drop this column.
+		tblInfo.MoveColumnInfo(colInfo.Offset, len(tblInfo.Columns)-1)
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
 		colInfo.State = model.StateNone
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)

@@ -59,8 +59,8 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			}
 			proxyJob := cloneFromSubJob(job, sub)
 			ver, err = w.runDDLJob(d, t, proxyJob)
-			mergeBackToSubJob(proxyJob, sub)
 			handleRevertibleException(job, sub.State, i)
+			mergeBackToSubJob(proxyJob, sub)
 			return ver, err
 		}
 		// All the sub-jobs are non-revertible.
@@ -95,7 +95,7 @@ func isFinished(job *model.SubJob) bool {
 
 func cloneFromSubJob(job *model.Job, sub *model.SubJob) *model.Job {
 	return &model.Job{
-		ID:              0,
+		ID:              job.ID,
 		Type:            sub.Type,
 		SchemaID:        job.SchemaID,
 		TableID:         job.TableID,
@@ -135,10 +135,10 @@ func handleRevertibleException(job *model.Job, res model.JobState, idx int) {
 	if res == model.JobStateRollingback || res == model.JobStateCancelling {
 		job.State = res
 	}
-	// Flush the rollback state and cancelled state to sub-jobs.
+	// Flush the cancelling state and cancelled state to sub-jobs.
 	for i, sub := range job.MultiSchemaInfo.SubJobs {
 		if i < idx {
-			sub.State = model.JobStateRollingback
+			sub.State = model.JobStateCancelling
 		}
 		if i > idx {
 			sub.State = model.JobStateCancelled

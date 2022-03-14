@@ -119,6 +119,8 @@ func IsJobRollbackable(job *model.Job) bool {
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
 		model.ActionModifyTableAutoIdCache, model.ActionModifySchemaDefaultPlacement:
 		return job.SchemaState == model.StateNone
+	case model.ActionMultiSchemaChange:
+		return job.MultiSchemaInfo.Revertible
 	}
 	return true
 }
@@ -164,6 +166,9 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 		}
 		if !IsJobRollbackable(job) {
 			errs[i] = ErrCannotCancelDDLJob.GenWithStackByArgs(job.ID)
+			continue
+		}
+		if job.IsCancelling() {
 			continue
 		}
 

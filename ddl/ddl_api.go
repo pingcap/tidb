@@ -3949,13 +3949,17 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 		return err
 	}
 
+	var multiSchemaInfo *model.MultiSchemaInfo
+	if ctx.GetSessionVars().EnableChangeMultiSchema {
+		multiSchemaInfo = &model.MultiSchemaInfo{}
+	}
 	job := &model.Job{
 		SchemaID:        schema.ID,
 		TableID:         t.Meta().ID,
 		SchemaName:      schema.Name.L,
 		Type:            model.ActionDropColumn,
 		BinlogInfo:      &model.HistoryInfo{},
-		MultiSchemaInfo: nil,
+		MultiSchemaInfo: multiSchemaInfo,
 		Args:            []interface{}{colName},
 	}
 

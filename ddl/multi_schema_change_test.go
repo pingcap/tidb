@@ -15,10 +15,16 @@
 package ddl_test
 
 import (
+	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/admin"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMultiSchemaChangeAddColumns(t *testing.T) {
@@ -69,6 +75,38 @@ func TestMultiSchemaChangeAddColumns(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int default 1, c int default 4);")
 	tk.MustGetErrCode("alter table t add column b int default 2, add column b int default 3", errno.ErrUnsupportedDDLOperation)
+}
+
+func TestMultiSchemaChangeAddColumnsCancelled(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
+
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1);")
+	var checkErr error
+	var once bool
+	hook := func(job *model.Job) {
+		if once || job.MultiSchemaInfo.SubJobs[1].SchemaState != model.StateWriteReorganization {
+			return
+		}
+		once = true
+		checkErr = kv.RunInNewTxn(context.Background(), store, false,
+			func(ctx context.Context, txn kv.Transaction) error {
+				errs, err := admin.CancelJobs(txn, []int64{job.ID})
+				if errs[0] != nil {
+					return errs[0]
+				}
+				return err
+			})
+	}
+	dom.DDL().SetHook(&ddl.TestDDLCallback{Do: dom, OnJobUpdatedExported: hook})
+	require.NoError(t, checkErr)
+	sql := "alter table t add column b int default 2, add column c int default 3, add column d int default 4;"
+	tk.MustGetErrCode(sql, errno.ErrCancelledDDLJob)
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1"))
 }
 
 func TestMultiSchemaChangeDropColumns(t *testing.T) {
@@ -190,6 +228,12 @@ func TestMultiSchemaChangeDropIndexes(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int, index t(a))")
 	tk.MustGetErrCode("alter table t drop index t, drop index t", errno.ErrUnsupportedDDLOperation)
+
+	tk.MustExec("create table t (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2));")
+	tk.MustExec("insert into t values (1, 2, 3);")
+	tk.MustExec("alter table t drop index i1, drop index i2;")
+	tk.MustGetErrCode("select * from t use index(i1);", errno.ErrKeyDoesNotExist)
+	tk.MustGetErrCode("select * from t use index(i2);", errno.ErrKeyDoesNotExist)
 
 	// Test drop index with drop column.
 	/*

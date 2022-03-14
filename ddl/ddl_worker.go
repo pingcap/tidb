@@ -401,19 +401,9 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 
-	if !job.IsCancelled() {
-		switch job.Type {
-		case model.ActionAddIndex, model.ActionAddPrimaryKey:
-			if job.State != model.JobStateRollbackDone {
-				break
-			}
-
-			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
-			err = w.deleteRange(w.ddlJobCtx, job)
-		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
-			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes:
-			err = w.deleteRange(w.ddlJobCtx, job)
-		}
+	err = deleteRangeForDropSchemaObjectJob(w, job)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	switch job.Type {
@@ -446,6 +436,33 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	w.writeDDLSeqNum(job)
 	err = t.AddHistoryDDLJob(job, updateRawArgs)
 	return errors.Trace(err)
+}
+
+func deleteRangeForDropSchemaObjectJob(w *worker, job *model.Job) error {
+	if job.IsCancelled() {
+		return nil
+	}
+	switch job.Type {
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		if job.State != model.JobStateRollbackDone {
+			break
+		}
+		// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
+		return w.deleteRange(w.ddlJobCtx, job)
+	case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
+		model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes:
+		return w.deleteRange(w.ddlJobCtx, job)
+	case model.ActionMultiSchemaChange:
+		for _, sub := range job.MultiSchemaInfo.SubJobs {
+			proxyJob := cloneFromSubJob(job, sub)
+			err := deleteRangeForDropSchemaObjectJob(w, proxyJob)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
+	}
+	return nil
 }
 
 func (w *worker) writeDDLSeqNum(job *model.Job) {
@@ -768,7 +785,9 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	}
 	// The cause of this job state is that the job is cancelled by client.
 	if job.IsCancelling() {
-		return convertJob2RollbackJob(w, d, t, job)
+		if job.Type != model.ActionMultiSchemaChange {
+			return convertJob2RollbackJob(w, d, t, job)
+		}
 	}
 
 	if !job.IsRollingback() && !job.IsCancelling() {
