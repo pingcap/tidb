@@ -47,12 +47,6 @@ func TestSetSystemVariable(t *testing.T) {
 		{variable.TiDBOptAggPushDown, "1", false},
 		{variable.TiDBOptDistinctAggPushDown, "1", false},
 		{variable.TiDBMemQuotaQuery, "1024", false},
-		{variable.TiDBMemQuotaHashJoin, "1024", false},
-		{variable.TiDBMemQuotaMergeJoin, "1024", false},
-		{variable.TiDBMemQuotaSort, "1024", false},
-		{variable.TiDBMemQuotaTopn, "1024", false},
-		{variable.TiDBMemQuotaIndexLookupReader, "1024", false},
-		{variable.TiDBMemQuotaIndexLookupJoin, "1024", false},
 		{variable.TiDBMemQuotaApplyCache, "1024", false},
 		{variable.TiDBEnableStmtSummary, "1", true}, // now global only
 	}
