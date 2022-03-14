@@ -8536,7 +8536,7 @@ func (s *testSuite) TestDeleteWithMulTbl(c *C) {
 	tk.MustExec("insert into t1 values(3);")
 	tk.MustExec("insert into t2 values(2, 2);")
 	tk.MustExec("insert into t2 values(0, 0);")
-	tk.MustExec("delete from t1, t2 using t1 left join t2 t1.c1 = t2.c2;")
+	tk.MustExec("delete from t1, t2 using t1 left join t2 on t1.c1 = t2.c2;")
 	tk.MustQuery("select * from t1 order by c1;").Check(testkit.Rows())
 	tk.MustQuery("select * from t2 order by c1;").Check(testkit.Rows("0 0", "2 2"))
 
@@ -8547,6 +8547,6 @@ func (s *testSuite) TestDeleteWithMulTbl(c *C) {
 	tk.MustExec("insert into t1 values(null);")
 	tk.MustExec("insert into t2 values(null);")
 	tk.MustExec("delete from t1, t2 using t1 join t2 where t1.c1 is null;")
-	tk.MustQuery("select * from t1;").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("select * from t2;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select * from t1;").Check(testkit.Rows())
+	tk.MustQuery("select * from t2;").Check(testkit.Rows())
 }
