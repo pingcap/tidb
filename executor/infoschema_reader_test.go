@@ -546,7 +546,7 @@ func TestForAnalyzeStatus(t *testing.T) {
 	rows := tk.MustQuery("select * from information_schema.analyze_status where TABLE_NAME='t1'").Sort().Rows()
 	require.Greater(t, len(rows), 0)
 	for _, row := range rows {
-		require.Len(t, row, 11)    // test length of row
+		require.Len(t, row, 11) // test length of row
 		// test `End_time` field
 		str, ok := row[6].(string)
 		require.True(t, ok)
