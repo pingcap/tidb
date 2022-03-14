@@ -351,7 +351,7 @@ func (d *ddl) addConcurrencyDDLJobs(tasks []*limitJobTask) {
 	var err error
 	startTs := uint64(0)
 	err = kv.RunInNewTxn(context.Background(), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
-		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
+		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 		t := meta.NewMeta(txn)
 		ids, err = t.GenGlobalIDs(len(tasks))
 		if err != nil {
