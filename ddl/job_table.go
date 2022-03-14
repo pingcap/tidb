@@ -397,9 +397,9 @@ func (d *ddl) doReorgDDLJobWorker(job *model.Job) {
 
 const addDDLJobSQL = "insert into mysql.tidb_ddl_job values"
 
-func (d *ddl) addDDLjobsInternal(job []*model.job, level kvrpcpb.DiskFullOpt) error {
+func (d *ddl) addDDLJobsInternal(jobs []*model.Job, level kvrpcpb.DiskFullOpt) error {
 	var sql string
-	for i, job := range job {
+	for i, job := range jobs {
 		b, err := job.Encode(true)
 		if err != nil {
 			return err
@@ -446,10 +446,10 @@ func (d *ddl) addDDLJobs(jobs []*model.Job) error {
 			notAllowJobs = append(notAllowJobs, job)
 		}
 	}
-	if err := d.addDDLjobsInternal(allowJobs, kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull); err != nil {
+	if err := d.addDDLJobsInternal(allowJobs, kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull); err != nil {
 		return err
 	}
-	return d.addDDLjobsInternal(notAllowJobs, kvrpcpb.DiskFullOpt_NotAllowedOnFull)
+	return d.addDDLJobsInternal(notAllowJobs, kvrpcpb.DiskFullOpt_NotAllowedOnFull)
 }
 
 func (w *worker) deleteDDLJob(job *model.Job) error {
