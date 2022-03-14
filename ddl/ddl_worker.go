@@ -1332,8 +1332,15 @@ func buildPlacementAffects(oldIDs []int64, newIDs []int64) []*model.AffectedOpti
 // updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
 func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 	var err error
+	schemaVersion := int64(0)
+	if !variable.AllowConcurrencyDDL.Load() {
+		schemaVersion, err = t.GenSchemaVersion()
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+	}
 	diff := &model.SchemaDiff{
-		Version:  0,
+		Version:  schemaVersion,
 		Type:     job.Type,
 		SchemaID: job.SchemaID,
 	}
@@ -1444,8 +1451,12 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 	default:
 		diff.TableID = job.TableID
 	}
-	t.PreSetSchemaDiff(diff)
-	return 0, errors.Trace(err)
+	if !variable.AllowConcurrencyDDL.Load() {
+		err = t.SetSchemaDiffOld(diff)
+	} else {
+		t.PreSetSchemaDiff(diff)
+	}
+	return schemaVersion, errors.Trace(err)
 }
 
 func isChanClosed(quitCh <-chan struct{}) bool {

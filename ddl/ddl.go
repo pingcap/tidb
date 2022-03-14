@@ -533,7 +533,9 @@ func (d *ddl) close() {
 		d.delRangeMgr.clear()
 	}
 	if d.sessPool != nil {
-		d.sessPool.put(d.sessForAddDDL)
+		if d.sessForAddDDL != nil {
+			d.sessPool.put(d.sessForAddDDL)
+		}
 		d.sessPool.close()
 	}
 	variable.UnregisterStatistics(d)

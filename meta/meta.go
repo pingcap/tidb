@@ -1490,3 +1490,16 @@ func (m *Meta) SetSchemaDiff(d kv.Storage) error {
 	metrics.MetaHistogram.WithLabelValues(metrics.SetSchemaDiff, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return errors.Trace(err)
 }
+
+// SetSchemaDiffOld sets the modification information on a given schema version.
+func (m *Meta) SetSchemaDiffOld(diff *model.SchemaDiff) error {
+	data, err := json.Marshal(diff)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	diffKey := m.schemaDiffKey(diff.Version)
+	startTime := time.Now()
+	err = m.txn.Set(diffKey, data)
+	metrics.MetaHistogram.WithLabelValues(metrics.SetSchemaDiff, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	return errors.Trace(err)
+}
