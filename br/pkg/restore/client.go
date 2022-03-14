@@ -389,11 +389,12 @@ func (rc *Client) GetDatabase(name string) *utils.Database {
 func (rc *Client) GetPlacementPolicies() ([]*model.PolicyInfo, error) {
 	policies := make([]*model.PolicyInfo, 0, len(rc.backupMeta.Policies))
 	for _, p := range rc.backupMeta.Policies {
-		policyInfo := model.PolicyInfo{}
-		err := json.Unmarshal(p.Info, &policyInfo)
+		policyInfo := &model.PolicyInfo{}
+		err := json.Unmarshal(p.Info, policyInfo)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		policies = append(policies, policyInfo)
 	}
 	return policies, nil
 }

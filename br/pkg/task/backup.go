@@ -352,6 +352,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		m.BrVersion = brVersion
 	})
 
+	log.Info("get placement policies", zap.Int("count", len(policies)))
 	if len(policies) != 0 {
 		metawriter.Update(func(m *backuppb.BackupMeta) {
 			m.Policies = policies

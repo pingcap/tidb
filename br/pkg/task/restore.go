@@ -368,6 +368,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	if err != nil {
 		return errors.Trace(err)
 	}
+	log.Info("get policy from backup", zap.Int("count", len(policies)))
 	err = client.CreatePlacementPolicies(ctx, policies)
 	if err != nil {
 		return errors.Trace(err)
