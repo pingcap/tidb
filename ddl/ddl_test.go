@@ -64,6 +64,7 @@ func testNewDDLAndStart(ctx context.Context, options ...Option) (*ddl, error) {
 	options = append(options, WithInfoCache(ic))
 	d := newDDL(ctx, options...)
 	var err error
+	variable.AllowConcurrencyDDL.Store(false)
 	if variable.AllowConcurrencyDDL.Load() {
 		sysFac := func() (pools.Resource, error) {
 			return nil, nil
