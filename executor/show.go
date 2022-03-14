@@ -345,7 +345,7 @@ func (e *ShowExec) fetchShowBind() error {
 func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, fmt.Sprintf("SELECT count(*) FROM mysql.bind_info where status = '%s' or status = '%s';", bindinfo.Enabled, bindinfo.Using))
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, fmt.Sprintf("SELECT count(*) FROM mysql.bind_info where status = '%s' or status = '%s' or status = '%s';", bindinfo.Enabled, bindinfo.Using, bindinfo.Disabled))
 	if err != nil {
 		return errors.Trace(err)
 	}
