@@ -28,8 +28,8 @@ type UniqueTableName struct {
 	Table string
 }
 
-// NewDB returns a new DB.
-func NewDB(g glue.Glue, store kv.Storage, policyMode string) (*DB, error) {
+// newDB returns a new DB.
+func newDB(g glue.Glue, store kv.Storage, policyMode string) (*DB, error) {
 	se, err := g.CreateSession(store)
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -53,6 +53,7 @@ import (
 // defaultChecksumConcurrency is the default number of the concurrent
 // checksum tasks.
 const defaultChecksumConcurrency = 64
+const defaultDDLConcurrency     = 16
 const minBatchDdlSize = 1
 
 // Client sends requests to restore files.
@@ -79,6 +80,9 @@ type Client struct {
 	// https://github.com/pingcap/br/pull/377#discussion_r446594501,
 	// this probably isn't as easy as it seems like (however, not hard, too :D)
 	db              *DB
+
+	// use db pool to speed up restoration in BR binary mode.
+	dbPool          []*DB
 	rateLimit       uint64
 	isOnline        bool
 	noSchema        bool
@@ -108,43 +112,57 @@ type Client struct {
 
 // NewRestoreClient returns a new RestoreClient.
 func NewRestoreClient(
-	g glue.Glue,
 	pdClient pd.Client,
-	store kv.Storage,
 	tlsConf *tls.Config,
 	keepaliveConf keepalive.ClientParameters,
 	isRawKv bool,
-) (*Client, error) {
-	dom, err := g.GetDomain(store)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	var statsHandle *handle.Handle
-	// tikv.Glue will return nil, tidb.Glue will return available domain
-	if dom != nil {
-		statsHandle = dom.StatsHandle()
-	}
-
+) *Client {
 	return &Client{
 		pdClient:      pdClient,
 		toolClient:    NewSplitClient(pdClient, tlsConf, isRawKv),
 		tlsConf:       tlsConf,
 		keepaliveConf: keepaliveConf,
 		switchCh:      make(chan struct{}),
-		dom:           dom,
-		statsHandler:  statsHandle,
-	}, nil
+	}
 }
 
-// SetDB to set db.
-func (rc *Client) SetDB(g glue.Glue, store kv.Storage) error {
-	db, err := NewDB(g, store, rc.policyMode)
+// Init create db connection and domain for storage.
+func (rc *Client) Init(g glue.Glue, store kv.Storage) error {
+	// setDB must happen after set PolicyMode.
+	// we will use policyMode to set session variables.
+	var err error
+	rc.db, err = newDB(g, store, rc.policyMode)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	rc.db = db
-	return nil
+	rc.dom, err = g.GetDomain(store)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// tikv.Glue will return nil, tidb.Glue will return available domain
+	if rc.dom != nil {
+		rc.statsHandler = rc.dom.StatsHandle()
+	}
+
+	// Only in binary we can use multi-thread sessions to create tables.
+	// so use OwnStorage() to tell whether we are use binary or SQL.
+	if g.OwnsStorage() {
+		// Maybe allow user modify the DDL concurrency isn't necessary,
+		// because executing DDL is really I/O bound (or, algorithm bound?),
+		// and we cost most of time at waiting DDL jobs be enqueued.
+		// So these jobs won't be faster or slower when machine become faster or slower,
+		// hence make it a fixed value would be fine.
+		rc.dbPool, err = makeDBPool(defaultDDLConcurrency, func() (*DB, error) {
+			return newDB(g, store, rc.policyMode)
+		})
+		if err != nil {
+			log.Warn("create session pool failed, we will send DDLs only by created sessions",
+				zap.Error(err),
+				zap.Int("sessionCount", len(rc.dbPool)),
+			)
+		}
+	}
+	return errors.Trace(err)
 }
 
 // SetPolicyMode to policy mode.
@@ -154,11 +172,6 @@ func (rc *Client) SetPolicyMode(withPlacementPolicy bool) {
 	} else {
 		rc.policyMode = "IGNORE"
 	}
-}
-
-// GetPolicyMode gets policy mode.
-func (rc *Client) GetPolicyMode() string {
-	return rc.policyMode
 }
 
 // SetRateLimit to set rateLimit.
@@ -437,7 +450,7 @@ func (rc *Client) CreateTables(
 	for i, t := range tables {
 		tbMapping[t.Info.Name.String()] = i
 	}
-	dataCh := rc.GoCreateTables(context.TODO(), dom, tables, newTS, nil, errCh)
+	dataCh := rc.GoCreateTables(context.TODO(), dom, tables, newTS, errCh)
 	for et := range dataCh {
 		rules := et.RewriteRule
 		rewriteRules.Data = append(rewriteRules.Data, rules.Data...)
@@ -541,7 +554,6 @@ func (rc *Client) GoCreateTables(
 	dom *domain.Domain,
 	tables []*metautil.Table,
 	newTS uint64,
-	dbPool []*DB,
 	errCh chan<- error,
 ) <-chan CreatedTable {
 	// Could we have a smaller size of tables?
@@ -558,9 +570,9 @@ func (rc *Client) GoCreateTables(
 
 	var err error
 
-	if rc.batchDdlSize > minBatchDdlSize && len(dbPool) > 0 {
+	if rc.batchDdlSize > minBatchDdlSize && len(rc.dbPool) > 0 {
 
-		err = rc.createTablesInWorkerPool(ctx, dom, tables, dbPool, newTS, outCh)
+		err = rc.createTablesInWorkerPool(ctx, dom, tables, newTS, outCh)
 
 		if err == nil {
 			defer log.Debug("all tables are created")
@@ -607,8 +619,8 @@ func (rc *Client) GoCreateTables(
 		defer close(outCh)
 		defer log.Debug("all tables are created")
 		var err error
-		if len(dbPool) > 0 {
-			err = rc.createTablesWithDBPool(ctx, createOneTable, tables, dbPool)
+		if len(rc.dbPool) > 0 {
+			err = rc.createTablesWithDBPool(ctx, createOneTable, tables)
 		} else {
 			err = rc.createTablesWithSoleDB(ctx, createOneTable, tables)
 		}
@@ -633,23 +645,23 @@ func (rc *Client) createTablesWithSoleDB(ctx context.Context,
 
 func (rc *Client) createTablesWithDBPool(ctx context.Context,
 	createOneTable func(ctx context.Context, db *DB, t *metautil.Table) error,
-	tables []*metautil.Table, dbPool []*DB) error {
+	tables []*metautil.Table) error {
 	eg, ectx := errgroup.WithContext(ctx)
-	workers := utils.NewWorkerPool(uint(len(dbPool)), "DDL workers")
+	workers := utils.NewWorkerPool(uint(len(rc.dbPool)), "DDL workers")
 	for _, t := range tables {
 		table := t
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
-			db := dbPool[id%uint64(len(dbPool))]
+			db := rc.dbPool[id%uint64(len(rc.dbPool))]
 			return createOneTable(ectx, db, table)
 		})
 	}
 	return eg.Wait()
 }
 
-func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Domain, tables []*metautil.Table, dbPool []*DB, newTS uint64, outCh chan<- CreatedTable) error {
+func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Domain, tables []*metautil.Table, newTS uint64, outCh chan<- CreatedTable) error {
 	eg, ectx := errgroup.WithContext(ctx)
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
-	workers := utils.NewWorkerPool(uint(len(dbPool)), "Create Tables Worker")
+	workers := utils.NewWorkerPool(uint(len(rc.dbPool)), "Create Tables Worker")
 	numOfTables := len(tables)
 
 	for lastSent := 0; lastSent < numOfTables; lastSent += int(rc.batchDdlSize) {
@@ -658,7 +670,7 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 
 		tableSlice := tables[lastSent:end]
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
-			db := dbPool[id%uint64(len(dbPool))]
+			db := rc.dbPool[id%uint64(len(rc.dbPool))]
 			cts, err := rc.createTables(ectx, db, dom, tableSlice, newTS) // ddl job for [lastSent:i)
 			failpoint.Inject("restore-createtables-error", func(val failpoint.Value) {
 				if val.(bool) {
