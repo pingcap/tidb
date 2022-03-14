@@ -114,6 +114,8 @@ type Client struct {
 
 	// policy name -> policy info
 	policyMap *sync.Map
+
+	supportPolicy bool
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -137,7 +139,7 @@ func (rc *Client) Init(g glue.Glue, store kv.Storage) error {
 	// setDB must happen after set PolicyMode.
 	// we will use policyMode to set session variables.
 	var err error
-	rc.db, err = NewDB(g, store, rc.policyMode)
+	rc.db, rc.supportPolicy, err = NewDB(g, store, rc.policyMode)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -159,7 +161,8 @@ func (rc *Client) Init(g glue.Glue, store kv.Storage) error {
 		// So these jobs won't be faster or slower when machine become faster or slower,
 		// hence make it a fixed value would be fine.
 		rc.dbPool, err = makeDBPool(defaultDDLConcurrency, func() (*DB, error) {
-			return NewDB(g, store, rc.policyMode)
+			db, _, err := NewDB(g, store, rc.policyMode)
+			return db, err
 		})
 		if err != nil {
 			log.Warn("create session pool failed, we will send DDLs only by created sessions",
@@ -201,6 +204,11 @@ func (rc *Client) SetPolicyMap(p *sync.Map) {
 // GetPolicyMap set policyMap.
 func (rc *Client) GetPolicyMap() *sync.Map {
 	return rc.policyMap
+}
+
+// GetSupportPolicy tells whether target tidb support placement policy.
+func (rc *Client) GetSupportPolicy() bool {
+	return rc.supportPolicy
 }
 
 // GetPDClient returns a pd client.

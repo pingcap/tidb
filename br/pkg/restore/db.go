@@ -31,21 +31,22 @@ type UniqueTableName struct {
 }
 
 // NewDB returns a new DB.
-func NewDB(g glue.Glue, store kv.Storage, policyMode string) (*DB, error) {
+func NewDB(g glue.Glue, store kv.Storage, policyMode string) (*DB, bool, error) {
 	se, err := g.CreateSession(store)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, false, errors.Trace(err)
 	}
 	// The session may be nil in raw kv mode
 	if se == nil {
-		return nil, nil
+		return nil, false, nil
 	}
 	// Set SQL mode to None for avoiding SQL compatibility problem
 	err = se.Execute(context.Background(), "set @@sql_mode=''")
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, false, errors.Trace(err)
 	}
 
+	supportPolicy := false
 	if len(policyMode) != 0 {
 		// Set placement mode for handle placement policy.
 		err = se.Execute(context.Background(), fmt.Sprintf("set @@tidb_placement_mode='%s';", policyMode))
@@ -54,15 +55,16 @@ func NewDB(g glue.Glue, store kv.Storage, policyMode string) (*DB, error) {
 				// not support placement policy, just ignore it
 				log.Warn("target tidb not support tidb_placement_mode, ignore create policies", zap.Error(err))
 			} else {
-				return nil, errors.Trace(err)
+				return nil, false, errors.Trace(err)
 			}
 		} else {
 			log.Info("set tidb_placement_mode success", zap.String("mode", policyMode))
+			supportPolicy = true
 		}
 	}
 	return &DB{
 		se: se,
-	}, nil
+	}, supportPolicy, nil
 }
 
 // ExecDDL executes the query of a ddl job.

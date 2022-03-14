@@ -374,19 +374,21 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	restoreDBConfig := enableTiDBConfig()
 	defer restoreDBConfig()
 
-	// create policy if backupMeta has policies.
-	policies, err := client.GetPlacementPolicies()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if isFullRestore(cmdName) {
-		// we should restore all policies during full restoration.
-		err = client.CreatePolicies(ctx, policies)
+	if client.GetSupportPolicy() {
+		// create policy if backupMeta has policies.
+		policies, err := client.GetPlacementPolicies()
 		if err != nil {
 			return errors.Trace(err)
 		}
-	} else {
-		client.SetPolicyMap(policies)
+		if isFullRestore(cmdName) {
+			// we should restore all policies during full restoration.
+			err = client.CreatePolicies(ctx, policies)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		} else {
+			client.SetPolicyMap(policies)
+		}
 	}
 
 	// execute DDL first
