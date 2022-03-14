@@ -820,7 +820,6 @@ type AnalyzeColumnsExec struct {
 	indexes       []*model.IndexInfo
 	core.AnalyzeInfo
 
-	subIndexWorkerWg  *analyzeResultsNotifyWaitGroupWrapper
 	samplingBuilderWg *util.NotifyErrorWaitGroupWrapper
 	samplingMergeWg   *util.WaitGroupWrapper
 
@@ -1142,9 +1141,9 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.Inde
 	if len(tasks) < statsConcurrncy {
 		statsConcurrncy = len(tasks)
 	}
-	e.subIndexWorkerWg = NewAnalyzeResultsNotifyWaitGroupWrapper(resultsCh)
+	var subIndexWorkerWg = NewAnalyzeResultsNotifyWaitGroupWrapper(resultsCh)
 	for i := 0; i < statsConcurrncy; i++ {
-		e.subIndexWorkerWg.Run(func() { e.subIndexWorkerForNDV(taskCh, resultsCh) })
+		subIndexWorkerWg.Run(func() { e.subIndexWorkerForNDV(taskCh, resultsCh) })
 	}
 	for _, task := range tasks {
 		taskCh <- task
