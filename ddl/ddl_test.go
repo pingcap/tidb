@@ -16,6 +16,9 @@ package ddl
 
 import (
 	"context"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/charset"
+	"github.com/pingcap/tidb/util/dbterror"
 	"testing"
 	"time"
 
@@ -252,4 +255,68 @@ func TestGetIntervalFromPolicy(t *testing.T) {
 	val, changed = getIntervalFromPolicy(policy, 3)
 	require.Equal(t, val, 2*time.Second)
 	require.False(t, changed)
+}
+
+func colDefStrToFieldType(t *testing.T, str string, ctx sessionctx.Context) *types.FieldType {
+	sqlA := "alter table t modify column a " + str
+	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
+	require.NoError(t, err)
+	colDef := stmt.(*ast.AlterTableStmt).Specs[0].NewColumns[0]
+	chs, coll := charset.GetDefaultCharsetAndCollate()
+	col, _, err := buildColumnAndConstraint(ctx, 0, colDef, nil, chs, coll)
+	require.NoError(t, err)
+	return &col.FieldType
+}
+
+func TestModifyColumn(t *testing.T) {
+	ctx := mock.NewContext()
+	tests := []struct {
+		origin string
+		to     string
+		err    error
+	}{
+		{"int", "bigint", nil},
+		{"int", "int unsigned", nil},
+		{"varchar(10)", "text", nil},
+		{"varbinary(10)", "blob", nil},
+		{"text", "blob", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8mb4 to binary")},
+		{"varchar(10)", "varchar(8)", nil},
+		{"varchar(10)", "varchar(11)", nil},
+		{"varchar(10) character set utf8 collate utf8_bin", "varchar(10) character set utf8", nil},
+		{"decimal(2,1)", "decimal(3,2)", nil},
+		{"decimal(2,1)", "decimal(2,2)", nil},
+		{"decimal(2,1)", "decimal(2,1)", nil},
+		{"decimal(2,1)", "int", nil},
+		{"decimal", "int", nil},
+		{"decimal(2,1)", "bigint", nil},
+		{"int", "varchar(10) character set gbk", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from binary to gbk")},
+		{"varchar(10) character set gbk", "int", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from gbk to binary")},
+		{"varchar(10) character set gbk", "varchar(10) character set utf8", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from gbk to utf8")},
+		{"varchar(10) character set gbk", "char(10) character set utf8", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from gbk to utf8")},
+		{"varchar(10) character set utf8", "char(10) character set gbk", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8 to gbk")},
+		{"varchar(10) character set utf8", "varchar(10) character set gbk", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8 to gbk")},
+		{"varchar(10) character set gbk", "varchar(255) character set gbk", nil},
+	}
+	for _, tt := range tests {
+		ftA := colDefStrToFieldType(t, tt.origin, ctx)
+		ftB := colDefStrToFieldType(t, tt.to, ctx)
+		err := checkModifyTypes(ctx, ftA, ftB, false)
+		if err == nil {
+			require.NoErrorf(t, tt.err, "origin:%v, to:%v", tt.origin, tt.to)
+		} else {
+			require.EqualError(t, err, tt.err.Error())
+		}
+	}
+}
+
+func TestFieldCase(t *testing.T) {
+	var fields = []string{"field", "Field"}
+	colObjects := make([]*model.ColumnInfo, len(fields))
+	for i, name := range fields {
+		colObjects[i] = &model.ColumnInfo{
+			Name: model.NewCIStr(name),
+		}
+	}
+	err := checkDuplicateColumn(colObjects)
+	require.EqualError(t, err, infoschema.ErrColumnExists.GenWithStackByArgs("Field").Error())
 }

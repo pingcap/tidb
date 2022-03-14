@@ -16,6 +16,7 @@ package ddl_test
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -518,4 +519,32 @@ func TestCreateTableIgnoreCheckConstraint(t *testing.T) {
 		"admin_user CREATE TABLE `admin_user` (\n"+
 		"  `enable` tinyint(1) DEFAULT NULL\n"+
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func TestAutoConvertBlobTypeByLength(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	sql := fmt.Sprintf("create table t0(c0 Blob(%d), c1 Blob(%d), c2 Blob(%d), c3 Blob(%d))",
+		255-1, 65535-1, 16777215-1, 4294967295-1)
+	tk.MustExec(sql)
+
+	var tableID int64
+	rs := tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where table_name='t0' and table_schema='test';")
+	tableIDi, _ := strconv.Atoi(rs.Rows()[0][0].(string))
+	tableID = int64(tableIDi)
+
+	tbl, exist := dom.InfoSchema().TableByID(tableID)
+	require.True(t, exist)
+
+	require.Equal(t, tbl.Cols()[0].Tp, mysql.TypeTinyBlob)
+	require.Equal(t, tbl.Cols()[0].Flen, 255)
+	require.Equal(t, tbl.Cols()[1].Tp, mysql.TypeBlob)
+	require.Equal(t, tbl.Cols()[1].Flen, 65535)
+	require.Equal(t, tbl.Cols()[2].Tp, mysql.TypeMediumBlob)
+	require.Equal(t, tbl.Cols()[2].Flen, 16777215)
+	require.Equal(t, tbl.Cols()[3].Tp, mysql.TypeLongBlob)
+	require.Equal(t, tbl.Cols()[3].Flen, 4294967295)
 }
