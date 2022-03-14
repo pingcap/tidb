@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
+	"github.com/pingcap/tidb/util/topsql"
 	"go.uber.org/zap"
 )
 
@@ -321,6 +322,11 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			failpoint.Return(nil, nil, 0, errors.New("gofail wrong optimizerCnt error"))
 		}
 	})
+	failpoint.Inject("mockHighLoadForOptimize", func() {
+		sqlPrefixes := []string{"select"}
+		topsql.MockHighCPULoad(sctx.GetSessionVars().StmtCtx.OriginalSQL, sqlPrefixes, 10)
+	})
+
 	// build logical plan
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0

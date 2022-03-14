@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
@@ -642,7 +643,7 @@ func TestDisableTablePartition(t *testing.T) {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec(`create table t (id int) partition by list  (id) (
 	    partition p0 values in (1,2),partition p1 values in (3,4));`)
-		tbl := tk.GetTableByName("test", "t")
+		tbl := external.GetTableByName(t, tk, "test", "t")
 		require.Nil(t, tbl.Meta().Partition)
 		_, err := tk.Exec(`alter table t add partition (
 		partition p4 values in (7),
@@ -804,7 +805,7 @@ func TestCreateTableWithListPartition(t *testing.T) {
 		if id == len(validCases)-1 {
 			tblName = "gen_t"
 		}
-		tbl := tk.GetTableByName("test", tblName)
+		tbl := external.GetTableByName(t, tk, "test", tblName)
 		tblInfo := tbl.Meta()
 		require.NotNil(t, tblInfo.Partition)
 		require.True(t, tblInfo.Partition.Enable)
@@ -1011,7 +1012,7 @@ func TestCreateTableWithListColumnsPartition(t *testing.T) {
 	for _, sql := range validCases {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec(sql)
-		tbl := tk.GetTableByName("test", "t")
+		tbl := external.GetTableByName(t, tk, "test", "t")
 		tblInfo := tbl.Meta()
 		require.NotNil(t, tblInfo.Partition)
 		require.Equal(t, true, tblInfo.Partition.Enable)
@@ -1294,10 +1295,10 @@ func TestAlterTableTruncatePartitionByList(t *testing.T) {
 	    partition p3 values in (5,null)
 	);`)
 	tk.MustExec(`insert into t values (1),(3),(5),(null)`)
-	oldTbl := tk.GetTableByName("test", "t")
+	oldTbl := external.GetTableByName(t, tk, "test", "t")
 	tk.MustExec(`alter table t truncate partition p1`)
 	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1", "5", "<nil>"))
-	tbl := tk.GetTableByName("test", "t")
+	tbl := external.GetTableByName(t, tk, "test", "t")
 	require.NotNil(t, tbl.Meta().Partition)
 	part := tbl.Meta().Partition
 	require.True(t, part.Type == model.PartitionTypeList)
@@ -1327,10 +1328,10 @@ func TestAlterTableTruncatePartitionByListColumns(t *testing.T) {
 	    partition p3 values in ((5,'a'),(null,null))
 	);`)
 	tk.MustExec(`insert into t values (1,'a'),(3,'a'),(5,'a'),(null,null)`)
-	oldTbl := tk.GetTableByName("test", "t")
+	oldTbl := external.GetTableByName(t, tk, "test", "t")
 	tk.MustExec(`alter table t truncate partition p1`)
 	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 a", "5 a", "<nil> <nil>"))
-	tbl := tk.GetTableByName("test", "t")
+	tbl := external.GetTableByName(t, tk, "test", "t")
 	require.NotNil(t, tbl.Meta().Partition)
 	part := tbl.Meta().Partition
 	require.True(t, part.Type == model.PartitionTypeList)
@@ -1696,7 +1697,7 @@ func TestDropPartitionWithGlobalIndex(t *testing.T) {
 		partition p1 values less than (10),
 		partition p2 values less than (20)
 	);`)
-	tt := tk.GetTableByName("test", "test_global")
+	tt := external.GetTableByName(t, tk, "test", "test_global")
 	pid := tt.Meta().Partition.Definitions[1].ID
 
 	tk.MustExec("Alter Table test_global Add Unique Index idx_b (b);")
@@ -1707,7 +1708,7 @@ func TestDropPartitionWithGlobalIndex(t *testing.T) {
 	result := tk.MustQuery("select * from test_global;")
 	result.Sort().Check(testkit.Rows(`1 1 1`, `2 2 2`))
 
-	tt = tk.GetTableByName("test", "test_global")
+	tt = external.GetTableByName(t, tk, "test", "test_global")
 	idxInfo := tt.Meta().FindIndexByName("idx_b")
 	require.NotNil(t, idxInfo)
 	cnt := checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid)
@@ -1890,13 +1891,13 @@ func TestAlterTableExchangePartition(t *testing.T) {
 	tk.MustExec("alter table e15 set tiflash replica 1;")
 	tk.MustExec("alter table e16 set tiflash replica 2;")
 
-	e15 := tk.GetTableByName("test", "e15")
+	e15 := external.GetTableByName(t, tk, "test", "e15")
 	partition := e15.Meta().Partition
 
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, true)
 	require.NoError(t, err)
 
-	e16 := tk.GetTableByName("test", "e16")
+	e16 := external.GetTableByName(t, tk, "test", "e16")
 	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), e16.Meta().ID, true)
 	require.NoError(t, err)
 
@@ -1908,19 +1909,19 @@ func TestAlterTableExchangePartition(t *testing.T) {
 	tk.MustExec("alter table e15 set tiflash replica 1;")
 	tk.MustExec("alter table e16 set tiflash replica 1;")
 
-	e15 = tk.GetTableByName("test", "e15")
+	e15 = external.GetTableByName(t, tk, "test", "e15")
 	partition = e15.Meta().Partition
 
 	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, true)
 	require.NoError(t, err)
 
-	e16 = tk.GetTableByName("test", "e16")
+	e16 = external.GetTableByName(t, tk, "test", "e16")
 	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), e16.Meta().ID, true)
 	require.NoError(t, err)
 
 	tk.MustExec("alter table e15 exchange partition p0 with table e16")
 
-	e15 = tk.GetTableByName("test", "e15")
+	e15 = external.GetTableByName(t, tk, "test", "e15")
 
 	partition = e15.Meta().Partition
 
@@ -1928,7 +1929,7 @@ func TestAlterTableExchangePartition(t *testing.T) {
 	require.True(t, e15.Meta().TiFlashReplica.Available)
 	require.Equal(t, []int64{partition.Definitions[0].ID}, e15.Meta().TiFlashReplica.AvailablePartitionIDs)
 
-	e16 = tk.GetTableByName("test", "e16")
+	e16 = external.GetTableByName(t, tk, "test", "e16")
 	require.NotNil(t, e16.Meta().TiFlashReplica)
 	require.True(t, e16.Meta().TiFlashReplica.Available)
 
@@ -1943,13 +1944,13 @@ func TestAlterTableExchangePartition(t *testing.T) {
 
 	tk.MustExec("alter table e16 set tiflash replica 1 location labels 'a', 'b';")
 
-	e15 = tk.GetTableByName("test", "e15")
+	e15 = external.GetTableByName(t, tk, "test", "e15")
 	partition = e15.Meta().Partition
 
 	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, true)
 	require.NoError(t, err)
 
-	e16 = tk.GetTableByName("test", "e16")
+	e16 = external.GetTableByName(t, tk, "test", "e16")
 	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), e16.Meta().ID, true)
 	require.NoError(t, err)
 
@@ -2824,7 +2825,7 @@ func testPartitionCancelAddIndex(t *testing.T, store kv.Storage, d ddl.DDL, leas
 	// Set batch size to lower try to slow down add-index reorganization, This if for hook to cancel this ddl job.
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 32")
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", originBatchSize.Rows()[0][0]))
-	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExportedT(tk, store, hook, idxName)
+	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExportedT(t, tk, store, hook, idxName)
 	originHook := d.GetHook()
 	defer d.SetHook(originHook)
 	jobIDExt := wrapJobIDExtCallback(hook)
@@ -2862,7 +2863,7 @@ LOOP:
 	tk.MustExec("drop table t1")
 }
 
-func backgroundExecOnJobUpdatedExportedT(tk *testkit.TestKit, store kv.Storage, hook *ddl.TestDDLCallback, idxName string) (
+func backgroundExecOnJobUpdatedExportedT(t *testing.T, tk *testkit.TestKit, store kv.Storage, hook *ddl.TestDDLCallback, idxName string) (
 	func(*model.Job), *model.IndexInfo, error) {
 	var checkErr error
 	first := true
@@ -2877,8 +2878,8 @@ func backgroundExecOnJobUpdatedExportedT(tk *testkit.TestKit, store kv.Storage, 
 			if c3IdxInfo.ID != 0 {
 				return
 			}
-			t := tk.GetTableByName("test", "t1")
-			for _, index := range t.Indices() {
+			tt := external.GetTableByName(t, tk, "test", "t1")
+			for _, index := range tt.Indices() {
 				if !tables.IsIndexWritable(index) {
 					continue
 				}
@@ -3056,7 +3057,7 @@ func TestDropSchemaWithPartitionTable(t *testing.T) {
 		);`)
 	tk.MustExec("insert into t_part values (1),(2),(11),(12);")
 	ctx := tk.Session()
-	tbl := tk.GetTableByName("test_db_with_partition", "t_part")
+	tbl := external.GetTableByName(t, tk, "test_db_with_partition", "t_part")
 
 	// check records num before drop database.
 	recordsNum := getPartitionTableRecordsNum(t, ctx, tbl.(table.PartitionedTable))
@@ -3646,14 +3647,14 @@ func TestAddPartitionReplicaBiggerThanTiFlashStores(t *testing.T) {
 	tk.MustExec("alter table t1 set tiflash replica 1")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount"))
 	// Mock partitions replica as available.
-	t1 := tk.GetTableByName("test_partition2", "t1")
+	t1 := external.GetTableByName(t, tk, "test_partition2", "t1")
 	partition := t1.Meta().Partition
 	require.Equal(t, 2, len(partition.Definitions))
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, true)
 	require.NoError(t, err)
 	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[1].ID, true)
 	require.NoError(t, err)
-	t1 = tk.GetTableByName("test_partition2", "t1")
+	t1 = external.GetTableByName(t, tk, "test_partition2", "t1")
 	require.True(t, t1.Meta().TiFlashReplica.Available)
 	// Since there is no real TiFlash store (less than replica count), adding a partition will error here.
 	err = tk.ExecToErr("alter table t1 add partition (partition p2 values less than (300));")
