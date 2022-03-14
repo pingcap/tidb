@@ -418,7 +418,7 @@ func (d *ddl) addDDLJobs(jobs []*model.Job) error {
 		logutil.BgLogger().Error("[ddl] get session from sessPool", zap.Error(err))
 		return err
 	}
-	sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
+	sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	defer d.sessPool.put(sess)
 	_, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), addDDLJobSQL+sql)
 	if err != nil {
