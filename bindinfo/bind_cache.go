@@ -80,7 +80,7 @@ func (c *bindCache) get(key bindCacheKey) []*BindRecord {
 func (c *bindCache) set(key bindCacheKey, value []*BindRecord) (ok bool, err error) {
 	mem := calcBindCacheKVMem(key, value)
 	if mem > c.memCapacity { // ignore this kv pair if its size is too large
-		err = errors.New("The memory usage of the binding_cache exceeds its capacity")
+		err = errors.New("The memory usage of the binding_cache exceeds its capacity. The cache can't hold all of the available bindings")
 		return
 	}
 	bindRecords := c.get(key)
@@ -89,7 +89,7 @@ func (c *bindCache) set(key bindCacheKey, value []*BindRecord) (ok bool, err err
 		mem -= calcBindCacheKVMem(key, bindRecords)
 	}
 	for mem+c.memTracker.BytesConsumed() > c.memCapacity {
-		err = errors.New("The memory usage of the binding_cache exceeds its capacity")
+		err = errors.New("The memory usage of the binding_cache exceeds its capacity. The cache can't hold all of the available bindings")
 		evictedKey, evictedValue, evicted := c.cache.RemoveOldest()
 		if !evicted {
 			return
@@ -157,9 +157,6 @@ func (c *bindCache) SetBindRecord(hash string, meta *BindRecord) (err error) {
 		}
 	}
 	_, err = c.set(cacheKey, []*BindRecord{meta})
-	if err != nil {
-		return
-	}
 	return
 }
 
@@ -214,7 +211,7 @@ func (c *bindCache) Copy() (newCache *bindCache, err error) {
 	defer c.lock.Unlock()
 	newCache = newBindCache()
 	if c.memTracker.BytesConsumed() > newCache.GetMemCapacity() {
-		err = errors.New("The memory usage of the binding_cache exceeds its capacity")
+		err = errors.New("The memory usage of the binding_cache exceeds its capacity. The cache can't hold all of the available bindings")
 	}
 	keys := c.cache.Keys()
 	for _, key := range keys {
