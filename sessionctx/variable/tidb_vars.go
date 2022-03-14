@@ -801,7 +801,7 @@ const (
 	DefTiDBEnableMutationChecker          = false
 	DefTiDBTxnAssertionLevel              = AssertionOffStr
 	DefTiDBBatchPendingTiFlashCount       = 4000
-  DefTiDBReadStaleness                  = 0
+	DefTiDBReadStaleness                  = 0
 )
 
 // Process global variables.
