@@ -258,13 +258,17 @@ func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table,
 
 // CreateTables execute a internal CREATE TABLES.
 func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
-	ddlTables map[UniqueTableName]bool, policyMap *sync.Map) error {
+	ddlTables map[UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
 	if batchSession, ok := db.se.(glue.BatchCreateTableSession); ok {
 		m := map[string][]*model.TableInfo{}
 		for _, table := range tables {
 			m[table.DB.Name.L] = append(m[table.DB.Name.L], table.Info)
 			if table.Info.PlacementPolicyRef != nil && policyMap != nil {
-				if p, exists := policyMap.Load(table.Info.PlacementPolicyRef.Name.L); exists {
+				if !supportPolicy {
+					log.Info("set placementPolicyRef to nil when target tidb not support policy",
+						zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
+					table.Info.PlacementPolicyRef = nil
+				} else if p, exists := policyMap.Load(table.Info.PlacementPolicyRef.Name.L); exists {
 					err := db.CreatePlacementPolicy(ctx, p.(*model.PolicyInfo))
 					if err != nil {
 						return errors.Trace(err)
@@ -290,9 +294,13 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 
 // CreateTable executes a CREATE TABLE SQL.
 func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
-	ddlTables map[UniqueTableName]bool, policyMap *sync.Map) error {
+	ddlTables map[UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
 	if table.Info.PlacementPolicyRef != nil && policyMap != nil {
-		if p, exists := policyMap.Load(table.Info.PlacementPolicyRef.Name.L); exists {
+		if !supportPolicy {
+			log.Info("set placementPolicyRef to nil when target tidb not support policy",
+				zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
+			table.Info.PlacementPolicyRef = nil
+		} else if p, exists := policyMap.Load(table.Info.PlacementPolicyRef.Name.L); exists {
 			err := db.CreatePlacementPolicy(ctx, p.(*model.PolicyInfo))
 			if err != nil {
 				return errors.Trace(err)

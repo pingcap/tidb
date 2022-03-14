@@ -96,7 +96,7 @@ func TestRestoreAutoIncID(t *testing.T) {
 	err = db.CreateDatabase(context.Background(), table.DB)
 	require.NoErrorf(t, err, "Error create empty charset db: %s %s", err, s.mock.DSN)
 	uniqueMap := make(map[restore.UniqueTableName]bool)
-	err = db.CreateTable(context.Background(), &table, uniqueMap, nil)
+	err = db.CreateTable(context.Background(), &table, uniqueMap, false, nil)
 	require.NoErrorf(t, err, "Error create table: %s %s", err, s.mock.DSN)
 
 	tk.MustExec("use test")
@@ -107,7 +107,7 @@ func TestRestoreAutoIncID(t *testing.T) {
 
 	// try again, failed due to table exists.
 	table.Info.AutoIncID = globalAutoID + 200
-	err = db.CreateTable(context.Background(), &table, uniqueMap, nil)
+	err = db.CreateTable(context.Background(), &table, uniqueMap, false, nil)
 	require.NoError(t, err)
 	// Check if AutoIncID is not altered.
 	autoIncID, err = strconv.ParseUint(tk.MustQuery("admin show `\"t\"` next_row_id").Rows()[0][3].(string), 10, 64)
@@ -117,7 +117,7 @@ func TestRestoreAutoIncID(t *testing.T) {
 	// try again, success because we use alter sql in unique map.
 	table.Info.AutoIncID = globalAutoID + 300
 	uniqueMap[restore.UniqueTableName{"test", "\"t\""}] = true
-	err = db.CreateTable(context.Background(), &table, uniqueMap, nil)
+	err = db.CreateTable(context.Background(), &table, uniqueMap, false, nil)
 	require.NoError(t, err)
 	// Check if AutoIncID is altered to globalAutoID + 300.
 	autoIncID, err = strconv.ParseUint(tk.MustQuery("admin show `\"t\"` next_row_id").Rows()[0][3].(string), 10, 64)
@@ -160,7 +160,7 @@ func TestCreateTablesInDb(t *testing.T) {
 	db, _, err := restore.NewDB(gluetidb.New(), s.mock.Storage, "STRICT")
 	require.NoError(t, err)
 
-	err = db.CreateTables(context.Background(), tables, ddlJobMap, nil)
+	err = db.CreateTables(context.Background(), tables, ddlJobMap, false, nil)
 	require.NoError(t, err)
 
 }

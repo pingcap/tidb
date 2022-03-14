@@ -459,6 +459,11 @@ func (rc *Client) CreateDatabase(ctx context.Context, db *model.DBInfo) error {
 		log.Info("skip create database", zap.Stringer("database", db.Name))
 		return nil
 	}
+	if !rc.supportPolicy {
+		log.Info("set placementPolicyRef to nil when target tidb not support policy",
+			zap.Stringer("database", db.Name))
+		db.PlacementPolicyRef = nil
+	}
 	if db.PlacementPolicyRef != nil && rc.policyMap != nil {
 		if policy, ok := rc.policyMap.Load(db.PlacementPolicyRef.Name.L); ok {
 			err := rc.db.CreatePlacementPolicy(ctx, policy.(*model.PolicyInfo))
@@ -518,7 +523,7 @@ func (rc *Client) createTables(
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID")
 	} else {
-		err := db.CreateTables(ctx, tables, rc.GetDDLJobsMap(), rc.GetPolicyMap())
+		err := db.CreateTables(ctx, tables, rc.GetDDLJobsMap(), rc.GetSupportPolicy(), rc.GetPolicyMap())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -558,7 +563,7 @@ func (rc *Client) createTable(
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID", zap.Stringer("table", table.Info.Name))
 	} else {
-		err := db.CreateTable(ctx, table, rc.GetDDLJobsMap(), rc.GetPolicyMap())
+		err := db.CreateTable(ctx, table, rc.GetDDLJobsMap(), rc.GetSupportPolicy(), rc.GetPolicyMap())
 		if err != nil {
 			return CreatedTable{}, errors.Trace(err)
 		}
