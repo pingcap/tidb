@@ -352,5 +352,5 @@ func (s *infosSchemaClusterTableSuite) TestTableStorageStats() {
 		Hostname: "localhost",
 	}, nil, nil))
 
-	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("30"))
+	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("31"))
 }
