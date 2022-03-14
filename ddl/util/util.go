@@ -207,6 +207,7 @@ func GetTimeZone(sctx sessionctx.Context) (string, int) {
 	return "UTC", offset
 }
 
+// IsAllowedOnAlreadyFull is used for judge the job if it is allowed on already full.
 func IsAllowedOnAlreadyFull(job *model.Job) bool {
 	switch job.Type {
 	case model.ActionDropSchema,
