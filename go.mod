@@ -16,7 +16,7 @@ require (
 	github.com/cheggaaa/pb/v3 v3.0.8
 	github.com/cheynewallace/tabby v1.1.1
 	github.com/cockroachdb/pebble v0.0.0-20210719141320-8c3bd06debb5
-	github.com/coocood/freecache v1.1.1
+	github.com/coocood/freecache v1.2.1
 	github.com/coreos/go-semver v0.3.0
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
 	github.com/cznic/sortutil v0.0.0-20181122101858-f5f958428db8
