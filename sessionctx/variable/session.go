@@ -582,9 +582,6 @@ type SessionVars struct {
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
 
-	// AllowBCJ means allow broadcast join.
-	AllowBCJ bool
-
 	// AllowCartesianBCJ means allow broadcast CARTESIAN join, 0 means not allow, 1 means allow broadcast CARTESIAN join
 	// but the table size should under the broadcast threshold, 2 means allow broadcast CARTESIAN join even if the table
 	// size exceeds the broadcast threshold
@@ -753,10 +750,6 @@ type SessionVars struct {
 	// WaitSplitRegionTimeout defines the split region timeout.
 	WaitSplitRegionTimeout uint64
 
-	// EnableStreaming indicates whether the coprocessor request can use streaming API.
-	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
-	EnableStreaming bool
-
 	// EnableChunkRPC indicates whether the coprocessor request can use chunk API.
 	EnableChunkRPC bool
 
@@ -918,6 +911,9 @@ type SessionVars struct {
 	// LastQueryInfo keeps track the info of last query.
 	LastQueryInfo QueryInfo
 
+	// LastDDLInfo keeps track the info of last DDL.
+	LastDDLInfo LastDDLInfo
+
 	// PartitionPruneMode indicates how and when to prune partitions.
 	PartitionPruneMode atomic2.String
 
@@ -1001,6 +997,15 @@ type SessionVars struct {
 
 	// StatsLoadSyncWait indicates how long to wait for stats load before timeout.
 	StatsLoadSyncWait int64
+
+	// SysdateIsNow indicates whether Sysdate is an alias of Now function
+	SysdateIsNow bool
+	// EnableMutationChecker indicates whether to check data consistency for mutations
+	EnableMutationChecker bool
+	// AssertionLevel controls how strict the assertions on data mutations should be.
+	AssertionLevel AssertionLevel
+	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
+	BatchPendingTiFlashCount int
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1056,11 +1061,6 @@ func (s *SessionVars) CheckAndGetTxnScope() string {
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
 func (s *SessionVars) UseDynamicPartitionPrune() bool {
-	if s.InTxn() || !s.GetStatusFlag(mysql.ServerStatusAutocommit) {
-		// UnionScan cannot get partition table IDs in dynamic-mode, this is a quick-fix for issues/26719,
-		// please see it for more details.
-		return false
-	}
 	return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
 }
 
@@ -1170,7 +1170,6 @@ func NewSessionVars() *SessionVars {
 		Status:                      mysql.ServerStatusAutocommit,
 		StmtCtx:                     new(stmtctx.StatementContext),
 		AllowAggPushDown:            false,
-		AllowBCJ:                    false,
 		AllowCartesianBCJ:           DefOptCartesianBCJ,
 		MPPOuterJoinFixedBuildSide:  DefOptMPPOuterJoinFixedBuildSide,
 		BroadcastJoinThresholdSize:  DefBroadcastJoinThresholdSize,
@@ -1260,16 +1259,6 @@ func NewSessionVars() *SessionVars {
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:      config.GetGlobalConfig().MemQuotaQuery,
 		MemQuotaApplyCache: DefTiDBMemQuotaApplyCache,
-
-		// The variables below do not take any effect anymore, it's remaining for compatibility.
-		// TODO: remove them in v4.1
-		MemQuotaHashJoin:          DefTiDBMemQuotaHashJoin,
-		MemQuotaMergeJoin:         DefTiDBMemQuotaMergeJoin,
-		MemQuotaSort:              DefTiDBMemQuotaSort,
-		MemQuotaTopn:              DefTiDBMemQuotaTopn,
-		MemQuotaIndexLookupReader: DefTiDBMemQuotaIndexLookupReader,
-		MemQuotaIndexLookupJoin:   DefTiDBMemQuotaIndexLookupJoin,
-		MemQuotaDistSQL:           DefTiDBMemQuotaDistSQL,
 	}
 	vars.BatchSize = BatchSize{
 		IndexJoinBatchSize: DefIndexJoinBatchSize,
@@ -1278,14 +1267,6 @@ func NewSessionVars() *SessionVars {
 		MaxChunkSize:       DefMaxChunkSize,
 	}
 	vars.DMLBatchSize = DefDMLBatchSize
-	var enableStreaming string
-	if config.GetGlobalConfig().EnableStreaming {
-		enableStreaming = "1"
-	} else {
-		enableStreaming = "0"
-	}
-	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
-
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
 	vars.allowMPPExecution = DefTiDBAllowMPPExecution
 	vars.HashExchangeWithNewCollation = DefTiDBHashExchangeWithNewCollation
@@ -1543,9 +1524,6 @@ func (s *SessionVars) GetSystemVar(name string) (string, bool) {
 	} else if name == ErrorCount {
 		return strconv.Itoa(int(s.SysErrorCount)), true
 	}
-	if name == TiDBSlowLogMasking {
-		name = TiDBRedactLog
-	}
 	if val, ok := s.stmtVars[name]; ok {
 		return val, ok
 	}
@@ -1662,7 +1640,7 @@ func (s *SessionVars) GetPrevStmtDigest() string {
 
 // LazyCheckKeyNotExists returns if we can lazy check key not exists.
 func (s *SessionVars) LazyCheckKeyNotExists() bool {
-	return s.PresumeKeyNotExists || (s.TxnCtx.IsPessimistic && !s.StmtCtx.DupKeyAsWarning)
+	return s.PresumeKeyNotExists || (s.TxnCtx != nil && s.TxnCtx.IsPessimistic && !s.StmtCtx.DupKeyAsWarning)
 }
 
 // GetTemporaryTable returns a TempTable by tableInfo.
@@ -1895,23 +1873,6 @@ type MemQuota struct {
 	MemQuotaQuery int64
 	// MemQuotaApplyCache defines the memory capacity for apply cache.
 	MemQuotaApplyCache int64
-
-	// The variables below do not take any effect anymore, it's remaining for compatibility.
-	// TODO: remove them in v4.1
-	// MemQuotaHashJoin defines the memory quota for a hash join executor.
-	MemQuotaHashJoin int64
-	// MemQuotaMergeJoin defines the memory quota for a merge join executor.
-	MemQuotaMergeJoin int64
-	// MemQuotaSort defines the memory quota for a sort executor.
-	MemQuotaSort int64
-	// MemQuotaTopn defines the memory quota for a top n executor.
-	MemQuotaTopn int64
-	// MemQuotaIndexLookupReader defines the memory quota for a index lookup reader executor.
-	MemQuotaIndexLookupReader int64
-	// MemQuotaIndexLookupJoin defines the memory quota for a index lookup join executor.
-	MemQuotaIndexLookupJoin int64
-	// MemQuotaDistSQL defines the memory quota for all operators in DistSQL layer like co-processor and selectResult.
-	MemQuotaDistSQL int64
 }
 
 // BatchSize defines batch size values.
@@ -2149,7 +2110,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 
 	if len(s.CurrentDB) > 0 {
-		writeSlowLogItem(&buf, SlowLogDBStr, s.CurrentDB)
+		writeSlowLogItem(&buf, SlowLogDBStr, strings.ToLower(s.CurrentDB))
 	}
 	if len(logItems.IndexNames) > 0 {
 		writeSlowLogItem(&buf, SlowLogIndexNamesStr, logItems.IndexNames)
@@ -2260,7 +2221,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 
 	if s.CurrentDBChanged {
-		buf.WriteString(fmt.Sprintf("use %s;\n", s.CurrentDB))
+		buf.WriteString(fmt.Sprintf("use %s;\n", strings.ToLower(s.CurrentDB)))
 		s.CurrentDBChanged = false
 	}
 
@@ -2282,6 +2243,12 @@ type QueryInfo struct {
 	StartTS     uint64 `json:"start_ts"`
 	ForUpdateTS uint64 `json:"for_update_ts"`
 	ErrMsg      string `json:"error,omitempty"`
+}
+
+// LastDDLInfo represents the information of last DDL. It's used to expose information for test purpose.
+type LastDDLInfo struct {
+	Query  string `json:"query"`
+	SeqNum uint64 `json:"seq_num"`
 }
 
 // TxnReadTS indicates the value and used situation for tx_read_ts

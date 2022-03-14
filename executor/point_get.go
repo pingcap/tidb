@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
@@ -37,7 +36,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil/consistency"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
@@ -309,8 +310,22 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	if len(val) == 0 {
 		if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) &&
 			!e.ctx.GetSessionVars().StmtCtx.WeakConsistency {
-			return kv.ErrNotExist.GenWithStack("inconsistent extra index %s, handle %d not found in table",
-				e.idxInfo.Name.O, e.handle)
+			return (&consistency.Reporter{
+				HandleEncode: func(handle kv.Handle) kv.Key {
+					return key
+				},
+				IndexEncode: func(idxRow *consistency.RecordData) kv.Key {
+					return e.idxKey
+				},
+				Tbl:  e.tblInfo,
+				Idx:  e.idxInfo,
+				Sctx: e.ctx,
+			}).ReportLookupInconsistent(ctx,
+				1, 0,
+				[]kv.Handle{e.handle},
+				[]kv.Handle{e.handle},
+				[]consistency.RecordData{{}},
+			)
 		}
 		return nil
 	}
@@ -364,7 +379,7 @@ func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) erro
 	}
 	if e.lock {
 		seVars := e.ctx.GetSessionVars()
-		lockCtx := newLockCtx(seVars, e.lockWaitTime)
+		lockCtx := newLockCtx(seVars, e.lockWaitTime, 1)
 		lockCtx.InitReturnValues(1)
 		err := doLockKeys(ctx, e.ctx, lockCtx, key)
 		if err != nil {
@@ -457,10 +472,10 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 		return nil
 	}
 	if len(partName) > 0 {
-		return ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+		return dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
 			fmt.Sprintf("table %v's partition %v can not be read by %v txn_scope", tblName, partName, txnScope))
 	}
-	return ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+	return dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
 		fmt.Sprintf("table %v can not be read by %v txn_scope", tblName, txnScope))
 }
 

@@ -16,7 +16,6 @@ package core
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -183,17 +182,6 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 		tsExec.TableId = p.physicalTableID
 	}
 	executorID := ""
-	if storeType == kv.TiFlash && p.IsGlobalRead {
-		tsExec.NextReadEngine = tipb.EngineType_TiFlash
-		splitedRanges, _ := distsql.SplitRangesAcrossInt64Boundary(p.Ranges, false, false, p.Table.IsCommonHandle)
-		ranges, err := distsql.TableHandleRangesToKVRanges(ctx.GetSessionVars().StmtCtx, []int64{tsExec.TableId}, p.Table.IsCommonHandle, splitedRanges, nil)
-		if err != nil {
-			return nil, err
-		}
-		for _, keyRange := range ranges {
-			tsExec.Ranges = append(tsExec.Ranges, tipb.KeyRange{Low: keyRange.StartKey, High: keyRange.EndKey})
-		}
-	}
 	if storeType == kv.TiFlash {
 		executorID = p.ExplainID().String()
 	}
@@ -324,6 +312,8 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.
 	for _, col := range p.schema.Columns {
 		if col.ID == model.ExtraHandleID {
 			columns = append(columns, model.NewExtraHandleColInfo())
+		} else if col.ID == model.ExtraPhysTblID {
+			columns = append(columns, model.NewExtraPhysTblIDColInfo())
 		} else if col.ID == model.ExtraPidColID {
 			columns = append(columns, model.NewExtraPartitionIDColInfo())
 		} else {
@@ -390,7 +380,9 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 
 	var otherConditionsInJoin expression.CNFExprs
 	var otherEqConditionsFromIn expression.CNFExprs
-	if p.JoinType == AntiSemiJoin {
+	/// For anti join, equal conditions from `in` clause requires additional processing,
+	/// for example, treat `null` as true.
+	if p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin || p.JoinType == LeftOuterSemiJoin {
 		for _, condition := range p.OtherConditions {
 			if expression.IsEQCondFromIn(condition) {
 				otherEqConditionsFromIn = append(otherEqConditionsFromIn, condition)

@@ -708,11 +708,11 @@ func TestIndexEstimationCrossValidate(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, key(a,b))")
 	tk.MustExec("insert into t values(1, 1), (1, 2), (1, 3), (2, 2)")
 	tk.MustExec("analyze table t")
-	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/statistics/table/mockQueryBytesMaxUint64", `return(100000)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/table/mockQueryBytesMaxUint64", `return(100000)`))
 	tk.MustQuery("explain select * from t where a = 1 and b = 2").Check(testkit.Rows(
 		"IndexReader_6 1.00 root  index:IndexRangeScan_5",
 		"└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a, b) range:[1 2,1 2], keep order:false"))
-	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/statistics/table/mockQueryBytesMaxUint64"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/table/mockQueryBytesMaxUint64"))
 
 	// Test issue 22466
 	tk.MustExec("drop table if exists t2")
@@ -866,7 +866,11 @@ func prepareSelectivity(testKit *testkit.TestKit, dom *domain.Domain) (*statisti
 		return nil, err
 	}
 	for i := 1; i <= 5; i++ {
-		statsTbl.Columns[int64(i)] = &statistics.Column{Histogram: *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)), Info: tbl.Columns[i-1]}
+		statsTbl.Columns[int64(i)] = &statistics.Column{
+			Histogram: *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)),
+			Info:      tbl.Columns[i-1],
+			Loaded:    true,
+		}
 	}
 
 	// Set the value of two indices' histograms.

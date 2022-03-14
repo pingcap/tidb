@@ -193,6 +193,37 @@ func (cfg *RestoreConfig) adjustRestoreConfig() {
 	}
 }
 
+func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *RestoreConfig) error {
+	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	opts := storage.ExternalStorageOptions{
+		NoCredentials:   cfg.NoCreds,
+		SendCredentials: cfg.SendCreds,
+	}
+	if err = client.SetStorage(ctx, u, &opts); err != nil {
+		return errors.Trace(err)
+	}
+	client.SetRateLimit(cfg.RateLimit)
+	client.SetCrypter(&cfg.CipherInfo)
+	client.SetConcurrency(uint(cfg.Concurrency))
+	if cfg.Online {
+		client.EnableOnline()
+	}
+	if cfg.NoSchema {
+		client.EnableSkipCreateSQL()
+	}
+	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
+	client.SetBatchDdlSize(cfg.DdlBatchSize)
+	err = client.LoadRestoreStores(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return nil
+}
+
 // CheckRestoreDBAndTable is used to check whether the restore dbs or tables have been backup
 func CheckRestoreDBAndTable(client *restore.Client, cfg *RestoreConfig) error {
 	if len(cfg.Schemas) == 0 && len(cfg.Tables) == 0 {
@@ -244,43 +275,21 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	// Restore needs domain to do DDL.
 	needDomain := true
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain)
+	keepaliveCfg := GetKeepalive(&cfg.Config)
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, keepaliveCfg, cfg.CheckRequirements, needDomain)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer mgr.Close()
 
-	keepaliveCfg := GetKeepalive(&cfg.Config)
 	keepaliveCfg.PermitWithoutStream = true
-	client, err := restore.NewRestoreClient(g, mgr.GetPDClient(), mgr.GetStorage(), mgr.GetTLSConfig(), keepaliveCfg)
+	client, err := restore.NewRestoreClient(g, mgr.GetPDClient(), mgr.GetStorage(), mgr.GetTLSConfig(), keepaliveCfg, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer client.Close()
 
-	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	opts := storage.ExternalStorageOptions{
-		NoCredentials:   cfg.NoCreds,
-		SendCredentials: cfg.SendCreds,
-	}
-	if err = client.SetStorage(ctx, u, &opts); err != nil {
-		return errors.Trace(err)
-	}
-	client.SetRateLimit(cfg.RateLimit)
-	client.SetCrypter(&cfg.CipherInfo)
-	client.SetConcurrency(uint(cfg.Concurrency))
-	if cfg.Online {
-		client.EnableOnline()
-	}
-	if cfg.NoSchema {
-		client.EnableSkipCreateSQL()
-	}
-	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
-	client.SetBatchDdlSize(cfg.DdlBatchSize)
-	err = client.LoadRestoreStores(ctx)
+	err = configureRestoreClient(ctx, client, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}

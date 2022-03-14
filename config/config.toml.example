@@ -460,6 +460,9 @@ deadlock-history-capacity = 10
 # Whether retryable deadlocks (in-statement deadlocks) are collected to the information_schema.deadlocks table.
 deadlock-history-collect-retryable = false
 
+# If true it means the auto-commit transactions will be in pessimistic mode.
+pessimistic-auto-commit = false
+
 # experimental section controls the features that are still experimental: their semantics,
 # interfaces are subject to change, using these features in the production environment is not recommended.
 [experimental]

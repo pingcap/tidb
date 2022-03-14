@@ -443,8 +443,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		}
 	}
 
-	readFromTableCache := stmtCtx.ReadFromTableCache
-	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && ds.tableInfo.TempTableType != model.TempTableLocal && !readFromTableCache {
+	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && ds.tableInfo.TempTableType != model.TempTableLocal {
 		err := ds.generateAndPruneIndexMergePath(indexMergeConds, ds.indexMergeHints != nil)
 		if err != nil {
 			return nil, err
@@ -458,8 +457,6 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 			msg = "Got no_index_merge hint or tidb_enable_index_merge is off."
 		} else if ds.tableInfo.TempTableType == model.TempTableLocal {
 			msg = "Cannot use IndexMerge on temporary table."
-		} else if readFromTableCache {
-			msg = "Cannot use IndexMerge on TableCache."
 		}
 		msg = fmt.Sprintf("IndexMerge is inapplicable or disabled. %s", msg)
 		stmtCtx.AppendWarning(errors.Errorf(msg))

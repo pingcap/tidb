@@ -1,0 +1,5 @@
+ddl TestModifyColumn
+util/cpuprofile TestGetCPUProfile
+executor TestDefaultValForAnalyze
+executor TestPBMemoryLeak
+executor TestInvalidReadCacheTable

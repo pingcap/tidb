@@ -163,10 +163,7 @@ func (s *Server) SetDomain(dom *domain.Domain) {
 
 // InitGlobalConnID initialize global connection id.
 func (s *Server) InitGlobalConnID(serverIDGetter func() uint64) {
-	s.globalConnID = util.GlobalConnID{
-		ServerIDGetter: serverIDGetter,
-		Is64bits:       true,
-	}
+	s.globalConnID = util.NewGlobalConnIDWithGetter(serverIDGetter, true)
 }
 
 // newConn creates a new *clientConn from a net.Conn.
@@ -193,7 +190,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint64]*clientConn),
-		globalConnID:      util.GlobalConnID{ServerID: 0, Is64bits: true},
+		globalConnID:      util.NewGlobalConnID(0, true),
 	}
 	s.capability = defaultCapability
 	setTxnScope()
@@ -619,9 +616,22 @@ func (s *Server) checkConnectionCount() error {
 
 // ShowProcessList implements the SessionManager interface.
 func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
+	rs := make(map[uint64]*util.ProcessInfo)
+	for connID, pi := range s.getUserProcessList() {
+		rs[connID] = pi
+	}
+	if s.dom != nil {
+		for connID, pi := range s.dom.SysProcTracker().GetSysProcessList() {
+			rs[connID] = pi
+		}
+	}
+	return rs
+}
+
+func (s *Server) getUserProcessList() map[uint64]*util.ProcessInfo {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
-	rs := make(map[uint64]*util.ProcessInfo, len(s.clients))
+	rs := make(map[uint64]*util.ProcessInfo)
 	for _, client := range s.clients {
 		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
 			continue
@@ -668,7 +678,8 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
 	conn, ok := s.clients[connectionID]
-	if !ok {
+	if !ok && s.dom != nil {
+		s.dom.SysProcTracker().KillSysProcess(connectionID)
 		return
 	}
 

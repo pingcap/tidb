@@ -251,6 +251,11 @@ func newColString(chs, coll string) *Column {
 	return column
 }
 
+func newColJSON() *Column {
+	column := &Column{RetType: &types.FieldType{Tp: mysql.TypeJSON, Charset: charset.CharsetBinary, Collate: charset.CollationBin}}
+	return column
+}
+
 func newConstInt(coercibility Coercibility) *Constant {
 	constant := &Constant{RetType: &types.FieldType{Tp: mysql.TypeLong, Charset: charset.CharsetBin, Collate: charset.CollationBin}, Value: types.NewDatum(1)}
 	constant.SetCoercibility(coercibility)
@@ -507,6 +512,46 @@ func TestDeriveCollation(t *testing.T) {
 		},
 		{
 			[]string{
+				ast.ExportSet, ast.Elt, ast.MakeSet,
+			},
+			[]Expression{
+				newColInt(CoercibilityExplicit),
+				newColJSON(),
+				newColString(charset.CharsetUTF8MB4, "utf8mb4_unicode_ci"),
+			},
+			[]types.EvalType{types.ETInt, types.ETJson},
+			types.ETString,
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
+		},
+		{
+			[]string{
+				ast.Concat, ast.ConcatWS, ast.Coalesce, ast.Greatest, ast.Least,
+			},
+			[]Expression{
+				newColString(charset.CharsetGBK, charset.CollationGBKBin),
+				newColJSON(),
+			},
+			[]types.EvalType{types.ETString, types.ETJson},
+			types.ETString,
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
+		},
+		{
+			[]string{
+				ast.Concat, ast.ConcatWS, ast.Coalesce, ast.Greatest, ast.Least,
+			},
+			[]Expression{
+				newColJSON(),
+				newColString(charset.CharsetBinary, charset.CharsetBinary),
+			},
+			[]types.EvalType{types.ETJson, types.ETString},
+			types.ETString,
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetBinary, charset.CharsetBinary},
+		},
+		{
+			[]string{
 				ast.Concat, ast.ConcatWS, ast.Coalesce, ast.In, ast.Greatest, ast.Least,
 			},
 			[]Expression{
@@ -530,6 +575,18 @@ func TestDeriveCollation(t *testing.T) {
 			types.ETString,
 			false,
 			&ExprCollation{CoercibilityCoercible, ASCII, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
+		},
+		{
+			[]string{
+				ast.Lower, ast.Lcase, ast.Reverse, ast.Upper, ast.Ucase, ast.Quote,
+			},
+			[]Expression{
+				newColJSON(),
+			},
+			[]types.EvalType{types.ETString},
+			types.ETString,
+			false,
+			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
 		},
 		{
 			[]string{

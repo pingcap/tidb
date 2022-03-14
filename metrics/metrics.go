@@ -162,6 +162,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TopSQLReportDataHistogram)
 	prometheus.MustRegister(PDApiExecutionHistogram)
 	prometheus.MustRegister(CPUProfileCounter)
+	prometheus.MustRegister(ReadFromTableCacheCounter)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()
