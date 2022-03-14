@@ -200,7 +200,9 @@ func TestTiFlashNoRedundantPDRules(t *testing.T) {
 	// Disable emulator GC, otherwise delete range will be automatically called.
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed", `return`))
-	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed"))
+	}()
 
 	fCancelPD := s.SetPdLoop(10000)
 	defer fCancelPD()
