@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
@@ -686,7 +687,7 @@ func TestTableLocksLostCommit(t *testing.T) {
 }
 
 func checkTableLock(t *testing.T, tk *testkit.TestKit, dbName, tableName string, lockTp model.TableLockType) {
-	tb := tk.GetTableByName(dbName, tableName)
+	tb := external.GetTableByName(t, tk, dbName, tableName)
 	dom := domain.GetDomain(tk.Session())
 	err := dom.Reload()
 	require.NoError(t, err)
