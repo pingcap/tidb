@@ -4707,6 +4707,10 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		},
 		Args: []interface{}{&newCol, oldColName, spec.Position, 0},
 	}
+	if info := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; info != nil {
+		info.AddColumns = append(info.AddColumns, newCol)
+		info.DropColumns = append(info.DropColumns, oldCol.ToInfo())
+	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
@@ -5163,7 +5167,14 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{spec.FromKey, spec.ToKey},
 	}
+	if info := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; info != nil {
+		idx := tb.Meta().FindIndexByName(spec.FromKey.L)
+		newIdx := idx.Clone()
+		newIdx.Name = spec.ToKey
 
+		info.DropIndexes = append(info.DropIndexes, idx)
+		info.AddIndexes = append(info.AddIndexes, newIdx)
+	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)

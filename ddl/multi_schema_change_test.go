@@ -126,6 +126,32 @@ func TestMultiSchemaChangeAddDropColumns(t *testing.T) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("4 3"))
 }
 
+func TestMultiSchemaRenameColumns(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
+
+	// Test add and rename to same column name
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int default 1, b int default 2);")
+	tk.MustExec("insert into t values ();")
+	tk.MustGetErrCode("alter table t rename column b to c, add column c int", errno.ErrUnsupportedDDLOperation)
+
+	// Test drop and rename with same column
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int default 1, b int default 2);")
+	tk.MustExec("insert into t values ();")
+	tk.MustGetErrCode("alter table t drop column b, rename column b to c", errno.ErrUnsupportedDDLOperation)
+
+	// Test add index and rename with same column
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int default 1, b int default 2, index t(a, b));")
+	tk.MustExec("insert into t values ();")
+	tk.MustGetErrCode("alter table t rename column b to c, add index t1(a, b)", errno.ErrUnsupportedDDLOperation)
+}
+
 func TestMultiSchemaChangeAddIndexes(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -191,4 +217,22 @@ func TestMultiSchemaChangeAddDropIndexes(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int, index t(a))")
 	tk.MustGetErrCode("alter table t add index t1(b), drop index t1", errno.ErrUnsupportedDDLOperation)
+}
+
+func TestMultiSchemaRenameIndexes(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
+
+	// Test drop and rename same index.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int, index t(a))")
+	tk.MustGetErrCode("alter table t drop index t, rename index t to t1", errno.ErrUnsupportedDDLOperation)
+
+	// Test add and rename to same index name.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int, index t(a))")
+	tk.MustGetErrCode("alter table t add index t1(b), rename index t to t1", errno.ErrUnsupportedDDLOperation)
 }
