@@ -275,7 +275,17 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 		schema4Agg.Append(newCol)
 		names = append(names, p.OutputNames()[i])
 	}
-	if join, isJoin := p.(*LogicalJoin); isJoin && join.fullSchema != nil {
+	var (
+		join            *LogicalJoin
+		isJoin          bool
+		isSelectionJoin bool
+	)
+	join, isJoin = p.(*LogicalJoin)
+	selection, isSelection := p.(*LogicalSelection)
+	if isSelection {
+		join, isSelectionJoin = selection.children[0].(*LogicalJoin)
+	}
+	if (isJoin && join.fullSchema != nil) || (isSelectionJoin && join.fullSchema != nil) {
 		for i, col := range join.fullSchema.Columns {
 			if p.Schema().Contains(col) {
 				continue
@@ -1320,6 +1330,12 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 		// After that
 		if p.SCtx().GetSessionVars().SQLMode.HasOnlyFullGroupBy() && fds.HasAggBuilt {
 			for offset, expr := range proj.Exprs[:len(fields)] {
+				// skip the auxiliary column in agg appended to select fields, which mainly comes from two kind of cases:
+				// 1: having agg(t.a), this will append t.a to the select fields, if it isn't here.
+				// 2: order by agg(t.a), this will append t.a to the select fields, if it isn't here.
+				if fields[offset].AuxiliaryColInAgg {
+					continue
+				}
 				item := fd.NewFastIntSet()
 				switch x := expr.(type) {
 				case *expression.Column:
@@ -1335,16 +1351,22 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 					item.Insert(scalarUniqueID)
 				default:
 				}
-				// Rule #1, if select fields are constant, it's ok.
+				// Rule #1, if there are no group cols, the col in the order by shouldn't be limited.
+				if fds.GroupByCols.Only1Zero() && fields[offset].AuxiliaryColInOrderBy {
+					continue
+				}
+
+				// Rule #2, if select fields are constant, it's ok.
 				if item.SubsetOf(fds.ConstantCols()) {
 					continue
 				}
-				// Rule #2, if select fields are subset of group by items, it's ok.
+
+				// Rule #3, if select fields are subset of group by items, it's ok.
 				if item.SubsetOf(fds.GroupByCols) {
 					continue
 				}
 
-				// Rule #3, if select fields are dependencies of Strict FD with determinants in group-by items, it's ok.
+				// Rule #4, if select fields are dependencies of Strict FD with determinants in group-by items, it's ok.
 				// lax FD couldn't be done here, eg: for unique key (b), index key NULL & NULL are different rows with
 				// uncertain other column values.
 				strictClosure := fds.ClosureOfStrict(fds.GroupByCols)
@@ -2122,6 +2144,14 @@ func (a *havingWindowAndOrderbyExprResolver) resolveFromPlan(v *ast.ColumnNameEx
 	sf := &ast.SelectField{
 		Expr:      &ast.ColumnNameExpr{Name: newColName},
 		Auxiliary: true,
+	}
+	// appended with new select fields. set them with flag.
+	if a.inAggFunc {
+		// should skip check in FD for only full group by.
+		sf.AuxiliaryColInAgg = true
+	} else if a.curClause == orderByClause {
+		// should skip check in FD for only full group by only when group by item are empty.
+		sf.AuxiliaryColInOrderBy = true
 	}
 	sf.Expr.SetType(col.GetType())
 	a.selectFields = append(a.selectFields, sf)

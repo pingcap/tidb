@@ -207,4 +207,12 @@ func TestOnlyFullGroupByOldCases(t *testing.T) {
 	err = tk.ExecToErr("SELECT * FROM t2 AS _tmp_1 JOIN (SELECT max(_tmp_3.f2) AS _tmp_4,min(_tmp_3.i2) AS _tmp_5 FROM t2 AS _tmp_3 WHERE _tmp_3.f2>=_tmp_3.c2 GROUP BY _tmp_3.c2 ORDER BY _tmp_3.i2) AS _tmp_2 WHERE _tmp_2._tmp_5=100;")
 	require.NotNil(t, err)
 	require.Equal(t, err.Error(), "[planner:1055]Expression #3 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test._tmp_3.i2' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
+
+	// test issue #22301 and #33056
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (a int);")
+	tk.MustExec("create table t2 (a int, b int);")
+	tk.MustQuery("select t1.a from t1 join t2 on t2.a=t1.a group by t2.a having min(t2.b) > 0;")
+	tk.MustQuery("select t2.a, count(t2.b) from t1 join t2 using (a) where t1.a = 1;")
+	tk.MustQuery("select count(t2.b) from t1 join t2 using (a) order by t2.a;")
 }

@@ -549,13 +549,11 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 				determinants.Insert(int(one.UniqueID))
 				// the dependent columns in scalar function should be also considered as output columns as well.
 				outputColsUniqueIDs.Insert(int(one.UniqueID))
-				outputColsUniqueIDsArray = append(outputColsUniqueIDsArray, int(one.UniqueID))
 			}
 			for _, one := range extractedCorColumns {
 				determinants.Insert(int(one.UniqueID))
 				// the dependent columns in scalar function should be also considered as output columns as well.
 				outputColsUniqueIDs.Insert(int(one.UniqueID))
-				outputColsUniqueIDsArray = append(outputColsUniqueIDsArray, int(one.UniqueID))
 			}
 			nullable := false
 			result := expression.EvaluateExprWithNull(p.ctx, p.schema, x)
@@ -961,7 +959,16 @@ func (p *LogicalSelection) ExtractFD() *fd.FDSet {
 	// collect the output columns' unique ID.
 	outputColsUniqueIDs := fd.NewFastIntSet()
 	notnullColsUniqueIDs := fd.NewFastIntSet()
-	for _, one := range p.Schema().Columns {
+	// eg: select t2.a, count(t2.b) from t1 join t2 using (a) where t1.a = 1
+	// join's schema will miss t2.a while join.full schema has. since selection
+	// itself doesn't contain schema, extracting schema should tell them apart.
+	var columns []*expression.Column
+	if join, ok := p.children[0].(*LogicalJoin); ok {
+		columns = join.fullSchema.Columns
+	} else {
+		columns = p.Schema().Columns
+	}
+	for _, one := range columns {
 		outputColsUniqueIDs.Insert(int(one.UniqueID))
 	}
 
