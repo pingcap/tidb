@@ -363,6 +363,16 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	restoreDBConfig := enableTiDBConfig()
 	defer restoreDBConfig()
 
+	// create policy if backupMeta has policies.
+	policies, err := client.GetPlacementPolicies()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = client.CreatePlacementPolicies(ctx, policies)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	// execute DDL first
 	err = client.ExecDDLs(ctx, ddlJobs)
 	if err != nil {
@@ -375,16 +385,6 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		// even nothing to restore, we show a success message since there is no failure.
 		summary.SetSuccessStatus(true)
 		return nil
-	}
-
-	// create policy if backupMeta has policies.
-	policies, err := client.GetPlacementPolicies()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = client.CreatePlacementPolicies(ctx, policies)
-	if err != nil {
-		return errors.Trace(err)
 	}
 
 	for _, db := range dbs {

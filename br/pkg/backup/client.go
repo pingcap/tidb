@@ -472,6 +472,14 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 
 		if (job.State == model.JobStateDone || job.State == model.JobStateSynced) &&
 			(job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion > lastSchemaVersion) {
+			if job.BinlogInfo.DBInfo != nil {
+				// ignore all placement policy info during incremental backup for now.
+				job.BinlogInfo.DBInfo.PlacementPolicyRef = nil
+			}
+			if job.BinlogInfo.TableInfo != nil {
+				// ignore all placement policy info during incremental backup for now.
+				job.BinlogInfo.TableInfo.PlacementPolicyRef = nil
+			}
 			jobBytes, err := json.Marshal(job)
 			if err != nil {
 				return errors.Trace(err)
