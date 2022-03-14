@@ -45,8 +45,8 @@ cloud.google.com/go/storage v1.10.0/go.mod h1:FLPqc6j+Ki4BU591ie1oL6qBQGu2Bl/tZ9
 cloud.google.com/go/storage v1.16.1 h1:sMEIc4wxvoY3NXG7Rn9iP7jb/2buJgWR1vNXCR/UPfs=
 cloud.google.com/go/storage v1.16.1/go.mod h1:LaNorbty3ehnU3rEjXSNV/NRgQA0O8Y+uh6bPe5UOk4=
 dmitri.shuralyov.com/gpu/mtl v0.0.0-20190408044501-666a987793e9/go.mod h1:H6x//7gZCb22OMCxBHrMx7a5I7Hp++hsVxbQ4BYO7hU=
-github.com/3pointer/kvproto v0.0.0-20220311042544-de381a6943c7 h1:wMpaA8IC7c1LlGK77L1LESHb7t0m7AtmUWE2Q9A6MOk=
-github.com/3pointer/kvproto v0.0.0-20220311042544-de381a6943c7/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
+github.com/3pointer/kvproto v0.0.0-20220314042019-103945ffdd16 h1:xTAVr7VWP18ZZXN6g11MN4xaCDjY3w1mWa25fxlOIOI=
+github.com/3pointer/kvproto v0.0.0-20220314042019-103945ffdd16/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
 github.com/AndreasBriese/bbloom v0.0.0-20190306092124-e2d15f34fcf9/go.mod h1:bOvUY6CB00SOBii9/FifXqc0awNKxLFCL/+pkDPuyl8=
 github.com/Azure/azure-sdk-for-go/sdk/azcore v0.20.0 h1:KQgdWmEOmaJKxaUUZwHAYh12t+b+ZJf8q3friycK1kA=
 github.com/Azure/azure-sdk-for-go/sdk/azcore v0.20.0/go.mod h1:ZPW/Z0kLCTdDZaDbYTetxc9Cxl/2lNqxYHYNOF2bti0=

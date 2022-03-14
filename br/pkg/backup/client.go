@@ -283,11 +283,11 @@ func BuildBackupRangeAndSchema(
 	tableFilter filter.Filter,
 	backupTS uint64,
 	isFullBackup bool,
-) ([]rtree.Range, *Schemas, []*backuppb.Policy, error) {
+) ([]rtree.Range, *Schemas, []*backuppb.PlacementPolicy, error) {
 	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
 	m := meta.NewSnapshotMeta(snapshot)
 
-	var policies []*backuppb.Policy
+	var policies []*backuppb.PlacementPolicy
 	if isFullBackup {
 		// according to https://github.com/pingcap/tidb/issues/32290
 		// only full backup will record policies in backupMeta.
@@ -295,13 +295,13 @@ func BuildBackupRangeAndSchema(
 		if err != nil {
 			return nil, nil, nil, errors.Trace(err)
 		}
-		policies = make([]*backuppb.Policy, 0, len(policies))
+		policies = make([]*backuppb.PlacementPolicy, 0, len(policies))
 		for _, policyInfo := range policyList {
 			p, err := json.Marshal(policyInfo)
 			if err != nil {
 				return nil, nil, nil, errors.Trace(err)
 			}
-			policies = append(policies, &backuppb.Policy{Info: p})
+			policies = append(policies, &backuppb.PlacementPolicy{Info: p})
 		}
 	}
 

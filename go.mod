@@ -104,7 +104,7 @@ require (
 
 replace github.com/pingcap/tidb/parser => ./parser
 
-replace github.com/pingcap/kvproto => github.com/3pointer/kvproto v0.0.0-20220311042544-de381a6943c7
+replace github.com/pingcap/kvproto => github.com/3pointer/kvproto v0.0.0-20220314042019-103945ffdd16
 
 // fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
