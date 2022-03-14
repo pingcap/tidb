@@ -39,7 +39,7 @@ type fdEdge struct {
 	uniLax bool
 }
 
-// FDSet is the main portal of functional dependency, it stores the relationship between (extended table/ physical table)'s
+// FDSet is the main portal of functional dependency, it stores the relationship between (extended table / physical table)'s
 // columns. For more theory about this design, ref the head comments in the funcdep/doc.go.
 type FDSet struct {
 	fdEdges []*fdEdge

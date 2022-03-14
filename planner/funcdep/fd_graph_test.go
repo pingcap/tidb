@@ -25,7 +25,7 @@ func TestAddStrictFunctionalDependency(t *testing.T) {
 		fdEdges: []*fdEdge{},
 	}
 	fe1 := &fdEdge{
-		from:   NewFastIntSet(1), // AB -> CDEFG
+		from:   NewFastIntSet(1, 2), // AB -> CDEFG
 		to:     NewFastIntSet(3, 4, 5, 6, 7),
 		strict: true,
 		equiv:  false,
@@ -46,8 +46,9 @@ func TestAddStrictFunctionalDependency(t *testing.T) {
 	assertF := func() {
 		require.Equal(t, len(fd.fdEdges), 1)
 		from := fd.fdEdges[0].from.SortedArray()
-		require.Equal(t, len(from), 1)
+		require.Equal(t, len(from), 2)
 		require.Equal(t, from[0], 1)
+		require.Equal(t, from[1], 2)
 		to := fd.fdEdges[0].to.SortedArray()
 		require.Equal(t, len(to), 5)
 		require.Equal(t, to[0], 3)
