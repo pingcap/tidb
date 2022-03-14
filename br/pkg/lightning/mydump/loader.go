@@ -23,11 +23,11 @@ import (
 	"github.com/pingcap/errors"
 	regexprrouter "github.com/pingcap/tidb-tools/pkg/regexpr-router"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
-	"go.uber.org/zap"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"go.uber.org/zap"
 )
 
 type MDDatabaseMeta struct {
