@@ -2326,7 +2326,7 @@ type analyzeResultsNotifyWaitGroupWrapper struct {
 	cnt    atomicutil.Uint64
 }
 
-// analyzeResultsNotifyWaitGroupWrapper is to create analyzeResultsNotifyWaitGroupWrapper
+// NewAnalyzeResultsNotifyWaitGroupWrapper is to create analyzeResultsNotifyWaitGroupWrapper
 func NewAnalyzeResultsNotifyWaitGroupWrapper(notify chan *statistics.AnalyzeResults) *analyzeResultsNotifyWaitGroupWrapper {
 	return &analyzeResultsNotifyWaitGroupWrapper{
 		notify: notify,
