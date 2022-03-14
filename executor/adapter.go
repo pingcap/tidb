@@ -1171,7 +1171,17 @@ func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool) (
 	}
 	if genHint {
 		hints := plannercore.GenHintsFromPhysicalPlan(p)
-		hints = append(hints, sctx.GetSessionVars().StmtCtx.OriginalTableHints...)
+		for _, tableHint := range sctx.GetSessionVars().StmtCtx.OriginalTableHints {
+			// some hints like 'memory_quota' cannot be extracted from the plan, so we
+			// have to iterate all hints from the customer and keep some of them.
+			switch tableHint.HintName.L {
+			case "memory_quota", "use_toja", "no_index_merge", "max_execution_time",
+				plannercore.HintAggToCop, plannercore.HintIgnoreIndex,
+				plannercore.HintReadFromStorage, plannercore.HintLimitToCop:
+				hints = append(hints, tableHint)
+			}
+		}
+
 		hintStr = hint.RestoreOptimizerHints(hints)
 		sctx.GetSessionVars().StmtCtx.SetPlanHint(hintStr)
 	}
