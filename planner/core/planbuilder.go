@@ -3083,7 +3083,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 				}
 			} else if raw.ConnectionID == util2.GetAutoAnalyzeProcID() {
 				// Only the users with the SUPER privilege can kill auto analyze.
-				err := ErrSpecificAccessDenied.GenWithStack("SUPER")
+				err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
 			}
 		}
