@@ -788,10 +788,10 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 	}
 	var capacity int
 	if variable.AllowConcurrencyDDL.Load() {
-		// reorgWorker + generalWorker + sessForAddDDL + PollTiFlashRoutine + limitDDLJobs +
-		capacity = (10+1)*5 + 1 + 1 + 1
+		// reorgWorker + generalWorker + sessForAddDDL + PollTiFlashRoutine + limitDDLJobs
+		capacity = (10+1)*4 + 1 + 1 + 1
 	} else {
-		capacity = 2
+		capacity = 3
 	}
 	sysCtxPool := pools.NewResourcePool(sysFac, capacity, capacity, resourceIdleTimeout)
 	ctx, cancelFunc := context.WithCancel(context.Background())
