@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
 )
@@ -1141,10 +1142,16 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 	if expr == nil {
 		return nil, name, nil
 	}
+	// invalid unique id
+	correlatedColUniqueID := int64(0)
+	if cc, ok := expr.(*expression.CorrelatedColumn); ok {
+		correlatedColUniqueID = cc.UniqueID
+	}
 	// for expr projection, we should record the map relationship <hashcode, uniqueID> down.
 	newCol := &expression.Column{
-		UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-		RetType:  expr.GetType(),
+		UniqueID:              b.ctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:               expr.GetType(),
+		CorrelatedColUniqueID: correlatedColUniqueID,
 	}
 	if b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol == nil {
 		b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = make(map[string]int, 1)
@@ -1303,6 +1310,89 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 		}
 	}
 	proj.SetChildren(p)
+	// delay the only-full-group-by-check in create view statement to later query.
+	if !b.isCreateView {
+		fds := proj.ExtractFD()
+		// Projection -> Children -> ...
+		// Let the projection itself to evaluate the whole FD, which will build the connection
+		// 1: from select-expr to registered-expr
+		// 2: from base-column to select-expr
+		// After that
+		if p.SCtx().GetSessionVars().SQLMode.HasOnlyFullGroupBy() && fds.HasAggBuilt {
+			for offset, expr := range proj.Exprs[:len(fields)] {
+				item := fd.NewFastIntSet()
+				switch x := expr.(type) {
+				case *expression.Column:
+					item.Insert(int(x.UniqueID))
+				case *expression.ScalarFunction:
+					if expression.CheckFuncInExpr(x, ast.AnyValue) {
+						continue
+					}
+					scalarUniqueID, ok := fds.IsHashCodeRegistered(string(hack.String(x.HashCode(p.SCtx().GetSessionVars().StmtCtx))))
+					if !ok {
+						panic("selected expr must have been registered, shouldn't be here")
+					}
+					item.Insert(scalarUniqueID)
+				default:
+				}
+				// Rule #1, if select fields are constant, it's ok.
+				if item.SubsetOf(fds.ConstantCols()) {
+					continue
+				}
+				// Rule #2, if select fields are subset of group by items, it's ok.
+				if item.SubsetOf(fds.GroupByCols) {
+					continue
+				}
+
+				// Rule #3, if select fields are dependencies of Strict FD with determinants in group-by items, it's ok.
+				// lax FD couldn't be done here, eg: for unique key (b), index key NULL & NULL are different rows with
+				// uncertain other column values.
+				strictClosure := fds.ClosureOfStrict(fds.GroupByCols)
+				if item.SubsetOf(strictClosure) {
+					continue
+				}
+				// locate the base col that are not in (constant list / group by list / strict fd closure) for error show.
+				baseCols := expression.ExtractColumns(expr)
+				errShowCol := baseCols[0]
+				for _, col := range baseCols {
+					colSet := fd.NewFastIntSet(int(col.UniqueID))
+					if !colSet.SubsetOf(strictClosure) {
+						errShowCol = col
+						break
+					}
+				}
+				name := errShowCol.OrigName
+				if name == "" {
+					name = proj.names[offset].String()
+				}
+				// Only1Zero is to judge whether it's no-group-by-items case.
+				if !fds.GroupByCols.Only1Zero() {
+					return nil, nil, 0, ErrFieldNotInGroupBy.GenWithStackByArgs(offset+1, ErrExprInSelect, name)
+				} else {
+					return nil, nil, 0, ErrMixOfGroupFuncAndFields.GenWithStackByArgs(offset+1, name)
+				}
+			}
+			if fds.GroupByCols.Only1Zero() {
+				// maxOneRow is delayed from agg's ExtractFD logic since some details listed in it.
+				projectionUniqueIDs := fd.NewFastIntSet()
+				for _, expr := range proj.Exprs {
+					switch x := expr.(type) {
+					case *expression.Column:
+						projectionUniqueIDs.Insert(int(x.UniqueID))
+					case *expression.ScalarFunction:
+						scalarUniqueID, ok := fds.IsHashCodeRegistered(string(hack.String(x.HashCode(p.SCtx().GetSessionVars().StmtCtx))))
+						if !ok {
+							panic("selected expr must have been registered, shouldn't be here")
+						}
+						projectionUniqueIDs.Insert(scalarUniqueID)
+					}
+				}
+				fds.MaxOneRow(projectionUniqueIDs)
+			}
+			// for select * from view (include agg), outer projection don't have to check select list with the inner group-by flag.
+			fds.HasAggBuilt = false
+		}
+	}
 	return proj, proj.Exprs, oldLen, nil
 }
 
@@ -3577,13 +3667,6 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 
-	if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() && sel.From != nil {
-		err = b.checkOnlyFullGroupBy(p, sel)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	hasWindowFuncField := b.detectSelectWindow(sel)
 	// Some SQL statements define WINDOW but do not use them. But we also need to check the window specification list.
 	// For example: select id from t group by id WINDOW w AS (ORDER BY uids DESC) ORDER BY id;
@@ -4286,10 +4369,17 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 					fds.AddStrictFunctionalDependency(keyCols, allCols)
 					fds.MakeNotNull(keyCols)
 				} else {
-					fds.AddLaxFunctionalDependency(keyCols, allCols)
+					// unique index:
+					// 1: normal value should be unique
+					// 2: null value can be multiple
+					// for this kind of lax to be strict, we need to make the determinant not-null.
+					fds.AddLaxFunctionalDependency(keyCols, allCols, true)
 				}
 			} else {
-				fds.AddLaxFunctionalDependency(keyCols, allCols)
+				// 1: normal value can be multiple
+				// 2: null value can be multiple
+				// for this kind of lax to be strict, we need to make both the determinant and dependency not-null.
+				fds.AddLaxFunctionalDependency(keyCols, allCols, false)
 			}
 		}
 		// handle the datasource conditions (maybe pushed down from upper layer OP)
@@ -4310,6 +4400,28 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 				fds.AddEquivalence(equiv[0], equiv[1])
 			}
 		}
+		// build the dependency for generated columns.
+		// the generated column is sequentially dependent on the forward column.
+		// a int, b int as (a+1), c int as (b+1), here we can build the strict FD down:
+		// {a} -> {b}, {b} -> {c}, put the maintenance of the dependencies between generated columns to the FD graph.
+		notNullCols := fd.NewFastIntSet()
+		for _, col := range ds.TblCols {
+			if col.VirtualExpr != nil {
+				dependencies := fd.NewFastIntSet()
+				dependencies.Insert(int(col.UniqueID))
+				// dig out just for 1 level.
+				directBaseCol := expression.ExtractColumns(col.VirtualExpr)
+				determinant := fd.NewFastIntSet()
+				for _, col := range directBaseCol {
+					determinant.Insert(int(col.UniqueID))
+				}
+				fds.AddStrictFunctionalDependency(determinant, dependencies)
+			}
+			if mysql.HasNotNullFlag(col.RetType.Flag) {
+				notNullCols.Insert(int(col.UniqueID))
+			}
+		}
+		fds.MakeNotNull(notNullCols)
 		ds.fdSet = fds
 	}
 	return ds.fdSet
@@ -4474,7 +4586,9 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	if err != nil {
 		if terror.ErrorNotEqual(err, ErrViewRecursive) &&
 			terror.ErrorNotEqual(err, ErrNoSuchTable) &&
-			terror.ErrorNotEqual(err, ErrInternal) {
+			terror.ErrorNotEqual(err, ErrInternal) &&
+			terror.ErrorNotEqual(err, ErrFieldNotInGroupBy) &&
+			terror.ErrorNotEqual(err, ErrMixOfGroupFuncAndFields) {
 			err = ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 		}
 		return nil, err
@@ -4569,6 +4683,30 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 	}
 	for i := outerPlan.Schema().Len(); i < ap.Schema().Len(); i++ {
 		ap.names[i] = types.EmptyName
+	}
+	// build the join correlated equal condition for apply join, this equal condition is used for deriving the transitive FD between outer and inner side.
+	correlatedCols := ExtractCorrelatedCols4LogicalPlan(innerPlan)
+	deduplicateCorrelatedCols := make(map[int64]*expression.CorrelatedColumn)
+	for _, cc := range correlatedCols {
+		if _, ok := deduplicateCorrelatedCols[cc.UniqueID]; !ok {
+			deduplicateCorrelatedCols[cc.UniqueID] = cc
+		}
+	}
+	// for case like select (select t1.a from t2) from t1. <t1.a> will be assigned with new UniqueID after sub query projection is built.
+	// we should distinguish them out, building the equivalence relationship from inner <t1.a> == outer <t1.a> in the apply-join for FD derivation.
+	for _, cc := range deduplicateCorrelatedCols {
+		// for every correlated column, find the connection with the inner newly built column.
+		for _, col := range innerPlan.Schema().Columns {
+			if cc.UniqueID == col.CorrelatedColUniqueID {
+				ccc := &cc.Column
+				cond, err := expression.NewFunction(b.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), ccc, col)
+				if err != nil {
+					// give up connection building for not interfering old logic.
+					return ap
+				}
+				ap.EqualConditions = append(ap.EqualConditions, cond.(*expression.ScalarFunction))
+			}
+		}
 	}
 	return ap
 }

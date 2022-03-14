@@ -28,7 +28,7 @@ func makeAbcdeFD(ass *assert.Assertions) *FDSet {
 	allCols := NewFastIntSet(1, 2, 3, 4, 5)
 	abcde := &FDSet{}
 	abcde.AddStrictFunctionalDependency(NewFastIntSet(1), allCols)
-	abcde.AddLaxFunctionalDependency(NewFastIntSet(2, 3), allCols)
+	abcde.AddLaxFunctionalDependency(NewFastIntSet(2, 3), allCols, false)
 
 	testColsAreStrictKey(ass, abcde, NewFastIntSet(1), allCols, true)
 	testColsAreStrictKey(ass, abcde, NewFastIntSet(2, 3), allCols, false)
@@ -65,7 +65,7 @@ func TestFuncDeps_ColsAreKey(t *testing.T) {
 	loj = *abcde
 	loj.MakeCartesianProduct(mnpq)
 	loj.AddConstants(NewFastIntSet(3))
-	loj.MakeOuterJoin(&FDSet{}, &FDSet{}, preservedCols, nullExtendedCols)
+	loj.MakeOuterJoin(&FDSet{}, &FDSet{}, preservedCols, nullExtendedCols, nil)
 	loj.AddEquivalence(NewFastIntSet(1), NewFastIntSet(10))
 
 	testcases := []struct {
@@ -130,8 +130,8 @@ func TestFuncDeps_ProjectCols(t *testing.T) {
 	foo := &FDSet{}
 	all := NewFastIntSet(1, 2, 3, 4)
 	foo.AddStrictFunctionalDependency(NewFastIntSet(1), all)
-	foo.AddLaxFunctionalDependency(NewFastIntSet(2, 3), all)
-	foo.AddLaxFunctionalDependency(NewFastIntSet(4), all)
+	foo.AddLaxFunctionalDependency(NewFastIntSet(2, 3), all, false)
+	foo.AddLaxFunctionalDependency(NewFastIntSet(4), all, false)
 	ass.Equal("(1)-->(2-4), (2,3)~~>(1,4), (4)~~>(1-3)", foo.String())
 	foo.MakeNotNull(NewFastIntSet(1, 4))
 	//  nothing change.
@@ -280,8 +280,8 @@ func TestFuncDeps_ProjectCols(t *testing.T) {
 	// projected away.
 	abcde = &FDSet{}
 	abcde.AddStrictFunctionalDependency(NewFastIntSet(1), NewFastIntSet(1, 2, 3, 4, 5))
-	abcde.AddLaxFunctionalDependency(NewFastIntSet(2), NewFastIntSet(1, 2, 3, 4, 5))
-	abcde.AddLaxFunctionalDependency(NewFastIntSet(3, 4), NewFastIntSet(1, 2, 3, 4, 5))
+	abcde.AddLaxFunctionalDependency(NewFastIntSet(2), NewFastIntSet(1, 2, 3, 4, 5), false)
+	abcde.AddLaxFunctionalDependency(NewFastIntSet(3, 4), NewFastIntSet(1, 2, 3, 4, 5), false)
 	ass.Equal("(1)-->(2-5), (2)~~>(1,3-5), (3,4)~~>(1,2,5)", abcde.String())
 	abcde.MakeNotNull(NewFastIntSet(1))
 	abcde.ProjectCols(NewFastIntSet(2, 3, 4, 5))

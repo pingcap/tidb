@@ -1016,6 +1016,40 @@ func IsRuntimeConstExpr(expr Expression) bool {
 	return false
 }
 
+func CheckNonDeterministic(e Expression) bool {
+	switch x := e.(type) {
+	case *Constant, *Column, *CorrelatedColumn:
+		return false
+	case *ScalarFunction:
+		if _, ok := unFoldableFunctions[x.FuncName.L]; ok {
+			return true
+		}
+		for _, arg := range x.GetArgs() {
+			if CheckNonDeterministic(arg) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func CheckFuncInExpr(e Expression, funcName string) bool {
+	switch x := e.(type) {
+	case *Constant, *Column, *CorrelatedColumn:
+		return false
+	case *ScalarFunction:
+		if x.FuncName.L == funcName {
+			return true
+		}
+		for _, arg := range x.GetArgs() {
+			if CheckFuncInExpr(arg, funcName) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // IsMutableEffectsExpr checks if expr contains function which is mutable or has side effects.
 func IsMutableEffectsExpr(expr Expression) bool {
 	switch x := expr.(type) {

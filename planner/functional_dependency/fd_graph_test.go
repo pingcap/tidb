@@ -176,19 +176,19 @@ func TestFDSet_InClosure(t *testing.T) {
 	}
 	fd.fdEdges = append(fd.fdEdges, fe1, fe2, fe3)
 	// A -> F : false (determinants should not be torn apart)
-	ass.False(fd.inClosure(NewFastIntSet(1), NewFastIntSet(6)))
+	ass.False(fd.InClosure(NewFastIntSet(1), NewFastIntSet(6)))
 	// B -> G : true (dependency can be torn apart)
-	ass.True(fd.inClosure(NewFastIntSet(2), NewFastIntSet(7)))
+	ass.True(fd.InClosure(NewFastIntSet(2), NewFastIntSet(7)))
 	// AB -> E : true (dependency can be torn apart)
-	ass.True(fd.inClosure(NewFastIntSet(1, 2), NewFastIntSet(5)))
+	ass.True(fd.InClosure(NewFastIntSet(1, 2), NewFastIntSet(5)))
 	// AB -> FG: true (in closure node set)
-	ass.True(fd.inClosure(NewFastIntSet(1, 2), NewFastIntSet(6, 7)))
+	ass.True(fd.InClosure(NewFastIntSet(1, 2), NewFastIntSet(6, 7)))
 	// AB -> DF: true (in closure node set)
-	ass.True(fd.inClosure(NewFastIntSet(1, 2), NewFastIntSet(4, 6)))
+	ass.True(fd.InClosure(NewFastIntSet(1, 2), NewFastIntSet(4, 6)))
 	// AB -> EG: true (in closure node set)
-	ass.True(fd.inClosure(NewFastIntSet(1, 2), NewFastIntSet(5, 7)))
+	ass.True(fd.InClosure(NewFastIntSet(1, 2), NewFastIntSet(5, 7)))
 	// AB -> EGH: false (H is not in closure node set)
-	ass.False(fd.inClosure(NewFastIntSet(1, 2), NewFastIntSet(5, 7, 8)))
+	ass.False(fd.InClosure(NewFastIntSet(1, 2), NewFastIntSet(5, 7, 8)))
 
 	fe4 := &fdEdge{
 		from:   NewFastIntSet(2), // B -> CH
@@ -198,7 +198,7 @@ func TestFDSet_InClosure(t *testing.T) {
 	}
 	fd.fdEdges = append(fd.fdEdges, fe4)
 	// AB -> EGH: true (in closure node set)
-	ass.True(fd.inClosure(NewFastIntSet(1, 2), NewFastIntSet(5, 7, 8)))
+	ass.True(fd.InClosure(NewFastIntSet(1, 2), NewFastIntSet(5, 7, 8)))
 }
 
 func TestFDSet_AddConstant(t *testing.T) {
@@ -236,7 +236,7 @@ func TestFDSet_AddConstant(t *testing.T) {
 	ass.Equal("(4)", fd.fdEdges[1].from.String()) // determinant 3 reduced as constant, leaving FD {d} --> {f,g}.
 	ass.Equal("(5,6)", fd.fdEdges[1].to.String())
 
-	fd.AddLaxFunctionalDependency(NewFastIntSet(7), NewFastIntSet(5, 6)) // {g} ~~> {e,f}
+	fd.AddLaxFunctionalDependency(NewFastIntSet(7), NewFastIntSet(5, 6), false) // {g} ~~> {e,f}
 	ass.Equal(len(fd.fdEdges), 3)
 	ass.False(fd.fdEdges[2].strict)
 	ass.False(fd.fdEdges[2].equiv)
@@ -257,25 +257,25 @@ func TestFDSet_LaxImplies(t *testing.T) {
 	ass := assert.New(t)
 
 	fd := FDSet{}
-	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(2, 3))
-	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(2))
+	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(2, 3), false)
+	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(2), false)
 	// lax FD won't imply each other once they have the different to side.
 	ass.Equal("(1)~~>(2,3), (1)~~>(2)", fd.String())
 
 	fd = FDSet{}
-	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(2))
-	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(2, 3))
+	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(2), false)
+	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(2, 3), false)
 	ass.Equal("(1)~~>(2), (1)~~>(2,3)", fd.String())
 
 	fd = FDSet{}
-	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(3))
-	fd.AddLaxFunctionalDependency(NewFastIntSet(1, 2), NewFastIntSet(3))
+	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(3), false)
+	fd.AddLaxFunctionalDependency(NewFastIntSet(1, 2), NewFastIntSet(3), false)
 	// lax FD can imply each other once they have the same to side. {1,2} ~~> {3} implies {1} ~~> {3}
 	ass.Equal("(1)~~>(3)", fd.String())
 
 	fd = FDSet{}
-	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(3, 4))
-	fd.AddLaxFunctionalDependency(NewFastIntSet(1, 2), NewFastIntSet(3))
+	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(3, 4), false)
+	fd.AddLaxFunctionalDependency(NewFastIntSet(1, 2), NewFastIntSet(3), false)
 	// lax FD won't imply each other once they have the different to side. {1,2} ~~> {3} implies {1} ~~> {3}
 	ass.Equal("(1)~~>(3,4), (1,2)~~>(3)", fd.String())
 }

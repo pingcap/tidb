@@ -382,7 +382,10 @@ type baseLogicalPlan struct {
 
 // ExtractFD return the children[0]'s fdSet if there are no adding/removing fd in this logic plan.
 func (p *baseLogicalPlan) ExtractFD() *fd.FDSet {
-	fds := &fd.FDSet{}
+	if p.fdSet != nil {
+		return p.fdSet
+	}
+	fds := &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
 	for _, ch := range p.children {
 		fds.AddFrom(ch.ExtractFD())
 	}

@@ -37,6 +37,11 @@ func (s FastIntSet) Len() int {
 	return s.large.Len()
 }
 
+// Only1Zero is a usage function for convenience judgement.
+func (s FastIntSet) Only1Zero() bool {
+	return s.Len() == 1 && s.Has(0)
+}
+
 // Insert is used to insert a value into int-set.
 func (s *FastIntSet) Insert(i int) {
 	isSmall := i >= 0 && i < smallCutOff
