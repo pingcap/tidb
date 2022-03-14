@@ -1313,10 +1313,10 @@ var defaultSysVars = []*SysVar{
 	},
 	{Scope: ScopeGlobal, Name: TiDBStatsLoadPseudoTimeout, Value: BoolToOnOff(DefTiDBStatsLoadPseudoTimeout), skipInit: true, Type: TypeBool,
 		GetGlobal: func(s *SessionVars) (string, error) {
-			return strconv.FormatBool(EnableAnalyzeRateLimit.Load()), nil
+			return strconv.FormatBool(StatsLoadPseudoTimeout.Load()), nil
 		},
 		SetGlobal: func(s *SessionVars, val string) error {
-			EnableAnalyzeRateLimit.Store(TiDBOptOn(val))
+			StatsLoadPseudoTimeout.Store(TiDBOptOn(val))
 			return nil
 		},
 	},
@@ -1354,10 +1354,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableAnalyzeRateLimit, Value: BoolToOnOff(DefTiDBEnableAnalyzeRateLimit), skipInit: true, Type: TypeBool,
 		GetGlobal: func(s *SessionVars) (string, error) {
-			return strconv.FormatBool(StatsLoadPseudoTimeout.Load()), nil
+			return strconv.FormatBool(EnableAnalyzeRateLimit.Load()), nil
 		},
 		SetGlobal: func(s *SessionVars, val string) error {
-			StatsLoadPseudoTimeout.Store(TiDBOptOn(val))
+			EnableAnalyzeRateLimit.Store(TiDBOptOn(val))
 			return nil
 		},
 	},

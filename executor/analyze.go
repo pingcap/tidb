@@ -1055,8 +1055,6 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	})
 
 	totalLen := len(e.colsInfo) + len(e.indexes)
-	initTotalSize := (statistics.EmptyHistogramMemUsage + statistics.EmptyTopNMemUsage) * int64(totalLen)
-	e.memTracker.Consume(initTotalSize)
 	hists = make([]*statistics.Histogram, totalLen)
 	topns = make([]*statistics.TopN, totalLen)
 	fmSketches = make([]*statistics.FMSketch, 0, totalLen)
@@ -1119,7 +1117,6 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			}
 			continue
 		}
-		e.memTracker.Consume(-statistics.EmptyHistogramMemUsage - statistics.EmptyTopNMemUsage)
 	}
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
