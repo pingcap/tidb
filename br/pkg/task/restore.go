@@ -40,8 +40,9 @@ const (
 	FlagBatchFlushInterval = "batch-flush-interval"
 	// FlagDdlBatchSize controls batch ddl size to create a batch of tables
 	FlagDdlBatchSize = "ddl-batch-size"
-	// FlagWithPlacementPolicy controls whether restore policy to tidb or not.
-	FlagWithPlacementPolicy = "with-tidb-placement-policy"
+	// FlagWithPlacementPolicy corresponds to tidb config with-tidb-placement-mode
+	// current only support STRICT or IGNORE, the default is STRICT according to tidb.
+	FlagWithPlacementPolicy = "with-tidb-placement-mode"
 
 	defaultRestoreConcurrency = 128
 	maxRestoreBatchSizeLimit  = 10240
@@ -123,7 +124,7 @@ type RestoreConfig struct {
 	// DdlBatchSize use to define the size of batch ddl to create tables
 	DdlBatchSize uint `json:"ddl-batch-size" toml:"ddl-batch-size"`
 
-	WithPlacementPolicy bool `json:"with-tidb-placement-policy" toml:"with-tidb-placement-policy"`
+	WithPlacementPolicy string `json:"with-tidb-placement-mode" toml:"with-tidb-placement-mode"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -131,7 +132,7 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagNoSchema, false, "skip creating schemas and tables, reuse existing empty ones")
 	// Do not expose this flag
 	_ = flags.MarkHidden(flagNoSchema)
-	flags.Bool(FlagWithPlacementPolicy, true, "restore policy to tidb and make tidb-placement-mode = true")
+	flags.String(FlagWithPlacementPolicy, "STRICT", "correspond to tidb global/session variable with-tidb-placement-mode")
 
 	DefineRestoreCommonFlags(flags)
 }
@@ -168,7 +169,7 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagDdlBatchSize)
 	}
-	cfg.WithPlacementPolicy, err = flags.GetBool(FlagWithPlacementPolicy)
+	cfg.WithPlacementPolicy, err = flags.GetString(FlagWithPlacementPolicy)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagWithPlacementPolicy)
 	}
@@ -212,7 +213,7 @@ func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *Re
 	}
 	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
 	client.SetBatchDdlSize(cfg.DdlBatchSize)
-	client.SetPolicyMode(cfg.WithPlacementPolicy)
+	client.SetPlacementPolicyMode(cfg.WithPlacementPolicy)
 
 	err := client.LoadRestoreStores(ctx)
 	if err != nil {

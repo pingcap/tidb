@@ -56,6 +56,11 @@ const defaultChecksumConcurrency = 64
 const defaultDDLConcurrency = 16
 const minBatchDdlSize = 1
 
+const (
+	strictPlacementPolicyMode = "STRICT"
+	ignorePlacementPolicyMode = "IGNORE"
+)
+
 // Client sends requests to restore files.
 type Client struct {
 	pdClient      pd.Client
@@ -163,13 +168,17 @@ func (rc *Client) Init(g glue.Glue, store kv.Storage) error {
 	return errors.Trace(err)
 }
 
-// SetPolicyMode to policy mode.
-func (rc *Client) SetPolicyMode(withPlacementPolicy bool) {
-	if withPlacementPolicy {
-		rc.policyMode = "STRICT"
-	} else {
-		rc.policyMode = "IGNORE"
+// SetPlacementPolicyMode to policy mode.
+func (rc *Client) SetPlacementPolicyMode(withPlacementPolicy string) {
+	switch strings.ToUpper(withPlacementPolicy) {
+	case strictPlacementPolicyMode:
+		rc.policyMode = strictPlacementPolicyMode
+	case ignorePlacementPolicyMode:
+		rc.policyMode = ignorePlacementPolicyMode
+	default:
+		rc.policyMode = strictPlacementPolicyMode
 	}
+	log.Info("set placement policy mode", zap.String("mode", rc.policyMode))
 }
 
 // SetRateLimit to set rateLimit.
