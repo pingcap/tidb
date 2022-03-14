@@ -173,8 +173,8 @@ func buildTableInfo(t *testing.T, sql string) *model.TableInfo {
 }
 
 func TestIssue29520(t *testing.T) {
-	store, close := testkit.CreateMockStore(t)
-	defer close()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_enable_mutation_checker=1")
 	tk.MustExec("use test")
@@ -184,8 +184,8 @@ func TestIssue29520(t *testing.T) {
 }
 
 func TestAssertionWithLazyCheck(t *testing.T) {
-	store, close := testkit.CreateMockStore(t)
-	defer close()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_txn_assertion_level = 'STRICT'")
 

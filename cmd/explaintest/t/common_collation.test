@@ -17,6 +17,10 @@ create table t (a char(20), b blob(100), c text, d json, e timestamp, f set('a�
 insert into t values ('你好', '你好', '你好', '{\"测试\": \"你好\"}', '2018-10-13', 1, '你好', 'a一');
 select coercibility(a), coercibility(b), coercibility(c), coercibility(d), coercibility(e), coercibility(f), coercibility(g), coercibility(h) from t;
 select collation(d), collation(upper(d)), collation(elt(1, d, 0x12)), collation(elt(1, elt(1, d, 0x12), 0x12)), collation(elt(1, d, b)) from t;
+drop table t;
+create table t(a binary, b json, c char charset gbk);
+insert into t values ('a', '{"a":"b"}', 'a');
+select collation(concat(a, b)), collation(concat(b, a)), collation(concat(0x61, b)), collation(concat(b, 0x61)), collation(concat(c, b)), collation(concat(b, c)) from t;
 
 # test greatest and least function with collation.
 DROP TABLE IF EXISTS t2;

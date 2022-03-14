@@ -276,7 +276,6 @@ func (tiflash *MockTiFlash) setUpMockTiFlashHTTPServer() {
 			return
 		}
 		table, ok := tiflash.SyncStatus[tableID]
-		logutil.BgLogger().Info("Mock TiFlash returns", zap.Bool("ok", ok), zap.Int("tableID", tableID))
 		if !ok {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("0\n\n"))
@@ -542,7 +541,7 @@ func (m *mockTiFlashPlacementManager) DeletePlacementRule(ctx context.Context, g
 	if m.tiflash == nil {
 		return nil
 	}
-	logutil.BgLogger().Info("Remove TiFlash rule", zap.String("ID", ruleID))
+	logutil.BgLogger().Info("Remove TiFlash rule", zap.String("ruleID", ruleID))
 	m.tiflash.HandleDeletePlacementRule(group, ruleID)
 	return nil
 }

@@ -49,7 +49,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.etcd.io/etcd/clientv3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -96,7 +96,7 @@ var (
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
 type DDL interface {
 	CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt, placementPolicyRef *model.PolicyRefInfo) error
-	AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error
+	AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error
 	DropSchema(ctx sessionctx.Context, schema model.CIStr) error
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
@@ -146,6 +146,12 @@ type DDL interface {
 		schema model.CIStr,
 		info []*model.TableInfo,
 		onExist OnExist) error
+
+	// CreatePlacementPolicyWithInfo creates a placement policy
+	//
+	// WARNING: the DDL owns the `policy` after calling this function, and will modify its fields
+	// in-place. If you want to keep using `policy`, please call Clone() first.
+	CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *model.PolicyInfo, onExist OnExist) error
 
 	// Start campaigns the owner and starts workers.
 	// ctxPool is used for the worker's delRangeManager and creates sessions.
@@ -216,6 +222,11 @@ type ddlCtx struct {
 		sync.RWMutex
 		hook        Callback
 		interceptor Interceptor
+	}
+
+	ddlSeqNumMu struct {
+		sync.Mutex
+		seqNum uint64
 	}
 }
 
@@ -329,11 +340,11 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	d := &ddl{
-		ctx:               ctx,
 		ddlCtx:            ddlCtx,
 		limitJobCh:        make(chan *limitJobTask, batchAddingJobs),
 		enableTiFlashPoll: atomicutil.NewBool(true),
 	}
+	d.ctx, d.cancel = context.WithCancel(ctx)
 
 	return d
 }
@@ -364,7 +375,6 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 // Start implements DDL.Start interface.
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
-	d.ctx, d.cancel = context.WithCancel(d.ctx)
 
 	d.wg.Add(1)
 	go d.limitDDLJobs()
@@ -380,8 +390,8 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		d.workers = make(map[workerType]*worker, 2)
 		d.sessPool = newSessionPool(ctxPool)
 		d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
-		d.workers[generalWorker] = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr)
-		d.workers[addIdxWorker] = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr)
+		d.workers[generalWorker] = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
+		d.workers[addIdxWorker] = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
 		for _, worker := range d.workers {
 			worker.wg.Add(1)
 			w := worker
@@ -392,6 +402,15 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			// When the start function is called, we will send a fake job to let worker
 			// checks owner firstly and try to find whether a job exists and run.
 			asyncNotify(worker.ddlJobCh)
+		}
+
+		err = kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+			t := meta.NewMeta(txn)
+			d.ddlSeqNumMu.seqNum, err = t.GetHistoryDDLCount()
+			return err
+		})
+		if err != nil {
+			return err
 		}
 
 		go d.schemaSyncer.StartCleanWork()
@@ -469,6 +488,18 @@ func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
 		m := meta.NewMeta(txn)
 		var err error
 		ret, err = m.GenGlobalIDs(count)
+		return err
+	})
+
+	return ret, err
+}
+
+func (d *ddl) genPlacementPolicyID() (int64, error) {
+	var ret int64
+	err := kv.RunInNewTxn(context.Background(), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		var err error
+		ret, err = m.GenPlacementPolicyID()
 		return err
 	})
 
@@ -571,6 +602,14 @@ func updateTickerInterval(ticker *time.Ticker, lease time.Duration, job *model.J
 	return time.NewTicker(chooseLeaseTime(lease, interval))
 }
 
+func recordLastDDLInfo(ctx sessionctx.Context, job *model.Job) {
+	if job == nil {
+		return
+	}
+	ctx.GetSessionVars().LastDDLInfo.Query = job.Query
+	ctx.GetSessionVars().LastDDLInfo.SeqNum = job.SeqNum
+}
+
 // doDDLJob will return
 // - nil: found in history DDL job and no job error
 // - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
@@ -606,6 +645,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		ticker.Stop()
 		metrics.JobsGauge.WithLabelValues(job.Type.String()).Dec()
 		metrics.HandleJobHistogram.WithLabelValues(job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+		recordLastDDLInfo(ctx, historyJob)
 	}()
 	i := 0
 	for {

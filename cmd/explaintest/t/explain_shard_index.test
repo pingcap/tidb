@@ -1,0 +1,22 @@
+use test;
+drop table if exists test3, test5;
+create table test3(id int primary key clustered, a int, b int, unique key uk_expr((tidb_shard(a)),a));
+create table test5(id int primary key clustered, a int, b int, unique key uk_expr((tidb_shard(a)),a,b));
+
+explain format=brief select * from test3 where a=100;
+explain format=brief select * from test3 where a=100 and (b = 100 or b = 200);
+explain format=brief select * from test3 where tidb_shard(a) = 8;
+explain format=brief select * from test3 where a=100 or b = 200;
+explain format=brief select * from test3 where a=100 or a = 300;
+explain format=brief select * from test3 where a=100 or a = 300 or a > 997;
+explain format=brief select * from test3 where ((a=100 and b = 100) or a = 200) and b = 300;
+explain format=brief select * from test3 where a = b;
+explain format=brief select * from test3 where a = b and b = 100;
+explain format=brief select * from test5 where a=100 and b = 100;
+explain format=brief select * from test5 where (a=100 and b = 100) or  (a=200 and b = 200);
+explain format=brief select a+b from test5 where (a, b) in ((100, 100), (200, 200));
+explain format=brief SELECT * FROM test3 WHERE a IN (100);
+explain format=brief SELECT * FROM test3 WHERE a IN (100, 200, 300);
+
+drop table if exists test3, test5;
+

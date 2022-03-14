@@ -26,7 +26,7 @@ import (
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
@@ -293,8 +293,8 @@ func TestCreateSchemaWithPlacement(t *testing.T) {
 }
 
 func TestAlterDBPlacement(t *testing.T) {
-	store, close := testkit.CreateMockStore(t)
-	defer close()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists TestAlterDB;")
 	tk.MustExec("create database TestAlterDB;")
@@ -316,13 +316,13 @@ func TestAlterDBPlacement(t *testing.T) {
 	// Test for information_schema.schemata
 	tk.MustQuery("SELECT CATALOG_NAME, SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME, TIDB_PLACEMENT_POLICY_NAME FROM information_schema.schemata WHERE SCHEMA_NAME='TestAlterDB'").Check(testkit.Rows(`def TestAlterDB utf8mb4 utf8mb4_bin alter_x`))
 	// Test for Show Create Database
-	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create database TestAlterDB`).Check(testkit.RowsWithSep("|",
 		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
 			"/*T![placement] PLACEMENT POLICY=`alter_x` */",
 	))
 	// Test for Alter Placement Policy affect table created.
 	tk.MustExec("create table t(a int);")
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
@@ -332,13 +332,13 @@ func TestAlterDBPlacement(t *testing.T) {
 	// Test for Alter Default Placement Policy, And will not update the old table options.
 	tk.MustExec("ALTER DATABASE TestAlterDB DEFAULT PLACEMENT POLICY=`alter_y`;")
 	tk.MustExec("create table t2(a int);")
-	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table t`).Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
 			"/*T![placement] PLACEMENT POLICY=`alter_x` */",
 	))
-	tk.MustQuery(`show create table t2`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table t2`).Check(testkit.RowsWithSep("|",
 		"t2 CREATE TABLE `t2` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
@@ -353,7 +353,7 @@ func TestAlterDBPlacement(t *testing.T) {
 
 	// Test for Alter Placement Rule affect table created.
 	tk.MustExec("create table t3(a int);")
-	tk.MustQuery(`show create table t3`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table t3`).Check(testkit.RowsWithSep("|",
 		"t3 CREATE TABLE `t3` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
@@ -363,7 +363,7 @@ func TestAlterDBPlacement(t *testing.T) {
 
 	// Test for override default option
 	tk.MustExec("create table t4(a int) PLACEMENT POLICY=\"alter_y\";")
-	tk.MustQuery(`show create table t4`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table t4`).Check(testkit.RowsWithSep("|",
 		"t4 CREATE TABLE `t4` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin "+
@@ -373,7 +373,7 @@ func TestAlterDBPlacement(t *testing.T) {
 
 	// Test alter to another policy
 	tk.MustExec("ALTER DATABASE TestAlterDB PLACEMENT POLICY=`alter_y`;")
-	tk.MustQuery(`show create database TestAlterDB`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create database TestAlterDB`).Check(testkit.RowsWithSep("|",
 		"TestAlterDB CREATE DATABASE `TestAlterDB` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ "+
 			"/*T![placement] PLACEMENT POLICY=`alter_y` */",
 	))
@@ -411,6 +411,9 @@ func TestPlacementMode(t *testing.T) {
 	defer tk.MustExec("drop table if exists t2")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
+	existPolicy, ok := dom.InfoSchema().PolicyByName(model.NewCIStr("p1"))
+	require.True(t, ok)
+
 	// invalid values
 	err := tk.ExecToErr("set tidb_placement_mode='aaa'")
 	require.EqualError(t, err, "[variable:1231]Variable 'tidb_placement_mode' can't be set to the value of 'aaa'")
@@ -426,6 +429,28 @@ func TestPlacementMode(t *testing.T) {
 
 	// create placement policy in ignore mode (policy name not exists)
 	tk.MustExec("create placement policy p3 primary_region='r1' regions='r1'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
+	tk.MustQuery("show placement where target='POLICY p3'").Check(testkit.Rows())
+
+	// create placement policy with info in ignore mode (policy name exists)
+	newPolicy := existPolicy.Clone()
+	newPolicy.Followers = 8
+	err = dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistError)
+	require.NoError(t, err)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
+	tk.MustQuery("show placement where target='POLICY p1'").Check(testkit.Rows("POLICY p1 FOLLOWERS=4 NULL"))
+
+	err = dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistReplace)
+	require.NoError(t, err)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
+	tk.MustQuery("show placement where target='POLICY p1'").Check(testkit.Rows("POLICY p1 FOLLOWERS=4 NULL"))
+
+	// create placement policy in ignore mode (policy name not exists)
+	newPolicy = existPolicy.Clone()
+	newPolicy.Name = model.NewCIStr("p3")
+	newPolicy.Followers = 8
+	err = dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy, ddl.OnExistError)
+	require.NoError(t, err)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
 	tk.MustQuery("show placement where target='POLICY p3'").Check(testkit.Rows())
 
@@ -650,8 +675,8 @@ func TestPlacementMode(t *testing.T) {
 }
 
 func TestPlacementTiflashCheck(t *testing.T) {
-	store, close := testkit.CreateMockStore(t)
-	defer close()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
 	defer func() {
@@ -674,9 +699,9 @@ func TestPlacementTiflashCheck(t *testing.T) {
 	tk.MustExec("alter table tp set tiflash replica 1")
 
 	err := tk.ExecToErr("alter table tp placement policy p1")
-	require.True(t, ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err))
+	require.True(t, dbterror.ErrIncompatibleTiFlashAndPlacement.Equal(err))
 	err = tk.ExecToErr("alter table tp partition p0 placement policy p1")
-	require.True(t, ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err))
+	require.True(t, dbterror.ErrIncompatibleTiFlashAndPlacement.Equal(err))
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
@@ -691,7 +716,7 @@ func TestPlacementTiflashCheck(t *testing.T) {
 	  PARTITION p1 VALUES LESS THAN (1000)
 	)`)
 	err = tk.ExecToErr("alter table tp set tiflash replica 1")
-	require.True(t, ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err))
+	require.True(t, dbterror.ErrIncompatibleTiFlashAndPlacement.Equal(err))
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
@@ -706,7 +731,7 @@ func TestPlacementTiflashCheck(t *testing.T) {
       PARTITION p1 VALUES LESS THAN (1000)
 	)`)
 	err = tk.ExecToErr("alter table tp set tiflash replica 1")
-	require.True(t, ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err))
+	require.True(t, dbterror.ErrIncompatibleTiFlashAndPlacement.Equal(err))
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
@@ -721,7 +746,7 @@ func TestPlacementTiflashCheck(t *testing.T) {
 	  PARTITION p1 VALUES LESS THAN (1000)
 	)`)
 	err = tk.ExecToErr("alter table tp set tiflash replica 1")
-	require.True(t, ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err))
+	require.True(t, dbterror.ErrIncompatibleTiFlashAndPlacement.Equal(err))
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
@@ -736,7 +761,7 @@ func TestPlacementTiflashCheck(t *testing.T) {
       PARTITION p1 VALUES LESS THAN (1000)
 	)`)
 	err = tk.ExecToErr("alter table tp set tiflash replica 1")
-	require.True(t, ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err))
+	require.True(t, dbterror.ErrIncompatibleTiFlashAndPlacement.Equal(err))
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
