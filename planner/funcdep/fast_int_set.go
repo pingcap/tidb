@@ -1,3 +1,17 @@
+// Copyright 2022 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package funcdep
 
 import (
@@ -68,6 +82,7 @@ func (s FastIntSet) toLarge() *intsets.Sparse {
 	return large
 }
 
+// Next returns the next existing number in the Set. If there's no larger one than the given start val, return (MaxInt, false).
 func (s FastIntSet) Next(startVal int) (int, bool) {
 	if startVal < smallCutOff {
 		if startVal < 0 {
@@ -204,14 +219,6 @@ func (s FastIntSet) largeToSmall() (small uint64, otherValues bool) {
 	return s.small, s.large.Min() < 0 || s.large.Max() >= smallCutOff
 }
 
-// println is just used for debug.
-func (s FastIntSet) println() {
-	for i, ok := s.Next(0); ok; i, ok = s.Next(i + 1) {
-		fmt.Print(i, " ")
-	}
-	fmt.Println()
-}
-
 // *************************************************************************
 // *                            Logic Operators                            *
 // *************************************************************************
@@ -328,6 +335,7 @@ func (s *FastIntSet) Shift(delta int) FastIntSet {
 	return result
 }
 
+// AddRange adds the interval [from, to] to the Set.
 func (s *FastIntSet) AddRange(from, to int) {
 	if to < from {
 		panic("invalid range when adding range to FastIntSet")

@@ -1,3 +1,17 @@
+// Copyright 2022 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package funcdep
 
 import (
@@ -5,36 +19,127 @@ import (
 	"math/rand"
 	"reflect"
 	"runtime"
+	"sort"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/tools/container/intsets"
 )
 
-func TestFastIntSetBasic(t *testing.T) {
-	ass := assert.New(t)
+// IntSet is used to hold set of vertexes of one side of an edge.
+type IntSet map[int]struct{}
 
+// SubsetOf is used to judge whether IntSet itself is a subset of others.
+func (is IntSet) SubsetOf(target IntSet) bool {
+	for i := range is {
+		if _, ok := target[i]; ok {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// Intersects is used to judge whether IntSet itself intersects with others.
+func (is IntSet) Intersects(target IntSet) bool {
+	for i := range is {
+		if _, ok := target[i]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// Difference is used to exclude the intersection sector away from itself.
+func (is IntSet) Difference(target IntSet) {
+	for i := range target {
+		delete(is, i)
+	}
+}
+
+func (is IntSet) Difference2(target1, target2 IntSet) {
+	for i := range target1 {
+		if _, ok := target2[i]; ok {
+			delete(is, i)
+		} else {
+			is[i] = struct{}{}
+		}
+	}
+}
+
+// Union is used to union the IntSet itself with others
+func (is IntSet) Union(target IntSet) {
+	// deduplicate
+	for i := range target {
+		if _, ok := is[i]; ok {
+			continue
+		}
+		is[i] = struct{}{}
+	}
+}
+
+// Equals is used to judge whether two IntSet are semantically equal.
+func (is IntSet) Equals(target IntSet) bool {
+	if len(is) != len(target) {
+		return false
+	}
+	for i := range target {
+		if _, ok := is[i]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func (is *IntSet) CopyFrom(target IntSet) {
+	*is = NewIntSetWithCap(len(target))
+	for k, v := range target {
+		(*is)[k] = v
+	}
+}
+
+func (is IntSet) SortedArray() []int {
+	arr := make([]int, 0, len(is))
+	for k := range is {
+		arr = append(arr, k)
+	}
+	sort.Slice(arr, func(i, j int) bool { return arr[i] < arr[j] })
+	return arr
+}
+
+func (is IntSet) Insert(k int) {
+	is[k] = struct{}{}
+}
+
+func NewIntSet() IntSet {
+	return make(map[int]struct{})
+}
+
+func NewIntSetWithCap(c int) IntSet {
+	return make(map[int]struct{}, c)
+}
+
+func TestFastIntSetBasic(t *testing.T) {
 	// Test Insert, Remove, Len, Has.
 	fis := FastIntSet{}
 	fis.Insert(1)
 	fis.Insert(2)
 	fis.Insert(3)
-	ass.Equal(fis.Len(), 3)
-	ass.True(fis.Has(1))
-	ass.True(fis.Has(2))
-	ass.True(fis.Has(3))
+	require.Equal(t, fis.Len(), 3)
+	require.True(t, fis.Has(1))
+	require.True(t, fis.Has(2))
+	require.True(t, fis.Has(3))
 	fis.Remove(2)
-	ass.Equal(fis.Len(), 2)
-	ass.True(fis.Has(1))
-	ass.True(fis.Has(3))
+	require.Equal(t, fis.Len(), 2)
+	require.True(t, fis.Has(1))
+	require.True(t, fis.Has(3))
 	fis.Remove(3)
-	ass.Equal(fis.Len(), 1)
-	ass.True(fis.Has(1))
+	require.Equal(t, fis.Len(), 1)
+	require.True(t, fis.Has(1))
 	fis.Remove(1)
-	ass.Equal(fis.Len(), 0)
+	require.Equal(t, fis.Len(), 0)
 
 	// Test Next (only seek non-neg)
 	fis.Insert(6)
@@ -43,24 +148,25 @@ func TestFastIntSetBasic(t *testing.T) {
 	fis.Insert(-1)
 	fis.Insert(77)
 	n, ok := fis.Next(intsets.MinInt)
-	ass.True(ok)
-	ass.Equal(n, 0)
+	require.True(t, ok)
+	require.Equal(t, n, 0)
 	n, ok = fis.Next(n + 1)
-	ass.True(ok)
-	ass.Equal(n, 3)
+	require.True(t, ok)
+	require.Equal(t, n, 3)
 	n, ok = fis.Next(n + 1)
-	ass.True(ok)
-	ass.Equal(n, 6)
+	require.True(t, ok)
+	require.Equal(t, n, 6)
 	n, ok = fis.Next(n + 1)
-	ass.True(ok)
-	ass.Equal(n, 77)
+	require.True(t, ok)
+	require.Equal(t, n, 77)
 	n, ok = fis.Next(n + 1)
-	ass.False(ok)
+	require.False(t, ok)
+	require.Equal(t, n, intsets.MaxInt)
 
 	// Test Clear and IsEmpty.
 	fis.Clear()
-	ass.Equal(fis.Len(), 0)
-	ass.True(fis.IsEmpty())
+	require.Equal(t, fis.Len(), 0)
+	require.True(t, fis.IsEmpty())
 
 	// Test ForEach (seek all) and SortedArray.
 	fis.Insert(1)
@@ -71,31 +177,24 @@ func TestFastIntSetBasic(t *testing.T) {
 		res = append(res, i)
 	})
 	res1 := fis.SortedArray()
-	ass.Equal(len(res), 3)
-	ass.Equal(len(res1), 3)
-	ass.Equal(res, res1)
+	require.Equal(t, len(res), 3)
+	require.Equal(t, len(res1), 3)
+	require.Equal(t, res, res1)
 
 	// Test Copy,  CopyFrom and Equal
 	cp := fis.Copy()
-	ass.Equal(fis.Len(), cp.Len())
-	ass.Equal(fis.SortedArray(), cp.SortedArray())
-	ass.True(fis.Equals(cp))
+	require.Equal(t, fis.Len(), cp.Len())
+	require.Equal(t, fis.SortedArray(), cp.SortedArray())
+	require.True(t, fis.Equals(cp))
 
 	cpf := FastIntSet{}
 	intervene := 100
 	cpf.Insert(intervene)
 	cpf.CopyFrom(fis)
-	ass.Equal(cpf.Len(), cp.Len())
-	ass.Equal(cpf.SortedArray(), cp.SortedArray())
-	ass.True(cpf.Equals(cp))
+	require.Equal(t, cpf.Len(), cp.Len())
+	require.Equal(t, cpf.SortedArray(), cp.SortedArray())
+	require.True(t, cpf.Equals(cp))
 }
-
-// A Mutex is a mutual exclusion lock.
-type Mutex struct {
-	sync.Mutex
-}
-
-var mtx Mutex
 
 func getTestName() string {
 	pcs := make([]uintptr, 10)
@@ -118,8 +217,6 @@ var lastTestName string
 var rng *rand.Rand
 
 func NewTestRand() (*rand.Rand, int64) {
-	mtx.Lock()
-	defer mtx.Unlock()
 	fxn := getTestName()
 	if fxn != "" && lastTestName != fxn {
 		// Re-seed rng (the source of seeds for test random number generators) with
@@ -136,7 +233,6 @@ func TestFastIntSet(t *testing.T) {
 	for _, mVal := range []int{1, 8, 30, smallCutOff, 2 * smallCutOff, 4 * smallCutOff} {
 		m := mVal
 		t.Run(fmt.Sprintf("%d", m), func(t *testing.T) {
-			t.Parallel() // SAFE FOR TESTING (this comment is for the linter)
 			rng, _ := NewTestRand()
 			in := make([]bool, m)
 			forEachRes := make([]bool, m)
@@ -181,19 +277,19 @@ func TestFastIntSet(t *testing.T) {
 				if o := s.SortedArray(); !reflect.DeepEqual(vals, o) {
 					t.Fatalf("set built with Next doesn't match Ordered: %v vs %v", vals, o)
 				}
-				assertSame := func(orig, copy FastIntSet) {
+				assertSame := func(orig, copied FastIntSet) {
 					t.Helper()
-					if !orig.Equals(copy) || !copy.Equals(orig) {
-						t.Fatalf("expected equality: %v, %v", orig, copy)
+					if !orig.Equals(copied) || !copied.Equals(orig) {
+						t.Fatalf("expected equality: %v, %v", orig, copied)
 					}
-					if col, ok := copy.Next(0); ok {
-						copy.Remove(col)
-						if orig.Equals(copy) || copy.Equals(orig) {
-							t.Fatalf("unexpected equality: %v, %v", orig, copy)
+					if col, ok := copied.Next(0); ok {
+						copied.Remove(col)
+						if orig.Equals(copied) || copied.Equals(orig) {
+							t.Fatalf("unexpected equality: %v, %v", orig, copied)
 						}
-						copy.Insert(col)
-						if !orig.Equals(copy) || !copy.Equals(orig) {
-							t.Fatalf("expected equality: %v, %v", orig, copy)
+						copied.Insert(col)
+						if !orig.Equals(copied) || !copied.Equals(orig) {
+							t.Fatalf("expected equality: %v, %v", orig, copied)
 						}
 					}
 				}
