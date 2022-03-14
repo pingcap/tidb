@@ -1,4 +1,4 @@
-package functional_dependency_test
+package funcdep_test
 
 import (
 	"testing"

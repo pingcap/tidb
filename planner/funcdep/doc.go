@@ -1,4 +1,4 @@
-package functional_dependency
+package funcdep
 
 // Theory to Practice
 //

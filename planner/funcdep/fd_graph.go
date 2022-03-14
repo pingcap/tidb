@@ -1,4 +1,4 @@
-package functional_dependency
+package funcdep
 
 import (
 	"errors"
@@ -26,7 +26,7 @@ type fdEdge struct {
 }
 
 // FDSet is the main portal of functional dependency, it stores the relationship between (extended table/ physical table)'s
-// columns. For more theory about this design, ref the head comments in the functional_dependency/doc.go.
+// columns. For more theory about this design, ref the head comments in the funcdep/doc.go.
 type FDSet struct {
 	fdEdges []*fdEdge
 	// NotNullCols is used to record the columns with not-null attributes applied.
