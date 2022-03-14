@@ -397,7 +397,7 @@ func (d *ddl) doReorgDDLJobWorker(job *model.Job) {
 
 const addDDLJobSQL = "insert into mysql.tidb_ddl_job values"
 
-func (d *ddl) addDDLJobsInternal(jobs []*model.Job, level kvrpcpb.DiskFullOpt) error {
+func (d *ddl) addDDLJobs(jobs []*model.Job) error {
 	if len(jobs) == 0 {
 		return nil
 	}
@@ -418,28 +418,13 @@ func (d *ddl) addDDLJobsInternal(jobs []*model.Job, level kvrpcpb.DiskFullOpt) e
 		logutil.BgLogger().Error("[ddl] get session from sessPool", zap.Error(err))
 		return err
 	}
-	sess.SetDiskFullOpt(level)
+	sess.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	defer d.sessPool.put(sess)
 	_, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), addDDLJobSQL+sql)
 	if err != nil {
 		logutil.BgLogger().Error("[ddl] add job to mysql.tidb_ddl_job table", zap.Error(err))
 	}
 	return err
-}
-
-func (d *ddl) addDDLJobs(jobs []*model.Job) error {
-	var notAllowJobs, allowJobs []*model.Job
-	for _, job := range jobs {
-		if mayNeedReorg(job) {
-			notAllowJobs = append(notAllowJobs, job)
-		} else {
-			allowJobs = append(allowJobs, job)
-		}
-	}
-	if err := d.addDDLJobsInternal(allowJobs, kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull); err != nil {
-		return err
-	}
-	return d.addDDLJobsInternal(notAllowJobs, kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 }
 
 func (w *worker) deleteDDLJob(job *model.Job) error {
