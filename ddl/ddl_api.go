@@ -4509,7 +4509,7 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
 		},
-		Args: []interface{}{&newCol, oldColName, spec.Position, 0},
+		Args: []interface{}{&newCol, oldColName, spec.Position, 0, 0},
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
