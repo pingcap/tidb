@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/gcutil"
@@ -124,7 +126,7 @@ func (s *stateChangeSuite) TestShowCreateTable() {
 		}
 		if job.SchemaState != model.StatePublic {
 			var result sqlexec.RecordSet
-			tbl2 := tkInternal.GetTableByName("test", "t2")
+			tbl2 := external.GetTableByName(s.T(), tkInternal, "test", "t2")
 			if job.TableID == tbl2.Meta().ID {
 				// Try to do not use mustQuery in hook func, cause assert fail in mustQuery will cause ddl job hung.
 				result, checkErr = tkInternal.Exec("show create table t2")
@@ -1305,7 +1307,7 @@ func (s *stateChangeSuite) TestParallelUpdateTableReplica() {
 	tk1, tk2, ch, originalCallback := s.prepareTestControlParallelExecSQL()
 	defer s.dom.DDL().SetHook(originalCallback)
 
-	t1 := tk1.GetTableByName("test_db_state", "t1")
+	t1 := external.GetTableByName(s.T(), s.tk, "test_db_state", "t1")
 
 	var err1 error
 	var err2 error
@@ -1538,15 +1540,15 @@ func (s *stateChangeSuite) TestParallelFlashbackTable() {
 	defer func(originGC bool) {
 		s.Require().NoError(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"))
 		if originGC {
-			ddl.EmulatorGCEnable()
+			ddlutil.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			ddlutil.EmulatorGCDisable()
 		}
-	}(ddl.IsEmulatorGCEnable())
+	}(ddlutil.IsEmulatorGCEnable())
 
 	// disable emulator GC.
 	// Disable emulator GC, otherwise, emulator GC will delete table record as soon as possible after executing drop table DDL.
-	ddl.EmulatorGCDisable()
+	ddlutil.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
 	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
@@ -1600,7 +1602,7 @@ func (s *stateChangeSuite) TestModifyColumnTypeArgs() {
 	s.Require().Equal("[ddl:-1]mock update version and tableInfo error", strs[0])
 
 	jobID := strings.Split(strs[1], "=")[1]
-	tbl := tk.GetTableByName("test", "t_modify_column_args")
+	tbl := external.GetTableByName(s.T(), tk, "test", "t_modify_column_args")
 	s.Require().Len(tbl.Meta().Columns, 1)
 	s.Require().Len(tbl.Meta().Indices, 1)
 
