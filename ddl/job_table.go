@@ -352,7 +352,7 @@ func (d *ddl) doGeneralDDLJobWorker(job *model.Job) {
 			d.generalDDLWorkerPool.put(wk)
 		}()
 		wk.handleDDLJobWaitSchemaSynced(d.ddlCtx, job)
-		if err := wk.HandleDDLJob(d.ddlCtx, job, d.ddlJobCh, kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull); err != nil {
+		if err := wk.HandleDDLJob(d.ddlCtx, job, d.ddlJobCh, kvrpcpb.DiskFullOpt_AllowedOnAlmostFull); err != nil {
 			log.Error("[ddl] handle General DDL job failed", zap.Error(err))
 		}
 	})
