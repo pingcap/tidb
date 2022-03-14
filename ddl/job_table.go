@@ -398,6 +398,9 @@ func (d *ddl) doReorgDDLJobWorker(job *model.Job) {
 const addDDLJobSQL = "insert into mysql.tidb_ddl_job values"
 
 func (d *ddl) addDDLJobsInternal(jobs []*model.Job, level kvrpcpb.DiskFullOpt) error {
+	if len(jobs) == 0 {
+		return nil
+	}
 	var sql string
 	for i, job := range jobs {
 		b, err := job.Encode(true)
