@@ -129,7 +129,7 @@ func (rc *Client) Init(g glue.Glue, store kv.Storage) error {
 	// setDB must happen after set PolicyMode.
 	// we will use policyMode to set session variables.
 	var err error
-	rc.db, err = newDB(g, store, rc.policyMode)
+	rc.db, err = NewDB(g, store, rc.policyMode)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -151,7 +151,7 @@ func (rc *Client) Init(g glue.Glue, store kv.Storage) error {
 		// So these jobs won't be faster or slower when machine become faster or slower,
 		// hence make it a fixed value would be fine.
 		rc.dbPool, err = makeDBPool(defaultDDLConcurrency, func() (*DB, error) {
-			return newDB(g, store, rc.policyMode)
+			return NewDB(g, store, rc.policyMode)
 		})
 		if err != nil {
 			log.Warn("create session pool failed, we will send DDLs only by created sessions",

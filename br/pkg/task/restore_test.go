@@ -20,7 +20,7 @@ func TestRestoreConfigAdjust(t *testing.T) {
 	require.Equal(t, restore.DefaultMergeRegionSizeBytes, cfg.MergeSmallRegionSizeBytes)
 }
 
-func TestConfigureRestoreClient(t *testing.T) {
+func TestconfigureRestoreClient(t *testing.T) {
 	cfg := Config{
 		Concurrency: 1024,
 	}
