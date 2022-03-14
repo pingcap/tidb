@@ -104,7 +104,7 @@ func TestIsOnline(t *testing.T) {
 func TestPreCheckTableClusterIndex(t *testing.T) {
 	m := mc
 	g := gluetidb.New()
-	client := restore.NewRestoreClient(m.PDClient,  nil, defaultKeepaliveCfg, false)
+	client := restore.NewRestoreClient(m.PDClient, nil, defaultKeepaliveCfg, false)
 	err := client.Init(g, m.Storage)
 	require.NoError(t, err)
 
@@ -200,7 +200,7 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 	g := gluetidb.New()
 	client := restore.NewRestoreClient(fakePDClient{
 		stores: mockStores,
-	},  nil, defaultKeepaliveCfg, false)
+	}, nil, defaultKeepaliveCfg, false)
 	err := client.Init(g, m.Storage)
 	require.NoError(t, err)
 

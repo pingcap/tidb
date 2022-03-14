@@ -281,7 +281,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	defer mgr.Close()
 
 	keepaliveCfg.PermitWithoutStream = true
-	client := restore.NewRestoreClient(mgr.GetPDClient(),  mgr.GetTLSConfig(), keepaliveCfg, false)
+	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, false)
 	err = configureRestoreClient(ctx, client, cfg)
 	if err != nil {
 		return errors.Trace(err)
@@ -376,16 +376,14 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return nil
 	}
 
-	if cfg.WithPlacementPolicy {
-		// create policy if backupMeta has policies.
-		policies, err := client.GetPolicies()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = client.CreatePolicies(ctx, policies)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	// create policy if backupMeta has policies.
+	policies, err := client.GetPlacementPolicies()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = client.CreatePlacementPolicies(ctx, policies)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	for _, db := range dbs {

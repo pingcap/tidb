@@ -497,8 +497,8 @@ func (gs *tidbGlueSession) CreateTable(ctx context.Context, dbName model.CIStr, 
 	return d.CreateTableWithInfo(gs.se, dbName, table, ddl.OnExistIgnore)
 }
 
-// CreatePolicy implements glue.Session
-func (gs *tidbGlueSession) CreatePolicy(ctx context.Context, policy *model.PolicyInfo) error {
+// CreatePlacementPolicy implements glue.Session
+func (gs *tidbGlueSession) CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error {
 	d := domain.GetDomain(gs.se).DDL()
 	// the default behaviour is ignoring duplicated policy during restore.
 	return d.CreatePlacementPolicyWithInfo(gs.se, policy, ddl.OnExistIgnore)

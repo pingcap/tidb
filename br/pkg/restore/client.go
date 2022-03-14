@@ -53,7 +53,7 @@ import (
 // defaultChecksumConcurrency is the default number of the concurrent
 // checksum tasks.
 const defaultChecksumConcurrency = 64
-const defaultDDLConcurrency     = 16
+const defaultDDLConcurrency = 16
 const minBatchDdlSize = 1
 
 // Client sends requests to restore files.
@@ -79,7 +79,7 @@ type Client struct {
 	// Before you do it, you can firstly read discussions at
 	// https://github.com/pingcap/br/pull/377#discussion_r446594501,
 	// this probably isn't as easy as it seems like (however, not hard, too :D)
-	db              *DB
+	db *DB
 
 	// use db pool to speed up restoration in BR binary mode.
 	dbPool          []*DB
@@ -376,8 +376,8 @@ func (rc *Client) GetDatabase(name string) *utils.Database {
 	return rc.databases[name]
 }
 
-// GetPolicies returns policies.
-func (rc *Client) GetPolicies() ([]*model.PolicyInfo, error) {
+// GetPlacementPolicies returns policies.
+func (rc *Client) GetPlacementPolicies() ([]*model.PolicyInfo, error) {
 	policies := make([]*model.PolicyInfo, 0, len(rc.backupMeta.Policies))
 	for _, p := range rc.backupMeta.Policies {
 		policyInfo := model.PolicyInfo{}
@@ -408,9 +408,9 @@ func (rc *Client) GetTableSchema(
 	return table.Meta(), nil
 }
 
-// CreatePolicies creates policies to db.
-func (rc *Client) CreatePolicies(ctx context.Context, policies []*model.PolicyInfo) error {
-	return rc.db.CreatePolicies(ctx, policies)
+// CreatePlacementPolicies creates policies to db.
+func (rc *Client) CreatePlacementPolicies(ctx context.Context, policies []*model.PolicyInfo) error {
+	return rc.db.CreatePlacementPolicies(ctx, policies)
 }
 
 // CreateDatabase creates a database.

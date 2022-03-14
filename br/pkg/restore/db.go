@@ -128,13 +128,14 @@ func (db *DB) UpdateStatsMeta(ctx context.Context, tableID int64, restoreTS uint
 	return nil
 }
 
-// CreatePolicies check whether cluster support policy and create the policy.
-func (db *DB) CreatePolicies(ctx context.Context, policies []*model.PolicyInfo) error {
+// CreatePlacementPolicies check whether cluster support policy and create the policy.
+func (db *DB) CreatePlacementPolicies(ctx context.Context, policies []*model.PolicyInfo) error {
 	for _, p := range policies {
-		err := db.se.CreatePolicy(ctx, p)
+		err := db.se.CreatePlacementPolicy(ctx, p)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		log.Info("create placement policy succeed", zap.Stringer("name", p.Name))
 	}
 	return nil
 }
