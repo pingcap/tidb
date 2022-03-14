@@ -2690,7 +2690,6 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) Executor {
 	e := &AnalyzeExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),
-		wg:           &sync.WaitGroup{},
 		opts:         v.Opts,
 		OptionsMap:   v.OptionsMap,
 	}
@@ -3101,7 +3100,10 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	if err != nil {
 		return nil, err
 	}
-	ts := v.GetTableScan()
+	ts, err := v.GetTableScan()
+	if err != nil {
+		return nil, err
+	}
 	if err = b.validCanReadTemporaryOrCacheTable(ts.Table); err != nil {
 		return nil, err
 	}
@@ -3205,7 +3207,11 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		return nil
 	}
 
-	ts := v.GetTableScan()
+	ts, err := v.GetTableScan()
+	if err != nil {
+		b.err = err
+		return nil
+	}
 	if err = b.validCanReadTemporaryOrCacheTable(ts.Table); err != nil {
 		b.err = err
 		return nil

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	mysql "github.com/pingcap/tidb/errno"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/stretchr/testify/require"
 )
 
@@ -189,6 +191,98 @@ func TestPlacementPolicy(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 8239 Unknown placement policy 'x'"))
 
 	// TODO: privilege check & constraint syntax check.
+}
+
+func TestCreatePlacementPolicyWithInfo(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	// clearAllBundles(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tp")
+	tk.MustExec("drop placement policy if exists p")
+	tk.MustExec("create placement policy p " +
+		"LEARNERS=1 " +
+		"LEARNER_CONSTRAINTS=\"[+region=cn-west-1]\" " +
+		"FOLLOWERS=3 " +
+		"FOLLOWER_CONSTRAINTS=\"[+disk=ssd]\"")
+	defer tk.MustExec("drop placement policy if exists p")
+	defer tk.MustExec("drop placement policy if exists p2")
+	tk.MustExec(`CREATE TABLE tp(id int) placement policy p PARTITION BY RANGE (id) (
+PARTITION p0 VALUES LESS THAN (100) PLACEMENT POLICY p,
+PARTITION p1 VALUES LESS THAN (1000))
+`)
+	defer tk.MustExec("drop table if exists tp")
+
+	oldPolicy, ok := dom.InfoSchema().PolicyByName(model.NewCIStr("p"))
+	oldPolicy = oldPolicy.Clone()
+	require.True(t, ok)
+
+	// create a non exist policy
+	for _, onExist := range []ddl.OnExist{ddl.OnExistReplace, ddl.OnExistIgnore, ddl.OnExistError} {
+		newPolicy := oldPolicy.Clone()
+		newPolicy.Name = model.NewCIStr("p2")
+		newPolicy.Followers = 2
+		newPolicy.LearnerConstraints = "[+zone=z2]"
+		err := dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), onExist)
+		require.NoError(t, err)
+		// old policy should not be changed
+		found, ok := dom.InfoSchema().PolicyByName(model.NewCIStr("p"))
+		require.True(t, ok)
+		checkPolicyEquals(t, oldPolicy, found)
+		checkExistTableBundlesInPD(t, dom, "test", "tp")
+
+		// new created policy
+		found, ok = dom.InfoSchema().PolicyByName(model.NewCIStr("p2"))
+		require.True(t, ok)
+		// ID of the created policy should be reassigned
+		require.NotEqual(t, newPolicy.ID, found.ID)
+		newPolicy.ID = found.ID
+		checkPolicyEquals(t, newPolicy, found)
+		tk.MustExec("drop placement policy if exists p2")
+	}
+
+	// create same name policy with on exists error
+	newPolicy := oldPolicy.Clone()
+	newPolicy.ID = oldPolicy.ID + 1
+	err := dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistError)
+	require.Error(t, err)
+	require.True(t, infoschema.ErrPlacementPolicyExists.Equal(err))
+	found, ok := dom.InfoSchema().PolicyByName(model.NewCIStr("p"))
+	require.True(t, ok)
+	checkPolicyEquals(t, oldPolicy, found)
+	checkExistTableBundlesInPD(t, dom, "test", "tp")
+
+	// create same name policy with on exist ignore
+	newPolicy = oldPolicy.Clone()
+	newPolicy.ID = oldPolicy.ID + 1
+	err = dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistIgnore)
+	require.NoError(t, err)
+	found, ok = dom.InfoSchema().PolicyByName(model.NewCIStr("p"))
+	require.True(t, ok)
+	checkPolicyEquals(t, oldPolicy, found)
+	checkExistTableBundlesInPD(t, dom, "test", "tp")
+
+	// create same name policy with on exist replace
+	newPolicy = oldPolicy.Clone()
+	newPolicy.ID = oldPolicy.ID + 1
+	newPolicy.Followers = 1
+	newPolicy.LearnerConstraints = "[+zone=z1]"
+	err = dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistReplace)
+	require.NoError(t, err)
+	found, ok = dom.InfoSchema().PolicyByName(model.NewCIStr("p"))
+	require.True(t, ok)
+	// when replace a policy the old policy's id should not be changed
+	newPolicy.ID = oldPolicy.ID
+	checkPolicyEquals(t, newPolicy, found)
+	checkExistTableBundlesInPD(t, dom, "test", "tp")
+}
+
+func checkPolicyEquals(t *testing.T, expected *model.PolicyInfo, actual *model.PolicyInfo) {
+	require.Equal(t, expected.ID, actual.ID)
+	require.Equal(t, expected.Name, actual.Name)
+	require.Equal(t, *expected.PlacementSettings, *actual.PlacementSettings)
+	require.Equal(t, expected.State, actual.State)
 }
 
 func TestPlacementFollowers(t *testing.T) {
@@ -354,20 +448,29 @@ func TestResetSchemaPlacement(t *testing.T) {
 }
 
 func TestCreateOrReplacePlacementPolicy(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop placement policy if exists x")
+	tk.MustExec("drop table if exists tp")
 
 	// If the policy does not exist, CREATE OR REPLACE PLACEMENT POLICY is the same as CREATE PLACEMENT POLICY
 	tk.MustExec("create or replace placement policy x primary_region=\"cn-east-1\" regions=\"cn-east-1,cn-east\"")
 	defer tk.MustExec("drop placement policy if exists x")
 	tk.MustQuery("show create placement policy x").Check(testkit.Rows("x CREATE PLACEMENT POLICY `x` PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1,cn-east\""))
 
+	// create a table refers the policy
+	tk.MustExec(`CREATE TABLE tp(id int) placement policy x PARTITION BY RANGE (id) (
+PARTITION p0 VALUES LESS THAN (100) PLACEMENT POLICY x,
+PARTITION p1 VALUES LESS THAN (1000))
+`)
+	defer tk.MustExec("drop table if exists tp")
+
 	// If the policy does exist, CREATE OR REPLACE PLACEMENT_POLICY is the same as ALTER PLACEMENT POLICY.
 	tk.MustExec("create or replace placement policy x primary_region=\"cn-east-1\" regions=\"cn-east-1\"")
 	tk.MustQuery("show create placement policy x").Check(testkit.Rows("x CREATE PLACEMENT POLICY `x` PRIMARY_REGION=\"cn-east-1\" REGIONS=\"cn-east-1\""))
+	checkExistTableBundlesInPD(t, dom, "test", "tp")
 
 	// Cannot be used together with the if not exists clause. Ref: https://mariadb.com/kb/en/create-view
 	tk.MustGetErrMsg("create or replace placement policy if not exists x primary_region=\"cn-east-1\" regions=\"cn-east-1\"", "[ddl:1221]Incorrect usage of OR REPLACE and IF NOT EXISTS")
@@ -501,7 +604,7 @@ func TestCreateTableWithPlacementPolicy(t *testing.T) {
 	require.Equal(t, "y", policyY.Name.L)
 	require.Equal(t, true, policyY.ID != 0)
 
-	tbl := tk.GetTableByName("test", "t")
+	tbl := external.GetTableByName(t, tk, "test", "t")
 	require.NotNil(t, tbl)
 	require.NotNil(t, tbl.Meta().PlacementPolicyRef)
 	require.Equal(t, "x", tbl.Meta().PlacementPolicyRef.Name.L)
@@ -509,7 +612,7 @@ func TestCreateTableWithPlacementPolicy(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 
 	checkPartitionTableFunc := func(tblName string) {
-		tbl = tk.GetTableByName("test", tblName)
+		tbl = external.GetTableByName(t, tk, "test", tblName)
 		require.NotNil(t, tbl)
 		require.NotNil(t, tbl.Meta().PlacementPolicyRef)
 		require.Equal(t, "x", tbl.Meta().PlacementPolicyRef.Name.L)
@@ -536,7 +639,7 @@ func TestCreateTableWithPlacementPolicy(t *testing.T) {
 	checkPartitionTableFunc("t_list_p")
 	tk.MustExec("drop table if exists t_list_p")
 
-	tbl = tk.GetTableByName("test", "t_hash_p")
+	tbl = external.GetTableByName(t, tk, "test", "t_hash_p")
 	require.NotNil(t, tbl)
 	require.NotNil(t, tbl.Meta().PlacementPolicyRef)
 	require.Equal(t, "x", tbl.Meta().PlacementPolicyRef.Name.L)
@@ -789,7 +892,7 @@ func TestPolicyCacheAndPolicyDependency(t *testing.T) {
 	tk.MustExec("create table t (a int) placement policy \"x\"")
 	defer tk.MustExec("drop table if exists t")
 	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, TIDB_PLACEMENT_POLICY_NAME FROM information_schema.Tables WHERE TABLE_SCHEMA='test' AND TABLE_NAME = 't'").Check(testkit.Rows(`def test t BASE TABLE x`))
-	tbl := tk.GetTableByName("test", "t")
+	tbl := external.GetTableByName(t, tk, "test", "t")
 
 	// Test policy dependency cache.
 	dependencies := testGetPolicyDependency(store, "x")
@@ -801,7 +904,7 @@ func TestPolicyCacheAndPolicyDependency(t *testing.T) {
 	tk.MustExec("create table t2 (a int) placement policy \"x\"")
 	defer tk.MustExec("drop table if exists t2")
 	tk.MustQuery("SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE, TIDB_PLACEMENT_POLICY_NAME FROM information_schema.Tables WHERE TABLE_SCHEMA='test' AND TABLE_NAME = 't'").Check(testkit.Rows(`def test t BASE TABLE x`))
-	tbl2 := tk.GetTableByName("test", "t2")
+	tbl2 := external.GetTableByName(t, tk, "test", "t2")
 
 	dependencies = testGetPolicyDependency(store, "x")
 	require.NotNil(t, dependencies)
@@ -1064,12 +1167,12 @@ func TestDropDatabaseGCPlacement(t *testing.T) {
 	defer func(originGC bool) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed"))
 		if originGC {
-			ddl.EmulatorGCEnable()
+			util.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			util.EmulatorGCDisable()
 		}
-	}(ddl.IsEmulatorGCEnable())
-	ddl.EmulatorGCDisable()
+	}(util.IsEmulatorGCEnable())
+	util.EmulatorGCDisable()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1124,12 +1227,12 @@ func TestDropTableGCPlacement(t *testing.T) {
 	defer func(originGC bool) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed"))
 		if originGC {
-			ddl.EmulatorGCEnable()
+			util.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			util.EmulatorGCDisable()
 		}
-	}(ddl.IsEmulatorGCEnable())
-	ddl.EmulatorGCDisable()
+	}(util.IsEmulatorGCEnable())
+	util.EmulatorGCDisable()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1252,12 +1355,12 @@ func TestDropTablePartitionGCPlacement(t *testing.T) {
 	defer func(originGC bool) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed"))
 		if originGC {
-			ddl.EmulatorGCEnable()
+			util.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			util.EmulatorGCDisable()
 		}
-	}(ddl.IsEmulatorGCEnable())
-	ddl.EmulatorGCDisable()
+	}(util.IsEmulatorGCEnable())
+	util.EmulatorGCDisable()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1562,12 +1665,12 @@ func TestTruncateTableGCWithPlacement(t *testing.T) {
 	defer func(originGC bool) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed"))
 		if originGC {
-			ddl.EmulatorGCEnable()
+			util.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			util.EmulatorGCDisable()
 		}
-	}(ddl.IsEmulatorGCEnable())
-	ddl.EmulatorGCDisable()
+	}(util.IsEmulatorGCEnable())
+	util.EmulatorGCDisable()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1697,12 +1800,12 @@ func TestTruncatePartitionGCWithPlacement(t *testing.T) {
 	defer func(originGC bool) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed"))
 		if originGC {
-			ddl.EmulatorGCEnable()
+			util.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			util.EmulatorGCDisable()
 		}
-	}(ddl.IsEmulatorGCEnable())
-	ddl.EmulatorGCDisable()
+	}(util.IsEmulatorGCEnable())
+	util.EmulatorGCDisable()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1990,12 +2093,12 @@ func TestRecoverTableWithPlacementPolicy(t *testing.T) {
 	defer func(originGC bool) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed"))
 		if originGC {
-			ddl.EmulatorGCEnable()
+			util.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			util.EmulatorGCDisable()
 		}
-	}(ddl.IsEmulatorGCEnable())
-	ddl.EmulatorGCDisable()
+	}(util.IsEmulatorGCEnable())
+	util.EmulatorGCDisable()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)

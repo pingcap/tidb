@@ -411,6 +411,9 @@ func TestPlacementMode(t *testing.T) {
 	defer tk.MustExec("drop table if exists t2")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
+	existPolicy, ok := dom.InfoSchema().PolicyByName(model.NewCIStr("p1"))
+	require.True(t, ok)
+
 	// invalid values
 	err := tk.ExecToErr("set tidb_placement_mode='aaa'")
 	require.EqualError(t, err, "[variable:1231]Variable 'tidb_placement_mode' can't be set to the value of 'aaa'")
@@ -426,6 +429,28 @@ func TestPlacementMode(t *testing.T) {
 
 	// create placement policy in ignore mode (policy name not exists)
 	tk.MustExec("create placement policy p3 primary_region='r1' regions='r1'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
+	tk.MustQuery("show placement where target='POLICY p3'").Check(testkit.Rows())
+
+	// create placement policy with info in ignore mode (policy name exists)
+	newPolicy := existPolicy.Clone()
+	newPolicy.Followers = 8
+	err = dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistError)
+	require.NoError(t, err)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
+	tk.MustQuery("show placement where target='POLICY p1'").Check(testkit.Rows("POLICY p1 FOLLOWERS=4 NULL"))
+
+	err = dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistReplace)
+	require.NoError(t, err)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
+	tk.MustQuery("show placement where target='POLICY p1'").Check(testkit.Rows("POLICY p1 FOLLOWERS=4 NULL"))
+
+	// create placement policy in ignore mode (policy name not exists)
+	newPolicy = existPolicy.Clone()
+	newPolicy.Name = model.NewCIStr("p3")
+	newPolicy.Followers = 8
+	err = dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy, ddl.OnExistError)
+	require.NoError(t, err)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
 	tk.MustQuery("show placement where target='POLICY p3'").Check(testkit.Rows())
 
