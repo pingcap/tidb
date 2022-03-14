@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -353,7 +352,7 @@ func (d *ddl) doGeneralDDLJobWorker(job *model.Job) {
 			d.generalDDLWorkerPool.put(wk)
 		}()
 		wk.handleDDLJobWaitSchemaSynced(d.ddlCtx, job)
-		if err := wk.HandleDDLJob(d.ddlCtx, job, d.ddlJobCh); err != nil {
+		if err := wk.HandleDDLJob(d.ddlCtx, job, d.ddlJobCh, kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull); err != nil {
 			log.Error("[ddl] handle General DDL job failed", zap.Error(err))
 		}
 	})
@@ -390,7 +389,7 @@ func (d *ddl) doReorgDDLJobWorker(job *model.Job) {
 			d.reorgWorkerPool.put(wk)
 		}()
 		wk.handleDDLJobWaitSchemaSynced(d.ddlCtx, job)
-		if err := wk.HandleDDLJob(d.ddlCtx, job, d.ddlJobCh); err != nil {
+		if err := wk.HandleDDLJob(d.ddlCtx, job, d.ddlJobCh, kvrpcpb.DiskFullOpt_NotAllowedOnFull); err != nil {
 			log.Error("[ddl] handle Reorg DDL job failed", zap.Error(err))
 		}
 	})
@@ -424,14 +423,15 @@ func (d *ddl) addDDLJobsInternal(jobs []*model.Job, level kvrpcpb.DiskFullOpt) e
 	}
 	return err
 }
+
 func (d *ddl) addDDLJobs(jobs []*model.Job) error {
 	notAllowJobs := make([]*model.Job, 0, len(jobs))
 	allowJobs := make([]*model.Job, 0, len(jobs))
 	for _, job := range jobs {
-		if util.IsAllowedOnAlreadyFull(job) {
-			allowJobs = append(allowJobs, job)
-		} else {
+		if mayNeedReorg(job) {
 			notAllowJobs = append(notAllowJobs, job)
+		} else {
+			allowJobs = append(allowJobs, job)
 		}
 	}
 	if err := d.addDDLJobsInternal(allowJobs, kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull); err != nil {

@@ -630,7 +630,7 @@ func (w *worker) handleDDLJobWaitSchemaSynced(d *ddlCtx, job *model.Job) {
 	*/
 }
 
-func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error {
+func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}, level kvrpcpb.DiskFullOpt) error {
 	defer func() {
 		r := recover()
 		if r == nil {
@@ -643,11 +643,8 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 		runJobErr error
 		waitTime  = 2 * d.lease
 	)
-	if util.IsAllowedOnAlreadyFull(job) {
-		w.sessForJob.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
-	} else {
-		w.sessForJob.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
-	}
+
+	w.sessForJob.SetDiskFullOpt(level)
 	w.setDDLLabelForTopSQL(job)
 	err := w.sessForJob.NewTxn(w.ctx)
 	if err != nil {
@@ -658,12 +655,7 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 	if err != nil {
 		return err
 	}
-	if util.IsAllowedOnAlreadyFull(job) {
-		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
-	} else {
-		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
-	}
-
+	txn.SetDiskFullOpt(level)
 	w.sessForJob.GetSessionVars().SetInTxn(true)
 	t := meta.NewMeta(txn)
 
