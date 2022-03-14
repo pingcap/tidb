@@ -1165,4 +1165,31 @@ func TestTiflashPartitionTableScan(t *testing.T) {
 	tk.MustExec("set @@session.tidb_allow_mpp=OFF;")
 	tk.MustExec("set @@tidb_allow_batch_cop = 2;")
 	tk.MustQuery("select count(*) from t where a < 12;").Check(testkit.Rows("2"))
+
+	// test retry batch cop
+	// MPP
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy", `return(true)`))
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy"))
+		wg.Done()
+	}()
+	tk.MustExec("set @@session.tidb_allow_mpp=ON;")
+	tk.MustQuery("select count(*) from t where a < 12;").Check(testkit.Rows("2"))
+	wg.Wait()
+
+	// BatchCop
+	wg.Add(1)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy", `return(true)`))
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy"))
+		wg.Done()
+	}()
+	tk.MustExec("set @@session.tidb_allow_mpp=OFF;")
+	tk.MustExec("set @@tidb_allow_batch_cop = 2;")
+	tk.MustQuery("select count(*) from t where a < 12;").Check(testkit.Rows("2"))
+	wg.Wait()
 }

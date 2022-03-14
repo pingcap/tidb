@@ -523,6 +523,9 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 	return ret
 }
 
+// When `partitionIDs != nil`, it means that buildBatchCopTasks is constructing a batch cop tasks for PartitionTableScan.
+// At this time, `len(rangesForEachPhysicalTable) == len(partitionIDs)` and `rangesForEachPhysicalTable[i]` is for partition `partitionIDs[i]`.
+// Otherwise, `rangesForEachPhysicalTable[0]` indicates the range for the single physical table.
 func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, rangesForEachPhysicalTable []*KeyRanges, storeType kv.StoreType, mppStoreLastFailTime map[string]time.Time, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64, partitionIDs []int64) ([]*batchCopTask, error) {
 	cache := store.GetRegionCache()
 	start := time.Now()
@@ -638,13 +641,16 @@ func buildBatchCopTasks(bo *backoff.Backoffer, store *kvStore, rangesForEachPhys
 					tableRegions[ri.PartitionIndex].Regions = append(tableRegions[ri.PartitionIndex].Regions,
 						ri.toCoprocessorRegionInfo())
 				}
+				count := 0
 				// clear empty table region
-				for j := len(tableRegions) - 1; j >= 0; j-- {
-					if len(tableRegions[j].Regions) == 0 {
-						tableRegions = append(tableRegions[:j], tableRegions[j+1:]...)
+				for j := 0; j < len(tableRegions); j++ {
+					if len(tableRegions[j].Regions) != 0 {
+						tableRegions[count] = tableRegions[j]
+						count++
 					}
 				}
-				copTask.PartitionTableRegions = tableRegions
+				copTask.PartitionTableRegions = tableRegions[:count]
+				copTask.regionInfos = nil
 			}
 		}
 		return batchTasks, nil
@@ -825,10 +831,13 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 	for _, trs := range batchTask.PartitionTableRegions {
 		pid = append(pid, trs.PhysicalTableId)
 		ranges := make([]kv.KeyRange, 0, len(trs.Regions))
-		for _, ri := range batchTask.regionInfos {
-			ri.Ranges.Do(func(ran *kv.KeyRange) {
-				ranges = append(ranges, *ran)
-			})
+		for _, ri := range trs.Regions {
+			for _, ran := range ri.Ranges {
+				ranges = append(ranges, kv.KeyRange{
+					StartKey: ran.Start,
+					EndKey:   ran.End,
+				})
+			}
 		}
 		keyRanges = append(keyRanges, NewKeyRanges(ranges))
 	}
@@ -852,9 +861,6 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backo
 		SchemaVer:    b.req.SchemaVar,
 		Regions:      regionInfos,
 		TableRegions: task.PartitionTableRegions,
-	}
-	if copReq.TableRegions != nil {
-		copReq.Regions = nil
 	}
 
 	req := tikvrpc.NewRequest(task.cmdType, &copReq, kvrpcpb.Context{

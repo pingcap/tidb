@@ -322,62 +322,48 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		return e.constructMPPTasksForPartitionTable(ctx, ts, splitedRanges, partitions)
+		return e.constructMPPTasks(ctx, ts, splitedRanges, partitions)
 	}
-
-	kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{ts.Table.ID}, ts.Table.IsCommonHandle, splitedRanges, nil)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return e.constructMPPTasksForSinglePhysicalTable(ctx, kvRanges, ts.Table.ID)
+	return e.constructMPPTasks(ctx, ts, splitedRanges, nil)
 }
 
-func (e *mppTaskGenerator) constructMPPTasksForSinglePhysicalTable(ctx context.Context, kvRanges []kv.KeyRange, tableID int64) ([]*kv.MPPTask, error) {
-	req := &kv.MPPBuildTasksRequest{
-		KeyRanges: kvRanges,
-	}
+func (e *mppTaskGenerator) constructMPPTasks(ctx context.Context, ts *PhysicalTableScan, splitedRanges []*ranger.Range, partitions []table.PhysicalTable) ([]*kv.MPPTask, error) {
 	ttl, err := time.ParseDuration(e.ctx.GetSessionVars().MPPStoreFailTTL)
 	if err != nil {
 		logutil.BgLogger().Warn("MPP store fail ttl is invalid", zap.Error(err))
 		ttl = 30 * time.Second
 	}
-	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, e.ctx.GetSessionVars().MPPStoreLastFailTime, ttl)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	tasks := make([]*kv.MPPTask, 0, len(metas))
-	for _, meta := range metas {
-		tasks = append(tasks, &kv.MPPTask{Meta: meta, ID: e.ctx.GetSessionVars().AllocMPPTaskID(e.startTS), StartTs: e.startTS, TableID: tableID})
-	}
-	return tasks, nil
-}
 
-func (e *mppTaskGenerator) constructMPPTasksForPartitionTable(ctx context.Context, ts *PhysicalTableScan, splitedRanges []*ranger.Range, partitions []table.PhysicalTable) ([]*kv.MPPTask, error) {
-	ttl, err := time.ParseDuration(e.ctx.GetSessionVars().MPPStoreFailTTL)
-	if err != nil {
-		logutil.BgLogger().Warn("MPP store fail ttl is invalid", zap.Error(err))
-		ttl = 30 * time.Second
-	}
-	sort.Slice(partitions, func(i, j int) bool {
-		return partitions[i].GetPhysicalID() < partitions[j].GetPhysicalID()
-	})
-
-	partitionIDAndRanges := make([]kv.PartitionIDAndRanges, len(partitions))
-	allPartitionsIDs := make([]int64, len(partitions))
-	// Get region info for each partition
-	for i, p := range partitions {
-		pid := p.GetPhysicalID()
-		meta := p.Meta()
-		kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && ts.Table.IsCommonHandle, splitedRanges, nil)
+	var req *kv.MPPBuildTasksRequest
+	var allPartitionsIDs []int64
+	if partitions != nil {
+		// For partition table scan
+		sort.Slice(partitions, func(i, j int) bool {
+			return partitions[i].GetPhysicalID() < partitions[j].GetPhysicalID()
+		})
+		partitionIDAndRanges := make([]kv.PartitionIDAndRanges, len(partitions))
+		allPartitionsIDs = make([]int64, len(partitions))
+		// Get region info for each partition
+		for i, p := range partitions {
+			pid := p.GetPhysicalID()
+			meta := p.Meta()
+			kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && ts.Table.IsCommonHandle, splitedRanges, nil)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			partitionIDAndRanges[i].ID = pid
+			partitionIDAndRanges[i].KeyRanges = kvRanges
+			allPartitionsIDs[i] = pid
+		}
+		req = &kv.MPPBuildTasksRequest{PartitionIDAndRanges: partitionIDAndRanges}
+	} else {
+		// For single physical table
+		kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{ts.Table.ID}, ts.Table.IsCommonHandle, splitedRanges, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		partitionIDAndRanges[i].ID = pid
-		partitionIDAndRanges[i].KeyRanges = kvRanges
-		allPartitionsIDs[i] = pid
+		req = &kv.MPPBuildTasksRequest{KeyRanges: kvRanges}
 	}
-
-	req := &kv.MPPBuildTasksRequest{PartitionIDAndRanges: partitionIDAndRanges}
 	metas, err := e.ctx.GetMPPClient().ConstructMPPTasks(ctx, req, e.ctx.GetSessionVars().MPPStoreLastFailTime, ttl)
 	if err != nil {
 		return nil, errors.Trace(err)

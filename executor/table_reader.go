@@ -344,7 +344,6 @@ func (e *TableReaderExecutor) buildKVForPartitionTableScan(ctx context.Context, 
 	}
 	partitionIDAndRanges := make([]kv.PartitionIDAndRanges, 0, len(pids))
 	for i, kvRange := range kvRanges {
-		e.kvRanges = append(e.kvRanges, kvRange...)
 		partitionIDAndRanges = append(partitionIDAndRanges, kv.PartitionIDAndRanges{
 			ID:        pids[i],
 			KeyRanges: kvRange,
@@ -354,7 +353,7 @@ func (e *TableReaderExecutor) buildKVForPartitionTableScan(ctx context.Context, 
 		return nil, err
 	}
 	var builder distsql.RequestBuilder
-	reqBuilder := builder.SetKeyRanges(e.kvRanges).SetPartitionIDAndRanges(partitionIDAndRanges)
+	reqBuilder := builder.SetPartitionIDAndRanges(partitionIDAndRanges)
 	kvReq, err := reqBuilder.
 		SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).
