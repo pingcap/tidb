@@ -32,6 +32,8 @@ const (
 	tiDBEnableGlobalTemporaryTable = "tidb_enable_global_temporary_table"
 	tiDBSlowLogMasking             = "tidb_slow_log_masking"
 	placementChecks                = "placement_checks"
+	tiDBEnableStreaming            = "tidb_enable_streaming"
+	tiDBOptBCJ                     = "tidb_opt_broadcast_join"
 )
 
 var removedSysVars = map[string]string{
@@ -45,6 +47,8 @@ var removedSysVars = map[string]string{
 	tiDBMemQuotaTopn:               "use tidb_mem_quota_query instead",
 	tiDBMemQuotaIndexLookupReader:  "use tidb_mem_quota_query instead",
 	tiDBMemQuotaIndexLookupJoin:    "use tidb_mem_quota_query instead",
+	tiDBEnableStreaming:            "streaming is no longer supported",
+	tiDBOptBCJ:                     "tidb_opt_broadcast_join is removed and use tidb_allow_mpp instead",
 }
 
 // IsRemovedSysVar returns true if the sysvar has been removed
