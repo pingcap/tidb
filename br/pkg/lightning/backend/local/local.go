@@ -82,6 +82,7 @@ const (
 	// maxWriteAndIngestRetryTimes is the max retry times for write and ingest.
 	// A large retry times is for tolerating tikv cluster failures.
 	maxWriteAndIngestRetryTimes = 30
+	maxRetryBackoffTime         = 30 * time.Second
 
 	gRPCKeepAliveTime    = 10 * time.Minute
 	gRPCKeepAliveTimeout = 5 * time.Minute
@@ -1285,8 +1286,8 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 				log.L().Warn("write and ingest by range failed",
 					zap.Int("retry time", i+1), log.ShortError(err))
 				backOffTime *= 2
-				if backOffTime > time.Second*30 {
-					backOffTime = time.Second * 30
+				if backOffTime > maxRetryBackoffTime {
+					backOffTime = maxRetryBackoffTime
 				}
 				select {
 				case <-time.After(backOffTime):
