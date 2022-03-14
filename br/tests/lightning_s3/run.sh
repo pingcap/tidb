@@ -168,7 +168,7 @@ function test_import_using_manual_path_config() {
     local base_path_02="${DBPATH}/${bucket_02}/${sub_path_02}"
     rm -rf "${base_path_02}"
     mkdir -p "${base_path_02}"
-    cp "$DATA_PATH/$DB-schema-create.sql" "${base_path_02}/"
+    touch "${base_path_02}/$DB-schema-create.sql"    #empty schema file
     cp "$DATA_PATH/$DB.$TABLE-schema.sql" "${base_path_02}/"
     local sql_data_path_02="${base_path_02}/data-sql"
     local csv_data_path_02="${base_path_02}/data-csv"

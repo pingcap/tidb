@@ -461,14 +461,6 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 			return errors.Trace(err)
 		}
 		for _, r := range res.Contents {
-			// when walk on specify directory, the result include storage.Prefix,
-			// which can not be reuse in other API(Open/Read) directly.
-			// so we use TrimPrefix to filter Prefix for next Open/Read.
-			path := strings.TrimPrefix(*r.Key, rs.options.Prefix)
-			if err = fn(path, *r.Size); err != nil {
-				return errors.Trace(err)
-			}
-
 			// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjects.html#AmazonS3-ListObjects-response-NextMarker -
 			//
 			// `res.NextMarker` is populated only if we specify req.Delimiter.
@@ -479,6 +471,22 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 			// you can use the value of the last Key in the response as the marker
 			// in the subsequent request to get the next set of object keys."
 			req.Marker = r.Key
+
+			// when walk on specify directory, the result include storage.Prefix,
+			// which can not be reuse in other API(Open/Read) directly.
+			// so we use TrimPrefix to filter Prefix for next Open/Read.
+			path := strings.TrimPrefix(*r.Key, rs.options.Prefix)
+			itemSize := *r.Size
+
+			// filter out s3's  directries items
+			if itemSize <= 0 {
+				log.Info("this path is empty and cannot be opened in S3.  Skip it", zap.String("path", path))
+				continue
+			}
+			if err = fn(path, itemSize); err != nil {
+				return errors.Trace(err)
+			}
+
 		}
 		if !aws.BoolValue(res.IsTruncated) {
 			break

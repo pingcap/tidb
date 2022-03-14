@@ -311,18 +311,13 @@ func makeParquetFileRegion(
 	dataFile FileInfo,
 	prevRowIdxMax int64,
 ) (int64, *TableRegion, error) {
-	var numberRows int64 = 0
-
-	// for S3, reading an empty file will cause error, so skip reading the empty files
-	if dataFile.FileMeta.FileSize > 0 {
-		r, err := store.Open(ctx, dataFile.FileMeta.Path)
-		if err != nil {
-			return prevRowIdxMax, nil, errors.Trace(err)
-		}
-		numberRows, err = ReadParquetFileRowCount(ctx, store, r, dataFile.FileMeta.Path)
-		if err != nil {
-			return 0, nil, errors.Trace(err)
-		}
+	r, err := store.Open(ctx, dataFile.FileMeta.Path)
+	if err != nil {
+		return prevRowIdxMax, nil, errors.Trace(err)
+	}
+	numberRows, err := ReadParquetFileRowCount(ctx, store, r, dataFile.FileMeta.Path)
+	if err != nil {
+		return 0, nil, errors.Trace(err)
 	}
 	rowIDMax := prevRowIdxMax + numberRows
 	region := &TableRegion{
