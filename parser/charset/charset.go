@@ -126,7 +126,7 @@ func GetDefaultCollationLegacy(charset string) (string, error) {
 	case CharsetUTF8, CharsetUTF8MB4, CharsetASCII, CharsetLatin1, CharsetBin:
 		return GetDefaultCollation(charset)
 	default:
-		return "", errors.Errorf("Unknown charset '%s'", charset)
+		return "", errors.Errorf("Unknown charset %s", charset)
 	}
 }
 
@@ -150,7 +150,7 @@ func GetCharsetInfo(cs string) (*Charset, error) {
 		return c, nil
 	}
 
-	return nil, errors.Errorf("Unknown charset '%s'", cs)
+	return nil, errors.Errorf("Unknown charset %s", cs)
 }
 
 // GetCharsetInfoByID returns charset and collation for id as cs_number.
