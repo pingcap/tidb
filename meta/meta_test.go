@@ -49,6 +49,7 @@ func TestPlacementPolicy(t *testing.T) {
 
 	// test the meta storage of placemnt policy.
 	policy := &model.PolicyInfo{
+		ID:   1,
 		Name: model.NewCIStr("aa"),
 		PlacementSettings: &model.PlacementSettings{
 			PrimaryRegion:      "my primary",

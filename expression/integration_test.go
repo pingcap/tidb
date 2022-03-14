@@ -51,6 +51,8 @@ import (
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/util/versioninfo"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1192,6 +1194,16 @@ func TestInfoBuiltin(t *testing.T) {
 	// for version
 	result = tk.MustQuery("select version()")
 	result.Check(testkit.Rows(mysql.ServerVersion))
+
+	// for tidb_version
+	result = tk.MustQuery("select tidb_version()")
+	tidbVersionResult := ""
+	for _, line := range result.Rows() {
+		tidbVersionResult += fmt.Sprint(line)
+	}
+	lines := strings.Split(tidbVersionResult, "\n")
+	assert.Equal(t, true, strings.Split(lines[0], " ")[2] == mysql.TiDBReleaseVersion, "errors in 'select tidb_version()'")
+	assert.Equal(t, true, strings.Split(lines[1], " ")[1] == versioninfo.TiDBEdition, "errors in 'select tidb_version()'")
 
 	// for row_count
 	tk.MustExec("drop table if exists t")
@@ -2804,7 +2816,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	result.Check(testkit.Rows("7480000000000000FF2E5F728000000011FFE1A3000000000000"))
 	warns := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 	require.Len(t, warns, 1)
-	require.Error(t, warns[0].Err, "invalid record/index key: 7480000000000000FF2E5F728000000011FFE1A3000000000000")
+	require.EqualError(t, warns[0].Err, "invalid key: 7480000000000000FF2E5F728000000011FFE1A3000000000000")
 
 	// Test in real tables.
 	tk.MustExec("use test;")
@@ -2867,9 +2879,14 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	result.Check(testkit.Rows(rs))
 
 	// https://github.com/pingcap/tidb/issues/27434.
-	hexKey = "7480000000000000375F69800000000000000103800000000001D4C1023B6458"
-	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
+	hexKey = "7480000000000100375F69800000000000000103800000000001D4C1023B6458"
+	sql = fmt.Sprintf("select tidb_decode_key('%s')", hexKey)
 	tk.MustQuery(sql).Check(testkit.Rows(hexKey))
+
+	// https://github.com/pingcap/tidb/issues/33015.
+	hexKey = "74800000000000012B5F72800000000000A5D3"
+	sql = fmt.Sprintf("select tidb_decode_key('%s')", hexKey)
+	tk.MustQuery(sql).Check(testkit.Rows(`{"_tidb_rowid":42451,"table_id":"299"}`))
 
 	// Test the table with the nonclustered index.
 	const rowID = 10
