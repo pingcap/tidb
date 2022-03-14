@@ -957,7 +957,7 @@ func TestCaptureHints(t *testing.T) {
 		tk.MustExec(capCase.query)
 		tk.MustExec("admin capture bindings")
 		res := tk.MustQuery(`show global bindings`).Rows()
-		require.Equal(t, len(res), 1) // this query is captured, and
+		require.Equal(t, len(res), 1)                                       // this query is captured, and
 		require.True(t, strings.Contains(res[0][1].(string), capCase.hint)) // the binding contains the expected hint
 	}
 }
