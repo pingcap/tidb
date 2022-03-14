@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright 2020 PingCAP, Inc.
+# Copyright 2022 PingCAP, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -45,8 +45,9 @@ echo "full backup meta v1 start..."
 rm -f $BACKUPMETAV1_LOG
 run_br backup full --log-file $BACKUPMETAV1_LOG -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
 
-# clear data
+# clear data and policy
 run_sql "DROP DATABASE $DB;"
+run_sql "DROP PLACEMENT POLICY fivereplicas;"
 
 # restore with tidb-placement-policy
 echo "restore with tidb-placement start..."

@@ -358,6 +358,11 @@ func BuildBackupRangeAndSchema(
 				return nil, nil, nil, errors.Trace(err)
 			}
 			tableInfo.AutoIncID = globalAutoID
+			if !isFullBackup {
+				// according to https://github.com/pingcap/tidb/issues/32290.
+				// ignore placement policy when not in full backup
+				tableInfo.PlacementPolicyRef = nil
+			}
 
 			if tableInfo.PKIsHandle && tableInfo.ContainsAutoRandomBits() {
 				// this table has auto_random id, we need backup and rebase in restoration
