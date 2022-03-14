@@ -21,6 +21,8 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+
+	"github.com/pingcap/tidb/metrics"
 )
 
 // Tracker is used to track the memory usage during query execution.
@@ -231,6 +233,10 @@ func (t *Tracker) Detach() {
 	if parent == nil {
 		return
 	}
+	if parent.isGlobal {
+		t.DetachFromGlobalTracker()
+		return
+	}
 	parent.remove(t)
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -312,6 +318,9 @@ func (t *Tracker) Consume(bytes int64) {
 	var rootExceed, rootExceedForSoftLimit *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
 		bytesConsumed := atomic.AddInt64(&tracker.bytesConsumed, bytes)
+		if label, ok := MetricsTypes[tracker.label]; ok {
+			metrics.MemoryUsage.WithLabelValues(label).Set(float64(bytesConsumed))
+		}
 		if bytesConsumed >= tracker.bytesHardLimit && tracker.bytesHardLimit > 0 {
 			rootExceed = tracker
 		}
@@ -558,4 +567,13 @@ const (
 	LabelForIndexJoinOuterWorker int = -21
 	// LabelForBindCache represents the label of the bind cache
 	LabelForBindCache int = -22
+	// LabelForAnalyzeMemory represents the label of the memory of each analyze job
+	LabelForAnalyzeMemory int = -22
+	// LabelForAnalyzeSharedMemory represents the label of the global memory of all analyze jobs
+	LabelForAnalyzeSharedMemory int = -23
 )
+
+// MetricsTypes is used to get label for metrics
+var MetricsTypes = map[int]string{
+	LabelForAnalyzeSharedMemory: "analyze-memory",
+}

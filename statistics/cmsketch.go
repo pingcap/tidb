@@ -690,6 +690,17 @@ func (c *TopN) RemoveVal(val []byte) {
 	c.TopN = append(c.TopN[:pos], c.TopN[pos+1:]...)
 }
 
+// EmptyTopNMemUsage is the size of empty TopN.
+var EmptyTopNMemUsage = int64(8) // TODO
+
+// MemoryUsage returns the total memory usage of a topn.
+func (c *TopN) MemoryUsage() (sum int64) {
+	for _, meta := range c.TopN {
+		sum += int64(cap(meta.Encoded)) + 8
+	}
+	return
+}
+
 // NewTopN creates the new TopN struct by the given size.
 func NewTopN(n int) *TopN {
 	return &TopN{TopN: make([]TopNMeta, 0, n)}

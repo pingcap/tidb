@@ -1958,6 +1958,19 @@ func (d *Datum) ToMysqlJSON() (j json.BinaryJSON, err error) {
 	return
 }
 
+// MemUsage gets the memory usage of datum.
+func (d *Datum) MemUsage() (sum int) {
+	switch d.Kind() {
+	case KindMysqlDecimal:
+		sum += sizeOfMyDecimal
+	case KindMysqlTime:
+		sum += sizeOfMysqlTime
+	default:
+		sum += len(d.b)
+	}
+	return sum
+}
+
 func invalidConv(d *Datum, tp byte) (Datum, error) {
 	return Datum{}, errors.Errorf("cannot convert datum from %s to type %s.", KindStr(d.Kind()), TypeStr(tp))
 }
@@ -2364,14 +2377,7 @@ func EstimatedMemUsage(array []Datum, numOfRows int) int64 {
 	}
 	var bytesConsumed int
 	for _, d := range array {
-		switch d.Kind() {
-		case KindMysqlDecimal:
-			bytesConsumed += sizeOfMyDecimal
-		case KindMysqlTime:
-			bytesConsumed += sizeOfMysqlTime
-		default:
-			bytesConsumed += len(d.b)
-		}
+		bytesConsumed += d.MemUsage()
 	}
 	bytesConsumed += len(array) * sizeOfEmptyDatum
 	return int64(bytesConsumed * numOfRows)

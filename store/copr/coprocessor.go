@@ -136,7 +136,6 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 	if sessionMemTracker != nil {
 		sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
 	}
-
 	if !it.req.Streaming {
 		ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)
 	}
@@ -298,7 +297,7 @@ type copIterator struct {
 	wg sync.WaitGroup
 	// closed represents when the Close is called.
 	// There are two cases we need to close the `finishCh` channel, one is when context is done, the other one is
-	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
+	// when the Close is called. we use atomic.CompareAndSwap `closed` to make sure the channel is not closed twice.
 	closed uint32
 
 	resolvedLocks  util.TSSet
