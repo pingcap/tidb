@@ -2362,15 +2362,10 @@ func collectPartitionInfosFromMPPPlan(p *PhysicalTableReader, mppPlan PhysicalPl
 }
 
 func collectRowSizeFromMPPPlan(mppPlan PhysicalPlan) (rowSize float64) {
-	switch x := mppPlan.(type) {
-	case *PhysicalTableScan:
-		rowSize += x.Stats().HistColl.GetAvgRowSize(x.ctx, x.schema.Columns, false, false)
-	default:
-		for _, ch := range mppPlan.Children() {
-			rowSize += collectRowSizeFromMPPPlan(ch)
-		}
+	if mppPlan != nil && mppPlan.Stats() != nil && mppPlan.Stats().HistColl != nil {
+		return mppPlan.Stats().HistColl.GetAvgRowSize(mppPlan.SCtx(), mppPlan.Schema().Columns, false, false)
 	}
-	return
+	return 1 // use 1 as lower-bound for safety
 }
 
 func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
@@ -2386,7 +2381,7 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	}.Init(ctx, t.p.SelectBlockOffset())
 	p.stats = t.p.statsInfo()
 	collectPartitionInfosFromMPPPlan(p, t.p)
-	rowSize := math.Max(collectRowSizeFromMPPPlan(t.p), 1) // use 1 as lower-bound for safety
+	rowSize := collectRowSizeFromMPPPlan(sender)
 
 	cst := t.cst + t.count()*rowSize*ctx.GetSessionVars().GetNetworkFactor(nil)
 	cst /= p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
