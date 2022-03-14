@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	atomicutil "go.uber.org/atomic"
 )
 
 const (
@@ -204,4 +205,23 @@ func GetTimeZone(sctx sessionctx.Context) (string, int) {
 	}
 	_, offset := time.Now().In(loc).Zone()
 	return "UTC", offset
+}
+
+// enableEmulatorGC means whether to enable emulator GC. The default is enable.
+// In some unit tests, we want to stop emulator GC, then wen can set enableEmulatorGC to 0.
+var emulatorGCEnable = atomicutil.NewInt32(1)
+
+// EmulatorGCEnable enables emulator gc. It exports for testing.
+func EmulatorGCEnable() {
+	emulatorGCEnable.Store(1)
+}
+
+// EmulatorGCDisable disables emulator gc. It exports for testing.
+func EmulatorGCDisable() {
+	emulatorGCEnable.Store(0)
+}
+
+// IsEmulatorGCEnable indicates whether emulator GC enabled. It exports for testing.
+func IsEmulatorGCEnable() bool {
+	return emulatorGCEnable.Load() == 1
 }
