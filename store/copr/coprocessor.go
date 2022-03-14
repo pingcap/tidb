@@ -1435,7 +1435,7 @@ func (r *CopRateLimiter) open() {
 
 func (r *CopRateLimiter) close() {
 	if r.isEnabled() {
-		atomic.StoreUint32(&r.enabled, 0)
+		r.setEnabled(0)
 		r.capMemTracker.UnRegisterFreeWatcher(r)
 	}
 }

@@ -471,5 +471,5 @@ func (ph PartitionHandle) Compare(h Handle) int {
 
 // MemUsage implements the Handle interface.
 func (ph PartitionHandle) MemUsage() int {
-	return ph.MemUsage() + 8
+	return ph.Handle.MemUsage() + 8
 }

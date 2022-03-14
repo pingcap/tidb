@@ -35,7 +35,7 @@ var (
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "memory_usage",
-			Help:      "Memory usage",
+			Help:      "Memory Usage",
 		}, []string{LblType})
 )
 
