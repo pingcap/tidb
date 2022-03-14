@@ -16,6 +16,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"go.uber.org/zap"
 )
 
@@ -49,10 +50,12 @@ func NewDB(g glue.Glue, store kv.Storage, policyMode string) (*DB, error) {
 		// Set placement mode for handle placement policy.
 		err = se.Execute(context.Background(), fmt.Sprintf("set @@tidb_placement_mode='%s';", policyMode))
 		if err != nil {
-			// There are two reason reach here
-			// if tidb version doesn't support placement mode, we can just ignore it.
-			// if set failed. the default mode in tidb is 'STRICT', so the behaviour works as default.
-			log.Warn("execute set tidb_placement_mode sql failed, ignore create policies", zap.Error(err))
+			if variable.ErrUnknownSystemVar.Equal(err) {
+				// not support placement policy, just ignore it
+				log.Warn("target tidb not support tidb_placement_mode, ignore create policies", zap.Error(err))
+			} else {
+				return nil, errors.Trace(err)
+			}
 		} else {
 			log.Info("set tidb_placement_mode success", zap.String("mode", policyMode))
 		}
