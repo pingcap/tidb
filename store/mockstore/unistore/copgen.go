@@ -232,7 +232,14 @@ func (c *TestGenConfig) Dump(path string) error {
 	if err != nil {
 		return err
 	}
+
+	c.ResetData()
 	return nil
+}
+
+func (c *TestGenConfig) ResetData() {
+	c.TableData = make(map[int64]*TableInfo)
+	c.RequestData = c.RequestData[:0]
 }
 
 func (c *TestGenConfig) IsTableInterested(tid int64) bool {

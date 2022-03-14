@@ -1,6 +1,7 @@
 package executor_test
 
 import (
+	"fmt"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -94,16 +95,15 @@ func TestCoprTest(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	require.NoError(t, testGen.Prepare())
 	tk.MustExec("set @@sql_mode=''")
-	tk.MustExec("set @@tidb_opt_projection_push_down=1")
+	//tk.MustExec("set @@tidb_opt_projection_push_down=1")
 	dir := "../../copr-test/push-down-test/sql"
 	var files []string
 	err = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if info.IsDir() {
 			return nil
 		}
-		if !strings.HasSuffix(info.Name(), ".sql") || strings.HasSuffix(info.Name(), "10_agg.sql") {
+		if !strings.HasSuffix(info.Name(), ".sql") || strings.HasSuffix(info.Name(), "3_compare_1.sql") || strings.HasSuffix(info.Name(), "10_agg.sql") {
 			return nil
 		}
 		files = append(files, path)
@@ -111,6 +111,7 @@ func TestCoprTest(t *testing.T) {
 	})
 	require.NoError(t, err)
 	for _, file := range files {
+		require.NoError(t, testGen.Prepare())
 		data, err := ioutil.ReadFile(file)
 		require.NoError(t, err)
 		statements, warns, err := parseSQLText(string(data))
@@ -121,6 +122,6 @@ func TestCoprTest(t *testing.T) {
 		for _, stmt := range statements {
 			tk.MustExec(stmt.Text())
 		}
+		require.NoError(t, testGen.Dump(fmt.Sprintf("/tmp/copr-test-%s.json", filepath.Base(file))))
 	}
-	require.NoError(t, testGen.Dump("/tmp/copr-test.json"))
 }
