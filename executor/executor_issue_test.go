@@ -1210,7 +1210,6 @@ func TestIssue33038(t *testing.T) {
 	tk.MustExec("insert into t(id) values (5)")
 	tk.MustQuery("select * from t where c = 5").Check(testkit.Rows("5 5"))
 
-
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_max_chunk_size=16")
 	tk.MustExec("create table t1 (id int, c int as (id))")
