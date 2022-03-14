@@ -66,6 +66,7 @@ type RetryInfo struct {
 	DroppedPreparedStmtIDs []uint32
 	autoIncrementIDs       retryInfoAutoIDs
 	autoRandomIDs          retryInfoAutoIDs
+	LastRcReadTS           uint64
 }
 
 // Clean does some clean work.
@@ -182,6 +183,9 @@ type TransactionContext struct {
 
 	// CachedTables is not nil if the transaction write on cached table.
 	CachedTables map[int64]interface{}
+
+	// Last tso used by read-consistency read.
+	LastRcReadTs uint64
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.
@@ -1008,6 +1012,8 @@ type SessionVars struct {
 	IgnorePreparedCacheCloseStmt bool
 	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
 	BatchPendingTiFlashCount int
+	// RcReadCheckTS indicates if tso check optimization is enabled for current session.
+	RcReadCheckTS bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -2346,4 +2352,22 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 		}
 	}
 	return s.seekFactor
+}
+
+// IsRcCheckTsRetryable checks if the current error is retryable for `RcReadCheckTS` path.
+func (s *SessionVars) IsRcCheckTsRetryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	// The `RCCheckTS` flag of `stmtCtx` is set.
+	return s.RcReadCheckTS && s.StmtCtx.RCCheckTS && errors.ErrorEqual(err, kv.ErrWriteConflict)
+}
+
+// NeedSetRCCheckTSFlag checks whether it's needed to set `RCCheckTS` flag in current stmtctx.
+func (s *SessionVars) NeedSetRCCheckTSFlag() bool {
+	if s.ConnectionID > 0 && s.RcReadCheckTS && s.InTxn() &&
+		s.IsPessimisticReadConsistency() && !s.RetryInfo.Retrying {
+		return true
+	}
+	return false
 }

@@ -1881,6 +1881,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.NotFillCache = !opts.SQLCache
 		}
 		sc.WeakConsistency = isWeakConsistencyRead(ctx, stmt)
+		// Try to mark the `RCCheckTS` flag for the first time execution of in-transaction read requests
+		// using read-consistency isolation level.
+		if ctx.GetSessionVars().NeedSetRCCheckTSFlag() {
+			sc.RCCheckTS = true
+		}
 	case *ast.SetOprStmt:
 		sc.InSelectStmt = true
 		sc.OverflowAsWarning = true

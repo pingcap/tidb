@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/mockstore/unistore/config"
 	"github.com/pingcap/tidb/store/mockstore/unistore/lockstore"
+	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/kverrors"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/store/mockstore/unistore/util/lockwaiter"
 	"github.com/stretchr/testify/require"
@@ -267,7 +268,7 @@ func MustPrewritePut(pk, key []byte, val []byte, startTs uint64, store *TestStor
 func MustPrewritePutLockErr(pk, key []byte, val []byte, startTs uint64, store *TestStore) {
 	err := PrewriteOptimistic(pk, key, val, startTs, lockTTL, startTs, false, [][]byte{}, store)
 	require.Error(store.t, err)
-	lockedErr := err.(*ErrLocked)
+	lockedErr := err.(*kverrors.ErrLocked)
 	require.NotNil(store.t, lockedErr)
 }
 
@@ -298,7 +299,7 @@ func MustPrewriteInsertAlreadyExists(pk, key []byte, val []byte, startTs uint64,
 	}
 	err := store.MvccStore.prewriteOptimistic(store.newReqCtx(), prewriteReq.Mutations, prewriteReq)
 	require.Error(store.t, err)
-	existErr := err.(*ErrKeyAlreadyExists)
+	existErr := err.(*kverrors.ErrKeyAlreadyExists)
 	require.NotNil(store.t, existErr)
 }
 
@@ -312,7 +313,7 @@ func MustPrewriteOpCheckExistAlreadyExist(pk, key []byte, startTs uint64, store 
 	}
 	err := store.MvccStore.prewriteOptimistic(store.newReqCtx(), prewriteReq.Mutations, prewriteReq)
 	require.Error(store.t, err)
-	existErr := err.(*ErrKeyAlreadyExists)
+	existErr := err.(*kverrors.ErrKeyAlreadyExists)
 	require.NotNil(store.t, existErr)
 }
 
@@ -635,7 +636,7 @@ func TestCheckTxnStatus(t *testing.T) {
 	lockTTL := uint64(100)
 	minCommitTs := uint64(20)
 	err = PrewriteOptimistic(pk, pk, val, startTs, lockTTL, minCommitTs, false, [][]byte{}, store)
-	require.ErrorIs(t, err, ErrAlreadyRollback)
+	require.ErrorIs(t, err, kverrors.ErrAlreadyRollback)
 
 	// Prewrite a large txn
 	startTs = 2
@@ -1721,7 +1722,7 @@ func TestAssertion(t *testing.T) {
 			return
 		}
 		require.NotNil(t, err)
-		e, ok := errors.Cause(err).(*ErrAssertionFailed)
+		e, ok := errors.Cause(err).(*kverrors.ErrAssertionFailed)
 		require.True(t, ok)
 		require.Equal(t, startTs, e.StartTS)
 		require.Equal(t, key, e.Key)
