@@ -45,7 +45,7 @@ echo "full backup meta v1 start..."
 rm -f $BACKUPMETAV1_LOG
 run_br backup full --log-file $BACKUPMETAV1_LOG -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
 
-# clear data and policy
+# clear data and policy fore restore.
 run_sql "DROP DATABASE $DB;"
 run_sql "DROP PLACEMENT POLICY fivereplicas;"
 
@@ -59,7 +59,7 @@ if [ "$policy_name" -ne "fivereplicas" ];then
     exit 1
 fi
 
-# clear data and policy
+# clear data and policy for restore.
 run_sql "DROP DATABASE $DB;"
 run_sql "DROP PLACEMENT POLICY fivereplicas;"
 
@@ -73,7 +73,7 @@ if [ "$policy_count" -ne "0" ];then
     exit 1
 fi
 
-# clear data and policy
+# clear data and policy for next case.
 run_sql "DROP DATABASE $DB;"
 
 echo "test backup db can ignore placement policy"
@@ -86,6 +86,7 @@ run_sql "insert into $DB.sbtest values ($i, $i, '$i', '$i');"
 
 run_br backup db --db $DB -s "local://$TEST_DIR/${DB}_db" --pd $PD_ADDR
 
+# clear data and policy for restore.
 run_sql "DROP DATABASE $DB;"
 run_sql "DROP PLACEMENT POLICY fivereplicas;"
 
@@ -98,6 +99,7 @@ if [ "$policy_count" -ne "0" ];then
     exit 1
 fi
 
+# clear data for next case.
 run_sql "DROP DATABASE $DB;"
 
 echo "test only restore related placement policy..."
@@ -113,7 +115,7 @@ run_sql "insert into $DB.sbtest values ($i, $i, '$i', '$i');"
 # backup table and policies
 run_br backup full -s "local://$TEST_DIR/${DB}_related" --pd $PD_ADDR
 
-# clear data and policies
+# clear data and policies for restore.
 run_sql "DROP DATABASE $DB;"
 run_sql "DROP PLACEMENT POLICY fivereplicas;"
 run_sql "DROP PLACEMENT POLICY tworeplicas;"
@@ -130,10 +132,14 @@ fi
 
 # which is fivereplicas...
 policy_name=$(run_sql "use $DB; show placement;" | grep "POLICY" | awk '{print $2}')
-if [ "$policy_name" -ne "fivereplicas" ];then
+if [ "$policy_name" = "fivereplicas" ];then
     echo "TEST: [$TEST_NAME] failed! due to policy restore failed"
     exit 1
 fi
+
+# clear data and policies for next case.
+run_sql "DROP DATABASE $DB;"
+run_sql "DROP PLACEMENT POLICY fivereplicas;"
 
 echo "test restore all placement policies..."
 run_sql "create schema $DB;"
@@ -148,7 +154,7 @@ run_sql "insert into $DB.sbtest values ($i, $i, '$i', '$i');"
 # backup table and policies
 run_br backup full -s "local://$TEST_DIR/${DB}_all" --pd $PD_ADDR
 
-# clear data and policies
+# clear data and policies for restore.
 run_sql "DROP DATABASE $DB;"
 run_sql "DROP PLACEMENT POLICY fivereplicas;"
 run_sql "DROP PLACEMENT POLICY tworeplicas;"
