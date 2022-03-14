@@ -93,8 +93,9 @@ type InsertValues struct {
 	// isLoadData indicates whatever current goroutine is use for generating batch data. LoadData use two goroutines. One for generate batch data,
 	// The other one for commit task, which will invalid txn.
 	// We use mutex to protect routine from using invalid txn.
-	isLoadData bool
-	txnInUse   sync.Mutex
+	isLoadData   bool
+	loadDataInfo *LoadDataInfo
+	txnInUse     sync.Mutex
 }
 
 type defaultVal struct {
@@ -761,8 +762,14 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 			}
 			// It's compatible with mysql setting the first allocated autoID to lastInsertID.
 			// Cause autoID may be specified by user, judge only the first row is not suitable.
-			if e.lastInsertID == 0 {
-				e.lastInsertID = uint64(min)
+			if !e.isLoadData {
+				if e.lastInsertID == 0 {
+					e.lastInsertID = uint64(min)
+				}
+			} else {
+				if e.loadDataInfo.Ctx.GetSessionVars().StmtCtx.LastInsertID == 0 {
+					e.loadDataInfo.Ctx.GetSessionVars().SetLastInsertID(uint64(min))
+				}
 			}
 			// Assign autoIDs to rows.
 			for j := 0; j < cnt; j++ {
@@ -830,8 +837,14 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 		}
 		// It's compatible with mysql setting the first allocated autoID to lastInsertID.
 		// Cause autoID may be specified by user, judge only the first row is not suitable.
-		if e.lastInsertID == 0 {
-			e.lastInsertID = uint64(recordID)
+		if !e.isLoadData {
+			if e.lastInsertID == 0 {
+				e.lastInsertID = uint64(recordID)
+			}
+		} else {
+			if e.loadDataInfo.Ctx.GetSessionVars().StmtCtx.LastInsertID == 0 {
+				e.loadDataInfo.Ctx.GetSessionVars().SetLastInsertID(uint64(recordID))
+			}
 		}
 	}
 
@@ -913,8 +926,14 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 		}
 		// It's compatible with mysql setting the first allocated autoID to lastInsertID.
 		// Cause autoID may be specified by user, judge only the first row is not suitable.
-		if e.lastInsertID == 0 {
-			e.lastInsertID = uint64(recordID)
+		if !e.isLoadData {
+			if e.lastInsertID == 0 {
+				e.lastInsertID = uint64(recordID)
+			}
+		} else {
+			if e.loadDataInfo.Ctx.GetSessionVars().StmtCtx.LastInsertID == 0 {
+				e.loadDataInfo.Ctx.GetSessionVars().SetLastInsertID(uint64(recordID))
+			}
 		}
 	}
 
@@ -1021,8 +1040,11 @@ func (e *InsertValues) rebaseImplicitRowID(ctx context.Context, recordID int64) 
 }
 
 func (e *InsertValues) handleWarning(err error) {
-	sc := e.ctx.GetSessionVars().StmtCtx
-	sc.AppendWarning(err)
+	if !e.isLoadData {
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+	} else {
+		e.loadDataInfo.Ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+	}
 }
 
 func (e *InsertValues) collectRuntimeStatsEnabled() bool {
@@ -1098,7 +1120,11 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 						return err2
 					}
 				} else {
-					e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
+					if !e.isLoadData {
+						e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
+					} else {
+						e.loadDataInfo.Ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
+					}
 					continue
 				}
 			} else if !kv.IsErrNotFound(err) {
@@ -1109,7 +1135,11 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			_, err := txn.Get(ctx, uk.newKey)
 			if err == nil {
 				// If duplicate keys were found in BatchGet, mark row = nil.
-				e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
+				if !e.isLoadData {
+					e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
+				} else {
+					e.loadDataInfo.Ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
+				}
 				skip = true
 				break
 			}
@@ -1122,7 +1152,12 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		// it should be add to values map for the further row check.
 		// There may be duplicate keys inside the insert statement.
 		if !skip {
-			e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
+			if !e.isLoadData {
+				e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
+			} else {
+				e.loadDataInfo.Ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
+			}
+
 			err = addRecord(ctx, rows[i])
 			if err != nil {
 				return err
@@ -1205,10 +1240,16 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 	if err != nil {
 		return err
 	}
-	vars.StmtCtx.AddAffectedRows(1)
-	if e.lastInsertID != 0 {
-		vars.SetLastInsertID(e.lastInsertID)
+	if !e.isLoadData {
+		vars.StmtCtx.AddAffectedRows(1)
+		if e.lastInsertID != 0 {
+			vars.SetLastInsertID(e.lastInsertID)
+		}
+	} else {
+		e.loadDataInfo.Ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
+		// lastInsertID not handle here again
 	}
+
 	return nil
 }
 

@@ -1582,13 +1582,17 @@ func processStream(ctx context.Context, cc *clientConn, loadDataInfo *executor.L
 				zap.Reflect("r", r),
 				zap.Stack("stack"))
 		}
+		if err != nil {
+			logutil.Logger(ctx).Error("processStream error", zap.Error(err))
+		}
 		if err != nil || r != nil {
-			loadDataInfo.ForceQuit()
+			loadDataInfo.ForceQuit(ctx)
 		} else {
 			loadDataInfo.CloseTaskQueue()
 		}
 		wg.Done()
 	}()
+
 	for {
 		curData, err = cc.readPacket()
 		if err != nil {
@@ -1653,11 +1657,21 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataInfo *executor
 	loadDataInfo.SetMaxRowsInBatch(uint64(loadDataInfo.Ctx.GetSessionVars().DMLBatchSize))
 	loadDataInfo.StartStopWatcher()
 	// let stop watcher goroutine quit
-	defer loadDataInfo.ForceQuit()
-	err = loadDataInfo.Ctx.NewTxn(ctx)
-	if err != nil {
-		return err
+	defer loadDataInfo.ForceQuit(ctx)
+	// 改成每个子任务单独启动事务
+	for i := 0; i < len(loadDataInfo.LoadDataInfoSubList); i++ {
+		loadDataInfo.LoadDataInfoSubList[i].Ctx, err = cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, nil)
+		if err != nil {
+			return err
+		}
+
+		loadDataInfo.LoadDataInfoSubList[i].SetTxnCtx(loadDataInfo.LoadDataInfoSubList[i].Ctx)
+		err = loadDataInfo.LoadDataInfoSubList[i].Ctx.NewTxn(ctx)
+		if err != nil {
+			return err
+		}
 	}
+
 	// processStream process input data, enqueue commit task
 	wg := new(sync.WaitGroup)
 	wg.Add(1)

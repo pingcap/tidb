@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -38,8 +39,9 @@ import (
 )
 
 var (
-	null          = []byte("NULL")
-	taskQueueSize = 16 // the maximum number of pending tasks to commit in queue
+	null                     = []byte("NULL")
+	taskQueueSize            = 16 // the maximum number of pending tasks to commit in queue
+	loadDataInfoSubQueueSize = taskQueueSize + 1
 )
 
 // LoadDataExec represents a load data executor.
@@ -64,7 +66,7 @@ func (e *LoadDataExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return errors.New("Load Data: don't support load data terminated is nil")
 	}
 
-	sctx := e.loadDataInfo.ctx
+	sctx := e.loadDataInfo.Ctx
 	val := sctx.Value(LoadDataVarKey)
 	if val != nil {
 		sctx.SetValue(LoadDataVarKey, nil)
@@ -85,32 +87,32 @@ func (e *LoadDataExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *LoadDataExec) Open(ctx context.Context) error {
-	if e.loadDataInfo.insertColumns != nil {
-		e.loadDataInfo.initEvalBuffer()
+	for i := 0; i < len(e.loadDataInfo.LoadDataInfoSubList); i++ {
+		if e.loadDataInfo.LoadDataInfoSubList[i].insertColumns != nil {
+			e.loadDataInfo.LoadDataInfoSubList[i].initEvalBuffer()
+		}
+		// Init for runtime stats.
+		e.loadDataInfo.LoadDataInfoSubList[i].collectRuntimeStatsEnabled()
 	}
-	// Init for runtime stats.
-	e.loadDataInfo.collectRuntimeStatsEnabled()
+
 	return nil
 }
 
 // CommitTask is used for fetching data from data preparing routine into committing routine.
 type CommitTask struct {
-	cnt  uint64
-	rows [][]types.Datum
+	loadDataInfoSub *LoadDataInfoSub
+	cnt             uint64
+	rows            [][]types.Datum
 }
 
 // LoadDataInfo saves the information of loading data operation.
 type LoadDataInfo struct {
-	*InsertValues
-
-	row         []types.Datum
+	Ctx         sessionctx.Context
 	Path        string
 	Table       table.Table
 	FieldsInfo  *ast.FieldsClause
 	LinesInfo   *ast.LinesClause
 	IgnoreLines uint64
-	Ctx         sessionctx.Context
-	rows        [][]types.Datum
 	Drained     bool
 
 	ColumnAssignments  []*ast.Assignment
@@ -121,12 +123,36 @@ type LoadDataInfo struct {
 	StopCh          chan struct{}
 	QuitCh          chan struct{}
 	OnDuplicate     ast.OnDuplicateKeyHandlingType
+
+	LoadDataInfoSubList    []*LoadDataInfoSub
+	LoadDataInfoSubQueue   chan *LoadDataInfoSub
+	CurrentLoadDataInfoSub *LoadDataInfoSub
+}
+
+// LoadDataInfoSub saves the information of sub loading data operation.
+type LoadDataInfoSub struct {
+	*InsertValues
+
+	Ctx          sessionctx.Context
+	rows         [][]types.Datum
+	loadDataInfo *LoadDataInfo
+}
+
+// SetTxnCtx save the ctx from context
+func (e *LoadDataInfoSub) SetTxnCtx(ctx sessionctx.Context) {
+	ctx.GetSessionVars().StmtCtx = e.ctx.GetSessionVars().StmtCtx
+	e.ctx = ctx
 }
 
 // FieldMapping inticates the relationship between input field and table column or user variable
 type FieldMapping struct {
 	Column  *table.Column
 	UserVar *ast.VariableExpr
+}
+
+func (e *LoadDataInfo) handleWarning(err error) {
+	sc := e.Ctx.GetSessionVars().StmtCtx
+	sc.AppendWarning(err)
 }
 
 // initLoadColumns sets columns which the input fields loaded to.
@@ -149,19 +175,22 @@ func (e *LoadDataInfo) initLoadColumns(columnNames []string) error {
 		cols = tableCols
 	}
 
-	for _, col := range cols {
-		if !col.IsGenerated() {
-			e.insertColumns = append(e.insertColumns, col)
-		}
-		if col.Name.L == model.ExtraHandleName.L {
-			if !e.ctx.GetSessionVars().AllowWriteRowID {
-				return errors.Errorf("load data statement for _tidb_rowid are not supported.")
+	for i := 0; i < len(e.LoadDataInfoSubList); i++ {
+		for _, col := range cols {
+			if !col.IsGenerated() {
+				e.LoadDataInfoSubList[i].insertColumns = append(e.LoadDataInfoSubList[i].insertColumns, col)
 			}
-			e.hasExtraHandle = true
-			break
+
+			if col.Name.L == model.ExtraHandleName.L {
+				if !e.LoadDataInfoSubList[i].ctx.GetSessionVars().AllowWriteRowID {
+					return errors.Errorf("load data statement for _tidb_rowid are not supported.")
+				}
+				e.LoadDataInfoSubList[i].hasExtraHandle = true
+				break
+			}
 		}
+		e.LoadDataInfoSubList[i].rowLen = len(e.LoadDataInfoSubList[i].insertColumns)
 	}
-	e.rowLen = len(e.insertColumns)
 	// Check column whether is specified only once.
 	err = table.CheckOnce(cols)
 	if err != nil {
@@ -211,12 +240,12 @@ func (e *LoadDataInfo) initFieldMappings() []string {
 }
 
 // GetRows getter for rows
-func (e *LoadDataInfo) GetRows() [][]types.Datum {
+func (e *LoadDataInfoSub) GetRows() [][]types.Datum {
 	return e.rows
 }
 
 // GetCurBatchCnt getter for curBatchCnt
-func (e *LoadDataInfo) GetCurBatchCnt() uint64 {
+func (e *LoadDataInfoSub) GetCurBatchCnt() uint64 {
 	return e.curBatchCnt
 }
 
@@ -228,7 +257,7 @@ func (e *LoadDataInfo) CloseTaskQueue() {
 // InitQueues initialize task queue and error report queue
 func (e *LoadDataInfo) InitQueues() {
 	e.commitTaskQueue = make(chan CommitTask, taskQueueSize)
-	e.StopCh = make(chan struct{}, 2)
+	e.StopCh = make(chan struct{}, 128)
 	e.QuitCh = make(chan struct{})
 }
 
@@ -241,23 +270,32 @@ func (e *LoadDataInfo) StartStopWatcher() {
 }
 
 // ForceQuit let commit quit directly
-func (e *LoadDataInfo) ForceQuit() {
+func (e *LoadDataInfo) ForceQuit(ctx context.Context) {
+	logutil.Logger(ctx).Info("ForceQuit() invoked start")
 	e.StopCh <- struct{}{}
+	logutil.Logger(ctx).Info("ForceQuit() invoked end")
 }
 
-// MakeCommitTask produce commit task with data in LoadDataInfo.rows LoadDataInfo.curBatchCnt
-func (e *LoadDataInfo) MakeCommitTask() CommitTask {
-	return CommitTask{e.curBatchCnt, e.rows}
+// MakeCommitTask produce commit task to invoke loadDataInfoSub MakeCommitTaskBySub
+func (e *LoadDataInfo) MakeCommitTask(loadDataInfoSub *LoadDataInfoSub) CommitTask {
+	return loadDataInfoSub.MakeCommitTaskBySub()
+}
+
+// MakeCommitTaskBySub produce commit task with data in LoadDataInfo.rows LoadDataInfo.curBatchCnt
+func (e *LoadDataInfoSub) MakeCommitTaskBySub() CommitTask {
+	return CommitTask{e, e.curBatchCnt, e.rows}
 }
 
 // EnqOneTask feed one batch commit task to commit work
 func (e *LoadDataInfo) EnqOneTask(ctx context.Context) error {
 	var err error
-	if e.curBatchCnt > 0 {
+
+	if e.CurrentLoadDataInfoSub != nil && e.CurrentLoadDataInfoSub.curBatchCnt > 0 {
 		sendOk := false
 		for !sendOk {
 			select {
-			case e.commitTaskQueue <- e.MakeCommitTask():
+			case e.commitTaskQueue <- e.MakeCommitTask(e.CurrentLoadDataInfoSub):
+				e.CurrentLoadDataInfoSub = nil
 				sendOk = true
 			case <-e.QuitCh:
 				err = errors.New("EnqOneTask forced to quit")
@@ -265,14 +303,12 @@ func (e *LoadDataInfo) EnqOneTask(ctx context.Context) error {
 				return err
 			}
 		}
-		// reset rows buffer, will reallocate buffer but NOT reuse
-		e.SetMaxRowsInBatch(e.maxRowsInBatch)
 	}
 	return err
 }
 
 // CommitOneTask insert Data from LoadDataInfo.rows, then make commit and refresh txn
-func (e *LoadDataInfo) CommitOneTask(ctx context.Context, task CommitTask) error {
+func (e *LoadDataInfoSub) CommitOneTask(ctx context.Context, task CommitTask) error {
 	var err error
 	defer func() {
 		if err != nil {
@@ -309,36 +345,68 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 				zap.Reflect("r", r),
 				zap.Stack("stack"))
 		}
-		if err != nil || r != nil {
-			e.ForceQuit()
-		}
 		if err != nil {
-			e.ctx.StmtRollback()
+			logutil.Logger(ctx).Error("CommitWork error", zap.Error(err))
+		}
+		if err != nil || r != nil {
+			e.ForceQuit(ctx)
 		}
 	}()
 	var tasks uint64
 	var end = false
+	var waitGroup sync.WaitGroup
 	for !end {
 		select {
 		case <-e.QuitCh:
 			err = errors.New("commit forced to quit")
-			logutil.Logger(ctx).Error("commit forced to quit, possible preparation failed")
+			logutil.Logger(ctx).Error("commit forced to quit, possible preparation failed", zap.Error(err))
 			return err
 		case commitTask, ok := <-e.commitTaskQueue:
 			if ok {
-				start := time.Now()
-				err = e.CommitOneTask(ctx, commitTask)
-				if err != nil {
-					break
-				}
 				tasks++
-				logutil.Logger(ctx).Info("commit one task success",
-					zap.Duration("commit time usage", time.Since(start)),
-					zap.Uint64("keys processed", commitTask.cnt),
-					zap.Uint64("tasks processed", tasks),
-					zap.Int("tasks in queue", len(e.commitTaskQueue)))
+				waitGroup.Add(1)
+				go func(commitTaskInner CommitTask, tasksInner uint64, tasksInQueueInner int) {
+					var innerErr error
+					defer func() {
+						r := recover()
+						if r != nil {
+							logutil.Logger(ctx).Error("CommitWorkSub panicked",
+								zap.Reflect("r", r),
+								zap.Stack("stack"))
+						}
+						if innerErr != nil {
+							logutil.Logger(ctx).Error("CommitWorkSub error", zap.Error(innerErr))
+						}
+						if innerErr != nil || r != nil {
+							e.ForceQuit(ctx)
+						}
+						if innerErr != nil {
+							commitTaskInner.loadDataInfoSub.Ctx.StmtRollback()
+						}
+					}()
+
+					defer func() {
+						err = innerErr
+						// reset rows buffer, will reallocate buffer but NOT reuse
+						commitTaskInner.loadDataInfoSub.SetMaxRowsInBatchBySub(commitTaskInner.loadDataInfoSub.maxRowsInBatch)
+						commitTaskInner.loadDataInfoSub.loadDataInfo.LoadDataInfoSubQueue <- commitTaskInner.loadDataInfoSub
+						waitGroup.Done()
+					}()
+
+					start := time.Now()
+					innerErr = commitTaskInner.loadDataInfoSub.CommitOneTask(ctx, commitTaskInner)
+					if innerErr != nil {
+						return
+					}
+					logutil.Logger(ctx).Info("commit one task success",
+						zap.Duration("commit time usage", time.Since(start)),
+						zap.Uint64("keys processed", commitTask.cnt),
+						zap.Uint64("tasks processed", tasksInner),
+						zap.Int("tasks in queue", tasksInQueueInner))
+				}(commitTask, tasks, len(e.commitTaskQueue))
 			} else {
 				end = true
+				waitGroup.Wait()
 			}
 		}
 		if err != nil {
@@ -356,6 +424,15 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 
 // SetMaxRowsInBatch sets the max number of rows to insert in a batch.
 func (e *LoadDataInfo) SetMaxRowsInBatch(limit uint64) {
+	for i := 0; i < len(e.LoadDataInfoSubList); i++ {
+		e.LoadDataInfoSubList[i].maxRowsInBatch = limit
+		e.LoadDataInfoSubList[i].rows = make([][]types.Datum, 0, limit)
+		e.LoadDataInfoSubList[i].curBatchCnt = 0
+	}
+}
+
+// SetMaxRowsInBatchBySub sets the max number of rows to insert in a batch.
+func (e *LoadDataInfoSub) SetMaxRowsInBatchBySub(limit uint64) {
 	e.maxRowsInBatch = limit
 	e.rows = make([][]types.Datum, 0, limit)
 	e.curBatchCnt = 0
@@ -501,6 +578,17 @@ func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte)
 		isEOF = true
 		prevData, curData = curData, prevData
 	}
+
+	if e.CurrentLoadDataInfoSub == nil {
+		// 获取每个子任务
+		currentLoadDataInfoSub, ok := <-e.LoadDataInfoSubQueue
+		if ok {
+			e.CurrentLoadDataInfoSub = currentLoadDataInfoSub
+		} else {
+			return nil, false, errors.New("can not get currentLoadDataInfoSub from e.LoadDataInfoSubQueue")
+		}
+	}
+
 	for len(curData) > 0 {
 		line, curData, hasStarting = e.getLine(prevData, curData, e.IgnoreLines > 0)
 		prevData = nil
@@ -531,13 +619,15 @@ func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte)
 		}
 		// rowCount will be used in fillRow(), last insert ID will be assigned according to the rowCount = 1.
 		// So should add first here.
-		e.rowCount++
-		e.rows = append(e.rows, e.colsToRow(ctx, cols))
-		e.curBatchCnt++
-		if e.maxRowsInBatch != 0 && e.rowCount%e.maxRowsInBatch == 0 {
+		e.CurrentLoadDataInfoSub.rowCount++
+		e.CurrentLoadDataInfoSub.rows = append(e.CurrentLoadDataInfoSub.rows, e.CurrentLoadDataInfoSub.colsToRow(ctx, cols))
+		e.CurrentLoadDataInfoSub.curBatchCnt++
+		if e.CurrentLoadDataInfoSub.maxRowsInBatch != 0 &&
+			e.CurrentLoadDataInfoSub.rowCount%e.CurrentLoadDataInfoSub.maxRowsInBatch == 0 {
 			reachLimit = true
-			logutil.Logger(ctx).Info("batch limit hit when inserting rows", zap.Int("maxBatchRows", e.maxChunkSize),
-				zap.Uint64("totalRows", e.rowCount))
+			logutil.Logger(ctx).Info("batch limit hit when inserting rows",
+				zap.Int("maxBatchRows", e.CurrentLoadDataInfoSub.maxChunkSize),
+				zap.Uint64("totalRows", e.CurrentLoadDataInfoSub.rowCount))
 			break
 		}
 	}
@@ -545,7 +635,7 @@ func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte)
 }
 
 // CheckAndInsertOneBatch is used to commit one transaction batch full filled data
-func (e *LoadDataInfo) CheckAndInsertOneBatch(ctx context.Context, rows [][]types.Datum, cnt uint64) error {
+func (e *LoadDataInfoSub) CheckAndInsertOneBatch(ctx context.Context, rows [][]types.Datum, cnt uint64) error {
 	if e.stats != nil && e.stats.BasicRuntimeStats != nil {
 		// Since this method will not call by executor Next,
 		// so we need record the basic executor runtime stats by ourself.
@@ -558,10 +648,12 @@ func (e *LoadDataInfo) CheckAndInsertOneBatch(ctx context.Context, rows [][]type
 	if cnt == 0 {
 		return err
 	}
-	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(cnt)
+	// 在loadDataInfo里计数
+	// e.ctx.GetSessionVars().StmtCtx.AddRecordRows(cnt)
+	e.loadDataInfo.Ctx.GetSessionVars().StmtCtx.AddRecordRows(cnt)
 
 	replace := false
-	if e.OnDuplicate == ast.OnDuplicateKeyHandlingReplace {
+	if e.loadDataInfo.OnDuplicate == ast.OnDuplicateKeyHandlingReplace {
 		replace = true
 	}
 
@@ -575,29 +667,29 @@ func (e *LoadDataInfo) CheckAndInsertOneBatch(ctx context.Context, rows [][]type
 // SetMessage sets info message(ERR_LOAD_INFO) generated by LOAD statement, it is public because of the special way that
 // LOAD statement is handled.
 func (e *LoadDataInfo) SetMessage() {
-	stmtCtx := e.ctx.GetSessionVars().StmtCtx
+	stmtCtx := e.Ctx.GetSessionVars().StmtCtx
 	numRecords := stmtCtx.RecordRows()
 	numDeletes := stmtCtx.DeletedRows()
 	numSkipped := numRecords - stmtCtx.CopiedRows()
 	numWarnings := stmtCtx.WarningCount()
 	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
-	e.ctx.GetSessionVars().StmtCtx.SetMessage(msg)
+	e.Ctx.GetSessionVars().StmtCtx.SetMessage(msg)
 }
 
-func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datum {
+func (e *LoadDataInfoSub) colsToRow(ctx context.Context, cols []field) []types.Datum {
 	row := make([]types.Datum, 0, len(e.insertColumns))
 
-	for i := 0; i < len(e.FieldMappings); i++ {
+	for i := 0; i < len(e.loadDataInfo.FieldMappings); i++ {
 		if i >= len(cols) {
-			if e.FieldMappings[i].Column == nil {
+			if e.loadDataInfo.FieldMappings[i].Column == nil {
 				sessionVars := e.Ctx.GetSessionVars()
-				sessionVars.SetUserVar(e.FieldMappings[i].UserVar.Name, "", mysql.DefaultCollationName)
+				sessionVars.SetUserVar(e.loadDataInfo.FieldMappings[i].UserVar.Name, "", mysql.DefaultCollationName)
 				continue
 			}
 
 			// If some columns is missing and their type is time and has not null flag, they should be set as current time.
-			if types.IsTypeTime(e.FieldMappings[i].Column.Tp) && mysql.HasNotNullFlag(e.FieldMappings[i].Column.Flag) {
-				row = append(row, types.NewTimeDatum(types.CurrentTime(e.FieldMappings[i].Column.Tp)))
+			if types.IsTypeTime(e.loadDataInfo.FieldMappings[i].Column.Tp) && mysql.HasNotNullFlag(e.loadDataInfo.FieldMappings[i].Column.Flag) {
+				row = append(row, types.NewTimeDatum(types.CurrentTime(e.loadDataInfo.FieldMappings[i].Column.Tp)))
 				continue
 			}
 
@@ -605,9 +697,9 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 			continue
 		}
 
-		if e.FieldMappings[i].Column == nil {
+		if e.loadDataInfo.FieldMappings[i].Column == nil {
 			sessionVars := e.Ctx.GetSessionVars()
-			sessionVars.SetUserVar(e.FieldMappings[i].UserVar.Name, string(cols[i].str), mysql.DefaultCollationName)
+			sessionVars.SetUserVar(e.loadDataInfo.FieldMappings[i].UserVar.Name, string(cols[i].str), mysql.DefaultCollationName)
 			continue
 		}
 
@@ -620,11 +712,11 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 
 		row = append(row, types.NewDatum(string(cols[i].str)))
 	}
-	for i := 0; i < len(e.ColumnAssignments); i++ {
+	for i := 0; i < len(e.loadDataInfo.ColumnAssignments); i++ {
 		// eval expression of `SET` clause
-		d, err := expression.EvalAstExpr(e.Ctx, e.ColumnAssignments[i].Expr)
+		d, err := expression.EvalAstExpr(e.Ctx, e.loadDataInfo.ColumnAssignments[i].Expr)
 		if err != nil {
-			e.handleWarning(err)
+			e.loadDataInfo.handleWarning(err)
 			return nil
 		}
 		row = append(row, d)
@@ -633,20 +725,19 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 	// a new row buffer will be allocated in getRow
 	newRow, err := e.getRow(ctx, row)
 	if err != nil {
-		e.handleWarning(err)
+		e.loadDataInfo.handleWarning(err)
 		return nil
 	}
-
 	return newRow
 }
 
-func (e *LoadDataInfo) addRecordLD(ctx context.Context, row []types.Datum) error {
+func (e *LoadDataInfoSub) addRecordLD(ctx context.Context, row []types.Datum) error {
 	if row == nil {
 		return nil
 	}
 	err := e.addRecord(ctx, row)
 	if err != nil {
-		e.handleWarning(err)
+		e.loadDataInfo.handleWarning(err)
 		return err
 	}
 	return nil
