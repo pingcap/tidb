@@ -534,6 +534,7 @@ func (t *Tracker) setParent(parent *Tracker) {
 	t.parMu.parent = parent
 }
 
+// FindAncestor finds the ancestor based on label
 func (t *Tracker) FindAncestor(label int) *Tracker {
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
 		if tracker.label == label {
@@ -543,23 +544,27 @@ func (t *Tracker) FindAncestor(label int) *Tracker {
 	return nil
 }
 
+// FreeWatcher is implemented by those who needs to watch free memory to take actions.
 type FreeWatcher interface {
 	OnFreeAllocated(bytesAllocated int64)
 	Weight() int64
 }
 
+// RegisterFreeWatcher registers implementation of FreeWatcher to Tracker
 func (t *Tracker) RegisterFreeWatcher(freeWatcher FreeWatcher) {
 	t.fwMu.Lock()
 	defer t.fwMu.Unlock()
 	t.fwMu.freeWatchers[freeWatcher] = struct{}{}
 }
 
+// UnRegisterFreeWatcher unregisters implementation of FreeWatcher from Tracker
 func (t *Tracker) UnRegisterFreeWatcher(freeWatcher FreeWatcher) {
 	t.fwMu.Lock()
 	defer t.fwMu.Unlock()
 	delete(t.fwMu.freeWatchers, freeWatcher)
 }
 
+// AllocateForFreeWatchers allocates memory to watchers when some is freed
 func (t *Tracker) AllocateForFreeWatchers(bytesConsumed int64, bytes int64) {
 	if bytes < t.bytesSoftLimit/100 {
 		return

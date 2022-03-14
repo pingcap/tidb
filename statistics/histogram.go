@@ -127,6 +127,7 @@ func (hg *Histogram) GetUpper(idx int) *types.Datum {
 	return &d
 }
 
+// EmptyHistogramMemUsage is the size of empty Histogram.
 var EmptyHistogramMemUsage = int64(48) // TODO
 
 // MemoryUsage returns the total memory usage of this Histogram.

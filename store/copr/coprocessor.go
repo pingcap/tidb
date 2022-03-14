@@ -1372,6 +1372,7 @@ func isolationLevelToPB(level kv.IsoLevel) kvrpcpb.IsolationLevel {
 	}
 }
 
+// CopRateLimiter is used to limit the sendRate of request to TiKV based on free memory.
 type CopRateLimiter struct {
 	// immutable attributes of limiter
 	minCapacity   uint32
@@ -1487,9 +1488,8 @@ func (r *CopRateLimiter) onCurTaskFinished() {
 		if r.curCapacity > r.targetCapacity {
 			r.curCapacity -= 1
 			return
-		} else {
-			r.sendRate.PutToken()
 		}
+		r.sendRate.PutToken()
 	}
 }
 
@@ -1545,7 +1545,6 @@ func (r *CopRateLimiter) Weight() int64 {
 	defer r.RUnlock()
 	if r.isEnabled() && r.finTaskNum >= r.minCapacity {
 		return r.avgTaskRespSize * int64(r.totalTaskNum)
-	} else {
-		return 0
 	}
+	return 0
 }

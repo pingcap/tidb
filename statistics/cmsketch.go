@@ -690,6 +690,7 @@ func (c *TopN) RemoveVal(val []byte) {
 	c.TopN = append(c.TopN[:pos], c.TopN[pos+1:]...)
 }
 
+// EmptyTopNMemUsage is the size of empty TopN.
 var EmptyTopNMemUsage = int64(8) // TODO
 
 // MemoryUsage returns the total memory usage of a topn.

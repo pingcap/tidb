@@ -29,6 +29,7 @@ var (
 			Help:      "Counter of panic.",
 		}, []string{LblType})
 
+	// MemoryUsage measures the usage gauge of memory.
 	MemoryUsage = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
