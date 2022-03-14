@@ -15,6 +15,7 @@
 package stmtctx
 
 import (
+	"github.com/pingcap/tidb/parser/ast"
 	"math"
 	"sort"
 	"strconv"
@@ -262,6 +263,9 @@ type StmtHints struct {
 	HasMaxExecutionTime            bool
 	HasEnableCascadesPlannerHint   bool
 	SetVars                        map[string]string
+
+	// the original table hints
+	OriginalTableHints []*ast.TableOptimizerHint
 }
 
 // TaskMapNeedBackUp indicates that whether we need to back up taskMap during physical optimizing.

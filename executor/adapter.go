@@ -1171,6 +1171,7 @@ func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool) (
 	}
 	if genHint {
 		hints := plannercore.GenHintsFromPhysicalPlan(p)
+		hints = append(hints, sctx.GetSessionVars().StmtCtx.OriginalTableHints...)
 		hintStr = hint.RestoreOptimizerHints(hints)
 		sctx.GetSessionVars().StmtCtx.SetPlanHint(hintStr)
 	}
