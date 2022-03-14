@@ -958,6 +958,8 @@ func (s *stateChangeSuite) TestParallelAlterModifyColumn() {
 }
 
 func (s *stateChangeSuite) TestParallelAlterModifyColumnWithData() {
+	// modify column: double -> int
+	// modify column: double -> int
 	sql := "ALTER TABLE t MODIFY COLUMN c int;"
 	f := func(err1, err2 error) {
 		s.Require().NoError(err1)
@@ -977,9 +979,56 @@ func (s *stateChangeSuite) TestParallelAlterModifyColumnWithData() {
 		s.Require().NoError(rs.Close())
 	}
 	s.testControlParallelExecSQL("", sql, sql, f)
+
+	// modify column: int -> double
+	// rename column: double -> int
+	sql1 := "ALTER TABLE t MODIFY b double;"
+	sql2 := "ALTER TABLE t RENAME COLUMN b to bb;"
+	f = func(err1, err2 error) {
+		s.Require().Nil(err1)
+		s.Require().Nil(err2)
+		rs, err := s.tk.Exec("select * from t")
+		s.Require().NoError(err)
+		sRows, err := session.ResultSetToStringSlice(context.Background(), s.tk.Session(), rs)
+		s.Require().NoError(err)
+		s.Require().Equal("2", sRows[0][1])
+		s.Require().NoError(rs.Close())
+		s.tk.MustExec("insert into t values(11, 22.2, 33, 44, 55)")
+		rs, err = s.tk.Exec("select * from t")
+		s.Require().NoError(err)
+		sRows, err = session.ResultSetToStringSlice(context.Background(), s.tk.Session(), rs)
+		s.Require().NoError(err)
+		s.Require().Equal("22", sRows[1][1])
+		s.Require().NoError(rs.Close())
+	}
+	s.testControlParallelExecSQL("", sql1, sql2, f)
+
+	// modify column: int -> double
+	// modify column: double -> int
+	sql2 = "ALTER TABLE t CHANGE b bb int;"
+	f = func(err1, err2 error) {
+		s.Require().Nil(err1)
+		s.Require().Nil(err2)
+		rs, err := s.tk.Exec("select * from t")
+		s.Require().NoError(err)
+		sRows, err := session.ResultSetToStringSlice(context.Background(), s.tk.Session(), rs)
+		s.Require().NoError(err)
+		s.Require().Equal("2", sRows[0][1])
+		s.Require().NoError(rs.Close())
+		s.tk.MustExec("insert into t values(11, 22.2, 33, 44, 55)")
+		rs, err = s.tk.Exec("select * from t")
+		s.Require().NoError(err)
+		sRows, err = session.ResultSetToStringSlice(context.Background(), s.tk.Session(), rs)
+		s.Require().NoError(err)
+		s.Require().Equal("22", sRows[1][1])
+		s.Require().NoError(rs.Close())
+	}
+	s.testControlParallelExecSQL("", sql1, sql2, f)
 }
 
 func (s *stateChangeSuite) TestParallelAlterModifyColumnToNotNullWithData() {
+	// double null -> int not null
+	// double null -> int not null
 	sql := "ALTER TABLE t MODIFY COLUMN c int not null;"
 	f := func(err1, err2 error) {
 		s.Require().NoError(err1)
@@ -1001,6 +1050,32 @@ func (s *stateChangeSuite) TestParallelAlterModifyColumnToNotNullWithData() {
 		s.Require().NoError(rs.Close())
 	}
 	s.testControlParallelExecSQL("", sql, sql, f)
+
+	// int null -> double not null
+	// double not null -> int null
+	sql1 := "ALTER TABLE t CHANGE b b double not null;"
+	sql2 := "ALTER TABLE t CHANGE b bb int null;"
+	f = func(err1, err2 error) {
+		s.Require().Nil(err1)
+		s.Require().Nil(err2)
+		rs, err := s.tk.Exec("select * from t")
+		s.Require().NoError(err)
+		sRows, err := session.ResultSetToStringSlice(context.Background(), s.tk.Session(), rs)
+		s.Require().NoError(err)
+		s.Require().Equal("2", sRows[0][1])
+		s.Require().NoError(rs.Close())
+		err = s.tk.ExecToErr("insert into t values(11, null, 33, 44, 55)")
+		s.Require().NoError(err)
+		s.tk.MustExec("insert into t values(11, 22.2, 33, 44, 55)")
+		rs, err = s.tk.Exec("select * from t")
+		s.Require().NoError(err)
+		sRows, err = session.ResultSetToStringSlice(context.Background(), s.tk.Session(), rs)
+		s.Require().NoError(err)
+		s.Require().Equal("<nil>", sRows[1][1])
+		s.Require().Equal("22", sRows[2][1])
+		s.Require().NoError(rs.Close())
+	}
+	s.testControlParallelExecSQL("", sql1, sql2, f)
 }
 
 func (s *stateChangeSuite) TestParallelAddGeneratedColumnAndAlterModifyColumn() {
