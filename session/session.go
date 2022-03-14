@@ -232,7 +232,10 @@ type session struct {
 
 	cache [1]ast.StmtNode
 
-	builtinFunctionUsage telemetry.BuiltinFunctionsUsage
+	functionUsageMu struct {
+		sync.RWMutex
+		builtinFunctionUsage telemetry.BuiltinFunctionsUsage
+	}
 	// allowed when tikv disk full happened.
 	diskFullOpt kvrpcpb.DiskFullOpt
 
@@ -2948,14 +2951,14 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		return nil, err
 	}
 	s := &session{
-		store:                store,
-		sessionVars:          variable.NewSessionVars(),
-		ddlOwnerChecker:      dom.DDL().OwnerManager(),
-		client:               store.GetClient(),
-		mppClient:            store.GetMPPClient(),
-		builtinFunctionUsage: make(telemetry.BuiltinFunctionsUsage),
-		stmtStats:            stmtstats.CreateStatementStats(),
+		store:           store,
+		sessionVars:     variable.NewSessionVars(),
+		ddlOwnerChecker: dom.DDL().OwnerManager(),
+		client:          store.GetClient(),
+		mppClient:       store.GetMPPClient(),
+		stmtStats:       stmtstats.CreateStatementStats(),
 	}
+	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 	if plannercore.PreparedPlanCacheEnabled() {
 		if opt != nil && opt.PreparedPlanCache != nil {
 			s.preparedPlanCache = opt.PreparedPlanCache
@@ -2983,13 +2986,13 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 // a lock context, which cause we can't call createSession directly.
 func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
 	s := &session{
-		store:                store,
-		sessionVars:          variable.NewSessionVars(),
-		client:               store.GetClient(),
-		mppClient:            store.GetMPPClient(),
-		builtinFunctionUsage: make(telemetry.BuiltinFunctionsUsage),
-		stmtStats:            stmtstats.CreateStatementStats(),
+		store:       store,
+		sessionVars: variable.NewSessionVars(),
+		client:      store.GetClient(),
+		mppClient:   store.GetMPPClient(),
+		stmtStats:   stmtstats.CreateStatementStats(),
 	}
+	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
 			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
@@ -3440,8 +3443,22 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 	}
 }
 
+// GetBuiltinFunctionUsage returns the replica of counting of builtin function usage
 func (s *session) GetBuiltinFunctionUsage() map[string]uint32 {
-	return s.builtinFunctionUsage
+	s.functionUsageMu.RLock()
+	defer s.functionUsageMu.RUnlock()
+	replica := make(map[string]uint32)
+	for key, value := range s.functionUsageMu.builtinFunctionUsage {
+		replica[key] = value
+	}
+	return replica
+}
+
+// BuiltinFunctionUsageInc increase the counting of the builtin function usage
+func (s *session) BuiltinFunctionUsageInc(scalarFuncSigName string) {
+	s.functionUsageMu.Lock()
+	defer s.functionUsageMu.Unlock()
+	s.functionUsageMu.builtinFunctionUsage.Inc(scalarFuncSigName)
 }
 
 func (s *session) getSnapshotInterceptor() kv.SnapshotInterceptor {
