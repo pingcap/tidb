@@ -71,7 +71,10 @@ func (i ReservoirRowSampleItem) MemUsage() (sum int) {
 	for _, col := range i.Columns {
 		sum += col.MemUsage()
 	}
-	sum += 8 + i.Handle.MemUsage()
+	sum = 8
+	if i.Handle != nil {
+		sum += i.Handle.MemUsage()
+	}
 	return sum
 }
 
