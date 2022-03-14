@@ -54,9 +54,12 @@ func TestColumnAdd(t *testing.T) {
 		deleteOnlyTable table.Table
 		writeOnlyTable  table.Table
 		publicTable     table.Table
+		dropCol         *table.Column
 	)
 	first := true
+	var jobID int64
 	tc.OnJobUpdatedExported = func(job *model.Job) {
+		jobID = job.ID
 		require.NoError(t, dom.Reload())
 		tbl, exist := dom.InfoSchema().TableByID(job.TableID)
 		require.True(t, exist)
@@ -79,10 +82,10 @@ func TestColumnAdd(t *testing.T) {
 	d.SetHook(tc)
 	tk.MustExec("alter table t add column c3 int default 3")
 	tb := publicTable
+	v := getSchemaVer(t, tk.Session())
+	checkHistoryJobArgs(t, tk.Session(), jobID, &historyJobArgs{ver: v, tbl: tb.Meta()})
 
 	// Drop column.
-	var dropCol *table.Column
-	var jobID int64
 	first = true
 	tc.OnJobUpdatedExported = func(job *model.Job) {
 		jobID = job.ID
@@ -103,7 +106,8 @@ func TestColumnAdd(t *testing.T) {
 	}
 	d.SetHook(tc)
 	tk.MustExec("alter table t drop column c3")
-	v := getSchemaVer(t, tk.Session())
+	v = getSchemaVer(t, tk.Session())
+	// Don't check column, so it's ok to use tb.
 	checkHistoryJobArgs(t, tk.Session(), jobID, &historyJobArgs{ver: v, tbl: tb.Meta()})
 
 	// Add column not default.
