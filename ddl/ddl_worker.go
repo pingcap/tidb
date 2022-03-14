@@ -643,7 +643,11 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 		runJobErr error
 		waitTime  = 2 * d.lease
 	)
-
+	if util.IsAllowedOnAlreadyFull(job) {
+		w.sessForJob.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
+	} else {
+		w.sessForJob.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
+	}
 	w.setDDLLabelForTopSQL(job)
 	err := w.sessForJob.NewTxn(w.ctx)
 	if err != nil {
@@ -651,27 +655,15 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}) error
 	}
 	w.sessForJob.PrepareTSFuture(w.ctx)
 	txn, err := w.sessForJob.Txn(true)
-	switch job.Type {
-	case model.ActionDropSchema,
-		model.ActionDropTable,
-		model.ActionDropColumn,
-		model.ActionDropIndex,
-		model.ActionDropForeignKey,
-		model.ActionTruncateTable,
-		model.ActionDropView,
-		model.ActionDropPrimaryKey,
-		model.ActionDropSequence,
-		model.ActionDropColumns,
-		model.ActionDropCheckConstraint,
-		model.ActionDropIndexes,
-		model.ActionDropPlacementPolicy:
-		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
-	default:
-		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
-	}
 	if err != nil {
 		return err
 	}
+	if util.IsAllowedOnAlreadyFull(job) {
+		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
+	} else {
+		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
+	}
+
 	w.sessForJob.GetSessionVars().SetInTxn(true)
 	t := meta.NewMeta(txn)
 

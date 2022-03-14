@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -427,22 +428,9 @@ func (d *ddl) addDDLJobs(jobs []*model.Job) error {
 	notAllowJobs := make([]*model.Job, len(jobs))
 	allowJobs := make([]*model.Job, len(jobs))
 	for _, job := range jobs {
-		switch job.Type {
-		case model.ActionDropSchema,
-			model.ActionDropTable,
-			model.ActionDropColumn,
-			model.ActionDropIndex,
-			model.ActionDropForeignKey,
-			model.ActionTruncateTable,
-			model.ActionDropView,
-			model.ActionDropPrimaryKey,
-			model.ActionDropSequence,
-			model.ActionDropColumns,
-			model.ActionDropCheckConstraint,
-			model.ActionDropIndexes,
-			model.ActionDropPlacementPolicy:
+		if util.IsAllowedOnAlreadyFull(job) {
 			allowJobs = append(allowJobs, job)
-		default:
+		} else {
 			notAllowJobs = append(notAllowJobs, job)
 		}
 	}

@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -204,4 +205,25 @@ func GetTimeZone(sctx sessionctx.Context) (string, int) {
 	}
 	_, offset := time.Now().In(loc).Zone()
 	return "UTC", offset
+}
+
+func IsAllowedOnAlreadyFull(job *model.Job) bool {
+	switch job.Type {
+	case model.ActionDropSchema,
+		model.ActionDropTable,
+		model.ActionDropColumn,
+		model.ActionDropIndex,
+		model.ActionDropForeignKey,
+		model.ActionTruncateTable,
+		model.ActionDropView,
+		model.ActionDropPrimaryKey,
+		model.ActionDropSequence,
+		model.ActionDropColumns,
+		model.ActionDropCheckConstraint,
+		model.ActionDropIndexes,
+		model.ActionDropPlacementPolicy:
+		return true
+	default:
+		return false
+	}
 }
