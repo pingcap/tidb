@@ -73,6 +73,22 @@ func (c *bindCache) get(key bindCacheKey) []*BindRecord {
 	return typedValue
 }
 
+// getCopiedVal gets a copied cache item according to cache key.
+// The return value can be modified.
+// If you want to modify the return value, use the 'getCopiedVal' function rather than 'get' function.
+// We use the copy on write way to operate the bindRecord in cache for safety and accuracy of memory usage.
+func (c *bindCache) getCopiedVal(key bindCacheKey) []*BindRecord {
+	bindRecords := c.get(key)
+	if bindRecords != nil {
+		copiedRecords := make([]*BindRecord, len(bindRecords))
+		for i, bindRecord := range bindRecords {
+			copiedRecords[i] = bindRecord.shallowCopy()
+		}
+		return copiedRecords
+	}
+	return bindRecords
+}
+
 // set inserts an item to the cache. It's not thread-safe.
 // Only other functions of the bindCache can use this function.
 func (c *bindCache) set(key bindCacheKey, value []*BindRecord) bool {
@@ -144,7 +160,7 @@ func (c *bindCache) SetBindRecord(hash string, meta *BindRecord) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	cacheKey := bindCacheKey(hash)
-	metas := c.get(cacheKey)
+	metas := c.getCopiedVal(cacheKey)
 	for i := range metas {
 		if metas[i].OriginalSQL == meta.OriginalSQL {
 			metas[i] = meta
@@ -158,7 +174,7 @@ func (c *bindCache) SetBindRecord(hash string, meta *BindRecord) {
 func (c *bindCache) RemoveBindRecord(hash string, meta *BindRecord) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	metas := c.get(bindCacheKey(hash))
+	metas := c.getCopiedVal(bindCacheKey(hash))
 	if metas == nil {
 		return
 	}
@@ -185,6 +201,14 @@ func (c *bindCache) SetMemCapacity(capacity int64) {
 	defer c.lock.Unlock()
 	// Only change the capacity size without affecting the cached bindRecord
 	c.memCapacity = capacity
+}
+
+// GetMemUsage get the memory Usage for the cache.
+// The function is thread-safe.
+func (c *bindCache) GetMemUsage() int64 {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	return c.memTracker.BytesConsumed()
 }
 
 // GetMemCapacity get the memory capacity for the cache.
