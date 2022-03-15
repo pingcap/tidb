@@ -2337,9 +2337,8 @@ func NewAnalyzeResultsNotifyWaitGroupWrapper(notify chan *statistics.AnalyzeResu
 	}
 }
 
-// Run runs a function in a goroutine, adds 1 to WaitGroup
-// and calls done when function returns. Please DO NOT use panic
-// in the cb function.
+// Run runs a function in a goroutine and calls done when function returns.
+// Please DO NOT use panic in the cb function.
 func (w *analyzeResultsNotifyWaitGroupWrapper) Run(exec func()) {
 	old := w.cnt.Inc() - 1
 	go func(cnt uint64) {
@@ -2370,9 +2369,8 @@ func newNotifyErrorWaitGroupWrapper(notify chan error) *notifyErrorWaitGroupWrap
 	}
 }
 
-// Run runs a function in a goroutine, adds 1 to WaitGroup
-// and calls done when function returns. Please DO NOT use panic
-// in the cb function.
+// Run runs a function in a goroutine and calls done when function returns.
+// Please DO NOT use panic in the cb function.
 func (w *notifyErrorWaitGroupWrapper) Run(exec func()) {
 	old := w.cnt.Inc() - 1
 	go func(cnt uint64) {
