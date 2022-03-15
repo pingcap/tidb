@@ -820,7 +820,7 @@ type AnalyzeColumnsExec struct {
 	indexes       []*model.IndexInfo
 	core.AnalyzeInfo
 
-	samplingBuilderWg *util.NotifyErrorWaitGroupWrapper
+	samplingBuilderWg *notifyErrorWaitGroupWrapper
 	samplingMergeWg   *util.WaitGroupWrapper
 
 	schemaForVirtualColEval *expression.Schema
@@ -1043,7 +1043,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	if totalLen < statsConcurrency {
 		statsConcurrency = totalLen
 	}
-	e.samplingBuilderWg = util.NewNotifyErrorWaitGroupWrapper(buildResultChan)
+	e.samplingBuilderWg = newNotifyErrorWaitGroupWrapper(buildResultChan)
 	sampleCollectors := make([]*statistics.SampleCollector, len(e.colsInfo))
 	exitCh := make(chan struct{})
 	for i := 0; i < statsConcurrency; i++ {
@@ -2338,6 +2338,39 @@ func NewAnalyzeResultsNotifyWaitGroupWrapper(notify chan *statistics.AnalyzeResu
 // and calls done when function returns. Please DO NOT use panic
 // in the cb function.
 func (w *analyzeResultsNotifyWaitGroupWrapper) Run(exec func()) {
+	w.Add(1)
+	old := w.cnt.Inc() - 1
+	go func(cnt uint64) {
+		defer func() {
+			w.Done()
+			if cnt == 0 {
+				w.Wait()
+				close(w.notify)
+			}
+		}()
+		exec()
+	}(old)
+}
+
+// notifyErrorWaitGroupWrapper is a wrapper for sync.WaitGroup
+type notifyErrorWaitGroupWrapper struct {
+	sync.WaitGroup
+	notify chan error
+	cnt    atomicutil.Uint64
+}
+
+// newNotifyErrorWaitGroupWrapper is to create notifyErrorWaitGroupWrapper
+func newNotifyErrorWaitGroupWrapper(notify chan error) *notifyErrorWaitGroupWrapper {
+	return &notifyErrorWaitGroupWrapper{
+		notify: notify,
+		cnt:    *atomicutil.NewUint64(0),
+	}
+}
+
+// Run runs a function in a goroutine, adds 1 to WaitGroup
+// and calls done when function returns. Please DO NOT use panic
+// in the cb function.
+func (w *notifyErrorWaitGroupWrapper) Run(exec func()) {
 	w.Add(1)
 	old := w.cnt.Inc() - 1
 	go func(cnt uint64) {
