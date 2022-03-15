@@ -3199,15 +3199,18 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		}
 	})
 	if useMPPExecution(b.ctx, v) {
+		plannercore.SetMppOrBatchCopForTableScan(v.GetTablePlan())
 		return b.buildMPPGather(v)
 	}
-	ret, err := buildNoRangeTableReader(b, v)
+	ts, err := v.GetTableScan()
 	if err != nil {
 		b.err = err
 		return nil
 	}
-
-	ts, err := v.GetTableScan()
+	if v.BatchCop {
+		ts.IsMPPOrBatchCop = true
+	}
+	ret, err := buildNoRangeTableReader(b, v)
 	if err != nil {
 		b.err = err
 		return nil

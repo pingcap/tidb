@@ -158,6 +158,8 @@ type copTask struct {
 	eventCb    trxevents.EventCallback
 	paging     bool
 	pagingSize uint64
+
+	partitionIndex int64 // used by balanceBatchCopTask in PartitionTableScan
 }
 
 func (r *copTask) String() string {
