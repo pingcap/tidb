@@ -44,7 +44,7 @@ func testCreatePlacementPolicy(t *testing.T, ctx sessionctx.Context, d *ddl, pol
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{policyInfo},
 	}
-	err := d.doDDLJob(ctx, job)
+	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)

@@ -169,7 +169,7 @@ func testCreateTable(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{tblInfo},
 	}
-	err := d.doDDLJob(ctx, job)
+	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)
@@ -189,7 +189,7 @@ func testCreateView(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.
 	}
 
 	require.True(t, tblInfo.IsView())
-	require.NoError(t, d.doDDLJob(ctx, job))
+	require.NoError(t, d.DoDDLJob(ctx, job))
 
 	v := getSchemaVer(t, ctx)
 	tblInfo.State = model.StatePublic
@@ -205,7 +205,7 @@ func testDropTable(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.D
 		Type:       model.ActionDropTable,
 		BinlogInfo: &model.HistoryInfo{},
 	}
-	require.NoError(t, d.doDDLJob(ctx, job))
+	require.NoError(t, d.DoDDLJob(ctx, job))
 
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})

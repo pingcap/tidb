@@ -174,6 +174,8 @@ type DDL interface {
 	GetHook() Callback
 	// SetHook sets the hook.
 	SetHook(h Callback)
+	// DoDDLJob does the DDL job, it's exported for test.
+	DoDDLJob(ctx sessionctx.Context, job *model.Job) error
 }
 
 type limitJobTask struct {
@@ -592,11 +594,11 @@ func recordLastDDLInfo(ctx sessionctx.Context, job *model.Job) {
 	ctx.GetSessionVars().LastDDLInfo.SeqNum = job.SeqNum
 }
 
-// doDDLJob will return
+// DoDDLJob will return
 // - nil: found in history DDL job and no job error
 // - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
 // - other: found in history DDL job and return that job error
-func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
+func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	// Get a global job ID and put the DDL job in the queue.
 	job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
 	task := &limitJobTask{job, make(chan error)}
@@ -641,7 +643,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			i++
 			ticker = updateTickerInterval(ticker, 10*d.lease, job, i)
 		case <-d.ctx.Done():
-			logutil.BgLogger().Info("[ddl] doDDLJob will quit because context done")
+			logutil.BgLogger().Info("[ddl] DoDDLJob will quit because context done")
 			return context.Canceled
 		}
 

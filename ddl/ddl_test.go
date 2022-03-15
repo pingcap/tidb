@@ -151,7 +151,7 @@ func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bo
 func testCreatePrimaryKey(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string) *model.Job {
 	job := buildCreateIdxJob(dbInfo, tblInfo, true, "primary", colName)
 	job.Type = model.ActionAddPrimaryKey
-	err := d.doDDLJob(ctx, job)
+	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
@@ -160,7 +160,7 @@ func testCreatePrimaryKey(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *
 
 func testCreateIndex(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
 	job := buildCreateIdxJob(dbInfo, tblInfo, unique, indexName, colName)
-	err := d.doDDLJob(ctx, job)
+	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
@@ -175,7 +175,7 @@ func testAddColumn(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.D
 		Args:       args,
 		BinlogInfo: &model.HistoryInfo{},
 	}
-	err := d.doDDLJob(ctx, job)
+	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
@@ -190,7 +190,7 @@ func testAddColumns(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.
 		Args:       args,
 		BinlogInfo: &model.HistoryInfo{},
 	}
-	err := d.doDDLJob(ctx, job)
+	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
@@ -213,7 +213,7 @@ func buildDropIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName s
 
 func testDropIndex(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName string) *model.Job {
 	job := buildDropIdxJob(dbInfo, tblInfo, indexName)
-	err := d.doDDLJob(ctx, job)
+	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
@@ -319,4 +319,103 @@ func TestFieldCase(t *testing.T) {
 	}
 	err := checkDuplicateColumn(colObjects)
 	require.EqualError(t, err, infoschema.ErrColumnExists.GenWithStackByArgs("Field").Error())
+}
+
+func TestIgnorableSpec(t *testing.T) {
+	specs := []ast.AlterTableType{
+		ast.AlterTableOption,
+		ast.AlterTableAddColumns,
+		ast.AlterTableAddConstraint,
+		ast.AlterTableDropColumn,
+		ast.AlterTableDropPrimaryKey,
+		ast.AlterTableDropIndex,
+		ast.AlterTableDropForeignKey,
+		ast.AlterTableModifyColumn,
+		ast.AlterTableChangeColumn,
+		ast.AlterTableRenameTable,
+		ast.AlterTableAlterColumn,
+	}
+	for _, spec := range specs {
+		require.False(t, isIgnorableSpec(spec))
+	}
+
+	ignorableSpecs := []ast.AlterTableType{
+		ast.AlterTableLock,
+		ast.AlterTableAlgorithm,
+	}
+	for _, spec := range ignorableSpecs {
+		require.True(t, isIgnorableSpec(spec))
+	}
+}
+
+func TestBuildJobDependence(t *testing.T) {
+	store := createMockStore(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	// Add some non-add-index jobs.
+	job1 := &model.Job{ID: 1, TableID: 1, Type: model.ActionAddColumn}
+	job2 := &model.Job{ID: 2, TableID: 1, Type: model.ActionCreateTable}
+	job3 := &model.Job{ID: 3, TableID: 2, Type: model.ActionDropColumn}
+	job6 := &model.Job{ID: 6, TableID: 1, Type: model.ActionDropTable}
+	job7 := &model.Job{ID: 7, TableID: 2, Type: model.ActionModifyColumn}
+	job9 := &model.Job{ID: 9, SchemaID: 111, Type: model.ActionDropSchema}
+	job11 := &model.Job{ID: 11, TableID: 2, Type: model.ActionRenameTable, Args: []interface{}{int64(111), "old db name"}}
+	err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		require.NoError(t, m.EnQueueDDLJob(job1))
+		require.NoError(t, m.EnQueueDDLJob(job2))
+		require.NoError(t, m.EnQueueDDLJob(job3))
+		require.NoError(t, m.EnQueueDDLJob(job6))
+		require.NoError(t, m.EnQueueDDLJob(job7))
+		require.NoError(t, m.EnQueueDDLJob(job9))
+		require.NoError(t, m.EnQueueDDLJob(job11))
+		return nil
+	})
+	require.NoError(t, err)
+	job4 := &model.Job{ID: 4, TableID: 1, Type: model.ActionAddIndex}
+	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		err := buildJobDependence(m, job4)
+		require.NoError(t, err)
+		require.Equal(t, job4.DependencyID, int64(2))
+		return nil
+	})
+	require.NoError(t, err)
+	job5 := &model.Job{ID: 5, TableID: 2, Type: model.ActionAddIndex}
+	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		err := buildJobDependence(m, job5)
+		require.NoError(t, err)
+		require.Equal(t, job5.DependencyID, int64(3))
+		return nil
+	})
+	require.NoError(t, err)
+	job8 := &model.Job{ID: 8, TableID: 3, Type: model.ActionAddIndex}
+	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		err := buildJobDependence(m, job8)
+		require.NoError(t, err)
+		require.Equal(t, job8.DependencyID, int64(0))
+		return nil
+	})
+	require.NoError(t, err)
+	job10 := &model.Job{ID: 10, SchemaID: 111, TableID: 3, Type: model.ActionAddIndex}
+	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		err := buildJobDependence(m, job10)
+		require.NoError(t, err)
+		require.Equal(t, job10.DependencyID, int64(9))
+		return nil
+	})
+	require.NoError(t, err)
+	job12 := &model.Job{ID: 12, SchemaID: 112, TableID: 2, Type: model.ActionAddIndex}
+	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		err := buildJobDependence(m, job12)
+		require.NoError(t, err)
+		require.Equal(t, job12.DependencyID, int64(11))
+		return nil
+	})
+	require.NoError(t, err)
 }

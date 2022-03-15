@@ -69,7 +69,7 @@ func TestDDLStatsInfo(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- d.doDDLJob(ctx, job)
+		done <- d.DoDDLJob(ctx, job)
 	}()
 
 	exit := false

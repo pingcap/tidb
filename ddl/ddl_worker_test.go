@@ -12,10 +12,15 @@
 //// See the License for the specific language governing permissions and
 //// limitations under the License.
 //
-package ddl
+package ddl_test
 
 import (
 	"context"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"testing"
 	"time"
 
@@ -24,179 +29,38 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/stretchr/testify/require"
-	"github.com/stretchr/testify/suite"
 )
-
-type testDDLSerialSuiteToVerify struct {
-	suite.Suite
-}
-
-func TestDDLSerialSuite(t *testing.T) {
-	suite.Run(t, new(testDDLSerialSuiteToVerify))
-}
 
 const testLease = 5 * time.Millisecond
 
-func (s *testDDLSerialSuiteToVerify) SetupSuite() {
-	SetWaitTimeWhenErrorOccurred(time.Microsecond)
-}
-
 func TestCheckOwner(t *testing.T) {
-	store := createMockStore(t)
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
+	_, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	defer clean()
 
-	d1, err := testNewDDLAndStart(
-		context.Background(),
-		WithStore(store),
-		WithLease(testLease),
-	)
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, d1.Stop())
-	}()
 	time.Sleep(testLease)
-	testCheckOwner(t, d1, true)
+	testCheckOwner(t, dom, true)
 
-	require.Equal(t, d1.GetLease(), testLease)
+	require.Equal(t, dom.DDL().GetLease(), testLease)
 }
 
-func TestNotifyDDLJob(t *testing.T) {
-	store := createMockStore(t)
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
-
-	getFirstNotificationAfterStartDDL := func(d *ddl) {
-		select {
-		case <-d.workers[addIdxWorker].ddlJobCh:
-		default:
-			// The notification may be received by the worker.
-		}
-		select {
-		case <-d.workers[generalWorker].ddlJobCh:
-		default:
-			// The notification may be received by the worker.
-		}
-	}
-
-	d, err := testNewDDLAndStart(
-		context.Background(),
-		WithStore(store),
-		WithLease(testLease),
-	)
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, d.Stop())
-	}()
-	getFirstNotificationAfterStartDDL(d)
-	// Ensure that the notification is not handled in workers `start` function.
-	d.cancel()
-	for _, worker := range d.workers {
-		worker.close()
-	}
-
-	job := &model.Job{
-		SchemaID:   1,
-		TableID:    2,
-		Type:       model.ActionCreateTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{},
-	}
-	// Test the notification mechanism of the owner and the server receiving the DDL request on the same TiDB.
-	// This DDL request is a general DDL job.
-	d.asyncNotifyWorker(job)
-	select {
-	case <-d.workers[generalWorker].ddlJobCh:
-	default:
-		require.FailNow(t, "do not get the general job notification")
-	}
-	// Test the notification mechanism of the owner and the server receiving the DDL request on the same TiDB.
-	// This DDL request is a add index DDL job.
-	job.Type = model.ActionAddIndex
-	d.asyncNotifyWorker(job)
-	select {
-	case <-d.workers[addIdxWorker].ddlJobCh:
-	default:
-		require.FailNow(t, "do not get the add index job notification")
-	}
-
-	// Test the notification mechanism that the owner and the server receiving the DDL request are not on the same TiDB.
-	// And the etcd client is nil.
-	d1, err := testNewDDLAndStart(
-		context.Background(),
-		WithStore(store),
-		WithLease(testLease),
-	)
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, d1.Stop())
-	}()
-	getFirstNotificationAfterStartDDL(d1)
-	// Ensure that the notification is not handled by worker's "start".
-	d1.cancel()
-	for _, worker := range d1.workers {
-		worker.close()
-	}
-	d1.ownerManager.RetireOwner()
-	d1.asyncNotifyWorker(job)
-	job.Type = model.ActionCreateTable
-	d1.asyncNotifyWorker(job)
-	testCheckOwner(t, d1, false)
-	select {
-	case <-d1.workers[addIdxWorker].ddlJobCh:
-		require.FailNow(t, "should not get the add index job notification")
-	case <-d1.workers[generalWorker].ddlJobCh:
-		require.FailNow(t, "should not get the general job notification")
-	default:
-	}
-}
-
-// TestRunWorker tests no job is handled when the value of RunWorker is false.
-func (s *testDDLSerialSuiteToVerify) TestRunWorker() {
-	store := createMockStore(s.T())
-	defer func() {
-		require.NoError(s.T(), store.Close())
-	}()
-
-	RunWorker = false
-	d, err := testNewDDLAndStart(
-		context.Background(),
-		WithStore(store),
-		WithLease(testLease),
-	)
-	require.NoError(s.T(), err)
-	testCheckOwner(s.T(), d, false)
-	defer func() {
-		require.NoError(s.T(), d.Stop())
-	}()
-
-	// Make sure the DDL worker is nil.
-	worker := d.generalWorker()
-	require.Nil(s.T(), worker)
-	// Make sure the DDL job can be done and exit that goroutine.
-	RunWorker = true
-	d1, err := testNewDDLAndStart(
-		context.Background(),
-		WithStore(store),
-		WithLease(testLease),
-	)
-	require.NoError(s.T(), err)
-	testCheckOwner(s.T(), d1, true)
-	defer func() {
-		err := d1.Stop()
-		require.NoError(s.T(), err)
-	}()
-	worker = d1.generalWorker()
-	require.NotNil(s.T(), worker)
-}
-
-//func TestSchemaError(t *testing.T) {
+//func TestNotifyDDLJob(t *testing.T) {
 //	store := createMockStore(t)
 //	defer func() {
 //		require.NoError(t, store.Close())
 //	}()
+//
+//	getFirstNotificationAfterStartDDL := func(d *ddl) {
+//		select {
+//		case <-d.workers[addIdxWorker].ddlJobCh:
+//		default:
+//			// The notification may be received by the worker.
+//		}
+//		select {
+//		case <-d.workers[generalWorker].ddlJobCh:
+//		default:
+//			// The notification may be received by the worker.
+//		}
+//	}
 //
 //	d, err := testNewDDLAndStart(
 //		context.Background(),
@@ -207,200 +71,85 @@ func (s *testDDLSerialSuiteToVerify) TestRunWorker() {
 //	defer func() {
 //		require.NoError(t, d.Stop())
 //	}()
-//	ctx := testNewContext(d)
-//
-//	doDDLJobErr(t, 1, 0, model.ActionCreateSchema, []interface{}{1}, ctx, d)
-//}
-//
-//func TestTableError(t *testing.T) {
-//	store := createMockStore(t)
-//	defer func() {
-//		require.NoError(t, store.Close())
-//	}()
-//
-//	d, err := testNewDDLAndStart(
-//		context.Background(),
-//		WithStore(store),
-//		WithLease(testLease),
-//	)
-//	require.NoError(t, err)
-//	defer func() {
-//		require.NoError(t, d.Stop())
-//	}()
-//	ctx := testNewContext(d)
-//
-//	// Schema ID is wrong, so dropping table is failed.
-//	doDDLJobErr(t, -1, 1, model.ActionDropTable, nil, ctx, d)
-//	// Table ID is wrong, so dropping table is failed.
-//	dbInfo, err := testSchemaInfo(d, "test_ddl")
-//	require.NoError(t, err)
-//	testCreateSchema(t, testNewContext(d), d, dbInfo)
-//	job := doDDLJobErr(t, dbInfo.ID, -1, model.ActionDropTable, nil, ctx, d)
-//
-//	// Table ID or schema ID is wrong, so getting table is failed.
-//	tblInfo, err := testTableInfo(d, "t", 3)
-//	require.NoError(t, err)
-//	testCreateTable(t, ctx, d, dbInfo, tblInfo)
-//	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-//		job.SchemaID = -1
-//		job.TableID = -1
-//		m := meta.NewMeta(txn)
-//		_, err1 := getTableInfoAndCancelFaultJob(m, job, job.SchemaID)
-//		require.Error(t, err1)
-//		job.SchemaID = dbInfo.ID
-//		_, err1 = getTableInfoAndCancelFaultJob(m, job, job.SchemaID)
-//		require.Error(t, err1)
-//		return nil
-//	})
-//	require.NoError(t, err)
-//
-//	// Args is wrong, so creating table is failed.
-//	doDDLJobErr(t, 1, 1, model.ActionCreateTable, []interface{}{1}, ctx, d)
-//	// Schema ID is wrong, so creating table is failed.
-//	doDDLJobErr(t, -1, tblInfo.ID, model.ActionCreateTable, []interface{}{tblInfo}, ctx, d)
-//	// Table exists, so creating table is failed.
-//	tblInfo.ID++
-//	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionCreateTable, []interface{}{tblInfo}, ctx, d)
-//
-//}
-//
-//func TestViewError(t *testing.T) {
-//	store := createMockStore(t)
-//	defer func() {
-//		require.NoError(t, store.Close())
-//	}()
-//
-//	d, err := testNewDDLAndStart(
-//		context.Background(),
-//		WithStore(store),
-//		WithLease(testLease),
-//	)
-//	require.NoError(t, err)
-//	defer func() {
-//		require.NoError(t, d.Stop())
-//	}()
-//	ctx := testNewContext(d)
-//	dbInfo, err := testSchemaInfo(d, "test_ddl")
-//	require.NoError(t, err)
-//	testCreateSchema(t, testNewContext(d), d, dbInfo)
-//
-//	// Table ID or schema ID is wrong, so getting table is failed.
-//	tblInfo := testViewInfo(t, d, "t", 3)
-//	testCreateView(t, ctx, d, dbInfo, tblInfo)
-//
-//	// Args is wrong, so creating view is failed.
-//	doDDLJobErr(t, 1, 1, model.ActionCreateView, []interface{}{1}, ctx, d)
-//	// Schema ID is wrong and orReplace is false, so creating view is failed.
-//	doDDLJobErr(t, -1, tblInfo.ID, model.ActionCreateView, []interface{}{tblInfo, false}, ctx, d)
-//	// View exists and orReplace is false, so creating view is failed.
-//	tblInfo.ID++
-//	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionCreateView, []interface{}{tblInfo, false}, ctx, d)
-//
-//}
-//
-//func TestInvalidDDLJob(t *testing.T) {
-//	store := createMockStore(t)
-//	defer func() {
-//		require.NoError(t, store.Close())
-//	}()
-//	d, err := testNewDDLAndStart(
-//		context.Background(),
-//		WithStore(store),
-//		WithLease(testLease),
-//	)
-//	require.NoError(t, err)
-//	defer func() {
-//		require.NoError(t, d.Stop())
-//	}()
-//	ctx := testNewContext(d)
+//	getFirstNotificationAfterStartDDL(d)
+//	// Ensure that the notification is not handled in workers `start` function.
+//	d.cancel()
+//	for _, worker := range d.workers {
+//		worker.close()
+//	}
 //
 //	job := &model.Job{
-//		SchemaID:   0,
-//		TableID:    0,
-//		Type:       model.ActionNone,
+//		SchemaID:   1,
+//		TableID:    2,
+//		Type:       model.ActionCreateTable,
 //		BinlogInfo: &model.HistoryInfo{},
 //		Args:       []interface{}{},
 //	}
-//	err = d.doDDLJob(ctx, job)
-//	require.Equal(t, err.Error(), "[ddl:8204]invalid ddl job type: none")
-//}
+//	// Test the notification mechanism of the owner and the server receiving the DDL request on the same TiDB.
+//	// This DDL request is a general DDL job.
+//	d.asyncNotifyWorker(job)
+//	select {
+//	case <-d.workers[generalWorker].ddlJobCh:
+//	default:
+//		require.FailNow(t, "do not get the general job notification")
+//	}
+//	// Test the notification mechanism of the owner and the server receiving the DDL request on the same TiDB.
+//	// This DDL request is a add index DDL job.
+//	job.Type = model.ActionAddIndex
+//	d.asyncNotifyWorker(job)
+//	select {
+//	case <-d.workers[addIdxWorker].ddlJobCh:
+//	default:
+//		require.FailNow(t, "do not get the add index job notification")
+//	}
 //
-//func TestForeignKeyError(t *testing.T) {
-//	store := createMockStore(t)
-//	defer func() {
-//		require.NoError(t, store.Close())
-//	}()
-//
-//	d, err := testNewDDLAndStart(
+//	// Test the notification mechanism that the owner and the server receiving the DDL request are not on the same TiDB.
+//	// And the etcd client is nil.
+//	d1, err := testNewDDLAndStart(
 //		context.Background(),
 //		WithStore(store),
 //		WithLease(testLease),
 //	)
 //	require.NoError(t, err)
 //	defer func() {
-//		require.NoError(t, d.Stop())
+//		require.NoError(t, d1.Stop())
 //	}()
-//	ctx := testNewContext(d)
-//
-//	doDDLJobErr(t, -1, 1, model.ActionAddForeignKey, nil, ctx, d)
-//	doDDLJobErr(t, -1, 1, model.ActionDropForeignKey, nil, ctx, d)
-//
-//	dbInfo, err := testSchemaInfo(d, "test_ddl")
-//	require.NoError(t, err)
-//	tblInfo, err := testTableInfo(d, "t", 3)
-//	require.NoError(t, err)
-//	testCreateSchema(t, ctx, d, dbInfo)
-//	testCreateTable(t, ctx, d, dbInfo, tblInfo)
-//	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionDropForeignKey, []interface{}{model.NewCIStr("c1_foreign_key")}, ctx, d)
+//	getFirstNotificationAfterStartDDL(d1)
+//	// Ensure that the notification is not handled by worker's "start".
+//	d1.cancel()
+//	for _, worker := range d1.workers {
+//		worker.close()
+//	}
+//	d1.ownerManager.RetireOwner()
+//	d1.asyncNotifyWorker(job)
+//	job.Type = model.ActionCreateTable
+//	d1.asyncNotifyWorker(job)
+//	testCheckOwner(t, d1, false)
+//	select {
+//	case <-d1.workers[addIdxWorker].ddlJobCh:
+//		require.FailNow(t, "should not get the add index job notification")
+//	case <-d1.workers[generalWorker].ddlJobCh:
+//		require.FailNow(t, "should not get the general job notification")
+//	default:
+//	}
 //}
-//
-//func TestIndexError(t *testing.T) {
-//	store := createMockStore(t)
-//	defer func() {
-//		require.NoError(t, store.Close())
-//	}()
-//
-//	d, err := testNewDDLAndStart(
-//		context.Background(),
-//		WithStore(store),
-//		WithLease(testLease),
-//	)
-//	require.NoError(t, err)
-//	defer func() {
-//		require.NoError(t, d.Stop())
-//	}()
-//	ctx := testNewContext(d)
-//
-//	// Schema ID is wrong.
-//	doDDLJobErr(t, -1, 1, model.ActionAddIndex, nil, ctx, d)
-//	doDDLJobErr(t, -1, 1, model.ActionDropIndex, nil, ctx, d)
-//
-//	dbInfo, err := testSchemaInfo(d, "test_ddl")
-//	require.NoError(t, err)
-//	tblInfo, err := testTableInfo(d, "t", 3)
-//	require.NoError(t, err)
-//	testCreateSchema(t, ctx, d, dbInfo)
-//	testCreateTable(t, ctx, d, dbInfo, tblInfo)
-//
-//	// for adding index
-//	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionAddIndex, []interface{}{1}, ctx, d)
-//	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionAddIndex,
-//		[]interface{}{false, model.NewCIStr("t"), 1,
-//			[]*ast.IndexPartSpecification{{Column: &ast.ColumnName{Name: model.NewCIStr("c")}, Length: 256}}}, ctx, d)
-//	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionAddIndex,
-//		[]interface{}{false, model.NewCIStr("c1_index"), 1,
-//			[]*ast.IndexPartSpecification{{Column: &ast.ColumnName{Name: model.NewCIStr("c")}, Length: 256}}}, ctx, d)
-//	testCreateIndex(t, ctx, d, dbInfo, tblInfo, false, "c1_index", "c1")
-//	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionAddIndex,
-//		[]interface{}{false, model.NewCIStr("c1_index"), 1,
-//			[]*ast.IndexPartSpecification{{Column: &ast.ColumnName{Name: model.NewCIStr("c1")}, Length: 256}}}, ctx, d)
-//
-//	// for dropping index
-//	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionDropIndex, []interface{}{1}, ctx, d)
-//	testDropIndex(t, ctx, d, dbInfo, tblInfo, "c1_index")
-//	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionDropIndex, []interface{}{model.NewCIStr("c1_index")}, ctx, d)
-//}
-//
+
+func TestInvalidDDLJob(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	defer clean()
+
+	job := &model.Job{
+		SchemaID:   0,
+		TableID:    0,
+		Type:       model.ActionNone,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{},
+	}
+	ctx := testNewContext(store)
+	err := dom.DDL().DoDDLJob(ctx, job)
+	require.Equal(t, err.Error(), "[ddl:8204]invalid ddl job type: none")
+}
+
 //func TestColumnError(t *testing.T) {
 //	store := createMockStore(t)
 //	defer func() {
@@ -459,53 +208,27 @@ func (s *testDDLSerialSuiteToVerify) TestRunWorker() {
 //	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionDropColumns, []interface{}{0}, ctx, d)
 //	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionDropColumns, []interface{}{[]model.CIStr{model.NewCIStr("c5"), model.NewCIStr("c6")}, make([]bool, 2)}, ctx, d)
 //}
-//
-//func (s *testDDLSerialSuiteToVerify) TestAddBatchJobError() {
-//	store := createMockStore(s.T())
-//	defer func() {
-//		require.NoError(s.T(), store.Close())
-//	}()
-//	d, err := testNewDDLAndStart(
-//		context.Background(),
-//		WithStore(store),
-//		WithLease(testLease),
-//	)
-//	require.NoError(s.T(), err)
-//	defer func() {
-//		require.NoError(s.T(), d.Stop())
-//	}()
-//	ctx := testNewContext(d)
-//	require.Nil(s.T(), failpoint.Enable("github.com/pingcap/tidb/ddl/mockAddBatchDDLJobsErr", `return(true)`))
-//	// Test the job runner should not hang forever.
-//	job := &model.Job{SchemaID: 1, TableID: 1}
-//	err = d.doDDLJob(ctx, job)
-//	require.Error(s.T(), err)
-//	require.Equal(s.T(), err.Error(), "mockAddBatchDDLJobsErr")
-//	require.Nil(s.T(), failpoint.Disable("github.com/pingcap/tidb/ddl/mockAddBatchDDLJobsErr"))
-//}
-//
-func testCheckOwner(t *testing.T, d *ddl, expectedVal bool) {
-	require.Equal(t, d.isOwner(), expectedVal)
+
+func TestAddBatchJobError(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	defer clean()
+	ctx := testNewContext(store)
+
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockAddBatchDDLJobsErr", `return(true)`))
+	// Test the job runner should not hang forever.
+	job := &model.Job{SchemaID: 1, TableID: 1}
+	err := dom.DDL().DoDDLJob(ctx, job)
+	require.Error(t, err)
+	require.Equal(t, err.Error(), "mockAddBatchDDLJobsErr")
+	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockAddBatchDDLJobsErr"))
 }
 
-func testCheckJobDone(t *testing.T, d *ddl, job *model.Job, isAdd bool) {
-	require.NoError(t, kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		historyJob, err := m.GetHistoryDDLJob(job.ID)
-		require.NoError(t, err)
-		checkHistoryJob(t, historyJob)
-		if isAdd {
-			require.Equal(t, historyJob.SchemaState, model.StatePublic)
-		} else {
-			require.Equal(t, historyJob.SchemaState, model.StateNone)
-		}
-
-		return nil
-	}))
+func testCheckOwner(t *testing.T, dom *domain.Domain, expectedVal bool) {
+	require.Equal(t, dom.DDL().OwnerManager().IsOwner(), expectedVal)
 }
 
-func testCheckJobCancelled(t *testing.T, d *ddl, job *model.Job, state *model.SchemaState) {
-	require.NoError(t, kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+func testCheckJobCancelled(t *testing.T, store kv.Storage, job *model.Job, state *model.SchemaState) {
+	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		historyJob, err := m.GetHistoryDDLJob(job.ID)
 		require.NoError(t, err)
@@ -517,7 +240,7 @@ func testCheckJobCancelled(t *testing.T, d *ddl, job *model.Job, state *model.Sc
 	}))
 }
 
-func doDDLJobErrWithSchemaState(ctx sessionctx.Context, d *ddl, t *testing.T, schemaID, tableID int64, tp model.ActionType,
+func doDDLJobErrWithSchemaState(ctx sessionctx.Context, ddl ddl.DDL, store kv.Storage, t *testing.T, schemaID, tableID int64, tp model.ActionType,
 	args []interface{}, state *model.SchemaState) *model.Job {
 	job := &model.Job{
 		SchemaID:   schemaID,
@@ -527,13 +250,13 @@ func doDDLJobErrWithSchemaState(ctx sessionctx.Context, d *ddl, t *testing.T, sc
 		BinlogInfo: &model.HistoryInfo{},
 	}
 	// TODO: check error detail
-	require.Error(t, d.doDDLJob(ctx, job))
-	testCheckJobCancelled(t, d, job, state)
+	require.Error(t, ddl.DoDDLJob(ctx, job))
+	testCheckJobCancelled(t, store, job, state)
 
 	return job
 }
 
-func doDDLJobSuccess(ctx sessionctx.Context, d *ddl, t *testing.T, schemaID, tableID int64, tp model.ActionType,
+func doDDLJobSuccess(ctx sessionctx.Context, ddl ddl.DDL, t *testing.T, schemaID, tableID int64, tp model.ActionType,
 	args []interface{}) {
 	job := &model.Job{
 		SchemaID:   schemaID,
@@ -542,12 +265,12 @@ func doDDLJobSuccess(ctx sessionctx.Context, d *ddl, t *testing.T, schemaID, tab
 		Args:       args,
 		BinlogInfo: &model.HistoryInfo{},
 	}
-	err := d.doDDLJob(ctx, job)
+	err := ddl.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 }
 
-func doDDLJobErr(t *testing.T, schemaID, tableID int64, tp model.ActionType, args []interface{}, ctx sessionctx.Context, d *ddl) *model.Job {
-	return doDDLJobErrWithSchemaState(ctx, d, t, schemaID, tableID, tp, args, nil)
+func doDDLJobErr(t *testing.T, schemaID, tableID int64, tp model.ActionType, args []interface{}, ctx sessionctx.Context, ddl ddl.DDL, store kv.Storage) *model.Job {
+	return doDDLJobErrWithSchemaState(ctx, ddl, store, t, schemaID, tableID, tp, args, nil)
 }
 
 //
@@ -1319,105 +1042,7 @@ func doDDLJobErr(t *testing.T, schemaID, tableID int64, tp model.ActionType, arg
 //	s.checkDropIndexes(d, dbInfo.ID, tableInfo.ID, idxNames, true)
 //}
 //
-//func TestIgnorableSpec(t *testing.T) {
-//	specs := []ast.AlterTableType{
-//		ast.AlterTableOption,
-//		ast.AlterTableAddColumns,
-//		ast.AlterTableAddConstraint,
-//		ast.AlterTableDropColumn,
-//		ast.AlterTableDropPrimaryKey,
-//		ast.AlterTableDropIndex,
-//		ast.AlterTableDropForeignKey,
-//		ast.AlterTableModifyColumn,
-//		ast.AlterTableChangeColumn,
-//		ast.AlterTableRenameTable,
-//		ast.AlterTableAlterColumn,
-//	}
-//	for _, spec := range specs {
-//		require.False(t, isIgnorableSpec(spec))
-//	}
-//
-//	ignorableSpecs := []ast.AlterTableType{
-//		ast.AlterTableLock,
-//		ast.AlterTableAlgorithm,
-//	}
-//	for _, spec := range ignorableSpecs {
-//		require.True(t, isIgnorableSpec(spec))
-//	}
-//}
-//
-//func TestBuildJobDependence(t *testing.T) {
-//	store := createMockStore(t)
-//	defer func() {
-//		require.NoError(t, store.Close())
-//	}()
-//	// Add some non-add-index jobs.
-//	job1 := &model.Job{ID: 1, TableID: 1, Type: model.ActionAddColumn}
-//	job2 := &model.Job{ID: 2, TableID: 1, Type: model.ActionCreateTable}
-//	job3 := &model.Job{ID: 3, TableID: 2, Type: model.ActionDropColumn}
-//	job6 := &model.Job{ID: 6, TableID: 1, Type: model.ActionDropTable}
-//	job7 := &model.Job{ID: 7, TableID: 2, Type: model.ActionModifyColumn}
-//	job9 := &model.Job{ID: 9, SchemaID: 111, Type: model.ActionDropSchema}
-//	job11 := &model.Job{ID: 11, TableID: 2, Type: model.ActionRenameTable, Args: []interface{}{int64(111), "old db name"}}
-//	err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-//		m := meta.NewMeta(txn)
-//		require.NoError(t, m.EnQueueDDLJob(job1))
-//		require.NoError(t, m.EnQueueDDLJob(job2))
-//		require.NoError(t, m.EnQueueDDLJob(job3))
-//		require.NoError(t, m.EnQueueDDLJob(job6))
-//		require.NoError(t, m.EnQueueDDLJob(job7))
-//		require.NoError(t, m.EnQueueDDLJob(job9))
-//		require.NoError(t, m.EnQueueDDLJob(job11))
-//		return nil
-//	})
-//	require.NoError(t, err)
-//	job4 := &model.Job{ID: 4, TableID: 1, Type: model.ActionAddIndex}
-//	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-//		m := meta.NewMeta(txn)
-//		err := buildJobDependence(m, job4)
-//		require.NoError(t, err)
-//		require.Equal(t, job4.DependencyID, int64(2))
-//		return nil
-//	})
-//	require.NoError(t, err)
-//	job5 := &model.Job{ID: 5, TableID: 2, Type: model.ActionAddIndex}
-//	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-//		m := meta.NewMeta(txn)
-//		err := buildJobDependence(m, job5)
-//		require.NoError(t, err)
-//		require.Equal(t, job5.DependencyID, int64(3))
-//		return nil
-//	})
-//	require.NoError(t, err)
-//	job8 := &model.Job{ID: 8, TableID: 3, Type: model.ActionAddIndex}
-//	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-//		m := meta.NewMeta(txn)
-//		err := buildJobDependence(m, job8)
-//		require.NoError(t, err)
-//		require.Equal(t, job8.DependencyID, int64(0))
-//		return nil
-//	})
-//	require.NoError(t, err)
-//	job10 := &model.Job{ID: 10, SchemaID: 111, TableID: 3, Type: model.ActionAddIndex}
-//	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-//		m := meta.NewMeta(txn)
-//		err := buildJobDependence(m, job10)
-//		require.NoError(t, err)
-//		require.Equal(t, job10.DependencyID, int64(9))
-//		return nil
-//	})
-//	require.NoError(t, err)
-//	job12 := &model.Job{ID: 12, SchemaID: 112, TableID: 2, Type: model.ActionAddIndex}
-//	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-//		m := meta.NewMeta(txn)
-//		err := buildJobDependence(m, job12)
-//		require.NoError(t, err)
-//		require.Equal(t, job12.DependencyID, int64(11))
-//		return nil
-//	})
-//	require.NoError(t, err)
-//}
-//
+
 //func addDDLJob(t *testing.T, d *ddl, job *model.Job) {
 //	task := &limitJobTask{job, make(chan error)}
 //	d.limitJobCh <- task
@@ -1629,34 +1254,34 @@ func doDDLJobErr(t *testing.T, schemaID, tableID int64, tp model.ActionType, arg
 //	d.SetHook(tc)
 //}
 //
-//func TestDDLPackageExecuteSQL(t *testing.T) {
-//	store := createMockStore(t)
-//	defer func() {
-//		require.NoError(t, store.Close())
-//	}()
-//
-//	d, err := testNewDDLAndStart(
-//		context.Background(),
-//		WithStore(store),
-//		WithLease(testLease),
-//	)
-//	require.NoError(t, err)
-//	testCheckOwner(t, d, true)
-//	defer func() {
-//		require.NoError(t, d.Stop())
-//	}()
-//	worker := d.generalWorker()
-//	require.NotNil(t, worker)
-//
-//	// In test environment, worker.ctxPool will be nil, and get will return mock.Context.
-//	// We just test that can use it to call sqlexec.SQLExecutor.Execute.
-//	sess, err := worker.sessPool.get()
-//	require.NoError(t, err)
-//	defer worker.sessPool.put(sess)
-//	se := sess.(sqlexec.SQLExecutor)
-//	_, _ = se.Execute(context.Background(), "create table t(a int);")
-//}
-//
+func TestDDLPackageExecuteSQL(t *testing.T) {
+	store := createMockStore(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	d, err := testNewDDLAndStart(
+		context.Background(),
+		WithStore(store),
+		WithLease(testLease),
+	)
+	require.NoError(t, err)
+	testCheckOwner(t, d, true)
+	defer func() {
+		require.NoError(t, d.Stop())
+	}()
+	worker := d.generalWorker()
+	require.NotNil(t, worker)
+
+	// In test environment, worker.ctxPool will be nil, and get will return mock.Context.
+	// We just test that can use it to call sqlexec.SQLExecutor.Execute.
+	sess, err := worker.sessPool.get()
+	require.NoError(t, err)
+	defer worker.sessPool.put(sess)
+	se := sess.(sqlexec.SQLExecutor)
+	_, _ = se.Execute(context.Background(), "create table t(a int);")
+}
+
 //func (s *testDDLSerialSuiteToVerify) checkDropIndexes(d *ddl, schemaID int64, tableID int64, idxNames []model.CIStr, success bool) {
 //	for _, idxName := range idxNames {
 //		checkIdxExist(s.T(), d, schemaID, tableID, idxName.O, !success)
