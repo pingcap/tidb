@@ -671,8 +671,9 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer e.releaseSysSession(sess)
-	return e.DDLJobRetriever.initial(txn, sess)
+	err = e.DDLJobRetriever.initial(txn, sess)
+	e.releaseSysSession(sess)
+	return err
 }
 
 // Next implements the Executor Next interface.
