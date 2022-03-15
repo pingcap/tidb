@@ -856,7 +856,6 @@ func TestDefaultCharsetAndCollation(t *testing.T) {
 }
 
 func TestInstanceScope(t *testing.T) {
-
 	// Instance scope used to be settable via "SET SESSION", which is weird to any MySQL user.
 	// It is now settable via SET GLOBAL, but to work correctly a sysvar can only ever
 	// be INSTANCE scoped or GLOBAL scoped, never *both* at the same time (at least for now).

@@ -765,7 +765,6 @@ func (s *testSessionSuite) TestUpgradeSysvars(c *C) {
 }
 
 func (s *testSessionSuite) TestSetInstanceSysvarBySetGlobalSysVar(c *C) {
-
 	varName := "tidb_general_log"
 	defaultValue := "OFF" // This is the default value for tidb_general_log
 
