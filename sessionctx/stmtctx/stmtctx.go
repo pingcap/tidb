@@ -75,6 +75,7 @@ type StatementContext struct {
 	InLoadDataStmt         bool
 	InExplainStmt          bool
 	InCreateOrAlterStmt    bool
+	InPreparedStmt         bool
 	IgnoreTruncate         bool
 	IgnoreZeroInDate       bool
 	NoZeroDate             bool

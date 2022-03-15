@@ -454,7 +454,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		// so you don't need to consider whether prepared.useCache is enabled.
 		plan := prepared.CachedPlan.(Plan)
 		names := prepared.CachedNames.(types.NameSlice)
-		err := e.rebuildRange(plan)
+		err := e.RebuildPlan(plan)
 		if err != nil {
 			logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
 			goto REBUILD
@@ -501,7 +501,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					}
 				}
 				if planValid {
-					err := e.rebuildRange(cachedVal.Plan)
+					err := e.RebuildPlan(cachedVal.Plan)
 					if err != nil {
 						logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
 						goto REBUILD
@@ -627,6 +627,14 @@ func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context
 		sctx.GetSessionVars().StmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 	}
 	return err
+}
+
+// RebuildPlan will rebuild this plan under current user parameters.
+func (e *Execute) RebuildPlan(p Plan) error {
+	sc := p.SCtx().GetSessionVars().StmtCtx
+	sc.InPreparedStmt = true
+	defer func() { sc.InPreparedStmt = false }()
+	return e.rebuildRange(p)
 }
 
 func (e *Execute) rebuildRange(p Plan) error {
