@@ -17,8 +17,6 @@ package core
 import (
 	"math"
 
-	"github.com/pingcap/tidb/util/hack"
-
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
@@ -33,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
@@ -958,6 +957,7 @@ func (la *LogicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	return corCols
 }
 
+// ExtractFD implements the LogicalPlan interface.
 func (la *LogicalApply) ExtractFD() *fd.FDSet {
 	innerPlan := la.children[1]
 	// build the join correlated equal condition for apply join, this equal condition is used for deriving the transitive FD between outer and inner side.
