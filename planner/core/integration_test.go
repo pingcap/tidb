@@ -857,12 +857,16 @@ func TestMPPJoinWithCanNotFoundColumnInSchemaColumnsError(t *testing.T) {
 func TestJoinNotSupportedByTiFlash(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists table_1")
 	tk.MustExec("create table table_1(id int not null, bit_col bit(2) not null, datetime_col datetime not null)")
 	tk.MustExec("insert into table_1 values(1,b'1','2020-01-01 00:00:00'),(2,b'0','2020-01-01 00:00:00')")
 	tk.MustExec("analyze table table_1")
+
+	tk.MustExec("insert into mysql.expr_pushdown_blacklist values('dayofmonth', 'tiflash', '');")
+	tk.MustExec("admin reload expr_pushdown_blacklist;")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
