@@ -602,6 +602,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 			setVarsOffs = append(setVarsOffs, i)
 		}
 	}
+	stmtHints.OriginalTableHints = hints
 	stmtHints.SetVars = setVars
 
 	// Handle MEMORY_QUOTA
