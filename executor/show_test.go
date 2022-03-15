@@ -1008,6 +1008,17 @@ func TestShowCreateTable(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
 		"PARTITION BY HASH (`id`) PARTITIONS 1",
 	))
+
+	// default value escape character '\\' display case
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int primary key, b varchar(20) default '\\\\');")
+	tk.MustQuery("show create table t;").Check(testkit.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` int(11) NOT NULL,\n"+
+			"  `b` varchar(20) DEFAULT '\\\\',\n"+
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
 func TestShowCreateTablePlacement(t *testing.T) {
@@ -1580,9 +1591,17 @@ func TestShowVar(t *testing.T) {
 	// Test Hidden tx_read_ts
 	res = tk.MustQuery("show variables like '%tx_read_ts'")
 	require.Len(t, res.Rows(), 0)
-	// Test Hidden tidb_enable_streaming
-	res = tk.MustQuery("show variables like '%tidb_enable_streaming%';")
-	require.Len(t, res.Rows(), 0)
+
+	// Test versions' related variables
+	res = tk.MustQuery("show variables like 'version%'")
+	for _, row := range res.Rows() {
+		line := fmt.Sprint(row)
+		if strings.HasPrefix(line, "version ") {
+			require.Equal(t, mysql.ServerVersion, line[len("version "):])
+		} else if strings.HasPrefix(line, "version_comment ") {
+			require.Equal(t, variable.GetSysVar(variable.VersionComment), line[len("version_comment "):])
+		}
+	}
 }
 
 func TestIssue19507(t *testing.T) {
@@ -1719,4 +1738,89 @@ func TestShowCachedTable(t *testing.T) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustQuery("select create_options from information_schema.tables where table_schema = 'test' and table_name = 't1'").Check(
 		testkit.Rows(""))
+}
+
+func TestShowBindingCache(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec(`set global tidb_mem_quota_bind_cache = 1`)
+	tk.MustQuery("select @@global.tidb_mem_quota_bind_cache").Check(testkit.Rows("1"))
+	tk.MustExec("admin reload bindings;")
+	res := tk.MustQuery("show global bindings")
+	require.Equal(t, 0, len(res.Rows()))
+
+	tk.MustExec("create global binding for select * from t using select * from t")
+	res = tk.MustQuery("show global bindings")
+	require.Equal(t, 0, len(res.Rows()))
+
+	tk.MustExec(`set global tidb_mem_quota_bind_cache = default`)
+	tk.MustQuery("select @@global.tidb_mem_quota_bind_cache").Check(testkit.Rows("67108864"))
+	tk.MustExec("admin reload bindings")
+	res = tk.MustQuery("show global bindings")
+	require.Equal(t, 1, len(res.Rows()))
+
+	tk.MustExec("create global binding for select * from t where a > 1 using select * from t where a > 1")
+	res = tk.MustQuery("show global bindings")
+	require.Equal(t, 2, len(res.Rows()))
+}
+
+func TestShowBindingCacheStatus(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
+		"0 0 0 Bytes 64 MB"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx_a(a), index idx_b(b))")
+	result := tk.MustQuery("show global bindings")
+	rows := result.Rows()
+	require.Equal(t, len(rows), 0)
+	tk.MustExec("create global binding for select * from t using select * from t")
+
+	result = tk.MustQuery("show global bindings")
+	rows = result.Rows()
+	require.Equal(t, len(rows), 1)
+
+	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
+		"1 1 159 Bytes 64 MB"))
+
+	tk.MustExec(`set global tidb_mem_quota_bind_cache = 250`)
+	tk.MustQuery(`select @@global.tidb_mem_quota_bind_cache`).Check(testkit.Rows("250"))
+	tk.MustExec("admin reload bindings;")
+	tk.MustExec("create global binding for select * from t where a > 1 using select * from t where a > 1")
+	result = tk.MustQuery("show global bindings")
+	rows = result.Rows()
+	require.Equal(t, len(rows), 1)
+	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
+		"1 2 187 Bytes 250 Bytes"))
+
+	tk.MustExec("drop global binding for select * from t where a > 1")
+	result = tk.MustQuery("show global bindings")
+	rows = result.Rows()
+	require.Equal(t, len(rows), 0)
+	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
+		"0 1 0 Bytes 250 Bytes"))
+
+	tk.MustExec("admin reload bindings")
+	result = tk.MustQuery("show global bindings")
+	rows = result.Rows()
+	require.Equal(t, len(rows), 1)
+	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
+		"1 1 159 Bytes 250 Bytes"))
+
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx_a)")
+
+	result = tk.MustQuery("show global bindings")
+	rows = result.Rows()
+	require.Equal(t, len(rows), 1)
+
+	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
+		"1 1 198 Bytes 250 Bytes"))
 }

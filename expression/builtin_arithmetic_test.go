@@ -41,7 +41,7 @@ func TestSetFlenDecimal4RealOrDecimal(t *testing.T) {
 	}
 	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, false)
 	require.Equal(t, 1, ret.Decimal)
-	require.Equal(t, 6, ret.Flen)
+	require.Equal(t, 4, ret.Flen)
 
 	b.Flen = 65
 	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, false)
@@ -72,7 +72,7 @@ func TestSetFlenDecimal4RealOrDecimal(t *testing.T) {
 	}
 	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, true)
 	require.Equal(t, 1, ret.Decimal)
-	require.Equal(t, 8, ret.Flen)
+	require.Equal(t, 6, ret.Flen)
 
 	b.Flen = 65
 	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, true)

@@ -22,17 +22,12 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/assert"
@@ -348,31 +343,6 @@ func WithPruneMode(tk *TestKit, mode variable.PartitionPruneMode, f func()) {
 	f()
 }
 
-// MockGC is used to make GC work in the test environment.
-func MockGC(tk *TestKit) (string, string, string, func()) {
-	originGC := ddl.IsEmulatorGCEnable()
-	resetGC := func() {
-		if originGC {
-			ddl.EmulatorGCEnable()
-		} else {
-			ddl.EmulatorGCDisable()
-		}
-	}
-
-	// disable emulator GC.
-	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
-	ddl.EmulatorGCDisable()
-	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
-	timeAfterDrop := time.Now().Add(48 * 60 * 60 * time.Second).Format(gcTimeFormat)
-	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
-			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[1]s'`
-	// clear GC variables first.
-	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
-	return timeBeforeDrop, timeAfterDrop, safePointSQL, resetGC
-}
-
 func containGlobal(rs *Result) bool {
 	partitionNameCol := 2
 	for i := range rs.rows {
@@ -395,16 +365,6 @@ func (tk *TestKit) MustNoGlobalStats(table string) bool {
 		return false
 	}
 	return true
-}
-
-// GetTableByName gets table by name for test.
-func (tk *TestKit) GetTableByName(db, table string) table.Table {
-	dom := domain.GetDomain(tk.Session())
-	// Make sure the table schema is the new schema.
-	tk.require.NoError(dom.Reload())
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
-	tk.require.NoError(err)
-	return tbl
 }
 
 // CheckLastMessage checks last message after executing MustExec
