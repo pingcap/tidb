@@ -1186,16 +1186,6 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	return available, nil
 }
 
-func filterOutTiFlashPaths(paths []*util.AccessPath) []*util.AccessPath {
-	updatedPaths := make([]*util.AccessPath, 0, len(paths))
-	for _, path := range paths {
-		if path.StoreType != kv.TiFlash {
-			updatedPaths = append(updatedPaths, path)
-		}
-	}
-	return updatedPaths
-}
-
 func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath, tblName model.CIStr, dbName model.CIStr) ([]*util.AccessPath, error) {
 	// TODO: filter paths with isolation read locations.
 	if dbName.L == mysql.SystemDB {
@@ -3081,6 +3071,10 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 					b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "CONNECTION_ADMIN", false, err)
 					b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, &auth.UserIdentity{Username: pi.User, Hostname: pi.Host}, "RESTRICTED_CONNECTION_ADMIN")
 				}
+			} else if raw.ConnectionID == util2.GetAutoAnalyzeProcID() {
+				// Only the users with SUPER or CONNECTION_ADMIN privilege can kill auto analyze.
+				err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or CONNECTION_ADMIN")
+				b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "CONNECTION_ADMIN", false, err)
 			}
 		}
 	case *ast.UseStmt:
