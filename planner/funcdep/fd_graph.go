@@ -567,6 +567,7 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 	// maintain a key?
 }
 
+// MakeRestoreRule333 reset the status of how we deal with this rule.
 func (s *FDSet) MakeRestoreRule333() {
 	for _, eg := range s.Rule333Equiv.Edges {
 		if eg.isConstant() {
@@ -579,6 +580,7 @@ func (s *FDSet) MakeRestoreRule333() {
 	s.Rule333Equiv.InnerCols.Clear()
 }
 
+// ArgOpts contains some arg used for FD maintaince.
 type ArgOpts struct {
 	SkipFDRule331   bool
 	TypeFDRule331   TypeFilterFD331
@@ -586,13 +588,16 @@ type ArgOpts struct {
 	InnerIsFalse    bool
 }
 
+// TypeFilterFD331 describes the type of the filter used in this rule.
 type TypeFilterFD331 byte
 
+// Here's the two specific type.
 const (
 	SingleFD   TypeFilterFD331 = 0
 	CombinedFD TypeFilterFD331 = 1
 )
 
+// FindPrimaryKey checks whether there's a key in the current set which implies key -> all cols.
 func (s FDSet) FindPrimaryKey() (*FastIntSet, bool) {
 	allCols := s.AllCols()
 	for i := 0; i < len(s.fdEdges); i++ {
@@ -610,6 +615,7 @@ func (s FDSet) FindPrimaryKey() (*FastIntSet, bool) {
 	return nil, false
 }
 
+// AllCols returns all columns in the current set.
 func (s FDSet) AllCols() FastIntSet {
 	allCols := NewFastIntSet()
 	for i := 0; i < len(s.fdEdges); i++ {
@@ -908,6 +914,7 @@ func (s *FDSet) RegisterUniqueID(hashCode string, uniqueID int) {
 	s.HashCodeToUniqueID[hashCode] = uniqueID
 }
 
+// IsHashCodeRegistered checks whether the given hashcode has been registered in the current set.
 func (s *FDSet) IsHashCodeRegistered(hashCode string) (int, bool) {
 	if uniqueID, ok := s.HashCodeToUniqueID[hashCode]; ok {
 		return uniqueID, true

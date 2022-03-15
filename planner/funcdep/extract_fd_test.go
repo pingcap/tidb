@@ -74,14 +74,15 @@ func TestFDSet_ExtractFD(t *testing.T) {
 		},
 		{
 			sql: "select b+1, sum(a) from t1 group by(b)",
-			// since b is projected out, b --> b+1 and b ~~> sum(a) is eliminated.
+			// The final ones are b -> (b+1), b -> sum(a)
 			best: "DataScan(t1)->Aggr(sum(test.t1.a),firstrow(test.t1.b))->Projection",
 			fd:   "{(1)-->(2,3), (2,3)~~>(1)} >>> {(2)-->(4)} >>> {(2)-->(4,5)}",
 		},
 		{
-			sql:  "select b+1, b, sum(a) from t1 group by(b)",
+			sql: "select b+1, b, sum(a) from t1 group by(b)",
+			// The final ones are b -> (b+1), b -> sum(a)
 			best: "DataScan(t1)->Aggr(sum(test.t1.a),firstrow(test.t1.b))->Projection",
-			fd:   "{(1)-->(2,3), (2,3)~~>(1)} >>> {(2)~~>(4)} >>> {(2)~~>(4), (2)-->(5)}",
+			fd:   "{(1)-->(2,3), (2,3)~~>(1)} >>> {(2)-->(4)} >>> {(2)-->(4,5)}",
 		},
 		// test for table x1 and x2
 		{
@@ -109,12 +110,12 @@ func TestFDSet_ExtractFD(t *testing.T) {
 			// b+c is an expr assigned with new plan ID when building upper-layer projection.
 			// when extracting FD after build phase is done, we should be able to recognize a+b in lower-layer group by item with the same unique ID.
 			// that's why we introduce session variable MapHashCode2UniqueID4ExtendedCol in.
-			fd: "{(1)-->(2-4), (2,3)~~>(1,4), (2,4)-->(1,3)} >>> {(2,3)-->(5), (5)~~>(2,3)} >>> {(2,3)-->(5), (5)~~>(2,3)}",
+			fd: "{(1)-->(2-4), (2,3)~~>(1,4), (2,4)-->(1,3)} >>> {(2,3)-->(5)} >>> {(2,3)-->(5)}",
 		},
 		{
 			sql:  "select b+c, min(a) from x1 group by b+c, b-c",
 			best: "DataScan(x1)->Aggr(min(test.x1.a),firstrow(test.x1.b),firstrow(test.x1.c))->Projection",
-			fd:   "{(1)-->(2-4), (2,3)~~>(1,4), (2,4)-->(1,3)} >>> {(2,3)-->(6,8), (6,8)~~>(2,3,5)} >>> {(2,3)-->(6)}",
+			fd:   "{(1)-->(2-4), (2,3)~~>(1,4), (2,4)-->(1,3)} >>> {(2,3)-->(6,8), (6,8)-->(5)} >>> {(2,3)-->(6,8), (6,8)-->(5)}",
 		},
 		{
 			sql:  "select b+c, min(a) from x1 group by b, c",
