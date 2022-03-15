@@ -409,8 +409,11 @@ func (h *BindHandle) SetBindRecordStatus(originalSQL, db string, binding *Bindin
 	if err != nil {
 		return err
 	}
-	var updateTs types.Time
-	var oldStatus0, oldStatus1 string
+	var (
+		updateTs               types.Time
+		oldStatus0, oldStatus1 string
+		affectRows             int
+	)
 	if newStatus == Disabled {
 		// For compatibility reasons, when we need to 'set binding disabled for <stmt>',
 		// we need to consider both the 'enabled' and 'using' status.
@@ -429,7 +432,10 @@ func (h *BindHandle) SetBindRecordStatus(originalSQL, db string, binding *Bindin
 		}
 
 		_, err = exec.ExecuteInternal(context.TODO(), "COMMIT")
-		if err != nil {
+		if err != nil || affectRows == 0 {
+			if affectRows == 0 {
+				logutil.BgLogger().Warn("[sql-bind] There are no bindings can be set the status")
+			}
 			return
 		}
 
@@ -452,8 +458,6 @@ func (h *BindHandle) SetBindRecordStatus(originalSQL, db string, binding *Bindin
 		}
 		if setBindingStatusSucc {
 			h.setBindRecord(sqlDigest.String(), record)
-		} else {
-			logutil.BgLogger().Warn("[sql-bind] There are no bindings can be set the status")
 		}
 	}()
 
@@ -463,14 +467,16 @@ func (h *BindHandle) SetBindRecordStatus(originalSQL, db string, binding *Bindin
 	}
 
 	updateTs = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
+	updateTsStr := updateTs.String()
 
 	if binding == nil {
-		_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND (status = %? or status = %?)`,
-			newStatus, updateTs.String(), originalSQL, updateTs.String(), oldStatus0, oldStatus1)
+		_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND (status = %? OR status = %?)`,
+			newStatus, updateTsStr, originalSQL, updateTsStr, oldStatus0, oldStatus1)
 	} else {
-		_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %? and (status = %? or status = %?)`,
-			newStatus, updateTs.String(), originalSQL, updateTs.String(), binding.BindSQL, oldStatus0, oldStatus1)
+		_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %? AND (status = %? OR status = %?)`,
+			newStatus, updateTsStr, originalSQL, updateTsStr, binding.BindSQL, oldStatus0, oldStatus1)
 	}
+	affectRows = int(h.sctx.Context.GetSessionVars().StmtCtx.AffectedRows())
 	return err
 }
 
@@ -656,7 +662,7 @@ func (h *BindHandle) setBindRecord(hash string, meta *BindRecord) {
 	updateMetrics(metrics.ScopeGlobal, oldRecord, meta, false)
 }
 
-// appendBindRecord addes the BindRecord to the cache, all the stale BindRecords are
+// appendBindRecord adds the BindRecord to the cache, all the stale BindRecords are
 // removed from the cache after this operation.
 func (h *BindHandle) appendBindRecord(hash string, meta *BindRecord) {
 	newCache := h.bindInfo.Value.Load().(*bindCache).Copy()

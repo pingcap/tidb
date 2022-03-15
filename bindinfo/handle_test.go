@@ -311,6 +311,50 @@ func TestSetBindingStatus(t *testing.T) {
 	require.Len(t, rows, 0)
 }
 
+func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, index idx_a(a))")
+	utilCleanBindingEnv(tk, dom)
+	tk.MustQuery("show global bindings").Check(testkit.Rows())
+
+	// Simulate creating bindings on other machines
+	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT /*+ USE_INDEX(`t` `idx_a`)*/ * FROM `test`.`t` WHERE `a` > 10', 'test', 'deleted', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
+		bindinfo.Manual + "')")
+	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT /*+ USE_INDEX(`t` `idx_a`)*/ * FROM `test`.`t` WHERE `a` > 10', 'test', 'enabled', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
+		bindinfo.Manual + "')")
+	dom.BindHandle().Clear()
+	tk.MustExec("set binding disabled for select * from t where a > 10")
+	tk.MustExec("admin reload bindings")
+	rows := tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, bindinfo.Disabled, rows[0][3])
+
+	// clear the mysql.bind_info
+	utilCleanBindingEnv(tk, dom)
+	dom.BindHandle().Clear()
+
+	// Simulate creating bindings on other machines
+	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT * FROM `test`.`t` WHERE `a` > 10', 'test', 'deleted', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
+		bindinfo.Manual + "')")
+	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT * FROM `test`.`t` WHERE `a` > 10', 'test', 'disabled', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
+		bindinfo.Manual + "')")
+	dom.BindHandle().Clear()
+	tk.MustExec("set binding enabled for select * from t where a > 10")
+	tk.MustExec("admin reload bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, bindinfo.Enabled, rows[0][3])
+
+	utilCleanBindingEnv(tk, dom)
+	dom.BindHandle().Clear()
+}
+
 var testSQLs = []struct {
 	createSQL   string
 	overlaySQL  string
