@@ -1791,8 +1791,8 @@ func TestShowBindingCacheStatus(t *testing.T) {
 	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
 		"1 1 159 Bytes 64 MB"))
 
-	tk.MustExec(`set global tidb_mem_quota_bind_cache = 250`)
-	tk.MustQuery(`select @@global.tidb_mem_quota_bind_cache`).Check(testkit.Rows("250"))
+	tk.MustExec(`set global tidb_mem_quota_binding_cache = 250`)
+	tk.MustQuery(`select @@global.tidb_mem_quota_binding_cache`).Check(testkit.Rows("250"))
 	tk.MustExec("admin reload bindings;")
 	tk.MustExec("create global binding for select * from t where a > 1 using select * from t where a > 1")
 	result = tk.MustQuery("show global bindings")
