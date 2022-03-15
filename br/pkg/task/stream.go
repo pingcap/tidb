@@ -17,6 +17,11 @@ package task
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/httputil"
+	"net/http"
 	"sort"
 	"strings"
 
@@ -88,10 +93,10 @@ type StreamConfig struct {
 	RestoreTS    uint64 `json:"restore-ts" toml:"restore-ts"`
 }
 
-func (sc *StreamConfig) adjustRestoreConfig() {
-	sc.Config.adjust()
-	if sc.Concurrency == 0 {
-		sc.Concurrency = 32
+func (cfg *StreamConfig) adjustRestoreConfig() {
+	cfg.Config.adjust()
+	if cfg.Concurrency == 0 {
+		cfg.Concurrency = 32
 	}
 }
 
@@ -188,12 +193,13 @@ func (cfg *StreamConfig) ParseStreamCommonFromFlags(flags *pflag.FlagSet) error 
 }
 
 type streamMgr struct {
-	Cfg *StreamConfig
+	cfg *StreamConfig
 	mgr *conn.Mgr
 	bc  *backup.Client
+	httpCli *http.Client
 }
 
-func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, needStorage bool,
+func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamStart bool,
 ) (*streamMgr, error) {
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
 		cfg.CheckRequirements, true)
@@ -208,10 +214,10 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, needStora
 
 	// just stream start need Storage
 	s := &streamMgr{
-		Cfg: cfg,
+		cfg: cfg,
 		mgr: mgr,
 	}
-	if needStorage {
+	if isStreamStart {
 		backend, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -230,6 +236,9 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, needStora
 			return nil, errors.Trace(err)
 		}
 		s.bc = client
+
+		// create http client to do some requirements check.
+		s.httpCli = httputil.NewClient(mgr.GetTLSConfig())
 	}
 	return s, nil
 }
@@ -250,19 +259,19 @@ func (s *streamMgr) adjustAndCheckStartTS(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	// set currentTS to startTS as a default value
-	if s.Cfg.StartTS == 0 {
-		s.Cfg.StartTS = currentTS
+	if s.cfg.StartTS == 0 {
+		s.cfg.StartTS = currentTS
 	}
 
-	if currentTS < s.Cfg.StartTS || s.Cfg.EndTS <= currentTS {
+	if currentTS < s.cfg.StartTS || s.cfg.EndTS <= currentTS {
 		return errors.Annotatef(berrors.ErrInvalidArgument,
 			"invalid timestamps, startTS %d should be smaller than currentTS %d",
-			s.Cfg.StartTS, currentTS)
+			s.cfg.StartTS, currentTS)
 	}
-	if s.Cfg.EndTS <= currentTS {
+	if s.cfg.EndTS <= currentTS {
 		return errors.Annotatef(berrors.ErrInvalidArgument,
 			"invalid timestamps, endTS %d should be larger than currentTS %d",
-			s.Cfg.EndTS, currentTS)
+			s.cfg.EndTS, currentTS)
 	}
 
 	return nil
@@ -275,15 +284,15 @@ func (s *streamMgr) setGCSafePoint(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	err := utils.CheckGCSafePoint(ctx, s.mgr.GetPDClient(), s.Cfg.StartTS)
+	err := utils.CheckGCSafePoint(ctx, s.mgr.GetPDClient(), s.cfg.StartTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	sp := utils.BRServiceSafePoint{
 		ID:       utils.MakeSafePointID(),
-		TTL:      s.Cfg.SafePointTTL,
-		BackupTS: s.Cfg.StartTS,
+		TTL:      s.cfg.SafePointTTL,
+		BackupTS: s.cfg.StartTS,
 	}
 	err = utils.UpdateServiceSafePoint(ctx, s.mgr.GetPDClient(), sp)
 	if err != nil {
@@ -306,8 +315,8 @@ func (s *streamMgr) getTS(ctx context.Context) (uint64, error) {
 func (s *streamMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, error) {
 	dRanges, err := stream.BuildObserveDataRanges(
 		s.mgr.GetStorage(),
-		s.Cfg.TableFilter,
-		s.Cfg.StartTS,
+		s.cfg.TableFilter,
+		s.cfg.StartTS,
 	)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -321,6 +330,50 @@ func (s *streamMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, erro
 
 	return rs, nil
 }
+
+// checkRequirements will check some requirements before stream starts.
+func (s *streamMgr) checkRequirements(ctx context.Context) (bool, error) {
+	allStores, err := conn.GetAllTiKVStoresWithRetry(ctx, s.mgr.GetPDClient(), conn.SkipTiFlash)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
+	type backupStream struct {
+		EnableStreaming bool `json:"enable-streaming"`
+	}
+	type config struct {
+		BackupStream backupStream `json:"backup-stream"`
+	}
+
+	supportBackupStream := false
+	for _, store := range allStores {
+		if store.State != metapb.StoreState_Up {
+			continue
+		}
+		// we need make sure every available store support backup-stream otherwise we might lose data.
+		// so check every store's config
+		addr := fmt.Sprintf("%s/config", store.GetStatusAddress())
+		err = utils.WithRetry(ctx, func() error {
+			resp, e := s.httpCli.Get(addr)
+			if e != nil {
+				return e
+			}
+			c := &config{}
+			e = json.NewDecoder(resp.Body).Decode(c)
+			if e != nil {
+				err = e
+				return nil
+			}
+			if c.BackupStream.EnableStreaming {
+				supportBackupStream = true
+			}
+			return nil
+		}, utils.NewPDReqBackoffer())
+
+	}
+	return supportBackupStream, err
+}
+
 
 // RunStreamCommand run all kinds of `stream task``
 func RunStreamCommand(
