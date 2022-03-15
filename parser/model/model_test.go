@@ -440,6 +440,39 @@ func TestPlacementSettingsString(t *testing.T) {
 	require.Equal(t, "CONSTRAINTS=\"{+us-east-1:1,+us-east-2:1}\" VOTERS=3 FOLLOWERS=2 LEARNERS=1", settings.String())
 }
 
+func TestPlacementSettingsClone(t *testing.T) {
+	settings := &PlacementSettings{}
+	clonedSettings := settings.Clone()
+	clonedSettings.PrimaryRegion = "r1"
+	clonedSettings.Regions = "r1,r2"
+	clonedSettings.Followers = 1
+	clonedSettings.Voters = 2
+	clonedSettings.Followers = 3
+	clonedSettings.Constraints = "[+zone=z1]"
+	clonedSettings.LearnerConstraints = "[+region=r1]"
+	clonedSettings.FollowerConstraints = "[+disk=ssd]"
+	clonedSettings.LeaderConstraints = "[+region=r2]"
+	clonedSettings.VoterConstraints = "[+zone=z2]"
+	clonedSettings.Schedule = "even"
+	require.Equal(t, PlacementSettings{}, *settings)
+}
+
+func TestPlacementPolicyClone(t *testing.T) {
+	policy := &PolicyInfo{
+		PlacementSettings: &PlacementSettings{},
+	}
+	clonedPolicy := policy.Clone()
+	clonedPolicy.ID = 100
+	clonedPolicy.Name = NewCIStr("p2")
+	clonedPolicy.State = StateDeleteOnly
+	clonedPolicy.PlacementSettings.Followers = 10
+
+	require.Equal(t, int64(0), policy.ID)
+	require.Equal(t, NewCIStr(""), policy.Name)
+	require.Equal(t, StateNone, policy.State)
+	require.Equal(t, PlacementSettings{}, *(policy.PlacementSettings))
+}
+
 func TestLocation(t *testing.T) {
 	// test offset = 0
 	loc := &TimeZoneLocation{}
