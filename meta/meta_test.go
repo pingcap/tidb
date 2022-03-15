@@ -714,3 +714,23 @@ func match(ids, candidate []int64) bool {
 
 	return true
 }
+
+func TestDBKey(b *testing.T) {
+	var dbID int64 = 10
+	dbKey := meta.DBkey(dbID)
+	require.True(b, meta.IsDBkey(dbKey))
+
+	parseID, err := meta.ParseDBKey(dbKey)
+	require.NoError(b, err)
+	require.Equal(b, dbID, parseID)
+}
+
+func TestTableKey(b *testing.T) {
+	var tableID int64 = 10
+	tableKey := meta.TableKey(tableID)
+	require.True(b, meta.IsTableKey(tableKey))
+
+	parseID, err := meta.ParseTableKey(tableKey)
+	require.NoError(b, err)
+	require.Equal(b, tableID, parseID)
+}

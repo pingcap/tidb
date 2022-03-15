@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/domain"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/rawkv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -103,6 +105,9 @@ type Client struct {
 	// restoreTs is used for kv file restore.
 	// TiKV will filter the key space larger than this ts.
 	restoreTs uint64
+	// currentTS is used for rewrite meta kv when restore stream.
+	// Can not use `restoreTS` directly, because schema created in `full backup` maybe is new than `restoreTS`.
+	currentTS uint64
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -198,6 +203,10 @@ func (rc *Client) Close() {
 
 func (rc *Client) SetRestoreTs(ts uint64) {
 	rc.restoreTs = ts
+}
+
+func (rc *Client) SetCurrentTS(ts uint64) {
+	rc.currentTS = ts
 }
 
 func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool) {
@@ -384,6 +393,17 @@ func (rc *Client) GetTableSchema(
 		return nil, errors.Trace(err)
 	}
 	return table.Meta(), nil
+}
+
+// GetDBSchema gets the schema of a db from TiDB cluster
+func (rc *Client) GetDBSchema(dom *domain.Domain, dbName model.CIStr) (*model.DBInfo, error) {
+	info := dom.InfoSchema()
+	dbInfo, exist := info.SchemaByName(dbName)
+	if !exist {
+		log.Warn("schema not exist", zap.String("dbName", dbName.String()))
+		return nil, errors.Annotatef(berrors.ErrRestoreSchemaNotExists, "%v not exist", dbName.String())
+	}
+	return dbInfo, nil
 }
 
 // CreateDatabase creates a database.
@@ -1360,18 +1380,29 @@ func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*
 }
 
 // ReadStreamDataFiles is used for streaming task. collect all meta file by TS.
-func (rc *Client) ReadStreamDataFiles(ctx context.Context, metas []*backuppb.Metadata, restoreTS uint64) ([]*backuppb.DataFileInfo, error) {
-	streamBackupDataFiles := make([]*backuppb.DataFileInfo, 0)
+func (rc *Client) ReadStreamDataFiles(
+	ctx context.Context,
+	metas []*backuppb.Metadata,
+	restoreTS uint64,
+) (dataFile, metaFile []*backuppb.DataFileInfo, err error) {
+	dFiles := make([]*backuppb.DataFileInfo, 0)
+	mFiles := make([]*backuppb.DataFileInfo, 0)
+
 	for _, m := range metas {
 		for _, d := range m.Files {
 			if d.MinTs > restoreTS {
 				continue
 			}
-			streamBackupDataFiles = append(streamBackupDataFiles, d)
+
+			if d.IsMeta {
+				mFiles = append(mFiles, d)
+			} else {
+				dFiles = append(dFiles, d)
+			}
 			log.Debug("backup stream collect data file", zap.String("file", d.Path))
 		}
 	}
-	return streamBackupDataFiles, nil
+	return dFiles, mFiles, nil
 }
 
 // FixIndex tries to fix a single index.
@@ -1412,7 +1443,12 @@ func (rc *Client) FixIndicesOfTable(ctx context.Context, schema string, table *m
 	return nil
 }
 
-func (rc *Client) RestoreKVFiles(ctx context.Context, rules map[int64]*RewriteRules, files []*backuppb.DataFileInfo, onProgress func()) error {
+func (rc *Client) RestoreKVFiles(
+	ctx context.Context,
+	rules map[int64]*RewriteRules,
+	files []*backuppb.DataFileInfo,
+	onProgress func(),
+) error {
 	var err error
 	start := time.Now()
 	defer func() {
@@ -1470,6 +1506,119 @@ func (rc *Client) RestoreKVFiles(ctx context.Context, rules map[int64]*RewriteRu
 			zap.Error(err),
 		)
 		return errors.Trace(err)
+	}
+	return nil
+}
+
+// initSchemasReplaceForDDL gets schemas information Mapping from old schemas to new schemas.
+// It is used to rewrite meta kv-event.
+func (rc *Client) initSchemasReplaceForDDL(tables *map[int64]*metautil.Table) (*stream.SchemasReplace, error) {
+	var (
+		dbIDmap    = make(map[stream.OldID]stream.NewID)
+		tableIDmap = make(map[stream.OldID]stream.TableReplace)
+	)
+
+	for _, t := range *tables {
+		newDBInfo, err := rc.GetDBSchema(rc.GetDomain(), t.DB.Name)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		newTableInfo, err := rc.GetTableSchema(rc.GetDomain(), t.DB.Name, t.Info.Name)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		dbIDmap[t.DB.ID] = newDBInfo.ID
+
+		tbls := getTableIDMap(newTableInfo, t.Info)
+		for o, n := range tbls {
+			tableIDmap[o] = stream.TableReplace{TableID: n}
+		}
+
+		indexMap := getIndexIDMap(newTableInfo, t.Info)
+		tableIDmap[t.Info.ID] = stream.TableReplace{TableID: newTableInfo.ID, IndexMap: indexMap}
+	}
+
+	return stream.NewSchemasReplace(dbIDmap, tableIDmap, rc.currentTS), nil
+}
+
+// RestoreMetaKVFiles tries to restore files about meta kv-event from stream-backup.
+func (rc *Client) RestoreMetaKVFiles(
+	ctx context.Context,
+	rawkvClient *rawkv.Client,
+	files []*backuppb.DataFileInfo,
+	tables *map[int64]*metautil.Table,
+) error {
+	schemasReplace, err := rc.initSchemasReplaceForDDL(tables)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, f := range files {
+		// skip these files if file.MinTs > restoreTS
+		if f.MinTs > rc.restoreTs {
+			continue
+		}
+
+		log.Info("restore meta kv events", zap.String("file", f.Path),
+			zap.String("cf", f.Cf), zap.Int64(("kv-count"), f.NumberOfEntries))
+		err := rc.RestoreMetaKVFile(ctx, rawkvClient, f, schemasReplace)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
+}
+
+// RestoreMetaKVFiles tries to restore a file about meta kv-event from stream-backup.
+func (rc *Client) RestoreMetaKVFile(
+	ctx context.Context,
+	rawKVClient *rawkv.Client,
+	file *backuppb.DataFileInfo,
+	sr *stream.SchemasReplace,
+) error {
+	buff, err := rc.storage.ReadFile(ctx, file.Path)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	iter := stream.NewEventIterator(buff)
+	for iter.Valid() {
+		iter.Next()
+		if iter.GetError() != nil {
+			return errors.Trace(iter.GetError())
+		}
+
+		txnEntry := kv.Entry{Key: iter.Key(), Value: iter.Value()}
+		ts, err := GetKeyTS(txnEntry.Key)
+		if err != nil {
+			return errors.Trace(err)
+		} else if ts > rc.restoreTs {
+			break
+		}
+
+		log.Debug("rewrite txn entry",
+			zap.Int("txnKey-len", len(txnEntry.Key)), zap.ByteString("txnKey", txnEntry.Key))
+
+		newEntry, err := sr.RewriteKvEntry(&txnEntry, file.Cf)
+		if err != nil {
+			log.Error("rewrite txn entry failed", zap.Int("klen", len(txnEntry.Key)),
+				logutil.Key("txn-key", txnEntry.Key))
+			return errors.Trace(err)
+		} else if newEntry == nil {
+			continue
+		}
+
+		log.Debug("rewrite txn entry",
+			zap.Int("newKey-len", len(newEntry.Key)), zap.ByteString("newkey", newEntry.Key))
+
+		// to do...
+		// use BatchPut instead of put
+		rawKVClient.SetColumnFamily(file.Cf)
+		if err := rawKVClient.Put(ctx, newEntry.Key, newEntry.Value); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return nil
 }

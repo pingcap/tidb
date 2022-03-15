@@ -1136,6 +1136,11 @@ error = '''
 Table '%-.192s.%-.192s' doesn't exist
 '''
 
+["meta:1300"]
+error = '''
+Invalid %s character string: '%.64s'
+'''
+
 ["meta:8235"]
 error = '''
 DDL reorg element does not exist
