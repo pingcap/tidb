@@ -2385,7 +2385,7 @@ func (p *baseLogicalPlan) canPushToCopImpl(storeTp kv.StoreType, considerDual bo
 			}
 		case *LogicalTableDual:
 			return storeTp == kv.TiFlash && considerDual
-		case *LogicalAggregation, *LogicalSelection, *LogicalJoin:
+		case *LogicalAggregation, *LogicalSelection, *LogicalJoin, *LogicalWindow:
 			if storeTp == kv.TiFlash {
 				ret = ret && c.canPushToCop(storeTp)
 			} else {
@@ -2394,8 +2394,6 @@ func (p *baseLogicalPlan) canPushToCopImpl(storeTp kv.StoreType, considerDual bo
 		// These operators can be partially push down to TiFlash, so we don't raise warning for them.
 		case *LogicalLimit, *LogicalTopN:
 			return false
-		case *LogicalWindow:
-			return true
 		default:
 			p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 				"MPP mode may be blocked because operator `" + c.TP() + "` is not supported now.")
