@@ -382,6 +382,28 @@ func (s *streamMgr) checkRequirements(ctx context.Context) (bool, error) {
 	return hasTiKV && supportBackupStream, err
 }
 
+func (s *streamMgr) backupFullSchemas(ctx context.Context, g glue.Glue) error {
+	metaWriter := metautil.NewMetaWriter(s.bc.GetStorage(), metautil.MetaFileSize, false, nil)
+	schemas, err := backup.BuildFullSchema(s.mgr.GetStorage(), s.cfg.StartTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	schemasConcurrency := uint(utils.MinInt(backup.DefaultSchemaConcurrency, schemas.Len()))
+	updateCh := g.StartProgress(ctx, "Checksum", int64(schemas.Len()), !s.cfg.LogProgress)
+
+	err = schemas.BackupSchemas(ctx, metaWriter, s.mgr.GetStorage(), nil,
+		s.cfg.StartTS, schemasConcurrency, 0, true, updateCh)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if err = metaWriter.FlushBackupMeta(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // RunStreamCommand run all kinds of `stream task``
 func RunStreamCommand(
 	ctx context.Context,
@@ -438,10 +460,24 @@ func RunStreamStart(
 			"and restart tikv")
 	}
 
-	if err = streamMgr.setGCSafePoint(ctx); err != nil {
+	if err := streamMgr.setGCSafePoint(ctx); err != nil {
 		return errors.Trace(err)
 	}
+
+	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
+	// It supports single stream log task currently.
+	count, err := cli.GetTaskCount(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	} else if count > 0 {
+		return errors.Annotate(berrors.ErrStreamLogTaskExist, "It supports single stream log task current")
+	}
+
 	if err = streamMgr.setLock(ctx); err != nil {
+		return errors.Trace(err)
+	}
+
+	if err := streamMgr.backupFullSchemas(ctx, g); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -466,14 +502,6 @@ func RunStreamStart(
 		},
 		Ranges:  ranges,
 		Pausing: false,
-	}
-	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
-	// It supports single stream log task current
-	count, err := cli.GetTaskCount(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	} else if count > 0 {
-		return errors.Annotate(berrors.ErrStreamLogTaskExist, "It supports single stream log task current")
 	}
 
 	if err := cli.PutTask(ctx, ti); err != nil {
@@ -759,9 +787,14 @@ func RunStreamRestore(
 		}
 		defer rawkvClient.Close()
 
-		err = client.RestoreMetaKVFiles(ctx, rawkvClient, mFiles, &fullBackupTables)
+		err = client.RestoreMetaKVFiles(ctx, rawkvClient, mFiles, &fullBackupTables, cfg.TableFilter)
 		errChMeta <- err
 	}()
+
+	if err := <-errChMeta; err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 
 	// perform restore kv files
 	pd := g.StartProgress(ctx, "Restore KV Files", int64(len(dFiles)), cfg.LogProgress)
@@ -772,22 +805,18 @@ func RunStreamRestore(
 		return errors.Annotate(err, "failed to restore kv files")
 	}
 
-	if err := <-errChMeta; err != nil {
-		return errors.Trace(err)
-	}
-
-	pi := g.StartProgress(ctx, "Restore Index", countIndices(fullBackupTables), cfg.LogProgress)
-	err = withProgress(pi, func(p glue.Progress) error {
-		for _, table := range fullBackupTables {
-			if err := client.FixIndicesOfTable(ctx, table.DB.Name.L, table.Info, p.Inc); err != nil {
-				return errors.Annotatef(err, "failed to fix index for table %s.%s", table.DB.Name, table.Info.Name)
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return errors.Annotate(err, "failed to fix index for some table")
-	}
+	// pi := g.StartProgress(ctx, "Restore Index", countIndices(fullBackupTables), cfg.LogProgress)
+	// err = withProgress(pi, func(p glue.Progress) error {
+	// 	for _, table := range fullBackupTables {
+	// 		if err := client.FixIndicesOfTable(ctx, table.DB.Name.L, table.Info, p.Inc); err != nil {
+	// 			return errors.Annotatef(err, "failed to fix index for table %s.%s", table.DB.Name, table.Info.Name)
+	// 		}
+	// 	}
+	// 	return nil
+	// })
+	// if err != nil {
+	// 	return errors.Annotate(err, "failed to fix index for some table")
+	// }
 
 	// TODO split put and delete files
 	return nil
