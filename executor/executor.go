@@ -609,11 +609,11 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		defer e.releaseSysSession(newSess)
 		jobs, err = admin.GetConcurrencyDDLJobs(newSess)
 		if err != nil {
 			return err
 		}
-		e.releaseSysSession(newSess)
 	} else {
 		jobs, err = admin.GetDDLJobs(txn)
 		if err != nil {
