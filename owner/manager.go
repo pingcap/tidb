@@ -200,7 +200,7 @@ func (m *ownerManager) CampaignOwner() error {
 func (m *ownerManager) ResignOwner(ctx context.Context) error {
 	elec := (*concurrency.Election)(atomic.LoadPointer(&m.elec))
 	if elec == nil {
-		return errors.Errorf("This node is not a ddl owner, can't be resigned.")
+		return errors.Errorf("This node is not a ddl owner, can't be resigned")
 	}
 
 	childCtx, cancel := context.WithTimeout(ctx, keyOpDefaultTimeout)

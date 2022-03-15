@@ -514,7 +514,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 	lexpr := er.ctxStack[len(er.ctxStack)-1]
 	subq, ok := v.R.(*ast.SubqueryExpr)
 	if !ok {
-		er.err = errors.Errorf("Unknown compare type %T.", v.R)
+		er.err = errors.Errorf("Unknown compare type %T", v.R)
 		return v, true
 	}
 	np, err := er.buildSubquery(ctx, subq)
@@ -797,7 +797,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 	defer resetCTECheckForSubQuery(ci)
 	subq, ok := v.Sel.(*ast.SubqueryExpr)
 	if !ok {
-		er.err = errors.Errorf("Unknown exists type %T.", v.Sel)
+		er.err = errors.Errorf("Unknown exists type %T", v.Sel)
 		return v, true
 	}
 	np, err := er.buildSubquery(ctx, subq)
@@ -871,7 +871,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 	lexpr := er.ctxStack[len(er.ctxStack)-1]
 	subq, ok := v.Sel.(*ast.SubqueryExpr)
 	if !ok {
-		er.err = errors.Errorf("Unknown compare type %T.", v.Sel)
+		er.err = errors.Errorf("Unknown compare type %T", v.Sel)
 		return v, true
 	}
 	np, err := er.buildSubquery(ctx, subq)

@@ -467,7 +467,7 @@ func TestPartitionTable(t *testing.T) {
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
-	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(4)`)
+	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(1)`)
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("4"))
 	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
 	tk.MustExec("set @@session.tidb_partition_prune_mode='static-only'")
@@ -489,7 +489,7 @@ func TestPartitionTable(t *testing.T) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
 	// test if it is really work.
-	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(8)`)
+	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(2)`)
 	tk.MustQuery("select count(*) from t1 , t where t1.a = t.a").Check(testkit.Rows("4"))
 	// test partition prune
 	tk.MustQuery("select count(*) from t1 , t where t1.a = t.a and t1.a < 2 and t.a < 2").Check(testkit.Rows("1"))
@@ -507,7 +507,7 @@ func TestPartitionTable(t *testing.T) {
 	tk.MustExec("insert into t2 values(3,0)")
 	tk.MustExec("insert into t2 values(4,0)")
 	// test with no partition table
-	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(9)`)
+	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(3)`)
 	tk.MustQuery("select count(*) from t1 , t, t2 where t1.a = t.a and t2.a = t.a").Check(testkit.Rows("4"))
 	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
 
@@ -527,10 +527,10 @@ func TestPartitionTable(t *testing.T) {
 	tk.MustExec("insert into t3 values(3,4)")
 	tk.MustExec("insert into t3 values(4,6)")
 
-	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(7)`)
+	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(2)`)
 	tk.MustQuery("select count(*) from t, t3 where t3.a = t.a and t3.b <= 4").Check(testkit.Rows("3"))
 	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
-	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(5)`)
+	failpoint.Enable("github.com/pingcap/tidb/executor/checkTotalMPPTasks", `return(2)`)
 	tk.MustQuery("select count(*) from t, t3 where t3.a = t.a and t3.b > 10").Check(testkit.Rows("0"))
 	failpoint.Disable("github.com/pingcap/tidb/executor/checkTotalMPPTasks")
 	failpoint.Disable("github.com/pingcap/tidb/executor/checkUseMPP")
@@ -1141,4 +1141,56 @@ func TestForbidTiFlashIfExtraPhysTableIDIsNeeded(t *testing.T) {
 	require.Contains(t, res, "tiflash")
 	require.NotContains(t, res, "tikv")
 	tk.MustExec("rollback")
+}
+
+func TestTiflashPartitionTableScan(t *testing.T) {
+	store, clean := createTiFlashStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(\n    a int,\n    primary key(a)\n) partition by range(a) (\n    partition p1 values less than (10),\n    partition p2 values less than (20),\n    partition p3 values less than (30),\n    partition p4 values less than (40),\n    partition p5 values less than (50)\n);")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	time.Sleep(2 * time.Second)
+	tk.MustExec("insert into t values(1),(11),(21),(31),(41);")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\";")
+	// MPP
+	tk.MustExec("set @@session.tidb_allow_mpp=ON;")
+	tk.MustQuery("select count(*) from t where a < 12;").Check(testkit.Rows("2"))
+
+	// BatchCop
+	tk.MustExec("set @@session.tidb_allow_mpp=OFF;")
+	tk.MustExec("set @@tidb_allow_batch_cop = 2;")
+	tk.MustQuery("select count(*) from t where a < 12;").Check(testkit.Rows("2"))
+
+	// test retry batch cop
+	// MPP
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy", `return(true)`))
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy"))
+		wg.Done()
+	}()
+	tk.MustExec("set @@session.tidb_allow_mpp=ON;")
+	tk.MustQuery("select count(*) from t where a < 12;").Check(testkit.Rows("2"))
+	wg.Wait()
+
+	// BatchCop
+	wg.Add(1)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy", `return(true)`))
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcServerBusy"))
+		wg.Done()
+	}()
+	tk.MustExec("set @@session.tidb_allow_mpp=OFF;")
+	tk.MustExec("set @@tidb_allow_batch_cop = 2;")
+	tk.MustQuery("select count(*) from t where a < 12;").Check(testkit.Rows("2"))
+	wg.Wait()
 }

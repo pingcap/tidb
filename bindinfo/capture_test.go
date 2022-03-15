@@ -943,12 +943,20 @@ func TestCaptureHints(t *testing.T) {
 		{"select * from t use index(b)", "use_index(@`sel_1` `test`.`t` `b`)"},
 		{"select /*+ use_index(b) */ * from t use index(b)", "use_index(@`sel_1` `test`.`t` `b`)"},
 		{"select /*+ use_index_merge(t, a, b) */ a, b from t where a=1 or b=1", "use_index_merge(@`sel_1` `t` `a`, `b`)"},
+		{"select /*+ ignore_index(t, a) */ * from t where a=1", "ignore_index(`t` `a`)"},
 		// push-down hints
+		{"select /*+ limit_to_cop() */ * from t limit 10", "limit_to_cop()"},
+		{"select /*+ agg_to_cop() */ a, count(*) from t group by a", "agg_to_cop()"},
 		// index-merge hints
+		{"select /*+ no_index_merge() */ a, b from t where a>1 or b>1", "no_index_merge()"},
+		{"select /*+ use_index_merge(t, a, b) */ a, b from t where a>1 or b>1", "use_index_merge(@`sel_1` `t` `a`, `b`)"},
 		// runtime hints
+		{"select /*+ memory_quota(1024 MB) */ * from t", "memory_quota(1024 mb)"},
+		{"select /*+ max_execution_time(1000) */ * from t", "max_execution_time(1000)"},
 		// storage hints
-		// query-blocks
+		{"select /*+ read_from_storage(tikv[t]) */ * from t", "read_from_storage(tikv[`t`])"},
 		// others
+		{"select /*+ use_toja(true) */ t1.a, t1.b from t t1 where t1.a in (select t2.a from t t2)", "use_toja(true)"},
 	}
 	for _, capCase := range captureCases {
 		stmtsummary.StmtSummaryByDigestMap.Clear()
