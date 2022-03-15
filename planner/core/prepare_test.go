@@ -1508,6 +1508,30 @@ func TestIssue28254(t *testing.T) {
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1"))
 }
 
+func TestIssue33067(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer core.SetPreparedPlanCache(orgEnable)
+	core.SetPreparedPlanCache(true)
+	se, err := session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	require.NoError(t, err)
+	tk := testkit.NewTestKitWithSession(t, store, se)
+
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS `t`")
+	tk.MustExec("CREATE TABLE `t` (`COL1` char(20) DEFAULT NULL, `COL2` bit(16),`COL3` date, KEY `U_M_COL5` (`COL3`,`COL2`))")
+	tk.MustExec("insert into t values ('','>d','9901-06-17')")
+	tk.MustExec("prepare stmt from 'select * from t where col1 is not null and col2 not in (?, ?, ?) and col3 in (?, ?, ?)'")
+	tk.MustExec(`set @a=-21188, @b=26824, @c=31855, @d="5597-1-4", @e="5755-12-6", @f="1253-7-12"`)
+	tk.MustQuery(`execute stmt using @a,@b,@c,@d,@e,@f`).Check(testkit.Rows())
+	tk.MustExec(`set @a=-5360, @b=-11715, @c=9399, @d="9213-09-13", @e="4705-12-24", @f="9901-06-17"`)
+	tk.MustQuery(`execute stmt using @a,@b,@c,@d,@e,@f`).Check(testkit.Rows(" >d 9901-06-17"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
 func TestIssue29486(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

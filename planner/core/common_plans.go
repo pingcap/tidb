@@ -632,8 +632,8 @@ func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context
 // RebuildPlan will rebuild this plan under current user parameters.
 func (e *Execute) RebuildPlan(p Plan) error {
 	sc := p.SCtx().GetSessionVars().StmtCtx
-	sc.InPreparedStmt = true
-	defer func() { sc.InPreparedStmt = false }()
+	sc.InPreparedPlanBuilding = true
+	defer func() { sc.InPreparedPlanBuilding = false }()
 	return e.rebuildRange(p)
 }
 
