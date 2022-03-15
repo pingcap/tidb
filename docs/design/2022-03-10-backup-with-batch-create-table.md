@@ -1,8 +1,8 @@
 # TiDB Design Documents
 
-- Author(s): [fengou1](http://github.com/your-github-id)
-- Discussion PR: https://github.com/pingcap/tidb/pull/27036
-- Tracking Issue: https://github.com/pingcap/tidb/issues/28763
+- Author(s): [fengou1](http://github.com/fengou1)
+- Discussion PR: https://github.com/pingcap/tidb/issues/28763
+- Tracking Issue: https://github.com/pingcap/tidb/pull/27036
 
 ## Table of Contents
 
@@ -10,7 +10,6 @@
 * [Motivation or Background](#motivation-or-background)
 * [Detailed Design](#detailed-design)
 * [Test Design](#test-design)
- * [Functional Tests](#functional-tests)
  * [Compatibility Tests](#compatibility-tests)
  * [Benchmark Tests](#benchmark-tests)
 
@@ -27,7 +26,7 @@ The cluster has 6 TiB data, 30k tables, and 11 TiKVs. When I use BR to backup an
 Backup and Restore for massive tables is extremely slow, the bottleneck of creating the table is to waiting for the schema version change. Each table creates ddl cause a schema version change. 60000 tables have almost 60000 times schema change, it is very cost of restoring massive table
 
 Currently, BR uses an internal interface named CreateTableWithInfo to create table, which creating the table and wait the schema changing one-by-one, omitting the sync of the ddl job between BR and leader, the procedure of creating one table would be like this:
-
+```
 for _, t := range tables {
  RunInTxn(func(txn) {
  m := meta.New(txn)
@@ -37,10 +36,10 @@ for _, t := range tables {
  waitSchemaToSync() // <- This would notify and then 
  // waiting for all other TiDB nodes are synced with the latest schema version. 
 }
+```
 
-the new design will introduce a new batch create table api
-BatchCreateTableWithInfo
-
+the new design will introduce a new batch create table api `BatchCreateTableWithInfo`
+```
 for _, info := range tableInfo {
  job, err := d.createTableWithInfoJob(ctx, dbName, info, onExist, true)
  if err != nil {
@@ -72,15 +71,14 @@ for _, info := range tableInfo {
  return errors.Trace(d.callHookOnChanged(err))
  }
  }
+```
 
-
-For ddl work, introduce a new job type ActionCreateTables
+For ddl work, introduce a new job type `ActionCreateTables`
+```
  case model.ActionCreateTables:
  tableInfos := []*model.TableInfo{}
  err = job.DecodeArgs(&tableInfos)
- if err != nil {
- return 0, errors.Trace(err)
- }
+
  diff.AffectedOpts = make([]*model.AffectedOption, len(tableInfos))
  for i := range tableInfos {
  diff.AffectedOpts[i] = &model.AffectedOption{
@@ -90,11 +88,12 @@ For ddl work, introduce a new job type ActionCreateTables
  OldTableID: tableInfos[i].ID,
  }
  }
+```
 
-for each job ActionCreateTables, only one schema change, so one schema version for one batch of creating table, it greatly improves the performance of creating tables.
+for each job `ActionCreateTables`, only one schema change, so one schema version for one batch of creating table, it greatly improves the performance of creating tables.
 
 
-The feature auto-enabled with batch size 128 to batch create the table. Users can disable the feature by specifying --ddl-batch-size=0. The max batch size depends on the txn message size, currently, it configures 8MB by default. 
+The feature auto-enabled with batch size 128 to batch create the table. Users can disable the feature by specifying `--ddl-batch-size=0`. The max batch size depends on the txn message size, currently, it configures 8MB by default. 
 
 ## Test Design
 UT: see PRs https://github.com/pingcap/tidb/pull/28763, https://github.com/pingcap/tics/pull/4201, https://github.com/pingcap/tidb/pull/29380
