@@ -17,6 +17,7 @@ package memory
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"sync"
@@ -569,7 +570,7 @@ func (t *Tracker) UnRegisterFreeWatcher(freeWatcher FreeWatcher) {
 
 // AllocateForFreeWatchers allocates memory to watchers when some is freed
 func (t *Tracker) AllocateForFreeWatchers(bytesConsumed int64, bytes int64) {
-	if bytes < t.bytesSoftLimit/100 {
+	if math.Abs(float64(bytes)) < float64(t.bytesSoftLimit)/100 {
 		return
 	}
 	t.fwMu.Lock()
@@ -578,6 +579,9 @@ func (t *Tracker) AllocateForFreeWatchers(bytesConsumed int64, bytes int64) {
 		return
 	}
 	free := t.bytesSoftLimit - bytesConsumed
+	if free < 0 {
+		free = 0
+	}
 	totalWeight := int64(0)
 	weightMap := make(map[FreeWatcher]int64, len(t.fwMu.freeWatchers))
 	for watcher := range t.fwMu.freeWatchers {

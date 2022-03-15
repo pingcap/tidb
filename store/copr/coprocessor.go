@@ -118,6 +118,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		it.rateLimiter = newCopRateLimiter(
 			option.EnableRateLimitV2,
 			2,
+			uint32(option.RateLimitMinRate),
 			uint32(it.sendRate.GetCapacity()),
 			uint32(len(it.tasks)),
 			req.MemTracker,
@@ -644,7 +645,15 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 				return nil, nil
 			}
 			if ok {
-				it.rateLimiter.onResponse(resp.MemSize())
+				respSize := resp.MemSize()
+				failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
+					if val.(bool) {
+						if resp != finCopResp {
+							respSize = MockResponseSizeForTest
+						}
+					}
+				})
+				it.rateLimiter.onResponse(respSize)
 				break
 			}
 			// reach the end of current task.respChan
@@ -1377,6 +1386,7 @@ func isolationLevelToPB(level kv.IsoLevel) kvrpcpb.IsolationLevel {
 // CopRateLimiter is used to limit the sendRate of request to TiKV based on free memory.
 type CopRateLimiter struct {
 	// immutable attributes of limiter
+	initCapacity  uint32
 	minCapacity   uint32
 	maxCapacity   uint32
 	totalTaskNum  uint32
@@ -1399,6 +1409,7 @@ type CopRateLimiter struct {
 
 func newCopRateLimiter(
 	enabled bool,
+	initCapacity uint32,
 	minCapacity uint32,
 	maxCapacity uint32,
 	totalTaskNum uint32,
@@ -1406,6 +1417,7 @@ func newCopRateLimiter(
 	capMemTracker *memory.Tracker,
 	finishCh <-chan struct{}) *CopRateLimiter {
 	rateLimiter := &CopRateLimiter{
+		initCapacity:     initCapacity,
 		minCapacity:      minCapacity,
 		maxCapacity:      maxCapacity,
 		totalTaskNum:     totalTaskNum,
@@ -1413,10 +1425,11 @@ func newCopRateLimiter(
 		capMemTracker:    capMemTracker,
 		finishCh:         finishCh,
 		requestsInFlight: 0,
+		bytesAllocated:   -1,
 		finTaskNum:       0,
 		avgTaskRespSize:  0,
 		curCapacity:      maxCapacity,
-		targetCapacity:   minCapacity,
+		targetCapacity:   initCapacity,
 	}
 	if enabled {
 		rateLimiter.enabled = 1
@@ -1513,7 +1526,7 @@ func (r *CopRateLimiter) recalcTokenCapacity() {
 	r.Lock()
 	defer r.Unlock()
 	bytesAllocated := atomic.LoadInt64(&r.bytesAllocated)
-	if r.finTaskNum >= r.minCapacity && bytesAllocated > 0 {
+	if r.finTaskNum >= r.initCapacity && bytesAllocated >= 0 {
 		newCapacity := bytesAllocated / r.avgTaskRespSize
 		if newCapacity < int64(r.minCapacity) {
 			newCapacity = int64(r.minCapacity)
@@ -1521,6 +1534,7 @@ func (r *CopRateLimiter) recalcTokenCapacity() {
 		if newCapacity > int64(r.maxCapacity) {
 			newCapacity = int64(r.maxCapacity)
 		}
+		logutil.BgLogger().Debug("recalcTokenCapacity", zap.Int64("allocated", bytesAllocated), zap.Int64("capacity", newCapacity))
 		r.targetCapacity = uint32(newCapacity)
 		for r.curCapacity < r.targetCapacity {
 			r.sendRate.PutToken()
@@ -1533,7 +1547,7 @@ func (r *CopRateLimiter) recalcTokenCapacity() {
 			tokensToRemoveNow -= 1
 		}
 	}
-	atomic.StoreInt64(&r.bytesAllocated, 0)
+	atomic.StoreInt64(&r.bytesAllocated, -1)
 }
 
 // OnFreeAllocated is called when free memory is allocated by capMemTracker.
@@ -1545,7 +1559,7 @@ func (r *CopRateLimiter) OnFreeAllocated(bytesAllocated int64) {
 func (r *CopRateLimiter) Weight() int64 {
 	r.RLock()
 	defer r.RUnlock()
-	if r.isEnabled() && r.finTaskNum >= r.minCapacity {
+	if r.isEnabled() && r.finTaskNum >= r.initCapacity {
 		return r.avgTaskRespSize * int64(r.totalTaskNum)
 	}
 	return 0

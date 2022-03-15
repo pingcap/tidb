@@ -643,6 +643,8 @@ const (
 	TiDBMemQuotaBindingCache = "tidb_mem_quota_binding_cache"
 	// TiDBEnableAnalyzeRateLimit indicates whether to enable rate-limit for Analyze's requests to TiKV.
 	TiDBEnableAnalyzeRateLimit = "tidb_enable_analyze_rate_limit"
+	// TiDBAnalyzeRateLimitMin indicates the min rate of analyze rate-limit.
+	TiDBAnalyzeRateLimitMin = "tidb_analyze_rate_limit_min"
 )
 
 // TiDB intentional limits
@@ -808,6 +810,7 @@ const (
 	DefTiDBIgnorePreparedCacheCloseStmt   = false
 	DefTiDBBatchPendingTiFlashCount       = 4000
 	DefTiDBEnableAnalyzeRateLimit         = false
+	DefTiDBAnalyzeRateLimitMin            = 2
 )
 
 // Process global variables.
@@ -843,4 +846,5 @@ var (
 	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
 	MemQuotaBindingCache                  = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
 	EnableAnalyzeRateLimit                = atomic.NewBool(DefTiDBEnableAnalyzeRateLimit)
+	AnalyzeRateLimitMin                   = atomic.NewInt64(DefTiDBAnalyzeRateLimitMin)
 )

@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -2805,4 +2806,47 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 			}
 		}()
 	}
+}
+
+func TestAnalyzeRateLimitBasedOnMemoryUsage(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	originalVal1 := tk.MustQuery("select @@tidb_enable_rate_limit_action").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_enable_rate_limit_action = %v", originalVal1))
+	}()
+	originalVal2 := tk.MustQuery("select @@tidb_analyze_rate_limit_min").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_analyze_rate_limit_min = %v", originalVal2))
+	}()
+	originalLimit := executor.AnalyzeMemoryTracker.GetBytesLimit()
+	defer func() {
+		executor.AnalyzeMemoryTracker.SetBytesLimit(originalLimit)
+	}()
+
+	tk.MustExec(`set global tidb_analyze_rate_limit_min=0`)
+	tk.MustExec(`set session tidb_distsql_scan_concurrency=10`)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, index(id))")
+	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("10 1"))
+	tk.MustQuery("split table t INDEX id between (0) and (10000) regions 10;").Check(testkit.Rows("10 1"))
+	tk.MustExec("insert into t (id) values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10)")
+	quota := int64(3*copr.MockResponseSizeForTest - 100)
+	executor.AnalyzeMemoryTracker.SetBytesLimit(quota)
+	failpoint.Enable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockConsumeAndAssert", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/copr/testRateLimitActionMockConsumeAndAssert")
+	sql := "analyze table t"
+	tk.MustExec(`set global tidb_enable_analyze_rate_limit=ON`)
+
+	require.Equal(t, int64(0), executor.AnalyzeMemoryTracker.BytesConsumed())
+	tk.MustExec(sql)
+	maxConsumed := executor.AnalyzeMemoryTracker.MaxConsumed()
+	require.Less(t, maxConsumed, quota)
+
+	tk.MustExec(`set global tidb_enable_analyze_rate_limit=OFF`)
+	tk.MustGetErrMsg(sql, "Out Of Global Analyze Memory Limit!")
+	maxConsumed = executor.AnalyzeMemoryTracker.MaxConsumed()
+	require.Greater(t, maxConsumed, quota)
 }

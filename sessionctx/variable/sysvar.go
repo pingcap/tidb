@@ -1367,6 +1367,15 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBAnalyzeRateLimitMin, Value: strconv.Itoa(DefTiDBAnalyzeRateLimitMin), skipInit: true, Type: TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return strconv.FormatInt(AnalyzeRateLimitMin.Load(), 10), nil
+		},
+		SetGlobal: func(s *SessionVars, val string) error {
+			AnalyzeRateLimitMin.Store(TidbOptInt64(val, DefTiDBAnalyzeRateLimitMin))
+			return nil
+		},
+	},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.

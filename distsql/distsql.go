@@ -167,6 +167,7 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars inte
 	option := &kv.ClientSendOption{
 		EnableCollectExecutionInfo: config.GetGlobalConfig().EnableCollectExecutionInfo,
 		EnableRateLimitV2:          variable.EnableAnalyzeRateLimit.Load(),
+		RateLimitMinRate:           variable.AnalyzeRateLimitMin.Load(),
 		CapMemTracker:              kvReq.MemTracker.FindAncestor(memory.LabelForAnalyzeSharedMemory),
 	}
 	resp := client.Send(ctx, kvReq, vars, option)

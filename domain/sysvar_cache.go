@@ -245,6 +245,13 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 		variable.StatsLoadPseudoTimeout.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBEnableAnalyzeRateLimit:
 		variable.EnableAnalyzeRateLimit.Store(variable.TiDBOptOn(sVal))
+	case variable.TiDBAnalyzeRateLimitMin:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.AnalyzeRateLimitMin.Store(val)
 	}
 	if err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", name), zap.Error(err))
