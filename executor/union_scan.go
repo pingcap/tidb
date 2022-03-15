@@ -139,59 +139,44 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	defer us.memBuf.RUnlock()
 	req.GrowAndReset(us.maxChunkSize)
 	mutableRow := chunk.MutRowFromTypes(retTypes(us))
-
-	var done bool
-	var err error
-	for !done {
-		done, err = us.nextOnce(ctx, mutableRow, req)
+	for batchSize := req.Capacity(); req.NumRows() < batchSize; {
+		row, err := us.getOneRow(ctx)
 		if err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// nextOnce handles a batch of chunk rows, returns whether whole work is done.
-func (us *UnionScanExec) nextOnce(ctx context.Context, mutableRow chunk.MutRow, req *chunk.Chunk) (bool, error) {
-	for i, batchSize := 0, req.Capacity(); i < batchSize; i++ {
-		row, err := us.getOneRow(ctx)
-		if err != nil {
-			return true, err
-		}
 		// no more data.
 		if row == nil {
-			return true, nil
+			return nil
 		}
 		mutableRow.SetDatums(row...)
 
 		for _, idx := range us.virtualColumnIndex {
 			datum, err := us.schema.Columns[idx].EvalVirtualColumn(mutableRow.ToRow())
 			if err != nil {
-				return true, err
+				return err
 			}
 			// Because the expression might return different type from
 			// the generated column, we should wrap a CAST on the result.
 			castDatum, err := table.CastValue(us.ctx, datum, us.columns[idx], false, true)
 			if err != nil {
-				return true, err
+				return err
 			}
 			// Handle the bad null error.
 			if (mysql.HasNotNullFlag(us.columns[idx].Flag) || mysql.HasPreventNullInsertFlag(us.columns[idx].Flag)) && castDatum.IsNull() {
 				castDatum = table.GetZeroValue(us.columns[idx])
 			}
-
 			mutableRow.SetDatum(idx, castDatum)
 		}
 
 		matched, _, err := expression.EvalBool(us.ctx, us.conditionsWithVirCol, mutableRow.ToRow())
 		if err != nil {
-			return true, err
+			return err
 		}
 		if matched {
 			req.AppendRow(mutableRow.ToRow())
 		}
 	}
-	return false, nil
+	return nil
 }
 
 // Close implements the Executor Close interface.
