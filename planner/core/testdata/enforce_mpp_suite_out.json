@@ -262,14 +262,15 @@
       {
         "SQL": "explain format = 'brief' SELECT a, ROW_NUMBER() OVER (ORDER BY a) FROM t; -- 5. window unsupported",
         "Plan": [
-          "Window 10000.00 root  row_number()->Column#7 over(order by test.t.a rows between current row and current row)",
-          "└─IndexReader 10000.00 root  index:IndexFullScan",
-          "  └─IndexFullScan 10000.00 cop[tikv] table:t, index:idx(a) keep order:true, stats:pseudo"
+          "TableReader 10000.00 root  data:ExchangeSender",
+          "└─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "  └─Window 10000.00 cop[tiflash]  row_number()->Column#7 over(order by test.t.a rows between current row and current row)",
+          "    └─Sort 10000.00 cop[tiflash]  test.t.a",
+          "      └─ExchangeReceiver 10000.00 cop[tiflash]  ",
+          "        └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: PassThrough",
+          "          └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "MPP mode may be blocked because operator `Window` is not supported now.",
-          "MPP mode may be blocked because operator `Window` is not supported now."
-        ]
+        "Warn": null
       },
       {
         "SQL": "EXPLAIN format = 'brief' SELECT t1.b FROM t t1 join t t2 where t1.a=t2.a; -- 6. virtual column",

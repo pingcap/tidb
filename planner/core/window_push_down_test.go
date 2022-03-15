@@ -26,38 +26,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestWindowPushDownPlans(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-
-	// test query
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists employee")
-	tk.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
-
-	// Create virtual tiflash replica info.
-	dom := domain.GetDomain(tk.Session())
+func SetTiFlashReplica(t *testing.T, dom *domain.Domain, dbName, tableName string) {
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	db, exists := is.SchemaByName(model.NewCIStr(dbName))
 	require.True(t, exists)
 	for _, tblInfo := range db.Tables {
-		if tblInfo.Name.L == "employee" {
+		if tblInfo.Name.L == tableName {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
 				Available: true,
 			}
 		}
 	}
+}
 
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-		Warn []string
-	}
-	enforceMPPSuiteData := plannercore.GetWindowPushDownSuiteData()
-	enforceMPPSuiteData.GetTestCases(t, &input, &output)
+type Input []string
+type Output []struct {
+	SQL  string
+	Plan []string
+	Warn []string
+}
+
+func testWithData(t *testing.T, tk *testkit.TestKit, input Input, output Output) {
 	for i, tt := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
@@ -77,3 +67,59 @@ func TestWindowPushDownPlans(t *testing.T) {
 		// c.Assert(len(output[i].Warn), Equals, 0)
 	}
 }
+
+// Test WindowFuncDesc.CanPushDownToTiFlash
+func TestWindowFunctionDescCanPushDown(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	dom := domain.GetDomain(tk.Session())
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists employee")
+	tk.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
+	SetTiFlashReplica(t, dom, "test", "employee")
+
+	var input Input
+	var output Output
+	suiteData := plannercore.GetWindowPushDownSuiteData()
+	suiteData.GetTestCases(t, &input, &output)
+	testWithData(t, tk, input, output)
+}
+
+
+func TestWindowPushDownPlans(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	dom := domain.GetDomain(tk.Session())
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists employee")
+	tk.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
+	SetTiFlashReplica(t, dom, "test", "employee")
+
+	var input Input
+	var output Output
+	suiteData := plannercore.GetWindowPushDownSuiteData()
+	suiteData.GetTestCases(t, &input, &output)
+	testWithData(t, tk, input, output)
+}
+
+//func TestWindowPlanWithOtherOperators(t *testing.T) {
+//	store, clean := testkit.CreateMockStore(t)
+//	defer clean()
+//	tk := testkit.NewTestKit(t, store)
+//	dom := domain.GetDomain(tk.Session())
+//
+//	tk.MustExec("use test")
+//	tk.MustExec("drop table if exists employee")
+//	tk.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
+//	SetTiFlashReplica(t, dom, "test", "employee")
+//
+//	var input Input
+//	var output Output
+//	suiteData := plannercore.GetWindowPushDownSuiteData()
+//	suiteData.GetTestCases(t, &input, &output)
+//	testWithData(t, tk, input, output)
+//}
