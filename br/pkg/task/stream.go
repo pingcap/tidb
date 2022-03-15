@@ -19,6 +19,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -37,7 +38,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/spf13/pflag"
+	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/rawkv"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -641,18 +645,17 @@ func RunStreamRestore(
 	}
 
 	client.InitClients(u, false)
-
-	currentTs, err := streamMgr.getTS(ctx)
+	currentTS, err := streamMgr.getTS(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	if cfg.RestoreTS == 0 {
-		cfg.RestoreTS = currentTs
+		cfg.RestoreTS = currentTS
 	}
-
-	log.Info("start restore on point", zap.Uint64("ts", cfg.RestoreTS))
 	client.SetRestoreTs(cfg.RestoreTS)
+	client.SetCurrentTS(currentTS)
+	log.Info("start restore on point", zap.Uint64("ts", cfg.RestoreTS))
 
 	// get full backup meta to generate rewrite rules.
 	fullBackupTables, err := initFullBackupTables(ctx, cfg.FullBackupStorage, cfg)
@@ -674,18 +677,36 @@ func RunStreamRestore(
 		return nil
 	}
 	// read data file by given ts.
-	datas, err := client.ReadStreamDataFiles(ctx, metas, cfg.RestoreTS)
+	dFiles, mFiles, err := client.ReadStreamDataFiles(ctx, metas, cfg.RestoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+	// perform restore meta kv files
+	errChMeta := make(chan error)
+	go func() {
+		rawkvClient, err := newRawkvClient(ctx, cfg.PD, cfg.TLS)
+		if err != nil {
+			errChMeta <- err
+			return
+		}
+		defer rawkvClient.Close()
+
+		err = client.RestoreMetaKVFiles(ctx, rawkvClient, mFiles, &fullBackupTables)
+		errChMeta <- err
+	}()
+
 	// perform restore kv files
-	pd := g.StartProgress(ctx, "Restore KV Files", int64(len(datas)), cfg.LogProgress)
+	pd := g.StartProgress(ctx, "Restore KV Files", int64(len(dFiles)), cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
-		return client.RestoreKVFiles(ctx, rewriteRules, datas, p.Inc)
+		return client.RestoreKVFiles(ctx, rewriteRules, dFiles, p.Inc)
 	})
 	if err != nil {
 		return errors.Annotate(err, "failed to restore kv files")
+	}
+
+	if err := <-errChMeta; err != nil {
+		return errors.Trace(err)
 	}
 
 	pi := g.StartProgress(ctx, "Restore Index", countIndices(fullBackupTables), cfg.LogProgress)
@@ -711,7 +732,7 @@ func withProgress(p glue.Progress, cc func(p glue.Progress) error) error {
 	return cc(p)
 }
 
-func countIndices(ts map[string]*metautil.Table) int64 {
+func countIndices(ts map[int64]*metautil.Table) int64 {
 	result := int64(0)
 	for _, t := range ts {
 		result += int64(len(t.Info.Indices))
@@ -719,7 +740,11 @@ func countIndices(ts map[string]*metautil.Table) int64 {
 	return result
 }
 
-func initFullBackupTables(ctx context.Context, fullBackupStorage string, cfg *StreamConfig) (map[string]*metautil.Table, error) {
+func initFullBackupTables(
+	ctx context.Context,
+	fullBackupStorage string,
+	cfg *StreamConfig,
+) (map[int64]*metautil.Table, error) {
 	_, s, err := GetStorage(ctx, fullBackupStorage, &cfg.Config)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -740,24 +765,29 @@ func initFullBackupTables(ctx context.Context, fullBackupStorage string, cfg *St
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	tables := make(map[string]*metautil.Table)
+
+	tables := make(map[int64]*metautil.Table)
 	for _, db := range databases {
 		dbName := db.Info.Name.O
 		if name, ok := utils.GetSysDBName(db.Info.Name); utils.IsSysDB(name) && ok {
 			dbName = name
 		}
+
+		if !cfg.TableFilter.MatchSchema(dbName) {
+			continue
+		}
+
 		for _, table := range db.Tables {
 			if !cfg.TableFilter.MatchTable(dbName, table.Info.Name.O) {
 				continue
 			}
-			tables[utils.UniqueID(dbName, table.Info.Name.String())] = table
+			tables[table.Info.ID] = table
 		}
 	}
 	return tables, nil
-
 }
 
-func initRewriteRules(client *restore.Client, tables map[string]*metautil.Table) (map[int64]*restore.RewriteRules, error) {
+func initRewriteRules(client *restore.Client, tables map[int64]*metautil.Table) (map[int64]*restore.RewriteRules, error) {
 	// compare table exists in cluster and map[table]table.Info to get rewrite rules.
 	rules := make(map[int64]*restore.RewriteRules)
 	for _, t := range tables {
@@ -787,4 +817,15 @@ func initRewriteRules(client *restore.Client, tables map[string]*metautil.Table)
 		)
 	}
 	return rules, nil
+}
+
+func newRawkvClient(ctx context.Context, pdAddrs []string, tlsConfig TLSConfig) (*rawkv.Client, error) {
+	security := config.Security{
+		ClusterSSLCA:   tlsConfig.CA,
+		ClusterSSLCert: tlsConfig.Cert,
+		ClusterSSLKey:  tlsConfig.Key,
+	}
+	return rawkv.NewClient(ctx, pdAddrs, security,
+		pd.WithCustomTimeoutOption(10*time.Second),
+		pd.WithMaxErrorRetry(3))
 }

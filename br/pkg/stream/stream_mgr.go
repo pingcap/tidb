@@ -26,7 +26,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var metaPrefix = []byte("m")
+var MetaPrefix = []byte("m")
 
 // appendTableObserveRanges specifies building key ranges corresponding to `tblIDS`
 func appendTableObserveRanges(tblIDs []int64) []kv.KeyRange {
@@ -103,7 +103,7 @@ func BuildObserveDataRanges(
 // BuildObserveDataRanges specifies build key ranges to observe meta KV(contains all of metas)
 func BuildObserveMetaRange() *kv.KeyRange {
 	var startKey []byte
-	startKey = append(startKey, metaPrefix...)
+	startKey = append(startKey, MetaPrefix...)
 	sk := kv.Key(startKey)
 	ek := sk.PrefixNext()
 
