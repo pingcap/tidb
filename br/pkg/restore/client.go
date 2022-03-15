@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
+	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -1512,23 +1514,31 @@ func (rc *Client) RestoreKVFiles(
 
 // initSchemasReplaceForDDL gets schemas information Mapping from old schemas to new schemas.
 // It is used to rewrite meta kv-event.
-func (rc *Client) initSchemasReplaceForDDL(tables *map[int64]*metautil.Table) (*stream.SchemasReplace, error) {
+func (rc *Client) initSchemasReplaceForDDL(
+	tables *map[int64]*metautil.Table,
+	tableFilter filter.Filter,
+) (*stream.SchemasReplace, error) {
 	var (
-		dbIDmap    = make(map[stream.OldID]stream.NewID)
+		dbIDmap    = make(map[stream.OldID]stream.DBReplace)
 		tableIDmap = make(map[stream.OldID]stream.TableReplace)
 	)
 
 	for _, t := range *tables {
-		newDBInfo, err := rc.GetDBSchema(rc.GetDomain(), t.DB.Name)
+		name, _ := utils.GetSysDBName(t.DB.Name)
+		dbName := model.NewCIStr(name)
+		newDBInfo, err := rc.GetDBSchema(rc.GetDomain(), dbName)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		newTableInfo, err := rc.GetTableSchema(rc.GetDomain(), t.DB.Name, t.Info.Name)
+		newTableInfo, err := rc.GetTableSchema(rc.GetDomain(), dbName, t.Info.Name)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 
-		dbIDmap[t.DB.ID] = newDBInfo.ID
+		dbIDmap[t.DB.ID] = stream.DBReplace{
+			DBID:   newDBInfo.ID,
+			DBName: dbName.String(),
+		}
 
 		tbls := getTableIDMap(newTableInfo, t.Info)
 		for o, n := range tbls {
@@ -1536,10 +1546,22 @@ func (rc *Client) initSchemasReplaceForDDL(tables *map[int64]*metautil.Table) (*
 		}
 
 		indexMap := getIndexIDMap(newTableInfo, t.Info)
-		tableIDmap[t.Info.ID] = stream.TableReplace{TableID: newTableInfo.ID, IndexMap: indexMap}
+		tableIDmap[t.Info.ID] = stream.TableReplace{
+			TableID:   newTableInfo.ID,
+			TableName: t.Info.Name.O,
+			IndexMap:  indexMap,
+		}
 	}
 
-	return stream.NewSchemasReplace(dbIDmap, tableIDmap, rc.currentTS), nil
+	for id, db := range dbIDmap {
+		log.Info("replace", zap.String("dbname", db.DBName), zap.Int64("old-id", id), zap.Int64("new-id", db.DBID))
+	}
+
+	for id, t := range tableIDmap {
+		log.Info("replace", zap.String("tablename", t.TableName), zap.Int64("old-id", id), zap.Int64("new-id", t.TableID))
+	}
+
+	return stream.NewSchemasReplace(dbIDmap, tableIDmap, rc.currentTS, tableFilter, rc.GenGlobalID, rc.GenGlobalIDs), nil
 }
 
 // RestoreMetaKVFiles tries to restore files about meta kv-event from stream-backup.
@@ -1548,8 +1570,9 @@ func (rc *Client) RestoreMetaKVFiles(
 	rawkvClient *rawkv.Client,
 	files []*backuppb.DataFileInfo,
 	tables *map[int64]*metautil.Table,
+	tableFilter filter.Filter,
 ) error {
-	schemasReplace, err := rc.initSchemasReplaceForDDL(tables)
+	schemasReplace, err := rc.initSchemasReplaceForDDL(tables, tableFilter)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1559,14 +1582,20 @@ func (rc *Client) RestoreMetaKVFiles(
 		if f.MinTs > rc.restoreTs {
 			continue
 		}
+		log.Info("restore mfile",
+			zap.String("file", f.Path),
+			zap.String("cf", f.Cf),
+			zap.Int64(("kv-count"), f.NumberOfEntries))
 
-		log.Info("restore mfile", zap.String("file", f.Path), zap.String("cf", f.Cf), zap.Int64(("kv-count"), f.NumberOfEntries))
 		err := rc.RestoreMetaKVFile(ctx, rawkvClient, f, schemasReplace)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 
+	if err := rc.UpdateSchemaVersion(ctx); err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 
@@ -1597,8 +1626,8 @@ func (rc *Client) RestoreMetaKVFile(
 			break
 		}
 
-		log.Info("rewrite txn entry",
-			zap.Int("txnKey-len", len(txnEntry.Key)), zap.ByteString("txnKey", txnEntry.Key))
+		log.Info("txn entry", zap.Int("txnKey-len", len(txnEntry.Key)),
+			zap.Int("txnValue-len", len(txnEntry.Value)), zap.ByteString("txnKey", txnEntry.Key))
 
 		newEntry, err := sr.RewriteKvEntry(&txnEntry, file.Cf)
 		if err != nil {
@@ -1609,8 +1638,8 @@ func (rc *Client) RestoreMetaKVFile(
 			continue
 		}
 
-		log.Info("rewrite txn entry",
-			zap.Int("newKey-len", len(newEntry.Key)), zap.ByteString("newkey", newEntry.Key))
+		log.Info("rewrite txn entry", zap.Int("newKey-len", len(newEntry.Key)),
+			zap.Int("newValue-len", len(txnEntry.Value)), zap.ByteString("newkey", newEntry.Key))
 
 		// to do...
 		// use BatchPut instead of put
@@ -1627,4 +1656,62 @@ func transferBoolToValue(enable bool) string {
 		return "ON"
 	}
 	return "OFF"
+}
+
+// GenGlobalIDs generates a global id by transaction way.
+func (rc *Client) GenGlobalID(ctx context.Context) (int64, error) {
+	var id int64
+	storage := rc.GetDomain().Store()
+
+	err := kv.RunInNewTxn(
+		ctx,
+		storage,
+		true,
+		func(ctx context.Context, txn kv.Transaction) error {
+			var e error
+			t := meta.NewMeta(txn)
+			id, e = t.GenGlobalID()
+			return e
+		})
+
+	return id, err
+}
+
+// GenGlobalIDs generates several global ids by transaction way.
+func (rc *Client) GenGlobalIDs(ctx context.Context, n int) ([]int64, error) {
+	ids := make([]int64, 0)
+	storage := rc.GetDomain().Store()
+
+	err := kv.RunInNewTxn(
+		ctx,
+		storage,
+		true,
+		func(ctx context.Context, txn kv.Transaction) error {
+			var e error
+			t := meta.NewMeta(txn)
+			ids, e = t.GenGlobalIDs(n)
+			return e
+		})
+
+	return ids, err
+}
+
+// UpdateSchemaVersion updates schema version by transaction way.
+func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
+	storage := rc.GetDomain().Store()
+
+	err := kv.RunInNewTxn(
+		ctx,
+		storage,
+		true,
+		func(ctx context.Context, txn kv.Transaction) error {
+			t := meta.NewMeta(txn)
+			_, e := t.GenSchemaVersion()
+			return e
+		})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return nil
 }
