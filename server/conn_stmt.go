@@ -207,9 +207,6 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt, args, useCursor)
-	if err != nil && cc.connectionID > 0 {
-		logutil.Logger(ctx).Error("handleStmtExecute Error", zap.Error(err))
-	}
 	if retryable && err != nil && cc.ctx.GetSessionVars().IsRcCheckTsRetryable(err) {
 		logutil.Logger(ctx).Info("RC read using start_ts has failed, retry RC read",
 			zap.String("sql", cc.ctx.GetSessionVars().StmtCtx.OriginalSQL))
