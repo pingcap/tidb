@@ -609,8 +609,8 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		defer e.releaseSysSession(newSess)
 		jobs, err = admin.GetConcurrencyDDLJobs(newSess)
+		e.releaseSysSession(newSess)
 		if err != nil {
 			return err
 		}
@@ -671,11 +671,8 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	err = e.DDLJobRetriever.initial(txn, sess)
-	if err != nil {
-		return err
-	}
-	return nil
+	defer e.releaseSysSession(sess)
+	return e.DDLJobRetriever.initial(txn, sess)
 }
 
 // Next implements the Executor Next interface.
