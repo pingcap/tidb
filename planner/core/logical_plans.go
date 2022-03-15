@@ -953,6 +953,7 @@ func extractEquivalenceCols(Conditions []expression.Expression, sctx sessionctx.
 	return equivUniqueIDs
 }
 
+// ExtractFD implements the LogicalPlan interface.
 func (p *LogicalSelection) ExtractFD() *fd.FDSet {
 	// basically extract the children's fdSet.
 	fds := p.baseLogicalPlan.ExtractFD()

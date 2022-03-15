@@ -841,6 +841,7 @@ func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols F
 	s.HasAggBuilt = s.HasAggBuilt || innerFDs.HasAggBuilt
 }
 
+// MakeRestoreRule333 reset the status of this rule.
 func (s *FDSet) MakeRestoreRule333() {
 	for _, eg := range s.Rule333Equiv.Edges {
 		if eg.isConstant() {
@@ -853,6 +854,7 @@ func (s *FDSet) MakeRestoreRule333() {
 	s.Rule333Equiv.InnerCols.Clear()
 }
 
+// ArgOpts contains a bunch of things used for rule.
 type ArgOpts struct {
 	SkipFDRule331   bool
 	TypeFDRule331   TypeFilterFD331
@@ -860,13 +862,16 @@ type ArgOpts struct {
 	InnerIsFalse    bool
 }
 
+// TypeFilterFD331 describes the types used for rule 3.3.1 in outer join.
 type TypeFilterFD331 byte
 
+// Here's the two type of the filters.
 const (
 	SingleFD   TypeFilterFD331 = 0
 	CombinedFD TypeFilterFD331 = 1
 )
 
+// FindPrimaryKey checks whether there's a key that key -> all cols holds.
 func (s FDSet) FindPrimaryKey() (*FastIntSet, bool) {
 	allCols := s.AllCols()
 	for i := 0; i < len(s.fdEdges); i++ {
@@ -884,6 +889,7 @@ func (s FDSet) FindPrimaryKey() (*FastIntSet, bool) {
 	return nil, false
 }
 
+// AllCols returns all columns involved in the set.
 func (s FDSet) AllCols() FastIntSet {
 	allCols := NewFastIntSet()
 	for i := 0; i < len(s.fdEdges); i++ {
@@ -1182,6 +1188,7 @@ func (s *FDSet) RegisterUniqueID(hashCode string, uniqueID int) {
 	s.HashCodeToUniqueID[hashCode] = uniqueID
 }
 
+// IsHashCodeRegistered checks whether the given hash code has been registered in the set.
 func (s *FDSet) IsHashCodeRegistered(hashCode string) (int, bool) {
 	if uniqueID, ok := s.HashCodeToUniqueID[hashCode]; ok {
 		return uniqueID, true

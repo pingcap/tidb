@@ -1016,6 +1016,7 @@ func IsRuntimeConstExpr(expr Expression) bool {
 	return false
 }
 
+// CheckNonDeterministic checks whether the given expression contains non-deterministic functions.
 func CheckNonDeterministic(e Expression) bool {
 	switch x := e.(type) {
 	case *Constant, *Column, *CorrelatedColumn:
@@ -1033,6 +1034,7 @@ func CheckNonDeterministic(e Expression) bool {
 	return false
 }
 
+// CheckFuncInExpr checks whether the given expression contains the specific function.
 func CheckFuncInExpr(e Expression, funcName string) bool {
 	switch x := e.(type) {
 	case *Constant, *Column, *CorrelatedColumn:
