@@ -990,8 +990,8 @@ func TestPrepareCacheForPartition(t *testing.T) {
 	tk := testkit.NewTestKitWithSession(t, store, se)
 
 	tk.MustExec("use test")
-	for _, val := range []string{string(variable.Static), string(variable.Dynamic)} {
-		tk.MustExec("set @@tidb_partition_prune_mode = '" + val + "'")
+	for _, pruneMode := range []string{string(variable.Static), string(variable.Dynamic)} {
+		tk.MustExec("set @@tidb_partition_prune_mode = '" + pruneMode + "'")
 		// Test for PointGet and IndexRead.
 		tk.MustExec("drop table if exists t_index_read")
 		tk.MustExec("create table t_index_read (id int, k int, c varchar(10), primary key (id, k)) partition by hash(id+k) partitions 10")
@@ -1092,6 +1092,22 @@ func TestPrepareCacheForPartition(t *testing.T) {
 		tk.MustQuery("execute stmt8 using @id").Check(testkit.Rows("hij"))
 		tk.MustExec("set @id=100")
 		tk.MustQuery("execute stmt8 using @id").Check(testkit.Rows())
+
+		// https://github.com/pingcap/tidb/issues/33031
+		tk.MustExec(`drop table if exists Issue33031`)
+		tk.MustExec(`CREATE TABLE Issue33031 (COL1 int(16) DEFAULT '29' COMMENT 'NUMERIC UNIQUE INDEX', COL2 bigint(20) DEFAULT NULL, UNIQUE KEY UK_COL1 (COL1)) PARTITION BY RANGE (COL1) (PARTITION P0 VALUES LESS THAN (0))`)
+		tk.MustExec(`insert into Issue33031 values(-5, 7)`)
+		tk.MustExec(`prepare stmt from 'select *,? from Issue33031 where col2 < ? and col1 in (?, ?)'`)
+		tk.MustExec(`set @a=111, @b=1, @c=2, @d=22`)
+		tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows())
+		tk.MustExec(`set @a=112, @b=-2, @c=-5, @d=33`)
+		tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows("-5 7 33"))
+		if pruneMode == string(variable.Dynamic) {
+			// When the temporary disabling of prepared plan cache for dynamic partition prune mode is disabled, change this to 1!
+			tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+		} else {
+			tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+		}
 	}
 }
 
