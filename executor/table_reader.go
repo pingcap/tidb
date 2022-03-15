@@ -280,7 +280,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 			return distsql.NewSerialSelectResults(results), nil
 		}
 		// Use PartitionTable Scan
-		kvReq, err := e.buildKVRangeForPartitionTableScan(ctx, ranges)
+		kvReq, err := e.buildKVReqForPartitionTableScan(ctx, ranges)
 		if err != nil {
 			return nil, err
 		}
@@ -312,7 +312,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 	kvReqs := make([]*kv.Request, 0, len(kvRanges))
 	for i, kvRange := range kvRanges {
 		e.kvRanges = append(e.kvRanges, kvRange...)
-		if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, pids[i], true, nil); err != nil {
+		if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, true, []int64{pids[i]}); err != nil {
 			return nil, err
 		}
 		var builder distsql.RequestBuilder
@@ -337,7 +337,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 	return kvReqs, nil
 }
 
-func (e *TableReaderExecutor) buildKVRangeForPartitionTableScan(ctx context.Context, ranges []*ranger.Range) (*kv.Request, error) {
+func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Context, ranges []*ranger.Range) (*kv.Request, error) {
 	pids, kvRanges, err := e.kvRangeBuilder.buildKeyRangeSeparately(ranges)
 	if err != nil {
 		return nil, err
@@ -349,7 +349,7 @@ func (e *TableReaderExecutor) buildKVRangeForPartitionTableScan(ctx context.Cont
 			KeyRanges: kvRange,
 		})
 	}
-	if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, e.table.Meta().ID, true, pids); err != nil {
+	if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, true, pids); err != nil {
 		return nil, err
 	}
 	var builder distsql.RequestBuilder
