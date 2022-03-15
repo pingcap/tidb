@@ -1356,6 +1356,12 @@ var defaultSysVars = []*SysVar{
 		AllowConcurrencyDDL.Store(TiDBOptOn(val))
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBIgnorePreparedCacheCloseStmt, Value: BoolToOnOff(DefTiDBIgnorePreparedCacheCloseStmt), Type: TypeBool,
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.IgnorePreparedCacheCloseStmt = TiDBOptOn(s)
+			return nil
+		},
+	},
 }
 
 // FeedbackProbability points to the FeedbackProbability in statistics package.
