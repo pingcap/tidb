@@ -3410,10 +3410,6 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	if info := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; info != nil {
-		info.AddColumns = append(info.AddColumns, col.ColumnInfo)
-	}
 	return col, nil
 }
 
@@ -4061,10 +4057,6 @@ func checkIsDroppableColumn(ctx sessionctx.Context, t table.Table, spec *ast.Alt
 		}
 		return false, err
 	}
-
-	if info := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; info != nil {
-		info.DropColumns = append(info.DropColumns, col.ColumnInfo)
-	}
 	if err = isDroppableColumn(ctx.GetSessionVars().EnableChangeMultiSchema, tblInfo, colName); err != nil {
 		return false, errors.Trace(err)
 	}
@@ -4467,7 +4459,7 @@ func (d *ddl) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Contex
 			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
 		CtxVars: []interface{}{needChangeColData},
-		Args:    []interface{}{&newCol, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
+		Args:    []interface{}{&newCol.ColumnInfo, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
 	}
 	return job, nil
 }
@@ -4711,10 +4703,6 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		},
 		Args: []interface{}{&newCol, oldColName, spec.Position, 0},
 	}
-	if info := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; info != nil {
-		info.AddColumns = append(info.AddColumns, newCol)
-		info.DropColumns = append(info.DropColumns, oldCol.ToInfo())
-	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
@@ -4800,7 +4788,6 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{col},
 	}
-
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
@@ -5170,14 +5157,6 @@ func (d *ddl) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 		Type:       model.ActionRenameIndex,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{spec.FromKey, spec.ToKey},
-	}
-	if info := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; info != nil {
-		idx := tb.Meta().FindIndexByName(spec.FromKey.L)
-		newIdx := idx.Clone()
-		newIdx.Name = spec.ToKey
-
-		info.DropIndexes = append(info.DropIndexes, idx)
-		info.AddIndexes = append(info.AddIndexes, newIdx)
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
@@ -5731,15 +5710,6 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		Args:     []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
 		Priority: ctx.GetSessionVars().DDLReorgPriority,
 	}
-
-	if info := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; info != nil {
-		info.AddIndexes = append(info.AddIndexes, &model.IndexInfo{
-			Name:    indexName,
-			Columns: indexColumns,
-			State:   model.StateNone,
-		})
-	}
-
 	err = d.doDDLJob(ctx, job)
 	// key exists, but if_not_exists flags is true, so we ignore this error.
 	if dbterror.ErrDupKeyName.Equal(err) && ifNotExists {
@@ -5940,10 +5910,6 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{indexName},
 	}
-
-	if info := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; info != nil {
-		info.DropIndexes = append(info.DropIndexes, indexInfo)
-	}
 	err = d.doDDLJob(ctx, job)
 	// index not exists, but if_exists flags is true, so we ignore this error.
 	if dbterror.ErrCantDropFieldOrKey.Equal(err) && ifExists {
@@ -5986,9 +5952,6 @@ func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 
 		indexNames = append(indexNames, indexName)
 		ifExists = append(ifExists, spec.IfExists)
-		if info := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; info != nil {
-			info.DropIndexes = append(info.DropIndexes, indexInfo)
-		}
 	}
 
 	job := &model.Job{

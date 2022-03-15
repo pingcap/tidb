@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -146,42 +147,106 @@ func handleRevertibleException(job *model.Job, res model.JobState, idx int) {
 	}
 }
 
+func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error) {
+	switch job.Type {
+	case model.ActionAddColumn:
+		col := job.Args[0].(*table.Column)
+		pos := job.Args[1].(*ast.ColumnPosition)
+		info.AddColumns = append(info.AddColumns, col.Name)
+		if pos.Tp == ast.ColumnPositionAfter {
+			info.RelativeColumns = append(info.RelativeColumns, pos.RelativeColumn.Name)
+		}
+	case model.ActionAddColumns:
+		cols := job.Args[0].([]*table.Column)
+		pos := job.Args[0].([]*ast.ColumnPosition)
+		for i := range cols {
+			info.AddColumns = append(info.AddColumns, cols[i].Name)
+			if pos[i].Tp == ast.ColumnPositionAfter {
+				info.RelativeColumns = append(info.RelativeColumns, pos[i].RelativeColumn.Name)
+			}
+		}
+	case model.ActionDropColumn:
+		colName := job.Args[0].(model.CIStr)
+		info.DropColumns = append(info.DropColumns, colName)
+	case model.ActionDropIndex:
+		indexName := job.Args[0].(model.CIStr)
+		info.DropIndexes = append(info.DropIndexes, indexName)
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		indexName := job.Args[1].(model.CIStr)
+		indexPartSpecifications := job.Args[2].([]*ast.IndexPartSpecification)
+		info.AddIndexes = append(info.AddIndexes, indexName)
+		for _, indexPartSpecification := range indexPartSpecifications {
+			info.RelativeColumns = append(info.RelativeColumns, indexPartSpecification.Column.Name)
+		}
+	case model.ActionRenameIndex:
+		from := job.Args[0].(model.CIStr)
+		to := job.Args[1].(model.CIStr)
+		info.AddIndexes = append(info.AddIndexes, to)
+		info.DropIndexes = append(info.DropIndexes, from)
+	case model.ActionModifyColumn:
+		newCol := *job.Args[0].(**model.ColumnInfo)
+		oldColName := job.Args[1].(model.CIStr)
+		pos := job.Args[2].(*ast.ColumnPosition)
+		if newCol.Name.L != oldColName.L {
+			info.AddColumns = append(info.AddColumns, newCol.Name)
+			info.DropColumns = append(info.DropColumns, oldColName)
+		} else {
+			info.RelativeColumns = append(info.RelativeColumns, newCol.Name)
+		}
+		if pos != nil && pos.Tp == ast.ColumnPositionAfter {
+			info.RelativeColumns = append(info.RelativeColumns, pos.RelativeColumn.Name)
+		}
+	default:
+		return dbterror.ErrRunMultiSchemaChanges
+	}
+	return nil
+}
+
 func checkOperateSameColumn(info *model.MultiSchemaInfo) error {
 	modifyCols := make(map[string]struct{})
 	modifyIdx := make(map[string]struct{})
-	for _, col := range info.AddColumns {
-		name := col.Name.L
-		if _, ok := modifyCols[name]; ok {
-			return dbterror.ErrOperateSameColumn.GenWithStackByArgs(name)
-		}
-		modifyCols[name] = struct{}{}
-	}
-	for _, col := range info.DropColumns {
-		name := col.Name.L
-		if _, ok := modifyCols[name]; ok {
-			return dbterror.ErrOperateSameColumn.GenWithStackByArgs(name)
-		}
-		modifyCols[name] = struct{}{}
-	}
-	for _, index := range info.AddIndexes {
-		idxName := index.Name.L
-		if _, ok := modifyIdx[idxName]; ok {
-			return dbterror.ErrOperateSameIndex.GenWithStackByArgs(idxName)
-		}
-		modifyIdx[idxName] = struct{}{}
-		for _, col := range index.Columns {
-			colName := col.Name.L
-			if _, ok := modifyCols[colName]; ok {
-				return dbterror.ErrOperateSameColumn.GenWithStackByArgs(colName)
+
+	checkColumns := func(colNames []model.CIStr, addToModifyCols bool) error {
+		for _, colName := range colNames {
+			name := colName.L
+			if _, ok := modifyCols[name]; ok {
+				return dbterror.ErrOperateSameColumn.GenWithStackByArgs(name)
+			}
+			if addToModifyCols {
+				modifyCols[name] = struct{}{}
 			}
 		}
+		return nil
 	}
-	for _, index := range info.DropIndexes {
-		idxName := index.Name.L
-		if _, ok := modifyIdx[idxName]; ok {
-			return dbterror.ErrOperateSameIndex.GenWithStackByArgs(idxName)
+
+	checkIndexes := func(idxNames []model.CIStr, addToModifyIdx bool) error {
+		for _, idxName := range idxNames {
+			name := idxName.L
+			if _, ok := modifyIdx[name]; ok {
+				return dbterror.ErrOperateSameColumn.GenWithStackByArgs(name)
+			}
+			if addToModifyIdx {
+				modifyIdx[name] = struct{}{}
+			}
 		}
-		modifyIdx[idxName] = struct{}{}
+		return nil
+	}
+
+	if err := checkColumns(info.AddColumns, true); err != nil {
+		return err
+	}
+	if err := checkColumns(info.DropColumns, true); err != nil {
+		return err
+	}
+	if err := checkIndexes(info.AddIndexes, true); err != nil {
+		return err
+	}
+	if err := checkIndexes(info.DropIndexes, true); err != nil {
+		return err
+	}
+
+	if err := checkColumns(info.RelativeColumns, false); err != nil {
+		return err
 	}
 	return nil
 }
