@@ -1151,7 +1151,7 @@ func TestTiflashPartitionTableScan(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(\n    a int,\n    primary key(a)\n) partition by range(a) (\n    partition p1 values less than (10),\n    partition p2 values less than (20),\n    partition p3 values less than (30),\n    partition p4 values less than (40),\n    partition p5 values less than (50)\n);")
 	tk.MustExec("alter table t set tiflash replica 1")
-	tb := tk.GetTableByName("test", "t")
+	tb := external.GetTableByName(t, tk, "test", "t")
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 	time.Sleep(2 * time.Second)
