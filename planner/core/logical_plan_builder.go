@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/parser/terror"
+	fd "github.com/pingcap/tidb/planner/funcdep"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/privilege"
@@ -55,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
 )
@@ -273,7 +275,17 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 		schema4Agg.Append(newCol)
 		names = append(names, p.OutputNames()[i])
 	}
-	if join, isJoin := p.(*LogicalJoin); isJoin && join.fullSchema != nil {
+	var (
+		join            *LogicalJoin
+		isJoin          bool
+		isSelectionJoin bool
+	)
+	join, isJoin = p.(*LogicalJoin)
+	selection, isSelection := p.(*LogicalSelection)
+	if isSelection {
+		join, isSelectionJoin = selection.children[0].(*LogicalJoin)
+	}
+	if (isJoin && join.fullSchema != nil) || (isSelectionJoin && join.fullSchema != nil) {
 		for i, col := range join.fullSchema.Columns {
 			if p.Schema().Contains(col) {
 				continue
@@ -1140,10 +1152,21 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 	if expr == nil {
 		return nil, name, nil
 	}
-	newCol := &expression.Column{
-		UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-		RetType:  expr.GetType(),
+	// invalid unique id
+	correlatedColUniqueID := int64(0)
+	if cc, ok := expr.(*expression.CorrelatedColumn); ok {
+		correlatedColUniqueID = cc.UniqueID
 	}
+	// for expr projection, we should record the map relationship <hashcode, uniqueID> down.
+	newCol := &expression.Column{
+		UniqueID:              b.ctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:               expr.GetType(),
+		CorrelatedColUniqueID: correlatedColUniqueID,
+	}
+	if b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol == nil {
+		b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = make(map[string]int, 1)
+	}
+	b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol[string(expr.HashCode(b.ctx.GetSessionVars().StmtCtx))] = int(newCol.UniqueID)
 	newCol.SetCoercibility(expr.Coercibility())
 	return newCol, name, nil
 }
@@ -1297,6 +1320,108 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 		}
 	}
 	proj.SetChildren(p)
+	// delay the only-full-group-by-check in create view statement to later query.
+	if !b.isCreateView {
+		fds := proj.ExtractFD()
+		// Projection -> Children -> ...
+		// Let the projection itself to evaluate the whole FD, which will build the connection
+		// 1: from select-expr to registered-expr
+		// 2: from base-column to select-expr
+		// After that
+		if p.SCtx().GetSessionVars().SQLMode.HasOnlyFullGroupBy() && fds.HasAggBuilt {
+			for offset, expr := range proj.Exprs[:len(fields)] {
+				// skip the auxiliary column in agg appended to select fields, which mainly comes from two kind of cases:
+				// 1: having agg(t.a), this will append t.a to the select fields, if it isn't here.
+				// 2: order by agg(t.a), this will append t.a to the select fields, if it isn't here.
+				if fields[offset].AuxiliaryColInAgg {
+					continue
+				}
+				item := fd.NewFastIntSet()
+				switch x := expr.(type) {
+				case *expression.Column:
+					item.Insert(int(x.UniqueID))
+				case *expression.ScalarFunction:
+					if expression.CheckFuncInExpr(x, ast.AnyValue) {
+						continue
+					}
+					scalarUniqueID, ok := fds.IsHashCodeRegistered(string(hack.String(x.HashCode(p.SCtx().GetSessionVars().StmtCtx))))
+					if !ok {
+						panic("selected expr must have been registered, shouldn't be here")
+					}
+					item.Insert(scalarUniqueID)
+				default:
+				}
+				// Rule #1, if there are no group cols, the col in the order by shouldn't be limited.
+				if fds.GroupByCols.Only1Zero() && fields[offset].AuxiliaryColInOrderBy {
+					continue
+				}
+
+				// Rule #2, if select fields are constant, it's ok.
+				if item.SubsetOf(fds.ConstantCols()) {
+					continue
+				}
+
+				// Rule #3, if select fields are subset of group by items, it's ok.
+				if item.SubsetOf(fds.GroupByCols) {
+					continue
+				}
+
+				// Rule #4, if select fields are dependencies of Strict FD with determinants in group-by items, it's ok.
+				// lax FD couldn't be done here, eg: for unique key (b), index key NULL & NULL are different rows with
+				// uncertain other column values.
+				strictClosure := fds.ClosureOfStrict(fds.GroupByCols)
+				if item.SubsetOf(strictClosure) {
+					continue
+				}
+				// locate the base col that are not in (constant list / group by list / strict fd closure) for error show.
+				baseCols := expression.ExtractColumns(expr)
+				errShowCol := baseCols[0]
+				for _, col := range baseCols {
+					colSet := fd.NewFastIntSet(int(col.UniqueID))
+					if !colSet.SubsetOf(strictClosure) {
+						errShowCol = col
+						break
+					}
+				}
+				// better use the schema alias name firstly if any.
+				name := ""
+				for idx, schemaCol := range proj.Schema().Columns {
+					if schemaCol.UniqueID == errShowCol.UniqueID {
+						name = proj.names[idx].String()
+						break
+					}
+				}
+				if name == "" {
+					name = errShowCol.OrigName
+				}
+				// Only1Zero is to judge whether it's no-group-by-items case.
+				if !fds.GroupByCols.Only1Zero() {
+					return nil, nil, 0, ErrFieldNotInGroupBy.GenWithStackByArgs(offset+1, ErrExprInSelect, name)
+				} else {
+					return nil, nil, 0, ErrMixOfGroupFuncAndFields.GenWithStackByArgs(offset+1, name)
+				}
+			}
+			if fds.GroupByCols.Only1Zero() {
+				// maxOneRow is delayed from agg's ExtractFD logic since some details listed in it.
+				projectionUniqueIDs := fd.NewFastIntSet()
+				for _, expr := range proj.Exprs {
+					switch x := expr.(type) {
+					case *expression.Column:
+						projectionUniqueIDs.Insert(int(x.UniqueID))
+					case *expression.ScalarFunction:
+						scalarUniqueID, ok := fds.IsHashCodeRegistered(string(hack.String(x.HashCode(p.SCtx().GetSessionVars().StmtCtx))))
+						if !ok {
+							panic("selected expr must have been registered, shouldn't be here")
+						}
+						projectionUniqueIDs.Insert(scalarUniqueID)
+					}
+				}
+				fds.MaxOneRow(projectionUniqueIDs)
+			}
+			// for select * from view (include agg), outer projection don't have to check select list with the inner group-by flag.
+			fds.HasAggBuilt = false
+		}
+	}
 	return proj, proj.Exprs, oldLen, nil
 }
 
@@ -2020,6 +2145,14 @@ func (a *havingWindowAndOrderbyExprResolver) resolveFromPlan(v *ast.ColumnNameEx
 		Expr:      &ast.ColumnNameExpr{Name: newColName},
 		Auxiliary: true,
 	}
+	// appended with new select fields. set them with flag.
+	if a.inAggFunc {
+		// should skip check in FD for only full group by.
+		sf.AuxiliaryColInAgg = true
+	} else if a.curClause == orderByClause {
+		// should skip check in FD for only full group by only when group by item are empty.
+		sf.AuxiliaryColInOrderBy = true
+	}
 	sf.Expr.SetType(col.GetType())
 	a.selectFields = append(a.selectFields, sf)
 	return len(a.selectFields) - 1, nil
@@ -2727,6 +2860,7 @@ func checkColFuncDepend(
 			continue
 		}
 		funcDepend := true
+		// if all columns of some unique/pri indexes are determined, all columns left are check-passed.
 		for _, indexCol := range index.Columns {
 			iColInfo := tblInfo.Columns[indexCol.Offset]
 			if !mysql.HasNotNullFlag(iColInfo.Flag) {
@@ -3570,13 +3704,6 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 
-	if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() && sel.From != nil {
-		err = b.checkOnlyFullGroupBy(p, sel)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	hasWindowFuncField := b.detectSelectWindow(sel)
 	// Some SQL statements define WINDOW but do not use them. But we also need to check the window specification list.
 	// For example: select id from t group by id WINDOW w AS (ORDER BY uids DESC) ORDER BY id;
@@ -4229,6 +4356,108 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	return result, nil
 }
 
+func (ds *DataSource) ExtractFD() *fd.FDSet {
+	// FD in datasource (leaf node) can be cached and reused.
+	// Once the all conditions are not equal to nil, built it again.
+	if ds.fdSet == nil || ds.allConds != nil {
+		fds := &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
+		allCols := fd.NewFastIntSet()
+		// should use the column's unique ID avoiding fdSet conflict.
+		for _, col := range ds.TblCols {
+			// todo: change it to int64
+			allCols.Insert(int(col.UniqueID))
+		}
+		// int pk doesn't store its index column in indexInfo.
+		if ds.tableInfo.PKIsHandle {
+			keyCols := fd.NewFastIntSet()
+			for _, col := range ds.TblCols {
+				if mysql.HasPriKeyFlag(col.RetType.Flag) {
+					keyCols.Insert(int(col.UniqueID))
+				}
+			}
+			fds.AddStrictFunctionalDependency(keyCols, allCols)
+			fds.MakeNotNull(keyCols)
+		}
+		// other indices including common handle.
+		for _, idx := range ds.tableInfo.Indices {
+			keyCols := fd.NewFastIntSet()
+			allColIsNotNull := true
+			for _, idxCol := range idx.Columns {
+				// Note: even the prefix column can also be the FD. For example:
+				// unique(char_column(10)), will also guarantee the prefix to be
+				// the unique which means the while column is unique too.
+				refCol := ds.tableInfo.Columns[idxCol.Offset]
+				if !mysql.HasNotNullFlag(refCol.Flag) {
+					allColIsNotNull = false
+				}
+				keyCols.Insert(int(ds.TblCols[idxCol.Offset].UniqueID))
+			}
+			if idx.Primary {
+				fds.AddStrictFunctionalDependency(keyCols, allCols)
+				fds.MakeNotNull(keyCols)
+			} else if idx.Unique {
+				if allColIsNotNull {
+					fds.AddStrictFunctionalDependency(keyCols, allCols)
+					fds.MakeNotNull(keyCols)
+				} else {
+					// unique index:
+					// 1: normal value should be unique
+					// 2: null value can be multiple
+					// for this kind of lax to be strict, we need to make the determinant not-null.
+					fds.AddLaxFunctionalDependency(keyCols, allCols, true)
+				}
+			} else {
+				// 1: normal value can be multiple
+				// 2: null value can be multiple
+				// for this kind of lax to be strict, we need to make both the determinant and dependency not-null.
+				fds.AddLaxFunctionalDependency(keyCols, allCols, false)
+			}
+		}
+		// handle the datasource conditions (maybe pushed down from upper layer OP)
+		if len(ds.allConds) != 0 {
+			// extract the not null attributes from selection conditions.
+			notnullColsUniqueIDs := extractNotNullFromConds(ds.allConds, ds)
+
+			// extract the constant cols from selection conditions.
+			constUniqueIDs := extractConstantCols(ds.allConds, ds.SCtx(), fds)
+
+			// extract equivalence cols.
+			equivUniqueIDs := extractEquivalenceCols(ds.allConds, ds.SCtx(), fds)
+
+			// apply conditions to FD.
+			fds.MakeNotNull(notnullColsUniqueIDs)
+			fds.AddConstants(constUniqueIDs)
+			for _, equiv := range equivUniqueIDs {
+				fds.AddEquivalence(equiv[0], equiv[1])
+			}
+		}
+		// build the dependency for generated columns.
+		// the generated column is sequentially dependent on the forward column.
+		// a int, b int as (a+1), c int as (b+1), here we can build the strict FD down:
+		// {a} -> {b}, {b} -> {c}, put the maintenance of the dependencies between generated columns to the FD graph.
+		notNullCols := fd.NewFastIntSet()
+		for _, col := range ds.TblCols {
+			if col.VirtualExpr != nil {
+				dependencies := fd.NewFastIntSet()
+				dependencies.Insert(int(col.UniqueID))
+				// dig out just for 1 level.
+				directBaseCol := expression.ExtractColumns(col.VirtualExpr)
+				determinant := fd.NewFastIntSet()
+				for _, col := range directBaseCol {
+					determinant.Insert(int(col.UniqueID))
+				}
+				fds.AddStrictFunctionalDependency(determinant, dependencies)
+			}
+			if mysql.HasNotNullFlag(col.RetType.Flag) {
+				notNullCols.Insert(int(col.UniqueID))
+			}
+		}
+		fds.MakeNotNull(notNullCols)
+		ds.fdSet = fds
+	}
+	return ds.fdSet
+}
+
 func (b *PlanBuilder) timeRangeForSummaryTable() QueryTimeRange {
 	const defaultSummaryDuration = 30 * time.Minute
 	hints := b.TableHints()
@@ -4388,7 +4617,9 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	if err != nil {
 		if terror.ErrorNotEqual(err, ErrViewRecursive) &&
 			terror.ErrorNotEqual(err, ErrNoSuchTable) &&
-			terror.ErrorNotEqual(err, ErrInternal) {
+			terror.ErrorNotEqual(err, ErrInternal) &&
+			terror.ErrorNotEqual(err, ErrFieldNotInGroupBy) &&
+			terror.ErrorNotEqual(err, ErrMixOfGroupFuncAndFields) {
 			err = ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 		}
 		return nil, err
@@ -4483,6 +4714,30 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 	}
 	for i := outerPlan.Schema().Len(); i < ap.Schema().Len(); i++ {
 		ap.names[i] = types.EmptyName
+	}
+	// build the join correlated equal condition for apply join, this equal condition is used for deriving the transitive FD between outer and inner side.
+	correlatedCols := ExtractCorrelatedCols4LogicalPlan(innerPlan)
+	deduplicateCorrelatedCols := make(map[int64]*expression.CorrelatedColumn)
+	for _, cc := range correlatedCols {
+		if _, ok := deduplicateCorrelatedCols[cc.UniqueID]; !ok {
+			deduplicateCorrelatedCols[cc.UniqueID] = cc
+		}
+	}
+	// for case like select (select t1.a from t2) from t1. <t1.a> will be assigned with new UniqueID after sub query projection is built.
+	// we should distinguish them out, building the equivalence relationship from inner <t1.a> == outer <t1.a> in the apply-join for FD derivation.
+	for _, cc := range deduplicateCorrelatedCols {
+		// for every correlated column, find the connection with the inner newly built column.
+		for _, col := range innerPlan.Schema().Columns {
+			if cc.UniqueID == col.CorrelatedColUniqueID {
+				ccc := &cc.Column
+				cond, err := expression.NewFunction(b.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), ccc, col)
+				if err != nil {
+					// give up connection building for not interfering old logic.
+					return ap
+				}
+				ap.EqualConditions = append(ap.EqualConditions, cond.(*expression.ScalarFunction))
+			}
+		}
 	}
 	return ap
 }
