@@ -85,7 +85,7 @@ type inFunctionClass struct {
 }
 
 func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
-	args, err = c.verifyArgs(args)
+	args, err = c.verifyArgs(ctx, args)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +157,7 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	return sig, nil
 }
 
-func (c *inFunctionClass) verifyArgs(args []Expression) ([]Expression, error) {
+func (c *inFunctionClass) verifyArgs(ctx sessionctx.Context, args []Expression) ([]Expression, error) {
 	columnType := args[0].GetType()
 	validatedArgs := make([]Expression, 0, len(args))
 	for _, arg := range args {
@@ -165,6 +165,9 @@ func (c *inFunctionClass) verifyArgs(args []Expression) ([]Expression, error) {
 			switch {
 			case columnType.Tp == mysql.TypeBit && constant.Value.Kind() == types.KindInt64:
 				if constant.Value.GetInt64() < 0 {
+					if MaybeOverOptimized4PlanCache(ctx, args) {
+						ctx.GetSessionVars().StmtCtx.SkipPlanCache = true
+					}
 					continue
 				}
 			}
