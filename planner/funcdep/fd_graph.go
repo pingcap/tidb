@@ -580,7 +580,7 @@ func (s *FDSet) MakeRestoreRule333() {
 	s.Rule333Equiv.InnerCols.Clear()
 }
 
-// ArgOpts contains some arg used for FD maintaince.
+// ArgOpts contains some arg used for FD maintenance.
 type ArgOpts struct {
 	SkipFDRule331   bool
 	TypeFDRule331   TypeFilterFD331

@@ -120,7 +120,7 @@ func TestFDSet_ExtractFD(t *testing.T) {
 		{
 			sql:  "select b+c, min(a) from x1 group by b, c",
 			best: "DataScan(x1)->Aggr(min(test.x1.a),firstrow(test.x1.b),firstrow(test.x1.c))->Projection",
-			fd:   "{(1)-->(2-4), (2,3)~~>(1,4), (2,4)-->(1,3)} >>> {(2,3)~~>(5)} >>> {(2,3)~~>(5), (2,3)-->(6)}",
+			fd:   "{(1)-->(2-4), (2,3)~~>(1,4), (2,4)-->(1,3)} >>> {(2,3)-->(5)} >>> {(2,3)-->(5,6)}",
 		},
 		{
 			sql:  "select b+c from x1 group by b,c",
@@ -143,7 +143,7 @@ func TestFDSet_ExtractFD(t *testing.T) {
 			sql:  "select exists (select * from x1) from x1 group by d",
 			best: "DataScan(x1)->Aggr(firstrow(1))->Projection",
 			// 14 is added in the logicAgg pruning process cause all the columns of agg has been pruned.
-			fd: "{(1)-->(2-4), (2,3)~~>(1,4), (2,4)-->(1,3)} >>> {(4)~~>(14)} >>> {()-->(13)}",
+			fd: "{(1)-->(2-4), (2,3)~~>(1,4), (2,4)-->(1,3)} >>> {} >>> {()-->(13)}",
 		},
 		{
 			sql:  "select c is null from x1 group by c",

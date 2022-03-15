@@ -747,8 +747,6 @@ func TestOnlyFullGroupBy(t *testing.T) {
 	// test compatible with sql_mode = ONLY_FULL_GROUP_BY
 	tk.MustQuery("select a from t group by a,b,c")
 	tk.MustQuery("select b from t group by b")
-	err = tk.ExecToErr("select b*rand() from t group by b")
-	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), "err %v", err)
 	tk.MustQuery("select b as e from t group by b")
 	tk.MustQuery("select b+c from t group by b+c")
 	tk.MustQuery("select b+c, min(a) from t group by b+c, b-c")
@@ -781,6 +779,8 @@ func TestOnlyFullGroupBy(t *testing.T) {
 	tk.MustQuery("select t.*, x.* from t, x where t.b = x.b and t.d = x.d group by t.b, t.d")
 	tk.MustQuery("select t.*, x.* from t, x where t.b = x.a group by t.b, t.d")
 	tk.MustQuery("select t.b, x.* from t, x where t.b = x.a group by t.b")
+	err = tk.ExecToErr("select t.*, x.* from t, x where t.c = x.a group by t.b, t.c")
+	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), "err %v", err)
 	// test functional dependency derived from keys in join
 	tk.MustQuery("select t.*, x.* from t inner join x on t.a = x.a group by t.a")
 	tk.MustQuery("select t.*, x.* from t inner join x  on (t.b = x.b and t.d = x.d) group by t.b, x.d")
