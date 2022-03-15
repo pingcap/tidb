@@ -63,7 +63,6 @@ func TestNewSessionVars(t *testing.T) {
 	require.Equal(t, DefExecutorConcurrency, vars.IndexLookupJoinConcurrency())
 	require.Equal(t, DefExecutorConcurrency, vars.HashJoinConcurrency())
 	require.Equal(t, DefTiDBAllowBatchCop, vars.AllowBatchCop)
-	require.Equal(t, DefOptBCJ, vars.AllowBCJ)
 	require.Equal(t, ConcurrencyUnset, vars.projectionConcurrency)
 	require.Equal(t, ConcurrencyUnset, vars.hashAggPartialConcurrency)
 	require.Equal(t, ConcurrencyUnset, vars.hashAggFinalConcurrency)
@@ -202,17 +201,6 @@ func TestVarsutil(t *testing.T) {
 		require.Equal(t, mode, v.SQLMode)
 	}
 
-	err = SetSessionSystemVar(v, "tidb_opt_broadcast_join", "1")
-	require.NoError(t, err)
-	err = SetSessionSystemVar(v, "tidb_allow_batch_cop", "0")
-	require.True(t, terror.ErrorEqual(err, ErrWrongValueForVar))
-	err = SetSessionSystemVar(v, "tidb_opt_broadcast_join", "0")
-	require.NoError(t, err)
-	err = SetSessionSystemVar(v, "tidb_allow_batch_cop", "0")
-	require.NoError(t, err)
-	err = SetSessionSystemVar(v, "tidb_opt_broadcast_join", "1")
-	require.True(t, terror.ErrorEqual(err, ErrWrongValueForVar))
-
 	// Combined sql_mode
 	err = SetSessionSystemVar(v, "sql_mode", "REAL_AS_FLOAT,ANSI_QUOTES")
 	require.NoError(t, err)
@@ -245,19 +233,6 @@ func TestVarsutil(t *testing.T) {
 	bVal, err := json.MarshalIndent(config.GetGlobalConfig(), "", "\t")
 	require.NoError(t, err)
 	require.Equal(t, config.HideConfig(string(bVal)), val)
-
-	err = SetSessionSystemVar(v, TiDBEnableStreaming, "1")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBEnableStreaming)
-	require.NoError(t, err)
-	require.Equal(t, "ON", val)
-	require.True(t, v.EnableStreaming)
-	err = SetSessionSystemVar(v, TiDBEnableStreaming, "0")
-	require.NoError(t, err)
-	val, err = GetSessionOrGlobalSystemVar(v, TiDBEnableStreaming)
-	require.NoError(t, err)
-	require.Equal(t, "OFF", val)
-	require.False(t, v.EnableStreaming)
 
 	require.Equal(t, DefTiDBOptimizerSelectivityLevel, v.OptimizerSelectivityLevel)
 	err = SetSessionSystemVar(v, TiDBOptimizerSelectivityLevel, "1")

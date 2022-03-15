@@ -582,9 +582,6 @@ type SessionVars struct {
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
 
-	// AllowBCJ means allow broadcast join.
-	AllowBCJ bool
-
 	// AllowCartesianBCJ means allow broadcast CARTESIAN join, 0 means not allow, 1 means allow broadcast CARTESIAN join
 	// but the table size should under the broadcast threshold, 2 means allow broadcast CARTESIAN join even if the table
 	// size exceeds the broadcast threshold
@@ -752,10 +749,6 @@ type SessionVars struct {
 
 	// WaitSplitRegionTimeout defines the split region timeout.
 	WaitSplitRegionTimeout uint64
-
-	// EnableStreaming indicates whether the coprocessor request can use streaming API.
-	// TODO: remove this after tidb-server configuration "enable-streaming' removed.
-	EnableStreaming bool
 
 	// EnableChunkRPC indicates whether the coprocessor request can use chunk API.
 	EnableChunkRPC bool
@@ -1011,6 +1004,10 @@ type SessionVars struct {
 	EnableMutationChecker bool
 	// AssertionLevel controls how strict the assertions on data mutations should be.
 	AssertionLevel AssertionLevel
+	// IgnorePreparedCacheCloseStmt controls if ignore the close-stmt command for prepared statement.
+	IgnorePreparedCacheCloseStmt bool
+	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
+	BatchPendingTiFlashCount int
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1175,7 +1172,6 @@ func NewSessionVars() *SessionVars {
 		Status:                      mysql.ServerStatusAutocommit,
 		StmtCtx:                     new(stmtctx.StatementContext),
 		AllowAggPushDown:            false,
-		AllowBCJ:                    false,
 		AllowCartesianBCJ:           DefOptCartesianBCJ,
 		MPPOuterJoinFixedBuildSide:  DefOptMPPOuterJoinFixedBuildSide,
 		BroadcastJoinThresholdSize:  DefBroadcastJoinThresholdSize,
@@ -1273,14 +1269,6 @@ func NewSessionVars() *SessionVars {
 		MaxChunkSize:       DefMaxChunkSize,
 	}
 	vars.DMLBatchSize = DefDMLBatchSize
-	var enableStreaming string
-	if config.GetGlobalConfig().EnableStreaming {
-		enableStreaming = "1"
-	} else {
-		enableStreaming = "0"
-	}
-	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
-
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
 	vars.allowMPPExecution = DefTiDBAllowMPPExecution
 	vars.HashExchangeWithNewCollation = DefTiDBHashExchangeWithNewCollation
