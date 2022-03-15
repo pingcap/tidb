@@ -3445,9 +3445,9 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 
 // GetBuiltinFunctionUsage returns the replica of counting of builtin function usage
 func (s *session) GetBuiltinFunctionUsage() map[string]uint32 {
+	replica := make(map[string]uint32)
 	s.functionUsageMu.RLock()
 	defer s.functionUsageMu.RUnlock()
-	replica := make(map[string]uint32)
 	for key, value := range s.functionUsageMu.builtinFunctionUsage {
 		replica[key] = value
 	}
