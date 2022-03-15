@@ -1893,6 +1893,8 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (err error) {
 
 	// Notify PD to drop the placement rules of partition-ids and table-id, even if there may be no placement rules.
 	var physicalTableIDs []int64
+	var tiflashPhysicalTableIDs []int64
+
 	switch historyJob.Type {
 	case model.ActionDropTable, model.ActionTruncateTable:
 		var startKey kv.Key
@@ -1900,53 +1902,22 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (err error) {
 			return
 		}
 		physicalTableIDs = append(physicalTableIDs, historyJob.TableID)
-	case model.ActionDropSchema, model.ActionDropTablePartition, model.ActionTruncateTablePartition:
+		tblInfo := historyJob.BinlogInfo.TableInfo
+		if tblInfo.TiFlashReplica != nil {
+			tiflashPhysicalTableIDs = append(tiflashPhysicalTableIDs, historyJob.TableID)
+		}
+	case model.ActionDropSchema:
 		if err = historyJob.DecodeArgs(&physicalTableIDs); err != nil {
 			return
 		}
-	}
-
-	var tiflashPhysicalTableIDs []int64
-	switch historyJob.Type {
-	case model.ActionDropSchema:
-		for _, tbInfo := range historyJob.BinlogInfo.DBInfo.Tables {
-			if tbInfo.TiFlashReplica != nil {
-				logutil.BgLogger().Info("!!!! have schema", zap.Any("tableID", tbInfo.ID))
-				tiflashPhysicalTableIDs = append(tiflashPhysicalTableIDs, tbInfo.ID)
-			} else {
-				logutil.BgLogger().Info("!!!! negn schema", zap.Any("tableID", tbInfo.ID))
-			}
-		}
-	case model.ActionDropTable, model.ActionTruncateTable:
-		tblInfo := historyJob.BinlogInfo.TableInfo
-		if tblInfo.TiFlashReplica != nil {
-			if tblInfo.Partition != nil {
-				for _, p := range tblInfo.Partition.Definitions {
-					logutil.BgLogger().Info("!!!! have part table", zap.Any("t", historyJob.Type), zap.Any("tableID", tblInfo.ID), zap.Any("p", p))
-					tiflashPhysicalTableIDs = append(tiflashPhysicalTableIDs, p.ID)
-				}
-				for _, p := range tblInfo.Partition.AddingDefinitions {
-					logutil.BgLogger().Info("!!!! have part table", zap.Any("t", historyJob.Type), zap.Any("tableID", tblInfo.ID), zap.Any("p", p))
-					tiflashPhysicalTableIDs = append(tiflashPhysicalTableIDs, p.ID)
-				}
-			} else {
-				logutil.BgLogger().Info("!!!! have table", zap.Any("t", historyJob.Type), zap.Any("tableID", tblInfo.ID))
-				tiflashPhysicalTableIDs = append(tiflashPhysicalTableIDs, tblInfo.ID)
-			}
-		} else {
-			logutil.BgLogger().Info("!!!! have no table", zap.Any("t", historyJob.Type), zap.Any("tableID", tblInfo.ID))
-		}
+		tiflashPhysicalTableIDs = physicalTableIDs
 	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
-		var pids []int64
-		if err = historyJob.DecodeArgs(&pids); err != nil {
+		if err = historyJob.DecodeArgs(&physicalTableIDs); err != nil {
 			return
 		}
 		tblInfo := historyJob.BinlogInfo.TableInfo
 		if tblInfo.TiFlashReplica != nil {
-			for _, p := range pids {
-				logutil.BgLogger().Info("!!!! have partition", zap.Any("tableID", tblInfo.ID), zap.Any("p", p))
-				tiflashPhysicalTableIDs = append(tiflashPhysicalTableIDs, p)
-			}
+			tiflashPhysicalTableIDs = physicalTableIDs
 		}
 	}
 
