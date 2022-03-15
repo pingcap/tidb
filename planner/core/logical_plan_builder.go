@@ -2102,6 +2102,34 @@ func (a *havingWindowAndOrderbyExprResolver) Enter(n ast.Node) (node ast.Node, s
 	return n, false
 }
 
+func dfsResolveFromInsideJoin(v *ast.ColumnNameExpr, p LogicalPlan) ([]*expression.Column, types.NameSlice, int, error) {
+	// For SQL like `select t2.a from t1 join t2 using(a) where t2.a > 0
+	// order by t2.a`, the query plan will be `join->selection->sort`. The
+	// schema of selection will be `[t1.a]`, thus we need to recursively
+	// retrieve the `t2.a` from the underlying join.
+	idx, err := expression.FindFieldName(p.OutputNames(), v.Name)
+	if err != nil {
+		return nil, nil, -1, err
+	}
+	if idx >= 0 {
+		return p.Schema().Columns, p.OutputNames(), idx, err
+	}
+	switch x := p.(type) {
+	case *LogicalLimit, *LogicalSelection, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
+		return dfsResolveFromInsideJoin(v, p.Children()[0])
+	case *LogicalJoin:
+		if len(x.fullNames) != 0 {
+			idx, err = expression.FindFieldName(x.fullNames, v.Name)
+			schemaCols, outputNames := x.fullSchema.Columns, x.fullNames
+			if err == nil && idx >= 0 {
+				return schemaCols, outputNames, idx, err
+			}
+		}
+	}
+	// -1, nil
+	return nil, nil, idx, err
+}
+
 func (a *havingWindowAndOrderbyExprResolver) resolveFromPlan(v *ast.ColumnNameExpr, p LogicalPlan) (int, error) {
 	idx, err := expression.FindFieldName(p.OutputNames(), v.Name)
 	if err != nil {
@@ -2109,20 +2137,21 @@ func (a *havingWindowAndOrderbyExprResolver) resolveFromPlan(v *ast.ColumnNameEx
 	}
 	schemaCols, outputNames := p.Schema().Columns, p.OutputNames()
 	if idx < 0 {
-		// For SQL like `select t2.a from t1 join t2 using(a) where t2.a > 0
-		// order by t2.a`, the query plan will be `join->selection->sort`. The
-		// schema of selection will be `[t1.a]`, thus we need to recursively
-		// retrieve the `t2.a` from the underlying join.
-		switch x := p.(type) {
-		case *LogicalLimit, *LogicalSelection, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
-			return a.resolveFromPlan(v, p.Children()[0])
-		case *LogicalJoin:
-			if len(x.fullNames) != 0 {
-				idx, err = expression.FindFieldName(x.fullNames, v.Name)
-				schemaCols, outputNames = x.fullSchema.Columns, x.fullNames
+		// maybe the referred column is in the outer schema stack.
+		for i := len(a.outerSchemas) - 1; i >= 0; i-- {
+			outerSchema, outerName := a.outerSchemas[i], a.outerNames[i]
+			idx, err = expression.FindFieldName(outerName, v.Name)
+			if err == nil && idx >= 0 {
+				schemaCols, outputNames = outerSchema.Columns, outerName
+				break
 			}
 		}
-		if err != nil || idx < 0 {
+	}
+	if idx < 0 {
+		// maybe the referred column is in the inside join's full schema.
+		schemaCols, outputNames, idx, err = dfsResolveFromInsideJoin(v, p)
+		if idx < 0 {
+			// nowhere to be found.
 			return -1, err
 		}
 	}
@@ -2645,6 +2674,20 @@ func (b *PlanBuilder) resolveCorrelatedAggregates(ctx context.Context, sel *ast.
 	}
 	correlatedAggMap := make(map[*ast.AggregateFuncExpr]int)
 	for _, aggFunc := range correlatedAggList {
+		colMap := make(map[*types.FieldName]struct{}, len(p.Schema().Columns))
+		allColFromAggExprNode(p, aggFunc, colMap)
+		for k := range colMap {
+			colName := &ast.ColumnName{
+				Schema: k.DBName,
+				Table:  k.TblName,
+				Name:   k.ColName,
+			}
+			sel.Fields.Fields = append(sel.Fields.Fields, &ast.SelectField{
+				Auxiliary:         true,
+				AuxiliaryColInAgg: true,
+				Expr:              &ast.ColumnNameExpr{Name: colName},
+			})
+		}
 		correlatedAggMap[aggFunc] = len(sel.Fields.Fields)
 		sel.Fields.Fields = append(sel.Fields.Fields, &ast.SelectField{
 			Auxiliary: true,
@@ -3211,6 +3254,28 @@ func (c *colResolverForOnlyFullGroupBy) Enter(node ast.Node) (ast.Node, bool) {
 
 func (c *colResolverForOnlyFullGroupBy) Leave(node ast.Node) (ast.Node, bool) {
 	return node, true
+}
+
+type aggColNameResolver struct {
+	colNameResolver
+}
+
+func (c *aggColNameResolver) Enter(inNode ast.Node) (ast.Node, bool) {
+	switch inNode.(type) {
+	case *ast.ColumnNameExpr:
+		return inNode, true
+	}
+	return inNode, false
+}
+
+func allColFromAggExprNode(p LogicalPlan, n ast.Node, names map[*types.FieldName]struct{}) {
+	extractor := &aggColNameResolver{
+		colNameResolver: colNameResolver{
+			p:     p,
+			names: names,
+		},
+	}
+	n.Accept(extractor)
 }
 
 type colNameResolver struct {

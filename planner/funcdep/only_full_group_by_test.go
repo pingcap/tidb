@@ -215,4 +215,12 @@ func TestOnlyFullGroupByOldCases(t *testing.T) {
 	tk.MustQuery("select t1.a from t1 join t2 on t2.a=t1.a group by t2.a having min(t2.b) > 0;")
 	tk.MustQuery("select t2.a, count(t2.b) from t1 join t2 using (a) where t1.a = 1;")
 	tk.MustQuery("select count(t2.b) from t1 join t2 using (a) order by t2.a;")
+
+	// test issue #30024
+	tk.MustExec("drop table if exists t1,t2;")
+	tk.MustExec("CREATE TABLE t1 (a INT, b INT, c INT DEFAULT 0);")
+	tk.MustExec("INSERT INTO t1 (a, b) VALUES (3,3), (2,2), (3,3), (2,2), (3,3), (4,4);")
+	tk.MustExec("CREATE TABLE t2 (a INT, b INT, c INT DEFAULT 0);")
+	tk.MustExec("INSERT INTO t2 (a, b) VALUES (3,3), (2,2), (3,3), (2,2), (3,3), (4,4);")
+	tk.MustQuery("SELECT t1.a FROM t1 GROUP BY t1.a HAVING t1.a IN (SELECT t2.a FROM t2 ORDER BY SUM(t1.b));")
 }
