@@ -1046,6 +1046,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	e.samplingBuilderWg = newNotifyErrorWaitGroupWrapper(buildResultChan)
 	sampleCollectors := make([]*statistics.SampleCollector, len(e.colsInfo))
 	exitCh := make(chan struct{})
+	e.samplingBuilderWg.Add(statsConcurrency)
 	for i := 0; i < statsConcurrency; i++ {
 		e.samplingBuilderWg.Run(func() { e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, sampleCollectors, exitCh) })
 	}
@@ -1142,6 +1143,7 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.Inde
 		statsConcurrncy = len(tasks)
 	}
 	var subIndexWorkerWg = NewAnalyzeResultsNotifyWaitGroupWrapper(resultsCh)
+	subIndexWorkerWg.Add(statsConcurrncy)
 	for i := 0; i < statsConcurrncy; i++ {
 		subIndexWorkerWg.Run(func() { e.subIndexWorkerForNDV(taskCh, resultsCh) })
 	}
@@ -2338,7 +2340,6 @@ func NewAnalyzeResultsNotifyWaitGroupWrapper(notify chan *statistics.AnalyzeResu
 // and calls done when function returns. Please DO NOT use panic
 // in the cb function.
 func (w *analyzeResultsNotifyWaitGroupWrapper) Run(exec func()) {
-	w.Add(1)
 	old := w.cnt.Inc() - 1
 	go func(cnt uint64) {
 		defer func() {
@@ -2371,7 +2372,6 @@ func newNotifyErrorWaitGroupWrapper(notify chan error) *notifyErrorWaitGroupWrap
 // and calls done when function returns. Please DO NOT use panic
 // in the cb function.
 func (w *notifyErrorWaitGroupWrapper) Run(exec func()) {
-	w.Add(1)
 	old := w.cnt.Inc() - 1
 	go func(cnt uint64) {
 		defer func() {
