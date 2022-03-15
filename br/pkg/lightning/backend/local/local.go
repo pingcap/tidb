@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
+	"github.com/pingcap/tidb/br/pkg/resolver"
 	split "github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
@@ -85,6 +86,10 @@ const (
 	bigValueSize            = 1 << 16 // 64K
 	maxRetryTimes           = 5
 	defaultRetryBackoffTime = 3 * time.Second
+	// maxWriteAndIngestRetryTimes is the max retry times for write and ingest.
+	// A large retry times is for tolerating tikv cluster failures.
+	maxWriteAndIngestRetryTimes = 30
+	maxRetryBackoffTime         = 30 * time.Second
 
 	gRPCKeepAliveTime    = 10 * time.Minute
 	gRPCKeepAliveTimeout = 5 * time.Minute
@@ -132,6 +137,7 @@ type Range struct {
 	end   []byte
 }
 
+<<<<<<< HEAD
 // localFileMeta contains some field that is necessary to continue the engine restore/import process.
 // These field should be written to disk when we update chunk checkpoint
 type localFileMeta struct {
@@ -218,12 +224,38 @@ func (e *File) Close() error {
 	log.L().Debug("closing local engine", zap.Stringer("engine", e.UUID), zap.Stack("stack"))
 	if e.db == nil {
 		return nil
+=======
+type importClientFactoryImpl struct {
+	conns          *common.GRPCConns
+	splitCli       split.SplitClient
+	tls            *common.TLS
+	resolveBuilder *resolver.Builder
+	tcpConcurrency int
+}
+
+func newImportClientFactoryImpl(splitCli split.SplitClient, tls *common.TLS, tcpConcurrency int) *importClientFactoryImpl {
+	resolveBuilder := resolver.NewBuilder(splitCli)
+	return &importClientFactoryImpl{
+		conns:          common.NewGRPCConns(),
+		splitCli:       splitCli,
+		tls:            tls,
+		resolveBuilder: resolveBuilder,
+		tcpConcurrency: tcpConcurrency,
+	}
+}
+
+func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
+	opt := grpc.WithInsecure()
+	if f.tls.TLSConfig() != nil {
+		opt = grpc.WithTransportCredentials(credentials.NewTLS(f.tls.TLSConfig()))
+>>>>>>> 9c4f94dd7... lightning: tolerate tikv node address changes during importing (#32876)
 	}
 	err := errors.Trace(e.db.Close())
 	e.db = nil
 	return err
 }
 
+<<<<<<< HEAD
 // Cleanup remove meta and db files
 func (e *File) Cleanup(dataDir string) error {
 	if err := os.RemoveAll(e.sstDir); err != nil {
@@ -245,6 +277,23 @@ func (e *File) Exist(dataDir string) error {
 
 func (e *File) getSizeProperties() (*sizeProperties, error) {
 	sstables, err := e.db.SSTables(pebble.WithProperties())
+=======
+	bfConf := backoff.DefaultConfig
+	bfConf.MaxDelay = gRPCBackOffMaxDelay
+	conn, err := grpc.DialContext(
+		ctx,
+		f.resolveBuilder.Target(storeID),
+		opt,
+		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                gRPCKeepAliveTime,
+			Timeout:             gRPCKeepAliveTimeout,
+			PermitWithoutStream: true,
+		}),
+		grpc.WithResolvers(f.resolveBuilder),
+	)
+	cancel()
+>>>>>>> 9c4f94dd7... lightning: tolerate tikv node address changes during importing (#32876)
 	if err != nil {
 		log.L().Warn("get table properties failed", zap.Stringer("engine", e.UUID), log.ShortError(err))
 		return nil, errors.Trace(err)
@@ -1954,16 +2003,24 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engineFile *File
 				wg.Done()
 			}()
 			var err error
-			// max retry backoff time: 2+4+8+16=30s
+			// max retry backoff time: 2+4+8+16+30*26=810s
 			backOffTime := time.Second
+<<<<<<< HEAD
 			for i := 0; i < maxRetryTimes; i++ {
 				err = local.writeAndIngestByRange(ctx, engineFile, startKey, endKey)
+=======
+			for i := 0; i < maxWriteAndIngestRetryTimes; i++ {
+				err = local.writeAndIngestByRange(ctx, engine, startKey, endKey, regionSplitSize, regionSplitKeys)
+>>>>>>> 9c4f94dd7... lightning: tolerate tikv node address changes during importing (#32876)
 				if err == nil || common.IsContextCanceledError(err) {
 					return
 				}
 				log.L().Warn("write and ingest by range failed",
 					zap.Int("retry time", i+1), log.ShortError(err))
 				backOffTime *= 2
+				if backOffTime > maxRetryBackoffTime {
+					backOffTime = maxRetryBackoffTime
+				}
 				select {
 				case <-time.After(backOffTime):
 				case <-ctx.Done():
@@ -1983,6 +2040,9 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engineFile *File
 	// wait for all sub tasks finish to avoid panic. if we return on the first error,
 	// the outer tasks may close the pebble db but some sub tasks still read from the db
 	wg.Wait()
+	if allErr == nil {
+		return ctx.Err()
+	}
 	return allErr
 }
 
