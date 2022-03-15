@@ -332,6 +332,9 @@ func TestIssue28650(t *testing.T) {
 }
 
 func TestIssue30289(t *testing.T) {
+	// This failpoint will impact the work of Concurrency DDL
+	variable.AllowConcurrencyDDL.Store(false)
+	defer variable.AllowConcurrencyDDL.Store(true)
 	fpName := "github.com/pingcap/tidb/executor/issue30289"
 	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
 	defer require.NoError(t, failpoint.Disable(fpName))
