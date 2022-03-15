@@ -794,7 +794,6 @@ func RunStreamRestore(
 	if err := <-errChMeta; err != nil {
 		return errors.Trace(err)
 	}
-	return nil
 
 	// perform restore kv files
 	pd := g.StartProgress(ctx, "Restore KV Files", int64(len(dFiles)), cfg.LogProgress)
@@ -805,18 +804,13 @@ func RunStreamRestore(
 		return errors.Annotate(err, "failed to restore kv files")
 	}
 
-	// pi := g.StartProgress(ctx, "Restore Index", countIndices(fullBackupTables), cfg.LogProgress)
-	// err = withProgress(pi, func(p glue.Progress) error {
-	// 	for _, table := range fullBackupTables {
-	// 		if err := client.FixIndicesOfTable(ctx, table.DB.Name.L, table.Info, p.Inc); err != nil {
-	// 			return errors.Annotatef(err, "failed to fix index for table %s.%s", table.DB.Name, table.Info.Name)
-	// 		}
-	// 	}
-	// 	return nil
-	// })
-	// if err != nil {
-	// 	return errors.Annotate(err, "failed to fix index for some table")
-	// }
+	pi := g.StartProgress(ctx, "Restore Index", countIndices(fullBackupTables), cfg.LogProgress)
+	err = withProgress(pi, func(p glue.Progress) error {
+		return client.FixIndicesOfTables(ctx, fullBackupTables, p.Inc)
+	})
+	if err != nil {
+		return errors.Annotate(err, "failed to fix index for some table")
+	}
 
 	// TODO split put and delete files
 	return nil

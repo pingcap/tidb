@@ -176,7 +176,7 @@ func (sr *SchemasReplace) rewriteKeyForTable(key []byte, cf string) ([]byte, boo
 	dbReplace, exist := sr.DbMap[dbID]
 	if !exist {
 		log.Warn("db not exists, skip this events", zap.Int64("DBID", dbID))
-		return nil, false, errors.Annotatef(berrors.ErrKVUnknown, "database not exist, DBID:%v")
+		return nil, false, errors.Annotatef(berrors.ErrKVUnknown, "database not exist, DBID:%v", dbID)
 	}
 
 	tableReplace, exist := sr.TableMap[tableID]
