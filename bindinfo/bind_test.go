@@ -87,9 +87,13 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1(a int, b int, c int, key idx_b(b), key idx_c(c))")
-	tk.MustExec("create table t2(a int, b int, c int, key idx_b(b), key idx_c(c))")
+	// TestDDl
+	tk.MustExec("prepare stmt_ddl from 'drop table if exists t1, t2'")
+	tk.MustExec("execute stmt_ddl;")
+	tk.MustExec("prepare stmt_ddl from 'create table t1(a int, b int, c int, key idx_b(b), key idx_c(c))'")
+	tk.MustExec("execute stmt_ddl;")
+	tk.MustExec("prepare stmt_ddl from 'create table t2(a int, b int, c int, key idx_b(b), key idx_c(c))'")
+	tk.MustExec("execute stmt_ddl;")
 
 	// TestDMLSQLBind
 	tk.MustExec("prepare stmt1 from 'delete from t1 where b = 1 and c > 1';")
@@ -113,6 +117,28 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_c(c)"), res.Rows())
 
+	tk.MustExec("create session binding for delete from t1 where b = 1 and c > 1 using delete from t1 where b = 1 and c > 1")
+
+	tk.MustExec("execute stmt1;")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("execute stmt1;")
+	require.Equal(t, "t1:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_b(b)"), res.Rows())
+
+	tk.MustExec("drop session binding for delete from t1 where b = 1 and c > 1")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("execute stmt1;")
+	require.Equal(t, "t1:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	require.True(t, tk.MustUseIndex4ExplainFor(res, "idx_b(b)"), res.Rows())
+
 	tk.MustExec("prepare stmt2 from 'delete t1, t2 from t1 inner join t2 on t1.b = t2.b';")
 	tk.MustExec("execute stmt2;")
 	tkProcess = tk.Session().ShowProcess()
@@ -131,6 +157,29 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.True(t, tk.HasPlan4ExplainFor(res, "IndexJoin"), res.Rows())
+
+	tk.MustExec("drop global binding for delete t1, t2 from t1 inner join t2 on t1.b = t2.b")
+
+	tk.MustExec("execute stmt2;")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("execute stmt2;")
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	require.True(t, tk.HasPlan4ExplainFor(res, "HashJoin"), res.Rows())
+
+	tk.MustExec("prepare stmt2 from 'delete from t1, t2 using t1 inner join t2 on t1.b = t2.b where t1.c = 1';")
+	tk.MustExec("execute stmt2;")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+	tk.MustExec("execute stmt2;")
+	tkProcess = tk.Session().ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&mockSessionManager1{PS: ps})
+	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
+	require.True(t, tk.HasPlan4ExplainFor(res, "IndexJoin"), res.Rows())
+	tk.MustExec("execute stmt2;")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	tk.MustExec("prepare stmt3 from 'update t1 set a = 1 where b = 1 and c > 1';")
 	tk.MustExec("execute stmt3;")

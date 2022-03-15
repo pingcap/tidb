@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/stretchr/testify/require"
@@ -118,6 +119,42 @@ func TestCapturePlanBaseline(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", rows[0][0])
 	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` > 10", rows[0][1])
+}
+
+func TestCapturePlanBaseline4PC(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+
+	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
+	defer func() {
+		tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = off")
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustQuery("show global bindings").Check(testkit.Rows())
+	tk.MustExec("prepare stmt from 'select count(*) from t where a > 10'")
+	tk.MustExec("execute stmt;")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+	tk.MustExec("execute stmt;")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("select count(*) from t where a > 10")
+	tk.MustExec("select count(*) from t where a > 10")
+	tk.MustExec("admin capture bindings")
+
+	tk.MustExec("execute stmt")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("execute stmt")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 }
 
 func TestCaptureDBCaseSensitivity(t *testing.T) {
