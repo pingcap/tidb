@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -592,6 +593,33 @@ func recordLastDDLInfo(ctx sessionctx.Context, job *model.Job) {
 	ctx.GetSessionVars().LastDDLInfo.SeqNum = job.SeqNum
 }
 
+func checkHistoryJobInTest(historyJob *model.Job) {
+	if !RunInGoTest {
+		return
+	}
+
+	// Check binlog.
+	if historyJob.BinlogInfo.FinishedTS == 0 {
+		panic(fmt.Sprintf("job ID %d, BinlogInfo.FinishedTS is 0", historyJob.ID))
+	}
+	if historyJob.BinlogInfo.SchemaVersion != int64(historyJob.SnapshotVer) {
+		panic(fmt.Sprintf("job ID %d, SchemaVersion are not consisitent, binlog: %d, job: %d", historyJob.ID, historyJob.BinlogInfo.SchemaVersion, historyJob.SnapshotVer))
+	}
+
+	// Check DDL query.
+	p := parser.New()
+	stmt, _, err := p.ParseSQL(historyJob.Query)
+	if err != nil {
+		panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+	}
+	if len(stmt) != 0 {
+		panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+	}
+	if _, ok := stmt[0].(ast.DDLNode); !ok {
+		panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+	}
+}
+
 // doDDLJob will return
 // - nil: found in history DDL job and no job error
 // - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
@@ -682,6 +710,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 		if historyJob.Error != nil {
 			logutil.BgLogger().Info("[ddl] DDL job is failed", zap.Int64("jobID", jobID))
+			checkHistoryJobInTest(historyJob)
 			return errors.Trace(historyJob.Error)
 		}
 		// Only for JobStateCancelled job which is adding columns or drop columns or drop indexes.
