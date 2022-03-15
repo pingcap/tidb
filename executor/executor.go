@@ -610,13 +610,17 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 			return err
 		}
 		jobs, err = admin.GetConcurrencyDDLJobs(newSess)
+		if err != nil {
+			return err
+		}
 		e.releaseSysSession(newSess)
 	} else {
 		jobs, err = admin.GetDDLJobs(txn)
+		if err != nil {
+			return err
+		}
 	}
-	if err != nil {
-		return err
-	}
+
 	// TODO(hawkingrei): Can it be used in concurrency DDL. it need to be checked.
 	historyJobs, err := admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
 	if err != nil {
