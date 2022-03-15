@@ -1049,6 +1049,17 @@ type Column struct {
 	Flag           int64
 	LastAnalyzePos types.Datum
 	StatsVer       int64 // StatsVer is the version of the current stats, used to maintain compatibility
+
+	// Loaded means if the histogram, the topn and the cm sketch are loaded fully.
+	// Those three parts of a Column is loaded lazily. It will only be loaded after trying to use them.
+	// Note: Currently please use Column.IsLoaded() to check if it's loaded.
+	Loaded bool
+}
+
+// IsLoaded is a wrap around c.Loaded.
+// It's just for safe when we are switching from `c.notNullCount() > 0)` to `c.Loaded`.
+func (c *Column) IsLoaded() bool {
+	return c.Loaded || c.notNullCount() > 0
 }
 
 func (c *Column) String() string {
@@ -1108,20 +1119,23 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 		if stmtctx != nil && stmtctx.StatsLoad.Fallback {
 			return true
 		}
-		if c.Histogram.NDV > 0 && c.notNullCount() == 0 && stmtctx != nil {
+		if !c.IsLoaded() && stmtctx != nil {
 			if stmtctx.StatsLoad.Timeout > 0 {
 				logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
 					zap.String(strconv.FormatInt(c.Info.ID, 10), c.Info.Name.O))
 			}
-			HistogramNeededColumns.insert(tableColumnID{TableID: c.PhysicalID, ColumnID: c.Info.ID})
+			// In some tests, the c.Info is not set, so we add this check here.
+			if c.Info != nil {
+				HistogramNeededColumns.insert(tableColumnID{TableID: c.PhysicalID, ColumnID: c.Info.ID})
+			}
 		}
 	}
-	return c.TotalRowCount() == 0 || (c.Histogram.NDV > 0 && c.notNullCount() == 0)
+	return c.TotalRowCount() == 0 || !c.IsLoaded()
 }
 
 // IsHistNeeded checks if this column needs histogram to be loaded
 func (c *Column) IsHistNeeded(collPseudo bool) bool {
-	return (!collPseudo || !c.NotAccurate()) && c.Histogram.NDV > 0 && c.notNullCount() == 0
+	return (!collPseudo || !c.NotAccurate()) && !c.IsLoaded()
 }
 
 func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encodedVal []byte, realtimeRowCount int64) (float64, error) {
@@ -1238,8 +1252,10 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 		cnt := c.BetweenRowCount(sctx, lowVal, highVal, lowEncoded, highEncoded)
 		// `betweenRowCount` returns count for [l, h) range, we adjust cnt for boundaries here.
 		// Note that, `cnt` does not include null values, we need specially handle cases
-		// where null is the lower bound.
-		if rg.LowExclude && !lowVal.IsNull() {
+		//   where null is the lower bound.
+		// And because we use (2, MaxValue] to represent expressions like a > 2 and use [MinNotNull, 3) to represent
+		//   expressions like b < 3, we need to exclude the special values.
+		if rg.LowExclude && !lowVal.IsNull() && lowVal.Kind() != types.KindMaxValue && lowVal.Kind() != types.KindMinNotNull {
 			lowCnt, err := c.equalRowCount(sctx, lowVal, lowEncoded, realtimeRowCount)
 			if err != nil {
 				return 0, errors.Trace(err)
@@ -1250,7 +1266,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 		if !rg.LowExclude && lowVal.IsNull() {
 			cnt += float64(c.NullCount)
 		}
-		if !rg.HighExclude {
+		if !rg.HighExclude && highVal.Kind() != types.KindMaxValue && highVal.Kind() != types.KindMinNotNull {
 			highCnt, err := c.equalRowCount(sctx, highVal, highEncoded, realtimeRowCount)
 			if err != nil {
 				return 0, errors.Trace(err)
@@ -1425,7 +1441,30 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 				return 0, err
 			}
 			if expBackoffSuccess {
-				totalCount += expBackoffSel * idx.TotalRowCount()
+				expBackoffCnt := expBackoffSel * idx.TotalRowCount()
+
+				upperLimit := expBackoffCnt
+				// Use the multi-column stats to calculate the max possible row count of [l, r)
+				if idx.Len() > 0 {
+					_, lowerBkt, _, _ := idx.locateBucket(l)
+					_, upperBkt, _, _ := idx.locateBucket(r)
+					// Use Count of the Bucket before l as the lower bound.
+					preCount := float64(0)
+					if lowerBkt > 0 {
+						preCount = float64(idx.Buckets[lowerBkt-1].Count)
+					}
+					// Use Count of the Bucket where r exists as the upper bound.
+					upperCnt := float64(idx.Buckets[upperBkt].Count)
+					upperLimit = upperCnt - preCount
+					upperLimit += float64(idx.TopN.BetweenCount(lb, rb))
+				}
+
+				// If the result of exponential backoff strategy is larger than the result from multi-column stats,
+				// 	use the upper limit from multi-column histogram instead.
+				if expBackoffCnt > upperLimit {
+					expBackoffCnt = upperLimit
+				}
+				totalCount += expBackoffCnt
 			}
 		}
 		if !expBackoffSuccess {
@@ -1672,6 +1711,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sctx sessionctx.Context, statsNod
 				zap.Error(err))
 			continue
 		}
+		newCol.Loaded = oldCol.Loaded
 		newColl.Columns[node.ID] = newCol
 	}
 	for id, idx := range coll.Indices {

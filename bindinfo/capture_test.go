@@ -906,3 +906,58 @@ func TestCaptureFilter(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `mysql` . `capture_plan_baselines_blacklist`", rows[0][0])
 }
+
+func TestCaptureHints(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
+	defer func() {
+		tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = off")
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int primary key, a int, b int, key(a), key(b))")
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	captureCases := []struct {
+		query string
+		hint  string
+	}{
+		// agg hints
+		{"select /*+ hash_agg() */ count(1) from t", "hash_agg"},
+		{"select /*+ stream_agg() */ count(1) from t", "stream_agg"},
+		// join hints
+		{"select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a", "merge_join"},
+		{"select /*+ tidb_smj(t1, t2) */ * from t t1, t t2 where t1.a=t2.a", "merge_join"},
+		{"select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a", "hash_join"},
+		{"select /*+ tidb_hj(t1, t2) */ * from t t1, t t2 where t1.a=t2.a", "hash_join"},
+		{"select /*+ inl_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a", "inl_join"},
+		{"select /*+ tidb_inlj(t1, t2) */ * from t t1, t t2 where t1.a=t2.a", "inl_join"},
+		{"select /*+ inl_hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a", "inl_hash_join"},
+		// index hints
+		{"select * from t use index(primary)", "use_index(@`sel_1` `test`.`t` )"},
+		{"select /*+ use_index(primary) */ * from t", "use_index(@`sel_1` `test`.`t` )"},
+		{"select * from t use index(a)", "use_index(@`sel_1` `test`.`t` `a`)"},
+		{"select /*+ use_index(a) */ * from t use index(a)", "use_index(@`sel_1` `test`.`t` `a`)"},
+		{"select * from t use index(b)", "use_index(@`sel_1` `test`.`t` `b`)"},
+		{"select /*+ use_index(b) */ * from t use index(b)", "use_index(@`sel_1` `test`.`t` `b`)"},
+		{"select /*+ use_index_merge(t, a, b) */ a, b from t where a=1 or b=1", "use_index_merge(@`sel_1` `t` `a`, `b`)"},
+		// push-down hints
+		// index-merge hints
+		// runtime hints
+		// storage hints
+		// query-blocks
+		// others
+	}
+	for _, capCase := range captureCases {
+		stmtsummary.StmtSummaryByDigestMap.Clear()
+		utilCleanBindingEnv(tk, dom)
+		tk.MustExec(capCase.query)
+		tk.MustExec(capCase.query)
+		tk.MustExec("admin capture bindings")
+		res := tk.MustQuery(`show global bindings`).Rows()
+		require.Equal(t, len(res), 1)                                       // this query is captured, and
+		require.True(t, strings.Contains(res[0][1].(string), capCase.hint)) // the binding contains the expected hint
+	}
+}
