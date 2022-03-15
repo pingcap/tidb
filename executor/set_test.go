@@ -1568,7 +1568,6 @@ func TestSetTopSQLVariables(t *testing.T) {
 }
 
 func TestInstanceScopeSwitching(t *testing.T) {
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
