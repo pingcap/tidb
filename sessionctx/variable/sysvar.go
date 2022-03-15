@@ -707,7 +707,6 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
-	/* The following variable is defined as session scope but is actually server scope. */
 	{Scope: ScopeInstance, Name: TiDBGeneralLog, Value: BoolToOnOff(DefTiDBGeneralLog), Type: TypeBool, skipInit: true, SetGlobal: func(s *SessionVars, val string) error {
 		ProcessGeneralLog.Store(TiDBOptOn(val))
 		return nil
