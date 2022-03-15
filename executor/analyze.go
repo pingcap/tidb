@@ -2322,6 +2322,7 @@ func analyzePKIncremental(colExec *analyzePKIncrementalExec) *statistics.Analyze
 }
 
 // analyzeResultsNotifyWaitGroupWrapper is a wrapper for sync.WaitGroup
+// Please add all goroutine count when to `Add` to avoid exiting in advance.
 type analyzeResultsNotifyWaitGroupWrapper struct {
 	sync.WaitGroup
 	notify chan *statistics.AnalyzeResults
@@ -2354,6 +2355,7 @@ func (w *analyzeResultsNotifyWaitGroupWrapper) Run(exec func()) {
 }
 
 // notifyErrorWaitGroupWrapper is a wrapper for sync.WaitGroup
+// Please add all goroutine count when to `Add` to avoid exiting in advance.
 type notifyErrorWaitGroupWrapper struct {
 	sync.WaitGroup
 	notify chan error
