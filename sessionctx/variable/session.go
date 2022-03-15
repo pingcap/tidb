@@ -1004,6 +1004,8 @@ type SessionVars struct {
 	EnableMutationChecker bool
 	// AssertionLevel controls how strict the assertions on data mutations should be.
 	AssertionLevel AssertionLevel
+	// IgnorePreparedCacheCloseStmt controls if ignore the close-stmt command for prepared statement.
+	IgnorePreparedCacheCloseStmt bool
 	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
 	BatchPendingTiFlashCount int
 }
