@@ -85,7 +85,12 @@ type inFunctionClass struct {
 }
 
 func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+<<<<<<< HEAD
 	if err := c.verifyArgs(args); err != nil {
+=======
+	args, err = c.verifyArgs(ctx, args)
+	if err != nil {
+>>>>>>> caad839ae... planner: fix the wrong range built for bit columns when reusing cached plan (#33090)
 		return nil, err
 	}
 	argTps := make([]types.EvalType, len(args))
@@ -156,6 +161,30 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	return sig, nil
 }
 
+<<<<<<< HEAD
+=======
+func (c *inFunctionClass) verifyArgs(ctx sessionctx.Context, args []Expression) ([]Expression, error) {
+	columnType := args[0].GetType()
+	validatedArgs := make([]Expression, 0, len(args))
+	for _, arg := range args {
+		if constant, ok := arg.(*Constant); ok {
+			switch {
+			case columnType.Tp == mysql.TypeBit && constant.Value.Kind() == types.KindInt64:
+				if constant.Value.GetInt64() < 0 {
+					if MaybeOverOptimized4PlanCache(ctx, args) {
+						ctx.GetSessionVars().StmtCtx.SkipPlanCache = true
+					}
+					continue
+				}
+			}
+		}
+		validatedArgs = append(validatedArgs, arg)
+	}
+	err := c.baseFunctionClass.verifyArgs(args)
+	return validatedArgs, err
+}
+
+>>>>>>> caad839ae... planner: fix the wrong range built for bit columns when reusing cached plan (#33090)
 // nolint:structcheck
 type baseInSig struct {
 	baseBuiltinFunc
