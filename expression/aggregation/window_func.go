@@ -124,9 +124,10 @@ func (s *WindowFuncDesc) CanPushDownToTiFlash() bool {
 	switch s.Name {
 	case ast.WindowFuncRowNumber, ast.WindowFuncRank, ast.WindowFuncDenseRank, ast.WindowFuncLead, ast.WindowFuncLag:
 		return true
-		// aggregate functions
+		// TODO: support aggregate functions
 		//case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg, ast.AggFuncMax, ast.AggFuncMin:
 		//	return true
 	}
+
 	return false
 }
