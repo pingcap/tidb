@@ -1158,6 +1158,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_LeastInt, tipb.ScalarFuncSig_LeastReal:
 			return true
 		}
+	case ast.IsTruthWithNull, ast.IsTruthWithoutNull, ast.IsFalsity:
+		return true
 	}
 	return false
 }
