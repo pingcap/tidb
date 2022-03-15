@@ -12,7 +12,7 @@ For a small, frequently visited, and rarely changed table, caching the whole tab
 
 For tables that are too small, they are located in just one region, that region would become a hotspot, and such hotspots would cause a performance bottleneck. By directly caching the small table data in the TiDB layer, such hotspot issues can be solved.
 
-We are caching tables for some scenarios already, in a way we're not realized. For example, our handling of global variables. When the client has a new connection request, TiDB needs to load global variables. After a downtime or restart in some situations, all clients will reconnect the TiDB server simultaneously, loading global variables becomes a hotspot. A special processing of TiDB is to cache global variables, and the modification of global variables will take 3 seconds to take effect. The data of privilege related tables are also cached.
+We are caching tables for some scenarios already, in a way we're not realized. For example, our handling of global variables. To prevent row-at-a-time loading of each system variable from TiKV, we needed to implement the [sysvar cache](https://github.com/pingcap/tidb/pull/24359). This helps reduce `show variables like ..` latency, but the data set is small and the problem is very generic. It also doesn't help in cases where system variables read from `mysql.tidb` instead, which does not have a cache. The data of privilege related tables are also cached.
 
 It can also be used to improve the performance of join. The cached table could be used as the inner table, cutting down the network cost of loading data to TiDB. An example is the TPC-C test, there is an ITEM table. It stores the information of all the goods sold by the sales company, including the name and price of the goods. During the execution of the "order creation" transaction, the data in this table is used to determine the price of the order. Such a table is also a typical scenario that can be optimized.
 
@@ -136,7 +136,7 @@ The entry of the feature is the 'ALTER TABLE' statement. If the user does not ex
 
 Metadata management will introduce persistent data. The old version TiDB does not access or use the meta-data, so there should not be any problem when upgrading or downgrading.
 
-It is unsafe to mix the old and new versions of the binary, but rolling update is OK because there won’t be any cached tables in the old cluster. 
+It is unsafe to mix the old and new versions of TiDB when using cached tables. Rolling updates are safe, but there is a risk that if an old version of a TiDB server re-joins after a table is in cached 'Enabled' state it could modify the contents in an unsafe manner. Currently _downgrade_ is not technically supported by TiDB, but there is no technical mechanism which prevents an older versioned binary joining a newer versioned cluster. We need to solve this issue to perform meta-data upgrades, but it is currently blocked in the requirements phase, because we have not decided from which versions upgrade/downgrade will be supported.
 
 ## Investigation & Alternatives
 
