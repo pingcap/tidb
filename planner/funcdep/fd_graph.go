@@ -15,9 +15,10 @@
 package funcdep
 
 import (
-	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 type fdEdge struct {
@@ -649,7 +650,8 @@ func (s *FDSet) AddFrom(fds *FDSet) {
 	} else {
 		for k, v := range fds.HashCodeToUniqueID {
 			if _, ok := s.HashCodeToUniqueID[k]; ok {
-				panic("shouldn't be here, children has same expr while registered not only once")
+				logutil.BgLogger().Warn("Error occurred when building the functional dependency")
+				continue
 			}
 			s.HashCodeToUniqueID[k] = v
 		}
@@ -863,7 +865,7 @@ func (s *FDSet) makeEquivMap(detCols, projectedCols FastIntSet) map[int]int {
 			if equivMap == nil {
 				equivMap = make(map[int]int)
 			}
-			id, _ := closure.Next(0) // 不应该只记录一个
+			id, _ := closure.Next(0) // We can record more equiv columns.
 			equivMap[i] = id
 		}
 	}
@@ -888,7 +890,8 @@ func (e *fdEdge) String() string {
 	var b strings.Builder
 	if e.equiv {
 		if !e.strict {
-			panic(errors.New("lax equivalent columns are not supported"))
+			logutil.BgLogger().Warn("Error occurred when building the functional dependency. We don't support lax equivalent columns")
+			return "Wrong functional dependency"
 		}
 		_, _ = fmt.Fprintf(&b, "%s==%s", e.from, e.to)
 	} else {
@@ -905,11 +908,13 @@ func (e *fdEdge) String() string {
 func (s *FDSet) RegisterUniqueID(hashCode string, uniqueID int) {
 	if len(hashCode) == 0 {
 		// shouldn't be here.
-		panic("map empty expr hashcode to uniqueID")
+		logutil.BgLogger().Warn("Error occurred when building the functional dependency")
+		return
 	}
 	if _, ok := s.HashCodeToUniqueID[hashCode]; ok {
 		// shouldn't be here.
-		panic("hashcode has been registered")
+		logutil.BgLogger().Warn("Error occurred when building the functional dependency")
+		return
 	}
 	s.HashCodeToUniqueID[hashCode] = uniqueID
 }
