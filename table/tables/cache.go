@@ -90,7 +90,7 @@ func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) k
 		if distance >= 0 && distance <= leaseDuration/2 || triggerFailpoint {
 			select {
 			case c.renewReadLease <- struct{}{}:
-				go c.renewLease(ts, data, data.Lease, leaseDuration)
+				go c.renewLease(ts, data, leaseDuration)
 			default:
 			}
 		}
@@ -247,7 +247,7 @@ func (c *cachedTable) RemoveRecord(sctx sessionctx.Context, h kv.Handle, r []typ
 // TestMockRenewLeaseABA2 is used by test function TestRenewLeaseABAFailPoint.
 var TestMockRenewLeaseABA2 chan struct{}
 
-func (c *cachedTable) renewLease(ts uint64, data *cacheData, oldLease uint64, leaseDuration time.Duration) {
+func (c *cachedTable) renewLease(ts uint64, data *cacheData, leaseDuration time.Duration) {
 	defer func() { <-c.renewReadLease }()
 
 	failpoint.Inject("mockRenewLeaseABA2", func(_ failpoint.Value) {
@@ -256,7 +256,7 @@ func (c *cachedTable) renewLease(ts uint64, data *cacheData, oldLease uint64, le
 
 	tid := c.Meta().ID
 	lease := leaseFromTS(ts, leaseDuration)
-	newLease, err := c.handle.RenewReadLease(context.Background(), tid, oldLease, lease)
+	newLease, err := c.handle.RenewReadLease(context.Background(), tid, data.Lease, lease)
 	if err != nil && !kv.IsTxnRetryableError(err) {
 		log.Warn("Renew read lease error", zap.Error(err))
 	}
