@@ -149,7 +149,7 @@
         "SQL": "explain format='verbose' select count(*) from t where a=1",
         "Plan": [
           "HashAgg_25 1.00 33.60 root  funcs:count(Column#6)->Column#4",
-          "└─TableReader_27 1.00 0.00 root  data:ExchangeSender_26",
+          "└─TableReader_27 1.00 0.29 root  data:ExchangeSender_26",
           "  └─ExchangeSender_26 1.00 285050.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg_10 1.00 285050.00 batchCop[tiflash]  funcs:count(1)->Column#6",
           "      └─Selection_24 10.00 285020.00 batchCop[tiflash]  eq(test.t.a, 1)",
@@ -173,7 +173,7 @@
         "SQL": "explain format='verbose' select /*+ read_from_storage(tiflash[t]) */ count(*) from t where a=1",
         "Plan": [
           "HashAgg_22 1.00 33.60 root  funcs:count(Column#6)->Column#4",
-          "└─TableReader_24 1.00 0.00 root  data:ExchangeSender_23",
+          "└─TableReader_24 1.00 0.29 root  data:ExchangeSender_23",
           "  └─ExchangeSender_23 1.00 285050.00 batchCop[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg_10 1.00 285050.00 batchCop[tiflash]  funcs:count(1)->Column#6",
           "      └─Selection_21 10.00 285020.00 batchCop[tiflash]  eq(test.t.a, 1)",
