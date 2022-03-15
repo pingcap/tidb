@@ -2310,6 +2310,7 @@ func TestPartitionTable(t *testing.T) {
 	tk.MustExec("create database test_plan_cache")
 	tk.MustExec("use test_plan_cache")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("set @@tidb_enable_list_partition = 1")
 
 	type testcase struct {
 		t1Create string
@@ -2419,7 +2420,8 @@ func TestPartitionTable(t *testing.T) {
 		for i := 0; i < 100; i++ {
 			tk.MustExec(fmt.Sprintf("set @a=%v", tc.varGener()))
 			result1 := tk.MustQuery("execute stmt1 using @a").Sort().Rows()
-			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+			// When https://github.com/pingcap/tidb/pull/33098 is reverted this should be 1 again
+			tk.MustQuery("select @@last_plan_from_cache /* i=" + strconv.Itoa(i) + " prepared statement: (t1) " + tc.query + "\n-- create table: " + tc.t1Create + "*/").Check(testkit.Rows("0"))
 			tk.MustQuery("execute stmt2 using @a").Sort().Check(result1)
 			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 		}
