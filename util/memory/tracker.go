@@ -554,6 +554,9 @@ type FreeWatcher interface {
 func (t *Tracker) RegisterFreeWatcher(freeWatcher FreeWatcher) {
 	t.fwMu.Lock()
 	defer t.fwMu.Unlock()
+	if t.fwMu.freeWatchers == nil {
+		t.fwMu.freeWatchers = map[FreeWatcher]struct{}{}
+	}
 	t.fwMu.freeWatchers[freeWatcher] = struct{}{}
 }
 
@@ -569,15 +572,21 @@ func (t *Tracker) AllocateForFreeWatchers(bytesConsumed int64, bytes int64) {
 	if bytes < t.bytesSoftLimit/100 {
 		return
 	}
-	free := t.bytesSoftLimit - bytesConsumed
 	t.fwMu.Lock()
 	defer t.fwMu.Unlock()
+	if t.fwMu.freeWatchers == nil {
+		return
+	}
+	free := t.bytesSoftLimit - bytesConsumed
 	totalWeight := int64(0)
 	weightMap := make(map[FreeWatcher]int64, len(t.fwMu.freeWatchers))
 	for watcher := range t.fwMu.freeWatchers {
 		weight := watcher.Weight()
 		totalWeight += weight
 		weightMap[watcher] = weight
+	}
+	if totalWeight == 0 {
+		return
 	}
 	for watcher, weight := range weightMap {
 		watcher.OnFreeAllocated(free * weight / totalWeight)
