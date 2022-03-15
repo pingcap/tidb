@@ -593,7 +593,7 @@ const (
 	// TiDBTmpTableMaxSize indicates the max memory size of temporary tables.
 	TiDBTmpTableMaxSize = "tidb_tmp_table_max_size"
 
-	// TiDBEnableLegacyInstanceScope indicates if instance scope can be set with SET SESSION
+	// TiDBEnableLegacyInstanceScope indicates if instance scope can be set with SET SESSION.
 	TiDBEnableLegacyInstanceScope = "tidb_enable_legacy_instance_scope"
 
 	// TiDBTableCacheLease indicates the read lock lease of a cached table.
