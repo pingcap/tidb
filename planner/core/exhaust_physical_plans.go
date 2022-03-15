@@ -2242,12 +2242,12 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 		if lw.Frame != nil && lw.Frame.Type == ast.Ranges {
 			if _, err := expression.ExpressionsToPBList(lw.SCtx().GetSessionVars().StmtCtx, lw.Frame.Start.CalcFuncs, lw.ctx.GetClient()); err != nil {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
-					"MPP mode may be blocked because window function frame can't be push down, because " + err.Error())
+					"MPP mode may be blocked because window function frame can't be pushed down, because " + err.Error())
 				return nil
 			}
 			if _, err := expression.ExpressionsToPBList(lw.SCtx().GetSessionVars().StmtCtx, lw.Frame.End.CalcFuncs, lw.ctx.GetClient()); err != nil {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
-					"MPP mode may be blocked because window function frame can't be push down, because " + err.Error())
+					"MPP mode may be blocked because window function frame can't be pushed down, because " + err.Error())
 				return nil
 			}
 		}
