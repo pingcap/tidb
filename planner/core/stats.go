@@ -478,7 +478,7 @@ func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expressio
 	// With hints and without generated IndexMerge paths
 	if regularPathCount == len(ds.possibleAccessPaths) {
 		ds.indexMergeHints = nil
-		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable."))
+		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable"))
 		return nil
 	}
 	// Do not need to consider the regular paths in find_best_task().

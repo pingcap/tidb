@@ -681,7 +681,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		stmtHints.ForceNthPlan = forceNthPlan.HintData.(int64)
 		if stmtHints.ForceNthPlan < 1 {
 			stmtHints.ForceNthPlan = -1
-			warn := errors.Errorf("the hintdata for NTH_PLAN() is too small, hint ignored.")
+			warn := errors.Errorf("the hintdata for NTH_PLAN() is too small, hint ignored")
 			warns = append(warns, warn)
 		}
 	} else {

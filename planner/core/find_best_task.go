@@ -197,7 +197,7 @@ func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan,
 			return errors.Errorf("PlanCounterTp planCounter is not handled")
 		}
 		if childTask != nil && childTask.invalid() {
-			return errors.Errorf("The current plan is invalid, please skip this plan.")
+			return errors.Errorf("The current plan is invalid, please skip this plan")
 		}
 		*childTasks = append(*childTasks, childTask)
 	}
