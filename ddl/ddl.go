@@ -962,7 +962,7 @@ func CancelConcurrencyJobs(sess sessionctx.Context, ids []int64) ([]error, error
 	} else {
 		var idsStr []string
 		for idx, id := range ids {
-			jobSet[ids[0]] = idx
+			jobSet[id] = idx
 			idsStr = append(idsStr, strconv.FormatInt(id, 10))
 		}
 		getJobSQL = fmt.Sprintf("select job_meta from mysql.tidb_ddl_job where job_id in (%s) order by job_id", strings.Join(idsStr, ", "))
