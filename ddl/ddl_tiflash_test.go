@@ -179,6 +179,7 @@ func (s *tiflashContext) SetPdLoop(tick uint64) func() {
 }
 
 // Run all kinds of DDLs, and will create no redundant pd rules for TiFlash.
+// Meanwhile, will also check all obsolete rules are deleted.
 func TestTiFlashNoRedundantPDRules(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
@@ -213,8 +214,12 @@ func TestTiFlashNoRedundantPDRules(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash")
 	tk.MustExec("drop table if exists ddltiflashp")
+	tk.MustExec("drop table if exists ddlnotiflash")
+	tk.MustExec("drop table if exists ddlnotiflashp")
 	tk.MustExec("create table ddltiflash(z int)")
 	tk.MustExec("create table ddltiflashp(z int) PARTITION BY RANGE(z) (PARTITION p0 VALUES LESS THAN (10),PARTITION p1 VALUES LESS THAN (20), PARTITION p2 VALUES LESS THAN (30))")
+	tk.MustExec("create table ddlnotiflash(z int)")
+	tk.MustExec("create table ddlnotiflashp(z int) PARTITION BY RANGE(z) (PARTITION p0 VALUES LESS THAN (10),PARTITION p1 VALUES LESS THAN (20), PARTITION p2 VALUES LESS THAN (30))")
 
 	total := 0
 	require.Equal(t, total, s.tiflash.PlacementRulesLen())
@@ -265,6 +270,23 @@ func TestTiFlashNoRedundantPDRules(t *testing.T) {
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	require.NoError(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
 	require.Equal(t, total, s.tiflash.PlacementRulesLen())
+
+	tk.MustExec("truncate table ddlnotiflash")
+	// Not affect TiFlash rules, since this table has no TiFlash replica.
+	require.NoError(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
+	require.Equal(t, total, s.tiflash.PlacementRulesLen())
+
+	tk.MustExec("truncate table ddlnotiflashp")
+	// Not affect TiFlash rules, since this table has no TiFlash replica.
+	require.NoError(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
+	require.Equal(t, total, s.tiflash.PlacementRulesLen())
+
+	tk.MustExec("drop database test")
+	require.NoError(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
+	require.Equal(t, 0, s.tiflash.PlacementRulesLen())
 }
 
 func TestTiFlashReplicaPartitionTableNormal(t *testing.T) {

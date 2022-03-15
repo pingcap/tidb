@@ -1906,6 +1906,50 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (err error) {
 		}
 	}
 
+	var tiflashPhysicalTableIDs []int64
+	switch historyJob.Type {
+	case model.ActionDropSchema:
+		for _, tbInfo := range historyJob.BinlogInfo.DBInfo.Tables {
+			if tbInfo.TiFlashReplica != nil {
+				logutil.BgLogger().Info("!!!! have schema", zap.Any("tableID", tbInfo.ID))
+				tiflashPhysicalTableIDs = append(tiflashPhysicalTableIDs, tbInfo.ID)
+			} else {
+				logutil.BgLogger().Info("!!!! negn schema", zap.Any("tableID", tbInfo.ID))
+			}
+		}
+	case model.ActionDropTable, model.ActionTruncateTable:
+		tblInfo := historyJob.BinlogInfo.TableInfo
+		if tblInfo.TiFlashReplica != nil {
+			if tblInfo.Partition != nil {
+				for _, p := range tblInfo.Partition.Definitions {
+					logutil.BgLogger().Info("!!!! have part table", zap.Any("t", historyJob.Type), zap.Any("tableID", tblInfo.ID), zap.Any("p", p))
+					tiflashPhysicalTableIDs = append(tiflashPhysicalTableIDs, p.ID)
+				}
+				for _, p := range tblInfo.Partition.AddingDefinitions {
+					logutil.BgLogger().Info("!!!! have part table", zap.Any("t", historyJob.Type), zap.Any("tableID", tblInfo.ID), zap.Any("p", p))
+					tiflashPhysicalTableIDs = append(tiflashPhysicalTableIDs, p.ID)
+				}
+			} else {
+				logutil.BgLogger().Info("!!!! have table", zap.Any("t", historyJob.Type), zap.Any("tableID", tblInfo.ID))
+				tiflashPhysicalTableIDs = append(tiflashPhysicalTableIDs, tblInfo.ID)
+			}
+		} else {
+			logutil.BgLogger().Info("!!!! have no table", zap.Any("t", historyJob.Type), zap.Any("tableID", tblInfo.ID))
+		}
+	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
+		var pids []int64
+		if err = historyJob.DecodeArgs(&pids); err != nil {
+			return
+		}
+		tblInfo := historyJob.BinlogInfo.TableInfo
+		if tblInfo.TiFlashReplica != nil {
+			for _, p := range pids {
+				logutil.BgLogger().Info("!!!! have partition", zap.Any("tableID", tblInfo.ID), zap.Any("p", p))
+				tiflashPhysicalTableIDs = append(tiflashPhysicalTableIDs, p)
+			}
+		}
+	}
+
 	if len(physicalTableIDs) == 0 {
 		return
 	}
