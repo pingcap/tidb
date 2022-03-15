@@ -730,7 +730,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 			metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save").Inc()
 		}
 
-		if err := w.doGCPlacementRules(r); err != nil {
+		if err := w.doGCPlacementRules(safePoint, r); err != nil {
 			logutil.Logger(ctx).Error("[gc worker] gc placement rules failed on range",
 				zap.String("uuid", w.uuid),
 				zap.Int64("jobID", r.JobID),
@@ -1862,7 +1862,7 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 // GC placement rules when the partitions are removed by the GC worker.
 // Placement rules cannot be removed immediately after drop table / truncate table,
 // because the tables can be flashed back or recovered.
-func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (err error) {
+func (w *GCWorker) doGCPlacementRules(safePoint uint64, dr util.DelRangeTask) (err error) {
 	// Get the job from the job history
 	var historyJob *model.Job
 	failpoint.Inject("mockHistoryJobForGC", func(v failpoint.Value) {
@@ -1892,39 +1892,38 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (err error) {
 	}
 
 	// Notify PD to drop the placement rules of partition-ids and table-id, even if there may be no placement rules.
-	var physicalTableIDs []int64
+	//var physicalTableIDs []int64
 	switch historyJob.Type {
-	case model.ActionDropTable, model.ActionTruncateTable:
-		var startKey kv.Key
-		if err = historyJob.DecodeArgs(&startKey, &physicalTableIDs); err != nil {
-			return
-		}
-		physicalTableIDs = append(physicalTableIDs, historyJob.TableID)
-	case model.ActionDropSchema, model.ActionDropTablePartition, model.ActionTruncateTablePartition:
-		if err = historyJob.DecodeArgs(&physicalTableIDs); err != nil {
-			return
-		}
+	case model.ActionDropTable, model.ActionTruncateTable, model.ActionDropSchema, model.ActionDropTablePartition, model.ActionTruncateTablePartition:
+		// These are the job types that we concern.
+	default:
+		return nil
 	}
 
-	if len(physicalTableIDs) == 0 {
-		return
+	// Double-check the key format.
+	if !(tablecodec.IsTableKey(dr.StartKey) && tablecodec.IsTableKey(dr.EndKey)) {
+		return nil
 	}
 
-	bundles := make([]*placement.Bundle, 0, len(physicalTableIDs))
-	for _, id := range physicalTableIDs {
-		bundles = append(bundles, placement.NewBundle(id))
+	tableIDInKey := tablecodec.DecodeTableID(dr.StartKey)
+	if tableIDInKey != dr.ElementID {
+		logutil.BgLogger().Error("table_id in deleted range record doesn't match element_id, which is not expected",
+			zap.Int64("tableIDInKey", tableIDInKey), zap.Int64("elementID", dr.ElementID), zap.Uint64("safePoint", safePoint))
+		// Ignore and continue.
+		return nil
 	}
 
-	for _, id := range physicalTableIDs {
-		// Delete pd rule
-		logutil.BgLogger().Info("try delete TiFlash pd rule", zap.Int64("tableID", id), zap.String("endKey", string(dr.EndKey)))
-		ruleID := fmt.Sprintf("table-%v-r", id)
-		if err := infosync.DeleteTiFlashPlacementRule(context.Background(), "tiflash", ruleID); err != nil {
-			// If DeletePlacementRule fails here, the rule will be deleted in `HandlePlacementRuleRoutine`.
-			logutil.BgLogger().Error("delete TiFlash pd rule failed when gc", zap.Error(err), zap.String("ruleID", ruleID))
-		}
+	physicalTableID := dr.ElementID
+	bundle := placement.NewBundle(physicalTableID)
+
+	// Delete pd rule
+	logutil.BgLogger().Info("try delete TiFlash pd rule", zap.Int64("tableID", physicalTableID), zap.String("endKey", string(dr.EndKey)), zap.Uint64("safePoint", safePoint))
+	ruleID := fmt.Sprintf("table-%v-r", physicalTableID)
+	if err := infosync.DeleteTiFlashPlacementRule(context.Background(), "tiflash", ruleID); err != nil {
+		// If DeletePlacementRule fails here, the rule will be deleted in `HandlePlacementRuleRoutine`.
+		logutil.BgLogger().Error("delete TiFlash pd rule failed when gc", zap.Error(err), zap.String("ruleID", ruleID), zap.Uint64("safePoint", safePoint))
 	}
-	return infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
+	return infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), []*placement.Bundle{bundle})
 }
 
 func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
