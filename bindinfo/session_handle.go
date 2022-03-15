@@ -87,7 +87,8 @@ func (h *SessionHandle) DropBindRecord(originalSQL, db string, binding *Binding)
 	}
 	err := h.ch.SetBindRecord(hash, newRecord)
 	if err != nil {
-		logutil.BgLogger().Warn("[sql-bind] ", zap.Error(err))
+		// Should never reach here, just return an error for safety
+		return err
 	}
 	updateMetrics(metrics.ScopeSession, oldRecord, newRecord, false)
 	return nil
