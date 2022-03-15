@@ -64,6 +64,8 @@ func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
 func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest, mppStoreLastFailTime map[string]time.Time, ttl time.Duration) ([]kv.MPPTaskMeta, error) {
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTS)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
+	var tasks []*batchCopTask
+	var err error
 	if req.PartitionIDAndRanges != nil {
 		rangesForEachPartition := make([]*KeyRanges, len(req.PartitionIDAndRanges))
 		partitionIDs := make([]int64, len(req.PartitionIDAndRanges))
@@ -71,22 +73,15 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 			rangesForEachPartition[i] = NewKeyRanges(p.KeyRanges)
 			partitionIDs[i] = p.ID
 		}
-		tasks, err := buildBatchCopTasksForPartitionedTable(bo, c.store, rangesForEachPartition, kv.TiFlash, mppStoreLastFailTime, ttl, true, 20, partitionIDs)
-		if err != nil {
-			return nil, errors.Trace(err)
+		tasks, err = buildBatchCopTasksForPartitionedTable(bo, c.store, rangesForEachPartition, kv.TiFlash, mppStoreLastFailTime, ttl, true, 20, partitionIDs)
+	} else {
+		if req.KeyRanges == nil {
+			return c.selectAllTiFlashStore(), nil
 		}
-		mppTasks := make([]kv.MPPTaskMeta, 0, len(tasks))
-		for _, copTask := range tasks {
-			mppTasks = append(mppTasks, copTask)
-		}
-		return mppTasks, nil
+		ranges := NewKeyRanges(req.KeyRanges)
+		tasks, err = buildBatchCopTasksForNonPartitionedTable(bo, c.store, ranges, kv.TiFlash, mppStoreLastFailTime, ttl, true, 20)
 	}
 
-	if req.KeyRanges == nil {
-		return c.selectAllTiFlashStore(), nil
-	}
-	ranges := NewKeyRanges(req.KeyRanges)
-	tasks, err := buildBatchCopTasksForNonPartitionedTable(bo, c.store, ranges, kv.TiFlash, mppStoreLastFailTime, ttl, true, 20)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
