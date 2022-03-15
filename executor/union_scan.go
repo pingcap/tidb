@@ -159,7 +159,7 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.GrowAndReset(us.maxChunkSize)
 	mutableRow := chunk.MutRowFromTypes(retTypes(us))
-	for i, batchSize := 0, req.Capacity(); i < batchSize; i++ {
+	for batchSize := req.Capacity(); req.NumRows() < batchSize; {
 		row, err := us.getOneRow(ctx)
 		if err != nil {
 			return err
