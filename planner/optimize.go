@@ -456,7 +456,7 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindRecord := sessionHandle.GetBindRecord(hash, normalizedSQL, "")
 	if bindRecord != nil {
-		if bindRecord.HasUsingBinding() {
+		if bindRecord.HasEnabledBinding() {
 			return bindRecord, metrics.ScopeSession, nil
 		}
 		return nil, "", nil
