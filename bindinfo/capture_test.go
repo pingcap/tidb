@@ -126,6 +126,7 @@ func TestCapturePlanBaseline4DisabledStatus(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 
+	utilCleanBindingEnv(tk, dom)
 	stmtsummary.StmtSummaryByDigestMap.Clear()
 	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
 	defer func() {
@@ -169,6 +170,8 @@ func TestCapturePlanBaseline4DisabledStatus(t *testing.T) {
 
 	tk.MustExec("select * from t where a > 10")
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+
+	utilCleanBindingEnv(tk, dom)
 }
 
 func TestCaptureDBCaseSensitivity(t *testing.T) {
@@ -362,39 +365,6 @@ func TestBindingSource(t *testing.T) {
 	require.Len(t, bindData.Bindings, 1)
 	bind = bindData.Bindings[0]
 	require.Equal(t, bindinfo.Capture, bind.Source)
-}
-
-func TestCaptureWithDisabledBinding(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	utilCleanBindingEnv(tk, dom)
-	stmtsummary.StmtSummaryByDigestMap.Clear()
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int)")
-	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
-	tk.MustExec("create global binding for select * from t using select * from t")
-	rows := tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, bindinfo.Enabled, rows[0][3])
-	require.Equal(t, bindinfo.Manual, rows[0][8])
-
-	tk.MustExec("set binding disabled for select * from t;")
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, bindinfo.Disabled, rows[0][3])
-	require.Equal(t, bindinfo.Manual, rows[0][8])
-	tk.MustExec("select * from t")
-	tk.MustExec("select * from t")
-	tk.MustExec("admin capture bindings")
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, bindinfo.Disabled, rows[0][3])
-	require.Equal(t, bindinfo.Manual, rows[0][8])
-
-	utilCleanBindingEnv(tk, dom)
 }
 
 func TestCapturedBindingCharset(t *testing.T) {

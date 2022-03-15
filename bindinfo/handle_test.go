@@ -337,7 +337,6 @@ func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
 
 	// clear the mysql.bind_info
 	utilCleanBindingEnv(tk, dom)
-	dom.BindHandle().Clear()
 
 	// Simulate creating bindings on other machines
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT * FROM `test`.`t` WHERE `a` > 10', 'test', 'deleted', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
@@ -352,7 +351,6 @@ func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
 	require.Equal(t, bindinfo.Enabled, rows[0][3])
 
 	utilCleanBindingEnv(tk, dom)
-	dom.BindHandle().Clear()
 }
 
 var testSQLs = []struct {
