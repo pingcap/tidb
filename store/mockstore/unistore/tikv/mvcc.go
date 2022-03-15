@@ -1546,7 +1546,8 @@ func (store *MVCCStore) BatchGet(reqCtx *requestCtx, keys [][]byte, version uint
 	return pairs
 }
 
-func (store *MVCCStore) collectRangeLock(startTS uint64, startKey, endKey []byte, resolved, committed []uint64) []*kvrpcpb.KvPair {
+func (store *MVCCStore) collectRangeLock(startTS uint64, startKey, endKey []byte, resolved, committed []uint64,
+	isolationLEvel kvrpcpb.IsolationLevel) []*kvrpcpb.KvPair {
 	var pairs []*kvrpcpb.KvPair
 	it := store.lockStore.NewIterator()
 	for it.Seek(startKey); it.Valid(); it.Next() {
@@ -1554,18 +1555,28 @@ func (store *MVCCStore) collectRangeLock(startTS uint64, startKey, endKey []byte
 			break
 		}
 		lock := mvcc.DecodeLock(it.Value())
-		lockPair, err := checkLock(lock, it.Key(), startTS, resolved, committed)
-		if lockPair != nil {
-			pairs = append(pairs, &kvrpcpb.KvPair{
-				Key: lockPair.key,
-				// deleted key's value is nil
-				Value: getValueFromLock(lockPair.lock),
-			})
-		} else if err != nil {
-			pairs = append(pairs, &kvrpcpb.KvPair{
-				Error: convertToKeyError(err),
-				Key:   safeCopy(it.Key()),
-			})
+		if isolationLEvel == kvrpcpb.IsolationLevel_SI {
+			lockPair, err := checkLock(lock, it.Key(), startTS, resolved, committed)
+			if lockPair != nil {
+				pairs = append(pairs, &kvrpcpb.KvPair{
+					Key: lockPair.key,
+					// deleted key's value is nil
+					Value: getValueFromLock(lockPair.lock),
+				})
+			} else if err != nil {
+				pairs = append(pairs, &kvrpcpb.KvPair{
+					Error: convertToKeyError(err),
+					Key:   safeCopy(it.Key()),
+				})
+			}
+		} else if isolationLEvel == kvrpcpb.IsolationLevel_RCCheckTS {
+			err := checkLockForRcCheckTS(lock, it.Key(), startTS, resolved)
+			if err != nil {
+				pairs = append(pairs, &kvrpcpb.KvPair{
+					Error: convertToKeyError(err),
+					Key:   safeCopy(it.Key()),
+				})
+			}
 		}
 	}
 	return pairs
@@ -1627,8 +1638,9 @@ func (store *MVCCStore) Scan(reqCtx *requestCtx, req *kvrpcpb.ScanRequest) []*kv
 	var lockPairs []*kvrpcpb.KvPair
 	limit := req.GetLimit()
 	if req.SampleStep == 0 {
-		if reqCtx.isSnapshotIsolation() {
-			lockPairs = store.collectRangeLock(req.GetVersion(), startKey, endKey, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks)
+		if reqCtx.isSnapshotIsolation() || reqCtx.isRcCheckTSIsolationLevel() {
+			lockPairs = store.collectRangeLock(req.GetVersion(), req.StartKey, req.EndKey, reqCtx.rpcCtx.ResolvedLocks,
+				reqCtx.rpcCtx.CommittedLocks, reqCtx.rpcCtx.IsolationLevel)
 		}
 	} else {
 		limit = req.SampleStep * limit

@@ -1802,17 +1802,13 @@ func TestAssertion(t *testing.T) {
 	require.Nil(t, err)
 }
 
-// mockScanProcessor process the key/value pair.
-type mockScanProcessor struct{}
-
-// Process deals with the value.
-func (m *mockScanProcessor) Process(key, value []byte) error {
+func getConflictErr(res []*kvrpcpb.KvPair) *kvrpcpb.WriteConflict {
+	for _, pair := range res {
+		if pair.Error != nil && pair.Error.Conflict != nil {
+			return pair.Error.Conflict
+		}
+	}
 	return nil
-}
-
-// SkipValue returns if we can skip the value.
-func (m *mockScanProcessor) SkipValue() bool {
-	return false
 }
 
 func TestRcReadCheckTS(t *testing.T) {
@@ -1832,16 +1828,18 @@ func TestRcReadCheckTS(t *testing.T) {
 
 	k3 := []byte("tk3")
 	v3 := []byte("v3")
-	MustPrewriteOptimistic(k3, k3, v3, 1, 100, 0, store)
+	MustPrewriteOptimistic(k3, k3, v3, 10, 100, 0, store)
 
 	// Test point get with RcReadCheckTS.
-	reader := store.newReqCtx().getDBReader()
-	reader.RcCheckTS = true
-	val, err := reader.Get(k1, 3)
+	reqCtx := store.newReqCtx()
+	reqCtx.rpcCtx.ResolvedLocks = nil
+	reqCtx.rpcCtx.CommittedLocks = nil
+	reqCtx.rpcCtx.IsolationLevel = kvrpcpb.IsolationLevel_RCCheckTS
+	val, err := store.MvccStore.Get(reqCtx, k1, 3)
 	require.Nil(t, err)
 	require.Equal(t, v1, val)
 
-	_, err = reader.Get(k2, 3)
+	_, err = store.MvccStore.Get(reqCtx, k2, 3)
 	require.NotNil(t, err)
 	e, ok := errors.Cause(err).(*kverrors.ErrConflict)
 	require.True(t, ok)
@@ -1849,20 +1847,47 @@ func TestRcReadCheckTS(t *testing.T) {
 	require.Equal(t, uint64(5), e.ConflictTS)
 	require.Equal(t, uint64(6), e.ConflictCommitTS)
 
-	// Test scan and reverseScan.
-	err = reader.Scan([]byte(""), []byte("v"), 10, 3, &mockScanProcessor{})
+	_, err = store.MvccStore.Get(reqCtx, k3, 3)
 	require.NotNil(t, err)
 	e, ok = errors.Cause(err).(*kverrors.ErrConflict)
 	require.True(t, ok)
 	require.Equal(t, uint64(3), e.StartTS)
-	require.Equal(t, uint64(5), e.ConflictTS)
-	require.Equal(t, uint64(6), e.ConflictCommitTS)
+	require.Equal(t, uint64(10), e.ConflictTS)
 
-	err = reader.ReverseScan([]byte(""), []byte("v"), 10, 3, &mockScanProcessor{})
-	require.NotNil(t, err)
-	e, ok = errors.Cause(err).(*kverrors.ErrConflict)
-	require.True(t, ok)
-	require.Equal(t, uint64(3), e.StartTS)
-	require.Equal(t, uint64(5), e.ConflictTS)
-	require.Equal(t, uint64(6), e.ConflictCommitTS)
+	// Test scan and reverse scan.
+	scanReq := &kvrpcpb.ScanRequest{
+		Context:  reqCtx.rpcCtx,
+		StartKey: []byte("a"),
+		Limit:    100,
+		Version:  3,
+		EndKey:   []byte("z"),
+	}
+
+	// The error is reported from more recent version.
+	scanRes := store.MvccStore.Scan(reqCtx, scanReq)
+	conflictErr := getConflictErr(scanRes)
+	require.NotNil(t, conflictErr)
+	require.Equal(t, uint64(3), conflictErr.StartTs)
+	require.Equal(t, uint64(5), conflictErr.ConflictTs)
+	require.Equal(t, uint64(6), conflictErr.ConflictCommitTs)
+
+	// The error is reported from lock.
+	scanReq.Version = 15
+	scanRes = store.MvccStore.Scan(reqCtx, scanReq)
+	conflictErr = getConflictErr(scanRes)
+	require.NotNil(t, conflictErr)
+	require.Equal(t, uint64(15), conflictErr.StartTs)
+	require.Equal(t, uint64(10), conflictErr.ConflictTs)
+
+	// Test reverse scan.
+	scanReq.Version = 3
+	scanReq.Reverse = true
+	scanRes = store.MvccStore.Scan(reqCtx, scanReq)
+	conflictErr = getConflictErr(scanRes)
+	require.NotNil(t, conflictErr)
+
+	scanReq.Version = 15
+	scanRes = store.MvccStore.Scan(reqCtx, scanReq)
+	conflictErr = getConflictErr(scanRes)
+	require.NotNil(t, conflictErr)
 }
