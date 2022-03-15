@@ -1,9 +1,22 @@
+// Copyright 2022 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package funcdep
 
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -12,7 +25,7 @@ func TestAddStrictFunctionalDependency(t *testing.T) {
 		fdEdges: []*fdEdge{},
 	}
 	fe1 := &fdEdge{
-		from:   NewFastIntSet(1), // AB -> CDEFG
+		from:   NewFastIntSet(1, 2), // AB -> CDEFG
 		to:     NewFastIntSet(3, 4, 5, 6, 7),
 		strict: true,
 		equiv:  false,
@@ -33,8 +46,9 @@ func TestAddStrictFunctionalDependency(t *testing.T) {
 	assertF := func() {
 		require.Equal(t, len(fd.fdEdges), 1)
 		from := fd.fdEdges[0].from.SortedArray()
-		require.Equal(t, len(from), 1)
+		require.Equal(t, len(from), 2)
 		require.Equal(t, from[0], 1)
+		require.Equal(t, from[1], 2)
 		to := fd.fdEdges[0].to.SortedArray()
 		require.Equal(t, len(to), 5)
 		require.Equal(t, to[0], 3)
@@ -191,13 +205,11 @@ func TestFDSet_InClosure(t *testing.T) {
 }
 
 func TestFDSet_AddConstant(t *testing.T) {
-	ass := assert.New(t)
-
 	fd := FDSet{}
 	require.Equal(t, "()", fd.ConstantCols().String())
 
 	fd.AddConstants(NewFastIntSet(1, 2)) // {} --> {a,b}
-	ass.Equal(t, len(fd.fdEdges), 1)
+	require.Equal(t, len(fd.fdEdges), 1)
 	require.True(t, fd.fdEdges[0].strict)
 	require.False(t, fd.fdEdges[0].equiv)
 	require.Equal(t, "()", fd.fdEdges[0].from.String())
@@ -205,7 +217,7 @@ func TestFDSet_AddConstant(t *testing.T) {
 	require.Equal(t, "(1,2)", fd.ConstantCols().String())
 
 	fd.AddConstants(NewFastIntSet(3)) // c, {} --> {a,b,c}
-	ass.Equal(t, len(fd.fdEdges), 1)
+	require.Equal(t, len(fd.fdEdges), 1)
 	require.True(t, fd.fdEdges[0].strict)
 	require.False(t, fd.fdEdges[0].equiv)
 	require.Equal(t, "()", fd.fdEdges[0].from.String())
@@ -213,7 +225,7 @@ func TestFDSet_AddConstant(t *testing.T) {
 	require.Equal(t, "(1-3)", fd.ConstantCols().String())
 
 	fd.AddStrictFunctionalDependency(NewFastIntSet(3, 4), NewFastIntSet(5, 6)) // {c,d} --> {e,f}
-	ass.Equal(t, len(fd.fdEdges), 2)
+	require.Equal(t, len(fd.fdEdges), 2)
 	require.True(t, fd.fdEdges[0].strict)
 	require.False(t, fd.fdEdges[0].equiv)
 	require.Equal(t, "()", fd.fdEdges[0].from.String())
@@ -225,7 +237,7 @@ func TestFDSet_AddConstant(t *testing.T) {
 	require.Equal(t, "(5,6)", fd.fdEdges[1].to.String())
 
 	fd.AddLaxFunctionalDependency(NewFastIntSet(7), NewFastIntSet(5, 6), false) // {g} ~~> {e,f}
-	ass.Equal(t, len(fd.fdEdges), 3)
+	require.Equal(t, len(fd.fdEdges), 3)
 	require.False(t, fd.fdEdges[2].strict)
 	require.False(t, fd.fdEdges[2].equiv)
 	require.Equal(t, "(7)", fd.fdEdges[2].from.String())

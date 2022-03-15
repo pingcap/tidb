@@ -1,3 +1,17 @@
+// Copyright 2022 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package funcdep
 
 import (
@@ -25,7 +39,7 @@ type fdEdge struct {
 	uniLax bool
 }
 
-// FDSet is the main portal of functional dependency, it stores the relationship between (extended table/ physical table)'s
+// FDSet is the main portal of functional dependency, it stores the relationship between (extended table / physical table)'s
 // columns. For more theory about this design, ref the head comments in the funcdep/doc.go.
 type FDSet struct {
 	fdEdges []*fdEdge
@@ -257,7 +271,7 @@ func (s *FDSet) addFunctionalDependency(from, to FastIntSet, strict, equiv, laxU
 			// There's a strong one. No need to add.
 			if fd.implies(newFD) {
 				added = true
-			} else if fd.strict == true && fd.equiv == false && fd.from.Equals(from) {
+			} else if fd.strict && !fd.equiv && fd.from.Equals(from) {
 				// We can use the new FD to extend the current one.
 				// eg:  A -> BC, A -> CE, they couldn't be the subset of each other, union them.
 				// res: A -> BCE
@@ -295,9 +309,8 @@ func (e *fdEdge) implies(otherEdge *fdEdge) bool {
 	if lhsIsLax && rhsIsLax {
 		if e.from.SubsetOf(otherEdge.from) && e.to.Equals(otherEdge.to) {
 			return true
-		} else {
-			return false
 		}
+		return false
 	}
 	if e.from.SubsetOf(otherEdge.from) && otherEdge.to.SubsetOf(e.to) {
 		// The given one should be weaker than the current one.
@@ -552,11 +565,6 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 	}
 	// todo: add strict FD: (left key + right key) -> all cols.
 	// maintain a key?
-}
-
-// MakeApply maintain the FD relationship between outer and inner table after Apply OP is done.
-// Since Apply is implemented by join, it seems the fd can be extracted through its inner join directly.
-func (s *FDSet) MakeApply(inner *FDSet) {
 }
 
 // MakeOuterJoin generates the records the fdSet of the outer join.
