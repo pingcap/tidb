@@ -318,8 +318,6 @@ func TestGenGlobalIDFail(t *testing.T) {
 }
 
 func TestAddIndexWorkerNum(t *testing.T) {
-	variable.AllowConcurrencyDDL.Store(false)
-	defer variable.AllowConcurrencyDDL.Store(true)
 	s, clean := createFailDBSuite(t)
 	defer clean()
 
@@ -408,8 +406,11 @@ func TestAddIndexWorkerNum(t *testing.T) {
 					wg.Done()
 				}
 			}
-
-			require.Greater(t, checkNum, 5)
+			if variable.AllowConcurrencyDDL.Load() {
+				require.Greater(t, checkNum, 3)
+			} else {
+				require.Greater(t, checkNum, 5)
+			}
 			tk.MustExec("admin check table test_add_index")
 			tk.MustExec("drop table test_add_index")
 		})
