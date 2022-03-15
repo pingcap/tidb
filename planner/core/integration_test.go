@@ -857,12 +857,16 @@ func TestMPPJoinWithCanNotFoundColumnInSchemaColumnsError(t *testing.T) {
 func TestJoinNotSupportedByTiFlash(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists table_1")
 	tk.MustExec("create table table_1(id int not null, bit_col bit(2) not null, datetime_col datetime not null)")
 	tk.MustExec("insert into table_1 values(1,b'1','2020-01-01 00:00:00'),(2,b'0','2020-01-01 00:00:00')")
 	tk.MustExec("analyze table table_1")
+
+	tk.MustExec("insert into mysql.expr_pushdown_blacklist values('dayofmonth', 'tiflash', '');")
+	tk.MustExec("admin reload expr_pushdown_blacklist;")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
@@ -907,22 +911,6 @@ func TestJoinNotSupportedByTiFlash(t *testing.T) {
 		res := tk.MustQuery(tt)
 		res.Check(testkit.Rows(output[i].Plan...))
 	}
-
-	tk.MustExec("set @@session.tidb_allow_mpp = 0")
-	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
-	tk.MustExec("set @@session.tidb_allow_batch_cop = 1")
-	tk.MustExec("set @@session.tidb_opt_broadcast_join = 1")
-	// make cbo force choose broadcast join since sql hint does not work for semi/anti-semi join
-	tk.MustExec("set @@session.tidb_opt_cpu_factor=10000000;")
-	integrationSuiteData.GetTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		res := tk.MustQuery(tt)
-		res.Check(testkit.Rows(output[i].Plan...))
-	}
 }
 
 func TestMPPWithHashExchangeUnderNewCollation(t *testing.T) {
@@ -955,7 +943,6 @@ func TestMPPWithHashExchangeUnderNewCollation(t *testing.T) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_allow_mpp = 1")
-	tk.MustExec("set @@session.tidb_opt_broadcast_join = 0")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
 	tk.MustExec("set @@session.tidb_hash_exchange_with_new_collation = 1")
@@ -2720,6 +2707,17 @@ func TestBitColumnPushDown(t *testing.T) {
 		{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
+
+	// test collation
+	tk.MustExec("update mysql.tidb set VARIABLE_VALUE='True' where VARIABLE_NAME='new_collation_enabled'")
+	tk.MustQuery("SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME='new_collation_enabled';").Check(
+		testkit.Rows("True"))
+	tk.MustExec("create table t3 (a bit(8));")
+	tk.MustExec("insert into t3 values (65)")
+	tk.MustExec("SET NAMES utf8mb4 COLLATE utf8mb4_bin")
+	tk.MustQuery("select a from t3 where cast(a as char) = 'a'").Check(testkit.Rows())
+	tk.MustExec("SET NAMES utf8mb4 COLLATE utf8mb4_general_ci")
+	tk.MustQuery("select a from t3 where cast(a as char) = 'a'").Check(testkit.Rows("A"))
 }
 
 func TestSysdatePushDown(t *testing.T) {
@@ -2736,12 +2734,12 @@ func TestSysdatePushDown(t *testing.T) {
 	}
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
 		CheckAt([]int{0, 3, 6}, rows)
-	// assert sysdate isn't now after set global sysdate_is_now in the same session
-	tk.MustExec("set global sysdate_is_now='1'")
+	// assert sysdate isn't now after set global tidb_sysdate_is_now in the same session
+	tk.MustExec("set global tidb_sysdate_is_now='1'")
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
 		CheckAt([]int{0, 3, 6}, rows)
 
-	// assert sysdate is now after set global sysdate_is_now in the new session
+	// assert sysdate is now after set global tidb_sysdate_is_now in the new session
 	tk = testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	now := time.Now()
@@ -2751,8 +2749,8 @@ func TestSysdatePushDown(t *testing.T) {
 		CheckAt([]int{0, 3, 6}, rows)
 	failpoint.Disable("github.com/pingcap/tidb/expression/injectNow")
 
-	// assert sysdate isn't now after set session sysdate_is_now false in the same session
-	tk.MustExec("set sysdate_is_now='0'")
+	// assert sysdate isn't now after set session tidb_sysdate_is_now false in the same session
+	tk.MustExec("set tidb_sysdate_is_now='0'")
 	rows[1][2] = "gt(test.t.d, sysdate())"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
 		CheckAt([]int{0, 3, 6}, rows)
@@ -4012,8 +4010,6 @@ func TestPushDownProjectionForTiFlash(t *testing.T) {
 		}
 	}
 
-	tk.MustExec("set @@tidb_opt_broadcast_join=1;")
-
 	var input []string
 	var output []struct {
 		SQL  string
@@ -4054,7 +4050,7 @@ func TestPushDownProjectionForMPP(t *testing.T) {
 		}
 	}
 
-	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_opt_broadcast_join=0; set @@tidb_enforce_mpp=1;")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 
 	var input []string
 	var output []struct {
@@ -4189,7 +4185,7 @@ func TestPushDownAggForMPP(t *testing.T) {
 		}
 	}
 
-	tk.MustExec(" set @@tidb_allow_mpp=1; set @@tidb_opt_broadcast_join=0; set @@tidb_broadcast_join_threshold_count = 1; set @@tidb_broadcast_join_threshold_size=1;")
+	tk.MustExec(" set @@tidb_allow_mpp=1; set @@tidb_broadcast_join_threshold_count = 1; set @@tidb_broadcast_join_threshold_size=1;")
 
 	var input []string
 	var output []struct {
@@ -5627,7 +5623,7 @@ func TestRejectSortForMPP(t *testing.T) {
 		}
 	}
 
-	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_opt_broadcast_join=0; set @@tidb_enforce_mpp=1;")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 
 	var input []string
 	var output []struct {

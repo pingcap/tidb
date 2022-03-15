@@ -41,9 +41,6 @@ const (
 	// TiDBOptAggPushDown is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
-	// TiDBOptBCJ is used to enable/disable broadcast join in MPP mode
-	TiDBOptBCJ = "tidb_opt_broadcast_join"
-
 	// TiDBOptCartesianBCJ is used to disable/enable broadcast cartesian join in MPP mode
 	TiDBOptCartesianBCJ = "tidb_opt_broadcast_cartesian_join"
 
@@ -130,9 +127,6 @@ const (
 	// TiDBDisableTxnAutoRetry disables transaction auto retry.
 	TiDBDisableTxnAutoRetry = "tidb_disable_txn_auto_retry"
 
-	// Deprecated: tidb_enable_streaming enables TiDB to use streaming API for coprocessor requests.
-	TiDBEnableStreaming = "tidb_enable_streaming"
-
 	// TiDBEnableChunkRPC enables TiDB to use Chunk format for coprocessor requests.
 	TiDBEnableChunkRPC = "tidb_enable_chunk_rpc"
 
@@ -217,6 +211,9 @@ const (
 
 	// TiDBReadConsistency indicates whether the autocommit read statement goes through TiKV RC.
 	TiDBReadConsistency = "tidb_read_consistency"
+
+	// TiDBSysdateIsNow is the name of the `tidb_sysdate_is_now` system variable
+	TiDBSysdateIsNow = "tidb_sysdate_is_now"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -607,6 +604,12 @@ const (
 	// TiDBTxnAssertionLevel indicates how strict the assertion will be, which helps to detect and preventing data &
 	// index inconsistency problems.
 	TiDBTxnAssertionLevel = "tidb_txn_assertion_level"
+
+	// TiDBIgnorePreparedCacheCloseStmt indicates whether to ignore close-stmt commands for prepared statements.
+	TiDBIgnorePreparedCacheCloseStmt = "tidb_ignore_prepared_cache_close_stmt"
+
+	// TiDBBatchPendingTiFlashCount indicates the maximum count of non-available TiFlash tables.
+	TiDBBatchPendingTiFlashCount = "tidb_batch_pending_tiflash_count"
 )
 
 // TiDB vars that have only global scope
@@ -636,8 +639,8 @@ const (
 	TiDBDisableColumnTrackingTime = "tidb_disable_column_tracking_time"
 	// TiDBStatsLoadPseudoTimeout indicates whether to fallback to pseudo stats after load timeout.
 	TiDBStatsLoadPseudoTimeout = "tidb_stats_load_pseudo_timeout"
-	// TiDBMemQuotaBindCache indicates the memory quota for the bind cache.
-	TiDBMemQuotaBindCache = "tidb_mem_quota_bind_cache"
+	// TiDBMemQuotaBindingCache indicates the memory quota for the bind cache.
+	TiDBMemQuotaBindingCache = "tidb_mem_quota_binding_cache"
 )
 
 // TiDB intentional limits
@@ -668,7 +671,6 @@ const (
 	DefSkipUTF8Check                      = false
 	DefSkipASCIICheck                     = false
 	DefOptAggPushDown                     = false
-	DefOptBCJ                             = false
 	DefOptCartesianBCJ                    = 1
 	DefOptMPPOuterJoinFixedBuildSide      = false
 	DefOptWriteRowID                      = false
@@ -698,7 +700,7 @@ const (
 	DefMaxPreparedStmtCount               = -1
 	DefWaitTimeout                        = 28800
 	DefTiDBMemQuotaApplyCache             = 32 << 20 // 32MB.
-	DefTiDBMemQuotaBindCache              = 64 << 20 // 64MB.
+	DefTiDBMemQuotaBindingCache           = 64 << 20 // 64MB.
 	DefTiDBGeneralLog                     = false
 	DefTiDBPProfSQLCPU                    = 0
 	DefTiDBRetryLimit                     = 10
@@ -801,6 +803,8 @@ const (
 	DefSysdateIsNow                       = false
 	DefTiDBEnableMutationChecker          = false
 	DefTiDBTxnAssertionLevel              = AssertionOffStr
+	DefTiDBIgnorePreparedCacheCloseStmt   = false
+	DefTiDBBatchPendingTiFlashCount       = 4000
 )
 
 // Process global variables.
@@ -834,5 +838,5 @@ var (
 	EnableColumnTracking                  = atomic.NewBool(DefTiDBEnableColumnTracking)
 	StatsLoadSyncWait                     = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
 	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
-	MemQuotaBindCache                     = atomic.NewInt64(DefTiDBMemQuotaBindCache)
+	MemQuotaBindingCache                  = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
 )
