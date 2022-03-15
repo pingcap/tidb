@@ -508,6 +508,362 @@ func (s *FDSet) EquivalenceCols() (eqs []*FastIntSet) {
 	return eqs
 }
 
+// MakeNotNull modify the FD set based the listed column with NOT NULL flags.
+// Most of the case is used in the derived process after predicate evaluation,
+// which can upgrade lax FDs to strict ones.
+func (s *FDSet) MakeNotNull(notNullCols FastIntSet) {
+	notNullCols.UnionWith(s.NotNullCols)
+	notNullColsSet := s.closureOfEquivalence(notNullCols)
+	for i := 0; i < len(s.fdEdges); i++ {
+		fd := s.fdEdges[i]
+		if fd.strict {
+			continue
+		}
+		if fd.uniLax {
+			// unique lax can be made strict only if determinant are not null.
+			if fd.from.SubsetOf(notNullColsSet) {
+				// we don't need to clean the old lax FD because when adding the corresponding strict one, the lax
+				// one will be implied by that and itself is removed.
+				s.AddStrictFunctionalDependency(fd.from, fd.to)
+				// add strict FDs will cause reconstruction of FDSet, re-traverse it.
+				i = -1
+			}
+		} else {
+			// lax can be made strict if all determinant & dependency columns are not null.
+			if fd.from.SubsetOf(notNullColsSet) && fd.to.SubsetOf(notNullColsSet) {
+				// we don't need to clean the old lax FD because when adding the corresponding strict one, the lax
+				// one will be implied by that and itself is removed.
+				s.AddStrictFunctionalDependency(fd.from, fd.to)
+				// add strict FDs will cause reconstruction of FDSet, re-traverse it.
+				i = -1
+			}
+		}
+	}
+	s.NotNullCols = notNullColsSet
+}
+
+// MakeNullable make the fd's NotNullCols to be cleaned, after the both side fds are handled it can be nullable.
+func (s *FDSet) MakeNullable(nullableCols FastIntSet) {
+	s.NotNullCols.DifferenceWith(nullableCols)
+}
+
+// MakeCartesianProduct records fdSet after the impact of Cartesian Product of (T1 x T2) is made.
+// 1: left FD is reserved.
+// 2: right FD is reserved.
+// Actually, for two independent table, FDs won't affect (implies or something) each other, appending
+// them together is adequate. But for constant FDs, according to our definition, we should merge them
+// as a larger superset pointing themselves.
+func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
+	for i := 0; i < len(rhs.fdEdges); i++ {
+		fd := rhs.fdEdges[i]
+		if fd.isConstant() {
+			// both from or to side is ok since {superset} --> {superset}.
+			s.AddConstants(fd.to)
+		} else {
+			s.fdEdges = append(s.fdEdges, fd)
+		}
+	}
+	// todo: add strict FD: (left key + right key) -> all cols.
+	// maintain a key?
+}
+
+func (s *FDSet) MakeRestoreRule333() {
+	for _, eg := range s.Rule333Equiv.Edges {
+		if eg.isConstant() {
+			s.AddConstants(eg.to)
+		} else {
+			s.AddEquivalence(eg.from, eg.to)
+		}
+	}
+	s.Rule333Equiv.Edges = nil
+	s.Rule333Equiv.InnerCols.Clear()
+}
+
+type ArgOpts struct {
+	SkipFDRule331   bool
+	TypeFDRule331   TypeFilterFD331
+	OnlyInnerFilter bool
+	InnerIsFalse    bool
+}
+
+type TypeFilterFD331 byte
+
+const (
+	SingleFD   TypeFilterFD331 = 0
+	CombinedFD TypeFilterFD331 = 1
+)
+
+func (s FDSet) FindPrimaryKey() (*FastIntSet, bool) {
+	allCols := s.AllCols()
+	for i := 0; i < len(s.fdEdges); i++ {
+		fd := s.fdEdges[i]
+		// Since we haven't maintained the key column, let's traverse every strict FD to judge with.
+		if fd.strict && !fd.equiv {
+			closure := s.closureOfStrict(fd.from)
+			if allCols.SubsetOf(closure) {
+				pk := NewFastIntSet()
+				pk.CopyFrom(fd.from)
+				return &pk, true
+			}
+		}
+	}
+	return nil, false
+}
+
+func (s FDSet) AllCols() FastIntSet {
+	allCols := NewFastIntSet()
+	for i := 0; i < len(s.fdEdges); i++ {
+		allCols.UnionWith(s.fdEdges[i].from)
+		if !s.fdEdges[i].equiv {
+			allCols.UnionWith(s.fdEdges[i].to)
+		}
+	}
+	return allCols
+}
+
+// AddFrom merges two FD sets by adding each FD from the given set to this set.
+// Since two different tables may have some column ID overlap, we better use
+// column unique ID to build the FDSet instead.
+func (s *FDSet) AddFrom(fds *FDSet) {
+	for i := range fds.fdEdges {
+		fd := fds.fdEdges[i]
+		if fd.equiv {
+			s.addEquivalence(fd.from)
+		} else if fd.isConstant() {
+			s.AddConstants(fd.to)
+		} else if fd.strict {
+			s.AddStrictFunctionalDependency(fd.from, fd.to)
+		} else {
+			s.AddLaxFunctionalDependency(fd.from, fd.to, fd.uniLax)
+		}
+	}
+	s.NotNullCols.UnionWith(fds.NotNullCols)
+	if s.HashCodeToUniqueID == nil {
+		s.HashCodeToUniqueID = fds.HashCodeToUniqueID
+	} else {
+		for k, v := range fds.HashCodeToUniqueID {
+			if _, ok := s.HashCodeToUniqueID[k]; ok {
+				panic("shouldn't be here, children has same expr while registered not only once")
+			}
+			s.HashCodeToUniqueID[k] = v
+		}
+	}
+	for i, ok := fds.GroupByCols.Next(0); ok; i, ok = fds.GroupByCols.Next(i + 1) {
+		s.GroupByCols.Insert(i)
+	}
+	s.HasAggBuilt = fds.HasAggBuilt
+	s.Rule333Equiv = fds.Rule333Equiv
+}
+
+// MaxOneRow will regard every column in the fdSet as a constant. Since constant is stronger that strict FD, it will
+// take over all existed strict/lax FD, only keeping the equivalence. Because equivalence is stronger than constant.
+//
+//   f:      {a}--> {b,c}, {abc} == {abc}
+//   cols:   {a,c}
+//   result: {} --> {a,c}, {a,c} == {a,c}
+func (s *FDSet) MaxOneRow(cols FastIntSet) {
+	cnt := 0
+	for i := 0; i < len(s.fdEdges); i++ {
+		fd := s.fdEdges[i]
+		// non-equivalence FD, skip it.
+		if !fd.equiv {
+			continue
+		}
+		// equivalence: {superset} --> {superset}
+		if cols.Intersects(fd.from) {
+			s.fdEdges[cnt] = &fdEdge{
+				from:   fd.from.Intersection(cols),
+				to:     fd.to.Intersection(cols),
+				strict: true,
+				equiv:  true,
+			}
+			cnt++
+		}
+	}
+	s.fdEdges = s.fdEdges[:cnt]
+	// At last, add the constant FD, {} --> {cols}
+	if !cols.IsEmpty() {
+		s.fdEdges = append(s.fdEdges, &fdEdge{
+			to:     cols,
+			strict: true,
+		})
+	}
+}
+
+// ProjectCols projects FDSet to the target columns
+// Formula:
+// Strict decomposition FD4A: If X −→ Y Z then X −→ Y and X −→ Z.
+// Lax decomposition FD4B: If X ~→ Y Z and I(R) is Y-definite then X ~→ Z.
+func (s *FDSet) ProjectCols(cols FastIntSet) {
+	// **************************************** START LOOP 1 ********************************************
+	// Ensure the transitive relationship between remaining columns won't be lost.
+	// 1: record all the constant columns
+	// 2: if an FD's to side contain un-projected column, substitute it with its closure.
+	// 		fd1: {a} --> {b,c}
+	//	    fd2: {b} --> {d}
+	//      when b is un-projected, the fd1 should be {a} --> {b,c's closure} which is {a} --> {b,c,d}
+	// 3: track all columns that have equivalent alternates that are part of the projection.
+	//		fd1: {a} --> {c}
+	//      fd2: {a,b} == {a,b}
+	//      if only a is un-projected, the fd1 can actually be kept as {b} --> {c}.
+	var constCols, detCols, equivCols FastIntSet
+	for i := 0; i < len(s.fdEdges); i++ {
+		fd := s.fdEdges[i]
+
+		if fd.isConstant() {
+			constCols = fd.to
+		}
+
+		if !fd.to.SubsetOf(cols) {
+			// equivalence FD has been the closure as {superset} == {superset}.
+			if !fd.equiv && fd.strict {
+				// extended the `to` as it's complete closure, in case of missing some transitive FDs.
+				fd.to = s.closureOfStrict(fd.to.Union(fd.from))
+				fd.to.DifferenceWith(fd.from)
+			}
+		}
+
+		// {a,b} --> {c}, when b is un-projected, this FD should be handled latter, recording `b` here.
+		if !fd.equiv && !fd.from.SubsetOf(cols) {
+			detCols.UnionWith(fd.from.Difference(cols))
+		}
+
+		// equivalence {superset} == {superset}
+		if fd.equiv && fd.from.Intersects(cols) {
+			equivCols.UnionWith(fd.from)
+		}
+	}
+	// ****************************************** END LOOP 1 ********************************************
+
+	// find deleted columns with equivalence.
+	detCols.IntersectionWith(equivCols)
+	equivMap := s.makeEquivMap(detCols, cols)
+
+	// it's actually maintained already.
+	if !constCols.IsEmpty() {
+		s.AddConstants(constCols)
+	}
+
+	// **************************************** START LOOP 2 ********************************************
+	// leverage the information collected in the loop1 above and try to do some FD substitution.
+	var (
+		cnt    int
+		newFDs []*fdEdge
+	)
+	for i := range s.fdEdges {
+		fd := s.fdEdges[i]
+
+		// step1: clear the `to` side
+		// subtract out un-projected columns from dependants.
+		// subtract out strict constant columns from dependants.
+		if !fd.to.SubsetOf(cols) {
+			// since loop 1 has computed the complete transitive closure for strict FD, now as:
+			// 1: equivalence FD: {superset} == {superset}
+			// 2: strict FD: {xxx} --> {complete closure}
+			// 3: lax FD: {xxx} ~~> {yyy}
+			if fd.equiv {
+				// As formula FD4A above, delete from un-projected column from `to` side directly.
+				fd.to = fd.to.Intersection(cols)
+				// Since from are the same, delete it too here.
+				fd.from = fd.from.Intersection(cols)
+			} else if fd.strict {
+				// As formula FD4A above, delete from un-projected column from `to` side directly.
+				fd.to = fd.to.Intersection(cols)
+			} else {
+				// As formula FD4B above, only if the deleted columns are definite, then we can keep it.
+				deletedCols := fd.to.Difference(cols)
+				if deletedCols.SubsetOf(constCols) {
+					fd.to = fd.to.Intersection(cols)
+				} else if deletedCols.SubsetOf(s.NotNullCols) {
+					fd.to = fd.to.Intersection(cols)
+				} else {
+					continue
+				}
+			}
+
+			if !fd.isConstant() {
+				// clear the constant columns in the dependency of FD.
+				if fd.removeColumnsToSide(constCols) {
+					continue
+				}
+			}
+			if fd.removeColumnsToSide(fd.from) {
+				// fd.to side is empty, remove this FD.
+				continue
+			}
+		}
+
+		// step2: clear the `from` side
+		// substitute the equivalence columns for removed determinant columns.
+		if !fd.from.SubsetOf(cols) {
+			// equivalence and constant FD couldn't be here.
+			deletedCols := fd.from.Difference(cols)
+			substitutedCols := NewFastIntSet()
+			foundAll := true
+			for c, ok := deletedCols.Next(0); ok; c, ok = deletedCols.Next(c + 1) {
+				// For every un-projected column, try to found their substituted column in projection list.
+				var id int
+				if id, foundAll = equivMap[c]; !foundAll {
+					break
+				}
+				substitutedCols.Insert(id)
+			}
+			if foundAll {
+				// deleted columns can be remapped using equivalencies.
+				from := fd.from.Union(substitutedCols)
+				from.DifferenceWith(deletedCols)
+				newFDs = append(newFDs, &fdEdge{
+					from:   from,
+					to:     fd.to,
+					strict: fd.strict,
+					equiv:  fd.equiv,
+				})
+			}
+			continue
+		}
+
+		if cnt != i {
+			s.fdEdges[cnt] = s.fdEdges[i]
+		}
+		cnt++
+	}
+	s.fdEdges = s.fdEdges[:cnt]
+	// ****************************************** END LOOP 2 ********************************************
+
+	for i := range newFDs {
+		fd := newFDs[i]
+		if fd.equiv {
+			s.addEquivalence(fd.from)
+		} else if fd.isConstant() {
+			s.AddConstants(fd.to)
+		} else if fd.strict {
+			s.AddStrictFunctionalDependency(fd.from, fd.to)
+		} else {
+			s.AddLaxFunctionalDependency(fd.from, fd.to, fd.uniLax)
+		}
+	}
+}
+
+// makeEquivMap try to find the equivalence column of every deleted column in the project list.
+func (s *FDSet) makeEquivMap(detCols, projectedCols FastIntSet) map[int]int {
+	var equivMap map[int]int
+	for i, ok := detCols.Next(0); ok; i, ok = detCols.Next(i + 1) {
+		var oneCol FastIntSet
+		oneCol.Insert(i)
+		closure := s.closureOfEquivalence(oneCol)
+		closure.IntersectionWith(projectedCols)
+		// the column to be deleted has an equivalence column exactly in the project list.
+		if !closure.IsEmpty() {
+			if equivMap == nil {
+				equivMap = make(map[int]int)
+			}
+			id, _ := closure.Next(0) // 不应该只记录一个
+			equivMap[i] = id
+		}
+	}
+	return equivMap
+}
+
 // String returns format string of this FDSet.
 func (s *FDSet) String() string {
 	var builder strings.Builder
@@ -537,4 +893,24 @@ func (e *fdEdge) String() string {
 		}
 	}
 	return b.String()
+}
+
+// RegisterUniqueID is used to record the map relationship between expr and allocated uniqueID.
+func (s *FDSet) RegisterUniqueID(hashCode string, uniqueID int) {
+	if len(hashCode) == 0 {
+		// shouldn't be here.
+		panic("map empty expr hashcode to uniqueID")
+	}
+	if _, ok := s.HashCodeToUniqueID[hashCode]; ok {
+		// shouldn't be here.
+		panic("hashcode has been registered")
+	}
+	s.HashCodeToUniqueID[hashCode] = uniqueID
+}
+
+func (s *FDSet) IsHashCodeRegistered(hashCode string) (int, bool) {
+	if uniqueID, ok := s.HashCodeToUniqueID[hashCode]; ok {
+		return uniqueID, true
+	}
+	return -1, false
 }
