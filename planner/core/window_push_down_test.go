@@ -16,48 +16,20 @@ package core_test
 
 import (
 	"strings"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testutil"
+	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = SerialSuites(&testWindowPushDownSuite{})
-
-type testWindowPushDownSuite struct {
-	testData testutil.TestData
-	store    kv.Storage
-	dom      *domain.Domain
-}
-
-func (s *testWindowPushDownSuite) SetUpSuite(c *C) {
-	var err error
-	s.testData, err = testutil.LoadTestSuiteData("testdata", "window_push_down_suite")
-	c.Assert(err, IsNil)
-}
-
-func (s *testWindowPushDownSuite) TearDownSuite(c *C) {
-	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
-}
-
-func (s *testWindowPushDownSuite) SetUpTest(c *C) {
-	var err error
-	s.store, s.dom, err = newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-}
-
-func (s *testWindowPushDownSuite) TearDownTest(c *C) {
-	s.dom.Close()
-	err := s.store.Close()
-	c.Assert(err, IsNil)
-}
-
-// new collation.
-func (s *testWindowPushDownSuite) TestWindowPushDownPlans(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestWindowPushDownPlans(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 
 	// test query
 	tk.MustExec("use test")
@@ -65,10 +37,10 @@ func (s *testWindowPushDownSuite) TestWindowPushDownPlans(c *C) {
 	tk.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
 
 	// Create virtual tiflash replica info.
-	dom := domain.GetDomain(tk.Se)
+	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	c.Assert(exists, IsTrue)
+	require.True(t, exists)
 	for _, tblInfo := range db.Tables {
 		if tblInfo.Name.L == "employee" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
@@ -84,23 +56,24 @@ func (s *testWindowPushDownSuite) TestWindowPushDownPlans(c *C) {
 		Plan []string
 		Warn []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+	enforceMPPSuiteData := plannercore.GetWindowPushDownSuiteData()
+	enforceMPPSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
 		})
 		if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
 			tk.MustExec(tt)
 			continue
 		}
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-			output[i].Warn = s.testData.ConvertSQLWarnToStrings(tk.Se.GetSessionVars().StmtCtx.GetWarnings())
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
 		})
 		res := tk.MustQuery(tt)
 		res.Check(testkit.Rows(output[i].Plan...))
-		c.Assert(s.testData.ConvertSQLWarnToStrings(tk.Se.GetSessionVars().StmtCtx.GetWarnings()), DeepEquals, output[i].Warn)
+		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		// c.Assert(len(output[i].Warn), Equals, 0)
 	}
 }
