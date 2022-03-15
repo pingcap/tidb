@@ -1801,3 +1801,68 @@ func TestAssertion(t *testing.T) {
 		kvrpcpb.Assertion_NotExist, kvrpcpb.AssertionLevel_Strict, store)
 	require.Nil(t, err)
 }
+
+// mockScanProcessor process the key/value pair.
+type mockScanProcessor struct{}
+
+// Process deals with the value.
+func (m *mockScanProcessor) Process(key, value []byte) error {
+	return nil
+}
+
+// SkipValue returns if we can skip the value.
+func (m *mockScanProcessor) SkipValue() bool {
+	return false
+}
+
+func TestRcReadCheckTS(t *testing.T) {
+	store, clean := NewTestStore("TestRcReadCheckTS", "TestRcReadCheckTS", t)
+	defer clean()
+
+	// Prepare.
+	k1 := []byte("tk1")
+	v1 := []byte("v1")
+	MustPrewriteOptimistic(k1, k1, v1, 1, 100, 0, store)
+	MustCommit(k1, 1, 2, store)
+
+	k2 := []byte("tk2")
+	v2 := []byte("v2")
+	MustPrewriteOptimistic(k2, k2, v2, 5, 100, 0, store)
+	MustCommit(k2, 5, 6, store)
+
+	k3 := []byte("tk3")
+	v3 := []byte("v3")
+	MustPrewriteOptimistic(k3, k3, v3, 1, 100, 0, store)
+
+	// Test point get with RcReadCheckTS.
+	reader := store.newReqCtx().getDBReader()
+	reader.RcCheckTS = true
+	val, err := reader.Get(k1, 3)
+	require.Nil(t, err)
+	require.Equal(t, v1, val)
+
+	_, err = reader.Get(k2, 3)
+	require.NotNil(t, err)
+	e, ok := errors.Cause(err).(*kverrors.ErrConflict)
+	require.True(t, ok)
+	require.Equal(t, uint64(3), e.StartTS)
+	require.Equal(t, uint64(5), e.ConflictTS)
+	require.Equal(t, uint64(6), e.ConflictCommitTS)
+
+	// Test scan and reverseScan.
+	err = reader.Scan([]byte(""), []byte("v"), 10, 3, &mockScanProcessor{})
+	require.NotNil(t, err)
+	e, ok = errors.Cause(err).(*kverrors.ErrConflict)
+	require.True(t, ok)
+	require.Equal(t, uint64(3), e.StartTS)
+	require.Equal(t, uint64(5), e.ConflictTS)
+	require.Equal(t, uint64(6), e.ConflictCommitTS)
+
+	err = reader.ReverseScan([]byte(""), []byte("v"), 10, 3, &mockScanProcessor{})
+	require.NotNil(t, err)
+	e, ok = errors.Cause(err).(*kverrors.ErrConflict)
+	require.True(t, ok)
+	require.Equal(t, uint64(3), e.StartTS)
+	require.Equal(t, uint64(5), e.ConflictTS)
+	require.Equal(t, uint64(6), e.ConflictCommitTS)
+}

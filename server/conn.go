@@ -1860,9 +1860,9 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 				_, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
 				cc.ctx.GetSessionVars().RetryInfo.Retrying = false
 				if err != nil {
-					return err
+					break
 				}
-				break
+				continue
 			}
 			if !retryable || !errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) {
 				break

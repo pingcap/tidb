@@ -117,7 +117,7 @@ func (r *DBReader) Get(key []byte, startTS uint64) ([]byte, error) {
 	if item == nil {
 		return nil, nil
 	}
-	err = r.CheckWriteItemForRcRead(startTS, item)
+	err = r.CheckWriteItemForRcCheckTSRead(startTS, item)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -177,7 +177,7 @@ func (r *DBReader) BatchGet(keys [][]byte, startTS uint64, f BatchGetFunc) {
 		if item != nil {
 			val, err = item.Value()
 			if err == nil {
-				err = r.CheckWriteItemForRcRead(startTS, item)
+				err = r.CheckWriteItemForRcCheckTSRead(startTS, item)
 			}
 		}
 		f(key, val, err)
@@ -223,7 +223,7 @@ func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc
 		if exceedEndKey(key, endKey) {
 			break
 		}
-		err = r.CheckWriteItemForRcRead(startTS, item)
+		err = r.CheckWriteItemForRcCheckTSRead(startTS, item)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -289,7 +289,7 @@ func (r *DBReader) ReverseScan(startKey, endKey []byte, limit int, startTS uint6
 			continue
 		}
 		var err error
-		err = r.CheckWriteItemForRcRead(startTS, item)
+		err = r.CheckWriteItemForRcCheckTSRead(startTS, item)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -318,19 +318,20 @@ func (r *DBReader) ReverseScan(startKey, endKey []byte, limit int, startTS uint6
 	return nil
 }
 
-// CheckWriteItemForRcRead checks the data version if `RcCheckTS` isolation level is used.
-func (r *DBReader) CheckWriteItemForRcRead(readTS uint64, item *badger.Item) error {
+// CheckWriteItemForRcCheckTSRead checks the data version if `RcCheckTS` isolation level is used.
+func (r *DBReader) CheckWriteItemForRcCheckTSRead(readTS uint64, item *badger.Item) error {
 	if item == nil {
 		return nil
 	}
-	if r.RcCheckTS {
-		userMeta := mvcc.DBUserMeta(item.UserMeta())
-		if userMeta.CommitTS() > readTS {
-			return &kverrors.ErrConflict{
-				StartTS:          readTS,
-				ConflictTS:       userMeta.StartTS(),
-				ConflictCommitTS: userMeta.CommitTS(),
-			}
+	if !r.RcCheckTS {
+		return nil
+	}
+	userMeta := mvcc.DBUserMeta(item.UserMeta())
+	if userMeta.CommitTS() > readTS {
+		return &kverrors.ErrConflict{
+			StartTS:          readTS,
+			ConflictTS:       userMeta.StartTS(),
+			ConflictCommitTS: userMeta.CommitTS(),
 		}
 	}
 	return nil
