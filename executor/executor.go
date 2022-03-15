@@ -605,7 +605,12 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 		return err
 	}
 	if variable.AllowConcurrencyDDL.Load() {
-		jobs, err = admin.GetConcurrencyDDLJobs(e.ctx)
+		newSess, err := e.getSysSession()
+		if err != nil {
+			return err
+		}
+		jobs, err = admin.GetConcurrencyDDLJobs(newSess)
+		e.releaseSysSession(newSess)
 	} else {
 		jobs, err = admin.GetDDLJobs(txn)
 	}
@@ -658,7 +663,11 @@ func (e *ShowDDLJobsExec) Open(ctx context.Context) error {
 	if e.jobNumber == 0 {
 		e.jobNumber = admin.DefNumHistoryJobs
 	}
-	err = e.DDLJobRetriever.initial(txn, e.ctx)
+	sess, err := e.getSysSession()
+	if err != nil {
+		return err
+	}
+	err = e.DDLJobRetriever.initial(txn, sess)
 	if err != nil {
 		return err
 	}
