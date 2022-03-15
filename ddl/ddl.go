@@ -627,11 +627,13 @@ func checkHistoryJobInTest(historyJob *model.Job) {
 	if err != nil {
 		panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
 	}
-	if len(stmt) != 1 {
+	if len(stmt) != 1 && historyJob.Type != model.ActionCreateTables {
 		panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
 	}
-	if _, ok := stmt[0].(ast.DDLNode); !ok {
-		panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+	for _, st := range stmt {
+		if _, ok := st.(ast.DDLNode); !ok {
+			panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+		}
 	}
 }
 
