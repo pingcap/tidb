@@ -642,8 +642,8 @@ const (
 	TiDBDisableColumnTrackingTime = "tidb_disable_column_tracking_time"
 	// TiDBStatsLoadPseudoTimeout indicates whether to fallback to pseudo stats after load timeout.
 	TiDBStatsLoadPseudoTimeout = "tidb_stats_load_pseudo_timeout"
-	// TiDBMemQuotaBindCache indicates the memory quota for the bind cache.
-	TiDBMemQuotaBindCache = "tidb_mem_quota_bind_cache"
+	// TiDBMemQuotaBindingCache indicates the memory quota for the bind cache.
+	TiDBMemQuotaBindingCache = "tidb_mem_quota_binding_cache"
 )
 
 // TiDB intentional limits
@@ -703,7 +703,7 @@ const (
 	DefMaxPreparedStmtCount               = -1
 	DefWaitTimeout                        = 28800
 	DefTiDBMemQuotaApplyCache             = 32 << 20 // 32MB.
-	DefTiDBMemQuotaBindCache              = 64 << 20 // 64MB.
+	DefTiDBMemQuotaBindingCache           = 64 << 20 // 64MB.
 	DefTiDBGeneralLog                     = false
 	DefTiDBPProfSQLCPU                    = 0
 	DefTiDBRetryLimit                     = 10
@@ -842,6 +842,6 @@ var (
 	EnableColumnTracking                  = atomic.NewBool(DefTiDBEnableColumnTracking)
 	StatsLoadSyncWait                     = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
 	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
-	MemQuotaBindCache                     = atomic.NewInt64(DefTiDBMemQuotaBindCache)
+	MemQuotaBindingCache                  = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
 	AllowConcurrencyDDL                   = atomic.NewBool(DefTiDBEnableConcurrencyDDL)
 )
