@@ -594,16 +594,13 @@ func recordLastDDLInfo(ctx sessionctx.Context, job *model.Job) {
 }
 
 func checkHistoryJobInTest(historyJob *model.Job) {
-	if !RunInGoTest {
+	if !(flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil) {
 		return
 	}
 
 	// Check binlog.
 	if historyJob.BinlogInfo.FinishedTS == 0 {
 		panic(fmt.Sprintf("job ID %d, BinlogInfo.FinishedTS is 0", historyJob.ID))
-	}
-	if historyJob.BinlogInfo.SchemaVersion != int64(historyJob.SnapshotVer) {
-		panic(fmt.Sprintf("job ID %d, SchemaVersion are not consisitent, binlog: %d, job: %d", historyJob.ID, historyJob.BinlogInfo.SchemaVersion, historyJob.SnapshotVer))
 	}
 
 	// Check DDL query.
@@ -612,7 +609,7 @@ func checkHistoryJobInTest(historyJob *model.Job) {
 	if err != nil {
 		panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
 	}
-	if len(stmt) != 0 {
+	if len(stmt) != 1 {
 		panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
 	}
 	if _, ok := stmt[0].(ast.DDLNode); !ok {
@@ -683,6 +680,8 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			continue
 		}
 
+		checkHistoryJobInTest(historyJob)
+
 		// If a job is a history job, the state must be JobStateSynced or JobStateRollbackDone or JobStateCancelled.
 		if historyJob.IsSynced() {
 			// Judge whether there are some warnings when executing DDL under the certain SQL mode.
@@ -710,7 +709,6 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 		if historyJob.Error != nil {
 			logutil.BgLogger().Info("[ddl] DDL job is failed", zap.Int64("jobID", jobID))
-			checkHistoryJobInTest(historyJob)
 			return errors.Trace(historyJob.Error)
 		}
 		// Only for JobStateCancelled job which is adding columns or drop columns or drop indexes.
