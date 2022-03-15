@@ -64,6 +64,7 @@ type StatementContext struct {
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
+<<<<<<< HEAD
 	IsDDLJobInQueue              bool
 	InInsertStmt                 bool
 	InUpdateStmt                 bool
@@ -89,6 +90,40 @@ type StatementContext struct {
 	IgnoreExplainIDSuffix        bool
 	IsStaleness                  bool
 
+=======
+	IsDDLJobInQueue        bool
+	InInsertStmt           bool
+	InUpdateStmt           bool
+	InDeleteStmt           bool
+	InSelectStmt           bool
+	InLoadDataStmt         bool
+	InExplainStmt          bool
+	InCreateOrAlterStmt    bool
+	InPreparedPlanBuilding bool
+	IgnoreTruncate         bool
+	IgnoreZeroInDate       bool
+	NoZeroDate             bool
+	DupKeyAsWarning        bool
+	BadNullAsWarning       bool
+	DividedByZeroAsWarning bool
+	TruncateAsWarning      bool
+	OverflowAsWarning      bool
+	InShowWarning          bool
+	UseCache               bool
+	BatchCheck             bool
+	InNullRejectCheck      bool
+	AllowInvalidDate       bool
+	IgnoreNoPartition      bool
+	SkipPlanCache          bool
+	IgnoreExplainIDSuffix  bool
+	SkipUTF8Check          bool
+	SkipASCIICheck         bool
+	SkipUTF8MB4Check       bool
+	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
+	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
+	// in stmtCtx
+	IsStaleness bool
+>>>>>>> caad839ae... planner: fix the wrong range built for bit columns when reusing cached plan (#33090)
 	// mu struct holds variables that change during execution.
 	mu struct {
 		sync.Mutex
