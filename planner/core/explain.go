@@ -291,7 +291,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 		buffer.WriteString(", stats:pseudo")
 	}
 	if p.StoreType == kv.TiFlash && p.Table.GetPartitionInfo() != nil && p.IsMPPOrBatchCop && p.ctx.GetSessionVars().UseDynamicPartitionPrune() {
-		buffer.WriteString(", PartitionTableScan")
+		buffer.WriteString(", isPartitionTableScan")
 	}
 	return buffer.String()
 }

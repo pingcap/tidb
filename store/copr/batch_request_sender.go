@@ -34,7 +34,7 @@ type RegionInfo struct {
 	Meta           *metapb.Region
 	Ranges         *KeyRanges
 	AllStores      []uint64
-	PartitionIndex int64
+	PartitionIndex int64 // used by PartitionTableScan, indicates the n-th partition of the partition table
 }
 
 func (ri *RegionInfo) toCoprocessorRegionInfo() *coprocessor.RegionInfo {

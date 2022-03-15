@@ -280,7 +280,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 			return distsql.NewSerialSelectResults(results), nil
 		}
 		// Use PartitionTable Scan
-		kvReq, err := e.buildKVForPartitionTableScan(ctx, ranges)
+		kvReq, err := e.buildKVRangeForPartitionTableScan(ctx, ranges)
 		if err != nil {
 			return nil, err
 		}
@@ -337,7 +337,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 	return kvReqs, nil
 }
 
-func (e *TableReaderExecutor) buildKVForPartitionTableScan(ctx context.Context, ranges []*ranger.Range) (*kv.Request, error) {
+func (e *TableReaderExecutor) buildKVRangeForPartitionTableScan(ctx context.Context, ranges []*ranger.Range) (*kv.Request, error) {
 	pids, kvRanges, err := e.kvRangeBuilder.buildKeyRangeSeparately(ranges)
 	if err != nil {
 		return nil, err

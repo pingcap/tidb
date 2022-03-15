@@ -6582,5 +6582,50 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestTiFlashPartitionTableScan",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from rp_t where a = 1",
+        "Plan": [
+          "TableReader 10.00 root partition:p0 data:ExchangeSender",
+          "└─ExchangeSender 10.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection 10.00 batchCop[tiflash]  eq(test.rp_t.a, 1)",
+          "    └─TableFullScan 10000.00 batchCop[tiflash] table:rp_t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from hp_t where a = 1",
+        "Plan": [
+          "TableReader 10.00 root partition:p1 data:ExchangeSender",
+          "└─ExchangeSender 10.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection 10.00 batchCop[tiflash]  eq(test.hp_t.a, 1)",
+          "    └─TableFullScan 10000.00 batchCop[tiflash] table:hp_t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select count(*) from rp_t where a = 1",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#3",
+          "└─TableReader 1.00 root partition:p0 data:ExchangeSender",
+          "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#5",
+          "      └─Selection 10.00 batchCop[tiflash]  eq(test.rp_t.a, 1)",
+          "        └─TableFullScan 10000.00 batchCop[tiflash] table:rp_t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select count(*) from hp_t where a = 1",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#3",
+          "└─TableReader 1.00 root partition:p1 data:ExchangeSender",
+          "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#5",
+          "      └─Selection 10.00 batchCop[tiflash]  eq(test.hp_t.a, 1)",
+          "        └─TableFullScan 10000.00 batchCop[tiflash] table:hp_t keep order:false, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]
