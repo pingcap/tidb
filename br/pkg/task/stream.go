@@ -1,4 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -193,9 +193,9 @@ func (cfg *StreamConfig) ParseStreamCommonFromFlags(flags *pflag.FlagSet) error 
 }
 
 type streamMgr struct {
-	cfg *StreamConfig
-	mgr *conn.Mgr
-	bc  *backup.Client
+	cfg     *StreamConfig
+	mgr     *conn.Mgr
+	bc      *backup.Client
 	httpCli *http.Client
 }
 
@@ -345,11 +345,13 @@ func (s *streamMgr) checkRequirements(ctx context.Context) (bool, error) {
 		BackupStream backupStream `json:"backup-stream"`
 	}
 
-	supportBackupStream := false
+	supportBackupStream := true
+	hasTiKV := false
 	for _, store := range allStores {
 		if store.State != metapb.StoreState_Up {
 			continue
 		}
+		hasTiKV = true
 		// we need make sure every available store support backup-stream otherwise we might lose data.
 		// so check every store's config
 		addr := fmt.Sprintf("%s/config", store.GetStatusAddress())
@@ -361,19 +363,18 @@ func (s *streamMgr) checkRequirements(ctx context.Context) (bool, error) {
 			c := &config{}
 			e = json.NewDecoder(resp.Body).Decode(c)
 			if e != nil {
-				err = e
-				return nil
+				return e
 			}
-			if c.BackupStream.EnableStreaming {
-				supportBackupStream = true
-			}
+			supportBackupStream = supportBackupStream && c.BackupStream.EnableStreaming
 			return nil
 		}, utils.NewPDReqBackoffer())
-
+		if err != nil {
+			// if one store failed, break and return error
+			break
+		}
 	}
-	return supportBackupStream, err
+	return hasTiKV && supportBackupStream, err
 }
-
 
 // RunStreamCommand run all kinds of `stream task``
 func RunStreamCommand(
@@ -421,10 +422,20 @@ func RunStreamStart(
 	}
 	defer streamMgr.close()
 
-	if err := streamMgr.setGCSafePoint(ctx); err != nil {
+	supportStream, err := streamMgr.checkRequirements(ctx)
+	if err != nil {
 		return errors.Trace(err)
 	}
-	if err := streamMgr.setLock(ctx); err != nil {
+	if !supportStream {
+		return errors.New("Unable to create stream task. " +
+			"please set tikv config `backup-stream.enable-streaming` to true." +
+			"and restart tikv")
+	}
+
+	if err = streamMgr.setGCSafePoint(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	if err = streamMgr.setLock(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
