@@ -4620,30 +4620,6 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 	for i := outerPlan.Schema().Len(); i < ap.Schema().Len(); i++ {
 		ap.names[i] = types.EmptyName
 	}
-	// build the join correlated equal condition for apply join, this equal condition is used for deriving the transitive FD between outer and inner side.
-	correlatedCols := ExtractCorrelatedCols4LogicalPlan(innerPlan)
-	deduplicateCorrelatedCols := make(map[int64]*expression.CorrelatedColumn)
-	for _, cc := range correlatedCols {
-		if _, ok := deduplicateCorrelatedCols[cc.UniqueID]; !ok {
-			deduplicateCorrelatedCols[cc.UniqueID] = cc
-		}
-	}
-	// for case like select (select t1.a from t2) from t1. <t1.a> will be assigned with new UniqueID after sub query projection is built.
-	// we should distinguish them out, building the equivalence relationship from inner <t1.a> == outer <t1.a> in the apply-join for FD derivation.
-	for _, cc := range deduplicateCorrelatedCols {
-		// for every correlated column, find the connection with the inner newly built column.
-		for _, col := range innerPlan.Schema().Columns {
-			if cc.UniqueID == col.CorrelatedColUniqueID {
-				ccc := &cc.Column
-				cond, err := expression.NewFunction(b.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), ccc, col)
-				if err != nil {
-					// give up connection building for not interfering old logic.
-					return ap
-				}
-				ap.EqualConditions = append(ap.EqualConditions, cond.(*expression.ScalarFunction))
-			}
-		}
-	}
 	return ap
 }
 

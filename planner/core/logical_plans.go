@@ -186,15 +186,15 @@ func (p *LogicalJoin) Shallow() *LogicalJoin {
 func (p *LogicalJoin) ExtractFD() *fd.FDSet {
 	switch p.JoinType {
 	case InnerJoin:
-		return p.extractFDForInnerJoin()
+		return p.extractFDForInnerJoin(nil)
 	case SemiJoin:
-		return p.extractFDForSemiJoin()
+		return p.extractFDForSemiJoin(nil)
 	default:
 		return &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
 	}
 }
 
-func (p *LogicalJoin) extractFDForSemiJoin() *fd.FDSet {
+func (p *LogicalJoin) extractFDForSemiJoin(filtersFromApply []expression.Expression) *fd.FDSet {
 	// 1: since semi join will keep the part or all rows of the outer table, it's outer FD can be saved.
 	// 2: the un-projected column will be left for the upper layer projection or already be pruned from bottom up.
 	outerFD, _ := p.children[0].ExtractFD(), p.children[1].ExtractFD()
@@ -202,6 +202,7 @@ func (p *LogicalJoin) extractFDForSemiJoin() *fd.FDSet {
 
 	eqCondSlice := expression.ScalarFuncs2Exprs(p.EqualConditions)
 	allConds := append(eqCondSlice, p.OtherConditions...)
+	allConds = append(allConds, filtersFromApply...)
 	notNullColsFromFilters := extractNotNullFromConds(allConds, p)
 
 	constUniqueIDs := extractConstantCols(p.LeftConditions, p.SCtx(), fds)
@@ -212,7 +213,7 @@ func (p *LogicalJoin) extractFDForSemiJoin() *fd.FDSet {
 	return fds
 }
 
-func (p *LogicalJoin) extractFDForInnerJoin() *fd.FDSet {
+func (p *LogicalJoin) extractFDForInnerJoin(filtersFromApply []expression.Expression) *fd.FDSet {
 	leftFD, rightFD := p.children[0].ExtractFD(), p.children[1].ExtractFD()
 	fds := leftFD
 	fds.MakeCartesianProduct(rightFD)
@@ -220,6 +221,7 @@ func (p *LogicalJoin) extractFDForInnerJoin() *fd.FDSet {
 	eqCondSlice := expression.ScalarFuncs2Exprs(p.EqualConditions)
 	// some join eq conditions are stored in the OtherConditions.
 	allConds := append(eqCondSlice, p.OtherConditions...)
+	allConds = append(allConds, filtersFromApply...)
 	notNullColsFromFilters := extractNotNullFromConds(allConds, p)
 
 	constUniqueIDs := extractConstantCols(allConds, p.SCtx(), fds)
@@ -954,6 +956,39 @@ func (la *LogicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 		}
 	}
 	return corCols
+}
+
+func (la *LogicalApply) ExtractFD() *fd.FDSet {
+	innerPlan := la.children[1]
+	// build the join correlated equal condition for apply join, this equal condition is used for deriving the transitive FD between outer and inner side.
+	correlatedCols := ExtractCorrelatedCols4LogicalPlan(innerPlan)
+	deduplicateCorrelatedCols := make(map[int64]*expression.CorrelatedColumn)
+	for _, cc := range correlatedCols {
+		if _, ok := deduplicateCorrelatedCols[cc.UniqueID]; !ok {
+			deduplicateCorrelatedCols[cc.UniqueID] = cc
+		}
+	}
+	eqCond := make([]expression.Expression, 0, 4)
+	// for case like select (select t1.a from t2) from t1. <t1.a> will be assigned with new UniqueID after sub query projection is built.
+	// we should distinguish them out, building the equivalence relationship from inner <t1.a> == outer <t1.a> in the apply-join for FD derivation.
+	for _, cc := range deduplicateCorrelatedCols {
+		// for every correlated column, find the connection with the inner newly built column.
+		for _, col := range innerPlan.Schema().Columns {
+			if cc.UniqueID == col.CorrelatedColUniqueID {
+				ccc := &cc.Column
+				cond := expression.NewFunctionInternal(la.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), ccc, col)
+				eqCond = append(eqCond, cond.(*expression.ScalarFunction))
+			}
+		}
+	}
+	switch la.JoinType {
+	case InnerJoin:
+		return la.extractFDForInnerJoin(eqCond)
+	case SemiJoin:
+		return la.extractFDForSemiJoin(eqCond)
+	default:
+		return &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
+	}
 }
 
 // LogicalMaxOneRow checks if a query returns no more than one row.
