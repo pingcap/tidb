@@ -33,9 +33,6 @@ for _, t := range tables {
  schemaVesrion := m.CreateTable(t)
  m.UpdateSchema(schemaVersion)
  })
- waitSchemaToSync() // <- This would notify and then 
- // waiting for all other TiDB nodes are synced with the latest schema version. 
-}
 ```
 
 the new design will introduce a new batch create table api `BatchCreateTableWithInfo`
