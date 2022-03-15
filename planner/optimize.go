@@ -456,7 +456,7 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindRecord := sessionHandle.GetBindRecord(hash, normalizedSQL, "")
 	if bindRecord != nil {
-		if bindRecord.HasUsingBinding() {
+		if bindRecord.HasEnabledBinding() {
 			return bindRecord, metrics.ScopeSession, nil
 		}
 		return nil, "", nil
@@ -602,6 +602,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 			setVarsOffs = append(setVarsOffs, i)
 		}
 	}
+	stmtHints.OriginalTableHints = hints
 	stmtHints.SetVars = setVars
 
 	// Handle MEMORY_QUOTA
