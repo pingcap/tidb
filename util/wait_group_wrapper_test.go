@@ -16,6 +16,7 @@ package util
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
@@ -56,6 +57,7 @@ func TestNotifyErrorWaitGroupWrapper(t *testing.T) {
 	var wg = NewNotifyErrorWaitGroupWrapper(errCh)
 	for i := int32(0); i < expect; i++ {
 		wg.Run(func() {
+			time.Sleep(time.Duration(500-i*100) * time.Millisecond)
 			val.Inc()
 		})
 	}
