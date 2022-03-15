@@ -318,6 +318,8 @@ func TestGenGlobalIDFail(t *testing.T) {
 }
 
 func TestAddIndexWorkerNum(t *testing.T) {
+	variable.AllowConcurrencyDDL.Store(false)
+	defer variable.AllowConcurrencyDDL.Store(true)
 	s, clean := createFailDBSuite(t)
 	defer clean()
 
