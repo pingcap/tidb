@@ -23,7 +23,8 @@ require (
 	github.com/dgraph-io/ristretto v0.1.0
 	github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13
 	github.com/docker/go-units v0.4.0
-	github.com/fsouza/fake-gcs-server v1.19.0
+	github.com/fatih/color v1.10.0
+	github.com/form3tech-oss/jwt-go v3.2.5+incompatible // indirect
 	github.com/go-sql-driver/mysql v1.6.0
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang/mock v1.6.0

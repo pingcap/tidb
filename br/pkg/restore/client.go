@@ -222,6 +222,26 @@ func (rc *Client) GetSupportPolicy() bool {
 	return rc.supportPolicy
 }
 
+func (rc *Client) GetTruncateSafepoint(ctx context.Context) uint64 {
+	ts, err := GetTruncateSafepoint(ctx, rc.storage)
+	if err != nil {
+		log.Warn("failed to get truncate safepoint, using 0", logutil.ShortError(err))
+		return 0
+	}
+	return ts
+}
+
+// SetStorage set ExternalStorage for client.
+func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storage.ExternalStorageOptions) error {
+	var err error
+	rc.storage, err = storage.New(ctx, backend, opts)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rc.backend = backend
+	return nil
+}
+
 func (rc *Client) GetDomain() *domain.Domain {
 	return rc.dom
 }
@@ -1505,12 +1525,16 @@ func (rc *Client) ReadStreamDataFiles(
 	ctx context.Context,
 	metas []*backuppb.Metadata,
 	restoreTS uint64,
+	fromTS uint64,
 ) (dataFile, metaFile []*backuppb.DataFileInfo, err error) {
 	dFiles := make([]*backuppb.DataFileInfo, 0)
 	mFiles := make([]*backuppb.DataFileInfo, 0)
 
 	for _, m := range metas {
 		for _, d := range m.Files {
+			if d.MaxTs < fromTS {
+				continue
+			}
 			if d.MinTs > restoreTS {
 				continue
 			}
