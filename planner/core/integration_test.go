@@ -4720,7 +4720,7 @@ func TestIncrementalAnalyzeStatsVer2(t *testing.T) {
 	require.Len(t, warns, 3)
 	require.EqualError(t, warns[0].Err, "The version 2 would collect all statistics not only the selected indexes")
 	require.EqualError(t, warns[1].Err, "The version 2 stats would ignore the INCREMENTAL keyword and do full sampling")
-	require.EqualError(t, warns[2].Err, "Analyze use auto adjusted sample rate 1.000000 for table test.t.")
+	require.EqualError(t, warns[2].Err, "Analyze use auto adjusted sample rate 1.000000 for table test.t")
 	rows = tk.MustQuery(fmt.Sprintf("select distinct_count from mysql.stats_histograms where table_id = %d and is_index = 1", tblID)).Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "6", rows[0][0])
@@ -5065,7 +5065,7 @@ func TestIssue29834(t *testing.T) {
 	tk.MustQuery("SELECT/*+ INL_JOIN(t1, t2), nth_plan(1) */ t2.* FROM IDT_MC21814 t1 LEFT JOIN IDT_MC21814 t2 ON t1.col1 = t2.col1 WHERE t2.col2 BETWEEN 2593 AND 1971 AND t1.col1 IN (2155, 1901, 1967);").Check(testkit.Rows())
 	tk.MustQuery("SELECT/*+ INL_JOIN(t1, t2), nth_plan(2) */ t2.* FROM IDT_MC21814 t1 LEFT JOIN IDT_MC21814 t2 ON t1.col1 = t2.col1 WHERE t2.col2 BETWEEN 2593 AND 1971 AND t1.col1 IN (2155, 1901, 1967);").Check(testkit.Rows())
 	// Only can generate one index join plan. Because the index join inner child can not be tableDual.
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The parameter of nth_plan() is out of range."))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The parameter of nth_plan() is out of range"))
 }
 
 func TestIssue29221(t *testing.T) {
