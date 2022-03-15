@@ -1427,8 +1427,30 @@ func (rc *Client) FixIndex(ctx context.Context, schema, table, index string) err
 	return nil
 }
 
+// FixIndicdesOfTables tries to fix the indices of the tables via `ADMIN RECOVERY INDEX`.
+func (rc *Client) FixIndicesOfTables(
+	ctx context.Context,
+	fullBackupTables map[int64]*metautil.Table,
+	onProgress func(),
+) error {
+	for _, table := range fullBackupTables {
+		if name, ok := utils.GetSysDBName(table.DB.Name); utils.IsSysDB(name) && ok {
+			// skip system table for now
+			onProgress()
+			continue
+		}
+
+		if err := rc.FixIndicesOfTable(ctx, table.DB.Name.L, table.Info); err != nil {
+			return errors.Annotatef(err, "failed to fix index for table %s.%s", table.DB.Name, table.Info.Name)
+		}
+		onProgress()
+	}
+
+	return nil
+}
+
 // FixIndicdesOfTable tries to fix the indices of the table via `ADMIN RECOVERY INDEX`.
-func (rc *Client) FixIndicesOfTable(ctx context.Context, schema string, table *model.TableInfo, onProgress func()) error {
+func (rc *Client) FixIndicesOfTable(ctx context.Context, schema string, table *model.TableInfo) error {
 	tableName := table.Name.L
 	// NOTE: Maybe we can create multi sessions and restore indices concurrently?
 	for _, index := range table.Indices {
@@ -1436,10 +1458,9 @@ func (rc *Client) FixIndicesOfTable(ctx context.Context, schema string, table *m
 		if err := rc.FixIndex(ctx, schema, tableName, index.Name.L); err != nil {
 			return errors.Annotatef(err, "failed to fix index %s", index.Name)
 		}
-		onProgress()
+
 		log.Info("Fix index done.", zap.Stringer("take", time.Since(start)),
-			zap.String("table", tableName),
-			zap.String("database", schema),
+			zap.String("table", schema+"."+tableName),
 			zap.Stringer("index", index.Name))
 	}
 	return nil
