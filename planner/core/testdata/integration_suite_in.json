@@ -877,10 +877,10 @@
   {
     "name": "TestTiFlashPartitionTableScan",
     "cases": [
-      "explain format = 'brief' select * from rp_t where a = 1",
-      "explain format = 'brief' select * from hp_t where a = 1",
-      "explain format = 'brief' select count(*) from rp_t where a = 1",
-      "explain format = 'brief' select count(*) from hp_t where a = 1"
+      "explain format = 'brief' select * from rp_t where a = 1 or a = 20",
+      "explain format = 'brief' select * from hp_t where a = 1 or a = 20",
+      "explain format = 'brief' select count(*) from rp_t where a = 1 or a = 20",
+      "explain format = 'brief' select count(*) from hp_t where a = 1 or a = 20"
     ]
   }
 ]
