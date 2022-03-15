@@ -1196,7 +1196,7 @@ func testCancelDropIndexes(t *testing.T, store kv.Storage, d ddl.DDL) {
 				checkErr = errors.Trace(err)
 				return
 			}
-			if errs[0] != nil {
+			if errs != nil && errs[0] != nil {
 				checkErr = errors.Trace(errs[0])
 				return
 			}
