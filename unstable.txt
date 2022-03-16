@@ -1,5 +1,7 @@
 ddl TestModifyColumn
+ddl TestModifyColumnTypeWhenInterception
 util/cpuprofile TestGetCPUProfile
 executor TestDefaultValForAnalyze
 executor TestPBMemoryLeak
 executor TestInvalidReadCacheTable
+server TestTopSQLCPUProfile
