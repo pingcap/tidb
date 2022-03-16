@@ -43,6 +43,22 @@ func TestTxnUsageInfo(t *testing.T) {
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.True(t, txnUsage.AsyncCommitUsed)
 		require.True(t, txnUsage.OnePCUsed)
+
+		tk.MustExec(fmt.Sprintf("set global %s = 0", variable.TiDBEnableMutationChecker))
+		tk.MustExec(fmt.Sprintf("set global %s = off", variable.TiDBTxnAssertionLevel))
+		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+		require.False(t, txnUsage.MutationCheckerUsed)
+		require.Equal(t, "OFF", txnUsage.AssertionLevel)
+
+		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBEnableMutationChecker))
+		tk.MustExec(fmt.Sprintf("set global %s = strict", variable.TiDBTxnAssertionLevel))
+		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+		require.True(t, txnUsage.MutationCheckerUsed)
+		require.Equal(t, "STRICT", txnUsage.AssertionLevel)
+
+		tk.MustExec(fmt.Sprintf("set global %s = fast", variable.TiDBTxnAssertionLevel))
+		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+		require.Equal(t, "FAST", txnUsage.AssertionLevel)
 	})
 
 	t.Run("Count", func(t *testing.T) {
