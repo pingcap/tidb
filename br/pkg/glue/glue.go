@@ -36,6 +36,7 @@ type Session interface {
 	ExecuteInternal(ctx context.Context, sql string, args ...interface{}) error
 	CreateDatabase(ctx context.Context, schema *model.DBInfo) error
 	CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo) error
+	CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error
 	Close()
 }
 

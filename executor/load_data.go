@@ -155,7 +155,7 @@ func (e *LoadDataInfo) initLoadColumns(columnNames []string) error {
 		}
 		if col.Name.L == model.ExtraHandleName.L {
 			if !e.ctx.GetSessionVars().AllowWriteRowID {
-				return errors.Errorf("load data statement for _tidb_rowid are not supported.")
+				return errors.Errorf("load data statement for _tidb_rowid are not supported")
 			}
 			e.hasExtraHandle = true
 			break

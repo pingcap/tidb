@@ -49,7 +49,7 @@ func (sg *sessionPool) get() (sessionctx.Context, error) {
 	sg.mu.Lock()
 	if sg.mu.closed {
 		sg.mu.Unlock()
-		return nil, errors.Errorf("sessionPool is closed.")
+		return nil, errors.Errorf("sessionPool is closed")
 	}
 	sg.mu.Unlock()
 

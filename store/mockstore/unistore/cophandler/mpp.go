@@ -90,6 +90,29 @@ func (b *mppExecBuilder) buildMPPTableScan(pb *tipb.TableScan) (*tableScanExec, 
 	return ts, err
 }
 
+func (b *mppExecBuilder) buildMPPPartitionTableScan(pb *tipb.PartitionTableScan) (*tableScanExec, error) {
+	ranges, err := extractKVRanges(b.dbReader.StartKey, b.dbReader.EndKey, b.dagCtx.keyRanges, false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ts := &tableScanExec{
+		baseMPPExec: baseMPPExec{sc: b.sc, mppCtx: b.mppCtx},
+		startTS:     b.dagCtx.startTS,
+		kvRanges:    ranges,
+		dbReader:    b.dbReader,
+	}
+	for i, col := range pb.Columns {
+		if col.ColumnId == model.ExtraPhysTblID {
+			ts.physTblIDColIdx = new(int)
+			*ts.physTblIDColIdx = i
+		}
+		ft := fieldTypeFromPBColumn(col)
+		ts.fieldTypes = append(ts.fieldTypes, ft)
+	}
+	ts.decoder, err = newRowDecoder(pb.Columns, ts.fieldTypes, pb.PrimaryColumnIds, b.sc.TimeZone)
+	return ts, err
+}
+
 func (b *mppExecBuilder) buildIdxScan(pb *tipb.IndexScan) (*indexScanExec, error) {
 	ranges, err := extractKVRanges(b.dbReader.StartKey, b.dbReader.EndKey, b.dagCtx.keyRanges, pb.Desc)
 	if err != nil {
@@ -457,6 +480,9 @@ func (b *mppExecBuilder) buildMPPExecutor(exec *tipb.Executor) (mppExec, error) 
 		return b.buildLimit(exec.Limit)
 	case tipb.ExecType_TypeTopN:
 		return b.buildTopN(exec.TopN)
+	case tipb.ExecType_TypePartitionTableScan:
+		ts := exec.PartitionTableScan
+		return b.buildMPPPartitionTableScan(ts)
 	default:
 		return nil, errors.Errorf(ErrExecutorNotSupportedMsg + exec.Tp.String())
 	}
