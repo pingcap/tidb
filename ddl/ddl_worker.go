@@ -40,8 +40,10 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -507,6 +509,20 @@ func (w *worker) setDDLLabelForTopSQL(job *model.Job) {
 	}
 
 	w.ddlJobCtx = topsql.AttachSQLInfo(context.Background(), w.cacheNormalizedSQL, w.cacheDigest, "", nil, false)
+}
+
+func (w *worker) setResourceGroupTaggerForTopSQL(txn kv.Transaction) {
+	if !topsqlstate.TopSQLEnabled() || w.cacheDigest == nil {
+		return
+	}
+
+	digest := w.cacheDigest
+	var tagger tikvrpc.ResourceGroupTagger
+	tagger = func(req *tikvrpc.Request) {
+		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, nil,
+			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
+	}
+	txn.SetOption(kv.ResourceGroupTagger, tagger)
 }
 
 // handleDDLJobQueue handles DDL jobs in DDL Job queue.
