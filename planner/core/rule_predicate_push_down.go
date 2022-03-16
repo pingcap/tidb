@@ -908,7 +908,12 @@ func (adder *exprPrefixAdder) addExprPrefix4DNFCond(condition *expression.Scalar
 	return []expression.Expression{expression.ComposeDNFCondition(adder.sctx, newAccessItems...)}, nil
 }
 
+// PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
+	if p.cte.recursivePartLogicalPlan != nil {
+		// Doesn't support recursive CTE yet.
+		return predicates, p.self
+	}
 	if len(predicates) == 0 {
 		p.cte.pushDownPredicates = append(p.cte.pushDownPredicates, expression.NewOne())
 		return predicates, p.self
