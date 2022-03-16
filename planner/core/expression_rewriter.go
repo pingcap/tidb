@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
@@ -514,7 +513,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 	lexpr := er.ctxStack[len(er.ctxStack)-1]
 	subq, ok := v.R.(*ast.SubqueryExpr)
 	if !ok {
-		er.err = errors.Errorf("Unknown compare type %T.", v.R)
+		er.err = errors.Errorf("Unknown compare type %T", v.R)
 		return v, true
 	}
 	np, err := er.buildSubquery(ctx, subq)
@@ -797,7 +796,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 	defer resetCTECheckForSubQuery(ci)
 	subq, ok := v.Sel.(*ast.SubqueryExpr)
 	if !ok {
-		er.err = errors.Errorf("Unknown exists type %T.", v.Sel)
+		er.err = errors.Errorf("Unknown exists type %T", v.Sel)
 		return v, true
 	}
 	np, err := er.buildSubquery(ctx, subq)
@@ -871,7 +870,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 	lexpr := er.ctxStack[len(er.ctxStack)-1]
 	subq, ok := v.Sel.(*ast.SubqueryExpr)
 	if !ok {
-		er.err = errors.Errorf("Unknown compare type %T.", v.Sel)
+		er.err = errors.Errorf("Unknown compare type %T", v.Sel)
 		return v, true
 	}
 	np, err := er.buildSubquery(ctx, subq)
@@ -1225,7 +1224,7 @@ func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldT
 		return
 	}
 	if scalarFunc, ok := ret.(*expression.ScalarFunction); ok {
-		telemetry.BuiltinFunctionsUsage(er.b.ctx.GetBuiltinFunctionUsage()).Inc(scalarFunc.Function.PbCode().String())
+		er.b.ctx.BuiltinFunctionUsageInc(scalarFunc.Function.PbCode().String())
 	}
 	return
 }
