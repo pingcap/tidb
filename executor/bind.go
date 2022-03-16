@@ -89,11 +89,10 @@ func (e *SQLBindExec) setBindingStatus() error {
 			Collation: e.collation,
 		}
 	}
-	err := domain.GetDomain(e.ctx).BindHandle().SetBindRecordStatus(e.normdOrigSQL, e.db, bindInfo, e.newStatus)
-	if err != nil && err.Error() == "There are no bindings can be set the status. Please check the SQL text." {
-		// TODO: Need to uniform the error code
-		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-		return nil
+	ok, err := domain.GetDomain(e.ctx).BindHandle().SetBindRecordStatus(e.normdOrigSQL, bindInfo, e.newStatus)
+	if err == nil && !ok {
+		warningMess := errors.New("There are no bindings can be set the status. Please check the SQL text")
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(warningMess)
 	}
 	return err
 }

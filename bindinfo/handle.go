@@ -16,7 +16,6 @@ package bindinfo
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"runtime"
 	"strconv"
@@ -410,8 +409,7 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 }
 
 // SetBindRecordStatus set a BindRecord's status to the storage and bind cache.
-func (h *BindHandle) SetBindRecordStatus(originalSQL, db string, binding *Binding, newStatus string) (err error) {
-	db = strings.ToLower(db)
+func (h *BindHandle) SetBindRecordStatus(originalSQL string, binding *Binding, newStatus string) (ok bool, err error) {
 	h.bindInfo.Lock()
 	h.sctx.Lock()
 	defer func() {
@@ -421,7 +419,7 @@ func (h *BindHandle) SetBindRecordStatus(originalSQL, db string, binding *Bindin
 	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(context.TODO(), "BEGIN PESSIMISTIC")
 	if err != nil {
-		return err
+		return
 	}
 	var (
 		updateTs               types.Time
@@ -450,35 +448,36 @@ func (h *BindHandle) SetBindRecordStatus(originalSQL, db string, binding *Bindin
 			return
 		}
 		if affectRows == 0 {
-			err = errors.New("There are no bindings can be set the status. Please check the SQL text.")
 			return
 		}
 
-		record := &BindRecord{OriginalSQL: originalSQL, Db: db}
+		// The set binding status operation is success.
+		ok = true
+		record := &BindRecord{OriginalSQL: originalSQL}
 		sqlDigest := parser.DigestNormalized(record.OriginalSQL)
-		oldRecord := h.GetBindRecord(sqlDigest.String(), originalSQL, db)
-		setBindingStatusSucc := false
+		oldRecord := h.GetBindRecord(sqlDigest.String(), originalSQL, "")
+		setBindingStatusInCacheSucc := false
 		if oldRecord != nil && len(oldRecord.Bindings) > 0 {
 			record.Bindings = make([]Binding, len(oldRecord.Bindings))
 			copy(record.Bindings, oldRecord.Bindings)
 			for ind, oldBinding := range record.Bindings {
 				if oldBinding.Status == oldStatus0 || oldBinding.Status == oldStatus1 {
 					if binding == nil || (binding != nil && oldBinding.isSame(binding)) {
-						setBindingStatusSucc = true
+						setBindingStatusInCacheSucc = true
 						record.Bindings[ind].Status = newStatus
 						record.Bindings[ind].UpdateTime = updateTs
 					}
 				}
 			}
 		}
-		if setBindingStatusSucc {
+		if setBindingStatusInCacheSucc {
 			h.setBindRecord(sqlDigest.String(), record)
 		}
 	}()
 
 	// Lock mysql.bind_info to synchronize with SetBindingStatus on other tidb instances.
 	if err = h.lockBindInfoTable(); err != nil {
-		return err
+		return
 	}
 
 	updateTs = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
@@ -492,7 +491,7 @@ func (h *BindHandle) SetBindRecordStatus(originalSQL, db string, binding *Bindin
 			newStatus, updateTsStr, originalSQL, updateTsStr, binding.BindSQL, oldStatus0, oldStatus1)
 	}
 	affectRows = int(h.sctx.Context.GetSessionVars().StmtCtx.AffectedRows())
-	return err
+	return
 }
 
 // GCBindRecord physically removes the deleted bind records in mysql.bind_info.
