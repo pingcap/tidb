@@ -1291,7 +1291,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		er.b.visitInfo = appendDynamicVisitInfo(er.b.visitInfo, "RESTRICTED_VARIABLES_ADMIN", false, err)
 	}
 	if v.ExplicitScope && !sysVar.HasNoneScope() {
-		if v.IsGlobal && !sysVar.HasGlobalScope() {
+		if v.IsGlobal && !(sysVar.HasGlobalScope() || sysVar.HasInstanceScope()) {
 			er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "SESSION")
 			return
 		}
