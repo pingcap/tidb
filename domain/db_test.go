@@ -19,13 +19,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/stretchr/testify/require"
 )
 
-// SubTestDomainSession is batched in TestDomainSerial
-func SubTestDomainSession(t *testing.T) {
+func TestDomainSession(t *testing.T) {
 	lease := 50 * time.Millisecond
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
@@ -36,6 +36,7 @@ func SubTestDomainSession(t *testing.T) {
 	session.SetSchemaLease(lease)
 	domain, err := session.BootstrapSession(store)
 	require.NoError(t, err)
+	ddl.DisableTiFlashPoll(domain.DDL())
 	defer domain.Close()
 
 	// for NotifyUpdatePrivilege

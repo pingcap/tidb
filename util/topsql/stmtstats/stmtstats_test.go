@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -84,21 +85,25 @@ func TestKvStatementStatsItem_Merge(t *testing.T) {
 
 func TestStatementsStatsItem_Merge(t *testing.T) {
 	item1 := &StatementStatsItem{
-		ExecCount:   1,
-		KvStatsItem: NewKvStatementStatsItem(),
+		ExecCount:     1,
+		SumDurationNs: 100,
+		KvStatsItem:   NewKvStatementStatsItem(),
 	}
 	item2 := &StatementStatsItem{
-		ExecCount:   2,
-		KvStatsItem: NewKvStatementStatsItem(),
+		ExecCount:     2,
+		SumDurationNs: 50,
+		KvStatsItem:   NewKvStatementStatsItem(),
 	}
 	item1.Merge(item2)
 	assert.Equal(t, uint64(3), item1.ExecCount)
+	assert.Equal(t, uint64(150), item1.SumDurationNs)
 }
 
 func TestStatementStatsMap_Merge(t *testing.T) {
 	m1 := StatementStatsMap{
 		SQLPlanDigest{SQLDigest: "SQL-1"}: &StatementStatsItem{
-			ExecCount: 1,
+			ExecCount:     1,
+			SumDurationNs: 100,
 			KvStatsItem: KvStatementStatsItem{
 				KvExecCount: map[string]uint64{
 					"KV-1": 1,
@@ -107,7 +112,8 @@ func TestStatementStatsMap_Merge(t *testing.T) {
 			},
 		},
 		SQLPlanDigest{SQLDigest: "SQL-2"}: &StatementStatsItem{
-			ExecCount: 1,
+			ExecCount:     1,
+			SumDurationNs: 200,
 			KvStatsItem: KvStatementStatsItem{
 				KvExecCount: map[string]uint64{
 					"KV-1": 1,
@@ -118,7 +124,8 @@ func TestStatementStatsMap_Merge(t *testing.T) {
 	}
 	m2 := StatementStatsMap{
 		SQLPlanDigest{SQLDigest: "SQL-2"}: &StatementStatsItem{
-			ExecCount: 1,
+			ExecCount:     1,
+			SumDurationNs: 100,
 			KvStatsItem: KvStatementStatsItem{
 				KvExecCount: map[string]uint64{
 					"KV-1": 1,
@@ -127,7 +134,8 @@ func TestStatementStatsMap_Merge(t *testing.T) {
 			},
 		},
 		SQLPlanDigest{SQLDigest: "SQL-3"}: &StatementStatsItem{
-			ExecCount: 1,
+			ExecCount:     1,
+			SumDurationNs: 50,
 			KvStatsItem: KvStatementStatsItem{
 				KvExecCount: map[string]uint64{
 					"KV-1": 1,
@@ -144,6 +152,9 @@ func TestStatementStatsMap_Merge(t *testing.T) {
 	assert.Equal(t, uint64(1), m1[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
 	assert.Equal(t, uint64(2), m1[SQLPlanDigest{SQLDigest: "SQL-2"}].ExecCount)
 	assert.Equal(t, uint64(1), m1[SQLPlanDigest{SQLDigest: "SQL-3"}].ExecCount)
+	assert.Equal(t, uint64(100), m1[SQLPlanDigest{SQLDigest: "SQL-1"}].SumDurationNs)
+	assert.Equal(t, uint64(300), m1[SQLPlanDigest{SQLDigest: "SQL-2"}].SumDurationNs)
+	assert.Equal(t, uint64(50), m1[SQLPlanDigest{SQLDigest: "SQL-3"}].SumDurationNs)
 	assert.Equal(t, uint64(1), m1[SQLPlanDigest{SQLDigest: "SQL-1"}].KvStatsItem.KvExecCount["KV-1"])
 	assert.Equal(t, uint64(2), m1[SQLPlanDigest{SQLDigest: "SQL-1"}].KvStatsItem.KvExecCount["KV-2"])
 	assert.Equal(t, uint64(2), m1[SQLPlanDigest{SQLDigest: "SQL-2"}].KvStatsItem.KvExecCount["KV-1"])
@@ -173,15 +184,21 @@ func TestExecCounter_AddExecCount_Take(t *testing.T) {
 	}
 	for n := 0; n < 2; n++ {
 		stats.OnExecutionBegin([]byte("SQL-2"), []byte(""))
+		stats.OnExecutionFinished([]byte("SQL-2"), []byte(""), time.Second)
 	}
 	for n := 0; n < 3; n++ {
 		stats.OnExecutionBegin([]byte("SQL-3"), []byte(""))
+		stats.OnExecutionFinished([]byte("SQL-3"), []byte(""), time.Millisecond)
 	}
+	stats.OnExecutionFinished([]byte("SQL-3"), []byte(""), -time.Millisecond)
 	m = stats.Take()
 	assert.Len(t, m, 3)
 	assert.Equal(t, uint64(1), m[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
+	assert.Equal(t, uint64(0), m[SQLPlanDigest{SQLDigest: "SQL-1"}].SumDurationNs)
 	assert.Equal(t, uint64(2), m[SQLPlanDigest{SQLDigest: "SQL-2"}].ExecCount)
+	assert.Equal(t, uint64(2*10e8), m[SQLPlanDigest{SQLDigest: "SQL-2"}].SumDurationNs)
 	assert.Equal(t, uint64(3), m[SQLPlanDigest{SQLDigest: "SQL-3"}].ExecCount)
+	assert.Equal(t, uint64(3*10e5), m[SQLPlanDigest{SQLDigest: "SQL-3"}].SumDurationNs)
 	m = stats.Take()
 	assert.Len(t, m, 0)
 }

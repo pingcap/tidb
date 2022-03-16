@@ -37,6 +37,7 @@ type featureUsage struct {
 	TemporaryTable bool               `json:"temporaryTable"`
 	CTE            *m.CTEUsageCounter `json:"cte"`
 	CachedTable    bool               `json:"cachedTable"`
+	AutoCapture    bool               `json:"autoCapture"`
 }
 
 func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
@@ -56,7 +57,8 @@ func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
 
 	cachedTable := ctx.(TemporaryOrCacheTableFeatureChecker).CachedTableExists()
 
-	return &featureUsage{txnUsage, clusterIdxUsage, temporaryTable, cteUsage, cachedTable}, nil
+	enableAutoCapture := getAutoCaptureUsageInfo(ctx)
+	return &featureUsage{txnUsage, clusterIdxUsage, temporaryTable, cteUsage, cachedTable, enableAutoCapture}, nil
 }
 
 // ClusterIndexUsage records the usage info of all the tables, no more than 10k tables
@@ -77,16 +79,12 @@ func getClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, er
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 
 	// query INFORMATION_SCHEMA.tables to get the latest table information about ClusterIndex
-	stmt, err := exec.ParseWithParamsInternal(context.TODO(), `
+	rows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, `
 		SELECT left(sha2(TABLE_NAME, 256), 6) table_name_hash, TIDB_PK_TYPE, TABLE_SCHEMA, TABLE_NAME
 		FROM information_schema.tables
 		WHERE table_schema not in ('INFORMATION_SCHEMA', 'METRICS_SCHEMA', 'PERFORMANCE_SCHEMA', 'mysql')
 		ORDER BY table_name_hash
 		limit 10000`)
-	if err != nil {
-		return nil, err
-	}
-	rows, _, err := exec.ExecRestrictedStmt(context.TODO(), stmt)
 	if err != nil {
 		return nil, err
 	}
@@ -188,4 +186,12 @@ func getCTEUsageInfo() *m.CTEUsageCounter {
 	curr := m.GetCTECounter()
 	diff := curr.Sub(initialCTECounter)
 	return &diff
+}
+
+// getAutoCaptureUsageInfo gets the 'Auto Capture' usage
+func getAutoCaptureUsageInfo(ctx sessionctx.Context) bool {
+	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBCapturePlanBaseline); err == nil {
+		return val == variable.On
+	}
+	return false
 }

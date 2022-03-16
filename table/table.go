@@ -20,6 +20,7 @@ package table
 
 import (
 	"context"
+	"time"
 
 	"github.com/opentracing/opentracing-go"
 	mysql "github.com/pingcap/tidb/errno"
@@ -101,6 +102,8 @@ var (
 	ErrRowDoesNotMatchGivenPartitionSet = dbterror.ClassTable.NewStd(mysql.ErrRowDoesNotMatchGivenPartitionSet)
 	// ErrTempTableFull returns a table is full error, it's used by temporary table now.
 	ErrTempTableFull = dbterror.ClassTable.NewStd(mysql.ErrRecordFileFull)
+	// ErrOptOnCacheTable returns when exec unsupported opt at cache mode
+	ErrOptOnCacheTable = dbterror.ClassDDL.NewStd(mysql.ErrOptOnCacheTable)
 )
 
 // RecordIterFunc is used for low-level record iteration.
@@ -238,6 +241,7 @@ type PartitionedTable interface {
 	GetPartition(physicalID int64) PhysicalTable
 	GetPartitionByRow(sessionctx.Context, []types.Datum) (PhysicalTable, error)
 	GetAllPartitionIDs() []int64
+	GetPartitionColumnNames() []model.CIStr
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.
@@ -253,12 +257,12 @@ var MockTableFromMeta func(tableInfo *model.TableInfo) Table
 type CachedTable interface {
 	Table
 
-	Init(renewCh chan func(), exec sqlexec.SQLExecutor) error
+	Init(exec sqlexec.SQLExecutor) error
 
 	// TryReadFromCache checks if the cache table is readable.
-	TryReadFromCache(ts uint64) kv.MemBuffer
+	TryReadFromCache(ts uint64, leaseDuration time.Duration) kv.MemBuffer
 
 	// UpdateLockForRead If you cannot meet the conditions of the read buffer,
 	// you need to update the lock information and read the data from the original table
-	UpdateLockForRead(ctx context.Context, store kv.Storage, ts uint64) error
+	UpdateLockForRead(ctx context.Context, store kv.Storage, ts uint64, leaseDuration time.Duration)
 }

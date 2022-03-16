@@ -24,48 +24,48 @@ import (
 
 const (
 	// UnspecifiedFsp is the unspecified fractional seconds part.
-	UnspecifiedFsp = int8(-1)
+	UnspecifiedFsp = -1
 	// MaxFsp is the maximum digit of fractional seconds part.
-	MaxFsp = int8(6)
+	MaxFsp = 6
 	// MinFsp is the minimum digit of fractional seconds part.
-	MinFsp = int8(0)
+	MinFsp = 0
 	// DefaultFsp is the default digit of fractional seconds part.
 	// MySQL use 0 as the default Fsp.
-	DefaultFsp = int8(0)
+	DefaultFsp = 0
 )
 
 // CheckFsp checks whether fsp is in valid range.
-func CheckFsp(fsp int) (int8, error) {
-	if fsp == int(UnspecifiedFsp) {
+func CheckFsp(fsp int) (int, error) {
+	if fsp == UnspecifiedFsp {
 		return DefaultFsp, nil
 	}
-	if fsp < int(MinFsp) {
+	if fsp < MinFsp {
 		return DefaultFsp, errors.Errorf("Invalid fsp %d", fsp)
-	} else if fsp > int(MaxFsp) {
+	} else if fsp > MaxFsp {
 		return MaxFsp, nil
 	}
-	return int8(fsp), nil
+	return fsp, nil
 }
 
 // ParseFrac parses the input string according to fsp, returns the microsecond,
 // and also a bool value to indice overflow. eg:
 // "999" fsp=2 will overflow.
-func ParseFrac(s string, fsp int8) (v int, overflow bool, err error) {
+func ParseFrac(s string, fsp int) (v int, overflow bool, err error) {
 	if len(s) == 0 {
 		return 0, false, nil
 	}
 
-	fsp, err = CheckFsp(int(fsp))
+	fsp, err = CheckFsp(fsp)
 	if err != nil {
 		return 0, false, errors.Trace(err)
 	}
 
-	if int(fsp) >= len(s) {
+	if fsp >= len(s) {
 		tmp, e := strconv.ParseInt(s, 10, 64)
 		if e != nil {
 			return 0, false, errors.Trace(e)
 		}
-		v = int(float64(tmp) * math.Pow10(int(MaxFsp)-len(s)))
+		v = int(float64(tmp) * math.Pow10(MaxFsp-len(s)))
 		return
 	}
 
@@ -76,7 +76,7 @@ func ParseFrac(s string, fsp int8) (v int, overflow bool, err error) {
 	}
 	tmp = (tmp + 5) / 10
 
-	if float64(tmp) >= math.Pow10(int(fsp)) {
+	if float64(tmp) >= math.Pow10(fsp) {
 		// overflow
 		return 0, true, nil
 	}
@@ -85,7 +85,7 @@ func ParseFrac(s string, fsp int8) (v int, overflow bool, err error) {
 	//  1236 round 3 -> 124 -> 124000
 	//  0312 round 2 -> 3 -> 30000
 	//  999 round 2 -> 100 -> overflow
-	v = int(float64(tmp) * math.Pow10(int(MaxFsp-fsp)))
+	v = int(float64(tmp) * math.Pow10(MaxFsp-fsp))
 	return
 }
 

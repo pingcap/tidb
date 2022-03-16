@@ -138,6 +138,10 @@ func (req *requestCtx) getDBReader() *dbreader.DBReader {
 	return req.reader
 }
 
+func (req *requestCtx) isSnapshotIsolation() bool {
+	return req.rpcCtx.IsolationLevel == kvrpcpb.IsolationLevel_SI
+}
+
 func (req *requestCtx) finish() {
 	atomic.AddInt32(&req.svr.refCount, -1)
 	if req.reader != nil {
@@ -579,6 +583,13 @@ func (svr *Server) BatchCoprocessor(req *coprocessor.BatchRequest, batchCopServe
 			ctx.finish()
 		}
 	}()
+	if req.TableRegions != nil {
+		// Support PartitionTableScan for BatchCop
+		req.Regions = req.Regions[:]
+		for _, tr := range req.TableRegions {
+			req.Regions = append(req.Regions, tr.Regions...)
+		}
+	}
 	for _, ri := range req.Regions {
 		cop := coprocessor.Request{
 			Tp:      kv.ReqTypeDAG,
@@ -639,6 +650,13 @@ func (svr *Server) DispatchMPPTask(_ context.Context, _ *mpp.DispatchTaskRequest
 
 func (svr *Server) executeMPPDispatch(ctx context.Context, req *mpp.DispatchTaskRequest, storeAddr string, storeID uint64, handler *cophandler.MPPTaskHandler) error {
 	var reqCtx *requestCtx
+	if len(req.TableRegions) > 0 {
+		// Simple unistore logic for PartitionTableScan.
+		for _, tr := range req.TableRegions {
+			req.Regions = append(req.Regions, tr.Regions...)
+		}
+	}
+
 	if len(req.Regions) > 0 {
 		kvContext := &kvrpcpb.Context{
 			RegionId:    req.Regions[0].RegionId,
@@ -1029,6 +1047,16 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 			TxnNotFound: &kvrpcpb.TxnNotFound{
 				StartTs:    x.StartTS,
 				PrimaryKey: x.PrimaryKey,
+			},
+		}
+	case *ErrAssertionFailed:
+		return &kvrpcpb.KeyError{
+			AssertionFailed: &kvrpcpb.AssertionFailed{
+				StartTs:          x.StartTS,
+				Key:              x.Key,
+				Assertion:        x.Assertion,
+				ExistingStartTs:  x.ExistingStartTS,
+				ExistingCommitTs: x.ExistingCommitTS,
 			},
 		}
 	default:

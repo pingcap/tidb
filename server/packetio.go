@@ -49,8 +49,8 @@ import (
 const defaultWriterSize = 16 * 1024
 
 var (
-	readPacketBytes  = metrics.PacketIOHistogram.WithLabelValues("read")
-	writePacketBytes = metrics.PacketIOHistogram.WithLabelValues("write")
+	readPacketBytes  = metrics.PacketIOCounter.WithLabelValues("read")
+	writePacketBytes = metrics.PacketIOCounter.WithLabelValues("write")
 )
 
 // packetIO is a helper to read and write data in packet format.
@@ -120,7 +120,7 @@ func (p *packetIO) readPacket() ([]byte, error) {
 	}
 
 	if len(data) < mysql.MaxPayloadLen {
-		readPacketBytes.Observe(float64(len(data)))
+		readPacketBytes.Add(float64(len(data)))
 		return data, nil
 	}
 
@@ -138,14 +138,14 @@ func (p *packetIO) readPacket() ([]byte, error) {
 		}
 	}
 
-	readPacketBytes.Observe(float64(len(data)))
+	readPacketBytes.Add(float64(len(data)))
 	return data, nil
 }
 
 // writePacket writes data that already have header
 func (p *packetIO) writePacket(data []byte) error {
 	length := len(data) - 4
-	writePacketBytes.Observe(float64(len(data)))
+	writePacketBytes.Add(float64(len(data)))
 
 	for length >= mysql.MaxPayloadLen {
 		data[0] = 0xff

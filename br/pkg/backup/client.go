@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
@@ -82,8 +83,9 @@ type Client struct {
 	mgr       ClientMgr
 	clusterID uint64
 
-	storage storage.ExternalStorage
-	backend *backuppb.StorageBackend
+	storage    storage.ExternalStorage
+	backend    *backuppb.StorageBackend
+	apiVersion kvrpcpb.APIVersion
 
 	gcTTL int64
 }
@@ -193,6 +195,16 @@ func (bc *Client) GetClusterID() uint64 {
 	return bc.clusterID
 }
 
+// GetApiVersion sets api version of the TiKV storage
+func (bc *Client) GetApiVersion() kvrpcpb.APIVersion {
+	return bc.apiVersion
+}
+
+// SetApiVersion sets api version of the TiKV storage
+func (bc *Client) SetApiVersion(v kvrpcpb.APIVersion) {
+	bc.apiVersion = v
+}
+
 // CheckBackupStorageIsLocked checks whether backups is locked.
 // which means we found other backup progress already write
 // some data files into the same backup directory or cloud prefix.
@@ -270,15 +282,34 @@ func BuildBackupRangeAndSchema(
 	storage kv.Storage,
 	tableFilter filter.Filter,
 	backupTS uint64,
-) ([]rtree.Range, *Schemas, error) {
+	isFullBackup bool,
+) ([]rtree.Range, *Schemas, []*backuppb.PlacementPolicy, error) {
 	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
 	m := meta.NewSnapshotMeta(snapshot)
+
+	var policies []*backuppb.PlacementPolicy
+	if isFullBackup {
+		// according to https://github.com/pingcap/tidb/issues/32290
+		// only full backup will record policies in backupMeta.
+		policyList, err := m.ListPolicies()
+		if err != nil {
+			return nil, nil, nil, errors.Trace(err)
+		}
+		policies = make([]*backuppb.PlacementPolicy, 0, len(policies))
+		for _, policyInfo := range policyList {
+			p, err := json.Marshal(policyInfo)
+			if err != nil {
+				return nil, nil, nil, errors.Trace(err)
+			}
+			policies = append(policies, &backuppb.PlacementPolicy{Info: p})
+		}
+	}
 
 	ranges := make([]rtree.Range, 0)
 	backupSchemas := newBackupSchemas()
 	dbs, err := m.ListDatabases()
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
 
 	for _, dbInfo := range dbs {
@@ -289,13 +320,19 @@ func BuildBackupRangeAndSchema(
 
 		tables, err := m.ListTables(dbInfo.ID)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, nil, errors.Trace(err)
 		}
 
 		if len(tables) == 0 {
 			log.Warn("It's not necessary for backing up empty database",
 				zap.Stringer("db", dbInfo.Name))
 			continue
+		}
+
+		if !isFullBackup {
+			// according to https://github.com/pingcap/tidb/issues/32290.
+			// ignore placement policy when not in full backup
+			dbInfo.PlacementPolicyRef = nil
 		}
 
 		for _, tableInfo := range tables {
@@ -324,16 +361,21 @@ func BuildBackupRangeAndSchema(
 				globalAutoID, err = idAlloc.NextGlobalAutoID()
 			}
 			if err != nil {
-				return nil, nil, errors.Trace(err)
+				return nil, nil, nil, errors.Trace(err)
 			}
 			tableInfo.AutoIncID = globalAutoID
+			if !isFullBackup {
+				// according to https://github.com/pingcap/tidb/issues/32290.
+				// ignore placement policy when not in full backup
+				tableInfo.PlacementPolicyRef = nil
+			}
 
 			if tableInfo.PKIsHandle && tableInfo.ContainsAutoRandomBits() {
 				// this table has auto_random id, we need backup and rebase in restoration
 				var globalAutoRandID int64
 				globalAutoRandID, err = randAlloc.NextGlobalAutoID()
 				if err != nil {
-					return nil, nil, errors.Trace(err)
+					return nil, nil, nil, errors.Trace(err)
 				}
 				tableInfo.AutoRandID = globalAutoRandID
 				logger.Debug("change table AutoRandID",
@@ -356,7 +398,7 @@ func BuildBackupRangeAndSchema(
 
 			tableRanges, err := BuildTableRanges(tableInfo)
 			if err != nil {
-				return nil, nil, errors.Trace(err)
+				return nil, nil, nil, errors.Trace(err)
 			}
 			for _, r := range tableRanges {
 				ranges = append(ranges, rtree.Range{
@@ -369,9 +411,9 @@ func BuildBackupRangeAndSchema(
 
 	if backupSchemas.Len() == 0 {
 		log.Info("nothing to backup")
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
-	return ranges, backupSchemas, nil
+	return ranges, backupSchemas, policies, nil
 }
 
 func skipUnsupportedDDLJob(job *model.Job) bool {
@@ -430,11 +472,22 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 
 		if (job.State == model.JobStateDone || job.State == model.JobStateSynced) &&
 			(job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion > lastSchemaVersion) {
+			if job.BinlogInfo.DBInfo != nil {
+				// ignore all placement policy info during incremental backup for now.
+				job.BinlogInfo.DBInfo.PlacementPolicyRef = nil
+			}
+			if job.BinlogInfo.TableInfo != nil {
+				// ignore all placement policy info during incremental backup for now.
+				job.BinlogInfo.TableInfo.PlacementPolicyRef = nil
+			}
 			jobBytes, err := json.Marshal(job)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			metaWriter.Send(jobBytes, metautil.AppendDDL)
+			err = metaWriter.Send(jobBytes, metautil.AppendDDL)
+			if err != nil {
+				return errors.Trace(err)
+			}
 			count++
 		}
 	}
@@ -530,7 +583,7 @@ func (bc *Client) BackupRange(
 	// TODO: test fine grained backup.
 	err = bc.fineGrainedBackup(
 		ctx, startKey, endKey, req.StartVersion, req.EndVersion, req.CompressionType, req.CompressionLevel,
-		req.RateLimit, req.Concurrency, results, progressCallBack)
+		req.RateLimit, req.Concurrency, req.IsRawKv, req.CipherInfo, results, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -574,10 +627,12 @@ func (bc *Client) BackupRange(
 	return nil
 }
 
-func (bc *Client) findRegionLeader(ctx context.Context, key []byte) (*metapb.Peer, error) {
+func (bc *Client) findRegionLeader(ctx context.Context, key []byte, isRawKv bool) (*metapb.Peer, error) {
 	// Keys are saved in encoded format in TiKV, so the key must be encoded
 	// in order to find the correct region.
-	key = codec.EncodeBytes([]byte{}, key)
+	if !isRawKv {
+		key = codec.EncodeBytes([]byte{}, key)
+	}
 	for i := 0; i < 5; i++ {
 		// better backoff.
 		region, err := bc.mgr.GetPDClient().GetRegion(ctx, key)
@@ -608,6 +663,8 @@ func (bc *Client) fineGrainedBackup(
 	compressLevel int32,
 	rateLimit uint64,
 	concurrency uint32,
+	isRawKv bool,
+	cipherInfo *backuppb.CipherInfo,
 	rangeTree rtree.RangeTree,
 	progressCallBack func(ProgressUnit),
 ) error {
@@ -658,7 +715,7 @@ func (bc *Client) fineGrainedBackup(
 				for rg := range retry {
 					backoffMs, err :=
 						bc.handleFineGrained(ctx, boFork, rg, lastBackupTS, backupTS,
-							compressType, compressLevel, rateLimit, concurrency, respCh)
+							compressType, compressLevel, rateLimit, concurrency, isRawKv, cipherInfo, respCh)
 					if err != nil {
 						errCh <- err
 						return
@@ -704,6 +761,8 @@ func (bc *Client) fineGrainedBackup(
 					logutil.Key("fine-grained-range-end", resp.EndKey),
 				)
 				rangeTree.Put(resp.StartKey, resp.EndKey, resp.Files)
+				apiVersion := resp.ApiVersion
+				bc.SetApiVersion(apiVersion)
 
 				// Update progress
 				progressCallBack(RegionUnit)
@@ -803,9 +862,11 @@ func (bc *Client) handleFineGrained(
 	compressionLevel int32,
 	rateLimit uint64,
 	concurrency uint32,
+	isRawKv bool,
+	cipherInfo *backuppb.CipherInfo,
 	respCh chan<- *backuppb.BackupResponse,
 ) (int, error) {
-	leader, pderr := bc.findRegionLeader(ctx, rg.StartKey)
+	leader, pderr := bc.findRegionLeader(ctx, rg.StartKey, isRawKv)
 	if pderr != nil {
 		return 0, errors.Trace(pderr)
 	}
@@ -820,8 +881,10 @@ func (bc *Client) handleFineGrained(
 		StorageBackend:   bc.backend,
 		RateLimit:        rateLimit,
 		Concurrency:      concurrency,
+		IsRawKv:          isRawKv,
 		CompressionType:  compressType,
 		CompressionLevel: compressionLevel,
+		CipherInfo:       cipherInfo,
 	}
 	lockResolver := bc.mgr.GetLockResolver()
 	client, err := bc.mgr.GetBackupClient(ctx, storeID)
@@ -884,6 +947,69 @@ func (bc *Client) handleFineGrained(
 	return backoffMill, nil
 }
 
+func doSendBackup(
+	ctx context.Context,
+	client backuppb.BackupClient,
+	req backuppb.BackupRequest,
+	respFn func(*backuppb.BackupResponse) error,
+) error {
+	failpoint.Inject("hint-backup-start", func(v failpoint.Value) {
+		logutil.CL(ctx).Info("failpoint hint-backup-start injected, " +
+			"process will notify the shell.")
+		if sigFile, ok := v.(string); ok {
+			file, err := os.Create(sigFile)
+			if err != nil {
+				log.Warn("failed to create file for notifying, skipping notify", zap.Error(err))
+			}
+			if file != nil {
+				file.Close()
+			}
+		}
+		time.Sleep(3 * time.Second)
+	})
+	bCli, err := client.Backup(ctx, &req)
+	failpoint.Inject("reset-retryable-error", func(val failpoint.Value) {
+		if val.(bool) {
+			logutil.CL(ctx).Debug("failpoint reset-retryable-error injected.")
+			err = status.Error(codes.Unavailable, "Unavailable error")
+		}
+	})
+	failpoint.Inject("reset-not-retryable-error", func(val failpoint.Value) {
+		if val.(bool) {
+			logutil.CL(ctx).Debug("failpoint reset-not-retryable-error injected.")
+			err = status.Error(codes.Unknown, "Your server was haunted hence doesn't work, meow :3")
+		}
+	})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = bCli.CloseSend()
+	}()
+
+	for {
+		resp, err := bCli.Recv()
+		if err != nil {
+			if errors.Cause(err) == io.EOF { // nolint:errorlint
+				logutil.CL(ctx).Debug("backup streaming finish",
+					logutil.Key("backup-start-key", req.GetStartKey()),
+					logutil.Key("backup-end-key", req.GetEndKey()))
+				return nil
+			}
+			return err
+		}
+		// TODO: handle errors in the resp.
+		logutil.CL(ctx).Debug("range backed up",
+			logutil.Key("small-range-start-key", resp.GetStartKey()),
+			logutil.Key("small-range-end-key", resp.GetEndKey()),
+			zap.Int("api-version", int(resp.ApiVersion)))
+		err = respFn(resp)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+}
+
 // SendBackup send backup request to the given store.
 // Stop receiving response if respFn returns error.
 func SendBackup(
@@ -905,40 +1031,15 @@ func SendBackup(
 	}
 
 	var errReset error
-backupLoop:
+	var errBackup error
+
 	for retry := 0; retry < backupRetryTimes; retry++ {
 		logutil.CL(ctx).Info("try backup",
 			zap.Int("retry time", retry),
 		)
-		failpoint.Inject("hint-backup-start", func(v failpoint.Value) {
-			logutil.CL(ctx).Info("failpoint hint-backup-start injected, " +
-				"process will notify the shell.")
-			if sigFile, ok := v.(string); ok {
-				file, err := os.Create(sigFile)
-				if err != nil {
-					log.Warn("failed to create file for notifying, skipping notify", zap.Error(err))
-				}
-				if file != nil {
-					file.Close()
-				}
-			}
-			time.Sleep(3 * time.Second)
-		})
-		bcli, err := client.Backup(ctx, &req)
-		failpoint.Inject("reset-retryable-error", func(val failpoint.Value) {
-			if val.(bool) {
-				logutil.CL(ctx).Debug("failpoint reset-retryable-error injected.")
-				err = status.Error(codes.Unavailable, "Unavailable error")
-			}
-		})
-		failpoint.Inject("reset-not-retryable-error", func(val failpoint.Value) {
-			if val.(bool) {
-				logutil.CL(ctx).Debug("failpoint reset-not-retryable-error injected.")
-				err = status.Error(codes.Unknown, "Your server was haunted hence doesn't work, meow :3")
-			}
-		})
-		if err != nil {
-			if isRetryableError(err) {
+		errBackup = doSendBackup(ctx, client, req, respFn)
+		if errBackup != nil {
+			if isRetryableError(errBackup) {
 				time.Sleep(3 * time.Second)
 				client, errReset = resetFn()
 				if errReset != nil {
@@ -947,41 +1048,11 @@ backupLoop:
 				}
 				continue
 			}
-			logutil.CL(ctx).Error("fail to backup", zap.Uint64("StoreID", storeID),
-				zap.Int("retry time", retry))
-			return berrors.ErrFailedToConnect.Wrap(err).GenWithStack("failed to create backup stream to store %d", storeID)
-		}
-		defer bcli.CloseSend()
-
-		for {
-			resp, err := bcli.Recv()
-			if err != nil {
-				if errors.Cause(err) == io.EOF { // nolint:errorlint
-					logutil.CL(ctx).Info("backup streaming finish",
-						zap.Int("retry-time", retry))
-					break backupLoop
-				}
-				if isRetryableError(err) {
-					time.Sleep(3 * time.Second)
-					// current tikv is unavailable
-					client, errReset = resetFn()
-					if errReset != nil {
-						return errors.Annotatef(errReset, "failed to reset recv connection on store:%d "+
-							"please check the tikv status", storeID)
-					}
-					break
-				}
-				return berrors.ErrFailedToConnect.Wrap(err).GenWithStack("failed to connect to store: %d with retry times:%d", storeID, retry)
-			}
-
-			// TODO: handle errors in the resp.
-			logutil.CL(ctx).Info("range backed up",
-				logutil.Key("small-range-start-key", resp.GetStartKey()),
-				logutil.Key("small-range-end-key", resp.GetEndKey()))
-			err = respFn(resp)
-			if err != nil {
-				return errors.Trace(err)
-			}
+			logutil.CL(ctx).Error("fail to backup", zap.Uint64("StoreID", storeID), zap.Int("retry", retry))
+			return berrors.ErrFailedToConnect.Wrap(errBackup).GenWithStack("failed to create backup stream to store %d", storeID)
+		} else {
+			// finish backup
+			break
 		}
 	}
 	return nil

@@ -18,27 +18,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
 
-func createTestKitAndDom(t *testing.T) (*testkit.TestKit, *domain.Domain, func()) {
-	store, dom, err := newStoreWithBootstrap()
-	require.NoError(t, err)
-	clean := func() {
-		dom.Close()
-		err := store.Close()
-		require.NoError(t, err)
-	}
-	tk := testkit.NewTestKit(t, store)
-	return tk, dom, clean
-}
-
 func TestGCStats(t *testing.T) {
-	testKit, dom, clean := createTestKitAndDom(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("set @@tidb_analyze_version = 1")
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, index idx(a, b), index idx_a(a))")
@@ -70,8 +58,9 @@ func TestGCStats(t *testing.T) {
 }
 
 func TestGCPartition(t *testing.T) {
-	testKit, dom, clean := createTestKitAndDom(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("set @@tidb_analyze_version = 1")
 	testkit.WithPruneMode(testKit, variable.Static, func() {
 		testKit.MustExec("use test")
@@ -108,8 +97,9 @@ func TestGCPartition(t *testing.T) {
 }
 
 func TestGCExtendedStats(t *testing.T) {
-	testKit, dom, clean := createTestKitAndDom(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("set session tidb_enable_extended_stats = on")
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, c int)")
@@ -152,8 +142,9 @@ func TestGCExtendedStats(t *testing.T) {
 }
 
 func TestGCColumnStatsUsage(t *testing.T) {
-	testKit, dom, clean := createTestKitAndDom(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, c int)")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")

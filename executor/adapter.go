@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/topsql"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
@@ -332,7 +333,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 }
 
 func (a *ExecStmt) setPlanLabelForTopSQL(ctx context.Context) context.Context {
-	if a.Plan == nil || !variable.TopSQLEnabled() {
+	if a.Plan == nil || !topsqlstate.TopSQLEnabled() {
 		return ctx
 	}
 	vars := a.Ctx.GetSessionVars()
@@ -499,6 +500,27 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 	return false, nil, nil
 }
 
+func isNoResultPlan(p plannercore.Plan) bool {
+	if p.Schema().Len() == 0 {
+		return true
+	}
+
+	// Currently this is only for the "DO" statement. Take "DO 1, @a=2;" as an example:
+	// the Projection has two expressions and two columns in the schema, but we should
+	// not return the result of the two expressions.
+	switch raw := p.(type) {
+	case *plannercore.LogicalProjection:
+		if raw.CalculateNoDelay {
+			return true
+		}
+	case *plannercore.PhysicalProjection:
+		if raw.CalculateNoDelay {
+			return true
+		}
+	}
+	return false
+}
+
 // getMaxExecutionTime get the max execution timeout value.
 func getMaxExecutionTime(sctx sessionctx.Context) uint64 {
 	if sctx.GetSessionVars().StmtCtx.HasMaxExecutionTime {
@@ -655,7 +677,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		keys = filterTemporaryTableKeys(sctx.GetSessionVars(), keys)
 		seVars := sctx.GetSessionVars()
 		keys = filterLockTableKeys(seVars.StmtCtx, keys)
-		lockCtx := newLockCtx(seVars, seVars.LockWaitTimeout)
+		lockCtx := newLockCtx(seVars, seVars.LockWaitTimeout, len(keys))
 		var lockKeyStats *util.LockKeysDetails
 		ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)
 		startLocking := time.Now()
@@ -944,6 +966,10 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	sessVars.DurationParse = 0
 	// Clean the stale read flag when statement execution finish
 	sessVars.StmtCtx.IsStaleness = false
+
+	if sessVars.StmtCtx.ReadFromTableCache {
+		metrics.ReadFromTableCacheCounter.Inc()
+	}
 }
 
 // CloseRecordSet will finish the execution of current statement and do some record work
@@ -1145,6 +1171,17 @@ func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool) (
 	}
 	if genHint {
 		hints := plannercore.GenHintsFromPhysicalPlan(p)
+		for _, tableHint := range sctx.GetSessionVars().StmtCtx.OriginalTableHints {
+			// some hints like 'memory_quota' cannot be extracted from the PhysicalPlan directly,
+			// so we have to iterate all hints from the customer and keep some other necessary hints.
+			switch tableHint.HintName.L {
+			case "memory_quota", "use_toja", "no_index_merge", "max_execution_time",
+				plannercore.HintAggToCop, plannercore.HintIgnoreIndex,
+				plannercore.HintReadFromStorage, plannercore.HintLimitToCop:
+				hints = append(hints, tableHint)
+			}
+		}
+
 		hintStr = hint.RestoreOptimizerHints(hints)
 		sctx.GetSessionVars().StmtCtx.SetPlanHint(hintStr)
 	}
@@ -1222,8 +1259,14 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if tikvExecDetailRaw != nil {
 		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
 	}
+
 	if stmtCtx.WaitLockLeaseTime > 0 {
+		if execDetail.BackoffSleep == nil {
+			execDetail.BackoffSleep = make(map[string]time.Duration)
+		}
 		execDetail.BackoffSleep["waitLockLeaseForCacheTable"] = stmtCtx.WaitLockLeaseTime
+		execDetail.BackoffTime += stmtCtx.WaitLockLeaseTime
+		execDetail.TimeDetail.WaitTime += stmtCtx.WaitLockLeaseTime
 	}
 	stmtExecInfo := &stmtsummary.StmtExecInfo{
 		SchemaName:      strings.ToLower(sessVars.CurrentDB),
@@ -1278,18 +1321,27 @@ func (a *ExecStmt) GetTextToLog() string {
 }
 
 func (a *ExecStmt) observeStmtBeginForTopSQL() {
-	if vars := a.Ctx.GetSessionVars(); variable.TopSQLEnabled() && vars.StmtStats != nil {
+	vars := a.Ctx.GetSessionVars()
+	if vars == nil {
+		return
+	}
+	if stats := a.Ctx.GetStmtStats(); stats != nil && topsqlstate.TopSQLEnabled() {
 		sqlDigest, planDigest := a.getSQLPlanDigest()
-		vars.StmtStats.OnExecutionBegin(sqlDigest, planDigest)
+		stats.OnExecutionBegin(sqlDigest, planDigest)
 		// This is a special logic prepared for TiKV's SQLExecCount.
-		vars.StmtCtx.KvExecCounter = vars.StmtStats.CreateKvExecCounter(sqlDigest, planDigest)
+		vars.StmtCtx.KvExecCounter = stats.CreateKvExecCounter(sqlDigest, planDigest)
 	}
 }
 
 func (a *ExecStmt) observeStmtFinishedForTopSQL() {
-	if vars := a.Ctx.GetSessionVars(); variable.TopSQLEnabled() && vars.StmtStats != nil {
+	vars := a.Ctx.GetSessionVars()
+	if vars == nil {
+		return
+	}
+	if stats := a.Ctx.GetStmtStats(); stats != nil && topsqlstate.TopSQLEnabled() {
 		sqlDigest, planDigest := a.getSQLPlanDigest()
-		vars.StmtStats.OnExecutionFinished(sqlDigest, planDigest)
+		execDuration := time.Since(vars.StartTime) + vars.DurationParse
+		stats.OnExecutionFinished(sqlDigest, planDigest, execDuration)
 	}
 }
 

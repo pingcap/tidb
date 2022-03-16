@@ -15,51 +15,41 @@
 package mydump_test
 
 import (
-	"context"
+	"fmt"
 	"io"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testMydumpParserSuite{})
-
-type testMydumpParserSuite struct {
-	ioWorkers *worker.Pool
-}
-
-func (s *testMydumpParserSuite) SetUpSuite(c *C) {
-	s.ioWorkers = worker.NewPool(context.Background(), 5, "test_sql")
-}
-func (s *testMydumpParserSuite) TearDownSuite(c *C) {}
-
-func (s *testMydumpParserSuite) runTestCases(c *C, mode mysql.SQLMode, blockBufSize int64, cases []testCase) {
+func runTestCases(t *testing.T, mode mysql.SQLMode, blockBufSize int64, cases []testCase) {
 	for _, tc := range cases {
-		parser := mydump.NewChunkParser(mode, mydump.NewStringReader(tc.input), blockBufSize, s.ioWorkers)
+		parser := mydump.NewChunkParser(mode, mydump.NewStringReader(tc.input), blockBufSize, ioWorkers)
 		for i, row := range tc.expected {
 			e := parser.ReadRow()
-			comment := Commentf("input = %q, row = %d, err = %s", tc.input, i+1, errors.ErrorStack(e))
-			c.Assert(e, IsNil, comment)
-			c.Assert(parser.LastRow().RowID, DeepEquals, int64(i)+1)
-			c.Assert(parser.LastRow().Row, DeepEquals, row)
+			comment := fmt.Sprintf("input = %q, row = %d, err = %s", tc.input, i+1, errors.ErrorStack(e))
+			assert.NoError(t, e, comment)
+			assert.Equal(t, int64(i)+1, parser.LastRow().RowID, comment)
+			assert.Equal(t, row, parser.LastRow().Row, comment)
 		}
-		c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF, Commentf("input = %q", tc.input))
+		assert.ErrorIsf(t, errors.Cause(parser.ReadRow()), io.EOF, "input = %q", tc.input)
 	}
 }
 
-func (s *testMydumpParserSuite) runFailingTestCases(c *C, mode mysql.SQLMode, blockBufSize int64, cases []string) {
+func runFailingTestCases(t *testing.T, mode mysql.SQLMode, blockBufSize int64, cases []string) {
 	for _, tc := range cases {
-		parser := mydump.NewChunkParser(mode, mydump.NewStringReader(tc), blockBufSize, s.ioWorkers)
-		c.Assert(parser.ReadRow(), ErrorMatches, "syntax error.*", Commentf("input = %q", tc))
+		parser := mydump.NewChunkParser(mode, mydump.NewStringReader(tc), blockBufSize, ioWorkers)
+		assert.Regexpf(t, "syntax error.*", parser.ReadRow().Error(), "input = %q", tc)
 	}
 }
 
-func (s *testMydumpParserSuite) TestReadRow(c *C) {
+func TestReadRow(t *testing.T) {
 	reader := mydump.NewStringReader(
 		"/* whatever pragmas */;" +
 			"INSERT INTO `namespaced`.`table` (columns, more, columns) VALUES (1,-2, 3),\n(4,5., 6);" +
@@ -67,10 +57,10 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 			"insert another_table values (10,11e1,12, '(13)', '(', 14, ')');",
 	)
 
-	parser := mydump.NewChunkParser(mysql.ModeNone, reader, int64(config.ReadBlockSize), s.ioWorkers)
+	parser := mydump.NewChunkParser(mysql.ModeNone, reader, int64(config.ReadBlockSize), ioWorkers)
 
-	c.Assert(parser.ReadRow(), IsNil)
-	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
+	require.NoError(t, parser.ReadRow())
+	require.Equal(t, mydump.Row{
 		RowID: 1,
 		Row: []types.Datum{
 			types.NewUintDatum(1),
@@ -78,14 +68,14 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 			types.NewUintDatum(3),
 		},
 		Length: 62,
-	})
-	c.Assert(parser.Columns(), DeepEquals, []string{"columns", "more", "columns"})
+	}, parser.LastRow())
+	require.Equal(t, []string{"columns", "more", "columns"}, parser.Columns())
 	offset, rowID := parser.Pos()
-	c.Assert(offset, Equals, int64(97))
-	c.Assert(rowID, Equals, int64(1))
+	require.Equal(t, int64(97), offset)
+	require.Equal(t, int64(1), rowID)
 
-	c.Assert(parser.ReadRow(), IsNil)
-	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
+	require.NoError(t, parser.ReadRow())
+	require.Equal(t, mydump.Row{
 		RowID: 2,
 		Row: []types.Datum{
 			types.NewUintDatum(4),
@@ -93,14 +83,14 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 			types.NewUintDatum(6),
 		},
 		Length: 6,
-	})
-	c.Assert(parser.Columns(), DeepEquals, []string{"columns", "more", "columns"})
+	}, parser.LastRow())
+	require.Equal(t, []string{"columns", "more", "columns"}, parser.Columns())
 	offset, rowID = parser.Pos()
-	c.Assert(offset, Equals, int64(108))
-	c.Assert(rowID, Equals, int64(2))
+	require.Equal(t, int64(108), offset)
+	require.Equal(t, int64(2), rowID)
 
-	c.Assert(parser.ReadRow(), IsNil)
-	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
+	require.NoError(t, parser.ReadRow())
+	require.Equal(t, mydump.Row{
 		RowID: 3,
 		Row: []types.Datum{
 			types.NewUintDatum(7),
@@ -108,14 +98,14 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 			types.NewUintDatum(9),
 		},
 		Length: 42,
-	})
-	c.Assert(parser.Columns(), DeepEquals, []string{"x", "y", "z"})
+	}, parser.LastRow())
+	require.Equal(t, []string{"x", "y", "z"}, parser.Columns())
 	offset, rowID = parser.Pos()
-	c.Assert(offset, Equals, int64(159))
-	c.Assert(rowID, Equals, int64(3))
+	require.Equal(t, int64(159), offset)
+	require.Equal(t, int64(3), rowID)
 
-	c.Assert(parser.ReadRow(), IsNil)
-	c.Assert(parser.LastRow(), DeepEquals, mydump.Row{
+	require.NoError(t, parser.ReadRow())
+	require.Equal(t, mydump.Row{
 		RowID: 4,
 		Row: []types.Datum{
 			types.NewUintDatum(10),
@@ -127,27 +117,27 @@ func (s *testMydumpParserSuite) TestReadRow(c *C) {
 			types.NewStringDatum(")"),
 		},
 		Length: 49,
-	})
-	c.Assert(parser.Columns(), IsNil)
+	}, parser.LastRow())
+	require.Nil(t, parser.Columns())
 	offset, rowID = parser.Pos()
-	c.Assert(offset, Equals, int64(222))
-	c.Assert(rowID, Equals, int64(4))
+	require.Equal(t, int64(222), offset)
+	require.Equal(t, int64(4), rowID)
 
-	c.Assert(errors.Cause(parser.ReadRow()), Equals, io.EOF)
+	require.ErrorIs(t, errors.Cause(parser.ReadRow()), io.EOF)
 }
 
-func (s *testMydumpParserSuite) TestReadChunks(c *C) {
+func TestReadChunks(t *testing.T) {
 	reader := mydump.NewStringReader(`
 		INSERT foo VALUES (1,2,3,4),(5,6,7,8),(9,10,11,12);
 		INSERT foo VALUES (13,14,15,16),(17,18,19,20),(21,22,23,24),(25,26,27,28);
 		INSERT foo VALUES (29,30,31,32),(33,34,35,36);
 	`)
 
-	parser := mydump.NewChunkParser(mysql.ModeNone, reader, int64(config.ReadBlockSize), s.ioWorkers)
+	parser := mydump.NewChunkParser(mysql.ModeNone, reader, int64(config.ReadBlockSize), ioWorkers)
 
 	chunks, err := mydump.ReadChunks(parser, 32)
-	c.Assert(err, IsNil)
-	c.Assert(chunks, DeepEquals, []mydump.Chunk{
+	require.NoError(t, err)
+	require.Equal(t, []mydump.Chunk{
 		{
 			Offset:       0,
 			EndOffset:    40,
@@ -178,10 +168,10 @@ func (s *testMydumpParserSuite) TestReadChunks(c *C) {
 			PrevRowIDMax: 8,
 			RowIDMax:     9,
 		},
-	})
+	}, chunks)
 }
 
-func (s *testMydumpParserSuite) TestNestedRow(c *C) {
+func TestNestedRow(t *testing.T) {
 	reader := mydump.NewStringReader(`
 		INSERT INTO exam_detail VALUES
 		("123",CONVERT("{}" USING UTF8MB4)),
@@ -189,11 +179,11 @@ func (s *testMydumpParserSuite) TestNestedRow(c *C) {
 		("789",CONVERT("[]" USING UTF8MB4));
 	`)
 
-	parser := mydump.NewChunkParser(mysql.ModeNone, reader, int64(config.ReadBlockSize), s.ioWorkers)
+	parser := mydump.NewChunkParser(mysql.ModeNone, reader, int64(config.ReadBlockSize), ioWorkers)
 	chunks, err := mydump.ReadChunks(parser, 96)
 
-	c.Assert(err, IsNil)
-	c.Assert(chunks, DeepEquals, []mydump.Chunk{
+	require.NoError(t, err)
+	require.Equal(t, []mydump.Chunk{
 		{
 			Offset:       0,
 			EndOffset:    117,
@@ -206,10 +196,10 @@ func (s *testMydumpParserSuite) TestNestedRow(c *C) {
 			PrevRowIDMax: 2,
 			RowIDMax:     3,
 		},
-	})
+	}, chunks)
 }
 
-func (s *testMydumpParserSuite) TestVariousSyntax(c *C) {
+func TestVariousSyntax(t *testing.T) {
 	testCases := []testCase{
 		{
 			input:    "INSERT INTO foobar VALUES (1, 2);",
@@ -356,10 +346,10 @@ func (s *testMydumpParserSuite) TestVariousSyntax(c *C) {
 		},
 	}
 
-	s.runTestCases(c, mysql.ModeNone, int64(config.ReadBlockSize), testCases)
+	runTestCases(t, mysql.ModeNone, int64(config.ReadBlockSize), testCases)
 }
 
-func (s *testMydumpParserSuite) TestContinuation(c *C) {
+func TestContinuation(t *testing.T) {
 	testCases := []testCase{
 		{
 			input: `
@@ -377,10 +367,10 @@ func (s *testMydumpParserSuite) TestContinuation(c *C) {
 		},
 	}
 
-	s.runTestCases(c, mysql.ModeNone, 1, testCases)
+	runTestCases(t, mysql.ModeNone, 1, testCases)
 }
 
-func (s *testMydumpParserSuite) TestPseudoKeywords(c *C) {
+func TestPseudoKeywords(t *testing.T) {
 	reader := mydump.NewStringReader(`
 		INSERT INTO t (
 			c, C,
@@ -422,9 +412,9 @@ func (s *testMydumpParserSuite) TestPseudoKeywords(c *C) {
 		) VALUES ();
 	`)
 
-	parser := mydump.NewChunkParser(mysql.ModeNone, reader, int64(config.ReadBlockSize), s.ioWorkers)
-	c.Assert(parser.ReadRow(), IsNil)
-	c.Assert(parser.Columns(), DeepEquals, []string{
+	parser := mydump.NewChunkParser(mysql.ModeNone, reader, int64(config.ReadBlockSize), ioWorkers)
+	require.NoError(t, parser.ReadRow())
+	require.Equal(t, []string{
 		"c", "c",
 		"co", "co",
 		"con", "con",
@@ -461,10 +451,10 @@ func (s *testMydumpParserSuite) TestPseudoKeywords(c *C) {
 		"ins", "ins",
 		"inse", "inse",
 		"inser", "inser",
-	})
+	}, parser.Columns())
 }
 
-func (s *testMydumpParserSuite) TestSyntaxError(c *C) {
+func TestSyntaxError(t *testing.T) {
 	inputs := []string{
 		"('xxx)",
 		`("xxx)`,
@@ -489,13 +479,13 @@ func (s *testMydumpParserSuite) TestSyntaxError(c *C) {
 		"/* ...",
 	}
 
-	s.runFailingTestCases(c, mysql.ModeNone, int64(config.ReadBlockSize), inputs)
+	runFailingTestCases(t, mysql.ModeNone, int64(config.ReadBlockSize), inputs)
 }
 
 // Various syntax error cases collected via fuzzing.
 // These cover most of the tokenizer branches.
 
-func (s *testMydumpParserSuite) TestMoreSyntaxError(c *C) {
+func TestMoreSyntaxError(t *testing.T) {
 	inputs := []string{
 		" usin0",
 		"- ",
@@ -862,11 +852,11 @@ func (s *testMydumpParserSuite) TestMoreSyntaxError(c *C) {
 		"x00`0`Valu0",
 	}
 
-	s.runFailingTestCases(c, mysql.ModeNone, 1, inputs)
-	s.runFailingTestCases(c, mysql.ModeNoBackslashEscapes, 1, inputs)
+	runFailingTestCases(t, mysql.ModeNone, 1, inputs)
+	runFailingTestCases(t, mysql.ModeNoBackslashEscapes, 1, inputs)
 }
 
-func (s *testMydumpParserSuite) TestMoreEmptyFiles(c *C) {
+func TestMoreEmptyFiles(t *testing.T) {
 	testCases := []testCase{
 		{input: ""},
 		{input: "--\t"},
@@ -884,6 +874,6 @@ func (s *testMydumpParserSuite) TestMoreEmptyFiles(c *C) {
 		{input: "--\r"},
 	}
 
-	s.runTestCases(c, mysql.ModeNone, 1, testCases)
-	s.runTestCases(c, mysql.ModeNoBackslashEscapes, 1, testCases)
+	runTestCases(t, mysql.ModeNone, 1, testCases)
+	runTestCases(t, mysql.ModeNoBackslashEscapes, 1, testCases)
 }

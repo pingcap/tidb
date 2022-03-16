@@ -2,17 +2,15 @@ package mydump
 
 import (
 	"strings"
+	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb-tools/pkg/filter"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testFileRouterSuite{})
-
-type testFileRouterSuite struct{}
-
-func (t *testFileRouterSuite) TestRouteParser(c *C) {
+func TestRouteParser(t *testing.T) {
 	// valid rules
 	rules := []*config.FileRouteRule{
 		{Pattern: `^(?:[^/]*/)*([^/.]+)\.([^./]+)(?:\.[0-9]+)?\.(csv|sql)`, Schema: "$1", Table: "$2", Type: "$3"},
@@ -24,7 +22,7 @@ func (t *testFileRouterSuite) TestRouteParser(c *C) {
 	}
 	for _, r := range rules {
 		_, err := NewFileRouter([]*config.FileRouteRule{r})
-		c.Assert(err, IsNil)
+		assert.NoError(t, err)
 	}
 
 	// invalid rules
@@ -35,48 +33,48 @@ func (t *testFileRouterSuite) TestRouteParser(c *C) {
 	}
 	for _, r := range invalidRules {
 		_, err := NewFileRouter([]*config.FileRouteRule{r})
-		c.Assert(err, NotNil)
+		assert.Error(t, err)
 	}
 }
 
-func (t *testFileRouterSuite) TestInvalidRouteRule(c *C) {
+func TestInvalidRouteRule(t *testing.T) {
 	rule := &config.FileRouteRule{}
 	rules := []*config.FileRouteRule{rule}
 	_, err := NewFileRouter(rules)
-	c.Assert(err, ErrorMatches, "`path` and `pattern` must not be both empty in \\[\\[mydumper.files\\]\\]")
+	require.Regexp(t, "`path` and `pattern` must not be both empty in \\[\\[mydumper.files\\]\\]", err.Error())
 
 	rule.Pattern = `^(?:[^/]*/)*([^/.]+)\.(?P<table>[^./]+)(?:\.(?P<key>[0-9]+))?\.(?P<type>csv|sql)(?:\.(?P<cp>[A-Za-z0-9]+))?$`
 	_, err = NewFileRouter(rules)
-	c.Assert(err, ErrorMatches, "field 'type' match pattern can't be empty")
+	require.Regexp(t, "field 'type' match pattern can't be empty", err.Error())
 
 	rule.Type = "$type"
 	_, err = NewFileRouter(rules)
-	c.Assert(err, ErrorMatches, "field 'schema' match pattern can't be empty")
+	require.Regexp(t, "field 'schema' match pattern can't be empty", err.Error())
 
 	rule.Schema = "$schema"
 	_, err = NewFileRouter(rules)
-	c.Assert(err, ErrorMatches, "invalid named capture '\\$schema'")
+	require.Regexp(t, "invalid named capture '\\$schema'", err.Error())
 
 	rule.Schema = "$1"
 	_, err = NewFileRouter(rules)
-	c.Assert(err, ErrorMatches, "field 'table' match pattern can't be empty")
+	require.Regexp(t, "field 'table' match pattern can't be empty", err.Error())
 
 	rule.Table = "$table"
 	_, err = NewFileRouter(rules)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	rule.Path = "/tmp/1.sql"
 	_, err = NewFileRouter(rules)
-	c.Assert(err, ErrorMatches, "can't set both `path` and `pattern` field in \\[\\[mydumper.files\\]\\]")
+	require.Regexp(t, "can't set both `path` and `pattern` field in \\[\\[mydumper.files\\]\\]", err.Error())
 }
 
-func (t *testFileRouterSuite) TestSingleRouteRule(c *C) {
+func TestSingleRouteRule(t *testing.T) {
 	rules := []*config.FileRouteRule{
 		{Pattern: `^(?:[^/]*/)*([^/.]+)\.(?P<table>[^./]+)(?:\.(?P<key>[0-9]+))?\.(?P<type>csv|sql)(?:\.(?P<cp>[A-Za-z0-9]+))?$`, Schema: "$1", Table: "$table", Type: "$type", Key: "$key", Compression: "$cp"},
 	}
 
 	r, err := NewFileRouter(rules)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	inputOutputMap := map[string][]string{
 		"my_schema.my_table.sql":           {"my_schema", "my_table", "", "", "sql"},
@@ -86,13 +84,13 @@ func (t *testFileRouterSuite) TestSingleRouteRule(c *C) {
 	}
 	for path, fields := range inputOutputMap {
 		res, err := r.Route(path)
-		c.Assert(err, IsNil)
+		assert.NoError(t, err)
 		compress, e := parseCompressionType(fields[3])
-		c.Assert(e, IsNil)
+		assert.NoError(t, e)
 		ty, e := parseSourceType(fields[4])
-		c.Assert(e, IsNil)
+		assert.NoError(t, e)
 		exp := &RouteResult{filter.Table{Schema: fields[0], Name: fields[1]}, fields[2], compress, ty}
-		c.Assert(res, DeepEquals, exp)
+		assert.Equal(t, exp, res)
 	}
 
 	notMatchPaths := []string{
@@ -104,14 +102,14 @@ func (t *testFileRouterSuite) TestSingleRouteRule(c *C) {
 	}
 	for _, p := range notMatchPaths {
 		res, err := r.Route(p)
-		c.Assert(res, IsNil)
-		c.Assert(err, IsNil)
+		assert.Nil(t, res)
+		assert.NoError(t, err)
 	}
 
 	rule := &config.FileRouteRule{Pattern: `^(?:[^/]*/)*([^/.]+)\.(?P<table>[^./]+)(?:\.(?P<key>[0-9]+))?\.(?P<type>\w+)(?:\.(?P<cp>[A-Za-z0-9]+))?$`, Schema: "$1", Table: "$table", Type: "$type", Key: "$key", Compression: "$cp"}
 	r, err = NewFileRouter([]*config.FileRouteRule{rule})
-	c.Assert(err, IsNil)
-	c.Assert(r, NotNil)
+	require.NoError(t, err)
+	require.NotNil(t, r)
 	invalidMatchPaths := []string{
 		"my_schema.my_table.sql.gz",
 		"my_schema.my_table.sql.rar",
@@ -119,12 +117,12 @@ func (t *testFileRouterSuite) TestSingleRouteRule(c *C) {
 	}
 	for _, p := range invalidMatchPaths {
 		res, err := r.Route(p)
-		c.Assert(res, IsNil)
-		c.Assert(err, NotNil)
+		assert.Nil(t, res)
+		assert.Error(t, err)
 	}
 }
 
-func (t *testFileRouterSuite) TestMultiRouteRule(c *C) {
+func TestMultiRouteRule(t *testing.T) {
 	// multi rule don't intersect with each other
 	rules := []*config.FileRouteRule{
 		{Pattern: `(?:[^/]*/)*([^/.]+)-schema-create\.sql`, Schema: "$1", Type: SchemaSchema},
@@ -134,7 +132,7 @@ func (t *testFileRouterSuite) TestMultiRouteRule(c *C) {
 	}
 
 	r, err := NewFileRouter(rules)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	inputOutputMap := map[string][]string{
 		"test-schema-create.sql":           {"test", "", "", "", SchemaSchema},
@@ -148,16 +146,16 @@ func (t *testFileRouterSuite) TestMultiRouteRule(c *C) {
 	}
 	for path, fields := range inputOutputMap {
 		res, err := r.Route(path)
-		c.Assert(err, IsNil)
+		assert.NoError(t, err)
 		if len(fields) == 0 {
-			c.Assert(res, IsNil)
+			assert.Nil(t, res)
 		} else {
 			compress, e := parseCompressionType(fields[3])
-			c.Assert(e, IsNil)
+			assert.NoError(t, e)
 			ty, e := parseSourceType(fields[4])
-			c.Assert(e, IsNil)
+			assert.NoError(t, e)
 			exp := &RouteResult{filter.Table{Schema: fields[0], Name: fields[1]}, fields[2], compress, ty}
-			c.Assert(res, DeepEquals, exp)
+			assert.Equal(t, exp, res)
 		}
 	}
 
@@ -166,24 +164,24 @@ func (t *testFileRouterSuite) TestMultiRouteRule(c *C) {
 	p := &config.FileRouteRule{Pattern: `^(?P<schema>[^/.]+)\.(?P<table>[^./]+)(?:\.(?P<key>[0-9]+))?\.(?P<type>csv|sql)(?:\.(?P<cp>[A-Za-z0-9]+))?$`, Schema: "test_schema", Table: "test_table", Type: "$type", Key: "$key", Compression: "$cp"}
 	rules = append(rules, p)
 	r, err = NewFileRouter(rules)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	for path, fields := range inputOutputMap {
 		res, err := r.Route(path)
-		c.Assert(err, IsNil)
+		assert.NoError(t, err)
 		if len(fields) == 0 {
-			c.Assert(res, IsNil)
+			assert.Nil(t, res)
 		} else {
 			compress, e := parseCompressionType(fields[3])
-			c.Assert(e, IsNil)
+			assert.NoError(t, e)
 			ty, e := parseSourceType(fields[4])
-			c.Assert(e, IsNil)
+			assert.NoError(t, e)
 			exp := &RouteResult{filter.Table{Schema: fields[0], Name: fields[1]}, fields[2], compress, ty}
-			c.Assert(res, DeepEquals, exp)
+			assert.Equal(t, exp, res)
 		}
 	}
 }
 
-func (t *testFileRouterSuite) TestRouteExpanding(c *C) {
+func TestRouteExpanding(t *testing.T) {
 	rule := &config.FileRouteRule{
 		Pattern:     `^(?:[^/]*/)*(?P<schema>[^/.]+)\.(?P<table_name>[^./]+)(?:\.(?P<key>[0-9]+))?\.(?P<type>csv|sql)(?:\.(?P<cp>[A-Za-z0-9]+))?$`,
 		Schema:      "$schema",
@@ -212,22 +210,22 @@ func (t *testFileRouterSuite) TestRouteExpanding(c *C) {
 	for pat, value := range tablePatternResMap {
 		rule.Table = pat
 		router, err := NewFileRouter([]*config.FileRouteRule{rule})
-		c.Assert(err, IsNil)
+		assert.NoError(t, err)
 		res, err := router.Route(path)
-		c.Assert(err, IsNil)
-		c.Assert(res, NotNil)
-		c.Assert(res.Name, Equals, value)
+		assert.NoError(t, err)
+		assert.NotNil(t, res)
+		assert.Equal(t, value, res.Name)
 	}
 
 	invalidPatterns := []string{"$1_$schema", "$schema_$table_name", "$6"}
 	for _, pat := range invalidPatterns {
 		rule.Table = pat
 		_, err := NewFileRouter([]*config.FileRouteRule{rule})
-		c.Assert(err, NotNil)
+		assert.Error(t, err)
 	}
 }
 
-func (t *testFileRouterSuite) TestRouteWithPath(c *C) {
+func TestRouteWithPath(t *testing.T) {
 	fileName := "myschema.(my_table$1).000.sql"
 	rule := &config.FileRouteRule{
 		Path:   fileName,
@@ -238,18 +236,18 @@ func (t *testFileRouterSuite) TestRouteWithPath(c *C) {
 	}
 	r := *rule
 	router, err := NewFileRouter([]*config.FileRouteRule{&r})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	res, err := router.Route(fileName)
-	c.Assert(err, IsNil)
-	c.Assert(res, NotNil)
-	c.Assert(res.Schema, Equals, rule.Schema)
-	c.Assert(res.Name, Equals, rule.Table)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Equal(t, rule.Schema, res.Schema)
+	require.Equal(t, rule.Table, res.Name)
 	ty, _ := parseSourceType(rule.Type)
-	c.Assert(res.Type, Equals, ty)
-	c.Assert(res.Key, Equals, rule.Key)
+	require.Equal(t, ty, res.Type)
+	require.Equal(t, rule.Key, res.Key)
 
 	// replace all '.' by '-', if with plain regex pattern, will still match
 	res, err = router.Route(strings.ReplaceAll(fileName, ".", "-"))
-	c.Assert(err, IsNil)
-	c.Assert(res, IsNil)
+	require.NoError(t, err)
+	require.Nil(t, res)
 }

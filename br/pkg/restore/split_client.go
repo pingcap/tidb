@@ -28,9 +28,8 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/store/pdtypes"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/server/config"
-	"github.com/tikv/pd/server/schedule/placement"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -40,6 +39,7 @@ import (
 
 const (
 	splitRegionMaxRetryTime = 4
+	defaultDialTimeout      = time.Minute
 )
 
 // SplitClient is an external client used by RegionSplitter.
@@ -64,18 +64,20 @@ type SplitClient interface {
 	ScatterRegions(ctx context.Context, regionInfo []*RegionInfo) error
 	// GetOperator gets the status of operator of the specified region.
 	GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error)
-	// ScanRegion gets a list of regions, starts from the region that contains key.
+	// ScanRegions gets a list of regions, starts from the region that contains key.
 	// Limit limits the maximum number of regions returned.
 	ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*RegionInfo, error)
 	// GetPlacementRule loads a placement rule from PD.
-	GetPlacementRule(ctx context.Context, groupID, ruleID string) (placement.Rule, error)
+	GetPlacementRule(ctx context.Context, groupID, ruleID string) (pdtypes.Rule, error)
 	// SetPlacementRule insert or update a placement rule to PD.
-	SetPlacementRule(ctx context.Context, rule placement.Rule) error
+	SetPlacementRule(ctx context.Context, rule pdtypes.Rule) error
 	// DeletePlacementRule removes a placement rule from PD.
 	DeletePlacementRule(ctx context.Context, groupID, ruleID string) error
-	// SetStoreLabel add or update specified label of stores. If labelValue
+	// SetStoresLabel add or update specified label of stores. If labelValue
 	// is empty, it clears the label.
 	SetStoresLabel(ctx context.Context, stores []uint64, labelKey, labelValue string) error
+	// InvalidateStoreCache invalidate store cache for the given store id.
+	InvalidateStoreCache(storeID uint64)
 }
 
 // pdClient is a wrapper of pd client, can be used by RegionSplitter.
@@ -89,14 +91,17 @@ type pdClient struct {
 	// 	this may mislead the scatter.
 	needScatterVal  bool
 	needScatterInit sync.Once
+
+	isRawKv bool
 }
 
 // NewSplitClient returns a client used by RegionSplitter.
-func NewSplitClient(client pd.Client, tlsConf *tls.Config) SplitClient {
+func NewSplitClient(client pd.Client, tlsConf *tls.Config, isRawKv bool) SplitClient {
 	cli := &pdClient{
 		client:     client,
 		tlsConf:    tlsConf,
 		storeCache: make(map[uint64]*metapb.Store),
+		isRawKv:    isRawKv,
 	}
 	return cli
 }
@@ -172,8 +177,10 @@ func (c *pdClient) GetRegionByID(ctx context.Context, regionID uint64) (*RegionI
 		return nil, nil
 	}
 	return &RegionInfo{
-		Region: region.Meta,
-		Leader: region.Leader,
+		Region:       region.Meta,
+		Leader:       region.Leader,
+		PendingPeers: region.PendingPeers,
+		DownPeers:    region.DownPeers,
 	}, nil
 }
 
@@ -188,11 +195,7 @@ func (c *pdClient) SplitRegion(ctx context.Context, regionInfo *RegionInfo, key 
 		peer = regionInfo.Region.Peers[0]
 	}
 	storeID := peer.GetStoreId()
-	store, err := c.GetStore(ctx, storeID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	conn, err := grpc.Dial(store.GetAddress(), grpc.WithInsecure())
+	conn, err := c.dialStore(ctx, storeID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -255,6 +258,7 @@ func splitRegionWithFailpoint(
 	peer *metapb.Peer,
 	client tikvpb.TikvClient,
 	keys [][]byte,
+	isRawKv bool,
 ) (*kvrpcpb.SplitRegionResponse, error) {
 	failpoint.Inject("not-leader-error", func(injectNewLeader failpoint.Value) {
 		log.Debug("failpoint not-leader-error injected.")
@@ -285,6 +289,7 @@ func splitRegionWithFailpoint(
 			Peer:        peer,
 		},
 		SplitKeys: keys,
+		IsRawKv:   isRawKv,
 	})
 }
 
@@ -306,21 +311,13 @@ func (c *pdClient) sendSplitRegionRequest(
 			peer = regionInfo.Region.Peers[0]
 		}
 		storeID := peer.GetStoreId()
-		store, err := c.GetStore(ctx, storeID)
-		if err != nil {
-			return nil, multierr.Append(splitErrors, err)
-		}
-		opt := grpc.WithInsecure()
-		if c.tlsConf != nil {
-			opt = grpc.WithTransportCredentials(credentials.NewTLS(c.tlsConf))
-		}
-		conn, err := grpc.Dial(store.GetAddress(), opt)
+		conn, err := c.dialStore(ctx, storeID)
 		if err != nil {
 			return nil, multierr.Append(splitErrors, err)
 		}
 		defer conn.Close()
 		client := tikvpb.NewTikvClient(conn)
-		resp, err := splitRegionWithFailpoint(ctx, regionInfo, peer, client, keys)
+		resp, err := splitRegionWithFailpoint(ctx, regionInfo, peer, client, keys, c.isRawKv)
 		if err != nil {
 			return nil, multierr.Append(splitErrors, err)
 		}
@@ -369,6 +366,25 @@ func (c *pdClient) sendSplitRegionRequest(
 		return resp, nil
 	}
 	return nil, errors.Trace(splitErrors)
+}
+
+func (c *pdClient) dialStore(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
+	store, err := c.GetStore(ctx, storeID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	credsOpt := grpc.WithInsecure()
+	if c.tlsConf != nil {
+		credsOpt = grpc.WithTransportCredentials(credentials.NewTLS(c.tlsConf))
+	}
+	subCtx, cancel := context.WithTimeout(ctx, defaultDialTimeout)
+	defer cancel()
+	conn, err := grpc.DialContext(subCtx, store.GetAddress(), credsOpt, grpc.WithReturnConnectionError())
+	if err != nil {
+		c.InvalidateStoreCache(storeID)
+		return nil, errors.Trace(err)
+	}
+	return conn, nil
 }
 
 func (c *pdClient) BatchSplitRegionsWithOrigin(
@@ -427,7 +443,7 @@ func (c *pdClient) getStoreCount(ctx context.Context) (int, error) {
 
 func (c *pdClient) getMaxReplica(ctx context.Context) (int, error) {
 	api := c.getPDAPIAddr()
-	configAPI := api + "/pd/api/v1/config"
+	configAPI := api + "/pd/api/v1/config/replicate"
 	req, err := http.NewRequestWithContext(ctx, "GET", configAPI, nil)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -441,11 +457,11 @@ func (c *pdClient) getMaxReplica(ctx context.Context) (int, error) {
 			log.Error("Response fail to close", zap.Error(err))
 		}
 	}()
-	var conf config.Config
+	var conf pdtypes.ReplicationConfig
 	if err := json.NewDecoder(res.Body).Decode(&conf); err != nil {
 		return 0, errors.Trace(err)
 	}
-	return int(conf.Replication.MaxReplicas), nil
+	return int(conf.MaxReplicas), nil
 }
 
 func (c *pdClient) checkNeedScatter(ctx context.Context) (bool, error) {
@@ -493,8 +509,8 @@ func (c *pdClient) ScanRegions(ctx context.Context, key, endKey []byte, limit in
 	return regionInfos, nil
 }
 
-func (c *pdClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (placement.Rule, error) {
-	var rule placement.Rule
+func (c *pdClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (pdtypes.Rule, error) {
+	var rule pdtypes.Rule
 	addr := c.getPDAPIAddr()
 	if addr == "" {
 		return rule, errors.Annotate(berrors.ErrRestoreSplitFailed, "failed to add stores labels: no leader")
@@ -523,7 +539,7 @@ func (c *pdClient) GetPlacementRule(ctx context.Context, groupID, ruleID string)
 	return rule, nil
 }
 
-func (c *pdClient) SetPlacementRule(ctx context.Context, rule placement.Rule) error {
+func (c *pdClient) SetPlacementRule(ctx context.Context, rule pdtypes.Rule) error {
 	addr := c.getPDAPIAddr()
 	if addr == "" {
 		return errors.Annotate(berrors.ErrPDLeaderNotFound, "failed to add stores labels")
@@ -594,10 +610,16 @@ func (c *pdClient) getPDAPIAddr() string {
 	return strings.TrimRight(addr, "/")
 }
 
-func checkRegionEpoch(new, old *RegionInfo) bool {
-	return new.Region.GetId() == old.Region.GetId() &&
-		new.Region.GetRegionEpoch().GetVersion() == old.Region.GetRegionEpoch().GetVersion() &&
-		new.Region.GetRegionEpoch().GetConfVer() == old.Region.GetRegionEpoch().GetConfVer()
+func (c *pdClient) InvalidateStoreCache(storeID uint64) {
+	c.mu.Lock()
+	delete(c.storeCache, storeID)
+	c.mu.Unlock()
+}
+
+func checkRegionEpoch(_new, _old *RegionInfo) bool {
+	return _new.Region.GetId() == _old.Region.GetId() &&
+		_new.Region.GetRegionEpoch().GetVersion() == _old.Region.GetRegionEpoch().GetVersion() &&
+		_new.Region.GetRegionEpoch().GetConfVer() == _old.Region.GetRegionEpoch().GetConfVer()
 }
 
 // exponentialBackoffer trivially retry any errors it meets.

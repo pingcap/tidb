@@ -21,12 +21,17 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
 
 func TestDropAndTruncatePartition(t *testing.T) {
-	store := testCreateStoreT(t, "test_store")
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
 	d, err := testNewDDLAndStart(
 		context.Background(),
 		WithStore(store),
@@ -34,19 +39,16 @@ func TestDropAndTruncatePartition(t *testing.T) {
 	)
 	require.NoError(t, err)
 	defer func() {
-		err := d.Stop()
-		require.NoError(t, err)
+		require.NoError(t, d.Stop())
 	}()
 	dbInfo, err := testSchemaInfo(d, "test_partition")
 	require.NoError(t, err)
-	testCreateSchemaT(t, testNewContext(d), d, dbInfo)
+	testCreateSchema(t, testNewContext(d), d, dbInfo)
 	// generate 5 partition in tableInfo.
 	tblInfo, partIDs := buildTableInfoWithPartition(t, d)
 	ctx := testNewContext(d)
-	testCreateTableT(t, ctx, d, dbInfo, tblInfo)
-
+	testCreateTable(t, ctx, d, dbInfo, tblInfo)
 	testDropPartition(t, ctx, d, dbInfo, tblInfo, []string{"p0", "p1"})
-
 	testTruncatePartition(t, ctx, d, dbInfo, tblInfo, []int64{partIDs[3], partIDs[4]})
 }
 
@@ -120,8 +122,8 @@ func testDropPartition(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *mod
 	job := buildDropPartitionJob(dbInfo, tblInfo, partNames)
 	err := d.doDDLJob(ctx, job)
 	require.NoError(t, err)
-	v := getSchemaVerT(t, ctx)
-	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	v := getSchemaVer(t, ctx)
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
@@ -139,7 +141,7 @@ func testTruncatePartition(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo 
 	job := buildTruncatePartitionJob(dbInfo, tblInfo, pids)
 	err := d.doDDLJob(ctx, job)
 	require.NoError(t, err)
-	v := getSchemaVerT(t, ctx)
-	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	v := getSchemaVer(t, ctx)
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }

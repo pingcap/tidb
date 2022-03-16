@@ -533,11 +533,27 @@ func TestAlterTableSpecRestore(t *testing.T) {
 		{"add stats_extended if not exists s1 dependency(a,b)", "ADD STATS_EXTENDED IF NOT EXISTS `s1` DEPENDENCY(`a`, `b`)"},
 		{"drop stats_extended s1", "DROP STATS_EXTENDED `s1`"},
 		{"drop stats_extended if exists s1", "DROP STATS_EXTENDED IF EXISTS `s1`"},
+		{"placement policy p1", "PLACEMENT POLICY = `p1`"},
+		{"placement policy p1 comment='aaa'", "PLACEMENT POLICY = `p1` COMMENT = 'aaa'"},
+		{"partition p0 placement policy p1", "PARTITION `p0` PLACEMENT POLICY = `p1`"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*AlterTableStmt).Specs[0]
 	}
 	runNodeRestoreTest(t, testCases, "ALTER TABLE t %s", extractNodeFunc)
+}
+
+func TestAlterTableWithSpecialCommentRestore(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{"placement policy p1", "/*T![placement] PLACEMENT POLICY = `p1` */"},
+		{"placement policy p1 comment='aaa'", "/*T![placement] PLACEMENT POLICY = `p1` */ COMMENT = 'aaa'"},
+		{"partition p0 placement policy p1", "/*T![placement] PARTITION `p0` PLACEMENT POLICY = `p1` */"},
+	}
+
+	extractNodeFunc := func(node Node) Node {
+		return node.(*AlterTableStmt).Specs[0]
+	}
+	runNodeRestoreTestWithFlags(t, testCases, "ALTER TABLE t %s", extractNodeFunc, format.DefaultRestoreFlags|format.RestoreTiDBSpecialComment)
 }
 
 func TestAlterTableOptionRestore(t *testing.T) {
@@ -624,6 +640,116 @@ func TestDropIndexRestore(t *testing.T) {
 	for _, ca := range cases {
 		testCases := []NodeRestoreTestCase{
 			{sourceSQL, ca.expectSQL},
+		}
+		runNodeRestoreTestWithFlags(t, testCases, "%s", extractNodeFunc, ca.flags)
+	}
+}
+
+func TestAlterDatabaseRestore(t *testing.T) {
+	sourceSQL1 := "alter database db1 charset='ascii'"
+	sourceSQL2 := "alter database db1 collate='ascii_bin'"
+	sourceSQL3 := "alter database db1 placement policy p1"
+	sourceSQL4 := "alter database db1 placement policy p1 charset='ascii'"
+
+	cases := []struct {
+		sourceSQL string
+		flags     format.RestoreFlags
+		expectSQL string
+	}{
+		{sourceSQL1, format.DefaultRestoreFlags, "ALTER DATABASE `db1` CHARACTER SET = ascii"},
+		{sourceSQL1, format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment, "ALTER DATABASE `db1` CHARACTER SET = ascii"},
+		{sourceSQL2, format.DefaultRestoreFlags, "ALTER DATABASE `db1` COLLATE = ascii_bin"},
+		{sourceSQL2, format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment, "ALTER DATABASE `db1` COLLATE = ascii_bin"},
+		{sourceSQL3, format.DefaultRestoreFlags, "ALTER DATABASE `db1` PLACEMENT POLICY = `p1`"},
+		{sourceSQL3, format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment, "/*T![placement] ALTER DATABASE `db1` PLACEMENT POLICY = `p1` */"},
+		{sourceSQL4, format.DefaultRestoreFlags, "ALTER DATABASE `db1` PLACEMENT POLICY = `p1` CHARACTER SET = ascii"},
+		{sourceSQL4, format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment, "ALTER DATABASE `db1` /*T![placement] PLACEMENT POLICY = `p1` */ CHARACTER SET = ascii"},
+	}
+
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+
+	for _, ca := range cases {
+		testCases := []NodeRestoreTestCase{
+			{ca.sourceSQL, ca.expectSQL},
+		}
+		runNodeRestoreTestWithFlags(t, testCases, "%s", extractNodeFunc, ca.flags)
+	}
+}
+
+func TestCreatePlacementPolicyRestore(t *testing.T) {
+	sourceSQL1 := "create placement policy p1 primary_region=\"r1\" regions='r1,r2' followers=1"
+	sourceSQL2 := "create placement policy if not exists p1 primary_region=\"r1\" regions='r1,r2' followers=1"
+	sourceSQL3 := "create or replace placement policy p1 followers=1"
+	cases := []struct {
+		sourceSQL string
+		flags     format.RestoreFlags
+		expectSQL string
+	}{
+		{sourceSQL1, format.DefaultRestoreFlags, "CREATE PLACEMENT POLICY `p1` PRIMARY_REGION = 'r1' REGIONS = 'r1,r2' FOLLOWERS = 1"},
+		{sourceSQL1, format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment, "/*T![placement] CREATE PLACEMENT POLICY `p1` PRIMARY_REGION = 'r1' REGIONS = 'r1,r2' FOLLOWERS = 1 */"},
+		{sourceSQL2, format.DefaultRestoreFlags, "CREATE PLACEMENT POLICY IF NOT EXISTS `p1` PRIMARY_REGION = 'r1' REGIONS = 'r1,r2' FOLLOWERS = 1"},
+		{sourceSQL2, format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment, "/*T![placement] CREATE PLACEMENT POLICY IF NOT EXISTS `p1` PRIMARY_REGION = 'r1' REGIONS = 'r1,r2' FOLLOWERS = 1 */"},
+		{sourceSQL3, format.DefaultRestoreFlags, "CREATE OR REPLACE PLACEMENT POLICY `p1` FOLLOWERS = 1"},
+		{sourceSQL3, format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment, "/*T![placement] CREATE OR REPLACE PLACEMENT POLICY `p1` FOLLOWERS = 1 */"},
+	}
+
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+
+	for _, ca := range cases {
+		testCases := []NodeRestoreTestCase{
+			{ca.sourceSQL, ca.expectSQL},
+		}
+		runNodeRestoreTestWithFlags(t, testCases, "%s", extractNodeFunc, ca.flags)
+	}
+}
+
+func TestAlterPlacementPolicyRestore(t *testing.T) {
+	sourceSQL := "alter placement policy p1 primary_region=\"r1\" regions='r1,r2' followers=1"
+	cases := []struct {
+		flags     format.RestoreFlags
+		expectSQL string
+	}{
+		{format.DefaultRestoreFlags, "ALTER PLACEMENT POLICY `p1` PRIMARY_REGION = 'r1' REGIONS = 'r1,r2' FOLLOWERS = 1"},
+		{format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment, "/*T![placement] ALTER PLACEMENT POLICY `p1` PRIMARY_REGION = 'r1' REGIONS = 'r1,r2' FOLLOWERS = 1 */"},
+	}
+
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+
+	for _, ca := range cases {
+		testCases := []NodeRestoreTestCase{
+			{sourceSQL, ca.expectSQL},
+		}
+		runNodeRestoreTestWithFlags(t, testCases, "%s", extractNodeFunc, ca.flags)
+	}
+}
+
+func TestDropPlacementPolicyRestore(t *testing.T) {
+	sourceSQL1 := "drop placement policy p1"
+	sourceSQL2 := "drop placement policy if exists p1"
+	cases := []struct {
+		sourceSQL string
+		flags     format.RestoreFlags
+		expectSQL string
+	}{
+		{sourceSQL1, format.DefaultRestoreFlags, "DROP PLACEMENT POLICY `p1`"},
+		{sourceSQL1, format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment, "/*T![placement] DROP PLACEMENT POLICY `p1` */"},
+		{sourceSQL2, format.DefaultRestoreFlags, "DROP PLACEMENT POLICY IF EXISTS `p1`"},
+		{sourceSQL2, format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment, "/*T![placement] DROP PLACEMENT POLICY IF EXISTS `p1` */"},
+	}
+
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+
+	for _, ca := range cases {
+		testCases := []NodeRestoreTestCase{
+			{ca.sourceSQL, ca.expectSQL},
 		}
 		runNodeRestoreTestWithFlags(t, testCases, "%s", extractNodeFunc, ca.flags)
 	}

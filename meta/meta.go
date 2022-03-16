@@ -165,6 +165,14 @@ func (m *Meta) GenGlobalIDs(n int) ([]int64, error) {
 	return ids, nil
 }
 
+// GenPlacementPolicyID generates next placement policy id globally.
+func (m *Meta) GenPlacementPolicyID() (int64, error) {
+	policyIDMutex.Lock()
+	defer policyIDMutex.Unlock()
+
+	return m.txn.Inc(mPolicyGlobalID, 1)
+}
+
 // GetGlobalID gets current global id.
 func (m *Meta) GetGlobalID() (int64, error) {
 	return m.txn.GetInt64(mNextGlobalIDKey)
@@ -284,22 +292,15 @@ func (m *Meta) checkTableNotExists(dbKey []byte, tableKey []byte) error {
 
 // CreatePolicy creates a policy.
 func (m *Meta) CreatePolicy(policy *model.PolicyInfo) error {
-	if policy.ID != 0 {
-		policyKey := m.policyKey(policy.ID)
-		if err := m.checkPolicyNotExists(policyKey); err != nil {
-			return errors.Trace(err)
-		}
-	} else {
-		// Autofill the policy ID.
-		policyIDMutex.Lock()
-		genID, err := m.txn.Inc(mPolicyGlobalID, 1)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		policyIDMutex.Unlock()
-		policy.ID = genID
+	if policy.ID == 0 {
+		return errors.New("policy.ID is invalid")
 	}
+
 	policyKey := m.policyKey(policy.ID)
+	if err := m.checkPolicyNotExists(policyKey); err != nil {
+		return errors.Trace(err)
+	}
+
 	data, err := json.Marshal(policy)
 	if err != nil {
 		return errors.Trace(err)
@@ -918,6 +919,11 @@ func (m *Meta) GetAllHistoryDDLJobs() ([]*model.Job, error) {
 	return jobs, nil
 }
 
+// GetHistoryDDLCount the count of all history DDL jobs.
+func (m *Meta) GetHistoryDDLCount() (uint64, error) {
+	return m.txn.HGetLen(mDDLJobHistoryKey)
+}
+
 // GetLastNHistoryDDLJobs gets latest N history ddl jobs.
 func (m *Meta) GetLastNHistoryDDLJobs(num int) ([]*model.Job, error) {
 	pairs, err := m.txn.HGetLastN(mDDLJobHistoryKey, num)
@@ -1004,7 +1010,7 @@ func (m *Meta) GetBootstrapVersion() (int64, error) {
 
 // FinishBootstrap finishes bootstrap.
 func (m *Meta) FinishBootstrap(version int64) error {
-	err := m.txn.Set(mBootstrapKey, []byte(fmt.Sprintf("%d", version)))
+	err := m.txn.Set(mBootstrapKey, []byte(strconv.FormatInt(version, 10)))
 	return errors.Trace(err)
 }
 

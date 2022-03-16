@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -17,10 +16,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/pd/server/core"
-	"github.com/tikv/pd/server/schedule/placement"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -30,7 +28,7 @@ type TestClient struct {
 	mu                  sync.RWMutex
 	stores              map[uint64]*metapb.Store
 	regions             map[uint64]*restore.RegionInfo
-	regionsInfo         *core.RegionsInfo // For now it's only used in ScanRegions
+	regionsInfo         *pdtypes.RegionTree // For now it's only used in ScanRegions
 	nextRegionID        uint64
 	injectInScatter     func(*restore.RegionInfo) error
 	supportBatchScatter bool
@@ -43,9 +41,9 @@ func NewTestClient(
 	regions map[uint64]*restore.RegionInfo,
 	nextRegionID uint64,
 ) *TestClient {
-	regionsInfo := core.NewRegionsInfo()
+	regionsInfo := &pdtypes.RegionTree{}
 	for _, regionInfo := range regions {
-		regionsInfo.SetRegion(core.NewRegionInfo(regionInfo.Region, regionInfo.Leader))
+		regionsInfo.SetRegion(pdtypes.NewRegionInfo(regionInfo.Region, regionInfo.Leader))
 	}
 	return &TestClient{
 		stores:          stores,
@@ -216,18 +214,18 @@ func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit 
 	regions := make([]*restore.RegionInfo, 0, len(infos))
 	for _, info := range infos {
 		regions = append(regions, &restore.RegionInfo{
-			Region: info.GetMeta(),
-			Leader: info.GetLeader(),
+			Region: info.Meta,
+			Leader: info.Leader,
 		})
 	}
 	return regions, nil
 }
 
-func (c *TestClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (r placement.Rule, err error) {
+func (c *TestClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (r pdtypes.Rule, err error) {
 	return
 }
 
-func (c *TestClient) SetPlacementRule(ctx context.Context, rule placement.Rule) error {
+func (c *TestClient) SetPlacementRule(ctx context.Context, rule pdtypes.Rule) error {
 	return nil
 }
 
@@ -238,6 +236,8 @@ func (c *TestClient) DeletePlacementRule(ctx context.Context, groupID, ruleID st
 func (c *TestClient) SetStoresLabel(ctx context.Context, stores []uint64, labelKey, labelValue string) error {
 	return nil
 }
+
+func (c *TestClient) InvalidateStoreCache(storeID uint64) {}
 
 type assertRetryLessThanBackoffer struct {
 	max     int
@@ -275,7 +275,7 @@ func TestScatterFinishInTime(t *testing.T) {
 	regionSplitter := restore.NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.Split(ctx, ranges, rewriteRules, func(key [][]byte) {})
+	err := regionSplitter.Split(ctx, ranges, rewriteRules, false, func(key [][]byte) {})
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	if !validateRegions(regions) {
@@ -331,7 +331,7 @@ func runTestSplitAndScatterWith(t *testing.T, client *TestClient) {
 	regionSplitter := restore.NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.Split(ctx, ranges, rewriteRules, func(key [][]byte) {})
+	err := regionSplitter.Split(ctx, ranges, rewriteRules, false, func(key [][]byte) {})
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	if !validateRegions(regions) {
@@ -465,30 +465,39 @@ FindRegion:
 	return true
 }
 
-func (s *testRangeSuite) TestNeedSplit(c *C) {
-	regions := []*restore.RegionInfo{
-		{
-			Region: &metapb.Region{
-				StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
-				EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
+func TestNeedSplit(t *testing.T) {
+	for _, isRawKv := range []bool{false, true} {
+		encode := func(in []byte) []byte {
+			if isRawKv {
+				return in
+			}
+			return codec.EncodeBytes([]byte{}, in)
+		}
+
+		regions := []*restore.RegionInfo{
+			{
+				Region: &metapb.Region{
+					StartKey: encode([]byte("b")),
+					EndKey:   encode([]byte("d")),
+				},
 			},
-		},
+		}
+		// Out of region
+		require.Nil(t, restore.NeedSplit([]byte("a"), regions, isRawKv))
+		// Region start key
+		require.Nil(t, restore.NeedSplit([]byte("b"), regions, isRawKv))
+		// In region
+		region := restore.NeedSplit([]byte("c"), regions, isRawKv)
+		require.Equal(t, 0, bytes.Compare(region.Region.GetStartKey(), encode([]byte("b"))))
+		require.Equal(t, 0, bytes.Compare(region.Region.GetEndKey(), encode([]byte("d"))))
+		// Region end key
+		require.Nil(t, restore.NeedSplit([]byte("d"), regions, isRawKv))
+		// Out of region
+		require.Nil(t, restore.NeedSplit([]byte("e"), regions, isRawKv))
 	}
-	// Out of region
-	c.Assert(restore.NeedSplit([]byte("a"), regions), IsNil)
-	// Region start key
-	c.Assert(restore.NeedSplit([]byte("b"), regions), IsNil)
-	// In region
-	region := restore.NeedSplit([]byte("c"), regions)
-	c.Assert(bytes.Compare(region.Region.GetStartKey(), codec.EncodeBytes([]byte{}, []byte("b"))), Equals, 0)
-	c.Assert(bytes.Compare(region.Region.GetEndKey(), codec.EncodeBytes([]byte{}, []byte("d"))), Equals, 0)
-	// Region end key
-	c.Assert(restore.NeedSplit([]byte("d"), regions), IsNil)
-	// Out of region
-	c.Assert(restore.NeedSplit([]byte("e"), regions), IsNil)
 }
 
-func (s *testRangeSuite) TestRegionConsistency(c *C) {
+func TestRegionConsistency(t *testing.T) {
 	cases := []struct {
 		startKey []byte
 		endKey   []byte
@@ -548,9 +557,8 @@ func (s *testRangeSuite) TestRegionConsistency(c *C) {
 		},
 	}
 	for _, ca := range cases {
-		c.Assert(
-			restore.CheckRegionConsistency(ca.startKey, ca.endKey, ca.regions),
-			ErrorMatches,
-			ca.err)
+		err := restore.CheckRegionConsistency(ca.startKey, ca.endKey, ca.regions)
+		require.Error(t, err)
+		require.Regexp(t, ca.err, err.Error())
 	}
 }
