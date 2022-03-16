@@ -141,6 +141,9 @@ type Context interface {
 	// GetBuiltinFunctionUsage returns the BuiltinFunctionUsage of current Context, which is not thread safe.
 	// Use primitive map type to prevent circular import. Should convert it to telemetry.BuiltinFunctionUsage before using.
 	GetBuiltinFunctionUsage() map[string]uint32
+	// BuiltinFunctionUsageInc increase the counting of each builtin function usage
+	// Notice that this is a thread safe function
+	BuiltinFunctionUsageInc(scalarFuncSigName string)
 	// GetStmtStats returns stmtstats.StatementStats owned by implementation.
 	GetStmtStats() *stmtstats.StatementStats
 	// ShowProcess returns ProcessInfo running in current Context

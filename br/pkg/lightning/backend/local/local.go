@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
+	"github.com/pingcap/tidb/br/pkg/resolver"
 	split "github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
@@ -78,6 +79,10 @@ const (
 	dialTimeout             = 5 * time.Minute
 	maxRetryTimes           = 5
 	defaultRetryBackoffTime = 3 * time.Second
+	// maxWriteAndIngestRetryTimes is the max retry times for write and ingest.
+	// A large retry times is for tolerating tikv cluster failures.
+	maxWriteAndIngestRetryTimes = 30
+	maxRetryBackoffTime         = 30 * time.Second
 
 	gRPCKeepAliveTime    = 10 * time.Minute
 	gRPCKeepAliveTimeout = 5 * time.Minute
@@ -123,23 +128,22 @@ type importClientFactoryImpl struct {
 	conns          *common.GRPCConns
 	splitCli       split.SplitClient
 	tls            *common.TLS
+	resolveBuilder *resolver.Builder
 	tcpConcurrency int
 }
 
 func newImportClientFactoryImpl(splitCli split.SplitClient, tls *common.TLS, tcpConcurrency int) *importClientFactoryImpl {
+	resolveBuilder := resolver.NewBuilder(splitCli)
 	return &importClientFactoryImpl{
 		conns:          common.NewGRPCConns(),
 		splitCli:       splitCli,
 		tls:            tls,
+		resolveBuilder: resolveBuilder,
 		tcpConcurrency: tcpConcurrency,
 	}
 }
 
 func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
-	store, err := f.splitCli.GetStore(ctx, storeID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
 	opt := grpc.WithInsecure()
 	if f.tls.TLSConfig() != nil {
 		opt = grpc.WithTransportCredentials(credentials.NewTLS(f.tls.TLSConfig()))
@@ -148,14 +152,9 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 
 	bfConf := backoff.DefaultConfig
 	bfConf.MaxDelay = gRPCBackOffMaxDelay
-	// we should use peer address for tiflash. for tikv, peer address is empty
-	addr := store.GetPeerAddress()
-	if addr == "" {
-		addr = store.GetAddress()
-	}
 	conn, err := grpc.DialContext(
 		ctx,
-		addr,
+		f.resolveBuilder.Target(storeID),
 		opt,
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
@@ -163,6 +162,7 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 			Timeout:             gRPCKeepAliveTimeout,
 			PermitWithoutStream: true,
 		}),
+		grpc.WithResolvers(f.resolveBuilder),
 	)
 	cancel()
 	if err != nil {
@@ -1276,9 +1276,9 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 				wg.Done()
 			}()
 			var err error
-			// max retry backoff time: 2+4+8+16=30s
+			// max retry backoff time: 2+4+8+16+30*26=810s
 			backOffTime := time.Second
-			for i := 0; i < maxRetryTimes; i++ {
+			for i := 0; i < maxWriteAndIngestRetryTimes; i++ {
 				err = local.writeAndIngestByRange(ctx, engine, startKey, endKey, regionSplitSize, regionSplitKeys)
 				if err == nil || common.IsContextCanceledError(err) {
 					return
@@ -1286,6 +1286,9 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 				log.L().Warn("write and ingest by range failed",
 					zap.Int("retry time", i+1), log.ShortError(err))
 				backOffTime *= 2
+				if backOffTime > maxRetryBackoffTime {
+					backOffTime = maxRetryBackoffTime
+				}
 				select {
 				case <-time.After(backOffTime):
 				case <-ctx.Done():
@@ -1305,6 +1308,9 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 	// wait for all sub tasks finish to avoid panic. if we return on the first error,
 	// the outer tasks may close the pebble db but some sub tasks still read from the db
 	wg.Wait()
+	if allErr == nil {
+		return ctx.Err()
+	}
 	return allErr
 }
 

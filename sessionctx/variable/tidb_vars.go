@@ -593,6 +593,9 @@ const (
 	// TiDBTmpTableMaxSize indicates the max memory size of temporary tables.
 	TiDBTmpTableMaxSize = "tidb_tmp_table_max_size"
 
+	// TiDBEnableLegacyInstanceScope indicates if instance scope can be set with SET SESSION.
+	TiDBEnableLegacyInstanceScope = "tidb_enable_legacy_instance_scope"
+
 	// TiDBTableCacheLease indicates the read lock lease of a cached table.
 	TiDBTableCacheLease = "tidb_table_cache_lease"
 
@@ -639,8 +642,8 @@ const (
 	TiDBDisableColumnTrackingTime = "tidb_disable_column_tracking_time"
 	// TiDBStatsLoadPseudoTimeout indicates whether to fallback to pseudo stats after load timeout.
 	TiDBStatsLoadPseudoTimeout = "tidb_stats_load_pseudo_timeout"
-	// TiDBMemQuotaBindCache indicates the memory quota for the bind cache.
-	TiDBMemQuotaBindCache = "tidb_mem_quota_bind_cache"
+	// TiDBMemQuotaBindingCache indicates the memory quota for the bind cache.
+	TiDBMemQuotaBindingCache = "tidb_mem_quota_binding_cache"
 )
 
 // TiDB intentional limits
@@ -700,7 +703,7 @@ const (
 	DefMaxPreparedStmtCount               = -1
 	DefWaitTimeout                        = 28800
 	DefTiDBMemQuotaApplyCache             = 32 << 20 // 32MB.
-	DefTiDBMemQuotaBindCache              = 64 << 20 // 64MB.
+	DefTiDBMemQuotaBindingCache           = 64 << 20 // 64MB.
 	DefTiDBGeneralLog                     = false
 	DefTiDBPProfSQLCPU                    = 0
 	DefTiDBRetryLimit                     = 10
@@ -795,6 +798,7 @@ const (
 	DefTiDBStmtSummaryMaxSQLLength        = 4096
 	DefTiDBCapturePlanBaseline            = Off
 	DefTiDBEnableIndexMerge               = true
+	DefEnableLegacyInstanceScope          = true
 	DefTiDBTableCacheLease                = 3 // 3s
 	DefTiDBPersistAnalyzeOptions          = true
 	DefTiDBEnableColumnTracking           = false
@@ -838,5 +842,5 @@ var (
 	EnableColumnTracking                  = atomic.NewBool(DefTiDBEnableColumnTracking)
 	StatsLoadSyncWait                     = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
 	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
-	MemQuotaBindCache                     = atomic.NewInt64(DefTiDBMemQuotaBindCache)
+	MemQuotaBindingCache                  = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
 )

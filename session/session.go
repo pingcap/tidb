@@ -232,7 +232,10 @@ type session struct {
 
 	cache [1]ast.StmtNode
 
-	builtinFunctionUsage telemetry.BuiltinFunctionsUsage
+	functionUsageMu struct {
+		sync.RWMutex
+		builtinFunctionUsage telemetry.BuiltinFunctionsUsage
+	}
 	// allowed when tikv disk full happened.
 	diskFullOpt kvrpcpb.DiskFullOpt
 
@@ -676,7 +679,7 @@ func (c *cachedTableRenewLease) renew(ctx context.Context, handle tables.StateRe
 	physicalTime := oracle.GetTimeFromTS(oldLease)
 	newLease := oracle.GoTimeToTS(physicalTime.Add(cacheTableWriteLease))
 
-	succ, err := handle.RenewLease(ctx, tid, newLease, tables.RenewWriteLease)
+	succ, err := handle.RenewWriteLease(ctx, tid, newLease)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1328,6 +1331,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 }
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
+// it is called (but skipped) when setting instance scope
 func (s *session) SetGlobalSysVar(name, value string) (err error) {
 	sv := variable.GetSysVar(name)
 	if sv == nil {
@@ -1338,6 +1342,9 @@ func (s *session) SetGlobalSysVar(name, value string) (err error) {
 	}
 	if err = sv.SetGlobalFromHook(s.sessionVars, value, false); err != nil {
 		return err
+	}
+	if sv.HasInstanceScope() { // skip for INSTANCE scope
+		return nil
 	}
 	if sv.GlobalConfigName != "" {
 		domain.GetDomain(s).NotifyGlobalConfigChange(sv.GlobalConfigName, variable.OnOffToTrueFalse(value))
@@ -1354,6 +1361,9 @@ func (s *session) SetGlobalSysVarOnly(name, value string) (err error) {
 	}
 	if err = sv.SetGlobalFromHook(s.sessionVars, value, true); err != nil {
 		return err
+	}
+	if sv.HasInstanceScope() { // skip for INSTANCE scope
+		return nil
 	}
 	return s.replaceGlobalVariablesTableValue(context.TODO(), sv.Name, value)
 }
@@ -2950,14 +2960,14 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		return nil, err
 	}
 	s := &session{
-		store:                store,
-		sessionVars:          variable.NewSessionVars(),
-		ddlOwnerChecker:      dom.DDL().OwnerManager(),
-		client:               store.GetClient(),
-		mppClient:            store.GetMPPClient(),
-		builtinFunctionUsage: make(telemetry.BuiltinFunctionsUsage),
-		stmtStats:            stmtstats.CreateStatementStats(),
+		store:           store,
+		sessionVars:     variable.NewSessionVars(),
+		ddlOwnerChecker: dom.DDL().OwnerManager(),
+		client:          store.GetClient(),
+		mppClient:       store.GetMPPClient(),
+		stmtStats:       stmtstats.CreateStatementStats(),
 	}
+	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 	if plannercore.PreparedPlanCacheEnabled() {
 		if opt != nil && opt.PreparedPlanCache != nil {
 			s.preparedPlanCache = opt.PreparedPlanCache
@@ -2985,13 +2995,13 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 // a lock context, which cause we can't call createSession directly.
 func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
 	s := &session{
-		store:                store,
-		sessionVars:          variable.NewSessionVars(),
-		client:               store.GetClient(),
-		mppClient:            store.GetMPPClient(),
-		builtinFunctionUsage: make(telemetry.BuiltinFunctionsUsage),
-		stmtStats:            stmtstats.CreateStatementStats(),
+		store:       store,
+		sessionVars: variable.NewSessionVars(),
+		client:      store.GetClient(),
+		mppClient:   store.GetMPPClient(),
+		stmtStats:   stmtstats.CreateStatementStats(),
 	}
+	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
 			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
@@ -3442,8 +3452,22 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 	}
 }
 
+// GetBuiltinFunctionUsage returns the replica of counting of builtin function usage
 func (s *session) GetBuiltinFunctionUsage() map[string]uint32 {
-	return s.builtinFunctionUsage
+	replica := make(map[string]uint32)
+	s.functionUsageMu.RLock()
+	defer s.functionUsageMu.RUnlock()
+	for key, value := range s.functionUsageMu.builtinFunctionUsage {
+		replica[key] = value
+	}
+	return replica
+}
+
+// BuiltinFunctionUsageInc increase the counting of the builtin function usage
+func (s *session) BuiltinFunctionUsageInc(scalarFuncSigName string) {
+	s.functionUsageMu.Lock()
+	defer s.functionUsageMu.Unlock()
+	s.functionUsageMu.builtinFunctionUsage.Inc(scalarFuncSigName)
 }
 
 func (s *session) getSnapshotInterceptor() kv.SnapshotInterceptor {
