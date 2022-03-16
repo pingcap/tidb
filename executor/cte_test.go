@@ -427,7 +427,7 @@ func TestCTEExecError(t *testing.T) {
 	insertStr += ";"
 	tk.MustExec(insertStr)
 
-	// Increase projection concurrency and decrese chunk size
+	// Increase projection concurrency and decrease chunk size
 	// to increase the probability of reproducing the problem.
 	tk.MustExec("set tidb_max_chunk_size = 32")
 	tk.MustExec("set tidb_projection_concurrency = 20")
