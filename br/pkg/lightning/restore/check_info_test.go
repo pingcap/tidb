@@ -18,7 +18,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 

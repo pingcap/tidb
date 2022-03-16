@@ -206,11 +206,7 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 			}
 
 			if status == metaStatusChecksuming {
-<<<<<<< HEAD
-				return errors.New("target table is calculating checksum, please wait unit the checksum is finished and try again.")
-=======
-				return common.ErrAllocTableRowIDs.GenWithStack("Target table is calculating checksum. Please wait until the checksum is finished and try again.")
->>>>>>> a702ef1b7... lightning: add retry and early terminate checking empty table (#31798)
+				return errors.New("Target table is calculating checksum. Please wait until the checksum is finished and try again.")
 			}
 
 			if metaTaskID == m.taskID {
