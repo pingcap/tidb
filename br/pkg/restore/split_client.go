@@ -39,7 +39,6 @@ import (
 
 const (
 	splitRegionMaxRetryTime = 4
-	defaultDialTimeout      = time.Minute
 )
 
 // SplitClient is an external client used by RegionSplitter.
@@ -76,8 +75,6 @@ type SplitClient interface {
 	// SetStoresLabel add or update specified label of stores. If labelValue
 	// is empty, it clears the label.
 	SetStoresLabel(ctx context.Context, stores []uint64, labelKey, labelValue string) error
-	// InvalidateStoreCache invalidate store cache for the given store id.
-	InvalidateStoreCache(storeID uint64)
 }
 
 // pdClient is a wrapper of pd client, can be used by RegionSplitter.
@@ -195,7 +192,11 @@ func (c *pdClient) SplitRegion(ctx context.Context, regionInfo *RegionInfo, key 
 		peer = regionInfo.Region.Peers[0]
 	}
 	storeID := peer.GetStoreId()
-	conn, err := c.dialStore(ctx, storeID)
+	store, err := c.GetStore(ctx, storeID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	conn, err := grpc.Dial(store.GetAddress(), grpc.WithInsecure())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -311,7 +312,15 @@ func (c *pdClient) sendSplitRegionRequest(
 			peer = regionInfo.Region.Peers[0]
 		}
 		storeID := peer.GetStoreId()
-		conn, err := c.dialStore(ctx, storeID)
+		store, err := c.GetStore(ctx, storeID)
+		if err != nil {
+			return nil, multierr.Append(splitErrors, err)
+		}
+		opt := grpc.WithInsecure()
+		if c.tlsConf != nil {
+			opt = grpc.WithTransportCredentials(credentials.NewTLS(c.tlsConf))
+		}
+		conn, err := grpc.Dial(store.GetAddress(), opt)
 		if err != nil {
 			return nil, multierr.Append(splitErrors, err)
 		}
@@ -366,25 +375,6 @@ func (c *pdClient) sendSplitRegionRequest(
 		return resp, nil
 	}
 	return nil, errors.Trace(splitErrors)
-}
-
-func (c *pdClient) dialStore(ctx context.Context, storeID uint64) (*grpc.ClientConn, error) {
-	store, err := c.GetStore(ctx, storeID)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	credsOpt := grpc.WithInsecure()
-	if c.tlsConf != nil {
-		credsOpt = grpc.WithTransportCredentials(credentials.NewTLS(c.tlsConf))
-	}
-	subCtx, cancel := context.WithTimeout(ctx, defaultDialTimeout)
-	defer cancel()
-	conn, err := grpc.DialContext(subCtx, store.GetAddress(), credsOpt, grpc.WithReturnConnectionError())
-	if err != nil {
-		c.InvalidateStoreCache(storeID)
-		return nil, errors.Trace(err)
-	}
-	return conn, nil
 }
 
 func (c *pdClient) BatchSplitRegionsWithOrigin(
@@ -608,12 +598,6 @@ func (c *pdClient) getPDAPIAddr() string {
 		addr = "http://" + addr
 	}
 	return strings.TrimRight(addr, "/")
-}
-
-func (c *pdClient) InvalidateStoreCache(storeID uint64) {
-	c.mu.Lock()
-	delete(c.storeCache, storeID)
-	c.mu.Unlock()
 }
 
 func checkRegionEpoch(_new, _old *RegionInfo) bool {
