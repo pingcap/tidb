@@ -45,7 +45,7 @@ After trials and errors of only-full-group-by check, TiDB ultimately seek to fun
 
 #### How to store function dependency
 
-Generally speaking, functional dependencies store the relationship between columns. According to paper [CS-2000-11.thesis.pdf](https://cs.uwaterloo.ca/research/tr/2000/11/CS-2000-11.thesis.pdf), this relationship can be constant, equivalence, strict and lax. Except constant is a unary relationship, all other relationships can be regarded as binary relationships. Therefore, we can try to use graph theory to store functional dependencies, maintain edge sets between point-set and point-set, and identify different equivalence, strict and lax attributes on the edge sets. For unary constant property, we can still save it as an edge, since constant has no start point-set, we can think of it as a headless edge.
+Generally speaking, functional dependencies store the relationship between columns. According to paper [CS-2000-11.thesis.pdf](https://cs.uwaterloo.ca/research/tr/2000/11/CS-2000-11.thesis.pdf), this relationship can be constant, equivalence, strict and lax. Except constant is a unary relationship, all other relationships can be regarded as binary relationships. Therefore, we can try to use graph theory to store functional dependencies, maintain edge sets between point-set and point-set, and attach equivalence, strict and lax attributes on each edge. For unary constant property, we can still save it as an edge, since constant has no starting point-set, we can regard it as a headless edge.
 
 * equivalence: {a} == {b}
 * strict FD:   {a} -> {b}
