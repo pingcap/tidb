@@ -200,6 +200,7 @@ func (d *ddl) getReorgJob(sess sessionctx.Context) (*model.Job, error) {
 		return nil, err
 	}
 	if len(rows) == 0 {
+		logutil.BgLogger().Info("no reorg job")
 		return nil, nil
 	}
 	jobBinary := rows[0].GetBytes(0)
@@ -265,10 +266,9 @@ func (d *ddl) startDispatchLoop() {
 		notifyDDLJobByEtcdChGeneral = d.etcdCli.Watch(context.Background(), addingDDLJobGeneral)
 		notifyDDLJobByEtcdChReorg = d.etcdCli.Watch(context.Background(), addingDDLJobReorg)
 	}
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 	var ok bool
-	var isTicker bool
 	for {
 		if isChanClosed(d.ctx.Done()) {
 			return
@@ -277,15 +277,14 @@ func (d *ddl) startDispatchLoop() {
 			time.Sleep(time.Second)
 			continue
 		}
-		isTicker = false
 		var enableGeneralDDLJob, enableReorgDDLJob bool
 		select {
 		case <-d.ddlJobCh:
 			enableGeneralDDLJob = true
+			enableReorgDDLJob = true
 		case <-ticker.C:
 			enableGeneralDDLJob = true
 			enableReorgDDLJob = true
-			isTicker = true
 		case _, ok = <-notifyDDLJobByEtcdChGeneral:
 			if !ok {
 				logutil.BgLogger().Error("[ddl] notifyDDLJobByEtcdChGeneral channel closed")
@@ -302,21 +301,16 @@ func (d *ddl) startDispatchLoop() {
 				continue
 			}
 			enableReorgDDLJob = true
+		case <-d.ctx.Done():
+			return
 		}
-		var retryGeneral, retryReorgDDLJob bool
-		var cnt = 0
-		for {
+		for enableGeneralDDLJob || enableReorgDDLJob {
 			if enableGeneralDDLJob {
-				retryGeneral = d.generalDDLJob(sess)
+				enableGeneralDDLJob = d.generalDDLJob(sess)
 			}
 			if enableReorgDDLJob {
-				retryReorgDDLJob = d.reorgDDLJob(sess)
+				enableReorgDDLJob = d.reorgDDLJob(sess)
 			}
-			if (retryGeneral || retryReorgDDLJob) && cnt < 2 && !isTicker {
-				cnt = cnt + 1
-				continue
-			}
-			break
 		}
 	}
 }
@@ -331,13 +325,19 @@ func (d *ddl) generalDDLJob(sctx sessionctx.Context) bool {
 		return false
 	}
 	d.doGeneralDDLJobWorker(job)
-	return false
+	return true
 }
 
 func (d *ddl) doGeneralDDLJobWorker(job *model.Job) {
 	d.insertRunningDDLJobMap(int(job.ID))
 	d.wg.Run(func() {
-		defer d.deleteRunningDDLJobMap(int(job.ID))
+		defer func() {
+			d.deleteRunningDDLJobMap(int(job.ID))
+			if job.IsSynced() || job.IsCancelled() || job.IsRollbackDone() {
+				asyncNotify(d.ddlJobDoneCh)
+			}
+			asyncNotify(d.ddlJobCh)
+		}()
 		log.Info("ready to get generalDDLWorkerPool")
 		wk, err := d.generalDDLWorkerPool.get()
 		log.Info("complete to get generalDDLWorkerPool")
@@ -368,13 +368,19 @@ func (d *ddl) reorgDDLJob(sctx sessionctx.Context) bool {
 		return false
 	}
 	d.doReorgDDLJobWorker(job)
-	return false
+	return true
 }
 
 func (d *ddl) doReorgDDLJobWorker(job *model.Job) {
 	d.insertRunningDDLJobMap(int(job.ID))
 	d.wg.Run(func() {
-		defer d.deleteRunningDDLJobMap(int(job.ID))
+		defer func() {
+			d.deleteRunningDDLJobMap(int(job.ID))
+			if job.IsSynced() || job.IsCancelled() || job.IsRollbackDone() {
+				asyncNotify(d.ddlJobDoneCh)
+			}
+			asyncNotify(d.ddlJobCh)
+		}()
 		log.Info("ready to get reorgWorkerPool")
 		wk, err := d.reorgWorkerPool.get()
 		log.Info("complete to get reorgWorkerPool")
@@ -448,6 +454,7 @@ func updateConcurrencyDDLJob(sctx sessionctx.Context, job *model.Job, updateRawA
 	sql := fmt.Sprintf(updateConcurrencyDDLJobSQL, b, job.ID)
 	_, err = sctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 	if err != nil {
+		logutil.BgLogger().Error("update meet error", zap.Error(err))
 		return err
 	}
 	return nil

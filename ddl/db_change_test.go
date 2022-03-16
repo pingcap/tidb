@@ -1269,14 +1269,15 @@ func (s *stateChangeSuite) TestParallelAlterAndDropSchema() {
 func (s *stateChangeSuite) prepareTestControlParallelExecSQL() (*testkit.TestKit, *testkit.TestKit, chan struct{}, ddl.Callback) {
 	callback := &ddl.TestDDLCallback{}
 	times := 0
-	callback.OnJobUpdatedExported = func(job *model.Job) {
+	callback.OnJobRunBeforeExported = func(job *model.Job) {
 		if times != 0 {
 			return
 		}
 		var qLen int
+		tk := testkit.NewTestKit(s.T(), s.store)
 		for {
 			if variable.AllowConcurrencyDDL.Load() {
-				sess := s.tk.Session().(sessionctx.Context)
+				sess := tk.Session().(sessionctx.Context)
 				jobs, err1 := admin.GetConcurrencyDDLJobs(sess)
 				s.Require().NoError(err1)
 				qLen = len(jobs)

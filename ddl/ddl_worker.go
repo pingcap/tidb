@@ -811,11 +811,6 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}, level
 	d.mu.hook.OnJobUpdated(job)
 	d.mu.RUnlock()
 
-	if job.IsSynced() || job.IsCancelled() || job.IsRollbackDone() {
-		asyncNotify(d.ddlJobDoneCh)
-	} else {
-		asyncNotify(ch)
-	}
 	if w.lockSeqNum {
 		w.lockSeqNum = false
 		d.ddlSeqNumMu.Unlock()
