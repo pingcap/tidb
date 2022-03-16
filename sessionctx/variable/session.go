@@ -992,6 +992,10 @@ type SessionVars struct {
 	// EnablePaging indicates whether enable paging in coprocessor requests.
 	EnablePaging bool
 
+	// EnableLegacyInstanceScope says if SET SESSION can be used to set an instance
+	// scope variable. The default is TRUE.
+	EnableLegacyInstanceScope bool
+
 	// ReadConsistency indicates the read consistency requirement.
 	ReadConsistency ReadConsistencyLevel
 
@@ -1004,6 +1008,8 @@ type SessionVars struct {
 	EnableMutationChecker bool
 	// AssertionLevel controls how strict the assertions on data mutations should be.
 	AssertionLevel AssertionLevel
+	// IgnorePreparedCacheCloseStmt controls if ignore the close-stmt command for prepared statement.
+	IgnorePreparedCacheCloseStmt bool
 	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
 	BatchPendingTiFlashCount int
 }
@@ -1240,6 +1246,7 @@ func NewSessionVars() *SessionVars {
 		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
 		Rng:                         utilMath.NewWithTime(),
 		StatsLoadSyncWait:           StatsLoadSyncWait.Load(),
+		EnableLegacyInstanceScope:   DefEnableLegacyInstanceScope,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
