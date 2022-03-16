@@ -1876,6 +1876,7 @@ func (w *GCWorker) doGCPlacementRules(safePoint uint64, dr util.DelRangeTask, gc
 		historyJob = &model.Job{
 			ID:      dr.JobID,
 			Type:    model.ActionDropTable,
+			TableID: int64(v.(int)),
 			RawArgs: args,
 		}
 	})
