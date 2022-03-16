@@ -55,14 +55,14 @@ run_sql "DROP PLACEMENT POLICY tworeplicas;"
 echo "restore with tidb-placement start..."
 run_br restore db --db $DB -s "local://$TEST_DIR/${DB}v2" --pd $PD_ADDR
 
-$policy_count=$(run_sql "use $DB; show placement;" | grep "POLICY fivereplicas" | wc -l)
-if [ "$policy_count" -ne "0" ];then
+policy_count=$(run_sql "use $DB; show placement;" | grep "POLICY fivereplicas" | wc -l)
+if [ "$policy_count" -ne "1" ];then
     echo "TEST: [$TEST_NAME] failed! due to policy restore failed"
     exit 1
 fi
 
-$policy_count=$(run_sql "use $DB; show placement;" | grep "POLICY tworeplicas" | wc -l)
-if [ "$policy_count" -ne "0" ];then
+policy_count=$(run_sql "use $DB; show placement;" | grep "POLICY tworeplicas" | wc -l)
+if [ "$policy_count" -ne "1" ];then
     echo "TEST: [$TEST_NAME] failed! due to policy restore failed"
     exit 1
 fi
