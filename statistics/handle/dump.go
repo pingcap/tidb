@@ -219,10 +219,23 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			hist := statistics.HistogramFromProto(jsonCol.Histogram)
 			count := int64(hist.TotalRowCount())
 			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+			// Deal with sortKey, the length of sortKey maybe longer than the column's length.
+			orgLen := colInfo.FieldType.Flen
+			if types.IsString(colInfo.FieldType.Tp) {
+				colInfo.Flen = types.UnspecifiedLength
+			}
 			hist, err := hist.ConvertTo(sc, &colInfo.FieldType)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+<<<<<<< HEAD
+=======
+			if types.IsString(colInfo.FieldType.Tp) {
+				colInfo.Flen = orgLen
+			}
+			cm, topN := statistics.CMSketchAndTopNFromProto(jsonCol.CMSketch)
+			fms := statistics.FMSketchFromProto(jsonCol.FMSketch)
+>>>>>>> 128dc1682... statistics: fix load stat for new collation column (#33146)
 			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.TotColSize, hist.Correlation = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion, jsonCol.TotColSize, jsonCol.Correlation
 			col := &statistics.Column{
 				PhysicalID: physicalID,
