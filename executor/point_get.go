@@ -156,6 +156,9 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	} else {
 		e.snapshot = e.ctx.GetSnapshotWithTS(snapshotTS)
 	}
+	if e.ctx.GetSessionVars().StmtCtx.RCCheckTS {
+		e.snapshot.SetOption(kv.IsolationLevel, kv.RCCheckTS)
+	}
 	if e.cacheTable != nil {
 		e.snapshot = cacheTableSnapshot{e.snapshot, e.cacheTable}
 	}
@@ -171,7 +174,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	readReplicaType := e.ctx.GetSessionVars().GetReplicaRead()
-	if readReplicaType.IsFollowerRead() {
+	if readReplicaType.IsFollowerRead() && !e.ctx.GetSessionVars().StmtCtx.RCCheckTS {
 		e.snapshot.SetOption(kv.ReplicaRead, readReplicaType)
 	}
 	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
