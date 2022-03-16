@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/util"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -43,7 +44,9 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -169,7 +172,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	re := tk.MustQuery("show table t1 regions")
 	rows := re.Rows()
 	require.Len(t, rows, 3)
-	tbl := tk.GetTableByName("test", "t1")
+	tbl := external.GetTableByName(t, tk, "test", "t1")
 	partitionDef := tbl.Meta().GetPartitionInfo().Definitions
 	require.Regexp(t, fmt.Sprintf("t_%d_.*", partitionDef[0].ID), rows[0][1])
 	require.Regexp(t, fmt.Sprintf("t_%d_.*", partitionDef[1].ID), rows[1][1])
@@ -184,7 +187,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	rows = re.Rows()
 	// Table t2 which create like t_pre should have 4 regions now.
 	require.Len(t, rows, 4)
-	tbl = tk.GetTableByName("test", "t2")
+	tbl = external.GetTableByName(t, tk, "test", "t2")
 	require.Equal(t, fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID), rows[1][1])
 	require.Equal(t, fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID), rows[2][1])
 	require.Equal(t, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID), rows[3][1])
@@ -193,7 +196,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	re = tk.MustQuery("show table t2 regions")
 	rows = re.Rows()
 	require.Equal(t, 4, len(rows))
-	tbl = tk.GetTableByName("test", "t2")
+	tbl = external.GetTableByName(t, tk, "test", "t2")
 	require.Equal(t, fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID), rows[1][1])
 	require.Equal(t, fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID), rows[2][1])
 	require.Equal(t, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID), rows[3][1])
@@ -265,7 +268,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec("create global temporary table shard_row_id_temporary_table_plus (a int) on commit delete rows")
 	defer tk.MustExec("drop table if exists shard_row_id_table, shard_row_id_temporary_table, shard_row_id_table_plus, shard_row_id_temporary_table_plus")
 	err = tk.ExecToErr("alter table shard_row_id_temporary_table_plus shard_row_id_bits = 4")
-	require.Equal(t, ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error(), err.Error())
+	require.Equal(t, dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error(), err.Error())
 
 	// Test partition.
 	tk.MustExec("drop table if exists global_partition_table")
@@ -481,9 +484,7 @@ func TestCancelAddIndexPanic(t *testing.T) {
 			checkErr = txn.Commit(context.Background())
 		}
 	}
-	origHook := dom.DDL().GetHook()
-	defer dom.DDL().(ddl.DDLForTest).SetHook(origHook)
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 	rs, err := tk.Exec("alter table t add index idx_c2(c2)")
 	if rs != nil {
 		require.NoError(t, rs.Close())
@@ -507,15 +508,15 @@ func TestRecoverTableByJobID(t *testing.T) {
 	tk.MustExec("create table t_recover (a int)")
 	defer func(originGC bool) {
 		if originGC {
-			ddl.EmulatorGCEnable()
+			util.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			util.EmulatorGCDisable()
 		}
-	}(ddl.IsEmulatorGCEnable())
+	}(util.IsEmulatorGCEnable())
 
 	// disable emulator GC.
 	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
-	ddl.EmulatorGCDisable()
+	util.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
 	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
 	timeAfterDrop := time.Now().Add(48 * 60 * 60 * time.Second).Format(gcTimeFormat)
@@ -624,15 +625,15 @@ func TestRecoverTableByJobIDFail(t *testing.T) {
 	tk.MustExec("create table t_recover (a int)")
 	defer func(originGC bool) {
 		if originGC {
-			ddl.EmulatorGCEnable()
+			util.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			util.EmulatorGCDisable()
 		}
-	}(ddl.IsEmulatorGCEnable())
+	}(util.IsEmulatorGCEnable())
 
 	// disable emulator GC.
-	// Otherwise, emulator GC will delete table record as soon as possible after execute drop table ddl.
-	ddl.EmulatorGCDisable()
+	// Otherwise, emulator GC will delete table record as soon as possible after execute drop table util.
+	util.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
 	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
@@ -664,9 +665,7 @@ func TestRecoverTableByJobIDFail(t *testing.T) {
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `return(true)`))
 		}
 	}
-	origHook := dom.DDL().GetHook()
-	defer dom.DDL().(ddl.DDLForTest).SetHook(origHook)
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 
 	// do recover table.
 	tk.MustExec(fmt.Sprintf("recover table by job %d", jobID))
@@ -695,15 +694,15 @@ func TestRecoverTableByTableNameFail(t *testing.T) {
 	tk.MustExec("create table t_recover (a int)")
 	defer func(originGC bool) {
 		if originGC {
-			ddl.EmulatorGCEnable()
+			util.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			util.EmulatorGCDisable()
 		}
-	}(ddl.IsEmulatorGCEnable())
+	}(util.IsEmulatorGCEnable())
 
 	// disable emulator GC.
 	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
-	ddl.EmulatorGCDisable()
+	util.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
 	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
@@ -726,9 +725,7 @@ func TestRecoverTableByTableNameFail(t *testing.T) {
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockRecoverTableCommitErr", `return(true)`))
 		}
 	}
-	origHook := dom.DDL().GetHook()
-	defer dom.DDL().(ddl.DDLForTest).SetHook(origHook)
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 
 	// do recover table.
 	tk.MustExec("recover table t_recover")
@@ -812,9 +809,7 @@ func TestCanceledJobTakeTime(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
-	origHook := dom.DDL().GetHook()
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
-	defer dom.DDL().(ddl.DDLForTest).SetHook(origHook)
+	dom.DDL().SetHook(hook)
 
 	originalWT := ddl.GetWaitTimeWhenErrorOccurred()
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Second)
@@ -840,7 +835,7 @@ func TestTableLocksEnable(t *testing.T) {
 
 	tk.MustExec("lock tables t1 write")
 	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1235 LOCK TABLES is not supported. To enable this experimental feature, set 'enable-table-lock' in the configuration file."))
-	tbl := tk.GetTableByName("test", "t1")
+	tbl := external.GetTableByName(t, tk, "test", "t1")
 	dom := domain.GetDomain(tk.Session())
 	require.NoError(t, dom.Reload())
 	require.Nil(t, tbl.Meta().Lock)
@@ -871,7 +866,7 @@ func TestAutoRandom(t *testing.T) {
 
 	assertInvalidAutoRandomErr := func(sql string, errMsg string, args ...interface{}) {
 		err := tk.ExecToErr(sql)
-		require.EqualError(t, err, ddl.ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(errMsg, args...)).Error())
+		require.EqualError(t, err, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(errMsg, args...)).Error())
 	}
 
 	assertPKIsNotHandle := func(sql, errCol string) {
@@ -1097,7 +1092,7 @@ func TestAutoRandomWithPreSplitRegion(t *testing.T) {
 	re := tk.MustQuery("show table t regions")
 	rows := re.Rows()
 	require.Len(t, rows, 4)
-	tbl := tk.GetTableByName("auto_random_db", "t")
+	tbl := external.GetTableByName(t, tk, "auto_random_db", "t") //nolint:typecheck
 	require.Equal(t, fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID), rows[1][1])
 	require.Equal(t, fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID), rows[2][1])
 	require.Equal(t, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID), rows[3][1])
@@ -1291,13 +1286,13 @@ func TestLocalTemporaryTableBlockedDDL(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int)")
 	tk.MustExec("create temporary table tmp1 (id int primary key, a int unique, b int)")
-	require.ErrorIs(t, tk.ExecToErr("rename table tmp1 to tmp2"), ddl.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("alter table tmp1 add column c int"), ddl.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("alter table tmp1 add index b(b)"), ddl.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("create index a on tmp1(b)"), ddl.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("drop index a on tmp1"), ddl.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("lock tables tmp1 read"), ddl.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("lock tables tmp1 write"), ddl.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("lock tables t1 read, tmp1 read"), ddl.ErrUnsupportedLocalTempTableDDL)
-	require.ErrorIs(t, tk.ExecToErr("admin cleanup table lock tmp1"), ddl.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("rename table tmp1 to tmp2"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("alter table tmp1 add column c int"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("alter table tmp1 add index b(b)"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("create index a on tmp1(b)"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("drop index a on tmp1"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("lock tables tmp1 read"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("lock tables tmp1 write"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("lock tables t1 read, tmp1 read"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("admin cleanup table lock tmp1"), dbterror.ErrUnsupportedLocalTempTableDDL)
 }
