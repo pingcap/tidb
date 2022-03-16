@@ -619,14 +619,8 @@ func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
 				determinants.Insert(int(one.UniqueID))
 				groupByColsOutputCols.Insert(int(one.UniqueID))
 			}
-			nullable := false
-			result := expression.EvaluateExprWithNull(la.ctx, la.schema, x)
-			con, ok := result.(*expression.Constant)
-			if !ok || con.Value.IsNull() {
-				// if x can be nullable when referred columns are null, the extended column can be nullable.
-				nullable = true
-			}
-			if !nullable || determinants.SubsetOf(fds.NotNullCols) {
+			notnull := isNullRejected(la.ctx, la.schema, x)
+			if notnull || determinants.SubsetOf(fds.NotNullCols) {
 				notnullColsUniqueIDs.Insert(scalarUniqueID)
 			}
 			fds.AddStrictFunctionalDependency(determinants, fd.NewFastIntSet(scalarUniqueID))
