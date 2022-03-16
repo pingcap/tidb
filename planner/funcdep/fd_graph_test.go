@@ -236,7 +236,7 @@ func TestFDSet_AddConstant(t *testing.T) {
 	require.Equal(t, "(4)", fd.fdEdges[1].from.String()) // determinant 3 reduced as constant, leaving FD {d} --> {f,g}.
 	require.Equal(t, "(5,6)", fd.fdEdges[1].to.String())
 
-	fd.AddLaxFunctionalDependency(NewFastIntSet(7), NewFastIntSet(5, 6), false) // {g} ~~> {e,f}
+	fd.AddLaxFunctionalDependency(NewFastIntSet(7), NewFastIntSet(5, 6)) // {g} ~~> {e,f}
 	require.Equal(t, len(fd.fdEdges), 3)
 	require.False(t, fd.fdEdges[2].strict)
 	require.False(t, fd.fdEdges[2].equiv)
@@ -254,25 +254,25 @@ func TestFDSet_AddConstant(t *testing.T) {
 
 func TestFDSet_LaxImplies(t *testing.T) {
 	fd := FDSet{}
-	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(2, 3), false)
-	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(2), false)
+	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(2, 3))
+	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(2))
 	// lax FD won't imply each other once they have the different to side.
 	require.Equal(t, "(1)~~>(2,3), (1)~~>(2)", fd.String())
 
 	fd = FDSet{}
-	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(2), false)
-	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(2, 3), false)
+	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(2))
+	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(2, 3))
 	require.Equal(t, "(1)~~>(2), (1)~~>(2,3)", fd.String())
 
 	fd = FDSet{}
-	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(3), false)
-	fd.AddLaxFunctionalDependency(NewFastIntSet(1, 2), NewFastIntSet(3), false)
+	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(3))
+	fd.AddLaxFunctionalDependency(NewFastIntSet(1, 2), NewFastIntSet(3))
 	// lax FD can imply each other once they have the same to side. {1,2} ~~> {3} implies {1} ~~> {3}
 	require.Equal(t, "(1)~~>(3)", fd.String())
 
 	fd = FDSet{}
-	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(3, 4), false)
-	fd.AddLaxFunctionalDependency(NewFastIntSet(1, 2), NewFastIntSet(3), false)
+	fd.AddLaxFunctionalDependency(NewFastIntSet(1), NewFastIntSet(3, 4))
+	fd.AddLaxFunctionalDependency(NewFastIntSet(1, 2), NewFastIntSet(3))
 	// lax FD won't imply each other once they have the different to side. {1,2} ~~> {3} implies {1} ~~> {3}
 	require.Equal(t, "(1)~~>(3,4), (1,2)~~>(3)", fd.String())
 }
