@@ -18,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 
@@ -543,15 +544,11 @@ func (s *checkInfoSuite) TestCheckTableEmpty(c *C) {
 	mock.ExpectQuery("select 1 from `test1`.`tbl2` limit 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
 	err = rc.checkTableEmpty(ctx)
-<<<<<<< HEAD
 	c.Assert(err, IsNil)
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
-=======
-	require.NoError(t, err)
-	require.NoError(t, mock.ExpectationsWereMet())
 
 	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/restore/CheckTableEmptyFailed", `return`)
-	require.NoError(t, err)
+	c.Assert(err, IsNil)
 	defer func() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/restore/CheckTableEmptyFailed")
 	}()
@@ -560,8 +557,7 @@ func (s *checkInfoSuite) TestCheckTableEmpty(c *C) {
 	rc.cfg.App.RegionConcurrency = 1
 	// test check tables not stuck but return the right error
 	err = rc.checkTableEmpty(ctx)
-	require.Regexp(t, ".*check table contains data failed: mock error.*", err.Error())
->>>>>>> a702ef1b7... lightning: add retry and early terminate checking empty table (#31798)
+	c.Assert(err, ErrorMatches, ".*check table contains data failed: mock error.*")
 }
 
 func (s *checkInfoSuite) TestLocalResource(c *C) {
