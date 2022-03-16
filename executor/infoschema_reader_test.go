@@ -150,6 +150,18 @@ func TestViews(t *testing.T) {
 	tk.MustQuery("SELECT table_catalog, table_schema, table_name, table_type, engine, version, row_format, table_rows, avg_row_length, data_length, max_data_length, index_length, data_free, auto_increment, update_time, check_time, table_collation, checksum, create_options, table_comment FROM information_schema.tables WHERE table_schema='test' AND table_name='v1'").Check(testkit.Rows("def test v1 VIEW <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> VIEW"))
 }
 
+func TestColumnsTables(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (bit bit(10) DEFAULT b'100')")
+	tk.MustQuery("SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 't'").Check(testkit.Rows(
+		"def test t bit 1 b'100' YES bit <nil> <nil> 10 0 <nil> <nil> <nil> bit(10) unsigned   select,insert,update,references  "))
+	tk.MustExec("drop table if exists t")
+}
+
 func TestEngines(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -526,7 +538,7 @@ func TestForAnalyzeStatus(t *testing.T) {
 	tk.MustExec("create table t1 (a int, b int, index idx(a))")
 	tk.MustExec("insert into t1 values (1,2),(3,4)")
 	tk.MustExec("analyze table t1")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t1.")) // 1 note.
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t1")) // 1 note.
 	require.NoError(t, dom.StatsHandle().LoadNeededHistograms())
 	tk.MustExec("CREATE ROLE r_t1 ;")
 	tk.MustExec("GRANT ALL PRIVILEGES ON test.t1 TO r_t1;")

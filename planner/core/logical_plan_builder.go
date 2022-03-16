@@ -27,7 +27,6 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -55,6 +54,7 @@ import (
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
 )
@@ -67,11 +67,8 @@ const (
 
 	// TiDBBroadCastJoin indicates applying broadcast join by force.
 	TiDBBroadCastJoin = "tidb_bcj"
-
 	// HintBCJ indicates applying broadcast join by force.
 	HintBCJ = "broadcast_join"
-	// HintBCJPreferLocal specifies the preferred local read table
-	HintBCJPreferLocal = "broadcast_join_local"
 
 	// TiDBIndexNestedLoopJoin is hint enforce index nested loop join.
 	TiDBIndexNestedLoopJoin = "tidb_inlj"
@@ -538,19 +535,6 @@ func extractTableAlias(p Plan, parentOffset int) *hintTableInfo {
 		return &hintTableInfo{dbName: dbName, tblName: firstName.TblName, selectOffset: blockOffset}
 	}
 	return nil
-}
-
-func (p *LogicalJoin) getPreferredBCJLocalIndex() (hasPrefer bool, prefer int) {
-	if p.hintInfo == nil {
-		return
-	}
-	if p.hintInfo.ifPreferAsLocalInBCJoin(p.children[0], p.blockOffset) {
-		return true, 0
-	}
-	if p.hintInfo.ifPreferAsLocalInBCJoin(p.children[1], p.blockOffset) {
-		return true, 1
-	}
-	return false, 0
 }
 
 func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
@@ -2206,6 +2190,20 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 	return havingAggMapper, extractor.aggMapper, nil
 }
 
+func (b *PlanBuilder) extractAggFuncsInExprs(exprs []ast.ExprNode) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int) {
+	extractor := &AggregateFuncExtractor{skipAggMap: b.correlatedAggMapper}
+	for _, expr := range exprs {
+		expr.Accept(extractor)
+	}
+	aggList := extractor.AggFuncs
+	totalAggMapper := make(map[*ast.AggregateFuncExpr]int, len(aggList))
+
+	for i, agg := range aggList {
+		totalAggMapper[agg] = i
+	}
+	return aggList, totalAggMapper
+}
+
 func (b *PlanBuilder) extractAggFuncsInSelectFields(fields []*ast.SelectField) ([]*ast.AggregateFuncExpr, map[*ast.AggregateFuncExpr]int) {
 	extractor := &AggregateFuncExtractor{skipAggMap: b.correlatedAggMapper}
 	for _, f := range fields {
@@ -3182,7 +3180,7 @@ func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column [
 		}
 		if (dbName.L == "" || dbName.L == name.DBName.L) &&
 			(tblName.L == "" || tblName.L == name.TblName.L) &&
-			col.ID != model.ExtraHandleID {
+			col.ID != model.ExtraHandleID && col.ID != model.ExtraPidColID && col.ID != model.ExtraPhysTblID {
 			colName := &ast.ColumnNameExpr{
 				Name: &ast.ColumnName{
 					Schema: name.DBName,
@@ -3285,12 +3283,12 @@ func (b *PlanBuilder) pushHintWithoutTableWarning(hint *ast.TableOptimizerHint) 
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLevel int) {
 	hints = b.hintProcessor.GetCurrentStmtHints(hints, currentLevel)
 	var (
-		sortMergeTables, INLJTables, INLHJTables, INLMJTables, hashJoinTables, BCTables, BCJPreferLocalTables []hintTableInfo
-		indexHintList, indexMergeHintList                                                                     []indexHintInfo
-		tiflashTables, tikvTables                                                                             []hintTableInfo
-		aggHints                                                                                              aggHintInfo
-		timeRangeHint                                                                                         ast.HintTimeRange
-		limitHints                                                                                            limitHintInfo
+		sortMergeTables, INLJTables, INLHJTables, INLMJTables, hashJoinTables, BCTables []hintTableInfo
+		indexHintList, indexMergeHintList                                               []indexHintInfo
+		tiflashTables, tikvTables                                                       []hintTableInfo
+		aggHints                                                                        aggHintInfo
+		timeRangeHint                                                                   ast.HintTimeRange
+		limitHints                                                                      limitHintInfo
 	)
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
@@ -3308,8 +3306,6 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			sortMergeTables = append(sortMergeTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case TiDBBroadCastJoin, HintBCJ:
 			BCTables = append(BCTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
-		case HintBCJPreferLocal:
-			BCJPreferLocalTables = append(BCJPreferLocalTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case TiDBIndexNestedLoopJoin, HintINLJ:
 			INLJTables = append(INLJTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case HintINLHJ:
@@ -3400,18 +3396,17 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		}
 	}
 	b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
-		sortMergeJoinTables:         sortMergeTables,
-		broadcastJoinTables:         BCTables,
-		broadcastJoinPreferredLocal: BCJPreferLocalTables,
-		indexNestedLoopJoinTables:   indexNestedLoopJoinTables{INLJTables, INLHJTables, INLMJTables},
-		hashJoinTables:              hashJoinTables,
-		indexHintList:               indexHintList,
-		tiflashTables:               tiflashTables,
-		tikvTables:                  tikvTables,
-		aggHints:                    aggHints,
-		indexMergeHintList:          indexMergeHintList,
-		timeRangeHint:               timeRangeHint,
-		limitHints:                  limitHints,
+		sortMergeJoinTables:       sortMergeTables,
+		broadcastJoinTables:       BCTables,
+		indexNestedLoopJoinTables: indexNestedLoopJoinTables{INLJTables, INLHJTables, INLMJTables},
+		hashJoinTables:            hashJoinTables,
+		indexHintList:             indexHintList,
+		tiflashTables:             tiflashTables,
+		tikvTables:                tikvTables,
+		aggHints:                  aggHints,
+		indexMergeHintList:        indexMergeHintList,
+		timeRangeHint:             timeRangeHint,
+		limitHints:                limitHints,
 	})
 }
 
@@ -3431,7 +3426,6 @@ func (b *PlanBuilder) popTableHints() {
 	b.appendUnmatchedJoinHintWarning(HintINLMJ, "", hintInfo.indexNestedLoopJoinTables.inlmjTables)
 	b.appendUnmatchedJoinHintWarning(HintSMJ, TiDBMergeJoin, hintInfo.sortMergeJoinTables)
 	b.appendUnmatchedJoinHintWarning(HintBCJ, TiDBBroadCastJoin, hintInfo.broadcastJoinTables)
-	b.appendUnmatchedJoinHintWarning(HintBCJPreferLocal, "", hintInfo.broadcastJoinPreferredLocal)
 	b.appendUnmatchedJoinHintWarning(HintHJ, TiDBHashJoin, hintInfo.hashJoinTables)
 	b.appendUnmatchedStorageHintWarning(hintInfo.tiflashTables, hintInfo.tikvTables)
 	b.tableHintInfo = b.tableHintInfo[:len(b.tableHintInfo)-1]
@@ -3781,30 +3775,36 @@ func (ds *DataSource) newExtraHandleSchemaCol() *expression.Column {
 	}
 }
 
-// addExtraPIDColumn add an extra PID column for partition table.
+// AddExtraPhysTblIDColumn for partition table.
 // 'select ... for update' on a partition table need to know the partition ID
 // to construct the lock key, so this column is added to the chunk row.
-func (ds *DataSource) addExtraPIDColumn(info *extraPIDInfo) {
+// Also needed for checking against the sessions transaction buffer
+func (ds *DataSource) AddExtraPhysTblIDColumn() *expression.Column {
+	// Avoid adding multiple times (should never happen!)
+	cols := ds.TblCols
+	for i := len(cols) - 1; i >= 0; i-- {
+		if cols[i].ID == model.ExtraPhysTblID {
+			return cols[i]
+		}
+	}
 	pidCol := &expression.Column{
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 		UniqueID: ds.ctx.GetSessionVars().AllocPlanColumnID(),
-		ID:       model.ExtraPidColID,
-		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraPartitionIdName),
+		ID:       model.ExtraPhysTblID,
+		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.tableInfo.Name, model.ExtraPhysTblIdName),
 	}
 
-	ds.Columns = append(ds.Columns, model.NewExtraPartitionIDColInfo())
+	ds.Columns = append(ds.Columns, model.NewExtraPhysTblIDColInfo())
 	schema := ds.Schema()
 	schema.Append(pidCol)
 	ds.names = append(ds.names, &types.FieldName{
 		DBName:      ds.DBName,
 		TblName:     ds.TableInfo().Name,
-		ColName:     model.ExtraPartitionIdName,
-		OrigColName: model.ExtraPartitionIdName,
+		ColName:     model.ExtraPhysTblIdName,
+		OrigColName: model.ExtraPhysTblIdName,
 	})
 	ds.TblCols = append(ds.TblCols, pidCol)
-
-	info.Columns = append(info.Columns, pidCol)
-	info.TblIDs = append(info.TblIDs, ds.TableInfo().ID)
+	return pidCol
 }
 
 var (
@@ -4207,11 +4207,19 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	var result LogicalPlan = ds
 	dirty := tableHasDirtyContent(b.ctx, tableInfo)
-	if dirty || tableInfo.TempTableType == model.TempTableLocal {
+	if dirty || tableInfo.TempTableType == model.TempTableLocal || tableInfo.TableCacheStatusType == model.TableCacheStatusEnable {
 		us := LogicalUnionScan{handleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
+		if tableInfo.Partition != nil && b.optFlag&flagPartitionProcessor == 0 {
+			// Adding ExtraPhysTblIDCol for UnionScan (transaction buffer handling)
+			// Not using old static prune mode
+			// Single TableReader for all partitions, needs the PhysTblID from storage
+			_ = ds.AddExtraPhysTblIDColumn()
+		}
 		result = us
 	}
+
+	// Adding ExtraPhysTblIDCol for SelectLock (SELECT FOR UPDATE) is done when building SelectLock
 
 	if sessionVars.StmtCtx.TblInfo2UnionScan == nil {
 		sessionVars.StmtCtx.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
@@ -5167,10 +5175,10 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan
 			tn.DBInfo = tb.DBInfo
 			tn.TableInfo = tb.TableInfo
 			if tn.TableInfo.IsView() {
-				return nil, errors.Errorf("delete view %s is not supported now.", tn.Name.O)
+				return nil, errors.Errorf("delete view %s is not supported now", tn.Name.O)
 			}
 			if tn.TableInfo.IsSequence() {
-				return nil, errors.Errorf("delete sequence %s is not supported now.", tn.Name.O)
+				return nil, errors.Errorf("delete sequence %s is not supported now", tn.Name.O)
 			}
 			if sessionVars.User != nil {
 				authErr = ErrTableaccessDenied.FastGenByArgs("DELETE", sessionVars.User.AuthUsername, sessionVars.User.AuthHostname, tb.Name.L)
@@ -5186,10 +5194,10 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan
 				return nil, ErrNonUpdatableTable.GenWithStackByArgs(v.Name.O, "DELETE")
 			}
 			if v.TableInfo.IsView() {
-				return nil, errors.Errorf("delete view %s is not supported now.", v.Name.O)
+				return nil, errors.Errorf("delete view %s is not supported now", v.Name.O)
 			}
 			if v.TableInfo.IsSequence() {
-				return nil, errors.Errorf("delete sequence %s is not supported now.", v.Name.O)
+				return nil, errors.Errorf("delete sequence %s is not supported now", v.Name.O)
 			}
 			dbName := v.Schema.L
 			if dbName == "" {
@@ -6412,7 +6420,7 @@ func (b *PlanBuilder) adjustCTEPlanOutputName(p LogicalPlan, def *ast.CommonTabl
 	}
 	if len(def.ColNameList) > 0 {
 		if len(def.ColNameList) != len(p.OutputNames()) {
-			return nil, ddl.ErrViewWrongList
+			return nil, dbterror.ErrViewWrongList
 		}
 		for i, n := range def.ColNameList {
 			outPutNames[i].ColName = n

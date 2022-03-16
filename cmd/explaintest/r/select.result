@@ -354,6 +354,7 @@ Projection_3	1.00	root		sysdate()->Column#1, sleep(1)->Column#2, sysdate()->Colu
 └─TableDual_4	1.00	root		rows:1
 drop table if exists th;
 set @@session.tidb_enable_table_partition = '1';
+set @@session.tidb_partition_prune_mode = 'static';
 create table th (a int, b int) partition by hash(a) partitions 3;
 insert into th values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8);
 insert into th values (-1,-1),(-2,-2),(-3,-3),(-4,-4),(-5,-5),(-6,-6),(-7,-7),(-8,-8);
@@ -378,6 +379,21 @@ PartitionUnion_8	20000.00	root
 │ └─TableFullScan_9	10000.00	cop[tikv]	table:th, partition:p1	keep order:false, stats:pseudo
 └─TableReader_12	10000.00	root		data:TableFullScan_11
   └─TableFullScan_11	10000.00	cop[tikv]	table:th, partition:p2	keep order:false, stats:pseudo
+set @@session.tidb_partition_prune_mode = 'dynamic';
+desc select * from th where a=-2;
+id	estRows	task	access object	operator info
+TableReader_7	10.00	root	partition:p2	data:Selection_6
+└─Selection_6	10.00	cop[tikv]		eq(test.th.a, -2)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:th	keep order:false, stats:pseudo
+desc select * from th;
+id	estRows	task	access object	operator info
+TableReader_5	10000.00	root	partition:all	data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:th	keep order:false, stats:pseudo
+desc select * from th partition (p2,p1);
+id	estRows	task	access object	operator info
+TableReader_5	10000.00	root	partition:p1,p2	data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:th	keep order:false, stats:pseudo
+set @@session.tidb_partition_prune_mode = DEFAULT;
 drop table if exists t;
 create table t(a int, b int);
 explain format = 'brief' select a != any (select a from t t2) from t t1;
