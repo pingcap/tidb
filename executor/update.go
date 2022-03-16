@@ -82,7 +82,39 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 				break
 			}
 		}
+<<<<<<< HEAD
 		if !updatable {
+=======
+		if unmatchedOuterRow(content, row) {
+			updatable = false
+		}
+		e.tableUpdatable = append(e.tableUpdatable, updatable)
+
+		changed, ok := e.updatedRowKeys[content.Start].Get(handle)
+		if ok {
+			e.changed = append(e.changed, changed.(bool))
+			e.matches = append(e.matches, false)
+		} else {
+			e.changed = append(e.changed, false)
+			e.matches = append(e.matches, true)
+		}
+	}
+	return nil
+}
+
+func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) error {
+	if e.mergedRowData == nil {
+		e.mergedRowData = make(map[int64]*kv.HandleMap)
+	}
+	var mergedData []types.Datum
+	// merge updates from and into mergedRowData
+	for i, content := range e.tblColPosInfos {
+		if !e.multiUpdateOnSameTable[content.TblID] {
+			// No need to merge if not multi-updated
+			continue
+		}
+		if !e.tableUpdatable[i] {
+>>>>>>> 2dd0074e4... executor: fix wrong result of delete multiple tables using left join (#33055)
 			// If there's nothing to update, we can just skip current row
 			continue
 		}
@@ -119,8 +151,14 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 // the inner handle field is filled with a NULL value.
 //
 // This fixes: https://github.com/pingcap/tidb/issues/7176.
+<<<<<<< HEAD
 func (e *UpdateExec) canNotUpdate(handle types.Datum) bool {
 	return handle.IsNull()
+=======
+func unmatchedOuterRow(tblPos plannercore.TblColPosInfo, waitUpdateRow []types.Datum) bool {
+	firstHandleIdx := tblPos.HandleCols.GetCol(0)
+	return waitUpdateRow[firstHandleIdx.Index].IsNull()
+>>>>>>> 2dd0074e4... executor: fix wrong result of delete multiple tables using left join (#33055)
 }
 
 // Next implements the Executor Next interface.

@@ -121,6 +121,9 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []plannercore.TblColPosInfo, joinedRow []types.Datum) {
 	// iterate all the joined tables, and got the copresonding rows in joinedRow.
 	for _, info := range colPosInfos {
+		if unmatchedOuterRow(info, joinedRow) {
+			continue
+		}
 		if tblRowMap[info.TblID] == nil {
 			tblRowMap[info.TblID] = make(map[int64][]types.Datum)
 		}
