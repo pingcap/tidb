@@ -193,16 +193,16 @@ create table t1(a bigint, b bigint);
 create table t2(a bigint, b bigint);
 desc select * from t1 where t1.a in (select t2.a as a from t2 where t2.b > t1.b order by t1.b limit 1);
 id	estRows	task	access object	operator info
-Apply_15	9990.00	root		semi join, equal:[eq(test.t1.a, test.t2.a)]
-├─TableReader_18(Build)	9990.00	root		data:Selection_17
-│ └─Selection_17	9990.00	cop[tikv]		not(isnull(test.t1.a))
-│   └─TableFullScan_16	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Selection_19(Probe)	0.80	root		not(isnull(test.t2.a))
-  └─Limit_20	1.00	root		offset:0, count:1
-    └─TableReader_25	1.00	root		data:Limit_24
-      └─Limit_24	1.00	cop[tikv]		offset:0, count:1
-        └─Selection_23	1.00	cop[tikv]		gt(test.t2.b, test.t1.b)
-          └─TableFullScan_22	1.25	cop[tikv]	table:t2	keep order:false, stats:pseudo
+Apply_16	9990.00	root		semi join, equal:[eq(test.t1.a, test.t2.a)]
+├─TableReader_19(Build)	9990.00	root		data:Selection_18
+│ └─Selection_18	9990.00	cop[tikv]		not(isnull(test.t1.a))
+│   └─TableFullScan_17	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Selection_20(Probe)	0.80	root		not(isnull(test.t2.a))
+  └─Limit_22	1.00	root		offset:0, count:1
+    └─TableReader_27	1.00	root		data:Limit_26
+      └─Limit_26	1.00	cop[tikv]		offset:0, count:1
+        └─Selection_25	1.00	cop[tikv]		gt(test.t2.b, test.t1.b)
+          └─TableFullScan_24	1.25	cop[tikv]	table:t2	keep order:false, stats:pseudo
 desc select * from t1 where t1.a in (select a from (select t2.a as a, t1.b as b from t2 where t2.b > t1.b) x order by b limit 1);
 id	estRows	task	access object	operator info
 Apply_17	9990.00	root		semi join, equal:[eq(test.t1.a, test.t2.a)]

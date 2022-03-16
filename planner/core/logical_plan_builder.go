@@ -1397,9 +1397,8 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 				// Only1Zero is to judge whether it's no-group-by-items case.
 				if !fds.GroupByCols.Only1Zero() {
 					return nil, nil, 0, ErrFieldNotInGroupBy.GenWithStackByArgs(offset+1, ErrExprInSelect, name)
-				} else {
-					return nil, nil, 0, ErrMixOfGroupFuncAndFields.GenWithStackByArgs(offset+1, name)
 				}
+				return nil, nil, 0, ErrMixOfGroupFuncAndFields.GenWithStackByArgs(offset+1, name)
 			}
 			if fds.GroupByCols.Only1Zero() {
 				// maxOneRow is delayed from agg's ExtractFD logic since some details listed in it.
@@ -4421,6 +4420,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	return result, nil
 }
 
+// ExtractFD implements the LogicalPlan interface.
 func (ds *DataSource) ExtractFD() *fd.FDSet {
 	// FD in datasource (leaf node) can be cached and reused.
 	// Once the all conditions are not equal to nil, built it again.
@@ -4447,6 +4447,9 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 		for _, idx := range ds.tableInfo.Indices {
 			keyCols := fd.NewFastIntSet()
 			allColIsNotNull := true
+			if idx.State != model.StatePublic {
+				continue
+			}
 			for _, idxCol := range idx.Columns {
 				// Note: even the prefix column can also be the FD. For example:
 				// unique(char_column(10)), will also guarantee the prefix to be
@@ -4774,30 +4777,6 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan LogicalPlan, t
 	}
 	for i := outerPlan.Schema().Len(); i < ap.Schema().Len(); i++ {
 		ap.names[i] = types.EmptyName
-	}
-	// build the join correlated equal condition for apply join, this equal condition is used for deriving the transitive FD between outer and inner side.
-	correlatedCols := ExtractCorrelatedCols4LogicalPlan(innerPlan)
-	deduplicateCorrelatedCols := make(map[int64]*expression.CorrelatedColumn)
-	for _, cc := range correlatedCols {
-		if _, ok := deduplicateCorrelatedCols[cc.UniqueID]; !ok {
-			deduplicateCorrelatedCols[cc.UniqueID] = cc
-		}
-	}
-	// for case like select (select t1.a from t2) from t1. <t1.a> will be assigned with new UniqueID after sub query projection is built.
-	// we should distinguish them out, building the equivalence relationship from inner <t1.a> == outer <t1.a> in the apply-join for FD derivation.
-	for _, cc := range deduplicateCorrelatedCols {
-		// for every correlated column, find the connection with the inner newly built column.
-		for _, col := range innerPlan.Schema().Columns {
-			if cc.UniqueID == col.CorrelatedColUniqueID {
-				ccc := &cc.Column
-				cond, err := expression.NewFunction(b.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), ccc, col)
-				if err != nil {
-					// give up connection building for not interfering old logic.
-					return ap
-				}
-				ap.EqualConditions = append(ap.EqualConditions, cond.(*expression.ScalarFunction))
-			}
-		}
 	}
 	return ap
 }

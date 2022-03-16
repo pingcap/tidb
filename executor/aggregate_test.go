@@ -799,10 +799,8 @@ func TestOnlyFullGroupBy(t *testing.T) {
 	err = tk.ExecToErr("select t.b, x.* from t right join x on t.b = x.b group by t.b, x.d")
 	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), "err %v", err)
 
-	// FixMe: test functional dependency of derived table
 	tk.MustQuery("select * from (select * from t) as e group by a")
 	tk.MustQuery("select * from (select * from t) as e group by b,d")
-	// failed
 	err = tk.ExecToErr("select * from (select * from t) as e group by b,c")
 	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), "err %v", err)
 

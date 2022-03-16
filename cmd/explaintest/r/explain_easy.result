@@ -13,12 +13,12 @@ set @@session.tidb_hashagg_final_concurrency = 1;
 set @@session.tidb_window_concurrency = 1;
 explain format = 'brief' select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
 id	estRows	task	access object	operator info
-HashJoin	8000.00	root		semi join, equal:[eq(Column#13, Column#11)]
-├─StreamAgg(Build)	1.00	root		funcs:sum(Column#16)->Column#11
+HashJoin	8000.00	root		semi join, equal:[eq(Column#15, Column#11)]
+├─StreamAgg(Build)	1.00	root		funcs:sum(Column#18)->Column#11
 │ └─TableReader	1.00	root		data:StreamAgg
-│   └─StreamAgg	1.00	cop[tikv]		funcs:sum(test.t3.a)->Column#16
+│   └─StreamAgg	1.00	cop[tikv]		funcs:sum(test.t3.a)->Column#18
 │     └─TableFullScan	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
-└─Projection(Probe)	10000.00	root		test.t3.a, test.t3.b, test.t3.c, test.t3.d, cast(test.t3.a, decimal(20,0) BINARY)->Column#13
+└─Projection(Probe)	10000.00	root		test.t3.a, test.t3.b, test.t3.c, test.t3.d, cast(test.t3.a, decimal(20,0) BINARY)->Column#15
   └─TableReader	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1;
