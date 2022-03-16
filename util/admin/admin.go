@@ -92,7 +92,7 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 // IsJobRollbackable checks whether the job can be rollback.
 func IsJobRollbackable(job *model.Job) bool {
 	switch job.Type {
-	case model.ActionDropIndex, model.ActionDropPrimaryKey, model.ActionDropIndexes:
+	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		// We can't cancel if index current state is in StateDeleteOnly or StateDeleteReorganization or StateWriteOnly, otherwise there will be an inconsistent issue between record and index.
 		// In WriteOnly state, we can rollback for normal index but can't rollback for expression index(need to drop hidden column). Since we can't
 		// know the type of index here, we consider all indices except primary index as non-rollbackable.

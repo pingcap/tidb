@@ -3966,15 +3966,9 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 		Type:            model.ActionDropColumn,
 		BinlogInfo:      &model.HistoryInfo{},
 		MultiSchemaInfo: multiSchemaInfo,
-		Args:            []interface{}{colName},
+		Args:            []interface{}{colName, nil /* index IDs */, nil /* partition IDs */, spec.IfExists},
 	}
-
 	err = d.doDDLJob(ctx, job)
-	// column not exists, but if_exists flags is true, so we ignore this error.
-	if dbterror.ErrCantDropFieldOrKey.Equal(err) && spec.IfExists {
-		ctx.GetSessionVars().StmtCtx.AppendNote(err)
-		return nil
-	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
@@ -5922,61 +5916,8 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		SchemaName: schema.Name.L,
 		Type:       jobTp,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{indexName},
+		Args:       []interface{}{indexName, indexInfo.ID, nil /* partition IDs */, ifExists},
 	}
-	err = d.doDDLJob(ctx, job)
-	// index not exists, but if_exists flags is true, so we ignore this error.
-	if dbterror.ErrCantDropFieldOrKey.Equal(err) && ifExists {
-		ctx.GetSessionVars().StmtCtx.AppendNote(err)
-		return nil
-	}
-	err = d.callHookOnChanged(err)
-	return errors.Trace(err)
-}
-
-func (d *ddl) DropIndexes(ctx sessionctx.Context, ti ast.Ident, specs []*ast.AlterTableSpec) error {
-	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
-	if err != nil {
-		return err
-	}
-
-	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
-		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Drop Indexes"))
-	}
-	indexNames := make([]model.CIStr, 0, len(specs))
-	ifExists := make([]bool, 0, len(specs))
-	for _, spec := range specs {
-		var indexName model.CIStr
-		if spec.Tp == ast.AlterTableDropPrimaryKey {
-			indexName = model.NewCIStr(mysql.PrimaryKeyName)
-		} else {
-			indexName = model.NewCIStr(spec.Name)
-		}
-
-		indexInfo := t.Meta().FindIndexByName(indexName.L)
-		if indexInfo != nil {
-			_, err := checkIsDropPrimaryKey(indexName, indexInfo, t)
-			if err != nil {
-				return err
-			}
-			if err := checkDropIndexOnAutoIncrementColumn(t.Meta(), indexInfo); err != nil {
-				return errors.Trace(err)
-			}
-		}
-
-		indexNames = append(indexNames, indexName)
-		ifExists = append(ifExists, spec.IfExists)
-	}
-
-	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
-		SchemaName: schema.Name.L,
-		Type:       model.ActionDropIndexes,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{indexNames, ifExists},
-	}
-
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)

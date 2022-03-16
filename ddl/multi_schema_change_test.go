@@ -16,9 +16,11 @@ package ddl_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -88,29 +90,20 @@ func TestMultiSchemaChangeAddColumnsCancelled(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
+	originHook := dom.DDL().GetHook()
 
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("insert into t values (1);")
-	var checkErr error
-	var once bool
-	hook := func(job *model.Job) {
-		if once || job.MultiSchemaInfo.SubJobs[1].SchemaState != model.StateWriteReorganization {
-			return
-		}
-		once = true
-		checkErr = kv.RunInNewTxn(context.Background(), store, false,
-			func(ctx context.Context, txn kv.Transaction) error {
-				errs, err := admin.CancelJobs(txn, []int64{job.ID})
-				if errs[0] != nil {
-					return errs[0]
-				}
-				return err
-			})
-	}
-	dom.DDL().SetHook(&ddl.TestDDLCallback{Do: dom, OnJobUpdatedExported: hook})
-	require.NoError(t, checkErr)
+	hook := newCancelJobHook(store, dom, func(job *model.Job) bool {
+		// Cancel job when the column 'c' is in write-reorg.
+		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateWriteReorganization
+	})
+	dom.DDL().SetHook(hook)
 	sql := "alter table t add column b int default 2, add column c int default 3, add column d int default 4;"
 	tk.MustGetErrCode(sql, errno.ErrCancelledDDLJob)
+	dom.DDL().SetHook(originHook)
+	require.NoError(t, hook.cancelErr)
+	require.True(t, hook.triggered)
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1"))
 }
 
@@ -136,6 +129,58 @@ func TestMultiSchemaChangeDropColumns(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int default 1, c int default 4);")
 	tk.MustGetErrCode("alter table t drop column a, drop column a", errno.ErrUnsupportedDDLOperation)
+
+	// Test drop if exists column.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int default 1, b int default 2);")
+	tk.MustExec("insert into t values ();")
+	tk.MustExec("alter table t drop column if exists c, drop column a;")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1091 Can't DROP 'c'; check that column/key exists"))
+	tk.MustQuery("select * from t;").Check(testkit.Rows("2"))
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int default 1, b int default 2, c int default 3);")
+	tk.MustExec("insert into t values ();")
+	tk.MustExec("alter table t drop column a, drop column if exists d, drop column c;")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1091 Can't DROP 'd'; check that column/key exists"))
+	tk.MustQuery("select * from t;").Check(testkit.Rows("2"))
+}
+
+func TestMultiSchemaChangeDropColumnsCancelled(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
+	originHook := dom.DDL().GetHook()
+
+	// Test for cancel the job in a middle state.
+	tk.MustExec("create table t (a int default 1, b int default 2, c int default 3, d int default 4);")
+	tk.MustExec("insert into t values ();")
+	hook := newCancelJobHook(store, dom, func(job *model.Job) bool {
+		// Cancel job when the column 'a' is in delete-reorg.
+		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateDeleteReorganization
+	})
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t drop column b, drop column a, drop column d;")
+	dom.DDL().SetHook(originHook)
+	require.Contains(t, hook.cancelErr.Error(), fmt.Sprintf("%d", errno.ErrCannotCancelDDLJob))
+	require.True(t, hook.triggered)
+	tk.MustQuery("select * from t;").Check(testkit.Rows("3"))
+
+	// Test for cancel the job in public.
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int default 1, b int default 2, c int default 3, d int default 4);")
+	tk.MustExec("insert into t values ();")
+	hook = newCancelJobHook(store, dom, func(job *model.Job) bool {
+		// Cancel job when the column 'a' is in public.
+		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StatePublic
+	})
+	dom.DDL().SetHook(hook)
+	tk.MustGetErrCode("alter table t drop column b, drop column a, drop column d;", errno.ErrCancelledDDLJob)
+	dom.DDL().SetHook(originHook)
+	require.NoError(t, hook.cancelErr)
+	require.True(t, hook.triggered)
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3 4"))
 }
 
 func TestMultiSchemaChangeAddDropColumns(t *testing.T) {
@@ -333,4 +378,37 @@ func TestMultiSchemaRenameIndexes(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int, index t(a))")
 	tk.MustGetErrCode("alter table t add index t1(b), rename index t to t1", errno.ErrUnsupportedDDLOperation)
+}
+
+type cancelOnceHook struct {
+	store     kv.Storage
+	triggered bool
+	cancelErr error
+	pred      func(job *model.Job) bool
+
+	ddl.TestDDLCallback
+}
+
+func (c *cancelOnceHook) OnJobUpdated(job *model.Job) {
+	if c.triggered || !c.pred(job) {
+		return
+	}
+	c.triggered = true
+	c.cancelErr = kv.RunInNewTxn(context.Background(), c.store, false,
+		func(ctx context.Context, txn kv.Transaction) error {
+			errs, err := admin.CancelJobs(txn, []int64{job.ID})
+			if errs[0] != nil {
+				return errs[0]
+			}
+			return err
+		})
+}
+
+func newCancelJobHook(store kv.Storage, dom *domain.Domain,
+	pred func(job *model.Job) bool) *cancelOnceHook {
+	return &cancelOnceHook{
+		store:           store,
+		pred:            pred,
+		TestDDLCallback: ddl.TestDDLCallback{Do: dom},
+	}
 }

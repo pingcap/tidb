@@ -82,7 +82,7 @@ const (
 	__DEPRECATED_ActionAlterTableAlterPartition ActionType = 46
 
 	ActionRenameTables                  ActionType = 47
-	ActionDropIndexes                   ActionType = 48
+	__DEPRECATED_ActionDropIndexes      ActionType = 48
 	ActionAlterTableAttributes          ActionType = 49
 	ActionAlterTablePartitionAttributes ActionType = 50
 	ActionCreatePlacementPolicy         ActionType = 51
@@ -146,7 +146,7 @@ var actionMap = map[ActionType]string{
 	ActionAddCheckConstraint:            "add check constraint",
 	ActionDropCheckConstraint:           "drop check constraint",
 	ActionAlterCheckConstraint:          "alter check constraint",
-	ActionDropIndexes:                   "drop multi-indexes",
+	__DEPRECATED_ActionDropIndexes:      "drop multi-indexes",
 	ActionAlterTableAttributes:          "alter table attributes",
 	ActionAlterTablePartitionPlacement:  "alter table partition placement",
 	ActionAlterTablePartitionAttributes: "alter table partition attributes",
@@ -271,7 +271,6 @@ type MultiSchemaInfo struct {
 
 func NewMultiSchemaInfo() *MultiSchemaInfo {
 	return &MultiSchemaInfo{
-		Warnings:   nil,
 		SubJobs:    nil,
 		Revertible: true,
 	}
@@ -285,6 +284,7 @@ type SubJob struct {
 	SnapshotVer uint64          `json:"snapshot_ver"`
 	Revertible  bool            `json:"revertible"`
 	State       JobState        `json:"state"`
+	Warning     error           `json:"warning"`
 }
 
 // Job is for a DDL operation.
@@ -295,6 +295,7 @@ type Job struct {
 	TableID    int64         `json:"table_id"`
 	SchemaName string        `json:"schema_name"`
 	State      JobState      `json:"state"`
+	Warning    *terror.Error `json:"warning"`
 	Error      *terror.Error `json:"err"`
 	// ErrorCount will be increased, every time we meet an error when running job.
 	ErrorCount int64 `json:"err_count"`

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/dbterror"
 )
@@ -51,9 +52,10 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		// The sub-jobs are normally running.
 		// Run the first executable sub-job.
 		for i, sub := range job.MultiSchemaInfo.SubJobs {
-			if !sub.Revertible {
+			if !sub.Revertible || isFinished(sub) {
 				// Skip the sub jobs which related schema states
 				// are in the last revertible point.
+				// If a sub job is finished here, it should be a noop job.
 				continue
 			}
 			proxyJob := cloneFromSubJob(job, sub)
@@ -137,11 +139,11 @@ func handleRevertibleException(job *model.Job, subJob *model.SubJob, idx int, er
 	job.State = model.JobStateRollingback
 	job.Error = err
 	// Flush the cancelling state and cancelled state to sub-jobs.
-	for i, sub := range job.MultiSchemaInfo.SubJobs {
-		if i < idx {
+	for _, sub := range job.MultiSchemaInfo.SubJobs {
+		switch sub.State {
+		case model.JobStateRunning:
 			sub.State = model.JobStateCancelling
-		}
-		if i > idx {
+		case model.JobStateNone:
 			sub.State = model.JobStateCancelled
 		}
 	}
@@ -265,4 +267,15 @@ func checkMultiSchemaInfo(info *model.MultiSchemaInfo, t table.Table) error {
 		return err
 	}
 	return nil
+}
+
+func appendMultiChangeWarningsToOwnerCtx(ctx sessionctx.Context, job *model.Job) {
+	if job.MultiSchemaInfo == nil || job.Type != model.ActionMultiSchemaChange {
+		return
+	}
+	for _, sub := range job.MultiSchemaInfo.SubJobs {
+		if sub.Warning != nil {
+			ctx.GetSessionVars().StmtCtx.AppendNote(sub.Warning)
+		}
+	}
 }

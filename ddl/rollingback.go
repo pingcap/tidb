@@ -204,7 +204,7 @@ func rollingbackAddColumns(t *meta.Meta, job *model.Job) (ver int64, err error) 
 }
 
 func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, colInfo, idxInfos, err := checkDropColumn(t, job)
+	_, colInfo, idxInfos, _, err := checkDropColumn(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -268,8 +268,9 @@ func rollingbackDropColumns(t *meta.Meta, job *model.Job) (ver int64, err error)
 }
 
 func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, indexInfo, err := checkDropIndex(t, job)
+	_, indexInfo, _, err := checkDropIndex(t, job)
 	if err != nil {
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
@@ -285,43 +286,6 @@ func rollingbackDropIndex(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	default:
 		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
 	}
-}
-
-func rollingbackDropIndexes(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, indexNames, ifExists, err := getSchemaInfos(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	indexInfos, err := checkDropIndexes(tblInfo, job, indexNames, ifExists)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	indexInfo := indexInfos[0]
-	originalState := indexInfo.State
-	switch indexInfo.State {
-	case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
-		// We can not rollback now, so just continue to drop index.
-		// Normally won't fetch here, because there is a check when canceling DDL jobs. See function: IsJobRollbackable.
-		job.State = model.JobStateRunning
-		return ver, nil
-	case model.StatePublic:
-		job.State = model.JobStateRollbackDone
-		for _, indexInfo := range indexInfos {
-			indexInfo.State = model.StatePublic
-		}
-	default:
-		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
-	}
-
-	job.SchemaState = indexInfo.State
-	ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	job.FinishTableJob(model.JobStateRollbackDone, model.StatePublic, ver, tblInfo)
-	return ver, dbterror.ErrCancelledDDLJob
 }
 
 func rollingbackAddIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
@@ -478,8 +442,6 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackDropColumns(t, job)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		ver, err = rollingbackDropIndex(t, job)
-	case model.ActionDropIndexes:
-		ver, err = rollingbackDropIndexes(t, job)
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		err = rollingbackDropTableOrView(t, job)
 	case model.ActionDropTablePartition:

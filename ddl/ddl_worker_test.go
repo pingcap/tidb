@@ -666,11 +666,6 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 68}, cancelRetErrs: noErrs, cancelState: model.StateWriteReorganization},
 		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 69}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob}, cancelState: model.StatePublic},
 
-		// for drop indexes
-		{act: model.ActionDropIndexes, jobIDs: []int64{firstID + 72}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 72)}, cancelState: model.StateWriteOnly},
-		{act: model.ActionDropIndexes, jobIDs: []int64{firstID + 73}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 73)}, cancelState: model.StateDeleteOnly},
-		{act: model.ActionDropIndexes, jobIDs: []int64{firstID + 74}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 74)}, cancelState: model.StateWriteReorganization},
-
 		// for alter db placement
 		{act: model.ActionModifySchemaDefaultPlacement, jobIDs: []int64{firstID + 75}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 		{act: model.ActionModifySchemaDefaultPlacement, jobIDs: []int64{firstID + 76}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 76)}, cancelState: model.StatePublic},
@@ -1307,27 +1302,6 @@ func (s *testDDLSerialSuiteToVerify) TestCancelJob() {
 	require.Equal(s.T(), baseTable.Meta().Columns[0].FieldType.Tp, mysql.TypeTiny)
 	require.Equal(s.T(), baseTable.Meta().Columns[0].FieldType.Flag&mysql.NotNullFlag, uint(1))
 	require.Nil(s.T(), failpoint.Disable("github.com/pingcap/tidb/ddl/skipMockContextDoExec"))
-
-	// for drop indexes
-	updateTest(&tests[54])
-	ifExists := make([]bool, 2)
-	idxNames := []model.CIStr{model.NewCIStr("i1"), model.NewCIStr("i2")}
-	dropIndexesArgs := []interface{}{idxNames, ifExists}
-	tableInfo := createTestTableForDropIndexes(s.T(), ctx, d, dbInfo, "test-drop-indexes", 6)
-	doDDLJobSuccess(ctx, d, s.T(), dbInfo.ID, tableInfo.ID, test.act, dropIndexesArgs)
-	s.checkDropIndexes(d, dbInfo.ID, tableInfo.ID, idxNames, true)
-
-	updateTest(&tests[55])
-	idxNames = []model.CIStr{model.NewCIStr("i3"), model.NewCIStr("i4")}
-	dropIndexesArgs = []interface{}{idxNames, ifExists}
-	doDDLJobSuccess(ctx, d, s.T(), dbInfo.ID, tableInfo.ID, test.act, dropIndexesArgs)
-	s.checkDropIndexes(d, dbInfo.ID, tableInfo.ID, idxNames, true)
-
-	updateTest(&tests[56])
-	idxNames = []model.CIStr{model.NewCIStr("i5"), model.NewCIStr("i6")}
-	dropIndexesArgs = []interface{}{idxNames, ifExists}
-	doDDLJobSuccess(ctx, d, s.T(), dbInfo.ID, tableInfo.ID, test.act, dropIndexesArgs)
-	s.checkDropIndexes(d, dbInfo.ID, tableInfo.ID, idxNames, true)
 }
 
 func TestIgnorableSpec(t *testing.T) {
