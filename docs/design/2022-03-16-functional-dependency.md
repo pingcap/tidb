@@ -39,9 +39,9 @@ After trials and errors of only-full-group-by check, TiDB ultimately seek to fun
 
 ### Implementation Overview
 
-* How to store function dependency?
-* How to maintain function dependency?
-* How to integrate function dependency with TiDB arch?
+* How to store function dependency
+* How to maintain function dependency
+* How to integrate function dependency with TiDB arch
 
 #### How to store function dependency
 
