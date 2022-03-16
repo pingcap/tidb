@@ -1900,20 +1900,32 @@ func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 ses
 			return
 		}
 		var qLen int
+		sess, err := session.CreateSession4Test(s.store)
+		c.Assert(err, IsNil)
 		for {
-			err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
-				jobs, err1 := admin.GetDDLJobs(txn)
-				if err1 != nil {
-					return err1
-				}
+			if variable.AllowConcurrencyDDL.Load() {
+				jobs, err1 := admin.GetConcurrencyDDLJobs(sess)
+				c.Assert(err1, IsNil)
 				qLen = len(jobs)
-				return nil
-			})
-			c.Assert(err, IsNil)
-			if qLen == 2 {
-				break
+				if qLen == 2 {
+					break
+				}
+				time.Sleep(5 * time.Millisecond)
+			} else {
+				err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
+					jobs, err1 := admin.GetDDLJobs(txn)
+					if err1 != nil {
+						return err1
+					}
+					qLen = len(jobs)
+					return nil
+				})
+				c.Assert(err, IsNil)
+				if qLen == 2 {
+					break
+				}
+				time.Sleep(5 * time.Millisecond)
 			}
-			time.Sleep(5 * time.Millisecond)
 		}
 		times++
 	}
@@ -1929,22 +1941,37 @@ func (s *testDBSuite4) testParallelExecSQL(c *C, sql1, sql2 string, se1, se2 ses
 	// Make sure the sql1 is put into the DDLJobQueue.
 	go func() {
 		var qLen int
-		for {
-			err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
-				jobs, err3 := admin.GetDDLJobs(txn)
-				if err3 != nil {
-					return err3
-				}
+		sess, err := session.CreateSession4Test(s.store)
+		c.Assert(err, IsNil)
+		if variable.AllowConcurrencyDDL.Load() {
+			for {
+				jobs, err1 := admin.GetConcurrencyDDLJobs(sess)
+				c.Assert(err1, IsNil)
 				qLen = len(jobs)
-				return nil
-			})
-			c.Assert(err, IsNil)
-			if qLen == 1 {
-				// Make sure sql2 is executed after the sql1.
-				close(ch)
-				break
+				if qLen == 1 {
+					close(ch)
+					break
+				}
+				time.Sleep(5 * time.Millisecond)
 			}
-			time.Sleep(5 * time.Millisecond)
+		} else {
+			for {
+				err := kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
+					jobs, err3 := admin.GetDDLJobs(txn)
+					if err3 != nil {
+						return err3
+					}
+					qLen = len(jobs)
+					return nil
+				})
+				c.Assert(err, IsNil)
+				if qLen == 1 {
+					// Make sure sql2 is executed after the sql1.
+					close(ch)
+					break
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
 		}
 	}()
 	wg.Run(func() {
