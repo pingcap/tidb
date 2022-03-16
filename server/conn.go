@@ -1849,6 +1849,17 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		}
 		retryable, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
 		if err != nil {
+			if retryable && cc.ctx.GetSessionVars().IsRcCheckTsRetryable(err) {
+				cc.ctx.GetSessionVars().RetryInfo.Retrying = true
+				logutil.Logger(ctx).Info("RC read with ts checking has failed, retry RC read",
+					zap.String("sql", cc.ctx.GetSessionVars().StmtCtx.OriginalSQL))
+				_, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
+				cc.ctx.GetSessionVars().RetryInfo.Retrying = false
+				if err != nil {
+					break
+				}
+				continue
+			}
 			if !retryable || !errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) {
 				break
 			}
