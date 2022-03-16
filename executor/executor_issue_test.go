@@ -333,14 +333,14 @@ func TestIssue28650(t *testing.T) {
 
 func TestIssue30289(t *testing.T) {
 	fpName := "github.com/pingcap/tidb/executor/issue30289"
-	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
-	defer require.NoError(t, failpoint.Disable(fpName))
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
+	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
+	defer require.NoError(t, failpoint.Disable(fpName))
 	err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
 	require.EqualError(t, err, "issue30289 build return error")
 }
