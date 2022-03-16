@@ -1904,13 +1904,9 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (err error) {
 		physicalTableIDs = append(physicalTableIDs, historyJob.TableID)
 		tiflashPhysicalTableIDs = append(tiflashPhysicalTableIDs, historyJob.TableID)
 		binlogInfo := historyJob.BinlogInfo
-		if binlogInfo == nil {
-			logutil.BgLogger().Info("has no BinlogInfo", zap.Any("type", historyJob.Type))
-		} else {
+		if binlogInfo != nil {
 			tblInfo := binlogInfo.TableInfo
-			if tblInfo == nil {
-				logutil.BgLogger().Info("has no tblInfo", zap.Any("type", historyJob.Type))
-			} else {
+			if tblInfo != nil {
 				if tblInfo.TiFlashReplica == nil {
 					tiflashPhysicalTableIDs = []int64{}
 				}
