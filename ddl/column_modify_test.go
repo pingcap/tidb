@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
@@ -120,7 +121,7 @@ AddLoop:
 		})
 	}
 
-	tbl := tk.GetTableByName("test", "t2")
+	tbl := external.GetTableByName(t, tk, "test", "t2")
 	i := 0
 	j := 0
 	require.NoError(t, tk.Session().NewTxn(context.Background()))
@@ -388,7 +389,7 @@ func TestRenameColumn(t *testing.T) {
 	tk.MustExec("use test")
 
 	assertColNames := func(tableName string, colNames ...string) {
-		cols := tk.GetTableByName("test", tableName).Cols()
+		cols := external.GetTableByName(t, tk, "test", tableName).Cols()
 		require.Equal(t, len(colNames), len(cols))
 		for i := range cols {
 			require.Equal(t, strings.ToLower(colNames[i]), cols[i].Name.L)
@@ -506,7 +507,7 @@ func TestCancelDropColumn(t *testing.T) {
 		err := tk.ExecToErr("alter table test_drop_column drop column c3")
 		var col1 *table.Column
 		var idx1 table.Index
-		tbl := tk.GetTableByName("test", "test_drop_column")
+		tbl := external.GetTableByName(t, tk, "test", "test_drop_column")
 		for _, col := range tbl.Cols() {
 			if strings.EqualFold(col.Name.L, "c3") {
 				col1 = col
@@ -610,7 +611,7 @@ func TestCancelDropColumns(t *testing.T) {
 			c3IdxID = testGetIndexID(t, tk.Session(), "test", "test_drop_column", "idx_c3")
 		}
 		err := tk.ExecToErr("alter table test_drop_column drop column c3, drop column c4")
-		tbl := tk.GetTableByName("test", "test_drop_column")
+		tbl := external.GetTableByName(t, tk, "test", "test_drop_column")
 		col3 := table.FindCol(tbl.Cols(), "c3")
 		col4 := table.FindCol(tbl.Cols(), "c4")
 		var idx3 table.Index
@@ -898,4 +899,16 @@ func TestTransactionWithWriteOnlyColumn(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, checkErr)
 	tk.MustQuery("select a from t1").Check(testkit.Rows("2"))
+}
+
+func TestColumnCheck(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists column_check")
+	tk.MustExec("create table column_check (pk int primary key, a int check (a > 1))")
+	defer tk.MustExec("drop table if exists column_check")
+	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|8231|CONSTRAINT CHECK is not supported"))
 }

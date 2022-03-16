@@ -105,3 +105,23 @@ func TestCachedTable(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, usage.CachedTable)
 }
+
+func TestAutoCapture(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.False(t, usage.AutoCapture)
+
+	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
+	defer func() {
+		tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = off")
+	}()
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.True(t, usage.AutoCapture)
+}
