@@ -285,6 +285,8 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 			if needAutoID && newRowIDBase == 0 && newStatus < metaStatusRestoreStarted {
 				newStatus = metaStatusRestoreStarted
 			}
+
+			// nolint:gosec
 			query := fmt.Sprintf("update %s set row_id_base = ?, row_id_max = ?, status = ? where table_id = ? and task_id = ?", m.tableName)
 			_, err := tx.ExecContext(ctx, query, newRowIDBase, newRowIDMax, newStatus.String(), m.tr.tableInfo.ID, m.taskID)
 			if err != nil {
@@ -454,6 +456,7 @@ func (m *dbTableMetaMgr) CheckAndUpdateLocalChecksum(ctx context.Context, checks
 			return errors.Trace(rows.Err())
 		}
 
+		// nolint:gosec
 		query := fmt.Sprintf("update %s set total_kvs = ?, total_bytes = ?, checksum = ?, status = ?, has_duplicates = ? where table_id = ? and task_id = ?", m.tableName)
 		_, err = tx.ExecContext(ctx, query, checksum.SumKVS(), checksum.SumSize(), checksum.Sum(), newStatus.String(), hasLocalDupes, m.tr.tableInfo.ID, m.taskID)
 		return errors.Annotate(err, "update local checksum failed")
@@ -674,6 +677,7 @@ func (m *dbTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(t
 			return errors.Trace(err)
 		}
 		for _, task := range newTasks {
+			// nolint:gosec
 			query := fmt.Sprintf("REPLACE INTO %s (task_id, pd_cfgs, status, state, source_bytes, cluster_avail) VALUES(?, ?, ?, ?, ?, ?)", m.tableName)
 			if _, err = tx.ExecContext(ctx, query, task.taskID, task.pdCfgs, task.status.String(), task.state, task.sourceBytes, task.clusterAvail); err != nil {
 				return errors.Trace(err)
@@ -781,6 +785,7 @@ func (m *dbTaskMetaMgr) CheckAndPausePdSchedulers(ctx context.Context) (pdutil.U
 			return errors.Trace(err)
 		}
 
+		// nolint:gosec
 		query := fmt.Sprintf("update %s set pd_cfgs = ?, status = ? where task_id = ?", m.tableName)
 		_, err = tx.ExecContext(ctx, query, string(jsonByts), taskMetaStatusScheduleSet.String(), m.taskID)
 
@@ -893,6 +898,7 @@ func (m *dbTaskMetaMgr) CheckAndFinishRestore(ctx context.Context, finished bool
 				newStatus = taskMetaStatusSwitchSkipped
 			}
 
+			// nolint:gosec
 			query := fmt.Sprintf("update %s set status = ?, state = ? where task_id = ?", m.tableName)
 			if _, err = tx.ExecContext(ctx, query, newStatus.String(), newState, m.taskID); err != nil {
 				return errors.Trace(err)
