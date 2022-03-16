@@ -23,7 +23,9 @@
       // Union ALL.
       "select avg(a) from t union all select avg(b) from t",
       // Apply.
-      "select a = (select a from t t2 where t1.b = t2.b order by a limit 1) from t t1"
+      "select a = (select a from t t2 where t1.b = t2.b order by a limit 1) from t t1",
+      // CTE.
+      "with x as (select * from (select b from t) ss) select * from x where b = 1"
     ]
   }
 ]

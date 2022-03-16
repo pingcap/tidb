@@ -1257,13 +1257,13 @@ func (p *LogicalCTE) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 	}
 
 	var err error
-	if p.cte.seedPartPhysicalPlan == nil {
-		p.cte.seedPartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.seedPartLogicalPlan)
+	if p.CTE.SeedPartPhysicalPlan == nil {
+		p.CTE.SeedPartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.CTE.optFlag, p.CTE.SeedPartLogicalPlan)
 		if err != nil {
 			return nil, err
 		}
 	}
-	resStat := p.cte.seedPartPhysicalPlan.Stats()
+	resStat := p.CTE.SeedPartPhysicalPlan.Stats()
 	// Changing the pointer so that seedStat in LogicalCTETable can get the new stat.
 	*p.seedStat = *resStat
 	p.stats = &property.StatsInfo{
@@ -1271,20 +1271,20 @@ func (p *LogicalCTE) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 	}
 	for i, col := range selfSchema.Columns {
-		p.stats.ColNDVs[col.UniqueID] += resStat.ColNDVs[p.cte.seedPartLogicalPlan.Schema().Columns[i].UniqueID]
+		p.stats.ColNDVs[col.UniqueID] += resStat.ColNDVs[p.CTE.SeedPartLogicalPlan.Schema().Columns[i].UniqueID]
 	}
-	if p.cte.recursivePartLogicalPlan != nil {
-		if p.cte.recursivePartPhysicalPlan == nil {
-			p.cte.recursivePartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.recursivePartLogicalPlan)
+	if p.CTE.RecursivePartLogicalPlan != nil {
+		if p.CTE.RecursivePartPhysicalPlan == nil {
+			p.CTE.RecursivePartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.CTE.optFlag, p.CTE.RecursivePartLogicalPlan)
 			if err != nil {
 				return nil, err
 			}
 		}
-		recurStat := p.cte.recursivePartPhysicalPlan.Stats()
+		recurStat := p.CTE.RecursivePartPhysicalPlan.Stats()
 		for i, col := range selfSchema.Columns {
-			p.stats.ColNDVs[col.UniqueID] += recurStat.ColNDVs[p.cte.recursivePartLogicalPlan.Schema().Columns[i].UniqueID]
+			p.stats.ColNDVs[col.UniqueID] += recurStat.ColNDVs[p.CTE.RecursivePartLogicalPlan.Schema().Columns[i].UniqueID]
 		}
-		if p.cte.IsDistinct {
+		if p.CTE.IsDistinct {
 			p.stats.RowCount = getColsNDV(p.schema.Columns, p.schema, p.stats)
 		} else {
 			p.stats.RowCount += recurStat.RowCount

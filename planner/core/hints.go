@@ -123,8 +123,8 @@ func genHintsFromPhysicalPlan(p PhysicalPlan, nodeType utilhint.NodeType) (res [
 		res = append(res, genHintsFromPhysicalPlan(child, nodeType)...)
 	}
 	if phCte, ok := p.(*PhysicalCTE); ok {
-		res = append(res, genHintsFromPhysicalPlan(phCte.CTE.seedPartPhysicalPlan, nodeType)...)
-		res = append(res, genHintsFromPhysicalPlan(phCte.CTE.recursivePartPhysicalPlan, nodeType)...)
+		res = append(res, genHintsFromPhysicalPlan(phCte.CTE.SeedPartPhysicalPlan, nodeType)...)
+		res = append(res, genHintsFromPhysicalPlan(phCte.CTE.RecursivePartPhysicalPlan, nodeType)...)
 	}
 
 	qbName, err := utilhint.GenerateQBName(nodeType, p.SelectBlockOffset())

@@ -88,6 +88,9 @@ var defaultImplementationMap = map[memo.Operand][]ImplementationRule{
 	memo.OperandWindow: {
 		&ImplWindow{},
 	},
+	memo.OperandCTE: {
+		&ImplCTE{},
+	},
 }
 
 // ImplTableDual implements LogicalTableDual as PhysicalTableDual.
@@ -619,4 +622,27 @@ func (w *ImplWindow) OnImplement(expr *memo.GroupExpr, reqProp *property.Physica
 	)
 	physicalWindow.SetSchema(expr.Group.Prop.Schema)
 	return []memo.Implementation{impl.NewWindowImpl(physicalWindow)}, nil
+}
+
+// ImplCTE implements LogicalCTE to PhysicalCTE.
+type ImplCTE struct {
+}
+
+// Match implements ImplementationRule Match interface.
+func (r *ImplCTE) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
+	return prop.IsEmpty()
+}
+
+// OnImplement implements ImplementationRule OnImplement interface.
+func (r *ImplCTE) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error) {
+	logicProp := expr.Group.Prop
+	logicCTE := expr.ExprNode.(*plannercore.LogicalCTE)
+	pcte := plannercore.PhysicalCTE{
+		SeedPlan:  logicCTE.CTE.SeedPartPhysicalPlan,
+		RecurPlan: logicCTE.CTE.RecursivePartPhysicalPlan,
+		CTE:       logicCTE.CTE,
+		CteAsName: logicCTE.CteAsName,
+	}.Init(logicCTE.SCtx(), logicProp.Stats)
+	pcte.SetSchema(logicProp.Schema)
+	return []memo.Implementation{impl.NewCTEImpl(pcte)}, nil
 }

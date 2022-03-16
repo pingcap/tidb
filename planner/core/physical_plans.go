@@ -1443,7 +1443,7 @@ type PhysicalCTE struct {
 	SeedPlan  PhysicalPlan
 	RecurPlan PhysicalPlan
 	CTE       *CTEClass
-	cteAsName model.CIStr
+	CteAsName model.CIStr
 }
 
 // PhysicalCTETable is for CTE table.
@@ -1464,7 +1464,7 @@ func (p *PhysicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 
 // AccessObject implements physicalScan interface.
 func (p *PhysicalCTE) AccessObject(normalized bool) string {
-	return fmt.Sprintf("CTE:%s", p.cteAsName.L)
+	return fmt.Sprintf("CTE:%s", p.CteAsName.L)
 }
 
 // OperatorInfo implements dataAccesser interface.

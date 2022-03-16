@@ -1372,5 +1372,43 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestCTE",
+    "Cases": [
+      {
+        "SQL": "with x as (select * from (select b from t) ss) select * from x where b = 1",
+        "Plan": [
+          "Selection_12 8000.00 root  eq(test.t.b, 1)",
+          "└─CTEFullScan_13 10000.00 root CTE:x data:CTE_0",
+          "CTE_0 10000.00 root  Non-Recursive CTE",
+          "└─IndexReader_11(Seed Part) 10000.00 root  index:IndexFullScan_10",
+          "  └─IndexFullScan_10 10000.00 cop[tikv] table:t, index:b(b) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "with x as (select * from (select b from t) ss) select * from x, x x2 where x.b = x2.b",
+        "Plan": [
+          "HashJoin_27 10000.00 root  inner join, equal:[eq(test.t.b, test.t.b)]",
+          "├─Selection_29(Build) 8000.00 root  not(isnull(test.t.b)), not(isnull(test.t.b)), not(isnull(test.t.b))",
+          "│ └─CTEFullScan_30 10000.00 root CTE:x data:CTE_0",
+          "└─Selection_31(Probe) 8000.00 root  not(isnull(test.t.b)), not(isnull(test.t.b)), not(isnull(test.t.b))",
+          "  └─CTEFullScan_32 10000.00 root CTE:x2 data:CTE_0",
+          "CTE_0 10000.00 root  Non-Recursive CTE",
+          "└─IndexReader_26(Seed Part) 10000.00 root  index:IndexFullScan_25",
+          "  └─IndexFullScan_25 10000.00 cop[tikv] table:t, index:b(b) keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 1",
+          "2 2",
+          "3 3",
+          "4 4",
+          "5 5"
+        ]
+      }
+    ]
   }
 ]

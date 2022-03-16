@@ -159,5 +159,12 @@
       "select /*+ INL_MERGE_JOIN(t1) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;",
       "select /*+ MERGE_JOIN(t1, t2) */ t1.b, t2.b from t1 inner join t2 on t1.a = t2.a;"
     ]
+  },
+  {
+    "name": "TestCTE",
+    "cases": [
+      "with x as (select * from (select b from t) ss) select * from x where b = 1",
+      "with x as (select * from (select b from t) ss) select * from x, x x2 where x.b = x2.b"
+    ]
   }
 ]

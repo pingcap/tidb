@@ -68,6 +68,8 @@ const (
 	OperandShow
 	// OperandWindow is the operand for window function.
 	OperandWindow
+	// OperandCTE is the operand for LogicalCTE.
+	OperandCTE
 	// OperandUnsupported is the operand for unsupported operators.
 	OperandUnsupported
 )
@@ -115,6 +117,8 @@ func GetOperand(p plannercore.LogicalPlan) Operand {
 		return OperandShow
 	case *plannercore.LogicalWindow:
 		return OperandWindow
+	case *plannercore.LogicalCTE:
+		return OperandCTE
 	default:
 		return OperandUnsupported
 	}

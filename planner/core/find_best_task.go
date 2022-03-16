@@ -2214,11 +2214,11 @@ func (p *LogicalCTE) findBestTask(prop *property.PhysicalProperty, planCounter *
 		return invalidTask, 1, nil
 	}
 	// The physical plan has been build when derive stats.
-	pcte := PhysicalCTE{SeedPlan: p.cte.seedPartPhysicalPlan, RecurPlan: p.cte.recursivePartPhysicalPlan, CTE: p.cte, cteAsName: p.cteAsName}.Init(p.ctx, p.stats)
+	pcte := PhysicalCTE{SeedPlan: p.CTE.SeedPartPhysicalPlan, RecurPlan: p.CTE.RecursivePartPhysicalPlan, CTE: p.CTE, CteAsName: p.CteAsName}.Init(p.ctx, p.stats)
 	pcte.SetSchema(p.schema)
-	cst := p.cte.seedPartPhysicalPlan.Cost()
-	if p.cte.recursivePartPhysicalPlan != nil {
-		cst += p.cte.recursivePartPhysicalPlan.Cost()
+	cst := p.CTE.SeedPartPhysicalPlan.Cost()
+	if p.CTE.RecursivePartPhysicalPlan != nil {
+		cst += p.CTE.RecursivePartPhysicalPlan.Cost()
 	}
 	t = &rootTask{pcte, cst, false}
 	if prop.CanAddEnforcer {

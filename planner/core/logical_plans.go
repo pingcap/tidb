@@ -1274,12 +1274,12 @@ type LogicalShowDDLJobs struct {
 type CTEClass struct {
 	// The union between seed part and recursive part is DISTINCT or DISTINCT ALL.
 	IsDistinct bool
-	// seedPartLogicalPlan and recursivePartLogicalPlan are the logical plans for the seed part and recursive part of this CTE.
-	seedPartLogicalPlan      LogicalPlan
-	recursivePartLogicalPlan LogicalPlan
-	// seedPartPhysicalPlan and recursivePartPhysicalPlan are the physical plans for the seed part and recursive part of this CTE.
-	seedPartPhysicalPlan      PhysicalPlan
-	recursivePartPhysicalPlan PhysicalPlan
+	// SeedPartLogicalPlan and RecursivePartLogicalPlan are the logical plans for the seed part and recursive part of this CTE.
+	SeedPartLogicalPlan      LogicalPlan
+	RecursivePartLogicalPlan LogicalPlan
+	// SeedPartPhysicalPlan and RecursivePartPhysicalPlan are the physical plans for the seed part and recursive part of this CTE.
+	SeedPartPhysicalPlan      PhysicalPlan
+	RecursivePartPhysicalPlan PhysicalPlan
 	// storageID for this CTE.
 	IDForStorage int
 	// optFlag is the optFlag for the whole CTE.
@@ -1294,8 +1294,8 @@ type CTEClass struct {
 type LogicalCTE struct {
 	logicalSchemaProducer
 
-	cte       *CTEClass
-	cteAsName model.CIStr
+	CTE       *CTEClass
+	CteAsName model.CIStr
 	seedStat  *property.StatsInfo
 }
 
@@ -1313,9 +1313,9 @@ type LogicalCTETable struct {
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
 func (p *LogicalCTE) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
-	corCols := ExtractCorrelatedCols4LogicalPlan(p.cte.seedPartLogicalPlan)
-	if p.cte.recursivePartLogicalPlan != nil {
-		corCols = append(corCols, ExtractCorrelatedCols4LogicalPlan(p.cte.recursivePartLogicalPlan)...)
+	corCols := ExtractCorrelatedCols4LogicalPlan(p.CTE.SeedPartLogicalPlan)
+	if p.CTE.RecursivePartLogicalPlan != nil {
+		corCols = append(corCols, ExtractCorrelatedCols4LogicalPlan(p.CTE.RecursivePartLogicalPlan)...)
 	}
 	return corCols
 }

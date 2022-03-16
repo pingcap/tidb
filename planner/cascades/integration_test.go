@@ -450,3 +450,34 @@ func TestInlineProjection(t *testing.T) {
 		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 	}
 }
+
+func TestCTE(t *testing.T) {
+	t.Parallel()
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int, key (b));")
+	tk.MustExec("insert into t(a, b) values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5);")
+	tk.MustExec("set session tidb_enable_cascades_planner = 1;")
+	var input []string
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	integrationSuiteData := cascades.GetIntegrationSuiteData()
+	integrationSuiteData.GetTestCases(t, &input, &output)
+	for i, sql := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = sql
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
+		})
+		tk.MustQuery("explain " + sql).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
+	}
+}
