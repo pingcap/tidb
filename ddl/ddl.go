@@ -611,7 +611,7 @@ func recordLastDDLInfo(ctx sessionctx.Context, job *model.Job) {
 	ctx.GetSessionVars().LastDDLInfo.SeqNum = job.SeqNum
 }
 
-func checkHistoryJobInTest(historyJob *model.Job) {
+func checkHistoryJobInTest(ctx sessionctx.Context, historyJob *model.Job) {
 	if !(flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil) {
 		return
 	}
@@ -635,9 +635,10 @@ func checkHistoryJobInTest(historyJob *model.Job) {
 		}
 	}
 	p := parser.New()
+	p.SetParserConfig(ctx.GetSessionVars().BuildParserConfig())
 	stmt, _, err := p.ParseSQL(historyJob.Query)
 	if err != nil {
-		panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+		panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s, err %s", historyJob.ID, historyJob.Query, err.Error()))
 	}
 	if len(stmt) != 1 && historyJob.Type != model.ActionCreateTables {
 		panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
@@ -722,7 +723,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			continue
 		}
 
-		checkHistoryJobInTest(historyJob)
+		checkHistoryJobInTest(ctx, historyJob)
 
 		// If a job is a history job, the state must be JobStateSynced or JobStateRollbackDone or JobStateCancelled.
 		if historyJob.IsSynced() {
