@@ -444,7 +444,7 @@ func buildRespWithMPPExec(chunks []tipb.Chunk, counts, ndvs []int64, exec mppExe
 	}
 	resp.Data = data
 	if err != nil {
-		if conflictErr, ok := err.(*kverrors.ErrConflict); ok {
+		if conflictErr, ok := errors.Cause(err).(*kverrors.ErrConflict); ok {
 			resp.OtherError = conflictErr.Error()
 		}
 	}
