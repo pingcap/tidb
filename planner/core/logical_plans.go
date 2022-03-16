@@ -239,7 +239,8 @@ func (p *LogicalJoin) extractFDForInnerJoin(filtersFromApply []expression.Expres
 	} else {
 		for k, v := range rightFD.HashCodeToUniqueID {
 			if _, ok := fds.HashCodeToUniqueID[k]; ok {
-				panic("shouldn't be here, children has same expr while registered not only once")
+				logutil.BgLogger().Warn("Error occurred while maintaining functional dependency")
+				continue
 			}
 			fds.HashCodeToUniqueID[k] = v
 		}
@@ -457,14 +458,8 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 				// the dependent columns in scalar function should be also considered as output columns as well.
 				outputColsUniqueIDs.Insert(int(one.UniqueID))
 			}
-			nullable := false
-			result := expression.EvaluateExprWithNull(p.ctx, p.schema, x)
-			con, ok := result.(*expression.Constant)
-			if !ok || con.Value.IsNull() {
-				// if x can be nullable when referred columns are null, the extended column can be nullable.
-				nullable = true
-			}
-			if !nullable || determinants.SubsetOf(fds.NotNullCols) {
+			notnull := isNullRejected(p.ctx, p.schema, x)
+			if notnull || determinants.SubsetOf(fds.NotNullCols) {
 				notnullColsUniqueIDs.Insert(scalarUniqueID)
 			}
 			fds.AddStrictFunctionalDependency(determinants, fd.NewFastIntSet(scalarUniqueID))
@@ -488,7 +483,8 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 			case *expression.ScalarFunction:
 				scalarUniqueID, ok := fds.IsHashCodeRegistered(string(hack.String(x.HashCode(p.SCtx().GetSessionVars().StmtCtx))))
 				if !ok {
-					panic("selected expr must have been registered, shouldn't be here")
+					logutil.BgLogger().Warn("Error occurred while maintaining the functional dependency")
+					continue
 				}
 				projectionUniqueIDs.Insert(scalarUniqueID)
 			}
