@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"net/url"
 	"strings"
@@ -475,6 +476,12 @@ func (gs *tidbGlueSession) ExecuteInternal(ctx context.Context, sql string, args
 // CreateDatabase implements glue.Session
 func (gs *tidbGlueSession) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
 	d := domain.GetDomain(gs.se).DDL()
+	// 512 is defaultCapOfCreateTable.
+	result := bytes.NewBuffer(make([]byte, 0, 512))
+	if err := ConstructResultOfShowCreateDatabase(gs.se, schema, true, result); err != nil {
+		return err
+	}
+	gs.se.SetValue(sessionctx.QueryString, result.String())
 	schema = schema.Clone()
 	if len(schema.Charset) == 0 {
 		schema.Charset = mysql.DefaultCharset
