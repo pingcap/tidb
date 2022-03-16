@@ -693,6 +693,16 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}, level
 			w.unlockSeqNum()
 			return err
 		}
+		if RunInGoTest {
+			// d.mu.hook is initialed from domain / test callback, which will force the owner host update schema diff synchronously.
+			d.mu.RLock()
+			d.mu.hook.OnSchemaStateChanged()
+			d.mu.RUnlock()
+		}
+
+		d.mu.RLock()
+		d.mu.hook.OnJobUpdated(job)
+		d.mu.RUnlock()
 		asyncNotify(d.ddlJobDoneCh)
 		if w.lockSeqNum {
 			w.lockSeqNum = false
