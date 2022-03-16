@@ -223,4 +223,11 @@ func TestOnlyFullGroupByOldCases(t *testing.T) {
 	tk.MustExec("CREATE TABLE t2 (a INT, b INT, c INT DEFAULT 0);")
 	tk.MustExec("INSERT INTO t2 (a, b) VALUES (3,3), (2,2), (3,3), (2,2), (3,3), (4,4);")
 	tk.MustQuery("SELECT t1.a FROM t1 GROUP BY t1.a HAVING t1.a IN (SELECT t2.a FROM t2 ORDER BY SUM(t1.b));")
+
+	// a normal case
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int not null, b int not null, index(a))")
+	err = tk.ExecToErr("select b from t1 group by a")
+	require.NotNil(t, err)
+	require.Equal(t, err.Error(), "[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t1.b' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
 }
