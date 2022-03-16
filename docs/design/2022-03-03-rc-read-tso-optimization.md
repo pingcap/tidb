@@ -6,7 +6,7 @@
 
 ## Motivation
 
-For the read-consistency isolation level read requests in a single transaction, each will need to fetch a new `ts` to read the latest committed data.
+For the read-consistency isolation level, each read request in a single transaction will need to fetch a new `ts` to read the latest committed data.
 If the workload is a read-heavy one or the read qps is large, fetching ts each time will increase the query lantecy.
 
 The new ts itself is used to ensure the most recent data will be returned, if the data version does not change frequently then it's unnecessary to fetch a new timestamp every time.
