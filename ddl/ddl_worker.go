@@ -521,7 +521,7 @@ func (w *worker) setResourceGroupTaggerForTopSQL(txn kv.Transaction) {
 		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, nil,
 			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
 	}
-	txn.SetOption(kv.ResourceGroupTagger, tagger)
+	txn.SetOption(kv.ResourceGroupTagger, tikvrpc.ResourceGroupTagger(tagger))
 }
 
 // handleDDLJobQueue handles DDL jobs in DDL Job queue.
