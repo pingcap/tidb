@@ -29,8 +29,7 @@ import (
 )
 
 var (
-	recordPrefixSep = []byte("_r")
-	quoteRegexp     = regexp.MustCompile("`(?:[^`]|``)*`")
+	quoteRegexp = regexp.MustCompile("`(?:[^`]|``)*`")
 )
 
 // AppliedFile has two types for now.
@@ -87,8 +86,8 @@ func GetRewriteRules(
 	for oldTableID, newTableID := range tableIDs {
 		if getDetailRule {
 			dataRules = append(dataRules, &import_sstpb.RewriteRule{
-				OldKeyPrefix: append(tablecodec.EncodeTablePrefix(oldTableID), recordPrefixSep...),
-				NewKeyPrefix: append(tablecodec.EncodeTablePrefix(newTableID), recordPrefixSep...),
+				OldKeyPrefix: tablecodec.GenTableRecordPrefix(oldTableID),
+				NewKeyPrefix: tablecodec.GenTableRecordPrefix(newTableID),
 				NewTimestamp: newTimeStamp,
 			})
 			for oldIndexID, newIndexID := range indexIDs {
@@ -110,6 +109,69 @@ func GetRewriteRules(
 	return &RewriteRules{
 		Data: dataRules,
 	}
+}
+
+func GetRewriteRulesMap(
+	newTable, oldTable *model.TableInfo, newTimeStamp uint64, getDetailRule bool,
+) map[int64]*RewriteRules {
+	rules := make(map[int64]*RewriteRules)
+
+	tableIDs := getTableIDMap(newTable, oldTable)
+	indexIDs := getIndexIDMap(newTable, oldTable)
+
+	for oldTableID, newTableID := range tableIDs {
+		dataRules := make([]*import_sstpb.RewriteRule, 0)
+		if getDetailRule {
+			dataRules = append(dataRules, &import_sstpb.RewriteRule{
+				OldKeyPrefix: tablecodec.GenTableRecordPrefix(oldTableID),
+				NewKeyPrefix: tablecodec.GenTableRecordPrefix(newTableID),
+				NewTimestamp: newTimeStamp,
+			})
+			for oldIndexID, newIndexID := range indexIDs {
+				dataRules = append(dataRules, &import_sstpb.RewriteRule{
+					OldKeyPrefix: tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexID),
+					NewKeyPrefix: tablecodec.EncodeTableIndexPrefix(newTableID, newIndexID),
+					NewTimestamp: newTimeStamp,
+				})
+			}
+		} else {
+			dataRules = append(dataRules, &import_sstpb.RewriteRule{
+				OldKeyPrefix: tablecodec.EncodeTablePrefix(oldTableID),
+				NewKeyPrefix: tablecodec.EncodeTablePrefix(newTableID),
+				NewTimestamp: newTimeStamp,
+			})
+		}
+
+		rules[oldTableID] = &RewriteRules{
+			Data: dataRules,
+		}
+	}
+
+	return rules
+}
+
+// GetRewriteRuleOfTable returns a rewrite rule from t_{oldID} to t_{newID}.
+func GetRewriteRuleOfTable(
+	oldID, newID int64,
+	newTs uint64,
+	detailRule bool,
+) *import_sstpb.RewriteRule {
+	rule := import_sstpb.RewriteRule{}
+	if detailRule {
+		rule = import_sstpb.RewriteRule{
+			OldKeyPrefix: tablecodec.GenTableRecordPrefix(oldID),
+			NewKeyPrefix: tablecodec.GenTableRecordPrefix(newID),
+			NewTimestamp: newTs,
+		}
+	} else {
+		rule = import_sstpb.RewriteRule{
+			OldKeyPrefix: tablecodec.EncodeTablePrefix(oldID),
+			NewKeyPrefix: tablecodec.EncodeTablePrefix(newID),
+			NewTimestamp: newTs,
+		}
+	}
+
+	return &rule
 }
 
 // GetSSTMetaFromFile compares the keys in file, region and rewrite rules, then returns a sst conn.

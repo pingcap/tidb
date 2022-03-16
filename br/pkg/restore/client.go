@@ -1592,6 +1592,7 @@ func (rc *Client) RestoreMetaKVFiles(
 	files []*backuppb.DataFileInfo,
 	tables *map[int64]*metautil.Table,
 	tableFilter filter.Filter,
+	updateRewriteRules func(oldID, newID int64),
 ) error {
 	schemasReplace, err := rc.initSchemasReplaceForDDL(tables, tableFilter)
 	if err != nil {
