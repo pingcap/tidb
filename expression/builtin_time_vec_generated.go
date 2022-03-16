@@ -677,12 +677,7 @@ func (b *builtinSubDatetimeAndDurationSig) vecEvalTime(input *chunk.Chunk, resul
 
 		sc := b.ctx.GetSessionVars().StmtCtx
 		arg1Duration := types.Duration{Duration: arg1, Fsp: -1}
-		arg1time, err := arg1Duration.ConvertToTime(sc, mysql.TypeDatetime)
-		if err != nil {
-			return err
-		}
-		tmpDuration := arg0.Sub(sc, &arg1time)
-		output, err := tmpDuration.ConvertToTime(sc, arg0.Type())
+		output, err := arg0.Add(sc, arg1Duration.Neg())
 
 		if err != nil {
 			return err
@@ -751,12 +746,7 @@ func (b *builtinSubDatetimeAndStringSig) vecEvalTime(input *chunk.Chunk, result 
 			}
 			return err
 		}
-		arg1time, err := arg1Duration.ConvertToTime(sc, mysql.TypeDatetime)
-		if err != nil {
-			return err
-		}
-		tmpDuration := arg0.Sub(sc, &arg1time)
-		output, err := tmpDuration.ConvertToTime(sc, mysql.TypeDatetime)
+		output, err := arg0.Add(sc, arg1Duration.Neg())
 
 		if err != nil {
 			return err
