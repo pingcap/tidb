@@ -103,7 +103,7 @@ func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, newLease
 	h.Lock()
 	defer h.Unlock()
 	succ := false
-	err := h.runInTxn(ctx, func(ctx context.Context, now uint64) error {
+	err := h.runInTxn(ctx, false, func(ctx context.Context, now uint64) error {
 		lockType, lease, _, err := h.loadRow(ctx, tid)
 		if err != nil {
 			return errors.Trace(err)
@@ -155,7 +155,7 @@ func (h *stateRemoteHandle) LockForWrite(ctx context.Context, tid int64, leaseDu
 }
 
 func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, leaseDuration time.Duration) (waitAndRetry time.Duration, ts uint64, err error) {
-	err = h.runInTxn(ctx, func(ctx context.Context, now uint64) error {
+	err = h.runInTxn(ctx, true, func(ctx context.Context, now uint64) error {
 		lockType, lease, oldReadLease, err := h.loadRow(ctx, tid)
 		if err != nil {
 			return errors.Trace(err)
@@ -211,8 +211,11 @@ func waitForLeaseExpire(oldReadLease, now uint64) time.Duration {
 	if oldReadLease >= now {
 		t1 := oracle.GetTimeFromTS(oldReadLease)
 		t2 := oracle.GetTimeFromTS(now)
-		waitDuration := t1.Sub(t2)
-		return waitDuration
+		if t1.After(t2) {
+			waitDuration := t1.Sub(t2)
+			return waitDuration
+		}
+		return time.Microsecond
 	}
 	return 0
 }
@@ -220,8 +223,10 @@ func waitForLeaseExpire(oldReadLease, now uint64) time.Duration {
 // RenewReadLease renew the read lock lease.
 // Return the current lease value on success, and return 0 on fail.
 func (h *stateRemoteHandle) RenewReadLease(ctx context.Context, tid int64, oldLocalLease, newValue uint64) (uint64, error) {
+	h.Lock()
+	defer h.Unlock()
 	var newLease uint64
-	err := h.runInTxn(ctx, func(ctx context.Context, now uint64) error {
+	err := h.runInTxn(ctx, false, func(ctx context.Context, now uint64) error {
 		lockType, remoteLease, _, err := h.loadRow(ctx, tid)
 		if err != nil {
 			return errors.Trace(err)
@@ -266,8 +271,10 @@ func (h *stateRemoteHandle) RenewReadLease(ctx context.Context, tid int64, oldLo
 }
 
 func (h *stateRemoteHandle) RenewWriteLease(ctx context.Context, tid int64, newLease uint64) (bool, error) {
+	h.Lock()
+	defer h.Unlock()
 	var succ bool
-	err := h.runInTxn(ctx, func(ctx context.Context, now uint64) error {
+	err := h.runInTxn(ctx, true, func(ctx context.Context, now uint64) error {
 		lockType, oldLease, _, err := h.loadRow(ctx, tid)
 		if err != nil {
 			return errors.Trace(err)
@@ -293,8 +300,13 @@ func (h *stateRemoteHandle) RenewWriteLease(ctx context.Context, tid int64, newL
 	return succ, err
 }
 
-func (h *stateRemoteHandle) beginTxn(ctx context.Context) error {
-	_, err := h.execSQL(ctx, "begin optimistic")
+func (h *stateRemoteHandle) beginTxn(ctx context.Context, pess bool) error {
+	var err error
+	if pess {
+		_, err = h.execSQL(ctx, "begin pessimistic")
+	} else {
+		_, err = h.execSQL(ctx, "begin optimistic")
+	}
 	return err
 }
 
@@ -308,8 +320,8 @@ func (h *stateRemoteHandle) rollbackTxn(ctx context.Context) error {
 	return err
 }
 
-func (h *stateRemoteHandle) runInTxn(ctx context.Context, fn func(ctx context.Context, txnTS uint64) error) error {
-	err := h.beginTxn(ctx)
+func (h *stateRemoteHandle) runInTxn(ctx context.Context, pessimistic bool, fn func(ctx context.Context, txnTS uint64) error) error {
+	err := h.beginTxn(ctx, pessimistic)
 	if err != nil {
 		return errors.Trace(err)
 	}
