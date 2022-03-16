@@ -184,7 +184,7 @@ type TransactionContext struct {
 	// CachedTables is not nil if the transaction write on cached table.
 	CachedTables map[int64]interface{}
 
-	// Last tso used by read-consistency read.
+	// Last ts used by read-consistency read.
 	LastRcReadTs uint64
 }
 
