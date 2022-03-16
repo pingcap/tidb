@@ -444,6 +444,75 @@ func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression, 
 	return nil, p
 }
 
+func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) ([]expression.Expression, []expression.Expression) {
+	var condsToPush []expression.Expression
+	var ret []expression.Expression
+	switch cond.(type) {
+	case *expression.Constant:
+		condsToPush = append(condsToPush, cond)
+		// Consider SQL list "select sum(b) from t group by a having 1=0". "1=0" is a constant predicate which should be
+		// retained and pushed down at the same time. Because we will get a wrong query result that contains one column
+		// with value 0 rather than an empty query result.
+		ret = append(ret, cond)
+	case *expression.ScalarFunction:
+		extractedCols := expression.ExtractColumns(cond)
+		ok := true
+		for _, col := range extractedCols {
+			if !groupByColumns.Contains(col) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			newFunc := expression.ColumnSubstitute(cond, la.Schema(), exprsOriginal)
+			condsToPush = append(condsToPush, newFunc)
+		} else {
+			ret = append(ret, cond)
+		}
+	default:
+		ret = append(ret, cond)
+	}
+	return condsToPush, ret
+}
+
+func (la *LogicalAggregation) pushDownCNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) ([]expression.Expression, []expression.Expression) {
+	var condsToPush []expression.Expression
+	var ret []expression.Expression
+	subCNFItem := expression.SplitCNFItems(cond)
+	if len(subCNFItem) == 1 {
+		return la.pushDownPredicatesForAggregation(subCNFItem[0], groupByColumns, exprsOriginal)
+	}
+	for _, item := range subCNFItem {
+		condsToPushForItem, retForItem := la.pushDownDNFPredicatesForAggregation(item, groupByColumns, exprsOriginal)
+		condsToPush = append(condsToPush, condsToPushForItem...)
+		ret = append(ret, retForItem...)
+	}
+	return condsToPush, ret
+}
+
+func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) ([]expression.Expression, []expression.Expression) {
+	var condsToPush []expression.Expression
+	var ret []expression.Expression
+	subDNFItem := expression.SplitDNFItems(cond)
+	if len(subDNFItem) == 1 {
+		return la.pushDownPredicatesForAggregation(subDNFItem[0], groupByColumns, exprsOriginal)
+	}
+	for _, item := range subDNFItem {
+		condsToPushForItem, retForItem := la.pushDownCNFPredicatesForAggregation(item, groupByColumns, exprsOriginal)
+		if len(condsToPushForItem) > 0 {
+			condsToPush = append(condsToPush, condsToPushForItem...)
+		} else {
+			condsToPush = append(condsToPush, expression.NewOne())
+		}
+		ret = append(ret, retForItem...)
+	}
+	dnfPushDownCond := expression.ComposeDNFCondition(la.ctx, condsToPush...)
+	if len(ret) == 0 {
+		return []expression.Expression{dnfPushDownCond}, ret
+	}
+	return []expression.Expression{dnfPushDownCond}, []expression.Expression{cond}
+}
+
 // PredicatePushDown implements LogicalPlan PredicatePushDown interface.
 func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) (ret []expression.Expression, retPlan LogicalPlan) {
 	var condsToPush []expression.Expression
@@ -453,31 +522,9 @@ func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expressi
 	}
 	groupByColumns := expression.NewSchema(la.GetGroupByCols()...)
 	for _, cond := range predicates {
-		switch cond.(type) {
-		case *expression.Constant:
-			condsToPush = append(condsToPush, cond)
-			// Consider SQL list "select sum(b) from t group by a having 1=0". "1=0" is a constant predicate which should be
-			// retained and pushed down at the same time. Because we will get a wrong query result that contains one column
-			// with value 0 rather than an empty query result.
-			ret = append(ret, cond)
-		case *expression.ScalarFunction:
-			extractedCols := expression.ExtractColumns(cond)
-			ok := true
-			for _, col := range extractedCols {
-				if !groupByColumns.Contains(col) {
-					ok = false
-					break
-				}
-			}
-			if ok {
-				newFunc := expression.ColumnSubstitute(cond, la.Schema(), exprsOriginal)
-				condsToPush = append(condsToPush, newFunc)
-			} else {
-				ret = append(ret, cond)
-			}
-		default:
-			ret = append(ret, cond)
-		}
+		subCondsToPush, subRet := la.pushDownDNFPredicatesForAggregation(cond, groupByColumns, exprsOriginal)
+		condsToPush = append(condsToPush, subCondsToPush...)
+		ret = append(ret, subRet...)
 	}
 	la.baseLogicalPlan.PredicatePushDown(condsToPush, opt)
 	return ret, la
@@ -859,4 +906,18 @@ func (adder *exprPrefixAdder) addExprPrefix4DNFCond(condition *expression.Scalar
 	}
 
 	return []expression.Expression{expression.ComposeDNFCondition(adder.sctx, newAccessItems...)}, nil
+}
+
+func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
+	if len(predicates) == 0 {
+		p.cte.pushDownPredicates = append(p.cte.pushDownPredicates, expression.NewOne())
+		return predicates, p.self
+	}
+	newPred := make([]expression.Expression, 0, len(predicates))
+	for i := range predicates {
+		newPred = append(newPred, predicates[i].Clone())
+		ResolveExprAndReplace(newPred[i], p.cte.ColumnMap)
+	}
+	p.cte.pushDownPredicates = append(p.cte.pushDownPredicates, expression.ComposeCNFCondition(p.ctx, newPred...))
+	return predicates, p.self
 }
