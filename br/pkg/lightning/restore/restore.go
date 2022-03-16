@@ -367,7 +367,7 @@ func NewRestoreControllerWithPauser(
 
 		backend, err = local.NewLocalBackend(ctx, tls, cfg, g, maxOpenFiles, errorMgr)
 		if err != nil {
-			return nil, errors.Annotate(err, "build local backend failed")
+			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
 		}
 		err = verifyLocalFile(ctx, cpdb, cfg.TikvImporter.SortedKVDir)
 		if err != nil {
