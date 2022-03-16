@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore/client"
 	"github.com/pingcap/tidb/store/mockstore/unistore/lockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
+	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/kverrors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -443,7 +444,9 @@ func buildRespWithMPPExec(chunks []tipb.Chunk, counts, ndvs []int64, exec mppExe
 	}
 	resp.Data = data
 	if err != nil {
-		resp.OtherError = err.Error()
+		if conflictErr, ok := err.(*kverrors.ErrConflict); ok {
+			resp.OtherError = conflictErr.Error()
+		}
 	}
 	return resp
 }
