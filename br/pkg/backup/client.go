@@ -287,15 +287,34 @@ func BuildBackupRangeAndSchema(
 	storage kv.Storage,
 	tableFilter filter.Filter,
 	backupTS uint64,
-) ([]rtree.Range, *Schemas, error) {
+	isFullBackup bool,
+) ([]rtree.Range, *Schemas, []*backuppb.PlacementPolicy, error) {
 	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
 	m := meta.NewSnapshotMeta(snapshot)
+
+	var policies []*backuppb.PlacementPolicy
+	if isFullBackup {
+		// according to https://github.com/pingcap/tidb/issues/32290
+		// only full backup will record policies in backupMeta.
+		policyList, err := m.ListPolicies()
+		if err != nil {
+			return nil, nil, nil, errors.Trace(err)
+		}
+		policies = make([]*backuppb.PlacementPolicy, 0, len(policies))
+		for _, policyInfo := range policyList {
+			p, err := json.Marshal(policyInfo)
+			if err != nil {
+				return nil, nil, nil, errors.Trace(err)
+			}
+			policies = append(policies, &backuppb.PlacementPolicy{Info: p})
+		}
+	}
 
 	ranges := make([]rtree.Range, 0)
 	backupSchemas := newBackupSchemas()
 	dbs, err := m.ListDatabases()
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
 
 	for _, dbInfo := range dbs {
@@ -306,13 +325,19 @@ func BuildBackupRangeAndSchema(
 
 		tables, err := m.ListTables(dbInfo.ID)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, nil, errors.Trace(err)
 		}
 
 		if len(tables) == 0 {
 			log.Warn("It's not necessary for backing up empty database",
 				zap.Stringer("db", dbInfo.Name))
 			continue
+		}
+
+		if !isFullBackup {
+			// according to https://github.com/pingcap/tidb/issues/32290.
+			// ignore placement policy when not in full backup
+			dbInfo.PlacementPolicyRef = nil
 		}
 
 		for _, tableInfo := range tables {
@@ -341,16 +366,21 @@ func BuildBackupRangeAndSchema(
 				globalAutoID, err = idAlloc.NextGlobalAutoID()
 			}
 			if err != nil {
-				return nil, nil, errors.Trace(err)
+				return nil, nil, nil, errors.Trace(err)
 			}
 			tableInfo.AutoIncID = globalAutoID
+			if !isFullBackup {
+				// according to https://github.com/pingcap/tidb/issues/32290.
+				// ignore placement policy when not in full backup
+				tableInfo.PlacementPolicyRef = nil
+			}
 
 			if tableInfo.PKIsHandle && tableInfo.ContainsAutoRandomBits() {
 				// this table has auto_random id, we need backup and rebase in restoration
 				var globalAutoRandID int64
 				globalAutoRandID, err = randAlloc.NextGlobalAutoID()
 				if err != nil {
-					return nil, nil, errors.Trace(err)
+					return nil, nil, nil, errors.Trace(err)
 				}
 				tableInfo.AutoRandID = globalAutoRandID
 				logger.Debug("change table AutoRandID",
@@ -373,7 +403,7 @@ func BuildBackupRangeAndSchema(
 
 			tableRanges, err := BuildTableRanges(tableInfo)
 			if err != nil {
-				return nil, nil, errors.Trace(err)
+				return nil, nil, nil, errors.Trace(err)
 			}
 			for _, r := range tableRanges {
 				ranges = append(ranges, rtree.Range{
@@ -386,9 +416,9 @@ func BuildBackupRangeAndSchema(
 
 	if backupSchemas.Len() == 0 {
 		log.Info("nothing to backup")
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
-	return ranges, backupSchemas, nil
+	return ranges, backupSchemas, policies, nil
 }
 
 func skipUnsupportedDDLJob(job *model.Job) bool {
@@ -447,6 +477,14 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 
 		if (job.State == model.JobStateDone || job.State == model.JobStateSynced) &&
 			(job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion > lastSchemaVersion) {
+			if job.BinlogInfo.DBInfo != nil {
+				// ignore all placement policy info during incremental backup for now.
+				job.BinlogInfo.DBInfo.PlacementPolicyRef = nil
+			}
+			if job.BinlogInfo.TableInfo != nil {
+				// ignore all placement policy info during incremental backup for now.
+				job.BinlogInfo.TableInfo.PlacementPolicyRef = nil
+			}
 			jobBytes, err := json.Marshal(job)
 			if err != nil {
 				return errors.Trace(err)

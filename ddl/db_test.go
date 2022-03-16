@@ -22,10 +22,13 @@ import (
 
 	"github.com/pingcap/tidb/ddl"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
@@ -324,7 +327,7 @@ func TestIssue23473(t *testing.T) {
 	tk.MustExec("create table t_23473 (k int primary key, v int)")
 	tk.MustExec("alter table t_23473 change column k k bigint")
 
-	tbl := tk.GetTableByName("test", "t_23473")
+	tbl := external.GetTableByName(t, tk, "test", "t_23473")
 	require.True(t, mysql.HasNoDefaultValueFlag(tbl.Cols()[0].Flag))
 }
 
@@ -518,4 +521,210 @@ func TestCreateTableIgnoreCheckConstraint(t *testing.T) {
 		"admin_user CREATE TABLE `admin_user` (\n"+
 		"  `enable` tinyint(1) DEFAULT NULL\n"+
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func TestAlterLock(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_index_lock (c1 int, c2 int, C3 int)")
+	tk.MustExec("alter table t_index_lock add index (c1, c2), lock=none")
+}
+
+func TestComment(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	validComment := strings.Repeat("a", 1024)
+	invalidComment := strings.Repeat("b", 1025)
+
+	tk.MustExec("create table ct (c int, d int, e int, key (c) comment '" + validComment + "')")
+	tk.MustExec("create index i on ct (d) comment '" + validComment + "'")
+	tk.MustExec("alter table ct add key (e) comment '" + validComment + "'")
+
+	tk.MustGetErrCode("create table ct1 (c int, key (c) comment '"+invalidComment+"')", errno.ErrTooLongIndexComment)
+	tk.MustGetErrCode("create index i1 on ct (d) comment '"+invalidComment+"b"+"'", errno.ErrTooLongIndexComment)
+	tk.MustGetErrCode("alter table ct add key (e) comment '"+invalidComment+"'", errno.ErrTooLongIndexComment)
+
+	tk.MustExec("set @@sql_mode=''")
+	tk.MustExec("create table ct1 (c int, d int, e int, key (c) comment '" + invalidComment + "')")
+	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1688|Comment for index 'c' is too long (max = 1024)"))
+	tk.MustExec("create index i1 on ct1 (d) comment '" + invalidComment + "b" + "'")
+	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1688|Comment for index 'i1' is too long (max = 1024)"))
+	tk.MustExec("alter table ct1 add key (e) comment '" + invalidComment + "'")
+	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1688|Comment for index 'e' is too long (max = 1024)"))
+}
+
+func TestIfNotExists(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int key)")
+
+	// ADD COLUMN
+	sql := "alter table t1 add column b int"
+	tk.MustExec(sql)
+	tk.MustGetErrCode(sql, errno.ErrDupFieldName)
+	tk.MustExec("alter table t1 add column if not exists b int")
+	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Note|1060|Duplicate column name 'b'"))
+
+	// ADD INDEX
+	sql = "alter table t1 add index idx_b (b)"
+	tk.MustExec(sql)
+	tk.MustGetErrCode(sql, errno.ErrDupKeyName)
+	tk.MustExec("alter table t1 add index if not exists idx_b (b)")
+	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Note|1061|index already exist idx_b"))
+
+	// CREATE INDEX
+	sql = "create index idx_b on t1 (b)"
+	tk.MustGetErrCode(sql, errno.ErrDupKeyName)
+	tk.MustExec("create index if not exists idx_b on t1 (b)")
+	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Note|1061|index already exist idx_b"))
+
+	// ADD PARTITION
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 (a int key) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
+	sql = "alter table t2 add partition (partition p2 values less than (30))"
+	tk.MustExec(sql)
+	tk.MustGetErrCode(sql, errno.ErrSameNamePartition)
+	tk.MustExec("alter table t2 add partition if not exists (partition p2 values less than (30))")
+	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Note|1517|Duplicate partition name p2"))
+}
+
+func TestIfExists(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int key, b int);")
+
+	// DROP COLUMN
+	sql := "alter table t1 drop column b"
+	tk.MustExec(sql)
+	tk.MustGetErrCode(sql, errno.ErrCantDropFieldOrKey)
+	tk.MustExec("alter table t1 drop column if exists b") // only `a` exists now
+	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Note|1091|Can't DROP 'b'; check that column/key exists"))
+
+	// CHANGE COLUMN
+	sql = "alter table t1 change column b c int"
+	tk.MustGetErrCode(sql, errno.ErrBadField)
+	tk.MustExec("alter table t1 change column if exists b c int")
+	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Note|1054|Unknown column 'b' in 't1'"))
+	tk.MustExec("alter table t1 change column if exists a c int") // only `c` exists now
+
+	// MODIFY COLUMN
+	sql = "alter table t1 modify column a bigint"
+	tk.MustGetErrCode(sql, errno.ErrBadField)
+	tk.MustExec("alter table t1 modify column if exists a bigint")
+	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Note|1054|Unknown column 'a' in 't1'"))
+	tk.MustExec("alter table t1 modify column if exists c bigint") // only `c` exists now
+
+	// DROP INDEX
+	tk.MustExec("alter table t1 add index idx_c (c)")
+	sql = "alter table t1 drop index idx_c"
+	tk.MustExec(sql)
+	tk.MustGetErrCode(sql, errno.ErrCantDropFieldOrKey)
+	tk.MustExec("alter table t1 drop index if exists idx_c")
+	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Note|1091|index idx_c doesn't exist"))
+
+	// DROP PARTITION
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 (a int key) partition by range(a) (partition pNeg values less than (0), partition p0 values less than (10), partition p1 values less than (20))")
+	sql = "alter table t2 drop partition p1"
+	tk.MustExec(sql)
+	tk.MustGetErrCode(sql, errno.ErrDropPartitionNonExistent)
+	tk.MustExec("alter table t2 drop partition if exists p1")
+	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Note|1507|Error in list of partitions to DROP"))
+}
+
+func TestCheckTooBigFieldLength(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table tr_01 (id int, name varchar(20000), purchased date )  default charset=utf8 collate=utf8_bin;")
+
+	tk.MustExec("drop table if exists tr_02;")
+	tk.MustExec("create table tr_02 (id int, name varchar(16000), purchased date )  default charset=utf8mb4 collate=utf8mb4_bin;")
+
+	tk.MustExec("drop table if exists tr_03;")
+	tk.MustExec("create table tr_03 (id int, name varchar(65534), purchased date ) default charset=latin1;")
+
+	tk.MustExec("drop table if exists tr_04;")
+	tk.MustExec("create table tr_04 (a varchar(20000) ) default charset utf8;")
+	tk.MustGetErrCode("alter table tr_04 add column b varchar(20000) charset utf8mb4;", errno.ErrTooBigFieldlength)
+	tk.MustGetErrCode("alter table tr_04 convert to character set utf8mb4;", errno.ErrTooBigFieldlength)
+	tk.MustGetErrCode("create table tr (id int, name varchar(30000), purchased date )  default charset=utf8 collate=utf8_bin;", errno.ErrTooBigFieldlength)
+	tk.MustGetErrCode("create table tr (id int, name varchar(20000) charset utf8mb4, purchased date ) default charset=utf8 collate=utf8_bin;", errno.ErrTooBigFieldlength)
+	tk.MustGetErrCode("create table tr (id int, name varchar(65536), purchased date ) default charset=latin1;", errno.ErrTooBigFieldlength)
+
+	tk.MustExec("drop table if exists tr_05;")
+	tk.MustExec("create table tr_05 (a varchar(16000) charset utf8);")
+	tk.MustExec("alter table tr_05 modify column a varchar(16000) charset utf8;")
+	tk.MustExec("alter table tr_05 modify column a varchar(16000) charset utf8mb4;")
+}
+
+func TestGeneratedColumnWindowFunction(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustGetErrCode("CREATE TABLE t (a INT , b INT as (ROW_NUMBER() OVER (ORDER BY a)))", errno.ErrWindowInvalidWindowFuncUse)
+	tk.MustGetErrCode("CREATE TABLE t (a INT , index idx ((ROW_NUMBER() OVER (ORDER BY a))))", errno.ErrWindowInvalidWindowFuncUse)
+}
+
+func TestCreateTableWithDecimalWithDoubleZero(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	checkType := func(db, table, field string) {
+		ctx := tk.Session().(sessionctx.Context)
+		is := domain.GetDomain(ctx).InfoSchema()
+		tableInfo, err := is.TableByName(model.NewCIStr(db), model.NewCIStr(table))
+		require.NoError(t, err)
+		tblInfo := tableInfo.Meta()
+		for _, col := range tblInfo.Columns {
+			if col.Name.L == field {
+				require.Equal(t, 10, col.Flen)
+			}
+		}
+	}
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tt")
+	tk.MustExec("create table tt(d decimal(0, 0))")
+	checkType("test", "tt", "d")
+
+	tk.MustExec("drop table tt")
+	tk.MustExec("create table tt(a int)")
+	tk.MustExec("alter table tt add column d decimal(0, 0)")
+	checkType("test", "tt", "d")
+
+	tk.MustExec("drop table tt")
+	tk.MustExec("create table tt(d int)")
+	tk.MustExec("alter table tt change column d d decimal(0, 0)")
+	checkType("test", "tt", "d")
 }
