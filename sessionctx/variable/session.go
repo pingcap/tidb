@@ -1024,6 +1024,8 @@ type SessionVars struct {
 	BatchPendingTiFlashCount int
 	// RcReadCheckTS indicates if ts check optimization is enabled for current session.
 	RcReadCheckTS bool
+	// RemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
+	RemoveOrderbyInSubquery bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1259,6 +1261,7 @@ func NewSessionVars() *SessionVars {
 		Rng:                         utilMath.NewWithTime(),
 		StatsLoadSyncWait:           StatsLoadSyncWait.Load(),
 		EnableLegacyInstanceScope:   DefEnableLegacyInstanceScope,
+		RemoveOrderbyInSubquery:     DefTiDBRemoveOrderbyInSubquery,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
