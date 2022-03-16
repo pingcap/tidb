@@ -120,6 +120,66 @@ func TestCapturePlanBaseline(t *testing.T) {
 	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` > 10", rows[0][1])
 }
 
+func TestCapturePlanBaseline4DisabledStatus(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	utilCleanBindingEnv(tk, dom)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
+	defer func() {
+		tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = off")
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, index idx_a(a))")
+	dom.BindHandle().CaptureBaselines()
+	tk.MustQuery("show global bindings").Check(testkit.Rows())
+	tk.MustExec("select /*+ USE_INDEX(t, idx_a) */ * from t where a > 10")
+	tk.MustExec("select /*+ USE_INDEX(t, idx_a) */ * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows := tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 0)
+
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, bindinfo.Enabled, rows[0][3])
+	require.Equal(t, bindinfo.Capture, rows[0][8])
+
+	tk.MustExec("select * from t where a > 10")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+
+	tk.MustExec("set binding disabled for select * from t where a > 10")
+
+	tk.MustExec("select * from t where a > 10")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+	rows = tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, bindinfo.Disabled, rows[0][3])
+
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, bindinfo.Disabled, rows[0][3])
+
+	tk.MustExec("select * from t where a > 10")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+
+	tk.MustExec("drop global binding for select * from t where a > 10")
+	rows = tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 0)
+
+	utilCleanBindingEnv(tk, dom)
+}
+
 func TestCaptureDBCaseSensitivity(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
