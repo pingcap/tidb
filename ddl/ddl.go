@@ -622,12 +622,17 @@ func checkHistoryJobInTest(historyJob *model.Job) {
 	}
 
 	// Check DDL query.
-	if historyJob.Query == "" && historyJob.Type == model.ActionUpdateTiFlashReplicaStatus {
+	switch historyJob.Type {
+	case model.ActionUpdateTiFlashReplicaStatus, model.ActionUnlockTable:
+		if historyJob.Query != "" {
+			panic(fmt.Sprintf("job ID %d, type %s, query %s", historyJob.ID, historyJob.Type.String(), historyJob.Query))
+		}
 		return
-	}
-	if historyJob.Query == "skip" {
-		// Skip the check if the test explicitly set the query.
-		return
+	default:
+		if historyJob.Query == "skip" {
+			// Skip the check if the test explicitly set the query.
+			return
+		}
 	}
 	p := parser.New()
 	stmt, _, err := p.ParseSQL(historyJob.Query)
@@ -644,13 +649,23 @@ func checkHistoryJobInTest(historyJob *model.Job) {
 	}
 }
 
+func setDDLJobQuery(ctx sessionctx.Context, job *model.Job) {
+	switch job.Type {
+	case model.ActionUpdateTiFlashReplicaStatus, model.ActionUnlockTable:
+		job.Query = ""
+	default:
+		// Get a global job ID and put the DDL job in the queue.
+		job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
+	}
+}
+
 // doDDLJob will return
 // - nil: found in history DDL job and no job error
 // - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
 // - other: found in history DDL job and return that job error
 func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	// Get a global job ID and put the DDL job in the queue.
-	job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
+	setDDLJobQuery(ctx, job)
 	task := &limitJobTask{job, make(chan error)}
 	d.limitJobCh <- task
 	// worker should restart to continue handling tasks in limitJobCh, and send back through task.err

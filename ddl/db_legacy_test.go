@@ -1732,7 +1732,6 @@ func (s *testSerialDBSuite) TestSkipSchemaChecker(c *C) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t1 set a=1;")
 	tb := testGetTableByName(c, tk.Se, "test", "t1")
-	tk.Se.SetValue(sessionctx.QueryString, "skip")
 	err := domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, tb.Meta().ID, true)
 	c.Assert(err, IsNil)
 	tk.MustExec("commit")
