@@ -245,6 +245,12 @@ func TestSelectClusterTable(t *testing.T) {
 	re := tk.MustQuery("select * from `CLUSTER_statements_summary`")
 	require.NotNil(t, re)
 	require.Greater(t, len(re.Rows()), 0)
+	re = tk.MustQuery("select * from `CLUSTER_statements_summary` where table_names REGEXP '\\binformation_schema\\.'")
+	require.NotNil(t, re)
+	require.Equal(t, len(re.Rows()), 0)
+	re = tk.MustQuery("select * from `CLUSTER_statements_summary` where table_names REGEXP 'information_schema\\.'")
+	require.NotNil(t, re)
+	require.Greater(t, len(re.Rows()), 0)
 	// Test for TiDB issue 14915.
 	re = tk.MustQuery("select sum(exec_count*avg_mem) from cluster_statements_summary_history group by schema_name,digest,digest_text;")
 	require.NotNil(t, re)
