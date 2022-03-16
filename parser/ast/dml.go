@@ -2591,6 +2591,7 @@ const (
 	ShowPrivileges
 	ShowErrors
 	ShowBindings
+	ShowBindingCacheStatus
 	ShowPumpStatus
 	ShowDrainerStatus
 	ShowOpenTables
@@ -2917,6 +2918,8 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 				ctx.WriteKeyWord("SESSION ")
 			}
 			ctx.WriteKeyWord("BINDINGS")
+		case ShowBindingCacheStatus:
+			ctx.WriteKeyWord("BINDING_CACHE STATUS")
 		case ShowPumpStatus:
 			ctx.WriteKeyWord("PUMP STATUS")
 		case ShowDrainerStatus:

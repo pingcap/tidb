@@ -78,6 +78,10 @@ const (
 	dialTimeout             = 5 * time.Minute
 	maxRetryTimes           = 5
 	defaultRetryBackoffTime = 3 * time.Second
+	// maxWriteAndIngestRetryTimes is the max retry times for write and ingest.
+	// A large retry times is for tolerating tikv cluster failures.
+	maxWriteAndIngestRetryTimes = 30
+	maxRetryBackoffTime         = 30 * time.Second
 
 	gRPCKeepAliveTime    = 10 * time.Minute
 	gRPCKeepAliveTimeout = 5 * time.Minute
@@ -1276,9 +1280,9 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 				wg.Done()
 			}()
 			var err error
-			// max retry backoff time: 2+4+8+16=30s
+			// max retry backoff time: 2+4+8+16+30*26=810s
 			backOffTime := time.Second
-			for i := 0; i < maxRetryTimes; i++ {
+			for i := 0; i < maxWriteAndIngestRetryTimes; i++ {
 				err = local.writeAndIngestByRange(ctx, engine, startKey, endKey, regionSplitSize, regionSplitKeys)
 				if err == nil || common.IsContextCanceledError(err) {
 					return
@@ -1286,6 +1290,9 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 				log.L().Warn("write and ingest by range failed",
 					zap.Int("retry time", i+1), log.ShortError(err))
 				backOffTime *= 2
+				if backOffTime > maxRetryBackoffTime {
+					backOffTime = maxRetryBackoffTime
+				}
 				select {
 				case <-time.After(backOffTime):
 				case <-ctx.Done():
@@ -1305,6 +1312,9 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 	// wait for all sub tasks finish to avoid panic. if we return on the first error,
 	// the outer tasks may close the pebble db but some sub tasks still read from the db
 	wg.Wait()
+	if allErr == nil {
+		return ctx.Err()
+	}
 	return allErr
 }
 
