@@ -996,6 +996,10 @@ type SessionVars struct {
 	// EnablePaging indicates whether enable paging in coprocessor requests.
 	EnablePaging bool
 
+	// EnableLegacyInstanceScope says if SET SESSION can be used to set an instance
+	// scope variable. The default is TRUE.
+	EnableLegacyInstanceScope bool
+
 	// ReadConsistency indicates the read consistency requirement.
 	ReadConsistency ReadConsistencyLevel
 
@@ -1248,6 +1252,7 @@ func NewSessionVars() *SessionVars {
 		MPPStoreFailTTL:             DefTiDBMPPStoreFailTTL,
 		Rng:                         utilMath.NewWithTime(),
 		StatsLoadSyncWait:           StatsLoadSyncWait.Load(),
+		EnableLegacyInstanceScope:   DefEnableLegacyInstanceScope,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{

@@ -764,6 +764,42 @@ func (s *testSessionSuite) TestUpgradeSysvars(c *C) {
 	c.Assert(v, Equals, "OFF") // the default value is restored.
 }
 
+func (s *testSessionSuite) TestSetInstanceSysvarBySetGlobalSysVar(c *C) {
+	varName := "tidb_general_log"
+	defaultValue := "OFF" // This is the default value for tidb_general_log
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	se := tk.Se.(variable.GlobalVarAccessor)
+
+	// Get globalSysVar twice and get the same default value
+	v, err := se.GetGlobalSysVar(varName)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, defaultValue)
+	v, err = se.GetGlobalSysVar(varName)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, defaultValue)
+
+	// session.GetGlobalSysVar would not get the value which session.SetGlobalSysVar writes,
+	// because SetGlobalSysVar calls SetGlobalFromHook, which uses TiDBGeneralLog's SetGlobal,
+	// but GetGlobalSysVar could not access TiDBGeneralLog's GetGlobal.
+
+	// set to "1"
+	err = se.SetGlobalSysVar(varName, "ON")
+	c.Assert(err, IsNil)
+	v, err = se.GetGlobalSysVar(varName)
+	tk.MustQuery("select @@global.tidb_general_log").Check(testkit.Rows("1"))
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, defaultValue)
+
+	// set back to "0"
+	err = se.SetGlobalSysVar(varName, defaultValue)
+	c.Assert(err, IsNil)
+	v, err = se.GetGlobalSysVar(varName)
+	tk.MustQuery("select @@global.tidb_general_log").Check(testkit.Rows("0"))
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, defaultValue)
+}
+
 func (s *testSessionSuite) TestMatchIdentity(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("CREATE USER `useridentity`@`%`")
@@ -6090,4 +6126,19 @@ func (s *testSessionSuite) TestSysdateIsNow(c *C) {
 	tk.MustExec("set @@tidb_sysdate_is_now=true")
 	tk.MustQuery("show variables like '%tidb_sysdate_is_now%'").Check(testkit.Rows("tidb_sysdate_is_now ON"))
 	c.Assert(tk.Se.GetSessionVars().SysdateIsNow, IsTrue)
+}
+
+func (s *testSessionSuite) TestEnableLegacyInstanceScope(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// enable 'switching' to SESSION variables
+	tk.MustExec("set tidb_enable_legacy_instance_scope = 1")
+	tk.MustExec("set tidb_general_log = 1")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(fmt.Sprintf("Warning %d modifying tidb_general_log will require SET GLOBAL in a future version of TiDB", errno.ErrInstanceScope)))
+	c.Assert(tk.Se.GetSessionVars().EnableLegacyInstanceScope, IsTrue)
+
+	// disable 'switching' to SESSION variables
+	tk.MustExec("set tidb_enable_legacy_instance_scope = 0")
+	tk.MustGetErrCode("set tidb_general_log = 1", errno.ErrGlobalVariable)
+	c.Assert(tk.Se.GetSessionVars().EnableLegacyInstanceScope, IsFalse)
 }
