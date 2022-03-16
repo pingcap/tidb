@@ -1389,10 +1389,12 @@ func (s *stateChangeSuite) TestParallelUpdateTableReplica() {
 	var wg util.WaitGroupWrapper
 	wg.Run(func() {
 		// Mock for table tiflash replica was available.
+		tk1.Session().SetValue(sessionctx.QueryString, "skip")
 		err1 = domain.GetDomain(tk1.Session()).DDL().UpdateTableReplicaInfo(tk1.Session(), t1.Meta().ID, true)
 	})
 	wg.Run(func() {
 		<-ch
+		tk2.Session().SetValue(sessionctx.QueryString, "skip")
 		// Mock for table tiflash replica was available.
 		err2 = domain.GetDomain(tk2.Session()).DDL().UpdateTableReplicaInfo(tk2.Session(), t1.Meta().ID, true)
 	})

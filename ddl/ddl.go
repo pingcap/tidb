@@ -622,6 +622,9 @@ func checkHistoryJobInTest(historyJob *model.Job) {
 	}
 
 	// Check DDL query.
+	if historyJob.Query == "" && historyJob.Type == model.ActionUpdateTiFlashReplicaStatus {
+		return
+	}
 	if historyJob.Query == "skip" {
 		// Skip the check if the test explicitly set the query.
 		return
