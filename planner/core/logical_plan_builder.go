@@ -4287,6 +4287,9 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 		for _, idx := range ds.tableInfo.Indices {
 			keyCols := fd.NewFastIntSet()
 			allColIsNotNull := true
+			if idx.State != model.StatePublic {
+				continue
+			}
 			for _, idxCol := range idx.Columns {
 				// Note: even the prefix column can also be the FD. For example:
 				// unique(char_column(10)), will also guarantee the prefix to be
