@@ -183,6 +183,11 @@ func (c *Context) GetBuiltinFunctionUsage() map[string]uint32 {
 	return make(map[string]uint32)
 }
 
+// BuiltinFunctionUsageInc implements sessionctx.Context.
+func (c *Context) BuiltinFunctionUsageInc(scalarFuncSigName string) {
+
+}
+
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.
 func (c *Context) GetGlobalSysVar(ctx sessionctx.Context, name string) (string, error) {
 	v := variable.GetSysVar(name)
