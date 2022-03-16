@@ -258,34 +258,42 @@ func TestTiFlashNoRedundantPDRules(t *testing.T) {
 
 	tk.MustExec("truncate table ddltiflash")
 	total += 1
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
 	require.Equal(t, total, s.tiflash.PlacementRulesLen())
 	require.NoError(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
 	total -= 1
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
 	require.Equal(t, total, s.tiflash.PlacementRulesLen())
 
 	tk.MustExec("drop table ddltiflash")
 	total -= 1
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
 	require.NoError(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
 	require.Equal(t, total, s.tiflash.PlacementRulesLen())
 
 	tk.MustExec("truncate table ddlnotiflash")
 	// Not affect TiFlash rules, since this table has no TiFlash replica.
 	require.NoError(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
+	require.Equal(t, total, s.tiflash.PlacementRulesLen())
+
+	tk.MustExec("alter table ddlnotiflashp truncate partition p1")
+	tk.MustExec("alter table ddlnotiflashp drop partition p2")
+	// Not affect TiFlash rules, since this table has no TiFlash replica.
+	require.NoError(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
 	require.Equal(t, total, s.tiflash.PlacementRulesLen())
 
 	tk.MustExec("truncate table ddlnotiflashp")
+	tk.MustExec("drop table ddlnotiflash")
 	// Not affect TiFlash rules, since this table has no TiFlash replica.
 	require.NoError(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
 	require.Equal(t, total, s.tiflash.PlacementRulesLen())
 
 	tk.MustExec("drop database test")
 	require.NoError(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
-	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
+	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
 	require.Equal(t, 0, s.tiflash.PlacementRulesLen())
 }
 
