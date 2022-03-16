@@ -713,6 +713,9 @@ type SessionVars struct {
 	// OptimizerSelectivityLevel defines the level of the selectivity estimation in plan.
 	OptimizerSelectivityLevel int
 
+	// OptimizerEnableNewOnlyFullGroupByCheck enables the new only_full_group_by check which is implemented by maintaining functional dependency.
+	OptimizerEnableNewOnlyFullGroupByCheck bool
+
 	// EnableTablePartition enables table partition feature.
 	EnableTablePartition string
 

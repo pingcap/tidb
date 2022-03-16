@@ -47,6 +47,7 @@ func TestFDSet_ExtractFD(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode = ''")
+	tk.MustExec("set @@session.tidb_optimizer_enable_new_only_full_group_by_check = 'on';")
 	tk.MustExec("create table t1(a int key, b int, c int, unique(b,c))")
 	tk.MustExec("create table t2(m int key, n int, p int, unique(m,n))")
 	tk.MustExec("create table x1(a int not null primary key, b int not null, c int default null, d int not null, unique key I_b_c (b,c), unique key I_b_d (b,d))")
@@ -241,6 +242,7 @@ func TestFDSet_ExtractFDForApply(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_optimizer_enable_new_only_full_group_by_check = 'on';")
 	tk.MustExec("CREATE TABLE X (a INT PRIMARY KEY, b INT, c INT, d INT, e INT)")
 	tk.MustExec("CREATE UNIQUE INDEX uni ON X (b, c)")
 	tk.MustExec("CREATE TABLE Y (m INT, n INT, p INT, q INT, PRIMARY KEY (m, n))")

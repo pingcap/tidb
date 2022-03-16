@@ -1162,10 +1162,12 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p LogicalPlan, f
 		RetType:               expr.GetType(),
 		CorrelatedColUniqueID: correlatedColUniqueID,
 	}
-	if b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol == nil {
-		b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = make(map[string]int, 1)
+	if b.ctx.GetSessionVars().OptimizerEnableNewOnlyFullGroupByCheck {
+		if b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol == nil {
+			b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = make(map[string]int, 1)
+		}
+		b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol[string(expr.HashCode(b.ctx.GetSessionVars().StmtCtx))] = int(newCol.UniqueID)
 	}
-	b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol[string(expr.HashCode(b.ctx.GetSessionVars().StmtCtx))] = int(newCol.UniqueID)
 	newCol.SetCoercibility(expr.Coercibility())
 	return newCol, name, nil
 }
