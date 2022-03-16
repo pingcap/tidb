@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -1307,4 +1308,41 @@ func TestAddMultiColumnsIndexClusterIndex(t *testing.T) {
 
 	tk.MustExec("admin check index t idx;")
 	tk.MustExec("admin check table t;")
+}
+
+func TestAddIndexWithDupCols(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	err1 := infoschema.ErrColumnExists.GenWithStackByArgs("b")
+	err2 := infoschema.ErrColumnExists.GenWithStackByArgs("B")
+
+	tk.MustExec("create table test_add_index_with_dup (a int, b int)")
+	err := tk.ExecToErr("create index c on test_add_index_with_dup(b, a, b)")
+	require.ErrorIs(t, err, errors.Cause(err1))
+	err = tk.ExecToErr("create index c on test_add_index_with_dup(b, a, B)")
+	require.ErrorIs(t, err, errors.Cause(err2))
+	err = tk.ExecToErr("alter table test_add_index_with_dup add index c (b, a, b)")
+	require.ErrorIs(t, err, errors.Cause(err1))
+	err = tk.ExecToErr("alter table test_add_index_with_dup add index c (b, a, B)")
+	require.ErrorIs(t, err, errors.Cause(err2))
+
+	tk.MustExec("drop table test_add_index_with_dup")
+}
+
+func TestAnonymousIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("create table t(bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb int, b int)")
+	tk.MustExec("alter table t add index bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb(b)")
+	tk.MustExec("alter table t add index (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)")
+	rows := tk.MustQuery("show index from t where key_name='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'").Rows()
+	require.Len(t, rows, 1)
+	rows = tk.MustQuery("show index from t where key_name='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb_2'").Rows()
+	require.Len(t, rows, 1)
 }

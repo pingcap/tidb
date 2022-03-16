@@ -326,12 +326,12 @@ func TestAnalyze(t *testing.T) {
 
 	testKit.MustExec("create view v as select * from t")
 	_, err := testKit.Exec("analyze table v")
-	require.EqualError(t, err, "analyze view v is not supported now.")
+	require.EqualError(t, err, "analyze view v is not supported now")
 	testKit.MustExec("drop view v")
 
 	testKit.MustExec("create sequence seq")
 	_, err = testKit.Exec("analyze table seq")
-	require.EqualError(t, err, "analyze sequence seq is not supported now.")
+	require.EqualError(t, err, "analyze sequence seq is not supported now")
 	testKit.MustExec("drop sequence seq")
 
 	var input, output []string

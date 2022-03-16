@@ -143,7 +143,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 		return err
 	}
 
-	newCache := h.bindInfo.Value.Load().(*bindCache).Copy()
+	newCache, memExceededErr := h.bindInfo.Value.Load().(*bindCache).Copy()
 	defer func() {
 		h.bindInfo.lastUpdateTime = lastUpdateTime
 		h.bindInfo.Value.Store(newCache)
@@ -151,6 +151,10 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 	}()
 
 	for _, row := range rows {
+		// If the memory usage of the binding_cache exceeds its capacity, we will break and do not handle.
+		if memExceededErr != nil {
+			break
+		}
 		// Skip the builtin record which is designed for binding synchronization.
 		if row.GetString(0) == BuiltinPseudoSQL4BindLock {
 			continue
@@ -171,11 +175,20 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 		oldRecord := newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
 		newRecord := merge(oldRecord, meta).removeDeletedBindings()
 		if len(newRecord.Bindings) > 0 {
-			newCache.SetBindRecord(hash, newRecord)
+			err = newCache.SetBindRecord(hash, newRecord)
+			if err != nil {
+				memExceededErr = err
+			}
 		} else {
 			newCache.RemoveBindRecord(hash, newRecord)
 		}
 		updateMetrics(metrics.ScopeGlobal, oldRecord, newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db), true)
+	}
+	if memExceededErr != nil {
+		// When the memory capacity of bing_cache is not enough,
+		// there will be some memory-related errors in multiple places.
+		// Only needs to be handled once.
+		logutil.BgLogger().Warn("[sql-bind] BindHandle.Update", zap.Error(memExceededErr))
 	}
 	return nil
 }
@@ -267,7 +280,7 @@ func (h *BindHandle) AddBindRecord(sctx sessionctx.Context, record *BindRecord) 
 	if oldRecord != nil {
 		binding := oldRecord.FindBinding(record.Bindings[0].ID)
 		if binding != nil {
-			// There is already a binding with status `Using`, `PendingVerify` or `Rejected`, we could directly cancel the job.
+			// There is already a binding with status `Enabled`, `Disabled`, `PendingVerify` or `Rejected`, we could directly cancel the job.
 			if record.Bindings[0].Status == PendingVerify {
 				return nil
 			}
@@ -538,6 +551,16 @@ func (h *BindHandle) SetBindCacheCapacity(capacity int64) {
 	h.bindInfo.Load().(*bindCache).SetMemCapacity(capacity)
 }
 
+// GetMemUsage returns the memory usage for the bind cache.
+func (h *BindHandle) GetMemUsage() (memUsage int64) {
+	return h.bindInfo.Load().(*bindCache).GetMemUsage()
+}
+
+// GetMemCapacity returns the memory capacity for the bind cache.
+func (h *BindHandle) GetMemCapacity() (memCapacity int64) {
+	return h.bindInfo.Load().(*bindCache).GetMemCapacity()
+}
+
 // newBindRecord builds BindRecord from a tuple in storage.
 func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
 	status := row.GetString(3)
@@ -570,27 +593,43 @@ func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
 // setBindRecord sets the BindRecord to the cache, if there already exists a BindRecord,
 // it will be overridden.
 func (h *BindHandle) setBindRecord(hash string, meta *BindRecord) {
-	newCache := h.bindInfo.Value.Load().(*bindCache).Copy()
+	newCache, err0 := h.bindInfo.Value.Load().(*bindCache).Copy()
+	if err0 != nil {
+		logutil.BgLogger().Warn("[sql-bind] BindHandle.setBindRecord", zap.Error(err0))
+	}
 	oldRecord := newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
-	newCache.SetBindRecord(hash, meta)
+	err1 := newCache.SetBindRecord(hash, meta)
+	if err1 != nil && err0 == nil {
+		logutil.BgLogger().Warn("[sql-bind] BindHandle.setBindRecord", zap.Error(err1))
+	}
 	h.bindInfo.Value.Store(newCache)
 	updateMetrics(metrics.ScopeGlobal, oldRecord, meta, false)
 }
 
-// appendBindRecord addes the BindRecord to the cache, all the stale BindRecords are
+// appendBindRecord adds the BindRecord to the cache, all the stale BindRecords are
 // removed from the cache after this operation.
 func (h *BindHandle) appendBindRecord(hash string, meta *BindRecord) {
-	newCache := h.bindInfo.Value.Load().(*bindCache).Copy()
+	newCache, err0 := h.bindInfo.Value.Load().(*bindCache).Copy()
+	if err0 != nil {
+		logutil.BgLogger().Warn("[sql-bind] BindHandle.appendBindRecord", zap.Error(err0))
+	}
 	oldRecord := newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
 	newRecord := merge(oldRecord, meta)
-	newCache.SetBindRecord(hash, newRecord)
+	err1 := newCache.SetBindRecord(hash, newRecord)
+	if err1 != nil && err0 == nil {
+		// Only need to handle the error once.
+		logutil.BgLogger().Warn("[sql-bind] BindHandle.appendBindRecord", zap.Error(err1))
+	}
 	h.bindInfo.Value.Store(newCache)
 	updateMetrics(metrics.ScopeGlobal, oldRecord, newRecord, false)
 }
 
 // removeBindRecord removes the BindRecord from the cache.
 func (h *BindHandle) removeBindRecord(hash string, meta *BindRecord) {
-	newCache := h.bindInfo.Value.Load().(*bindCache).Copy()
+	newCache, err := h.bindInfo.Value.Load().(*bindCache).Copy()
+	if err != nil {
+		logutil.BgLogger().Warn("[sql-bind] ", zap.Error(err))
+	}
 	oldRecord := newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
 	newCache.RemoveBindRecord(hash, meta)
 	h.bindInfo.Value.Store(newCache)
@@ -744,7 +783,7 @@ func (h *BindHandle) CaptureBaselines() {
 		}
 		dbName := utilparser.GetDefaultDB(stmt, bindableStmt.Schema)
 		normalizedSQL, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, dbName, bindableStmt.Query))
-		if r := h.GetBindRecord(digest.String(), normalizedSQL, dbName); r != nil && r.HasUsingBinding() {
+		if r := h.GetBindRecord(digest.String(), normalizedSQL, dbName); r != nil && r.HasAvailableBinding() {
 			continue
 		}
 		bindSQL := GenerateBindSQL(context.TODO(), stmt, bindableStmt.PlanHint, true, dbName)
