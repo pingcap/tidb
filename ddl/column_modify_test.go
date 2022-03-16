@@ -492,7 +492,7 @@ func TestCancelDropColumn(t *testing.T) {
 				checkErr = errors.Trace(err)
 				return
 			}
-			if errs[0] != nil {
+			if errs != nil && errs[0] != nil {
 				checkErr = errors.Trace(errs[0])
 				return
 			}
@@ -602,7 +602,7 @@ func TestCancelDropColumns(t *testing.T) {
 				checkErr = errors.Trace(err)
 				return
 			}
-			if errs[0] != nil {
+			if errs != nil && errs[0] != nil {
 				checkErr = errors.Trace(errs[0])
 				return
 			}

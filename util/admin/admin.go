@@ -131,7 +131,6 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 		return nil, nil
 	}
 
-	errs := make([]error, len(ids))
 	t := meta.NewMeta(txn)
 	generalJobs, err := getDDLJobsInQueue(t, meta.DefaultJobListKey)
 	if err != nil {
@@ -141,6 +140,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	errs := make([]error, len(ids))
 	jobs := append(generalJobs, addIdxJobs...)
 	jobsMap := make(map[int64]int)
 	for i, id := range ids {
