@@ -622,6 +622,10 @@ func checkHistoryJobInTest(historyJob *model.Job) {
 	}
 
 	// Check DDL query.
+	if historyJob.Query == "skip" {
+		// Skip the check if the test explicitly set the query.
+		return
+	}
 	p := parser.New()
 	stmt, _, err := p.ParseSQL(historyJob.Query)
 	if err != nil {
