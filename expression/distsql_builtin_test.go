@@ -847,6 +847,28 @@ func TestPBToExprWithNewCollation(t *testing.T) {
 	}
 }
 
+// Test convert various scalar functions.
+func TestPBToScalarFuncExpr(t *testing.T) {
+	sc := new(stmtctx.StatementContext)
+	fieldTps := make([]*types.FieldType, 1)
+	exprs := []*tipb.Expr{
+		{
+			Tp:        tipb.ExprType_ScalarFunc,
+			Sig:       tipb.ScalarFuncSig_RegexpSig,
+			FieldType: ToPBFieldType(newStringFieldType()),
+		},
+		{
+			Tp:        tipb.ExprType_ScalarFunc,
+			Sig:       tipb.ScalarFuncSig_RegexpUTF8Sig,
+			FieldType: ToPBFieldType(newStringFieldType()),
+		},
+	}
+	for _, expr := range exprs {
+		_, err := PBToExpr(expr, fieldTps, sc)
+		require.NoError(t, err)
+	}
+}
+
 func datumExpr(t *testing.T, d types.Datum) *tipb.Expr {
 	expr := new(tipb.Expr)
 	switch d.Kind() {
