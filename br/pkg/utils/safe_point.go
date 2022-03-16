@@ -144,6 +144,7 @@ type FakePDClient struct {
 	Stores []*metapb.Store
 }
 
+// GetAllStores return fake stores.
 func (c FakePDClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
 	return append([]*metapb.Store{}, c.Stores...), nil
 }

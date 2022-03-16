@@ -19,8 +19,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/br/pkg/httputil"
 	"net/http"
 	"sort"
 	"strings"
@@ -28,11 +26,13 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
@@ -366,6 +366,7 @@ func (s *streamMgr) checkRequirements(ctx context.Context) (bool, error) {
 				return e
 			}
 			supportBackupStream = supportBackupStream && c.BackupStream.EnableStreaming
+			_ = resp.Body.Close()
 			return nil
 		}, utils.NewPDReqBackoffer())
 		if err != nil {

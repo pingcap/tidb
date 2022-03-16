@@ -17,16 +17,17 @@ package task
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
-	"net/http"
-	"net/http/httptest"
-	"strings"
-	"testing"
 )
 
 func newMockStreamMgr(pdCli pd.Client, httpCli *http.Client) *streamMgr {
