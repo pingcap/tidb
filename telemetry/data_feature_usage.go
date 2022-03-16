@@ -153,7 +153,7 @@ type TxnUsage struct {
 	OnePCUsed           bool                     `json:"onePCUsed"`
 	TxnCommitCounter    metrics.TxnCommitCounter `json:"txnCommitCounter"`
 	MutationCheckerUsed bool                     `json:"mutationCheckerUsed"`
-	AssertionLevel      string                   `json:"assertionUsed"`
+	AssertionLevel      string                   `json:"assertionLevel"`
 }
 
 var initialTxnCommitCounter metrics.TxnCommitCounter
