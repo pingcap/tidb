@@ -517,8 +517,7 @@ func (w *worker) setResourceGroupTaggerForTopSQL(txn kv.Transaction) {
 	}
 
 	digest := w.cacheDigest
-	var tagger tikvrpc.ResourceGroupTagger
-	tagger = func(req *tikvrpc.Request) {
+	tagger := func(req *tikvrpc.Request) {
 		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, nil,
 			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
 	}
