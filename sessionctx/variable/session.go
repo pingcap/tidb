@@ -2367,12 +2367,3 @@ func (s *SessionVars) IsRcCheckTsRetryable(err error) bool {
 	// The `RCCheckTS` flag of `stmtCtx` is set.
 	return s.RcReadCheckTS && s.StmtCtx.RCCheckTS && errors.ErrorEqual(err, kv.ErrWriteConflict)
 }
-
-// NeedSetRCCheckTSFlag checks whether it's needed to set `RCCheckTS` flag in current stmtctx.
-func (s *SessionVars) NeedSetRCCheckTSFlag() bool {
-	if s.ConnectionID > 0 && s.RcReadCheckTS && s.InTxn() &&
-		s.IsPessimisticReadConsistency() && !s.RetryInfo.Retrying {
-		return true
-	}
-	return false
-}
