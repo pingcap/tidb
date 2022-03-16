@@ -367,7 +367,7 @@ func BuildBackupRangeAndSchema(
 			if !isFullBackup {
 				// according to https://github.com/pingcap/tidb/issues/32290.
 				// ignore placement policy when not in full backup
-				tableInfo.PlacementPolicyRef = nil
+				tableInfo.ClearPlacement()
 			}
 
 			if tableInfo.PKIsHandle && tableInfo.ContainsAutoRandomBits() {
@@ -478,7 +478,7 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 			}
 			if job.BinlogInfo.TableInfo != nil {
 				// ignore all placement policy info during incremental backup for now.
-				job.BinlogInfo.TableInfo.PlacementPolicyRef = nil
+				job.BinlogInfo.TableInfo.ClearPlacement()
 			}
 			jobBytes, err := json.Marshal(job)
 			if err != nil {

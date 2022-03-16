@@ -459,21 +459,19 @@ func (rc *Client) CreateDatabase(ctx context.Context, db *model.DBInfo) error {
 		log.Info("skip create database", zap.Stringer("database", db.Name))
 		return nil
 	}
+
 	if !rc.supportPolicy {
 		log.Info("set placementPolicyRef to nil when target tidb not support policy",
 			zap.Stringer("database", db.Name))
 		db.PlacementPolicyRef = nil
 	}
-	if db.PlacementPolicyRef != nil && rc.policyMap != nil {
-		if policy, ok := rc.policyMap.Load(db.PlacementPolicyRef.Name.L); ok {
-			err := rc.db.CreatePlacementPolicy(ctx, policy.(*model.PolicyInfo))
-			if err != nil {
-				return errors.Trace(err)
-			}
-			// delete policy in cache after restore succeed
-			rc.policyMap.Delete(db.PlacementPolicyRef.Name.L)
+
+	if db.PlacementPolicyRef != nil {
+		if err := rc.db.ensurePlacementPolicy(ctx, db.PlacementPolicyRef.Name, rc.policyMap); err != nil {
+			return errors.Trace(err)
 		}
 	}
+
 	return rc.db.CreateDatabase(ctx, db)
 }
 
