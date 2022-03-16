@@ -1932,7 +1932,7 @@ func (b *PlanBuilder) getPredicateColumns(tbl *ast.TableName, cols *calcOnceMap)
 		return nil, err
 	}
 	if len(colList) == 0 {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("No predicate column has been collected yet for table %s.%s so all columns are analyzed.", tbl.Schema.L, tbl.Name.L))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("No predicate column has been collected yet for table %s.%s so all columns are analyzed", tbl.Schema.L, tbl.Name.L))
 		for _, colInfo := range tblInfo.Columns {
 			cols.data[colInfo.ID] = struct{}{}
 		}
@@ -1969,7 +1969,7 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 	warning bool,
 ) ([]*model.ColumnInfo, []*model.ColumnInfo, error) {
 	if mustAllColumns && warning && (columnChoice == model.PredicateColumns || columnChoice == model.ColumnList) {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Table %s.%s has version 1 statistics so all the columns must be analyzed to overwrite the current statistics.", tbl.Schema.L, tbl.Name.L))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Table %s.%s has version 1 statistics so all the columns must be analyzed to overwrite the current statistics", tbl.Schema.L, tbl.Name.L))
 	}
 	colSet2colList := func(colSet map[int64]struct{}) []*model.ColumnInfo {
 		colList := make([]*model.ColumnInfo, 0, len(colSet))
@@ -2026,7 +2026,7 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 						missingNames = append(missingNames, col.Name.O)
 					}
 				}
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Columns %s are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.", strings.Join(missingNames, ",")))
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Columns %s are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats", strings.Join(missingNames, ",")))
 			}
 		}
 		for colID := range mustAnalyzed {
@@ -2303,10 +2303,10 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 	usePersistedOptions := variable.PersistAnalyzeOptions.Load()
 	for _, tbl := range as.TableNames {
 		if tbl.TableInfo.IsView() {
-			return nil, errors.Errorf("analyze view %s is not supported now.", tbl.Name.O)
+			return nil, errors.Errorf("analyze view %s is not supported now", tbl.Name.O)
 		}
 		if tbl.TableInfo.IsSequence() {
-			return nil, errors.Errorf("analyze sequence %s is not supported now.", tbl.Name.O)
+			return nil, errors.Errorf("analyze sequence %s is not supported now", tbl.Name.O)
 		}
 		idxInfo, colInfo := getColsInfo(tbl)
 		physicalIDs, names, err := GetPhysicalIDsAndPartitionNames(tbl.TableInfo, as.PartitionNames)
@@ -2405,7 +2405,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 	versionIsSame := statsHandle.CheckAnalyzeVersion(tblInfo, physicalIDs, &version)
 	if !versionIsSame {
 		if b.ctx.GetSessionVars().EnableFastAnalyze {
-			return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1.")
+			return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1")
 		}
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
@@ -2470,7 +2470,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 	versionIsSame := statsHandle.CheckAnalyzeVersion(tblInfo, physicalIDs, &version)
 	if !versionIsSame {
 		if b.ctx.GetSessionVars().EnableFastAnalyze {
-			return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1.")
+			return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1")
 		}
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
@@ -2582,7 +2582,7 @@ func parseAnalyzeOptionsV2(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uin
 		}
 	}
 	if sampleNum > 0 && sampleRate > 0 {
-		return nil, errors.Errorf("You can only either set the value of the sample num or set the value of the sample rate. Don't set both of them.")
+		return nil, errors.Errorf("You can only either set the value of the sample num or set the value of the sample rate. Don't set both of them")
 	}
 	return optMap, nil
 }
@@ -2647,7 +2647,7 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeO
 		}
 	}
 	if sampleNum > 0 && sampleRate > 0 {
-		return nil, errors.Errorf("You can only either set the value of the sample num or set the value of the sample rate. Don't set both of them.")
+		return nil, errors.Errorf("You can only either set the value of the sample num or set the value of the sample rate. Don't set both of them")
 	}
 	if optMap[ast.AnalyzeOptCMSketchWidth]*optMap[ast.AnalyzeOptCMSketchDepth] > CMSketchSizeLimit {
 		return nil, errors.Errorf("cm sketch size(depth * width) should not larger than %d", CMSketchSizeLimit)
@@ -2658,11 +2658,11 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeO
 func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 	// If enable fast analyze, the storage must be tikv.Storage.
 	if _, isTikvStorage := b.ctx.GetStore().(tikv.Storage); !isTikvStorage && b.ctx.GetSessionVars().EnableFastAnalyze {
-		return nil, errors.Errorf("Only support fast analyze in tikv storage.")
+		return nil, errors.Errorf("Only support fast analyze in tikv storage")
 	}
 	statsVersion := b.ctx.GetSessionVars().AnalyzeVersion
 	if b.ctx.GetSessionVars().EnableFastAnalyze && statsVersion >= statistics.Version2 {
-		return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently.")
+		return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently")
 	}
 	for _, tbl := range as.TableNames {
 		user := b.ctx.GetSessionVars().User
@@ -3321,16 +3321,16 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	}
 	tableInfo := tn.TableInfo
 	if tableInfo.IsView() {
-		err := errors.Errorf("insert into view %s is not supported now.", tableInfo.Name.O)
+		err := errors.Errorf("insert into view %s is not supported now", tableInfo.Name.O)
 		if insert.IsReplace {
-			err = errors.Errorf("replace into view %s is not supported now.", tableInfo.Name.O)
+			err = errors.Errorf("replace into view %s is not supported now", tableInfo.Name.O)
 		}
 		return nil, err
 	}
 	if tableInfo.IsSequence() {
-		err := errors.Errorf("insert into sequence %s is not supported now.", tableInfo.Name.O)
+		err := errors.Errorf("insert into sequence %s is not supported now", tableInfo.Name.O)
 		if insert.IsReplace {
-			err = errors.Errorf("replace into sequence %s is not supported now.", tableInfo.Name.O)
+			err = errors.Errorf("replace into sequence %s is not supported now", tableInfo.Name.O)
 		}
 		return nil, err
 	}
@@ -3341,7 +3341,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	}
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {
-		return nil, errors.Errorf("Can't get table %s.", tableInfo.Name.O)
+		return nil, errors.Errorf("Can't get table %s", tableInfo.Name.O)
 	}
 
 	insertPlan := Insert{
