@@ -4069,14 +4069,18 @@ func checkIsDroppableColumn(ctx sessionctx.Context, t table.Table, spec *ast.Alt
 
 func checkVisibleColumnCnt(t table.Table, addCnt, dropCnt int) error {
 	tblInfo := t.Meta()
-	visibleColumCnt := addCnt
+	visibleColumCnt := 0
 	for _, column := range tblInfo.Columns {
 		if !column.Hidden {
 			visibleColumCnt++
 		}
-		if visibleColumCnt > dropCnt {
-			return nil
-		}
+	}
+	if visibleColumCnt+addCnt > dropCnt {
+		return nil
+	}
+	if len(tblInfo.Columns)-visibleColumCnt > 0 {
+		// There are only invisible columns.
+		return dbterror.ErrTableMustHaveColumns
 	}
 	return dbterror.ErrCantRemoveAllFields
 }

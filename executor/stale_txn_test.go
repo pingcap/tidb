@@ -875,9 +875,9 @@ func TestAsOfTimestampCompatibility(t *testing.T) {
 		tk.MustExec("commit")
 	}
 	tk.MustExec(`create table test.table1 (id int primary key, a int);`)
-	defer tk.MustExec("drop table if exists test.table1;")
 	time1 = time.Now()
 	tk.MustExec(fmt.Sprintf("explain analyze select * from test.table1 as of timestamp '%s' where id = 1;", time1.Format("2006-1-2 15:04:05.000")))
+	tk.MustExec("drop table if exists test.table1;")
 }
 
 func TestSetTransactionInfoSchema(t *testing.T) {

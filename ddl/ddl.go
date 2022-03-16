@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	goutil "github.com/pingcap/tidb/util"
 	tidbutil "github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -714,15 +713,14 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		}
 		// Only for JobStateCancelled job which is adding columns or drop columns or drop indexes.
 		if historyJob.IsCancelled() && (historyJob.Type == model.ActionAddColumns || historyJob.Type == model.ActionDropColumns ||
-			historyJob.Type == model.ActionDropIndexes ||
-			historyJob.Type == model.ActionMultiSchemaChange) {
+			historyJob.Type == model.ActionDropIndexes) {
 			if historyJob.MultiSchemaInfo != nil && len(historyJob.MultiSchemaInfo.Warnings) != 0 {
 				for _, warning := range historyJob.MultiSchemaInfo.Warnings {
 					ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 				}
 			}
 			logutil.BgLogger().Info("[ddl] DDL job is cancelled", zap.Int64("jobID", jobID))
-			return dbterror.ErrCancelledDDLJob
+			return nil
 		}
 		panic("When the state is JobStateRollbackDone or JobStateCancelled, historyJob.Error should never be nil")
 	}

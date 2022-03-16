@@ -46,6 +46,11 @@ func TestMultiSchemaChangeAddColumns(t *testing.T) {
 	tk.MustExec("insert into t values (1);")
 	tk.MustExec("alter table t add column (b int default 2, c int default 3);")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3"))
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, c int);")
+	tk.MustExec("insert into t values (1, 2, 3);")
+	tk.MustExec("alter table t add column (d int default 4, e int default 5);")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3 4 5"))
 
 	// Test referencing previous column in multi-schema change is not supported.
 	tk.MustExec("drop table if exists t;")

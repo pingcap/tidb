@@ -440,6 +440,26 @@ func rollingbackTruncateTable(t *meta.Meta, job *model.Job) (ver int64, err erro
 	return cancelOnlyNotHandledJob(job)
 }
 
+func rollingBackMultiSchemaChange(job *model.Job) error {
+	if !job.MultiSchemaInfo.Revertible {
+		// Cannot rolling back because the jobs are non-revertible.
+		// Resume the job state to running.
+		job.State = model.JobStateRunning
+		return nil
+	}
+	// Mark all the jobs to cancelling.
+	for _, sub := range job.MultiSchemaInfo.SubJobs {
+		switch sub.State {
+		case model.JobStateRunning:
+			sub.State = model.JobStateCancelling
+		case model.JobStateNone:
+			sub.State = model.JobStateCancelled
+		}
+	}
+	job.State = model.JobStateRollingback
+	return dbterror.ErrCancelledDDLJob
+}
+
 func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	switch job.Type {
 	case model.ActionAddColumn:
@@ -479,6 +499,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		model.ActionModifyTableAutoIdCache, model.ActionAlterIndexVisibility,
 		model.ActionExchangeTablePartition, model.ActionModifySchemaDefaultPlacement:
 		ver, err = cancelOnlyNotHandledJob(job)
+	case model.ActionMultiSchemaChange:
+		err = rollingBackMultiSchemaChange(job)
 	default:
 		job.State = model.JobStateCancelled
 		err = dbterror.ErrCancelledDDLJob

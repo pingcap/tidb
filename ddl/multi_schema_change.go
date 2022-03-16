@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/dbterror"
 )
@@ -27,7 +28,7 @@ import (
 func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	if job.MultiSchemaInfo.Revertible {
 		// Handle the rolling back job.
-		if job.IsRollingback() || job.IsCancelling() {
+		if job.IsRollingback() {
 			// Rollback/cancel the sub-jobs in reverse order.
 			for i := len(job.MultiSchemaInfo.SubJobs) - 1; i >= 0; i-- {
 				sub := job.MultiSchemaInfo.SubJobs[i]
@@ -37,17 +38,14 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 				proxyJob := cloneFromSubJob(job, sub)
 				ver, err = w.runDDLJob(d, t, proxyJob)
 				mergeBackToSubJob(proxyJob, sub)
-				if i == 0 {
-					// The last rollback/cancelling sub-job is done.
-					if job.IsRollingback() {
-						job.State = model.JobStateRollbackDone
-					}
-					if job.IsCancelling() {
-						job.State = model.JobStateCancelled
-					}
+				if i == 0 && isFinished(sub) {
+					job.State = model.JobStateRollbackDone
 				}
 				return ver, err
 			}
+			// The last rollback/cancelling sub-job is done.
+			job.State = model.JobStateRollbackDone
+			return ver, nil
 		}
 
 		// The sub-jobs are normally running.
@@ -60,8 +58,8 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			}
 			proxyJob := cloneFromSubJob(job, sub)
 			ver, err = w.runDDLJob(d, t, proxyJob)
-			handleRevertibleException(job, sub.State, i)
 			mergeBackToSubJob(proxyJob, sub)
+			handleRevertibleException(job, sub, i, proxyJob.Error)
 			return ver, err
 		}
 		// All the sub-jobs are non-revertible.
@@ -101,7 +99,7 @@ func cloneFromSubJob(job *model.Job, sub *model.SubJob) *model.Job {
 		SchemaID:        job.SchemaID,
 		TableID:         job.TableID,
 		SchemaName:      job.SchemaName,
-		State:           job.State,
+		State:           sub.State,
 		Error:           nil,
 		ErrorCount:      0,
 		RowCount:        0,
@@ -132,10 +130,12 @@ func mergeBackToSubJob(job *model.Job, sub *model.SubJob) {
 	sub.State = job.State
 }
 
-func handleRevertibleException(job *model.Job, res model.JobState, idx int) {
-	if res == model.JobStateRollingback || res == model.JobStateCancelling {
-		job.State = res
+func handleRevertibleException(job *model.Job, subJob *model.SubJob, idx int, err *terror.Error) {
+	if !isAbnormal(subJob) {
+		return
 	}
+	job.State = model.JobStateRollingback
+	job.Error = err
 	// Flush the cancelling state and cancelled state to sub-jobs.
 	for i, sub := range job.MultiSchemaInfo.SubJobs {
 		if i < idx {
@@ -145,6 +145,13 @@ func handleRevertibleException(job *model.Job, res model.JobState, idx int) {
 			sub.State = model.JobStateCancelled
 		}
 	}
+}
+
+func isAbnormal(job *model.SubJob) bool {
+	return job.State == model.JobStateCancelling ||
+		job.State == model.JobStateCancelled ||
+		job.State == model.JobStateRollingback ||
+		job.State == model.JobStateRollbackDone
 }
 
 func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error) {

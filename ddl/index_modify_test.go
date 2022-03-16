@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -1098,19 +1099,21 @@ func testDropIndexesIfExists(t *testing.T, store kv.Storage) {
 		"[ddl:1091]index i3 doesn't exist",
 	)
 	tk.MustExec("alter table test_drop_indexes_if_exists drop index i1, drop index if exists i3;")
-	tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Warning|1091|index i3 doesn't exist"))
+	tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Note|1091|index i3 doesn't exist"))
 
 	// Verify the impact of deletion order when dropping duplicate indexes.
-	tk.MustGetErrMsg(
+	tk.MustGetErrCode(
 		"alter table test_drop_indexes_if_exists drop index i2, drop index i2;",
-		"[ddl:1091]index i2 doesn't exist",
+		errno.ErrUnsupportedDDLOperation,
 	)
-	tk.MustGetErrMsg(
+	tk.MustGetErrCode(
 		"alter table test_drop_indexes_if_exists drop index if exists i2, drop index i2;",
-		"[ddl:1091]index i2 doesn't exist",
+		errno.ErrUnsupportedDDLOperation,
 	)
-	tk.MustExec("alter table test_drop_indexes_if_exists drop index i2, drop index if exists i2;")
-	tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Warning|1091|index i2 doesn't exist"))
+	tk.MustGetErrCode(
+		"alter table test_drop_indexes_if_exists drop index i2, drop index if exists i2;",
+		errno.ErrUnsupportedDDLOperation,
+	)
 }
 
 func testDropIndexesFromPartitionedTable(t *testing.T, store kv.Storage) {

@@ -785,9 +785,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	}
 	// The cause of this job state is that the job is cancelled by client.
 	if job.IsCancelling() {
-		if job.Type != model.ActionMultiSchemaChange {
-			return convertJob2RollbackJob(w, d, t, job)
-		}
+		return convertJob2RollbackJob(w, d, t, job)
 	}
 
 	if !job.IsRollingback() && !job.IsCancelling() {
