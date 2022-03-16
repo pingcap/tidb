@@ -26,6 +26,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// GetSchemaByName gets schema by name for test.
+func GetSchemaByName(t *testing.T, tk *testkit.TestKit, db string) *model.DBInfo {
+	dom := domain.GetDomain(tk.Session())
+	// Make sure the table schema is the new schema.
+	require.NoError(t, dom.Reload())
+	dbInfo, ok := dom.InfoSchema().SchemaByName(model.NewCIStr(db))
+	require.True(t, ok)
+	return dbInfo
+}
+
 // GetTableByName gets table by name for test.
 func GetTableByName(t *testing.T, tk *testkit.TestKit, db, table string) table.Table {
 	dom := domain.GetDomain(tk.Session())
