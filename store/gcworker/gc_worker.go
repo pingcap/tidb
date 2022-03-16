@@ -1859,32 +1859,6 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 	return errors.Trace(err)
 }
 
-func (w *GCWorker) checkNeedDeletePlacementRules(safePoint uint64, dr util.DelRangeTask, ddlType model.ActionType) bool {
-	// Notify PD to drop the placement rules of partition-ids and table-id, even if there may be no placement rules.
-	//var physicalTableIDs []int64
-	switch ddlType {
-	case model.ActionDropTable, model.ActionTruncateTable, model.ActionDropSchema, model.ActionDropTablePartition, model.ActionTruncateTablePartition:
-		// These are the job types that we concern.
-	default:
-		return false
-	}
-
-	// Double-check the key format.
-	if !(tablecodec.IsTableKey(dr.StartKey) && tablecodec.IsTableKey(dr.EndKey)) {
-		return false
-	}
-
-	tableIDInKey := tablecodec.DecodeTableID(dr.StartKey)
-	if tableIDInKey != dr.ElementID {
-		logutil.BgLogger().Error("table_id in deleted range record doesn't match element_id, which is not expected",
-			zap.Int64("tableIDInKey", tableIDInKey), zap.Int64("elementID", dr.ElementID), zap.Uint64("safePoint", safePoint))
-		// Ignore and continue.
-		return false
-	}
-
-	return true
-}
-
 // GC placement rules when the partitions are removed by the GC worker.
 // Placement rules cannot be removed immediately after drop table / truncate table,
 // because the tables can be flashed back or recovered.
@@ -1917,7 +1891,25 @@ func (w *GCWorker) doGCPlacementRules(safePoint uint64, dr util.DelRangeTask) (e
 		}
 	}
 
-	if !w.checkNeedDeletePlacementRules(safePoint, dr, historyJob.Type) {
+	// Notify PD to drop the placement rules of partition-ids and table-id, even if there may be no placement rules.
+	//var physicalTableIDs []int64
+	switch historyJob.Type {
+	case model.ActionDropTable, model.ActionTruncateTable, model.ActionDropSchema, model.ActionDropTablePartition, model.ActionTruncateTablePartition:
+		// These are the job types that we concern.
+	default:
+		return nil
+	}
+
+	// Double-check the key format.
+	if !(tablecodec.IsTableKey(dr.StartKey) && tablecodec.IsTableKey(dr.EndKey)) {
+		return nil
+	}
+
+	tableIDInKey := tablecodec.DecodeTableID(dr.StartKey)
+	if tableIDInKey != dr.ElementID {
+		logutil.BgLogger().Error("table_id in deleted range record doesn't match element_id, which is not expected",
+			zap.Int64("tableIDInKey", tableIDInKey), zap.Int64("elementID", dr.ElementID), zap.Uint64("safePoint", safePoint))
+		// Ignore and continue.
 		return nil
 	}
 
