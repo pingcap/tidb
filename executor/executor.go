@@ -154,7 +154,10 @@ func init() {
 	GlobalDiskUsageTracker.SetActionOnExceed(action)
 	AnalyzeMemoryTracker = memory.NewTracker(memory.LabelForAnalyzeSharedMemory, -1)
 	AnalyzeMemoryTracker.SetActionOnExceed(action)
-	AnalyzeMemoryTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
+	// TODO, do not attach now to avoid impact to global
+	// Also, memory usage of analyze coprocesseor was tracked under global by now removed.
+	// It's not a big impact since all responses are read quickly and sent to analyze's taskCh.
+	//AnalyzeMemoryTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
 }
 
 // SetLogHook sets a hook for PanicOnExceed.
