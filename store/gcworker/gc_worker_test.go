@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -1672,8 +1671,8 @@ func TestGCPlacementRules(t *testing.T) {
 	require.False(t, got.IsEmpty())
 
 	// do gc
-	dr := util.DelRangeTask{JobID: 1, ElementID: 10, StartKey: tablecodec.EncodeTablePrefix(10), EndKey: tablecodec.EncodeTablePrefix(11)}
-	err = s.gcWorker.doGCPlacementRules(100, dr)
+	dr := util.DelRangeTask{JobID: 1, ElementID: 10}
+	err = s.gcWorker.doGCPlacementRules(dr)
 	require.NoError(t, err)
 
 	// check bundle deleted after gc
