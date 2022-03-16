@@ -870,24 +870,6 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			d.mu.hook.OnJobRunBefore(job)
 			d.mu.RUnlock()
 
-			switch job.Type {
-			case model.ActionDropSchema,
-				model.ActionDropTable,
-				model.ActionDropColumn,
-				model.ActionDropIndex,
-				model.ActionDropForeignKey,
-				model.ActionTruncateTable,
-				model.ActionDropView,
-				model.ActionDropPrimaryKey,
-				model.ActionDropSequence,
-				model.ActionDropColumns,
-				model.ActionDropCheckConstraint,
-				model.ActionDropIndexes,
-				model.ActionDropPlacementPolicy:
-				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlreadyFull)
-			default:
-				txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
-			}
 			// If running job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
 			schemaVer, runJobErr = w.runDDLJob(d, t, job)
