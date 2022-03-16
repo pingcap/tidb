@@ -263,18 +263,13 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 		m := map[string][]*model.TableInfo{}
 		for _, table := range tables {
 			m[table.DB.Name.L] = append(m[table.DB.Name.L], table.Info)
-			if table.Info.PlacementPolicyRef != nil && policyMap != nil {
-				if !supportPolicy {
-					log.Info("set placementPolicyRef to nil when target tidb not support policy",
-						zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
-					table.Info.PlacementPolicyRef = nil
-				} else if p, exists := policyMap.Load(table.Info.PlacementPolicyRef.Name.L); exists {
-					err := db.CreatePlacementPolicy(ctx, p.(*model.PolicyInfo))
-					if err != nil {
-						return errors.Trace(err)
-					}
-					// delete policy in cache after restore table succeed.
-					policyMap.Delete(table.Info.PlacementPolicyRef.Name.L)
+			if !supportPolicy {
+				log.Info("set placementPolicyRef to nil when target tidb not support policy",
+					zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
+				table.Info.ClearPlacement()
+			} else {
+				if err := db.ensureTablePlacementPolicies(ctx, table.Info, policyMap); err != nil {
+					return errors.Trace(err)
 				}
 			}
 		}
@@ -295,20 +290,16 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 // CreateTable executes a CREATE TABLE SQL.
 func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 	ddlTables map[UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
-	if table.Info.PlacementPolicyRef != nil && policyMap != nil {
-		if !supportPolicy {
-			log.Info("set placementPolicyRef to nil when target tidb not support policy",
-				zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
-			table.Info.PlacementPolicyRef = nil
-		} else if p, exists := policyMap.Load(table.Info.PlacementPolicyRef.Name.L); exists {
-			err := db.CreatePlacementPolicy(ctx, p.(*model.PolicyInfo))
-			if err != nil {
-				return errors.Trace(err)
-			}
-			// delete policy in cache after restore table succeed.
-			policyMap.Delete(table.Info.PlacementPolicyRef.Name.L)
+	if !supportPolicy {
+		log.Info("set placementPolicyRef to nil when target tidb not support policy",
+			zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
+		table.Info.ClearPlacement()
+	} else {
+		if err := db.ensureTablePlacementPolicies(ctx, table.Info, policyMap); err != nil {
+			return errors.Trace(err)
 		}
 	}
+
 	err := db.se.CreateTable(ctx, table.DB.Name, table.Info)
 	if err != nil {
 		log.Error("create table failed",
@@ -329,6 +320,41 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 // Close closes the connection.
 func (db *DB) Close() {
 	db.se.Close()
+}
+
+func (db *DB) ensurePlacementPolicy(ctx context.Context, policyName model.CIStr, policies *sync.Map) error {
+	if policies == nil {
+		return nil
+	}
+
+	if policy, ok := policies.LoadAndDelete(policyName.L); ok {
+		return db.CreatePlacementPolicy(ctx, policy.(*model.PolicyInfo))
+	}
+
+	// This means policy already created
+	return nil
+}
+
+func (db *DB) ensureTablePlacementPolicies(ctx context.Context, tableInfo *model.TableInfo, policies *sync.Map) error {
+	if tableInfo.PlacementPolicyRef != nil {
+		if err := db.ensurePlacementPolicy(ctx, tableInfo.PlacementPolicyRef.Name, policies); err != nil {
+			return err
+		}
+	}
+
+	if tableInfo.Partition != nil {
+		for _, def := range tableInfo.Partition.Definitions {
+			if def.PlacementPolicyRef == nil {
+				continue
+			}
+
+			if err := db.ensurePlacementPolicy(ctx, def.PlacementPolicyRef.Name, policies); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 // FilterDDLJobs filters ddl jobs.
