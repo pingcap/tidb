@@ -282,15 +282,34 @@ func BuildBackupRangeAndSchema(
 	storage kv.Storage,
 	tableFilter filter.Filter,
 	backupTS uint64,
-) ([]rtree.Range, *Schemas, error) {
+	isFullBackup bool,
+) ([]rtree.Range, *Schemas, []*backuppb.PlacementPolicy, error) {
 	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
 	m := meta.NewSnapshotMeta(snapshot)
+
+	var policies []*backuppb.PlacementPolicy
+	if isFullBackup {
+		// according to https://github.com/pingcap/tidb/issues/32290
+		// only full backup will record policies in backupMeta.
+		policyList, err := m.ListPolicies()
+		if err != nil {
+			return nil, nil, nil, errors.Trace(err)
+		}
+		policies = make([]*backuppb.PlacementPolicy, 0, len(policies))
+		for _, policyInfo := range policyList {
+			p, err := json.Marshal(policyInfo)
+			if err != nil {
+				return nil, nil, nil, errors.Trace(err)
+			}
+			policies = append(policies, &backuppb.PlacementPolicy{Info: p})
+		}
+	}
 
 	ranges := make([]rtree.Range, 0)
 	backupSchemas := newBackupSchemas()
 	dbs, err := m.ListDatabases()
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
 
 	for _, dbInfo := range dbs {
@@ -301,13 +320,19 @@ func BuildBackupRangeAndSchema(
 
 		tables, err := m.ListTables(dbInfo.ID)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return nil, nil, nil, errors.Trace(err)
 		}
 
 		if len(tables) == 0 {
 			log.Warn("It's not necessary for backing up empty database",
 				zap.Stringer("db", dbInfo.Name))
 			continue
+		}
+
+		if !isFullBackup {
+			// according to https://github.com/pingcap/tidb/issues/32290.
+			// ignore placement policy when not in full backup
+			dbInfo.PlacementPolicyRef = nil
 		}
 
 		for _, tableInfo := range tables {
@@ -336,16 +361,21 @@ func BuildBackupRangeAndSchema(
 				globalAutoID, err = idAlloc.NextGlobalAutoID()
 			}
 			if err != nil {
-				return nil, nil, errors.Trace(err)
+				return nil, nil, nil, errors.Trace(err)
 			}
 			tableInfo.AutoIncID = globalAutoID
+			if !isFullBackup {
+				// according to https://github.com/pingcap/tidb/issues/32290.
+				// ignore placement policy when not in full backup
+				tableInfo.PlacementPolicyRef = nil
+			}
 
 			if tableInfo.PKIsHandle && tableInfo.ContainsAutoRandomBits() {
 				// this table has auto_random id, we need backup and rebase in restoration
 				var globalAutoRandID int64
 				globalAutoRandID, err = randAlloc.NextGlobalAutoID()
 				if err != nil {
-					return nil, nil, errors.Trace(err)
+					return nil, nil, nil, errors.Trace(err)
 				}
 				tableInfo.AutoRandID = globalAutoRandID
 				logger.Debug("change table AutoRandID",
@@ -368,7 +398,7 @@ func BuildBackupRangeAndSchema(
 
 			tableRanges, err := BuildTableRanges(tableInfo)
 			if err != nil {
-				return nil, nil, errors.Trace(err)
+				return nil, nil, nil, errors.Trace(err)
 			}
 			for _, r := range tableRanges {
 				ranges = append(ranges, rtree.Range{
@@ -381,9 +411,9 @@ func BuildBackupRangeAndSchema(
 
 	if backupSchemas.Len() == 0 {
 		log.Info("nothing to backup")
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
-	return ranges, backupSchemas, nil
+	return ranges, backupSchemas, policies, nil
 }
 
 func skipUnsupportedDDLJob(job *model.Job) bool {
@@ -442,6 +472,14 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 
 		if (job.State == model.JobStateDone || job.State == model.JobStateSynced) &&
 			(job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion > lastSchemaVersion) {
+			if job.BinlogInfo.DBInfo != nil {
+				// ignore all placement policy info during incremental backup for now.
+				job.BinlogInfo.DBInfo.PlacementPolicyRef = nil
+			}
+			if job.BinlogInfo.TableInfo != nil {
+				// ignore all placement policy info during incremental backup for now.
+				job.BinlogInfo.TableInfo.PlacementPolicyRef = nil
+			}
 			jobBytes, err := json.Marshal(job)
 			if err != nil {
 				return errors.Trace(err)
@@ -545,7 +583,7 @@ func (bc *Client) BackupRange(
 	// TODO: test fine grained backup.
 	err = bc.fineGrainedBackup(
 		ctx, startKey, endKey, req.StartVersion, req.EndVersion, req.CompressionType, req.CompressionLevel,
-		req.RateLimit, req.Concurrency, results, progressCallBack)
+		req.RateLimit, req.Concurrency, req.IsRawKv, req.CipherInfo, results, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -589,10 +627,12 @@ func (bc *Client) BackupRange(
 	return nil
 }
 
-func (bc *Client) findRegionLeader(ctx context.Context, key []byte) (*metapb.Peer, error) {
+func (bc *Client) findRegionLeader(ctx context.Context, key []byte, isRawKv bool) (*metapb.Peer, error) {
 	// Keys are saved in encoded format in TiKV, so the key must be encoded
 	// in order to find the correct region.
-	key = codec.EncodeBytes([]byte{}, key)
+	if !isRawKv {
+		key = codec.EncodeBytes([]byte{}, key)
+	}
 	for i := 0; i < 5; i++ {
 		// better backoff.
 		region, err := bc.mgr.GetPDClient().GetRegion(ctx, key)
@@ -623,6 +663,8 @@ func (bc *Client) fineGrainedBackup(
 	compressLevel int32,
 	rateLimit uint64,
 	concurrency uint32,
+	isRawKv bool,
+	cipherInfo *backuppb.CipherInfo,
 	rangeTree rtree.RangeTree,
 	progressCallBack func(ProgressUnit),
 ) error {
@@ -673,7 +715,7 @@ func (bc *Client) fineGrainedBackup(
 				for rg := range retry {
 					backoffMs, err :=
 						bc.handleFineGrained(ctx, boFork, rg, lastBackupTS, backupTS,
-							compressType, compressLevel, rateLimit, concurrency, respCh)
+							compressType, compressLevel, rateLimit, concurrency, isRawKv, cipherInfo, respCh)
 					if err != nil {
 						errCh <- err
 						return
@@ -820,9 +862,11 @@ func (bc *Client) handleFineGrained(
 	compressionLevel int32,
 	rateLimit uint64,
 	concurrency uint32,
+	isRawKv bool,
+	cipherInfo *backuppb.CipherInfo,
 	respCh chan<- *backuppb.BackupResponse,
 ) (int, error) {
-	leader, pderr := bc.findRegionLeader(ctx, rg.StartKey)
+	leader, pderr := bc.findRegionLeader(ctx, rg.StartKey, isRawKv)
 	if pderr != nil {
 		return 0, errors.Trace(pderr)
 	}
@@ -837,8 +881,10 @@ func (bc *Client) handleFineGrained(
 		StorageBackend:   bc.backend,
 		RateLimit:        rateLimit,
 		Concurrency:      concurrency,
+		IsRawKv:          isRawKv,
 		CompressionType:  compressType,
 		CompressionLevel: compressionLevel,
+		CipherInfo:       cipherInfo,
 	}
 	lockResolver := bc.mgr.GetLockResolver()
 	client, err := bc.mgr.GetBackupClient(ctx, storeID)

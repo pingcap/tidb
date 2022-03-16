@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func (s *testColumnChangeSuiteToVerify) TestFailBeforeDecodeArgs() {
+func (s *testColumnSuiteToVerify) TestFailBeforeDecodeArgs() {
 	d, err := testNewDDLAndStart(
 		context.Background(),
 		WithStore(s.store),
