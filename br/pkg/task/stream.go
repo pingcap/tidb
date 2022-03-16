@@ -725,7 +725,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	done := color.New(color.FgGreen).SprintFunc()
 	warn := color.New(color.Bold, color.FgHiRed).SprintFunc()
 	formatTs := func(ts uint64) string {
-		return time.UnixMilli(oracle.ExtractPhysical(ts)).Format("2006-01-02 15:04:05.0000")
+		return oracle.GetTimeFromTS(ts).Format("2006-01-02 15:04:05.0000")
 	}
 
 	cfg.adjustRestoreConfig()
