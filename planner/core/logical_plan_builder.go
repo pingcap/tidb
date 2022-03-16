@@ -4469,13 +4469,8 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 					// 1: normal value should be unique
 					// 2: null value can be multiple
 					// for this kind of lax to be strict, we need to make the determinant not-null.
-					fds.AddLaxFunctionalDependency(keyCols, allCols, true)
+					fds.AddLaxFunctionalDependency(keyCols, allCols)
 				}
-			} else {
-				// 1: normal value can be multiple
-				// 2: null value can be multiple
-				// for this kind of lax to be strict, we need to make both the determinant and dependency not-null.
-				fds.AddLaxFunctionalDependency(keyCols, allCols, false)
 			}
 		}
 		// handle the datasource conditions (maybe pushed down from upper layer OP)
