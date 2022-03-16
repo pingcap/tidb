@@ -2169,7 +2169,7 @@ func (b *executorBuilder) refreshForUpdateTSForRC() error {
 		b.snapshotTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	}()
 	// The first time read-consistency read is executed and `RcReadCheckTS` is enabled, try to use
-	// the last valid tso as the for update read tso.
+	// the last valid ts as the for update read ts.
 	if b.ctx.GetSessionVars().StmtCtx.RCCheckTS {
 		rcReadTS := b.ctx.GetSessionVars().TxnCtx.LastRcReadTs
 		if rcReadTS == 0 {
