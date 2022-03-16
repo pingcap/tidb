@@ -1016,7 +1016,7 @@ type SessionVars struct {
 	IgnorePreparedCacheCloseStmt bool
 	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
 	BatchPendingTiFlashCount int
-	// RcReadCheckTS indicates if tso check optimization is enabled for current session.
+	// RcReadCheckTS indicates if ts check optimization is enabled for current session.
 	RcReadCheckTS bool
 }
 
