@@ -655,7 +655,6 @@ func setDDLJobQuery(ctx sessionctx.Context, job *model.Job) {
 	case model.ActionUpdateTiFlashReplicaStatus, model.ActionUnlockTable:
 		job.Query = ""
 	default:
-		// Get a global job ID and put the DDL job in the queue.
 		job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
 	}
 }
