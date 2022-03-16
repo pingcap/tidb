@@ -484,8 +484,12 @@ func (la *LogicalAggregation) pushDownCNFPredicatesForAggregation(cond expressio
 	}
 	for _, item := range subCNFItem {
 		condsToPushForItem, retForItem := la.pushDownDNFPredicatesForAggregation(item, groupByColumns, exprsOriginal)
-		condsToPush = append(condsToPush, condsToPushForItem...)
-		ret = append(ret, retForItem...)
+		if len(condsToPushForItem) > 0 {
+			condsToPush = append(condsToPush, expression.ComposeDNFCondition(la.ctx, condsToPushForItem...))
+		}
+		if len(retForItem) > 0 {
+			ret = append(ret, expression.ComposeDNFCondition(la.ctx, retForItem...))
+		}
 	}
 	return condsToPush, ret
 }
@@ -500,13 +504,16 @@ func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expressio
 	for _, item := range subDNFItem {
 		condsToPushForItem, retForItem := la.pushDownCNFPredicatesForAggregation(item, groupByColumns, exprsOriginal)
 		if len(condsToPushForItem) > 0 {
-			condsToPush = append(condsToPush, condsToPushForItem...)
+			condsToPush = append(condsToPush, expression.ComposeCNFCondition(la.ctx, condsToPushForItem...))
 		} else {
 			condsToPush = append(condsToPush, expression.NewOne())
 		}
-		ret = append(ret, retForItem...)
+		if len(retForItem) > 0 {
+			ret = append(ret, expression.ComposeCNFCondition(la.ctx, retForItem...))
+		}
 	}
 	dnfPushDownCond := expression.ComposeDNFCondition(la.ctx, condsToPush...)
+	dnfPushDownCond = expression.FoldConstant(dnfPushDownCond)
 	if len(ret) == 0 {
 		return []expression.Expression{dnfPushDownCond}, ret
 	}
