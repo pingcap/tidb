@@ -2419,10 +2419,10 @@ func (b *builtinUTCTimestampWithArgSig) evalTime(row chunk.Row) (types.Time, boo
 	}
 
 	if !isNull && num > int64(types.MaxFsp) {
-		return types.ZeroTime, true, errors.Errorf("Too-big precision %v specified for 'utc_timestamp'. Maximum is %v.", num, types.MaxFsp)
+		return types.ZeroTime, true, errors.Errorf("Too-big precision %v specified for 'utc_timestamp'. Maximum is %v", num, types.MaxFsp)
 	}
 	if !isNull && num < int64(types.MinFsp) {
-		return types.ZeroTime, true, errors.Errorf("Invalid negative %d specified, must in [0, 6].", num)
+		return types.ZeroTime, true, errors.Errorf("Invalid negative %d specified, must in [0, 6]", num)
 	}
 
 	result, isNull, err := evalUTCTimestampWithFsp(b.ctx, int(num))
@@ -2543,9 +2543,9 @@ func (b *builtinNowWithArgSig) evalTime(row chunk.Row) (types.Time, bool, error)
 	if isNull {
 		fsp = 0
 	} else if fsp > int64(types.MaxFsp) {
-		return types.ZeroTime, true, errors.Errorf("Too-big precision %v specified for 'now'. Maximum is %v.", fsp, types.MaxFsp)
+		return types.ZeroTime, true, errors.Errorf("Too-big precision %v specified for 'now'. Maximum is %v", fsp, types.MaxFsp)
 	} else if fsp < int64(types.MinFsp) {
-		return types.ZeroTime, true, errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
+		return types.ZeroTime, true, errors.Errorf("Invalid negative %d specified, must in [0, 6]", fsp)
 	}
 
 	result, isNull, err := evalNowWithFsp(b.ctx, int(fsp))
@@ -5391,21 +5391,16 @@ func strDatetimeSubDuration(sc *stmtctx.StatementContext, d string, arg1 types.D
 		sc.AppendWarning(err)
 		return "", true, nil
 	}
-	arg1time, err := arg1.ConvertToTime(sc, uint8(types.GetFsp(arg1.String())))
+	resultTime, err := arg0.Add(sc, arg1.Neg())
 	if err != nil {
 		return "", false, err
 	}
-	tmpDuration := arg0.Sub(sc, &arg1time)
 	fsp := types.MaxFsp
-	if tmpDuration.MicroSecond() == 0 {
+	if resultTime.Microsecond() == 0 {
 		fsp = types.MinFsp
 	}
-	resultDuration, err := tmpDuration.ConvertToTime(sc, mysql.TypeDatetime)
-	if err != nil {
-		return "", false, err
-	}
-	resultDuration.SetFsp(fsp)
-	return resultDuration.String(), false, nil
+	resultTime.SetFsp(fsp)
+	return resultTime.String(), false, nil
 }
 
 // strDurationSubDuration subtracts duration from duration string, returns a string value.
@@ -6476,12 +6471,7 @@ func (b *builtinSubDatetimeAndDurationSig) evalTime(row chunk.Row) (types.Time, 
 		return types.ZeroDatetime, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	arg1time, err := arg1.ConvertToTime(sc, mysql.TypeDatetime)
-	if err != nil {
-		return arg1time, true, err
-	}
-	tmpDuration := arg0.Sub(sc, &arg1time)
-	result, err := tmpDuration.ConvertToTime(sc, arg0.Type())
+	result, err := arg0.Add(sc, arg1.Neg())
 	return result, err != nil, err
 }
 
@@ -6521,12 +6511,7 @@ func (b *builtinSubDatetimeAndStringSig) evalTime(row chunk.Row) (types.Time, bo
 		}
 		return types.ZeroDatetime, true, err
 	}
-	arg1time, err := arg1.ConvertToTime(sc, mysql.TypeDatetime)
-	if err != nil {
-		return types.ZeroDatetime, true, err
-	}
-	tmpDuration := arg0.Sub(sc, &arg1time)
-	result, err := tmpDuration.ConvertToTime(sc, mysql.TypeDatetime)
+	result, err := arg0.Add(sc, arg1.Neg())
 	return result, err != nil, err
 }
 
@@ -7168,10 +7153,10 @@ func (b *builtinUTCTimeWithArgSig) evalDuration(row chunk.Row) (types.Duration, 
 		return types.Duration{}, isNull, err
 	}
 	if fsp > int64(types.MaxFsp) {
-		return types.Duration{}, true, errors.Errorf("Too-big precision %v specified for 'utc_time'. Maximum is %v.", fsp, types.MaxFsp)
+		return types.Duration{}, true, errors.Errorf("Too-big precision %v specified for 'utc_time'. Maximum is %v", fsp, types.MaxFsp)
 	}
 	if fsp < int64(types.MinFsp) {
-		return types.Duration{}, true, errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
+		return types.Duration{}, true, errors.Errorf("Invalid negative %d specified, must in [0, 6]", fsp)
 	}
 	nowTs, err := getStmtTimestamp(b.ctx)
 	if err != nil {
@@ -7432,9 +7417,9 @@ func getFspByIntArg(ctx sessionctx.Context, exps []Expression) (int, error) {
 			return 0, err
 		}
 		if fsp > int64(types.MaxFsp) {
-			return 0, errors.Errorf("Too-big precision %v specified for 'curtime'. Maximum is %v.", fsp, types.MaxFsp)
+			return 0, errors.Errorf("Too-big precision %v specified for 'curtime'. Maximum is %v", fsp, types.MaxFsp)
 		} else if fsp < int64(types.MinFsp) {
-			return 0, errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
+			return 0, errors.Errorf("Invalid negative %d specified, must in [0, 6]", fsp)
 		}
 		return int(fsp), nil
 	}

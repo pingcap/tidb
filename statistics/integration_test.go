@@ -167,7 +167,7 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 	tk.MustExec("analyze table t index idx")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
-		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t.")) // since fallback to ver2 path, should do samplerate adjustment
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t")) // since fallback to ver2 path, should do samplerate adjustment
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
@@ -176,7 +176,7 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 	tk.MustExec("analyze table t index")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
-		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t."))
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t"))
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
 	for _, idx := range statsTblT.Indices {
@@ -204,7 +204,7 @@ func TestFastAnalyzeOnVer2(t *testing.T) {
 	tk.MustExec("insert into t values(1, 1), (1, 2), (1, 3)")
 	_, err := tk.Exec("analyze table t")
 	require.Error(t, err)
-	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently.", err.Error())
+	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently", err.Error())
 	tk.MustExec("set @@session.tidb_enable_fast_analyze = 0")
 	tk.MustExec("analyze table t")
 	is := dom.InfoSchema()
@@ -222,14 +222,14 @@ func TestFastAnalyzeOnVer2(t *testing.T) {
 	tk.MustExec("set @@session.tidb_enable_fast_analyze = 1")
 	err = tk.ExecToErr("analyze table t index idx")
 	require.Error(t, err)
-	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently.", err.Error())
+	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently", err.Error())
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
 	_, err = tk.Exec("analyze table t index idx")
 	require.Error(t, err)
-	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1.", err.Error())
+	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1", err.Error())
 	_, err = tk.Exec("analyze table t index")
 	require.Error(t, err)
-	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1.", err.Error())
+	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1", err.Error())
 	tk.MustExec("analyze table t")
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())

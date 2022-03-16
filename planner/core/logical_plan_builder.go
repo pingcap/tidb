@@ -5175,10 +5175,10 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan
 			tn.DBInfo = tb.DBInfo
 			tn.TableInfo = tb.TableInfo
 			if tn.TableInfo.IsView() {
-				return nil, errors.Errorf("delete view %s is not supported now.", tn.Name.O)
+				return nil, errors.Errorf("delete view %s is not supported now", tn.Name.O)
 			}
 			if tn.TableInfo.IsSequence() {
-				return nil, errors.Errorf("delete sequence %s is not supported now.", tn.Name.O)
+				return nil, errors.Errorf("delete sequence %s is not supported now", tn.Name.O)
 			}
 			if sessionVars.User != nil {
 				authErr = ErrTableaccessDenied.FastGenByArgs("DELETE", sessionVars.User.AuthUsername, sessionVars.User.AuthHostname, tb.Name.L)
@@ -5194,10 +5194,10 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (Plan
 				return nil, ErrNonUpdatableTable.GenWithStackByArgs(v.Name.O, "DELETE")
 			}
 			if v.TableInfo.IsView() {
-				return nil, errors.Errorf("delete view %s is not supported now.", v.Name.O)
+				return nil, errors.Errorf("delete view %s is not supported now", v.Name.O)
 			}
 			if v.TableInfo.IsSequence() {
-				return nil, errors.Errorf("delete sequence %s is not supported now.", v.Name.O)
+				return nil, errors.Errorf("delete sequence %s is not supported now", v.Name.O)
 			}
 			dbName := v.Schema.L
 			if dbName == "" {
