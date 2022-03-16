@@ -1930,7 +1930,7 @@ func (w *GCWorker) doGCPlacementRules(dr util.DelRangeTask) (err error) {
 		bundles = append(bundles, placement.NewBundle(id))
 	}
 
-	for _, id := range physicalTableIDs {
+	for _, id := range tiflashPhysicalTableIDs {
 		// Delete pd rule
 		logutil.BgLogger().Info("try delete TiFlash pd rule", zap.Int64("tableID", id), zap.String("endKey", string(dr.EndKey)))
 		ruleID := fmt.Sprintf("table-%v-r", id)
