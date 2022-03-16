@@ -289,6 +289,8 @@ func (importer *FileImporter) getKeyRangeForFiles(
 		}
 	}
 
+	log.Debug("rewrite file keys", logutil.Files(files),
+		logutil.Key("startKey", startKey), logutil.Key("endKey", endKey))
 	return startKey, endKey, nil
 }
 
@@ -309,9 +311,6 @@ func (importer *FileImporter) Import(
 	if err != nil {
 		return errors.Trace(err)
 	}
-
-	log.Debug("rewrite file keys", logutil.Files(files),
-		logutil.Key("startKey", startKey), logutil.Key("endKey", endKey))
 
 	err = utils.WithRetry(ctx, func() error {
 		tctx, cancel := context.WithTimeout(ctx, importScanRegionTime)
