@@ -27,8 +27,7 @@ for CFG in chunk engine; do
 
   tail -n 10 $TEST_DIR/lightning-tidb.log | grep "ERROR" | tail -n 1 | grep -Fq "Error 1062: Duplicate entry '1-1' for key 'uq'"
 
-  ! grep -Fq "restore file completed" $TEST_DIR/lightning-tidb.log
-  [ $? -eq 0 ]
+  grep -Fq "restore file failed" $TEST_DIR/lightning-tidb.log
 
   ! grep -Fq "restore engine completed" $TEST_DIR/lightning-tidb.log
   [ $? -eq 0 ]
