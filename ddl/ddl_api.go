@@ -2917,6 +2917,16 @@ func needToOverwriteColCharset(options []*ast.TableOption) bool {
 	return false
 }
 
+func resolveAlterTableAddColumns(spec *ast.AlterTableSpec) []*ast.AlterTableSpec {
+	specs := make([]*ast.AlterTableSpec, len(spec.NewColumns))
+	for i, col := range spec.NewColumns {
+		t := *spec
+		t.NewColumns = []*ast.ColumnDef{col}
+		specs[i] = &t
+	}
+	return specs
+}
+
 // resolveAlterTableSpec resolves alter table algorithm and removes ignore table spec in specs.
 // returns valied specs, and the occurred error.
 func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) ([]*ast.AlterTableSpec, error) {
@@ -2930,7 +2940,11 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 		if isIgnorableSpec(spec.Tp) {
 			continue
 		}
-		validSpecs = append(validSpecs, spec)
+		if spec.Tp == ast.AlterTableAddColumns && len(spec.NewColumns) > 1 {
+			validSpecs = append(validSpecs, resolveAlterTableAddColumns(spec)...)
+		} else {
+			validSpecs = append(validSpecs, spec)
+		}
 	}
 
 	// Verify whether the algorithm is supported.
@@ -2987,11 +3001,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 		var handledCharsetOrCollate bool
 		switch spec.Tp {
 		case ast.AlterTableAddColumns:
-			if len(spec.NewColumns) != 1 {
-				err = d.AddColumns(sctx, ident, []*ast.AlterTableSpec{spec})
-			} else {
-				err = d.AddColumn(sctx, ident, spec)
-			}
+			err = d.AddColumn(sctx, ident, spec)
 		case ast.AlterTableAddPartitions:
 			err = d.AddTablePartitions(sctx, ident, spec)
 		case ast.AlterTableCoalescePartitions:

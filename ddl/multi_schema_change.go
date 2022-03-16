@@ -160,17 +160,8 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 		col := job.Args[0].(*table.Column)
 		pos := job.Args[1].(*ast.ColumnPosition)
 		info.AddColumns = append(info.AddColumns, col.Name)
-		if pos.Tp == ast.ColumnPositionAfter {
+		if pos != nil && pos.Tp == ast.ColumnPositionAfter {
 			info.RelativeColumns = append(info.RelativeColumns, pos.RelativeColumn.Name)
-		}
-	case model.ActionAddColumns:
-		cols := job.Args[0].([]*table.Column)
-		pos := job.Args[0].([]*ast.ColumnPosition)
-		for i := range cols {
-			info.AddColumns = append(info.AddColumns, cols[i].Name)
-			if pos[i].Tp == ast.ColumnPositionAfter {
-				info.RelativeColumns = append(info.RelativeColumns, pos[i].RelativeColumn.Name)
-			}
 		}
 	case model.ActionDropColumn:
 		colName := job.Args[0].(model.CIStr)
