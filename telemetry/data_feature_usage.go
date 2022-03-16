@@ -154,6 +154,7 @@ type TxnUsage struct {
 	TxnCommitCounter    metrics.TxnCommitCounter `json:"txnCommitCounter"`
 	MutationCheckerUsed bool                     `json:"mutationCheckerUsed"`
 	AssertionLevel      string                   `json:"assertionLevel"`
+	RcCheckTS           bool                     `json:"rcCheckTS"`
 }
 
 var initialTxnCommitCounter metrics.TxnCommitCounter
@@ -179,7 +180,11 @@ func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBTxnAssertionLevel); err == nil {
 		assertionUsed = val
 	}
-	return &TxnUsage{asyncCommitUsed, onePCUsed, diff, mutationCheckerUsed, assertionUsed}
+	rcCheckTSUsed := false
+	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBRCReadCheckTS); err == nil {
+		rcCheckTSUsed = val == variable.On
+	}
+	return &TxnUsage{asyncCommitUsed, onePCUsed, diff, mutationCheckerUsed, assertionUsed, rcCheckTSUsed}
 }
 
 func postReportTxnUsage() {
