@@ -316,8 +316,8 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 		for _, singleScanIdx := range singleScanIdxs {
 			col2Len := singleScanIdx.GetCol2LenFromAccessConds()
 			for _, uniqueIdxCol2Len := range uniqueIdxAccessCols {
-				accessResult, comparable := util.CompareCol2Len(col2Len, uniqueIdxCol2Len)
-				if comparable && accessResult == 1 {
+				accessResult, comparable1 := util.CompareCol2Len(col2Len, uniqueIdxCol2Len)
+				if comparable1 && accessResult == 1 {
 					if refinedBest == nil || len(singleScanIdx.Ranges) < len(refinedBest.Ranges) {
 						refinedBest = singleScanIdx
 					}
@@ -478,7 +478,7 @@ func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expressio
 	// With hints and without generated IndexMerge paths
 	if regularPathCount == len(ds.possibleAccessPaths) {
 		ds.indexMergeHints = nil
-		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable."))
+		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable"))
 		return nil
 	}
 	// Do not need to consider the regular paths in find_best_task().

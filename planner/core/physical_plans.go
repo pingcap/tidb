@@ -129,6 +129,17 @@ func (p *PhysicalTableReader) GetTableScan() (*PhysicalTableScan, error) {
 	return tableScans[0], nil
 }
 
+// SetMppOrBatchCopForTableScan set IsMPPOrBatchCop for all TableScan.
+func SetMppOrBatchCopForTableScan(curPlan PhysicalPlan) {
+	if ts, ok := curPlan.(*PhysicalTableScan); ok {
+		ts.IsMPPOrBatchCop = true
+	}
+	children := curPlan.Children()
+	for _, child := range children {
+		SetMppOrBatchCopForTableScan(child)
+	}
+}
+
 // GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
 func (sg *TiKVSingleGather) GetPhysicalTableReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
 	reader := PhysicalTableReader{}.Init(sg.ctx, sg.blockOffset)
@@ -477,6 +488,8 @@ type PhysicalTableScan struct {
 	HandleCols HandleCols
 
 	StoreType kv.StoreType
+
+	IsMPPOrBatchCop bool // Used for tiflash PartitionTableScan.
 
 	// The table scan may be a partition, rather than a real table.
 	// TODO: clean up this field. After we support dynamic partitioning, table scan
