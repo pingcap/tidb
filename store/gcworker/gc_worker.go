@@ -1906,7 +1906,7 @@ func (w *GCWorker) doGCPlacementRules(safePoint uint64, dr util.DelRangeTask, gc
 			return
 		}
 		physicalTableIDs = append(physicalTableIDs, historyJob.TableID)
-		tiflashPhysicalTableIDs = append(tiflashPhysicalTableIDs, historyJob.TableID)
+		tiflashPhysicalTableIDs = physicalTableIDs
 		binlogInfo := historyJob.BinlogInfo
 		if binlogInfo != nil {
 			tblInfo := binlogInfo.TableInfo
