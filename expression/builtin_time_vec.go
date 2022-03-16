@@ -416,10 +416,10 @@ func (b *builtinUTCTimeWithArgSig) vecEvalDuration(input *chunk.Chunk, result *c
 		}
 		fsp := i64s[i]
 		if fsp > int64(types.MaxFsp) {
-			return errors.Errorf("Too-big precision %v specified for 'utc_time'. Maximum is %v.", fsp, types.MaxFsp)
+			return errors.Errorf("Too-big precision %v specified for 'utc_time'. Maximum is %v", fsp, types.MaxFsp)
 		}
 		if fsp < int64(types.MinFsp) {
-			return errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
+			return errors.Errorf("Invalid negative %d specified, must in [0, 6]", fsp)
 		}
 		res, err := types.ParseDuration(stmtCtx, utc, int(fsp))
 		if err != nil {
@@ -557,10 +557,10 @@ func (b *builtinNowWithArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.Col
 		fsp := 0
 		if !bufFsp.IsNull(i) {
 			if fsps[i] > int64(types.MaxFsp) {
-				return errors.Errorf("Too-big precision %v specified for 'now'. Maximum is %v.", fsps[i], types.MaxFsp)
+				return errors.Errorf("Too-big precision %v specified for 'now'. Maximum is %v", fsps[i], types.MaxFsp)
 			}
 			if fsps[i] < int64(types.MinFsp) {
-				return errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsps[i])
+				return errors.Errorf("Invalid negative %d specified, must in [0, 6]", fsps[i])
 			}
 			fsp = int(fsps[i])
 		}
@@ -1417,10 +1417,10 @@ func (b *builtinUTCTimestampWithArgSig) vecEvalTime(input *chunk.Chunk, result *
 		}
 		fsp := i64s[i]
 		if fsp > int64(types.MaxFsp) {
-			return errors.Errorf("Too-big precision %v specified for 'utc_timestamp'. Maximum is %v.", fsp, types.MaxFsp)
+			return errors.Errorf("Too-big precision %v specified for 'utc_timestamp'. Maximum is %v", fsp, types.MaxFsp)
 		}
 		if fsp < int64(types.MinFsp) {
-			return errors.Errorf("Invalid negative %d specified, must in [0, 6].", fsp)
+			return errors.Errorf("Invalid negative %d specified, must in [0, 6]", fsp)
 		}
 		res, isNull, err := evalUTCTimestampWithFsp(b.ctx, int(fsp))
 		if err != nil {
