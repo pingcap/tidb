@@ -16,6 +16,7 @@ package bindinfo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"strconv"
@@ -445,10 +446,11 @@ func (h *BindHandle) SetBindRecordStatus(originalSQL, db string, binding *Bindin
 		}
 
 		_, err = exec.ExecuteInternal(context.TODO(), "COMMIT")
-		if err != nil || affectRows == 0 {
-			if affectRows == 0 {
-				logutil.BgLogger().Warn("[sql-bind] There are no bindings can be set the status")
-			}
+		if err != nil {
+			return
+		}
+		if affectRows == 0 {
+			err = errors.New("There are no bindings can be set the status. Please check the SQL text.")
 			return
 		}
 
@@ -483,10 +485,10 @@ func (h *BindHandle) SetBindRecordStatus(originalSQL, db string, binding *Bindin
 	updateTsStr := updateTs.String()
 
 	if binding == nil {
-		_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND (status = %? OR status = %?)`,
+		_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND status IN (%?, %?)`,
 			newStatus, updateTsStr, originalSQL, updateTsStr, oldStatus0, oldStatus1)
 	} else {
-		_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %? AND (status = %? OR status = %?)`,
+		_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %? AND status IN (%?, %?)`,
 			newStatus, updateTsStr, originalSQL, updateTsStr, binding.BindSQL, oldStatus0, oldStatus1)
 	}
 	affectRows = int(h.sctx.Context.GetSessionVars().StmtCtx.AffectedRows())

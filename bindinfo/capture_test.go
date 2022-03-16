@@ -157,6 +157,8 @@ func TestCapturePlanBaseline4DisabledStatus(t *testing.T) {
 
 	tk.MustExec("set binding disabled for select * from t where a > 10")
 
+	tk.MustExec("select * from t where a > 10")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, bindinfo.Disabled, rows[0][3])
@@ -170,6 +172,10 @@ func TestCapturePlanBaseline4DisabledStatus(t *testing.T) {
 
 	tk.MustExec("select * from t where a > 10")
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+
+	tk.MustExec("drop global binding for select * from t where a > 10")
+	rows = tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 0)
 
 	utilCleanBindingEnv(tk, dom)
 }

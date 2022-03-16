@@ -267,6 +267,7 @@ func TestSetBindingStatus(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 
 	tk.MustExec("set binding disabled for select * from t where a > 10 using select * from t where a > 10")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 There are no bindings can be set the status. Please check the SQL text."))
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, bindinfo.Enabled, rows[0][3])
