@@ -772,7 +772,7 @@ func RunStreamRestore(
 		return nil
 	}
 	// read data file by given ts.
-	dFiles, mFiles, err := client.ReadStreamDataFiles(ctx, metas, cfg.RestoreTS)
+	dmlFiles, ddlFiles, err := client.ReadStreamDataFiles(ctx, metas, cfg.RestoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -787,7 +787,10 @@ func RunStreamRestore(
 		}
 		defer rawkvClient.Close()
 
-		err = client.RestoreMetaKVFiles(ctx, rawkvClient, mFiles, &fullBackupTables, cfg.TableFilter)
+		err = client.RestoreMetaKVFiles(ctx, rawkvClient, ddlFiles, &fullBackupTables, cfg.TableFilter, func(oldID, newID int64) {
+			//rule := restore.GetRewriteRuleOfTable(oldID, newID, 0, false)
+
+		})
 		errChMeta <- err
 	}()
 
@@ -796,9 +799,9 @@ func RunStreamRestore(
 	}
 
 	// perform restore kv files
-	pd := g.StartProgress(ctx, "Restore KV Files", int64(len(dFiles)), cfg.LogProgress)
+	pd := g.StartProgress(ctx, "Restore KV Files", int64(len(dmlFiles)), cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
-		return client.RestoreKVFiles(ctx, rewriteRules, dFiles, p.Inc)
+		return client.RestoreKVFiles(ctx, rewriteRules, dmlFiles, p.Inc)
 	})
 	if err != nil {
 		return errors.Annotate(err, "failed to restore kv files")
@@ -890,7 +893,11 @@ func initRewriteRules(client *restore.Client, tables map[int64]*metautil.Table) 
 			return nil, errors.Trace(err)
 		}
 		// we don't handle index rule in pitr. since we only support pitr on non-exists table.
-		rules[t.Info.ID] = restore.GetRewriteRules(newTableInfo, t.Info, 0, false)
+		tableRules := restore.GetRewriteRulesMap(newTableInfo, t.Info, 0, false)
+		for tableID, tableRule := range tableRules {
+			rules[tableID] = tableRule
+		}
+
 		log.Info("Using rewrite rule for table.", zap.Stringer("table", t.Info.Name),
 			zap.Stringer("database", t.DB.Name),
 			zap.Int("old-id", int(t.Info.ID)),
