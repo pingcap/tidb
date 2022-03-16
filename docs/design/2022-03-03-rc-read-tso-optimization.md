@@ -14,7 +14,7 @@ That is the `rc-read` could be processed in an optimistic way, the ts could be u
 
 ## Detailed Design
 
-Introduce another system variable `tidb_rc_read_check_ts` to enable the "lazy ts update" read mode. It will take effect for all the in-transaction select stataments and the
+Introduce another system variable `tidb_rc_read_check_ts` to enable the "lazy ts update" read mode. It will take effect for all the in-transaction select statements when the
 transaction isolation level is `read-consistency`.
 
 The execution flow is like this:
