@@ -635,6 +635,7 @@ func checkHistoryJobInTest(ctx sessionctx.Context, historyJob *model.Job) {
 		}
 	}
 	p := parser.New()
+	p.SetSQLMode(ctx.GetSessionVars().SQLMode)
 	p.SetParserConfig(ctx.GetSessionVars().BuildParserConfig())
 	stmt, _, err := p.ParseSQL(historyJob.Query)
 	if err != nil {
