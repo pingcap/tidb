@@ -7,7 +7,7 @@
 ## Motivation
 
 For the read-consistency isolation level, each read request in a single transaction will need to fetch a new `ts` to read the latest committed data.
-If the workload is a read-heavy one or the read qps is large, fetching ts each time will increase the query lantecy.
+If the workload is a read-heavy one and or read QPS is significantly higher than writes, and there're few read-write conflicts, fetching ts each time will increase the query lantecy.
 
 The new ts itself is used to ensure the most recent data will be returned, if the data version does not change frequently then it's unnecessary to fetch a new timestamp every time.
 That is the `rc-read` could be processed in an optimistic way, the ts could be updated only when a new version data is met, then the ts cost will be saved a lot for this case.
