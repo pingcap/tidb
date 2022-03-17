@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
@@ -744,7 +745,7 @@ func TestTiFlashFallback(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int not null primary key, b int not null)")
 	tk.MustExec("alter table t set tiflash replica 1")
-	tb := tk.GetTableByName("test", "t")
+	tb := external.GetTableByName(t, tk, "test", "t")
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
@@ -889,8 +890,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		tk.MustExec("DROP USER unativepassword")
 	}()
 
-	// 5.5, 5.6 or 5.7 client trying to authenticate with mysql_native_password, w/o password
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
+	// 5.7 or newer client trying to authenticate with mysql_native_password
 	cc := &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
@@ -909,8 +909,6 @@ func TestHandleAuthPlugin(t *testing.T) {
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
-	require.Equal(t, resp.Auth, []byte(mysql.AuthNativePassword))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
 
 	// 8.0 or newer client trying to authenticate with caching_sha2_password
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))

@@ -60,6 +60,7 @@ func testCreateForeignKey(t *testing.T, d *ddl, ctx sessionctx.Context, dbInfo *
 	}
 	err := ctx.NewTxn(context.Background())
 	require.NoError(t, err)
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	err = d.doDDLJob(ctx, job)
 	require.NoError(t, err)
 	return job
@@ -73,10 +74,11 @@ func testDropForeignKey(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *mo
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{model.NewCIStr(foreignKeyName)},
 	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := d.doDDLJob(ctx, job)
 	require.NoError(t, err)
-	v := getSchemaVerT(t, ctx)
-	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	v := getSchemaVer(t, ctx)
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
@@ -114,14 +116,14 @@ func TestForeignKey(t *testing.T) {
 	dbInfo, err := testSchemaInfo(d, "test_foreign")
 	require.NoError(t, err)
 	ctx := testNewContext(d)
-	testCreateSchemaT(t, ctx, d, dbInfo)
+	testCreateSchema(t, ctx, d, dbInfo)
 	tblInfo, err := testTableInfo(d, "t", 3)
 	require.NoError(t, err)
 
 	err = ctx.NewTxn(context.Background())
 	require.NoError(t, err)
 
-	testCreateTableT(t, ctx, d, dbInfo, tblInfo)
+	testCreateTable(t, ctx, d, dbInfo, tblInfo)
 
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
@@ -157,7 +159,7 @@ func TestForeignKey(t *testing.T) {
 	d.SetHook(tc)
 
 	job := testCreateForeignKey(t, d, ctx, dbInfo, tblInfo, "c1_fk", []string{"c1"}, "t2", []string{"c1"}, ast.ReferOptionCascade, ast.ReferOptionSetNull)
-	testCheckJobDoneT(t, d, job, true)
+	testCheckJobDone(t, d, job, true)
 	txn, err = ctx.Txn(true)
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
@@ -168,8 +170,8 @@ func TestForeignKey(t *testing.T) {
 	mu.Unlock()
 	require.NoError(t, hErr)
 	require.True(t, ok)
-	v := getSchemaVerT(t, ctx)
-	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	v := getSchemaVer(t, ctx)
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 
 	mu.Lock()
 	checkOK = false
@@ -198,7 +200,7 @@ func TestForeignKey(t *testing.T) {
 	d.SetHook(tc2)
 
 	job = testDropForeignKey(t, ctx, d, dbInfo, tblInfo, "c1_fk")
-	testCheckJobDoneT(t, d, job, false)
+	testCheckJobDone(t, d, job, false)
 	mu.Lock()
 	hErr = hookErr
 	ok = checkOK
@@ -209,8 +211,8 @@ func TestForeignKey(t *testing.T) {
 	err = ctx.NewTxn(context.Background())
 	require.NoError(t, err)
 
-	job = testDropTableT(t, ctx, d, dbInfo, tblInfo)
-	testCheckJobDoneT(t, d, job, false)
+	job = testDropTable(t, ctx, d, dbInfo, tblInfo)
+	testCheckJobDone(t, d, job, false)
 
 	txn, err = ctx.Txn(true)
 	require.NoError(t, err)

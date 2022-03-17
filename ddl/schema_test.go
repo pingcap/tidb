@@ -49,29 +49,12 @@ func testCreateSchema(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *mode
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{dbInfo},
 	}
-	err := d.doDDLJob(ctx, job)
-	require.NoError(t, err)
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	require.NoError(t, d.doDDLJob(ctx, job))
 
 	v := getSchemaVer(t, ctx)
 	dbInfo.State = model.StatePublic
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, db: dbInfo})
-	dbInfo.State = model.StateNone
-	return job
-}
-
-func testCreateSchemaT(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) *model.Job {
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		Type:       model.ActionCreateSchema,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{dbInfo},
-	}
-	err := d.doDDLJob(ctx, job)
-	require.NoError(t, err)
-
-	v := getSchemaVerT(t, ctx)
-	dbInfo.State = model.StatePublic
-	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v, db: dbInfo})
 	dbInfo.State = model.StateNone
 	return job
 }
@@ -86,6 +69,7 @@ func buildDropSchemaJob(dbInfo *model.DBInfo) *model.Job {
 
 func testDropSchema(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) (*model.Job, int64) {
 	job := buildDropSchemaJob(dbInfo)
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := d.doDDLJob(ctx, job)
 	require.NoError(t, err)
 	ver := getSchemaVer(t, ctx)
@@ -194,6 +178,7 @@ func ExportTestSchema(t *testing.T) {
 		Type:       model.ActionDropSchema,
 		BinlogInfo: &model.HistoryInfo{},
 	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	err = d.doDDLJob(ctx, job)
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrDatabaseDropExists), "err %v", err)
 

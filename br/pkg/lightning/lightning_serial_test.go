@@ -56,7 +56,7 @@ func TestRun(t *testing.T) {
 	require.NoError(t, err)
 	err = lightning.RunOnce(context.Background(), cfg, nil)
 	require.Error(t, err)
-	require.Regexp(t, "mydumper dir does not exist$", err.Error())
+	require.Regexp(t, "`mydumper.data-source-dir` does not exist$", err.Error())
 
 	path, _ := filepath.Abs(".")
 	ctx := context.Background()
@@ -72,7 +72,7 @@ func TestRun(t *testing.T) {
 			Driver: "invalid",
 		},
 	}, invalidGlue)
-	require.EqualError(t, err, "open checkpoint db failed: Unknown checkpoint driver invalid")
+	require.EqualError(t, err, "[Lightning:Checkpoint:ErrUnknownCheckpointDriver]unknown checkpoint driver 'invalid'")
 
 	err = lightning.run(ctx, &config.Config{
 		Mydumper: config.MydumperRuntime{

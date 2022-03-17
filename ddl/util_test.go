@@ -169,6 +169,7 @@ func testCreateTable(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{tblInfo},
 	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := d.doDDLJob(ctx, job)
 	require.NoError(t, err)
 
@@ -189,8 +190,8 @@ func testCreateView(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.
 	}
 
 	require.True(t, tblInfo.IsView())
-	err := d.doDDLJob(ctx, job)
-	require.NoError(t, err)
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	require.NoError(t, d.doDDLJob(ctx, job))
 
 	v := getSchemaVer(t, ctx)
 	tblInfo.State = model.StatePublic
@@ -206,30 +207,29 @@ func testDropTable(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.D
 		Type:       model.ActionDropTable,
 		BinlogInfo: &model.HistoryInfo{},
 	}
-	err := d.doDDLJob(ctx, job)
-	require.NoError(t, err)
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	require.NoError(t, d.doDDLJob(ctx, job))
 
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
-func testCheckTableState(test *testing.T, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, state model.SchemaState) {
-	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		info, err := t.GetTable(dbInfo.ID, tblInfo.ID)
-		require.NoError(test, err)
+func testCheckTableState(t *testing.T, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, state model.SchemaState) {
+	require.NoError(t, kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		info, err := m.GetTable(dbInfo.ID, tblInfo.ID)
+		require.NoError(t, err)
 
 		if state == model.StateNone {
-			require.NoError(test, err)
+			require.NoError(t, err)
 			return nil
 		}
 
-		require.Equal(test, info.Name, tblInfo.Name)
-		require.Equal(test, info.State, state)
+		require.Equal(t, info.Name, tblInfo.Name)
+		require.Equal(t, info.State, state)
 		return nil
-	})
-	require.NoError(test, err)
+	}))
 }
 
 func testGetTable(t *testing.T, d *ddl, schemaID int64, tableID int64) table.Table {

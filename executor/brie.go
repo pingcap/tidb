@@ -15,6 +15,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"net/url"
 	"strings"
@@ -475,6 +476,12 @@ func (gs *tidbGlueSession) ExecuteInternal(ctx context.Context, sql string, args
 // CreateDatabase implements glue.Session
 func (gs *tidbGlueSession) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
 	d := domain.GetDomain(gs.se).DDL()
+	// 512 is defaultCapOfCreateTable.
+	result := bytes.NewBuffer(make([]byte, 0, 512))
+	if err := ConstructResultOfShowCreateDatabase(gs.se, schema, true, result); err != nil {
+		return err
+	}
+	gs.se.SetValue(sessionctx.QueryString, result.String())
 	schema = schema.Clone()
 	if len(schema.Charset) == 0 {
 		schema.Charset = mysql.DefaultCharset
@@ -495,6 +502,13 @@ func (gs *tidbGlueSession) CreateTable(ctx context.Context, dbName model.CIStr, 
 	}
 
 	return d.CreateTableWithInfo(gs.se, dbName, table, ddl.OnExistIgnore)
+}
+
+// CreatePlacementPolicy implements glue.Session
+func (gs *tidbGlueSession) CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error {
+	d := domain.GetDomain(gs.se).DDL()
+	// the default behaviour is ignoring duplicated policy during restore.
+	return d.CreatePlacementPolicyWithInfo(gs.se, policy, ddl.OnExistIgnore)
 }
 
 // Close implements glue.Session

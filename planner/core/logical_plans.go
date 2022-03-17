@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
@@ -458,9 +457,6 @@ type LogicalSelection struct {
 	// but after we converted to CNF(Conjunctive normal form), it can be
 	// split into a list of AND conditions.
 	Conditions []expression.Expression
-
-	// having selection can't be pushed down, because it must above the aggregation.
-	buildByHaving bool
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -533,9 +529,6 @@ type LogicalUnionScan struct {
 	conditions []expression.Expression
 
 	handleCols HandleCols
-
-	// cacheTable not nil means it's reading from cached table.
-	cacheTable kv.MemBuffer
 }
 
 // DataSource represents a tableScan without condition push down.
@@ -1292,6 +1285,9 @@ type CTEClass struct {
 	LimitBeg  uint64
 	LimitEnd  uint64
 	IsInApply bool
+	// pushDownPredicates may be push-downed by different references.
+	pushDownPredicates []expression.Expression
+	ColumnMap          map[string]*expression.Column
 }
 
 // LogicalCTE is for CTE.

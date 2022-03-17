@@ -40,3 +40,39 @@ func HandleEqual(t testing.TB, expected, actual kv.Handle, msgAndArgs ...interfa
 	require.Equal(t, expected.IsInt(), actual.IsInt(), msgAndArgs)
 	require.Equal(t, expected.String(), actual.String(), msgAndArgs)
 }
+
+// CompareUnorderedStringSlice compare two string slices.
+// If a and b is exactly the same except the order, it returns true.
+// In otherwise return false.
+func CompareUnorderedStringSlice(a []string, b []string) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	if len(a) != len(b) {
+		return false
+	}
+	m := make(map[string]int, len(a))
+	for _, i := range a {
+		_, ok := m[i]
+		if !ok {
+			m[i] = 1
+		} else {
+			m[i]++
+		}
+	}
+
+	for _, i := range b {
+		_, ok := m[i]
+		if !ok {
+			return false
+		}
+		m[i]--
+		if m[i] == 0 {
+			delete(m, i)
+		}
+	}
+	return len(m) == 0
+}
