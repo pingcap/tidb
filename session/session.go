@@ -3154,7 +3154,12 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 		s.txn.changeInvalidToPending(txnFuture)
 	} else if s.txn.Valid() && s.GetSessionVars().IsPessimisticReadConsistency() {
 		// Prepare the statement future if the transaction is valid in RC transactions.
-		s.GetSessionVars().TxnCtx.SetStmtFutureForRC(s.getTxnFuture(ctx).future)
+		// If the `RCCheckTS` is used, try to use the last valid ts to read.
+		if s.GetSessionVars().StmtCtx.RCCheckTS {
+			s.GetSessionVars().TxnCtx.SetStmtFutureForRC(nil)
+		} else {
+			s.GetSessionVars().TxnCtx.SetStmtFutureForRC(s.getTxnFuture(ctx).future)
+		}
 	}
 }
 
@@ -3371,34 +3376,6 @@ func (s *session) SetPort(port string) {
 // GetTxnWriteThroughputSLI implements the Context interface.
 func (s *session) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
 	return &s.txn.writeSLI
-}
-
-var _ telemetry.TemporaryOrCacheTableFeatureChecker = &session{}
-
-// TemporaryTableExists is used by the telemetry package to avoid circle dependency.
-func (s *session) TemporaryTableExists() bool {
-	is := domain.GetDomain(s).InfoSchema()
-	for _, dbInfo := range is.AllSchemas() {
-		for _, tbInfo := range is.SchemaTables(dbInfo.Name) {
-			if tbInfo.Meta().TempTableType != model.TempTableNone {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// CachedTableExists is used by the telemetry package to avoid circle dependency.
-func (s *session) CachedTableExists() bool {
-	is := domain.GetDomain(s).InfoSchema()
-	for _, dbInfo := range is.AllSchemas() {
-		for _, tbInfo := range is.SchemaTables(dbInfo.Name) {
-			if tbInfo.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // GetInfoSchema returns snapshotInfoSchema if snapshot schema is set.
