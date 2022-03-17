@@ -6243,3 +6243,35 @@ func TestTiFlashPartitionTableScan(t *testing.T) {
 	tk.MustExec("drop table rp_t;")
 	tk.MustExec("drop table hp_t;")
 }
+
+func TestIssue33175(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id bigint(45) unsigned not null, c varchar(20), primary key(id));")
+	tk.MustExec("insert into t values (9734095886065816707, 'a'), (10353107668348738101, 'b'), (0, 'c');")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (33, 'd');")
+	tk.MustQuery("select max(id) from t;").Check(testkit.Rows("10353107668348738101"))
+	tk.MustExec("rollback")
+
+	tk.MustExec("alter table t cache")
+	for {
+		tk.MustQuery("select max(id) from t;").Check(testkit.Rows("10353107668348738101"))
+		if tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache {
+			break
+		}
+	}
+
+	// With subquery, like the original issue case.
+	for {
+		tk.MustQuery("select * from t where id > (select  max(id) from t where t.id > 0);").Check(testkit.Rows())
+		if tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache {
+			break
+		}
+	}
+
+	tk.MustExec("alter table t nocache")
+	tk.MustExec("drop table t")
+}
