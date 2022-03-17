@@ -475,8 +475,7 @@ func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.E
 // It would consider the CNF.
 // For example,
 // (a > 1 or avg(b) > 1) and (a < 3), and `avg(b) > 1` can't be pushed-down.
-// Then condsToPush: (a < 3) and (a>1 or 1), ret: a > 1 or avg(b) > 1
-// TODO: simplify condsToPush to a < 3.
+// Then condsToPush: a < 3, ret: a > 1 or avg(b) > 1
 func (la *LogicalAggregation) pushDownCNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) ([]expression.Expression, []expression.Expression) {
 	var condsToPush []expression.Expression
 	var ret []expression.Expression
@@ -513,9 +512,7 @@ func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expressio
 		if len(condsToPushForItem) > 0 {
 			condsToPush = append(condsToPush, expression.ComposeCNFCondition(la.ctx, condsToPushForItem...))
 		} else {
-			// OR TRUE, construct a TRUE condition.
-			// TODO: simplify the whole condition since it's always true.
-			condsToPush = append(condsToPush, expression.NewOne())
+			return nil, []expression.Expression{cond}
 		}
 		if len(retForItem) > 0 {
 			ret = append(ret, expression.ComposeCNFCondition(la.ctx, retForItem...))
