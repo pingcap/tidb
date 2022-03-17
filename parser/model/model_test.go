@@ -158,7 +158,7 @@ func TestJobCodec(t *testing.T) {
 		BinlogInfo: &HistoryInfo{},
 		Args:       []interface{}{NewCIStr("a"), A{Name: "abc"}},
 		ReorgMeta: &DDLReorgMeta{
-			Location: &TimeZone{Name: tzName, Offset: tzOffset},
+			Location: &TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
 	}
 	job.BinlogInfo.AddDBInfo(123, &DBInfo{ID: 1, Name: NewCIStr("test_history_db")})
@@ -438,4 +438,64 @@ func TestPlacementSettingsString(t *testing.T) {
 		Constraints: "{+us-east-1:1,+us-east-2:1}",
 	}
 	require.Equal(t, "CONSTRAINTS=\"{+us-east-1:1,+us-east-2:1}\" VOTERS=3 FOLLOWERS=2 LEARNERS=1", settings.String())
+}
+
+func TestPlacementSettingsClone(t *testing.T) {
+	settings := &PlacementSettings{}
+	clonedSettings := settings.Clone()
+	clonedSettings.PrimaryRegion = "r1"
+	clonedSettings.Regions = "r1,r2"
+	clonedSettings.Followers = 1
+	clonedSettings.Voters = 2
+	clonedSettings.Followers = 3
+	clonedSettings.Constraints = "[+zone=z1]"
+	clonedSettings.LearnerConstraints = "[+region=r1]"
+	clonedSettings.FollowerConstraints = "[+disk=ssd]"
+	clonedSettings.LeaderConstraints = "[+region=r2]"
+	clonedSettings.VoterConstraints = "[+zone=z2]"
+	clonedSettings.Schedule = "even"
+	require.Equal(t, PlacementSettings{}, *settings)
+}
+
+func TestPlacementPolicyClone(t *testing.T) {
+	policy := &PolicyInfo{
+		PlacementSettings: &PlacementSettings{},
+	}
+	clonedPolicy := policy.Clone()
+	clonedPolicy.ID = 100
+	clonedPolicy.Name = NewCIStr("p2")
+	clonedPolicy.State = StateDeleteOnly
+	clonedPolicy.PlacementSettings.Followers = 10
+
+	require.Equal(t, int64(0), policy.ID)
+	require.Equal(t, NewCIStr(""), policy.Name)
+	require.Equal(t, StateNone, policy.State)
+	require.Equal(t, PlacementSettings{}, *(policy.PlacementSettings))
+}
+
+func TestLocation(t *testing.T) {
+	// test offset = 0
+	loc := &TimeZoneLocation{}
+	nLoc, err := loc.GetLocation()
+	require.NoError(t, err)
+	require.Equal(t, nLoc.String(), "UTC")
+	// test loc.location != nil
+	loc.Name = "Asia/Shanghai"
+	nLoc, err = loc.GetLocation()
+	require.NoError(t, err)
+	require.Equal(t, nLoc.String(), "UTC")
+	// timezone +05:00
+	loc1 := &TimeZoneLocation{Name: "UTC", Offset: 18000}
+	loc1Byte, err := json.Marshal(loc1)
+	require.NoError(t, err)
+	loc2 := &TimeZoneLocation{}
+	err = json.Unmarshal(loc1Byte, loc2)
+	require.NoError(t, err)
+	require.Equal(t, loc2.Offset, loc1.Offset)
+	require.Equal(t, loc2.Name, loc1.Name)
+	nLoc, err = loc2.GetLocation()
+	require.NoError(t, err)
+	require.Equal(t, nLoc.String(), "UTC")
+	location := time.FixedZone("UTC", loc1.Offset)
+	require.Equal(t, nLoc, location)
 }

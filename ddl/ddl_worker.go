@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
-	"go.etcd.io/etcd/clientv3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -92,7 +92,9 @@ type worker struct {
 	reorgCtx        *reorgCtx    // reorgCtx is used for reorganization.
 	delRangeManager delRangeManager
 	logCtx          context.Context
+	lockSeqNum      bool
 
+	*ddlCtx
 	ddlJobCache
 }
 
@@ -105,7 +107,7 @@ type ddlJobCache struct {
 	cacheDigest        *parser.Digest
 }
 
-func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRangeMgr delRangeManager) *worker {
+func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRangeMgr delRangeManager, dCtx *ddlCtx) *worker {
 	worker := &worker{
 		id:       atomic.AddInt32(&ddlWorkerID, 1),
 		tp:       tp,
@@ -117,6 +119,7 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRan
 			cacheNormalizedSQL: "",
 			cacheDigest:        nil,
 		},
+		ddlCtx:          dCtx,
 		reorgCtx:        &reorgCtx{notifyCancelReorgJob: 0},
 		sessPool:        sessPool,
 		delRangeManager: delRangeMgr,
@@ -385,7 +388,7 @@ func (w *worker) deleteRange(ctx context.Context, job *model.Job) error {
 	if job.Version <= currentVersion {
 		err = w.delRangeManager.addDelRangeJob(ctx, job)
 	} else {
-		err = errInvalidDDLJobVersion.GenWithStackByArgs(job.Version, currentVersion)
+		err = dbterror.ErrInvalidDDLJobVersion.GenWithStackByArgs(job.Version, currentVersion)
 	}
 	return errors.Trace(err)
 }
@@ -440,34 +443,16 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		// Notice: warnings is used to support non-strict mode.
 		updateRawArgs = false
 	}
-	err = writeDDLSeqNum(t, job)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	w.writeDDLSeqNum(job)
 	err = t.AddHistoryDDLJob(job, updateRawArgs)
 	return errors.Trace(err)
 }
 
-func writeDDLSeqNum(t *meta.Meta, job *model.Job) error {
-	it, err := t.GetLastHistoryDDLJobsIterator()
-	if err != nil {
-		return err
-	}
-	lastJob, err := it.GetLastJobs(1, nil)
-	if err != nil {
-		return err
-	}
-	if len(lastJob) > 0 && lastJob[0].SeqNum > 0 {
-		job.SeqNum = lastJob[0].SeqNum + 1
-	} else {
-		job.SeqNum, err = t.GetHistoryDDLCount()
-		// Make it start from 1.
-		job.SeqNum += 1
-	}
-	if err != nil {
-		return err
-	}
-	return nil
+func (w *worker) writeDDLSeqNum(job *model.Job) {
+	w.ddlSeqNumMu.Lock()
+	w.ddlSeqNumMu.seqNum++
+	w.lockSeqNum = true
+	job.SeqNum = w.ddlSeqNumMu.seqNum
 }
 
 func finishRecoverTable(w *worker, job *model.Job) error {
@@ -618,10 +603,20 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		}
 
 		if err != nil {
+			if w.lockSeqNum {
+				// txn commit failed, we should reset seqNum.
+				w.ddlSeqNumMu.seqNum--
+				w.lockSeqNum = false
+				w.ddlSeqNumMu.Unlock()
+			}
 			return errors.Trace(err)
 		} else if job == nil {
 			// No job now, return and retry getting later.
 			return nil
+		}
+		if w.lockSeqNum {
+			w.lockSeqNum = false
+			d.ddlSeqNumMu.Unlock()
 		}
 		w.waitDependencyJobFinished(job, &waitDependencyJobCnt)
 
@@ -803,7 +798,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionCreateView:
 		ver, err = onCreateView(d, t, job)
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
-		ver, err = onDropTableOrView(d, t, job)
+		ver, err = onDropTableOrView(t, job)
 	case model.ActionDropTablePartition:
 		ver, err = w.onDropTablePartition(d, t, job)
 	case model.ActionTruncateTablePartition:
@@ -881,7 +876,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionDropPlacementPolicy:
 		ver, err = onDropPlacementPolicy(d, t, job)
 	case model.ActionAlterPlacementPolicy:
-		ver, err = onAlterPlacementPolicy(d, t, job)
+		ver, err = onAlterPlacementPolicy(t, job)
 	case model.ActionAlterTablePartitionPlacement:
 		ver, err = onAlterTablePartitionPlacement(t, job)
 	case model.ActionAlterTablePlacement:
@@ -893,7 +888,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
-		err = errInvalidDDLJob.GenWithStack("invalid ddl job type: %v", job.Type)
+		err = dbterror.ErrInvalidDDLJob.GenWithStack("invalid ddl job type: %v", job.Type)
 	}
 
 	// Save errors in job if any, so that others can know errors happened.

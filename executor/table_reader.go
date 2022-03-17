@@ -17,13 +17,14 @@ package executor
 import (
 	"context"
 	"sort"
+	"time"
 
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
@@ -109,32 +110,18 @@ type TableReaderExecutor struct {
 	// batchCop indicates whether use super batch coprocessor request, only works for TiFlash engine.
 	batchCop bool
 
-	// extraPIDColumnIndex is used for partition reader to add an extra partition ID column.
-	extraPIDColumnIndex offsetOptional
-
 	// If dummy flag is set, this is not a real TableReader, it just provides the KV ranges for UnionScan.
 	// Used by the temporary table, cached table.
 	dummy bool
 }
 
-// offsetOptional may be a positive integer, or invalid.
-type offsetOptional int
-
-func newOffset(i int) offsetOptional {
-	return offsetOptional(i + 1)
-}
-
-func (i offsetOptional) valid() bool {
-	return i != 0
-}
-
-func (i offsetOptional) value() int {
-	return int(i - 1)
-}
-
 // Table implements the dataSourceExecutor interface.
 func (e *TableReaderExecutor) Table() table.Table {
 	return e.table
+}
+
+func (e *TableReaderExecutor) setDummy() {
+	e.dummy = true
 }
 
 // Open initializes necessary variables for using this executor.
@@ -144,6 +131,10 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	failpoint.Inject("mockSleepInTableReaderNext", func(v failpoint.Value) {
+		ms := v.(int)
+		time.Sleep(time.Millisecond * time.Duration(ms))
+	})
 
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
@@ -250,24 +241,7 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		return err
 	}
 
-	// When 'select ... for update' work on a partitioned table, the table reader should
-	// add the partition ID as an extra column. The SelectLockExec need this information
-	// to construct the lock key.
-	physicalID := getPhysicalTableID(e.table)
-	if e.extraPIDColumnIndex.valid() {
-		fillExtraPIDColumn(req, e.extraPIDColumnIndex.value(), physicalID)
-	}
-
 	return nil
-}
-
-func fillExtraPIDColumn(req *chunk.Chunk, extraPIDColumnIndex int, physicalID int64) {
-	numRows := req.NumRows()
-	pidColumn := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), numRows)
-	for i := 0; i < numRows; i++ {
-		pidColumn.AppendInt64(physicalID)
-	}
-	req.SetCol(extraPIDColumnIndex, pidColumn)
 }
 
 // Close implements the Executor Close interface.
@@ -289,20 +263,32 @@ func (e *TableReaderExecutor) Close() error {
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	if e.storeType == kv.TiFlash && e.kvRangeBuilder != nil {
-		// TiFlash cannot support to access multiple tables/partitions within one KVReq, so we have to build KVReq for each partition separately.
-		kvReqs, err := e.buildKVReqSeparately(ctx, ranges)
-		if err != nil {
-			return nil, err
-		}
-		var results []distsql.SelectResult
-		for _, kvReq := range kvReqs {
-			result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
+		if !e.batchCop {
+			// TiFlash cannot support to access multiple tables/partitions within one KVReq, so we have to build KVReq for each partition separately.
+			kvReqs, err := e.buildKVReqSeparately(ctx, ranges)
 			if err != nil {
 				return nil, err
 			}
-			results = append(results, result)
+			var results []distsql.SelectResult
+			for _, kvReq := range kvReqs {
+				result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
+				if err != nil {
+					return nil, err
+				}
+				results = append(results, result)
+			}
+			return distsql.NewSerialSelectResults(results), nil
 		}
-		return distsql.NewSerialSelectResults(results), nil
+		// Use PartitionTable Scan
+		kvReq, err := e.buildKVReqForPartitionTableScan(ctx, ranges)
+		if err != nil {
+			return nil, err
+		}
+		result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
+		if err != nil {
+			return nil, err
+		}
+		return result, nil
 	}
 
 	kvReq, err := e.buildKVReq(ctx, ranges)
@@ -326,7 +312,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 	kvReqs := make([]*kv.Request, 0, len(kvRanges))
 	for i, kvRange := range kvRanges {
 		e.kvRanges = append(e.kvRanges, kvRange...)
-		if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, pids[i], true); err != nil {
+		if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, true, []int64{pids[i]}); err != nil {
 			return nil, err
 		}
 		var builder distsql.RequestBuilder
@@ -349,6 +335,42 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 		kvReqs = append(kvReqs, kvReq)
 	}
 	return kvReqs, nil
+}
+
+func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Context, ranges []*ranger.Range) (*kv.Request, error) {
+	pids, kvRanges, err := e.kvRangeBuilder.buildKeyRangeSeparately(ranges)
+	if err != nil {
+		return nil, err
+	}
+	partitionIDAndRanges := make([]kv.PartitionIDAndRanges, 0, len(pids))
+	for i, kvRange := range kvRanges {
+		e.kvRanges = append(e.kvRanges, kvRange...)
+		partitionIDAndRanges = append(partitionIDAndRanges, kv.PartitionIDAndRanges{
+			ID:        pids[i],
+			KeyRanges: kvRange,
+		})
+	}
+	if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, true, pids); err != nil {
+		return nil, err
+	}
+	var builder distsql.RequestBuilder
+	reqBuilder := builder.SetPartitionIDAndRanges(partitionIDAndRanges)
+	kvReq, err := reqBuilder.
+		SetDAGRequest(e.dagPB).
+		SetStartTS(e.startTS).
+		SetDesc(e.desc).
+		SetKeepOrder(e.keepOrder).
+		SetStreaming(e.streaming).
+		SetReadReplicaScope(e.readReplicaScope).
+		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetFromInfoSchema(e.ctx.GetInfoSchema()).
+		SetMemTracker(e.memTracker).
+		SetStoreType(e.storeType).
+		SetAllowBatchCop(e.batchCop).Build()
+	if err != nil {
+		return nil, err
+	}
+	return kvReq, nil
 }
 
 func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.Range) (*kv.Request, error) {
