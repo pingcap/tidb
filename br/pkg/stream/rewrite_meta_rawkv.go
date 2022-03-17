@@ -57,6 +57,27 @@ type SchemasReplace struct {
 	genGenGlobalIDs func(ctx context.Context, n int) ([]int64, error)
 }
 
+// NewTableReplace creates a TableReplace struct.
+func NewTableReplace(tableID NewID, oldTableName, newTableName string) *TableReplace {
+	return &TableReplace{
+		TableID:      tableID,
+		OldName:      oldTableName,
+		NewName:      newTableName,
+		PartitionMap: make(map[OldID]NewID),
+		IndexMap:     make(map[OldID]NewID),
+	}
+}
+
+// NewDBReplace creates a DBReplace struct.
+func NewDBReplace(dbID NewID, oldDBName, newDBName string) *DBReplace {
+	return &DBReplace{
+		DBID:     dbID,
+		OldName:  oldDBName,
+		NewName:  newDBName,
+		TableMap: make(map[OldID]*TableReplace),
+	}
+}
+
 // NewSchemasReplace creates a SchemasReplace struct.
 func NewSchemasReplace(
 	dbMap map[OldID]*DBReplace,
@@ -71,19 +92,6 @@ func NewSchemasReplace(
 		TableFilter:     tableFilter,
 		genGenGlobalID:  genID,
 		genGenGlobalIDs: genIDs,
-	}
-}
-
-func (sr *SchemasReplace) updateDBReplace(OldID, NewID int64, dbName string) {
-	dbReplace, exist := sr.DbMap[OldID]
-	if !exist {
-		sr.DbMap[OldID] = &DBReplace{
-			DBID:    NewID,
-			OldName: dbName,
-		}
-	} else {
-		dbReplace.DBID = NewID
-		dbReplace.OldName = dbName
 	}
 }
 
@@ -105,10 +113,7 @@ func (sr *SchemasReplace) rewriteKeyForDB(key []byte, cf string) ([]byte, bool, 
 			return nil, false, 0, errors.Trace(err)
 		}
 
-		dbReplace = &DBReplace{
-			DBID:     newID,
-			TableMap: make(map[int64]*TableReplace),
-		}
+		dbReplace = NewDBReplace(newID, "", "")
 		sr.DbMap[dbID] = dbReplace
 	}
 
@@ -181,10 +186,7 @@ func (sr *SchemasReplace) rewriteKeyForTable(key []byte, cf string) ([]byte, boo
 			return nil, false, 0, errors.Trace(err)
 		}
 
-		dbReplace = &DBReplace{
-			DBID:     newID,
-			TableMap: make(map[int64]*TableReplace),
-		}
+		dbReplace = NewDBReplace(newID, "", "")
 		sr.DbMap[dbID] = dbReplace
 		log.Debug("db not exists, create new dbID", zap.Int64("oldID", dbID), zap.Int64("newID", newID))
 	}
@@ -196,11 +198,7 @@ func (sr *SchemasReplace) rewriteKeyForTable(key []byte, cf string) ([]byte, boo
 			return nil, false, 0, errors.Trace(err)
 		}
 
-		tableReplace = &TableReplace{
-			TableID:      newID,
-			PartitionMap: make(map[OldID]NewID),
-			IndexMap:     make(map[OldID]NewID),
-		}
+		tableReplace = NewTableReplace(newID, "", "")
 		dbReplace.TableMap[tableID] = tableReplace
 	}
 

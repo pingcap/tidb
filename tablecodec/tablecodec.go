@@ -82,6 +82,7 @@ func TablePrefix() []byte {
 	return tablePrefix
 }
 
+// MetaPrefix returns meta prefix 'm'.
 func MetaPrefix() []byte {
 	return metaPrefix
 }
