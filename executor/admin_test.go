@@ -188,7 +188,6 @@ func TestAdminCheckIndexInCacheTable(t *testing.T) {
 	tk.MustExec("admin checksum table cache_admin_table_with_index_test;")
 	tk.MustExec("admin checksum table cache_admin_table_without_index_test;")
 
-
 	tk.MustExec("alter table cache_admin_table_with_index_test nocache;")
 	tk.MustExec("alter table cache_admin_table_without_index_test nocache;")
 	tk.MustExec("drop table if exists cache_admin_table_with_index_test,cache_admin_table_without_index_test;")
