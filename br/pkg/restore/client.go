@@ -1721,10 +1721,12 @@ func (rc *Client) RestoreMetaKVFiles(
 	rawkvClient *rawkv.Client,
 	files []*backuppb.DataFileInfo,
 	schemasReplace *stream.SchemasReplace,
+	progressInc func(),
 ) error {
 	for _, f := range files {
 		// skip these files if file.MinTs > restoreTS
 		if f.MinTs > rc.restoreTs {
+			progressInc()
 			continue
 		}
 
@@ -1734,6 +1736,7 @@ func (rc *Client) RestoreMetaKVFiles(
 		if err != nil {
 			return errors.Trace(err)
 		}
+		progressInc()
 	}
 
 	if err := rc.UpdateSchemaVersion(ctx); err != nil {
