@@ -17,6 +17,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -64,9 +66,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 	// Make sure the count of regions more than backfill workers.
 	tk.MustQuery("split table t1 between (0) and (8192) regions 8;").Check(testkit.Rows("8 1"))
 
-	tbl := tk.GetTableByName("test", "t1")
-	originalHook := dom.DDL().GetHook()
-	defer dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	tbl := external.GetTableByName(t, tk, "test", "t1")
 
 	// Check insert null before job first update.
 	hook := &ddl.TestDDLCallback{Do: dom}
@@ -103,13 +103,13 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 				times++
 				return
 			}
-			tbl := tk.GetTableByName("test", "t1")
+			tbl := external.GetTableByName(t, tk, "test", "t1")
 			indexInfo := tbl.Meta().FindIndexByName("idx2")
 			elements = []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
 		}
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr", `return("cantDecodeRecordErr")`))
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 	err := tk.ExecToErr(sql)
 	require.EqualError(t, err, "[ddl:8202]Cannot decode index value, because mock can't decode record error")
 	require.NoError(t, checkErr)
@@ -180,18 +180,117 @@ func TestModifyColumnNullToNotNullWithChangingVal2(t *testing.T) {
 }
 
 func TestModifyColumnNullToNotNull(t *testing.T) {
-	sql1 := "alter table t1 change c2 c2 int not null;"
-	sql2 := "alter table t1 change c2 c2 int not null;"
-	testModifyColumnNullToNotNull(t, false, sql1, sql2, nil)
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond)
+	defer clean()
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+
+	tk1.MustExec("create table t1 (c1 int, c2 int)")
+
+	tbl := external.GetTableByName(t, tk1, "test", "t1")
+
+	// Check insert null before job first update.
+	hook := &ddl.TestDDLCallback{Do: dom}
+	tk1.MustExec("delete from t1")
+	once := sync.Once{}
+	var checkErr error
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if tbl.Meta().ID != job.TableID {
+			return
+		}
+		once.Do(func() {
+			checkErr = tk2.ExecToErr("insert into t1 values ()")
+		})
+	}
+	dom.DDL().SetHook(hook)
+	err := tk1.ExecToErr("alter table t1 change c2 c2 int not null")
+	require.NoError(t, checkErr)
+	require.EqualError(t, err, "[ddl:1138]Invalid use of NULL value")
+	tk1.MustQuery("select * from t1").Check(testkit.Rows("<nil> <nil>"))
+
+	// Check insert error when column has PreventNullInsertFlag.
+	tk1.MustExec("delete from t1")
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if tbl.Meta().ID != job.TableID {
+			return
+		}
+
+		if job.State != model.JobStateRunning {
+			return
+		}
+		// now c2 has PreventNullInsertFlag, an error is expected.
+		checkErr = tk2.ExecToErr("insert into t1 values ()")
+	}
+	dom.DDL().SetHook(hook)
+	tk1.MustExec("alter table t1 change c2 c2 int not null")
+	require.EqualError(t, checkErr, "[table:1048]Column 'c2' cannot be null")
+
+	c2 := external.GetModifyColumn(t, tk1, "test", "t1", "c2", false)
+	require.True(t, mysql.HasNotNullFlag(c2.Flag))
+	require.False(t, mysql.HasPreventNullInsertFlag(c2.Flag))
+	err = tk1.ExecToErr("insert into t1 values ();")
+	require.EqualError(t, err, "[table:1364]Field 'c2' doesn't have a default value")
 }
 
 func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
-	sql1 := "alter table t1 change c2 c2 tinyint not null;"
-	sql2 := "alter table t1 change c2 c2 tinyint not null;"
-	testModifyColumnNullToNotNull(t, true, sql1, sql2, func(tk *testkit.TestKit) {
-		c2 := tk.GetModifyColumn("test", "t1", "c2", false)
-		require.Equal(t, mysql.TypeTiny, c2.FieldType.Tp)
-	})
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond)
+	defer clean()
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+
+	tk1.MustExec("create table t1 (c1 int, c2 int)")
+
+	tbl := external.GetTableByName(t, tk1, "test", "t1")
+
+	// Check insert null before job first update.
+	hook := &ddl.TestDDLCallback{Do: dom}
+	tk1.MustExec("delete from t1")
+	once := sync.Once{}
+	var checkErr error
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if tbl.Meta().ID != job.TableID {
+			return
+		}
+		once.Do(func() {
+			checkErr = tk2.ExecToErr("insert into t1 values ()")
+		})
+	}
+	dom.DDL().SetHook(hook)
+	err := tk1.ExecToErr("alter table t1 change c2 c2 tinyint not null")
+	require.NoError(t, checkErr)
+	require.EqualError(t, err, "[ddl:1265]Data truncated for column 'c2' at row 1")
+	tk1.MustQuery("select * from t1").Check(testkit.Rows("<nil> <nil>"))
+
+	// Check insert error when column has PreventNullInsertFlag.
+	tk1.MustExec("delete from t1")
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if tbl.Meta().ID != job.TableID {
+			return
+		}
+
+		if job.State != model.JobStateRunning {
+			return
+		}
+		// now c2 has PreventNullInsertFlag, an error is expected.
+		checkErr = tk2.ExecToErr("insert into t1 values ()")
+	}
+	dom.DDL().SetHook(hook)
+	tk1.MustExec("alter table t1 change c2 c2 tinyint not null")
+	require.EqualError(t, checkErr, "[table:1048]Column 'c2' cannot be null")
+
+	c2 := external.GetModifyColumn(t, tk1, "test", "t1", "c2", false)
+	require.True(t, mysql.HasNotNullFlag(c2.Flag))
+	require.False(t, mysql.HasPreventNullInsertFlag(c2.Flag))
+	require.EqualError(t, tk1.ExecToErr("insert into t1 values ()"), "[table:1364]Field 'c2' doesn't have a default value")
+
+	c2 = external.GetModifyColumn(t, tk1, "test", "t1", "c2", false)
+	require.Equal(t, mysql.TypeTiny, c2.FieldType.Tp)
 }
 
 func TestModifyColumnBetweenStringTypes(t *testing.T) {
@@ -204,7 +303,7 @@ func TestModifyColumnBetweenStringTypes(t *testing.T) {
 	tk.MustExec("create table tt (a varchar(10));")
 	tk.MustExec("insert into tt values ('111'),('10000');")
 	tk.MustExec("alter table tt change a a varchar(5);")
-	mvc := tk.GetModifyColumn("test", "tt", "a", false)
+	mvc := external.GetModifyColumn(t, tk, "test", "tt", "a", false)
 	require.Equal(t, 5, mvc.FieldType.Flen)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 	tk.MustGetErrMsg("alter table tt change a a varchar(4);", "[types:1265]Data truncated for column 'a', value is '10000'")
@@ -216,7 +315,7 @@ func TestModifyColumnBetweenStringTypes(t *testing.T) {
 	tk.MustExec("create table tt (a char(10));")
 	tk.MustExec("insert into tt values ('111'),('10000');")
 	tk.MustExec("alter table tt change a a char(5);")
-	mc := tk.GetModifyColumn("test", "tt", "a", false)
+	mc := external.GetModifyColumn(t, tk, "test", "tt", "a", false)
 	require.Equal(t, 5, mc.FieldType.Flen)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 	tk.MustGetErrMsg("alter table tt change a a char(4);", "[types:1265]Data truncated for column 'a', value is '10000'")
@@ -228,7 +327,7 @@ func TestModifyColumnBetweenStringTypes(t *testing.T) {
 	tk.MustExec("create table tt (a binary(10));")
 	tk.MustExec("insert into tt values ('111'),('10000');")
 	tk.MustGetErrMsg("alter table tt change a a binary(5);", "[types:1265]Data truncated for column 'a', value is '111\x00\x00\x00\x00\x00\x00\x00'")
-	mb := tk.GetModifyColumn("test", "tt", "a", false)
+	mb := external.GetModifyColumn(t, tk, "test", "tt", "a", false)
 	require.Equal(t, 10, mb.FieldType.Flen)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111\x00\x00\x00\x00\x00\x00\x00", "10000\x00\x00\x00\x00\x00"))
 	tk.MustGetErrMsg("alter table tt change a a binary(4);", "[types:1265]Data truncated for column 'a', value is '111\x00\x00\x00\x00\x00\x00\x00'")
@@ -241,7 +340,7 @@ func TestModifyColumnBetweenStringTypes(t *testing.T) {
 	tk.MustExec("create table tt (a varbinary(10));")
 	tk.MustExec("insert into tt values ('111'),('10000');")
 	tk.MustExec("alter table tt change a a varbinary(5);")
-	mvb := tk.GetModifyColumn("test", "tt", "a", false)
+	mvb := external.GetModifyColumn(t, tk, "test", "tt", "a", false)
 	require.Equal(t, 5, mvb.FieldType.Flen)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 	tk.MustGetErrMsg("alter table tt change a a varbinary(4);", "[types:1265]Data truncated for column 'a', value is '10000'")
@@ -255,7 +354,7 @@ func TestModifyColumnBetweenStringTypes(t *testing.T) {
 	tk.MustExec("insert into tt values ('111'),('10000');")
 
 	tk.MustExec("alter table tt change a a char(10);")
-	c2 := tk.GetModifyColumn("test", "tt", "a", false)
+	c2 := external.GetModifyColumn(t, tk, "test", "tt", "a", false)
 	require.Equal(t, mysql.TypeString, c2.FieldType.Tp)
 	require.Equal(t, 10, c2.FieldType.Flen)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
@@ -263,26 +362,26 @@ func TestModifyColumnBetweenStringTypes(t *testing.T) {
 
 	// char to text
 	tk.MustExec("alter table tt change a a text;")
-	c2 = tk.GetModifyColumn("test", "tt", "a", false)
+	c2 = external.GetModifyColumn(t, tk, "test", "tt", "a", false)
 	require.Equal(t, mysql.TypeBlob, c2.FieldType.Tp)
 
 	// text to set
 	tk.MustGetErrMsg("alter table tt change a a set('111', '2222');", "[types:1265]Data truncated for column 'a', value is '10000'")
 	tk.MustExec("alter table tt change a a set('111', '10000');")
-	c2 = tk.GetModifyColumn("test", "tt", "a", false)
+	c2 = external.GetModifyColumn(t, tk, "test", "tt", "a", false)
 	require.Equal(t, mysql.TypeSet, c2.FieldType.Tp)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 
 	// set to set
 	tk.MustExec("alter table tt change a a set('10000', '111');")
-	c2 = tk.GetModifyColumn("test", "tt", "a", false)
+	c2 = external.GetModifyColumn(t, tk, "test", "tt", "a", false)
 	require.Equal(t, mysql.TypeSet, c2.FieldType.Tp)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 
 	// set to enum
 	tk.MustGetErrMsg("alter table tt change a a enum('111', '2222');", "[types:1265]Data truncated for column 'a', value is '10000'")
 	tk.MustExec("alter table tt change a a enum('111', '10000');")
-	c2 = tk.GetModifyColumn("test", "tt", "a", false)
+	c2 = external.GetModifyColumn(t, tk, "test", "tt", "a", false)
 	require.Equal(t, mysql.TypeEnum, c2.FieldType.Tp)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 	tk.MustExec("alter table tt change a a enum('10000', '111');")
@@ -312,7 +411,7 @@ func TestModifyColumnCharset(t *testing.T) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	tk.MustExec("alter table t_mcc modify column a varchar(8);")
-	tbl := tk.GetTableByName("test", "t_mcc")
+	tbl := external.GetTableByName(t, tk, "test", "t_mcc")
 	tbl.Meta().Version = model.TableInfoVersion0
 	// When the table version is TableInfoVersion0, the following statement don't change "b" charset.
 	// So the behavior is not compatible with MySQL.
@@ -797,9 +896,7 @@ func TestModifyColumnTypeWhenInterception(t *testing.T) {
 			}
 		}
 	}
-	originHook := d.GetHook()
-	d.(ddl.DDLForTest).SetHook(hook)
-	defer d.(ddl.DDLForTest).SetHook(originHook)
+	d.SetHook(hook)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/MockReorgTimeoutInOneRegion", `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/MockReorgTimeoutInOneRegion"))
@@ -827,7 +924,7 @@ func TestModifyColumnRollBack(t *testing.T) {
 			return
 		}
 
-		tbl := tk.GetTableByName("test", "t1")
+		tbl := external.GetTableByName(t, tk, "test", "t1")
 		for _, col := range tbl.Cols() {
 			if col.Name.L == "c2" {
 				c2 = col
@@ -873,8 +970,7 @@ func TestModifyColumnRollBack(t *testing.T) {
 		}
 	}
 
-	originalHook := dom.DDL().GetHook()
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 	done := make(chan error, 1)
 	go backgroundExecT(store, "alter table test.t1 change c2 c2 bigint not null;", done)
 
@@ -882,82 +978,12 @@ func TestModifyColumnRollBack(t *testing.T) {
 	require.EqualError(t, err, "[ddl:8214]Cancelled DDL job")
 	tk.MustExec("insert into t1(c2) values (null);")
 
-	tbl := tk.GetTableByName("test", "t1")
+	tbl := external.GetTableByName(t, tk, "test", "t1") //nolint:typecheck
 	for _, col := range tbl.Cols() {
 		if col.Name.L == "c2" {
 			c2 = col
 		}
 	}
 	require.False(t, mysql.HasNotNullFlag(c2.Flag))
-	dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	tk.MustExec("drop table t1")
-}
-
-func testModifyColumnNullToNotNull(t *testing.T, enableChangeColumnType bool, sql1, sql2 string, f func(*testkit.TestKit)) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	tk1 := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
-
-	tk1.MustExec("use test")
-	tk2.MustExec("use test")
-
-	tk1.MustExec("create table t1 (c1 int, c2 int)")
-
-	tbl := tk1.GetTableByName("test", "t1")
-	tk1.GetModifyColumn("test", "t1", "c2", false)
-
-	originalHook := dom.DDL().GetHook()
-	defer dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
-
-	// Check insert null before job first update.
-	times := 0
-	hook := &ddl.TestDDLCallback{Do: dom}
-	tk1.MustExec("delete from t1")
-	var checkErr error
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if tbl.Meta().ID != job.TableID {
-			return
-		}
-		if times == 0 {
-			_, checkErr = tk2.Exec("insert into t1 values ();")
-		}
-		times++
-	}
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
-	err := tk1.ExecToErr(sql1)
-	require.NoError(t, checkErr)
-	if enableChangeColumnType {
-		require.EqualError(t, err, "[ddl:1265]Data truncated for column 'c2' at row 1")
-		// Check whether the reorg information is cleaned up.
-	} else {
-		require.EqualError(t, err, "[ddl:1138]Invalid use of NULL value")
-	}
-	tk1.MustQuery("select * from t1").Check(testkit.Rows("<nil> <nil>"))
-
-	// Check insert error when column has PreventNullInsertFlag.
-	tk1.MustExec("delete from t1")
-	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if tbl.Meta().ID != job.TableID {
-			return
-		}
-		if job.State != model.JobStateRunning {
-			return
-		}
-		// now c2 has PreventNullInsertFlag, an error is expected.
-		_, checkErr = tk2.Exec("insert into t1 values ();")
-	}
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
-	tk1.MustExec(sql2)
-	require.EqualError(t, checkErr, "[table:1048]Column 'c2' cannot be null")
-
-	c2 := tk1.GetModifyColumn("test", "t1", "c2", false)
-	require.True(t, mysql.HasNotNullFlag(c2.Flag))
-	require.False(t, mysql.HasPreventNullInsertFlag(c2.Flag))
-	err = tk1.ExecToErr("insert into t1 values ();")
-	require.EqualError(t, err, "[table:1364]Field 'c2' doesn't have a default value")
-
-	if f != nil {
-		f(tk1)
-	}
 }

@@ -15,6 +15,8 @@
 package core_test
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -45,6 +47,43 @@ func TestSetVariables(t *testing.T) {
 	require.NoError(t, err)
 	err = tk.ExecToErr("set @@tidb_allow_mpp = 0;")
 	require.NoError(t, err)
+}
+
+func TestRowSizeInMPP(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(10), b varchar(20), c varchar(256))")
+	tk.MustExec("insert into t values (space(10), space(20), space(256))")
+	tk.MustExec("analyze table t")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec(`set @@tidb_opt_tiflash_concurrency_factor=1`)
+	tk.MustExec(`set @@tidb_allow_mpp=1`)
+	tk.MustExec(`set @@tidb_enforce_mpp=1`)
+	var costs [3]float64
+	for i, col := range []string{"a", "b", "c"} {
+		rs := tk.MustQuery(fmt.Sprintf(`explain format='verbose' select %v from t`, col)).Rows()
+		cost, err := strconv.ParseFloat(rs[0][2].(string), 64)
+		require.NoError(t, err)
+		costs[i] = cost
+	}
+	require.True(t, costs[0] < costs[1] && costs[1] < costs[2]) // rowSize can affect the final cost
 }
 
 func TestEnforceMPP(t *testing.T) {

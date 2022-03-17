@@ -515,7 +515,7 @@ func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (DB, error) {
 
 	switch cfg.Checkpoint.Driver {
 	case config.CheckpointDriverMySQL:
-		db, err := sql.Open("mysql", cfg.Checkpoint.DSN)
+		db, err := common.ConnectMySQL(cfg.Checkpoint.DSN)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -534,7 +534,7 @@ func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (DB, error) {
 		return cpdb, nil
 
 	default:
-		return nil, errors.Errorf("Unknown checkpoint driver %s", cfg.Checkpoint.Driver)
+		return nil, common.ErrUnknownCheckpointDriver.GenWithStackByArgs(cfg.Checkpoint.Driver)
 	}
 }
 
@@ -573,7 +573,7 @@ func IsCheckpointsDBExists(ctx context.Context, cfg *config.Config) (bool, error
 		return result, nil
 
 	default:
-		return false, errors.Errorf("Unknown checkpoint driver %s", cfg.Checkpoint.Driver)
+		return false, common.ErrUnknownCheckpointDriver.GenWithStackByArgs(cfg.Checkpoint.Driver)
 	}
 }
 
@@ -1423,9 +1423,12 @@ func (cpdb *MySQLCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, table
 		colName = columnTableName
 	}
 
+	// nolint:gosec
 	engineQuery := fmt.Sprintf(`
 		UPDATE %s.%s SET status = %d WHERE %s = ? AND status <= %d;
 	`, cpdb.schema, CheckpointTableNameEngine, CheckpointStatusLoaded, colName, CheckpointStatusMaxInvalid)
+
+	// nolint:gosec
 	tableQuery := fmt.Sprintf(`
 		UPDATE %s.%s SET status = %d WHERE %s = ? AND status <= %d;
 	`, cpdb.schema, CheckpointTableNameTable, CheckpointStatusLoaded, colName, CheckpointStatusMaxInvalid)
@@ -1469,12 +1472,18 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 		WHERE %[2]s = ? AND t.status <= %[3]d
 		GROUP BY t.table_name;
 	`, cpdb.schema, aliasedColName, CheckpointStatusMaxInvalid, CheckpointTableNameTable, CheckpointTableNameEngine)
+
+	// nolint:gosec
 	deleteChunkQuery := fmt.Sprintf(`
 		DELETE FROM %[1]s.%[4]s WHERE table_name IN (SELECT table_name FROM %[1]s.%[5]s WHERE %[2]s = ? AND status <= %[3]d)
 	`, cpdb.schema, colName, CheckpointStatusMaxInvalid, CheckpointTableNameChunk, CheckpointTableNameTable)
+
+	// nolint:gosec
 	deleteEngineQuery := fmt.Sprintf(`
 		DELETE FROM %[1]s.%[4]s WHERE table_name IN (SELECT table_name FROM %[1]s.%[5]s WHERE %[2]s = ? AND status <= %[3]d)
 	`, cpdb.schema, colName, CheckpointStatusMaxInvalid, CheckpointTableNameEngine, CheckpointTableNameTable)
+
+	// nolint:gosec
 	deleteTableQuery := fmt.Sprintf(`
 		DELETE FROM %s.%s WHERE %s = ? AND status <= %d
 	`, cpdb.schema, CheckpointTableNameTable, colName, CheckpointStatusMaxInvalid)

@@ -405,9 +405,9 @@ func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareSt
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindRecord := sessionHandle.GetBindRecord(preparedStmt.SQLDigest4PC, preparedStmt.NormalizedSQL4PC, "")
 	if bindRecord != nil {
-		usingBinding := bindRecord.FindUsingBinding()
-		if usingBinding != nil {
-			return usingBinding.BindSQL
+		enabledBinding := bindRecord.FindEnabledBinding()
+		if enabledBinding != nil {
+			return enabledBinding.BindSQL
 		}
 	}
 	globalHandle := domain.GetDomain(sctx).BindHandle()
@@ -416,15 +416,15 @@ func GetBindSQL4PlanCache(sctx sessionctx.Context, preparedStmt *CachedPrepareSt
 	}
 	bindRecord = globalHandle.GetBindRecord(preparedStmt.SQLDigest4PC, preparedStmt.NormalizedSQL4PC, "")
 	if bindRecord != nil {
-		usingBinding := bindRecord.FindUsingBinding()
-		if usingBinding != nil {
-			return usingBinding.BindSQL
+		enabledBinding := bindRecord.FindEnabledBinding()
+		if enabledBinding != nil {
+			return enabledBinding.BindSQL
 		}
 	}
 	return ""
 }
 
-func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) error {
+func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, preparedStmt *CachedPrepareStmt) (err error) {
 	var cacheKey kvcache.Key
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -434,7 +434,9 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	var bindSQL string
 	if prepared.UseCache {
 		bindSQL = GetBindSQL4PlanCache(sctx, preparedStmt)
-		cacheKey = NewPlanCacheKey(sctx.GetSessionVars(), e.ExecID, prepared.SchemaVersion)
+		if cacheKey, err = NewPlanCacheKey(sctx.GetSessionVars(), preparedStmt.StmtText, preparedStmt.StmtDB, prepared.SchemaVersion); err != nil {
+			return err
+		}
 	}
 	tps := make([]*types.FieldType, len(e.UsingVars))
 	varsNum := len(e.UsingVars)
@@ -452,7 +454,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 		// so you don't need to consider whether prepared.useCache is enabled.
 		plan := prepared.CachedPlan.(Plan)
 		names := prepared.CachedNames.(types.NameSlice)
-		err := e.rebuildRange(plan)
+		err := e.RebuildPlan(plan)
 		if err != nil {
 			logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
 			goto REBUILD
@@ -499,7 +501,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					}
 				}
 				if planValid {
-					err := e.rebuildRange(cachedVal.Plan)
+					err := e.RebuildPlan(cachedVal.Plan)
 					if err != nil {
 						logutil.BgLogger().Debug("rebuild range failed", zap.Error(err))
 						goto REBUILD
@@ -551,7 +553,9 @@ REBUILD:
 		// rebuild key to exclude kv.TiFlash when stmt is not read only
 		if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(stmt, sessVars) {
 			delete(sessVars.IsolationReadEngines, kv.TiFlash)
-			cacheKey = NewPlanCacheKey(sessVars, e.ExecID, prepared.SchemaVersion)
+			if cacheKey, err = NewPlanCacheKey(sessVars, preparedStmt.StmtText, preparedStmt.StmtDB, prepared.SchemaVersion); err != nil {
+				return err
+			}
 			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}
 		cached := NewPlanCacheValue(p, names, stmtCtx.TblInfo2UnionScan, tps, sessVars.StmtCtx.BindSQL)
@@ -623,6 +627,14 @@ func (e *Execute) tryCachePointPlan(ctx context.Context, sctx sessionctx.Context
 		sctx.GetSessionVars().StmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 	}
 	return err
+}
+
+// RebuildPlan will rebuild this plan under current user parameters.
+func (e *Execute) RebuildPlan(p Plan) error {
+	sc := p.SCtx().GetSessionVars().StmtCtx
+	sc.InPreparedPlanBuilding = true
+	defer func() { sc.InPreparedPlanBuilding = false }()
+	return e.rebuildRange(p)
 }
 
 func (e *Execute) rebuildRange(p Plan) error {
@@ -951,6 +963,8 @@ const (
 	OpEvolveBindings
 	// OpReloadBindings is used to reload plan binding.
 	OpReloadBindings
+	// OpSetBindingStatus is used to set binding status.
+	OpSetBindingStatus
 )
 
 // SQLBindPlan represents a plan for SQL bind.
@@ -965,6 +979,7 @@ type SQLBindPlan struct {
 	Db           string
 	Charset      string
 	Collation    string
+	NewStatus    string
 }
 
 // Simple represents a simple statement plan which doesn't need any optimization.

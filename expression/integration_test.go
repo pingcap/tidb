@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -50,7 +49,8 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/util/versioninfo"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -519,16 +519,16 @@ func TestStringBuiltin(t *testing.T) {
 
 	// for space
 	result = tk.MustQuery(`select space(0), space(2), space(-1), space(1.1), space(1.9)`)
-	result.Check(testutil.RowsWithSep(",", ",  ,, ,  "))
+	result.Check(testkit.RowsWithSep(",", ",  ,, ,  "))
 	result = tk.MustQuery(`select space("abc"), space("2"), space("1.1"), space(''), space(null)`)
-	result.Check(testutil.RowsWithSep(",", ",  , ,,<nil>"))
+	result.Check(testkit.RowsWithSep(",", ",  , ,,<nil>"))
 
 	// for replace
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a char(20), b int, c double, d datetime, e time)")
 	tk.MustExec(`insert into t values('www.mysql.com', 1234, 12.34, "2017-01-01 12:01:01", "12:01:01")`)
 	result = tk.MustQuery(`select replace(a, 'mysql', 'pingcap'), replace(b, 2, 55), replace(c, 34, 0), replace(d, '-', '/'), replace(e, '01', '22') from t`)
-	result.Check(testutil.RowsWithSep(",", "www.pingcap.com,15534,12.0,2017/01/01 12:01:01,12:22:22"))
+	result.Check(testkit.RowsWithSep(",", "www.pingcap.com,15534,12.0,2017/01/01 12:01:01,12:22:22"))
 	result = tk.MustQuery(`select replace('aaa', 'a', ''), replace(null, 'a', 'b'), replace('a', null, 'b'), replace('a', 'b', null)`)
 	result.Check(testkit.Rows(" <nil> <nil> <nil>"))
 
@@ -552,7 +552,7 @@ func TestStringBuiltin(t *testing.T) {
 	result = tk.MustQuery(`select substr(a, 3), substr(b, 2, 3), substr(c, -3), substr(d, -8), substr(e, -3, 100) from t`)
 	result.Check(testkit.Rows("kila 234 .45 12:01:01 :01"))
 	result = tk.MustQuery(`select substr('Sakila', 100), substr('Sakila', -100), substr('Sakila', -5, 3), substr('Sakila', 2, -1)`)
-	result.Check(testutil.RowsWithSep(",", ",,aki,"))
+	result.Check(testkit.RowsWithSep(",", ",,aki,"))
 	result = tk.MustQuery(`select substr('foobarbar' from 4), substr('Sakila' from -4 for 2)`)
 	result.Check(testkit.Rows("barbar ki"))
 	result = tk.MustQuery(`select substr(null, 2, 3), substr('foo', null, 3), substr('foo', 2, null)`)
@@ -583,7 +583,7 @@ func TestStringBuiltin(t *testing.T) {
 	result = tk.MustQuery(`select substring_index('www.pingcap.com', '.', 0), substring_index('www.pingcap.com', '.', 100), substring_index('www.pingcap.com', '.', -100)`)
 	result.Check(testkit.Rows(" www.pingcap.com www.pingcap.com"))
 	result = tk.MustQuery(`select substring_index('www.pingcap.com', 'd', 1), substring_index('www.pingcap.com', '', 1), substring_index('', '.', 1)`)
-	result.Check(testutil.RowsWithSep(",", "www.pingcap.com,,"))
+	result.Check(testkit.RowsWithSep(",", "www.pingcap.com,,"))
 	result = tk.MustQuery(`select substring_index(null, '.', 1), substring_index('www.pingcap.com', null, 1), substring_index('www.pingcap.com', '.', null)`)
 	result.Check(testkit.Rows("<nil> <nil> <nil>"))
 
@@ -624,13 +624,13 @@ func TestStringBuiltin(t *testing.T) {
 
 	// for ltrim and rtrim
 	result = tk.MustQuery(`select ltrim('   bar   '), ltrim('bar'), ltrim(''), ltrim(null)`)
-	result.Check(testutil.RowsWithSep(",", "bar   ,bar,,<nil>"))
+	result.Check(testkit.RowsWithSep(",", "bar   ,bar,,<nil>"))
 	result = tk.MustQuery(`select rtrim('   bar   '), rtrim('bar'), rtrim(''), rtrim(null)`)
-	result.Check(testutil.RowsWithSep(",", "   bar,bar,,<nil>"))
+	result.Check(testkit.RowsWithSep(",", "   bar,bar,,<nil>"))
 	result = tk.MustQuery(`select ltrim("\t   bar   "), ltrim("   \tbar"), ltrim("\n  bar"), ltrim("\r  bar")`)
-	result.Check(testutil.RowsWithSep(",", "\t   bar   ,\tbar,\n  bar,\r  bar"))
+	result.Check(testkit.RowsWithSep(",", "\t   bar   ,\tbar,\n  bar,\r  bar"))
 	result = tk.MustQuery(`select rtrim("   bar   \t"), rtrim("bar\t   "), rtrim("bar   \n"), rtrim("bar   \r")`)
-	result.Check(testutil.RowsWithSep(",", "   bar   \t,bar\t,bar   \n,bar   \r"))
+	result.Check(testkit.RowsWithSep(",", "   bar   \t,bar\t,bar   \n,bar   \r"))
 
 	// for reverse
 	tk.MustExec(`DROP TABLE IF EXISTS t;`)
@@ -645,11 +645,11 @@ func TestStringBuiltin(t *testing.T) {
 	result = tk.MustQuery(`select trim('   bar   '), trim(leading 'x' from 'xxxbarxxx'), trim(trailing 'xyz' from 'barxxyz'), trim(both 'x' from 'xxxbarxxx')`)
 	result.Check(testkit.Rows("bar barxxx barx bar"))
 	result = tk.MustQuery(`select trim('\t   bar\n   '), trim('   \rbar   \t')`)
-	result.Check(testutil.RowsWithSep(",", "\t   bar\n,\rbar   \t"))
+	result.Check(testkit.RowsWithSep(",", "\t   bar\n,\rbar   \t"))
 	result = tk.MustQuery(`select trim(leading from '   bar'), trim('x' from 'xxxbarxxx'), trim('x' from 'bar'), trim('' from '   bar   ')`)
-	result.Check(testutil.RowsWithSep(",", "bar,bar,bar,   bar   "))
+	result.Check(testkit.RowsWithSep(",", "bar,bar,bar,   bar   "))
 	result = tk.MustQuery(`select trim(''), trim('x' from '')`)
-	result.Check(testutil.RowsWithSep(",", ","))
+	result.Check(testkit.RowsWithSep(",", ","))
 	result = tk.MustQuery(`select trim(null from 'bar'), trim('x' from null), trim(null), trim(leading null from 'bar')`)
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
 
@@ -902,7 +902,7 @@ func TestEncryptionBuiltin(t *testing.T) {
 	result.Check(testkit.Rows(`45ABDD5C4802EFA6771A94C43F805208 45ABDD5C4802EFA6771A94C43F805208 791F1AEB6A6B796E6352BF381895CA0E D0147E2EB856186F146D9F6DE33F9546 <nil>`))
 	result = tk.MustQuery("select HEX(AES_ENCRYPT(a, 'key', 'iv')), HEX(AES_ENCRYPT(b, 'key', 'iv')) from t")
 	result.Check(testkit.Rows("B3800B3A3CB4ECE2051A3E80FE373EAC B3800B3A3CB4ECE2051A3E80FE373EAC"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1618|<IV> option ignored", "Warning|1618|<IV> option ignored"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1618|<IV> option ignored", "Warning|1618|<IV> option ignored"))
 	tk.MustExec("SET block_encryption_mode='aes-128-cbc';")
 	result = tk.MustQuery("select HEX(AES_ENCRYPT(a, 'key', '1234567890123456')), HEX(AES_ENCRYPT(b, 'key', '1234567890123456')), HEX(AES_ENCRYPT(c, 'key', '1234567890123456')), HEX(AES_ENCRYPT(d, 'key', '1234567890123456')), HEX(AES_ENCRYPT(e, 'key', '1234567890123456')), HEX(AES_ENCRYPT(f, 'key', '1234567890123456')), HEX(AES_ENCRYPT(g, 'key', '1234567890123456')), HEX(AES_ENCRYPT(h, 'key', '1234567890123456')), HEX(AES_ENCRYPT(i, 'key', '1234567890123456')) from t")
 	result.Check(testkit.Rows("341672829F84CB6B0BE690FEC4C4DAE9 341672829F84CB6B0BE690FEC4C4DAE9 D43734E147A12BB96C6897C4BBABA283 16F2C972411948DCEF3659B726D2CCB04AD1379A1A367FA64242058A50211B67 41E71D0C58967C1F50EEC074523946D1 1117D292E2D39C3EAA3B435371BE56FC 8ACB7ECC0883B672D7BD1CFAA9FA5FAF5B731ADE978244CD581F114D591C2E7E D2B13C30937E3251AEDA73859BA32E4B 2CF4A6051FF248A67598A17AA2C17267"))
@@ -1192,6 +1192,16 @@ func TestInfoBuiltin(t *testing.T) {
 	// for version
 	result = tk.MustQuery("select version()")
 	result.Check(testkit.Rows(mysql.ServerVersion))
+
+	// for tidb_version
+	result = tk.MustQuery("select tidb_version()")
+	tidbVersionResult := ""
+	for _, line := range result.Rows() {
+		tidbVersionResult += fmt.Sprint(line)
+	}
+	lines := strings.Split(tidbVersionResult, "\n")
+	assert.Equal(t, true, strings.Split(lines[0], " ")[2] == mysql.TiDBReleaseVersion, "errors in 'select tidb_version()'")
+	assert.Equal(t, true, strings.Split(lines[1], " ")[1] == versioninfo.TiDBEdition, "errors in 'select tidb_version()'")
 
 	// for row_count
 	tk.MustExec("drop table if exists t")
@@ -1484,7 +1494,7 @@ func TestArithmeticBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("2 2 1"))
 	result = tk.MustQuery("SELECT 1.175494351E-37 div 1.7976931348623157E+308, 1.7976931348623157E+308 div -1.7976931348623157E+307, 1 div 1e-82;")
 	result.Check(testkit.Rows("0 -1 <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Truncated incorrect DECIMAL value: '1.7976931348623157e+308'",
 		"Warning|1292|Truncated incorrect DECIMAL value: '1.7976931348623157e+308'",
 		"Warning|1292|Truncated incorrect DECIMAL value: '-1.7976931348623158e+307'",
@@ -1549,7 +1559,7 @@ func TestArithmeticBuiltin(t *testing.T) {
 	tk.MustExec("insert into t value(1.2)")
 	result = tk.MustQuery("select * from t where a/0 > 1")
 	result.Check(testkit.Rows())
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1365|Division by 0"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1365|Division by 0"))
 
 	tk.MustExec("USE test;")
 	tk.MustExec("DROP TABLE IF EXISTS t;")
@@ -1760,14 +1770,14 @@ func TestCompareBuiltin(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	result = tk.MustQuery(`select greatest(cast("2017-01-01" as datetime), "123", "234", cast("2018-01-01" as date)), greatest(cast("2017-01-01" as date), "123", null)`)
 	result.Check(testkit.Rows("234 <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect time value: '123'", "Warning|1292|Incorrect time value: '234'", "Warning|1292|Incorrect time value: '123'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Incorrect time value: '123'", "Warning|1292|Incorrect time value: '234'", "Warning|1292|Incorrect time value: '123'"))
 	// for least
 	result = tk.MustQuery(`select least(1, 2, 3), least("a", "b", "c"), least(1.1, 1.2, 1.3), least("123a", 1, 2)`)
 	result.Check(testkit.Rows("1 a 1.1 1"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	result = tk.MustQuery(`select least(cast("2017-01-01" as datetime), "123", "234", cast("2018-01-01" as date)), least(cast("2017-01-01" as date), "123", null)`)
 	result.Check(testkit.Rows("123 <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect time value: '123'", "Warning|1292|Incorrect time value: '234'", "Warning|1292|Incorrect time value: '123'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Incorrect time value: '123'", "Warning|1292|Incorrect time value: '234'", "Warning|1292|Incorrect time value: '123'"))
 	tk.MustQuery(`select 1 < 17666000000000000000, 1 > 17666000000000000000, 1 = 17666000000000000000`).Check(testkit.Rows("1 0 0"))
 
 	tk.MustExec("drop table if exists t")
@@ -1949,7 +1959,7 @@ func TestAggregationBuiltinGroupConcat(t *testing.T) {
 	tk.MustExec("set @@group_concat_max_len=7")
 	result = tk.MustQuery("select group_concat(a) from t")
 	result.Check(testkit.Rows("hello,h"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1260 Some rows were cut by GROUPCONCAT(test.t.a)"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning 1260 Some rows were cut by GROUPCONCAT(test.t.a)"))
 
 	_, err := tk.Exec("insert into d select group_concat(a) from t")
 	require.Equal(t, errors.ErrCode(mysql.ErrCutValueGroupConcat), errors.Cause(err).(*terror.Error).Code())
@@ -1957,7 +1967,7 @@ func TestAggregationBuiltinGroupConcat(t *testing.T) {
 	_, err = tk.Exec("set sql_mode=''")
 	require.NoError(t, err)
 	tk.MustExec("insert into d select group_concat(a) from t")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1260 Some rows were cut by GROUPCONCAT(test.t.a)"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning 1260 Some rows were cut by GROUPCONCAT(test.t.a)"))
 	tk.MustQuery("select * from d").Check(testkit.Rows("hello,h"))
 }
 
@@ -2317,7 +2327,7 @@ func TestTimeLiteral(t *testing.T) {
 
 	_, err = tk.Exec("select ADDDATE('2008-01-34', -1);")
 	require.NoError(t, err)
-	tk.MustQuery("Show warnings;").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("Show warnings;").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Incorrect datetime value: '2008-01-34'"))
 }
 
@@ -2566,7 +2576,7 @@ func TestColumnInfoModified(t *testing.T) {
 	testKit.MustExec("drop table if exists tab0")
 	testKit.MustExec("CREATE TABLE tab0(col0 INTEGER, col1 INTEGER, col2 INTEGER)")
 	testKit.MustExec("SELECT + - (- CASE + col0 WHEN + CAST( col0 AS SIGNED ) THEN col1 WHEN 79 THEN NULL WHEN + - col1 THEN col0 / + col0 END ) * - 16 FROM tab0")
-	ctx := testKit.Session().(sessionctx.Context)
+	ctx := testKit.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, _ := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tab0"))
 	col := table.FindCol(tbl.Cols(), "col1")
@@ -2607,12 +2617,12 @@ func TestIssues(t *testing.T) {
 	tk.MustExec("insert into t values('1e649'),('-1e649');")
 	r = tk.MustQuery(`SELECT * FROM t where c < 1;`)
 	r.Check(testkit.Rows("-1e649"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Truncated incorrect DOUBLE value: '1e649'",
 		"Warning|1292|Truncated incorrect DOUBLE value: '-1e649'"))
 	r = tk.MustQuery(`SELECT * FROM t where c > 1;`)
 	r.Check(testkit.Rows("1e649"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Truncated incorrect DOUBLE value: '1e649'",
 		"Warning|1292|Truncated incorrect DOUBLE value: '-1e649'"))
 
@@ -2698,7 +2708,7 @@ func TestFilterExtractFromDNF(t *testing.T) {
 	ctx := context.Background()
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
-		sctx := tk.Session().(sessionctx.Context)
+		sctx := tk.Session()
 		sc := sctx.GetSessionVars().StmtCtx
 		stmts, err := session.Parse(sctx, sql)
 		require.NoError(t, err, "error %v, for expr %s", err, tt.exprStr)
@@ -2804,7 +2814,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	result.Check(testkit.Rows("7480000000000000FF2E5F728000000011FFE1A3000000000000"))
 	warns := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 	require.Len(t, warns, 1)
-	require.Error(t, warns[0].Err, "invalid record/index key: 7480000000000000FF2E5F728000000011FFE1A3000000000000")
+	require.EqualError(t, warns[0].Err, "invalid key: 7480000000000000FF2E5F728000000011FFE1A3000000000000")
 
 	// Test in real tables.
 	tk.MustExec("use test;")
@@ -2867,9 +2877,14 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	result.Check(testkit.Rows(rs))
 
 	// https://github.com/pingcap/tidb/issues/27434.
-	hexKey = "7480000000000000375F69800000000000000103800000000001D4C1023B6458"
-	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
+	hexKey = "7480000000000100375F69800000000000000103800000000001D4C1023B6458"
+	sql = fmt.Sprintf("select tidb_decode_key('%s')", hexKey)
 	tk.MustQuery(sql).Check(testkit.Rows(hexKey))
+
+	// https://github.com/pingcap/tidb/issues/33015.
+	hexKey = "74800000000000012B5F72800000000000A5D3"
+	sql = fmt.Sprintf("select tidb_decode_key('%s')", hexKey)
+	tk.MustQuery(sql).Check(testkit.Rows(`{"_tidb_rowid":42451,"table_id":"299"}`))
 
 	// Test the table with the nonclustered index.
 	const rowID = 10

@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil/consistency"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -156,6 +156,9 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	} else {
 		e.snapshot = e.ctx.GetSnapshotWithTS(snapshotTS)
 	}
+	if e.ctx.GetSessionVars().StmtCtx.RCCheckTS {
+		e.snapshot.SetOption(kv.IsolationLevel, kv.RCCheckTS)
+	}
 	if e.cacheTable != nil {
 		e.snapshot = cacheTableSnapshot{e.snapshot, e.cacheTable}
 	}
@@ -171,7 +174,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	readReplicaType := e.ctx.GetSessionVars().GetReplicaRead()
-	if readReplicaType.IsFollowerRead() {
+	if readReplicaType.IsFollowerRead() && !e.ctx.GetSessionVars().StmtCtx.RCCheckTS {
 		e.snapshot.SetOption(kv.ReplicaRead, readReplicaType)
 	}
 	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
@@ -472,10 +475,10 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 		return nil
 	}
 	if len(partName) > 0 {
-		return ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+		return dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
 			fmt.Sprintf("table %v's partition %v can not be read by %v txn_scope", tblName, partName, txnScope))
 	}
-	return ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+	return dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
 		fmt.Sprintf("table %v can not be read by %v txn_scope", tblName, txnScope))
 }
 
