@@ -82,9 +82,15 @@ type IndexLookUpJoin struct {
 
 	memTracker *memory.Tracker // track memory usage.
 
+<<<<<<< HEAD
 	stats           *indexLookUpJoinRuntimeStats
 	ctxCancelReason atomic.Value
 	finished        *atomic.Value
+=======
+	stats    *indexLookUpJoinRuntimeStats
+	finished *atomic.Value
+	prepared bool
+>>>>>>> f12ad1e6c... executor: fix CTE may be blocked when query report error (#33085)
 }
 
 type outerCtx struct {
@@ -170,7 +176,11 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 		e.stats = &indexLookUpJoinRuntimeStats{}
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
+<<<<<<< HEAD
 	e.startWorkers(ctx)
+=======
+	e.cancelFunc = nil
+>>>>>>> f12ad1e6c... executor: fix CTE may be blocked when query report error (#33085)
 	return nil
 }
 
@@ -254,6 +264,10 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 
 // Next implements the Executor interface.
 func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.Chunk) error {
+	if !e.prepared {
+		e.startWorkers(ctx)
+		e.prepared = true
+	}
 	if e.isOuterJoin {
 		atomic.StoreInt64(&e.requiredRows, int64(req.RequiredRows()))
 	}
@@ -768,6 +782,7 @@ func (e *IndexLookUpJoin) Close() error {
 	e.memTracker = nil
 	e.task = nil
 	e.finished.Store(false)
+	e.prepared = false
 	return e.baseExecutor.Close()
 }
 
