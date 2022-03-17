@@ -650,12 +650,19 @@ func checkHistoryJobInTest(ctx sessionctx.Context, historyJob *model.Job) {
 			if _, ok := st.(*ast.CreatePlacementPolicyStmt); !ok {
 				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
 			}
-		case model.ActionCreateTable, model.ActionCreateTables:
+		case model.ActionCreateTable:
 			if _, ok := st.(*ast.CreateTableStmt); !ok {
 				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
 			}
 		case model.ActionCreateSchema:
 			if _, ok := st.(*ast.CreateDatabaseStmt); !ok {
+				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+			}
+		case model.ActionCreateTables:
+			_, isCreateTable := st.(*ast.CreateTableStmt)
+			_, isCreateSeq := st.(*ast.CreateSequenceStmt)
+			_, isCreateView := st.(*ast.CreateViewStmt)
+			if !isCreateTable && !isCreateSeq && !isCreateView {
 				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
 			}
 		default:
