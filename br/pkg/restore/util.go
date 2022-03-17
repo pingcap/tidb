@@ -341,7 +341,7 @@ func truncateTS(key []byte) []byte {
 // 2. rewrite rules.
 func SplitRanges(
 	ctx context.Context,
-	client TiKVRestorer,
+	client *Client,
 	ranges []rtree.Range,
 	rewriteRules *RewriteRules,
 	updateCh glue.Progress,

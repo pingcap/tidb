@@ -4,7 +4,6 @@ package restore
 
 import (
 	"context"
-	"crypto/tls"
 	"sync"
 	"time"
 
@@ -12,12 +11,12 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/model"
-	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -187,8 +186,11 @@ type BatchSender interface {
 }
 
 type TiKVRestorer interface {
-	GetPDClient() pd.Client
-	GetTLSConfig() *tls.Config
+	SplitRanges(ctx context.Context,
+		ranges []rtree.Range,
+		rewriteRules *RewriteRules,
+		updateCh glue.Progress,
+		isRawKv bool) error
 	RestoreFiles(ctx context.Context,
 		files []*backuppb.File,
 		rewriteRules *RewriteRules,
@@ -265,9 +267,9 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 		b.wg.Done()
 		if err := eg.Wait(); err != nil {
 			b.sink.EmitError(err)
-			return
 		}
 		close(next)
+		log.Info("TiKV Sender: split worker exits.")
 	}()
 
 	start := time.Now()
@@ -279,7 +281,7 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 	pool := utils.NewWorkerPool(concurrency, "split")
 	for {
 		select {
-		case <-ctx.Done():
+		case <-ectx.Done():
 			return
 		case result, ok := <-ranges:
 			if !ok {
@@ -302,7 +304,7 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 			// hence the checksum would fail.
 			done := b.registerTableIsRestoring(result.TablesToSend)
 			pool.ApplyOnErrorGroup(eg, func() error {
-				err := SplitRanges(ectx, b.client, result.Ranges, result.RewriteRules, b.updateCh, false)
+				err := b.client.SplitRanges(ectx, result.Ranges, result.RewriteRules, b.updateCh, false)
 				if err != nil {
 					log.Error("failed on split range", rtree.ZapRanges(result.Ranges), zap.Error(err))
 					return err
@@ -351,17 +353,17 @@ func (b *tikvSender) waitTablesDone(ts []CreatedTable) {
 func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResultAndDone) {
 	eg, ectx := errgroup.WithContext(ctx)
 	defer func() {
-		log.Debug("restore worker closed")
+		log.Info("TiKV Sender: restore worker prepare to close.")
 		if err := eg.Wait(); err != nil {
 			b.sink.EmitError(err)
-			return
 		}
-		b.wg.Done()
 		b.sink.Close()
+		b.wg.Done()
+		log.Info("TiKV Sender: restore worker exits.")
 	}()
 	for {
 		select {
-		case <-ctx.Done():
+		case <-ectx.Done():
 			return
 		case r, ok := <-ranges:
 			if !ok {
@@ -373,6 +375,7 @@ func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResul
 			eg.Go(func() error {
 				e := b.client.RestoreFiles(ectx, files, r.result.RewriteRules, b.updateCh)
 				if e != nil {
+					log.Error("restore batch meet error", logutil.ShortError(e), logutil.Files(files))
 					r.done()
 					return e
 				}

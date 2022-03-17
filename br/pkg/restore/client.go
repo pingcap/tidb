@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -809,6 +810,15 @@ func drainFilesByRange(files []*backuppb.File, supportMulti bool) ([]*backuppb.F
 	return files[:idx], files[idx:]
 }
 
+// SplitRanges implements TiKVRestorer.
+func (rc *Client) SplitRanges(ctx context.Context,
+	ranges []rtree.Range,
+	rewriteRules *RewriteRules,
+	updateCh glue.Progress,
+	isRawKv bool) error {
+	return SplitRanges(ctx, rc, ranges, rewriteRules, updateCh, isRawKv)
+}
+
 // RestoreFiles tries to restore the files.
 func (rc *Client) RestoreFiles(
 	ctx context.Context,
@@ -824,6 +834,10 @@ func (rc *Client) RestoreFiles(
 			summary.CollectSuccessUnit("files", len(files), elapsed)
 		}
 	}()
+
+	failpoint.Inject("restore-files", func(v failpoint.Value) {
+		failpoint.Return(errors.New("failed"))
+	})
 
 	log.Debug("start to restore files", zap.Int("files", len(files)))
 
