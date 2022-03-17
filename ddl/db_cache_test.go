@@ -126,7 +126,9 @@ func TestIndexOnCacheTable(t *testing.T) {
 	tk.MustExec("alter table cache_index_1 cache")
 	tk.MustGetErrCode("alter table cache_index_1 drop index i1, drop index i2;", errno.ErrOptOnCacheTable)
 
+	// cleanup
 	tk.MustExec("alter table cache_index_1 nocache")
+	tk.MustExec("alter table cache_index nocache")
 }
 
 func TestAlterTableCache(t *testing.T) {
