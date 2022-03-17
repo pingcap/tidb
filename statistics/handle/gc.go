@@ -22,6 +22,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
@@ -50,7 +51,10 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 			return errors.Trace(err)
 		}
 	}
-	return h.removeDeletedExtendedStats(gcVer)
+	if err := h.removeDeletedExtendedStats(gcVer); err != nil {
+		return errors.Trace(err)
+	}
+	return h.gcHistoricalStats()
 }
 
 func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error {
@@ -252,4 +256,52 @@ func (h *Handle) removeDeletedExtendedStats(version uint64) (err error) {
 	const sql = "delete from mysql.stats_extended where status = %? and version < %?"
 	_, err = exec.ExecuteInternal(ctx, sql, StatsStatusDeleted, version)
 	return
+}
+
+func (h *Handle) gcHistoricalStats() (err error) {
+	historicalStatsEnabled, err := h.CheckHistoricalStatsEnable()
+	if err != nil {
+		return errors.Errorf("check tidb_enable_historical_stats failed: %v", err)
+	}
+	if !historicalStatsEnabled {
+		return nil
+	}
+	historicalMaxDuration, err := h.getHistoricalStatsMaxDuration()
+	if err != nil {
+		return err
+	}
+	return h.DeleteElderHistoricalStatsFromKV(historicalMaxDuration)
+}
+
+// DeleteElderHistoricalStatsFromKV delete historical stats which are older than NOW()-maxDuration
+func (h *Handle) DeleteElderHistoricalStatsFromKV(maxDuration time.Duration) (err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ctx := context.Background()
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	_, err = exec.ExecuteInternal(ctx, "begin")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		err = finishTransaction(ctx, exec, err)
+	}()
+	ts := time.Now().Local().Format("2006-01-02 15:04:05.999999")
+	if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_meta_history where create_time < date_sub(%?, INTERVAL %? SECOND)", ts, int64(maxDuration.Seconds())); err != nil {
+		return err
+	}
+	if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_history where create_time < date_sub(%?, INTERVAL %? SECOND)", ts, int64(maxDuration.Seconds())); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (h *Handle) getHistoricalStatsMaxDuration() (maxDuration time.Duration, err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	val, err := h.mu.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBHistoricalStatsMaxDuration)
+	if err != nil {
+		return time.Minute * 10, errors.Trace(err)
+	}
+	return time.ParseDuration(val)
 }

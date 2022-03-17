@@ -632,6 +632,8 @@ const (
 	TiDBEnableEnhancedSecurity = "tidb_enable_enhanced_security"
 	// TiDBEnableHistoricalStats enables the historical statistics feature (default off)
 	TiDBEnableHistoricalStats = "tidb_enable_historical_stats"
+	// TiDBHistoricalStatsMaxDuration set max duration which historical statistics reserved
+	TiDBHistoricalStatsMaxDuration = "tidb_historical_stats_max_duration"
 	// TiDBPersistAnalyzeOptions persists analyze options for later analyze and auto-analyze
 	TiDBPersistAnalyzeOptions = "tidb_persist_analyze_options"
 	// TiDBEnableColumnTracking enables collecting predicate columns.
