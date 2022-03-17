@@ -169,6 +169,7 @@ func testCreateTable(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{tblInfo},
 	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := d.doDDLJob(ctx, job)
 	require.NoError(t, err)
 
@@ -189,6 +190,7 @@ func testCreateView(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.
 	}
 
 	require.True(t, tblInfo.IsView())
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.doDDLJob(ctx, job))
 
 	v := getSchemaVer(t, ctx)
@@ -205,6 +207,7 @@ func testDropTable(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.D
 		Type:       model.ActionDropTable,
 		BinlogInfo: &model.HistoryInfo{},
 	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.doDDLJob(ctx, job))
 
 	v := getSchemaVer(t, ctx)

@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
@@ -59,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikv"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -68,7 +70,7 @@ var _ Executor = &AnalyzeExec{}
 type AnalyzeExec struct {
 	baseExecutor
 	tasks      []*analyzeTask
-	wg         *sync.WaitGroup
+	wg         util.WaitGroupWrapper
 	opts       map[ast.AnalyzeOptionType]uint64
 	OptionsMap map[int64]core.V2AnalyzeOptions
 }
@@ -92,17 +94,25 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	taskCh := make(chan *analyzeTask, len(e.tasks))
 	resultsCh := make(chan *statistics.AnalyzeResults, len(e.tasks))
-	e.wg.Add(concurrency)
+	if len(e.tasks) < concurrency {
+		concurrency = len(e.tasks)
+	}
 	for i := 0; i < concurrency; i++ {
-		go e.analyzeWorker(taskCh, resultsCh, i == 0)
+		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
 	}
 	for _, task := range e.tasks {
 		statistics.AddNewAnalyzeJob(task.job)
 	}
+	failpoint.Inject("mockKillPendingAnalyzeJob", func() {
+		domain.GetDomain(e.ctx).SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
+	})
 	for _, task := range e.tasks {
 		taskCh <- task
 	}
 	close(taskCh)
+	e.wg.Wait()
+	close(resultsCh)
+
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	panicCnt := 0
 
@@ -187,6 +197,9 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	for _, task := range e.tasks {
 		statistics.MoveToHistory(task.job)
 	}
+	failpoint.Inject("mockKillFinishedAnalyzeJob", func() {
+		domain.GetDomain(e.ctx).SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
+	})
 	if err != nil {
 		return err
 	}
@@ -324,7 +337,7 @@ type analyzeTask struct {
 
 var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
 
-func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults, isCloseChanThread bool) {
+func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults) {
 	var task *analyzeTask
 	defer func() {
 		if r := recover(); r != nil {
@@ -337,11 +350,6 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 				Err: errAnalyzeWorkerPanic,
 				Job: task.job,
 			}
-		}
-		e.wg.Done()
-		if isCloseChanThread {
-			e.wg.Wait()
-			close(resultsCh)
 		}
 	}()
 	for {
@@ -575,6 +583,15 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 		statsVer = int(*e.analyzePB.IdxReq.Version)
 	}
 	for {
+		failpoint.Inject("mockKillRunningAnalyzeIndexJob", func() {
+			domain.GetDomain(e.ctx).SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
+		})
+		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
+			return nil, nil, nil, nil, errors.Trace(ErrQueryInterrupted)
+		}
+		failpoint.Inject("mockSlowAnalyzeIndex", func() {
+			time.Sleep(1000 * time.Second)
+		})
 		data, err := result.NextRaw(context.TODO())
 		if err != nil {
 			return nil, nil, nil, nil, err
@@ -687,8 +704,11 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) *statistics.AnalyzeResu
 		// subIndexWorkerWg is better to be initialized in handleNDVForSpecialIndexes, however if we do so, golang would
 		// report unexpected/unreasonable data race error on subIndexWorkerWg when running TestAnalyzeVirtualCol test
 		// case with `-race` flag now.
-		colExec.subIndexWorkerWg = &sync.WaitGroup{}
-		go colExec.handleNDVForSpecialIndexes(specialIndexes, idxNDVPushDownCh)
+		var wg util.WaitGroupWrapper
+		wg.Run(func() {
+			colExec.handleNDVForSpecialIndexes(specialIndexes, idxNDVPushDownCh)
+		})
+		defer wg.Wait()
 		count, hists, topns, fmSketches, extStats, err := colExec.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
 		if err != nil {
 			return &statistics.AnalyzeResults{Err: err, Job: colExec.job}
@@ -800,9 +820,8 @@ type AnalyzeColumnsExec struct {
 	indexes       []*model.IndexInfo
 	core.AnalyzeInfo
 
-	subIndexWorkerWg  *sync.WaitGroup
-	samplingBuilderWg *sync.WaitGroup
-	samplingMergeWg   *sync.WaitGroup
+	samplingBuilderWg *notifyErrorWaitGroupWrapper
+	samplingMergeWg   *util.WaitGroupWrapper
 
 	schemaForVirtualColEval *expression.Schema
 	baseCount               int64
@@ -890,9 +909,18 @@ func (e AnalyzeColumnsExec) decodeSampleDataWithVirtualColumn(
 	return nil
 }
 
-func readDataAndSendTask(handler *tableResultHandler, mergeTaskCh chan []byte) error {
+func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, mergeTaskCh chan []byte) error {
 	defer close(mergeTaskCh)
 	for {
+		failpoint.Inject("mockKillRunningV2AnalyzeJob", func() {
+			domain.GetDomain(ctx).SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
+		})
+		if atomic.LoadUint32(&ctx.GetSessionVars().Killed) == 1 {
+			return errors.Trace(ErrQueryInterrupted)
+		}
+		failpoint.Inject("mockSlowAnalyzeV2", func() {
+			time.Sleep(1000 * time.Second)
+		})
 		data, err := handler.nextRaw(context.TODO())
 		if err != nil {
 			return errors.Trace(err)
@@ -939,12 +967,12 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	}
 	mergeResultCh := make(chan *samplingMergeResult, statsConcurrency)
 	mergeTaskCh := make(chan []byte, statsConcurrency)
-	e.samplingMergeWg = &sync.WaitGroup{}
+	e.samplingMergeWg = &util.WaitGroupWrapper{}
 	e.samplingMergeWg.Add(statsConcurrency)
 	for i := 0; i < statsConcurrency; i++ {
 		go e.subMergeWorker(mergeResultCh, mergeTaskCh, l, i == 0)
 	}
-	if err = readDataAndSendTask(e.resultHandler, mergeTaskCh); err != nil {
+	if err = readDataAndSendTask(e.ctx, e.resultHandler, mergeTaskCh); err != nil {
 		return 0, nil, nil, nil, nil, err
 	}
 
@@ -1012,13 +1040,16 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	fmSketches = make([]*statistics.FMSketch, 0, totalLen)
 	buildResultChan := make(chan error, totalLen)
 	buildTaskChan := make(chan *samplingBuildTask, totalLen)
-	e.samplingBuilderWg = &sync.WaitGroup{}
-	e.samplingBuilderWg.Add(statsConcurrency)
-	sampleCollectors := make([]*statistics.SampleCollector, len(e.colsInfo))
-	for i := 0; i < statsConcurrency; i++ {
-		go e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, sampleCollectors, i == 0)
+	if totalLen < statsConcurrency {
+		statsConcurrency = totalLen
 	}
-
+	e.samplingBuilderWg = newNotifyErrorWaitGroupWrapper(buildResultChan)
+	sampleCollectors := make([]*statistics.SampleCollector, len(e.colsInfo))
+	exitCh := make(chan struct{})
+	e.samplingBuilderWg.Add(statsConcurrency)
+	for i := 0; i < statsConcurrency; i++ {
+		e.samplingBuilderWg.Run(func() { e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, sampleCollectors, exitCh) })
+	}
 	for i, col := range e.colsInfo {
 		buildTaskChan <- &samplingBuildTask{
 			id:               col.ID,
@@ -1032,6 +1063,8 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 
 	indexPushedDownResult := <-idxNDVPushDownCh
 	if indexPushedDownResult.err != nil {
+		close(exitCh)
+		e.samplingBuilderWg.Wait()
 		return 0, nil, nil, nil, nil, indexPushedDownResult.err
 	}
 	for _, offset := range indexesWithVirtualColOffsets {
@@ -1106,9 +1139,13 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.Inde
 		statistics.AddNewAnalyzeJob(task.job)
 	}
 	resultsCh := make(chan *statistics.AnalyzeResults, len(tasks))
-	e.subIndexWorkerWg.Add(statsConcurrncy)
+	if len(tasks) < statsConcurrncy {
+		statsConcurrncy = len(tasks)
+	}
+	var subIndexWorkerWg = NewAnalyzeResultsNotifyWaitGroupWrapper(resultsCh)
+	subIndexWorkerWg.Add(statsConcurrncy)
 	for i := 0; i < statsConcurrncy; i++ {
-		go e.subIndexWorkerForNDV(taskCh, resultsCh, i == 0)
+		subIndexWorkerWg.Run(func() { e.subIndexWorkerForNDV(taskCh, resultsCh) })
 	}
 	for _, task := range tasks {
 		taskCh <- task
@@ -1142,24 +1179,19 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.Inde
 }
 
 // subIndexWorker receive the task for each index and return the result for them.
-func (e *AnalyzeColumnsExec) subIndexWorkerForNDV(taskCh chan *analyzeTask, resultsCh chan *statistics.AnalyzeResults, isFirstToCloseCh bool) {
+func (e *AnalyzeColumnsExec) subIndexWorkerForNDV(taskCh chan *analyzeTask, resultsCh chan *statistics.AnalyzeResults) {
 	var task *analyzeTask
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
-			logutil.BgLogger().Error("analyze worker panicked", zap.String("stack", string(buf)))
+			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.String("stack", string(buf)))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultsCh <- &statistics.AnalyzeResults{
 				Err: errAnalyzeWorkerPanic,
 				Job: task.job,
 			}
-		}
-		e.subIndexWorkerWg.Done()
-		if isFirstToCloseCh {
-			e.subIndexWorkerWg.Wait()
-			close(resultsCh)
 		}
 	}()
 	for {
@@ -1307,20 +1339,15 @@ type samplingBuildTask struct {
 	slicePos         int
 }
 
-func (e *AnalyzeColumnsExec) subBuildWorker(resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, collectors []*statistics.SampleCollector, isClosedChanThread bool) {
+func (e *AnalyzeColumnsExec) subBuildWorker(resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, collectors []*statistics.SampleCollector, exitCh chan struct{}) {
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
-			logutil.BgLogger().Error("analyze worker panicked", zap.String("stack", string(buf)))
+			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.String("stack", string(buf)))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultCh <- errAnalyzeWorkerPanic
-		}
-		e.samplingBuilderWg.Done()
-		if isClosedChanThread {
-			e.samplingBuilderWg.Wait()
-			close(resultCh)
 		}
 	}()
 	failpoint.Inject("mockAnalyzeSamplingBuildWorkerPanic", func() {
@@ -1329,93 +1356,97 @@ func (e *AnalyzeColumnsExec) subBuildWorker(resultCh chan error, taskCh chan *sa
 	colLen := len(e.colsInfo)
 workLoop:
 	for {
-		task, ok := <-taskCh
-		if !ok {
-			break
-		}
-		var collector *statistics.SampleCollector
-		if task.isColumn {
-			if e.colsInfo[task.slicePos].IsGenerated() && !e.colsInfo[task.slicePos].GeneratedStored {
-				hists[task.slicePos] = nil
-				topns[task.slicePos] = nil
-				continue
+		select {
+		case task, ok := <-taskCh:
+			if !ok {
+				break workLoop
 			}
-			sampleItems := make([]*statistics.SampleItem, 0, task.rootRowCollector.Base().Samples.Len())
-			for j, row := range task.rootRowCollector.Base().Samples {
-				if row.Columns[task.slicePos].IsNull() {
+			var collector *statistics.SampleCollector
+			if task.isColumn {
+				if e.colsInfo[task.slicePos].IsGenerated() && !e.colsInfo[task.slicePos].GeneratedStored {
+					hists[task.slicePos] = nil
+					topns[task.slicePos] = nil
 					continue
 				}
-				val := row.Columns[task.slicePos]
-				ft := e.colsInfo[task.slicePos].FieldType
-				// When it's new collation data, we need to use its collate key instead of original value because only
-				// the collate key can ensure the correct ordering.
-				// This is also corresponding to similar operation in (*statistics.Column).GetColumnRowCount().
-				if ft.EvalType() == types.ETString && ft.Tp != mysql.TypeEnum && ft.Tp != mysql.TypeSet {
-					val.SetBytes(collate.GetCollator(ft.Collate).Key(val.GetString()))
+				sampleItems := make([]*statistics.SampleItem, 0, task.rootRowCollector.Base().Samples.Len())
+				for j, row := range task.rootRowCollector.Base().Samples {
+					if row.Columns[task.slicePos].IsNull() {
+						continue
+					}
+					val := row.Columns[task.slicePos]
+					ft := e.colsInfo[task.slicePos].FieldType
+					// When it's new collation data, we need to use its collate key instead of original value because only
+					// the collate key can ensure the correct ordering.
+					// This is also corresponding to similar operation in (*statistics.Column).GetColumnRowCount().
+					if ft.EvalType() == types.ETString && ft.Tp != mysql.TypeEnum && ft.Tp != mysql.TypeSet {
+						val.SetBytes(collate.GetCollator(ft.Collate).Key(val.GetString()))
+					}
+					sampleItems = append(sampleItems, &statistics.SampleItem{
+						Value:   val,
+						Ordinal: j,
+					})
 				}
-				sampleItems = append(sampleItems, &statistics.SampleItem{
-					Value:   val,
-					Ordinal: j,
-				})
-			}
-			collector = &statistics.SampleCollector{
-				Samples:   sampleItems,
-				NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
-				Count:     task.rootRowCollector.Base().Count - task.rootRowCollector.Base().NullCount[task.slicePos],
-				FMSketch:  task.rootRowCollector.Base().FMSketches[task.slicePos],
-				TotalSize: task.rootRowCollector.Base().TotalSizes[task.slicePos],
-			}
-		} else {
-			var tmpDatum types.Datum
-			var err error
-			idx := e.indexes[task.slicePos-colLen]
-			sampleItems := make([]*statistics.SampleItem, 0, task.rootRowCollector.Base().Samples.Len())
-			for _, row := range task.rootRowCollector.Base().Samples {
-				if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
-					continue
+				collector = &statistics.SampleCollector{
+					Samples:   sampleItems,
+					NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
+					Count:     task.rootRowCollector.Base().Count - task.rootRowCollector.Base().NullCount[task.slicePos],
+					FMSketch:  task.rootRowCollector.Base().FMSketches[task.slicePos],
+					TotalSize: task.rootRowCollector.Base().TotalSizes[task.slicePos],
 				}
+			} else {
+				var tmpDatum types.Datum
+				var err error
+				idx := e.indexes[task.slicePos-colLen]
+				sampleItems := make([]*statistics.SampleItem, 0, task.rootRowCollector.Base().Samples.Len())
+				for _, row := range task.rootRowCollector.Base().Samples {
+					if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
+						continue
+					}
 
-				b := make([]byte, 0, 8)
-				for _, col := range idx.Columns {
-					if col.Length != types.UnspecifiedLength {
-						row.Columns[col.Offset].Copy(&tmpDatum)
-						ranger.CutDatumByPrefixLen(&tmpDatum, col.Length, &e.colsInfo[col.Offset].FieldType)
-						b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, b, tmpDatum)
+					b := make([]byte, 0, 8)
+					for _, col := range idx.Columns {
+						if col.Length != types.UnspecifiedLength {
+							row.Columns[col.Offset].Copy(&tmpDatum)
+							ranger.CutDatumByPrefixLen(&tmpDatum, col.Length, &e.colsInfo[col.Offset].FieldType)
+							b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, b, tmpDatum)
+							if err != nil {
+								resultCh <- err
+								continue workLoop
+							}
+							continue
+						}
+						b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, b, row.Columns[col.Offset])
 						if err != nil {
 							resultCh <- err
 							continue workLoop
 						}
-						continue
 					}
-					b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, b, row.Columns[col.Offset])
-					if err != nil {
-						resultCh <- err
-						continue workLoop
-					}
+					sampleItems = append(sampleItems, &statistics.SampleItem{
+						Value: types.NewBytesDatum(b),
+					})
 				}
-				sampleItems = append(sampleItems, &statistics.SampleItem{
-					Value: types.NewBytesDatum(b),
-				})
+				collector = &statistics.SampleCollector{
+					Samples:   sampleItems,
+					NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
+					Count:     task.rootRowCollector.Base().Count - task.rootRowCollector.Base().NullCount[task.slicePos],
+					FMSketch:  task.rootRowCollector.Base().FMSketches[task.slicePos],
+					TotalSize: task.rootRowCollector.Base().TotalSizes[task.slicePos],
+				}
 			}
-			collector = &statistics.SampleCollector{
-				Samples:   sampleItems,
-				NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
-				Count:     task.rootRowCollector.Base().Count - task.rootRowCollector.Base().NullCount[task.slicePos],
-				FMSketch:  task.rootRowCollector.Base().FMSketches[task.slicePos],
-				TotalSize: task.rootRowCollector.Base().TotalSizes[task.slicePos],
+			if task.isColumn {
+				collectors[task.slicePos] = collector
 			}
+			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn)
+			if err != nil {
+				resultCh <- err
+				continue
+			}
+			hists[task.slicePos] = hist
+			topns[task.slicePos] = topn
+			resultCh <- nil
+		case <-exitCh:
+			return
 		}
-		if task.isColumn {
-			collectors[task.slicePos] = collector
-		}
-		hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn)
-		if err != nil {
-			resultCh <- err
-			continue
-		}
-		hists[task.slicePos] = hist
-		topns[task.slicePos] = topn
-		resultCh <- nil
 	}
 }
 
@@ -1456,6 +1487,15 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		}
 	}
 	for {
+		failpoint.Inject("mockKillRunningV1AnalyzeJob", func() {
+			domain.GetDomain(e.ctx).SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
+		})
+		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
+			return nil, nil, nil, nil, nil, errors.Trace(ErrQueryInterrupted)
+		}
+		failpoint.Inject("mockSlowAnalyzeV1", func() {
+			time.Sleep(1000 * time.Second)
+		})
 		data, err1 := e.resultHandler.nextRaw(context.TODO())
 		if err1 != nil {
 			return nil, nil, nil, nil, nil, err1
@@ -2279,4 +2319,68 @@ func analyzePKIncremental(colExec *analyzePKIncrementalExec) *statistics.Analyze
 		Count:    cnt,
 		Snapshot: colExec.snapshot,
 	}
+}
+
+// analyzeResultsNotifyWaitGroupWrapper is a wrapper for sync.WaitGroup
+// Please add all goroutine count when to `Add` to avoid exiting in advance.
+type analyzeResultsNotifyWaitGroupWrapper struct {
+	sync.WaitGroup
+	notify chan *statistics.AnalyzeResults
+	cnt    atomicutil.Uint64
+}
+
+// NewAnalyzeResultsNotifyWaitGroupWrapper is to create analyzeResultsNotifyWaitGroupWrapper
+func NewAnalyzeResultsNotifyWaitGroupWrapper(notify chan *statistics.AnalyzeResults) *analyzeResultsNotifyWaitGroupWrapper {
+	return &analyzeResultsNotifyWaitGroupWrapper{
+		notify: notify,
+		cnt:    *atomicutil.NewUint64(0),
+	}
+}
+
+// Run runs a function in a goroutine and calls done when function returns.
+// Please DO NOT use panic in the cb function.
+func (w *analyzeResultsNotifyWaitGroupWrapper) Run(exec func()) {
+	old := w.cnt.Inc() - 1
+	go func(cnt uint64) {
+		defer func() {
+			w.Done()
+			if cnt == 0 {
+				w.Wait()
+				close(w.notify)
+			}
+		}()
+		exec()
+	}(old)
+}
+
+// notifyErrorWaitGroupWrapper is a wrapper for sync.WaitGroup
+// Please add all goroutine count when to `Add` to avoid exiting in advance.
+type notifyErrorWaitGroupWrapper struct {
+	sync.WaitGroup
+	notify chan error
+	cnt    atomicutil.Uint64
+}
+
+// newNotifyErrorWaitGroupWrapper is to create notifyErrorWaitGroupWrapper
+func newNotifyErrorWaitGroupWrapper(notify chan error) *notifyErrorWaitGroupWrapper {
+	return &notifyErrorWaitGroupWrapper{
+		notify: notify,
+		cnt:    *atomicutil.NewUint64(0),
+	}
+}
+
+// Run runs a function in a goroutine and calls done when function returns.
+// Please DO NOT use panic in the cb function.
+func (w *notifyErrorWaitGroupWrapper) Run(exec func()) {
+	old := w.cnt.Inc() - 1
+	go func(cnt uint64) {
+		defer func() {
+			w.Done()
+			if cnt == 0 {
+				w.Wait()
+				close(w.notify)
+			}
+		}()
+		exec()
+	}(old)
 }

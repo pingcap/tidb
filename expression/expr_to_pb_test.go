@@ -1052,6 +1052,56 @@ func TestExprPushDownToFlash(t *testing.T) {
 	function, err = NewFunction(mock.NewContext(), ast.Least, types.NewFieldType(mysql.TypeDouble), float32Column, intColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
+	// is true
+	function, err = NewFunction(mock.NewContext(), ast.IsTruthWithoutNull, types.NewFieldType(mysql.TypeLonglong), int32Column)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	function, err = NewFunction(mock.NewContext(), ast.IsTruthWithoutNull, types.NewFieldType(mysql.TypeLonglong), float32Column)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	function, err = NewFunction(mock.NewContext(), ast.IsTruthWithoutNull, types.NewFieldType(mysql.TypeLonglong), decimalColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	// is true with null
+	function, err = NewFunction(mock.NewContext(), ast.IsTruthWithNull, types.NewFieldType(mysql.TypeLonglong), int32Column)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	function, err = NewFunction(mock.NewContext(), ast.IsTruthWithNull, types.NewFieldType(mysql.TypeLonglong), float32Column)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	function, err = NewFunction(mock.NewContext(), ast.IsTruthWithNull, types.NewFieldType(mysql.TypeLonglong), decimalColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	// is false, note seems there is actually no is_false_with_null, so unable to add ut for it
+	function, err = NewFunction(mock.NewContext(), ast.IsFalsity, types.NewFieldType(mysql.TypeLonglong), int32Column)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	function, err = NewFunction(mock.NewContext(), ast.IsFalsity, types.NewFieldType(mysql.TypeLonglong), float32Column)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	function, err = NewFunction(mock.NewContext(), ast.IsFalsity, types.NewFieldType(mysql.TypeLonglong), decimalColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// DayOfWeek
+	function, err = NewFunction(mock.NewContext(), ast.DayOfWeek, types.NewFieldType(mysql.TypeDatetime), datetimeColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// DayOfMonth
+	function, err = NewFunction(mock.NewContext(), ast.DayOfMonth, types.NewFieldType(mysql.TypeDatetime), datetimeColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// DayOfYear
+	function, err = NewFunction(mock.NewContext(), ast.DayOfYear, types.NewFieldType(mysql.TypeDatetime), datetimeColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// LastDay
+	function, err = NewFunction(mock.NewContext(), ast.LastDay, types.NewFieldType(mysql.TypeDatetime), datetimeColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
 
 	pushed, remained = PushDownExprs(sc, exprs, client, kv.TiFlash)
 	require.Len(t, pushed, len(exprs))
@@ -1438,7 +1488,7 @@ func TestExprOnlyPushDownToTiKV(t *testing.T) {
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 
-	function, err := NewFunction(mock.NewContext(), "dayofyear", types.NewFieldType(mysql.TypeLonglong), genColumn(mysql.TypeDatetime, 1))
+	function, err := NewFunction(mock.NewContext(), "weekofyear", types.NewFieldType(mysql.TypeLonglong), genColumn(mysql.TypeDatetime, 1))
 	require.NoError(t, err)
 	var exprs = make([]Expression, 0)
 	exprs = append(exprs, function)

@@ -1,4 +1,4 @@
-// Copyright 2020 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,9 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl
+package funcdep
 
-import "github.com/pingcap/tidb/util/dbterror"
+import (
+	"testing"
 
-// ErrDupKeyName returns for duplicated key name.
-var ErrDupKeyName = dbterror.ErrDupKeyName
+	"github.com/pingcap/tidb/util/testbridge"
+	"go.uber.org/goleak"
+)
+
+func TestMain(m *testing.M) {
+	testbridge.SetupForCommonTest()
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+	}
+	goleak.VerifyTestMain(m, opts...)
+}

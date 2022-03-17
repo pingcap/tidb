@@ -314,6 +314,7 @@ import (
 	begin                 "BEGIN"
 	bernoulli             "BERNOULLI"
 	binding               "BINDING"
+	bindingCache          "BINDING_CACHE"
 	bindings              "BINDINGS"
 	binlog                "BINLOG"
 	bitType               "BIT"
@@ -5747,6 +5748,7 @@ UnReservedKeyword:
 |	"ADVISE"
 |	"ASCII"
 |	"ATTRIBUTES"
+|	"BINDING_CACHE"
 |	"STATS_OPTIONS"
 |	"STATS_SAMPLE_RATE"
 |	"STATS_COL_CHOICE"
@@ -10633,6 +10635,12 @@ ShowTargetFilterable:
 		$$ = &ast.ShowStmt{
 			Tp:     ast.ShowTriggers,
 			DBName: $2,
+		}
+	}
+|	"BINDING_CACHE" "STATUS"
+	{
+		$$ = &ast.ShowStmt{
+			Tp: ast.ShowBindingCacheStatus,
 		}
 	}
 |	"PROCEDURE" "STATUS"
