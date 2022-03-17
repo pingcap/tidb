@@ -103,15 +103,10 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 	var child LogicalPlan
 	var retConditions []expression.Expression
 	var originConditions []expression.Expression
-	if p.buildByHaving {
-		retConditions, child = p.children[0].PredicatePushDown(predicates, opt)
-		retConditions = append(retConditions, p.Conditions...)
-	} else {
-		canBePushDown, canNotBePushDown := splitSetGetVarFunc(p.Conditions)
-		originConditions = canBePushDown
-		retConditions, child = p.children[0].PredicatePushDown(append(canBePushDown, predicates...), opt)
-		retConditions = append(retConditions, canNotBePushDown...)
-	}
+	canBePushDown, canNotBePushDown := splitSetGetVarFunc(p.Conditions)
+	originConditions = canBePushDown
+	retConditions, child = p.children[0].PredicatePushDown(append(canBePushDown, predicates...), opt)
+	retConditions = append(retConditions, canNotBePushDown...)
 	if len(retConditions) > 0 {
 		p.Conditions = expression.PropagateConstant(p.ctx, retConditions)
 		// Return table dual when filter is constant false or null.
@@ -696,7 +691,7 @@ func appendSelectionPredicatePushDownTraceStep(p *LogicalSelection, conditions [
 	reason := func() string {
 		return ""
 	}
-	if len(conditions) > 0 && !p.buildByHaving {
+	if len(conditions) > 0 {
 		reason = func() string {
 			buffer := bytes.NewBufferString("The conditions[")
 			for i, cond := range conditions {
