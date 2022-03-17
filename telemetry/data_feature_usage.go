@@ -37,6 +37,7 @@ type featureUsage struct {
 	TemporaryTable bool               `json:"temporaryTable"`
 	CTE            *m.CTEUsageCounter `json:"cte"`
 	CachedTable    bool               `json:"cachedTable"`
+	AutoCapture    bool               `json:"autoCapture"`
 }
 
 func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
@@ -56,7 +57,8 @@ func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
 
 	cachedTable := ctx.(TemporaryOrCacheTableFeatureChecker).CachedTableExists()
 
-	return &featureUsage{txnUsage, clusterIdxUsage, temporaryTable, cteUsage, cachedTable}, nil
+	enableAutoCapture := getAutoCaptureUsageInfo(ctx)
+	return &featureUsage{txnUsage, clusterIdxUsage, temporaryTable, cteUsage, cachedTable, enableAutoCapture}, nil
 }
 
 // ClusterIndexUsage records the usage info of all the tables, no more than 10k tables
@@ -147,9 +149,12 @@ type TemporaryOrCacheTableFeatureChecker interface {
 // TxnUsage records the usage info of transaction related features, including
 // async-commit, 1PC and counters of transactions committed with different protocols.
 type TxnUsage struct {
-	AsyncCommitUsed  bool                     `json:"asyncCommitUsed"`
-	OnePCUsed        bool                     `json:"onePCUsed"`
-	TxnCommitCounter metrics.TxnCommitCounter `json:"txnCommitCounter"`
+	AsyncCommitUsed     bool                     `json:"asyncCommitUsed"`
+	OnePCUsed           bool                     `json:"onePCUsed"`
+	TxnCommitCounter    metrics.TxnCommitCounter `json:"txnCommitCounter"`
+	MutationCheckerUsed bool                     `json:"mutationCheckerUsed"`
+	AssertionLevel      string                   `json:"assertionLevel"`
+	RcCheckTS           bool                     `json:"rcCheckTS"`
 }
 
 var initialTxnCommitCounter metrics.TxnCommitCounter
@@ -167,7 +172,19 @@ func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	}
 	curr := metrics.GetTxnCommitCounter()
 	diff := curr.Sub(initialTxnCommitCounter)
-	return &TxnUsage{asyncCommitUsed, onePCUsed, diff}
+	mutationCheckerUsed := false
+	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBEnableMutationChecker); err == nil {
+		mutationCheckerUsed = val == variable.On
+	}
+	assertionUsed := ""
+	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBTxnAssertionLevel); err == nil {
+		assertionUsed = val
+	}
+	rcCheckTSUsed := false
+	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBRCReadCheckTS); err == nil {
+		rcCheckTSUsed = val == variable.On
+	}
+	return &TxnUsage{asyncCommitUsed, onePCUsed, diff, mutationCheckerUsed, assertionUsed, rcCheckTSUsed}
 }
 
 func postReportTxnUsage() {
@@ -184,4 +201,12 @@ func getCTEUsageInfo() *m.CTEUsageCounter {
 	curr := m.GetCTECounter()
 	diff := curr.Sub(initialCTECounter)
 	return &diff
+}
+
+// getAutoCaptureUsageInfo gets the 'Auto Capture' usage
+func getAutoCaptureUsageInfo(ctx sessionctx.Context) bool {
+	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBCapturePlanBaseline); err == nil {
+		return val == variable.On
+	}
+	return false
 }
