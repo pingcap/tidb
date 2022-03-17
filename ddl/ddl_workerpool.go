@@ -42,7 +42,7 @@ func (sg *workerPool) get() (*worker, error) {
 	}
 
 	if sg.exit.Load() {
-		return nil, errors.Errorf("workerPool is closed.")
+		return nil, errors.Errorf("workerPool is closed")
 	}
 
 	// no need to protect sg.resPool
