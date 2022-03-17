@@ -4,10 +4,12 @@ package restore
 
 import (
 	"context"
+	"crypto/tls"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -15,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/model"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -183,8 +186,18 @@ type BatchSender interface {
 	Close()
 }
 
+type TiKVRestorer interface {
+	GetPDClient() pd.Client
+	GetTLSConfig() *tls.Config
+	RestoreFiles(ctx context.Context,
+		files []*backuppb.File,
+		rewriteRules *RewriteRules,
+		updateCh glue.Progress) error
+}
+
 type tikvSender struct {
-	client   *Client
+	client TiKVRestorer
+
 	updateCh glue.Progress
 
 	sink TableSink
@@ -209,7 +222,7 @@ func (b *tikvSender) RestoreBatch(ranges DrainResult) {
 // NewTiKVSender make a sender that send restore requests to TiKV.
 func NewTiKVSender(
 	ctx context.Context,
-	cli *Client,
+	cli TiKVRestorer,
 	updateCh glue.Progress,
 	splitConcurrency uint,
 ) (BatchSender, error) {
