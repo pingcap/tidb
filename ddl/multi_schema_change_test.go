@@ -520,6 +520,23 @@ func TestMultiSchemaRenameIndexes(t *testing.T) {
 	tk.MustGetErrCode("alter table t add index t1(b), rename index t to t1", errno.ErrUnsupportedDDLOperation)
 }
 
+func TestMultiSchemaChangeMix(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
+
+	tk.MustExec("create table t (a int, b int, c int, index i1(c), index i2(c));")
+	tk.MustExec("insert into t values (1, 2, 3);")
+	tk.MustExec("alter table t add column d int default 4, " +
+		"drop column a, drop column if exists z, add column if not exists e int default 5, " +
+		"drop index i2, add column f int default 6, drop column b, drop index i1, add column if not exists c int;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("3 4 5 6"))
+	tk.MustGetErrCode("select * from t use index (i1);", errno.ErrKeyDoesNotExist)
+	tk.MustGetErrCode("select * from t use index (i2);", errno.ErrKeyDoesNotExist)
+}
+
 type cancelOnceHook struct {
 	store     kv.Storage
 	triggered bool
