@@ -152,26 +152,35 @@ func GetRewriteRulesMap(
 
 // GetRewriteRuleOfTable returns a rewrite rule from t_{oldID} to t_{newID}.
 func GetRewriteRuleOfTable(
-	oldID, newID int64,
-	newTs uint64,
-	detailRule bool,
-) *import_sstpb.RewriteRule {
-	rule := import_sstpb.RewriteRule{}
-	if detailRule {
-		rule = import_sstpb.RewriteRule{
-			OldKeyPrefix: tablecodec.GenTableRecordPrefix(oldID),
-			NewKeyPrefix: tablecodec.GenTableRecordPrefix(newID),
-			NewTimestamp: newTs,
+	oldTableID, newTableID int64,
+	newTimeStamp uint64,
+	indexIDs map[int64]int64,
+	getDetailRule bool,
+) *RewriteRules {
+	dataRules := make([]*import_sstpb.RewriteRule, 0)
+
+	if getDetailRule {
+		dataRules = append(dataRules, &import_sstpb.RewriteRule{
+			OldKeyPrefix: tablecodec.GenTableRecordPrefix(oldTableID),
+			NewKeyPrefix: tablecodec.GenTableRecordPrefix(newTableID),
+			NewTimestamp: newTimeStamp,
+		})
+		for oldIndexID, newIndexID := range indexIDs {
+			dataRules = append(dataRules, &import_sstpb.RewriteRule{
+				OldKeyPrefix: tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexID),
+				NewKeyPrefix: tablecodec.EncodeTableIndexPrefix(newTableID, newIndexID),
+				NewTimestamp: newTimeStamp,
+			})
 		}
 	} else {
-		rule = import_sstpb.RewriteRule{
-			OldKeyPrefix: tablecodec.EncodeTablePrefix(oldID),
-			NewKeyPrefix: tablecodec.EncodeTablePrefix(newID),
-			NewTimestamp: newTs,
-		}
+		dataRules = append(dataRules, &import_sstpb.RewriteRule{
+			OldKeyPrefix: tablecodec.EncodeTablePrefix(oldTableID),
+			NewKeyPrefix: tablecodec.EncodeTablePrefix(newTableID),
+			NewTimestamp: newTimeStamp,
+		})
 	}
 
-	return &rule
+	return &RewriteRules{Data: dataRules}
 }
 
 // GetSSTMetaFromFile compares the keys in file, region and rewrite rules, then returns a sst conn.

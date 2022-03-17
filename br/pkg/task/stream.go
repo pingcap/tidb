@@ -625,7 +625,6 @@ func RunStreamRestore(
 	cfg *StreamConfig,
 ) error {
 	cfg.adjustRestoreConfig()
-
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
 
@@ -690,10 +689,6 @@ func RunStreamRestore(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	rewriteRules, err := initRewriteRules(client, fullBackupTables)
-	if err != nil {
-		return errors.Trace(err)
-	}
 
 	// read meta by given ts.
 	metas, err := client.ReadStreamMetaByTS(ctx, cfg.RestoreTS)
@@ -711,27 +706,27 @@ func RunStreamRestore(
 	}
 
 	// perform restore meta kv files
-	errChMeta := make(chan error)
-	go func() {
-		rawkvClient, err := newRawkvClient(ctx, cfg.PD, cfg.TLS)
-		if err != nil {
-			errChMeta <- err
-			return
-		}
-		defer rawkvClient.Close()
+	schemasReplace, err := client.InitSchemasReplaceForDDL(&fullBackupTables, cfg.TableFilter)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rawkvClient, err := newRawkvClient(ctx, cfg.PD, cfg.TLS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer rawkvClient.Close()
 
-		err = client.RestoreMetaKVFiles(ctx, rawkvClient, ddlFiles, &fullBackupTables, cfg.TableFilter, func(oldID, newID int64) {
-			//rule := restore.GetRewriteRuleOfTable(oldID, newID, 0, false)
-
-		})
-		errChMeta <- err
-	}()
-
-	if err := <-errChMeta; err != nil {
+	if err = client.RestoreMetaKVFiles(ctx, rawkvClient, ddlFiles, schemasReplace); err != nil {
 		return errors.Trace(err)
 	}
 
 	// perform restore kv files
+	rewriteRules, err := initRewriteRules(client, fullBackupTables)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	updateRewriteRules(rewriteRules, schemasReplace)
+
 	pd := g.StartProgress(ctx, "Restore KV Files", int64(len(dmlFiles)), cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
 		return client.RestoreKVFiles(ctx, rewriteRules, dmlFiles, p.Inc)
@@ -740,6 +735,7 @@ func RunStreamRestore(
 		return errors.Annotate(err, "failed to restore kv files")
 	}
 
+	// fix indices
 	pi := g.StartProgress(ctx, "Restore Index", countIndices(fullBackupTables), cfg.LogProgress)
 	err = withProgress(pi, func(p glue.Progress) error {
 		return client.FixIndicesOfTables(ctx, fullBackupTables, p.Inc)
@@ -847,6 +843,41 @@ func initRewriteRules(client *restore.Client, tables map[int64]*metautil.Table) 
 		)
 	}
 	return rules, nil
+}
+
+func updateRewriteRules(rules map[int64]*restore.RewriteRules, schemasReplace *stream.SchemasReplace) {
+	filter := schemasReplace.TableFilter
+
+	for _, dbReplace := range schemasReplace.DbMap {
+		if utils.IsSysDB(dbReplace.OldName) || utils.IsSysDB(dbReplace.NewName) {
+			continue
+		}
+		if !filter.MatchSchema(dbReplace.NewName) && !filter.MatchSchema(dbReplace.OldName) {
+			continue
+		}
+
+		for oldTableID, tableReplace := range dbReplace.TableMap {
+			if !filter.MatchTable(dbReplace.OldName, tableReplace.OldName) &&
+				!filter.MatchTable(dbReplace.NewName, tableReplace.NewName) {
+				continue
+			}
+
+			if _, exist := rules[oldTableID]; !exist {
+				log.Info("add rewrite rule", zap.String("tableName", dbReplace.NewName+"."+tableReplace.NewName),
+					zap.Int64("oldID", oldTableID), zap.Int64("newID", tableReplace.TableID))
+				rules[oldTableID] = restore.GetRewriteRuleOfTable(
+					oldTableID, tableReplace.TableID, 0, tableReplace.IndexMap, false)
+			}
+
+			for oldID, newID := range tableReplace.PartitionMap {
+				if _, exist := rules[oldID]; !exist {
+					log.Info("add rewrite rule", zap.String("tableName", dbReplace.NewName+"."+tableReplace.NewName),
+						zap.Int64("oldID", oldID), zap.Int64("newID", newID))
+					rules[oldID] = restore.GetRewriteRuleOfTable(oldID, newID, 0, tableReplace.IndexMap, false)
+				}
+			}
+		}
+	}
 }
 
 func newRawkvClient(ctx context.Context, pdAddrs []string, tlsConfig TLSConfig) (*rawkv.Client, error) {

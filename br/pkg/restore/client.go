@@ -48,6 +48,7 @@ import (
 	"github.com/tikv/client-go/v2/rawkv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -1533,16 +1534,13 @@ func (rc *Client) RestoreKVFiles(
 	return nil
 }
 
-// initSchemasReplaceForDDL gets schemas information Mapping from old schemas to new schemas.
+// InitSchemasReplaceForDDL gets schemas information Mapping from old schemas to new schemas.
 // It is used to rewrite meta kv-event.
-func (rc *Client) initSchemasReplaceForDDL(
+func (rc *Client) InitSchemasReplaceForDDL(
 	tables *map[int64]*metautil.Table,
 	tableFilter filter.Filter,
 ) (*stream.SchemasReplace, error) {
-	var (
-		dbIDmap    = make(map[stream.OldID]stream.DBReplace)
-		tableIDmap = make(map[stream.OldID]stream.TableReplace)
-	)
+	dbMap := make(map[stream.OldID]*stream.DBReplace)
 
 	for _, t := range *tables {
 		name, _ := utils.GetSysDBName(t.DB.Name)
@@ -1556,33 +1554,44 @@ func (rc *Client) initSchemasReplaceForDDL(
 			return nil, errors.Trace(err)
 		}
 
-		dbIDmap[t.DB.ID] = stream.DBReplace{
-			DBID:   newDBInfo.ID,
-			DBName: dbName.String(),
+		dbReplace, exist := dbMap[t.DB.ID]
+		if !exist {
+			dbReplace = &stream.DBReplace{
+				DBID:     newDBInfo.ID,
+				OldName:  name,
+				NewName:  newDBInfo.Name.String(),
+				TableMap: make(map[stream.OldID]*stream.TableReplace),
+			}
+			dbMap[t.DB.ID] = dbReplace
 		}
 
-		tbls := getTableIDMap(newTableInfo, t.Info)
-		for o, n := range tbls {
-			tableIDmap[o] = stream.TableReplace{TableID: n}
-		}
-
-		indexMap := getIndexIDMap(newTableInfo, t.Info)
-		tableIDmap[t.Info.ID] = stream.TableReplace{
-			TableID:   newTableInfo.ID,
-			TableName: t.Info.Name.O,
-			IndexMap:  indexMap,
+		dbReplace.TableMap[t.Info.ID] = &stream.TableReplace{
+			TableID:      newTableInfo.ID,
+			OldName:      t.Info.Name.String(),
+			NewName:      newTableInfo.Name.String(),
+			PartitionMap: getTableIDMap(newTableInfo, t.Info),
+			IndexMap:     getIndexIDMap(newTableInfo, t.Info),
 		}
 	}
 
-	for id, db := range dbIDmap {
-		log.Info("replace", zap.String("dbname", db.DBName), zap.Int64("old-id", id), zap.Int64("new-id", db.DBID))
+	for oldDBID, dbReplace := range dbMap {
+		log.Info("replace info", func() []zapcore.Field {
+			fields := make([]zapcore.Field, 0, (len(dbReplace.TableMap)+1)*3)
+			fields = append(fields,
+				zap.String("dbName", dbReplace.OldName),
+				zap.Int64("oldID", oldDBID),
+				zap.Int64("newID", dbReplace.DBID))
+			for oldTableID, tableReplace := range dbReplace.TableMap {
+				fields = append(fields,
+					zap.String("table", tableReplace.OldName),
+					zap.Int64("oldID", oldTableID),
+					zap.Int64("newID", tableReplace.TableID))
+			}
+			return fields
+		}()...)
 	}
 
-	for id, t := range tableIDmap {
-		log.Info("replace", zap.String("tablename", t.TableName), zap.Int64("old-id", id), zap.Int64("new-id", t.TableID))
-	}
-
-	return stream.NewSchemasReplace(dbIDmap, tableIDmap, rc.currentTS, tableFilter, rc.GenGlobalID, rc.GenGlobalIDs), nil
+	return stream.NewSchemasReplace(dbMap, rc.currentTS, tableFilter, rc.GenGlobalID, rc.GenGlobalIDs), nil
 }
 
 // RestoreMetaKVFiles tries to restore files about meta kv-event from stream-backup.
@@ -1590,15 +1599,8 @@ func (rc *Client) RestoreMetaKVFiles(
 	ctx context.Context,
 	rawkvClient *rawkv.Client,
 	files []*backuppb.DataFileInfo,
-	tables *map[int64]*metautil.Table,
-	tableFilter filter.Filter,
-	updateRewriteRules func(oldID, newID int64),
+	schemasReplace *stream.SchemasReplace,
 ) error {
-	schemasReplace, err := rc.initSchemasReplaceForDDL(tables, tableFilter)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	for _, f := range files {
 		// skip these files if file.MinTs > restoreTS
 		if f.MinTs > rc.restoreTs {
@@ -1648,7 +1650,7 @@ func (rc *Client) RestoreMetaKVFile(
 			break
 		}
 
-		log.Info("txn entry", zap.Int("txnKey-len", len(txnEntry.Key)),
+		log.Debug("txn entry", zap.Int("txnKey-len", len(txnEntry.Key)),
 			zap.Int("txnValue-len", len(txnEntry.Value)), zap.ByteString("txnKey", txnEntry.Key))
 
 		newEntry, err := sr.RewriteKvEntry(&txnEntry, file.Cf)
@@ -1660,7 +1662,7 @@ func (rc *Client) RestoreMetaKVFile(
 			continue
 		}
 
-		log.Info("rewrite txn entry", zap.Int("newKey-len", len(newEntry.Key)),
+		log.Debug("rewrite txn entry", zap.Int("newKey-len", len(newEntry.Key)),
 			zap.Int("newValue-len", len(txnEntry.Value)), zap.ByteString("newkey", newEntry.Key))
 
 		// to do...
