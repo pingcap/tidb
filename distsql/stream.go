@@ -94,7 +94,7 @@ func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Respons
 		return false, errors.Trace(err)
 	}
 	if stream.Error != nil {
-		return false, errors.Errorf("stream response error: [%d]%s\n", stream.Error.Code, stream.Error.Msg)
+		return false, errors.Errorf("stream response error: [%d]%s", stream.Error.Code, stream.Error.Msg)
 	}
 	for _, warning := range stream.Warnings {
 		r.ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))

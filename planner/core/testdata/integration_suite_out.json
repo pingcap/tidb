@@ -6582,5 +6582,50 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestTiFlashPartitionTableScan",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select * from rp_t where a = 1 or a = 20",
+        "Plan": [
+          "TableReader 20.00 root partition:p0,p3 data:ExchangeSender",
+          "└─ExchangeSender 20.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection 20.00 batchCop[tiflash]  or(eq(test.rp_t.a, 1), eq(test.rp_t.a, 20))",
+          "    └─TableFullScan 10000.00 batchCop[tiflash] table:rp_t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from hp_t where a = 1 or a = 20",
+        "Plan": [
+          "TableReader 20.00 root partition:p0,p1 data:ExchangeSender",
+          "└─ExchangeSender 20.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection 20.00 batchCop[tiflash]  or(eq(test.hp_t.a, 1), eq(test.hp_t.a, 20))",
+          "    └─TableFullScan 10000.00 batchCop[tiflash] table:hp_t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select count(*) from rp_t where a = 1 or a = 20",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#3",
+          "└─TableReader 1.00 root partition:p0,p3 data:ExchangeSender",
+          "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#5",
+          "      └─Selection 20.00 batchCop[tiflash]  or(eq(test.rp_t.a, 1), eq(test.rp_t.a, 20))",
+          "        └─TableFullScan 10000.00 batchCop[tiflash] table:rp_t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select count(*) from hp_t where a = 1 or a = 20",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(Column#5)->Column#3",
+          "└─TableReader 1.00 root partition:p0,p1 data:ExchangeSender",
+          "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#5",
+          "      └─Selection 20.00 batchCop[tiflash]  or(eq(test.hp_t.a, 1), eq(test.hp_t.a, 20))",
+          "        └─TableFullScan 10000.00 batchCop[tiflash] table:hp_t keep order:false, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]
