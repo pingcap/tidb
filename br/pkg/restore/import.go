@@ -284,7 +284,7 @@ func (importer *FileImporter) getKeyRangeForFiles(
 		if len(startKey) == 0 || bytes.Compare(start, startKey) < 0 {
 			startKey = start
 		}
-		if len(endKey) == 0 || bytes.Compare(startKey, end) < 0 {
+		if len(endKey) == 0 || bytes.Compare(endKey, end) < 0 {
 			endKey = end
 		}
 	}
