@@ -380,7 +380,7 @@ func TestShowCreateSequence(t *testing.T) {
 	tctx := tcontext.Background().WithLogger(appLogger)
 	baseConn := newBaseConn(conn, true, nil)
 
-	mock.ExpectQuery("SHOW CREATE SEQUENCE `s`").
+	mock.ExpectQuery("SHOW CREATE SEQUENCE `test`.`s`").
 		WillReturnRows(sqlmock.NewRows([]string{"Sequence", "Create Sequence"}).
 			AddRow("s", "CREATE SEQUENCE `s` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
 
