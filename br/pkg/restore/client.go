@@ -835,10 +835,6 @@ func (rc *Client) RestoreFiles(
 		}
 	}()
 
-	failpoint.Inject("restore-files", func(v failpoint.Value) {
-		failpoint.Return(errors.New("failed"))
-	})
-
 	log.Debug("start to restore files", zap.Int("files", len(files)))
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
