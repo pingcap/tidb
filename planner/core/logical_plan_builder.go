@@ -4285,10 +4285,29 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 			fds.AddStrictFunctionalDependency(keyCols, allCols)
 			fds.MakeNotNull(keyCols)
 		}
+		// we should check index valid while forUpdateRead, see detail in https://github.com/pingcap/tidb/pull/22152
+		var (
+			latestIndexes map[int64]*model.IndexInfo
+			changed       bool
+			err           error
+		)
+		if ds.isForUpdateRead {
+			latestIndexes, changed, err = getLatestIndexInfo(ds.ctx, ds.table.Meta().ID, 0)
+			if err != nil {
+				ds.fdSet = fds
+				return fds
+			}
+		}
 		// other indices including common handle.
 		for _, idx := range ds.tableInfo.Indices {
 			keyCols := fd.NewFastIntSet()
 			allColIsNotNull := true
+			if ds.isForUpdateRead && changed {
+				latestIndex, ok := latestIndexes[idx.ID]
+				if !ok || latestIndex.State != model.StatePublic {
+					continue
+				}
+			}
 			if idx.State != model.StatePublic {
 				continue
 			}
