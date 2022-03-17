@@ -103,15 +103,10 @@ func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression,
 	var child LogicalPlan
 	var retConditions []expression.Expression
 	var originConditions []expression.Expression
-	if p.buildByHaving {
-		retConditions, child = p.children[0].PredicatePushDown(predicates, opt)
-		retConditions = append(retConditions, p.Conditions...)
-	} else {
-		canBePushDown, canNotBePushDown := splitSetGetVarFunc(p.Conditions)
-		originConditions = canBePushDown
-		retConditions, child = p.children[0].PredicatePushDown(append(canBePushDown, predicates...), opt)
-		retConditions = append(retConditions, canNotBePushDown...)
-	}
+	canBePushDown, canNotBePushDown := splitSetGetVarFunc(p.Conditions)
+	originConditions = canBePushDown
+	retConditions, child = p.children[0].PredicatePushDown(append(canBePushDown, predicates...), opt)
+	retConditions = append(retConditions, canNotBePushDown...)
 	if len(retConditions) > 0 {
 		p.Conditions = expression.PropagateConstant(p.ctx, retConditions)
 		// Return table dual when filter is constant false or null.
@@ -444,6 +439,7 @@ func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression, 
 	return nil, p
 }
 
+// pushDownPredicatesForAggregation split a condition to two parts, can be pushed-down or can not be pushed-down below aggregation.
 func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) ([]expression.Expression, []expression.Expression) {
 	var condsToPush []expression.Expression
 	var ret []expression.Expression
@@ -475,6 +471,12 @@ func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.E
 	return condsToPush, ret
 }
 
+// pushDownPredicatesForAggregation split a CNF condition to two parts, can be pushed-down or can not be pushed-down below aggregation.
+// It would consider the CNF.
+// For example,
+// (a > 1 or avg(b) > 1) and (a < 3), and `avg(b) > 1` can't be pushed-down.
+// Then condsToPush: (a < 3) and (a>1 or 1), ret: a > 1 or avg(b) > 1
+// TODO: simplify condsToPush to a < 3.
 func (la *LogicalAggregation) pushDownCNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) ([]expression.Expression, []expression.Expression) {
 	var condsToPush []expression.Expression
 	var ret []expression.Expression
@@ -494,6 +496,11 @@ func (la *LogicalAggregation) pushDownCNFPredicatesForAggregation(cond expressio
 	return condsToPush, ret
 }
 
+// pushDownDNFPredicatesForAggregation split a DNF condition to two parts, can be pushed-down or can not be pushed-down below aggregation.
+// It would consider the DNF.
+// For example,
+// (a > 1 and avg(b) > 1) or (a < 3), and `avg(b) > 1` can't be pushed-down.
+// Then condsToPush: (a < 3) and (a > 1), ret: (a > 1 and avg(b) > 1) or (a < 3)
 func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) ([]expression.Expression, []expression.Expression) {
 	var condsToPush []expression.Expression
 	var ret []expression.Expression
@@ -506,6 +513,8 @@ func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expressio
 		if len(condsToPushForItem) > 0 {
 			condsToPush = append(condsToPush, expression.ComposeCNFCondition(la.ctx, condsToPushForItem...))
 		} else {
+			// OR TRUE, construct a TRUE condition.
+			// TODO: simplify the whole condition since it's always true.
 			condsToPush = append(condsToPush, expression.NewOne())
 		}
 		if len(retForItem) > 0 {
@@ -515,8 +524,10 @@ func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expressio
 	dnfPushDownCond := expression.ComposeDNFCondition(la.ctx, condsToPush...)
 	dnfPushDownCond = expression.FoldConstant(dnfPushDownCond)
 	if len(ret) == 0 {
+		// All the condition can be pushed down.
 		return []expression.Expression{dnfPushDownCond}, ret
 	}
+	// Some condition can't be pushed down, we need to keep all the condition.
 	return []expression.Expression{dnfPushDownCond}, []expression.Expression{cond}
 }
 
@@ -528,10 +539,15 @@ func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expressi
 		exprsOriginal = append(exprsOriginal, fun.Args[0])
 	}
 	groupByColumns := expression.NewSchema(la.GetGroupByCols()...)
+	// It's almost the same as pushDownCNFPredicatesForAggregation, except that the condition is a slice.
 	for _, cond := range predicates {
 		subCondsToPush, subRet := la.pushDownDNFPredicatesForAggregation(cond, groupByColumns, exprsOriginal)
-		condsToPush = append(condsToPush, subCondsToPush...)
-		ret = append(ret, subRet...)
+		if len(subCondsToPush) > 0 {
+			condsToPush = append(condsToPush, subCondsToPush...)
+		}
+		if len(subRet) > 0 {
+			ret = append(ret, subRet...)
+		}
 	}
 	la.baseLogicalPlan.PredicatePushDown(condsToPush, opt)
 	return ret, la
