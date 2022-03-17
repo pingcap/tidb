@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/sessionctx"
@@ -1138,4 +1139,11 @@ func TestUpgradeVersion86(t *testing.T) {
 	require.Equal(t, 1, req.NumRows())
 	row = req.GetRow(0)
 	require.Equal(t, int64(1), row.GetInt64(0))
+
+	storeWithePD, ok := store.(kv.StorageWithPD)
+	require.True(t, ok)
+	items, err := storeWithePD.GetPDClient().LoadGlobalConfig(ctx, []string{"enable_resource_metering"})
+	require.NoError(t, err)
+	require.Equal(t, 1, len(items))
+	require.Equal(t, "true", items[0].Value)
 }
