@@ -457,9 +457,6 @@ type LogicalSelection struct {
 	// but after we converted to CNF(Conjunctive normal form), it can be
 	// split into a list of AND conditions.
 	Conditions []expression.Expression
-
-	// having selection can't be pushed down, because it must above the aggregation.
-	buildByHaving bool
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -1288,6 +1285,9 @@ type CTEClass struct {
 	LimitBeg  uint64
 	LimitEnd  uint64
 	IsInApply bool
+	// pushDownPredicates may be push-downed by different references.
+	pushDownPredicates []expression.Expression
+	ColumnMap          map[string]*expression.Column
 }
 
 // LogicalCTE is for CTE.

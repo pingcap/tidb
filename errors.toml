@@ -1371,6 +1371,11 @@ error = '''
 data inconsistency in table: %s, index: %s, col: %s, handle: %#v, index-values:%#v != record-values:%#v, compare err:%#v
 '''
 
+["executor:8142"]
+error = '''
+modifying %s will require SET GLOBAL in a future version of TiDB
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s
