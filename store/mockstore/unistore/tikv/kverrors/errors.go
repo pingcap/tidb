@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package tikv
+package kverrors
 
 import (
 	"encoding/hex"
@@ -64,11 +64,11 @@ var (
 
 // ErrInvalidOp is returned when an operation cannot be completed.
 type ErrInvalidOp struct {
-	op kvrpcpb.Op
+	Op kvrpcpb.Op
 }
 
 func (e ErrInvalidOp) Error() string {
-	return fmt.Sprintf("invalid op: %s", e.op.String())
+	return fmt.Sprintf("invalid op: %s", e.Op.String())
 }
 
 // ErrAlreadyCommitted is returned specially when client tries to rollback a

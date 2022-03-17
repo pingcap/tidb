@@ -169,7 +169,9 @@ func (ts *TiDBStatement) Close() error {
 			if err != nil {
 				return err
 			}
-			ts.ctx.PreparedPlanCache().Delete(cacheKey)
+			if !ts.ctx.GetSessionVars().IgnorePreparedCacheCloseStmt { // keep the plan in cache
+				ts.ctx.PreparedPlanCache().Delete(cacheKey)
+			}
 		}
 		ts.ctx.GetSessionVars().RemovePreparedStmt(ts.id)
 	}

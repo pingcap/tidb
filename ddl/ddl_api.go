@@ -4721,7 +4721,7 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 			WarningsCount: make(map[errors.ErrorID]int64),
 			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
-		Args: []interface{}{&newCol, oldColName, spec.Position, 0},
+		Args: []interface{}{&newCol, oldColName, spec.Position, 0, 0},
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
@@ -6917,6 +6917,7 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("table too large")
 	}
 
+	ddlQuery, _ := ctx.Value(sessionctx.QueryString).(string)
 	// Initialize the cached table meta lock info in `mysql.table_cache_meta`.
 	// The operation shouldn't fail in most cases, and if it does, return the error directly.
 	// This DML and the following DDL is not atomic, that's not a problem.
@@ -6925,6 +6926,7 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 	if err != nil {
 		return errors.Trace(err)
 	}
+	ctx.SetValue(sessionctx.QueryString, ddlQuery)
 
 	job := &model.Job{
 		SchemaID:   schema.ID,

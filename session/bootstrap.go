@@ -581,11 +581,13 @@ const (
 	version83 = 83
 	// version84 adds the tables mysql.stats_meta_history
 	version84 = 84
+	// version85 updates bindings with status 'using' in mysql.bind_info table to 'enabled' status
+	version85 = 85
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version84
+var currentBootstrapVersion int64 = version85
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -673,6 +675,7 @@ var (
 		upgradeToVer82,
 		upgradeToVer83,
 		upgradeToVer84,
+		upgradeToVer85,
 	}
 )
 
@@ -1740,6 +1743,13 @@ func upgradeToVer84(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateStatsMetaHistory)
+}
+
+func upgradeToVer85(s Session, ver int64) {
+	if ver >= version85 {
+		return
+	}
+	mustExecute(s, fmt.Sprintf("UPDATE HIGH_PRIORITY mysql.bind_info SET status= '%s' WHERE status = '%s'", bindinfo.Enabled, bindinfo.Using))
 }
 
 func writeOOMAction(s Session) {
