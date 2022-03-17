@@ -62,7 +62,7 @@ func main() {
 			return errors.Trace(err)
 		}
 
-		query := fmt.Sprintf("insert into %s values('aaaaaaaaaa')", table)
+		query := fmt.Sprintf("insert into %s values('aaaaaaaaaa')", table) // nolint:gosec
 		for i := 1; i < 10000; i++ {
 			query += ",('aaaaaaaaaa')"
 		}

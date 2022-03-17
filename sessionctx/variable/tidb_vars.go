@@ -133,6 +133,9 @@ const (
 	// TiDBOptimizerSelectivityLevel is used to control the selectivity estimation level.
 	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
 
+	// TiDBOptimizerEnableNewOnlyFullGroupByCheck is used to open the newly only_full_group_by check by maintaining functional dependency.
+	TiDBOptimizerEnableNewOnlyFullGroupByCheck = "tidb_enable_new_only_full_group_by_check"
+
 	// TiDBTxnMode is used to control the transaction behavior.
 	TiDBTxnMode = "tidb_txn_mode"
 
@@ -593,6 +596,9 @@ const (
 	// TiDBTmpTableMaxSize indicates the max memory size of temporary tables.
 	TiDBTmpTableMaxSize = "tidb_tmp_table_max_size"
 
+	// TiDBEnableLegacyInstanceScope indicates if instance scope can be set with SET SESSION.
+	TiDBEnableLegacyInstanceScope = "tidb_enable_legacy_instance_scope"
+
 	// TiDBTableCacheLease indicates the read lock lease of a cached table.
 	TiDBTableCacheLease = "tidb_table_cache_lease"
 
@@ -644,6 +650,8 @@ const (
 	TiDBStatsLoadPseudoTimeout = "tidb_stats_load_pseudo_timeout"
 	// TiDBMemQuotaBindingCache indicates the memory quota for the bind cache.
 	TiDBMemQuotaBindingCache = "tidb_mem_quota_binding_cache"
+	// TiDBRCReadCheckTS indicates the tso optimization for read-consistency read is enabled.
+	TiDBRCReadCheckTS = "tidb_rc_read_check_ts"
 )
 
 // TiDB intentional limits
@@ -714,6 +722,7 @@ const (
 	DefBroadcastJoinThresholdSize         = 100 * 1024 * 1024
 	DefBroadcastJoinThresholdCount        = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel      = 0
+	DefTiDBOptimizerEnableNewOFGB         = false
 	DefTiDBAllowBatchCop                  = 1
 	DefTiDBAllowMPPExecution              = true
 	DefTiDBHashExchangeWithNewCollation   = true
@@ -798,6 +807,7 @@ const (
 	DefTiDBStmtSummaryMaxSQLLength        = 4096
 	DefTiDBCapturePlanBaseline            = Off
 	DefTiDBEnableIndexMerge               = true
+	DefEnableLegacyInstanceScope          = true
 	DefTiDBTableCacheLease                = 3 // 3s
 	DefTiDBPersistAnalyzeOptions          = true
 	DefTiDBEnableColumnTracking           = false
@@ -808,6 +818,7 @@ const (
 	DefTiDBTxnAssertionLevel              = AssertionOffStr
 	DefTiDBIgnorePreparedCacheCloseStmt   = false
 	DefTiDBBatchPendingTiFlashCount       = 4000
+	DefRCReadCheckTS                      = false
 	DefTiDBEnableConcurrencyDDL           = true
 )
 

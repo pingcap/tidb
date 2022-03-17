@@ -97,16 +97,16 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 	// Table t1 is not exist.
 	testFilter, err := filter.Parse([]string{"test.t1"})
 	require.NoError(t, err)
-	_, backupSchemas, err := backup.BuildBackupRangeAndSchema(
-		m.Storage, testFilter, math.MaxUint64)
+	_, backupSchemas, _, err := backup.BuildBackupRangeAndSchema(
+		m.Storage, testFilter, math.MaxUint64, false)
 	require.NoError(t, err)
 	require.Nil(t, backupSchemas)
 
 	// Database is not exist.
 	fooFilter, err := filter.Parse([]string{"foo.t1"})
 	require.NoError(t, err)
-	_, backupSchemas, err = backup.BuildBackupRangeAndSchema(
-		m.Storage, fooFilter, math.MaxUint64)
+	_, backupSchemas, _, err = backup.BuildBackupRangeAndSchema(
+		m.Storage, fooFilter, math.MaxUint64, false)
 	require.NoError(t, err)
 	require.Nil(t, backupSchemas)
 
@@ -114,8 +114,8 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 	// Filter out system tables manually.
 	noFilter, err := filter.Parse([]string{"*.*", "!mysql.*"})
 	require.NoError(t, err)
-	_, backupSchemas, err = backup.BuildBackupRangeAndSchema(
-		m.Storage, noFilter, math.MaxUint64)
+	_, backupSchemas, _, err = backup.BuildBackupRangeAndSchema(
+		m.Storage, noFilter, math.MaxUint64, false)
 	require.NoError(t, err)
 	require.Nil(t, backupSchemas)
 
@@ -123,11 +123,15 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1 (a int);")
 	tk.MustExec("insert into t1 values (10);")
+	tk.MustExec("create placement policy fivereplicas followers=4;")
 
-	_, backupSchemas, err = backup.BuildBackupRangeAndSchema(
-		m.Storage, testFilter, math.MaxUint64)
+	var policies []*backuppb.PlacementPolicy
+	_, backupSchemas, policies, err = backup.BuildBackupRangeAndSchema(
+		m.Storage, testFilter, math.MaxUint64, false)
 	require.NoError(t, err)
 	require.Equal(t, 1, backupSchemas.Len())
+	// we expect no policies collected, because it's not full backup.
+	require.Equal(t, 0, len(policies))
 	updateCh := new(simpleProgress)
 	skipChecksum := false
 	es := GetRandomStorage(t)
@@ -155,10 +159,12 @@ func TestBuildBackupRangeAndSchema(t *testing.T) {
 	tk.MustExec("insert into t2 values (10);")
 	tk.MustExec("insert into t2 values (11);")
 
-	_, backupSchemas, err = backup.BuildBackupRangeAndSchema(
-		m.Storage, noFilter, math.MaxUint64)
+	_, backupSchemas, policies, err = backup.BuildBackupRangeAndSchema(
+		m.Storage, noFilter, math.MaxUint64, true)
 	require.NoError(t, err)
 	require.Equal(t, 2, backupSchemas.Len())
+	// we expect the policy fivereplicas collected in full backup.
+	require.Equal(t, 1, len(policies))
 	updateCh.reset()
 
 	es2 := GetRandomStorage(t)
@@ -204,7 +210,7 @@ func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
 	f, err := filter.Parse([]string{"test.t3"})
 	require.NoError(t, err)
 
-	_, backupSchemas, err := backup.BuildBackupRangeAndSchema(m.Storage, f, math.MaxUint64)
+	_, backupSchemas, _, err := backup.BuildBackupRangeAndSchema(m.Storage, f, math.MaxUint64, false)
 	require.NoError(t, err)
 	require.Equal(t, 1, backupSchemas.Len())
 
@@ -238,7 +244,7 @@ func TestBuildBackupRangeAndSchemaWithBrokenStats(t *testing.T) {
 	// recover the statistics.
 	tk.MustExec("analyze table t3;")
 
-	_, backupSchemas, err = backup.BuildBackupRangeAndSchema(m.Storage, f, math.MaxUint64)
+	_, backupSchemas, _, err = backup.BuildBackupRangeAndSchema(m.Storage, f, math.MaxUint64, false)
 	require.NoError(t, err)
 	require.Equal(t, 1, backupSchemas.Len())
 
@@ -280,7 +286,7 @@ func TestBackupSchemasForSystemTable(t *testing.T) {
 
 	f, err := filter.Parse([]string{"mysql.systable*"})
 	require.NoError(t, err)
-	_, backupSchemas, err := backup.BuildBackupRangeAndSchema(m.Storage, f, math.MaxUint64)
+	_, backupSchemas, _, err := backup.BuildBackupRangeAndSchema(m.Storage, f, math.MaxUint64, false)
 	require.NoError(t, err)
 	require.Equal(t, systemTablesCount, backupSchemas.Len())
 

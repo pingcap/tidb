@@ -16,8 +16,6 @@ package util
 
 import (
 	"sync"
-
-	"go.uber.org/atomic"
 )
 
 // WaitGroupWrapper is a wrapper for sync.WaitGroup
@@ -52,37 +50,4 @@ func (w *WaitGroupWrapper) RunWithRecover(exec func(), recoverFn func(r interfac
 		}()
 		exec()
 	}()
-}
-
-// NotifyErrorWaitGroupWrapper is a wrapper for sync.WaitGroup
-type NotifyErrorWaitGroupWrapper struct {
-	sync.WaitGroup
-	notify chan error
-	cnt    atomic.Uint64
-}
-
-// NewNotifyErrorWaitGroupWrapper is to create NotifyErrorWaitGroupWrapper
-func NewNotifyErrorWaitGroupWrapper(notify chan error) *NotifyErrorWaitGroupWrapper {
-	return &NotifyErrorWaitGroupWrapper{
-		notify: notify,
-		cnt:    *atomic.NewUint64(0),
-	}
-}
-
-// Run runs a function in a goroutine, adds 1 to WaitGroup
-// and calls done when function returns. Please DO NOT use panic
-// in the cb function.
-func (w *NotifyErrorWaitGroupWrapper) Run(exec func()) {
-	w.Add(1)
-	old := w.cnt.Inc() - 1
-	go func(cnt uint64) {
-		defer func() {
-			w.Done()
-			if cnt == 0 {
-				w.Wait()
-				close(w.notify)
-			}
-		}()
-		exec()
-	}(old)
 }

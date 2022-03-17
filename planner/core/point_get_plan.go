@@ -117,7 +117,7 @@ func (p *PointGetPlan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.Execu
 
 // Clone implements PhysicalPlan interface.
 func (p *PointGetPlan) Clone() (PhysicalPlan, error) {
-	return nil, errors.Errorf("%T doesn't support cloning.", p)
+	return nil, errors.Errorf("%T doesn't support cloning", p)
 }
 
 // ExplainInfo implements Plan interface.

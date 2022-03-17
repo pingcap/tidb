@@ -1,0 +1,21 @@
+drop database if exists agg_predicate_pushdown;
+create database agg_predicate_pushdown;
+
+create table t(a int, b int, c int);
+
+desc format='brief' select a, b, avg(c) from t group by a, b, c having
+(a > 1) and (a > 2) and 1 and (b > 2) and (avg(c) > 3);
+
+desc format='brief' select a, b, avg(c) from t group by a, b, c having
+(a > 1 or b > 2) and (a > 2 or b < 1) and 1 and (b > 2) and (avg(c) > 3);
+
+desc format='brief' select a, b, avg(c) from t group by a, b, c having
+(a > 1 and b > 2) or (a > 2 and b < 1) or (b > 2 and avg(c) > 3);
+
+desc format='brief' select a, b, avg(c) from t group by a, b, c having
+(a > 1 or avg(c) > 1) and (a < 3);
+
+desc format='brief' select a, b, avg(c) from t group by a, b, c having
+(a > 1 and avg(c) > 1) or (a < 3);
+
+use test;

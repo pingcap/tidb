@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/sessionctx"
@@ -1074,4 +1075,80 @@ func TestIndexMergeUpgradeFrom400To540(t *testing.T) {
 			}
 		}()
 	}
+}
+
+func TestUpgradeToVer85(t *testing.T) {
+	ctx := context.Background()
+	store, dom := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+	se := createSessionAndSetID(t, store)
+	mustExec(t, se, `insert into mysql.bind_info values('select * from t', 'select /*+ use_index(t, idx_a)*/ * from t', 'test', 'using', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
+	mustExec(t, se, `insert into mysql.bind_info values('select * from t1', 'select /*+ use_index(t1, idx_a)*/ * from t1', 'test', 'enabled', '2021-01-05 14:50:58.257', '2021-01-05 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
+	mustExec(t, se, `insert into mysql.bind_info values('select * from t2', 'select /*+ use_index(t2, idx_a)*/ * from t2', 'test', 'disabled', '2021-01-06 14:50:58.257', '2021-01-06 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
+	mustExec(t, se, `insert into mysql.bind_info values('select * from t3', 'select /*+ use_index(t3, idx_a)*/ * from t3', 'test', 'deleted', '2021-01-07 14:50:58.257', '2021-01-07 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
+	mustExec(t, se, `insert into mysql.bind_info values('select * from t4', 'select /*+ use_index(t4, idx_a)*/ * from t4', 'test', 'invalid', '2021-01-08 14:50:58.257', '2021-01-08 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
+	upgradeToVer85(se, version84)
+
+	r := mustExec(t, se, `select count(*) from mysql.bind_info where status = 'enabled'`)
+	req := r.NewChunk(nil)
+	require.NoError(t, r.Next(ctx, req))
+	require.Equal(t, 1, req.NumRows())
+	row := req.GetRow(0)
+	require.Equal(t, int64(2), row.GetInt64(0))
+
+	require.NoError(t, r.Close())
+	mustExec(t, se, "delete from mysql.bind_info where default_db = 'test'")
+}
+
+func TestUpgradeVersion86(t *testing.T) {
+	ctx := context.Background()
+	store, dom := createStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	seV85 := createSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(85))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	mustExec(t, seV85, "update mysql.tidb set variable_value='85' where variable_name='tidb_server_version'")
+	mustExec(t, seV85, "set @@global.tidb_enable_top_sql = 0")
+	mustExec(t, seV85, "commit")
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV85)
+	require.NoError(t, err)
+	require.Equal(t, int64(85), ver)
+	// Top SQL is disabled in old version TiDB by default.
+	r := mustExec(t, seV85, `SELECT @@global.tidb_enable_top_sql`)
+	req := r.NewChunk(nil)
+	require.NoError(t, r.Next(ctx, req))
+	require.Equal(t, 1, req.NumRows())
+	row := req.GetRow(0)
+	require.Equal(t, int64(0), row.GetInt64(0))
+	dom.Close()
+
+	// after upgrade.
+	domV86, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domV86.Close()
+	seV86 := createSessionAndSetID(t, store)
+	ver, err = getBootstrapVersion(seV86)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+	r = mustExec(t, seV86, `SELECT @@global.tidb_enable_top_sql`)
+	req = r.NewChunk(nil)
+	require.NoError(t, r.Next(ctx, req))
+	require.Equal(t, 1, req.NumRows())
+	row = req.GetRow(0)
+	require.Equal(t, int64(1), row.GetInt64(0))
+
+	storeWithePD, ok := store.(kv.StorageWithPD)
+	require.True(t, ok)
+	items, err := storeWithePD.GetPDClient().LoadGlobalConfig(ctx, []string{"enable_resource_metering"})
+	require.NoError(t, err)
+	require.Equal(t, 1, len(items))
+	require.Equal(t, "true", items[0].Value)
 }

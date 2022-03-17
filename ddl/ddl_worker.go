@@ -43,8 +43,10 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -823,6 +825,19 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}, level
 	return nil
 }
 
+func (w *worker) setResourceGroupTaggerForTopSQL(txn kv.Transaction) {
+	if !topsqlstate.TopSQLEnabled() || w.cacheDigest == nil {
+		return
+	}
+
+	digest := w.cacheDigest
+	tagger := func(req *tikvrpc.Request) {
+		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, nil,
+			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
+	}
+	txn.SetOption(kv.ResourceGroupTagger, tikvrpc.ResourceGroupTagger(tagger))
+}
+
 // handleDDLJobQueue handles DDL jobs in DDL Job queue.
 func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 	once := true
@@ -858,6 +873,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			}
 
 			w.setDDLLabelForTopSQL(job)
+			w.setResourceGroupTaggerForTopSQL(txn)
 			if isDone, err1 := isDependencyJobDone(t, job); err1 != nil || !isDone {
 				return errors.Trace(err1)
 			}
