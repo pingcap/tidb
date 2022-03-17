@@ -165,6 +165,7 @@ func TestAdminCheckIndexInCacheTable(t *testing.T) {
 	tk.MustExec("admin check table cache_admin_test;")
 	tk.MustExec("admin check index cache_admin_test c1;")
 	tk.MustExec("admin check index cache_admin_test c2;")
+	tk.MustExec("alter table cache_admin_test nocache;")
 	tk.MustExec("drop table if exists cache_admin_test;")
 
 	tk.MustExec(`drop table if exists check_index_test;`)
@@ -175,6 +176,7 @@ func TestAdminCheckIndexInCacheTable(t *testing.T) {
 	result.Check(testkit.Rows("1 ef 3", "2 cd 2"))
 	result = tk.MustQuery("admin check index check_index_test a_b (3, 5);")
 	result.Check(testkit.Rows("-1 hi 4", "1 ef 3"))
+	tk.MustExec("alter table check_index_test nocache;")
 	tk.MustExec("drop table if exists check_index_test;")
 
 	tk.MustExec("drop table if exists cache_admin_table_with_index_test;")
@@ -185,8 +187,12 @@ func TestAdminCheckIndexInCacheTable(t *testing.T) {
 	tk.MustExec("alter table cache_admin_table_without_index_test cache")
 	tk.MustExec("admin checksum table cache_admin_table_with_index_test;")
 	tk.MustExec("admin checksum table cache_admin_table_without_index_test;")
+
+	tk.MustExec("alter table cache_admin_table_with_index_test nocache;")
+	tk.MustExec("alter table cache_admin_table_without_index_test nocache;")
 	tk.MustExec("drop table if exists cache_admin_table_with_index_test,cache_admin_table_without_index_test;")
 }
+
 func TestAdminRecoverIndex(t *testing.T) {
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
