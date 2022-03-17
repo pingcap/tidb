@@ -224,6 +224,7 @@ PARTITION p1 VALUES LESS THAN (1000))
 		newPolicy.Name = model.NewCIStr("p2")
 		newPolicy.Followers = 2
 		newPolicy.LearnerConstraints = "[+zone=z2]"
+		tk.Session().SetValue(sessionctx.QueryString, "skip")
 		err := dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), onExist)
 		require.NoError(t, err)
 		// old policy should not be changed
@@ -245,6 +246,7 @@ PARTITION p1 VALUES LESS THAN (1000))
 	// create same name policy with on exists error
 	newPolicy := oldPolicy.Clone()
 	newPolicy.ID = oldPolicy.ID + 1
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err := dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistError)
 	require.Error(t, err)
 	require.True(t, infoschema.ErrPlacementPolicyExists.Equal(err))
@@ -256,6 +258,7 @@ PARTITION p1 VALUES LESS THAN (1000))
 	// create same name policy with on exist ignore
 	newPolicy = oldPolicy.Clone()
 	newPolicy.ID = oldPolicy.ID + 1
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistIgnore)
 	require.NoError(t, err)
 	found, ok = dom.InfoSchema().PolicyByName(model.NewCIStr("p"))
@@ -268,6 +271,7 @@ PARTITION p1 VALUES LESS THAN (1000))
 	newPolicy.ID = oldPolicy.ID + 1
 	newPolicy.Followers = 1
 	newPolicy.LearnerConstraints = "[+zone=z1]"
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistReplace)
 	require.NoError(t, err)
 	found, ok = dom.InfoSchema().PolicyByName(model.NewCIStr("p"))
@@ -700,6 +704,7 @@ func TestCreateTableWithInfoPlacement(t *testing.T) {
 	tk.MustExec("alter table t1 placement policy='default'")
 	tk.MustExec("drop placement policy p1")
 	tk.MustExec("create placement policy p1 followers=2")
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	require.Nil(t, dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test2"), tbl, ddl.OnExistError))
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
@@ -720,6 +725,7 @@ func TestCreateTableWithInfoPlacement(t *testing.T) {
 	// Test policy not exists
 	tbl2.Name = model.NewCIStr("t3")
 	tbl2.PlacementPolicyRef.Name = model.NewCIStr("pxx")
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test2"), tbl2, ddl.OnExistError)
 	require.Equal(t, "[schema:8239]Unknown placement policy 'pxx'", err.Error())
 }
@@ -751,6 +757,7 @@ func TestCreateSchemaWithInfoPlacement(t *testing.T) {
 	tk.MustExec("alter database test2 placement policy='default'")
 	tk.MustExec("drop placement policy p1")
 	tk.MustExec("create placement policy p1 followers=2")
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	require.Nil(t, dom.DDL().CreateSchemaWithInfo(tk.Session(), db2, ddl.OnExistError))
 	tk.MustQuery("show create database test2").Check(testkit.Rows("test2 CREATE DATABASE `test2` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
 	tk.MustQuery("show create database test3").Check(testkit.Rows("test3 CREATE DATABASE `test3` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![placement] PLACEMENT POLICY=`p1` */"))
@@ -767,6 +774,7 @@ func TestCreateSchemaWithInfoPlacement(t *testing.T) {
 	// Test policy not exists
 	db2.Name = model.NewCIStr("test4")
 	db2.PlacementPolicyRef.Name = model.NewCIStr("p2")
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err := dom.DDL().CreateSchemaWithInfo(tk.Session(), db2, ddl.OnExistError)
 	require.Equal(t, "[schema:8239]Unknown placement policy 'p2'", err.Error())
 }
