@@ -48,17 +48,3 @@ func TestWaitGroupWrapperRunWithRecover(t *testing.T) {
 	wg.Wait()
 	require.Equal(t, expect, val.Load())
 }
-
-func TestNotifyErrorWaitGroupWrapper(t *testing.T) {
-	var expect int32 = 4
-	var errCh = make(chan error, 1)
-	var val atomic.Int32
-	var wg = NewNotifyErrorWaitGroupWrapper(errCh)
-	for i := int32(0); i < expect; i++ {
-		wg.Run(func() {
-			val.Inc()
-		})
-	}
-	<-errCh
-	require.Equal(t, expect, val.Load())
-}
