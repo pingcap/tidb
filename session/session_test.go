@@ -6088,6 +6088,10 @@ func (s *testSessionSuite) TestWriteOnMultipleCachedTable(c *C) {
 
 	tk.MustQuery("select * from ct1").Check(testkit.Rows("3 4"))
 	tk.MustQuery("select * from ct2").Check(testkit.Rows("5 6"))
+
+	// cleanup
+	tk.MustExec("alter table ct1 nocache")
+	tk.MustExec("alter table ct2 nocache")
 }
 
 func (s *testSessionSuite) TestForbidSettingBothTSVariable(c *C) {
