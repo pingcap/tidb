@@ -103,7 +103,7 @@ func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, newLease
 	h.Lock()
 	defer h.Unlock()
 	succ := false
-	err := h.runInTxn(ctx, false, func(ctx context.Context, now uint64) error {
+	err := h.runInTxn(ctx, func(ctx context.Context, now uint64) error {
 		lockType, lease, _, err := h.loadRow(ctx, tid)
 		if err != nil {
 			return errors.Trace(err)
@@ -155,7 +155,7 @@ func (h *stateRemoteHandle) LockForWrite(ctx context.Context, tid int64, leaseDu
 }
 
 func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, leaseDuration time.Duration) (waitAndRetry time.Duration, ts uint64, err error) {
-	err = h.runInTxn(ctx, true, func(ctx context.Context, now uint64) error {
+	err = h.runInTxn(ctx, func(ctx context.Context, now uint64) error {
 		lockType, lease, oldReadLease, err := h.loadRow(ctx, tid)
 		if err != nil {
 			return errors.Trace(err)
@@ -226,7 +226,7 @@ func (h *stateRemoteHandle) RenewReadLease(ctx context.Context, tid int64, oldLo
 	h.Lock()
 	defer h.Unlock()
 	var newLease uint64
-	err := h.runInTxn(ctx, false, func(ctx context.Context, now uint64) error {
+	err := h.runInTxn(ctx, func(ctx context.Context, now uint64) error {
 		lockType, remoteLease, _, err := h.loadRow(ctx, tid)
 		if err != nil {
 			return errors.Trace(err)
@@ -274,7 +274,7 @@ func (h *stateRemoteHandle) RenewWriteLease(ctx context.Context, tid int64, newL
 	h.Lock()
 	defer h.Unlock()
 	var succ bool
-	err := h.runInTxn(ctx, true, func(ctx context.Context, now uint64) error {
+	err := h.runInTxn(ctx, func(ctx context.Context, now uint64) error {
 		lockType, oldLease, _, err := h.loadRow(ctx, tid)
 		if err != nil {
 			return errors.Trace(err)
@@ -300,13 +300,8 @@ func (h *stateRemoteHandle) RenewWriteLease(ctx context.Context, tid int64, newL
 	return succ, err
 }
 
-func (h *stateRemoteHandle) beginTxn(ctx context.Context, pess bool) error {
-	var err error
-	if pess {
-		_, err = h.execSQL(ctx, "begin pessimistic")
-	} else {
-		_, err = h.execSQL(ctx, "begin optimistic")
-	}
+func (h *stateRemoteHandle) beginTxn(ctx context.Context) error {
+	_, err := h.execSQL(ctx, "begin optimistic")
 	return err
 }
 
@@ -320,8 +315,8 @@ func (h *stateRemoteHandle) rollbackTxn(ctx context.Context) error {
 	return err
 }
 
-func (h *stateRemoteHandle) runInTxn(ctx context.Context, pessimistic bool, fn func(ctx context.Context, txnTS uint64) error) error {
-	err := h.beginTxn(ctx, pessimistic)
+func (h *stateRemoteHandle) runInTxn(ctx context.Context, fn func(ctx context.Context, txnTS uint64) error) error {
+	err := h.beginTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
