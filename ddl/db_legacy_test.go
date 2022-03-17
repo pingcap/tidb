@@ -619,6 +619,10 @@ func (t *testDDLJobIDCallback) OnJobUpdated(job *model.Job) {
 	}
 }
 
+func (t *testDDLJobIDCallback) Clear() {
+	t.jobID = 0
+}
+
 func wrapJobIDExtCallback(oldCallback ddl.Callback) *testDDLJobIDCallback {
 	return &testDDLJobIDCallback{
 		Callback: oldCallback,

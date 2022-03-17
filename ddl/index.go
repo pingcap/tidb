@@ -740,8 +740,7 @@ func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Inde
 
 	var indexName model.CIStr
 	var ifExists bool
-	var placeholder interface{}
-	if err = job.DecodeArgs(&indexName, &placeholder, &placeholder, &ifExists); err != nil {
+	if err = job.DecodeArgs(&indexName, &ifExists); err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, false, errors.Trace(err)
 	}

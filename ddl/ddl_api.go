@@ -5767,7 +5767,7 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		SchemaName: schema.Name.L,
 		Type:       jobTp,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{indexName, indexInfo.ID, nil /* partition IDs */, ifExists},
+		Args:       []interface{}{indexName, ifExists},
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)

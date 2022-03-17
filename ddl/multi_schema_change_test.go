@@ -49,11 +49,20 @@ func TestMultiSchemaChangeAddColumns(t *testing.T) {
 	tk.MustExec("insert into t values (1);")
 	tk.MustExec("alter table t add column (b int default 2, c int default 3);")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3"))
+
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b int, c int);")
 	tk.MustExec("insert into t values (1, 2, 3);")
 	tk.MustExec("alter table t add column (d int default 4, e int default 5);")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3 4 5"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int default 1);")
+	tk.MustExec("insert into t values ();")
+	tk.MustExec("alter table t add column if not exists (b int default 2, c int default 3);")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3"))
+	tk.MustExec("alter table t add column if not exists (c int default 3, d int default 4);")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3 4"))
 
 	// Test referencing previous column in multi-schema change is not supported.
 	tk.MustExec("drop table if exists t;")
@@ -339,30 +348,57 @@ func TestMultiSchemaChangeAddIndexes(t *testing.T) {
 }
 
 func TestMultiSchemaChangeDropIndexes(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
+	tk.MustExec("use test;")
+	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
+	getIndexID := func(name string) int64 {
+		tt, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		require.NoError(t, err)
+		for _, idx := range tt.Indices() {
+			if idx.Meta().Name.L == name {
+				return idx.Meta().ID
+			}
+		}
+		return -1
+	}
+
+	jobIDExt := wrapJobIDExtCallback(dom.DDL().GetHook())
+	dom.DDL().SetHook(jobIDExt)
 
 	// Test drop same index.
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int, b int, c int, index t(a))")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, c int, index t(a));")
 	tk.MustGetErrCode("alter table t drop index t, drop index t", errno.ErrUnsupportedDDLOperation)
 
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2));")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int, c1 int, c2 int, primary key(id) nonclustered, key i1(c1), key i2(c2), key i3(c1, c2));")
 	tk.MustExec("insert into t values (1, 2, 3);")
+	jobIDExt.Clear()
+	i1, i2 := getIndexID("i1"), getIndexID("i2")
 	tk.MustExec("alter table t drop index i1, drop index i2;")
 	tk.MustGetErrCode("select * from t use index(i1);", errno.ErrKeyDoesNotExist)
 	tk.MustGetErrCode("select * from t use index(i2);", errno.ErrKeyDoesNotExist)
+	checkDelRangeAdded(tk, jobIDExt.jobID, i1)
+	checkDelRangeAdded(tk, jobIDExt.jobID, i2)
+	jobIDExt.Clear()
+	pk, i3 := getIndexID("primary"), getIndexID("i3")
+	tk.MustExec("alter table t drop index i3, drop primary key;")
+	tk.MustGetErrCode("select * from t use index(primary);", errno.ErrKeyDoesNotExist)
+	tk.MustGetErrCode("select * from t use index(i3);", errno.ErrKeyDoesNotExist)
+	checkDelRangeAdded(tk, jobIDExt.jobID, pk)
+	checkDelRangeAdded(tk, jobIDExt.jobID, i3)
 
 	// Test drop index with drop column.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int default 1, b int default 2, c int default 3, index t(a))")
 	tk.MustExec("insert into t values ();")
+	jobIDExt.Clear()
+	idx := getIndexID("t")
 	tk.MustExec("alter table t drop index t, drop column a")
 	tk.MustGetErrCode("select * from t force index(t)", errno.ErrKeyDoesNotExist)
+	checkDelRangeAdded(tk, jobIDExt.jobID, idx)
 }
 
 func TestMultiSchemaChangeDropIndexesCancelled(t *testing.T) {

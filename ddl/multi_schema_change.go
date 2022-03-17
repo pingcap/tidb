@@ -173,7 +173,7 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 	case model.ActionDropColumn:
 		colName := job.Args[0].(model.CIStr)
 		info.DropColumns = append(info.DropColumns, colName)
-	case model.ActionDropIndex:
+	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		indexName := job.Args[0].(model.CIStr)
 		info.DropIndexes = append(info.DropIndexes, indexName)
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
