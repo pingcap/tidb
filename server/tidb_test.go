@@ -2316,3 +2316,64 @@ func TestLocalhostClientMapping(t *testing.T) {
 	err = dbSocket.Ping()
 	require.Errorf(t, err, "Connection successful without matching host for unix domain socket!")
 }
+
+func TestRcReadCheckTS(t *testing.T) {
+	ts, cleanup := createTidbTestSuite(t)
+	defer cleanup()
+
+	db, err := sql.Open("mysql", ts.getDSN())
+	require.NoError(t, err)
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+
+	db2, err := sql.Open("mysql", ts.getDSN())
+	require.NoError(t, err)
+	defer func() {
+		err := db2.Close()
+		require.NoError(t, err)
+	}()
+	tk2 := testkit.NewDBTestKit(t, db2)
+	tk2.MustExec("set @@tidb_enable_async_commit = 0")
+	tk2.MustExec("set @@tidb_enable_1pc = 0")
+
+	cli := newTestServerClient()
+
+	tk := testkit.NewDBTestKit(t, db)
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c1 int key, c2 int)")
+	tk.MustExec("insert into t1 values(1, 10), (2, 20), (3, 30)")
+
+	tk.MustExec(`set tidb_rc_read_check_ts = 'on';`)
+	tk.MustExec(`set tx_isolation = 'READ-COMMITTED';`)
+	tk.MustExec("begin pessimistic")
+	// Test point get retry.
+	rows := tk.MustQuery("select * from t1 where c1 = 1")
+	cli.checkRows(t, rows, "1 10")
+	tk2.MustExec("update t1 set c2 = c2 + 1")
+	rows = tk.MustQuery("select * from t1 where c1 = 1")
+	cli.checkRows(t, rows, "1 11")
+	// Test batch point get retry.
+	rows = tk.MustQuery("select * from t1 where c1 in (1, 3)")
+	cli.checkRows(t, rows, "1 11", "3 31")
+	tk2.MustExec("update t1 set c2 = c2 + 1")
+	rows = tk.MustQuery("select * from t1 where c1 in (1, 3)")
+	cli.checkRows(t, rows, "1 12", "3 32")
+	// Test scan retry.
+	rows = tk.MustQuery("select * from t1")
+	cli.checkRows(t, rows, "1 12", "2 22", "3 32")
+	tk2.MustExec("update t1 set c2 = c2 + 1")
+	rows = tk.MustQuery("select * from t1")
+	cli.checkRows(t, rows, "1 13", "2 23", "3 33")
+	// Test reverse scan retry.
+	rows = tk.MustQuery("select * from t1 order by c1 desc")
+	cli.checkRows(t, rows, "3 33", "2 23", "1 13")
+	tk2.MustExec("update t1 set c2 = c2 + 1")
+	rows = tk.MustQuery("select * from t1 order by c1 desc")
+	cli.checkRows(t, rows, "3 34", "2 24", "1 14")
+
+	// Test retry caused by ongoing prewrite lock.
+	// As the `defaultLockTTL` is 3s and it's difficult to change it here, the lock
+	// test is implemented in the uft test cases.
+}
