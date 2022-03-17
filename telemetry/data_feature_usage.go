@@ -149,9 +149,12 @@ type TemporaryOrCacheTableFeatureChecker interface {
 // TxnUsage records the usage info of transaction related features, including
 // async-commit, 1PC and counters of transactions committed with different protocols.
 type TxnUsage struct {
-	AsyncCommitUsed  bool                     `json:"asyncCommitUsed"`
-	OnePCUsed        bool                     `json:"onePCUsed"`
-	TxnCommitCounter metrics.TxnCommitCounter `json:"txnCommitCounter"`
+	AsyncCommitUsed     bool                     `json:"asyncCommitUsed"`
+	OnePCUsed           bool                     `json:"onePCUsed"`
+	TxnCommitCounter    metrics.TxnCommitCounter `json:"txnCommitCounter"`
+	MutationCheckerUsed bool                     `json:"mutationCheckerUsed"`
+	AssertionLevel      string                   `json:"assertionLevel"`
+	RcCheckTS           bool                     `json:"rcCheckTS"`
 }
 
 var initialTxnCommitCounter metrics.TxnCommitCounter
@@ -169,7 +172,19 @@ func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	}
 	curr := metrics.GetTxnCommitCounter()
 	diff := curr.Sub(initialTxnCommitCounter)
-	return &TxnUsage{asyncCommitUsed, onePCUsed, diff}
+	mutationCheckerUsed := false
+	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBEnableMutationChecker); err == nil {
+		mutationCheckerUsed = val == variable.On
+	}
+	assertionUsed := ""
+	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBTxnAssertionLevel); err == nil {
+		assertionUsed = val
+	}
+	rcCheckTSUsed := false
+	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBRCReadCheckTS); err == nil {
+		rcCheckTSUsed = val == variable.On
+	}
+	return &TxnUsage{asyncCommitUsed, onePCUsed, diff, mutationCheckerUsed, assertionUsed, rcCheckTSUsed}
 }
 
 func postReportTxnUsage() {

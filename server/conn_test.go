@@ -890,8 +890,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		tk.MustExec("DROP USER unativepassword")
 	}()
 
-	// 5.5, 5.6 or 5.7 client trying to authenticate with mysql_native_password, w/o password
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
+	// 5.7 or newer client trying to authenticate with mysql_native_password
 	cc := &clientConn{
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
@@ -910,8 +909,6 @@ func TestHandleAuthPlugin(t *testing.T) {
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
-	require.Equal(t, resp.Auth, []byte(mysql.AuthNativePassword))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/server/FakeAuthSwitch"))
 
 	// 8.0 or newer client trying to authenticate with caching_sha2_password
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))
