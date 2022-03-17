@@ -102,43 +102,6 @@ func testCreateColumn(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *mode
 	return job
 }
 
-func buildCreateColumnsJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNames []string,
-	positions []*ast.ColumnPosition, defaultValue interface{}) *model.Job {
-	colInfos := make([]*model.ColumnInfo, len(colNames))
-	offsets := make([]int, len(colNames))
-	ifNotExists := make([]bool, len(colNames))
-	for i, colName := range colNames {
-		col := &model.ColumnInfo{
-			Name:               model.NewCIStr(colName),
-			Offset:             len(tblInfo.Columns),
-			DefaultValue:       defaultValue,
-			OriginDefaultValue: defaultValue,
-		}
-		col.ID = allocateColumnID(tblInfo)
-		col.FieldType = *types.NewFieldType(mysql.TypeLong)
-		colInfos[i] = col
-	}
-
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionAddColumns,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{colInfos, positions, offsets, ifNotExists},
-	}
-	return job
-}
-
-func testCreateColumns(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
-	colNames []string, positions []*ast.ColumnPosition, defaultValue interface{}) *model.Job {
-	job := buildCreateColumnsJob(dbInfo, tblInfo, colNames, positions, defaultValue)
-	err := d.doDDLJob(ctx, job)
-	require.NoError(t, err)
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
-	return job
-}
-
 func buildDropColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string) *model.Job {
 	return &model.Job{
 		SchemaID:        dbInfo.ID,
@@ -152,35 +115,6 @@ func buildDropColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName 
 
 func testDropColumn(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string, isError bool) *model.Job {
 	job := buildDropColumnJob(dbInfo, tblInfo, colName)
-	err := d.doDDLJob(ctx, job)
-	if isError {
-		require.Error(t, err)
-		return nil
-	}
-	require.NoError(t, err)
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
-	return job
-}
-
-func buildDropColumnsJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNames []string) *model.Job {
-	columnNames := make([]model.CIStr, len(colNames))
-	ifExists := make([]bool, len(colNames))
-	for i, colName := range colNames {
-		columnNames[i] = model.NewCIStr(colName)
-	}
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionDropColumns,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{columnNames, ifExists},
-	}
-	return job
-}
-
-func testDropColumns(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNames []string, isError bool) *model.Job {
-	job := buildDropColumnsJob(dbInfo, tblInfo, colNames)
 	err := d.doDDLJob(ctx, job)
 	if isError {
 		require.Error(t, err)
@@ -933,92 +867,6 @@ func (s *testColumnSuiteToVerify) TestAddColumn() {
 	require.NoError(s.T(), err)
 }
 
-func (s *testColumnSuiteToVerify) TestAddColumns() {
-	d, err := testNewDDLAndStart(
-		context.Background(),
-		WithStore(s.store),
-		WithLease(testLease),
-	)
-	require.NoError(s.T(), err)
-	tblInfo, err := testTableInfo(d, "t", 3)
-	require.NoError(s.T(), err)
-	ctx := testNewContext(d)
-
-	err = ctx.NewTxn(context.Background())
-	require.NoError(s.T(), err)
-
-	testCreateTable(s.T(), ctx, d, s.dbInfo, tblInfo)
-	t := testGetTable(s.T(), d, s.dbInfo.ID, tblInfo.ID)
-
-	oldRow := types.MakeDatums(int64(1), int64(2), int64(3))
-	handle, err := t.AddRecord(ctx, oldRow)
-	require.NoError(s.T(), err)
-
-	txn, err := ctx.Txn(true)
-	require.NoError(s.T(), err)
-	err = txn.Commit(context.Background())
-	require.NoError(s.T(), err)
-
-	newColNames := []string{"c4,c5,c6"}
-	positions := make([]*ast.ColumnPosition, 3)
-	for i := range positions {
-		positions[i] = &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
-	}
-	defaultColValue := int64(4)
-
-	var mu sync.Mutex
-	var hookErr error
-	checkOK := false
-
-	tc := &TestDDLCallback{}
-	tc.onJobUpdated = func(job *model.Job) {
-		mu.Lock()
-		defer mu.Unlock()
-		if checkOK {
-			return
-		}
-
-		t, err1 := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
-		if err1 != nil {
-			hookErr = errors.Trace(err1)
-			return
-		}
-		for _, newColName := range newColNames {
-			newCol := table.FindCol(t.(*tables.TableCommon).Columns, newColName)
-			if newCol == nil {
-				return
-			}
-
-			err1 = s.checkAddColumn(newCol.State, d, tblInfo, handle, newCol, oldRow, defaultColValue)
-			if err1 != nil {
-				hookErr = errors.Trace(err1)
-				return
-			}
-
-			if newCol.State == model.StatePublic {
-				checkOK = true
-			}
-		}
-	}
-
-	d.SetHook(tc)
-
-	job := testCreateColumns(s.T(), ctx, d, s.dbInfo, tblInfo, newColNames, positions, defaultColValue)
-
-	testCheckJobDone(s.T(), d, job, true)
-	mu.Lock()
-	hErr := hookErr
-	ok := checkOK
-	mu.Unlock()
-	require.NoError(s.T(), hErr)
-	require.True(s.T(), ok)
-
-	job = testDropTable(s.T(), ctx, d, s.dbInfo, tblInfo)
-	testCheckJobDone(s.T(), d, job, false)
-	err = d.Stop()
-	require.NoError(s.T(), err)
-}
-
 func (s *testColumnSuiteToVerify) TestDropColumn() {
 	d, err := testNewDDLAndStart(
 		context.Background(),
@@ -1092,76 +940,6 @@ func (s *testColumnSuiteToVerify) TestDropColumn() {
 	err = txn.Commit(context.Background())
 	require.NoError(s.T(), err)
 
-	err = d.Stop()
-	require.NoError(s.T(), err)
-}
-
-func (s *testColumnSuiteToVerify) TestDropColumns() {
-	d, err := testNewDDLAndStart(
-		context.Background(),
-		WithStore(s.store),
-		WithLease(testLease),
-	)
-	require.NoError(s.T(), err)
-	tblInfo, err := testTableInfo(d, "t2", 4)
-	require.NoError(s.T(), err)
-	ctx := testNewContext(d)
-
-	err = ctx.NewTxn(context.Background())
-	require.NoError(s.T(), err)
-
-	testCreateTable(s.T(), ctx, d, s.dbInfo, tblInfo)
-	t := testGetTable(s.T(), d, s.dbInfo.ID, tblInfo.ID)
-
-	colNames := []string{"c3", "c4"}
-	defaultColValue := int64(4)
-	row := types.MakeDatums(int64(1), int64(2), int64(3))
-	_, err = t.AddRecord(ctx, append(row, types.NewDatum(defaultColValue)))
-	require.NoError(s.T(), err)
-
-	txn, err := ctx.Txn(true)
-	require.NoError(s.T(), err)
-	err = txn.Commit(context.Background())
-	require.NoError(s.T(), err)
-
-	checkOK := false
-	var hookErr error
-	var mu sync.Mutex
-
-	tc := &TestDDLCallback{}
-	tc.onJobUpdated = func(job *model.Job) {
-		mu.Lock()
-		defer mu.Unlock()
-		if checkOK {
-			return
-		}
-		t, err1 := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
-		if err1 != nil {
-			hookErr = errors.Trace(err1)
-			return
-		}
-		for _, colName := range colNames {
-			col := table.FindCol(t.(*tables.TableCommon).Columns, colName)
-			if col == nil {
-				checkOK = true
-				return
-			}
-		}
-	}
-
-	d.SetHook(tc)
-
-	job := testDropColumns(s.T(), ctx, d, s.dbInfo, tblInfo, colNames, false)
-	testCheckJobDone(s.T(), d, job, false)
-	mu.Lock()
-	hErr := hookErr
-	ok := checkOK
-	mu.Unlock()
-	require.NoError(s.T(), hErr)
-	require.True(s.T(), ok)
-
-	job = testDropTable(s.T(), ctx, d, s.dbInfo, tblInfo)
-	testCheckJobDone(s.T(), d, job, false)
 	err = d.Stop()
 	require.NoError(s.T(), err)
 }

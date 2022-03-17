@@ -250,10 +250,7 @@ func checkOperateSameColumn(info *model.MultiSchemaInfo) error {
 		return err
 	}
 
-	if err := checkColumns(info.RelativeColumns, false); err != nil {
-		return err
-	}
-	return nil
+	return checkColumns(info.RelativeColumns, false)
 }
 
 func checkMultiSchemaInfo(info *model.MultiSchemaInfo, t table.Table) error {
@@ -267,11 +264,7 @@ func checkMultiSchemaInfo(info *model.MultiSchemaInfo, t table.Table) error {
 		return err
 	}
 
-	err = checkAddColumnTooManyColumns(len(t.Cols()) + len(info.AddColumns) - len(info.DropColumns))
-	if err != nil {
-		return err
-	}
-	return nil
+	return checkAddColumnTooManyColumns(len(t.Cols()) + len(info.AddColumns) - len(info.DropColumns))
 }
 
 func appendMultiChangeWarningsToOwnerCtx(ctx sessionctx.Context, job *model.Job) {

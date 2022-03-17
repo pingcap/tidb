@@ -234,22 +234,3 @@ func testGetTable(t *testing.T, d *ddl, schemaID int64, tableID int64) table.Tab
 	require.NoError(t, err)
 	return tbl
 }
-
-// for drop indexes
-func createTestTableForDropIndexes(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, name string, num int) *model.TableInfo {
-	tableInfo, err := testTableInfo(d, name, num)
-	require.NoError(t, err)
-	var idxs []*model.IndexInfo
-	for i := 0; i < num; i++ {
-		idxName := model.NewCIStr(fmt.Sprintf("i%d", i+1))
-		idx := &model.IndexInfo{
-			Name:    idxName,
-			State:   model.StatePublic,
-			Columns: []*model.IndexColumn{{Name: model.NewCIStr(fmt.Sprintf("c%d", i+1))}},
-		}
-		idxs = append(idxs, idx)
-	}
-	tableInfo.Indices = idxs
-	testCreateTable(t, ctx, d, dbInfo, tableInfo)
-	return tableInfo
-}

@@ -179,21 +179,6 @@ func testAddColumn(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.D
 	return job
 }
 
-func testAddColumns(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, args []interface{}) *model.Job {
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionAddColumns,
-		Args:       args,
-		BinlogInfo: &model.HistoryInfo{},
-	}
-	err := d.doDDLJob(ctx, job)
-	require.NoError(t, err)
-	v := getSchemaVer(t, ctx)
-	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
-	return job
-}
-
 func buildDropIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName string) *model.Job {
 	tp := model.ActionDropIndex
 	if indexName == "primary" {

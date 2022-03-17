@@ -444,9 +444,6 @@ func TestColumnError(t *testing.T) {
 	col.FieldType = *types.NewFieldType(mysql.TypeLong)
 	pos := &ast.ColumnPosition{Tp: ast.ColumnPositionAfter, RelativeColumn: &ast.ColumnName{Name: model.NewCIStr("c5")}}
 
-	cols := &[]*model.ColumnInfo{col}
-	positions := &[]*ast.ColumnPosition{pos}
-
 	// for adding column
 	doDDLJobErr(t, -1, tblInfo.ID, model.ActionAddColumn, []interface{}{col, pos, 0}, ctx, d)
 	doDDLJobErr(t, dbInfo.ID, -1, model.ActionAddColumn, []interface{}{col, pos, 0}, ctx, d)
@@ -458,18 +455,6 @@ func TestColumnError(t *testing.T) {
 	doDDLJobErr(t, dbInfo.ID, -1, model.ActionDropColumn, []interface{}{col, pos, 0}, ctx, d)
 	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionDropColumn, []interface{}{0}, ctx, d)
 	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionDropColumn, []interface{}{model.NewCIStr("c5")}, ctx, d)
-
-	// for adding columns
-	doDDLJobErr(t, -1, tblInfo.ID, model.ActionAddColumns, []interface{}{cols, positions, 0}, ctx, d)
-	doDDLJobErr(t, dbInfo.ID, -1, model.ActionAddColumns, []interface{}{cols, positions, 0}, ctx, d)
-	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, []interface{}{0}, ctx, d)
-	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, []interface{}{cols, positions, 0}, ctx, d)
-
-	// for dropping columns
-	doDDLJobErr(t, -1, tblInfo.ID, model.ActionDropColumns, []interface{}{col, pos, 0}, ctx, d)
-	doDDLJobErr(t, dbInfo.ID, -1, model.ActionDropColumns, []interface{}{col, pos, 0}, ctx, d)
-	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionDropColumns, []interface{}{0}, ctx, d)
-	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionDropColumns, []interface{}{[]model.CIStr{model.NewCIStr("c5"), model.NewCIStr("c6")}, make([]bool, 2)}, ctx, d)
 }
 
 func (s *testDDLSerialSuiteToVerify) TestAddBatchJobError() {
@@ -640,35 +625,26 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionDropPrimaryKey, jobIDs: []int64{firstID + 37}, cancelRetErrs: noErrs, cancelState: model.StateWriteOnly},
 		{act: model.ActionDropPrimaryKey, jobIDs: []int64{firstID + 38}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 38)}, cancelState: model.StateDeleteOnly},
 
-		{act: model.ActionAddColumns, jobIDs: []int64{firstID + 39}, cancelRetErrs: noErrs, cancelState: model.StateDeleteOnly},
-		{act: model.ActionAddColumns, jobIDs: []int64{firstID + 40}, cancelRetErrs: noErrs, cancelState: model.StateWriteOnly},
-		{act: model.ActionAddColumns, jobIDs: []int64{firstID + 41}, cancelRetErrs: noErrs, cancelState: model.StateWriteReorganization},
-		{act: model.ActionAddColumns, jobIDs: []int64{firstID + 42}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 42)}, cancelState: model.StatePublic},
+		{act: model.ActionAlterIndexVisibility, jobIDs: []int64{firstID + 40}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionAlterIndexVisibility, jobIDs: []int64{firstID + 41}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 48)}, cancelState: model.StatePublic},
 
-		{act: model.ActionDropColumns, jobIDs: []int64{firstID + 43}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 43)}, cancelState: model.StateDeleteOnly},
-		{act: model.ActionDropColumns, jobIDs: []int64{firstID + 44}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 44)}, cancelState: model.StateWriteOnly},
-		{act: model.ActionDropColumns, jobIDs: []int64{firstID + 45}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 45)}, cancelState: model.StateWriteReorganization},
+		{act: model.ActionExchangeTablePartition, jobIDs: []int64{firstID + 47}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionExchangeTablePartition, jobIDs: []int64{firstID + 48}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 55)}, cancelState: model.StatePublic},
 
-		{act: model.ActionAlterIndexVisibility, jobIDs: []int64{firstID + 47}, cancelRetErrs: noErrs, cancelState: model.StateNone},
-		{act: model.ActionAlterIndexVisibility, jobIDs: []int64{firstID + 48}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 48)}, cancelState: model.StatePublic},
-
-		{act: model.ActionExchangeTablePartition, jobIDs: []int64{firstID + 54}, cancelRetErrs: noErrs, cancelState: model.StateNone},
-		{act: model.ActionExchangeTablePartition, jobIDs: []int64{firstID + 55}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 55)}, cancelState: model.StatePublic},
-
-		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 60}, cancelRetErrs: noErrs, cancelState: model.StateNone},
-		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 61}, cancelRetErrs: noErrs, cancelState: model.StateReplicaOnly},
-		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 62}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob}, cancelState: model.StatePublic},
+		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 53}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 54}, cancelRetErrs: noErrs, cancelState: model.StateReplicaOnly},
+		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 55}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob}, cancelState: model.StatePublic},
 
 		// modify column has two different types, normal-type and reorg-type. The latter has 5 states and it can be cancelled except the public state.
-		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 65}, cancelRetErrs: noErrs, cancelState: model.StateNone},
-		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 66}, cancelRetErrs: noErrs, cancelState: model.StateDeleteOnly},
-		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 67}, cancelRetErrs: noErrs, cancelState: model.StateWriteOnly},
-		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 68}, cancelRetErrs: noErrs, cancelState: model.StateWriteReorganization},
-		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 69}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob}, cancelState: model.StatePublic},
+		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 58}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 59}, cancelRetErrs: noErrs, cancelState: model.StateDeleteOnly},
+		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 60}, cancelRetErrs: noErrs, cancelState: model.StateWriteOnly},
+		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 61}, cancelRetErrs: noErrs, cancelState: model.StateWriteReorganization},
+		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 62}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob}, cancelState: model.StatePublic},
 
 		// for alter db placement
-		{act: model.ActionModifySchemaDefaultPlacement, jobIDs: []int64{firstID + 75}, cancelRetErrs: noErrs, cancelState: model.StateNone},
-		{act: model.ActionModifySchemaDefaultPlacement, jobIDs: []int64{firstID + 76}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 76)}, cancelState: model.StatePublic},
+		{act: model.ActionModifySchemaDefaultPlacement, jobIDs: []int64{firstID + 68}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionModifySchemaDefaultPlacement, jobIDs: []int64{firstID + 69}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 76)}, cancelState: model.StatePublic},
 	}
 
 	return tests
@@ -1109,69 +1085,6 @@ func (s *testDDLSerialSuiteToVerify) TestCancelJob() {
 	require.NoError(s.T(), checkErr)
 	s.checkDropIdx(s.T(), d, dbInfo.ID, tblInfo.ID, idxOrigName, true)
 
-	// for add columns
-	updateTest(&tests[35])
-	addingColNames := []string{"colA", "colB", "colC", "colD", "colE", "colF"}
-	cols := make([]*table.Column, len(addingColNames))
-	for i, addingColName := range addingColNames {
-		newColumnDef := &ast.ColumnDef{
-			Name:    &ast.ColumnName{Name: model.NewCIStr(addingColName)},
-			Tp:      &types.FieldType{Tp: mysql.TypeLonglong},
-			Options: []*ast.ColumnOption{},
-		}
-		col, _, err := buildColumnAndConstraint(ctx, 0, newColumnDef, nil, mysql.DefaultCharset, "")
-		require.NoError(s.T(), err)
-		cols[i] = col
-	}
-	offsets := make([]int, len(cols))
-	positions := make([]*ast.ColumnPosition, len(cols))
-	for i := range positions {
-		positions[i] = &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
-	}
-	ifNotExists := make([]bool, len(cols))
-
-	addColumnArgs = []interface{}{cols, positions, offsets, ifNotExists}
-	doDDLJobErrWithSchemaState(ctx, d, s.T(), dbInfo.ID, tblInfo.ID, model.ActionAddColumns, addColumnArgs, &cancelState)
-	require.NoError(s.T(), checkErr)
-	s.checkAddColumns(d, dbInfo.ID, tblInfo.ID, addingColNames, false)
-
-	updateTest(&tests[36])
-	doDDLJobErrWithSchemaState(ctx, d, s.T(), dbInfo.ID, tblInfo.ID, model.ActionAddColumns, addColumnArgs, &cancelState)
-	require.NoError(s.T(), checkErr)
-	s.checkAddColumns(d, dbInfo.ID, tblInfo.ID, addingColNames, false)
-
-	updateTest(&tests[37])
-	doDDLJobErrWithSchemaState(ctx, d, s.T(), dbInfo.ID, tblInfo.ID, model.ActionAddColumns, addColumnArgs, &cancelState)
-	require.NoError(s.T(), checkErr)
-	s.checkAddColumns(d, dbInfo.ID, tblInfo.ID, addingColNames, false)
-
-	updateTest(&tests[38])
-	testAddColumns(s.T(), ctx, d, dbInfo, tblInfo, addColumnArgs)
-	require.NoError(s.T(), checkErr)
-	s.checkAddColumns(d, dbInfo.ID, tblInfo.ID, addingColNames, true)
-
-	// for drop columns
-	updateTest(&tests[39])
-	dropColNames := []string{"colA", "colB"}
-	s.checkCancelDropColumns(d, dbInfo.ID, tblInfo.ID, dropColNames, false)
-	testDropColumns(s.T(), ctx, d, dbInfo, tblInfo, dropColNames, false)
-	require.NoError(s.T(), checkErr)
-	s.checkCancelDropColumns(d, dbInfo.ID, tblInfo.ID, dropColNames, true)
-
-	updateTest(&tests[40])
-	dropColNames = []string{"colC", "colD"}
-	s.checkCancelDropColumns(d, dbInfo.ID, tblInfo.ID, dropColNames, false)
-	testDropColumns(s.T(), ctx, d, dbInfo, tblInfo, dropColNames, false)
-	require.NoError(s.T(), checkErr)
-	s.checkCancelDropColumns(d, dbInfo.ID, tblInfo.ID, dropColNames, true)
-
-	updateTest(&tests[41])
-	dropColNames = []string{"colE", "colF"}
-	s.checkCancelDropColumns(d, dbInfo.ID, tblInfo.ID, dropColNames, false)
-	testDropColumns(s.T(), ctx, d, dbInfo, tblInfo, dropColNames, false)
-	require.NoError(s.T(), checkErr)
-	s.checkCancelDropColumns(d, dbInfo.ID, tblInfo.ID, dropColNames, true)
-
 	// test alter index visibility failed caused by canceled.
 	indexName := "idx_c3"
 	testCreateIndex(s.T(), ctx, d, dbInfo, tblInfo, false, indexName, "c3")
@@ -1181,7 +1094,7 @@ func (s *testDDLSerialSuiteToVerify) TestCancelJob() {
 	require.Nil(s.T(), txn.Commit(context.Background()))
 	s.checkAddIdx(s.T(), d, dbInfo.ID, tblInfo.ID, indexName, true)
 
-	updateTest(&tests[42])
+	updateTest(&tests[35])
 	alterIndexVisibility := []interface{}{model.NewCIStr(indexName), true}
 	doDDLJobErrWithSchemaState(ctx, d, s.T(), dbInfo.ID, tblInfo.ID, test.act, alterIndexVisibility, &test.cancelState)
 	require.NoError(s.T(), checkErr)
@@ -1189,7 +1102,7 @@ func (s *testDDLSerialSuiteToVerify) TestCancelJob() {
 	require.True(s.T(), checkIdxVisibility(changedTable, indexName, false))
 
 	// cancel alter index visibility successfully
-	updateTest(&tests[43])
+	updateTest(&tests[36])
 	alterIndexVisibility = []interface{}{model.NewCIStr(indexName), true}
 	doDDLJobSuccess(ctx, d, s.T(), dbInfo.ID, tblInfo.ID, test.act, alterIndexVisibility)
 	require.NoError(s.T(), checkErr)
@@ -1203,7 +1116,7 @@ func (s *testDDLSerialSuiteToVerify) TestCancelJob() {
 	testCreateTable(s.T(), ctx, d, dbInfo, pt)
 	testCreateTable(s.T(), ctx, d, dbInfo, nt)
 
-	updateTest(&tests[44])
+	updateTest(&tests[37])
 	defID := pt.Partition.Definitions[0].ID
 	exchangeTablePartition := []interface{}{defID, dbInfo.ID, pt.ID, "p0", true}
 	doDDLJobErrWithSchemaState(ctx, d, s.T(), dbInfo.ID, nt.ID, test.act, exchangeTablePartition, &test.cancelState)
@@ -1214,7 +1127,7 @@ func (s *testDDLSerialSuiteToVerify) TestCancelJob() {
 	require.True(s.T(), changedPtTable.Meta().Partition.Definitions[0].ID == pt.Partition.Definitions[0].ID)
 
 	// cancel exchange partition successfully
-	updateTest(&tests[45])
+	updateTest(&tests[38])
 	doDDLJobSuccess(ctx, d, s.T(), dbInfo.ID, nt.ID, test.act, exchangeTablePartition)
 	require.NoError(s.T(), checkErr)
 	changedNtTable = testGetTable(s.T(), d, dbInfo.ID, pt.Partition.Definitions[0].ID)
@@ -1227,7 +1140,7 @@ func (s *testDDLSerialSuiteToVerify) TestCancelJob() {
 	testCreateTable(s.T(), ctx, d, dbInfo, baseTableInfo)
 
 	cancelState = model.StateNone
-	updateTest(&tests[46])
+	updateTest(&tests[39])
 	addedPartInfo := testAddedNewTablePartitionInfo(s.T(), d, baseTableInfo, "p1", "maxvalue")
 	addPartitionArgs := []interface{}{addedPartInfo}
 	doDDLJobErrWithSchemaState(ctx, d, s.T(), dbInfo.ID, baseTableInfo.ID, test.act, addPartitionArgs, &cancelState)
@@ -1235,13 +1148,13 @@ func (s *testDDLSerialSuiteToVerify) TestCancelJob() {
 	baseTable := testGetTable(s.T(), d, dbInfo.ID, baseTableInfo.ID)
 	require.Equal(s.T(), len(baseTable.Meta().Partition.Definitions), 1)
 
-	updateTest(&tests[47])
+	updateTest(&tests[40])
 	doDDLJobErrWithSchemaState(ctx, d, s.T(), dbInfo.ID, baseTableInfo.ID, test.act, addPartitionArgs, &cancelState)
 	require.NoError(s.T(), checkErr)
 	baseTable = testGetTable(s.T(), d, dbInfo.ID, baseTableInfo.ID)
 	require.Equal(s.T(), len(baseTable.Meta().Partition.Definitions), 1)
 
-	updateTest(&tests[48])
+	updateTest(&tests[41])
 	doDDLJobSuccess(ctx, d, s.T(), dbInfo.ID, baseTableInfo.ID, test.act, addPartitionArgs)
 	require.NoError(s.T(), checkErr)
 	baseTable = testGetTable(s.T(), d, dbInfo.ID, baseTableInfo.ID)
@@ -1266,7 +1179,7 @@ func (s *testDDLSerialSuiteToVerify) TestCancelJob() {
 	originColName := baseTableInfo.Columns[0].Name
 	pos := &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
 
-	updateTest(&tests[49])
+	updateTest(&tests[42])
 	modifyColumnArgs = []interface{}{&newCol, originColName, pos, mysql.TypeNull, 0}
 	doDDLJobErrWithSchemaState(ctx, d, s.T(), dbInfo.ID, baseTableInfo.ID, test.act, modifyColumnArgs, &cancelState)
 	require.NoError(s.T(), checkErr)
@@ -1274,28 +1187,28 @@ func (s *testDDLSerialSuiteToVerify) TestCancelJob() {
 	require.Equal(s.T(), baseTable.Meta().Columns[0].FieldType.Tp, mysql.TypeLong)
 	require.Equal(s.T(), mysql.HasNotNullFlag(baseTable.Meta().Columns[0].FieldType.Flag), false)
 
-	updateTest(&tests[50])
+	updateTest(&tests[43])
 	doDDLJobErrWithSchemaState(ctx, d, s.T(), dbInfo.ID, baseTableInfo.ID, test.act, modifyColumnArgs, &cancelState)
 	require.NoError(s.T(), checkErr)
 	baseTable = testGetTable(s.T(), d, dbInfo.ID, baseTableInfo.ID)
 	require.Equal(s.T(), baseTable.Meta().Columns[0].FieldType.Tp, mysql.TypeLong)
 	require.Equal(s.T(), baseTable.Meta().Columns[0].FieldType.Flag&mysql.NotNullFlag, uint(0))
 
-	updateTest(&tests[51])
+	updateTest(&tests[44])
 	doDDLJobErrWithSchemaState(ctx, d, s.T(), dbInfo.ID, baseTableInfo.ID, test.act, modifyColumnArgs, &cancelState)
 	require.NoError(s.T(), checkErr)
 	baseTable = testGetTable(s.T(), d, dbInfo.ID, baseTableInfo.ID)
 	require.Equal(s.T(), baseTable.Meta().Columns[0].FieldType.Tp, mysql.TypeLong)
 	require.Equal(s.T(), baseTable.Meta().Columns[0].FieldType.Flag&mysql.NotNullFlag, uint(0))
 
-	updateTest(&tests[52])
+	updateTest(&tests[45])
 	doDDLJobErrWithSchemaState(ctx, d, s.T(), dbInfo.ID, baseTableInfo.ID, test.act, modifyColumnArgs, &cancelState)
 	require.NoError(s.T(), checkErr)
 	baseTable = testGetTable(s.T(), d, dbInfo.ID, baseTableInfo.ID)
 	require.Equal(s.T(), baseTable.Meta().Columns[0].FieldType.Tp, mysql.TypeLong)
 	require.Equal(s.T(), baseTable.Meta().Columns[0].FieldType.Flag&mysql.NotNullFlag, uint(0))
 
-	updateTest(&tests[53])
+	updateTest(&tests[46])
 	doDDLJobSuccess(ctx, d, s.T(), dbInfo.ID, baseTableInfo.ID, test.act, modifyColumnArgs)
 	require.NoError(s.T(), checkErr)
 	baseTable = testGetTable(s.T(), d, dbInfo.ID, baseTableInfo.ID)
@@ -1640,10 +1553,4 @@ func TestDDLPackageExecuteSQL(t *testing.T) {
 	defer worker.sessPool.put(sess)
 	se := sess.(sqlexec.SQLExecutor)
 	_, _ = se.Execute(context.Background(), "create table t(a int);")
-}
-
-func (s *testDDLSerialSuiteToVerify) checkDropIndexes(d *ddl, schemaID int64, tableID int64, idxNames []model.CIStr, success bool) {
-	for _, idxName := range idxNames {
-		checkIdxExist(s.T(), d, schemaID, tableID, idxName.O, !success)
-	}
 }

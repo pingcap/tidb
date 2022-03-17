@@ -781,7 +781,6 @@ func (s *testSerialDBSuite) TestCreateTableWithLike2(c *C) {
 	var onceChecker sync.Map
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type != model.ActionAddColumn && job.Type != model.ActionDropColumn &&
-			job.Type != model.ActionAddColumns && job.Type != model.ActionDropColumns &&
 			job.Type != model.ActionAddIndex && job.Type != model.ActionDropIndex {
 			return
 		}

@@ -67,8 +67,8 @@ const (
 	ActionCreateSequence                ActionType = 34
 	ActionAlterSequence                 ActionType = 35
 	ActionDropSequence                  ActionType = 36
-	ActionAddColumns                    ActionType = 37
-	ActionDropColumns                   ActionType = 38
+	__DEPRECATED_ActionAddColumns       ActionType = 37
+	__DEPRECATED_ActionDropColumns      ActionType = 38
 	ActionModifyTableAutoIdCache        ActionType = 39
 	ActionRebaseAutoRandomBase          ActionType = 40
 	ActionAlterIndexVisibility          ActionType = 41
@@ -137,8 +137,8 @@ var actionMap = map[ActionType]string{
 	ActionCreateSequence:                "create sequence",
 	ActionAlterSequence:                 "alter sequence",
 	ActionDropSequence:                  "drop sequence",
-	ActionAddColumns:                    "add multi-columns",
-	ActionDropColumns:                   "drop multi-columns",
+	__DEPRECATED_ActionAddColumns:       "add multi-columns",
+	__DEPRECATED_ActionDropColumns:      "drop multi-columns",
 	ActionModifyTableAutoIdCache:        "modify auto id cache",
 	ActionRebaseAutoRandomBase:          "rebase auto_random ID",
 	ActionAlterIndexVisibility:          "alter index visibility",
