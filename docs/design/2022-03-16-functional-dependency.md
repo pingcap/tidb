@@ -1,6 +1,6 @@
 # Functional Dependency
 
-- Author(s): [AilinKid](https://github.com/AilinKid) (Lingxiang Tai) [Winoros](https://github.com/Winoros) Yiding Cui
+- Author(s): [AilinKid](https://github.com/AilinKid) (Lingxiang Tai) [Winoros](https://github.com/Winoros) (Yiding Cui)
 - Last updated: 2022-03-16
 - Motivation Issue: https://github.com/pingcap/tidb/issues/29766
 - Related Document: https://pingcap.feishu.cn/docs/doccndyrRWfcGALhjcyVhOrxWYd
@@ -31,9 +31,9 @@ Given a relation R and sets of attributes  X,Y ∈ R, X is said to functionally 
 
 ## Motivation And Background
 
-Since we already know the dependencies between columns after the FD has been built, we can take use of this relationship to do some optimization in many scenarios, eg: in only-full-group-by mode, for non-aggregated columns in the select list, as long as it is a functionally dependent column of the group-by clause column, then we can consider it legal. Otherwise, to extract the constant/equivalence/dependency relationship between columns everytime we use it is tricky and costly.  
+Since we have already known the dependencies between sets of attributes (columns) after the FD has been built, we can take use of this relationship to do optimization in many scenarios. Eg: in only-full-group-by mode, for non-aggregated columns in the select list, as long as it is functionally dependent on the group-by clause columns, then we can consider it legal. Otherwise, to extract the constant, equivalence, dependency relationship between columns everytime we use it is tricky and costly.  
 
-After trials and errors of only-full-group-by check, TiDB ultimately seek to functional dependency to solve it's check completely. Besides, functional dependency can also be applied to many others scenarios to reduce complexity, for example, distinct elimination with/without order by, selectivity for the correlated column and so on.
+After trials and errors of only-full-group-by check, TiDB ultimately seek to functional dependency to solve it's only-full-group-by check problem completely. Besides, functional dependency can also be applied to many other scenarios to reduce complexity, for example, distinct elimination with/without order by, selectivity for the correlated column and so on.
 
 ## Detail Design
 
@@ -45,20 +45,20 @@ After trials and errors of only-full-group-by check, TiDB ultimately seek to fun
 
 #### How to store function dependency
 
-Generally speaking, functional dependencies store the relationship between columns. According to paper [CS-2000-11.thesis.pdf](https://cs.uwaterloo.ca/research/tr/2000/11/CS-2000-11.thesis.pdf), this relationship can be constant, equivalence, strict and lax. Except constant is a unary relationship, all other relationships can be regarded as binary relationships. Therefore, we can try to use graph theory to store functional dependencies, maintain edge sets between point-set and point-set, and attach equivalence, strict and lax attributes on each edge. For unary constant property, we can still save it as an edge, since constant has no starting point-set, we can regard it as a headless edge.
+Generally speaking, functional dependencies essentially store the relationship between columns. According to paper [CS-2000-11.thesis.pdf](https://cs.uwaterloo.ca/research/tr/2000/11/CS-2000-11.thesis.pdf), this relationship can be constant, equivalence, strict and lax. Except constant is a unary, all others can be regarded as binary relationships. Therefore, we can use graph theory to store functional dependencies, maintaining edge sets between point-set and point-set, and attaching equivalence, strict and lax attributes as a label on each edge. For unary constant property, we can still save it as an edge, and since constant has no starting point-set, let's regard it as a headless edge.
 
 * equivalence: {a} == {b}
 * strict FD:   {a} -> {b}
-* lax Fd:      {a} ~> {b}
+* lax FD:      {a} ~> {b}
 * constant:    { } -> {b}
 
-for computation convenience, we can optimize equivalence as {a,b} == {a,b}, so we don't need to search for the both direction when encountering an equivalence edge.
+For computation convenience, we can optimize equivalence as {a,b} == {a,b}, so we don't have to search for the both direction side when confirming whether a point is in the equivalence set.
 
 #### How to maintain function dependency
 
-For open source mysql, the construction and maintenance of FD is still relatively heavy. It uses sub-queries as logical units and uses nested methods to recursively advance FD. For each logical unit, the source of FD is relatively simple, and the basic consideration is for three elements where, group-by and datasource(join/table). According to the paper [CS-2000-11.thesis.pdf](https://cs.uwaterloo.ca/research/tr/2000/11/CS-2000-11.thesis.pdf), TiDB chooses to build FDs based on logical operators, without the boundary restrictions of logical sub-queries. 
+For open-sourced mysql, the construction and maintenance of FD is still relatively heavy. It uses sub-queries as logical units and uses nested methods to recursively advance FD. For each logical unit, the source for where FD is derived is relatively simple, basically from three elements there: group-by, where-clause and datasource(join/table). However, according to the paper [CS-2000-11.thesis.pdf](https://cs.uwaterloo.ca/research/tr/2000/11/CS-2000-11.thesis.pdf), TiDB chooses to build FDs based on logical operators as an alternative, without the boundary restrictions of logical sub-queries. 
 
-example: 
+Example:
 
 ```sql
 create table t1(a int, c int)
@@ -66,7 +66,7 @@ create table t2(a int, b int)
 select t1.a from t1 join t2 on t2.a=t1.a group by t2.a where c=1;
 ```
 
-result:
+Result:
 
 ```sql
 mysql> explain  select t1.a, count(t2.b), t1.c  from t1 join t2 on t2.a=t1.a where t1.c=1 group by t2.a;
@@ -86,17 +86,19 @@ mysql> explain  select t1.a, count(t2.b), t1.c  from t1 join t2 on t2.a=t1.a whe
 9 rows in set (0.00 sec)
 ```
 
-analysis: 
-When building the FD through these logical operators, we are calling the function of ExtractFD recursively from the root node of the logical plan tree. When the call down to the leaf node, for the inner side, the FD from the datasource of base table of t2 are nil because they have no basic key constraint, while for outer side, since there is a filter on the datasource of base table t1, we got FD as {} -> {t1.c} because t1.c can only be constant 1 behind the filter. Up to next level, the join condition t1=t2 will build the equivalence for point-set of {t1.a, t2.a} == {t1.a, t2.a}. Finally, when arriving the root aggregate node, we will build strict FD from group-by point-set {t2.a} to select aggregate function {count(t2.b)}. Consequently, we get FD as {} -> {t1.c} & {t1.a, t2.a} == {t1.a, t2.a} & {t2.a} -> {count(t2.b)}.
+Analysis:
 
-application:
-For the only-full-group-check of building phase, after we got the FD as illustrated in the last subchapter, we can easily identify the select list that t1.a are equivalent to the group-by column t2.a, count(t2.b) are strictly functional dependent on group-by column t2.a and t.c are definitely constant after the filter is done. So only full group check is valid here. For more sophisticated cases with recursive sub-queries, maintenance work of this kind of FD will be automatically and reasonable when we're just pulling the request from the top node of the entire logical plan tree, all things are naturally.
+When building the FD through these logical operators, we are calling a function of ExtractFD recursively from the root node of the logical plan tree. When the call down to the leaf node (actually source table for both join side), for the inner side, the FD from the datasource of base table of t2 are nil because they have no basic key constraint. While for outer side, since there is a filter on the datasource of base table t1, we got FD as {} -> {t1.c}. Because t1.c can only be constant 1 behind the filter. Up to next level, the join condition t1=t2 will build the equivalence for point-set of {t1.a, t2.a} == {t1.a, t2.a}. Finally, when arriving the root aggregate node, we will build strict FD from group-by point-set {t2.a} to select aggregate function {count(t2.b)} reasonably. Consequently, we get FD as {} -> {t1.c} & {t1.a, t2.a} == {t1.a, t2.a} & {t2.a} -> {count(t2.b)}.
+
+Application:
+
+For the only-full-group-check of building phase, after getting the FD as illustrated in the last subchapter, we can easily identify the select list that t1.a are equivalent to the group-by column t2.a, count(t2.b) are strictly functional dependent on group-by column t2.a and t.c are definitely constant after the filter is passed. So only full group check is valid here. For more sophisticated cases with recursive sub-queries, maintenance work of this kind of FD architecture will be automatically and reasonable when we're just pulling the request from the top node of the entire logical plan tree, all things are naturally.
 
 #### How to integrate function dependency with TiDB arch
 
-Where to put this stuff in? When should the FD collection work be done? In FD logic, the relationship between columns is not limited to base col, but also between expressions, even sub-queries, we need to be able to identify two cols, expressions are equivalent, and even better to have a unique id that identifies them. When joining different tables, even if there are maybe some columns with the same name, we can still utilize this unified unique id to identify and distinguish them. Obviously, the expression tree after ast rewrite has this convenient functionality, and because we need to utilize FD functionality to check validation when building a logical plan, so eventually we can only perform FD collection while building the logical plan stage.
+Where to put this stuff in and when should the FD collection work be done? In FD logic, the relationship between columns is not limited to base col, but also between expressions, even sub-queries. We need to be able to identify sameness between cols, expressions and even better to have a unique id to tag them. When joining different tables, there are maybe some columns with the same name from difference source, we should still utilize this unified unique id to identify and distinguish them. Obviously, the expression tree after ast rewrite has this convenient functionality, and plus we need to utilize FD functionality to check validation when building a logical plan, so eventually we can only perform FD collection while building the logical plan stage.
 
-As illustrated above, tidb choose the collect FD in units of logical operators. So for the first step, we need to integrate FD collection logic for some meaningful logic operators, such as: datasource, join, apply, selection, projection and so on. For other meaningless logical operator like sort, it will not make any difference to FD collected from its child operator, so just output what it got from its child. The most important things in the FD construction chain are from various join keys, join conditions, join types, selection predicates and  group-by clause. Let's break it down and take it one by one in next chapter.
+As illustrated above, tidb chooses the collect FD in units of logical operators. So for the first step, integrating FD collection logic for some meaningful logic operators is necessary, such as: datasource, join, apply, selection, projection and so on. For other meaningless logical operator like sort, it will not make any difference to FD collected from its child operator, so just output what it got from its child. The most important things in FD construction chain are from various join keys, join conditions, join types, selection predicates and  group-by clause. Let's break it down and take it one by one in next chapter.
 
 ### Operator Overview
 
@@ -112,23 +114,23 @@ The logical datasource is the place where the most basic FD is generated. The na
 
 #### Logical Selection
 
-As you can see from the sql example above, logical selection from where/have clause can be used as a filter to filter data, the selected data will have the properties constrained by this predicate. The most common FD constructed from selection are constant, not null and equivalence, corresponding to t.a=1, t.a=1 and t.a = t.b respectively. The reason why ta=1 can generate both constant and not null is that in the expression calculation, if t.a is null, then null=1 will be calculated as null, and when the result of the predicate in where is null, this row will be rejected. So after the data is passed from this filter, t.a mustn't be null and must be 1 only. For most operators, there is a null value rejection feature with them, which means that if a parameter on the any side of an operator is null, then the final result is null (just like what t.a=1 is shown here).
+As you can see from the sql example above, logical selection from where/having clause can be used to filter data. The selected data will have the properties constrained by this predicate. Most common FDs constructed from selection are constant, not null and equivalence, corresponding to t.a=1, t.a=1 and t.a = t.b respectively. The reason why t.a=1 can generate both constant and not null relationship is that in the expression calculation, if t.a is null, then null=1 will be calculated as null, and when the result of the predicate in where is null, this row will be rejected. So after the data is pulled from this filter, t.a mustn't be null and must be 1 only. For most operators, null value rejection characteristic is with them, which means that if a parameter on the any side of an operator is null, then the final result is null (just like what t.a=1 is shown here).
 
 #### Logical Projection
 
-Logical projection can be described simply because it does not generate FD itself, but truncate some useless FD sets according to the projected columns. For example, providing that the FD graph has {a} -> {b} & {b} -> {c}, when only the {a,c} columns are selected in the projection, we need to maintain the closure and transitive properties of this functional dependency graph, generating the remaining {a} -> {c} functional dependencies for the rest when column b is projected out.
+Logical projection can be described simply because it does not generate FD itself, but truncate some useless FD sets according to the projected columns. For example, providing that the FD graph has {a} -> {b} & {b} -> {c}, when only the {a,c} columns are selected in the projection, we need to maintain the closure and transitive properties of this functional dependency graph, generating the remaining {a} -> {c} functional dependencies for the rest FD graph when column b is projected out.
 
 #### Logical Aggregation
 
-Logical aggregation mainly builds related FDs around the columns or expressions in the group by clause. It should be noted that if there is no group by clause, but there is agg function, all rows should be implicitly regarded as one group. Columns or expressions from group by clause naturally functional determine these aggregate expressions, but for others, it's waited to be judged, that's what and where only-full-group-by check does.
+Logical aggregation mainly builds related FDs around the columns or expressions in the group by clause. It should be noted that if there is no group by clause but agg functions, all rows should be implicitly regarded as one group. Columns or expressions from group by clause naturally functional determine these aggregate expressions. But for others, they're waited to be judged, that's what and where only-full-group-by check does.
 
 #### Logical Join
 
-Logical join must be the most difficult part to infer with, because the presence or absence of join key values, the variability of join conditions, and the difference of join types will all lead to the diversity of FD inference. For inner join, the final data comes first from cartesian product of inner and outer join side, and then pull the result through the filter generated from the inner join predicate (same as what selection does in where clause). Since reducing row data does not affect the presence or absence of FD in that join side, data after the cartesian product can retain all FDs of operators at both sides of the join. But when data pulled through filters, it is necessary to add the FD generated by the inner join condition.
+Logical join must be the most difficult part to infer with, because the presence of join key values, the variability of join conditions, and the difference of join types will all lead to the diversity of FD inference. For inner join, the final data comes first from cartesian product of inner and outer join side, and then pull the result through the filter generated from the inner join predicate (same as what selection does in where clause). Since reducing row data does not affect the presence of FD in that join side, data after the cartesian product can retain all FDs of operators at both sides of the join. But when data pulled through filters, it is necessary to add the FD generated by the inner join conditions.
 
-For outer join, we need to consider more, because outer join will choose the connection method based on the position of the join condition and the presence or absence of the join key.
+For outer join, we need to consider more, because outer join will choose the connection method based on the position of the join conditions and the presence of the join key.
 
-* only inner condition                --- apply inner filter after the cartesian product is made, which means no supplied-null row will be appended on the inner side.
+* only inner side condition           --- apply inner filter after the cartesian product is made, which means no supplied-null row will be appended on the inner side.
 * has outer condition or join key     --- apply all of this filter as matching judgement on the process of cartesian product, which means supplied-null row will be appended on the inner side when matching is failed.
 
 both cases will keep all rows from the outer side, but the time to apply the filter depends on where the conditions come from, which leading whether append the null rows on the inner side. So what's the big deal between this two? the former one can be seen as a inner join, but the later can only keep the FD from the outer side join, inner side's FD and filter FD has many complicated rules to infer with, we are not going to expand all of this here.
