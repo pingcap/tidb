@@ -237,8 +237,6 @@ func (c *TestClient) SetStoresLabel(ctx context.Context, stores []uint64, labelK
 	return nil
 }
 
-func (c *TestClient) InvalidateStoreCache(storeID uint64) {}
-
 type assertRetryLessThanBackoffer struct {
 	max     int
 	already int
