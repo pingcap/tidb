@@ -706,12 +706,16 @@
       {
         "Start": 300,
         "End": 899,
-        "Count": 4500
+        "Count": 4498.5
       },
       {
         "Start": 800,
         "End": 1000,
+<<<<<<< HEAD
         "Count": 1219.196869573942
+=======
+        "Count": 1201.196869573942
+>>>>>>> 47e4b5bf3... *: revert #27021 to fix a bug that selection can not be pushed down when having clause above aggregation (#33168)
       },
       {
         "Start": 900,
@@ -736,7 +740,11 @@
       {
         "Start": 200,
         "End": 400,
+<<<<<<< HEAD
         "Count": 1186.5288209899081
+=======
+        "Count": 1211.5288209899081
+>>>>>>> 47e4b5bf3... *: revert #27021 to fix a bug that selection can not be pushed down when having clause above aggregation (#33168)
       },
       {
         "Start": 200,
