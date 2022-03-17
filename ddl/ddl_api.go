@@ -3452,15 +3452,10 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		SchemaName: schema.Name.L,
 		Type:       model.ActionAddColumn,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{col, spec.Position, 0},
+		Args:       []interface{}{col, spec.Position, 0, spec.IfNotExists},
 	}
 
 	err = d.doDDLJob(ctx, job)
-	// column exists, but if_not_exists flags is true, so we ignore this error.
-	if infoschema.ErrColumnExists.Equal(err) && spec.IfNotExists {
-		ctx.GetSessionVars().StmtCtx.AppendNote(err)
-		return nil
-	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }

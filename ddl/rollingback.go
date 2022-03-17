@@ -152,7 +152,7 @@ func rollingbackModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job)
 }
 
 func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, columnInfo, col, _, err := checkAddColumn(t, job)
+	tblInfo, columnInfo, col, _, _, err := checkAddColumn(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}

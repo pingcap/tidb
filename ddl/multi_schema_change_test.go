@@ -62,6 +62,7 @@ func TestMultiSchemaChangeAddColumns(t *testing.T) {
 	tk.MustExec("alter table t add column if not exists (b int default 2, c int default 3);")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3"))
 	tk.MustExec("alter table t add column if not exists (c int default 3, d int default 4);")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Note 1060 Duplicate column name 'c'"))
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3 4"))
 
 	// Test referencing previous column in multi-schema change is not supported.
@@ -115,6 +116,30 @@ func TestMultiSchemaChangeAddColumnsCancelled(t *testing.T) {
 	require.NoError(t, hook.cancelErr)
 	require.True(t, hook.triggered)
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1"))
+}
+
+func TestMultiSchemaChangeAddColumnsParallel(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
+	tk.MustExec("create table t (a int default 1);")
+	tk.MustExec("insert into t values ();")
+	putTheSameDDLJobTwice(t, func() {
+		tk.MustExec("alter table t add column if not exists b int default 2, " +
+			"add column if not exists c int default 3;")
+		tk.MustQuery("show warnings").Check(testkit.Rows(
+			"Note 1060 Duplicate column name 'b'",
+			"Note 1060 Duplicate column name 'c'",
+		))
+	})
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3"))
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int);")
+	putTheSameDDLJobTwice(t, func() {
+		tk.MustGetErrCode("alter table t add column b int, add column c int;", errno.ErrDupFieldName)
+	})
 }
 
 func TestMultiSchemaChangeDropColumns(t *testing.T) {

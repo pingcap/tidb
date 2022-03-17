@@ -102,19 +102,21 @@ func createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *
 	return colInfo, pos, nil
 }
 
-func checkAddColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ColumnInfo, *model.ColumnInfo, *ast.ColumnPosition, error) {
+func checkAddColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ColumnInfo, *model.ColumnInfo,
+	*ast.ColumnPosition, bool /* ifNotExists */, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
-		return nil, nil, nil, nil, errors.Trace(err)
+		return nil, nil, nil, nil, false, errors.Trace(err)
 	}
 	col := &model.ColumnInfo{}
 	pos := &ast.ColumnPosition{}
 	offset := 0
-	err = job.DecodeArgs(col, pos, &offset)
+	ifNotExists := false
+	err = job.DecodeArgs(col, pos, &offset, &ifNotExists)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return nil, nil, nil, nil, errors.Trace(err)
+		return nil, nil, nil, nil, false, errors.Trace(err)
 	}
 
 	columnInfo := model.FindColumnInfo(tblInfo.Columns, col.Name.L)
@@ -122,10 +124,10 @@ func checkAddColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Colu
 		if columnInfo.State == model.StatePublic {
 			// We already have a column with the same column name.
 			job.State = model.JobStateCancelled
-			return nil, nil, nil, nil, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name)
+			return nil, nil, nil, nil, ifNotExists, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name)
 		}
 	}
-	return tblInfo, columnInfo, col, pos, nil
+	return tblInfo, columnInfo, col, pos, false, nil
 }
 
 func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
@@ -144,8 +146,13 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		}
 	})
 
-	tblInfo, columnInfo, col, pos, err := checkAddColumn(t, job)
+	tblInfo, columnInfo, col, pos, ifNotExists, err := checkAddColumn(t, job)
 	if err != nil {
+		if ifNotExists && infoschema.ErrColumnExists.Equal(err) {
+			job.Warning = toTError(err)
+			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+			return ver, nil
+		}
 		return ver, errors.Trace(err)
 	}
 	if columnInfo == nil {
