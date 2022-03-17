@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/stretchr/testify/require"
+
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -30,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/parser/test_driver"
-	"github.com/stretchr/testify/require"
 )
 
 func TestSimple(t *testing.T) {
@@ -2402,6 +2403,7 @@ func TestDDL(t *testing.T) {
 		{`create table testTableCompression (c VARCHAR(15000)) compression="ZLIB";`, true, "CREATE TABLE `testTableCompression` (`c` VARCHAR(15000)) COMPRESSION = 'ZLIB'"},
 		{`create table t1 (c1 int) compression="zlib";`, true, "CREATE TABLE `t1` (`c1` INT) COMPRESSION = 'zlib'"},
 		{`create table t1 (c1 int) collate=binary;`, true, "CREATE TABLE `t1` (`c1` INT) DEFAULT COLLATE = BINARY"},
+		{`create table t1 (c1 int) collate=utf8mb4_0900_as_cs;`, true, "CREATE TABLE `t1` (`c1` INT) DEFAULT COLLATE = UTF8MB4_0900_AS_CS"},
 		{`create table t1 (c1 int) default charset=binary collate=binary;`, true, "CREATE TABLE `t1` (`c1` INT) DEFAULT CHARACTER SET = BINARY DEFAULT COLLATE = BINARY"},
 
 		// for table option `UNION`
