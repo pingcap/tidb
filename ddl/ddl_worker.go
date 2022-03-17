@@ -442,6 +442,13 @@ func deleteRangeForDropSchemaObjectJob(w *worker, job *model.Job) error {
 	if job.IsCancelled() {
 		return nil
 	}
+	if job.Warning != nil {
+		// For the field/key not exists warnings, there is no need to
+		// delete the ranges.
+		if dbterror.ErrCantDropFieldOrKey.Equal(job.Warning) {
+			return nil
+		}
+	}
 	switch job.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		if job.State != model.JobStateRollbackDone {

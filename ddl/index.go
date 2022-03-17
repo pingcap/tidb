@@ -621,7 +621,6 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 			return ver, nil
 		}
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
@@ -741,25 +740,28 @@ func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Inde
 
 	var indexName model.CIStr
 	var ifExists bool
-	var indexID int64        // nolint: unused
-	var partitionIDs []int64 // nolint: unused
-	if err = job.DecodeArgs(&indexName, &indexID, &partitionIDs, &ifExists); err != nil {
+	var placeholder interface{}
+	if err = job.DecodeArgs(&indexName, &placeholder, &placeholder, &ifExists); err != nil {
+		job.State = model.JobStateCancelled
 		return nil, nil, false, errors.Trace(err)
 	}
 
 	indexInfo := tblInfo.FindIndexByName(indexName.L)
 	if indexInfo == nil {
-		return nil, nil, false, dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
+		job.State = model.JobStateCancelled
+		return nil, nil, ifExists, dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
 	}
 
 	// Double check for drop index on auto_increment column.
 	err = checkDropIndexOnAutoIncrementColumn(tblInfo, indexInfo)
 	if err != nil {
+		job.State = model.JobStateCancelled
 		return nil, nil, false, autoid.ErrWrongAutoKey
 	}
 
 	// Check that drop primary index will not cause invisible implicit primary index.
 	if err := checkInvisibleIndexesOnPK(tblInfo, []*model.IndexInfo{indexInfo}, job); err != nil {
+		job.State = model.JobStateCancelled
 		return nil, nil, false, errors.Trace(err)
 	}
 

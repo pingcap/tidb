@@ -257,7 +257,6 @@ func NewDDLReorgMeta() *DDLReorgMeta {
 
 // MultiSchemaInfo keeps some information for multi schema change.
 type MultiSchemaInfo struct {
-	Warnings   []*errors.Error
 	SubJobs    []*SubJob `json:"sub_jobs"`
 	Revertible bool      `json:"revertible"`
 
@@ -284,7 +283,7 @@ type SubJob struct {
 	SnapshotVer uint64          `json:"snapshot_ver"`
 	Revertible  bool            `json:"revertible"`
 	State       JobState        `json:"state"`
-	Warning     error           `json:"warning"`
+	Warning     *terror.Error   `json:"warning"`
 }
 
 // Job is for a DDL operation.
@@ -366,6 +365,8 @@ func (job *Job) FinishDBJob(jobState JobState, schemaState SchemaState, ver int6
 	job.BinlogInfo.AddDBInfo(ver, dbInfo)
 }
 
+// MarkNonRevertible mark the current job to be non-revertible.
+// It means the job cannot be cancelled or rollbacked.
 func (job *Job) MarkNonRevertible() {
 	if job.MultiSchemaInfo != nil {
 		job.MultiSchemaInfo.Revertible = false
