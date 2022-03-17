@@ -539,6 +539,9 @@ type SessionVars struct {
 	// PlanColumnID is the unique id for column when building plan.
 	PlanColumnID int64
 
+	// MapHashCode2UniqueID4ExtendedCol map the expr's hash code to specified unique ID.
+	MapHashCode2UniqueID4ExtendedCol map[string]int
+
 	// User is the user identity with which the session login.
 	User *auth.UserIdentity
 
@@ -709,6 +712,9 @@ type SessionVars struct {
 
 	// OptimizerSelectivityLevel defines the level of the selectivity estimation in plan.
 	OptimizerSelectivityLevel int
+
+	// OptimizerEnableNewOnlyFullGroupByCheck enables the new only_full_group_by check which is implemented by maintaining functional dependency.
+	OptimizerEnableNewOnlyFullGroupByCheck bool
 
 	// EnableTablePartition enables table partition feature.
 	EnableTablePartition string
