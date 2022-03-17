@@ -65,6 +65,7 @@ func testCreateForeignKey(t *testing.T, d *ddl, ctx sessionctx.Context, dbInfo *
 	}
 	err := ctx.NewTxn(context.Background())
 	require.NoError(t, err)
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	err = d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 	return job
@@ -78,6 +79,7 @@ func testDropForeignKey(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *mo
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{model.NewCIStr(foreignKeyName)},
 	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)

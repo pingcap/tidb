@@ -17,8 +17,10 @@ package executor
 import (
 	"context"
 	"sort"
+	"time"
 
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -129,6 +131,10 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	failpoint.Inject("mockSleepInTableReaderNext", func(v failpoint.Value) {
+		ms := v.(int)
+		time.Sleep(time.Millisecond * time.Duration(ms))
+	})
 
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
@@ -257,20 +263,32 @@ func (e *TableReaderExecutor) Close() error {
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	if e.storeType == kv.TiFlash && e.kvRangeBuilder != nil {
-		// TiFlash cannot support to access multiple tables/partitions within one KVReq, so we have to build KVReq for each partition separately.
-		kvReqs, err := e.buildKVReqSeparately(ctx, ranges)
-		if err != nil {
-			return nil, err
-		}
-		var results []distsql.SelectResult
-		for _, kvReq := range kvReqs {
-			result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
+		if !e.batchCop {
+			// TiFlash cannot support to access multiple tables/partitions within one KVReq, so we have to build KVReq for each partition separately.
+			kvReqs, err := e.buildKVReqSeparately(ctx, ranges)
 			if err != nil {
 				return nil, err
 			}
-			results = append(results, result)
+			var results []distsql.SelectResult
+			for _, kvReq := range kvReqs {
+				result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
+				if err != nil {
+					return nil, err
+				}
+				results = append(results, result)
+			}
+			return distsql.NewSerialSelectResults(results), nil
 		}
-		return distsql.NewSerialSelectResults(results), nil
+		// Use PartitionTable Scan
+		kvReq, err := e.buildKVReqForPartitionTableScan(ctx, ranges)
+		if err != nil {
+			return nil, err
+		}
+		result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
+		if err != nil {
+			return nil, err
+		}
+		return result, nil
 	}
 
 	kvReq, err := e.buildKVReq(ctx, ranges)
@@ -294,7 +312,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 	kvReqs := make([]*kv.Request, 0, len(kvRanges))
 	for i, kvRange := range kvRanges {
 		e.kvRanges = append(e.kvRanges, kvRange...)
-		if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, pids[i], true); err != nil {
+		if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, true, []int64{pids[i]}); err != nil {
 			return nil, err
 		}
 		var builder distsql.RequestBuilder
@@ -317,6 +335,42 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 		kvReqs = append(kvReqs, kvReq)
 	}
 	return kvReqs, nil
+}
+
+func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Context, ranges []*ranger.Range) (*kv.Request, error) {
+	pids, kvRanges, err := e.kvRangeBuilder.buildKeyRangeSeparately(ranges)
+	if err != nil {
+		return nil, err
+	}
+	partitionIDAndRanges := make([]kv.PartitionIDAndRanges, 0, len(pids))
+	for i, kvRange := range kvRanges {
+		e.kvRanges = append(e.kvRanges, kvRange...)
+		partitionIDAndRanges = append(partitionIDAndRanges, kv.PartitionIDAndRanges{
+			ID:        pids[i],
+			KeyRanges: kvRange,
+		})
+	}
+	if err := updateExecutorTableID(ctx, e.dagPB.RootExecutor, true, pids); err != nil {
+		return nil, err
+	}
+	var builder distsql.RequestBuilder
+	reqBuilder := builder.SetPartitionIDAndRanges(partitionIDAndRanges)
+	kvReq, err := reqBuilder.
+		SetDAGRequest(e.dagPB).
+		SetStartTS(e.startTS).
+		SetDesc(e.desc).
+		SetKeepOrder(e.keepOrder).
+		SetStreaming(e.streaming).
+		SetReadReplicaScope(e.readReplicaScope).
+		SetFromSessionVars(e.ctx.GetSessionVars()).
+		SetFromInfoSchema(e.ctx.GetInfoSchema()).
+		SetMemTracker(e.memTracker).
+		SetStoreType(e.storeType).
+		SetAllowBatchCop(e.batchCop).Build()
+	if err != nil {
+		return nil, err
+	}
+	return kvReq, nil
 }
 
 func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.Range) (*kv.Request, error) {

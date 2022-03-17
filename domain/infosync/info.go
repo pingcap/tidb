@@ -943,11 +943,14 @@ func GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rul
 }
 
 // SetTiFlashPlacementRule is a helper function to set placement rule.
+// It is discouraged to use SetTiFlashPlacementRule directly,
+// use `ConfigureTiFlashPDForTable`/`ConfigureTiFlashPDForPartitions` instead.
 func SetTiFlashPlacementRule(ctx context.Context, rule placement.TiFlashRule) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return errors.Trace(err)
 	}
+	logutil.BgLogger().Info("SetTiFlashPlacementRule", zap.String("ruleID", rule.ID))
 	return is.tiflashPlacementManager.SetPlacementRule(ctx, rule)
 }
 
@@ -957,6 +960,7 @@ func DeleteTiFlashPlacementRule(ctx context.Context, group string, ruleID string
 	if err != nil {
 		return errors.Trace(err)
 	}
+	logutil.BgLogger().Info("DeleteTiFlashPlacementRule", zap.String("ruleID", ruleID))
 	return is.tiflashPlacementManager.DeletePlacementRule(ctx, group, ruleID)
 }
 
@@ -975,6 +979,7 @@ func PostTiFlashAccelerateSchedule(ctx context.Context, tableID int64) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	logutil.BgLogger().Info("PostTiFlashAccelerateSchedule", zap.Int64("tableID", tableID))
 	return is.tiflashPlacementManager.PostAccelerateSchedule(ctx, tableID)
 }
 
@@ -1021,14 +1026,14 @@ func ConfigureTiFlashPDForTable(id int64, count uint64, locationLabels *[]string
 }
 
 // ConfigureTiFlashPDForPartitions configures pd rule for all partition in partitioned tables.
-func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionDefinition, count uint64, locationLabels *[]string) error {
+func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionDefinition, count uint64, locationLabels *[]string, tableID int64) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	ctx := context.Background()
 	for _, p := range *definitions {
-		logutil.BgLogger().Info("ConfigureTiFlashPDForPartitions", zap.Int64("partID", p.ID), zap.Bool("accel", accel), zap.Uint64("count", count))
+		logutil.BgLogger().Info("ConfigureTiFlashPDForPartitions", zap.Int64("tableID", tableID), zap.Int64("partID", p.ID), zap.Bool("accel", accel), zap.Uint64("count", count))
 		ruleNew := MakeNewRule(p.ID, count, *locationLabels)
 		if e := is.tiflashPlacementManager.SetPlacementRule(ctx, *ruleNew); e != nil {
 			return errors.Trace(e)

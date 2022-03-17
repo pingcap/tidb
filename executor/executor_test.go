@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
@@ -140,6 +141,31 @@ type testCoprCache struct {
 }
 type testPrepareSuite struct{ testData testutil.TestData }
 type testResourceTagSuite struct{ *baseTestSuite }
+
+// MockGC is used to make GC work in the test environment.
+func MockGC(tk *testkit.TestKit) (string, string, string, func()) {
+	originGC := ddlutil.IsEmulatorGCEnable()
+	resetGC := func() {
+		if originGC {
+			ddlutil.EmulatorGCEnable()
+		} else {
+			ddlutil.EmulatorGCDisable()
+		}
+	}
+
+	// disable emulator GC.
+	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
+	ddlutil.EmulatorGCDisable()
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
+	timeAfterDrop := time.Now().Add(48 * 60 * 60 * time.Second).Format(gcTimeFormat)
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+	// clear GC variables first.
+	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
+	return timeBeforeDrop, timeAfterDrop, safePointSQL, resetGC
+}
 
 type baseTestSuite struct {
 	cluster testutils.Cluster
@@ -2248,11 +2274,6 @@ func (s *testSuiteP2) TestSQLMode(c *C) {
 	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES'")
 	tk.MustExec("set @@global.sql_mode = ''")
 
-	_, err = tk.Exec("set sql_mode = null")
-	c.Check(err, NotNil)
-	_, err = tk.Exec("set @@global.sql_mode = null")
-	c.Check(err, NotNil)
-
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test")
 	tk2.MustExec("drop table if exists t2")
@@ -4005,19 +4026,6 @@ func (s *testSuite) TestLimit(c *C) {
 	))
 }
 
-func (s *testSuite) TestCoprocessorStreamingWarning(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a double)")
-	tk.MustExec("insert into t value(1.2)")
-	tk.MustExec("set @@session.tidb_enable_streaming = 1")
-
-	result := tk.MustQuery("select * from t where a/0 > 1")
-	result.Check(testkit.Rows())
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1365|Division by 0"))
-}
-
 func (s *testSuite3) TestYearTypeDeleteIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -5712,7 +5720,7 @@ func (s *testRecoverTable) TestRecoverTable(c *C) {
 	tk.MustExec("drop table if exists t_recover")
 	tk.MustExec("create table t_recover (a int);")
 
-	timeBeforeDrop, timeAfterDrop, safePointSQL, resetGC := testkit.MockGC(tk)
+	timeBeforeDrop, timeAfterDrop, safePointSQL, resetGC := MockGC(tk)
 	defer resetGC()
 
 	tk.MustExec("insert into t_recover values (1),(2),(3)")
@@ -5807,7 +5815,7 @@ func (s *testRecoverTable) TestFlashbackTable(c *C) {
 	tk.MustExec("drop table if exists t_flashback")
 	tk.MustExec("create table t_flashback (a int);")
 
-	timeBeforeDrop, _, safePointSQL, resetGC := testkit.MockGC(tk)
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
 	defer resetGC()
 
 	// Set GC safe point
@@ -5923,7 +5931,7 @@ func (s *testRecoverTable) TestRecoverTempTable(c *C) {
 	tk.MustExec("drop table if exists tmp2_recover")
 	tk.MustExec("create temporary table tmp2_recover (a int);")
 
-	timeBeforeDrop, _, safePointSQL, resetGC := testkit.MockGC(tk)
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
 	defer resetGC()
 	// Set GC safe point
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
@@ -8503,4 +8511,43 @@ func (s *testSerialSuite) TestEncodingSet(c *C) {
 	tk.MustExec("INSERT INTO `enum-set` VALUES\n(\"x00,x59\");")
 	tk.MustQuery("select `set` from `enum-set` use index(PRIMARY)").Check(testkit.Rows("x00,x59"))
 	tk.MustExec("admin check table `enum-set`")
+}
+
+// fix issue https://github.com/pingcap/tidb/issues/32871
+func (s *testSuite1) TestBitColumnIn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id bit(16), key id(id))")
+	tk.MustExec("insert into t values (65)")
+	tk.MustQuery("select * from t where id not in (-1,2)").Check(testkit.Rows("\x00A"))
+}
+
+func (s *testSuite) TestDeleteWithMulTbl(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// Delete multiple tables from left joined table.
+	// The result of left join is (3, null, null).
+	// Because rows in t2 are not matched, so no row will be deleted in t2.
+	// But row in t1 is matched, so it should be deleted.
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (c1 int);")
+	tk.MustExec("create table t2 (c1 int primary key, c2 int);")
+	tk.MustExec("insert into t1 values(3);")
+	tk.MustExec("insert into t2 values(2, 2);")
+	tk.MustExec("insert into t2 values(0, 0);")
+	tk.MustExec("delete from t1, t2 using t1 left join t2 on t1.c1 = t2.c2;")
+	tk.MustQuery("select * from t1 order by c1;").Check(testkit.Rows())
+	tk.MustQuery("select * from t2 order by c1;").Check(testkit.Rows("0 0", "2 2"))
+
+	// Rows in both t1 and t2 are matched, so will be deleted even if it's null.
+	// NOTE: The null values are not generated by join.
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (c1 int);")
+	tk.MustExec("create table t2 (c2 int);")
+	tk.MustExec("insert into t1 values(null);")
+	tk.MustExec("insert into t2 values(null);")
+	tk.MustExec("delete from t1, t2 using t1 join t2 where t1.c1 is null;")
+	tk.MustQuery("select * from t1;").Check(testkit.Rows())
+	tk.MustQuery("select * from t2;").Check(testkit.Rows())
 }

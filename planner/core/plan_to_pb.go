@@ -16,7 +16,6 @@ package core
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -131,7 +130,7 @@ func (p *PhysicalProjection) ToPB(ctx sessionctx.Context, storeType kv.StoreType
 		}
 		executorID = p.ExplainID().String()
 	} else {
-		return nil, errors.Errorf("The projection can only be pushed down to TiFlash now, not %s.", storeType.Name())
+		return nil, errors.Errorf("The projection can only be pushed down to TiFlash now, not %s", storeType.Name())
 	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeProjection, Projection: projExec, ExecutorId: &executorID}, nil
 }
@@ -177,28 +176,28 @@ func (p *PhysicalLimit) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*t
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+	if storeType == kv.TiFlash && p.Table.GetPartitionInfo() != nil && p.IsMPPOrBatchCop && p.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+		return p.partitionTableScanToPBForFlash(ctx)
+	}
 	tsExec := tables.BuildTableScanFromInfos(p.Table, p.Columns)
 	tsExec.Desc = p.Desc
 	if p.isPartition {
 		tsExec.TableId = p.physicalTableID
 	}
 	executorID := ""
-	if storeType == kv.TiFlash && p.IsGlobalRead {
-		tsExec.NextReadEngine = tipb.EngineType_TiFlash
-		splitedRanges, _ := distsql.SplitRangesAcrossInt64Boundary(p.Ranges, false, false, p.Table.IsCommonHandle)
-		ranges, err := distsql.TableHandleRangesToKVRanges(ctx.GetSessionVars().StmtCtx, []int64{tsExec.TableId}, p.Table.IsCommonHandle, splitedRanges, nil)
-		if err != nil {
-			return nil, err
-		}
-		for _, keyRange := range ranges {
-			tsExec.Ranges = append(tsExec.Ranges, tipb.KeyRange{Low: keyRange.StartKey, High: keyRange.EndKey})
-		}
-	}
 	if storeType == kv.TiFlash {
 		executorID = p.ExplainID().String()
 	}
 	err := SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec, ExecutorId: &executorID}, err
+}
+
+func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx sessionctx.Context) (*tipb.Executor, error) {
+	ptsExec := tables.BuildPartitionTableScanFromInfos(p.Table, p.Columns)
+	ptsExec.Desc = p.Desc
+	executorID := p.ExplainID().String()
+	err := SetPBColumnsDefaultValue(ctx, ptsExec.Columns, p.Columns)
+	return &tipb.Executor{Tp: tipb.ExecType_TypePartitionTableScan, PartitionTableScan: ptsExec, ExecutorId: &executorID}, err
 }
 
 // checkCoverIndex checks whether we can pass unique info to TiKV. We should push it if and only if the length of

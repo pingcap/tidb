@@ -146,6 +146,7 @@ func TestInvalidDDLJob(t *testing.T) {
 		Args:       []interface{}{},
 	}
 	ctx := testNewContext(store)
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := dom.DDL().DoDDLJob(ctx, job)
 	require.Equal(t, err.Error(), "[ddl:8204]invalid ddl job type: none")
 }
@@ -217,6 +218,7 @@ func TestAddBatchJobError(t *testing.T) {
 	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockAddBatchDDLJobsErr", `return(true)`))
 	// Test the job runner should not hang forever.
 	job := &model.Job{SchemaID: 1, TableID: 1}
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := dom.DDL().DoDDLJob(ctx, job)
 	require.Error(t, err)
 	require.Equal(t, err.Error(), "mockAddBatchDDLJobsErr")
@@ -250,6 +252,7 @@ func doDDLJobErrWithSchemaState(ctx sessionctx.Context, ddl ddl.DDL, store kv.St
 		BinlogInfo: &model.HistoryInfo{},
 	}
 	// TODO: check error detail
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.Error(t, ddl.DoDDLJob(ctx, job))
 	testCheckJobCancelled(t, store, job, state)
 
@@ -265,6 +268,7 @@ func doDDLJobSuccess(ctx sessionctx.Context, ddl ddl.DDL, t *testing.T, schemaID
 		Args:       args,
 		BinlogInfo: &model.HistoryInfo{},
 	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := ddl.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 }

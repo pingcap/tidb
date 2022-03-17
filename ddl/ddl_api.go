@@ -75,7 +75,11 @@ const (
 	longBlobMaxLength     = 4294967295
 	// When setting the placement policy with "PLACEMENT POLICY `default`",
 	// it means to remove placement policy from the specified object.
-	defaultPlacementPolicyName = "default"
+	defaultPlacementPolicyName        = "default"
+	tiflashCheckPendingTablesWaitTime = 3000 * time.Millisecond
+	// Once tiflashCheckPendingTablesLimit is reached, we trigger a limiter detection.
+	tiflashCheckPendingTablesLimit = 100
+	tiflashCheckPendingTablesRetry = 7
 )
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt, placementPolicyRef *model.PolicyRefInfo) (err error) {
@@ -206,13 +210,82 @@ func (d *ddl) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *ast.Alt
 	return errors.Trace(err)
 }
 
-func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
+// getPendingTiFlashTableCount counts unavailable TiFlash replica by iterating all tables in infoCache.
+func (d *ddl) getPendingTiFlashTableCount(sctx sessionctx.Context, originVersion int64, pendingCount uint32) (int64, uint32) {
+	is := d.GetInfoSchemaWithInterceptor(sctx)
+	dbInfos := is.AllSchemas()
+	// If there are no schema change since last time(can be weird).
+	if is.SchemaMetaVersion() == originVersion {
+		return originVersion, pendingCount
+	}
+	cnt := uint32(0)
+	for _, dbInfo := range dbInfos {
+		if util.IsMemOrSysDB(dbInfo.Name.L) {
+			continue
+		}
+		for _, tbl := range dbInfo.Tables {
+			if tbl.TiFlashReplica != nil && !tbl.TiFlashReplica.Available {
+				cnt += 1
+			}
+		}
+	}
+	return is.SchemaMetaVersion(), cnt
+}
+
+func isSessionDone(sctx sessionctx.Context) (bool, uint32) {
+	done := false
+	killed := atomic.LoadUint32(&sctx.GetSessionVars().Killed)
+	if killed == 1 {
+		done = true
+	}
+	failpoint.Inject("BatchAddTiFlashSendDone", func(val failpoint.Value) {
+		done = val.(bool)
+	})
+	return done, killed
+}
+
+func (d *ddl) waitPendingTableThreshold(sctx sessionctx.Context, schemaID int64, tableID int64, originVersion int64, pendingCount uint32, threshold uint32) (bool, int64, uint32, bool) {
+	configRetry := tiflashCheckPendingTablesRetry
+	configWaitTime := tiflashCheckPendingTablesWaitTime
+	failpoint.Inject("FastFailCheckTiFlashPendingTables", func(value failpoint.Value) {
+		configRetry = value.(int)
+		configWaitTime = time.Millisecond * 200
+	})
+
+	for retry := 0; retry < configRetry; retry += 1 {
+		done, killed := isSessionDone(sctx)
+		if done {
+			logutil.BgLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", schemaID), zap.Uint32("isKilled", killed))
+			return true, originVersion, pendingCount, false
+		}
+		originVersion, pendingCount = d.getPendingTiFlashTableCount(sctx, originVersion, pendingCount)
+		delay := time.Duration(0)
+		if pendingCount >= threshold {
+			logutil.BgLogger().Info("too many unavailable tables, wait", zap.Uint32("threshold", threshold), zap.Uint32("currentPendingCount", pendingCount), zap.Int64("schemaID", schemaID), zap.Int64("tableID", tableID), zap.Duration("time", configWaitTime))
+			delay = configWaitTime
+		} else {
+			// If there are not many unavailable tables, we don't need a force check.
+			return false, originVersion, pendingCount, false
+		}
+		time.Sleep(delay)
+	}
+	logutil.BgLogger().Info("too many unavailable tables, timeout", zap.Int64("schemaID", schemaID), zap.Int64("tableID", tableID))
+	// If timeout here, we will trigger a ddl job, to force sync schema. However, it doesn't mean we remove limiter,
+	// so there is a force check immediately after that.
+	return false, originVersion, pendingCount, true
+}
+
+func (d *ddl) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, tiflashReplica *ast.TiFlashReplicaSpec) error {
 	dbName := model.NewCIStr(stmt.Name)
-	is := d.GetInfoSchemaWithInterceptor(ctx)
+	is := d.GetInfoSchemaWithInterceptor(sctx)
 	dbInfo, ok := is.SchemaByName(dbName)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
 	}
+	if util.IsMemOrSysDB(dbInfo.Name.L) {
+		return errors.Trace(dbterror.ErrUnsupportedAlterReplicaForSysTable)
+	}
+
 	total := len(dbInfo.Tables)
 	succ := 0
 	skip := 0
@@ -222,18 +295,66 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.Al
 	if total == 0 {
 		return infoschema.ErrEmptyDatabase.GenWithStack("Empty database '%v'", dbName.O)
 	}
-	err := checkTiFlashReplicaCount(ctx, tiflashReplica.Count)
+	err := checkTiFlashReplicaCount(sctx, tiflashReplica.Count)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+	var originVersion int64 = 0
+	var pendingCount uint32 = 0
+	forceCheck := false
+
+	logutil.BgLogger().Info("start batch add TiFlash replicas", zap.Int("total", total), zap.Int64("schemaID", dbInfo.ID))
+	threshold := uint32(sctx.GetSessionVars().BatchPendingTiFlashCount)
+
 	for _, tbl := range dbInfo.Tables {
+		done, killed := isSessionDone(sctx)
+		if done {
+			logutil.BgLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID), zap.Uint32("isKilled", killed))
+			return nil
+		}
+
 		tbReplicaInfo := tbl.TiFlashReplica
 		if !shouldModifyTiFlashReplica(tbReplicaInfo, tiflashReplica) {
-			logutil.BgLogger().Info("skip processing schema table", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
+			logutil.BgLogger().Info("skip repeated processing table", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
 			skip += 1
 			continue
 		}
+
+		// Ban setting replica count for tables in system database.
+		if tbl.TempTableType != model.TempTableNone {
+			logutil.BgLogger().Info("skip processing temporary table", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
+			skip += 1
+			continue
+		}
+
+		charsetOk := true
+		// Ban setting replica count for tables which has charset not supported by TiFlash
+		for _, col := range tbl.Cols() {
+			_, ok := charset.TiFlashSupportedCharsets[col.Charset]
+			if !ok {
+				charsetOk = false
+				break
+			}
+		}
+		if !charsetOk {
+			logutil.BgLogger().Info("skip processing schema table, unsupported charset", zap.Int64("tableID", tbl.ID), zap.Int64("schemaID", dbInfo.ID), zap.String("tableName", tbl.Name.String()), zap.String("schemaName", dbInfo.Name.String()))
+			skip += 1
+			continue
+		}
+
+		// Alter `tiflashCheckPendingTablesLimit` tables are handled, we need to check if we have reached threshold.
+		if (succ+fail)%tiflashCheckPendingTablesLimit == 0 || forceCheck {
+			// We can execute one probing ddl to the latest schema, if we timeout in `pendingFunc`.
+			// However, we shall mark `forceCheck` to true, because we may still reach `threshold`.
+			finished := false
+			finished, originVersion, pendingCount, forceCheck = d.waitPendingTableThreshold(sctx, dbInfo.ID, tbl.ID, originVersion, pendingCount, threshold)
+			if finished {
+				logutil.BgLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID))
+				return nil
+			}
+		}
+
 		job := &model.Job{
 			SchemaID:   dbInfo.ID,
 			SchemaName: dbInfo.Name.L,
@@ -242,7 +363,7 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.Al
 			BinlogInfo: &model.HistoryInfo{},
 			Args:       []interface{}{*tiflashReplica},
 		}
-		err := d.DoDDLJob(ctx, job)
+		err := d.DoDDLJob(sctx, job)
 		err = d.callHookOnChanged(err)
 		if err != nil {
 			oneFail = tbl.ID
@@ -257,7 +378,8 @@ func (d *ddl) ModifySchemaSetTiFlashReplica(ctx sessionctx.Context, stmt *ast.Al
 		failStmt = fmt.Sprintf("(including table %v)", oneFail)
 	}
 	msg := fmt.Sprintf("In total %v tables: %v succeed, %v failed%v, %v skipped", total, succ, fail, failStmt, skip)
-	ctx.GetSessionVars().StmtCtx.SetMessage(msg)
+	sctx.GetSessionVars().StmtCtx.SetMessage(msg)
+	logutil.BgLogger().Info("finish batch add TiFlash replica", zap.Int64("schemaID", dbInfo.ID))
 	return nil
 }
 
@@ -335,7 +457,7 @@ func checkMultiSchemaSpecs(_sctx sessionctx.Context, specs []*ast.DatabaseOption
 	return nil
 }
 
-func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
+func (d *ddl) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
 	// Resolve target charset and collation from options.
 	var (
 		toCharset, toCollate                                         string
@@ -344,7 +466,7 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 		tiflashReplica                                               *ast.TiFlashReplicaSpec
 	)
 
-	err = checkMultiSchemaSpecs(ctx, stmt.Options)
+	err = checkMultiSchemaSpecs(sctx, stmt.Options)
 	if err != nil {
 		return err
 	}
@@ -380,17 +502,17 @@ func (d *ddl) AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (
 	}
 
 	if isAlterCharsetAndCollate {
-		if err = d.ModifySchemaCharsetAndCollate(ctx, stmt, toCharset, toCollate); err != nil {
+		if err = d.ModifySchemaCharsetAndCollate(sctx, stmt, toCharset, toCollate); err != nil {
 			return err
 		}
 	}
 	if isAlterPlacement {
-		if err = d.ModifySchemaDefaultPlacement(ctx, stmt, placementPolicyRef); err != nil {
+		if err = d.ModifySchemaDefaultPlacement(sctx, stmt, placementPolicyRef); err != nil {
 			return err
 		}
 	}
 	if isTiFlashReplica {
-		if err = d.ModifySchemaSetTiFlashReplica(ctx, stmt, tiflashReplica); err != nil {
+		if err = d.ModifySchemaSetTiFlashReplica(sctx, stmt, tiflashReplica); err != nil {
 			return err
 		}
 	}
@@ -2313,6 +2435,50 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	}
 
 	return nil
+}
+
+func (d *ddl) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *model.PolicyInfo, onExist OnExist) error {
+	if checkIgnorePlacementDDL(ctx) {
+		return nil
+	}
+
+	policyName := policy.Name
+	if policyName.L == defaultPlacementPolicyName {
+		return errors.Trace(infoschema.ErrReservedSyntax.GenWithStackByArgs(policyName))
+	}
+
+	// Check policy existence.
+	_, ok := d.GetInfoSchemaWithInterceptor(ctx).PolicyByName(policyName)
+	if ok {
+		err := infoschema.ErrPlacementPolicyExists.GenWithStackByArgs(policyName)
+		switch onExist {
+		case OnExistIgnore:
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		case OnExistError:
+			return err
+		}
+	}
+
+	if err := checkPolicyValidation(policy.PlacementSettings); err != nil {
+		return err
+	}
+
+	policyID, err := d.genPlacementPolicyID()
+	if err != nil {
+		return err
+	}
+	policy.ID = policyID
+
+	job := &model.Job{
+		SchemaName: policy.Name.L,
+		Type:       model.ActionCreatePlacementPolicy,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{policy, onExist == OnExistReplace},
+	}
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
 }
 
 // preSplitAndScatter performs pre-split and scatter of the table's regions.
@@ -4555,7 +4721,7 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 			WarningsCount: make(map[errors.ErrorID]int64),
 			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
 		},
-		Args: []interface{}{&newCol, oldColName, spec.Position, 0},
+		Args: []interface{}{&newCol, oldColName, spec.Position, 0, 0},
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
@@ -6632,41 +6798,27 @@ func (d *ddl) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlac
 	if checkIgnorePlacementDDL(ctx) {
 		return nil
 	}
-	policyName := stmt.PolicyName
-	if policyName.L == defaultPlacementPolicyName {
-		return errors.Trace(infoschema.ErrReservedSyntax.GenWithStackByArgs(policyName))
+
+	if stmt.OrReplace && stmt.IfNotExists {
+		return dbterror.ErrWrongUsage.GenWithStackByArgs("OR REPLACE", "IF NOT EXISTS")
 	}
-	is := d.GetInfoSchemaWithInterceptor(ctx)
-	// Check policy existence.
-	_, ok := is.PolicyByName(policyName)
-	if ok {
-		err = infoschema.ErrPlacementPolicyExists.GenWithStackByArgs(policyName)
-		if stmt.IfNotExists {
-			ctx.GetSessionVars().StmtCtx.AppendNote(err)
-			return nil
-		}
-		return err
-	}
-	// Auto fill the policyID when it is inserted.
+
 	policyInfo, err := buildPolicyInfo(stmt.PolicyName, stmt.PlacementOptions)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = checkPolicyValidation(policyInfo.PlacementSettings)
-	if err != nil {
-		return err
+	var onExists OnExist
+	switch {
+	case stmt.IfNotExists:
+		onExists = OnExistIgnore
+	case stmt.OrReplace:
+		onExists = OnExistReplace
+	default:
+		onExists = OnExistError
 	}
 
-	job := &model.Job{
-		SchemaName: policyInfo.Name.L,
-		Type:       model.ActionCreatePlacementPolicy,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{policyInfo},
-	}
-	err = d.DoDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
-	return errors.Trace(err)
+	return d.CreatePlacementPolicyWithInfo(ctx, policyInfo, onExists)
 }
 
 func (d *ddl) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) (err error) {
@@ -6765,6 +6917,7 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("table too large")
 	}
 
+	ddlQuery, _ := ctx.Value(sessionctx.QueryString).(string)
 	// Initialize the cached table meta lock info in `mysql.table_cache_meta`.
 	// The operation shouldn't fail in most cases, and if it does, return the error directly.
 	// This DML and the following DDL is not atomic, that's not a problem.
@@ -6773,6 +6926,7 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 	if err != nil {
 		return errors.Trace(err)
 	}
+	ctx.SetValue(sessionctx.QueryString, ddlQuery)
 
 	job := &model.Job{
 		SchemaID:   schema.ID,

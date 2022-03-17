@@ -115,6 +115,14 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		}
 		return variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
+
+	if sysVar.HasInstanceScope() && !v.IsGlobal && sessionVars.EnableLegacyInstanceScope {
+		// For backward compatibility we will change the v.IsGlobal to true,
+		// and append a warning saying this will not be supported in future.
+		v.IsGlobal = true
+		sessionVars.StmtCtx.AppendWarning(ErrInstanceScope.GenWithStackByArgs(sysVar.Name))
+	}
+
 	if v.IsGlobal {
 		valStr, err := e.getVarValue(v, sysVar)
 		if err != nil {
@@ -299,13 +307,8 @@ func (e *SetExecutor) getVarValue(v *expression.VarAssignment, sysVar *variable.
 		return variable.GetGlobalSystemVar(e.ctx.GetSessionVars(), v.Name)
 	}
 	nativeVal, err := v.Expr.Eval(chunk.Row{})
-	if err != nil {
+	if err != nil || nativeVal.IsNull() {
 		return "", err
-	}
-	// Setting NULL for system variables is not allowed,
-	// See https://github.com/pingcap/tidb/issues/32850#issuecomment-1062527091
-	if nativeVal.IsNull() {
-		return "", variable.ErrWrongValueForVar.GenWithStackByArgs(v.Name, "NULL")
 	}
 	return nativeVal.ToString()
 }

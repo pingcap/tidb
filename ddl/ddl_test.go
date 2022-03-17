@@ -151,6 +151,7 @@ func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bo
 func testCreatePrimaryKey(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string) *model.Job {
 	job := buildCreateIdxJob(dbInfo, tblInfo, true, "primary", colName)
 	job.Type = model.ActionAddPrimaryKey
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
@@ -160,6 +161,7 @@ func testCreatePrimaryKey(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *
 
 func testCreateIndex(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
 	job := buildCreateIdxJob(dbInfo, tblInfo, unique, indexName, colName)
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
@@ -175,6 +177,8 @@ func testAddColumn(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.D
 		Args:       args,
 		BinlogInfo: &model.HistoryInfo{},
 	}
+
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
@@ -190,6 +194,8 @@ func testAddColumns(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.
 		Args:       args,
 		BinlogInfo: &model.HistoryInfo{},
 	}
+
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
@@ -213,6 +219,8 @@ func buildDropIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName s
 
 func testDropIndex(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName string) *model.Job {
 	job := buildDropIdxJob(dbInfo, tblInfo, indexName)
+
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)

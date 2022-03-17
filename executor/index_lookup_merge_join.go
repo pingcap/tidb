@@ -73,6 +73,7 @@ type IndexLookUpMergeJoin struct {
 	lastColHelper *plannercore.ColWithCmpFuncManager
 
 	memTracker *memory.Tracker // track memory usage
+	prepared   bool
 }
 
 type outerMergeCtx struct {
@@ -162,7 +163,6 @@ func (e *IndexLookUpMergeJoin) Open(ctx context.Context) error {
 	}
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-	e.startWorkers(ctx)
 	return nil
 }
 
@@ -249,6 +249,10 @@ func (e *IndexLookUpMergeJoin) newInnerMergeWorker(taskCh chan *lookUpMergeJoinT
 
 // Next implements the Executor interface
 func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.Chunk) error {
+	if !e.prepared {
+		e.startWorkers(ctx)
+		e.prepared = true
+	}
 	if e.isOuterJoin {
 		atomic.StoreInt64(&e.requiredRows, int64(req.RequiredRows()))
 	}
@@ -731,5 +735,6 @@ func (e *IndexLookUpMergeJoin) Close() error {
 	// cancelFunc control the outer worker and outer worker close the task channel.
 	e.workerWg.Wait()
 	e.memTracker = nil
+	e.prepared = false
 	return e.baseExecutor.Close()
 }
