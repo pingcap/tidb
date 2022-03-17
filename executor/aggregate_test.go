@@ -919,6 +919,7 @@ func (s *testSuiteAgg) TestHaving(c *C) {
 	tk.MustQuery("select 1 from t group by c1 having sum(abs(c2 + c3)) = c1").Check(testkit.Rows("1"))
 }
 
+<<<<<<< HEAD
 func (s *testSuiteAgg) TestIssue26496(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
@@ -930,6 +931,13 @@ func (s *testSuiteAgg) TestIssue26496(c *C) {
 
 func (s *testSuiteAgg) TestAggEliminator(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+=======
+func TestAggEliminator(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+>>>>>>> 47e4b5bf3... *: revert #27021 to fix a bug that selection can not be pushed down when having clause above aggregation (#33168)
 
 	tk.MustExec("create table t(a int primary key, b int)")
 	tk.MustQuery("select min(a), min(a) from t").Check(testkit.Rows("<nil> <nil>"))
