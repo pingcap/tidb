@@ -53,7 +53,7 @@ func ExecMultiSQLInGoroutine(s kv.Storage, dbName string, multiSQL []string, don
 				return
 			}
 			if rs != nil {
-				done <- errors.Errorf("RecordSet should be empty.")
+				done <- errors.Errorf("RecordSet should be empty")
 				return
 			}
 			done <- nil

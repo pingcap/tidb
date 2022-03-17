@@ -593,6 +593,9 @@ const (
 	// TiDBTmpTableMaxSize indicates the max memory size of temporary tables.
 	TiDBTmpTableMaxSize = "tidb_tmp_table_max_size"
 
+	// TiDBEnableLegacyInstanceScope indicates if instance scope can be set with SET SESSION.
+	TiDBEnableLegacyInstanceScope = "tidb_enable_legacy_instance_scope"
+
 	// TiDBTableCacheLease indicates the read lock lease of a cached table.
 	TiDBTableCacheLease = "tidb_table_cache_lease"
 
@@ -604,6 +607,9 @@ const (
 	// TiDBTxnAssertionLevel indicates how strict the assertion will be, which helps to detect and preventing data &
 	// index inconsistency problems.
 	TiDBTxnAssertionLevel = "tidb_txn_assertion_level"
+
+	// TiDBIgnorePreparedCacheCloseStmt indicates whether to ignore close-stmt commands for prepared statements.
+	TiDBIgnorePreparedCacheCloseStmt = "tidb_ignore_prepared_cache_close_stmt"
 
 	// TiDBBatchPendingTiFlashCount indicates the maximum count of non-available TiFlash tables.
 	TiDBBatchPendingTiFlashCount = "tidb_batch_pending_tiflash_count"
@@ -636,8 +642,10 @@ const (
 	TiDBDisableColumnTrackingTime = "tidb_disable_column_tracking_time"
 	// TiDBStatsLoadPseudoTimeout indicates whether to fallback to pseudo stats after load timeout.
 	TiDBStatsLoadPseudoTimeout = "tidb_stats_load_pseudo_timeout"
-	// TiDBMemQuotaBindCache indicates the memory quota for the bind cache.
-	TiDBMemQuotaBindCache = "tidb_mem_quota_bind_cache"
+	// TiDBMemQuotaBindingCache indicates the memory quota for the bind cache.
+	TiDBMemQuotaBindingCache = "tidb_mem_quota_binding_cache"
+	// TiDBRCReadCheckTS indicates the tso optimization for read-consistency read is enabled.
+	TiDBRCReadCheckTS = "tidb_rc_read_check_ts"
 )
 
 // TiDB intentional limits
@@ -697,7 +705,7 @@ const (
 	DefMaxPreparedStmtCount               = -1
 	DefWaitTimeout                        = 28800
 	DefTiDBMemQuotaApplyCache             = 32 << 20 // 32MB.
-	DefTiDBMemQuotaBindCache              = 64 << 20 // 64MB.
+	DefTiDBMemQuotaBindingCache           = 64 << 20 // 64MB.
 	DefTiDBGeneralLog                     = false
 	DefTiDBPProfSQLCPU                    = 0
 	DefTiDBRetryLimit                     = 10
@@ -792,6 +800,7 @@ const (
 	DefTiDBStmtSummaryMaxSQLLength        = 4096
 	DefTiDBCapturePlanBaseline            = Off
 	DefTiDBEnableIndexMerge               = true
+	DefEnableLegacyInstanceScope          = true
 	DefTiDBTableCacheLease                = 3 // 3s
 	DefTiDBPersistAnalyzeOptions          = true
 	DefTiDBEnableColumnTracking           = false
@@ -800,8 +809,10 @@ const (
 	DefSysdateIsNow                       = false
 	DefTiDBEnableMutationChecker          = false
 	DefTiDBTxnAssertionLevel              = AssertionOffStr
+	DefTiDBIgnorePreparedCacheCloseStmt   = false
 	DefTiDBBatchPendingTiFlashCount       = 4000
-	DefTiDBReadStaleness                  = 0
+  DefRCReadCheckTS                      = false
+  DefTiDBReadStaleness                  = 0
 )
 
 // Process global variables.
@@ -835,5 +846,5 @@ var (
 	EnableColumnTracking                  = atomic.NewBool(DefTiDBEnableColumnTracking)
 	StatsLoadSyncWait                     = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
 	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
-	MemQuotaBindCache                     = atomic.NewInt64(DefTiDBMemQuotaBindCache)
+	MemQuotaBindingCache                  = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
 )
