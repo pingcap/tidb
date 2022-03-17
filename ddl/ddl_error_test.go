@@ -100,6 +100,7 @@ func TestIndexError(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int)")
+	tk.MustExec("alter table t add index a(a)")
 
 	// Schema ID is wrong.
 	doDDLJobErr(t, -1, 1, model.ActionAddIndex, nil, ctx, dom.DDL(), store)
@@ -109,21 +110,7 @@ func TestIndexError(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/MockModifyJobArg", `return(true)`))
 	_, err := tk.Exec("alter table t add index idx(a)")
 	require.Error(t, err)
+	_, err = tk.Exec("alter table t drop index a")
+	require.Error(t, err)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/MockModifyJobArg"))
-
-	//doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionAddIndex,
-	//	[]interface{}{false, model.NewCIStr("t"), 1,
-	//		[]*ast.IndexPartSpecification{{Column: &ast.ColumnName{Name: model.NewCIStr("c")}, Length: 256}}}, ctx, d)
-	//doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionAddIndex,
-	//	[]interface{}{false, model.NewCIStr("c1_index"), 1,
-	//		[]*ast.IndexPartSpecification{{Column: &ast.ColumnName{Name: model.NewCIStr("c")}, Length: 256}}}, ctx, d)
-	//testCreateIndex(t, ctx, d, dbInfo, tblInfo, false, "c1_index", "c1")
-	//doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionAddIndex,
-	//	[]interface{}{false, model.NewCIStr("c1_index"), 1,
-	//		[]*ast.IndexPartSpecification{{Column: &ast.ColumnName{Name: model.NewCIStr("c1")}, Length: 256}}}, ctx, d)
-	//
-	//// for dropping index
-	//doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionDropIndex, []interface{}{1}, ctx, d)
-	//testDropIndex(t, ctx, d, dbInfo, tblInfo, "c1_index")
-	//doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionDropIndex, []interface{}{model.NewCIStr("c1_index")}, ctx, d)
 }

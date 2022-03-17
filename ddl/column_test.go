@@ -17,6 +17,11 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"reflect"
+	"strconv"
+	"sync"
+	"testing"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -30,10 +35,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
-	"reflect"
-	"strconv"
-	"sync"
-	"testing"
 )
 
 func testCreateColumn(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, tblID int64,

@@ -19,8 +19,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"testing"
 	"time"
 
@@ -151,64 +152,61 @@ func TestInvalidDDLJob(t *testing.T) {
 	require.Equal(t, err.Error(), "[ddl:8204]invalid ddl job type: none")
 }
 
-//func TestColumnError(t *testing.T) {
-//	store := createMockStore(t)
-//	defer func() {
-//		require.NoError(t, store.Close())
-//	}()
-//	d, err := testNewDDLAndStart(
-//		context.Background(),
-//		WithStore(store),
-//		WithLease(testLease),
-//	)
-//	require.NoError(t, err)
-//	defer func() {
-//		require.NoError(t, d.Stop())
-//	}()
-//	ctx := testNewContext(d)
-//
-//	dbInfo, err := testSchemaInfo(d, "test_ddl")
-//	require.NoError(t, err)
-//	tblInfo, err := testTableInfo(d, "t", 3)
-//	require.NoError(t, err)
-//	testCreateSchema(t, ctx, d, dbInfo)
-//	testCreateTable(t, ctx, d, dbInfo, tblInfo)
-//	col := &model.ColumnInfo{
-//		Name:         model.NewCIStr("c4"),
-//		Offset:       len(tblInfo.Columns),
-//		DefaultValue: 0,
-//	}
-//	col.ID = allocateColumnID(tblInfo)
-//	col.FieldType = *types.NewFieldType(mysql.TypeLong)
-//	pos := &ast.ColumnPosition{Tp: ast.ColumnPositionAfter, RelativeColumn: &ast.ColumnName{Name: model.NewCIStr("c5")}}
-//
-//	cols := &[]*model.ColumnInfo{col}
-//	positions := &[]*ast.ColumnPosition{pos}
-//
-//	// for adding column
-//	doDDLJobErr(t, -1, tblInfo.ID, model.ActionAddColumn, []interface{}{col, pos, 0}, ctx, d)
-//	doDDLJobErr(t, dbInfo.ID, -1, model.ActionAddColumn, []interface{}{col, pos, 0}, ctx, d)
-//	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionAddColumn, []interface{}{0}, ctx, d)
-//	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionAddColumn, []interface{}{col, pos, 0}, ctx, d)
-//
-//	// for dropping column
-//	doDDLJobErr(t, -1, tblInfo.ID, model.ActionDropColumn, []interface{}{col, pos, 0}, ctx, d)
-//	doDDLJobErr(t, dbInfo.ID, -1, model.ActionDropColumn, []interface{}{col, pos, 0}, ctx, d)
-//	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionDropColumn, []interface{}{0}, ctx, d)
-//	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionDropColumn, []interface{}{model.NewCIStr("c5")}, ctx, d)
-//
-//	// for adding columns
-//	doDDLJobErr(t, -1, tblInfo.ID, model.ActionAddColumns, []interface{}{cols, positions, 0}, ctx, d)
-//	doDDLJobErr(t, dbInfo.ID, -1, model.ActionAddColumns, []interface{}{cols, positions, 0}, ctx, d)
-//	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, []interface{}{0}, ctx, d)
-//	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, []interface{}{cols, positions, 0}, ctx, d)
-//
-//	// for dropping columns
-//	doDDLJobErr(t, -1, tblInfo.ID, model.ActionDropColumns, []interface{}{col, pos, 0}, ctx, d)
-//	doDDLJobErr(t, dbInfo.ID, -1, model.ActionDropColumns, []interface{}{col, pos, 0}, ctx, d)
-//	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionDropColumns, []interface{}{0}, ctx, d)
-//	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionDropColumns, []interface{}{[]model.CIStr{model.NewCIStr("c5"), model.NewCIStr("c6")}, make([]bool, 2)}, ctx, d)
-//}
+func TestColumnError(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	defer clean()
+	ctx := testNewContext(store)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("alter table t add index a(a)")
+	ctx := testNewContext(d)
+
+	dbInfo, err := testSchemaInfo(d, "test_ddl")
+	require.NoError(t, err)
+	tblInfo, err := testTableInfo(d, "t", 3)
+	require.NoError(t, err)
+	testCreateSchema(t, ctx, d, dbInfo)
+	testCreateTable(t, ctx, d, dbInfo, tblInfo)
+	col := &model.ColumnInfo{
+		Name:         model.NewCIStr("c4"),
+		Offset:       len(tblInfo.Columns),
+		DefaultValue: 0,
+	}
+	col.ID = allocateColumnID(tblInfo)
+	col.FieldType = *types.NewFieldType(mysql.TypeLong)
+	pos := &ast.ColumnPosition{Tp: ast.ColumnPositionAfter, RelativeColumn: &ast.ColumnName{Name: model.NewCIStr("c5")}}
+
+	cols := &[]*model.ColumnInfo{col}
+	positions := &[]*ast.ColumnPosition{pos}
+
+	//
+
+	// for adding column
+	doDDLJobErr(t, -1, tblInfo.ID, model.ActionAddColumn, []interface{}{col, pos, 0}, ctx, d)
+	doDDLJobErr(t, dbInfo.ID, -1, model.ActionAddColumn, []interface{}{col, pos, 0}, ctx, d)
+	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionAddColumn, []interface{}{0}, ctx, d)
+	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionAddColumn, []interface{}{col, pos, 0}, ctx, d)
+
+	// for dropping column
+	doDDLJobErr(t, -1, tblInfo.ID, model.ActionDropColumn, []interface{}{col, pos, 0}, ctx, d)
+	doDDLJobErr(t, dbInfo.ID, -1, model.ActionDropColumn, []interface{}{col, pos, 0}, ctx, d)
+	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionDropColumn, []interface{}{0}, ctx, d)
+	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionDropColumn, []interface{}{model.NewCIStr("c5")}, ctx, d)
+
+	// for adding columns
+	doDDLJobErr(t, -1, tblInfo.ID, model.ActionAddColumns, []interface{}{cols, positions, 0}, ctx, d)
+	doDDLJobErr(t, dbInfo.ID, -1, model.ActionAddColumns, []interface{}{cols, positions, 0}, ctx, d)
+	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, []interface{}{0}, ctx, d)
+	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionAddColumns, []interface{}{cols, positions, 0}, ctx, d)
+
+	// for dropping columns
+	doDDLJobErr(t, -1, tblInfo.ID, model.ActionDropColumns, []interface{}{col, pos, 0}, ctx, d)
+	doDDLJobErr(t, dbInfo.ID, -1, model.ActionDropColumns, []interface{}{col, pos, 0}, ctx, d)
+	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionDropColumns, []interface{}{0}, ctx, d)
+	doDDLJobErr(t, dbInfo.ID, tblInfo.ID, model.ActionDropColumns, []interface{}{[]model.CIStr{model.NewCIStr("c5"), model.NewCIStr("c6")}, make([]bool, 2)}, ctx, d)
+}
 
 func TestAddBatchJobError(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
@@ -1258,33 +1256,33 @@ func doDDLJobErr(t *testing.T, schemaID, tableID int64, tp model.ActionType, arg
 //	d.SetHook(tc)
 //}
 //
-func TestDDLPackageExecuteSQL(t *testing.T) {
-	store := createMockStore(t)
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
-
-	d, err := testNewDDLAndStart(
-		context.Background(),
-		WithStore(store),
-		WithLease(testLease),
-	)
-	require.NoError(t, err)
-	testCheckOwner(t, d, true)
-	defer func() {
-		require.NoError(t, d.Stop())
-	}()
-	worker := d.generalWorker()
-	require.NotNil(t, worker)
-
-	// In test environment, worker.ctxPool will be nil, and get will return mock.Context.
-	// We just test that can use it to call sqlexec.SQLExecutor.Execute.
-	sess, err := worker.sessPool.get()
-	require.NoError(t, err)
-	defer worker.sessPool.put(sess)
-	se := sess.(sqlexec.SQLExecutor)
-	_, _ = se.Execute(context.Background(), "create table t(a int);")
-}
+//func TestDDLPackageExecuteSQL(t *testing.T) {
+//	store := createMockStore(t)
+//	defer func() {
+//		require.NoError(t, store.Close())
+//	}()
+//
+//	d, err := testNewDDLAndStart(
+//		context.Background(),
+//		WithStore(store),
+//		WithLease(testLease),
+//	)
+//	require.NoError(t, err)
+//	testCheckOwner(t, d, true)
+//	defer func() {
+//		require.NoError(t, d.Stop())
+//	}()
+//	worker := d.generalWorker()
+//	require.NotNil(t, worker)
+//
+//	// In test environment, worker.ctxPool will be nil, and get will return mock.Context.
+//	// We just test that can use it to call sqlexec.SQLExecutor.Execute.
+//	sess, err := worker.sessPool.get()
+//	require.NoError(t, err)
+//	defer worker.sessPool.put(sess)
+//	se := sess.(sqlexec.SQLExecutor)
+//	_, _ = se.Execute(context.Background(), "create table t(a int);")
+//}
 
 //func (s *testDDLSerialSuiteToVerify) checkDropIndexes(d *ddl, schemaID int64, tableID int64, idxNames []model.CIStr, success bool) {
 //	for _, idxName := range idxNames {
