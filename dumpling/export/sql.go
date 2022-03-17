@@ -183,7 +183,7 @@ func ShowCreateSequence(tctx *tcontext.Context, db *BaseConn, database, sequence
 	}
 	var createSequenceSQL strings.Builder
 
-	query := fmt.Sprintf("SHOW CREATE SEQUENCE `%s`", escapeString(sequence))
+	query := fmt.Sprintf("SHOW CREATE SEQUENCE `%s`.`%s`", escapeString(database), escapeString(sequence))
 	err := db.QuerySQL(tctx, handleOneRow, func() {
 		oneRow[0], oneRow[1] = "", ""
 	}, query)
