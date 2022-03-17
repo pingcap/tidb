@@ -885,25 +885,21 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 		if err != nil {
 			return nil, err
 		}
-		if resp.Capability&mysql.ClientPluginAuth > 0 {
-			_, err = cc.authSwitchRequest(ctx, mysql.AuthNativePassword)
-			if err != nil {
-				return nil, err
-			}
-		}
 		return []byte(user.Username), nil
 	}
 	if len(userplugin) == 0 {
 		// No user plugin set, assuming MySQL Native Password
 		// This happens if the account doesn't exist or if the account doesn't have
 		// a password set.
-		if resp.Capability&mysql.ClientPluginAuth > 0 {
-			resp.AuthPlugin = mysql.AuthNativePassword
-			authData, err := cc.authSwitchRequest(ctx, mysql.AuthNativePassword)
-			if err != nil {
-				return nil, err
+		if resp.AuthPlugin != mysql.AuthNativePassword {
+			if resp.Capability&mysql.ClientPluginAuth > 0 {
+				resp.AuthPlugin = mysql.AuthNativePassword
+				authData, err := cc.authSwitchRequest(ctx, mysql.AuthNativePassword)
+				if err != nil {
+					return nil, err
+				}
+				return authData, nil
 			}
-			return authData, nil
 		}
 		return nil, nil
 	}
@@ -1853,6 +1849,17 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		}
 		retryable, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
 		if err != nil {
+			if retryable && cc.ctx.GetSessionVars().IsRcCheckTsRetryable(err) {
+				cc.ctx.GetSessionVars().RetryInfo.Retrying = true
+				logutil.Logger(ctx).Info("RC read with ts checking has failed, retry RC read",
+					zap.String("sql", cc.ctx.GetSessionVars().StmtCtx.OriginalSQL))
+				_, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
+				cc.ctx.GetSessionVars().RetryInfo.Retrying = false
+				if err != nil {
+					break
+				}
+				continue
+			}
 			if !retryable || !errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) {
 				break
 			}
