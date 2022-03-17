@@ -3,7 +3,7 @@
     "Name": "TestEagerAggregation",
     "Cases": [
       "DataScan(t)->Aggr(sum(test.t.a),sum(plus(test.t.a, 1)),count(test.t.a))->Projection",
-      "DataScan(t)->Aggr(sum(plus(test.t.a, test.t.b)),sum(plus(test.t.a, test.t.c)),count(test.t.a))->Projection->Sel([gt(Column#13, 0)])->Sort->Projection",
+      "DataScan(t)->Aggr(sum(plus(test.t.a, test.t.b)),sum(plus(test.t.a, test.t.c)),count(test.t.a))->Sel([gt(Column#13, 0)])->Projection->Sort->Projection",
       "Join{DataScan(a)->Aggr(sum(test.t.a),firstrow(test.t.c))->DataScan(b)}(test.t.c,test.t.c)->Aggr(sum(Column#26))->Projection",
       "Join{DataScan(a)->DataScan(b)->Aggr(sum(test.t.a),firstrow(test.t.c))}(test.t.c,test.t.c)->Aggr(sum(Column#26))->Projection",
       "Join{DataScan(a)->DataScan(b)->Aggr(sum(test.t.a),firstrow(test.t.c))}(test.t.c,test.t.c)->Aggr(sum(Column#26),firstrow(test.t.a))->Projection",
@@ -89,7 +89,7 @@
       "DataScan(t)->Aggr(sum(test.t.b),firstrow(test.t.a))->Sel([gt(cast(test.t.a, decimal(20,0) BINARY), Column#13)])->Projection->Projection",
       "DataScan(t)->Aggr(sum(test.t.b),firstrow(test.t.a))->Sel([gt(test.t.a, 1)])->Projection->Projection",
       "Dual->Sel([gt(test.t.a, 1)])->Projection",
-      "DataScan(t)->Aggr(count(test.t.a),firstrow(test.t.a))->Projection->Sel([lt(Column#13, 1)])",
+      "DataScan(t)->Aggr(count(test.t.a),firstrow(test.t.a))->Sel([lt(Column#13, 1)])->Projection",
       "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)->Projection",
       "Dual->Projection",
       "DataScan(t)->Projection->Projection->Window(min(test.t.a)->Column#14)->Sel([lt(test.t.a, 10) eq(test.t.b, Column#14)])->Projection->Projection",
@@ -195,7 +195,7 @@
       "TableReader(Table(t))->Window(sum(cast(test.t.a, decimal(10,0) BINARY))->Column#14 over())->Sort->Projection",
       "TableReader(Table(t))->Window(sum(cast(test.t.a, decimal(10,0) BINARY))->Column#14 over(partition by test.t.a))->Sort->Projection",
       "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(Column#13)->Column#15 over())->Sort->Projection",
-      "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)]))->Window(sum(cast(test.t.a, decimal(10,0) BINARY))->Column#38 over())->MaxOneRow}->Sel([Column#38])->Projection",
+      "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)]))->Window(sum(cast(test.t.a, decimal(10,0) BINARY))->Column#38 over())->MaxOneRow->Sel([Column#38])}->Projection",
       "[planner:3594]You cannot use the alias 'w' of an expression containing a window function in this context.'",
       "[planner:1247]Reference 'sum_a' not supported (reference to window function)",
       "[planner:3579]Window name 'w2' is not defined.",
@@ -268,7 +268,7 @@
       "TableReader(Table(t))->Window(sum(cast(test.t.a, decimal(10,0) BINARY))->Column#14 over())->Sort->Projection",
       "TableReader(Table(t))->Window(sum(cast(test.t.a, decimal(10,0) BINARY))->Column#14 over(partition by test.t.a))->Sort->Projection",
       "TableReader(Table(t)->StreamAgg)->StreamAgg->Window(sum(Column#13)->Column#15 over())->Sort->Projection",
-      "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)]))->Window(sum(cast(test.t.a, decimal(10,0) BINARY))->Column#38 over())->MaxOneRow}->Sel([Column#38])->Projection",
+      "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)]))->Window(sum(cast(test.t.a, decimal(10,0) BINARY))->Column#38 over())->MaxOneRow->Sel([Column#38])}->Projection",
       "[planner:3594]You cannot use the alias 'w' of an expression containing a window function in this context.'",
       "[planner:1247]Reference 'sum_a' not supported (reference to window function)",
       "[planner:3579]Window name 'w2' is not defined.",
@@ -483,12 +483,12 @@
             "test.t.f"
           ]
         ],
-        "4": [
+        "5": [
           [
             "test.t.f"
           ]
         ],
-        "5": [
+        "6": [
           [
             "test.t.f"
           ]

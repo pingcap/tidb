@@ -133,6 +133,9 @@ const (
 	// TiDBOptimizerSelectivityLevel is used to control the selectivity estimation level.
 	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
 
+	// TiDBOptimizerEnableNewOnlyFullGroupByCheck is used to open the newly only_full_group_by check by maintaining functional dependency.
+	TiDBOptimizerEnableNewOnlyFullGroupByCheck = "tidb_enable_new_only_full_group_by_check"
+
 	// TiDBTxnMode is used to control the transaction behavior.
 	TiDBTxnMode = "tidb_txn_mode"
 
@@ -644,6 +647,8 @@ const (
 	TiDBStatsLoadPseudoTimeout = "tidb_stats_load_pseudo_timeout"
 	// TiDBMemQuotaBindingCache indicates the memory quota for the bind cache.
 	TiDBMemQuotaBindingCache = "tidb_mem_quota_binding_cache"
+	// TiDBRCReadCheckTS indicates the tso optimization for read-consistency read is enabled.
+	TiDBRCReadCheckTS = "tidb_rc_read_check_ts"
 )
 
 // TiDB intentional limits
@@ -714,6 +719,7 @@ const (
 	DefBroadcastJoinThresholdSize         = 100 * 1024 * 1024
 	DefBroadcastJoinThresholdCount        = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel      = 0
+	DefTiDBOptimizerEnableNewOFGB         = false
 	DefTiDBAllowBatchCop                  = 1
 	DefTiDBAllowMPPExecution              = true
 	DefTiDBHashExchangeWithNewCollation   = true
@@ -809,6 +815,7 @@ const (
 	DefTiDBTxnAssertionLevel              = AssertionOffStr
 	DefTiDBIgnorePreparedCacheCloseStmt   = false
 	DefTiDBBatchPendingTiFlashCount       = 4000
+	DefRCReadCheckTS                      = false
 )
 
 // Process global variables.

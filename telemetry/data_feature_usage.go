@@ -33,33 +33,81 @@ type featureUsage struct {
 	Txn *TxnUsage `json:"txn"`
 	// cluster index usage information
 	// key is the first 6 characters of sha2(TABLE_NAME, 256)
-	ClusterIndex   *ClusterIndexUsage `json:"clusterIndex"`
-	TemporaryTable bool               `json:"temporaryTable"`
-	CTE            *m.CTEUsageCounter `json:"cte"`
-	CachedTable    bool               `json:"cachedTable"`
-	AutoCapture    bool               `json:"autoCapture"`
+	ClusterIndex         *ClusterIndexUsage    `json:"clusterIndex"`
+	TemporaryTable       bool                  `json:"temporaryTable"`
+	CTE                  *m.CTEUsageCounter    `json:"cte"`
+	CachedTable          bool                  `json:"cachedTable"`
+	AutoCapture          bool                  `json:"autoCapture"`
+	PlacementPolicyUsage *placementPolicyUsage `json:"placementPolicy"`
+}
+
+type placementPolicyUsage struct {
+	NumPlacementPolicies uint64 `json:"numPlacementPolicies"`
+	NumDBWithPolicies    uint64 `json:"numDBWithPolicies"`
+	NumTableWithPolicies uint64 `json:"numTableWithPolicies"`
+	// The number of partitions that policies are explicitly specified.
+	NumPartitionWithExplicitPolicies uint64 `json:"numPartitionWithExplicitPolicies"`
 }
 
 func getFeatureUsage(ctx sessionctx.Context) (*featureUsage, error) {
-	clusterIdxUsage, err := getClusterIndexUsageInfo(ctx)
+	var usage featureUsage
+	var err error
+	usage.ClusterIndex, err = getClusterIndexUsageInfo(ctx)
 	if err != nil {
 		logutil.BgLogger().Info(err.Error())
 		return nil, err
 	}
 
 	// transaction related feature
-	txnUsage := getTxnUsageInfo(ctx)
+	usage.Txn = getTxnUsageInfo(ctx)
 
-	// Avoid the circle dependency.
-	temporaryTable := ctx.(TemporaryOrCacheTableFeatureChecker).TemporaryTableExists()
+	usage.CTE = getCTEUsageInfo()
 
-	cteUsage := getCTEUsageInfo()
+	usage.AutoCapture = getAutoCaptureUsageInfo(ctx)
 
-	cachedTable := ctx.(TemporaryOrCacheTableFeatureChecker).CachedTableExists()
-
-	enableAutoCapture := getAutoCaptureUsageInfo(ctx)
-	return &featureUsage{txnUsage, clusterIdxUsage, temporaryTable, cteUsage, cachedTable, enableAutoCapture}, nil
+	collectFeatureUsageFromInfoschema(ctx, &usage)
+	return &usage, nil
 }
+
+// collectFeatureUsageFromInfoschema updates the usage for temporary table, cached table and placement policies.
+func collectFeatureUsageFromInfoschema(ctx sessionctx.Context, usage *featureUsage) {
+	if usage.PlacementPolicyUsage == nil {
+		usage.PlacementPolicyUsage = &placementPolicyUsage{}
+	}
+	is := GetDomainInfoSchema(ctx)
+	for _, dbInfo := range is.AllSchemas() {
+		if dbInfo.PlacementPolicyRef != nil {
+			usage.PlacementPolicyUsage.NumDBWithPolicies++
+		}
+
+		for _, tbInfo := range is.SchemaTables(dbInfo.Name) {
+			if tbInfo.Meta().TempTableType != model.TempTableNone {
+				usage.TemporaryTable = true
+			}
+			if tbInfo.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
+				usage.CachedTable = true
+			}
+			if tbInfo.Meta().PlacementPolicyRef != nil {
+				usage.PlacementPolicyUsage.NumTableWithPolicies++
+			}
+			partitions := tbInfo.Meta().GetPartitionInfo()
+			if partitions == nil {
+				continue
+			}
+			for _, partitionInfo := range partitions.Definitions {
+				if partitionInfo.PlacementPolicyRef != nil {
+					usage.PlacementPolicyUsage.NumPartitionWithExplicitPolicies++
+				}
+			}
+		}
+	}
+
+	usage.PlacementPolicyUsage.NumPlacementPolicies += uint64(len(is.AllPlacementPolicies()))
+}
+
+// GetDomainInfoSchema is used by the telemetry package to get the latest schema information
+// while avoiding circle dependency with domain package.
+var GetDomainInfoSchema func(sessionctx.Context) infoschema.InfoSchema
 
 // ClusterIndexUsage records the usage info of all the tables, no more than 10k tables
 type ClusterIndexUsage map[string]TableClusteredInfo
@@ -139,19 +187,15 @@ func getClusterIndexUsageInfo(ctx sessionctx.Context) (cu *ClusterIndexUsage, er
 	return &usage, nil
 }
 
-// TemporaryOrCacheTableFeatureChecker is defined to avoid package circle dependency.
-// The session struct implements this interface.
-type TemporaryOrCacheTableFeatureChecker interface {
-	TemporaryTableExists() bool
-	CachedTableExists() bool
-}
-
 // TxnUsage records the usage info of transaction related features, including
 // async-commit, 1PC and counters of transactions committed with different protocols.
 type TxnUsage struct {
-	AsyncCommitUsed  bool                     `json:"asyncCommitUsed"`
-	OnePCUsed        bool                     `json:"onePCUsed"`
-	TxnCommitCounter metrics.TxnCommitCounter `json:"txnCommitCounter"`
+	AsyncCommitUsed     bool                     `json:"asyncCommitUsed"`
+	OnePCUsed           bool                     `json:"onePCUsed"`
+	TxnCommitCounter    metrics.TxnCommitCounter `json:"txnCommitCounter"`
+	MutationCheckerUsed bool                     `json:"mutationCheckerUsed"`
+	AssertionLevel      string                   `json:"assertionLevel"`
+	RcCheckTS           bool                     `json:"rcCheckTS"`
 }
 
 var initialTxnCommitCounter metrics.TxnCommitCounter
@@ -169,7 +213,19 @@ func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	}
 	curr := metrics.GetTxnCommitCounter()
 	diff := curr.Sub(initialTxnCommitCounter)
-	return &TxnUsage{asyncCommitUsed, onePCUsed, diff}
+	mutationCheckerUsed := false
+	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBEnableMutationChecker); err == nil {
+		mutationCheckerUsed = val == variable.On
+	}
+	assertionUsed := ""
+	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBTxnAssertionLevel); err == nil {
+		assertionUsed = val
+	}
+	rcCheckTSUsed := false
+	if val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBRCReadCheckTS); err == nil {
+		rcCheckTSUsed = val == variable.On
+	}
+	return &TxnUsage{asyncCommitUsed, onePCUsed, diff, mutationCheckerUsed, assertionUsed, rcCheckTSUsed}
 }
 
 func postReportTxnUsage() {
