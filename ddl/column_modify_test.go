@@ -36,9 +36,11 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -120,7 +122,7 @@ AddLoop:
 		})
 	}
 
-	tbl := tk.GetTableByName("test", "t2")
+	tbl := external.GetTableByName(t, tk, "test", "t2")
 	i := 0
 	j := 0
 	require.NoError(t, tk.Session().NewTxn(context.Background()))
@@ -388,7 +390,7 @@ func TestRenameColumn(t *testing.T) {
 	tk.MustExec("use test")
 
 	assertColNames := func(tableName string, colNames ...string) {
-		cols := tk.GetTableByName("test", tableName).Cols()
+		cols := external.GetTableByName(t, tk, "test", tableName).Cols()
 		require.Equal(t, len(colNames), len(cols))
 		for i := range cols {
 			require.Equal(t, strings.ToLower(colNames[i]), cols[i].Name.L)
@@ -506,7 +508,7 @@ func TestCancelDropColumn(t *testing.T) {
 		err := tk.ExecToErr("alter table test_drop_column drop column c3")
 		var col1 *table.Column
 		var idx1 table.Index
-		tbl := tk.GetTableByName("test", "test_drop_column")
+		tbl := external.GetTableByName(t, tk, "test", "test_drop_column")
 		for _, col := range tbl.Cols() {
 			if strings.EqualFold(col.Name.L, "c3") {
 				col1 = col
@@ -607,7 +609,7 @@ func TestCancelDropColumns(t *testing.T) {
 			c3IdxID = testGetIndexID(t, tk.Session(), "test", "test_drop_column", "idx_c3")
 		}
 		err := tk.ExecToErr("alter table test_drop_column drop column c3, drop column c4")
-		tbl := tk.GetTableByName("test", "test_drop_column")
+		tbl := external.GetTableByName(t, tk, "test", "test_drop_column")
 		col3 := table.FindCol(tbl.Cols(), "c3")
 		col4 := table.FindCol(tbl.Cols(), "c4")
 		var idx3 table.Index
@@ -895,4 +897,165 @@ func TestTransactionWithWriteOnlyColumn(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, checkErr)
 	tk.MustQuery("select a from t1").Check(testkit.Rows("2"))
+}
+
+func TestColumnCheck(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists column_check")
+	tk.MustExec("create table column_check (pk int primary key, a int check (a > 1))")
+	defer tk.MustExec("drop table if exists column_check")
+	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|8231|CONSTRAINT CHECK is not supported"))
+}
+
+func TestModifyGeneratedColumn(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	modIdxColErrMsg := "[ddl:3106]'modifying an indexed column' is not supported for generated columns."
+	modStoredColErrMsg := "[ddl:3106]'modifying a stored column' is not supported for generated columns."
+
+	// Modify column with single-col-index.
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (a int, b int as (a+1), index idx(b));")
+	tk.MustExec("insert into t1 set a=1;")
+	tk.MustGetErrMsg("alter table t1 modify column b int as (a+2);", modIdxColErrMsg)
+	tk.MustExec("drop index idx on t1;")
+	tk.MustExec("alter table t1 modify b int as (a+2);")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 3"))
+
+	// Modify column with multi-col-index.
+	tk.MustExec("drop table t1;")
+	tk.MustExec("create table t1 (a int, b int as (a+1), index idx(a, b));")
+	tk.MustExec("insert into t1 set a=1;")
+	tk.MustGetErrMsg("alter table t1 modify column b int as (a+2);", modIdxColErrMsg)
+	tk.MustExec("drop index idx on t1;")
+	tk.MustExec("alter table t1 modify b int as (a+2);")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 3"))
+
+	// Modify column with stored status to a different expression.
+	tk.MustExec("drop table t1;")
+	tk.MustExec("create table t1 (a int, b int as (a+1) stored);")
+	tk.MustExec("insert into t1 set a=1;")
+	tk.MustGetErrMsg("alter table t1 modify column b int as (a+2) stored;", modStoredColErrMsg)
+
+	// Modify column with stored status to the same expression.
+	tk.MustExec("drop table t1;")
+	tk.MustExec("create table t1 (a int, b int as (a+1) stored);")
+	tk.MustExec("insert into t1 set a=1;")
+	tk.MustExec("alter table t1 modify column b bigint as (a+1) stored;")
+	tk.MustExec("alter table t1 modify column b bigint as (a + 1) stored;")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 2"))
+
+	// Modify column with index to the same expression.
+	tk.MustExec("drop table t1;")
+	tk.MustExec("create table t1 (a int, b int as (a+1), index idx(b));")
+	tk.MustExec("insert into t1 set a=1;")
+	tk.MustExec("alter table t1 modify column b bigint as (a+1);")
+	tk.MustExec("alter table t1 modify column b bigint as (a + 1);")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 2"))
+
+	// Modify column from non-generated to stored generated.
+	tk.MustExec("drop table t1;")
+	tk.MustExec("create table t1 (a int, b int);")
+	tk.MustGetErrMsg("alter table t1 modify column b bigint as (a+1) stored;", modStoredColErrMsg)
+
+	// Modify column from stored generated to non-generated.
+	tk.MustExec("drop table t1;")
+	tk.MustExec("create table t1 (a int, b int as (a+1) stored);")
+	tk.MustExec("insert into t1 set a=1;")
+	tk.MustExec("alter table t1 modify column b int;")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 2"))
+}
+
+func TestCheckColumnDefaultValue(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists text_default_text;")
+	tk.MustGetErrCode("create table text_default_text(c1 text not null default '');", errno.ErrBlobCantHaveDefault)
+	tk.MustGetErrCode("create table text_default_text(c1 text not null default 'scds');", errno.ErrBlobCantHaveDefault)
+
+	tk.MustExec("drop table if exists text_default_json;")
+	tk.MustGetErrCode("create table text_default_json(c1 json not null default '');", errno.ErrBlobCantHaveDefault)
+	tk.MustGetErrCode("create table text_default_json(c1 json not null default 'dfew555');", errno.ErrBlobCantHaveDefault)
+
+	tk.MustExec("drop table if exists text_default_blob;")
+	tk.MustGetErrCode("create table text_default_blob(c1 blob not null default '');", errno.ErrBlobCantHaveDefault)
+	tk.MustGetErrCode("create table text_default_blob(c1 blob not null default 'scds54');", errno.ErrBlobCantHaveDefault)
+
+	tk.MustExec("set sql_mode='';")
+	tk.MustExec("create table text_default_text(c1 text not null default '');")
+	tk.MustQuery(`show create table text_default_text`).Check(testutil.RowsWithSep("|",
+		"text_default_text CREATE TABLE `text_default_text` (\n"+
+			"  `c1` text NOT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	is := domain.GetDomain(tk.Session()).InfoSchema()
+	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("text_default_text"))
+	require.NoError(t, err)
+	require.Empty(t, tblInfo.Meta().Columns[0].DefaultValue)
+
+	tk.MustExec("create table text_default_blob(c1 blob not null default '');")
+	tk.MustQuery(`show create table text_default_blob`).Check(testutil.RowsWithSep("|",
+		"text_default_blob CREATE TABLE `text_default_blob` (\n"+
+			"  `c1` blob NOT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	is = domain.GetDomain(tk.Session()).InfoSchema()
+	tblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("text_default_blob"))
+	require.NoError(t, err)
+	require.Empty(t, tblInfo.Meta().Columns[0].DefaultValue)
+
+	tk.MustExec("create table text_default_json(c1 json not null default '');")
+	tk.MustQuery(`show create table text_default_json`).Check(testutil.RowsWithSep("|",
+		"text_default_json CREATE TABLE `text_default_json` (\n"+
+			"  `c1` json NOT NULL DEFAULT 'null'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	is = domain.GetDomain(tk.Session()).InfoSchema()
+	tblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("text_default_json"))
+	require.NoError(t, err)
+	require.Equal(t, "null", tblInfo.Meta().Columns[0].DefaultValue)
+}
+
+func TestCheckConvertToCharacter(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a varchar(10) charset binary);")
+	is := domain.GetDomain(tk.Session()).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tk.MustGetErrCode("alter table t modify column a varchar(10) charset utf8 collate utf8_bin", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify column a varchar(10) charset utf8mb4 collate utf8mb4_bin", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify column a varchar(10) charset latin1 collate latin1_bin", errno.ErrUnsupportedDDLOperation)
+	require.Equal(t, "binary", tbl.Cols()[0].Charset)
+}
+
+func TestAddMultiColumnsIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists tidb;")
+	tk.MustExec("create database tidb;")
+	tk.MustExec("use tidb;")
+	tk.MustExec("create table tidb.test (a int auto_increment primary key, b int);")
+	tk.MustExec("insert tidb.test values (1, 1);")
+	tk.MustExec("update tidb.test set b = b + 1 where a = 1;")
+	tk.MustExec("insert into tidb.test values (2, 2);")
+	// Test that the b value is nil.
+	tk.MustExec("insert into tidb.test (a) values (3);")
+	tk.MustExec("insert into tidb.test values (4, 4);")
+	// Test that the b value is nil again.
+	tk.MustExec("insert into tidb.test (a) values (5);")
+	tk.MustExec("insert tidb.test values (6, 6);")
+	tk.MustExec("alter table tidb.test add index idx1 (a, b);")
+	tk.MustExec("admin check table test")
 }

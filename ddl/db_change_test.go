@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/ddl"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/gcutil"
@@ -124,7 +126,7 @@ func (s *stateChangeSuite) TestShowCreateTable() {
 		}
 		if job.SchemaState != model.StatePublic {
 			var result sqlexec.RecordSet
-			tbl2 := tkInternal.GetTableByName("test", "t2")
+			tbl2 := external.GetTableByName(s.T(), tkInternal, "test", "t2")
 			if job.TableID == tbl2.Meta().ID {
 				// Try to do not use mustQuery in hook func, cause assert fail in mustQuery will cause ddl job hung.
 				result, checkErr = tkInternal.Exec("show create table t2")
@@ -956,6 +958,8 @@ func (s *stateChangeSuite) TestParallelAlterModifyColumn() {
 }
 
 func (s *stateChangeSuite) TestParallelAlterModifyColumnWithData() {
+	// modify column: double -> int
+	// modify column: double -> int
 	sql := "ALTER TABLE t MODIFY COLUMN c int;"
 	f := func(err1, err2 error) {
 		s.Require().NoError(err1)
@@ -975,9 +979,56 @@ func (s *stateChangeSuite) TestParallelAlterModifyColumnWithData() {
 		s.Require().NoError(rs.Close())
 	}
 	s.testControlParallelExecSQL("", sql, sql, f)
+
+	// modify column: int -> double
+	// rename column: double -> int
+	sql1 := "ALTER TABLE t MODIFY b double;"
+	sql2 := "ALTER TABLE t RENAME COLUMN b to bb;"
+	f = func(err1, err2 error) {
+		s.Require().Nil(err1)
+		s.Require().Nil(err2)
+		rs, err := s.tk.Exec("select * from t")
+		s.Require().NoError(err)
+		sRows, err := session.ResultSetToStringSlice(context.Background(), s.tk.Session(), rs)
+		s.Require().NoError(err)
+		s.Require().Equal("2", sRows[0][1])
+		s.Require().NoError(rs.Close())
+		s.tk.MustExec("insert into t values(11, 22.2, 33, 44, 55)")
+		rs, err = s.tk.Exec("select * from t")
+		s.Require().NoError(err)
+		sRows, err = session.ResultSetToStringSlice(context.Background(), s.tk.Session(), rs)
+		s.Require().NoError(err)
+		s.Require().Equal("22", sRows[1][1])
+		s.Require().NoError(rs.Close())
+	}
+	s.testControlParallelExecSQL("", sql1, sql2, f)
+
+	// modify column: int -> double
+	// modify column: double -> int
+	sql2 = "ALTER TABLE t CHANGE b bb int;"
+	f = func(err1, err2 error) {
+		s.Require().Nil(err1)
+		s.Require().Nil(err2)
+		rs, err := s.tk.Exec("select * from t")
+		s.Require().NoError(err)
+		sRows, err := session.ResultSetToStringSlice(context.Background(), s.tk.Session(), rs)
+		s.Require().NoError(err)
+		s.Require().Equal("2", sRows[0][1])
+		s.Require().NoError(rs.Close())
+		s.tk.MustExec("insert into t values(11, 22.2, 33, 44, 55)")
+		rs, err = s.tk.Exec("select * from t")
+		s.Require().NoError(err)
+		sRows, err = session.ResultSetToStringSlice(context.Background(), s.tk.Session(), rs)
+		s.Require().NoError(err)
+		s.Require().Equal("22", sRows[1][1])
+		s.Require().NoError(rs.Close())
+	}
+	s.testControlParallelExecSQL("", sql1, sql2, f)
 }
 
 func (s *stateChangeSuite) TestParallelAlterModifyColumnToNotNullWithData() {
+	// double null -> int not null
+	// double null -> int not null
 	sql := "ALTER TABLE t MODIFY COLUMN c int not null;"
 	f := func(err1, err2 error) {
 		s.Require().NoError(err1)
@@ -999,6 +1050,32 @@ func (s *stateChangeSuite) TestParallelAlterModifyColumnToNotNullWithData() {
 		s.Require().NoError(rs.Close())
 	}
 	s.testControlParallelExecSQL("", sql, sql, f)
+
+	// int null -> double not null
+	// double not null -> int null
+	sql1 := "ALTER TABLE t CHANGE b b double not null;"
+	sql2 := "ALTER TABLE t CHANGE b bb int null;"
+	f = func(err1, err2 error) {
+		s.Require().Nil(err1)
+		s.Require().Nil(err2)
+		rs, err := s.tk.Exec("select * from t")
+		s.Require().NoError(err)
+		sRows, err := session.ResultSetToStringSlice(context.Background(), s.tk.Session(), rs)
+		s.Require().NoError(err)
+		s.Require().Equal("2", sRows[0][1])
+		s.Require().NoError(rs.Close())
+		err = s.tk.ExecToErr("insert into t values(11, null, 33, 44, 55)")
+		s.Require().NoError(err)
+		s.tk.MustExec("insert into t values(11, 22.2, 33, 44, 55)")
+		rs, err = s.tk.Exec("select * from t")
+		s.Require().NoError(err)
+		sRows, err = session.ResultSetToStringSlice(context.Background(), s.tk.Session(), rs)
+		s.Require().NoError(err)
+		s.Require().Equal("<nil>", sRows[1][1])
+		s.Require().Equal("22", sRows[2][1])
+		s.Require().NoError(rs.Close())
+	}
+	s.testControlParallelExecSQL("", sql1, sql2, f)
 }
 
 func (s *stateChangeSuite) TestParallelAddGeneratedColumnAndAlterModifyColumn() {
@@ -1305,7 +1382,7 @@ func (s *stateChangeSuite) TestParallelUpdateTableReplica() {
 	tk1, tk2, ch, originalCallback := s.prepareTestControlParallelExecSQL()
 	defer s.dom.DDL().SetHook(originalCallback)
 
-	t1 := tk1.GetTableByName("test_db_state", "t1")
+	t1 := external.GetTableByName(s.T(), s.tk, "test_db_state", "t1")
 
 	var err1 error
 	var err2 error
@@ -1538,15 +1615,15 @@ func (s *stateChangeSuite) TestParallelFlashbackTable() {
 	defer func(originGC bool) {
 		s.Require().NoError(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"))
 		if originGC {
-			ddl.EmulatorGCEnable()
+			ddlutil.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			ddlutil.EmulatorGCDisable()
 		}
-	}(ddl.IsEmulatorGCEnable())
+	}(ddlutil.IsEmulatorGCEnable())
 
 	// disable emulator GC.
 	// Disable emulator GC, otherwise, emulator GC will delete table record as soon as possible after executing drop table DDL.
-	ddl.EmulatorGCDisable()
+	ddlutil.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
 	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
@@ -1600,7 +1677,7 @@ func (s *stateChangeSuite) TestModifyColumnTypeArgs() {
 	s.Require().Equal("[ddl:-1]mock update version and tableInfo error", strs[0])
 
 	jobID := strings.Split(strs[1], "=")[1]
-	tbl := tk.GetTableByName("test", "t_modify_column_args")
+	tbl := external.GetTableByName(s.T(), tk, "test", "t_modify_column_args")
 	s.Require().Len(tbl.Meta().Columns, 1)
 	s.Require().Len(tbl.Meta().Indices, 1)
 
