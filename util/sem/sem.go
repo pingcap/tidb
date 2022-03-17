@@ -81,7 +81,7 @@ func Enable() {
 func Disable() {
 	atomic.StoreInt32(&semEnabled, 0)
 	variable.SetSysVar(variable.TiDBEnableEnhancedSecurity, variable.Off)
-	if hostname, err := os.Hostname(); err != nil {
+	if hostname, err := os.Hostname(); err == nil {
 		variable.SetSysVar(variable.Hostname, hostname)
 	}
 }
