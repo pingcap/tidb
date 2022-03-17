@@ -14,6 +14,7 @@
 package main
 
 import (
+	"os"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -48,6 +49,19 @@ func (t *testMainSuite) TestSetGlobalVars(c *C) {
 	})
 	setGlobalVars()
 
+<<<<<<< HEAD
 	c.Assert(variable.GetSysVar(variable.TiDBIsolationReadEngines).Value, Equals, "tikv,tidb")
 	c.Assert(variable.GetSysVar(variable.TiDBMemQuotaQuery).Value, Equals, "9999999")
+=======
+	// variable.Version won't change when len(conf.ServerVersion) == 0
+	require.Equal(t, "test", variable.GetSysVar(variable.Version).Value)
+	require.Equal(t, variable.GetSysVar(variable.Version).Value, mysql.ServerVersion)
+
+	cfg := config.GetGlobalConfig()
+	require.Equal(t, cfg.Socket, variable.GetSysVar(variable.Socket).Value)
+
+	if hostname, err := os.Hostname(); err == nil {
+		require.Equal(t, variable.GetSysVar(variable.Hostname).Value, hostname)
+	}
+>>>>>>> 0e0243c1e... main: fix `@@hostname` always returns `localhost` (#33064)
 }
