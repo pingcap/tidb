@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session/txninfo"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
@@ -176,10 +177,12 @@ func TestDomain(t *testing.T) {
 		Chs: "utf8",
 		Col: "utf8_bin",
 	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	err = dd.CreateSchema(ctx, model.NewCIStr("aaa"), cs, nil)
 	require.NoError(t, err)
 
 	// Test for fetchSchemasWithTables when "tables" isn't nil.
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	err = dd.CreateTable(ctx, &ast.CreateTableStmt{Table: &ast.TableName{
 		Schema: model.NewCIStr("aaa"),
 		Name:   model.NewCIStr("tbl")}})
@@ -233,6 +236,7 @@ func TestDomain(t *testing.T) {
 	require.Equal(t, tblInfo2, tbl.Meta())
 
 	// Test for tryLoadSchemaDiffs when "isTooOldSchema" is false.
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	err = dd.CreateSchema(ctx, model.NewCIStr("bbb"), cs, nil)
 	require.NoError(t, err)
 
