@@ -250,15 +250,19 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 		// Concurrency may be set to 1 by SetDAGRequest
 		builder.Request.Concurrency = sv.DistSQLScanConcurrency()
 	}
+	replicaReadType := sv.GetReplicaRead()
 	if sv.StmtCtx.WeakConsistency {
 		builder.Request.IsolationLevel = kv.RC
+	} else if sv.StmtCtx.RCCheckTS {
+		builder.Request.IsolationLevel = kv.RCCheckTS
+		replicaReadType = kv.ReplicaReadLeader
 	} else {
 		builder.Request.IsolationLevel = builder.getIsolationLevel()
 	}
 	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
 	builder.Request.TaskID = sv.StmtCtx.TaskID
 	builder.Request.Priority = builder.getKVPriority(sv)
-	builder.Request.ReplicaRead = sv.GetReplicaRead()
+	builder.Request.ReplicaRead = replicaReadType
 	builder.SetResourceGroupTagger(sv.StmtCtx)
 	return builder
 }
