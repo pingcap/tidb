@@ -369,7 +369,6 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 	for _, store := range pollTiFlashContext.TiFlashStores {
 		s := store
 		if err := d.UpdateTiFlashHTTPAddress(&s); err != nil {
-			logutil.BgLogger().Error("Update TiFlash status address failed", zap.Error(err))
 		}
 	}
 
@@ -447,6 +446,9 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 					return false, err
 				}
 			}
+			failpoint.Inject("skipUpdateTableReplicaInfoInLoop", func() {
+				failpoint.Continue()
+			})
 			// Will call `onUpdateFlashReplicaStatus` to update `TiFlashReplica`.
 			if err := d.UpdateTableReplicaInfo(ctx, tb.ID, avail); err != nil {
 				if infoschema.ErrTableNotExists.Equal(err) && tb.IsPartition {

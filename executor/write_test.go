@@ -301,16 +301,16 @@ func TestInsert(t *testing.T) {
 
 	tk.MustExec("create view v as select * from t")
 	_, err = tk.Exec("insert into v values(1,2)")
-	require.EqualError(t, err, "insert into view v is not supported now.")
+	require.EqualError(t, err, "insert into view v is not supported now")
 	_, err = tk.Exec("replace into v values(1,2)")
-	require.EqualError(t, err, "replace into view v is not supported now.")
+	require.EqualError(t, err, "replace into view v is not supported now")
 	tk.MustExec("drop view v")
 
 	tk.MustExec("create sequence seq")
 	_, err = tk.Exec("insert into seq values()")
-	require.EqualError(t, err, "insert into sequence seq is not supported now.")
+	require.EqualError(t, err, "insert into sequence seq is not supported now")
 	_, err = tk.Exec("replace into seq values()")
-	require.EqualError(t, err, "replace into sequence seq is not supported now.")
+	require.EqualError(t, err, "replace into sequence seq is not supported now")
 	tk.MustExec("drop sequence seq")
 
 	// issue 22851
@@ -1729,7 +1729,7 @@ func TestDelete(t *testing.T) {
 
 	tk.MustExec("create sequence seq")
 	_, err = tk.Exec("delete from seq")
-	require.EqualError(t, err, "delete sequence seq is not supported now.")
+	require.EqualError(t, err, "delete sequence seq is not supported now")
 	tk.MustExec("drop sequence seq")
 }
 
