@@ -587,7 +587,7 @@ const (
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version84
+var currentBootstrapVersion int64 = version85
 
 var (
 	bootstrapVersion = []func(Session, int64){
