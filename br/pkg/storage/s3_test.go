@@ -726,7 +726,7 @@ func TestOpenSeek(t *testing.T) {
 	require.Equal(t, someRandomBytes[998000:998100], slice)
 
 	// jumping to a negative position would cause error.
-	offset, err = reader.Seek(-8000, io.SeekStart)
+	_, err = reader.Seek(-8000, io.SeekStart)
 	require.Error(t, err)
 
 	// jumping backward should be fine, but would perform a new GetObject request.

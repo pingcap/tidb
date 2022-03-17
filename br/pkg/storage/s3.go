@@ -556,7 +556,7 @@ func (rs *S3Storage) open(
 	}
 	input.Range = rangeOffset
 	result, err := rs.svc.GetObjectWithContext(ctx, input)
-	log.L().Debug("dump S3 get object", zap.Any("request", input), zap.Any("response", result))
+	log.L().Debug("S3 get object", zap.Any("request", input), zap.Any("response", result))
 	if err != nil {
 		return nil, RangeInfo{}, errors.Trace(err)
 	}
@@ -564,7 +564,7 @@ func (rs *S3Storage) open(
 	var r RangeInfo
 	if isFullRangeRequest {
 		if result.ContentLength == nil {
-			return nil, RangeInfo{}, errors.Annotatef(berrors.ErrStorageUnknown, "open file '%s' failed. The S3 has no content length", path)
+			return nil, RangeInfo{}, errors.Annotatef(berrors.ErrStorageUnknown, "open file '%s' failed. The S3 object has no content length", path)
 		}
 		objectSize := *(result.ContentLength)
 		r = RangeInfo{
