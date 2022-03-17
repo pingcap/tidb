@@ -644,6 +644,8 @@ const (
 	TiDBStatsLoadPseudoTimeout = "tidb_stats_load_pseudo_timeout"
 	// TiDBMemQuotaBindingCache indicates the memory quota for the bind cache.
 	TiDBMemQuotaBindingCache = "tidb_mem_quota_binding_cache"
+	// TiDBRCReadCheckTS indicates the tso optimization for read-consistency read is enabled.
+	TiDBRCReadCheckTS = "tidb_rc_read_check_ts"
 )
 
 // TiDB intentional limits
@@ -809,6 +811,7 @@ const (
 	DefTiDBTxnAssertionLevel              = AssertionOffStr
 	DefTiDBIgnorePreparedCacheCloseStmt   = false
 	DefTiDBBatchPendingTiFlashCount       = 4000
+	DefRCReadCheckTS                      = false
 )
 
 // Process global variables.

@@ -306,7 +306,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 		if walkErr == nil {
 			return common.ErrEmptySourceDir.GenWithStackByArgs(taskCfg.Mydumper.SourceDir)
 		}
-		return common.NormalizeError(err)
+		return common.NormalizeOrWrapErr(common.ErrStorageUnknown, walkErr)
 	}
 
 	loadTask := log.L().Begin(zap.InfoLevel, "load data source")

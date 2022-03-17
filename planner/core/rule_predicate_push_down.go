@@ -766,7 +766,7 @@ func appendSelectionPredicatePushDownTraceStep(p *LogicalSelection, conditions [
 	reason := func() string {
 		return ""
 	}
-	if len(conditions) > 0 && !p.buildByHaving {
+	if len(conditions) > 0 {
 		reason = func() string {
 			buffer := bytes.NewBufferString("The conditions[")
 			for i, cond := range conditions {
