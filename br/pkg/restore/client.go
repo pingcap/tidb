@@ -1608,10 +1608,9 @@ func (rc *Client) RestoreMetaKVFiles(
 			progressInc()
 			continue
 		}
-		log.Info("restore mfile",
-			zap.String("file", f.Path),
-			zap.String("cf", f.Cf),
-			zap.Int64(("kv-count"), f.NumberOfEntries))
+
+		log.Info("restore meta kv events", zap.String("file", f.Path),
+			zap.String("cf", f.Cf), zap.Int64(("kv-count"), f.NumberOfEntries))
 
 		err := rc.RestoreMetaKVFile(ctx, rawkvClient, f, schemasReplace)
 		if err != nil {
@@ -1653,20 +1652,20 @@ func (rc *Client) RestoreMetaKVFile(
 			break
 		}
 
-		log.Debug("txn entry", zap.Int("txnKey-len", len(txnEntry.Key)),
-			zap.Int("txnValue-len", len(txnEntry.Value)), zap.ByteString("txnKey", txnEntry.Key))
+		log.Debug("before rewrite entry", zap.Int("key-len", len(txnEntry.Key)),
+			zap.Int("value-len", len(txnEntry.Value)), zap.ByteString("key", txnEntry.Key))
 
 		newEntry, err := sr.RewriteKvEntry(&txnEntry, file.Cf)
 		if err != nil {
-			log.Info("rewrite txn entry failed", zap.Int("klen", len(txnEntry.Key)),
+			log.Error("rewrite txn entry failed", zap.Int("klen", len(txnEntry.Key)),
 				logutil.Key("txn-key", txnEntry.Key))
 			return errors.Trace(err)
 		} else if newEntry == nil {
 			continue
 		}
 
-		log.Debug("rewrite txn entry", zap.Int("newKey-len", len(newEntry.Key)),
-			zap.Int("newValue-len", len(txnEntry.Value)), zap.ByteString("newkey", newEntry.Key))
+		log.Debug("after rewrite entry", zap.Int("key-len", len(newEntry.Key)),
+			zap.Int("value-len", len(txnEntry.Value)), zap.ByteString("key", newEntry.Key))
 
 		// to do...
 		// use BatchPut instead of put
