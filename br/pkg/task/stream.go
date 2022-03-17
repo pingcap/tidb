@@ -115,6 +115,7 @@ func DefineStreamRestoreFlags(flags *pflag.FlagSet) {
 	flags.String(flagStreamRestoreTS, "", "restore ts, used for restore kv.\n"+
 		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'")
 	flags.String(flagStreamFullBackupStorage, "", "find the maps between table id and table name")
+	flags.MarkHidden(flagStreamFullBackupStorage)
 }
 
 // DefineStreamCommonFlags define common flags for `stream task`
@@ -140,7 +141,7 @@ func (cfg *StreamConfig) ParseStreamRestoreFromFlags(flags *pflag.FlagSet) error
 		return errors.Trace(err)
 	}
 	if len(cfg.FullBackupStorage) == 0 {
-		return errors.New("must specify full backup storage.")
+		cfg.FullBackupStorage = cfg.Config.Storage
 	}
 	return nil
 }
