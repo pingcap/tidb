@@ -969,7 +969,7 @@ func TestModifyColumnRollBack(t *testing.T) {
 			return
 		}
 		// It only tests cancel one DDL job.
-		if errs[0] != nil {
+		if len(errs) != 0 && errs[0] != nil {
 			checkErr = errors.Trace(errs[0])
 			return
 		}
@@ -985,6 +985,7 @@ func TestModifyColumnRollBack(t *testing.T) {
 		}
 	}
 
+	originalHook := dom.DDL().GetHook()
 	dom.DDL().SetHook(hook)
 	done := make(chan error, 1)
 	go backgroundExecT(store, "alter table test.t1 change c2 c2 bigint not null;", done)
@@ -1000,5 +1001,6 @@ func TestModifyColumnRollBack(t *testing.T) {
 		}
 	}
 	require.False(t, mysql.HasNotNullFlag(c2.Flag))
+	dom.DDL().SetHook(originalHook)
 	tk.MustExec("drop table t1")
 }
