@@ -8520,6 +8520,9 @@ func (s *testSuite1) TestBitColumnIn(c *C) {
 	tk.MustExec("create table t (id bit(16), key id(id))")
 	tk.MustExec("insert into t values (65)")
 	tk.MustQuery("select * from t where id not in (-1,2)").Check(testkit.Rows("\x00A"))
+	err := tk.QueryToErr("select * from t where id in (-1, -2)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "Incorrect parameter count in the call to native function 'in'")
 }
 
 func (s *testSuite) TestDeleteWithMulTbl(c *C) {
