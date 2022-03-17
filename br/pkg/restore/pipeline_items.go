@@ -185,12 +185,18 @@ type BatchSender interface {
 	Close()
 }
 
+// TiKVRestorer is the minimal methods required for restoring.
+// It contains the primitive APIs extract from `restore.Client`, so some of arguments may seem redundant.
+// Maybe TODO: make a better abstraction?
 type TiKVRestorer interface {
+	// SplitRanges split regions implicated by the ranges and rewrite rules.
+	// After spliting, it also scatters the fresh regions.
 	SplitRanges(ctx context.Context,
 		ranges []rtree.Range,
 		rewriteRules *RewriteRules,
 		updateCh glue.Progress,
 		isRawKv bool) error
+	// RestoreFiles import the files to the TiKV.
 	RestoreFiles(ctx context.Context,
 		files []*backuppb.File,
 		rewriteRules *RewriteRules,
