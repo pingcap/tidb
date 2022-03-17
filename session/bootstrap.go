@@ -1985,7 +1985,7 @@ func rebuildAllPartitionValueMapAndSorted(s *session) {
 				panic("partition table gets partition expression failed")
 			}
 			for _, cp := range pe.ColPrunes {
-				if err = cp.BuildPartitionValueMapAndSorted(p); err != nil {
+				if err = cp.RebuildPartitionValueMapAndSorted(p); err != nil {
 					logutil.BgLogger().Warn("build list column partition value map and sorted failed")
 					break
 				}
