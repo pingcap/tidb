@@ -1915,6 +1915,10 @@ func doDMLWorks(s Session) {
 			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)
+
+			if v.GlobalConfigName != "" {
+				domain.GetDomain(s).NotifyGlobalConfigChange(v.GlobalConfigName, variable.OnOffToTrueFalse(vVal))
+			}
 		}
 	}
 	sql := fmt.Sprintf("INSERT HIGH_PRIORITY INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable,
