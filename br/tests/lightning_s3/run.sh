@@ -168,19 +168,19 @@ function test_import_using_manual_path_config() {
     local base_path_02="${DBPATH}/${bucket_02}/${sub_path_02}"
     rm -rf "${base_path_02}"
     mkdir -p "${base_path_02}"
-    touch "${base_path_02}/$DB-schema-create.sql"    #empty schema file
+    touch "${base_path_02}/$DB-schema-create.sql"    # empty schema file
     cp "$DATA_PATH/$DB.$TABLE-schema.sql" "${base_path_02}/"
     local sql_data_path_02="${base_path_02}/data-sql"
     local csv_data_path_02="${base_path_02}/data-csv"
     local parquet_data_path_02="${base_path_02}/data-parquet"
-    mkdir -p "${sql_data_path_02}/empty-dir" #try to add an empty path into it
+    mkdir -p "${sql_data_path_02}/empty-dir" # try to add an empty path into it
     cp "$DATA_PATH/$DB.$TABLE.sql" "${sql_data_path_02}/"
-    touch "${sql_data_path_02}/dummy.sql"    #empty file
-    mkdir -p "${csv_data_path_02}/empty-dir" #try to add an empty path into it
+    touch "${sql_data_path_02}/dummy.sql"    # empty file
+    mkdir -p "${csv_data_path_02}/empty-dir" # try to add an empty path into it
     cp "$DATA_PATH/$DB.$TABLE.0.csv" "${csv_data_path_02}/"
-    touch "${csv_data_path_02}/dummy.csv"    #empty file
-    mkdir -p "${parquet_data_path_02}/empty-dir" #try to add an empty path into it
-    touch "${parquet_data_path_02}/dummy.parquet"    #empty file
+    touch "${csv_data_path_02}/dummy.csv"    # empty file
+    mkdir -p "${parquet_data_path_02}/empty-dir" # try to add an empty path into it
+    # no touch empty file for parquet files
 
     local SOURCE_DIR="s3://${bucket_02}/${sub_path_02}?endpoint=http%3A//127.0.0.1%3A9900&access_key=$MINIO_ACCESS_KEY&secret_access_key=$MINIO_SECRET_KEY&force_path_style=true"
     if ! run_lightning -d "${SOURCE_DIR}" --backend local --config "tests/$TEST_NAME/config_manual_files.toml" 2> /dev/null; then

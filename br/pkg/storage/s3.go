@@ -478,9 +478,9 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 			path := strings.TrimPrefix(*r.Key, rs.options.Prefix)
 			itemSize := *r.Size
 
-			// filter out s3's  directries items
-			if itemSize <= 0 {
-				log.Info("this path is empty and cannot be opened in S3.  Skip it", zap.String("path", path))
+			// filter out s3's empty directory items
+			if itemSize <= 0 && strings.HasSuffix(path, "/") {
+				log.Info("this path is an empty directory and cannot be opened in S3.  Skip it", zap.String("path", path))
 				continue
 			}
 			if err = fn(path, itemSize); err != nil {
@@ -536,6 +536,7 @@ func (rs *S3Storage) open(
 	path string,
 	startOffset, endOffset int64,
 ) (io.ReadCloser, RangeInfo, error) {
+	var err error
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + path),
@@ -543,21 +544,39 @@ func (rs *S3Storage) open(
 
 	// always set rangeOffset to fetch file size info
 	// s3 endOffset is inclusive
+	isFullRangeRequest := false
 	var rangeOffset *string
-	if endOffset > startOffset {
+	switch {
+	case endOffset > startOffset:
 		rangeOffset = aws.String(fmt.Sprintf("bytes=%d-%d", startOffset, endOffset-1))
-	} else {
+	case startOffset == 0:
+		isFullRangeRequest = true
+	default:
 		rangeOffset = aws.String(fmt.Sprintf("bytes=%d-", startOffset))
 	}
 	input.Range = rangeOffset
 	result, err := rs.svc.GetObjectWithContext(ctx, input)
+	log.L().Debug("dump S3 get object", zap.Any("request", input), zap.Any("response", result))
 	if err != nil {
 		return nil, RangeInfo{}, errors.Trace(err)
 	}
 
-	r, err := ParseRangeInfo(result.ContentRange)
-	if err != nil {
-		return nil, RangeInfo{}, errors.Trace(err)
+	var r RangeInfo
+	if isFullRangeRequest {
+		if result.ContentLength == nil {
+			return nil, RangeInfo{}, errors.Annotatef(berrors.ErrStorageUnknown, "open file '%s' failed. The S3 has no content length", path)
+		}
+		objectSize := *(result.ContentLength)
+		r = RangeInfo{
+			Start: 0,
+			End:   objectSize - 1,
+			Size:  objectSize,
+		}
+	} else {
+		r, err = ParseRangeInfo(result.ContentRange)
+		if err != nil {
+			return nil, RangeInfo{}, errors.Trace(err)
+		}
 	}
 
 	if startOffset != r.Start || (endOffset != 0 && endOffset != r.End+1) {
@@ -664,6 +683,9 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 		realOffset = r.rangeInfo.Size + offset
 	default:
 		return 0, errors.Annotatef(berrors.ErrStorageUnknown, "Seek: invalid whence '%d'", whence)
+	}
+	if realOffset < 0 {
+		return 0, errors.Annotatef(berrors.ErrStorageUnknown, "Seek in '%s': invalid offset to seek '%d'.", r.name, realOffset)
 	}
 
 	if realOffset == r.pos {
