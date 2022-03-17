@@ -518,12 +518,11 @@ func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expressio
 			ret = append(ret, expression.ComposeCNFCondition(la.ctx, retForItem...))
 		}
 	}
-	dnfPushDownCond := expression.ComposeDNFCondition(la.ctx, condsToPush...)
-	dnfPushDownCond = expression.FoldConstant(dnfPushDownCond)
 	if len(ret) == 0 {
 		// All the condition can be pushed down.
-		return []expression.Expression{dnfPushDownCond}, ret
+		return []expression.Expression{cond}, nil
 	}
+	dnfPushDownCond := expression.ComposeDNFCondition(la.ctx, condsToPush...)
 	// Some condition can't be pushed down, we need to keep all the condition.
 	return []expression.Expression{dnfPushDownCond}, []expression.Expression{cond}
 }
