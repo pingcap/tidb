@@ -5,6 +5,7 @@ package restore
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
@@ -1755,6 +1756,11 @@ func (rc *Client) RestoreMetaKVFile(
 	buff, err := rc.storage.ReadFile(ctx, file.Path)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	if checksum := sha256.Sum256(buff); !bytes.Equal(checksum[:], file.Sha_256) {
+		return errors.Annotatef(berrors.ErrInvalidMetaFile,
+			"checksum mismatch expect %x, got %x", file.Sha_256, checksum[:])
 	}
 
 	iter := stream.NewEventIterator(buff)
