@@ -13,7 +13,7 @@ assert() {
 
 TEST_NAME=no_table_and_db_name
 run_sql "drop database if exists $TEST_NAME"
-run_sql "create database $TEST_NAME"
+run_sql "create database $TEST_NAME DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 export DUMPLING_TEST_DATABASE=no_table_and_db_name
 run_sql "create table t (a varchar(255))"
 

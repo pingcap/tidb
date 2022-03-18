@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"runtime/trace"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -65,6 +66,11 @@ type UnionScanExec struct {
 
 // Open implements the Executor Open interface.
 func (us *UnionScanExec) Open(ctx context.Context) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("UnionScanExec.Open", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
 	if err := us.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
@@ -98,13 +104,13 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 	// 2. build virtual columns and select with virtual columns
 	switch x := reader.(type) {
 	case *TableReaderExecutor:
-		us.addedRows, err = buildMemTableReader(us, x).getMemRows()
+		us.addedRows, err = buildMemTableReader(ctx, us, x).getMemRows(ctx)
 	case *IndexReaderExecutor:
-		us.addedRows, err = buildMemIndexReader(us, x).getMemRows()
+		us.addedRows, err = buildMemIndexReader(ctx, us, x).getMemRows(ctx)
 	case *IndexLookUpExecutor:
-		us.addedRows, err = buildMemIndexLookUpReader(us, x).getMemRows()
+		us.addedRows, err = buildMemIndexLookUpReader(ctx, us, x).getMemRows(ctx)
 	case *IndexMergeReaderExecutor:
-		us.addedRows, err = buildMemIndexMergeReader(us, x).getMemRows()
+		us.addedRows, err = buildMemIndexMergeReader(ctx, us, x).getMemRows(ctx)
 	default:
 		err = fmt.Errorf("unexpected union scan children:%T", reader)
 	}

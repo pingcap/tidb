@@ -5,7 +5,7 @@
 set -eu
 
 run_sql "drop database if exists file_size"
-run_sql "create database file_size"
+run_sql "create database file_size DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 export DUMPLING_TEST_DATABASE=file_size
 run_sql "create table t (a varchar(255))"
 

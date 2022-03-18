@@ -886,7 +886,7 @@
       },
       {
         "SQL": "select sum(to_base64(e)) from t where c = 1",
-        "Best": "IndexReader(Index(t.c_d_e)[[1,1]])->Projection->StreamAgg"
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]]->StreamAgg)->StreamAgg"
       },
       {
         "SQL": "select (select count(1) k from t s where s.a = t.a having k != 0) from t",
@@ -894,7 +894,7 @@
       },
       {
         "SQL": "select sum(to_base64(e)) from t group by e,d,c order by c",
-        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]])->Projection->StreamAgg->Projection"
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->StreamAgg)->StreamAgg->Projection"
       },
       {
         "SQL": "select sum(e+1) from t group by e,d,c order by c",
@@ -902,7 +902,7 @@
       },
       {
         "SQL": "select sum(to_base64(e)) from t group by e,d,c order by c,e",
-        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]])->Projection->StreamAgg->Sort->Projection"
+        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->StreamAgg)->StreamAgg->Sort->Projection"
       },
       {
         "SQL": "select sum(e+1) from t group by e,d,c order by c,e",

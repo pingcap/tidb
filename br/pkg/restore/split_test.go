@@ -16,10 +16,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/pd/server/core"
-	"github.com/tikv/pd/server/schedule/placement"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -29,7 +28,7 @@ type TestClient struct {
 	mu                  sync.RWMutex
 	stores              map[uint64]*metapb.Store
 	regions             map[uint64]*restore.RegionInfo
-	regionsInfo         *core.RegionsInfo // For now it's only used in ScanRegions
+	regionsInfo         *pdtypes.RegionTree // For now it's only used in ScanRegions
 	nextRegionID        uint64
 	injectInScatter     func(*restore.RegionInfo) error
 	supportBatchScatter bool
@@ -42,9 +41,9 @@ func NewTestClient(
 	regions map[uint64]*restore.RegionInfo,
 	nextRegionID uint64,
 ) *TestClient {
-	regionsInfo := core.NewRegionsInfo()
+	regionsInfo := &pdtypes.RegionTree{}
 	for _, regionInfo := range regions {
-		regionsInfo.SetRegion(core.NewRegionInfo(regionInfo.Region, regionInfo.Leader))
+		regionsInfo.SetRegion(pdtypes.NewRegionInfo(regionInfo.Region, regionInfo.Leader))
 	}
 	return &TestClient{
 		stores:          stores,
@@ -215,18 +214,18 @@ func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit 
 	regions := make([]*restore.RegionInfo, 0, len(infos))
 	for _, info := range infos {
 		regions = append(regions, &restore.RegionInfo{
-			Region: info.GetMeta(),
-			Leader: info.GetLeader(),
+			Region: info.Meta,
+			Leader: info.Leader,
 		})
 	}
 	return regions, nil
 }
 
-func (c *TestClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (r placement.Rule, err error) {
+func (c *TestClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (r pdtypes.Rule, err error) {
 	return
 }
 
-func (c *TestClient) SetPlacementRule(ctx context.Context, rule placement.Rule) error {
+func (c *TestClient) SetPlacementRule(ctx context.Context, rule pdtypes.Rule) error {
 	return nil
 }
 

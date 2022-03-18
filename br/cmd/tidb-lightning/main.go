@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"go.uber.org/zap"
 )
 
@@ -77,6 +78,9 @@ func main() {
 		logger.Error("failed to start HTTP server", zap.Error(err))
 		fmt.Fprintln(os.Stderr, "failed to start HTTP server:", err)
 		return
+	}
+	if len(globalCfg.App.StatusAddr) > 0 {
+		web.EnableCurrentProgress()
 	}
 
 	err = func() error {

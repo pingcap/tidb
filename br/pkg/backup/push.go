@@ -41,11 +41,11 @@ func (r responseAndStore) GetStore() *metapb.Store {
 }
 
 // newPushDown creates a push down backup.
-func newPushDown(mgr ClientMgr, cap int) *pushDown {
+func newPushDown(mgr ClientMgr, capacity int) *pushDown {
 	return &pushDown{
 		mgr:    mgr,
-		respCh: make(chan responseAndStore, cap),
-		errCh:  make(chan error, cap),
+		respCh: make(chan responseAndStore, capacity),
+		errCh:  make(chan error, capacity),
 	}
 }
 
@@ -163,20 +163,28 @@ func (push *pushDown) pushBackup(
 						logutil.CL(ctx).Warn("backup occur storage error", zap.String("error", errPb.GetMsg()))
 						continue
 					}
+					var errMsg string
 					if utils.MessageIsNotFoundStorageError(errPb.GetMsg()) {
-						errMsg := fmt.Sprintf("File or directory not found error occurs on TiKV Node(store id: %v; Address: %s)", store.GetId(), redact.String(store.GetAddress()))
-						logutil.CL(ctx).Error("", zap.String("error", berrors.ErrKVStorage.Error()+": "+errMsg),
-							zap.String("work around", "please ensure br and tikv node share a same disk and the user of br and tikv has same uid."))
+						errMsg = fmt.Sprintf("File or directory not found on TiKV Node (store id: %v; Address: %s). "+
+							"work around:please ensure br and tikv nodes share a same storage and the user of br and tikv has same uid.",
+							store.GetId(), redact.String(store.GetAddress()))
+						logutil.CL(ctx).Error("", zap.String("error", berrors.ErrKVStorage.Error()+": "+errMsg))
 					}
 					if utils.MessageIsPermissionDeniedStorageError(errPb.GetMsg()) {
-						errMsg := fmt.Sprintf("I/O permission denied error occurs on TiKV Node(store id: %v; Address: %s)", store.GetId(), redact.String(store.GetAddress()))
-						logutil.CL(ctx).Error("", zap.String("error", berrors.ErrKVStorage.Error()+": "+errMsg),
-							zap.String("work around", "please ensure tikv has permission to read from & write to the storage."))
+						errMsg = fmt.Sprintf("I/O permission denied error occurs on TiKV Node(store id: %v; Address: %s). "+
+							"work around:please ensure tikv has permission to read from & write to the storage.",
+							store.GetId(), redact.String(store.GetAddress()))
+						logutil.CL(ctx).Error("", zap.String("error", berrors.ErrKVStorage.Error()+": "+errMsg))
 					}
-					return res, errors.Annotatef(berrors.ErrKVStorage, "error happen in store %v at %s: %s",
+
+					if len(errMsg) <= 0 {
+						errMsg = errPb.Msg
+					}
+					return res, errors.Annotatef(berrors.ErrKVStorage, "error happen in store %v at %s: %s %s",
 						store.GetId(),
 						redact.String(store.GetAddress()),
-						errPb.Msg,
+						req.StorageBackend.String(),
+						errMsg,
 					)
 				}
 			}

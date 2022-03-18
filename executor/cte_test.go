@@ -27,8 +27,8 @@ import (
 )
 
 func TestBasicCTE(t *testing.T) {
-	store, close := testkit.CreateMockStore(t)
-	defer close()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -76,8 +76,8 @@ func TestBasicCTE(t *testing.T) {
 }
 
 func TestUnionDistinct(t *testing.T) {
-	store, close := testkit.CreateMockStore(t)
-	defer close()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -103,8 +103,8 @@ func TestUnionDistinct(t *testing.T) {
 }
 
 func TestCTEMaxRecursionDepth(t *testing.T) {
-	store, close := testkit.CreateMockStore(t)
-	defer close()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -144,8 +144,8 @@ func TestCTEMaxRecursionDepth(t *testing.T) {
 }
 
 func TestCTEWithLimit(t *testing.T) {
-	store, close := testkit.CreateMockStore(t)
-	defer close()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -357,8 +357,8 @@ func TestSpillToDisk(t *testing.T) {
 		conf.OOMUseTmpStorage = true
 	})
 
-	store, close := testkit.CreateMockStore(t)
-	defer close()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")

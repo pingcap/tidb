@@ -1912,7 +1912,7 @@ func TestTimeBuiltin(t *testing.T) {
 	_, err = tk.Exec(`update t set a = week("aa", 1)`)
 	require.True(t, terror.ErrorEqual(err, types.ErrWrongValue))
 	_, err = tk.Exec(`delete from t where a = week("aa", 1)`)
-	require.True(t, terror.ErrorEqual(err, types.ErrWrongValue))
+	require.Equal(t, types.ErrWrongValue.Code(), errors.Cause(err).(*terror.Error).Code(), "err %v", err)
 
 	// for weekofyear
 	result = tk.MustQuery(`select weekofyear("2012-12-22"), weekofyear("2008-02-20"), weekofyear("aa"), weekofyear(null), weekofyear(11), weekofyear(12.99);`)
@@ -3775,7 +3775,7 @@ func TestPreparePlanCache(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 }
 
-func TestPreparePlanCacheNotForCacheTable(t *testing.T) {
+func TestPreparePlanCacheOnCachedTable(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -3796,28 +3796,24 @@ func TestPreparePlanCacheNotForCacheTable(t *testing.T) {
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("alter table t cache")
 
-	var useCache bool
+	var readFromTableCache bool
 	for i := 0; i < 50; i++ {
 		tk.MustQuery("select * from t where a = 1")
-		if tk.HasPlan("select * from t where a = 1", "Union") {
-			useCache = true
+		if tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache {
+			readFromTableCache = true
+			break
 		}
 	}
-	require.True(t, useCache)
+	require.True(t, readFromTableCache)
 	// already read cache after reading first time
-	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows(
-		"Projection 10.00 root  test.t.a",
-		"└─UnionScan 10.00 root  eq(test.t.a, 1)",
-		"  └─TableReader 10.00 root  data:Selection",
-		"    └─Selection 10.00 cop[tikv]  eq(test.t.a, 1)",
-		"      └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
-
 	tk.MustExec("prepare stmt from 'select * from t where a = ?';")
 	tk.MustExec("set @a = 1;")
 	tk.MustExec("execute stmt using @a;")
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustExec("execute stmt using @a;")
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	readFromTableCache = tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache
+	require.True(t, readFromTableCache)
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 }
 
 func TestIssue16205(t *testing.T) {
@@ -4430,8 +4426,8 @@ PARTITION BY RANGE (c) (
 	tk.MustExec("set global tidb_enable_local_txn = on;")
 	for _, testcase := range testcases {
 		t.Log(testcase.name)
-		failpoint.Enable("tikvclient/injectTxnScope",
-			fmt.Sprintf(`return("%v")`, testcase.zone))
+		require.NoError(t, failpoint.Enable("tikvclient/injectTxnScope",
+			fmt.Sprintf(`return("%v")`, testcase.zone)))
 		tk.MustExec(fmt.Sprintf("set @@txn_scope='%v'", testcase.txnScope))
 		tk.Exec("begin")
 		res, err := tk.Exec(testcase.sql)
@@ -4453,7 +4449,7 @@ PARTITION BY RANGE (c) (
 		}
 		tk.Exec("commit")
 	}
-	failpoint.Disable("tikvclient/injectTxnScope")
+	require.NoError(t, failpoint.Disable("tikvclient/injectTxnScope"))
 	tk.MustExec("set global tidb_enable_local_txn = off;")
 }
 

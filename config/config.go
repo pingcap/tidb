@@ -569,6 +569,8 @@ type PessimisticTxn struct {
 	DeadlockHistoryCapacity uint `toml:"deadlock-history-capacity" json:"deadlock-history-capacity"`
 	// Whether retryable deadlocks (in-statement deadlocks) are collected to the information_schema.deadlocks table.
 	DeadlockHistoryCollectRetryable bool `toml:"deadlock-history-collect-retryable" json:"deadlock-history-collect-retryable"`
+	// PessimisticAutoCommit represents if true it means the auto-commit transactions will be in pessimistic mode.
+	PessimisticAutoCommit AtomicBool `toml:"pessimistic-auto-commit" json:"pessimistic-auto-commit"`
 }
 
 // DefaultPessimisticTxn returns the default configuration for PessimisticTxn
@@ -577,6 +579,7 @@ func DefaultPessimisticTxn() PessimisticTxn {
 		MaxRetryCount:                   256,
 		DeadlockHistoryCapacity:         10,
 		DeadlockHistoryCollectRetryable: false,
+		PessimisticAutoCommit:           *NewAtomicBool(false),
 	}
 }
 
@@ -1061,7 +1064,7 @@ func initByLDFlags(edition, checkBeforeDropLDFlag string) {
 }
 
 // The following constants represents the valid action configurations for OOMAction.
-// NOTE: Although the values is case insensitive, we should use lower-case
+// NOTE: Although the values is case-insensitive, we should use lower-case
 // strings because the configuration value will be transformed to lower-case
 // string and compared with these constants in the further usage.
 const (

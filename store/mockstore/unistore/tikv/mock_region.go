@@ -356,11 +356,11 @@ func (rm *MockRegionManager) Split(regionID, newRegionID uint64, key []byte, pee
 
 // SplitRaw splits a Region at the key (not encoded) and creates new Region.
 func (rm *MockRegionManager) SplitRaw(regionID, newRegionID uint64, rawKey []byte, peerIDs []uint64, leaderPeerID uint64) *metapb.Region {
-	new, err := rm.split(regionID, newRegionID, rawKey, peerIDs)
+	r, err := rm.split(regionID, newRegionID, rawKey, peerIDs)
 	if err != nil {
 		panic(err)
 	}
-	return proto.Clone(new).(*metapb.Region)
+	return proto.Clone(r).(*metapb.Region)
 }
 
 // SplitTable evenly splits the data in table into count regions.

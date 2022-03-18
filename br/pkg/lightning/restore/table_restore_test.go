@@ -58,12 +58,12 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	tmock "github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
-	"github.com/tikv/pd/server/api"
 )
 
 type tableRestoreSuiteBase struct {
@@ -78,6 +78,7 @@ type tableRestoreSuiteBase struct {
 }
 
 func (s *tableRestoreSuiteBase) setupSuite(t *testing.T) {
+	web.EnableCurrentProgress()
 	// Produce a mock table info
 
 	p := parser.New()
@@ -1115,41 +1116,41 @@ func (mockTaskMetaMgr) CheckTasksExclusively(ctx context.Context, action func(ta
 
 func (s *tableRestoreSuite) TestCheckClusterRegion() {
 	type testCase struct {
-		stores         api.StoresInfo
-		emptyRegions   api.RegionsInfo
+		stores         pdtypes.StoresInfo
+		emptyRegions   pdtypes.RegionsInfo
 		expectMsgs     []string
 		expectResult   bool
 		expectErrorCnt int
 	}
 
-	makeRegions := func(regionCnt int, storeID uint64) []api.RegionInfo {
-		var regions []api.RegionInfo
+	makeRegions := func(regionCnt int, storeID uint64) []pdtypes.RegionInfo {
+		var regions []pdtypes.RegionInfo
 		for i := 0; i < regionCnt; i++ {
-			regions = append(regions, api.RegionInfo{Peers: []api.MetaPeer{{Peer: &metapb.Peer{StoreId: storeID}}}})
+			regions = append(regions, pdtypes.RegionInfo{Peers: []pdtypes.MetaPeer{{Peer: &metapb.Peer{StoreId: storeID}}}})
 		}
 		return regions
 	}
 
 	testCases := []testCase{
 		{
-			stores: api.StoresInfo{Stores: []*api.StoreInfo{
-				{Store: &api.MetaStore{StoreID: 1}, Status: &api.StoreStatus{RegionCount: 200}},
+			stores: pdtypes.StoresInfo{Stores: []*pdtypes.StoreInfo{
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &pdtypes.StoreStatus{RegionCount: 200}},
 			}},
-			emptyRegions: api.RegionsInfo{
-				Regions: append([]api.RegionInfo(nil), makeRegions(100, 1)...),
+			emptyRegions: pdtypes.RegionsInfo{
+				Regions: append([]pdtypes.RegionInfo(nil), makeRegions(100, 1)...),
 			},
 			expectMsgs:     []string{".*Cluster doesn't have too many empty regions.*", ".*Cluster region distribution is balanced.*"},
 			expectResult:   true,
 			expectErrorCnt: 0,
 		},
 		{
-			stores: api.StoresInfo{Stores: []*api.StoreInfo{
-				{Store: &api.MetaStore{StoreID: 1}, Status: &api.StoreStatus{RegionCount: 2000}},
-				{Store: &api.MetaStore{StoreID: 2}, Status: &api.StoreStatus{RegionCount: 3100}},
-				{Store: &api.MetaStore{StoreID: 3}, Status: &api.StoreStatus{RegionCount: 2500}},
+			stores: pdtypes.StoresInfo{Stores: []*pdtypes.StoreInfo{
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &pdtypes.StoreStatus{RegionCount: 2000}},
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 2}}, Status: &pdtypes.StoreStatus{RegionCount: 3100}},
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &pdtypes.StoreStatus{RegionCount: 2500}},
 			}},
-			emptyRegions: api.RegionsInfo{
-				Regions: append(append(append([]api.RegionInfo(nil),
+			emptyRegions: pdtypes.RegionsInfo{
+				Regions: append(append(append([]pdtypes.RegionInfo(nil),
 					makeRegions(600, 1)...),
 					makeRegions(300, 2)...),
 					makeRegions(1200, 3)...),
@@ -1163,20 +1164,20 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 			expectErrorCnt: 1,
 		},
 		{
-			stores: api.StoresInfo{Stores: []*api.StoreInfo{
-				{Store: &api.MetaStore{StoreID: 1}, Status: &api.StoreStatus{RegionCount: 1200}},
-				{Store: &api.MetaStore{StoreID: 2}, Status: &api.StoreStatus{RegionCount: 3000}},
-				{Store: &api.MetaStore{StoreID: 3}, Status: &api.StoreStatus{RegionCount: 2500}},
+			stores: pdtypes.StoresInfo{Stores: []*pdtypes.StoreInfo{
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &pdtypes.StoreStatus{RegionCount: 1200}},
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 2}}, Status: &pdtypes.StoreStatus{RegionCount: 3000}},
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &pdtypes.StoreStatus{RegionCount: 2500}},
 			}},
 			expectMsgs:     []string{".*Region distribution is unbalanced.*but we expect it must not be less than 0.5.*"},
 			expectResult:   false,
 			expectErrorCnt: 1,
 		},
 		{
-			stores: api.StoresInfo{Stores: []*api.StoreInfo{
-				{Store: &api.MetaStore{StoreID: 1}, Status: &api.StoreStatus{RegionCount: 0}},
-				{Store: &api.MetaStore{StoreID: 2}, Status: &api.StoreStatus{RegionCount: 2800}},
-				{Store: &api.MetaStore{StoreID: 3}, Status: &api.StoreStatus{RegionCount: 2500}},
+			stores: pdtypes.StoresInfo{Stores: []*pdtypes.StoreInfo{
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 1}}, Status: &pdtypes.StoreStatus{RegionCount: 0}},
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 2}}, Status: &pdtypes.StoreStatus{RegionCount: 2800}},
+				{Store: &pdtypes.MetaStore{Store: &metapb.Store{Id: 3}}, Status: &pdtypes.StoreStatus{RegionCount: 2500}},
 			}},
 			expectMsgs:     []string{".*Region distribution is unbalanced.*but we expect it must not be less than 0.5.*"},
 			expectResult:   false,

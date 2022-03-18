@@ -293,8 +293,8 @@ func TestCreateSchemaWithPlacement(t *testing.T) {
 }
 
 func TestAlterDBPlacement(t *testing.T) {
-	store, close := testkit.CreateMockStore(t)
-	defer close()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists TestAlterDB;")
 	tk.MustExec("create database TestAlterDB;")
@@ -650,8 +650,8 @@ func TestPlacementMode(t *testing.T) {
 }
 
 func TestPlacementTiflashCheck(t *testing.T) {
-	store, close := testkit.CreateMockStore(t)
-	defer close()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`))
 	defer func() {

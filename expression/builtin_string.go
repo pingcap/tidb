@@ -639,6 +639,7 @@ func (c *repeatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, errors.Trace(err)
 	}
 	sig := &builtinRepeatSig{bf, maxAllowedPacket}
+	sig.setPbCode(tipb.ScalarFuncSig_Repeat)
 	return sig, nil
 }
 
@@ -3447,6 +3448,7 @@ func (c *fromBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinFromBase64Sig{bf, maxAllowedPacket}
+	sig.setPbCode(tipb.ScalarFuncSig_FromBase64)
 	return sig, nil
 }
 
@@ -3522,6 +3524,7 @@ func (c *toBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 
 	sig := &builtinToBase64Sig{bf, maxAllowedPacket}
+	sig.setPbCode(tipb.ScalarFuncSig_ToBase64)
 	return sig, nil
 }
 

@@ -17,26 +17,26 @@ package ddl_test
 import (
 	"context"
 	"strconv"
+	"testing"
 
-	. "github.com/pingcap/check"
-	errors2 "github.com/pingcap/errors"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/testkit"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = SerialSuites(&testRollingBackSuite{&testDBSuite{}})
+// TestCancelJobMeetError is used to test canceling ddl job failure when convert ddl job to a rolling back job.
+func TestCancelAddIndexJobError(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
 
-type testRollingBackSuite struct{ *testDBSuite }
-
-// TestCancelJobMeetError is used to test canceling ddl job failure when convert ddl job to a rollingback job.
-func (s *testRollingBackSuite) TestCancelAddIndexJobError(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk1 := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKit(t, store)
+	tk1 := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk1.MustExec("use test")
 
@@ -44,16 +44,16 @@ func (s *testRollingBackSuite) TestCancelAddIndexJobError(c *C) {
 	tk.MustExec("insert into t_cancel_add_index values(1),(2),(3)")
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit=3")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockConvertAddIdxJob2RollbackJobError", `return(true)`), IsNil)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockConvertAddIdxJob2RollbackJobError", `return(true)`))
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockConvertAddIdxJob2RollbackJobError"), IsNil)
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockConvertAddIdxJob2RollbackJobError"))
 	}()
 
-	tbl := testGetTableByName(c, tk.Se, "test", "t_cancel_add_index")
-	c.Assert(tbl, NotNil)
+	tbl := tk.GetTableByName("test", "t_cancel_add_index")
+	require.NotNil(t, tbl)
 
-	d := s.dom.DDL()
-	hook := &ddl.TestDDLCallback{Do: s.dom}
+	d := dom.DDL()
+	hook := &ddl.TestDDLCallback{Do: dom}
 	var (
 		checkErr error
 		jobID    int64
@@ -83,20 +83,19 @@ func (s *testRollingBackSuite) TestCancelAddIndexJobError(c *C) {
 	d.(ddl.DDLForTest).SetHook(hook)
 
 	// This will hang on stateDeleteOnly, and the job will be canceled.
-	_, err := tk.Exec("alter table t_cancel_add_index add index idx(a)")
-	c.Assert(err, NotNil)
-	c.Assert(checkErr, IsNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]rollback DDL job error count exceed the limit 3, cancelled it now")
+	err := tk.ExecToErr("alter table t_cancel_add_index add index idx(a)")
+	require.NoError(t, checkErr)
+	require.EqualError(t, err, "[ddl:-1]rollback DDL job error count exceed the limit 3, cancelled it now")
 
 	// Verification of the history job state.
 	var job *model.Job
-	err = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
 		var err1 error
-		job, err1 = t.GetHistoryDDLJob(jobID)
-		return errors2.Trace(err1)
+		job, err1 = m.GetHistoryDDLJob(jobID)
+		return errors.Trace(err1)
 	})
-	c.Assert(err, IsNil)
-	c.Assert(job.ErrorCount, Equals, int64(4))
-	c.Assert(job.Error.Error(), Equals, "[ddl:-1]rollback DDL job error count exceed the limit 3, cancelled it now")
+	require.NoError(t, err)
+	require.Equal(t, int64(4), job.ErrorCount)
+	require.EqualError(t, job.Error, "[ddl:-1]rollback DDL job error count exceed the limit 3, cancelled it now")
 }

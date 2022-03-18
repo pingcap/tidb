@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -552,8 +553,8 @@ func ColInfo2Col(cols []*Column, col *model.ColumnInfo) *Column {
 	return nil
 }
 
-// indexCol2Col finds the corresponding column of the IndexColumn in a column slice.
-func indexCol2Col(colInfos []*model.ColumnInfo, cols []*Column, col *model.IndexColumn) *Column {
+// IndexCol2Col finds the corresponding column of the IndexColumn in a column slice.
+func IndexCol2Col(colInfos []*model.ColumnInfo, cols []*Column, col *model.IndexColumn) *Column {
 	for i, info := range colInfos {
 		if info.Name.L == col.Name.L {
 			if col.Length > 0 && info.FieldType.Flen > col.Length {
@@ -576,7 +577,7 @@ func IndexInfo2PrefixCols(colInfos []*model.ColumnInfo, cols []*Column, index *m
 	retCols := make([]*Column, 0, len(index.Columns))
 	lengths := make([]int, 0, len(index.Columns))
 	for _, c := range index.Columns {
-		col := indexCol2Col(colInfos, cols, c)
+		col := IndexCol2Col(colInfos, cols, c)
 		if col == nil {
 			return retCols, lengths
 		}
@@ -598,7 +599,7 @@ func IndexInfo2Cols(colInfos []*model.ColumnInfo, cols []*Column, index *model.I
 	retCols := make([]*Column, 0, len(index.Columns))
 	lens := make([]int, 0, len(index.Columns))
 	for _, c := range index.Columns {
-		col := indexCol2Col(colInfos, cols, c)
+		col := IndexCol2Col(colInfos, cols, c)
 		if col == nil {
 			retCols = append(retCols, col)
 			lens = append(lens, types.UnspecifiedLength)
@@ -662,13 +663,17 @@ func (col *Column) Coercibility() Coercibility {
 
 // Repertoire returns the repertoire value which is used to check collations.
 func (col *Column) Repertoire() Repertoire {
-	if col.RetType.EvalType() != types.ETString {
+	switch col.RetType.EvalType() {
+	case types.ETJson:
+		return UNICODE
+	case types.ETString:
+		if col.RetType.Charset == charset.CharsetASCII {
+			return ASCII
+		}
+		return UNICODE
+	default:
 		return ASCII
 	}
-	if col.RetType.Charset == charset.CharsetASCII {
-		return ASCII
-	}
-	return UNICODE
 }
 
 // SortColumns sort columns based on UniqueID.
@@ -679,4 +684,32 @@ func SortColumns(cols []*Column) []*Column {
 		return sorted[i].UniqueID < sorted[j].UniqueID
 	})
 	return sorted
+}
+
+// InColumnArray check whether the col is in the cols array
+func (col *Column) InColumnArray(cols []*Column) bool {
+	for _, c := range cols {
+		if col.Equal(nil, c) {
+			return true
+		}
+	}
+	return false
+}
+
+// GcColumnExprIsTidbShard check whether the expression is tidb_shard()
+func GcColumnExprIsTidbShard(virtualExpr Expression) bool {
+	if virtualExpr == nil {
+		return false
+	}
+
+	f, ok := virtualExpr.(*ScalarFunction)
+	if !ok {
+		return false
+	}
+
+	if f.FuncName.L != ast.TiDBShard {
+		return false
+	}
+
+	return true
 }

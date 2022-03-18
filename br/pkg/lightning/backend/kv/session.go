@@ -219,6 +219,11 @@ func (t *transaction) GetTableInfo(id int64) *model.TableInfo {
 func (t *transaction) CacheTableInfo(id int64, info *model.TableInfo) {
 }
 
+// SetAssertion implements the kv.Transaction interface.
+func (t *transaction) SetAssertion(key []byte, assertion ...kv.FlagsOp) error {
+	return nil
+}
+
 // session is a trimmed down Session type which only wraps our own trimmed-down
 // transaction type and provides the session variables to the TiDB library
 // optimized for Lightning.

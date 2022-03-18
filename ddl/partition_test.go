@@ -26,7 +26,7 @@ import (
 )
 
 func ExportTestDropAndTruncatePartition(t *testing.T) {
-	store := testCreateStoreT(t, "test_store")
+	store := createMockStore(t)
 	defer func() {
 		err := store.Close()
 		require.NoError(t, err)
