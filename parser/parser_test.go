@@ -21,8 +21,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/stretchr/testify/require"
-
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
@@ -32,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/parser/test_driver"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSimple(t *testing.T) {
