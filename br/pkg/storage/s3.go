@@ -536,33 +536,40 @@ func (rs *S3Storage) open(
 	path string,
 	startOffset, endOffset int64,
 ) (io.ReadCloser, RangeInfo, error) {
-	var err error
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + path),
 	}
 
-	// always set rangeOffset to fetch file size info
-	// s3 endOffset is inclusive
+	// If we just open part of the object, we set `Range` in the request.
+	// If we meant to open the whole object, not just a part of it,
+	// we do not pass the range in the request,
+	// so that even if the object is empty, we can still get the response without errors.
+	// Then this behavior is similar to openning an empty file in local file system.
 	isFullRangeRequest := false
 	var rangeOffset *string
 	switch {
 	case endOffset > startOffset:
+		// s3 endOffset is inclusive
 		rangeOffset = aws.String(fmt.Sprintf("bytes=%d-%d", startOffset, endOffset-1))
 	case startOffset == 0:
+		// openning the whole object, no need to fill the `Range` field in the request
 		isFullRangeRequest = true
 	default:
 		rangeOffset = aws.String(fmt.Sprintf("bytes=%d-", startOffset))
 	}
 	input.Range = rangeOffset
 	result, err := rs.svc.GetObjectWithContext(ctx, input)
-	log.L().Debug("S3 get object", zap.Any("request", input), zap.Any("response", result))
 	if err != nil {
 		return nil, RangeInfo{}, errors.Trace(err)
 	}
 
 	var r RangeInfo
+	// Those requests without a `Range` will have no `ContentRange` in the response,
+	// In this case, we'll parse the `ContentLength` field instead.
 	if isFullRangeRequest {
+		// We must ensure the `ContentLengh` has data even if for empty objects,
+		// otherwise we have no places to get the object size
 		if result.ContentLength == nil {
 			return nil, RangeInfo{}, errors.Annotatef(berrors.ErrStorageUnknown, "open file '%s' failed. The S3 object has no content length", path)
 		}
