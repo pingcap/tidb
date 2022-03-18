@@ -821,16 +821,14 @@ func (s *stateChangeSuite) runTestInSchemaState(
 	callback := &ddl.TestDDLCallback{Do: s.dom}
 	prevState := model.StateNone
 	var checkErr error
-	times := 0
 	se, err := session.CreateSession(s.store)
 	s.Require().NoError(err)
 	_, err = se.Execute(context.Background(), "use test_db_state")
 	s.Require().NoError(err)
 	cbFunc := func(job *model.Job) {
-		if currentSchemaState(job) == prevState || checkErr != nil || times >= 3 {
+		if currentSchemaState(job) == prevState || checkErr != nil {
 			return
 		}
-		times++
 		if currentSchemaState(job) != state {
 			return
 		}
