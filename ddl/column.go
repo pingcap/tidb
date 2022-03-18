@@ -363,9 +363,10 @@ func checkDropColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Col
 	}
 
 	var colName model.CIStr
-	var placeholder interface{}
 	var ifExists bool
-	err = job.DecodeArgs(&colName, &placeholder, &placeholder, &ifExists)
+	// indexIds is used to make sure we don't truncate args when decoding the rawArgs.
+	var indexIds []int64
+	err = job.DecodeArgs(&colName, &ifExists, &indexIds)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, false, errors.Trace(err)

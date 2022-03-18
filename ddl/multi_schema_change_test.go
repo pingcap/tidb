@@ -218,6 +218,45 @@ func TestMultiSchemaChangeDropColumnsCancelled(t *testing.T) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3 4"))
 }
 
+func TestMultiSchemaChangeDropIndexedColumnsCancelled(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
+	originHook := dom.DDL().GetHook()
+	getIndexID := func(name string) int64 {
+		tt, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		require.NoError(t, err)
+		for _, idx := range tt.Indices() {
+			if idx.Meta().Name.L == name {
+				return idx.Meta().ID
+			}
+		}
+		return -1
+	}
+
+	// Test for cancelling the job in a middle state.
+	tk.MustExec("create table t (a int default 1, b int default 2, c int default 3, d int default 4, " +
+		"index(a), index(b), index(c), index(d));")
+	tk.MustExec("insert into t values ();")
+	hook := newCancelJobHook(store, dom, func(job *model.Job) bool {
+		// Cancel job when the column 'a' is in delete-reorg.
+		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateDeleteReorganization
+	})
+	jobIDExt := wrapJobIDExtCallback(hook)
+	dom.DDL().SetHook(jobIDExt)
+	ib, ia, id := getIndexID("b"), getIndexID("a"), getIndexID("d")
+	tk.MustExec("alter table t drop column b, drop column a, drop column d;")
+	dom.DDL().SetHook(originHook)
+	require.Contains(t, hook.cancelErr.Error(), fmt.Sprintf("%d", errno.ErrCannotCancelDDLJob))
+	require.True(t, hook.triggered)
+	tk.MustQuery("select * from t;").Check(testkit.Rows("3"))
+	checkDelRangeAdded(tk, jobIDExt.jobID, ib)
+	checkDelRangeAdded(tk, jobIDExt.jobID, ia)
+	checkDelRangeAdded(tk, jobIDExt.jobID, id)
+}
+
 func TestMultiSchemaChangeDropColumnsParallel(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

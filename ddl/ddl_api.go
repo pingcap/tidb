@@ -3887,7 +3887,7 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 		Type:            model.ActionDropColumn,
 		BinlogInfo:      &model.HistoryInfo{},
 		MultiSchemaInfo: multiSchemaInfo,
-		Args:            []interface{}{colName, nil /* index IDs */, nil /* partition IDs */, spec.IfExists},
+		Args:            []interface{}{colName, spec.IfExists},
 	}
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
