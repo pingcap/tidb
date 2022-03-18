@@ -513,4 +513,6 @@ const (
 	SI IsoLevel = iota
 	// RC stands for 'read committed'.
 	RC
+	// RCCheckTS stands for 'read consistency read with ts check'.
+	RCCheckTS
 )

@@ -101,7 +101,11 @@ func (b *mppExecBuilder) buildMPPPartitionTableScan(pb *tipb.PartitionTableScan)
 		kvRanges:    ranges,
 		dbReader:    b.dbReader,
 	}
-	for _, col := range pb.Columns {
+	for i, col := range pb.Columns {
+		if col.ColumnId == model.ExtraPhysTblID {
+			ts.physTblIDColIdx = new(int)
+			*ts.physTblIDColIdx = i
+		}
 		ft := fieldTypeFromPBColumn(col)
 		ts.fieldTypes = append(ts.fieldTypes, ft)
 	}

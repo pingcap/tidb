@@ -109,6 +109,12 @@ func TestReadPartitionTable(t *testing.T) {
 	tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("5"))
 	tk.MustExec("insert into t values(6,0)")
 	tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("6"))
+	// test dynamic prune + union scan
+	tk.MustExec("set tidb_partition_prune_mode=dynamic")
+	tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("6"))
+	// test dynamic prune + batch cop + union scan
+	tk.MustExec("set tidb_allow_batch_cop=2")
+	tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("6"))
 	tk.MustExec("commit")
 }
 
