@@ -330,6 +330,10 @@ func (se *session) GetBuiltinFunctionUsage() map[string]uint32 {
 	return make(map[string]uint32)
 }
 
+// BuiltinFunctionUsageInc implements the sessionctx.Context interface.
+func (se *session) BuiltinFunctionUsageInc(scalarFuncSigName string) {
+}
+
 // GetStmtStats implements the sessionctx.Context interface.
 func (se *session) GetStmtStats() *stmtstats.StatementStats {
 	return nil

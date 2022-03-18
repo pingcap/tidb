@@ -953,7 +953,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.Greatest, ast.Least, /* ast.Interval */
 
 		// arithmetical functions.
-		ast.PI, ast.Truncate,
+		ast.PI, /* ast.Truncate */
 		ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Abs, ast.Mod,
 
 		// math functions.
@@ -989,11 +989,11 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.MonthName, ast.MakeDate, ast.TimeToSec, ast.MakeTime,
 		ast.DateFormat,
 		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond, ast.Month,
-		ast.DayName, ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear,
+		/* ast.DayName */ ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear,
 		ast.Weekday, ast.WeekOfYear, ast.Year,
 		ast.FromDays, ast.ToDays,
 		ast.PeriodAdd, ast.PeriodDiff, /*ast.TimestampDiff, ast.DateAdd, ast.FromUnixTime,*/
-		ast.LastDay,
+		/* ast.LastDay */
 		ast.Sysdate,
 
 		// encryption functions.
@@ -1056,6 +1056,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.Concat, ast.ConcatWS,
 		ast.Date, ast.Year, ast.Month, ast.Day, ast.Quarter, ast.DayName, ast.MonthName,
 		ast.DateDiff, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
+		ast.DayOfMonth, ast.LastDay,
 
 		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Sign,
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
@@ -1150,6 +1151,14 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	case ast.Upper, ast.Ucase, ast.Lower, ast.Lcase:
 		return true
 	case ast.Sysdate:
+		return true
+	case ast.Least, ast.Greatest:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_GreatestInt, tipb.ScalarFuncSig_GreatestReal,
+			tipb.ScalarFuncSig_LeastInt, tipb.ScalarFuncSig_LeastReal:
+			return true
+		}
+	case ast.IsTruthWithNull, ast.IsTruthWithoutNull, ast.IsFalsity:
 		return true
 	}
 	return false
