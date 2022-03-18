@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -211,6 +212,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowPrivileges()
 	case ast.ShowBindings:
 		return e.fetchShowBind()
+	case ast.ShowBindingCacheStatus:
+		return e.fetchShowBindingCacheStatus(ctx)
 	case ast.ShowAnalyzeStatus:
 		e.fetchShowAnalyzeStatus()
 		return nil
@@ -336,6 +339,37 @@ func (e *ShowExec) fetchShowBind() error {
 			})
 		}
 	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
+	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, fmt.Sprintf("SELECT count(*) FROM mysql.bind_info where status = '%s' or status = '%s';", bindinfo.Enabled, bindinfo.Using))
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	handle := domain.GetDomain(e.ctx).BindHandle()
+
+	bindRecords := handle.GetAllBindRecord()
+	numBindings := 0
+	for _, bindRecord := range bindRecords {
+		for _, binding := range bindRecord.Bindings {
+			if binding.IsBindingEnabled() {
+				numBindings++
+			}
+		}
+	}
+
+	memUsage := handle.GetMemUsage()
+	memCapacity := handle.GetMemCapacity()
+	e.appendRow([]interface{}{
+		numBindings,
+		rows[0].GetInt64(0),
+		memory.FormatBytes(memUsage),
+		memory.FormatBytes(memCapacity),
+	})
 	return nil
 }
 
@@ -1358,6 +1392,11 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 	return nil
 }
 
+// ConstructResultOfShowCreatePlacementPolicy constructs the result for show create placement policy.
+func ConstructResultOfShowCreatePlacementPolicy(policyInfo *model.PolicyInfo) string {
+	return fmt.Sprintf("CREATE PLACEMENT POLICY `%s` %s", policyInfo.Name.O, policyInfo.PlacementSettings.String())
+}
+
 // fetchShowCreateDatabase composes show create database result.
 func (e *ShowExec) fetchShowCreateDatabase() error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
@@ -1386,7 +1425,7 @@ func (e *ShowExec) fetchShowCreatePlacementPolicy() error {
 	if !found {
 		return infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(e.DBName.O)
 	}
-	showCreate := fmt.Sprintf("CREATE PLACEMENT POLICY `%s` %s", e.DBName.O, policy.PlacementSettings.String())
+	showCreate := ConstructResultOfShowCreatePlacementPolicy(policy)
 	e.appendRow([]interface{}{e.DBName.O, showCreate})
 	return nil
 }

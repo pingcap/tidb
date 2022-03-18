@@ -820,7 +820,7 @@ type AnalyzeColumnsExec struct {
 	indexes       []*model.IndexInfo
 	core.AnalyzeInfo
 
-	samplingBuilderWg *util.NotifyErrorWaitGroupWrapper
+	samplingBuilderWg *notifyErrorWaitGroupWrapper
 	samplingMergeWg   *util.WaitGroupWrapper
 
 	schemaForVirtualColEval *expression.Schema
@@ -1043,9 +1043,10 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	if totalLen < statsConcurrency {
 		statsConcurrency = totalLen
 	}
-	e.samplingBuilderWg = util.NewNotifyErrorWaitGroupWrapper(buildResultChan)
+	e.samplingBuilderWg = newNotifyErrorWaitGroupWrapper(buildResultChan)
 	sampleCollectors := make([]*statistics.SampleCollector, len(e.colsInfo))
 	exitCh := make(chan struct{})
+	e.samplingBuilderWg.Add(statsConcurrency)
 	for i := 0; i < statsConcurrency; i++ {
 		e.samplingBuilderWg.Run(func() { e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, sampleCollectors, exitCh) })
 	}
@@ -1142,6 +1143,7 @@ func (e *AnalyzeColumnsExec) handleNDVForSpecialIndexes(indexInfos []*model.Inde
 		statsConcurrncy = len(tasks)
 	}
 	var subIndexWorkerWg = NewAnalyzeResultsNotifyWaitGroupWrapper(resultsCh)
+	subIndexWorkerWg.Add(statsConcurrncy)
 	for i := 0; i < statsConcurrncy; i++ {
 		subIndexWorkerWg.Run(func() { e.subIndexWorkerForNDV(taskCh, resultsCh) })
 	}
@@ -2320,6 +2322,7 @@ func analyzePKIncremental(colExec *analyzePKIncrementalExec) *statistics.Analyze
 }
 
 // analyzeResultsNotifyWaitGroupWrapper is a wrapper for sync.WaitGroup
+// Please add all goroutine count when to `Add` to avoid exiting in advance.
 type analyzeResultsNotifyWaitGroupWrapper struct {
 	sync.WaitGroup
 	notify chan *statistics.AnalyzeResults
@@ -2334,11 +2337,41 @@ func NewAnalyzeResultsNotifyWaitGroupWrapper(notify chan *statistics.AnalyzeResu
 	}
 }
 
-// Run runs a function in a goroutine, adds 1 to WaitGroup
-// and calls done when function returns. Please DO NOT use panic
-// in the cb function.
+// Run runs a function in a goroutine and calls done when function returns.
+// Please DO NOT use panic in the cb function.
 func (w *analyzeResultsNotifyWaitGroupWrapper) Run(exec func()) {
-	w.Add(1)
+	old := w.cnt.Inc() - 1
+	go func(cnt uint64) {
+		defer func() {
+			w.Done()
+			if cnt == 0 {
+				w.Wait()
+				close(w.notify)
+			}
+		}()
+		exec()
+	}(old)
+}
+
+// notifyErrorWaitGroupWrapper is a wrapper for sync.WaitGroup
+// Please add all goroutine count when to `Add` to avoid exiting in advance.
+type notifyErrorWaitGroupWrapper struct {
+	sync.WaitGroup
+	notify chan error
+	cnt    atomicutil.Uint64
+}
+
+// newNotifyErrorWaitGroupWrapper is to create notifyErrorWaitGroupWrapper
+func newNotifyErrorWaitGroupWrapper(notify chan error) *notifyErrorWaitGroupWrapper {
+	return &notifyErrorWaitGroupWrapper{
+		notify: notify,
+		cnt:    *atomicutil.NewUint64(0),
+	}
+}
+
+// Run runs a function in a goroutine and calls done when function returns.
+// Please DO NOT use panic in the cb function.
+func (w *notifyErrorWaitGroupWrapper) Run(exec func()) {
 	old := w.cnt.Inc() - 1
 	go func(cnt uint64) {
 		defer func() {
