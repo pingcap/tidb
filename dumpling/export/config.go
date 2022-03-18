@@ -449,6 +449,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
+	conf.specifiedTables = len(tablesList) > 0
 	conf.Tables, err = GetConfTables(conf, tablesList)
 	if err != nil {
 		return errors.Trace(err)
@@ -537,21 +538,18 @@ func ParseTableFilter(tablesList, filters []string) (filter.Filter, error) {
 func GetConfTables(conf *Config, tablesList []string) (DatabaseTables, error) {
 	dbTables := DatabaseTables{}
 	var (
-		schema, name string
-		tableType    TableType
+		tablename    string
 		avgRowLength uint64
 	)
-	tableType = TableTypeBase
 	avgRowLength = 0
-	conf.specifiedTables = len(tablesList) > 0
-	for _, name = range tablesList {
-		parts := strings.SplitN(name, ".", 2)
+	for _, tablename = range tablesList {
+		parts := strings.SplitN(tablename, ".", 2)
 		if len(parts) < 2 {
-			return nil, errors.Errorf("--tables-list only accepts qualified table names, but `%s` lacks a dot", name)
+			return nil, errors.Errorf("--tables-list only accepts qualified table names, but `%s` lacks a dot", tablename)
 		}
-		schema = parts[0]
-		tbname := parts[1]
-		dbTables[schema] = append(dbTables[schema], &TableInfo{tbname, avgRowLength, tableType})
+		dbName := parts[0]
+		tbName := parts[1]
+		dbTables[dbName] = append(dbTables[dbName], &TableInfo{tbName, avgRowLength, TableTypeBase})
 	}
 	return dbTables, nil
 }
