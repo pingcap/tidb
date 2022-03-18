@@ -811,8 +811,8 @@ const (
 	DefTiDBTxnAssertionLevel              = AssertionOffStr
 	DefTiDBIgnorePreparedCacheCloseStmt   = false
 	DefTiDBBatchPendingTiFlashCount       = 4000
-  DefRCReadCheckTS                      = false
-  DefTiDBReadStaleness                  = 0
+	DefRCReadCheckTS                      = false
+	DefTiDBReadStaleness                  = 0
 )
 
 // Process global variables.
