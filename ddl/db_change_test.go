@@ -60,7 +60,6 @@ type stateChangeSuite struct {
 }
 
 func TestStateChange(t *testing.T) {
-	t.Skip("Skip for multi-schema change")
 	suite.Run(t, new(stateChangeSuite))
 }
 
@@ -821,14 +820,18 @@ func (s *stateChangeSuite) runTestInSchemaState(
 
 	callback := &ddl.TestDDLCallback{Do: s.dom}
 	prevState := model.StateNone
+	times := 0
 	var checkErr error
 	se, err := session.CreateSession(s.store)
 	s.Require().NoError(err)
 	_, err = se.Execute(context.Background(), "use test_db_state")
 	s.Require().NoError(err)
 	cbFunc := func(job *model.Job) {
-		if currentSchemaState(job) == prevState || checkErr != nil {
+		if currentSchemaState(job) == prevState || checkErr != nil || times >= 3 {
 			return
+		}
+		if job.MultiSchemaInfo == nil {
+			times++
 		}
 		if currentSchemaState(job) != state {
 			return
