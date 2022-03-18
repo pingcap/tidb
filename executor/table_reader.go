@@ -246,15 +246,14 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
-	if e.dummy {
-		return nil
-	}
-
 	var err error
 	if e.resultHandler != nil {
 		err = e.resultHandler.Close()
 	}
 	e.kvRanges = e.kvRanges[:0]
+	if e.dummy {
+		return nil
+	}
 	e.ctx.StoreQueryFeedback(e.feedback)
 	return err
 }
