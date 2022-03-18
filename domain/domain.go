@@ -1275,6 +1275,14 @@ func (do *Domain) SetStatsUpdating(val bool) {
 // RunAutoAnalyze indicates if this TiDB server starts auto analyze worker and can run auto analyze job.
 var RunAutoAnalyze = true
 
+func (do *Domain) LoadStatsLoop(ctxs []sessionctx.Context) error {
+	if err := do.UpdateTableStatsLoop(ctxs[0]); err != nil {
+		return err
+	}
+	do.StartLoadStatsSubWorkers(ctxs[1:])
+	return nil
+}
+
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop.
 // It will also start a goroutine to analyze tables automatically.
 // It should be called only once in BootstrapSession.
