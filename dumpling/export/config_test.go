@@ -35,21 +35,19 @@ func TestMatchMysqlBugVersion(t *testing.T) {
 }
 
 func TestGetConfTables(t *testing.T) {
-	conf := defaultConfigForTest(t)
-
 	tablesList := []string{"db1t1", "db2.t1"}
-	_, err := GetConfTables(conf, tablesList)
+	_, err := GetConfTables(tablesList)
 	require.EqualError(t, err, fmt.Sprintf("--tables-list only accepts qualified table names, but `%s` lacks a dot", tablesList[0]))
 
 	tablesList = []string{"db1.t1", "db2t1"}
-	_, err = GetConfTables(conf, tablesList)
+	_, err = GetConfTables(tablesList)
 	require.EqualError(t, err, fmt.Sprintf("--tables-list only accepts qualified table names, but `%s` lacks a dot", tablesList[1]))
 
 	tablesList = []string{"db1.t1", "db2.t1"}
 	expectedDBTables := NewDatabaseTables().
 		AppendTables("db1", []string{"t1"}, []uint64{0}).
 		AppendTables("db2", []string{"t1"}, []uint64{0})
-	actualDBTables, err := GetConfTables(conf, tablesList)
+	actualDBTables, err := GetConfTables(tablesList)
 	require.NoError(t, err)
 	require.Equal(t, expectedDBTables, actualDBTables)
 

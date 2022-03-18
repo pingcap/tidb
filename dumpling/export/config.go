@@ -450,7 +450,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	conf.specifiedTables = len(tablesList) > 0
-	conf.Tables, err = GetConfTables(conf, tablesList)
+	conf.Tables, err = GetConfTables(tablesList)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -535,7 +535,7 @@ func ParseTableFilter(tablesList, filters []string) (filter.Filter, error) {
 	return filter.NewTablesFilter(tableNames...), nil
 }
 
-func GetConfTables(conf *Config, tablesList []string) (DatabaseTables, error) {
+func GetConfTables(tablesList []string) (DatabaseTables, error) {
 	dbTables := DatabaseTables{}
 	var (
 		tablename    string
