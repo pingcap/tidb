@@ -37,10 +37,9 @@ func Uint32() uint32
 
 // Uint32N returns, as an uint32, a pseudo-random number in [0,n).
 func Uint32N(n uint32) uint32 {
-	if n&(n-1) == 0 { // n is power of two, can mask
-		return Uint32() & (n - 1)
-	}
-	return Uint32() % n
+	// This is similar to Uint32() % n, but faster.
+	// See https://lemire.me/blog/2016/06/27/a-fast-alternative-to-the-modulo-reduction/
+	return uint32(uint64(Uint32()) * uint64(n) >> 32)
 }
 
 // Uint64N returns, as an uint64, a pseudo-random number in [0,n).
