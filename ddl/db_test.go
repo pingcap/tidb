@@ -1238,7 +1238,7 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 	require.Equal(t, int64(0), physicalID)
 }
 
-func (s *testSerialDBSuite) TestDropTableOnTiKVDiskFull(t *testing.T) {
+func TestDropTableOnTiKVDiskFull(t *testing.T) {
 	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
