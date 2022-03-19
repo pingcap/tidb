@@ -56,7 +56,7 @@ func (sr selectResultHook) SelectResult(ctx context.Context, sctx sessionctx.Con
 }
 
 type kvRangeBuilder interface {
-	buildKeyRange(pid int64, ranges []*ranger.Range) ([]kv.KeyRange, error)
+	buildKeyRange(ranges []*ranger.Range) ([]kv.KeyRange, error)
 	buildKeyRangeSeparately(ranges []*ranger.Range) ([]int64, [][]kv.KeyRange, error)
 }
 
@@ -376,7 +376,7 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 	var builder distsql.RequestBuilder
 	var reqBuilder *distsql.RequestBuilder
 	if e.kvRangeBuilder != nil {
-		kvRange, err := e.kvRangeBuilder.buildKeyRange(getPhysicalTableID(e.table), ranges)
+		kvRange, err := e.kvRangeBuilder.buildKeyRange(ranges)
 		if err != nil {
 			return nil, err
 		}
