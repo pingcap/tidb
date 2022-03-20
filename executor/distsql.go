@@ -207,16 +207,20 @@ func (e *IndexReaderExecutor) Table() table.Table {
 	return e.table
 }
 
+func (e *IndexReaderExecutor) setDummy() {
+	e.dummy = true
+}
+
 // Close clears all resources hold by current object.
 func (e *IndexReaderExecutor) Close() (err error) {
-	if e.dummy {
-		return nil
-	}
-
 	if e.result != nil {
 		err = e.result.Close()
 	}
 	e.result = nil
+	e.kvRanges = e.kvRanges[:0]
+	if e.dummy {
+		return nil
+	}
 	e.ctx.StoreQueryFeedback(e.feedback)
 	return err
 }
@@ -346,7 +350,7 @@ type IndexLookUpExecutor struct {
 	partitionTableMode bool                  // if this executor is accessing a partition table
 	prunedPartitions   []table.PhysicalTable // partition tables need to access
 	partitionRangeMap  map[int64][]*ranger.Range
-	partitionKVRanges  [][]kv.KeyRange // kvRanges of each partition table
+	partitionKVRanges  [][]kv.KeyRange // kvRanges of each prunedPartitions
 
 	// All fields above are immutable.
 
@@ -410,6 +414,10 @@ type checkIndexValue struct {
 // Table implements the dataSourceExecutor interface.
 func (e *IndexLookUpExecutor) Table() table.Table {
 	return e.table
+}
+
+func (e *IndexLookUpExecutor) setDummy() {
+	e.dummy = true
 }
 
 // Open implements the Executor Open interface.
@@ -696,6 +704,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 
 // Close implements Exec Close interface.
 func (e *IndexLookUpExecutor) Close() error {
+	e.kvRanges = e.kvRanges[:0]
 	if e.dummy {
 		return nil
 	}

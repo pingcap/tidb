@@ -387,17 +387,18 @@ insert into tpk values(1), (2), (3);
 // Expect a Sort operator on CTE.
 explain with cte1 as (select c1 from t1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 id	estRows	task	access object	operator info
-MergeJoin_26	10000.00	root		inner join, left key:test.t1.c1, right key:test.t1.c1
-├─Sort_24(Build)	8000.00	root		test.t1.c1
-│ └─Selection_22	8000.00	root		not(isnull(test.t1.c1))
-│   └─CTEFullScan_23	10000.00	root	CTE:dt2	data:CTE_0
-└─Sort_20(Probe)	9990.00	root		test.t1.c1
-  └─TableReader_19	9990.00	root		data:Selection_18
-    └─Selection_18	9990.00	cop[tikv]		not(isnull(test.t1.c1))
-      └─TableFullScan_17	10000.00	cop[tikv]	table:dt1	keep order:false, stats:pseudo
-CTE_0	10000.00	root		Non-Recursive CTE
-└─TableReader_12(Seed Part)	10000.00	root		data:TableFullScan_11
-  └─TableFullScan_11	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+MergeJoin_28	8000.00	root		inner join, left key:test.t1.c1, right key:test.t1.c1
+├─Sort_26(Build)	6400.00	root		test.t1.c1
+│ └─Selection_24	6400.00	root		not(isnull(test.t1.c1))
+│   └─CTEFullScan_25	8000.00	root	CTE:dt2	data:CTE_0
+└─Sort_22(Probe)	9990.00	root		test.t1.c1
+  └─TableReader_21	9990.00	root		data:Selection_20
+    └─Selection_20	9990.00	cop[tikv]		not(isnull(test.t1.c1))
+      └─TableFullScan_19	10000.00	cop[tikv]	table:dt1	keep order:false, stats:pseudo
+CTE_0	8000.00	root		Non-Recursive CTE
+└─Selection_11(Seed Part)	8000.00	root		not(isnull(test.t1.c1))
+  └─TableReader_14	10000.00	root		data:TableFullScan_13
+    └─TableFullScan_13	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 with cte1 as (select c1 from t1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 c1	c1
 1	1
@@ -411,15 +412,16 @@ c1	c1
 // Sort should not exist, because tpk.c1 is pk. Not the best plan for now(#25674).
 explain with cte1 as (select c1 from tpk) select /*+ MERGE_JOIN(dt1, dt2) */ * from tpk dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 id	estRows	task	access object	operator info
-MergeJoin_24	10000.00	root		inner join, left key:test.tpk.c1, right key:test.tpk.c1
-├─Sort_22(Build)	8000.00	root		test.tpk.c1
-│ └─Selection_20	8000.00	root		not(isnull(test.tpk.c1))
-│   └─CTEFullScan_21	10000.00	root	CTE:dt2	data:CTE_0
-└─TableReader_18(Probe)	10000.00	root		data:TableFullScan_17
-  └─TableFullScan_17	10000.00	cop[tikv]	table:dt1	keep order:true, stats:pseudo
-CTE_0	10000.00	root		Non-Recursive CTE
-└─TableReader_12(Seed Part)	10000.00	root		data:TableFullScan_11
-  └─TableFullScan_11	10000.00	cop[tikv]	table:tpk	keep order:false, stats:pseudo
+MergeJoin_26	8000.00	root		inner join, left key:test.tpk.c1, right key:test.tpk.c1
+├─Sort_24(Build)	6400.00	root		test.tpk.c1
+│ └─Selection_22	6400.00	root		not(isnull(test.tpk.c1))
+│   └─CTEFullScan_23	8000.00	root	CTE:dt2	data:CTE_0
+└─TableReader_20(Probe)	10000.00	root		data:TableFullScan_19
+  └─TableFullScan_19	10000.00	cop[tikv]	table:dt1	keep order:true, stats:pseudo
+CTE_0	8000.00	root		Non-Recursive CTE
+└─Selection_11(Seed Part)	8000.00	root		not(isnull(test.tpk.c1))
+  └─TableReader_14	10000.00	root		data:TableFullScan_13
+    └─TableFullScan_13	10000.00	cop[tikv]	table:tpk	keep order:false, stats:pseudo
 with cte1 as (select c1 from tpk) select /*+ MERGE_JOIN(dt1, dt2) */ * from tpk dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 c1	c1
 1	1
@@ -428,18 +430,19 @@ c1	c1
 // Sort should not exist, because we have order by in CTE definition. Not the best plan for now(#25674).
 explain with cte1 as (select c1 from t1 order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 id	estRows	task	access object	operator info
-MergeJoin_30	10000.00	root		inner join, left key:test.t1.c1, right key:test.t1.c1
-├─Sort_28(Build)	8000.00	root		test.t1.c1
-│ └─Selection_26	8000.00	root		not(isnull(test.t1.c1))
-│   └─CTEFullScan_27	10000.00	root	CTE:dt2	data:CTE_0
-└─Sort_24(Probe)	9990.00	root		test.t1.c1
-  └─TableReader_23	9990.00	root		data:Selection_22
-    └─Selection_22	9990.00	cop[tikv]		not(isnull(test.t1.c1))
-      └─TableFullScan_21	10000.00	cop[tikv]	table:dt1	keep order:false, stats:pseudo
-CTE_0	10000.00	root		Non-Recursive CTE
-└─Sort_11(Seed Part)	10000.00	root		test.t1.c1
-  └─TableReader_15	10000.00	root		data:TableFullScan_14
-    └─TableFullScan_14	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+MergeJoin_32	8000.00	root		inner join, left key:test.t1.c1, right key:test.t1.c1
+├─Sort_30(Build)	6400.00	root		test.t1.c1
+│ └─Selection_28	6400.00	root		not(isnull(test.t1.c1))
+│   └─CTEFullScan_29	8000.00	root	CTE:dt2	data:CTE_0
+└─Sort_26(Probe)	9990.00	root		test.t1.c1
+  └─TableReader_25	9990.00	root		data:Selection_24
+    └─Selection_24	9990.00	cop[tikv]		not(isnull(test.t1.c1))
+      └─TableFullScan_23	10000.00	cop[tikv]	table:dt1	keep order:false, stats:pseudo
+CTE_0	8000.00	root		Non-Recursive CTE
+└─Selection_12(Seed Part)	8000.00	root		not(isnull(test.t1.c1))
+  └─Sort_13	10000.00	root		test.t1.c1
+    └─TableReader_17	10000.00	root		data:TableFullScan_16
+      └─TableFullScan_16	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 with cte1 as (select c1 from t1 order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 c1	c1
 1	1
@@ -500,18 +503,19 @@ c1	c1
 // Expect Sort operator in CTE definition.
 explain with cte1 as (select c1 from t1 order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 id	estRows	task	access object	operator info
-MergeJoin_30	10000.00	root		inner join, left key:test.t1.c1, right key:test.t1.c1
-├─Sort_28(Build)	8000.00	root		test.t1.c1
-│ └─Selection_26	8000.00	root		not(isnull(test.t1.c1))
-│   └─CTEFullScan_27	10000.00	root	CTE:dt2	data:CTE_0
-└─Sort_24(Probe)	9990.00	root		test.t1.c1
-  └─TableReader_23	9990.00	root		data:Selection_22
-    └─Selection_22	9990.00	cop[tikv]		not(isnull(test.t1.c1))
-      └─TableFullScan_21	10000.00	cop[tikv]	table:dt1	keep order:false, stats:pseudo
-CTE_0	10000.00	root		Non-Recursive CTE
-└─Sort_11(Seed Part)	10000.00	root		test.t1.c1
-  └─TableReader_15	10000.00	root		data:TableFullScan_14
-    └─TableFullScan_14	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+MergeJoin_32	8000.00	root		inner join, left key:test.t1.c1, right key:test.t1.c1
+├─Sort_30(Build)	6400.00	root		test.t1.c1
+│ └─Selection_28	6400.00	root		not(isnull(test.t1.c1))
+│   └─CTEFullScan_29	8000.00	root	CTE:dt2	data:CTE_0
+└─Sort_26(Probe)	9990.00	root		test.t1.c1
+  └─TableReader_25	9990.00	root		data:Selection_24
+    └─Selection_24	9990.00	cop[tikv]		not(isnull(test.t1.c1))
+      └─TableFullScan_23	10000.00	cop[tikv]	table:dt1	keep order:false, stats:pseudo
+CTE_0	8000.00	root		Non-Recursive CTE
+└─Selection_12(Seed Part)	8000.00	root		not(isnull(test.t1.c1))
+  └─Sort_13	10000.00	root		test.t1.c1
+    └─TableReader_17	10000.00	root		data:TableFullScan_16
+      └─TableFullScan_16	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 with cte1 as (select c1 from t1 order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 c1	c1
 1	1
@@ -525,17 +529,18 @@ c1	c1
 // Sort should not exist, because tpk is ordered. Not the best plan for now(#25674).
 explain with cte1 as (select c1 from tpk order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 id	estRows	task	access object	operator info
-MergeJoin_32	10000.00	root		inner join, left key:test.t1.c1, right key:test.tpk.c1
-├─Sort_30(Build)	8000.00	root		test.tpk.c1
-│ └─Selection_28	8000.00	root		not(isnull(test.tpk.c1))
-│   └─CTEFullScan_29	10000.00	root	CTE:dt2	data:CTE_0
-└─Sort_26(Probe)	9990.00	root		test.t1.c1
-  └─TableReader_25	9990.00	root		data:Selection_24
-    └─Selection_24	9990.00	cop[tikv]		not(isnull(test.t1.c1))
-      └─TableFullScan_23	10000.00	cop[tikv]	table:dt1	keep order:false, stats:pseudo
-CTE_0	10000.00	root		Non-Recursive CTE
-└─TableReader_18(Seed Part)	10000.00	root		data:TableFullScan_17
-  └─TableFullScan_17	10000.00	cop[tikv]	table:tpk	keep order:true, stats:pseudo
+MergeJoin_34	8000.00	root		inner join, left key:test.t1.c1, right key:test.tpk.c1
+├─Sort_32(Build)	6400.00	root		test.tpk.c1
+│ └─Selection_30	6400.00	root		not(isnull(test.tpk.c1))
+│   └─CTEFullScan_31	8000.00	root	CTE:dt2	data:CTE_0
+└─Sort_28(Probe)	9990.00	root		test.t1.c1
+  └─TableReader_27	9990.00	root		data:Selection_26
+    └─Selection_26	9990.00	cop[tikv]		not(isnull(test.t1.c1))
+      └─TableFullScan_25	10000.00	cop[tikv]	table:dt1	keep order:false, stats:pseudo
+CTE_0	8000.00	root		Non-Recursive CTE
+└─Selection_12(Seed Part)	8000.00	root		not(isnull(test.tpk.c1))
+  └─TableReader_20	10000.00	root		data:TableFullScan_19
+    └─TableFullScan_19	10000.00	cop[tikv]	table:tpk	keep order:true, stats:pseudo
 with cte1 as (select c1 from tpk order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 c1	c1
 1	1
@@ -545,15 +550,16 @@ c1	c1
 // HashJoin. No need to sort
 explain with cte1 as (select c1 from t1) select /*+ HASH_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = 1 order by 1, 2;
 id	estRows	task	access object	operator info
-Sort_13	80000000.00	root		test.t1.c1, test.t1.c1
-└─HashJoin_16	80000000.00	root		CARTESIAN inner join
-  ├─Selection_20(Build)	8000.00	root		eq(test.t1.c1, 1)
-  │ └─CTEFullScan_21	10000.00	root	CTE:dt2	data:CTE_0
-  └─TableReader_19(Probe)	10000.00	root		data:TableFullScan_18
-    └─TableFullScan_18	10000.00	cop[tikv]	table:dt1	keep order:false, stats:pseudo
-CTE_0	10000.00	root		Non-Recursive CTE
-└─TableReader_12(Seed Part)	10000.00	root		data:TableFullScan_11
-  └─TableFullScan_11	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Sort_15	64000000.00	root		test.t1.c1, test.t1.c1
+└─HashJoin_18	64000000.00	root		CARTESIAN inner join
+  ├─Selection_22(Build)	6400.00	root		eq(test.t1.c1, 1)
+  │ └─CTEFullScan_23	8000.00	root	CTE:dt2	data:CTE_0
+  └─TableReader_21(Probe)	10000.00	root		data:TableFullScan_20
+    └─TableFullScan_20	10000.00	cop[tikv]	table:dt1	keep order:false, stats:pseudo
+CTE_0	8000.00	root		Non-Recursive CTE
+└─Selection_11(Seed Part)	8000.00	root		eq(test.t1.c1, 1)
+  └─TableReader_14	10000.00	root		data:TableFullScan_13
+    └─TableFullScan_13	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 with cte1 as (select c1 from t1) select /*+ HASH_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = 1 order by 1, 2;
 c1	c1
 1	1
@@ -566,15 +572,16 @@ c1	c1
 2	1
 explain with cte1 as (select c1 from tpk) select /*+ HASH_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = 1 order by 1, 2;
 id	estRows	task	access object	operator info
-Sort_13	80000000.00	root		test.t1.c1, test.tpk.c1
-└─HashJoin_16	80000000.00	root		CARTESIAN inner join
-  ├─Selection_20(Build)	8000.00	root		eq(test.tpk.c1, 1)
-  │ └─CTEFullScan_21	10000.00	root	CTE:dt2	data:CTE_0
-  └─TableReader_19(Probe)	10000.00	root		data:TableFullScan_18
-    └─TableFullScan_18	10000.00	cop[tikv]	table:dt1	keep order:false, stats:pseudo
-CTE_0	10000.00	root		Non-Recursive CTE
-└─TableReader_12(Seed Part)	10000.00	root		data:TableFullScan_11
-  └─TableFullScan_11	10000.00	cop[tikv]	table:tpk	keep order:false, stats:pseudo
+Sort_15	64000000.00	root		test.t1.c1, test.tpk.c1
+└─HashJoin_18	64000000.00	root		CARTESIAN inner join
+  ├─Selection_22(Build)	6400.00	root		eq(test.tpk.c1, 1)
+  │ └─CTEFullScan_23	8000.00	root	CTE:dt2	data:CTE_0
+  └─TableReader_21(Probe)	10000.00	root		data:TableFullScan_20
+    └─TableFullScan_20	10000.00	cop[tikv]	table:dt1	keep order:false, stats:pseudo
+CTE_0	8000.00	root		Non-Recursive CTE
+└─Selection_11(Seed Part)	8000.00	root		eq(test.tpk.c1, 1)
+  └─TableReader_14	10000.00	root		data:TableFullScan_13
+    └─TableFullScan_13	10000.00	cop[tikv]	table:tpk	keep order:false, stats:pseudo
 with cte1 as (select c1 from tpk) select /*+ HASH_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = 1 order by 1, 2;
 c1	c1
 1	1
@@ -589,19 +596,20 @@ create table tpk1(c1 int primary key);
 insert into tpk1 values(1), (2), (3);
 explain with cte1 as (select c1 from tpk) select /*+ merge_join(dt1, dt2) */ * from tpk1 dt1 inner join cte1 dt2 inner join cte1 dt3 on dt1.c1 = dt2.c1 and dt2.c1 = dt3.c1;
 id	estRows	task	access object	operator info
-Projection_18	12500.00	root		test.tpk1.c1, test.tpk.c1, test.tpk.c1
-└─HashJoin_20	12500.00	root		inner join, equal:[eq(test.tpk.c1, test.tpk.c1)]
-  ├─Selection_21(Build)	8000.00	root		not(isnull(test.tpk.c1))
-  │ └─CTEFullScan_22	10000.00	root	CTE:dt3	data:CTE_0
-  └─MergeJoin_23(Probe)	10000.00	root		inner join, left key:test.tpk1.c1, right key:test.tpk.c1
-    ├─Sort_29(Build)	8000.00	root		test.tpk.c1
-    │ └─Selection_27	8000.00	root		not(isnull(test.tpk.c1))
-    │   └─CTEFullScan_28	10000.00	root	CTE:dt2	data:CTE_0
-    └─TableReader_25(Probe)	10000.00	root		data:TableFullScan_24
-      └─TableFullScan_24	10000.00	cop[tikv]	table:dt1	keep order:true, stats:pseudo
-CTE_0	10000.00	root		Non-Recursive CTE
-└─TableReader_14(Seed Part)	10000.00	root		data:TableFullScan_13
-  └─TableFullScan_13	10000.00	cop[tikv]	table:tpk	keep order:false, stats:pseudo
+Projection_20	10000.00	root		test.tpk1.c1, test.tpk.c1, test.tpk.c1
+└─HashJoin_22	10000.00	root		inner join, equal:[eq(test.tpk.c1, test.tpk.c1)]
+  ├─Selection_23(Build)	6400.00	root		not(isnull(test.tpk.c1))
+  │ └─CTEFullScan_24	8000.00	root	CTE:dt3	data:CTE_0
+  └─MergeJoin_25(Probe)	8000.00	root		inner join, left key:test.tpk1.c1, right key:test.tpk.c1
+    ├─Sort_31(Build)	6400.00	root		test.tpk.c1
+    │ └─Selection_29	6400.00	root		not(isnull(test.tpk.c1))
+    │   └─CTEFullScan_30	8000.00	root	CTE:dt2	data:CTE_0
+    └─TableReader_27(Probe)	10000.00	root		data:TableFullScan_26
+      └─TableFullScan_26	10000.00	cop[tikv]	table:dt1	keep order:true, stats:pseudo
+CTE_0	8000.00	root		Non-Recursive CTE
+└─Selection_13(Seed Part)	8000.00	root		or(not(isnull(test.tpk.c1)), not(isnull(test.tpk.c1)))
+  └─TableReader_16	10000.00	root		data:TableFullScan_15
+    └─TableFullScan_15	10000.00	cop[tikv]	table:tpk	keep order:false, stats:pseudo
 with cte1 as (select c1 from tpk) select /*+ merge_join(dt1, dt2) */ * from tpk1 dt1 inner join cte1 dt2 inner join cte1 dt3 on dt1.c1 = dt2.c1 and dt2.c1 = dt3.c1;
 c1	c1	c1
 1	1	1
@@ -617,18 +625,18 @@ insert into t2 values(1, 1);
 insert into t2 values(3, 2);
 explain select * from t1 where c1 > all(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
 id	estRows	task	access object	operator info
-Projection_17	10000.00	root		test.t1.c1, test.t1.c2
-└─Apply_19	10000.00	root		CARTESIAN inner join, other cond:or(and(gt(test.t1.c1, Column#8), if(ne(Column#9, 0), NULL, 1)), or(eq(Column#10, 0), if(isnull(test.t1.c1), NULL, 0)))
-  ├─TableReader_21(Build)	10000.00	root		data:TableFullScan_20
-  │ └─TableFullScan_20	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─HashAgg_22(Probe)	1.00	root		funcs:max(Column#13)->Column#8, funcs:sum(Column#14)->Column#9, funcs:count(1)->Column#10
-    └─Projection_26	10.00	root		test.t2.c1, cast(isnull(test.t2.c1), decimal(20,0) BINARY)->Column#14
-      └─CTEFullScan_24	10.00	root	CTE:cte1	data:CTE_0
+Projection_18	10000.00	root		test.t1.c1, test.t1.c2
+└─Apply_20	10000.00	root		CARTESIAN inner join, other cond:or(and(gt(test.t1.c1, Column#8), if(ne(Column#9, 0), NULL, 1)), or(eq(Column#10, 0), if(isnull(test.t1.c1), NULL, 0)))
+  ├─TableReader_22(Build)	10000.00	root		data:TableFullScan_21
+  │ └─TableFullScan_21	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─HashAgg_23(Probe)	1.00	root		funcs:max(Column#13)->Column#8, funcs:sum(Column#14)->Column#9, funcs:count(1)->Column#10
+    └─Projection_27	10.00	root		test.t2.c1, cast(isnull(test.t2.c1), decimal(20,0) BINARY)->Column#14
+      └─CTEFullScan_25	10.00	root	CTE:cte1	data:CTE_0
 CTE_0	10.00	root		Non-Recursive CTE
-└─Projection_12(Seed Part)	10.00	root		test.t2.c1
-  └─TableReader_15	10.00	root		data:Selection_14
-    └─Selection_14	10.00	cop[tikv]		eq(test.t2.c2, test.t1.c2)
-      └─TableFullScan_13	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─Projection_13(Seed Part)	10.00	root		test.t2.c1
+  └─TableReader_16	10.00	root		data:Selection_15
+    └─Selection_15	10.00	cop[tikv]		eq(test.t2.c2, test.t1.c2)
+      └─TableFullScan_14	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select * from t1 where c1 > all(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
 c1	c2
 2	1
@@ -636,15 +644,15 @@ c1	c2
 insert into t1 values(2, 3);
 explain select * from t1 where exists(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
 id	estRows	task	access object	operator info
-Apply_16	10000.00	root		CARTESIAN semi join
-├─TableReader_18(Build)	10000.00	root		data:TableFullScan_17
-│ └─TableFullScan_17	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─CTEFullScan_19(Probe)	10.00	root	CTE:cte1	data:CTE_0
+Apply_17	10000.00	root		CARTESIAN semi join
+├─TableReader_19(Build)	10000.00	root		data:TableFullScan_18
+│ └─TableFullScan_18	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─CTEFullScan_20(Probe)	10.00	root	CTE:cte1	data:CTE_0
 CTE_0	10.00	root		Non-Recursive CTE
-└─Projection_10(Seed Part)	10.00	root		test.t2.c1
-  └─TableReader_13	10.00	root		data:Selection_12
-    └─Selection_12	10.00	cop[tikv]		eq(test.t2.c2, test.t1.c2)
-      └─TableFullScan_11	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─Projection_11(Seed Part)	10.00	root		test.t2.c1
+  └─TableReader_14	10.00	root		data:Selection_13
+    └─Selection_13	10.00	cop[tikv]		eq(test.t2.c2, test.t1.c2)
+      └─TableFullScan_12	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select * from t1 where exists(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
 c1	c2
 2	1

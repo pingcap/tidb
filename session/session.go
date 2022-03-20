@@ -61,7 +61,6 @@ import (
 
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
@@ -233,7 +232,10 @@ type session struct {
 
 	cache [1]ast.StmtNode
 
-	builtinFunctionUsage telemetry.BuiltinFunctionsUsage
+	functionUsageMu struct {
+		sync.RWMutex
+		builtinFunctionUsage telemetry.BuiltinFunctionsUsage
+	}
 	// allowed when tikv disk full happened.
 	diskFullOpt kvrpcpb.DiskFullOpt
 
@@ -319,23 +321,32 @@ func (s *session) cleanRetryInfo() {
 
 	planCacheEnabled := plannercore.PreparedPlanCacheEnabled()
 	var cacheKey kvcache.Key
+	var err error
 	var preparedAst *ast.Prepared
+	var stmtText, stmtDB string
 	if planCacheEnabled {
 		firstStmtID := retryInfo.DroppedPreparedStmtIDs[0]
 		if preparedPointer, ok := s.sessionVars.PreparedStmts[firstStmtID]; ok {
 			preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
 			if ok {
 				preparedAst = preparedObj.PreparedAst
-				cacheKey = plannercore.NewPlanCacheKey(s.sessionVars, firstStmtID, preparedAst.SchemaVersion)
+				stmtText, stmtDB = preparedObj.StmtText, preparedObj.StmtDB
+				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedAst.SchemaVersion)
+				if err != nil {
+					logutil.Logger(s.currentCtx).Warn("clean cached plan failed", zap.Error(err))
+					return
+				}
 			}
 		}
 	}
 	for i, stmtID := range retryInfo.DroppedPreparedStmtIDs {
 		if planCacheEnabled {
 			if i > 0 && preparedAst != nil {
-				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtID, preparedAst.SchemaVersion, s.sessionVars.IsolationReadEngines)
+				plannercore.SetPstmtIDSchemaVersion(cacheKey, stmtText, preparedAst.SchemaVersion, s.sessionVars.IsolationReadEngines)
 			}
-			s.PreparedPlanCache().Delete(cacheKey)
+			if !s.sessionVars.IgnorePreparedCacheCloseStmt { // keep the plan in cache
+				s.PreparedPlanCache().Delete(cacheKey)
+			}
 		}
 		s.sessionVars.RemovePreparedStmt(stmtID)
 	}
@@ -668,7 +679,7 @@ func (c *cachedTableRenewLease) renew(ctx context.Context, handle tables.StateRe
 	physicalTime := oracle.GetTimeFromTS(oldLease)
 	newLease := oracle.GoTimeToTS(physicalTime.Add(cacheTableWriteLease))
 
-	succ, err := handle.RenewLease(ctx, tid, newLease, tables.RenewWriteLease)
+	succ, err := handle.RenewWriteLease(ctx, tid, newLease)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1310,10 +1321,17 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 	}
 	// It might have been written from an earlier TiDB version, so we should do type validation
 	// See https://github.com/pingcap/tidb/issues/30255 for why we don't do full validation.
-	return sv.ValidateFromType(s.GetSessionVars(), sysVar, variable.ScopeGlobal)
+	// If validation fails, we should return the default value:
+	// See: https://github.com/pingcap/tidb/pull/31566
+	sysVar, err = sv.ValidateFromType(s.GetSessionVars(), sysVar, variable.ScopeGlobal)
+	if err != nil {
+		return sv.Value, nil
+	}
+	return sysVar, nil
 }
 
 // SetGlobalSysVar implements GlobalVarAccessor.SetGlobalSysVar interface.
+// it is called (but skipped) when setting instance scope
 func (s *session) SetGlobalSysVar(name, value string) (err error) {
 	sv := variable.GetSysVar(name)
 	if sv == nil {
@@ -1324,6 +1342,9 @@ func (s *session) SetGlobalSysVar(name, value string) (err error) {
 	}
 	if err = sv.SetGlobalFromHook(s.sessionVars, value, false); err != nil {
 		return err
+	}
+	if sv.HasInstanceScope() { // skip for INSTANCE scope
+		return nil
 	}
 	if sv.GlobalConfigName != "" {
 		domain.GetDomain(s).NotifyGlobalConfigChange(sv.GlobalConfigName, variable.OnOffToTrueFalse(value))
@@ -1340,6 +1361,9 @@ func (s *session) SetGlobalSysVarOnly(name, value string) (err error) {
 	}
 	if err = sv.SetGlobalFromHook(s.sessionVars, value, true); err != nil {
 		return err
+	}
+	if sv.HasInstanceScope() { // skip for INSTANCE scope
+		return nil
 	}
 	return s.replaceGlobalVariablesTableValue(context.TODO(), sv.Name, value)
 }
@@ -2936,14 +2960,14 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		return nil, err
 	}
 	s := &session{
-		store:                store,
-		sessionVars:          variable.NewSessionVars(),
-		ddlOwnerChecker:      dom.DDL().OwnerManager(),
-		client:               store.GetClient(),
-		mppClient:            store.GetMPPClient(),
-		builtinFunctionUsage: make(telemetry.BuiltinFunctionsUsage),
-		stmtStats:            stmtstats.CreateStatementStats(),
+		store:           store,
+		sessionVars:     variable.NewSessionVars(),
+		ddlOwnerChecker: dom.DDL().OwnerManager(),
+		client:          store.GetClient(),
+		mppClient:       store.GetMPPClient(),
+		stmtStats:       stmtstats.CreateStatementStats(),
 	}
+	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 	if plannercore.PreparedPlanCacheEnabled() {
 		if opt != nil && opt.PreparedPlanCache != nil {
 			s.preparedPlanCache = opt.PreparedPlanCache
@@ -2971,13 +2995,13 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 // a lock context, which cause we can't call createSession directly.
 func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
 	s := &session{
-		store:                store,
-		sessionVars:          variable.NewSessionVars(),
-		client:               store.GetClient(),
-		mppClient:            store.GetMPPClient(),
-		builtinFunctionUsage: make(telemetry.BuiltinFunctionsUsage),
-		stmtStats:            stmtstats.CreateStatementStats(),
+		store:       store,
+		sessionVars: variable.NewSessionVars(),
+		client:      store.GetClient(),
+		mppClient:   store.GetMPPClient(),
+		stmtStats:   stmtstats.CreateStatementStats(),
 	}
+	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 	if plannercore.PreparedPlanCacheEnabled() {
 		s.preparedPlanCache = kvcache.NewSimpleLRUCache(plannercore.PreparedPlanCacheCapacity,
 			plannercore.PreparedPlanCacheMemoryGuardRatio, plannercore.PreparedPlanCacheMaxMemory.Load())
@@ -3130,7 +3154,12 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 		s.txn.changeInvalidToPending(txnFuture)
 	} else if s.txn.Valid() && s.GetSessionVars().IsPessimisticReadConsistency() {
 		// Prepare the statement future if the transaction is valid in RC transactions.
-		s.GetSessionVars().TxnCtx.SetStmtFutureForRC(s.getTxnFuture(ctx).future)
+		// If the `RCCheckTS` is used, try to use the last valid ts to read.
+		if s.GetSessionVars().StmtCtx.RCCheckTS {
+			s.GetSessionVars().TxnCtx.SetStmtFutureForRC(nil)
+		} else {
+			s.GetSessionVars().TxnCtx.SetStmtFutureForRC(s.getTxnFuture(ctx).future)
+		}
 	}
 }
 
@@ -3300,7 +3329,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 					errMsg = fmt.Sprintf("table %v's partition %v doesn't have placement policies with txn_scope %v",
 						tableName, partitionName, txnScope)
 				}
-				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
+				err = dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
 				break
 			}
 			dcLocation, ok := bundle.GetLeaderDC(placement.DCLabelKey)
@@ -3309,7 +3338,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 				if len(partitionName) > 0 {
 					errMsg = fmt.Sprintf("table %v's partition %v's leader placement policy is not defined", tableName, partitionName)
 				}
-				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
+				err = dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
 				break
 			}
 			if dcLocation != txnScope {
@@ -3318,7 +3347,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 					errMsg = fmt.Sprintf("table %v's partition %v's leader location %v is out of txn_scope %v",
 						tableName, partitionName, dcLocation, txnScope)
 				}
-				err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
+				err = dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
 				break
 			}
 			// FIXME: currently we assume the physicalTableID is the partition ID. In future, we should consider the situation
@@ -3329,7 +3358,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 				tblInfo := tbl.Meta()
 				state := tblInfo.Partition.GetStateByID(partitionID)
 				if state == model.StateGlobalTxnOnly {
-					err = ddl.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
+					err = dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
 						fmt.Sprintf("partition %s of table %s can not be written by local transactions when its placement policy is being altered",
 							tblInfo.Name, partitionDefInfo.Name))
 					break
@@ -3347,34 +3376,6 @@ func (s *session) SetPort(port string) {
 // GetTxnWriteThroughputSLI implements the Context interface.
 func (s *session) GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI {
 	return &s.txn.writeSLI
-}
-
-var _ telemetry.TemporaryOrCacheTableFeatureChecker = &session{}
-
-// TemporaryTableExists is used by the telemetry package to avoid circle dependency.
-func (s *session) TemporaryTableExists() bool {
-	is := domain.GetDomain(s).InfoSchema()
-	for _, dbInfo := range is.AllSchemas() {
-		for _, tbInfo := range is.SchemaTables(dbInfo.Name) {
-			if tbInfo.Meta().TempTableType != model.TempTableNone {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// CachedTableExists is used by the telemetry package to avoid circle dependency.
-func (s *session) CachedTableExists() bool {
-	is := domain.GetDomain(s).InfoSchema()
-	for _, dbInfo := range is.AllSchemas() {
-		for _, tbInfo := range is.SchemaTables(dbInfo.Name) {
-			if tbInfo.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // GetInfoSchema returns snapshotInfoSchema if snapshot schema is set.
@@ -3428,8 +3429,22 @@ func (s *session) updateTelemetryMetric(es *executor.ExecStmt) {
 	}
 }
 
+// GetBuiltinFunctionUsage returns the replica of counting of builtin function usage
 func (s *session) GetBuiltinFunctionUsage() map[string]uint32 {
-	return s.builtinFunctionUsage
+	replica := make(map[string]uint32)
+	s.functionUsageMu.RLock()
+	defer s.functionUsageMu.RUnlock()
+	for key, value := range s.functionUsageMu.builtinFunctionUsage {
+		replica[key] = value
+	}
+	return replica
+}
+
+// BuiltinFunctionUsageInc increase the counting of the builtin function usage
+func (s *session) BuiltinFunctionUsageInc(scalarFuncSigName string) {
+	s.functionUsageMu.Lock()
+	defer s.functionUsageMu.Unlock()
+	s.functionUsageMu.builtinFunctionUsage.Inc(scalarFuncSigName)
 }
 
 func (s *session) getSnapshotInterceptor() kv.SnapshotInterceptor {

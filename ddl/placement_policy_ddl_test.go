@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
@@ -43,6 +44,7 @@ func testCreatePlacementPolicy(t *testing.T, ctx sessionctx.Context, d *ddl, pol
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{policyInfo},
 	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := d.doDDLJob(ctx, job)
 	require.NoError(t, err)
 
@@ -132,10 +134,10 @@ func TestPlacementPolicyInUse(t *testing.T) {
 	is := builder.Build()
 
 	for _, policy := range []*model.PolicyInfo{p1, p2, p4, p5} {
-		require.True(t, ErrPlacementPolicyInUse.Equal(checkPlacementPolicyNotInUseFromInfoSchema(is, policy)))
+		require.True(t, dbterror.ErrPlacementPolicyInUse.Equal(checkPlacementPolicyNotInUseFromInfoSchema(is, policy)))
 		require.NoError(t, kv.RunInNewTxn(ctx, sctx.GetStore(), false, func(ctx context.Context, txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
-			require.True(t, ErrPlacementPolicyInUse.Equal(checkPlacementPolicyNotInUseFromMeta(m, policy)))
+			require.True(t, dbterror.ErrPlacementPolicyInUse.Equal(checkPlacementPolicyNotInUseFromMeta(m, policy)))
 			return nil
 		}))
 	}

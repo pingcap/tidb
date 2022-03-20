@@ -19,7 +19,6 @@ import (
 	"context"
 	gjson "encoding/json"
 	"fmt"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -63,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -212,6 +212,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowPrivileges()
 	case ast.ShowBindings:
 		return e.fetchShowBind()
+	case ast.ShowBindingCacheStatus:
+		return e.fetchShowBindingCacheStatus(ctx)
 	case ast.ShowAnalyzeStatus:
 		e.fetchShowAnalyzeStatus()
 		return nil
@@ -340,6 +342,37 @@ func (e *ShowExec) fetchShowBind() error {
 	return nil
 }
 
+func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
+	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
+
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, fmt.Sprintf("SELECT count(*) FROM mysql.bind_info where status = '%s' or status = '%s';", bindinfo.Enabled, bindinfo.Using))
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	handle := domain.GetDomain(e.ctx).BindHandle()
+
+	bindRecords := handle.GetAllBindRecord()
+	numBindings := 0
+	for _, bindRecord := range bindRecords {
+		for _, binding := range bindRecord.Bindings {
+			if binding.IsBindingEnabled() {
+				numBindings++
+			}
+		}
+	}
+
+	memUsage := handle.GetMemUsage()
+	memCapacity := handle.GetMemCapacity()
+	e.appendRow([]interface{}{
+		numBindings,
+		rows[0].GetInt64(0),
+		memory.FormatBytes(memUsage),
+		memory.FormatBytes(memCapacity),
+	})
+	return nil
+}
+
 func (e *ShowExec) fetchShowEngines(ctx context.Context) error {
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
 
@@ -430,15 +463,16 @@ func (e *ShowExec) fetchShowTables() error {
 	tableNames := make([]string, 0, len(schemaTables))
 	activeRoles := e.ctx.GetSessionVars().ActiveRoles
 	var (
-		tableTypes          = make(map[string]string)
-		fieldPatternsRegexp *regexp.Regexp
-		FieldFilterEnable   bool
-		fieldFilter         string
+		tableTypes        = make(map[string]string)
+		fieldPatternsLike collate.WildcardPattern
+		FieldFilterEnable bool
+		fieldFilter       string
 	)
 	if e.Extractor != nil {
 		extractor := (e.Extractor).(*plannercore.ShowTablesTableExtractor)
 		if extractor.FieldPatterns != "" {
-			fieldPatternsRegexp = regexp.MustCompile(extractor.FieldPatterns)
+			fieldPatternsLike = collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
+			fieldPatternsLike.Compile(extractor.FieldPatterns, byte('\\'))
 		}
 		FieldFilterEnable = extractor.Field != ""
 		fieldFilter = extractor.Field
@@ -450,7 +484,7 @@ func (e *ShowExec) fetchShowTables() error {
 			continue
 		} else if FieldFilterEnable && v.Meta().Name.L != fieldFilter {
 			continue
-		} else if fieldPatternsRegexp != nil && !fieldPatternsRegexp.MatchString(v.Meta().Name.L) {
+		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Meta().Name.L) {
 			continue
 		}
 		tableNames = append(tableNames, v.Meta().Name.O)
@@ -528,14 +562,15 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	var (
-		fieldPatternsRegexp *regexp.Regexp
-		FieldFilterEnable   bool
-		fieldFilter         string
+		fieldPatternsLike collate.WildcardPattern
+		FieldFilterEnable bool
+		fieldFilter       string
 	)
 	if e.Extractor != nil {
 		extractor := (e.Extractor).(*plannercore.ShowColumnsTableExtractor)
 		if extractor.FieldPatterns != "" {
-			fieldPatternsRegexp = regexp.MustCompile(extractor.FieldPatterns)
+			fieldPatternsLike = collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
+			fieldPatternsLike.Compile(extractor.FieldPatterns, byte('\\'))
 		}
 		FieldFilterEnable = extractor.Field != ""
 		fieldFilter = extractor.Field
@@ -561,7 +596,7 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	for _, col := range cols {
 		if FieldFilterEnable && col.Name.L != fieldFilter {
 			continue
-		} else if fieldPatternsRegexp != nil && !fieldPatternsRegexp.MatchString(col.Name.L) {
+		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(col.Name.L) {
 			continue
 		}
 		desc := table.NewColDesc(col)
@@ -1357,6 +1392,11 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 	return nil
 }
 
+// ConstructResultOfShowCreatePlacementPolicy constructs the result for show create placement policy.
+func ConstructResultOfShowCreatePlacementPolicy(policyInfo *model.PolicyInfo) string {
+	return fmt.Sprintf("CREATE PLACEMENT POLICY `%s` %s", policyInfo.Name.O, policyInfo.PlacementSettings.String())
+}
+
 // fetchShowCreateDatabase composes show create database result.
 func (e *ShowExec) fetchShowCreateDatabase() error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
@@ -1385,7 +1425,7 @@ func (e *ShowExec) fetchShowCreatePlacementPolicy() error {
 	if !found {
 		return infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(e.DBName.O)
 	}
-	showCreate := fmt.Sprintf("CREATE PLACEMENT POLICY `%s` %s", e.DBName.O, policy.PlacementSettings.String())
+	showCreate := ConstructResultOfShowCreatePlacementPolicy(policy)
 	e.appendRow([]interface{}{e.DBName.O, showCreate})
 	return nil
 }

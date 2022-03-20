@@ -25,7 +25,9 @@ import (
 	"github.com/pingcap/tidb/domain"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
@@ -410,6 +412,9 @@ func TestPlacementMode(t *testing.T) {
 	defer tk.MustExec("drop table if exists t2")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
+	existPolicy, ok := dom.InfoSchema().PolicyByName(model.NewCIStr("p1"))
+	require.True(t, ok)
+
 	// invalid values
 	err := tk.ExecToErr("set tidb_placement_mode='aaa'")
 	require.EqualError(t, err, "[variable:1231]Variable 'tidb_placement_mode' can't be set to the value of 'aaa'")
@@ -425,6 +430,31 @@ func TestPlacementMode(t *testing.T) {
 
 	// create placement policy in ignore mode (policy name not exists)
 	tk.MustExec("create placement policy p3 primary_region='r1' regions='r1'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
+	tk.MustQuery("show placement where target='POLICY p3'").Check(testkit.Rows())
+
+	// create placement policy with info in ignore mode (policy name exists)
+	newPolicy := existPolicy.Clone()
+	newPolicy.Followers = 8
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
+	err = dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistError)
+	require.NoError(t, err)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
+	tk.MustQuery("show placement where target='POLICY p1'").Check(testkit.Rows("POLICY p1 FOLLOWERS=4 NULL"))
+
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
+	err = dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistReplace)
+	require.NoError(t, err)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
+	tk.MustQuery("show placement where target='POLICY p1'").Check(testkit.Rows("POLICY p1 FOLLOWERS=4 NULL"))
+
+	// create placement policy in ignore mode (policy name not exists)
+	newPolicy = existPolicy.Clone()
+	newPolicy.Name = model.NewCIStr("p3")
+	newPolicy.Followers = 8
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
+	err = dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy, ddl.OnExistError)
+	require.NoError(t, err)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
 	tk.MustQuery("show placement where target='POLICY p3'").Check(testkit.Rows())
 
@@ -606,6 +636,7 @@ func TestPlacementMode(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tbl.PlacementPolicyRef)
 	tbl.Name = model.NewCIStr("t2")
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test"), tbl, ddl.OnExistError)
 	require.NoError(t, err)
 	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
@@ -619,6 +650,7 @@ func TestPlacementMode(t *testing.T) {
 	require.NotNil(t, tbl.PlacementPolicyRef)
 	tbl.Name = model.NewCIStr("t2")
 	tbl.PlacementPolicyRef.Name = model.NewCIStr("pxx")
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test"), tbl, ddl.OnExistError)
 	require.NoError(t, err)
 	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
@@ -631,6 +663,7 @@ func TestPlacementMode(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, db1.PlacementPolicyRef)
 	db1.Name = model.NewCIStr("db2")
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = dom.DDL().CreateSchemaWithInfo(tk.Session(), db1, ddl.OnExistError)
 	require.NoError(t, err)
 	tk.MustQuery("show create database db2").Check(testkit.Rows("db2 CREATE DATABASE `db2` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
@@ -642,6 +675,7 @@ func TestPlacementMode(t *testing.T) {
 	require.NotNil(t, db1.PlacementPolicyRef)
 	db1.Name = model.NewCIStr("db2")
 	db1.PlacementPolicyRef.Name = model.NewCIStr("pxx")
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = dom.DDL().CreateSchemaWithInfo(tk.Session(), db1, ddl.OnExistError)
 	require.NoError(t, err)
 	tk.MustQuery("show create database db2").Check(testkit.Rows("db2 CREATE DATABASE `db2` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
@@ -673,9 +707,9 @@ func TestPlacementTiflashCheck(t *testing.T) {
 	tk.MustExec("alter table tp set tiflash replica 1")
 
 	err := tk.ExecToErr("alter table tp placement policy p1")
-	require.True(t, ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err))
+	require.True(t, dbterror.ErrIncompatibleTiFlashAndPlacement.Equal(err))
 	err = tk.ExecToErr("alter table tp partition p0 placement policy p1")
-	require.True(t, ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err))
+	require.True(t, dbterror.ErrIncompatibleTiFlashAndPlacement.Equal(err))
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
@@ -690,7 +724,7 @@ func TestPlacementTiflashCheck(t *testing.T) {
 	  PARTITION p1 VALUES LESS THAN (1000)
 	)`)
 	err = tk.ExecToErr("alter table tp set tiflash replica 1")
-	require.True(t, ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err))
+	require.True(t, dbterror.ErrIncompatibleTiFlashAndPlacement.Equal(err))
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
@@ -705,7 +739,7 @@ func TestPlacementTiflashCheck(t *testing.T) {
       PARTITION p1 VALUES LESS THAN (1000)
 	)`)
 	err = tk.ExecToErr("alter table tp set tiflash replica 1")
-	require.True(t, ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err))
+	require.True(t, dbterror.ErrIncompatibleTiFlashAndPlacement.Equal(err))
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
@@ -720,7 +754,7 @@ func TestPlacementTiflashCheck(t *testing.T) {
 	  PARTITION p1 VALUES LESS THAN (1000)
 	)`)
 	err = tk.ExecToErr("alter table tp set tiflash replica 1")
-	require.True(t, ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err))
+	require.True(t, dbterror.ErrIncompatibleTiFlashAndPlacement.Equal(err))
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
@@ -735,7 +769,7 @@ func TestPlacementTiflashCheck(t *testing.T) {
       PARTITION p1 VALUES LESS THAN (1000)
 	)`)
 	err = tk.ExecToErr("alter table tp set tiflash replica 1")
-	require.True(t, ddl.ErrIncompatibleTiFlashAndPlacement.Equal(err))
+	require.True(t, dbterror.ErrIncompatibleTiFlashAndPlacement.Equal(err))
 	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
 		"tp CREATE TABLE `tp` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +

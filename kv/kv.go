@@ -313,6 +313,9 @@ type Request struct {
 	Data      []byte
 	KeyRanges []KeyRange
 
+	// For PartitionTableScan used by tiflash.
+	PartitionIDAndRanges []PartitionIDAndRanges
+
 	// Concurrency is 1, if it only sends the request to a single storage unit when
 	// ResponseIterator.Next is called. If concurrency is greater than 1, the request will be
 	// sent to multiple storage units concurrently.
@@ -358,6 +361,12 @@ type Request struct {
 	ResourceGroupTagger tikvrpc.ResourceGroupTagger
 	// Paging indicates whether the request is a paging request.
 	Paging bool
+}
+
+// PartitionIDAndRanges used by PartitionTableScan in tiflash.
+type PartitionIDAndRanges struct {
+	ID        int64
+	KeyRanges []KeyRange
 }
 
 const (
@@ -504,4 +513,6 @@ const (
 	SI IsoLevel = iota
 	// RC stands for 'read committed'.
 	RC
+	// RCCheckTS stands for 'read consistency read with ts check'.
+	RCCheckTS
 )

@@ -26,23 +26,30 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
-const addIndexLease = 600 * time.Millisecond
+const indexModifyLease = 600 * time.Millisecond
 
 func TestAddPrimaryKey1(t *testing.T) {
 	testAddIndex(t, testPlain, "create table test_add_index (c1 bigint, c2 bigint, c3 bigint, unique key(c1))", "primary")
@@ -160,7 +167,7 @@ const (
 )
 
 func testAddIndex(t *testing.T, tp testAddIndexType, createTableSQL, idxTp string) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, addIndexLease)
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -216,7 +223,7 @@ func testAddIndex(t *testing.T, tp testAddIndexType, createTableSQL, idxTp strin
 
 	deletedKeys := make(map[int]struct{})
 
-	ticker := time.NewTicker(addIndexLease / 2)
+	ticker := time.NewTicker(indexModifyLease / 2)
 	defer ticker.Stop()
 LOOP:
 	for {
@@ -282,7 +289,7 @@ LOOP:
 
 	// get all row handles
 	require.NoError(t, tk.Session().NewTxn(context.Background()))
-	tbl := tk.GetTableByName("test", "test_add_index")
+	tbl := external.GetTableByName(t, tk, "test", "test_add_index")
 	handles := kv.NewHandleMap()
 	err := tables.IterRecords(tbl, tk.Session(), tbl.Cols(),
 		func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
@@ -316,7 +323,7 @@ LOOP:
 }
 
 func TestAddIndexForGeneratedColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, addIndexLease)
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -328,7 +335,7 @@ func TestAddIndexForGeneratedColumn(t *testing.T) {
 	tk.MustExec("ALTER TABLE t ADD COLUMN y1 year as (y + 2)")
 	tk.MustExec("ALTER TABLE t ADD INDEX idx_y(y1)")
 
-	tbl := tk.GetTableByName("test", "t")
+	tbl := external.GetTableByName(t, tk, "test", "t")
 	for _, idx := range tbl.Indices() {
 		require.False(t, strings.EqualFold(idx.Meta().Name.L, "idx_c2"))
 	}
@@ -380,7 +387,7 @@ func TestAddUniqueIndexRollback(t *testing.T) {
 }
 
 func testAddIndexRollback(t *testing.T, idxName, addIdxSQL, errMsg string, hasNullValsInKey bool) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, addIndexLease)
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -406,7 +413,7 @@ func testAddIndexRollback(t *testing.T, idxName, addIdxSQL, errMsg string, hasNu
 	go backgroundExecT(store, addIdxSQL, done)
 
 	times := 0
-	ticker := time.NewTicker(addIndexLease / 2)
+	ticker := time.NewTicker(indexModifyLease / 2)
 	defer ticker.Stop()
 LOOP:
 	for {
@@ -435,7 +442,7 @@ LOOP:
 		}
 	}
 
-	tbl := tk.GetTableByName("test", "t1")
+	tbl := external.GetTableByName(t, tk, "test", "t1")
 	for _, tidx := range tbl.Indices() {
 		require.False(t, strings.EqualFold(tidx.Meta().Name.L, idxName))
 	}
@@ -460,7 +467,7 @@ func TestAddIndexWithShardRowID(t *testing.T) {
 }
 
 func testAddIndexWithSplitTable(t *testing.T, createSQL, splitTableSQL string) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, addIndexLease)
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -519,7 +526,7 @@ func testAddIndexWithSplitTable(t *testing.T, createSQL, splitTableSQL string) {
 	addIdxSQL := "alter table test_add_index add index idx(a)"
 	testddlutil.SessionExecInGoroutine(store, "test", addIdxSQL, done)
 
-	ticker := time.NewTicker(addIndexLease / 5)
+	ticker := time.NewTicker(indexModifyLease / 5)
 	defer ticker.Stop()
 	num = 0
 LOOP:
@@ -559,7 +566,7 @@ LOOP:
 }
 
 func TestAddAnonymousIndex(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, addIndexLease)
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -571,13 +578,13 @@ func TestAddAnonymousIndex(t *testing.T) {
 	require.Error(t, err)
 	// The index name is c1 when adding index (c1, c2).
 	tk.MustExec("alter table t_anonymous_index drop index c1")
-	tbl := tk.GetTableByName("test", "t_anonymous_index")
+	tbl := external.GetTableByName(t, tk, "test", "t_anonymous_index")
 	require.Len(t, tbl.Indices(), 0)
 	// for adding some indices that the first column name is c1
 	tk.MustExec("alter table t_anonymous_index add index (c1)")
 	err = tk.ExecToErr("alter table t_anonymous_index add index c1 (c2)")
 	require.Error(t, err)
-	tbl = tk.GetTableByName("test", "t_anonymous_index")
+	tbl = external.GetTableByName(t, tk, "test", "t_anonymous_index")
 	require.Len(t, tbl.Indices(), 1)
 	require.Equal(t, "c1", tbl.Indices()[0].Meta().Name.L)
 	// The MySQL will be a warning.
@@ -585,7 +592,7 @@ func TestAddAnonymousIndex(t *testing.T) {
 	tk.MustExec("alter table t_anonymous_index add index (c1, c2, C3)")
 	// The MySQL will be a warning.
 	tk.MustExec("alter table t_anonymous_index add index (c1)")
-	tbl = tk.GetTableByName("test", "t_anonymous_index")
+	tbl = external.GetTableByName(t, tk, "test", "t_anonymous_index")
 	require.Len(t, tbl.Indices(), 4)
 	tk.MustExec("alter table t_anonymous_index drop index c1")
 	tk.MustExec("alter table t_anonymous_index drop index c1_2")
@@ -598,29 +605,29 @@ func TestAddAnonymousIndex(t *testing.T) {
 	tk.MustExec("alter table t_anonymous_index drop index C3")
 	// for anonymous index with column name `primary`
 	tk.MustExec("create table t_primary (`primary` int, b int, key (`primary`))")
-	tbl = tk.GetTableByName("test", "t_primary")
+	tbl = external.GetTableByName(t, tk, "test", "t_primary")
 	require.Equal(t, "primary_2", tbl.Indices()[0].Meta().Name.L)
 	tk.MustExec("alter table t_primary add index (`primary`);")
-	tbl = tk.GetTableByName("test", "t_primary")
+	tbl = external.GetTableByName(t, tk, "test", "t_primary")
 	require.Equal(t, "primary_2", tbl.Indices()[0].Meta().Name.L)
 	require.Equal(t, "primary_3", tbl.Indices()[1].Meta().Name.L)
 	tk.MustExec("alter table t_primary add primary key(b);")
-	tbl = tk.GetTableByName("test", "t_primary")
+	tbl = external.GetTableByName(t, tk, "test", "t_primary")
 	require.Equal(t, "primary_2", tbl.Indices()[0].Meta().Name.L)
 	require.Equal(t, "primary_3", tbl.Indices()[1].Meta().Name.L)
 	require.Equal(t, "primary", tbl.Indices()[2].Meta().Name.L)
 	tk.MustExec("create table t_primary_2 (`primary` int, key primary_2 (`primary`), key (`primary`))")
-	tbl = tk.GetTableByName("test", "t_primary_2")
+	tbl = external.GetTableByName(t, tk, "test", "t_primary_2")
 	require.Equal(t, "primary_2", tbl.Indices()[0].Meta().Name.L)
 	require.Equal(t, "primary_3", tbl.Indices()[1].Meta().Name.L)
 	tk.MustExec("create table t_primary_3 (`primary_2` int, key(`primary_2`), `primary` int, key(`primary`));")
-	tbl = tk.GetTableByName("test", "t_primary_3")
+	tbl = external.GetTableByName(t, tk, "test", "t_primary_3")
 	require.Equal(t, "primary_2", tbl.Indices()[0].Meta().Name.L)
 	require.Equal(t, "primary_3", tbl.Indices()[1].Meta().Name.L)
 }
 
 func TestAddIndexWithPK(t *testing.T) {
-	store, clean := testkit.CreateMockStoreWithSchemaLease(t, addIndexLease)
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -671,7 +678,7 @@ func TestAddIndexWithPK(t *testing.T) {
 }
 
 func TestCancelAddPrimaryKey(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, addIndexLease)
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, indexModifyLease)
 	defer clean()
 	idxName := "primary"
 	addIdxSQL := "alter table t1 add primary key idx_c2 (c2);"
@@ -681,13 +688,13 @@ func TestCancelAddPrimaryKey(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	require.NoError(t, tk.Session().NewTxn(context.Background()))
-	tbl := tk.GetTableByName("test", "t1")
+	tbl := external.GetTableByName(t, tk, "test", "t1")
 	col1Flag := tbl.Cols()[1].Flag
 	require.True(t, !mysql.HasNotNullFlag(col1Flag) && !mysql.HasPreventNullInsertFlag(col1Flag) && mysql.HasUnsignedFlag(col1Flag))
 }
 
 func TestCancelAddIndex(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, addIndexLease)
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, indexModifyLease)
 	defer clean()
 	idxName := "c3_index"
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
@@ -718,7 +725,7 @@ func testCancelAddIndex(t *testing.T, store kv.Storage, dom *domain.Domain, idxN
 	// the hook.OnJobUpdatedExported is called when the job is updated, runReorgJob will wait ddl.ReorgWaitTimeout, then return the ddl.runDDLJob.
 	// After that ddl call d.hook.OnJobUpdated(job), so that we can canceled the job in this test case.
 	var checkErr error
-	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(tk, store, hook, idxName)
+	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(t, tk, store, hook, idxName)
 	originalHook := d.GetHook()
 	jobIDExt := wrapJobIDExtCallback(hook)
 	d.SetHook(jobIDExt)
@@ -726,7 +733,7 @@ func testCancelAddIndex(t *testing.T, store kv.Storage, dom *domain.Domain, idxN
 	go backgroundExecT(store, addIdxSQL, done)
 
 	times := 0
-	ticker := time.NewTicker(addIndexLease / 2)
+	ticker := time.NewTicker(indexModifyLease / 2)
 	defer ticker.Stop()
 LOOP:
 	for {
@@ -750,11 +757,11 @@ LOOP:
 			times++
 		}
 	}
-	checkDelRangeAddedN(tk, jobIDExt.jobID, c3IdxInfo.ID)
+	checkDelRangeAdded(tk, jobIDExt.jobID, c3IdxInfo.ID)
 	d.SetHook(originalHook)
 }
 
-func backgroundExecOnJobUpdatedExported(tk *testkit.TestKit, store kv.Storage, hook *ddl.TestDDLCallback, idxName string) (func(*model.Job), *model.IndexInfo, error) {
+func backgroundExecOnJobUpdatedExported(t *testing.T, tk *testkit.TestKit, store kv.Storage, hook *ddl.TestDDLCallback, idxName string) (func(*model.Job), *model.IndexInfo, error) {
 	var checkErr error
 	first := true
 	c3IdxInfo := &model.IndexInfo{}
@@ -768,7 +775,7 @@ func backgroundExecOnJobUpdatedExported(tk *testkit.TestKit, store kv.Storage, h
 			if c3IdxInfo.ID != 0 {
 				return
 			}
-			tbl := tk.GetTableByName("test", "t1")
+			tbl := external.GetTableByName(t, tk, "test", "t1")
 			for _, index := range tbl.Indices() {
 				if !tables.IsIndexWritable(index) {
 					continue
@@ -825,7 +832,7 @@ func backgroundExecOnJobUpdatedExported(tk *testkit.TestKit, store kv.Storage, h
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
 func TestCancelAddIndex1(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, addIndexLease)
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, indexModifyLease)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -872,10 +879,496 @@ func TestCancelAddIndex1(t *testing.T) {
 	require.EqualError(t, err, "[ddl:8214]Cancelled DDL job")
 
 	dom.DDL().SetHook(originalHook)
-	tbl := tk.GetTableByName("test", "t")
+	tbl := external.GetTableByName(t, tk, "test", "t")
 	for _, idx := range tbl.Indices() {
 		require.False(t, strings.EqualFold(idx.Meta().Name.L, "idx_c2"))
 	}
 	tk.MustExec("alter table t add index idx_c2(c2)")
 	tk.MustExec("alter table t drop index idx_c2")
+}
+
+func TestAddGlobalIndex(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test_t1 (a int, b int) partition by range (b)" +
+		" (partition p0 values less than (10), " +
+		"  partition p1 values less than (maxvalue));")
+	tk.MustExec("insert test_t1 values (1, 1)")
+	tk.MustExec("alter table test_t1 add unique index p_a (a);")
+	tk.MustExec("insert test_t1 values (2, 11)")
+	tbl := external.GetTableByName(t, tk, "test", "test_t1")
+	tblInfo := tbl.Meta()
+	indexInfo := tblInfo.FindIndexByName("p_a")
+	require.NotNil(t, indexInfo)
+	require.True(t, indexInfo.Global)
+
+	require.NoError(t, tk.Session().NewTxn(context.Background()))
+	txn, err := tk.Session().Txn(true)
+	require.NoError(t, err)
+
+	// check row 1
+	pid := tblInfo.Partition.Definitions[0].ID
+	idxVals := []types.Datum{types.NewDatum(1)}
+	rowVals := []types.Datum{types.NewDatum(1), types.NewDatum(1)}
+	checkGlobalIndexRow(t, tk.Session(), tblInfo, indexInfo, pid, idxVals, rowVals)
+
+	// check row 2
+	pid = tblInfo.Partition.Definitions[1].ID
+	idxVals = []types.Datum{types.NewDatum(2)}
+	rowVals = []types.Datum{types.NewDatum(2), types.NewDatum(11)}
+	checkGlobalIndexRow(t, tk.Session(), tblInfo, indexInfo, pid, idxVals, rowVals)
+	require.NoError(t, txn.Commit(context.Background()))
+
+	// Test add global Primary Key index
+	tk.MustExec("create table test_t2 (a int, b int) partition by range (b)" +
+		" (partition p0 values less than (10), " +
+		"  partition p1 values less than (maxvalue));")
+	tk.MustExec("insert test_t2 values (1, 1)")
+	tk.MustExec("alter table test_t2 add primary key (a) nonclustered;")
+	tk.MustExec("insert test_t2 values (2, 11)")
+	tbl = external.GetTableByName(t, tk, "test", "test_t2")
+	tblInfo = tbl.Meta()
+	indexInfo = tblInfo.FindIndexByName("primary")
+	require.NotNil(t, indexInfo)
+	require.True(t, indexInfo.Global)
+
+	require.NoError(t, tk.Session().NewTxn(context.Background()))
+	txn, err = tk.Session().Txn(true)
+	require.NoError(t, err)
+
+	// check row 1
+	pid = tblInfo.Partition.Definitions[0].ID
+	idxVals = []types.Datum{types.NewDatum(1)}
+	rowVals = []types.Datum{types.NewDatum(1), types.NewDatum(1)}
+	checkGlobalIndexRow(t, tk.Session(), tblInfo, indexInfo, pid, idxVals, rowVals)
+
+	// check row 2
+	pid = tblInfo.Partition.Definitions[1].ID
+	idxVals = []types.Datum{types.NewDatum(2)}
+	rowVals = []types.Datum{types.NewDatum(2), types.NewDatum(11)}
+	checkGlobalIndexRow(t, tk.Session(), tblInfo, indexInfo, pid, idxVals, rowVals)
+
+	require.NoError(t, txn.Commit(context.Background()))
+}
+
+// checkGlobalIndexRow reads one record from global index and check. Only support int handle.
+func checkGlobalIndexRow(
+	t *testing.T,
+	ctx sessionctx.Context,
+	tblInfo *model.TableInfo,
+	indexInfo *model.IndexInfo,
+	pid int64,
+	idxVals []types.Datum,
+	rowVals []types.Datum,
+) {
+	require.NoError(t, ctx.NewTxn(context.Background()))
+	txn, err := ctx.Txn(true)
+	require.NoError(t, err)
+	sc := ctx.GetSessionVars().StmtCtx
+
+	tblColMap := make(map[int64]*types.FieldType, len(tblInfo.Columns))
+	for _, col := range tblInfo.Columns {
+		tblColMap[col.ID] = &col.FieldType
+	}
+
+	// Check local index entry does not exist.
+	localPrefix := tablecodec.EncodeTableIndexPrefix(pid, indexInfo.ID)
+	it, err := txn.Iter(localPrefix, nil)
+	require.NoError(t, err)
+	// no local index entry.
+	require.False(t, it.Valid() && it.Key().HasPrefix(localPrefix))
+	it.Close()
+
+	// Check global index entry.
+	encodedValue, err := codec.EncodeKey(sc, nil, idxVals...)
+	require.NoError(t, err)
+	key := tablecodec.EncodeIndexSeekKey(tblInfo.ID, indexInfo.ID, encodedValue)
+	require.NoError(t, err)
+	value, err := txn.Get(context.Background(), key)
+	require.NoError(t, err)
+	idxColInfos := tables.BuildRowcodecColInfoForIndexColumns(indexInfo, tblInfo)
+	colVals, err := tablecodec.DecodeIndexKV(key, value, len(indexInfo.Columns), tablecodec.HandleDefault, idxColInfos)
+	require.NoError(t, err)
+	require.Len(t, colVals, len(idxVals)+2)
+	for i, val := range idxVals {
+		_, d, err := codec.DecodeOne(colVals[i])
+		require.NoError(t, err)
+		require.Equal(t, val, d)
+	}
+	_, d, err := codec.DecodeOne(colVals[len(idxVals)+1]) // pid
+	require.NoError(t, err)
+	require.Equal(t, pid, d.GetInt64())
+
+	_, d, err = codec.DecodeOne(colVals[len(idxVals)]) // handle
+	require.NoError(t, err)
+	h := kv.IntHandle(d.GetInt64())
+	rowKey := tablecodec.EncodeRowKey(pid, h.Encoded())
+	rowValue, err := txn.Get(context.Background(), rowKey)
+	require.NoError(t, err)
+	rowValueDatums, err := tablecodec.DecodeRowToDatumMap(rowValue, tblColMap, time.UTC)
+	require.NoError(t, err)
+	require.NotNil(t, rowValueDatums)
+	for i, val := range rowVals {
+		require.Equal(t, val, rowValueDatums[tblInfo.Columns[i].ID])
+	}
+}
+
+func TestDropIndexes(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, indexModifyLease)
+	defer clean()
+	// drop multiple indexes
+	createSQL := "create table test_drop_indexes (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2));"
+	dropIdxSQL := "alter table test_drop_indexes drop index i1, drop index i2;"
+	idxNames := []string{"i1", "i2"}
+	testDropIndexes(t, store, createSQL, dropIdxSQL, idxNames)
+
+	createSQL = "create table test_drop_indexes (id int, c1 int, c2 int, primary key(id) nonclustered, unique key i1(c1), key i2(c2));"
+	dropIdxSQL = "alter table test_drop_indexes drop primary key, drop index i1;"
+	idxNames = []string{"primary", "i1"}
+	testDropIndexes(t, store, createSQL, dropIdxSQL, idxNames)
+
+	createSQL = "create table test_drop_indexes (uuid varchar(32), c1 int, c2 int, primary key(uuid), unique key i1(c1), key i2(c2));"
+	dropIdxSQL = "alter table test_drop_indexes drop primary key, drop index i1, drop index i2;"
+	idxNames = []string{"primary", "i1", "i2"}
+	testDropIndexes(t, store, createSQL, dropIdxSQL, idxNames)
+
+	testDropIndexesIfExists(t, store)
+	testDropIndexesFromPartitionedTable(t, store)
+	testCancelDropIndexes(t, store, dom.DDL())
+}
+
+func testDropIndexes(t *testing.T, store kv.Storage, createSQL, dropIdxSQL string, idxNames []string) {
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_drop_indexes")
+	tk.MustExec(createSQL)
+	done := make(chan error, 1)
+
+	num := 100
+	// add some rows
+	for i := 0; i < num; i++ {
+		tk.MustExec("insert into test_drop_indexes values (?, ?, ?)", i, i, i)
+	}
+	idxIDs := make([]int64, 0, 3)
+	for _, idxName := range idxNames {
+		idxIDs = append(idxIDs, testGetIndexID(t, tk.Session(), "test", "test_drop_indexes", idxName))
+	}
+	jobIDExt, reset := setupJobIDExtCallback(tk.Session())
+	defer reset()
+	testddlutil.SessionExecInGoroutine(store, "test", dropIdxSQL, done)
+
+	ticker := time.NewTicker(indexModifyLease / 2)
+	defer ticker.Stop()
+LOOP:
+	for {
+		select {
+		case err := <-done:
+			if err == nil {
+				break LOOP
+			}
+			require.NoError(t, err)
+		case <-ticker.C:
+			step := 5
+			// delete some rows, and add some data
+			for i := num; i < num+step; i++ {
+				n := rand.Intn(num)
+				tk.MustExec("update test_drop_indexes set c2 = 1 where c1 = ?", n)
+				tk.MustExec("insert into test_drop_indexes values (?, ?, ?)", i, i, i)
+			}
+			num += step
+		}
+	}
+	for _, idxID := range idxIDs {
+		checkDelRangeAdded(tk, jobIDExt.jobID, idxID)
+	}
+}
+
+func testDropIndexesIfExists(t *testing.T, store kv.Storage) {
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists test_drop_indexes_if_exists;")
+	tk.MustExec("create table test_drop_indexes_if_exists (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2));")
+
+	// Drop different indexes.
+	tk.MustGetErrMsg(
+		"alter table test_drop_indexes_if_exists drop index i1, drop index i3;",
+		"[ddl:1091]index i3 doesn't exist",
+	)
+	tk.MustExec("alter table test_drop_indexes_if_exists drop index i1, drop index if exists i3;")
+	tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Warning|1091|index i3 doesn't exist"))
+
+	// Verify the impact of deletion order when dropping duplicate indexes.
+	tk.MustGetErrMsg(
+		"alter table test_drop_indexes_if_exists drop index i2, drop index i2;",
+		"[ddl:1091]index i2 doesn't exist",
+	)
+	tk.MustGetErrMsg(
+		"alter table test_drop_indexes_if_exists drop index if exists i2, drop index i2;",
+		"[ddl:1091]index i2 doesn't exist",
+	)
+	tk.MustExec("alter table test_drop_indexes_if_exists drop index i2, drop index if exists i2;")
+	tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Warning|1091|index i2 doesn't exist"))
+}
+
+func testDropIndexesFromPartitionedTable(t *testing.T, store kv.Storage) {
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists test_drop_indexes_from_partitioned_table;")
+	tk.MustExec(`
+		create table test_drop_indexes_from_partitioned_table (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2))
+		partition by range(id) (partition p0 values less than (6), partition p1 values less than maxvalue);
+	`)
+	for i := 0; i < 20; i++ {
+		tk.MustExec("insert into test_drop_indexes_from_partitioned_table values (?, ?, ?)", i, i, i)
+	}
+	tk.MustExec("alter table test_drop_indexes_from_partitioned_table drop index i1, drop index if exists i2;")
+}
+
+func testCancelDropIndexes(t *testing.T, store kv.Storage, d ddl.DDL) {
+	indexesName := []string{"idx_c1", "idx_c2"}
+	addIdxesSQL := "alter table t add index idx_c1 (c1);alter table t add index idx_c2 (c2);"
+	dropIdxesSQL := "alter table t drop index idx_c1;alter table t drop index idx_c2;"
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c1 int, c2 int)")
+	defer tk.MustExec("drop table t;")
+	for i := 0; i < 5; i++ {
+		tk.MustExec("insert into t values (?, ?)", i, i)
+	}
+	testCases := []struct {
+		needAddIndex   bool
+		jobState       model.JobState
+		JobSchemaState model.SchemaState
+		cancelSucc     bool
+	}{
+		// model.JobStateNone means the jobs is canceled before the first run.
+		// if we cancel successfully, we need to set needAddIndex to false in the next test case. Otherwise, set needAddIndex to true.
+		{true, model.JobStateNone, model.StateNone, true},
+		{false, model.JobStateRunning, model.StateWriteOnly, false},
+		{true, model.JobStateRunning, model.StateDeleteOnly, false},
+		{true, model.JobStateRunning, model.StateDeleteReorganization, false},
+	}
+	var checkErr error
+	hook := &ddl.TestDDLCallback{}
+	var jobID int64
+	testCase := &testCases[0]
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if (job.Type == model.ActionDropIndex || job.Type == model.ActionDropPrimaryKey) &&
+			job.State == testCase.jobState && job.SchemaState == testCase.JobSchemaState {
+			jobID = job.ID
+			jobIDs := []int64{job.ID}
+			hookCtx := mock.NewContext()
+			hookCtx.Store = store
+			err := hookCtx.NewTxn(context.TODO())
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			txn, err := hookCtx.Txn(true)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+
+			errs, err := admin.CancelJobs(txn, jobIDs)
+			if err != nil {
+				checkErr = errors.Trace(err)
+				return
+			}
+			if errs[0] != nil {
+				checkErr = errors.Trace(errs[0])
+				return
+			}
+			checkErr = txn.Commit(context.Background())
+		}
+	}
+	originalHook := d.GetHook()
+	d.SetHook(hook)
+	for i := range testCases {
+		testCase = &testCases[i]
+		if testCase.needAddIndex {
+			tk.MustExec(addIdxesSQL)
+		}
+		err := tk.ExecToErr(dropIdxesSQL)
+		tbl := external.GetTableByName(t, tk, "test", "t")
+
+		var indexInfos []*model.IndexInfo
+		for _, idxName := range indexesName {
+			indexInfo := tbl.Meta().FindIndexByName(idxName)
+			if indexInfo != nil {
+				indexInfos = append(indexInfos, indexInfo)
+			}
+		}
+
+		if testCase.cancelSucc {
+			require.NoError(t, checkErr)
+			require.EqualError(t, err, "[ddl:8214]Cancelled DDL job")
+			require.NotNil(t, indexInfos)
+			require.Equal(t, model.StatePublic, indexInfos[0].State)
+		} else {
+			require.NoError(t, err)
+			require.EqualError(t, checkErr, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
+			require.Nil(t, indexInfos)
+		}
+	}
+	d.SetHook(originalHook)
+	tk.MustExec(addIdxesSQL)
+	tk.MustExec(dropIdxesSQL)
+}
+
+func TestDropPrimaryKey(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
+	defer clean()
+	idxName := "primary"
+	createSQL := "create table test_drop_index (c1 int, c2 int, c3 int, unique key(c1), primary key(c3) nonclustered)"
+	dropIdxSQL := "alter table test_drop_index drop primary key;"
+	testDropIndex(t, store, createSQL, dropIdxSQL, idxName)
+}
+
+func TestDropIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
+	defer clean()
+	idxName := "c3_index"
+	createSQL := "create table test_drop_index (c1 int, c2 int, c3 int, unique key(c1), key c3_index(c3))"
+	dropIdxSQL := "alter table test_drop_index drop index c3_index;"
+	testDropIndex(t, store, createSQL, dropIdxSQL, idxName)
+}
+
+func testDropIndex(t *testing.T, store kv.Storage, createSQL, dropIdxSQL, idxName string) {
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_drop_index")
+	tk.MustExec(createSQL)
+	done := make(chan error, 1)
+	tk.MustExec("delete from test_drop_index")
+
+	num := 100
+	// add some rows
+	for i := 0; i < num; i++ {
+		tk.MustExec("insert into test_drop_index values (?, ?, ?)", i, i, i)
+	}
+	indexID := testGetIndexID(t, tk.Session(), "test", "test_drop_index", idxName)
+	jobIDExt, reset := setupJobIDExtCallback(tk.Session())
+	defer reset()
+	testddlutil.SessionExecInGoroutine(store, "test", dropIdxSQL, done)
+
+	ticker := time.NewTicker(indexModifyLease / 2)
+	defer ticker.Stop()
+LOOP:
+	for {
+		select {
+		case err := <-done:
+			if err == nil {
+				break LOOP
+			}
+			require.NoError(t, err)
+		case <-ticker.C:
+			step := 5
+			// delete some rows, and add some data
+			for i := num; i < num+step; i++ {
+				n := rand.Intn(num)
+				tk.MustExec("update test_drop_index set c2 = 1 where c1 = ?", n)
+				tk.MustExec("insert into test_drop_index values (?, ?, ?)", i, i, i)
+			}
+			num += step
+		}
+	}
+
+	rows := tk.MustQuery("explain select c1 from test_drop_index where c3 >= 0")
+	require.NotContains(t, fmt.Sprintf("%v", rows), idxName)
+
+	checkDelRangeAdded(tk, jobIDExt.jobID, indexID)
+	tk.MustExec("drop table test_drop_index")
+}
+
+func TestAddMultiColumnsIndexClusterIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists test_add_multi_col_index_clustered;")
+	tk.MustExec("create database test_add_multi_col_index_clustered;")
+	tk.MustExec("use test_add_multi_col_index_clustered;")
+
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.MustExec("create table t (a int, b varchar(10), c int, primary key (a, b));")
+	tk.MustExec("insert into t values (1, '1', 1), (2, '2', NULL), (3, '3', 3);")
+	tk.MustExec("create index idx on t (a, c);")
+
+	tk.MustExec("admin check index t idx;")
+	tk.MustExec("admin check table t;")
+
+	tk.MustExec("insert into t values (5, '5', 5), (6, '6', NULL);")
+
+	tk.MustExec("admin check index t idx;")
+	tk.MustExec("admin check table t;")
+}
+
+func TestAddIndexWithDupCols(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	err1 := infoschema.ErrColumnExists.GenWithStackByArgs("b")
+	err2 := infoschema.ErrColumnExists.GenWithStackByArgs("B")
+
+	tk.MustExec("create table test_add_index_with_dup (a int, b int)")
+	err := tk.ExecToErr("create index c on test_add_index_with_dup(b, a, b)")
+	require.ErrorIs(t, err, errors.Cause(err1))
+	err = tk.ExecToErr("create index c on test_add_index_with_dup(b, a, B)")
+	require.ErrorIs(t, err, errors.Cause(err2))
+	err = tk.ExecToErr("alter table test_add_index_with_dup add index c (b, a, b)")
+	require.ErrorIs(t, err, errors.Cause(err1))
+	err = tk.ExecToErr("alter table test_add_index_with_dup add index c (b, a, B)")
+	require.ErrorIs(t, err, errors.Cause(err2))
+
+	tk.MustExec("drop table test_add_index_with_dup")
+}
+
+func TestAnonymousIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS t")
+	tk.MustExec("create table t(bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb int, b int)")
+	tk.MustExec("alter table t add index bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb(b)")
+	tk.MustExec("alter table t add index (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb)")
+	rows := tk.MustQuery("show index from t where key_name='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'").Rows()
+	require.Len(t, rows, 1)
+	rows = tk.MustQuery("show index from t where key_name='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb_2'").Rows()
+	require.Len(t, rows, 1)
+}
+
+func TestAddIndexWithDupIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	err1 := dbterror.ErrDupKeyName.GenWithStack("index already exist %s", "idx")
+	err2 := dbterror.ErrDupKeyName.GenWithStack("index already exist %s; "+
+		"a background job is trying to add the same index, "+
+		"please check by `ADMIN SHOW DDL JOBS`", "idx")
+
+	// When there is already an duplicate index, show error message.
+	tk.MustExec("create table test_add_index_with_dup (a int, key idx (a))")
+	err := tk.ExecToErr("alter table test_add_index_with_dup add index idx (a)")
+	require.ErrorIs(t, err, errors.Cause(err1))
+
+	// When there is another session adding duplicate index with state other than
+	// StatePublic, show explicit error message.
+	tbl := external.GetTableByName(t, tk, "test", "test_add_index_with_dup")
+	indexInfo := tbl.Meta().FindIndexByName("idx")
+	indexInfo.State = model.StateNone
+	err = tk.ExecToErr("alter table test_add_index_with_dup add index idx (a)")
+	require.ErrorIs(t, err, errors.Cause(err2))
 }
