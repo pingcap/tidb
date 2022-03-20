@@ -1143,7 +1143,7 @@ func TestInsertFloatOverflow(t *testing.T) {
 	tk.MustExec("drop table if exists t,t1")
 }
 
-// gitHub issue：https://github.com/pingcap/tidb/issues/32601
+// Fix https://github.com/pingcap/tidb/issues/32601.
 func TestTextTooLongError(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
