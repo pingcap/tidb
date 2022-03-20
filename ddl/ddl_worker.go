@@ -658,6 +658,7 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}, level
 		return err
 	}
 	txn.SetDiskFullOpt(level)
+	w.setResourceGroupTaggerForTopSQL(txn)
 	w.sessForJob.GetSessionVars().SetInTxn(true)
 	t := meta.NewMeta(txn)
 
