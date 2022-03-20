@@ -759,6 +759,9 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 					startIdx = i
 				}
 			}
+			if err = h.handleSingleHistogramUpdate(is, rows[startIdx:]); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil
