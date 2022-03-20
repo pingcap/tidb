@@ -45,7 +45,8 @@ type innerTxnStartTsBox struct {
 	chanToStoreStartTS  chan uint64
 	chanToDeleteStartTS chan uint64
 
-	innerTxnTsBoxRun atomic.Value
+	innerTxnTsBoxRun          atomic.Value
+	innerTxnTsBoxRoutineCount int32
 
 	innerTSLock        sync.Mutex
 	innerTxnStartTsMap map[uint64]uint64
@@ -88,25 +89,39 @@ func (ib *innerTxnStartTsBox) isBoxRunning() bool {
 func (ib *innerTxnStartTsBox) storeInnerTxnStartTsLoop() {
 	logutil.BgLogger().Info("storeInnerTxnStartTsLoop started")
 	defer ib.wg.Done()
+	atomic.AddInt32(&ib.innerTxnTsBoxRoutineCount, 1)
 	for startTS := range ib.chanToStoreStartTS {
+		failpoint.Inject("mockDelayStoreInnerTxnStartTs", func() {
+			logutil.BgLogger().Info("Enable mockDelayStoreInnerTxnStartTs ...")
+			time.Sleep(100 * time.Millisecond)
+		})
+
 		ib.storeInnerTxnTS(startTS)
 	}
+	atomic.AddInt32(&ib.innerTxnTsBoxRoutineCount, -1)
 	logutil.BgLogger().Info("storeInnerTxnStartTsLoop exited")
 }
 
 func (ib *innerTxnStartTsBox) deleteInnerTxnStartTsLoop() {
 	logutil.BgLogger().Info("deleteInnerTxnStartTsLoop started")
 	defer ib.wg.Done()
+	atomic.AddInt32(&ib.innerTxnTsBoxRoutineCount, 1)
 	for startTS := range ib.chanToDeleteStartTS {
 		ib.deleteInnerTxnTS(startTS)
 	}
+	atomic.AddInt32(&ib.innerTxnTsBoxRoutineCount, -1)
 	logutil.BgLogger().Info("deleteInnerTxnStartTsLoop exited")
 }
 
 func (ib *innerTxnStartTsBox) processUndeletedStartTsLoop() {
 	logutil.BgLogger().Info("processUndeletedStartTsLoop started")
 	defer ib.wg.Done()
-	defer logutil.BgLogger().Info("processUndeletedStartTsLoop exited")
+	defer func() {
+		atomic.AddInt32(&ib.innerTxnTsBoxRoutineCount, -1)
+		logutil.BgLogger().Info("processUndeletedStartTsLoop exited")
+	}()
+
+	atomic.AddInt32(&ib.innerTxnTsBoxRoutineCount, 1)
 	ticker := time.NewTicker(time.Millisecond * 100)
 	defer ticker.Stop()
 	for {
@@ -128,6 +143,8 @@ func (ib *innerTxnStartTsBox) processUndeletedStartTS() {
 		if ib.realDeleteInnerTxnTS(startTS) {
 			// modify the map when traverse it, refer to https://go.dev/doc/effective_go#for
 			delete(ib.undeletedStartTsMap, startTS)
+			logutil.BgLogger().Info("[processUndeletedStartTsLoop] processed an internal transaction start timestamp ",
+				zap.Uint64("startTS", startTS))
 		}
 	}
 	ib.undeletedTsLock.Unlock()
@@ -243,7 +260,8 @@ func (ib *innerTxnStartTsBox) getMinStartTs(now time.Time, startTSLowerLimit uin
 	for _, innerTS := range ib.innerTxnStartTsMap {
 		innerTxnStartTime := oracle.GetTimeFromTS(innerTS)
 		if now.Sub(innerTxnStartTime) > TimeToPrintLongTimeInternalTxn {
-			logutil.BgLogger().Info("An internal transaction running by RunInNewTxn lasts more than 1 minute")
+			logutil.BgLogger().Info("An internal transaction running by RunInNewTxn lasts long time",
+				zap.Duration("time", now.Sub(innerTxnStartTime)))
 		}
 
 		if innerTS > startTSLowerLimit && innerTS < minStartTS {

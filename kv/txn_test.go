@@ -17,10 +17,14 @@ package kv
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestBackOff(t *testing.T) {
@@ -64,4 +68,73 @@ func TestRetryExceedCountError(t *testing.T) {
 		return nil
 	})
 	assert.NotNil(t, err)
+}
+
+var wrapStoreInterTxnTSTest = wrapStoreInterTxnTS
+var getGlobalInnerTxnTsBoxTest = getGlobalInnerTxnTsBox
+var wrapDeleteInterTxnTSTest = wrapDeleteInterTxnTS
+
+// fmt.Println("ts0:", ts0, " ts1:", ts1, " ts2:", ts2, " ts3:", ts3, " lowLimit:", lowLimit, " minStartTS:", minStartTS, " newMinStartTS:", newMinStartTS)
+// fmt.Println("innerTxnStartTsMap:", ib.innerTxnStartTsMap)
+func TestInnerTxnStartTsBox(t *testing.T) {
+	InitInnerTxnStartTsBox()
+	defer CloseGlobalInnerTxnTsBox()
+
+	ib := getGlobalInnerTxnTsBoxTest()
+	for {
+		if atomic.LoadInt32(&ib.innerTxnTsBoxRoutineCount) == 3 {
+			break
+		}
+	}
+
+	// case1: store and delete
+	wrapStoreInterTxnTSTest(5)
+	time.Sleep(100 * time.Millisecond)
+	ts, ok := ib.innerTxnStartTsMap[5]
+	assert.Equal(t, true, ok)
+	assert.Equal(t, ts, (uint64)(5))
+
+	wrapDeleteInterTxnTSTest(5)
+	time.Sleep(100 * time.Millisecond)
+	ts, ok = ib.innerTxnStartTsMap[5]
+	assert.Equal(t, false, ok)
+	assert.Equal(t, ts, (uint64)(0))
+
+	// case2: store first and then delete, but delete chan received startTS first
+	// processUndeletedStartTsLoop process this undeleted startTS
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/kv/mockDelayStoreInnerTxnStartTs", "return"))
+	wrapStoreInterTxnTSTest(10)
+	wrapDeleteInterTxnTSTest(10)
+	time.Sleep(300 * time.Millisecond)
+	ts, ok = ib.innerTxnStartTsMap[10]
+	assert.Equal(t, false, ok)
+	assert.Equal(t, ts, (uint64)(0))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/kv/mockDelayStoreInnerTxnStartTs"))
+
+	// case2: test for WrapGetMinStartTs
+	tm0 := time.Date(2022, time.March, 8, 12, 10, 01, 0, time.UTC)
+	ts0 := oracle.GoTimeToTS(tm0)
+	tm1 := time.Date(2022, time.March, 10, 12, 10, 01, 0, time.UTC)
+	ts1 := oracle.GoTimeToTS(tm1)
+	tm2 := time.Date(2022, time.March, 10, 12, 14, 03, 0, time.UTC)
+	ts2 := oracle.GoTimeToTS(tm2)
+	tm3 := time.Date(2022, time.March, 10, 12, 14, 05, 0, time.UTC)
+	ts3 := oracle.GoTimeToTS(tm3)
+	tm4 := time.Date(2022, time.March, 10, 12, 15, 0, 0, time.UTC)
+	lowLimit := oracle.GoTimeToLowerLimitStartTS(tm4, 24*60*60*1000)
+	minStartTS := oracle.GoTimeToTS(tm4)
+
+	wrapStoreInterTxnTSTest(ts0)
+	wrapStoreInterTxnTSTest(ts1)
+	wrapStoreInterTxnTSTest(ts2)
+	wrapStoreInterTxnTSTest(ts3)
+	time.Sleep(200 * time.Millisecond)
+
+	newMinStartTS := WrapGetMinStartTs(tm4, lowLimit, minStartTS)
+	require.Equal(t, newMinStartTS, ts1)
+
+	wrapDeleteInterTxnTSTest(ts0)
+	wrapDeleteInterTxnTSTest(ts1)
+	wrapDeleteInterTxnTSTest(ts2)
+	wrapDeleteInterTxnTSTest(ts3)
 }
