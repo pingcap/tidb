@@ -37,7 +37,7 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 	for i := uint(0); i < maxRetryCnt; i++ {
 		txn, err = store.Begin()
 		if err != nil {
-			logutil.BgLogger().Error("RunInNewTxn", zap.Error(err))
+			logutil.BgLogger().Error("RunInNewTxn", zap.Error(err), zap.Stack("stack"))
 			return err
 		}
 
@@ -54,6 +54,7 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 				logutil.BgLogger().Warn("RunInNewTxn",
 					zap.Uint64("retry txn", txn.StartTS()),
 					zap.Uint64("original txn", originalTxnTS),
+					zap.Stack("stack"),
 					zap.Error(err))
 				continue
 			}
@@ -83,6 +84,7 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 			logutil.BgLogger().Warn("RunInNewTxn",
 				zap.Uint64("retry txn", txn.StartTS()),
 				zap.Uint64("original txn", originalTxnTS),
+				zap.Stack("stack"),
 				zap.Error(err))
 			BackOff(i)
 			continue

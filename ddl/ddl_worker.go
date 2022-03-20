@@ -632,6 +632,58 @@ func (w *worker) handleDDLJobWaitSchemaSynced(d *ddlCtx, job *model.Job) {
 	*/
 }
 
+func (w *worker) HandleDDLJobWhenDoneOrRollbackDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
+	if !job.IsRollbackDone() {
+		job.State = model.JobStateSynced
+	}
+	err := w.finishDDLJob(t, job)
+	if err != nil {
+		w.sessForJob.RollbackTxn(w.ctx)
+		w.unlockSeqNum()
+		log.Error("finishDDLJob", zap.Error(err))
+		return err
+	}
+	w.sessForJob.StmtCommit()
+	err = func() error {
+		if t.Diff != nil {
+			d.schemaVersionMu.Lock()
+			defer d.schemaVersionMu.Unlock()
+			err := t.SetSchemaDiff(d.store)
+			if err != nil {
+				w.sessForJob.RollbackTxn(w.ctx)
+				log.Error("SetSchemaDiff", zap.Error(err))
+				return err
+			}
+		}
+		err = w.sessForJob.CommitTxn(w.ctx)
+		if err != nil {
+			log.Error("sessForJob.CommitTxn", zap.Error(err))
+			return err
+		}
+		return nil
+	}()
+	if err != nil {
+		w.unlockSeqNum()
+		return err
+	}
+	if RunInGoTest {
+		// d.mu.hook is initialed from domain / test callback, which will force the owner host update schema diff synchronously.
+		d.mu.RLock()
+		d.mu.hook.OnSchemaStateChanged()
+		d.mu.RUnlock()
+	}
+
+	d.mu.RLock()
+	d.mu.hook.OnJobUpdated(job)
+	d.mu.RUnlock()
+	asyncNotify(d.ddlJobDoneCh)
+	if w.lockSeqNum {
+		w.lockSeqNum = false
+		d.ddlSeqNumMu.Unlock()
+	}
+	return nil
+}
+
 func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}, level kvrpcpb.DiskFullOpt) error {
 	defer func() {
 		r := recover()
@@ -661,57 +713,8 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}, level
 	w.setResourceGroupTaggerForTopSQL(txn)
 	w.sessForJob.GetSessionVars().SetInTxn(true)
 	t := meta.NewMeta(txn)
-
 	if job.IsDone() || job.IsRollbackDone() {
-		if !job.IsRollbackDone() {
-			job.State = model.JobStateSynced
-		}
-		err = w.finishDDLJob(t, job)
-		if err != nil {
-			w.sessForJob.RollbackTxn(w.ctx)
-			w.unlockSeqNum()
-			log.Error("finishDDLJob", zap.Error(err))
-			return err
-		}
-		w.sessForJob.StmtCommit()
-		err := func() error {
-			if t.Diff != nil {
-				d.schemaVersionMu.Lock()
-				defer d.schemaVersionMu.Unlock()
-				err := t.SetSchemaDiff(d.store)
-				if err != nil {
-					w.sessForJob.RollbackTxn(w.ctx)
-					log.Error("SetSchemaDiff", zap.Error(err))
-					return err
-				}
-			}
-			err = w.sessForJob.CommitTxn(w.ctx)
-			if err != nil {
-				log.Error("sessForJob.CommitTxn", zap.Error(err))
-				return err
-			}
-			return nil
-		}()
-		if err != nil {
-			w.unlockSeqNum()
-			return err
-		}
-		if RunInGoTest {
-			// d.mu.hook is initialed from domain / test callback, which will force the owner host update schema diff synchronously.
-			d.mu.RLock()
-			d.mu.hook.OnSchemaStateChanged()
-			d.mu.RUnlock()
-		}
-
-		d.mu.RLock()
-		d.mu.hook.OnJobUpdated(job)
-		d.mu.RUnlock()
-		asyncNotify(d.ddlJobDoneCh)
-		if w.lockSeqNum {
-			w.lockSeqNum = false
-			d.ddlSeqNumMu.Unlock()
-		}
-		return nil
+		return w.HandleDDLJobWhenDoneOrRollbackDone(d, job, t)
 	}
 
 	d.mu.RLock()
@@ -802,7 +805,9 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}, level
 	ctx, cancel := context.WithTimeout(w.ctx, waitTime)
 	w.waitSchemaChanged(ctx, d, waitTime, schemaVer, job)
 	cancel()
-
+	//if job.IsDone() || job.IsRollbackDone() {
+	//	return w.HandleDDLJobWhenDoneOrRollbackDone(d, job, t)
+	//}
 	if RunInGoTest {
 		// d.mu.hook is initialed from domain / test callback, which will force the owner host update schema diff synchronously.
 		d.mu.RLock()
