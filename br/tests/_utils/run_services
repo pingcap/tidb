@@ -134,7 +134,7 @@ start_tikv() {
     i=$1
     echo "Starting TiKV($i)..."
     mkdir -p "$TEST_DIR/tikv${i}"
-    bin/tikv-server \
+    rr record bin/tikv-server \
         --pd "$PD_ADDR" \
         -A "$TIKV_ADDR$i" \
         --status-addr "$TIKV_STATUS_ADDR$i" \
