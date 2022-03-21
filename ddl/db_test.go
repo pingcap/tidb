@@ -1236,6 +1236,7 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 	if variable.AllowConcurrencyDDL.Load() {
 		internalTk := testkit.NewTestKit(t, store)
 		element, start, end, physicalID, err = admin.GetDDLReorgHandle(currJob, internalTk.Session())
+		require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
 	} else {
 		err := ctx.NewTxn(context.Background())
 		require.NoError(t, err)
@@ -1243,14 +1244,13 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 		require.NoError(t, err)
 		m := meta.NewMeta(txn)
 		element, start, end, physicalID, err = m.GetDDLReorgHandle(currJob)
+		require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
 
 	}
-	require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
 	require.Nil(t, element)
 	require.Nil(t, start)
 	require.Nil(t, end)
 	require.Equal(t, int64(0), physicalID)
-
 }
 
 func TestDropTableOnTiKVDiskFull(t *testing.T) {
