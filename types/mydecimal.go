@@ -873,8 +873,8 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int, roundMode RoundMode) (err err
 			}
 		case ModeHalfUp:
 			digAfterScale := d.wordBuf[toIdx+1] / digMask // the first digit after scale.
-			// If first digit after scale is 5 or more, do increment.
-			doInc = (digAfterScale > 5) || (digAfterScale == 5)
+			// If first digit after scale is equal to or greater than 5, do increment.
+			doInc = digAfterScale >= 5
 		case ModeTruncate:
 			// Never round, just truncate.
 			doInc = false
