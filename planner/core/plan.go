@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	fd "github.com/pingcap/tidb/planner/funcdep"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -308,6 +309,9 @@ type LogicalPlan interface {
 
 	// canPushToCop check if we might push this plan to a specific store.
 	canPushToCop(store kv.StoreType) bool
+
+	// ExtractFD derive the FDSet from the tree bottom up.
+	ExtractFD() *fd.FDSet
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -369,6 +373,23 @@ type baseLogicalPlan struct {
 	self         LogicalPlan
 	maxOneRow    bool
 	children     []LogicalPlan
+	// fdSet is a set of functional dependencies(FDs) which powers many optimizations,
+	// including eliminating unnecessary DISTINCT operators, simplifying ORDER BY columns,
+	// removing Max1Row operators, and mapping semi-joins to inner-joins.
+	// for now, it's hard to maintain in individual operator, build it from bottom up when using.
+	fdSet *fd.FDSet
+}
+
+// ExtractFD return the children[0]'s fdSet if there are no adding/removing fd in this logic plan.
+func (p *baseLogicalPlan) ExtractFD() *fd.FDSet {
+	if p.fdSet != nil {
+		return p.fdSet
+	}
+	fds := &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
+	for _, ch := range p.children {
+		fds.AddFrom(ch.ExtractFD())
+	}
+	return fds
 }
 
 func (p *baseLogicalPlan) MaxOneRow() bool {
