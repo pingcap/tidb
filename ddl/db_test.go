@@ -15,6 +15,7 @@
 package ddl_test
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
 

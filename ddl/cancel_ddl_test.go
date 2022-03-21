@@ -818,13 +818,6 @@ func (s *testDDLSerialSuiteToVerify) TestCancelJob() {
 	s.checkDropIndexes(d, dbInfo.ID, tableInfo.ID, idxNames, true)
 }
 
-func addDDLJob(t *testing.T, d *ddl, job *model.Job) {
-	task := &limitJobTask{job, make(chan error)}
-	d.limitJobCh <- task
-	err := <-task.err
-	require.NoError(t, err)
-}
-
 func (s *testDDLSerialSuiteToVerify) checkDropIndexes(d *ddl, schemaID int64, tableID int64, idxNames []model.CIStr, success bool) {
 	for _, idxName := range idxNames {
 		checkIdxExist(s.T(), d, schemaID, tableID, idxName.O, !success)

@@ -228,16 +228,6 @@ func testDropIndex(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.D
 	return job
 }
 
-func buildRebaseAutoIDJobJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, newBaseID int64) *model.Job {
-	return &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionRebaseAutoID,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{newBaseID},
-	}
-}
-
 func TestGetIntervalFromPolicy(t *testing.T) {
 	policy := []time.Duration{
 		1 * time.Second,
