@@ -194,6 +194,7 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, store kv.Storage, t
 	if succ {
 		mb, startTS, totalSize, err := c.loadDataFromOriginalTable(store, lease)
 		if err != nil {
+			log.Info("load data from table", zap.Error(err))
 			return
 		}
 

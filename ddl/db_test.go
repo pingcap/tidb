@@ -21,9 +21,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/testkit"
@@ -548,4 +550,88 @@ func TestAutoConvertBlobTypeByLength(t *testing.T) {
 	require.Equal(t, tbl.Cols()[2].Flen, 16777215)
 	require.Equal(t, tbl.Cols()[3].Tp, mysql.TypeLongBlob)
 	require.Equal(t, tbl.Cols()[3].Flen, 4294967295)
+}
+
+func TestAddExpressionIndexRollback(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (c1 int, c2 int, c3 int, unique key(c1))")
+	tk.MustExec("insert into t1 values (20, 20, 20), (40, 40, 40), (80, 80, 80), (160, 160, 160);")
+
+	var checkErr error
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	d := dom.DDL()
+	hook := &ddl.TestDDLCallback{Do: dom}
+	var currJob *model.Job
+	ctx := mock.NewContext()
+	ctx.Store = store
+	times := 0
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateDeleteOnly:
+			_, checkErr = tk1.Exec("insert into t1 values (6, 3, 3) on duplicate key update c1 = 10")
+			if checkErr == nil {
+				_, checkErr = tk1.Exec("update t1 set c1 = 7 where c2=6;")
+			}
+			if checkErr == nil {
+				_, checkErr = tk1.Exec("delete from t1 where c1 = 40;")
+			}
+		case model.StateWriteOnly:
+			_, checkErr = tk1.Exec("insert into t1 values (2, 2, 2)")
+			if checkErr == nil {
+				_, checkErr = tk1.Exec("update t1 set c1 = 3 where c2 = 80")
+			}
+		case model.StateWriteReorganization:
+			if checkErr == nil && job.SchemaState == model.StateWriteReorganization && times == 0 {
+				_, checkErr = tk1.Exec("insert into t1 values (4, 4, 4)")
+				if checkErr != nil {
+					return
+				}
+				_, checkErr = tk1.Exec("update t1 set c1 = 5 where c2 = 80")
+				if checkErr != nil {
+					return
+				}
+				currJob = job
+				times++
+			}
+		}
+	}
+	d.SetHook(hook)
+
+	tk.MustGetErrMsg("alter table t1 add index expr_idx ((pow(c1, c2)));", "[ddl:8202]Cannot decode index value, because [types:1690]DOUBLE value is out of range in 'pow(160, 160)'")
+	require.NoError(t, checkErr)
+	tk.MustQuery("select * from t1 order by c1;").Check(testkit.Rows("2 2 2", "4 4 4", "5 80 80", "10 3 3", "20 20 20", "160 160 160"))
+
+	// Check whether the reorg information is cleaned up.
+	err := ctx.NewTxn(context.Background())
+	require.NoError(t, err)
+	txn, err := ctx.Txn(true)
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	element, start, end, physicalID, err := m.GetDDLReorgHandle(currJob)
+	require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
+	require.Nil(t, element)
+	require.Nil(t, start)
+	require.Nil(t, end)
+	require.Equal(t, int64(0), physicalID)
+}
+
+func TestDropTableOnTiKVDiskFull(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test_disk_full_drop_table(a int);")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/rpcTiKVAllowedOnAlmostFull", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/rpcTiKVAllowedOnAlmostFull"))
+	}()
+	tk.MustExec("drop table test_disk_full_drop_table;")
 }

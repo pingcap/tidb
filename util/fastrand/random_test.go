@@ -42,6 +42,22 @@ func TestRand(t *testing.T) {
 	require.Less(t, sum, 24)
 }
 
+func BenchmarkFastRandBuf(b *testing.B) {
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			Buf(20)
+		}
+	})
+}
+
+func BenchmarkFastRandUint32N(b *testing.B) {
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			Uint32N(127)
+		}
+	})
+}
+
 func BenchmarkFastRand(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
