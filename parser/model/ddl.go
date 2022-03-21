@@ -94,12 +94,14 @@ const (
 	ActionAlterCacheTable               ActionType = 57
 	ActionAlterTableStatsOptions        ActionType = 58
 	ActionAlterNoCacheTable             ActionType = 59
+	ActionCreateTables                  ActionType = 60
 )
 
 var actionMap = map[ActionType]string{
 	ActionCreateSchema:                  "create schema",
 	ActionDropSchema:                    "drop schema",
 	ActionCreateTable:                   "create table",
+	ActionCreateTables:                  "create tables",
 	ActionDropTable:                     "drop table",
 	ActionAddColumn:                     "add column",
 	ActionDropColumn:                    "drop column",
@@ -194,6 +196,15 @@ func (h *HistoryInfo) AddTableInfo(schemaVer int64, tblInfo *TableInfo) {
 	h.TableInfo = tblInfo
 }
 
+// SetTableInfos is like AddTableInfo, but will add multiple table infos to the binlog.
+func (h *HistoryInfo) SetTableInfos(schemaVer int64, tblInfos []*TableInfo) {
+	h.SchemaVersion = schemaVer
+	h.MultipleTableInfos = make([]*TableInfo, len(tblInfos))
+	for i, info := range tblInfos {
+		h.MultipleTableInfos[i] = info
+	}
+}
+
 // Clean cleans history information.
 func (h *HistoryInfo) Clean() {
 	h.SchemaVersion = 0
@@ -211,7 +222,28 @@ type DDLReorgMeta struct {
 	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
 	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
-	Location      *time.Location                   `json:"time_location"`
+	Location      *TimeZoneLocation                `json:"location"`
+}
+
+// TimeZoneLocation represents a single time zone.
+type TimeZoneLocation struct {
+	Name     string `json:"name"`
+	Offset   int    `json:"offset"` // seconds east of UTC
+	location *time.Location
+}
+
+func (tz *TimeZoneLocation) GetLocation() (*time.Location, error) {
+	if tz.location != nil {
+		return tz.location, nil
+	}
+
+	var err error
+	if tz.Offset == 0 {
+		tz.location, err = time.LoadLocation(tz.Name)
+	} else {
+		tz.location = time.FixedZone(tz.Name, tz.Offset)
+	}
+	return tz.location, err
 }
 
 // NewDDLReorgMeta new a DDLReorgMeta.
@@ -273,6 +305,9 @@ type Job struct {
 
 	// Priority is only used to set the operation priority of adding indices.
 	Priority int `json:"priority"`
+
+	// SeqNum is the total order in all DDLs, it's used to identify the order of DDL.
+	SeqNum uint64 `json:"seq_num"`
 }
 
 // FinishTableJob is called when a job is finished.

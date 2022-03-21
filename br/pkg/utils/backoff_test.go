@@ -136,7 +136,7 @@ func TestNewImportSSTBackofferWithSucess(t *testing.T) {
 		}
 	}, backoffer)
 	require.Equal(t, 16, counter)
-	require.Nil(t, err)
+	require.NoError(t, err)
 }
 
 func TestNewDownloadSSTBackofferWithCancel(t *testing.T) {

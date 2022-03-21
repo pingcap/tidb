@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/topsql/collector"
 	"github.com/pingcap/tidb/util/topsql/reporter"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -40,39 +40,42 @@ const (
 )
 
 var (
-	globalTopSQLReport   *reporter.RemoteTopSQLReporter
+	globalTopSQLReport   reporter.TopSQLReporter
 	singleTargetDataSink *reporter.SingleTargetDataSink
 )
 
+func init() {
+	remoteReporter := reporter.NewRemoteTopSQLReporter(plancodec.DecodeNormalizedPlan)
+	globalTopSQLReport = remoteReporter
+	singleTargetDataSink = reporter.NewSingleTargetDataSink(remoteReporter)
+}
+
 // SetupTopSQL sets up the top-sql worker.
 func SetupTopSQL() {
-	remoteReporter := reporter.NewRemoteTopSQLReporter(plancodec.DecodeNormalizedPlan)
-	singleTargetDataSink = reporter.NewSingleTargetDataSink(remoteReporter)
+	globalTopSQLReport.Start()
+	singleTargetDataSink.Start()
 
-	globalTopSQLReport = remoteReporter
-
-	tracecpu.GlobalSQLCPUProfiler.SetCollector(remoteReporter)
-	tracecpu.GlobalSQLCPUProfiler.Run()
-	stmtstats.RegisterCollector(remoteReporter)
+	stmtstats.RegisterCollector(globalTopSQLReport)
 	stmtstats.SetupAggregator()
+}
+
+// SetupTopSQLForTest sets up the global top-sql reporter, it's exporting for test.
+func SetupTopSQLForTest(r reporter.TopSQLReporter) {
+	globalTopSQLReport = r
 }
 
 // RegisterPubSubServer registers TopSQLPubSubService to the given gRPC server.
 func RegisterPubSubServer(s *grpc.Server) {
-	if globalTopSQLReport != nil {
-		service := reporter.NewTopSQLPubSubService(globalTopSQLReport)
+	if register, ok := globalTopSQLReport.(reporter.DataSinkRegisterer); ok {
+		service := reporter.NewTopSQLPubSubService(register)
 		tipb.RegisterTopSQLPubSubServer(s, service)
 	}
 }
 
 // Close uses to close and release the top sql resource.
 func Close() {
-	if singleTargetDataSink != nil {
-		singleTargetDataSink.Close()
-	}
-	if globalTopSQLReport != nil {
-		globalTopSQLReport.Close()
-	}
+	singleTargetDataSink.Close()
+	globalTopSQLReport.Close()
 	stmtstats.CloseAggregator()
 }
 
@@ -86,7 +89,7 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 	if planDigest != nil {
 		planDigestBytes = planDigest.Bytes()
 	}
-	ctx = tracecpu.CtxWithDigest(ctx, sqlDigestBytes, planDigestBytes)
+	ctx = collector.CtxWithDigest(ctx, sqlDigestBytes, planDigestBytes)
 	pprof.SetGoroutineLabels(ctx)
 
 	if len(normalizedPlan) == 0 || len(planDigestBytes) == 0 {
@@ -101,32 +104,41 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 		// Attention: Top SQL pprof profile unable to sample data of those SQL which run very fast, this behavior is expected.
 		// The integration test was just want to make sure each type of SQL will be set goroutine labels and and can be collected.
 		if val.(bool) {
-			lowerSQL := strings.ToLower(normalizedSQL)
-			if strings.Contains(lowerSQL, "mysql") {
-				failpoint.Return(ctx)
-			}
-			isDML := false
-			for _, prefix := range []string{"insert", "update", "delete", "load", "replace", "select", "commit"} {
-				if strings.HasPrefix(lowerSQL, prefix) {
-					isDML = true
-					break
-				}
-			}
-			if !isDML {
-				failpoint.Return(ctx)
-			}
-			start := time.Now()
-			logutil.BgLogger().Info("attach SQL info", zap.String("sql", normalizedSQL), zap.Bool("has-plan", len(normalizedPlan) > 0))
-			for {
-				if time.Since(start) > 11*time.Millisecond {
-					break
-				}
-				for i := 0; i < 10e5; i++ {
-				}
+			sqlPrefixes := []string{"insert", "update", "delete", "load", "replace", "select", "begin",
+				"commit", "analyze", "explain", "trace", "create", "set global"}
+			if MockHighCPULoad(normalizedSQL, sqlPrefixes, 1) {
+				logutil.BgLogger().Info("attach SQL info", zap.String("sql", normalizedSQL), zap.Bool("has-plan", len(normalizedPlan) > 0))
 			}
 		}
 	})
 	return ctx
+}
+
+// MockHighCPULoad mocks high cpu load, only use in failpoint test.
+func MockHighCPULoad(sql string, sqlPrefixs []string, load int64) bool {
+	lowerSQL := strings.ToLower(sql)
+	if strings.Contains(lowerSQL, "mysql") && !strings.Contains(lowerSQL, "global_variables") {
+		return false
+	}
+	match := false
+	for _, prefix := range sqlPrefixs {
+		if strings.HasPrefix(lowerSQL, prefix) {
+			match = true
+			break
+		}
+	}
+	if !match {
+		return false
+	}
+	start := time.Now()
+	for {
+		if time.Since(start) > 12*time.Millisecond*time.Duration(load) {
+			break
+		}
+		for i := 0; i < 10e5; i++ {
+		}
+	}
+	return true
 }
 
 func linkSQLTextWithDigest(sqlDigest []byte, normalizedSQL string, isInternal bool) {
@@ -134,14 +146,7 @@ func linkSQLTextWithDigest(sqlDigest []byte, normalizedSQL string, isInternal bo
 		normalizedSQL = normalizedSQL[:MaxSQLTextSize]
 	}
 
-	c := tracecpu.GlobalSQLCPUProfiler.GetCollector()
-	if c == nil {
-		return
-	}
-	topc, ok := c.(reporter.TopSQLReporter)
-	if ok {
-		topc.RegisterSQL(sqlDigest, normalizedSQL, isInternal)
-	}
+	globalTopSQLReport.RegisterSQL(sqlDigest, normalizedSQL, isInternal)
 }
 
 func linkPlanTextWithDigest(planDigest []byte, normalizedBinaryPlan string) {
@@ -150,12 +155,5 @@ func linkPlanTextWithDigest(planDigest []byte, normalizedBinaryPlan string) {
 		return
 	}
 
-	c := tracecpu.GlobalSQLCPUProfiler.GetCollector()
-	if c == nil {
-		return
-	}
-	topc, ok := c.(reporter.TopSQLReporter)
-	if ok {
-		topc.RegisterPlan(planDigest, normalizedBinaryPlan)
-	}
+	globalTopSQLReport.RegisterPlan(planDigest, normalizedBinaryPlan)
 }

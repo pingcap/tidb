@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -46,10 +45,12 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/testutil"
+	"github.com/pingcap/tidb/util/versioninfo"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -518,16 +519,16 @@ func TestStringBuiltin(t *testing.T) {
 
 	// for space
 	result = tk.MustQuery(`select space(0), space(2), space(-1), space(1.1), space(1.9)`)
-	result.Check(testutil.RowsWithSep(",", ",  ,, ,  "))
+	result.Check(testkit.RowsWithSep(",", ",  ,, ,  "))
 	result = tk.MustQuery(`select space("abc"), space("2"), space("1.1"), space(''), space(null)`)
-	result.Check(testutil.RowsWithSep(",", ",  , ,,<nil>"))
+	result.Check(testkit.RowsWithSep(",", ",  , ,,<nil>"))
 
 	// for replace
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a char(20), b int, c double, d datetime, e time)")
 	tk.MustExec(`insert into t values('www.mysql.com', 1234, 12.34, "2017-01-01 12:01:01", "12:01:01")`)
 	result = tk.MustQuery(`select replace(a, 'mysql', 'pingcap'), replace(b, 2, 55), replace(c, 34, 0), replace(d, '-', '/'), replace(e, '01', '22') from t`)
-	result.Check(testutil.RowsWithSep(",", "www.pingcap.com,15534,12.0,2017/01/01 12:01:01,12:22:22"))
+	result.Check(testkit.RowsWithSep(",", "www.pingcap.com,15534,12.0,2017/01/01 12:01:01,12:22:22"))
 	result = tk.MustQuery(`select replace('aaa', 'a', ''), replace(null, 'a', 'b'), replace('a', null, 'b'), replace('a', 'b', null)`)
 	result.Check(testkit.Rows(" <nil> <nil> <nil>"))
 
@@ -551,7 +552,7 @@ func TestStringBuiltin(t *testing.T) {
 	result = tk.MustQuery(`select substr(a, 3), substr(b, 2, 3), substr(c, -3), substr(d, -8), substr(e, -3, 100) from t`)
 	result.Check(testkit.Rows("kila 234 .45 12:01:01 :01"))
 	result = tk.MustQuery(`select substr('Sakila', 100), substr('Sakila', -100), substr('Sakila', -5, 3), substr('Sakila', 2, -1)`)
-	result.Check(testutil.RowsWithSep(",", ",,aki,"))
+	result.Check(testkit.RowsWithSep(",", ",,aki,"))
 	result = tk.MustQuery(`select substr('foobarbar' from 4), substr('Sakila' from -4 for 2)`)
 	result.Check(testkit.Rows("barbar ki"))
 	result = tk.MustQuery(`select substr(null, 2, 3), substr('foo', null, 3), substr('foo', 2, null)`)
@@ -582,7 +583,7 @@ func TestStringBuiltin(t *testing.T) {
 	result = tk.MustQuery(`select substring_index('www.pingcap.com', '.', 0), substring_index('www.pingcap.com', '.', 100), substring_index('www.pingcap.com', '.', -100)`)
 	result.Check(testkit.Rows(" www.pingcap.com www.pingcap.com"))
 	result = tk.MustQuery(`select substring_index('www.pingcap.com', 'd', 1), substring_index('www.pingcap.com', '', 1), substring_index('', '.', 1)`)
-	result.Check(testutil.RowsWithSep(",", "www.pingcap.com,,"))
+	result.Check(testkit.RowsWithSep(",", "www.pingcap.com,,"))
 	result = tk.MustQuery(`select substring_index(null, '.', 1), substring_index('www.pingcap.com', null, 1), substring_index('www.pingcap.com', '.', null)`)
 	result.Check(testkit.Rows("<nil> <nil> <nil>"))
 
@@ -623,13 +624,13 @@ func TestStringBuiltin(t *testing.T) {
 
 	// for ltrim and rtrim
 	result = tk.MustQuery(`select ltrim('   bar   '), ltrim('bar'), ltrim(''), ltrim(null)`)
-	result.Check(testutil.RowsWithSep(",", "bar   ,bar,,<nil>"))
+	result.Check(testkit.RowsWithSep(",", "bar   ,bar,,<nil>"))
 	result = tk.MustQuery(`select rtrim('   bar   '), rtrim('bar'), rtrim(''), rtrim(null)`)
-	result.Check(testutil.RowsWithSep(",", "   bar,bar,,<nil>"))
+	result.Check(testkit.RowsWithSep(",", "   bar,bar,,<nil>"))
 	result = tk.MustQuery(`select ltrim("\t   bar   "), ltrim("   \tbar"), ltrim("\n  bar"), ltrim("\r  bar")`)
-	result.Check(testutil.RowsWithSep(",", "\t   bar   ,\tbar,\n  bar,\r  bar"))
+	result.Check(testkit.RowsWithSep(",", "\t   bar   ,\tbar,\n  bar,\r  bar"))
 	result = tk.MustQuery(`select rtrim("   bar   \t"), rtrim("bar\t   "), rtrim("bar   \n"), rtrim("bar   \r")`)
-	result.Check(testutil.RowsWithSep(",", "   bar   \t,bar\t,bar   \n,bar   \r"))
+	result.Check(testkit.RowsWithSep(",", "   bar   \t,bar\t,bar   \n,bar   \r"))
 
 	// for reverse
 	tk.MustExec(`DROP TABLE IF EXISTS t;`)
@@ -644,11 +645,11 @@ func TestStringBuiltin(t *testing.T) {
 	result = tk.MustQuery(`select trim('   bar   '), trim(leading 'x' from 'xxxbarxxx'), trim(trailing 'xyz' from 'barxxyz'), trim(both 'x' from 'xxxbarxxx')`)
 	result.Check(testkit.Rows("bar barxxx barx bar"))
 	result = tk.MustQuery(`select trim('\t   bar\n   '), trim('   \rbar   \t')`)
-	result.Check(testutil.RowsWithSep(",", "\t   bar\n,\rbar   \t"))
+	result.Check(testkit.RowsWithSep(",", "\t   bar\n,\rbar   \t"))
 	result = tk.MustQuery(`select trim(leading from '   bar'), trim('x' from 'xxxbarxxx'), trim('x' from 'bar'), trim('' from '   bar   ')`)
-	result.Check(testutil.RowsWithSep(",", "bar,bar,bar,   bar   "))
+	result.Check(testkit.RowsWithSep(",", "bar,bar,bar,   bar   "))
 	result = tk.MustQuery(`select trim(''), trim('x' from '')`)
-	result.Check(testutil.RowsWithSep(",", ","))
+	result.Check(testkit.RowsWithSep(",", ","))
 	result = tk.MustQuery(`select trim(null from 'bar'), trim('x' from null), trim(null), trim(leading null from 'bar')`)
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
 
@@ -810,6 +811,12 @@ func TestStringBuiltin(t *testing.T) {
 	result = tk.MustQuery("select a,b,concat_ws(',',a,b) from t")
 	result.Check(testkit.Rows("114.57011441 38.04620115 114.57011441,38.04620115",
 		"-38.04620119 38.04620115 -38.04620119,38.04620115"))
+
+	// For issue 31603, only affects unistore.
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 varbinary(100));")
+	tk.MustExec("insert into t1 values('abc');")
+	tk.MustQuery("select 1 from t1 where char_length(c1) = 10;").Check(testkit.Rows())
 }
 
 func TestInvalidStrings(t *testing.T) {
@@ -895,7 +902,7 @@ func TestEncryptionBuiltin(t *testing.T) {
 	result.Check(testkit.Rows(`45ABDD5C4802EFA6771A94C43F805208 45ABDD5C4802EFA6771A94C43F805208 791F1AEB6A6B796E6352BF381895CA0E D0147E2EB856186F146D9F6DE33F9546 <nil>`))
 	result = tk.MustQuery("select HEX(AES_ENCRYPT(a, 'key', 'iv')), HEX(AES_ENCRYPT(b, 'key', 'iv')) from t")
 	result.Check(testkit.Rows("B3800B3A3CB4ECE2051A3E80FE373EAC B3800B3A3CB4ECE2051A3E80FE373EAC"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1618|<IV> option ignored", "Warning|1618|<IV> option ignored"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1618|<IV> option ignored", "Warning|1618|<IV> option ignored"))
 	tk.MustExec("SET block_encryption_mode='aes-128-cbc';")
 	result = tk.MustQuery("select HEX(AES_ENCRYPT(a, 'key', '1234567890123456')), HEX(AES_ENCRYPT(b, 'key', '1234567890123456')), HEX(AES_ENCRYPT(c, 'key', '1234567890123456')), HEX(AES_ENCRYPT(d, 'key', '1234567890123456')), HEX(AES_ENCRYPT(e, 'key', '1234567890123456')), HEX(AES_ENCRYPT(f, 'key', '1234567890123456')), HEX(AES_ENCRYPT(g, 'key', '1234567890123456')), HEX(AES_ENCRYPT(h, 'key', '1234567890123456')), HEX(AES_ENCRYPT(i, 'key', '1234567890123456')) from t")
 	result.Check(testkit.Rows("341672829F84CB6B0BE690FEC4C4DAE9 341672829F84CB6B0BE690FEC4C4DAE9 D43734E147A12BB96C6897C4BBABA283 16F2C972411948DCEF3659B726D2CCB04AD1379A1A367FA64242058A50211B67 41E71D0C58967C1F50EEC074523946D1 1117D292E2D39C3EAA3B435371BE56FC 8ACB7ECC0883B672D7BD1CFAA9FA5FAF5B731ADE978244CD581F114D591C2E7E D2B13C30937E3251AEDA73859BA32E4B 2CF4A6051FF248A67598A17AA2C17267"))
@@ -1185,6 +1192,16 @@ func TestInfoBuiltin(t *testing.T) {
 	// for version
 	result = tk.MustQuery("select version()")
 	result.Check(testkit.Rows(mysql.ServerVersion))
+
+	// for tidb_version
+	result = tk.MustQuery("select tidb_version()")
+	tidbVersionResult := ""
+	for _, line := range result.Rows() {
+		tidbVersionResult += fmt.Sprint(line)
+	}
+	lines := strings.Split(tidbVersionResult, "\n")
+	assert.Equal(t, true, strings.Split(lines[0], " ")[2] == mysql.TiDBReleaseVersion, "errors in 'select tidb_version()'")
+	assert.Equal(t, true, strings.Split(lines[1], " ")[1] == versioninfo.TiDBEdition, "errors in 'select tidb_version()'")
 
 	// for row_count
 	tk.MustExec("drop table if exists t")
@@ -1477,7 +1494,7 @@ func TestArithmeticBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("2 2 1"))
 	result = tk.MustQuery("SELECT 1.175494351E-37 div 1.7976931348623157E+308, 1.7976931348623157E+308 div -1.7976931348623157E+307, 1 div 1e-82;")
 	result.Check(testkit.Rows("0 -1 <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Truncated incorrect DECIMAL value: '1.7976931348623157e+308'",
 		"Warning|1292|Truncated incorrect DECIMAL value: '1.7976931348623157e+308'",
 		"Warning|1292|Truncated incorrect DECIMAL value: '-1.7976931348623158e+307'",
@@ -1542,7 +1559,7 @@ func TestArithmeticBuiltin(t *testing.T) {
 	tk.MustExec("insert into t value(1.2)")
 	result = tk.MustQuery("select * from t where a/0 > 1")
 	result.Check(testkit.Rows())
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1365|Division by 0"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1365|Division by 0"))
 
 	tk.MustExec("USE test;")
 	tk.MustExec("DROP TABLE IF EXISTS t;")
@@ -1753,14 +1770,14 @@ func TestCompareBuiltin(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	result = tk.MustQuery(`select greatest(cast("2017-01-01" as datetime), "123", "234", cast("2018-01-01" as date)), greatest(cast("2017-01-01" as date), "123", null)`)
 	result.Check(testkit.Rows("234 <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect time value: '123'", "Warning|1292|Incorrect time value: '234'", "Warning|1292|Incorrect time value: '123'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Incorrect time value: '123'", "Warning|1292|Incorrect time value: '234'", "Warning|1292|Incorrect time value: '123'"))
 	// for least
 	result = tk.MustQuery(`select least(1, 2, 3), least("a", "b", "c"), least(1.1, 1.2, 1.3), least("123a", 1, 2)`)
 	result.Check(testkit.Rows("1 a 1.1 1"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	result = tk.MustQuery(`select least(cast("2017-01-01" as datetime), "123", "234", cast("2018-01-01" as date)), least(cast("2017-01-01" as date), "123", null)`)
 	result.Check(testkit.Rows("123 <nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect time value: '123'", "Warning|1292|Incorrect time value: '234'", "Warning|1292|Incorrect time value: '123'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Incorrect time value: '123'", "Warning|1292|Incorrect time value: '234'", "Warning|1292|Incorrect time value: '123'"))
 	tk.MustQuery(`select 1 < 17666000000000000000, 1 > 17666000000000000000, 1 = 17666000000000000000`).Check(testkit.Rows("1 0 0"))
 
 	tk.MustExec("drop table if exists t")
@@ -1942,7 +1959,7 @@ func TestAggregationBuiltinGroupConcat(t *testing.T) {
 	tk.MustExec("set @@group_concat_max_len=7")
 	result = tk.MustQuery("select group_concat(a) from t")
 	result.Check(testkit.Rows("hello,h"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1260 Some rows were cut by GROUPCONCAT(test.t.a)"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning 1260 Some rows were cut by GROUPCONCAT(test.t.a)"))
 
 	_, err := tk.Exec("insert into d select group_concat(a) from t")
 	require.Equal(t, errors.ErrCode(mysql.ErrCutValueGroupConcat), errors.Cause(err).(*terror.Error).Code())
@@ -1950,7 +1967,7 @@ func TestAggregationBuiltinGroupConcat(t *testing.T) {
 	_, err = tk.Exec("set sql_mode=''")
 	require.NoError(t, err)
 	tk.MustExec("insert into d select group_concat(a) from t")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning 1260 Some rows were cut by GROUPCONCAT(test.t.a)"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning 1260 Some rows were cut by GROUPCONCAT(test.t.a)"))
 	tk.MustQuery("select * from d").Check(testkit.Rows("hello,h"))
 }
 
@@ -2310,7 +2327,7 @@ func TestTimeLiteral(t *testing.T) {
 
 	_, err = tk.Exec("select ADDDATE('2008-01-34', -1);")
 	require.NoError(t, err)
-	tk.MustQuery("Show warnings;").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("Show warnings;").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Incorrect datetime value: '2008-01-34'"))
 }
 
@@ -2559,7 +2576,7 @@ func TestColumnInfoModified(t *testing.T) {
 	testKit.MustExec("drop table if exists tab0")
 	testKit.MustExec("CREATE TABLE tab0(col0 INTEGER, col1 INTEGER, col2 INTEGER)")
 	testKit.MustExec("SELECT + - (- CASE + col0 WHEN + CAST( col0 AS SIGNED ) THEN col1 WHEN 79 THEN NULL WHEN + - col1 THEN col0 / + col0 END ) * - 16 FROM tab0")
-	ctx := testKit.Session().(sessionctx.Context)
+	ctx := testKit.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, _ := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tab0"))
 	col := table.FindCol(tbl.Cols(), "col1")
@@ -2600,12 +2617,12 @@ func TestIssues(t *testing.T) {
 	tk.MustExec("insert into t values('1e649'),('-1e649');")
 	r = tk.MustQuery(`SELECT * FROM t where c < 1;`)
 	r.Check(testkit.Rows("-1e649"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Truncated incorrect DOUBLE value: '1e649'",
 		"Warning|1292|Truncated incorrect DOUBLE value: '-1e649'"))
 	r = tk.MustQuery(`SELECT * FROM t where c > 1;`)
 	r.Check(testkit.Rows("1e649"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
 		"Warning|1292|Truncated incorrect DOUBLE value: '1e649'",
 		"Warning|1292|Truncated incorrect DOUBLE value: '-1e649'"))
 
@@ -2691,7 +2708,7 @@ func TestFilterExtractFromDNF(t *testing.T) {
 	ctx := context.Background()
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
-		sctx := tk.Session().(sessionctx.Context)
+		sctx := tk.Session()
 		sc := sctx.GetSessionVars().StmtCtx
 		stmts, err := session.Parse(sctx, sql)
 		require.NoError(t, err, "error %v, for expr %s", err, tt.exprStr)
@@ -2770,6 +2787,9 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
+	collate.SetNewCollationEnabledForTest(false)
+	defer collate.SetNewCollationEnabledForTest(true)
+
 	tk := testkit.NewTestKit(t, store)
 	var result *testkit.Result
 
@@ -2794,7 +2814,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	result.Check(testkit.Rows("7480000000000000FF2E5F728000000011FFE1A3000000000000"))
 	warns := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 	require.Len(t, warns, 1)
-	require.Error(t, warns[0].Err, "invalid record/index key: 7480000000000000FF2E5F728000000011FFE1A3000000000000")
+	require.EqualError(t, warns[0].Err, "invalid key: 7480000000000000FF2E5F728000000011FFE1A3000000000000")
 
 	// Test in real tables.
 	tk.MustExec("use test;")
@@ -2857,9 +2877,14 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	result.Check(testkit.Rows(rs))
 
 	// https://github.com/pingcap/tidb/issues/27434.
-	hexKey = "7480000000000000375F69800000000000000103800000000001D4C1023B6458"
-	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
+	hexKey = "7480000000000100375F69800000000000000103800000000001D4C1023B6458"
+	sql = fmt.Sprintf("select tidb_decode_key('%s')", hexKey)
 	tk.MustQuery(sql).Check(testkit.Rows(hexKey))
+
+	// https://github.com/pingcap/tidb/issues/33015.
+	hexKey = "74800000000000012B5F72800000000000A5D3"
+	sql = fmt.Sprintf("select tidb_decode_key('%s')", hexKey)
+	tk.MustQuery(sql).Check(testkit.Rows(`{"_tidb_rowid":42451,"table_id":"299"}`))
 
 	// Test the table with the nonclustered index.
 	const rowID = 10
@@ -3472,37 +3497,34 @@ func TestExprPushdown(t *testing.T) {
 		"(4,'511111','611',7,8,9),(5,'611111','711',8,9,10)")
 
 	// case 1, index scan without double read, some filters can not be pushed to cop task
-	rows := tk.MustQuery("explain format = 'brief' select col2, col1 from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Rows()
-	require.Equal(t, "root", fmt.Sprintf("%v", rows[1][2]))
-	require.Equal(t, "eq(substr(test.t.col1, 1, 1), \"4\")", fmt.Sprintf("%v", rows[1][4]))
-	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[3][2]))
-	require.Equal(t, "like(test.t.col2, \"5%\", 92)", fmt.Sprintf("%v", rows[3][4]))
-	tk.MustQuery("select col2, col1 from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("511 411111"))
-	tk.MustQuery("select count(col2) from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("1"))
+	rows := tk.MustQuery("explain format = 'brief' select col2, col1 from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
+	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[2][2]))
+	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\"), like(test.t.col2, \"5%\", 92)", fmt.Sprintf("%v", rows[2][4]))
+	tk.MustQuery("select col2, col1 from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("511 411111"))
+	tk.MustQuery("select count(col2) from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
 
 	// case 2, index scan without double read, none of the filters can be pushed to cop task
-	rows = tk.MustQuery("explain format = 'brief' select col1, col2 from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Rows()
-	require.Equal(t, "root", fmt.Sprintf("%v", rows[0][2]))
-	require.Equal(t, "eq(substr(test.t.col1, 1, 1), \"4\"), eq(substr(test.t.col2, 1, 1), \"5\")", fmt.Sprintf("%v", rows[0][4]))
-	tk.MustQuery("select col1, col2 from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("411111 511"))
-	tk.MustQuery("select count(col1) from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("1"))
+	rows = tk.MustQuery("explain format = 'brief' select col1, col2 from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
+	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[1][2]))
+	require.Equal(t, `eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), "4"), eq(from_base64(to_base64(substr(test.t.col2, 1, 1))), "5")`, fmt.Sprintf("%v", rows[1][4]))
+	tk.MustQuery("select col1, col2 from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("411111 511"))
+	tk.MustQuery("select count(col1) from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
 
 	// case 3, index scan with double read, some filters can not be pushed to cop task
-	rows = tk.MustQuery("explain format = 'brief' select id from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Rows()
-	require.Equal(t, "root", fmt.Sprintf("%v", rows[1][2]))
-	require.Equal(t, "eq(substr(test.t.col1, 1, 1), \"4\")", fmt.Sprintf("%v", rows[1][4]))
-	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[3][2]))
-	require.Equal(t, "like(test.t.col2, \"5%\", 92)", fmt.Sprintf("%v", rows[3][4]))
-	tk.MustQuery("select id from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("3"))
-	tk.MustQuery("select count(id) from t use index(key1) where col2 like '5%' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("1"))
+	rows = tk.MustQuery("explain format = 'brief' select id from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
+	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[2][2]))
+	require.Equal(t, `eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), "4"), like(test.t.col2, "5%", 92)`, fmt.Sprintf("%v", rows[2][4]))
+	tk.MustQuery("select id from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(id) from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
 
 	// case 4, index scan with double read, none of the filters can be pushed to cop task
-	rows = tk.MustQuery("explain format = 'brief' select id from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Rows()
-	require.Equal(t, "root", fmt.Sprintf("%v", rows[1][2]))
-	require.Equal(t, "eq(substr(test.t.col1, 1, 1), \"4\"), eq(substr(test.t.col2, 1, 1), \"5\")", fmt.Sprintf("%v", rows[1][4]))
-	tk.MustQuery("select id from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("3"))
-	tk.MustQuery("select count(id) from t use index(key2) where substr(col2, 1, 1) = '5' and substr(col1, 1, 1) = '4'").Check(testkit.Rows("1"))
+	rows = tk.MustQuery("explain format = 'brief' select id from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
+	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[2][2]))
+	require.Equal(t, `eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), "4"), eq(from_base64(to_base64(substr(test.t.col2, 1, 1))), "5")`, fmt.Sprintf("%v", rows[2][4]))
+	tk.MustQuery("select id from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("3"))
+	tk.MustQuery("select count(id) from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
 }
+
 func TestIssue16973(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -4169,7 +4191,7 @@ func TestSelectLimitPlanCache(t *testing.T) {
 	tk.MustQuery("execute stmt").Check(testkit.Rows("1", "2"))
 }
 
-func TestCollation(t *testing.T) {
+func TestCollationAndCharset(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -4179,51 +4201,51 @@ func TestCollation(t *testing.T) {
 	tk.MustExec("create table t (utf8_bin_c varchar(10) charset utf8 collate utf8_bin, utf8_gen_c varchar(10) charset utf8 collate utf8_general_ci, bin_c binary, num_c int, " +
 		"abin char collate ascii_bin, lbin char collate latin1_bin, u4bin char collate utf8mb4_bin, u4ci char collate utf8mb4_general_ci)")
 	tk.MustExec("insert into t values ('a', 'b', 'c', 4, 'a', 'a', 'a', 'a')")
-	tk.MustQuery("select collation(null)").Check(testkit.Rows("binary"))
-	tk.MustQuery("select collation(2)").Check(testkit.Rows("binary"))
-	tk.MustQuery("select collation(2 + 'a')").Check(testkit.Rows("binary"))
-	tk.MustQuery("select collation(2 + utf8_gen_c) from t").Check(testkit.Rows("binary"))
-	tk.MustQuery("select collation(2 + utf8_bin_c) from t").Check(testkit.Rows("binary"))
-	tk.MustQuery("select collation(concat(utf8_bin_c, 2)) from t").Check(testkit.Rows("utf8_bin"))
-	tk.MustQuery("select collation(concat(utf8_gen_c, 'abc')) from t").Check(testkit.Rows("utf8_general_ci"))
-	tk.MustQuery("select collation(concat(utf8_gen_c, null)) from t").Check(testkit.Rows("utf8_general_ci"))
-	tk.MustQuery("select collation(concat(utf8_gen_c, num_c)) from t").Check(testkit.Rows("utf8_general_ci"))
-	tk.MustQuery("select collation(concat(utf8_bin_c, utf8_gen_c)) from t").Check(testkit.Rows("utf8_bin"))
-	tk.MustQuery("select collation(upper(utf8_bin_c)) from t").Check(testkit.Rows("utf8_bin"))
-	tk.MustQuery("select collation(upper(utf8_gen_c)) from t").Check(testkit.Rows("utf8_general_ci"))
-	tk.MustQuery("select collation(upper(bin_c)) from t").Check(testkit.Rows("binary"))
-	tk.MustQuery("select collation(concat(abin, bin_c)) from t").Check(testkit.Rows("binary"))
-	tk.MustQuery("select collation(concat(lbin, bin_c)) from t").Check(testkit.Rows("binary"))
-	tk.MustQuery("select collation(concat(utf8_bin_c, bin_c)) from t").Check(testkit.Rows("binary"))
-	tk.MustQuery("select collation(concat(utf8_gen_c, bin_c)) from t").Check(testkit.Rows("binary"))
-	tk.MustQuery("select collation(concat(u4bin, bin_c)) from t").Check(testkit.Rows("binary"))
-	tk.MustQuery("select collation(concat(u4ci, bin_c)) from t").Check(testkit.Rows("binary"))
-	tk.MustQuery("select collation(concat(abin, u4bin)) from t").Check(testkit.Rows("utf8mb4_bin"))
-	tk.MustQuery("select collation(concat(lbin, u4bin)) from t").Check(testkit.Rows("utf8mb4_bin"))
-	tk.MustQuery("select collation(concat(utf8_bin_c, u4bin)) from t").Check(testkit.Rows("utf8mb4_bin"))
-	tk.MustQuery("select collation(concat(utf8_gen_c, u4bin)) from t").Check(testkit.Rows("utf8mb4_bin"))
-	tk.MustQuery("select collation(concat(u4ci, u4bin)) from t").Check(testkit.Rows("utf8mb4_bin"))
-	tk.MustQuery("select collation(concat(abin, u4ci)) from t").Check(testkit.Rows("utf8mb4_general_ci"))
-	tk.MustQuery("select collation(concat(lbin, u4ci)) from t").Check(testkit.Rows("utf8mb4_general_ci"))
-	tk.MustQuery("select collation(concat(utf8_bin_c, u4ci)) from t").Check(testkit.Rows("utf8mb4_general_ci"))
-	tk.MustQuery("select collation(concat(utf8_gen_c, u4ci)) from t").Check(testkit.Rows("utf8mb4_general_ci"))
-	tk.MustQuery("select collation(concat(abin, utf8_bin_c)) from t").Check(testkit.Rows("utf8_bin"))
-	tk.MustQuery("select collation(concat(lbin, utf8_bin_c)) from t").Check(testkit.Rows("utf8_bin"))
-	tk.MustQuery("select collation(concat(utf8_gen_c, utf8_bin_c)) from t").Check(testkit.Rows("utf8_bin"))
-	tk.MustQuery("select collation(concat(abin, utf8_gen_c)) from t").Check(testkit.Rows("utf8_general_ci"))
-	tk.MustQuery("select collation(concat(lbin, utf8_gen_c)) from t").Check(testkit.Rows("utf8_general_ci"))
-	tk.MustQuery("select collation(concat(abin, lbin)) from t").Check(testkit.Rows("latin1_bin"))
+	tk.MustQuery("select collation(null), charset(null)").Check(testkit.Rows("binary binary"))
+	tk.MustQuery("select collation(2), charset(2)").Check(testkit.Rows("binary binary"))
+	tk.MustQuery("select collation(2 + 'a'), charset(2 + 'a')").Check(testkit.Rows("binary binary"))
+	tk.MustQuery("select collation(2 + utf8_gen_c), charset(2 + utf8_gen_c) from t").Check(testkit.Rows("binary binary"))
+	tk.MustQuery("select collation(2 + utf8_bin_c), charset(2 + utf8_bin_c) from t").Check(testkit.Rows("binary binary"))
+	tk.MustQuery("select collation(concat(utf8_bin_c, 2)), charset(concat(utf8_bin_c, 2)) from t").Check(testkit.Rows("utf8_bin utf8"))
+	tk.MustQuery("select collation(concat(utf8_gen_c, 'abc')), charset(concat(utf8_gen_c, 'abc')) from t").Check(testkit.Rows("utf8_general_ci utf8"))
+	tk.MustQuery("select collation(concat(utf8_gen_c, null)), charset(concat(utf8_gen_c, null)) from t").Check(testkit.Rows("utf8_general_ci utf8"))
+	tk.MustQuery("select collation(concat(utf8_gen_c, num_c)), charset(concat(utf8_gen_c, num_c)) from t").Check(testkit.Rows("utf8_general_ci utf8"))
+	tk.MustQuery("select collation(concat(utf8_bin_c, utf8_gen_c)), charset(concat(utf8_bin_c, utf8_gen_c)) from t").Check(testkit.Rows("utf8_bin utf8"))
+	tk.MustQuery("select collation(upper(utf8_bin_c)), charset(upper(utf8_bin_c)) from t").Check(testkit.Rows("utf8_bin utf8"))
+	tk.MustQuery("select collation(upper(utf8_gen_c)), charset(upper(utf8_gen_c)) from t").Check(testkit.Rows("utf8_general_ci utf8"))
+	tk.MustQuery("select collation(upper(bin_c)), charset(upper(bin_c)) from t").Check(testkit.Rows("binary binary"))
+	tk.MustQuery("select collation(concat(abin, bin_c)), charset(concat(abin, bin_c)) from t").Check(testkit.Rows("binary binary"))
+	tk.MustQuery("select collation(concat(lbin, bin_c)), charset(concat(lbin, bin_c)) from t").Check(testkit.Rows("binary binary"))
+	tk.MustQuery("select collation(concat(utf8_bin_c, bin_c)), charset(concat(utf8_bin_c, bin_c)) from t").Check(testkit.Rows("binary binary"))
+	tk.MustQuery("select collation(concat(utf8_gen_c, bin_c)), charset(concat(utf8_gen_c, bin_c)) from t").Check(testkit.Rows("binary binary"))
+	tk.MustQuery("select collation(concat(u4bin, bin_c)), charset(concat(u4bin, bin_c)) from t").Check(testkit.Rows("binary binary"))
+	tk.MustQuery("select collation(concat(u4ci, bin_c)), charset(concat(u4ci, bin_c)) from t").Check(testkit.Rows("binary binary"))
+	tk.MustQuery("select collation(concat(abin, u4bin)), charset(concat(abin, u4bin)) from t").Check(testkit.Rows("utf8mb4_bin utf8mb4"))
+	tk.MustQuery("select collation(concat(lbin, u4bin)), charset(concat(lbin, u4bin)) from t").Check(testkit.Rows("utf8mb4_bin utf8mb4"))
+	tk.MustQuery("select collation(concat(utf8_bin_c, u4bin)), charset(concat(utf8_bin_c, u4bin)) from t").Check(testkit.Rows("utf8mb4_bin utf8mb4"))
+	tk.MustQuery("select collation(concat(utf8_gen_c, u4bin)), charset(concat(utf8_gen_c, u4bin)) from t").Check(testkit.Rows("utf8mb4_bin utf8mb4"))
+	tk.MustQuery("select collation(concat(u4ci, u4bin)), charset(concat(u4ci, u4bin)) from t").Check(testkit.Rows("utf8mb4_bin utf8mb4"))
+	tk.MustQuery("select collation(concat(abin, u4ci)), charset(concat(abin, u4ci)) from t").Check(testkit.Rows("utf8mb4_general_ci utf8mb4"))
+	tk.MustQuery("select collation(concat(lbin, u4ci)), charset(concat(lbin, u4ci)) from t").Check(testkit.Rows("utf8mb4_general_ci utf8mb4"))
+	tk.MustQuery("select collation(concat(utf8_bin_c, u4ci)), charset(concat(utf8_bin_c, u4ci)) from t").Check(testkit.Rows("utf8mb4_general_ci utf8mb4"))
+	tk.MustQuery("select collation(concat(utf8_gen_c, u4ci)), charset(concat(utf8_gen_c, u4ci)) from t").Check(testkit.Rows("utf8mb4_general_ci utf8mb4"))
+	tk.MustQuery("select collation(concat(abin, utf8_bin_c)), charset(concat(abin, utf8_bin_c)) from t").Check(testkit.Rows("utf8_bin utf8"))
+	tk.MustQuery("select collation(concat(lbin, utf8_bin_c)), charset(concat(lbin, utf8_bin_c)) from t").Check(testkit.Rows("utf8_bin utf8"))
+	tk.MustQuery("select collation(concat(utf8_gen_c, utf8_bin_c)), charset(concat(utf8_gen_c, utf8_bin_c)) from t").Check(testkit.Rows("utf8_bin utf8"))
+	tk.MustQuery("select collation(concat(abin, utf8_gen_c)), charset(concat(abin, utf8_gen_c)) from t").Check(testkit.Rows("utf8_general_ci utf8"))
+	tk.MustQuery("select collation(concat(lbin, utf8_gen_c)), charset(concat(lbin, utf8_gen_c)) from t").Check(testkit.Rows("utf8_general_ci utf8"))
+	tk.MustQuery("select collation(concat(abin, lbin)), charset(concat(abin, lbin)) from t").Check(testkit.Rows("latin1_bin latin1"))
 
 	tk.MustExec("set names utf8mb4 collate utf8mb4_bin")
-	tk.MustQuery("select collation('a')").Check(testkit.Rows("utf8mb4_bin"))
+	tk.MustQuery("select collation('a'), charset('a')").Check(testkit.Rows("utf8mb4_bin utf8mb4"))
 	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci")
-	tk.MustQuery("select collation('a')").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustQuery("select collation('a'), charset('a')").Check(testkit.Rows("utf8mb4_general_ci utf8mb4"))
 
 	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci")
 	tk.MustExec("set @test_collate_var = 'a'")
-	tk.MustQuery("select collation(@test_collate_var)").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustQuery("select collation(@test_collate_var), charset(@test_collate_var)").Check(testkit.Rows("utf8mb4_general_ci utf8mb4"))
 	tk.MustExec("set @test_collate_var = concat(\"a\", \"b\" collate utf8mb4_bin)")
-	tk.MustQuery("select collation(@test_collate_var)").Check(testkit.Rows("utf8mb4_bin"))
+	tk.MustQuery("select collation(@test_collate_var), charset(@test_collate_var)").Check(testkit.Rows("utf8mb4_bin utf8mb4"))
 
 	tk.MustQuery("select locate('1', '123' collate utf8mb4_bin, 2 collate `binary`);").Check(testkit.Rows("0"))
 	tk.MustQuery("select 1 in ('a' collate utf8mb4_bin, 'b' collate utf8mb4_general_ci);").Check(testkit.Rows("0"))
@@ -4755,17 +4777,6 @@ func TestIssue17287(t *testing.T) {
 	tk.MustExec("set @val2 = 1589873946;")
 	tk.MustQuery("execute stmt7 using @val1;").Check(testkit.Rows("1589873945"))
 	tk.MustQuery("execute stmt7 using @val2;").Check(testkit.Rows("1589873946"))
-}
-
-func TestIssue26989(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
-	tk.MustQuery("select position('a' in 'AA');").Check(testkit.Rows("0"))
-	tk.MustQuery("select locate('a', 'AA');").Check(testkit.Rows("0"))
-	tk.MustQuery("select locate('a', 'a');").Check(testkit.Rows("1"))
 }
 
 func TestIssue17898(t *testing.T) {
@@ -5764,7 +5775,7 @@ func TestVitessHash(t *testing.T) {
 		"(1, 30375298039), " +
 		"(2, 1123), " +
 		"(3, 30573721600), " +
-		"(4, " + fmt.Sprintf("%d", uint64(math.MaxUint64)) + ")," +
+		"(4, " + strconv.FormatUint(uint64(math.MaxUint64), 10) + ")," +
 		"(5, 116)," +
 		"(6, null);")
 
@@ -6988,4 +6999,78 @@ func TestIssue30264(t *testing.T) {
 	tk.MustQuery("select greatest(date '21000101', a) from t1;").Check(testkit.Rows("2100-01-01 00:00:00"))
 	// compare JSON/JSON, return JSON type
 	tk.MustQuery("select greatest(cast(a as JSON), cast('3' as JSON)) from t1;").Check(testkit.Rows("3"))
+}
+
+func TestIssue29708(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (a text)character set utf8 ;")
+	_, err := tk.Exec("INSERT INTO t1 VALUES  (REPEAT(0125,200000000));")
+	require.NotNil(t, err)
+	tk.MustQuery("select * from t1").Check(nil)
+
+	// test vectorized build-in function
+	tk.MustExec("insert into t1 (a) values ('a'),('b');")
+	_, err = tk.Exec("insert into t1 select REPEAT(a,200000000) from t1;")
+	require.NotNil(t, err)
+	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
+		{"a"},
+		{"b"},
+	})
+
+	// test cast
+	_, err = tk.Exec(`insert into t1 values  (cast("a" as binary(4294967295)));`)
+	require.NotNil(t, err)
+	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
+		{"a"},
+		{"b"},
+	})
+
+	_, err = tk.Exec("INSERT IGNORE INTO t1 VALUES (REPEAT(0125,200000000));")
+	require.NoError(t, err)
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1301 Result of repeat() was larger than max_allowed_packet (67108864) - truncated"))
+	tk.MustQuery("select a from t1 order by a;").Check([][]interface{}{
+		{nil},
+		{"a"},
+		{"b"},
+	})
+}
+
+func TestIssue22206(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tz := tk.Session().GetSessionVars().StmtCtx.TimeZone
+	result := tk.MustQuery("select from_unixtime(32536771199.999999)")
+	unixTime := time.Unix(32536771199, 999999000).In(tz).String()[:26]
+	result.Check(testkit.Rows(unixTime))
+	result = tk.MustQuery("select from_unixtime('32536771200.000000')")
+	result.Check(testkit.Rows("<nil>"))
+	result = tk.MustQuery("select from_unixtime(5000000000);")
+	unixTime = time.Unix(5000000000, 0).In(tz).String()[:19]
+	result.Check(testkit.Rows(unixTime))
+}
+
+func TestIssue32488(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a varchar(32)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;")
+	tk.MustExec("insert into t values('ʞ'), ('İ');")
+	tk.MustExec("set @@tidb_enable_vectorized_expression = false;")
+	tk.MustQuery("select binary upper(a), lower(a) from t order by upper(a);").Check([][]interface{}{{"İ i"}, {"Ʞ ʞ"}})
+	tk.MustQuery("select distinct upper(a), lower(a) from t order by upper(a);").Check([][]interface{}{{"İ i"}, {"Ʞ ʞ"}})
+	tk.MustExec("set @@tidb_enable_vectorized_expression = true;")
+	tk.MustQuery("select binary upper(a), lower(a) from t order by upper(a);").Check([][]interface{}{{"İ i"}, {"Ʞ ʞ"}})
+	tk.MustQuery("select distinct upper(a), lower(a) from t order by upper(a);").Check([][]interface{}{{"İ i"}, {"Ʞ ʞ"}})
 }

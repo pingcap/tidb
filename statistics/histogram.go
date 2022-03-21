@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unsafe"
@@ -429,28 +430,17 @@ func (hg *Histogram) ToString(idxCols int) string {
 // equalRowCount estimates the row count where the column equals to value.
 // matched: return true if this returned row count is from Bucket.Repeat or bucket NDV, which is more accurate than if not.
 func (hg *Histogram) equalRowCount(value types.Datum, hasBucketNDV bool) (count float64, matched bool) {
-	index, match := hg.Bounds.LowerBound(0, &value)
-	// Since we store the lower and upper bound together, if the index is an odd number, then it points to a upper bound.
-	if index%2 == 1 {
-		if match {
-			return float64(hg.Buckets[index/2].Repeat), true
-		}
-		if hasBucketNDV && hg.Buckets[index/2].NDV > 1 {
-			return float64(hg.bucketCount(index/2)-hg.Buckets[index/2].Repeat) / float64(hg.Buckets[index/2].NDV-1), true
-		}
-		return hg.notNullCount() / float64(hg.NDV), false
+	_, bucketIdx, inBucket, match := hg.locateBucket(value)
+	if !inBucket {
+		return 0, false
 	}
 	if match {
-		cmp := chunk.GetCompareFunc(hg.Tp)
-		if cmp(hg.Bounds.GetRow(index), 0, hg.Bounds.GetRow(index+1), 0) == 0 {
-			return float64(hg.Buckets[index/2].Repeat), true
-		}
-		if hasBucketNDV && hg.Buckets[index/2].NDV > 1 {
-			return float64(hg.bucketCount(index/2)-hg.Buckets[index/2].Repeat) / float64(hg.Buckets[index/2].NDV-1), true
-		}
-		return hg.notNullCount() / float64(hg.NDV), false
+		return float64(hg.Buckets[bucketIdx].Repeat), true
 	}
-	return 0, false
+	if hasBucketNDV && hg.Buckets[bucketIdx].NDV > 1 {
+		return float64(hg.bucketCount(bucketIdx)-hg.Buckets[bucketIdx].Repeat) / float64(hg.Buckets[bucketIdx].NDV-1), true
+	}
+	return hg.notNullCount() / float64(hg.NDV), false
 }
 
 // greaterRowCount estimates the row count where the column greater than value.
@@ -461,30 +451,69 @@ func (hg *Histogram) greaterRowCount(value types.Datum) float64 {
 	return math.Max(0, gtCount)
 }
 
+// locateBucket locates where a value falls in the range of the Histogram.
+// Return value:
+// 	exceed: if the value is larger than the upper bound of the last Bucket of the Histogram
+// 	bucketIdx: assuming exceed if false, which Bucket does this value fall in (note: the range before a Bucket is also
+//		considered belong to this Bucket)
+// 	inBucket: assuming exceed if false, whether this value falls in this Bucket, instead of falls between
+//		this Bucket and the previous Bucket.
+// 	matchLastValue: assuming inBucket is true, if this value is the last value in this Bucket, which has a counter (Bucket.Repeat)
+// Examples:
+// 	val0 |<-[bkt0]->| |<-[bkt1]->val1(last value)| val2 |<--val3--[bkt2]->| |<-[bkt3]->| val4
+// 	locateBucket(val0): false, 0, false, false
+// 	locateBucket(val1): false, 1, true, true
+// 	locateBucket(val2): false, 2, false, false
+// 	locateBucket(val3): false, 2, true, false
+// 	locateBucket(val4): true, 3, false, false
+func (hg *Histogram) locateBucket(value types.Datum) (exceed bool, bucketIdx int, inBucket, matchLastValue bool) {
+	// Empty histogram
+	if hg == nil || hg.Bounds.NumRows() == 0 {
+		return true, 0, false, false
+	}
+	index, match := hg.Bounds.LowerBound(0, &value)
+	// The value is larger than the max value in the histogram (exceed is true)
+	if index >= hg.Bounds.NumRows() {
+		return true, hg.Len() - 1, false, false
+	}
+	bucketIdx = index / 2
+	// The value is before this bucket
+	if index%2 == 0 && !match {
+		return false, bucketIdx, false, false
+	}
+	// The value matches the last value in this bucket
+	// case 1: The LowerBound()'s return value tells us the value matches an upper bound of a bucket
+	// case 2: We compare and find that the value is equal to the upper bound of this bucket. This might happen when
+	//           the bucket's lower bound is equal to its upper bound.
+	if (index%2 == 1 && match) || chunk.Compare(hg.Bounds.GetRow(bucketIdx*2+1), 0, &value) == 0 {
+		return false, bucketIdx, true, true
+	}
+	// The value is in the bucket and isn't the last value in this bucket
+	return false, bucketIdx, true, false
+}
+
 // LessRowCountWithBktIdx estimates the row count where the column less than value.
 func (hg *Histogram) LessRowCountWithBktIdx(value types.Datum) (float64, int) {
 	// All the values are null.
 	if hg.Bounds.NumRows() == 0 {
 		return 0, 0
 	}
-	index, match := hg.Bounds.LowerBound(0, &value)
-	if index == hg.Bounds.NumRows() {
+	exceed, bucketIdx, inBucket, match := hg.locateBucket(value)
+	if exceed {
 		return hg.notNullCount(), hg.Len() - 1
 	}
-	// Since we store the lower and upper bound together, so dividing the index by 2 will get the bucket index.
-	bucketIdx := index / 2
-	curCount, curRepeat := float64(hg.Buckets[bucketIdx].Count), float64(hg.Buckets[bucketIdx].Repeat)
 	preCount := float64(0)
 	if bucketIdx > 0 {
 		preCount = float64(hg.Buckets[bucketIdx-1].Count)
 	}
-	if index%2 == 1 {
-		if match {
-			return curCount - curRepeat, bucketIdx
-		}
-		return preCount + hg.calcFraction(bucketIdx, &value)*(curCount-curRepeat-preCount), bucketIdx
+	if !inBucket {
+		return preCount, bucketIdx
 	}
-	return preCount, bucketIdx
+	curCount, curRepeat := float64(hg.Buckets[bucketIdx].Count), float64(hg.Buckets[bucketIdx].Repeat)
+	if match {
+		return curCount - curRepeat, bucketIdx
+	}
+	return preCount + hg.calcFraction(bucketIdx, &value)*(curCount-curRepeat-preCount), bucketIdx
 }
 
 func (hg *Histogram) lessRowCount(value types.Datum) float64 {
@@ -1020,6 +1049,17 @@ type Column struct {
 	Flag           int64
 	LastAnalyzePos types.Datum
 	StatsVer       int64 // StatsVer is the version of the current stats, used to maintain compatibility
+
+	// Loaded means if the histogram, the topn and the cm sketch are loaded fully.
+	// Those three parts of a Column is loaded lazily. It will only be loaded after trying to use them.
+	// Note: Currently please use Column.IsLoaded() to check if it's loaded.
+	Loaded bool
+}
+
+// IsLoaded is a wrap around c.Loaded.
+// It's just for safe when we are switching from `c.notNullCount() > 0)` to `c.Loaded`.
+func (c *Column) IsLoaded() bool {
+	return c.Loaded || c.notNullCount() > 0
 }
 
 func (c *Column) String() string {
@@ -1074,10 +1114,28 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 	if collPseudo && c.NotAccurate() {
 		return true
 	}
-	if c.Histogram.NDV > 0 && c.notNullCount() == 0 && sctx != nil && sctx.GetSessionVars().StmtCtx != nil {
-		HistogramNeededColumns.insert(tableColumnID{TableID: c.PhysicalID, ColumnID: c.Info.ID})
+	if sctx != nil {
+		stmtctx := sctx.GetSessionVars().StmtCtx
+		if stmtctx != nil && stmtctx.StatsLoad.Fallback {
+			return true
+		}
+		if !c.IsLoaded() && stmtctx != nil {
+			if stmtctx.StatsLoad.Timeout > 0 {
+				logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
+					zap.String(strconv.FormatInt(c.Info.ID, 10), c.Info.Name.O))
+			}
+			// In some tests, the c.Info is not set, so we add this check here.
+			if c.Info != nil {
+				HistogramNeededColumns.insert(tableColumnID{TableID: c.PhysicalID, ColumnID: c.Info.ID})
+			}
+		}
 	}
-	return c.TotalRowCount() == 0 || (c.Histogram.NDV > 0 && c.notNullCount() == 0)
+	return c.TotalRowCount() == 0 || !c.IsLoaded()
+}
+
+// IsHistNeeded checks if this column needs histogram to be loaded
+func (c *Column) IsHistNeeded(collPseudo bool) bool {
+	return (!collPseudo || !c.NotAccurate()) && !c.IsLoaded()
 }
 
 func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encodedVal []byte, realtimeRowCount int64) (float64, error) {
@@ -1194,18 +1252,21 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 		cnt := c.BetweenRowCount(sctx, lowVal, highVal, lowEncoded, highEncoded)
 		// `betweenRowCount` returns count for [l, h) range, we adjust cnt for boundaries here.
 		// Note that, `cnt` does not include null values, we need specially handle cases
-		// where null is the lower bound.
-		if rg.LowExclude && !lowVal.IsNull() {
+		//   where null is the lower bound.
+		// And because we use (2, MaxValue] to represent expressions like a > 2 and use [MinNotNull, 3) to represent
+		//   expressions like b < 3, we need to exclude the special values.
+		if rg.LowExclude && !lowVal.IsNull() && lowVal.Kind() != types.KindMaxValue && lowVal.Kind() != types.KindMinNotNull {
 			lowCnt, err := c.equalRowCount(sctx, lowVal, lowEncoded, realtimeRowCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
 			cnt -= lowCnt
+			cnt = clampRowCount(cnt, c.notNullCount())
 		}
 		if !rg.LowExclude && lowVal.IsNull() {
 			cnt += float64(c.NullCount)
 		}
-		if !rg.HighExclude {
+		if !rg.HighExclude && highVal.Kind() != types.KindMaxValue && highVal.Kind() != types.KindMinNotNull {
 			highCnt, err := c.equalRowCount(sctx, highVal, highEncoded, realtimeRowCount)
 			if err != nil {
 				return 0, errors.Trace(err)
@@ -1213,11 +1274,7 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 			cnt += highCnt
 		}
 
-		if cnt > c.TotalRowCount() {
-			cnt = c.TotalRowCount()
-		} else if cnt < 0 {
-			cnt = 0
-		}
+		cnt = clampRowCount(cnt, c.TotalRowCount())
 
 		// If the current table row count has changed, we should scale the row count accordingly.
 		cnt *= c.GetIncreaseFactor(realtimeRowCount)
@@ -1233,11 +1290,8 @@ func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Ran
 
 		rowCount += cnt
 	}
-	if rowCount > float64(realtimeRowCount) {
-		rowCount = float64(realtimeRowCount)
-	} else if rowCount < 0 {
-		rowCount = 0
-	}
+
+	rowCount = clampRowCount(rowCount, float64(realtimeRowCount))
 	return rowCount, nil
 }
 
@@ -1387,7 +1441,30 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 				return 0, err
 			}
 			if expBackoffSuccess {
-				totalCount += expBackoffSel * idx.TotalRowCount()
+				expBackoffCnt := expBackoffSel * idx.TotalRowCount()
+
+				upperLimit := expBackoffCnt
+				// Use the multi-column stats to calculate the max possible row count of [l, r)
+				if idx.Len() > 0 {
+					_, lowerBkt, _, _ := idx.locateBucket(l)
+					_, upperBkt, _, _ := idx.locateBucket(r)
+					// Use Count of the Bucket before l as the lower bound.
+					preCount := float64(0)
+					if lowerBkt > 0 {
+						preCount = float64(idx.Buckets[lowerBkt-1].Count)
+					}
+					// Use Count of the Bucket where r exists as the upper bound.
+					upperCnt := float64(idx.Buckets[upperBkt].Count)
+					upperLimit = upperCnt - preCount
+					upperLimit += float64(idx.TopN.BetweenCount(lb, rb))
+				}
+
+				// If the result of exponential backoff strategy is larger than the result from multi-column stats,
+				// 	use the upper limit from multi-column histogram instead.
+				if expBackoffCnt > upperLimit {
+					expBackoffCnt = upperLimit
+				}
+				totalCount += expBackoffCnt
 			}
 		}
 		if !expBackoffSuccess {
@@ -1406,9 +1483,8 @@ func (idx *Index) GetRowCount(sctx sessionctx.Context, coll *HistColl, indexRang
 			totalCount += idx.Histogram.outOfRangeRowCount(&l, &r, increaseCount)
 		}
 	}
-	if totalCount > float64(realtimeRowCount) {
-		totalCount = float64(realtimeRowCount)
-	}
+
+	totalCount = clampRowCount(totalCount, float64(realtimeRowCount))
 	return totalCount, nil
 }
 
@@ -1635,6 +1711,7 @@ func (coll *HistColl) NewHistCollBySelectivity(sctx sessionctx.Context, statsNod
 				zap.Error(err))
 			continue
 		}
+		newCol.Loaded = oldCol.Loaded
 		newColl.Columns[node.ID] = newCol
 	}
 	for id, idx := range coll.Indices {
@@ -1660,6 +1737,16 @@ func (idx *Index) outOfRange(val types.Datum) bool {
 		return false
 	}
 	return true
+}
+
+func clampRowCount(rowCount, upperLimit float64) (clampedRowCount float64) {
+	if rowCount > upperLimit {
+		return upperLimit
+	}
+	if rowCount < 0 {
+		return 0
+	}
+	return rowCount
 }
 
 // matchPrefix checks whether ad is the prefix of value

@@ -71,7 +71,7 @@ type Writer interface {
 
 // ExternalStorage represents a kind of file system storage.
 type ExternalStorage interface {
-	// WriteFile writes a complete file to storage, similar to os.WriteFile
+	// WriteFile writes a complete file to storage, similar to os.WriteFile, but WriteFile should be atomic
 	WriteFile(ctx context.Context, name string, data []byte) error
 	// ReadFile reads a complete file from storage, similar to os.ReadFile
 	ReadFile(ctx context.Context, name string) ([]byte, error)
@@ -94,6 +94,8 @@ type ExternalStorage interface {
 
 	// Create opens a file writer by path. path is relative path to storage base path
 	Create(ctx context.Context, path string) (ExternalFileWriter, error)
+	// Rename file name from oldFileName to newFileName
+	Rename(ctx context.Context, oldFileName, newFileName string) error
 }
 
 // ExternalFileReader represents the streaming external file reader.
@@ -165,6 +167,8 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalSt
 			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "GCS config not found")
 		}
 		return newGCSStorage(ctx, backend.Gcs, opts)
+	case *backuppb.StorageBackend_AzureBlobStorage:
+		return newAzureBlobStorage(ctx, backend.AzureBlobStorage, opts)
 	default:
 		return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "storage %T is not supported yet", backend)
 	}

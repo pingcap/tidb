@@ -180,7 +180,7 @@ func ConvertConfigItem2JSON(ctx sessionctx.Context, key string, val expression.E
 		var s string
 		s, isNull, err = val.EvalString(ctx, chunk.Row{})
 		if err == nil && !isNull {
-			str = fmt.Sprintf(`"%s"`, s)
+			str = fmt.Sprintf("%q", s)
 		}
 	case types.ETInt:
 		var i int64

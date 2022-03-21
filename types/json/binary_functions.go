@@ -988,8 +988,8 @@ func ContainsBinary(obj, target BinaryJSON) bool {
 	switch obj.TypeCode {
 	case TypeCodeObject:
 		if target.TypeCode == TypeCodeObject {
-			len := target.GetElemCount()
-			for i := 0; i < len; i++ {
+			elemCount := target.GetElemCount()
+			for i := 0; i < elemCount; i++ {
 				key := target.objectGetKey(i)
 				val := target.objectGetVal(i)
 				if exp, exists := obj.objectSearchKey(key); !exists || !ContainsBinary(exp, val) {
@@ -1001,16 +1001,16 @@ func ContainsBinary(obj, target BinaryJSON) bool {
 		return false
 	case TypeCodeArray:
 		if target.TypeCode == TypeCodeArray {
-			len := target.GetElemCount()
-			for i := 0; i < len; i++ {
+			elemCount := target.GetElemCount()
+			for i := 0; i < elemCount; i++ {
 				if !ContainsBinary(obj, target.arrayGetElem(i)) {
 					return false
 				}
 			}
 			return true
 		}
-		len := obj.GetElemCount()
-		for i := 0; i < len; i++ {
+		elemCount := obj.GetElemCount()
+		for i := 0; i < elemCount; i++ {
 			if ContainsBinary(obj.arrayGetElem(i), target) {
 				return true
 			}
@@ -1034,9 +1034,9 @@ func ContainsBinary(obj, target BinaryJSON) bool {
 func (bj BinaryJSON) GetElemDepth() int {
 	switch bj.TypeCode {
 	case TypeCodeObject:
-		len := bj.GetElemCount()
+		elemCount := bj.GetElemCount()
 		maxDepth := 0
-		for i := 0; i < len; i++ {
+		for i := 0; i < elemCount; i++ {
 			obj := bj.objectGetVal(i)
 			depth := obj.GetElemDepth()
 			if depth > maxDepth {
@@ -1045,9 +1045,9 @@ func (bj BinaryJSON) GetElemDepth() int {
 		}
 		return maxDepth + 1
 	case TypeCodeArray:
-		len := bj.GetElemCount()
+		elemCount := bj.GetElemCount()
 		maxDepth := 0
-		for i := 0; i < len; i++ {
+		for i := 0; i < elemCount; i++ {
 			obj := bj.arrayGetElem(i)
 			depth := obj.GetElemDepth()
 			if depth > maxDepth {

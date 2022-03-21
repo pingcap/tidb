@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -311,7 +310,7 @@ func TestShowStatsExtended(t *testing.T) {
 }
 
 func TestShowColumnStatsUsage(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -320,7 +319,6 @@ func TestShowColumnStatsUsage(t *testing.T) {
 	tk.MustExec("create table t1 (a int, b int, index idx_a_b(a, b))")
 	tk.MustExec("create table t2 (a int, b int) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue)")
 
-	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
 	t1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
@@ -352,7 +350,7 @@ func TestShowHistogramsInFlight(t *testing.T) {
 	tk.MustExec("use test")
 	result := tk.MustQuery("show histograms_in_flight")
 	rows := result.Rows()
-	require.Equal(t, len(rows), 1)
+	require.Len(t, rows, 1)
 	require.Equal(t, rows[0][0], "0")
 }
 

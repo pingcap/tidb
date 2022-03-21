@@ -57,7 +57,7 @@ func TestBytesCodec(t *testing.T) {
 	}
 
 	for _, input := range inputs {
-		require.Equal(t, len(input.dec), EncodedBytesLength(len(input.enc)))
+		require.Len(t, input.dec, EncodedBytesLength(len(input.enc)))
 
 		if input.desc {
 			b := EncodeBytesDesc(nil, input.enc)

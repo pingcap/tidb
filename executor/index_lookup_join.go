@@ -84,9 +84,9 @@ type IndexLookUpJoin struct {
 
 	memTracker *memory.Tracker // track memory usage.
 
-	stats           *indexLookUpJoinRuntimeStats
-	ctxCancelReason atomic.Value
-	finished        *atomic.Value
+	stats    *indexLookUpJoinRuntimeStats
+	finished *atomic.Value
+	prepared bool
 }
 
 type outerCtx struct {
@@ -175,7 +175,6 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	e.cancelFunc = nil
-	e.startWorkers(ctx)
 	return nil
 }
 
@@ -259,6 +258,10 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 
 // Next implements the Executor interface.
 func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.Chunk) error {
+	if !e.prepared {
+		e.startWorkers(ctx)
+		e.prepared = true
+	}
 	if e.isOuterJoin {
 		atomic.StoreInt64(&e.requiredRows, int64(req.RequiredRows()))
 	}
@@ -318,9 +321,6 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 	select {
 	case task = <-e.resultCh:
 	case <-ctx.Done():
-		if err := e.ctxCancelReason.Load(); err != nil {
-			return nil, err.(error)
-		}
 		return nil, ctx.Err()
 	}
 	if task == nil {
@@ -333,9 +333,6 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 			return nil, err
 		}
 	case <-ctx.Done():
-		if err := e.ctxCancelReason.Load(); err != nil {
-			return nil, err.(error)
-		}
 		return nil, ctx.Err()
 	}
 
@@ -368,8 +365,6 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			err := errors.Errorf("%v", r)
 			task.doneCh <- err
 			ow.pushToChan(ctx, task, ow.resultCh)
-			ow.lookup.ctxCancelReason.Store(err)
-			ow.lookup.cancelFunc()
 		}
 		close(ow.resultCh)
 		close(ow.innerCh)
@@ -489,8 +484,6 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			err := errors.Errorf("%v", r)
 			// "task != nil" is guaranteed when panic happened.
 			task.doneCh <- err
-			iw.lookup.ctxCancelReason.Store(err)
-			iw.lookup.cancelFunc()
 		}
 		wg.Done()
 	}()
@@ -706,9 +699,6 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 	for {
 		select {
 		case <-ctx.Done():
-			if err := iw.lookup.ctxCancelReason.Load(); err != nil {
-				return err.(error)
-			}
 			return ctx.Err()
 		default:
 		}
@@ -778,6 +768,7 @@ func (e *IndexLookUpJoin) Close() error {
 	e.memTracker = nil
 	e.task = nil
 	e.finished.Store(false)
+	e.prepared = false
 	return e.baseExecutor.Close()
 }
 

@@ -112,6 +112,11 @@ var GBKCase = unicode.SpecialCase{
 // customGBK is a simplifiedchinese.GBK wrapper.
 type customGBK struct{}
 
+// NewCustomGBKEncoder return a custom GBK encoding.
+func NewCustomGBKEncoder() *encoding.Encoder {
+	return customGBK{}.NewEncoder()
+}
+
 // NewDecoder returns simplifiedchinese.GBK.NewDecoder().
 func (c customGBK) NewDecoder() *encoding.Decoder {
 	return &encoding.Decoder{
@@ -159,7 +164,7 @@ func (c customGBK) NewEncoder() *encoding.Encoder {
 // see https://github.com/pingcap/tidb/issues/30581 get details.
 func (c customGBKEncoder) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, err error) {
 	if bytes.HasPrefix(src, []byte{0xe2, 0x82, 0xac} /* '€' */) {
-		return 0, 0, errInvalidCharacterString
+		return 0, 0, ErrInvalidCharacterString
 	}
 	return c.gbkEncoder.Transform(dst, src, atEOF)
 }

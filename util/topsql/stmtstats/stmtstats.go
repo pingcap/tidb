@@ -78,6 +78,7 @@ func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte, execD
 	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
 
 	item.SumDurationNs += uint64(ns)
+	item.DurationCount++
 	// Count more data here.
 }
 
@@ -175,6 +176,10 @@ type StatementStatsItem struct {
 	// SumDurationNs is the total number of durations in nanoseconds.
 	SumDurationNs uint64
 
+	// DurationCount represents the number of SQL executions specially
+	// used to calculate SQLDuration.
+	DurationCount uint64
+
 	// KvStatsItem contains all indicators of kv layer.
 	KvStatsItem KvStatementStatsItem
 }
@@ -199,6 +204,7 @@ func (i *StatementStatsItem) Merge(other *StatementStatsItem) {
 	}
 	i.ExecCount += other.ExecCount
 	i.SumDurationNs += other.SumDurationNs
+	i.DurationCount += other.DurationCount
 	i.KvStatsItem.Merge(other.KvStatsItem)
 }
 

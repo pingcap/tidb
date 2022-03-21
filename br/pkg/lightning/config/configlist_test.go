@@ -16,17 +16,14 @@ package config_test
 
 import (
 	"context"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&configListTestSuite{})
-
-type configListTestSuite struct{}
-
-func (s *configListTestSuite) TestNormalPushPop(c *C) {
+func TestNormalPushPop(t *testing.T) {
 	cl := config.NewConfigList()
 
 	cl.Push(&config.Config{TikvImporter: config.TikvImporter{Addr: "1.1.1.1:1111"}})
@@ -34,15 +31,15 @@ func (s *configListTestSuite) TestNormalPushPop(c *C) {
 
 	startTime := time.Now()
 	cfg, err := cl.Pop(context.Background()) // these two should never block.
-	c.Assert(time.Since(startTime), Less, 100*time.Millisecond)
-	c.Assert(err, IsNil)
-	c.Assert(cfg.TikvImporter.Addr, Equals, "1.1.1.1:1111")
+	require.Less(t, time.Since(startTime), 100*time.Millisecond)
+	require.NoError(t, err)
+	require.Equal(t, "1.1.1.1:1111", cfg.TikvImporter.Addr)
 
 	startTime = time.Now()
 	cfg, err = cl.Pop(context.Background())
-	c.Assert(time.Since(startTime), Less, 100*time.Millisecond)
-	c.Assert(err, IsNil)
-	c.Assert(cfg.TikvImporter.Addr, Equals, "2.2.2.2:2222")
+	require.Less(t, time.Since(startTime), 100*time.Millisecond)
+	require.NoError(t, err)
+	require.Equal(t, "2.2.2.2:2222", cfg.TikvImporter.Addr)
 
 	startTime = time.Now()
 
@@ -52,12 +49,12 @@ func (s *configListTestSuite) TestNormalPushPop(c *C) {
 	}()
 
 	cfg, err = cl.Pop(context.Background()) // this should block for ≥400ms
-	c.Assert(time.Since(startTime), GreaterEqual, 400*time.Millisecond)
-	c.Assert(err, IsNil)
-	c.Assert(cfg.TikvImporter.Addr, Equals, "3.3.3.3:3333")
+	require.GreaterOrEqual(t, time.Since(startTime), 400*time.Millisecond)
+	require.NoError(t, err)
+	require.Equal(t, "3.3.3.3:3333", cfg.TikvImporter.Addr)
 }
 
-func (s *configListTestSuite) TestContextCancel(c *C) {
+func TestContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cl := config.NewConfigList()
 
@@ -68,11 +65,11 @@ func (s *configListTestSuite) TestContextCancel(c *C) {
 
 	startTime := time.Now()
 	_, err := cl.Pop(ctx)
-	c.Assert(time.Since(startTime), GreaterEqual, 400*time.Millisecond)
-	c.Assert(err, Equals, context.Canceled)
+	require.GreaterOrEqual(t, time.Since(startTime), 400*time.Millisecond)
+	require.Equal(t, context.Canceled, err)
 }
 
-func (s *configListTestSuite) TestGetRemove(c *C) {
+func TestGetRemove(t *testing.T) {
 	cl := config.NewConfigList()
 
 	cfg1 := &config.Config{TikvImporter: config.TikvImporter{Addr: "1.1.1.1:1111"}}
@@ -83,29 +80,29 @@ func (s *configListTestSuite) TestGetRemove(c *C) {
 	cl.Push(cfg3)
 
 	cfg, ok := cl.Get(cfg2.TaskID)
-	c.Assert(ok, IsTrue)
-	c.Assert(cfg, Equals, cfg2)
+	require.True(t, ok)
+	require.Equal(t, cfg2, cfg)
 	_, ok = cl.Get(cfg3.TaskID + 1000)
-	c.Assert(ok, IsFalse)
+	require.False(t, ok)
 
 	ok = cl.Remove(cfg2.TaskID)
-	c.Assert(ok, IsTrue)
+	require.True(t, ok)
 	ok = cl.Remove(cfg3.TaskID + 1000)
-	c.Assert(ok, IsFalse)
+	require.False(t, ok)
 	_, ok = cl.Get(cfg2.TaskID)
-	c.Assert(ok, IsFalse)
+	require.False(t, ok)
 
 	var err error
 	cfg, err = cl.Pop(context.Background())
-	c.Assert(err, IsNil)
-	c.Assert(cfg, Equals, cfg1)
+	require.NoError(t, err)
+	require.Equal(t, cfg1, cfg)
 
 	cfg, err = cl.Pop(context.Background())
-	c.Assert(err, IsNil)
-	c.Assert(cfg, Equals, cfg3)
+	require.NoError(t, err)
+	require.Equal(t, cfg3, cfg)
 }
 
-func (s *configListTestSuite) TestMoveFrontBack(c *C) {
+func TestMoveFrontBack(t *testing.T) {
 	cl := config.NewConfigList()
 
 	cfg1 := &config.Config{TikvImporter: config.TikvImporter{Addr: "1.1.1.1:1111"}}
@@ -115,19 +112,19 @@ func (s *configListTestSuite) TestMoveFrontBack(c *C) {
 	cfg3 := &config.Config{TikvImporter: config.TikvImporter{Addr: "3.3.3.3:3333"}}
 	cl.Push(cfg3)
 
-	c.Assert(cl.AllIDs(), DeepEquals, []int64{cfg1.TaskID, cfg2.TaskID, cfg3.TaskID})
+	require.Equal(t, []int64{cfg1.TaskID, cfg2.TaskID, cfg3.TaskID}, cl.AllIDs())
 
-	c.Assert(cl.MoveToFront(cfg2.TaskID), IsTrue)
-	c.Assert(cl.AllIDs(), DeepEquals, []int64{cfg2.TaskID, cfg1.TaskID, cfg3.TaskID})
-	c.Assert(cl.MoveToFront(cfg2.TaskID), IsTrue)
-	c.Assert(cl.AllIDs(), DeepEquals, []int64{cfg2.TaskID, cfg1.TaskID, cfg3.TaskID})
-	c.Assert(cl.MoveToFront(123456), IsFalse)
-	c.Assert(cl.AllIDs(), DeepEquals, []int64{cfg2.TaskID, cfg1.TaskID, cfg3.TaskID})
+	require.True(t, cl.MoveToFront(cfg2.TaskID))
+	require.Equal(t, []int64{cfg2.TaskID, cfg1.TaskID, cfg3.TaskID}, cl.AllIDs())
+	require.True(t, cl.MoveToFront(cfg2.TaskID))
+	require.Equal(t, []int64{cfg2.TaskID, cfg1.TaskID, cfg3.TaskID}, cl.AllIDs())
+	require.False(t, cl.MoveToFront(123456))
+	require.Equal(t, []int64{cfg2.TaskID, cfg1.TaskID, cfg3.TaskID}, cl.AllIDs())
 
-	c.Assert(cl.MoveToBack(cfg2.TaskID), IsTrue)
-	c.Assert(cl.AllIDs(), DeepEquals, []int64{cfg1.TaskID, cfg3.TaskID, cfg2.TaskID})
-	c.Assert(cl.MoveToBack(cfg2.TaskID), IsTrue)
-	c.Assert(cl.AllIDs(), DeepEquals, []int64{cfg1.TaskID, cfg3.TaskID, cfg2.TaskID})
-	c.Assert(cl.MoveToBack(123456), IsFalse)
-	c.Assert(cl.AllIDs(), DeepEquals, []int64{cfg1.TaskID, cfg3.TaskID, cfg2.TaskID})
+	require.True(t, cl.MoveToBack(cfg2.TaskID))
+	require.Equal(t, []int64{cfg1.TaskID, cfg3.TaskID, cfg2.TaskID}, cl.AllIDs())
+	require.True(t, cl.MoveToBack(cfg2.TaskID))
+	require.Equal(t, []int64{cfg1.TaskID, cfg3.TaskID, cfg2.TaskID}, cl.AllIDs())
+	require.False(t, cl.MoveToBack(123456))
+	require.Equal(t, []int64{cfg1.TaskID, cfg3.TaskID, cfg2.TaskID}, cl.AllIDs())
 }

@@ -25,26 +25,25 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
 func evalBuiltinFuncConcurrent(f builtinFunc, row chunk.Row) (d types.Datum, err error) {
-	wg := sync.WaitGroup{}
+	var wg util.WaitGroupWrapper
 	concurrency := 10
-	wg.Add(concurrency)
 	var lock sync.Mutex
 	err = nil
 	for i := 0; i < concurrency; i++ {
-		go func() {
-			defer wg.Done()
+		wg.Run(func() {
 			di, erri := evalBuiltinFunc(f, chunk.Row{})
 			lock.Lock()
 			if err == nil {
 				d, err = di, erri
 			}
 			lock.Unlock()
-		}()
+		})
 	}
 	wg.Wait()
 	return

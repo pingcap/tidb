@@ -49,7 +49,7 @@ func TestPoolGetChunk(t *testing.T) {
 
 	chk := pool.GetChunk(fieldTypes)
 	require.NotNil(t, chk)
-	require.Equal(t, len(fieldTypes), chk.NumCols())
+	require.Len(t, fieldTypes, chk.NumCols())
 	require.Nil(t, chk.columns[0].elemBuf)
 	require.Nil(t, chk.columns[1].elemBuf)
 	require.Equal(t, getFixedLen(fieldTypes[2]), len(chk.columns[2].elemBuf))

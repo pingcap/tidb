@@ -129,6 +129,29 @@
             "row_count": 2
           }
         ]
+      },
+      {
+        "Expr": "a < 5 or a > 10",
+        "Trace": [
+          {
+            "table_name": "t",
+            "type": "Index Stats-Range",
+            "expr": "((a < 5)) or ((a > 10 and true))",
+            "row_count": 6
+          },
+          {
+            "table_name": "t",
+            "type": "Column Stats-Range",
+            "expr": "((a < 5)) or ((a > 10 and true))",
+            "row_count": 6
+          },
+          {
+            "table_name": "t",
+            "type": "Table Stats-Expression-CNF",
+            "expr": "`or`(`lt`(test.t.a, 5), `gt`(test.t.a, 10))",
+            "row_count": 6
+          }
+        ]
       }
     ]
   }

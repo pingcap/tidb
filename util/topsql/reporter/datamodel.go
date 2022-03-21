@@ -21,9 +21,9 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/topsql/collector"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
-	"github.com/pingcap/tidb/util/topsql/tracecpu"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/wangjohn/quickselect"
 	atomic2 "go.uber.org/atomic"
@@ -49,7 +49,7 @@ import (
 //     - records: { sqlPlanDigest => record | sqlPlanDigest => record | ... }
 //     - evicted: { sqlPlanDigest | sqlPlanDigest | ... }
 //
-// cpuRecords: [ tracecpu.SQLCPUTimeRecord | tracecpu.SQLCPUTimeRecord | ... ]
+// cpuRecords: [ collector.SQLCPUTimeRecord | collector.SQLCPUTimeRecord | ... ]
 //
 // normalizeSQLMap: { sqlDigest => normalizedSQL | sqlDigest => normalizedSQL | ... }
 //
@@ -89,6 +89,7 @@ func (i *tsItem) toProto() *tipb.TopSQLRecordItem {
 		StmtExecCount:     i.stmtStats.ExecCount,
 		StmtKvExecCount:   i.stmtStats.KvStatsItem.KvExecCount,
 		StmtDurationSumNs: i.stmtStats.SumDurationNs,
+		StmtDurationCount: i.stmtStats.DurationCount,
 		// Convert more indicators here.
 	}
 }
@@ -496,29 +497,52 @@ func (c *collecting) appendOthersStmtStatsItem(timestamp uint64, item stmtstats.
 	others.appendStmtStatsItem(timestamp, item)
 }
 
-// compactToTopNAndOthers returns the largest N records, other records will be packed and appended to the end.
-func (c *collecting) compactToTopNAndOthers(n int) records {
+// removeInvalidPlanRecord remove "" plan if there are only 1 valid plan in the record.
+// Basically, it should be called once at the end of the collection, currently in `getReportRecords`.
+func (c *collecting) removeInvalidPlanRecord() {
+	sql2PlansMap := make(map[string][][]byte, len(c.records)) // sql_digest => []plan_digest
+	for _, v := range c.records {
+		k := string(v.sqlDigest)
+		sql2PlansMap[k] = append(sql2PlansMap[k], v.planDigest)
+	}
+	for k, plans := range sql2PlansMap {
+		if len(plans) != 2 {
+			continue
+		}
+		if len(plans[0]) > 0 && len(plans[1]) > 0 {
+			continue
+		}
+
+		sqlDigest := []byte(k)
+		key0 := encodeKey(c.keyBuf, sqlDigest, plans[0])
+		key1 := encodeKey(c.keyBuf, sqlDigest, plans[1])
+		record0, ok0 := c.records[key0]
+		record1, ok1 := c.records[key1]
+		if !ok0 || !ok1 {
+			continue
+		}
+		if len(plans[0]) != 0 {
+			record0.merge(record1)
+			delete(c.records, key1)
+		} else {
+			record1.merge(record0)
+			delete(c.records, key0)
+		}
+	}
+}
+
+// getReportRecords returns all records, others record will be packed and appended to the end.
+func (c *collecting) getReportRecords() records {
 	others := c.records[keyOthers]
 	delete(c.records, keyOthers)
+
+	c.removeInvalidPlanRecord()
+
 	rs := make(records, 0, len(c.records))
 	for _, v := range c.records {
 		rs = append(rs, *v)
 	}
-	// Fetch TopN records.
-	var evicted records
-	rs, evicted = rs.topN(n)
-	if others != nil {
-		// Sort the records by timestamp to fix the affect of time jump backward.
-		sort.Sort(others)
-	} else {
-		others = newRecord(nil, nil)
-	}
-	for _, evict := range evicted {
-		e := evict // Avoid implicit memory aliasing in for loop.
-		others.merge(&e)
-	}
-	if others.totalCPUTimeMs > 0 {
-		// append others which summarize all evicted item's cpu-time.
+	if others != nil && others.totalCPUTimeMs > 0 {
 		rs = append(rs, *others)
 	}
 	return rs
@@ -536,8 +560,8 @@ func (c *collecting) take() *collecting {
 	return r
 }
 
-// cpuRecords is a sortable list of tracecpu.SQLCPUTimeRecord, sort by CPUTimeMs (desc).
-type cpuRecords []tracecpu.SQLCPUTimeRecord
+// cpuRecords is a sortable list of collector.SQLCPUTimeRecord, sort by CPUTimeMs (desc).
+type cpuRecords []collector.SQLCPUTimeRecord
 
 func (rs cpuRecords) Len() int {
 	return len(rs)

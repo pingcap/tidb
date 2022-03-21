@@ -14,6 +14,7 @@
 package charset
 
 import (
+	"bytes"
 	go_unicode "unicode"
 
 	"golang.org/x/text/encoding"
@@ -60,7 +61,7 @@ func (e *encodingASCII) IsValid(src []byte) bool {
 	return true
 }
 
-func (e *encodingASCII) Transform(dest, src []byte, op Op) ([]byte, error) {
+func (e *encodingASCII) Transform(dest *bytes.Buffer, src []byte, op Op) ([]byte, error) {
 	if e.IsValid(src) {
 		return src, nil
 	}

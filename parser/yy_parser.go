@@ -217,8 +217,8 @@ func (parser *Parser) setLastSelectFieldText(st *ast.SelectStmt, lastEnd int) {
 		return
 	}
 	lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
-	if lastField.Offset+len(lastField.Text()) >= len(parser.src)-1 {
-		lastField.SetText(parser.src[lastField.Offset:lastEnd])
+	if lastField.Offset+len(lastField.OriginalText()) >= len(parser.src)-1 {
+		lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
 	}
 }
 

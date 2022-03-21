@@ -164,8 +164,8 @@ const (
 
 // Auth name information.
 const (
-	AuthNativePassword      = "mysql_native_password"
-	AuthCachingSha2Password = "caching_sha2_password"
+	AuthNativePassword      = "mysql_native_password" // #nosec G101
+	AuthCachingSha2Password = "caching_sha2_password" // #nosec G101
 	AuthSocket              = "auth_socket"
 )
 

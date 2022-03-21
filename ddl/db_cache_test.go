@@ -18,35 +18,24 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
-func checkTableCacheStatus(t *testing.T, se session.Session, dbName, tableName string, status model.TableCacheStatusType) {
-	tb := testGetTableByNameT(t, se, dbName, tableName)
-	dom := domain.GetDomain(se)
+func checkTableCacheStatus(t *testing.T, tk *testkit.TestKit, dbName, tableName string, status model.TableCacheStatusType) {
+	tb := external.GetTableByName(t, tk, dbName, tableName)
+	dom := domain.GetDomain(tk.Session())
 	err := dom.Reload()
 	require.NoError(t, err)
 	require.Equal(t, status, tb.Meta().TableCacheStatusType)
-}
-
-func testGetTableByNameT(t *testing.T, ctx sessionctx.Context, db, table string) table.Table {
-	dom := domain.GetDomain(ctx)
-	// Make sure the table schema is the new schema.
-	err := dom.Reload()
-	require.NoError(t, err)
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
-	require.NoError(t, err)
-	return tbl
 }
 
 func TestAlterPartitionCache(t *testing.T) {
@@ -101,9 +90,9 @@ func TestAlterTableNoCache(t *testing.T) {
 	/* Test of cache table */
 	tk.MustExec("create table nocache_t1 ( n int auto_increment primary key)")
 	tk.MustExec("alter table nocache_t1 cache")
-	checkTableCacheStatus(t, tk.Session(), "test", "nocache_t1", model.TableCacheStatusEnable)
+	checkTableCacheStatus(t, tk, "test", "nocache_t1", model.TableCacheStatusEnable)
 	tk.MustExec("alter table nocache_t1 nocache")
-	checkTableCacheStatus(t, tk.Session(), "test", "nocache_t1", model.TableCacheStatusDisable)
+	checkTableCacheStatus(t, tk, "test", "nocache_t1", model.TableCacheStatusDisable)
 	tk.MustExec("drop table if exists t1")
 	// Test if a table is not exists
 	tk.MustExec("drop table if exists nocache_t")
@@ -136,6 +125,10 @@ func TestIndexOnCacheTable(t *testing.T) {
 	tk.MustExec("create table cache_index_1 (id int, c1 int, c2 int, primary key(id), key i1(c1), key i2(c2));")
 	tk.MustExec("alter table cache_index_1 cache")
 	tk.MustGetErrCode("alter table cache_index_1 drop index i1, drop index i2;", errno.ErrOptOnCacheTable)
+
+	// cleanup
+	tk.MustExec("alter table cache_index_1 nocache")
+	tk.MustExec("alter table cache_index nocache")
 }
 
 func TestAlterTableCache(t *testing.T) {
@@ -165,7 +158,8 @@ func TestAlterTableCache(t *testing.T) {
 	tk.MustGetErrCode("alter table t1 ca", errno.ErrParse)
 	tk.MustGetErrCode("alter table t2 cache", errno.ErrNoSuchTable)
 	tk.MustExec("alter table t1 cache")
-	checkTableCacheStatus(t, tk.Session(), "test", "t1", model.TableCacheStatusEnable)
+	checkTableCacheStatus(t, tk, "test", "t1", model.TableCacheStatusEnable)
+	tk.MustExec("alter table t1 nocache")
 	tk.MustExec("drop table if exists t1")
 	/*Test can't skip schema checker*/
 	tk.MustExec("drop table if exists t1,t2")
@@ -178,6 +172,7 @@ func TestAlterTableCache(t *testing.T) {
 	require.True(t, terror.ErrorEqual(domain.ErrInfoSchemaChanged, err))
 	/* Test can skip schema checker */
 	tk.MustExec("begin")
+	tk.MustExec("alter table t1 nocache")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("CREATE TABLE t1 (a int)")
 	tk.MustExec("insert into t1 set a=2;")
@@ -192,6 +187,7 @@ func TestAlterTableCache(t *testing.T) {
 	tk.MustExec("alter table t cache")
 	tk.MustExec("alter table t cache")
 	// Test a temporary table
+	tk.MustExec("alter table t nocache")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create temporary table t (id int primary key auto_increment, u int unique, v int)")
 	tk.MustExec("drop table if exists tmp1")
@@ -201,7 +197,7 @@ func TestAlterTableCache(t *testing.T) {
 	tk.MustExec("create global temporary table tmp1 " +
 		"(id int not null primary key, code int not null, value int default null, unique key code(code))" +
 		"on commit delete rows")
-	tk.MustGetErrMsg("alter table tmp1 cache", ddl.ErrOptOnTemporaryTable.GenWithStackByArgs("alter temporary table cache").Error())
+	tk.MustGetErrMsg("alter table tmp1 cache", dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("alter temporary table cache").Error())
 }
 
 func TestCacheTableSizeLimit(t *testing.T) {
@@ -240,10 +236,14 @@ func TestCacheTableSizeLimit(t *testing.T) {
 		require.NoError(t, err)
 	}
 
+	lastReadFromCache := func(tk *testkit.TestKit) bool {
+		return tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache
+	}
+
 	cached := false
 	for i := 0; i < 200; i++ {
 		tk.MustQuery("select count(*) from (select * from cache_t2 limit 1) t1").Check(testkit.Rows("1"))
-		if tk.HasPlan("select * from cache_t2", "UnionScan") {
+		if lastReadFromCache(tk) {
 			cached = true
 			break
 		}

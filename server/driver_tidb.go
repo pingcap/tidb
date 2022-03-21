@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 )
 
 // TiDBDriver implements IDriver.
@@ -164,8 +165,13 @@ func (ts *TiDBStatement) Close() error {
 			if !ok {
 				return errors.Errorf("invalid CachedPrepareStmt type")
 			}
-			ts.ctx.PreparedPlanCache().Delete(core.NewPlanCacheKey(
-				ts.ctx.GetSessionVars(), ts.id, preparedObj.PreparedAst.SchemaVersion))
+			cacheKey, err := core.NewPlanCacheKey(ts.ctx.GetSessionVars(), preparedObj.StmtText, preparedObj.StmtDB, preparedObj.PreparedAst.SchemaVersion)
+			if err != nil {
+				return err
+			}
+			if !ts.ctx.GetSessionVars().IgnorePreparedCacheCloseStmt { // keep the plan in cache
+				ts.ctx.PreparedPlanCache().Delete(cacheKey)
+			}
 		}
 		ts.ctx.GetSessionVars().RemovePreparedStmt(ts.id)
 	}
@@ -290,6 +296,11 @@ func (tc *TiDBContext) Prepare(sql string) (statement PreparedStatement, columns
 	return
 }
 
+// GetStmtStats implements the sessionctx.Context interface.
+func (tc *TiDBContext) GetStmtStats() *stmtstats.StatementStats {
+	return tc.Session.GetStmtStats()
+}
+
 type tidbResultSet struct {
 	recordSet    sqlexec.RecordSet
 	columns      []*ColumnInfo
@@ -372,15 +383,13 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 	if fld.Table != nil {
 		ci.OrgTable = fld.Table.Name.O
 	}
-	if fld.Column.Flen == types.UnspecifiedLength {
-		ci.ColumnLength = 0
-	} else {
+	if fld.Column.Flen != types.UnspecifiedLength {
 		ci.ColumnLength = uint32(fld.Column.Flen)
 	}
 	if fld.Column.Tp == mysql.TypeNewDecimal {
 		// Consider the negative sign.
 		ci.ColumnLength++
-		if fld.Column.Decimal > int(types.DefaultFsp) {
+		if fld.Column.Decimal > types.DefaultFsp {
 			// Consider the decimal point.
 			ci.ColumnLength++
 		}

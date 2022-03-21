@@ -15,7 +15,6 @@
 package variable
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -39,6 +38,8 @@ const (
 	ScopeGlobal ScopeFlag = 1 << 0
 	// ScopeSession means the system variable can only be changed in current session.
 	ScopeSession ScopeFlag = 1 << 1
+	// ScopeInstance means it is similar to global but doesn't propagate to other TiDB servers.
+	ScopeInstance ScopeFlag = 1 << 2
 
 	// TypeStr is the default
 	TypeStr TypeFlag = 0
@@ -65,6 +66,15 @@ const (
 	Warn = "WARN"
 	// IntOnly means enable for int type
 	IntOnly = "INT_ONLY"
+
+	// AssertionStrictStr is a choice of variable TiDBTxnAssertionLevel that means full assertions should be performed,
+	// even if the performance might be slowed down.
+	AssertionStrictStr = "STRICT"
+	// AssertionFastStr is a choice of variable TiDBTxnAssertionLevel that means assertions that doesn't affect
+	// performance should be performed.
+	AssertionFastStr = "FAST"
+	// AssertionOffStr is a choice of variable TiDBTxnAssertionLevel that means no assertion should be performed.
+	AssertionOffStr = "OFF"
 )
 
 // Global config name list.
@@ -240,6 +250,11 @@ func (sv *SysVar) HasGlobalScope() bool {
 	return sv.Scope&ScopeGlobal != 0
 }
 
+// HasInstanceScope returns true if the scope for the sysVar includes instance
+func (sv *SysVar) HasInstanceScope() bool {
+	return sv.Scope&ScopeInstance != 0
+}
+
 // Validate checks if system variable satisfies specific restriction.
 func (sv *SysVar) Validate(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
 	// Check that the scope is correct first.
@@ -291,7 +306,7 @@ func (sv *SysVar) validateScope(scope ScopeFlag) error {
 	if sv.ReadOnly || sv.Scope == ScopeNone {
 		return ErrIncorrectScope.FastGenByArgs(sv.Name, "read only")
 	}
-	if scope == ScopeGlobal && !sv.HasGlobalScope() {
+	if scope == ScopeGlobal && !(sv.HasGlobalScope() || sv.HasInstanceScope()) {
 		return errLocalVariable.FastGenByArgs(sv.Name)
 	}
 	if scope == ScopeSession && !sv.HasSessionScope() {
@@ -373,7 +388,7 @@ func (sv *SysVar) checkUInt64SystemVar(value string, vars *SessionVars) (string,
 			return value, ErrWrongTypeForVar.GenWithStackByArgs(sv.Name)
 		}
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MinValue), nil
+		return strconv.FormatInt(sv.MinValue, 10), nil
 	}
 	val, err := strconv.ParseUint(value, 10, 64)
 	if err != nil {
@@ -381,11 +396,12 @@ func (sv *SysVar) checkUInt64SystemVar(value string, vars *SessionVars) (string,
 	}
 	if val < uint64(sv.MinValue) {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MinValue), nil
+		return strconv.FormatInt(sv.MinValue, 10), nil
 	}
 	if val > sv.MaxValue {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MaxValue), nil
+		return strconv.FormatUint(sv.MaxValue, 10), nil
+
 	}
 	return value, nil
 }
@@ -400,11 +416,11 @@ func (sv *SysVar) checkInt64SystemVar(value string, vars *SessionVars) (string, 
 	}
 	if val < sv.MinValue {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MinValue), nil
+		return strconv.FormatInt(sv.MinValue, 10), nil
 	}
 	if val > int64(sv.MaxValue) {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MaxValue), nil
+		return strconv.FormatUint(sv.MaxValue, 10), nil
 	}
 	return value, nil
 }
@@ -414,7 +430,7 @@ func (sv *SysVar) checkEnumSystemVar(value string, vars *SessionVars) (string, e
 	// This allows for the behavior 0 = OFF, 1 = ON, 2 = DEMAND etc.
 	var iStr string
 	for i, v := range sv.PossibleValues {
-		iStr = fmt.Sprintf("%d", i)
+		iStr = strconv.Itoa(i)
 		if strings.EqualFold(value, v) || strings.EqualFold(value, iStr) {
 			return v, nil
 		}
@@ -432,11 +448,11 @@ func (sv *SysVar) checkFloatSystemVar(value string, vars *SessionVars) (string, 
 	}
 	if val < float64(sv.MinValue) {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MinValue), nil
+		return strconv.FormatInt(sv.MinValue, 10), nil
 	}
 	if val > float64(sv.MaxValue) {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
-		return fmt.Sprintf("%d", sv.MaxValue), nil
+		return strconv.FormatUint(sv.MaxValue, 10), nil
 	}
 	return value, nil
 }
@@ -497,7 +513,7 @@ func (sv *SysVar) SkipInit() bool {
 	// These a special "Global-only" sysvars that for backward compatibility
 	// are currently cached in the session. Please don't add to this list.
 	switch sv.Name {
-	case TiDBEnableChangeMultiSchema, TiDBDDLReorgBatchSize, TiDBEnableAlterPlacement,
+	case TiDBEnableChangeMultiSchema, TiDBDDLReorgBatchSize,
 		TiDBMaxDeltaSchemaCount, InitConnect, MaxPreparedStmtCount,
 		TiDBDDLReorgWorkerCount, TiDBDDLErrorCountLimit, TiDBRowFormatVersion,
 		TiDBEnableTelemetry, TiDBEnablePointGetCache:
@@ -550,12 +566,12 @@ func SetSysVar(name string, value string) {
 func GetSysVars() map[string]*SysVar {
 	sysVarsLock.RLock()
 	defer sysVarsLock.RUnlock()
-	copy := make(map[string]*SysVar, len(sysVars))
+	m := make(map[string]*SysVar, len(sysVars))
 	for name, sv := range sysVars {
 		tmp := *sv
-		copy[name] = &tmp
+		m[name] = &tmp
 	}
-	return copy
+	return m
 }
 
 func init() {

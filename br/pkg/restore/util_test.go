@@ -5,40 +5,36 @@ package restore_test
 import (
 	"context"
 	"encoding/binary"
+	"testing"
 
-	. "github.com/pingcap/check"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testRestoreUtilSuite{})
-
-type testRestoreUtilSuite struct {
-}
-
-func (s *testRestoreUtilSuite) TestParseQuoteName(c *C) {
+func TestParseQuoteName(t *testing.T) {
 	schema, table := restore.ParseQuoteName("`a`.`b`")
-	c.Assert(schema, Equals, "a")
-	c.Assert(table, Equals, "b")
+	require.Equal(t, "a", schema)
+	require.Equal(t, "b", table)
 
 	schema, table = restore.ParseQuoteName("`a``b`.``````")
-	c.Assert(schema, Equals, "a`b")
-	c.Assert(table, Equals, "``")
+	require.Equal(t, "a`b", schema)
+	require.Equal(t, "``", table)
 
 	schema, table = restore.ParseQuoteName("`.`.`.`")
-	c.Assert(schema, Equals, ".")
-	c.Assert(table, Equals, ".")
+	require.Equal(t, ".", schema)
+	require.Equal(t, ".", table)
 
 	schema, table = restore.ParseQuoteName("`.``.`.`.`")
-	c.Assert(schema, Equals, ".`.")
-	c.Assert(table, Equals, ".")
+	require.Equal(t, ".`.", schema)
+	require.Equal(t, ".", table)
 }
 
-func (s *testRestoreUtilSuite) TestGetSSTMetaFromFile(c *C) {
+func TestGetSSTMetaFromFile(t *testing.T) {
 	file := &backuppb.File{
 		Name:     "file_write.sst",
 		StartKey: []byte("t1a"),
@@ -53,11 +49,11 @@ func (s *testRestoreUtilSuite) TestGetSSTMetaFromFile(c *C) {
 		EndKey:   []byte("t3a"),
 	}
 	sstMeta := restore.GetSSTMetaFromFile([]byte{}, file, region, rule)
-	c.Assert(string(sstMeta.GetRange().GetStart()), Equals, "t2abc")
-	c.Assert(string(sstMeta.GetRange().GetEnd()), Equals, "t2\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff")
+	require.Equal(t, "t2abc", string(sstMeta.GetRange().GetStart()))
+	require.Equal(t, "t2\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff", string(sstMeta.GetRange().GetEnd()))
 }
 
-func (s *testRestoreUtilSuite) TestMapTableToFiles(c *C) {
+func TestMapTableToFiles(t *testing.T) {
 	filesOfTable1 := []*backuppb.File{
 		{
 			Name:     "table1-1.sst",
@@ -90,11 +86,11 @@ func (s *testRestoreUtilSuite) TestMapTableToFiles(c *C) {
 
 	result := restore.MapTableToFiles(append(filesOfTable2, filesOfTable1...))
 
-	c.Assert(result[1], DeepEquals, filesOfTable1)
-	c.Assert(result[2], DeepEquals, filesOfTable2)
+	require.Equal(t, filesOfTable1, result[1])
+	require.Equal(t, filesOfTable2, result[2])
 }
 
-func (s *testRestoreUtilSuite) TestValidateFileRewriteRule(c *C) {
+func TestValidateFileRewriteRule(t *testing.T) {
 	rules := &restore.RewriteRules{
 		Data: []*import_sstpb.RewriteRule{{
 			OldKeyPrefix: []byte(tablecodec.EncodeTablePrefix(1)),
@@ -111,7 +107,8 @@ func (s *testRestoreUtilSuite) TestValidateFileRewriteRule(c *C) {
 		},
 		rules,
 	)
-	c.Assert(err, ErrorMatches, ".*cannot find rewrite rule.*")
+	require.Error(t, err)
+	require.Regexp(t, ".*cannot find rewrite rule.*", err.Error())
 
 	// Range is not overlap, no rule found.
 	err = restore.ValidateFileRewriteRule(
@@ -122,7 +119,8 @@ func (s *testRestoreUtilSuite) TestValidateFileRewriteRule(c *C) {
 		},
 		rules,
 	)
-	c.Assert(err, ErrorMatches, ".*cannot find rewrite rule.*")
+	require.Error(t, err)
+	require.Regexp(t, ".*cannot find rewrite rule.*", err.Error())
 
 	// No rule for end key.
 	err = restore.ValidateFileRewriteRule(
@@ -133,7 +131,8 @@ func (s *testRestoreUtilSuite) TestValidateFileRewriteRule(c *C) {
 		},
 		rules,
 	)
-	c.Assert(err, ErrorMatches, ".*cannot find rewrite rule.*")
+	require.Error(t, err)
+	require.Regexp(t, ".*cannot find rewrite rule.*", err.Error())
 
 	// Add a rule for end key.
 	rules.Data = append(rules.Data, &import_sstpb.RewriteRule{
@@ -148,7 +147,8 @@ func (s *testRestoreUtilSuite) TestValidateFileRewriteRule(c *C) {
 		},
 		rules,
 	)
-	c.Assert(err, ErrorMatches, ".*rewrite rule mismatch.*")
+	require.Error(t, err)
+	require.Regexp(t, ".*rewrite rule mismatch.*", err.Error())
 
 	// Add a bad rule for end key, after rewrite start key > end key.
 	rules.Data = append(rules.Data[:1], &import_sstpb.RewriteRule{
@@ -163,10 +163,11 @@ func (s *testRestoreUtilSuite) TestValidateFileRewriteRule(c *C) {
 		},
 		rules,
 	)
-	c.Assert(err, ErrorMatches, ".*rewrite rule mismatch.*")
+	require.Error(t, err)
+	require.Regexp(t, ".*rewrite rule mismatch.*", err.Error())
 }
 
-func (s *testRestoreUtilSuite) TestPaginateScanRegion(c *C) {
+func TestPaginateScanRegion(t *testing.T) {
 	peers := make([]*metapb.Peer, 1)
 	peers[0] = &metapb.Peer{
 		Id:      1,
@@ -223,53 +224,56 @@ func (s *testRestoreUtilSuite) TestPaginateScanRegion(c *C) {
 
 	ctx := context.Background()
 	regionMap := make(map[uint64]*restore.RegionInfo)
-	regions := []*restore.RegionInfo{}
-	batch, err := restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
-	c.Assert(err, ErrorMatches, ".*scan region return empty result.*")
+	var regions []*restore.RegionInfo
+	var batch []*restore.RegionInfo
+	_, err := restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
+	require.Error(t, err)
+	require.Regexp(t, ".*scan region return empty result.*", err.Error())
 
 	regionMap, regions = makeRegions(1)
 	batch, err = restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
-	c.Assert(err, IsNil)
-	c.Assert(batch, DeepEquals, regions)
+	require.NoError(t, err)
+	require.Equal(t, regions, batch)
 
 	regionMap, regions = makeRegions(2)
 	batch, err = restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
-	c.Assert(err, IsNil)
-	c.Assert(batch, DeepEquals, regions)
+	require.NoError(t, err)
+	require.Equal(t, regions, batch)
 
 	regionMap, regions = makeRegions(3)
 	batch, err = restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
-	c.Assert(err, IsNil)
-	c.Assert(batch, DeepEquals, regions)
+	require.NoError(t, err)
+	require.Equal(t, regions, batch)
 
 	regionMap, regions = makeRegions(8)
 	batch, err = restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
-	c.Assert(err, IsNil)
-	c.Assert(batch, DeepEquals, regions)
+	require.NoError(t, err)
+	require.Equal(t, regions, batch)
 
 	regionMap, regions = makeRegions(8)
 	batch, err = restore.PaginateScanRegion(
 		ctx, NewTestClient(stores, regionMap, 0), regions[1].Region.StartKey, []byte{}, 3)
-	c.Assert(err, IsNil)
-	c.Assert(batch, DeepEquals, regions[1:])
+	require.NoError(t, err)
+	require.Equal(t, regions[1:], batch)
 
 	batch, err = restore.PaginateScanRegion(
 		ctx, NewTestClient(stores, regionMap, 0), []byte{}, regions[6].Region.EndKey, 3)
-	c.Assert(err, IsNil)
-	c.Assert(batch, DeepEquals, regions[:7])
+	require.NoError(t, err)
+	require.Equal(t, regions[:7], batch)
 
 	batch, err = restore.PaginateScanRegion(
 		ctx, NewTestClient(stores, regionMap, 0), regions[1].Region.StartKey, regions[1].Region.EndKey, 3)
-	c.Assert(err, IsNil)
-	c.Assert(batch, DeepEquals, regions[1:2])
+	require.NoError(t, err)
+	require.Equal(t, regions[1:2], batch)
 
 	_, err = restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{2}, []byte{1}, 3)
-	c.Assert(err, ErrorMatches, ".*startKey >= endKey.*")
+	require.Error(t, err)
+	require.Regexp(t, ".*startKey >= endKey.*", err.Error())
 
 	// make the regionMap losing some region, this will cause scan region check fails
 	delete(regionMap, uint64(3))
-	_, err = restore.PaginateScanRegion(
-		ctx, NewTestClient(stores, regionMap, 0), regions[1].Region.EndKey, regions[5].Region.EndKey, 3)
-	c.Assert(err, ErrorMatches, ".*region endKey not equal to next region startKey.*")
+	_, err = restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), regions[1].Region.EndKey, regions[5].Region.EndKey, 3)
+	require.Error(t, err)
+	require.Regexp(t, ".*region endKey not equal to next region startKey.*", err.Error())
 
 }

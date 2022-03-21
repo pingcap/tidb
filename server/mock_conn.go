@@ -69,9 +69,9 @@ func (mc *mockConn) Close() {
 
 // CreateMockServer creates a mock server.
 func CreateMockServer(t *testing.T, store kv.Storage) *Server {
-	if !runInGoTest {
-		// If CreateMockServer is called in another package, runInGoTest is not initialized.
-		runInGoTest = flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil
+	if !RunInGoTest {
+		// If CreateMockServer is called in another package, RunInGoTest is not initialized.
+		RunInGoTest = flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil
 	}
 	tidbdrv := NewTiDBDriver(store)
 	cfg := config.NewConfig()

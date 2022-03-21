@@ -25,7 +25,6 @@ import (
 	"unsafe"
 
 	"github.com/ngaut/pools"
-	"github.com/ngaut/sync2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
@@ -58,8 +57,10 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
-	"go.etcd.io/etcd/clientv3"
-	"go.etcd.io/etcd/clientv3/concurrency"
+	pd "github.com/tikv/pd/client"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -86,7 +87,7 @@ type Domain struct {
 	slowQuery            *topNSlowQueries
 	expensiveQueryHandle *expensivequery.Handle
 	wg                   sync.WaitGroup
-	statsUpdating        sync2.AtomicInt32
+	statsUpdating        atomicutil.Int32
 	cancel               context.CancelFunc
 	indexUsageSyncLease  time.Duration
 	planReplayer         *planReplayer
@@ -94,10 +95,11 @@ type Domain struct {
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
-	isLostConnectionToPD sync2.AtomicInt32 // !0: true, 0: false.
-	renewLeaseCh         chan func()       // It is used to call the renewLease function of the cache table.
+	isLostConnectionToPD atomicutil.Int32 // !0: true, 0: false.
 	onClose              func()
 	sysExecutorFactory   func(*Domain) (pools.Resource, error)
+
+	sysProcesses SysProcesses
 }
 
 // loadInfoSchema loads infoschema at startTS.
@@ -162,7 +164,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.renewLeaseCh, do.sysFacHack).InitWithDBInfos(schemas, bundles, policies, neededSchemaVersion)
+	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithDBInfos(schemas, bundles, policies, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -284,7 +286,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 		diffs = append(diffs, diff)
 	}
-	builder := infoschema.NewBuilder(do.Store(), do.renewLeaseCh, do.sysFacHack).InitWithOldInfoSchema(do.infoCache.GetLatest())
+	builder := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithOldInfoSchema(do.infoCache.GetLatest())
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
 	for _, diff := range diffs {
@@ -363,12 +365,9 @@ func (do *Domain) InfoSyncer() *infosync.InfoSyncer {
 	return do.info
 }
 
-// NotifyGlobalConfigChange notify global config syncer to store the global config into PD(etcd).
+// NotifyGlobalConfigChange notify global config syncer to store the global config into PD.
 func (do *Domain) NotifyGlobalConfigChange(name, value string) {
-	if do.globalCfgSyncer == nil {
-		return
-	}
-	do.globalCfgSyncer.Notify(name, value)
+	do.globalCfgSyncer.Notify(pd.GlobalConfigItem{Name: name, Value: value})
 }
 
 // GetGlobalConfigSyncer exports for testing.
@@ -704,7 +703,9 @@ func (do *Domain) Close() {
 	}
 
 	do.slowQuery.Close()
-	do.cancel()
+	if do.cancel != nil {
+		do.cancel()
+	}
 	do.wg.Wait()
 	do.sysSessionPool.Close()
 	variable.UnregisterStatistics(do.bindHandle)
@@ -729,12 +730,12 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		indexUsageSyncLease: idxUsageSyncLease,
 		planReplayer:        &planReplayer{planReplayerGCLease: planReplayerGCLease},
 		onClose:             onClose,
-		renewLeaseCh:        make(chan func(), 10),
 		expiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),
 	}
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
+	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
 	return do
 }
 
@@ -815,7 +816,13 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 	if err != nil {
 		return err
 	}
-	do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(do.etcdClient)
+
+	var pdClient pd.Client
+	if store, ok := do.store.(kv.StorageWithPD); ok {
+		pdClient = store.GetPDClient()
+	}
+	do.globalCfgSyncer = globalconfigsync.NewGlobalConfigSyncer(pdClient)
+
 	err = do.ddl.SchemaSyncer().Init(ctx)
 	if err != nil {
 		return err
@@ -836,9 +843,9 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 			err := do.acquireServerID(ctx)
 			if err != nil {
 				logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
-				do.isLostConnectionToPD.Set(1) // will retry in `do.serverIDKeeper`
+				do.isLostConnectionToPD.Store(1) // will retry in `do.serverIDKeeper`
 			} else {
-				do.isLostConnectionToPD.Set(0)
+				do.isLostConnectionToPD.Store(0)
 			}
 
 			do.wg.Add(1)
@@ -856,10 +863,9 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		// Local store needs to get the change information for every DDL state in each session.
 		go do.loadSchemaInLoop(ctx, ddlLease)
 	}
-	do.wg.Add(4)
+	do.wg.Add(3)
 	go do.topNSlowQueryLoop()
 	go do.infoSyncerKeeper()
-	go do.renewLease()
 	go do.globalConfigSyncerKeeper()
 	if !skipRegisterToDashboard {
 		do.wg.Add(1)
@@ -878,9 +884,9 @@ type sessionPool struct {
 	}
 }
 
-func newSessionPool(cap int, factory pools.Factory) *sessionPool {
+func newSessionPool(capacity int, factory pools.Factory) *sessionPool {
 	return &sessionPool{
-		resources: make(chan pools.Resource, cap),
+		resources: make(chan pools.Resource, capacity),
 		factory:   factory,
 	}
 }
@@ -930,6 +936,11 @@ func (p *sessionPool) Close() {
 // SysSessionPool returns the system session pool.
 func (do *Domain) SysSessionPool() *sessionPool {
 	return do.sysSessionPool
+}
+
+// SysProcTracker returns the system processes tracker.
+func (do *Domain) SysProcTracker() sessionctx.SysProcTracker {
+	return &do.sysProcesses
 }
 
 // GetEtcdClient returns the etcd client.
@@ -1109,7 +1120,9 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
 				}
 				do.bindHandle.DropInvalidBindRecord()
-				if variable.TiDBOptOn(variable.CapturePlanBaseline.GetVal()) {
+				// Get Global
+				optVal, err := do.GetGlobalVar(variable.TiDBCapturePlanBaseline)
+				if err == nil && variable.TiDBOptOn(optVal) {
 					do.bindHandle.CaptureBaselines()
 				}
 				do.bindHandle.SaveEvolveTasksToStore()
@@ -1237,7 +1250,7 @@ func (do *Domain) StatsHandle() *handle.Handle {
 
 // CreateStatsHandle is used only for test.
 func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) error {
-	h, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool)
+	h, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool, &do.sysProcesses)
 	if err != nil {
 		return err
 	}
@@ -1247,27 +1260,36 @@ func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) error {
 
 // StatsUpdating checks if the stats worker is updating.
 func (do *Domain) StatsUpdating() bool {
-	return do.statsUpdating.Get() > 0
+	return do.statsUpdating.Load() > 0
 }
 
 // SetStatsUpdating sets the value of stats updating.
 func (do *Domain) SetStatsUpdating(val bool) {
 	if val {
-		do.statsUpdating.Set(1)
+		do.statsUpdating.Store(1)
 	} else {
-		do.statsUpdating.Set(0)
+		do.statsUpdating.Store(0)
 	}
 }
 
 // RunAutoAnalyze indicates if this TiDB server starts auto analyze worker and can run auto analyze job.
 var RunAutoAnalyze = true
 
+// LoadAndUpdateStatsLoop loads and updates stats info.
+func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context) error {
+	if err := do.UpdateTableStatsLoop(ctxs[0]); err != nil {
+		return err
+	}
+	do.StartLoadStatsSubWorkers(ctxs[1:])
+	return nil
+}
+
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop.
 // It will also start a goroutine to analyze tables automatically.
 // It should be called only once in BootstrapSession.
 func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	ctx.GetSessionVars().InRestrictedSQL = true
-	statsHandle, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool)
+	statsHandle, err := handle.NewHandle(ctx, do.statsLease, do.sysSessionPool, &do.sysProcesses)
 	if err != nil {
 		return err
 	}
@@ -1294,6 +1316,16 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 		go do.autoAnalyzeWorker(owner)
 	}
 	return nil
+}
+
+// StartLoadStatsSubWorkers starts sub workers with new sessions to load stats concurrently.
+func (do *Domain) StartLoadStatsSubWorkers(ctxList []sessionctx.Context) {
+	statsHandle := do.StatsHandle()
+	for i, ctx := range ctxList {
+		statsHandle.StatsLoad.SubCtxs[i] = ctx
+		do.wg.Add(1)
+		go statsHandle.SubLoadWorker(ctx, do.exit, &do.wg)
+	}
 }
 
 func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
@@ -1393,6 +1425,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
 	statsHandle := do.StatsHandle()
 	defer func() {
+		dumpColStatsUsageTicker.Stop()
 		loadFeedbackTicker.Stop()
 		dumpFeedbackTicker.Stop()
 		gcStatsTicker.Stop()
@@ -1536,7 +1569,7 @@ func (do *Domain) ServerID() uint64 {
 
 // IsLostConnectionToPD indicates lost connection to PD or not.
 func (do *Domain) IsLostConnectionToPD() bool {
-	return do.isLostConnectionToPD.Get() != 0
+	return do.isLostConnectionToPD.Load() != 0
 }
 
 const (
@@ -1638,7 +1671,8 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 	}
 
 	for {
-		randServerID := rand.Int63n(int64(util.MaxServerID)) + 1 // get a random serverID: [1, MaxServerID] #nosec G404
+		// get a random serverID: [1, MaxServerID]
+		randServerID := rand.Int63n(int64(util.MaxServerID)) + 1 // #nosec G404
 		key := fmt.Sprintf("%s/%v", serverIDEtcdPath, randServerID)
 		cmp := clientv3.Compare(clientv3.CreateRevision(key), "=", 0)
 		value := "0"
@@ -1713,7 +1747,7 @@ func (do *Domain) serverIDKeeper() {
 
 	onConnectionToPDRestored := func() {
 		logutil.BgLogger().Info("restored connection to PD")
-		do.isLostConnectionToPD.Set(0)
+		do.isLostConnectionToPD.Store(0)
 		lastSucceedTimestamp = time.Now()
 
 		if err := do.info.StoreServerInfo(context.Background()); err != nil {
@@ -1723,7 +1757,7 @@ func (do *Domain) serverIDKeeper() {
 
 	onConnectionToPDLost := func() {
 		logutil.BgLogger().Warn("lost connection to PD")
-		do.isLostConnectionToPD.Set(1)
+		do.isLostConnectionToPD.Store(1)
 
 		// Kill all connections when lost connection to PD,
 		//   to avoid the possibility that another TiDB instance acquires the same serverID and generates a same connection ID,
@@ -1767,24 +1801,11 @@ func (do *Domain) MockInfoCacheAndLoadInfoSchema(is infoschema.InfoSchema) {
 	do.infoCache.Insert(is, 0)
 }
 
-func (do *Domain) renewLease() {
-	defer func() {
-		do.wg.Done()
-		logutil.BgLogger().Info("renew lease goroutine exited.")
-	}()
-	for {
-		select {
-		case <-do.exit:
-			close(do.renewLeaseCh)
-			return
-		case op := <-do.renewLeaseCh:
-			op()
-		}
-	}
-}
-
 func init() {
 	initByLDFlagsForGlobalKill()
+	telemetry.GetDomainInfoSchema = func(ctx sessionctx.Context) infoschema.InfoSchema {
+		return GetDomain(ctx).InfoSchema()
+	}
 }
 
 var (
@@ -1794,3 +1815,56 @@ var (
 	ErrInfoSchemaChanged = dbterror.ClassDomain.NewStdErr(errno.ErrInfoSchemaChanged,
 		mysql.Message(errno.MySQLErrName[errno.ErrInfoSchemaChanged].Raw+". "+kv.TxnRetryableMark, nil))
 )
+
+// SysProcesses holds the sys processes infos
+type SysProcesses struct {
+	mu      *sync.RWMutex
+	procMap map[uint64]sessionctx.Context
+}
+
+// Track tracks the sys process into procMap
+func (s *SysProcesses) Track(id uint64, proc sessionctx.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if oldProc, ok := s.procMap[id]; ok && oldProc != proc {
+		return errors.Errorf("The ID is in use: %v", id)
+	}
+	s.procMap[id] = proc
+	proc.GetSessionVars().ConnectionID = id
+	atomic.StoreUint32(&proc.GetSessionVars().Killed, 0)
+	return nil
+}
+
+// UnTrack removes the sys process from procMap
+func (s *SysProcesses) UnTrack(id uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if proc, ok := s.procMap[id]; ok {
+		delete(s.procMap, id)
+		proc.GetSessionVars().ConnectionID = 0
+		atomic.StoreUint32(&proc.GetSessionVars().Killed, 0)
+	}
+}
+
+// GetSysProcessList gets list of system ProcessInfo
+func (s *SysProcesses) GetSysProcessList() map[uint64]*util.ProcessInfo {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rs := make(map[uint64]*util.ProcessInfo)
+	for connID, proc := range s.procMap {
+		// if session is still tracked in this map, it's not returned to sysSessionPool yet
+		if pi := proc.ShowProcess(); pi != nil && pi.ID == connID {
+			rs[connID] = pi
+		}
+	}
+	return rs
+}
+
+// KillSysProcess kills sys process with specified ID
+func (s *SysProcesses) KillSysProcess(id uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if proc, ok := s.procMap[id]; ok {
+		atomic.StoreUint32(&proc.GetSessionVars().Killed, 1)
+	}
+}

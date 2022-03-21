@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	atomicutil "go.uber.org/atomic"
 )
 
 const (
@@ -176,11 +178,7 @@ func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []str
 			paramNames = append(paramNames, name)
 		}
 		buf.WriteString(")")
-		stmt, err := e.ParseWithParamsInternal(ctx, buf.String(), paramNames...)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		rows, _, err := e.ExecRestrictedStmt(ctx, stmt)
+		rows, _, err := e.ExecRestrictedSQL(ctx, nil, buf.String(), paramNames...)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -193,4 +191,37 @@ func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []str
 		}
 	}
 	return nil
+}
+
+// GetTimeZone gets the session location's zone name and offset.
+func GetTimeZone(sctx sessionctx.Context) (string, int) {
+	loc := sctx.GetSessionVars().Location()
+	name := loc.String()
+	if name != "" {
+		_, err := time.LoadLocation(name)
+		if err == nil {
+			return name, 0
+		}
+	}
+	_, offset := time.Now().In(loc).Zone()
+	return "UTC", offset
+}
+
+// enableEmulatorGC means whether to enable emulator GC. The default is enable.
+// In some unit tests, we want to stop emulator GC, then wen can set enableEmulatorGC to 0.
+var emulatorGCEnable = atomicutil.NewInt32(1)
+
+// EmulatorGCEnable enables emulator gc. It exports for testing.
+func EmulatorGCEnable() {
+	emulatorGCEnable.Store(1)
+}
+
+// EmulatorGCDisable disables emulator gc. It exports for testing.
+func EmulatorGCDisable() {
+	emulatorGCEnable.Store(0)
+}
+
+// IsEmulatorGCEnable indicates whether emulator GC enabled. It exports for testing.
+func IsEmulatorGCEnable() bool {
+	return emulatorGCEnable.Load() == 1
 }
