@@ -174,7 +174,7 @@ func (c *inFunctionClass) verifyArgs(ctx sessionctx.Context, args []Expression) 
 		}
 		validatedArgs = append(validatedArgs, arg)
 	}
-	err := c.baseFunctionClass.verifyArgs(args)
+	err := c.baseFunctionClass.verifyArgs(validatedArgs)
 	return validatedArgs, err
 }
 
