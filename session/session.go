@@ -2833,7 +2833,10 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	}
 	collate.SetNewCollationEnabledForTest(newCollationEnabled)
 
-	updateMemoryConfigAndSysVar(ses[0])
+	err = updateMemoryConfigAndSysVar(ses[0])
+	if err != nil {
+		return nil, err
+	}
 
 	dom := domain.GetDomain(ses[0])
 	// We should make the load bind-info loop before other loops which has internal SQL.
@@ -2882,7 +2885,7 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	for i := 0; i < cnt; i++ {
 		subCtxs[i] = sessionctx.Context(ses[6+i])
 	}
-	if err = dom.LoadStatsLoop(subCtxs); err != nil {
+	if err = dom.LoadAndUpdateStatsLoop(subCtxs); err != nil {
 		return nil, err
 	}
 

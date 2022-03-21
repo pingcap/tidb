@@ -1275,7 +1275,8 @@ func (do *Domain) SetStatsUpdating(val bool) {
 // RunAutoAnalyze indicates if this TiDB server starts auto analyze worker and can run auto analyze job.
 var RunAutoAnalyze = true
 
-func (do *Domain) LoadStatsLoop(ctxs []sessionctx.Context) error {
+// LoadAndUpdateStatsLoop loads and updates stats info.
+func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context) error {
 	if err := do.UpdateTableStatsLoop(ctxs[0]); err != nil {
 		return err
 	}
@@ -1317,7 +1318,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	return nil
 }
 
-// StartLoadStatsSubWorkers starts sub workers with new sessions to load stats concurrently
+// StartLoadStatsSubWorkers starts sub workers with new sessions to load stats concurrently.
 func (do *Domain) StartLoadStatsSubWorkers(ctxList []sessionctx.Context) {
 	statsHandle := do.StatsHandle()
 	for i, ctx := range ctxList {
