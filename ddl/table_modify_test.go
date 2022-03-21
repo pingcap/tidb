@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
@@ -234,7 +235,14 @@ func testParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql
 		var qLen int
 		for {
 			err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-				jobs, err1 := admin.GetDDLJobs(txn)
+				var err1 error
+				var jobs []*model.Job
+				if variable.AllowConcurrencyDDL.Load() {
+					sess := testkit.NewTestKit(t, store)
+					jobs, err1 = admin.GetConcurrencyDDLJobs(sess.Session())
+				} else {
+					jobs, err1 = admin.GetDDLJobs(txn)
+				}
 				if err1 != nil {
 					return err1
 				}
@@ -263,7 +271,14 @@ func testParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql
 		var qLen int
 		for {
 			err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-				jobs, err3 := admin.GetDDLJobs(txn)
+				var err3 error
+				var jobs []*model.Job
+				if variable.AllowConcurrencyDDL.Load() {
+					sess := testkit.NewTestKit(t, store)
+					jobs, err1 = admin.GetConcurrencyDDLJobs(sess.Session())
+				} else {
+					jobs, err1 = admin.GetDDLJobs(txn)
+				}
 				if err3 != nil {
 					return err3
 				}
