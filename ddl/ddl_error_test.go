@@ -60,7 +60,7 @@ func TestTableError(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockModifyJobSchemaId"))
 	// Table exists, so creating table is failed.
 	tk.MustExec("create table test.t2(a int)")
-	tk.MustGetErrCode("create table test.t1(a int)", errno.ErrTableExists)
+	tk.MustGetErrCode("create table test.t2(a int)", errno.ErrTableExists)
 }
 
 func TestViewError(t *testing.T) {
