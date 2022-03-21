@@ -556,6 +556,7 @@ func TestBatchCreateTable(t *testing.T) {
 	})
 
 	// correct name
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err := d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), infos, ddl.OnExistError)
 	require.NoError(t, err)
 
@@ -570,6 +571,7 @@ func TestBatchCreateTable(t *testing.T) {
 
 	// duplicated name
 	infos[1].Name = model.NewCIStr("tables_1")
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), infos, ddl.OnExistError)
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableExists))
 
@@ -597,6 +599,7 @@ func TestBatchCreateTable(t *testing.T) {
 		newinfo.View = &model.ViewInfo{Cols: viewCols, Security: model.SecurityDefiner, Algorithm: model.AlgorithmMerge, SelectStmt: stmtBuffer.String(), CheckOption: model.CheckOptionCascaded, Definer: &auth.UserIdentity{CurrentUser: true}}
 	}
 
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), []*model.TableInfo{newinfo}, ddl.OnExistError)
 	require.NoError(t, err)

@@ -3075,7 +3075,7 @@ func (s *testSessionSuite2) TestHostLengthMax(c *C) {
 	tk.MustExec(fmt.Sprintf(`CREATE USER 'abcddfjakldfjaldddds'@'%s'`, host1))
 
 	err := tk.ExecToErr(fmt.Sprintf(`CREATE USER 'abcddfjakldfjaldddds'@'%s'`, host2))
-	c.Assert(err.Error(), Equals, "[types:1406]Data too long for column 'Host' at row 1")
+	c.Assert(err.Error(), Equals, "[ddl:1470]String 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' is too long for host name (should be no longer than 255)")
 }
 
 func (s *testSessionSerialSuite) TestKVVars(c *C) {
@@ -6088,6 +6088,10 @@ func (s *testSessionSuite) TestWriteOnMultipleCachedTable(c *C) {
 
 	tk.MustQuery("select * from ct1").Check(testkit.Rows("3 4"))
 	tk.MustQuery("select * from ct2").Check(testkit.Rows("5 6"))
+
+	// cleanup
+	tk.MustExec("alter table ct1 nocache")
+	tk.MustExec("alter table ct2 nocache")
 }
 
 func (s *testSessionSuite) TestForbidSettingBothTSVariable(c *C) {
