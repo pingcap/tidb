@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
@@ -1225,17 +1226,31 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 	tk.MustQuery("select * from t1 order by c1;").Check(testkit.Rows("2 2 2", "4 4 4", "5 80 80", "10 3 3", "20 20 20", "160 160 160"))
 
 	// Check whether the reorg information is cleaned up.
-	err := ctx.NewTxn(context.Background())
-	require.NoError(t, err)
-	txn, err := ctx.Txn(true)
-	require.NoError(t, err)
-	m := meta.NewMeta(txn)
-	element, start, end, physicalID, err := m.GetDDLReorgHandle(currJob)
+	var (
+		element    *meta.Element
+		start      kv.Key
+		end        kv.Key
+		physicalID int64
+		err        error
+	)
+	if variable.AllowConcurrencyDDL.Load() {
+		internalTk := testkit.NewTestKit(t, store)
+		element, start, end, physicalID, err = admin.GetDDLReorgHandle(currJob, internalTk.Session())
+	} else {
+		err := ctx.NewTxn(context.Background())
+		require.NoError(t, err)
+		txn, err := ctx.Txn(true)
+		require.NoError(t, err)
+		m := meta.NewMeta(txn)
+		element, start, end, physicalID, err = m.GetDDLReorgHandle(currJob)
+
+	}
 	require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
 	require.Nil(t, element)
 	require.Nil(t, start)
 	require.Nil(t, end)
 	require.Equal(t, int64(0), physicalID)
+
 }
 
 func TestDropTableOnTiKVDiskFull(t *testing.T) {
