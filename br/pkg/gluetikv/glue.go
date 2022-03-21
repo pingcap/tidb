@@ -4,6 +4,7 @@ package gluetikv
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/summary"
@@ -14,6 +15,12 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver"
 	pd "github.com/tikv/pd/client"
+)
+
+// Asserting Glue implements glue.ConsoleGlue and glue.Glue at compile time.
+var (
+	_ glue.ConsoleGlue = Glue{}
+	_ glue.Glue        = Glue{}
 )
 
 // Glue is an implementation of glue.Glue that accesses only TiKV without TiDB.
@@ -59,4 +66,17 @@ func (Glue) Record(name string, val uint64) {
 // GetVersion implements glue.Glue.
 func (Glue) GetVersion() string {
 	return "BR\n" + build.Info()
+}
+
+func (Glue) Print(args ...interface{}) {
+	fmt.Print(args...)
+}
+
+// SupportsScan checks whether the shell supports input.
+func (Glue) SupportsScan() bool {
+	return true
+}
+
+func (Glue) Scanln(args ...interface{}) (int, error) {
+	return fmt.Scanln(args...)
 }

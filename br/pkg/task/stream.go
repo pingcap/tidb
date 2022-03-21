@@ -705,22 +705,8 @@ func RunStreamStatus(
 	return nil
 }
 
-func promptBool(p string) bool {
-	for {
-		ans := ""
-		fmt.Print(p + "(y/N) ")
-		fmt.Scanln(&ans)
-		trimed := strings.TrimSpace(ans)
-		if strings.ToLower(trimed) == "y" {
-			return true
-		}
-		if trimed == "" || strings.ToLower(trimed) == "n" {
-			return false
-		}
-	}
-}
-
 func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error {
+	console := glue.GetConsole(g)
 	em := color.New(color.Bold, color.FgHiWhite).SprintFunc()
 	done := color.New(color.FgGreen).SprintFunc()
 	warn := color.New(color.Bold, color.FgHiRed).SprintFunc()
@@ -744,8 +730,8 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	}
 
 	if cfg.Until < sp {
-		fmt.Println("According to the log, you have truncated backup data before", em(formatTs(sp)))
-		if !cfg.SkipPrompt && !promptBool("Continue? ") {
+		console.Println("According to the log, you have truncated backup data before", em(formatTs(sp)))
+		if !cfg.SkipPrompt && !console.PromptBool("Continue? ") {
 			return nil
 		}
 	}
@@ -774,35 +760,35 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		fileCount++
 		return
 	})
-	fmt.Println("We are going to remove",
+	console.Println("We are going to remove ",
 		em(fileCount),
-		"files, until",
+		" files, until ",
 		em(formatTs(minTs))+".",
 	)
-	if !cfg.SkipPrompt && !promptBool(warn("Sure? ")) {
+	if !cfg.SkipPrompt && !console.PromptBool(warn("Sure? ")) {
 		return nil
 	}
 
 	removed := metas.RemoveDataBefore(cfg.Until)
 
-	fmt.Print("Removing metadata... ")
+	console.Print("Removing metadata... ")
 	if !cfg.DryRun {
 		if err := metas.DoWriteBack(ctx, storage); err != nil {
 			return err
 		}
 	}
-	fmt.Println(done("DONE"))
+	console.Println(done("DONE"))
 
-	fmt.Print("Clearing data files... ")
+	console.Print("Clearing data files... ")
 	for _, f := range removed {
 		if !cfg.DryRun {
 			if err := storage.DeleteFile(ctx, f.Path); err != nil {
 				log.Warn("File not deleted.", zap.String("path", f.Path), logutil.ShortError(err))
-				fmt.Print("\n"+em(f.Path), "not deleted, you may clear it manually:", warn(err))
+				console.Print("\n"+em(f.Path), "not deleted, you may clear it manually:", warn(err))
 			}
 		}
 	}
-	fmt.Println(done("DONE"))
+	console.Println(done("DONE"))
 
 	return nil
 }
