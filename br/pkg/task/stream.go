@@ -767,7 +767,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 
 	fileCount := 0
 	minTs := oracle.GoTimeToTS(time.Now())
-	metas.OverFilesFullyBefore(cfg.Until, func(d *backuppb.DataFileInfo) (shouldBreak bool) {
+	metas.IterateFilesFullyBefore(cfg.Until, func(d *backuppb.DataFileInfo) (shouldBreak bool) {
 		if d.MaxTs < minTs {
 			minTs = d.MaxTs
 		}

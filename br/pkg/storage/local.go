@@ -84,7 +84,7 @@ func (l *LocalStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(str
 		// so use Rel to convert to relative path to l.base
 		path, _ = filepath.Rel(l.base, path)
 
-		if !strings.HasPrefix(f.Name(), opt.ObjPrefix) {
+		if !strings.HasPrefix(path, opt.ObjPrefix) {
 			return nil
 		}
 

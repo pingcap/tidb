@@ -59,7 +59,7 @@ func TestTruncateLog(t *testing.T) {
 	require.NoError(t, s.LoadFrom(ctx, l))
 
 	fs := []*backuppb.DataFileInfo{}
-	s.OverFilesFullyBefore(17, func(d *backuppb.DataFileInfo) (shouldBreak bool) {
+	s.IterateFilesFullyBefore(17, func(d *backuppb.DataFileInfo) (shouldBreak bool) {
 		fs = append(fs, d)
 		require.Less(t, d.MaxTs, uint64(17))
 		return false
@@ -84,7 +84,7 @@ func TestTruncateLog(t *testing.T) {
 	require.ElementsMatch(t, modifiedFiles, []string{"v1_backupmeta_0003.meta"})
 
 	require.NoError(t, s.LoadFrom(ctx, l))
-	s.OverFilesFullyBefore(17, func(d *backuppb.DataFileInfo) (shouldBreak bool) {
+	s.IterateFilesFullyBefore(17, func(d *backuppb.DataFileInfo) (shouldBreak bool) {
 		t.Errorf("some of log files still not truncated, it is %#v", d)
 		return true
 	})

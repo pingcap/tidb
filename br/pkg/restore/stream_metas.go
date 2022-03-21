@@ -38,7 +38,7 @@ func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storage.ExternalSto
 	})
 }
 
-func (ms *StreamMetadataSet) overDataFiles(f func(d *backuppb.DataFileInfo) (shouldBreak bool)) {
+func (ms *StreamMetadataSet) iterateDataFiles(f func(d *backuppb.DataFileInfo) (shouldBreak bool)) {
 	for _, m := range ms.metadata {
 		for _, d := range m.Files {
 			if f(d) {
@@ -48,14 +48,14 @@ func (ms *StreamMetadataSet) overDataFiles(f func(d *backuppb.DataFileInfo) (sho
 	}
 }
 
-// OverFilesFullyBefore runs the function over all files contian data before the timestamp only.
+// IterateFilesFullyBefore runs the function over all files contian data before the timestamp only.
 //   0                                          before
 //   |------------------------------------------|
 //    |-file1---------------| <- File contains records in this TS range would be found.
 //                                  |-file2--------------| <- File contains any record out of this won't be found.
 // This function would call the `f` over file1 only.
-func (ms *StreamMetadataSet) OverFilesFullyBefore(before uint64, f func(d *backuppb.DataFileInfo) (shouldBreak bool)) {
-	ms.overDataFiles(func(d *backuppb.DataFileInfo) (shouldBreak bool) {
+func (ms *StreamMetadataSet) IterateFilesFullyBefore(before uint64, f func(d *backuppb.DataFileInfo) (shouldBreak bool)) {
+	ms.iterateDataFiles(func(d *backuppb.DataFileInfo) (shouldBreak bool) {
 		if d.MaxTs >= before {
 			return false
 		}
