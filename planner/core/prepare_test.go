@@ -2630,7 +2630,7 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`set @a0=%v, @a1=%v, @a2=%v`, rand.Intn(40000), rand.Intn(40000), rand.Intn(40000)))
 
 		var rscan, rlookup, rpoint, rbatch [][]interface{}
-		expectedFromPlanCache := "1"
+		var expectedFromPlanCache string
 		for id, tbl := range []string{"trangeIdx", "thashIdx", "tnormalIdx"} {
 			scan := tk.MustQuery(fmt.Sprintf(`execute stmt%v_indexscan using @mina, @maxa`, tbl)).Sort()
 			if id == 2 {
