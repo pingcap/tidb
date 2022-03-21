@@ -580,8 +580,11 @@ func GetDDLReorgHandle(job *model.Job, sess sessionctx.Context) (element *meta.E
 	var rows []chunk.Row
 	rows, err = sqlexec.DrainRecordSet(context.TODO(), rs, 8)
 	rs.Close()
-	if err != nil || len(rows) == 0 {
+	if err != nil {
 		return nil, nil, nil, 0, err
+	}
+	if len(rows) == 0 {
+		return nil, nil, nil, 0, meta.ErrDDLReorgElementNotExist
 	}
 	id := rows[0].GetInt64(0)
 	tp := rows[0].GetBytes(1)
