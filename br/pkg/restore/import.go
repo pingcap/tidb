@@ -313,6 +313,35 @@ func (importer *FileImporter) getKeyRangeForFiles(
 }
 
 // Import tries to import a file.
+func (importer *FileImporter) ImportKVFileForRegion(
+	ctx context.Context,
+	file *backuppb.DataFileInfo,
+	rule *RewriteRules,
+	restoreTs uint64,
+	info *RegionInfo,
+) RPCResult {
+	// Try to download file.
+	result := importer.downloadAndApplyKVFile(ctx, file, rule, info, restoreTs)
+	if !result.OK() {
+		errDownload := result.Err
+		for _, e := range multierr.Errors(errDownload) {
+			switch errors.Cause(e) { // nolint:errorlint
+			case berrors.ErrKVRewriteRuleNotFound, berrors.ErrKVRangeIsEmpty:
+				// Skip this region
+				logutil.CL(ctx).Warn("download file skipped",
+					logutil.Region(info.Region),
+					logutil.ShortError(e))
+				return RPCResultOK()
+			}
+		}
+		logutil.CL(ctx).Warn("download and apply file failed",
+			logutil.ShortError(&result))
+		return result
+	}
+	summary.CollectInt("RegionInvolved", 1)
+	return RPCResultOK()
+}
+
 func (importer *FileImporter) ImportKVFiles(
 	ctx context.Context,
 	file *backuppb.DataFileInfo,
@@ -321,16 +350,9 @@ func (importer *FileImporter) ImportKVFiles(
 ) error {
 	startTime := time.Now()
 	log.Debug("import kv files", zap.String("file", file.Path))
-	var startKey, endKey []byte
-	start, end, err := RewriteFileKeys(file, rule)
+	startKey, endKey, err := RewriteFileKeys(file, rule)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	if len(startKey) == 0 || bytes.Compare(startKey, start) > 0 {
-		startKey = start
-	}
-	if bytes.Compare(endKey, end) < 0 {
-		endKey = end
 	}
 
 	log.Debug("rewrite file keys",
@@ -338,60 +360,18 @@ func (importer *FileImporter) ImportKVFiles(
 		logutil.Key("startKey", startKey),
 		logutil.Key("endKey", endKey))
 
-	err = utils.WithRetry(ctx, func() error {
-		tctx, cancel := context.WithTimeout(ctx, importScanRegionTime)
-		defer cancel()
-		// Scan regions covered by the file range
-		regionInfos, errScanRegion := PaginateScanRegion(
-			tctx, importer.metaClient, startKey, endKey, ScanRegionPaginationLimit)
-		if errScanRegion != nil {
-			return errors.Trace(errScanRegion)
-		}
+	rs := utils.InitialRetryState(16, 100*time.Millisecond, 4*time.Second)
+	ctl := OverRegionsInRange(startKey, endKey, importer.metaClient, rs)
+	err = ctl.Run(ctx, func(ctx context.Context, r *RegionInfo) RPCResult {
+		return importer.ImportKVFileForRegion(ctx, file, rule, restoreTs, r)
+	})
 
-		log.Debug("scan regions", zap.String("name", file.Path), zap.Int("count", len(regionInfos)))
-		// Try to download and ingest the file in every region
-	regionLoop:
-		for _, regionInfo := range regionInfos {
-			info := regionInfo
-			// Try to download file.
-			errDownload := utils.WithRetry(ctx, func() error {
-				return importer.downloadAndApplyKVFile(ctx, file, rule, info, restoreTs)
-			}, utils.NewDownloadSSTBackoffer())
-			if errDownload != nil {
-				for _, e := range multierr.Errors(errDownload) {
-					switch errors.Cause(e) { // nolint:errorlint
-					case berrors.ErrKVRewriteRuleNotFound, berrors.ErrKVRangeIsEmpty:
-						// Skip this region
-						log.Warn("download file skipped",
-							logutil.Region(info.Region),
-							logutil.Key("startKey", startKey),
-							logutil.Key("endKey", endKey),
-							logutil.Key("fileStart", file.StartKey),
-							logutil.Key("fileEnd", file.EndKey),
-							logutil.ShortError(e))
-						continue regionLoop
-					}
-				}
-				log.Error("download and apply file failed",
-					logutil.Region(info.Region),
-					logutil.Key("startKey", startKey),
-					logutil.Key("endKey", endKey),
-					logutil.Key("fileStart", file.StartKey),
-					logutil.Key("fileEnd", file.EndKey),
-					logutil.ShortError(errDownload))
-				return errors.Trace(errDownload)
-			}
-			log.Debug("download and apply file done",
-				zap.String("file", file.Path),
-				zap.Stringer("take", time.Since(startTime)),
-				logutil.Key("fileStart", file.StartKey),
-				logutil.Key("fileEnd", file.EndKey),
-				logutil.Region(info.Region),
-			)
-			summary.CollectInt("RegionInvolved", 1)
-		}
-		return nil
-	}, utils.NewImportSSTBackoffer())
+	log.Debug("download and apply file done",
+		zap.String("file", file.Path),
+		zap.Stringer("take", time.Since(startTime)),
+		logutil.Key("fileStart", file.StartKey),
+		logutil.Key("fileEnd", file.EndKey),
+	)
 	return errors.Trace(err)
 }
 
@@ -784,16 +764,17 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 	rules *RewriteRules,
 	regionInfo *RegionInfo,
 	restoreTs uint64,
-) error {
+) RPCResult {
 	leader := regionInfo.Leader
 	if leader == nil {
-		return errors.Annotatef(berrors.ErrPDLeaderNotFound,
-			"region id %d has no leader", regionInfo.Region.Id)
+		return RPCResultFromError(errors.Annotatef(berrors.ErrPDLeaderNotFound,
+			"region id %d has no leader", regionInfo.Region.Id))
 	}
 	// Get the rewrite rule for the file.
 	fileRule := findMatchedRewriteRule(file, rules)
 	if fileRule == nil {
-		return errors.Trace(berrors.ErrKVRewriteRuleNotFound)
+		return RPCResultFromError(errors.Annotatef(berrors.ErrKVRewriteRuleNotFound,
+			"rewrite rule for file %+v not find (in %+v)", file, rules))
 	}
 	rule := import_sstpb.RewriteRule{
 		OldKeyPrefix: encodeKeyPrefix(fileRule.GetOldKeyPrefix()),
@@ -824,8 +805,15 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 		Context:        reqCtx,
 	}
 	log.Debug("apply kv file", logutil.Leader(leader))
-	_, err := importer.importClient.ApplyKVFile(ctx, leader.GetStoreId(), req)
-	return errors.Trace(err)
+	resp, err := importer.importClient.ApplyKVFile(ctx, leader.GetStoreId(), req)
+	if err != nil {
+		return RPCResultFromError(errors.Trace(err))
+	}
+	if resp.GetError() != nil {
+		logutil.CL(ctx).Warn("backup meet error", zap.Stringer("error", resp.GetError()))
+		return RPCResultFromPBError(resp.GetError())
+	}
+	return RPCResultOK()
 }
 
 func isDecryptSstErr(err error) bool {
