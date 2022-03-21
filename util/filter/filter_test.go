@@ -61,7 +61,7 @@ func TestFilterOnSchema(t *testing.T) {
 				IgnoreDBs: []string{"foo"},
 				DoDBs:     []string{"foo"},
 			},
-			Input:  []*Table{{Schema: "foo", Name: "bar"}, {Schema: "foo", Name: ""}, {Schema: "foo1", Name: "bar"}, {"foo1", ""}},
+			Input:  []*Table{{Schema: "foo", Name: "bar"}, {Schema: "foo", Name: ""}, {Schema: "foo1", Name: "bar"}, {Schema: "foo1", Name: ""}},
 			Output: []*Table{{Schema: "foo", Name: "bar"}, {Schema: "foo", Name: ""}},
 		},
 		{
