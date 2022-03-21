@@ -310,6 +310,12 @@ func onRenameIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 
 	idx := tblInfo.FindIndexByName(from.L)
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+		job.MarkNonRevertible()
+		// Store the mark and enter the next DDL handling loop.
+		return updateVersionAndTableInfoWithCheck(t, job, tblInfo, false)
+	}
+
 	idx.Name = to
 	if ver, err = updateVersionAndTableInfo(t, job, tblInfo, true); err != nil {
 		job.State = model.JobStateCancelled

@@ -542,11 +542,31 @@ func TestMultiSchemaChangeAddDropIndexes(t *testing.T) {
 }
 
 func TestMultiSchemaRenameIndexes(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
+	originHook := dom.DDL().GetHook()
+	getIndexID := func(name string) int64 {
+		tt, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		require.NoError(t, err)
+		for _, idx := range tt.Indices() {
+			if idx.Meta().Name.L == name {
+				return idx.Meta().ID
+			}
+		}
+		return -1
+	}
+
+	// Test rename index.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int, index t(a), index t1(b))")
+	tk.MustExec("alter table t rename index t to x, rename index t1 to x1")
+	tk.MustExec("select * from t use index (x);")
+	tk.MustExec("select * from t use index (x1);")
+	tk.MustGetErrCode("select * from t use index (t);", errno.ErrKeyDoesNotExist)
+	tk.MustGetErrCode("select * from t use index (t1);", errno.ErrKeyDoesNotExist)
 
 	// Test drop and rename same index.
 	tk.MustExec("drop table if exists t")
@@ -557,6 +577,32 @@ func TestMultiSchemaRenameIndexes(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int, index t(a))")
 	tk.MustGetErrCode("alter table t add index t1(b), rename index t to t1", errno.ErrUnsupportedDDLOperation)
+
+	// Test drop column with rename index.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int default 1, b int default 2, c int default 3, index t(a))")
+	tk.MustExec("insert into t values ();")
+	i1 := getIndexID("t")
+	jobIDExt := wrapJobIDExtCallback(dom.DDL().GetHook())
+	dom.DDL().SetHook(jobIDExt)
+	tk.MustExec("alter table t drop column a, rename index t to x")
+	tk.MustGetErrCode("select * from t use index (x);", errno.ErrKeyDoesNotExist)
+	tk.MustQuery("select * from t;").Check(testkit.Rows("2 3"))
+	checkDelRangeAdded(tk, jobIDExt.jobID, i1)
+
+	// Test cancel job with renameIndex
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int default 1, b int default 2, index t(a))")
+	tk.MustExec("insert into t values ()")
+	hook := newCancelJobHook(store, dom, func(job *model.Job) bool {
+		// Cancel job when the column 'c' is in write-reorg.
+		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization
+	})
+	dom.DDL().SetHook(hook)
+	tk.MustGetErrCode("alter table t add column c int default 3, rename index t to t1;", errno.ErrCancelledDDLJob)
+	dom.DDL().SetHook(originHook)
+	tk.MustQuery("select * from t use index (t);").Check(testkit.Rows("1 2"))
+	tk.MustGetErrCode("select * from t use index (t1);", errno.ErrKeyDoesNotExist)
 }
 
 func TestMultiSchemaChangeMix(t *testing.T) {
