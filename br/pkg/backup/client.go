@@ -170,10 +170,6 @@ func (bc *Client) GetStorage() storage.ExternalStorage {
 	return bc.storage
 }
 
-func (bc *Client) GetStorageBackend() *backuppb.StorageBackend {
-	return bc.backend
-}
-
 // SetStorage set ExternalStorage for client.
 func (bc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storage.ExternalStorageOptions) error {
 	var err error

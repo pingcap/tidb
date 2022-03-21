@@ -125,6 +125,8 @@ type Client struct {
 	// currentTS is used for rewrite meta kv when restore stream.
 	// Can not use `restoreTS` directly, because schema created in `full backup` maybe is new than `restoreTS`.
 	currentTS uint64
+
+	storage storage.ExternalStorage
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -264,8 +266,17 @@ func (rc *Client) SetCurrentTS(ts uint64) {
 	rc.currentTS = ts
 }
 
+func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storage.ExternalStorageOptions) error {
+	var err error
+	rc.storage, err = storage.New(ctx, backend, opts)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool) {
-	metaClient := NewSplitClient(rc.pdClient, rc.tlsConf)
+	metaClient := NewSplitClient(rc.pdClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, rc.rateLimit)
 }

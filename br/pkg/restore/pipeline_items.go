@@ -196,8 +196,8 @@ type TiKVRestorer interface {
 		rewriteRules *RewriteRules,
 		updateCh glue.Progress,
 		isRawKv bool) error
-	// RestoreFiles import the files to the TiKV.
-	RestoreFiles(ctx context.Context,
+	// RestoreSSTFiles import the files to the TiKV.
+	RestoreSSTFiles(ctx context.Context,
 		files []*backuppb.File,
 		rewriteRules *RewriteRules,
 		updateCh glue.Progress) error

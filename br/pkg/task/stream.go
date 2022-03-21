@@ -682,7 +682,8 @@ func RunStreamRestore(
 
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	keepaliveCfg.PermitWithoutStream = true
-	client, err := restore.NewRestoreClient(g, streamMgr.mgr.GetPDClient(), streamMgr.mgr.GetStorage(), streamMgr.mgr.GetTLSConfig(), keepaliveCfg)
+	client := restore.NewRestoreClient(streamMgr.mgr.GetPDClient(), streamMgr.mgr.GetTLSConfig(), keepaliveCfg, false)
+	err = client.Init(g, streamMgr.mgr.GetStorage())
 	if err != nil {
 		return errors.Trace(err)
 	}
