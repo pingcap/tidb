@@ -56,7 +56,7 @@ func (sr selectResultHook) SelectResult(ctx context.Context, sctx sessionctx.Con
 }
 
 type kvRangeBuilder interface {
-	buildKeyRange(pid int64, ranges []*ranger.Range) ([]kv.KeyRange, error)
+	buildKeyRange(ranges []*ranger.Range) ([]kv.KeyRange, error)
 	buildKeyRangeSeparately(ranges []*ranger.Range) ([]int64, [][]kv.KeyRange, error)
 }
 
@@ -187,7 +187,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		}
 		e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
 		if len(secondPartRanges) != 0 {
-			kvReq, err := e.buildKVReq(ctx, secondPartRanges)
+			kvReq, err = e.buildKVReq(ctx, secondPartRanges)
 			if err != nil {
 				return err
 			}
@@ -246,15 +246,14 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
-	if e.dummy {
-		return nil
-	}
-
 	var err error
 	if e.resultHandler != nil {
 		err = e.resultHandler.Close()
 	}
 	e.kvRanges = e.kvRanges[:0]
+	if e.dummy {
+		return nil
+	}
 	e.ctx.StoreQueryFeedback(e.feedback)
 	return err
 }
@@ -377,7 +376,7 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 	var builder distsql.RequestBuilder
 	var reqBuilder *distsql.RequestBuilder
 	if e.kvRangeBuilder != nil {
-		kvRange, err := e.kvRangeBuilder.buildKeyRange(getPhysicalTableID(e.table), ranges)
+		kvRange, err := e.kvRangeBuilder.buildKeyRange(ranges)
 		if err != nil {
 			return nil, err
 		}
