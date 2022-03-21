@@ -2985,8 +2985,20 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, ident ast
 	}
 
 	is := d.infoCache.GetLatest()
-	if is.TableIsView(ident.Schema, ident.Name) || is.TableIsSequence(ident.Schema, ident.Name) {
+	tb, err := is.TableByName(ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tb.Meta().IsView() || tb.Meta().IsSequence() {
 		return dbterror.ErrWrongObject.GenWithStackByArgs(ident.Schema, ident.Name, "BASE TABLE")
+	}
+	if tb.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
+		if len(validSpecs) != 1 {
+			return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Alter Table")
+		}
+		if validSpecs[0].Tp != ast.AlterTableCache && validSpecs[0].Tp != ast.AlterTableNoCache {
+			return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Alter Table")
+		}
 	}
 
 	err = checkMultiSpecs(sctx, validSpecs)
@@ -5030,6 +5042,9 @@ func (d *ddl) DropTable(ctx sessionctx.Context, ti ast.Ident) (err error) {
 	if tb.Meta().IsSequence() {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name)
 	}
+	if tb.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
+		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Drop Table")
+	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -5085,6 +5100,10 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	if tb.Meta().IsView() || tb.Meta().IsSequence() {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name.O, tb.Meta().Name.O)
 	}
+	if tb.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
+		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Truncate Table")
+	}
+
 	genIDs, err := d.genGlobalIDs(1)
 	if err != nil {
 		return errors.Trace(err)
@@ -5138,6 +5157,12 @@ func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, 
 		return nil
 	}
 
+	if tbl, ok := is.TableByID(tableID); ok {
+		if tbl.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
+			return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Table"))
+		}
+	}
+
 	job := &model.Job{
 		SchemaID:   schemas[1].ID,
 		TableID:    tableID,
@@ -5170,6 +5195,13 @@ func (d *ddl) RenameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 		if err != nil {
 			return err
 		}
+
+		if t, ok := is.TableByID(tableID); ok {
+			if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
+				return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Tables"))
+			}
+		}
+
 		tableIDs = append(tableIDs, tableID)
 		tableNames = append(tableNames, &newIdents[i].Name)
 		oldSchemaIDs = append(oldSchemaIDs, schemas[0].ID)
@@ -5938,6 +5970,7 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 		if t.Meta().IsView() || t.Meta().IsSequence() {
 			return table.ErrUnsupportedOp.GenWithStackByArgs()
 		}
+
 		err = checkTableLocked(t.Meta(), tl.Type, sessionInfo)
 		if err != nil {
 			return err
@@ -6694,6 +6727,7 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("table too large")
 	}
 
+	ddlQuery, _ := ctx.Value(sessionctx.QueryString).(string)
 	// Initialize the cached table meta lock info in `mysql.table_cache_meta`.
 	// The operation shouldn't fail in most cases, and if it does, return the error directly.
 	// This DML and the following DDL is not atomic, that's not a problem.
@@ -6702,6 +6736,7 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 	if err != nil {
 		return errors.Trace(err)
 	}
+	ctx.SetValue(sessionctx.QueryString, ddlQuery)
 
 	job := &model.Job{
 		SchemaID:   schema.ID,

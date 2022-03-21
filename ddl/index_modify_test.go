@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -1349,4 +1350,29 @@ func TestAnonymousIndex(t *testing.T) {
 	require.Len(t, rows, 1)
 	rows = tk.MustQuery("show index from t where key_name='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb_2'").Rows()
 	require.Len(t, rows, 1)
+}
+
+func TestAddIndexWithDupIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	err1 := dbterror.ErrDupKeyName.GenWithStack("index already exist %s", "idx")
+	err2 := dbterror.ErrDupKeyName.GenWithStack("index already exist %s; "+
+		"a background job is trying to add the same index, "+
+		"please check by `ADMIN SHOW DDL JOBS`", "idx")
+
+	// When there is already an duplicate index, show error message.
+	tk.MustExec("create table test_add_index_with_dup (a int, key idx (a))")
+	err := tk.ExecToErr("alter table test_add_index_with_dup add index idx (a)")
+	require.ErrorIs(t, err, errors.Cause(err1))
+
+	// When there is another session adding duplicate index with state other than
+	// StatePublic, show explicit error message.
+	tbl := external.GetTableByName(t, tk, "test", "test_add_index_with_dup")
+	indexInfo := tbl.Meta().FindIndexByName("idx")
+	indexInfo.State = model.StateNone
+	err = tk.ExecToErr("alter table test_add_index_with_dup add index idx (a)")
+	require.ErrorIs(t, err, errors.Cause(err2))
 }

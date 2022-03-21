@@ -10,9 +10,14 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -559,4 +564,124 @@ func TestRegionConsistency(t *testing.T) {
 		require.Error(t, err)
 		require.Regexp(t, ca.err, err.Error())
 	}
+}
+
+type fakeRestorer struct {
+	errorInSplit  bool
+	splitRanges   []rtree.Range
+	restoredFiles []*backuppb.File
+}
+
+func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, rewriteRules *restore.RewriteRules, updateCh glue.Progress, isRawKv bool) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	f.splitRanges = append(f.splitRanges, ranges...)
+	if f.errorInSplit {
+		err := errors.Annotatef(berrors.ErrRestoreSplitFailed,
+			"the key space takes many efforts and finally get together, how dare you split them again... :<")
+		log.Error("error happens :3", logutil.ShortError(err))
+		return err
+	}
+	return nil
+}
+
+func (f *fakeRestorer) RestoreFiles(ctx context.Context, files []*backuppb.File, rewriteRules *restore.RewriteRules, updateCh glue.Progress) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	f.restoredFiles = append(f.restoredFiles, files...)
+	err := errors.Annotatef(berrors.ErrRestoreWriteAndIngest, "the files to restore are taken by a hijacker, meow :3")
+	log.Error("error happens :3", logutil.ShortError(err))
+	return err
+}
+
+func fakeRanges(keys ...string) (r restore.DrainResult) {
+	for i := range keys {
+		if i+1 == len(keys) {
+			return
+		}
+		r.Ranges = append(r.Ranges, rtree.Range{
+			StartKey: []byte(keys[i]),
+			EndKey:   []byte(keys[i+1]),
+			Files:    []*backuppb.File{{Name: "fake.sst"}},
+		})
+	}
+	return
+}
+
+type errorInTimeSink struct {
+	ctx   context.Context
+	errCh chan error
+	t     *testing.T
+}
+
+func (e errorInTimeSink) EmitTables(tables ...restore.CreatedTable) {}
+
+func (e errorInTimeSink) EmitError(err error) {
+	e.errCh <- err
+}
+
+func (e errorInTimeSink) Close() {}
+
+func (e errorInTimeSink) Wait() {
+	select {
+	case <-e.ctx.Done():
+		e.t.Logf("The context is canceled but no error happen")
+		e.t.FailNow()
+	case <-e.errCh:
+	}
+}
+
+func assertErrorEmitInTime(ctx context.Context, t *testing.T) errorInTimeSink {
+	errCh := make(chan error, 1)
+	return errorInTimeSink{
+		ctx:   ctx,
+		errCh: errCh,
+		t:     t,
+	}
+}
+
+func TestRestoreFailed(t *testing.T) {
+	ranges := []restore.DrainResult{
+		fakeRanges("aax", "abx", "abz"),
+		fakeRanges("abz", "bbz", "bcy"),
+		fakeRanges("bcy", "cad", "xxy"),
+	}
+	r := &fakeRestorer{}
+	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1)
+	require.NoError(t, err)
+	dctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	sink := assertErrorEmitInTime(dctx, t)
+	sender.PutSink(sink)
+	for _, r := range ranges {
+		sender.RestoreBatch(r)
+	}
+	sink.Wait()
+	sink.Close()
+	sender.Close()
+	require.GreaterOrEqual(t, len(r.restoredFiles), 1)
+}
+
+func TestSplitFailed(t *testing.T) {
+	ranges := []restore.DrainResult{
+		fakeRanges("aax", "abx", "abz"),
+		fakeRanges("abz", "bbz", "bcy"),
+		fakeRanges("bcy", "cad", "xxy"),
+	}
+	r := &fakeRestorer{errorInSplit: true}
+	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1)
+	require.NoError(t, err)
+	dctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	sink := assertErrorEmitInTime(dctx, t)
+	sender.PutSink(sink)
+	for _, r := range ranges {
+		sender.RestoreBatch(r)
+	}
+	sink.Wait()
+	sender.Close()
+	require.GreaterOrEqual(t, len(r.splitRanges), 2)
+	require.Len(t, r.restoredFiles, 0)
 }

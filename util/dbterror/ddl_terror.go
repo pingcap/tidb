@@ -366,4 +366,6 @@ var (
 
 	// ErrAutoConvert when auto convert happens
 	ErrAutoConvert = ClassDDL.NewStd(mysql.ErrAutoConvert)
+	// ErrWrongStringLength when UserName or HostName is too long
+	ErrWrongStringLength = ClassDDL.NewStd(mysql.ErrWrongStringLength)
 )
