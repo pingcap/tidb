@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session/txninfo"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
@@ -319,7 +321,11 @@ func (s *infosSchemaClusterTableSuite) TestTableStorageStats() {
 		"test 2",
 	))
 	rows := tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()
-	s.Require().Len(rows, 30)
+	result := 30
+	if variable.AllowConcurrencyDDL.Load() {
+		result = result + 2 // tidb_ddl_job and tidb_ddl_reorg
+	}
+	s.Require().Len(rows, result)
 
 	// More tests about the privileges.
 	tk.MustExec("create user 'testuser'@'localhost'")
@@ -352,5 +358,5 @@ func (s *infosSchemaClusterTableSuite) TestTableStorageStats() {
 		Hostname: "localhost",
 	}, nil, nil))
 
-	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("30"))
+	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows(strconv.Itoa(result)))
 }
