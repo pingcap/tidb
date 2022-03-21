@@ -106,20 +106,20 @@ func TestWindowPushDownPlans(t *testing.T) {
 	testWithData(t, tk, input, output)
 }
 
-//func TestWindowPlanWithOtherOperators(t *testing.T) {
-//	store, clean := testkit.CreateMockStore(t)
-//	defer clean()
-//	tk := testkit.NewTestKit(t, store)
-//	dom := domain.GetDomain(tk.Session())
-//
-//	tk.MustExec("use test")
-//	tk.MustExec("drop table if exists employee")
-//	tk.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
-//	SetTiFlashReplica(t, dom, "test", "employee")
-//
-//	var input Input
-//	var output Output
-//	suiteData := plannercore.GetWindowPushDownSuiteData()
-//	suiteData.GetTestCases(t, &input, &output)
-//	testWithData(t, tk, input, output)
-//}
+func TestWindowPlanWithOtherOperators(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	dom := domain.GetDomain(tk.Session())
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists employee")
+	tk.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
+	SetTiFlashReplica(t, dom, "test", "employee")
+
+	var input Input
+	var output Output
+	suiteData := plannercore.GetWindowPushDownSuiteData()
+	suiteData.GetTestCases(t, &input, &output)
+	testWithData(t, tk, input, output)
+}

@@ -310,5 +310,75 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestWindowPlanWithOtherOperators",
+    "Cases": [
+      {
+        "SQL": "set @@tidb_enforce_mpp=1",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "explain select *, row_number() over () from (select count(distinct empid) from employee) t",
+        "Plan": [
+          "TableReader_53 1.00 root  data:ExchangeSender_52",
+          "└─ExchangeSender_52 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Window_51 1.00 batchCop[tiflash]  row_number()->Column#7 over(rows between current row and current row)",
+          "    └─Projection_15 1.00 batchCop[tiflash]  Column#5",
+          "      └─HashAgg_16 1.00 batchCop[tiflash]  funcs:count(distinct test.employee.empid)->Column#5",
+          "        └─ExchangeReceiver_18 1.00 batchCop[tiflash]  ",
+          "          └─ExchangeSender_17 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "            └─HashAgg_12 1.00 batchCop[tiflash]  group by:test.employee.empid, ",
+          "              └─TableFullScan_14 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select *, row_number() over () from (select count(empid) from employee group by deptid) t",
+        "Plan": [
+          "TableReader_84 8000.00 root  data:ExchangeSender_83",
+          "└─ExchangeSender_83 8000.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "  └─Window_82 8000.00 batchCop[tiflash]  row_number()->Column#7 over(rows between current row and current row)",
+          "    └─Projection_21 8000.00 batchCop[tiflash]  Column#5",
+          "      └─HashAgg_22 8000.00 batchCop[tiflash]  group by:test.employee.deptid, funcs:sum(Column#8)->Column#5",
+          "        └─ExchangeReceiver_24 8000.00 batchCop[tiflash]  ",
+          "          └─ExchangeSender_23 8000.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.employee.deptid, collate: binary]",
+          "            └─HashAgg_13 8000.00 batchCop[tiflash]  group by:test.employee.deptid, funcs:count(test.employee.empid)->Column#8",
+          "              └─TableFullScan_20 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select *, row_number() over (partition by deptid) from (select count(distinct empid) from employee) t",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "",
+        "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "",
+        "Plan": null,
+        "Warn": null
+      }
+    ]
   }
 ]

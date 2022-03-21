@@ -34,5 +34,19 @@
       "explain select *, row_number() over (partition by empid order by salary RANGE between 1 preceding and 1 following) FROM employee -- 3. range frame",
       "explain select *, sum(salary) over (partition by empid order by salary RANGE between 1 preceding and 1 following) FROM employee"
     ]
+  },
+  {
+    "name": "TestWindowPlanWithOtherOperators",
+    "cases": [
+      "set @@tidb_enforce_mpp=1",
+      "explain select *, row_number() over () from (select count(distinct empid) from employee) t",
+      "explain select *, row_number() over () from (select count(empid) from employee group by deptid) t",
+      "explain select *, row_number() over (partition by deptid) from (select count(distinct empid) from employee) t",
+      "explain select *, row_number() over (partition by deptid) from (select count(empid) from employee group by deptid) t",
+      "explain select count(distinct empid) from (select *, row_number() over () from employee) t",
+      "explain select count(distinct empid) from (select *, row_number() over (partition by deptid) from employee) t",
+      "explain select count(empid) from (select *, row_number() a over () from employee) t group by a",
+      "explain select count(empid) from (select *, row_number() a over (partition by deptid) from employee) t group by a"
+    ]
   }
 ]
