@@ -2246,7 +2246,7 @@ func (s *session) cachedPlanExec(ctx context.Context,
 // IsPointGetWithPKOrUniqueKeyByAutoCommit
 func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.CachedPrepareStmt) (bool, error) {
 	prepared := preparedStmt.PreparedAst
-	if prepared.CachedPlan == nil {
+	if prepared.CachedPlan == nil || preparedStmt.SnapshotTSEvaluator != nil {
 		return false, nil
 	}
 	// check auto commit
