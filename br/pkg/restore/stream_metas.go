@@ -17,13 +17,14 @@ type StreamMetadataSet struct {
 	// The metadata after changed that needs to be write back.
 	writeback map[string]*backuppb.Metadata
 
-	OnDoWriteBack func(path string, last, current *backuppb.Metadata)
+	BeforeDoWriteBack func(path string, last, current *backuppb.Metadata) (skip bool)
 }
 
 func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storage.ExternalStorage) error {
 	ms.metadata = map[string]*backuppb.Metadata{}
 	ms.writeback = map[string]*backuppb.Metadata{}
 	return s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: streamBackupMetaPrefix}, func(path string, size int64) error {
+		// Maybe load them lazily for preventing out of memory?
 		bs, err := s.ReadFile(ctx, path)
 		if err != nil {
 			return errors.Annotatef(err, "failed to read file %s", path)
@@ -111,14 +112,15 @@ func (ms *StreamMetadataSet) doWriteBackForFile(ctx context.Context, s storage.E
 
 func (ms *StreamMetadataSet) DoWriteBack(ctx context.Context, s storage.ExternalStorage) error {
 	for path := range ms.writeback {
+		if ms.BeforeDoWriteBack != nil && ms.BeforeDoWriteBack(path, ms.metadata[path], ms.writeback[path]) {
+			return nil
+		}
 		err := ms.doWriteBackForFile(ctx, s, path)
 		// NOTE: Maybe we'd better roll back all writebacks? (What will happen if roll back fails too?)
 		if err != nil {
 			return errors.Annotatef(err, "failed to write back file %s", path)
 		}
-		if ms.OnDoWriteBack != nil {
-			ms.OnDoWriteBack(path, ms.metadata[path], ms.writeback[path])
-		}
+
 		delete(ms.writeback, path)
 	}
 	return nil

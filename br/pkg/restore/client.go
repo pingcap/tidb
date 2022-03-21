@@ -1524,6 +1524,7 @@ func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*
 func (rc *Client) ReadStreamDataFiles(
 	ctx context.Context,
 	metas []*backuppb.Metadata,
+	fromTS uint64,
 	restoreTS uint64,
 	fromTS uint64,
 ) (dataFile, metaFile []*backuppb.DataFileInfo, err error) {
@@ -1536,6 +1537,9 @@ func (rc *Client) ReadStreamDataFiles(
 				continue
 			}
 			if d.MinTs > restoreTS {
+				continue
+			}
+			if d.MaxTs < fromTS {
 				continue
 			}
 

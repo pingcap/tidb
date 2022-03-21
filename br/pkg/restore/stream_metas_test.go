@@ -70,13 +70,14 @@ func TestTruncateLog(t *testing.T) {
 	fmt.Printf("%#v", s)
 	deletedFiles := []string{}
 	modifiedFiles := []string{}
-	s.OnDoWriteBack = func(path string, last, current *backuppb.Metadata) {
+	s.BeforeDoWriteBack = func(path string, last, current *backuppb.Metadata) bool {
 		require.NotNil(t, last)
 		if len(current.GetFiles()) == 0 {
 			deletedFiles = append(deletedFiles, path)
 		} else if len(current.GetFiles()) != len(last.GetFiles()) {
 			modifiedFiles = append(modifiedFiles, path)
 		}
+		return false
 	}
 	require.NoError(t, s.DoWriteBack(ctx, l))
 	require.ElementsMatch(t, deletedFiles, []string{"v1_backupmeta_0000.meta", "v1_backupmeta_0001.meta", "v1_backupmeta_0002.meta"})

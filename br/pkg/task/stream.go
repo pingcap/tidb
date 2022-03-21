@@ -754,10 +754,11 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	}
 
 	metas := restore.StreamMetadataSet{
-		OnDoWriteBack: func(path string, last, current *backuppb.Metadata) {
+		BeforeDoWriteBack: func(path string, last, current *backuppb.Metadata) (skip bool) {
 			log.Info("Updating metadata.", zap.String("file", path),
 				zap.Int("data-file-before", len(last.GetFiles())),
 				zap.Int("data-file-after", len(current.GetFiles())))
+			return cfg.DryRun
 		},
 	}
 	if err := metas.LoadFrom(ctx, storage); err != nil {
@@ -794,7 +795,6 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 
 	fmt.Print("Clearing data files... ")
 	for _, f := range removed {
-		log.Info("Clearing data file.", zap.String("path", f.Path))
 		if !cfg.DryRun {
 			if err := storage.DeleteFile(ctx, f.Path); err != nil {
 				log.Warn("File not deleted.", zap.String("path", f.Path), logutil.ShortError(err))
@@ -901,7 +901,7 @@ func RunStreamRestore(
 		return nil
 	}
 	// read data file by given ts.
-	dFiles, mFiles, err := client.ReadStreamDataFiles(ctx, metas, cfg.RestoreTS)
+	dFiles, mFiles, err := client.ReadStreamDataFiles(ctx, metas, safepoint, cfg.RestoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
