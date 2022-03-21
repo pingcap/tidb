@@ -95,6 +95,13 @@ func checkAddColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Colu
 			return nil, nil, nil, nil, ifNotExists, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name)
 		}
 	}
+
+	err = checkPosition(tblInfo, pos)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return nil, nil, nil, nil, false, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name)
+	}
+
 	return tblInfo, columnInfo, col, pos, false, nil
 }
 
@@ -170,7 +177,6 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		// Adjust table column offset.
 		offset, err := locateOffsetForColumn(pos, tblInfo)
 		if err != nil {
-			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 		if offset != -1 {
@@ -190,6 +196,16 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func checkPosition(tblInfo *model.TableInfo, pos *ast.ColumnPosition) error {
+	if pos != nil && pos.Tp == ast.ColumnPositionAfter {
+		c := model.FindColumnInfo(tblInfo.Columns, pos.RelativeColumn.Name.L)
+		if c == nil {
+			return infoschema.ErrColumnNotExists.GenWithStackByArgs(pos.RelativeColumn, tblInfo.Name)
+		}
+	}
+	return nil
 }
 
 func locateOffsetForColumn(pos *ast.ColumnPosition, tblInfo *model.TableInfo) (offset int, err error) {

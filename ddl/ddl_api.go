@@ -3453,7 +3453,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	if col == nil {
 		return nil
 	}
-	_, err = locateOffsetForColumn(spec.Position, t.Meta())
+	err = checkPosition(t.Meta(), spec.Position)
 	if err != nil {
 		return errors.Trace(err)
 	}
