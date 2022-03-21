@@ -52,8 +52,8 @@ const (
 
 	DivFracIncr = 4
 
-	// ModeHalfEven rounds normally.
-	ModeHalfEven RoundMode = 5
+	// ModeHalfUp rounds normally.
+	ModeHalfUp RoundMode = 5
 	// Truncate just truncates the decimal.
 	ModeTruncate RoundMode = 10
 	// Ceiling is not supported now.
@@ -265,7 +265,7 @@ func (d *MyDecimal) GetDigitsInt() int8 {
 // String returns the decimal string representation rounded to resultFrac.
 func (d *MyDecimal) String() string {
 	tmp := *d
-	err := tmp.Round(&tmp, int(tmp.resultFrac), ModeHalfEven)
+	err := tmp.Round(&tmp, int(tmp.resultFrac), ModeHalfUp)
 	terror.Log(errors.Trace(err))
 	return string(tmp.ToString())
 }
@@ -586,7 +586,7 @@ func (d *MyDecimal) Shift(shift int) error {
 		err = ErrTruncated
 		wordsFrac -= lack
 		diff := digitsFrac - wordsFrac*digitsPerWord
-		err1 := d.Round(d, digitEnd-point-diff, ModeHalfEven)
+		err1 := d.Round(d, digitEnd-point-diff, ModeHalfUp)
 		if err1 != nil {
 			return errors.Trace(err1)
 		}
@@ -802,11 +802,11 @@ func (d *MyDecimal) doMiniRightShift(shift, beg, end int) {
 //    to			- result buffer. d == to is allowed
 //    frac			- to what position after fraction point to round. can be negative!
 //    roundMode		- round to nearest even or truncate
-// 			ModeHalfEven rounds normally.
+// 			ModeHalfUp rounds normally.
 // 			Truncate just truncates the decimal.
 //
 // NOTES
-//  scale can be negative !
+//  frac can be negative !
 //  one TRUNCATED error (line XXX below) isn't treated very logical :(
 //
 // RETURN VALUE
@@ -871,9 +871,9 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int, roundMode RoundMode) (err err
 				}
 				idx--
 			}
-		case ModeHalfEven:
+		case ModeHalfUp:
 			digAfterScale := d.wordBuf[toIdx+1] / digMask // the first digit after scale.
-			// If first digit after scale is 5 and round even, do increment if digit at scale is odd.
+			// If first digit after scale is 5 or more, do increment.
 			doInc = (digAfterScale > 5) || (digAfterScale == 5)
 		case ModeTruncate:
 			// Never round, just truncate.

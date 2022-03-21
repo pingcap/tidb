@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -564,5 +565,50 @@ func BenchmarkCompareDatumByReflect(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		reflect.DeepEqual(vals, vals1)
+	}
+}
+
+func TestProduceDecWithSpecifiedTp(t *testing.T) {
+	tests := []struct {
+		dec        string
+		flen       int
+		frac       int
+		newDec     string
+		isOverflow bool
+	}{
+		{"0.0000", 4, 3, "0.000", false},
+		{"123", 8, 5, "123.00000", false},
+		{"-123", 8, 5, "-123.00000", false},
+		{"123.899", 5, 2, "123.90", false},
+		{"-123.899", 5, 2, "-123.90", false},
+		{"123.899", 6, 2, "123.90", false},
+		{"-123.899", 6, 2, "-123.90", false},
+		{"123.99", 4, 1, "124.0", false},
+		{"123.99", 3, 0, "124", false},
+		{"-123.99", 3, 0, "-124", false},
+		{"123.99", 3, 1, "99.9", true},
+		{"-123.99", 3, 1, "-99.9", true},
+		{"99.9999", 5, 3, "99.999", true},
+		{"-99.9999", 5, 3, "-99.999", true},
+		{"99.9999", 6, 3, "100.000", false},
+		{"-99.9999", 6, 3, "-100.000", false},
+	}
+	sc := new(stmtctx.StatementContext)
+	for _, tt := range tests {
+		tp := &FieldType{
+			Tp:      mysql.TypeNewDecimal,
+			Flen:    tt.flen,
+			Decimal: tt.frac,
+		}
+		dec := NewDecFromStringForTest(tt.dec)
+		newDec, err := ProduceDecWithSpecifiedTp(dec, tp, sc)
+		if tt.isOverflow {
+			if !ErrOverflow.Equal(err) {
+				assert.FailNow(t, "Error is not overflow", err)
+			}
+		} else {
+			require.NoError(t, err, tt)
+		}
+		require.Equal(t, tt.newDec, newDec.String())
 	}
 }
