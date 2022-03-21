@@ -34,7 +34,7 @@ func TestTableError(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("crate table testDrop(a int)")
+	tk.MustExec("create table testDrop(a int)")
 	// Schema ID is wrong, so dropping table is failed.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockModifyJobSchemaId", `return(-1)`))
 	_, err := tk.Exec("drop table testDrop")

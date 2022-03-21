@@ -302,6 +302,7 @@ func TestColumnBasic(t *testing.T) {
 	testCheckJobDone(t, store, jobID, false)
 
 	jobID = testDropColumnInternal(tk, t, testNewContext(store), tableID, "c6", true, dom)
+	testCheckJobDone(t, store, jobID, false)
 
 	testDropTable(tk, t, "t1", dom)
 }
