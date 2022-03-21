@@ -176,3 +176,13 @@ func TestColumnError(t *testing.T) {
 	tk.MustGetErrCode("alter table t add column c int after c5, add column d int", errno.ErrBadField)
 	tk.MustGetErrCode("alter table t drop column ab, drop column c5", errno.ErrCantDropFieldOrKey)
 }
+
+func TestCreateDatabaseError(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockModifyJobSchemaId", `return(-1)`))
+	tk.MustExec("create database db1;")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockModifyJobSchemaId"))
+}

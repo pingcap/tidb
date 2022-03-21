@@ -306,10 +306,6 @@ func TestCreateView(t *testing.T) {
 	// Refer https://github.com/pingcap/tidb/issues/25876
 	err = tk.ExecToErr("create view v_stale as select * from source_table as of timestamp current_timestamp(3)")
 	require.Truef(t, terror.ErrorEqual(err, executor.ErrViewInvalid), "err %s", err)
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockModifyJobSchemaId", `return(-1)`))
-	_, err = tk.Exec("create view v_fail_1 as select * from t1")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockModifyJobSchemaId"))
 }
 
 func TestViewRecursion(t *testing.T) {
@@ -500,16 +496,6 @@ func TestCreateDropDatabase(t *testing.T) {
 	tk.MustQuery("show create database charset_test;").Check(testkit.RowsWithSep("|",
 		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */",
 	))
-}
-
-func TestCreateDatabaseError(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockModifyJobSchemaId", `return(-1)`))
-	tk.MustExec("create database db1;")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockModifyJobSchemaId"))
 }
 
 func TestCreateDropTable(t *testing.T) {
