@@ -323,6 +323,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		StartVersion:     cfg.LastBackupTS,
 		EndVersion:       backupTS,
 		RateLimit:        cfg.RateLimit,
+		StorageBackend:   client.GetStorageBackend(),
 		Concurrency:      defaultBackupConcurrency,
 		CompressionType:  cfg.CompressionType,
 		CompressionLevel: cfg.CompressionLevel,

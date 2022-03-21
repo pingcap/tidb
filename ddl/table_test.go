@@ -46,6 +46,7 @@ func testRenameTable(
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{oldSchemaID, tblInfo.Name, oldSchemaName},
 	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.doDDLJob(ctx, job))
 
 	v := getSchemaVer(t, ctx)
@@ -65,6 +66,7 @@ func testRenameTables(
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{oldSchemaIDs, newSchemaIDs, newTableNames, oldTableIDs, oldSchemaNames},
 	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.doDDLJob(ctx, job))
 
 	v := getSchemaVer(t, ctx)
@@ -87,6 +89,7 @@ func testLockTable(t *testing.T, ctx sessionctx.Context, d *ddl, newSchemaID int
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{arg},
 	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := d.doDDLJob(ctx, job)
 	require.NoError(t, err)
 
@@ -125,6 +128,7 @@ func testTruncateTable(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *mod
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{newTableID},
 	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	err = d.doDDLJob(ctx, job)
 	require.NoError(t, err)
 
@@ -269,6 +273,7 @@ func testAlterCacheTable(t *testing.T, ctx sessionctx.Context, d *ddl, newSchema
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{},
 	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := d.doDDLJob(ctx, job)
 	require.NoError(t, err)
 
@@ -285,6 +290,7 @@ func testAlterNoCacheTable(t *testing.T, ctx sessionctx.Context, d *ddl, newSche
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{},
 	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	require.NoError(t, d.doDDLJob(ctx, job))
 
 	v := getSchemaVer(t, ctx)
@@ -391,6 +397,7 @@ func TestCreateTables(t *testing.T) {
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{infos},
 	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
 	err = d.doDDLJob(ctx, job)
 	require.NoError(t, err)
 
