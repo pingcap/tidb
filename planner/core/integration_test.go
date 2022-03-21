@@ -6243,3 +6243,14 @@ func TestTiFlashPartitionTableScan(t *testing.T) {
 	tk.MustExec("drop table rp_t;")
 	tk.MustExec("drop table hp_t;")
 }
+
+func TestIssue33237(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (c_int int, c_decimal decimal(12, 6), primary key (c_int) nonclustered,key((c_int + 1))) ;")
+	tk.MustExec("create table t2 like t1;")
+	tk.MustExec("select * from t1 where c_decimal in (select c_decimal from t2 where t2.c_int + 1 = 8 + 1);")
+}
