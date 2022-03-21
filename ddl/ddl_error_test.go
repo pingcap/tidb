@@ -16,16 +16,12 @@
 package ddl_test
 
 import (
-	"context"
+	"testing"
+
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 // This test file contains tests that test the expected or unexpected DDL error.
@@ -33,34 +29,32 @@ import (
 // For unexpected error, we mock a SQL job to check it.
 
 func TestTableError(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, testLease)
 	defer clean()
-	ctx := testNewContext(store)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 
+	tk.MustExec("crate table testDrop(a int)")
 	// Schema ID is wrong, so dropping table is failed.
-	doDDLJobErr(t, -1, 1, model.ActionDropTable, nil, ctx, dom.DDL(), store)
-	// Table ID is wrong, so dropping table is failed.
-	job := doDDLJobErr(t, 2, -1, model.ActionDropTable, nil, ctx, dom.DDL(), store)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockModifyJobSchemaId", `return(-1)`))
+	_, err := tk.Exec("drop table testDrop")
+	require.Error(t, err)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockModifyJobSchemaId"))
 
-	// Table ID or schema ID is wrong, so getting table is failed.
-	err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		job.SchemaID = -1
-		job.TableID = -1
-		m := meta.NewMeta(txn)
-		_, err1 := ddl.GetTableInfoAndCancelFaultJob(m, job, job.SchemaID)
-		require.Error(t, err1)
-		job.SchemaID = 2
-		_, err1 = ddl.GetTableInfoAndCancelFaultJob(m, job, job.SchemaID)
-		require.Error(t, err1)
-		return nil
-	})
-	require.NoError(t, err)
+	// Table ID is wrong, so dropping table is failed.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/MockModifyJobTableId", `return(-1)`))
+	_, err = tk.Exec("drop table testDrop")
+	require.Error(t, err)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/MockModifyJobTableId"))
 
 	// Args is wrong, so creating table is failed.
-	doDDLJobErr(t, 1, 1, model.ActionCreateTable, []interface{}{1}, ctx, dom.DDL(), store)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockModifyJobSchemaId", `return(-1)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/MockModifyJobArg", `return(true)`))
+	_, err = tk.Exec("create table test.t1(a int)")
+	require.Error(t, err)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/MockModifyJobArg"))
+
 	// Table exists, so creating table is failed.
-	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockModifyJobSchemaId", `return(-1)`))
 	_, err = tk.Exec("create table test.t1(a int)")
 	require.Error(t, err)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockModifyJobSchemaId"))
@@ -70,32 +64,39 @@ func TestTableError(t *testing.T) {
 }
 
 func TestViewError(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, testLease)
 	defer clean()
-	ctx := testNewContext(store)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int)")
-	tk.MustExec("create view v as select * from t")
 
 	// Args is wrong, so creating view is failed.
-	doDDLJobErr(t, 1, 1, model.ActionCreateView, []interface{}{1}, ctx, dom.DDL(), store)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/MockModifyJobArg", `return(true)`))
+	_, err := tk.Exec("create view v as select * from t")
+	require.Error(t, err)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/MockModifyJobArg"))
 }
 
 func TestForeignKeyError(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, testLease)
 	defer clean()
-	ctx := testNewContext(store)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("create table t1 (a int, FOREIGN KEY fk(a) REFERENCES t(a))")
 
-	doDDLJobErr(t, -1, 1, model.ActionAddForeignKey, nil, ctx, dom.DDL(), store)
-	doDDLJobErr(t, -1, 1, model.ActionDropForeignKey, nil, ctx, dom.DDL(), store)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockModifyJobSchemaId", `return(-1)`))
+	_, err := tk.Exec("alter table t1 add foreign key idx(a) REFERENCES t(a)")
+	require.Error(t, err)
+	_, err = tk.Exec("alter table t1 drop index fk")
+	require.Error(t, err)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockModifyJobSchemaId"))
 }
 
 func TestIndexError(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, testLease)
 	defer clean()
-	ctx := testNewContext(store)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -103,14 +104,75 @@ func TestIndexError(t *testing.T) {
 	tk.MustExec("alter table t add index a(a)")
 
 	// Schema ID is wrong.
-	doDDLJobErr(t, -1, 1, model.ActionAddIndex, nil, ctx, dom.DDL(), store)
-	doDDLJobErr(t, -1, 1, model.ActionDropIndex, nil, ctx, dom.DDL(), store)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockModifyJobSchemaId", `return(-1)`))
+	_, err := tk.Exec("alter table t add index idx(a)")
+	require.Error(t, err)
+	_, err = tk.Exec("alter table t1 drop a")
+	require.Error(t, err)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockModifyJobSchemaId"))
 
 	// for adding index
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/MockModifyJobArg", `return(true)`))
-	_, err := tk.Exec("alter table t add index idx(a)")
+	_, err = tk.Exec("alter table t add index idx(a)")
 	require.Error(t, err)
 	_, err = tk.Exec("alter table t drop index a")
 	require.Error(t, err)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/MockModifyJobArg"))
+}
+
+func TestColumnError(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, testLease)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, aa int, ab int)")
+	tk.MustExec("alter table t add index a(a)")
+
+	// Invalid schema ID.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockModifyJobSchemaId", `return(-1)`))
+	_, err := tk.Exec("alter table t add column ta int")
+	require.Error(t, err)
+	_, err = tk.Exec("alter table t drop column aa")
+	require.Error(t, err)
+	_, err = tk.Exec("alter table t drop column aa")
+	require.Error(t, err)
+	_, err = tk.Exec("alter table t add column ta int, add column tb int")
+	require.Error(t, err)
+	_, err = tk.Exec("alter table t drop column aa, drop column ab")
+	require.Error(t, err)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockModifyJobSchemaId"))
+
+	// Invalid table ID.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/MockModifyJobTableId", `return(-1)`))
+	_, err = tk.Exec("alter table t add column ta int")
+	require.Error(t, err)
+	_, err = tk.Exec("alter table t drop column aa")
+	require.Error(t, err)
+	_, err = tk.Exec("alter table t drop column aa")
+	require.Error(t, err)
+	_, err = tk.Exec("alter table t add column ta int, add column tb int")
+	require.Error(t, err)
+	_, err = tk.Exec("alter table t drop column aa, drop column ab")
+	require.Error(t, err)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/MockModifyJobTableId"))
+
+	// Invalid argument.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/MockModifyJobArg", `return(true)`))
+	_, err = tk.Exec("alter table t add column ta int")
+	require.Error(t, err)
+	_, err = tk.Exec("alter table t drop column aa")
+	require.Error(t, err)
+	_, err = tk.Exec("alter table t drop column aa")
+	require.Error(t, err)
+	_, err = tk.Exec("alter table t add column ta int, add column tb int")
+	require.Error(t, err)
+	_, err = tk.Exec("alter table t drop column aa, drop column ab")
+	require.Error(t, err)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/MockModifyJobArg"))
+
+	tk.MustGetErrCode("alter table t add column c int after c5", errno.ErrBadField)
+	tk.MustGetErrCode("alter table t drop column c5", errno.ErrCantDropFieldOrKey)
+	tk.MustGetErrCode("alter table t add column c int after c5, add column d int", errno.ErrBadField)
+	tk.MustGetErrCode("alter table t drop column ab, drop column c5", errno.ErrCantDropFieldOrKey)
 }

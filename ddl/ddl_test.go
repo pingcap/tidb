@@ -16,21 +16,21 @@ package ddl
 
 import (
 	"context"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/util/dbterror"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -426,4 +426,95 @@ func TestBuildJobDependence(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
+}
+
+func TestNotifyDDLJob(t *testing.T) {
+	store := createMockStore(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	getFirstNotificationAfterStartDDL := func(d *ddl) {
+		select {
+		case <-d.workers[addIdxWorker].ddlJobCh:
+		default:
+			// The notification may be received by the worker.
+		}
+		select {
+		case <-d.workers[generalWorker].ddlJobCh:
+		default:
+			// The notification may be received by the worker.
+		}
+	}
+
+	d, err := testNewDDLAndStart(
+		context.Background(),
+		WithStore(store),
+		WithLease(testLease),
+	)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, d.Stop())
+	}()
+	getFirstNotificationAfterStartDDL(d)
+	// Ensure that the notification is not handled in workers `start` function.
+	d.cancel()
+	for _, worker := range d.workers {
+		worker.close()
+	}
+
+	job := &model.Job{
+		SchemaID:   1,
+		TableID:    2,
+		Type:       model.ActionCreateTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{},
+	}
+	// Test the notification mechanism of the owner and the server receiving the DDL request on the same TiDB.
+	// This DDL request is a general DDL job.
+	d.asyncNotifyWorker(job)
+	select {
+	case <-d.workers[generalWorker].ddlJobCh:
+	default:
+		require.FailNow(t, "do not get the general job notification")
+	}
+	// Test the notification mechanism of the owner and the server receiving the DDL request on the same TiDB.
+	// This DDL request is a add index DDL job.
+	job.Type = model.ActionAddIndex
+	d.asyncNotifyWorker(job)
+	select {
+	case <-d.workers[addIdxWorker].ddlJobCh:
+	default:
+		require.FailNow(t, "do not get the add index job notification")
+	}
+
+	// Test the notification mechanism that the owner and the server receiving the DDL request are not on the same TiDB.
+	// And the etcd client is nil.
+	d1, err := testNewDDLAndStart(
+		context.Background(),
+		WithStore(store),
+		WithLease(testLease),
+	)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, d1.Stop())
+	}()
+	getFirstNotificationAfterStartDDL(d1)
+	// Ensure that the notification is not handled by worker's "start".
+	d1.cancel()
+	for _, worker := range d1.workers {
+		worker.close()
+	}
+	d1.ownerManager.RetireOwner()
+	d1.asyncNotifyWorker(job)
+	job.Type = model.ActionCreateTable
+	d1.asyncNotifyWorker(job)
+	testCheckOwner(t, d1, false)
+	select {
+	case <-d1.workers[addIdxWorker].ddlJobCh:
+		require.FailNow(t, "should not get the add index job notification")
+	case <-d1.workers[generalWorker].ddlJobCh:
+		require.FailNow(t, "should not get the general job notification")
+	default:
+	}
 }
