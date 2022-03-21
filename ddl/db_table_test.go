@@ -471,7 +471,8 @@ func TestCancelAddTableAndDropTablePartition(t *testing.T) {
 			}
 			var errs []error
 			if variable.AllowConcurrencyDDL.Load() {
-				errs, err = ddl.CancelConcurrencyJobs(tk.Session(), jobIDs)
+				internalTk := testkit.NewTestKit(t, store)
+				errs, err = ddl.CancelConcurrencyJobs(internalTk.Session(), jobIDs)
 			} else {
 				errs, err = admin.CancelJobs(txn, jobIDs)
 			}
