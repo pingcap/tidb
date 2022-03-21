@@ -477,7 +477,7 @@ func TestCancelAddIndexPanic(t *testing.T) {
 				checkErr = errors.Trace(err)
 				return
 			}
-			if errs[0] != nil {
+			if err != nil && errs[0] != nil {
 				checkErr = errors.Trace(errs[0])
 				return
 			}
