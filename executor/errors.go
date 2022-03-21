@@ -53,6 +53,7 @@ var (
 	ErrIllegalPrivilegeLevel         = dbterror.ClassExecutor.NewStd(mysql.ErrIllegalPrivilegeLevel)
 	ErrInvalidSplitRegionRanges      = dbterror.ClassExecutor.NewStd(mysql.ErrInvalidSplitRegionRanges)
 	ErrViewInvalid                   = dbterror.ClassExecutor.NewStd(mysql.ErrViewInvalid)
+	ErrInstanceScope                 = dbterror.ClassExecutor.NewStd(mysql.ErrInstanceScope)
 
 	ErrBRIEBackupFailed      = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEBackupFailed)
 	ErrBRIERestoreFailed     = dbterror.ClassExecutor.NewStd(mysql.ErrBRIERestoreFailed)

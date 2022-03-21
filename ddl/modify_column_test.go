@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -65,7 +66,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 	// Make sure the count of regions more than backfill workers.
 	tk.MustQuery("split table t1 between (0) and (8192) regions 8;").Check(testkit.Rows("8 1"))
 
-	tbl := tk.GetTableByName("test", "t1")
+	tbl := external.GetTableByName(t, tk, "test", "t1")
 
 	// Check insert null before job first update.
 	hook := &ddl.TestDDLCallback{Do: dom}
@@ -102,7 +103,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 				times++
 				return
 			}
-			tbl := tk.GetTableByName("test", "t1")
+			tbl := external.GetTableByName(t, tk, "test", "t1")
 			indexInfo := tbl.Meta().FindIndexByName("idx2")
 			elements = []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
 		}
@@ -189,7 +190,7 @@ func TestModifyColumnNullToNotNull(t *testing.T) {
 
 	tk1.MustExec("create table t1 (c1 int, c2 int)")
 
-	tbl := tk1.GetTableByName("test", "t1")
+	tbl := external.GetTableByName(t, tk1, "test", "t1")
 
 	// Check insert null before job first update.
 	hook := &ddl.TestDDLCallback{Do: dom}
@@ -227,7 +228,7 @@ func TestModifyColumnNullToNotNull(t *testing.T) {
 	tk1.MustExec("alter table t1 change c2 c2 int not null")
 	require.EqualError(t, checkErr, "[table:1048]Column 'c2' cannot be null")
 
-	c2 := tk1.GetModifyColumn("test", "t1", "c2", false)
+	c2 := external.GetModifyColumn(t, tk1, "test", "t1", "c2", false)
 	require.True(t, mysql.HasNotNullFlag(c2.Flag))
 	require.False(t, mysql.HasPreventNullInsertFlag(c2.Flag))
 	err = tk1.ExecToErr("insert into t1 values ();")
@@ -245,7 +246,7 @@ func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
 
 	tk1.MustExec("create table t1 (c1 int, c2 int)")
 
-	tbl := tk1.GetTableByName("test", "t1")
+	tbl := external.GetTableByName(t, tk1, "test", "t1")
 
 	// Check insert null before job first update.
 	hook := &ddl.TestDDLCallback{Do: dom}
@@ -283,12 +284,12 @@ func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
 	tk1.MustExec("alter table t1 change c2 c2 tinyint not null")
 	require.EqualError(t, checkErr, "[table:1048]Column 'c2' cannot be null")
 
-	c2 := tk1.GetModifyColumn("test", "t1", "c2", false)
+	c2 := external.GetModifyColumn(t, tk1, "test", "t1", "c2", false)
 	require.True(t, mysql.HasNotNullFlag(c2.Flag))
 	require.False(t, mysql.HasPreventNullInsertFlag(c2.Flag))
 	require.EqualError(t, tk1.ExecToErr("insert into t1 values ()"), "[table:1364]Field 'c2' doesn't have a default value")
 
-	c2 = tk1.GetModifyColumn("test", "t1", "c2", false)
+	c2 = external.GetModifyColumn(t, tk1, "test", "t1", "c2", false)
 	require.Equal(t, mysql.TypeTiny, c2.FieldType.Tp)
 }
 
@@ -302,7 +303,7 @@ func TestModifyColumnBetweenStringTypes(t *testing.T) {
 	tk.MustExec("create table tt (a varchar(10));")
 	tk.MustExec("insert into tt values ('111'),('10000');")
 	tk.MustExec("alter table tt change a a varchar(5);")
-	mvc := tk.GetModifyColumn("test", "tt", "a", false)
+	mvc := external.GetModifyColumn(t, tk, "test", "tt", "a", false)
 	require.Equal(t, 5, mvc.FieldType.Flen)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 	tk.MustGetErrMsg("alter table tt change a a varchar(4);", "[types:1265]Data truncated for column 'a', value is '10000'")
@@ -314,7 +315,7 @@ func TestModifyColumnBetweenStringTypes(t *testing.T) {
 	tk.MustExec("create table tt (a char(10));")
 	tk.MustExec("insert into tt values ('111'),('10000');")
 	tk.MustExec("alter table tt change a a char(5);")
-	mc := tk.GetModifyColumn("test", "tt", "a", false)
+	mc := external.GetModifyColumn(t, tk, "test", "tt", "a", false)
 	require.Equal(t, 5, mc.FieldType.Flen)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 	tk.MustGetErrMsg("alter table tt change a a char(4);", "[types:1265]Data truncated for column 'a', value is '10000'")
@@ -326,7 +327,7 @@ func TestModifyColumnBetweenStringTypes(t *testing.T) {
 	tk.MustExec("create table tt (a binary(10));")
 	tk.MustExec("insert into tt values ('111'),('10000');")
 	tk.MustGetErrMsg("alter table tt change a a binary(5);", "[types:1265]Data truncated for column 'a', value is '111\x00\x00\x00\x00\x00\x00\x00'")
-	mb := tk.GetModifyColumn("test", "tt", "a", false)
+	mb := external.GetModifyColumn(t, tk, "test", "tt", "a", false)
 	require.Equal(t, 10, mb.FieldType.Flen)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111\x00\x00\x00\x00\x00\x00\x00", "10000\x00\x00\x00\x00\x00"))
 	tk.MustGetErrMsg("alter table tt change a a binary(4);", "[types:1265]Data truncated for column 'a', value is '111\x00\x00\x00\x00\x00\x00\x00'")
@@ -339,7 +340,7 @@ func TestModifyColumnBetweenStringTypes(t *testing.T) {
 	tk.MustExec("create table tt (a varbinary(10));")
 	tk.MustExec("insert into tt values ('111'),('10000');")
 	tk.MustExec("alter table tt change a a varbinary(5);")
-	mvb := tk.GetModifyColumn("test", "tt", "a", false)
+	mvb := external.GetModifyColumn(t, tk, "test", "tt", "a", false)
 	require.Equal(t, 5, mvb.FieldType.Flen)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 	tk.MustGetErrMsg("alter table tt change a a varbinary(4);", "[types:1265]Data truncated for column 'a', value is '10000'")
@@ -353,7 +354,7 @@ func TestModifyColumnBetweenStringTypes(t *testing.T) {
 	tk.MustExec("insert into tt values ('111'),('10000');")
 
 	tk.MustExec("alter table tt change a a char(10);")
-	c2 := tk.GetModifyColumn("test", "tt", "a", false)
+	c2 := external.GetModifyColumn(t, tk, "test", "tt", "a", false)
 	require.Equal(t, mysql.TypeString, c2.FieldType.Tp)
 	require.Equal(t, 10, c2.FieldType.Flen)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
@@ -361,26 +362,26 @@ func TestModifyColumnBetweenStringTypes(t *testing.T) {
 
 	// char to text
 	tk.MustExec("alter table tt change a a text;")
-	c2 = tk.GetModifyColumn("test", "tt", "a", false)
+	c2 = external.GetModifyColumn(t, tk, "test", "tt", "a", false)
 	require.Equal(t, mysql.TypeBlob, c2.FieldType.Tp)
 
 	// text to set
 	tk.MustGetErrMsg("alter table tt change a a set('111', '2222');", "[types:1265]Data truncated for column 'a', value is '10000'")
 	tk.MustExec("alter table tt change a a set('111', '10000');")
-	c2 = tk.GetModifyColumn("test", "tt", "a", false)
+	c2 = external.GetModifyColumn(t, tk, "test", "tt", "a", false)
 	require.Equal(t, mysql.TypeSet, c2.FieldType.Tp)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 
 	// set to set
 	tk.MustExec("alter table tt change a a set('10000', '111');")
-	c2 = tk.GetModifyColumn("test", "tt", "a", false)
+	c2 = external.GetModifyColumn(t, tk, "test", "tt", "a", false)
 	require.Equal(t, mysql.TypeSet, c2.FieldType.Tp)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 
 	// set to enum
 	tk.MustGetErrMsg("alter table tt change a a enum('111', '2222');", "[types:1265]Data truncated for column 'a', value is '10000'")
 	tk.MustExec("alter table tt change a a enum('111', '10000');")
-	c2 = tk.GetModifyColumn("test", "tt", "a", false)
+	c2 = external.GetModifyColumn(t, tk, "test", "tt", "a", false)
 	require.Equal(t, mysql.TypeEnum, c2.FieldType.Tp)
 	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
 	tk.MustExec("alter table tt change a a enum('10000', '111');")
@@ -410,7 +411,7 @@ func TestModifyColumnCharset(t *testing.T) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	tk.MustExec("alter table t_mcc modify column a varchar(8);")
-	tbl := tk.GetTableByName("test", "t_mcc")
+	tbl := external.GetTableByName(t, tk, "test", "t_mcc")
 	tbl.Meta().Version = model.TableInfoVersion0
 	// When the table version is TableInfoVersion0, the following statement don't change "b" charset.
 	// So the behavior is not compatible with MySQL.
@@ -923,7 +924,7 @@ func TestModifyColumnRollBack(t *testing.T) {
 			return
 		}
 
-		tbl := tk.GetTableByName("test", "t1")
+		tbl := external.GetTableByName(t, tk, "test", "t1")
 		for _, col := range tbl.Cols() {
 			if col.Name.L == "c2" {
 				c2 = col
@@ -977,7 +978,7 @@ func TestModifyColumnRollBack(t *testing.T) {
 	require.EqualError(t, err, "[ddl:8214]Cancelled DDL job")
 	tk.MustExec("insert into t1(c2) values (null);")
 
-	tbl := tk.GetTableByName("test", "t1")
+	tbl := external.GetTableByName(t, tk, "test", "t1") //nolint:typecheck
 	for _, col := range tbl.Cols() {
 		if col.Name.L == "c2" {
 			c2 = col

@@ -38,6 +38,8 @@ const (
 	ScopeGlobal ScopeFlag = 1 << 0
 	// ScopeSession means the system variable can only be changed in current session.
 	ScopeSession ScopeFlag = 1 << 1
+	// ScopeInstance means it is similar to global but doesn't propagate to other TiDB servers.
+	ScopeInstance ScopeFlag = 1 << 2
 
 	// TypeStr is the default
 	TypeStr TypeFlag = 0
@@ -248,6 +250,11 @@ func (sv *SysVar) HasGlobalScope() bool {
 	return sv.Scope&ScopeGlobal != 0
 }
 
+// HasInstanceScope returns true if the scope for the sysVar includes instance
+func (sv *SysVar) HasInstanceScope() bool {
+	return sv.Scope&ScopeInstance != 0
+}
+
 // Validate checks if system variable satisfies specific restriction.
 func (sv *SysVar) Validate(vars *SessionVars, value string, scope ScopeFlag) (string, error) {
 	// Check that the scope is correct first.
@@ -299,7 +306,7 @@ func (sv *SysVar) validateScope(scope ScopeFlag) error {
 	if sv.ReadOnly || sv.Scope == ScopeNone {
 		return ErrIncorrectScope.FastGenByArgs(sv.Name, "read only")
 	}
-	if scope == ScopeGlobal && !sv.HasGlobalScope() {
+	if scope == ScopeGlobal && !(sv.HasGlobalScope() || sv.HasInstanceScope()) {
 		return errLocalVariable.FastGenByArgs(sv.Name)
 	}
 	if scope == ScopeSession && !sv.HasSessionScope() {
