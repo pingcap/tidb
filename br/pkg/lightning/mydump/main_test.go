@@ -24,6 +24,7 @@ import (
 func TestMain(m *testing.M) {
 	testbridge.SetupForCommonTest()
 	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("github.com/klauspost/compress/zstd.(*blockDec).startDecoder"),
 	}

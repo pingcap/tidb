@@ -211,8 +211,11 @@ func waitForLeaseExpire(oldReadLease, now uint64) time.Duration {
 	if oldReadLease >= now {
 		t1 := oracle.GetTimeFromTS(oldReadLease)
 		t2 := oracle.GetTimeFromTS(now)
-		waitDuration := t1.Sub(t2)
-		return waitDuration
+		if t1.After(t2) {
+			waitDuration := t1.Sub(t2)
+			return waitDuration
+		}
+		return time.Microsecond
 	}
 	return 0
 }
@@ -220,6 +223,8 @@ func waitForLeaseExpire(oldReadLease, now uint64) time.Duration {
 // RenewReadLease renew the read lock lease.
 // Return the current lease value on success, and return 0 on fail.
 func (h *stateRemoteHandle) RenewReadLease(ctx context.Context, tid int64, oldLocalLease, newValue uint64) (uint64, error) {
+	h.Lock()
+	defer h.Unlock()
 	var newLease uint64
 	err := h.runInTxn(ctx, func(ctx context.Context, now uint64) error {
 		lockType, remoteLease, _, err := h.loadRow(ctx, tid)
@@ -266,6 +271,8 @@ func (h *stateRemoteHandle) RenewReadLease(ctx context.Context, tid int64, oldLo
 }
 
 func (h *stateRemoteHandle) RenewWriteLease(ctx context.Context, tid int64, newLease uint64) (bool, error) {
+	h.Lock()
+	defer h.Unlock()
 	var succ bool
 	err := h.runInTxn(ctx, func(ctx context.Context, now uint64) error {
 		lockType, oldLease, _, err := h.loadRow(ctx, tid)

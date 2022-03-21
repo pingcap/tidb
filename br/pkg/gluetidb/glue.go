@@ -134,6 +134,7 @@ func (gs *tidbSession) CreateDatabase(ctx context.Context, schema *model.DBInfo)
 // CreatePlacementPolicy implements glue.Session.
 func (gs *tidbSession) CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error {
 	d := domain.GetDomain(gs.se).DDL()
+	gs.se.SetValue(sessionctx.QueryString, gs.showCreatePlacementPolicy(policy))
 	// the default behaviour is ignoring duplicated policy during restore.
 	return d.CreatePlacementPolicyWithInfo(gs.se, policy, ddl.OnExistIgnore)
 }
@@ -224,4 +225,8 @@ func (gs *tidbSession) showCreateDatabase(db *model.DBInfo) (string, error) {
 		return "", errors.Trace(err)
 	}
 	return result.String(), nil
+}
+
+func (gs *tidbSession) showCreatePlacementPolicy(policy *model.PolicyInfo) string {
+	return executor.ConstructResultOfShowCreatePlacementPolicy(policy)
 }

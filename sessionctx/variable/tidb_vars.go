@@ -133,6 +133,9 @@ const (
 	// TiDBOptimizerSelectivityLevel is used to control the selectivity estimation level.
 	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
 
+	// TiDBOptimizerEnableNewOnlyFullGroupByCheck is used to open the newly only_full_group_by check by maintaining functional dependency.
+	TiDBOptimizerEnableNewOnlyFullGroupByCheck = "tidb_enable_new_only_full_group_by_check"
+
 	// TiDBTxnMode is used to control the transaction behavior.
 	TiDBTxnMode = "tidb_txn_mode"
 
@@ -716,6 +719,7 @@ const (
 	DefBroadcastJoinThresholdSize         = 100 * 1024 * 1024
 	DefBroadcastJoinThresholdCount        = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel      = 0
+	DefTiDBOptimizerEnableNewOFGB         = false
 	DefTiDBAllowBatchCop                  = 1
 	DefTiDBAllowMPPExecution              = true
 	DefTiDBHashExchangeWithNewCollation   = true
