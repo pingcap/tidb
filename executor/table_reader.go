@@ -181,6 +181,11 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	// Calculate the kv ranges here, UnionScan rely on this kv ranges.
 	// cached table and temporary table are similar
 	if e.dummy {
+		kvReq, err := e.buildKVReq(ctx, firstPartRanges)
+		if err != nil {
+			return err
+		}
+		e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
 		if len(secondPartRanges) != 0 {
 			kvReq, err := e.buildKVReq(ctx, secondPartRanges)
 			if err != nil {
@@ -188,11 +193,6 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 			}
 			e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
 		}
-		kvReq, err := e.buildKVReq(ctx, firstPartRanges)
-		if err != nil {
-			return err
-		}
-		e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
 		return nil
 	}
 

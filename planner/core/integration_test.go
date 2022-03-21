@@ -6264,7 +6264,7 @@ func TestIssue33175(t *testing.T) {
 		}
 	}
 
-	// With subquery, like the original issue case.
+	// // With subquery, like the original issue case.
 	for {
 		tk.MustQuery("select * from t where id > (select  max(id) from t where t.id > 0);").Check(testkit.Rows())
 		if tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache {
@@ -6272,6 +6272,46 @@ func TestIssue33175(t *testing.T) {
 		}
 	}
 
+	// Test order by desc / asc.
+	tk.MustQuery("select id from t order by id desc;").Check(testkit.Rows(
+		"10353107668348738101",
+		"9734095886065816707",
+		"0"))
+
+	tk.MustQuery("select id from t order by id asc;").Check(testkit.Rows(
+		"0",
+		"9734095886065816707",
+		"10353107668348738101"))
+
 	tk.MustExec("alter table t nocache")
 	tk.MustExec("drop table t")
+
+	// Cover more code that use union scan
+	// TableReader/IndexReader/IndexLookup
+	for idx, q := range []string{
+		"create temporary table t (id bigint unsigned, c int default null, index(id))",
+		"create temporary table t (id bigint unsigned primary key)",
+	} {
+		tk.MustExec(q)
+		tk.MustExec("insert into t(id) values (1), (3), (9734095886065816707), (9734095886065816708)")
+		tk.MustQuery("select min(id) from t").Check(testkit.Rows("1"))
+		tk.MustQuery("select max(id) from t").Check(testkit.Rows("9734095886065816708"))
+		tk.MustQuery("select id from t order by id asc").Check(testkit.Rows(
+			"1", "3", "9734095886065816707", "9734095886065816708"))
+		tk.MustQuery("select id from t order by id desc").Check(testkit.Rows(
+			"9734095886065816708", "9734095886065816707", "3", "1"))
+		if idx == 0 {
+			tk.MustQuery("select * from t order by id asc").Check(testkit.Rows(
+				"1 <nil>",
+				"3 <nil>",
+				"9734095886065816707 <nil>",
+				"9734095886065816708 <nil>"))
+			tk.MustQuery("select * from t order by id desc").Check(testkit.Rows(
+				"9734095886065816708 <nil>",
+				"9734095886065816707 <nil>",
+				"3 <nil>",
+				"1 <nil>"))
+		}
+		tk.MustExec("drop table t")
+	}
 }
