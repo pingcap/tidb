@@ -119,7 +119,7 @@ func (*Join) resultSet() {}
 // We get (t1 join t3) left join t2, the semantics is correct.
 func NewCrossJoin(left, right ResultSetNode) (n *Join) {
 	rj, ok := right.(*Join)
-	if !ok || rj.Right == nil {
+	if !ok || rj.Right == nil || rj.ExplicitParens {
 		return &Join{Left: left, Right: right, Tp: CrossJoin}
 	}
 
