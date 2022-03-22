@@ -849,7 +849,11 @@ func RunStreamRestore(
 	safepoint := client.GetTruncateSafepoint(ctx)
 	if cfg.RestoreTS < safepoint {
 		// TODO: maybe also filter records less than safepoint.
-		return errors.Annotatef(berrors.ErrInvalidArgument, "the restore ts %d(%s) is truncated, please restore to longer than %d(%s)")
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"the restore ts %d(%s) is truncated, please restore to longer than %d(%s)",
+			cfg.RestoreTS, oracle.GetTimeFromTS(cfg.RestoreTS),
+			safepoint, oracle.GetTimeFromTS(safepoint),
+		)
 	}
 	err = client.LoadRestoreStores(ctx)
 	if err != nil {
