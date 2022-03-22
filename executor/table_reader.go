@@ -181,7 +181,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	// Calculate the kv ranges here, UnionScan rely on this kv ranges.
 	// cached table and temporary table are similar
 	if e.dummy {
-		if e.desc {
+		if e.desc && len(secondPartRanges) != 0 {
 			// TiKV support reverse scan and the `resultHandler` process the range order.
 			// While in UnionScan, it doesn't use reverse scan and reverse the final result rows manually.
 			// So things are differ, we need to reverse the kv range here.
