@@ -473,8 +473,10 @@ func SplitRangesAcrossInt64Boundary(ranges []*ranger.Range, keepOrder bool, desc
 			return append(unsignedRanges, signedRanges...), nil
 		}
 		if desc {
+			fmt.Println("SplitRangesAcrossInt64Boundary desc, unsigned -> signed", unsignedRanges, signedRanges)
 			return unsignedRanges, signedRanges
 		}
+		fmt.Println("SplitRangesAcrossInt64Boundary asc, signed -> unsigned", signedRanges, unsignedRanges)
 		return signedRanges, unsignedRanges
 	}
 	// need to split the range that straddles the int64 boundary
@@ -504,8 +506,10 @@ func SplitRangesAcrossInt64Boundary(ranges []*ranger.Range, keepOrder bool, desc
 		return append(unsignedRanges, signedRanges...), nil
 	}
 	if desc {
+		fmt.Println("SplitRangesAcrossInt64Boundary desc, unsigned -> signed", unsignedRanges, signedRanges)
 		return unsignedRanges, signedRanges
 	}
+	fmt.Println("SplitRangesAcrossInt64Boundary asc, signed -> unsigned", signedRanges, unsignedRanges)
 	return signedRanges, unsignedRanges
 }
 

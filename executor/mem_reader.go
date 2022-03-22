@@ -119,14 +119,6 @@ func (m *memIndexReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 	}
 
 	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
-
-	// TODO: `IterReverse` is not used... to get the same effect, reverse the kv ranges first,
-	// Then reverse the whole added rows.
-	// [99, 100] [44, 45] [1, 3] => [1, 3] [44, 45] [99, 100] => [100, 99] [45, 44] [3 1]
-	if m.desc {
-		reverseKVRanges(m.kvRanges)
-	}
-
 	err := iterTxnMemBuffer(m.ctx, m.cacheTable, m.kvRanges, func(key, value []byte) error {
 		data, err := m.decodeIndexKeyValue(key, value, tps)
 		if err != nil {
@@ -246,12 +238,6 @@ func (m *memTableReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 		span1 := span.Tracer().StartSpan("memTableReader.getMemRows", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		opentracing.ContextWithSpan(ctx, span1)
-	}
-
-	// TODO: `IterReverse` is not used... to get the same effect, reverse the kv ranges first,
-	// Then reverse the whole added rows.
-	if m.desc {
-		reverseKVRanges(m.kvRanges)
 	}
 
 	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
@@ -422,7 +408,6 @@ func iterTxnMemBuffer(ctx sessionctx.Context, cacheTable kv.MemBuffer, kvRanges 
 			if len(iter.Value()) == 0 {
 				continue
 			}
-
 			err = fn(iter.Key(), iter.Value())
 			if err != nil {
 				return err
@@ -449,12 +434,6 @@ func getSnapIter(ctx sessionctx.Context, cacheTable kv.MemBuffer, rg kv.KeyRange
 		snapCacheIter = cacheIter
 	}
 	return snapCacheIter, nil
-}
-
-func reverseKVRanges(rows []kv.KeyRange) {
-	for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
-		rows[i], rows[j] = rows[j], rows[i]
-	}
 }
 
 func reverseDatumSlice(rows [][]types.Datum) {
@@ -562,13 +541,6 @@ func (m *memIndexLookUpReader) getMemRows(ctx context.Context) ([][]types.Datum,
 	numHandles := 0
 	for i, tbl := range tbls {
 		m.idxReader.kvRanges = kvRanges[i]
-		// TODO: `IterReverse` is not used... to get the same effect, reverse the kv ranges first,
-		// Then reverse the whole added rows.
-		// [99, 100] [44, 45] [1, 3] => [1, 3] [44, 45] [99, 100] => [100, 99] [45, 44] [3 1]
-		if m.desc {
-			reverseKVRanges(m.idxReader.kvRanges)
-		}
-
 		handles, err := m.idxReader.getMemRowsHandle()
 		if err != nil {
 			return nil, err
