@@ -577,6 +577,7 @@ func TestProduceDecWithSpecifiedTp(t *testing.T) {
 		isOverflow bool
 	}{
 		{"0.0000", 4, 3, "0.000", false},
+		{"0.0001", 4, 3, "0.000", false},
 		{"123", 8, 5, "123.00000", false},
 		{"-123", 8, 5, "-123.00000", false},
 		{"123.899", 5, 2, "123.90", false},
