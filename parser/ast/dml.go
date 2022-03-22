@@ -119,6 +119,8 @@ func (*Join) resultSet() {}
 // We get (t1 join t3) left join t2, the semantics is correct.
 func NewCrossJoin(left, right ResultSetNode) (n *Join) {
 	rj, ok := right.(*Join)
+	// don't break the explicit parents name scope constraints.
+	// this kind of join re-order can be done in logical-phase after the name resolution.
 	if !ok || rj.Right == nil || rj.ExplicitParens {
 		return &Join{Left: left, Right: right, Tp: CrossJoin}
 	}
