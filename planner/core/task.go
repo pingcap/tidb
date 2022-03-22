@@ -967,7 +967,18 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 		newTask.cst += sortCPUCost
 	}
 	p.cost = newTask.cst
-	if t.needExtraProj {
+
+	// Do not inject the extra Projection even if t.needExtraProj is set, or the schema between the phase-1 agg and
+	// the final agg would be broken. Please reference comments for the similar logic in
+	// (*copTask).convertToRootTaskImpl() for the PhysicalTableReader case.
+	// We need to refactor these logics.
+	aggPushedDown := false
+	switch p.tablePlan.(type) {
+	case *PhysicalHashAgg, *PhysicalStreamAgg:
+		aggPushedDown = true
+	}
+
+	if t.needExtraProj && !aggPushedDown {
 		schema := t.originSchema
 		proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, t.tablePlan.SelectBlockOffset(), nil)
 		proj.SetSchema(schema)
