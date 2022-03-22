@@ -255,15 +255,15 @@ func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.
 	})
 	failpoint.Inject("setCpExtStorage", func(val failpoint.Value) {
 		file := val.(string)
-		o.cpNameInExtStorage = file
+		o.checkpointName = file
 	})
 
 	// pre-check about options
 	if o.externalStorage != nil && o.glue != nil {
-		return common.NormalizeError(errors.New("WithExternalStorage and WithGlue can't be both set"))
+		return common.ErrInvalidArgument.GenWithStack("WithExternalStorage and WithGlue can't be both set")
 	}
-	if o.cpNameInExtStorage != "" && o.glue != nil {
-		return common.NormalizeError(errors.New("WithCpNameInExtStorage and WithGlue can't be both set"))
+	if o.checkpointName != "" && o.glue != nil {
+		return common.ErrInvalidArgument.GenWithStack("WithCpNameInExtStorage and WithGlue can't be both set")
 	}
 
 	if o.externalStorage != nil {
@@ -400,7 +400,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		ExtStorage:         s,
 		OwnExtStorage:      o.externalStorage == nil,
 		Glue:               g,
-		CpNameInExtStorage: o.cpNameInExtStorage,
+		CpNameInExtStorage: o.checkpointName,
 	}
 
 	procedure, err = restore.NewRestoreController(ctx, taskCfg, param)

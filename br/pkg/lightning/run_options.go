@@ -20,9 +20,9 @@ import (
 )
 
 type options struct {
-	glue               glue.Glue
-	externalStorage    storage.ExternalStorage
-	cpNameInExtStorage string
+	glue            glue.Glue
+	externalStorage storage.ExternalStorage
+	checkpointName  string
 }
 
 type Option func(*options)
@@ -47,6 +47,6 @@ func WithExternalStorage(s storage.ExternalStorage) Option {
 // Typically, the checkpoint name is set when lightning is integrated with dataflow engine by DM.
 func WithCheckpointInExternalStorage(cpName string) Option {
 	return func(o *options) {
-		o.cpNameInExtStorage = cpName
+		o.checkpointName = cpName
 	}
 }
