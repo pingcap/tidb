@@ -20,9 +20,10 @@ import (
 )
 
 type options struct {
-	glue            glue.Glue
-	externalStorage storage.ExternalStorage
-	checkpointName  string
+	glue              glue.Glue
+	dumpFileStorage   storage.ExternalStorage
+	checkpointStorage storage.ExternalStorage
+	checkpointName    string
 }
 
 type Option func(*options)
@@ -35,18 +36,19 @@ func WithGlue(g glue.Glue) Option {
 	}
 }
 
-// WithExternalStorage sets the external storage to a lightning task.
+// WithDumpFileStorage sets the external storage to a lightning task.
 // Typically, the external storage is set when lightning is integrated with dataflow engine by DM.
-func WithExternalStorage(s storage.ExternalStorage) Option {
+func WithDumpFileStorage(s storage.ExternalStorage) Option {
 	return func(o *options) {
-		o.externalStorage = s
+		o.dumpFileStorage = s
 	}
 }
 
-// WithCheckpointInExternalStorage sets the checkpoint name in external storage to a lightning task.
+// WithCheckpointStorage sets the checkpoint name in external storage to a lightning task.
 // Typically, the checkpoint name is set when lightning is integrated with dataflow engine by DM.
-func WithCheckpointInExternalStorage(cpName string) Option {
+func WithCheckpointStorage(s storage.ExternalStorage, cpName string) Option {
 	return func(o *options) {
+		o.checkpointStorage = s
 		o.checkpointName = cpName
 	}
 }

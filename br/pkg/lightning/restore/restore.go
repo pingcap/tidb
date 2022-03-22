@@ -286,15 +286,17 @@ type ControllerParam struct {
 	// a pointer to status to report it to caller
 	Status *LightningStatus
 	// storage interface to read the dump data
-	ExtStorage storage.ExternalStorage
-	// if ExtStorage is created by lightning. In some cases where lightning is a library, the framework may pass an ExtStorage
+	DumpFileStorage storage.ExternalStorage
+	// true if DumpFileStorage is created by lightning. In some cases where lightning is a library, the framework may pass an DumpFileStorage
 	OwnExtStorage bool
 	// used by lightning server mode to pause tasks
 	Pauser *common.Pauser
 	// lightning via SQL will implement its glue, to let lightning use host TiDB's environment
 	Glue glue.Glue
-	// when not OwnExtStorage, checkpoint can also be saved in framework-created ExtStorage by setting this field
-	CpNameInExtStorage string
+	// storage interface to write file checkpoints
+	CheckpointStorage storage.ExternalStorage
+	// when CheckpointStorage is not nil, save file checkpoint to it with this name
+	CheckpointName string
 }
 
 func NewRestoreController(
@@ -317,9 +319,9 @@ func NewRestoreControllerWithPauser(
 	}
 
 	var cpdb checkpoints.DB
-	// if cpNameInExtStorage is set, we should use given ExternalStorage to create checkpoints.
-	if p.CpNameInExtStorage != "" {
-		cpdb, err = checkpoints.NewFileCheckpointsDBWithExstorageFileName(ctx, p.ExtStorage.URI(), p.ExtStorage, p.CpNameInExtStorage)
+	// if CheckpointStorage is set, we should use given ExternalStorage to create checkpoints.
+	if p.CheckpointStorage != nil {
+		cpdb, err = checkpoints.NewFileCheckpointsDBWithExstorageFileName(ctx, p.CheckpointStorage.URI(), p.CheckpointStorage, p.CheckpointName)
 		if err != nil {
 			return nil, common.ErrOpenCheckpoint.Wrap(err).GenWithStackByArgs()
 		}
@@ -436,7 +438,7 @@ func NewRestoreControllerWithPauser(
 		saveCpCh:          make(chan saveCp),
 		closedEngineLimit: worker.NewPool(ctx, cfg.App.TableConcurrency*2, "closed-engine"),
 
-		store:          p.ExtStorage,
+		store:          p.DumpFileStorage,
 		ownStore:       p.OwnExtStorage,
 		metaMgrBuilder: metaBuilder,
 		errorMgr:       errorMgr,

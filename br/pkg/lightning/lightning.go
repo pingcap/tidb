@@ -231,9 +231,9 @@ func (l *Lightning) RunServer() error {
 // - for lightning as a library, taskCtx could be a meaningful context that get canceled outside, and there Options may
 //   be used:
 //   - WithGlue: set a caller implemented glue. Otherwise, lightning will use a default glue later.
-//   - WithExternalStorage: caller has opened an external storage for lightning. Otherwise, lightning will open a
+//   - WithDumpFileStorage: caller has opened an external storage for lightning. Otherwise, lightning will open a
 //     storage by config
-//   - WithCheckpointInExternalStorage: caller has opened an external storage for lightning and want to save checkpoint
+//   - WithCheckpointStorage: caller has opened an external storage for lightning and want to save checkpoint
 //     in it. Otherwise, lightning will save checkpoint by the Checkpoint.DSN in config
 func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.Config, opts ...Option) error {
 	o := &options{}
@@ -251,22 +251,23 @@ func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.
 		if err != nil {
 			panic(err)
 		}
-		o.externalStorage = s
+		o.dumpFileStorage = s
+		o.checkpointStorage = s
 	})
-	failpoint.Inject("setCpExtStorage", func(val failpoint.Value) {
+	failpoint.Inject("setCheckpointName", func(val failpoint.Value) {
 		file := val.(string)
 		o.checkpointName = file
 	})
 
 	// pre-check about options
-	if o.externalStorage != nil && o.glue != nil {
-		return common.ErrInvalidArgument.GenWithStack("WithExternalStorage and WithGlue can't be both set")
+	if o.dumpFileStorage != nil && o.glue != nil {
+		return common.ErrInvalidArgument.GenWithStack("WithDumpFileStorage and WithGlue can't be both set")
 	}
-	if o.checkpointName != "" && o.glue != nil {
-		return common.ErrInvalidArgument.GenWithStack("WithCpNameInExtStorage and WithGlue can't be both set")
+	if o.checkpointStorage != nil && o.glue != nil {
+		return common.ErrInvalidArgument.GenWithStack("WithCheckpointStorage and WithGlue can't be both set")
 	}
 
-	if o.externalStorage != nil {
+	if o.dumpFileStorage != nil {
 		// we don't use it, set a value to pass Adjust
 		taskCfg.Mydumper.SourceDir = "noop://"
 	}
@@ -345,7 +346,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		g = glue.NewExternalTiDBGlue(db, taskCfg.TiDB.SQLMode)
 	}
 
-	s := o.externalStorage
+	s := o.dumpFileStorage
 	if s == nil {
 		u, err := storage.ParseBackend(taskCfg.Mydumper.SourceDir, nil)
 		if err != nil {
@@ -395,12 +396,12 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	var procedure *restore.Controller
 
 	param := &restore.ControllerParam{
-		DBMetas:            dbMetas,
-		Status:             &l.status,
-		ExtStorage:         s,
-		OwnExtStorage:      o.externalStorage == nil,
-		Glue:               g,
-		CpNameInExtStorage: o.checkpointName,
+		DBMetas:         dbMetas,
+		Status:          &l.status,
+		DumpFileStorage: s,
+		OwnExtStorage:   o.dumpFileStorage == nil,
+		Glue:            g,
+		CheckpointName:  o.checkpointName,
 	}
 
 	procedure, err = restore.NewRestoreController(ctx, taskCfg, param)

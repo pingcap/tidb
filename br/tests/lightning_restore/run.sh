@@ -52,7 +52,7 @@ for i in $(seq "$TABLE_COUNT"); do
 done
 
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/setExtStorage=return(\"$DBPATH2\")"
-export GO_FAILPOINTS="$GO_FAILPOINTS;github.com/pingcap/tidb/br/pkg/lightning/setCpExtStorage=return(\"test_checkpoint.pb\")"
+export GO_FAILPOINTS="$GO_FAILPOINTS;github.com/pingcap/tidb/br/pkg/lightning/setCheckpointName=return(\"test_checkpoint.pb\")"
 
 run_sql 'DROP DATABASE IF EXISTS restore_tsr'
 run_lightning
