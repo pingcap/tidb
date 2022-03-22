@@ -1269,18 +1269,20 @@ func TestWriteReorgForColumnTypeChangeOnAmendTxn(t *testing.T) {
 		}()
 		hook := &ddl.TestDDLCallback{Do: dom}
 		times := 0
-		hook.OnJobUpdatedExported = func(job *model.Job) {
-			if job.Type != model.ActionModifyColumn || checkErr != nil ||
-				(job.SchemaState != startColState && job.SchemaState != commitColState) {
+		hook.OnJobRunBeforeExported = func(job *model.Job) {
+			if job.Type != model.ActionModifyColumn || checkErr != nil || job.SchemaState != startColState {
 				return
 			}
 
-			if job.SchemaState == startColState {
-				tk1.MustExec("use test")
-				tk1.MustExec("begin pessimistic;")
-				tk1.MustExec("insert into t1 values(101, 102, 103)")
+			tk1.MustExec("use test")
+			tk1.MustExec("begin pessimistic;")
+			tk1.MustExec("insert into t1 values(101, 102, 103)")
+		}
+		hook.OnJobUpdatedExported = func(job *model.Job) {
+			if job.Type != model.ActionModifyColumn || checkErr != nil || job.SchemaState != commitColState {
 				return
 			}
+
 			if times == 0 {
 				_, checkErr = tk1.Exec("commit;")
 			}
