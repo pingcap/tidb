@@ -35,6 +35,7 @@ import (
 	"modernc.org/mathutil"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
+
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -348,7 +349,6 @@ func (rc *Controller) checkClusterRegion(ctx context.Context) error {
 }
 
 // StoragePermission checks whether Lightning has enough permission to storage.
-// this test cannot be skipped.
 func (rc *Controller) StoragePermission(ctx context.Context) error {
 	passed := true
 	message := "Lightning has the correct storage permission"

@@ -22,11 +22,12 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
+	"github.com/stretchr/testify/require"
+
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	"github.com/stretchr/testify/require"
 )
 
 func TestInitEnv(t *testing.T) {
@@ -61,6 +62,7 @@ func TestRun(t *testing.T) {
 	path, _ := filepath.Abs(".")
 	ctx := context.Background()
 	invalidGlue := glue.NewExternalTiDBGlue(nil, 0)
+	o := &options{glue: invalidGlue}
 	err = lightning.run(ctx, &config.Config{
 		Mydumper: config.MydumperRuntime{
 			SourceDir:        "file://" + filepath.ToSlash(path),
@@ -71,7 +73,7 @@ func TestRun(t *testing.T) {
 			Enable: true,
 			Driver: "invalid",
 		},
-	}, invalidGlue)
+	}, o)
 	require.EqualError(t, err, "[Lightning:Checkpoint:ErrUnknownCheckpointDriver]unknown checkpoint driver 'invalid'")
 
 	err = lightning.run(ctx, &config.Config{
@@ -84,7 +86,7 @@ func TestRun(t *testing.T) {
 			Driver: "file",
 			DSN:    "any-file",
 		},
-	}, invalidGlue)
+	}, o)
 	require.Error(t, err)
 }
 

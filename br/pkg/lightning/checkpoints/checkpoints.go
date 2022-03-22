@@ -28,6 +28,9 @@ import (
 
 	"github.com/joho/sqltocsv"
 	"github.com/pingcap/errors"
+	"go.uber.org/zap"
+	"modernc.org/mathutil"
+
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints/checkpointspb"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -36,8 +39,6 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"go.uber.org/zap"
-	"modernc.org/mathutil"
 )
 
 type CheckpointStatus uint8
@@ -954,23 +955,22 @@ type FileCheckpointsDB struct {
 	exStorage   storage.ExternalStorage
 }
 
-func NewFileCheckpointsDB(ctx context.Context, path string) (*FileCheckpointsDB, error) {
+func newFileCheckpointsDB(
+	ctx context.Context,
+	path string,
+	exStorage storage.ExternalStorage,
+	fileName string,
+) (*FileCheckpointsDB, error) {
 	cpdb := &FileCheckpointsDB{
-		path: path,
 		checkpoints: checkpointspb.CheckpointsModel{
 			TaskCheckpoint: &checkpointspb.TaskCheckpointModel{},
 			Checkpoints:    map[string]*checkpointspb.TableCheckpointModel{},
 		},
+		ctx:       ctx,
+		path:      path,
+		fileName:  fileName,
+		exStorage: exStorage,
 	}
-
-	// init ExternalStorage
-	s, fileName, err := createExstorageByCompletePath(ctx, path)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	cpdb.ctx = ctx
-	cpdb.fileName = fileName
-	cpdb.exStorage = s
 
 	if cpdb.fileName == "" {
 		return nil, errors.Errorf("the checkpoint DSN '%s' must not be a directory", path)
@@ -1011,6 +1011,24 @@ func NewFileCheckpointsDB(ctx context.Context, path string) (*FileCheckpointsDB,
 		}
 	}
 	return cpdb, nil
+}
+
+func NewFileCheckpointsDB(ctx context.Context, path string) (*FileCheckpointsDB, error) {
+	// init ExternalStorage
+	s, fileName, err := createExstorageByCompletePath(ctx, path)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return newFileCheckpointsDB(ctx, path, s, fileName)
+}
+
+func NewFileCheckpointsDBWithExstorageFileName(
+	ctx context.Context,
+	path string,
+	s storage.ExternalStorage,
+	fileName string,
+) (*FileCheckpointsDB, error) {
+	return newFileCheckpointsDB(ctx, path, s, fileName)
 }
 
 // createExstorageByCompletePath create ExternalStorage by completePath and return fileName.

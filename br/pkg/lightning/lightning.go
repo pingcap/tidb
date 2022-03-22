@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
+
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
@@ -188,6 +189,7 @@ func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 //   use a default glue later.
 // - for lightning as a library, taskCtx could be a meaningful context that get canceled outside, and glue could be a
 //   caller implemented glue.
+// deprecated: use RunOnceWithOptions instead.
 func (l *Lightning) RunOnce(taskCtx context.Context, taskCfg *config.Config, glue glue.Glue) error {
 	if err := taskCfg.Adjust(taskCtx); err != nil {
 		return err
@@ -198,7 +200,7 @@ func (l *Lightning) RunOnce(taskCtx context.Context, taskCfg *config.Config, glu
 		taskCfg.TaskID = int64(val.(int))
 	})
 
-	return l.run(taskCtx, taskCfg, glue)
+	return l.run(taskCtx, taskCfg, &options{glue: glue})
 }
 
 func (l *Lightning) RunServer() error {
@@ -223,12 +225,33 @@ func (l *Lightning) RunServer() error {
 	}
 }
 
+func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.Config, opts ...Option) error {
+	if err := taskCfg.Adjust(taskCtx); err != nil {
+		return err
+	}
+
+	taskCfg.TaskID = time.Now().UnixNano()
+	o := &options{}
+	for _, opt := range opts {
+		opt(o)
+	}
+	// pre-check about options
+	if o.externalStorage != nil && o.glue != nil {
+		return common.NormalizeError(errors.New("WithExternalStorage and WithGlue can't be both set"))
+	}
+	if o.cpNameInExtStorage != "" && o.glue != nil {
+		return common.NormalizeError(errors.New("WithCpNameInExtStorage and WithGlue can't be both set"))
+	}
+
+	return l.run(taskCtx, taskCfg, o)
+}
+
 var (
 	taskRunNotifyKey   = "taskRunNotifyKey"
 	taskCfgRecorderKey = "taskCfgRecorderKey"
 )
 
-func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.Glue) (err error) {
+func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *options) (err error) {
 	build.LogInfo(build.Lightning)
 	log.L().Info("cfg", zap.Stringer("cfg", taskCfg))
 
@@ -279,6 +302,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 
 	// initiation of default glue should be after RegisterMySQL, which is ready to be called after taskCfg.Adjust
 	// and also put it here could avoid injecting another two SkipRunTask failpoint to caller
+	g := o.glue
 	if g == nil {
 		db, err := restore.DBFromConfig(ctx, taskCfg.TiDB)
 		if err != nil {
@@ -287,13 +311,16 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 		g = glue.NewExternalTiDBGlue(db, taskCfg.TiDB.SQLMode)
 	}
 
-	u, err := storage.ParseBackend(taskCfg.Mydumper.SourceDir, nil)
-	if err != nil {
-		return common.NormalizeError(err)
-	}
-	s, err := storage.New(ctx, u, &storage.ExternalStorageOptions{})
-	if err != nil {
-		return common.NormalizeError(err)
+	s := o.externalStorage
+	if s == nil {
+		u, err := storage.ParseBackend(taskCfg.Mydumper.SourceDir, nil)
+		if err != nil {
+			return common.NormalizeError(err)
+		}
+		s, err = storage.New(ctx, u, &storage.ExternalStorageOptions{})
+		if err != nil {
+			return common.NormalizeError(err)
+		}
 	}
 
 	// return expectedErr means at least meet one file
@@ -333,7 +360,16 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 
 	var procedure *restore.Controller
 
-	procedure, err = restore.NewRestoreController(ctx, dbMetas, taskCfg, &l.status, s, g)
+	param := &restore.ControllerParam{
+		DBMetas:            dbMetas,
+		Status:             &l.status,
+		ExtStorage:         s,
+		OwnExtStorage:      o.externalStorage == nil,
+		Glue:               g,
+		CpNameInExtStorage: o.cpNameInExtStorage,
+	}
+
+	procedure, err = restore.NewRestoreController(ctx, taskCfg, param)
 	if err != nil {
 		log.L().Error("restore failed", log.ShortError(err))
 		return errors.Trace(err)
