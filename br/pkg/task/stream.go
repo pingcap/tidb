@@ -736,7 +736,9 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		}
 	}
 	if cfg.Until > sp && !cfg.DryRun {
-		restore.SetTruncateSafepoint(ctx, storage, cfg.Until)
+		if err := restore.SetTruncateSafepoint(ctx, storage, cfg.Until); err != nil {
+			return err
+		}
 	}
 
 	metas := restore.StreamMetadataSet{

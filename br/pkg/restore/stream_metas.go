@@ -48,7 +48,7 @@ func (ms *StreamMetadataSet) iterateDataFiles(f func(d *backuppb.DataFileInfo) (
 	}
 }
 
-// IterateFilesFullyBefore runs the function over all files contian data before the timestamp only.
+// IterateFilesFullyBefore runs the function over all files contain data before the timestamp only.
 //   0                                          before
 //   |------------------------------------------|
 //    |-file1---------------| <- File contains records in this TS range would be found.
@@ -128,7 +128,7 @@ func (ms *StreamMetadataSet) DoWriteBack(ctx context.Context, s storage.External
 
 func truncateAndWrite(ctx context.Context, s storage.ExternalStorage, path string, data []byte) error {
 	switch s.(type) {
-	// Performace hack: the `Write` implemention for S3 and local would truncate the file if it exists.
+	// Performance hack: the `Write` implemention for S3 and local would truncate the file if it exists.
 	case *storage.S3Storage, *storage.LocalStorage:
 		if err := s.WriteFile(ctx, path, data); err != nil {
 			return errors.Annotatef(err, "failed to save the file %s to %s", path, s.URI())
@@ -142,7 +142,7 @@ func truncateAndWrite(ctx context.Context, s storage.ExternalStorage, path strin
 }
 
 // swapAndOverrideFile is a slow but safe way for overriding a file in the external storage.
-// Because there isn't formal defintion of `WriteFile` over a existing file, this should be safe in generic external storage.
+// Because there isn't formal definition of `WriteFile` over a existing file, this should be safe in generic external storage.
 // It moves the origin file to a swap file and did the file write, finally remove the swap file.
 // The external storage doesn't support rename here, so we actually read-n-write it for renaming.
 func swapAndOverrideFile(ctx context.Context, s storage.ExternalStorage, path string, data []byte) error {

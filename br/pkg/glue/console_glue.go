@@ -17,7 +17,10 @@ func (ops ConsoleOperations) PromptBool(p string) bool {
 	for {
 		ans := ""
 		ops.Print(p + "(y/N) ")
-		ops.Scanln(&ans)
+		if n, err := ops.Scanln(&ans); err != nil || n == 0 {
+			// EOF or reply nothing.
+			return false
+		}
 		trimed := strings.TrimSpace(ans)
 		if strings.ToLower(trimed) == "y" {
 			return true
