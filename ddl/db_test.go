@@ -1138,6 +1138,19 @@ func TestCancelTruncateTable(t *testing.T) {
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionTruncateTable && job.State == model.JobStateNone {
 			jobIDs := []int64{job.ID}
+			if variable.AllowConcurrencyDDL.Load() {
+				ddlTk := testkit.NewTestKit(t, store)
+				errs, err := ddl.CancelConcurrencyJobs(ddlTk.Session(), jobIDs)
+				if err != nil {
+					checkErr = errors.Trace(err)
+					return
+				}
+				if errs[0] != nil {
+					checkErr = errors.Trace(errs[0])
+					return
+				}
+				return
+			}
 			hookCtx := mock.NewContext()
 			hookCtx.Store = store
 			err := hookCtx.NewTxn(context.Background())

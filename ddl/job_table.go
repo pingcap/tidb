@@ -83,7 +83,7 @@ func (d *ddl) getGeneralJob(sess sessionctx.Context) (*model.Job, error) {
 		return nil, errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		logutil.BgLogger().Error("No job")
+		log.Warn("No job")
 		return nil, nil
 	}
 	for _, row := range rows {
