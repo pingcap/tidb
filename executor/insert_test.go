@@ -1169,6 +1169,21 @@ func TestTextTooLongError(t *testing.T) {
 	tk.MustExec("drop table if exists t1")
 }
 
+func TestUpdateConstFold(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// Where clause const should be folded completely, without raise an error.
+	tk.MustExec(`DROP TABLE IF EXISTS t0;`)
+	tk.MustExec("CREATE TABLE t0(c0 INT);")
+	_, err := tk.Exec("INSERT INTO t0 VALUES(1);")
+	_, err = tk.Exec("UPDATE t0 SET c0 = 2 WHERE (1 | BIN(100000000)) IS NOT NULL;")
+	require.NoError(t, err)
+
+	tk.MustExec("drop table if exists t0")
+}
+
 // TestAutoIDIncrementAndOffset There is a potential issue in MySQL: when the value of auto_increment_offset is greater
 // than that of auto_increment_increment, the value of auto_increment_offset is ignored
 // (https://dev.mysql.com/doc/refman/8.0/en/replication-options-master.html#sysvar_auto_increment_increment),
