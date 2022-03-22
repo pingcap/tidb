@@ -239,7 +239,6 @@ func (m *memTableReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 		defer span1.Finish()
 		opentracing.ContextWithSpan(ctx, span1)
 	}
-
 	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
 	err := iterTxnMemBuffer(m.ctx, m.cacheTable, m.kvRanges, func(key, value []byte) error {
 		row, err := m.decodeRecordKeyValue(key, value)
