@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
@@ -1231,6 +1232,9 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
 	element, start, end, physicalID, err := m.GetDDLReorgHandle(currJob)
+	if variable.AllowConcurrencyDDL.Load() {
+		element, start, end, physicalID, err = admin.GetDDLReorgHandle(currJob, testkit.NewTestKit(t, store).Session())
+	}
 	require.True(t, meta.ErrDDLReorgElementNotExist.Equal(err))
 	require.Nil(t, element)
 	require.Nil(t, start)

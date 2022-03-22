@@ -934,10 +934,10 @@ func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
 				for _, DDLSQL := range curCase.tk2DDL {
 					tk2.MustExec(DDLSQL)
 				}
-				hook := &ddl.TestDDLCallback{}
+				hook := &ddl.TestDDLCallback{Do: s.dom}
 				prepared := false
 				committed := false
-				hook.OnJobUpdatedExported = func(job *model.Job) {
+				hook.OnJobRunBeforeExported = func(job *model.Job) {
 					if job.SchemaState == startState {
 						if !prepared {
 							tk.MustExec("begin pessimistic")
@@ -946,7 +946,10 @@ func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
 							}
 							prepared = true
 						}
-					} else if job.SchemaState == endState {
+					}
+				}
+				hook.OnJobUpdatedExported = func(job *model.Job) {
+					if job.SchemaState == endState {
 						if !committed {
 							if curCase.failCommit {
 								_, err := tk.Exec("commit")

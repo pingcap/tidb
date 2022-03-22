@@ -319,7 +319,7 @@ func (d *ddl) generalDDLJob(sctx sessionctx.Context) bool {
 	job, err := d.getGeneralJob(sctx)
 	if err != nil {
 		logutil.BgLogger().Error("[ddl] getGeneralJob", zap.Error(err))
-		return true
+		return false
 	}
 	if job == nil {
 		return false
@@ -362,7 +362,7 @@ func (d *ddl) reorgDDLJob(sctx sessionctx.Context) bool {
 	job, err := d.getReorgJob(sctx)
 	if err != nil {
 		logutil.BgLogger().Error("[ddl] getReorgJob", zap.Error(err))
-		return true
+		return false
 	}
 	if job == nil {
 		return false
