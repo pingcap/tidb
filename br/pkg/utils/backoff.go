@@ -17,9 +17,10 @@ import (
 )
 
 const (
+	// importSSTRetryTimes specifies the retry time. Its longest time is about 90s-100s.
 	importSSTRetryTimes      = 16
-	importSSTWaitInterval    = 10 * time.Millisecond
-	importSSTMaxWaitInterval = 1 * time.Second
+	importSSTWaitInterval    = 40 * time.Millisecond
+	importSSTMaxWaitInterval = 10 * time.Second
 
 	downloadSSTRetryTimes      = 8
 	downloadSSTWaitInterval    = 1 * time.Second

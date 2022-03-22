@@ -975,7 +975,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.Length, ast.BitLength, ast.Concat, ast.ConcatWS, ast.Replace, ast.ASCII, ast.Hex,
 		ast.Reverse, ast.LTrim, ast.RTrim, ast.Strcmp, ast.Space, ast.Elt, ast.Field,
 		InternalFuncFromBinary, InternalFuncToBinary, ast.Mid, ast.Substring, ast.Substr, ast.CharLength,
-		ast.Right, ast.Left,
+		ast.Right, /* ast.Left */
 
 		// json functions.
 		ast.JSONType, ast.JSONExtract, ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
@@ -1056,7 +1056,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.Concat, ast.ConcatWS,
 		ast.Date, ast.Year, ast.Month, ast.Day, ast.Quarter, ast.DayName, ast.MonthName,
 		ast.DateDiff, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
-		ast.DayOfMonth, ast.LastDay,
+		ast.DayOfWeek, ast.DayOfMonth, ast.DayOfYear, ast.LastDay,
 
 		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Sign,
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
@@ -1158,6 +1158,8 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_LeastInt, tipb.ScalarFuncSig_LeastReal:
 			return true
 		}
+	case ast.IsTruthWithNull, ast.IsTruthWithoutNull, ast.IsFalsity:
+		return true
 	}
 	return false
 }

@@ -1275,6 +1275,15 @@ func (do *Domain) SetStatsUpdating(val bool) {
 // RunAutoAnalyze indicates if this TiDB server starts auto analyze worker and can run auto analyze job.
 var RunAutoAnalyze = true
 
+// LoadAndUpdateStatsLoop loads and updates stats info.
+func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context) error {
+	if err := do.UpdateTableStatsLoop(ctxs[0]); err != nil {
+		return err
+	}
+	do.StartLoadStatsSubWorkers(ctxs[1:])
+	return nil
+}
+
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop.
 // It will also start a goroutine to analyze tables automatically.
 // It should be called only once in BootstrapSession.
@@ -1309,7 +1318,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	return nil
 }
 
-// StartLoadStatsSubWorkers starts sub workers with new sessions to load stats concurrently
+// StartLoadStatsSubWorkers starts sub workers with new sessions to load stats concurrently.
 func (do *Domain) StartLoadStatsSubWorkers(ctxList []sessionctx.Context) {
 	statsHandle := do.StatsHandle()
 	for i, ctx := range ctxList {
@@ -1662,7 +1671,8 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 	}
 
 	for {
-		randServerID := rand.Int63n(int64(util.MaxServerID)) + 1 // get a random serverID: [1, MaxServerID] #nosec G404
+		// get a random serverID: [1, MaxServerID]
+		randServerID := rand.Int63n(int64(util.MaxServerID)) + 1 // #nosec G404
 		key := fmt.Sprintf("%s/%v", serverIDEtcdPath, randServerID)
 		cmp := clientv3.Compare(clientv3.CreateRevision(key), "=", 0)
 		value := "0"
@@ -1793,6 +1803,9 @@ func (do *Domain) MockInfoCacheAndLoadInfoSchema(is infoschema.InfoSchema) {
 
 func init() {
 	initByLDFlagsForGlobalKill()
+	telemetry.GetDomainInfoSchema = func(ctx sessionctx.Context) infoschema.InfoSchema {
+		return GetDomain(ctx).InfoSchema()
+	}
 }
 
 var (
