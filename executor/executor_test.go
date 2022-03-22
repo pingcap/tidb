@@ -3333,8 +3333,7 @@ func (s *testSuite) TestEmptyEnum(c *C) {
 }
 
 const (
-	checkRequestOff = iota
-	checkDDLAddIndexPriority
+	checkDDLAddIndexPriority = iota
 )
 
 type checkRequestClient struct {
