@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
@@ -677,66 +678,31 @@ func TestTableDDLWithTimeType(t *testing.T) {
 }
 
 func TestUpdateMultipleTable(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database umt_db")
-	tk.MustExec("use umt_db")
+	tk.MustExec("use test")
 	tk.MustExec("create table t1 (c1 int, c2 int)")
 	tk.MustExec("insert t1 values (1, 1), (2, 2)")
 	tk.MustExec("create table t2 (c1 int, c2 int)")
 	tk.MustExec("insert t2 values (1, 3), (2, 5)")
-	ctx := tk.Session()
-	dom := domain.GetDomain(ctx)
-	is := dom.InfoSchema()
-	db, ok := is.SchemaByName(model.NewCIStr("umt_db"))
-	require.True(t, ok)
-	t1Tbl, err := is.TableByName(model.NewCIStr("umt_db"), model.NewCIStr("t1"))
-	require.NoError(t, err)
-	t1Info := t1Tbl.Meta()
 
-	// Add a new column in write only state.
-	newColumn := &model.ColumnInfo{
-		ID:                 100,
-		Name:               model.NewCIStr("c3"),
-		Offset:             2,
-		DefaultValue:       9,
-		OriginDefaultValue: 9,
-		FieldType:          *types.NewFieldType(mysql.TypeLonglong),
-		State:              model.StateWriteOnly,
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	d := dom.DDL()
+	hook := &ddl.TestDDLCallback{Do: dom}
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if job.SchemaState == model.StateWriteOnly {
+			tk2.MustExec("update t1, t2 set t1.c1 = 8, t2.c2 = 10 where t1.c2 = t2.c1")
+			tk2.MustQuery("select * from t1").Check(testkit.Rows("8 1", "8 2"))
+			tk2.MustQuery("select * from t2").Check(testkit.Rows("1 10", "2 10"))
+		}
 	}
-	t1Info.Columns = append(t1Info.Columns, newColumn)
+	d.SetHook(hook)
 
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		_, err = m.GenSchemaVersion()
-		require.NoError(t, err)
-		require.Nil(t, m.UpdateTable(db.ID, t1Info))
-		return nil
-	})
-	require.NoError(t, err)
-	err = dom.Reload()
-	require.NoError(t, err)
-
-	tk.MustExec("update t1, t2 set t1.c1 = 8, t2.c2 = 10 where t1.c2 = t2.c1")
-	tk.MustQuery("select * from t1").Check(testkit.Rows("8 1", "8 2"))
-	tk.MustQuery("select * from t2").Check(testkit.Rows("1 10", "2 10"))
-
-	newColumn.State = model.StatePublic
-
-	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		_, err = m.GenSchemaVersion()
-		require.NoError(t, err)
-		require.Nil(t, m.UpdateTable(db.ID, t1Info))
-		return nil
-	})
-	require.NoError(t, err)
-	err = dom.Reload()
-	require.NoError(t, err)
-
+	tk.MustExec("alter table t1 add column c3 bigint default 9")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("8 1 9", "8 2 9"))
-	tk.MustExec("drop database umt_db")
 }
 
 func TestNullGeneratedColumn(t *testing.T) {
