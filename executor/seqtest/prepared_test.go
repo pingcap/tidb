@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -155,24 +154,6 @@ func TestPrepared(t *testing.T) {
 		rs, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, []types.Datum{types.NewDatum(4)})
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows())
-
-		// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
-		stmt, _, _, err := executor.CompileExecutePreparedStmt(context.TODO(), tk.Session(), stmtID,
-			tk.Session().GetInfoSchema().(infoschema.InfoSchema), 0, []types.Datum{types.NewDatum(1)})
-		require.NoError(t, err)
-		require.Equal(t, query, stmt.OriginText())
-
-		// Check that rebuild plan works.
-		err = tk.Session().PrepareTxnCtx(ctx)
-		require.NoError(t, err)
-		_, err = stmt.RebuildPlan(ctx)
-		require.NoError(t, err)
-		rs, err = stmt.Exec(ctx)
-		require.NoError(t, err)
-		req := rs.NewChunk(nil)
-		err = rs.Next(ctx, req)
-		require.NoError(t, err)
-		require.NoError(t, rs.Close())
 
 		// Make schema change.
 		tk.MustExec("drop table if exists prepare2")
