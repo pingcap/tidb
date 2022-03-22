@@ -639,13 +639,6 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 		tk.MustExec("execute s2")
 	})
 
-	// plan cache for stmtID2
-	doWithCheckPath(t, se, []string{"assertTxnManagerInCachedPlanExec", "assertTxnManagerInShortPointGetPlan"}, func() {
-		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID2, nil)
-		require.NoError(t, err)
-		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
-	})
-
 	// tx_read_ts in prepare
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is1)
 	doWithCheckPath(t, se, path, func() {
@@ -655,13 +648,6 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	})
 	doWithCheckPath(t, se, normalPathRecords, func() {
 		tk.MustExec("execute s3")
-	})
-
-	// plan cache for stmtID3
-	doWithCheckPath(t, se, []string{"assertTxnManagerInCachedPlanExec", "assertTxnManagerInShortPointGetPlan"}, func() {
-		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID3, nil)
-		require.NoError(t, err)
-		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
 	})
 }
 
