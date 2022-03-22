@@ -55,7 +55,7 @@ func TestRun(t *testing.T) {
 	cfg := config.NewConfig()
 	err := cfg.LoadFromGlobal(globalConfig)
 	require.NoError(t, err)
-	err = lightning.RunOnce(context.Background(), cfg, nil)
+	err = lightning.RunOnceWithOptions(context.Background(), cfg)
 	require.Error(t, err)
 	require.Regexp(t, "`mydumper.data-source-dir` does not exist$", err.Error())
 

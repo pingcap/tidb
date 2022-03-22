@@ -225,16 +225,39 @@ func (l *Lightning) RunServer() error {
 	}
 }
 
+// RunOnceWithOptions is used by binary lightning and host when using lightning as a library.
+// - for binary lightning, taskCtx could be context.Background which means taskCtx wouldn't be canceled directly by its
+//   cancel function, but only by Lightning.Stop or HTTP DELETE using l.cancel. No need to set Options
+// - for lightning as a library, taskCtx could be a meaningful context that get canceled outside, and there Options may
+//   be used:
+//   - WithGlue: set a caller implemented glue. Otherwise, lightning will use a default glue later.
+//   - WithExternalStorage: caller has opened an external storage for lightning. Otherwise, lightning will open a
+//     storage by config
+//   - WithCheckpointInExternalStorage: caller has opened an external storage for lightning and want to save checkpoint
+//     in it. Otherwise, lightning will save checkpoint by the Checkpoint.DSN in config
 func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.Config, opts ...Option) error {
-	if err := taskCfg.Adjust(taskCtx); err != nil {
-		return err
-	}
-
-	taskCfg.TaskID = time.Now().UnixNano()
 	o := &options{}
 	for _, opt := range opts {
 		opt(o)
 	}
+
+	failpoint.Inject("setExtStorage", func(val failpoint.Value) {
+		path := val.(string)
+		b, err := storage.ParseBackend(path, nil)
+		if err != nil {
+			panic(err)
+		}
+		s, err := storage.New(context.Background(), b, &storage.ExternalStorageOptions{})
+		if err != nil {
+			panic(err)
+		}
+		o.externalStorage = s
+	})
+	failpoint.Inject("setCpExtStorage", func(val failpoint.Value) {
+		file := val.(string)
+		o.cpNameInExtStorage = file
+	})
+
 	// pre-check about options
 	if o.externalStorage != nil && o.glue != nil {
 		return common.NormalizeError(errors.New("WithExternalStorage and WithGlue can't be both set"))
@@ -242,6 +265,17 @@ func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.
 	if o.cpNameInExtStorage != "" && o.glue != nil {
 		return common.NormalizeError(errors.New("WithCpNameInExtStorage and WithGlue can't be both set"))
 	}
+
+	if o.externalStorage != nil {
+		// we don't use it, set a value to pass Adjust
+		taskCfg.Mydumper.SourceDir = "noop://"
+	}
+
+	if err := taskCfg.Adjust(taskCtx); err != nil {
+		return err
+	}
+
+	taskCfg.TaskID = time.Now().UnixNano()
 
 	return l.run(taskCtx, taskCfg, o)
 }

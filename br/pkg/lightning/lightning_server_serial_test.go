@@ -29,9 +29,10 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/stretchr/testify/require"
+
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
-	"github.com/stretchr/testify/require"
 )
 
 // initProgressOnce is used to ensure init progress once to avoid data race.
@@ -317,7 +318,7 @@ func TestHTTPAPIOutsideServerMode(t *testing.T) {
 	err := cfg.LoadFromGlobal(s.lightning.globalCfg)
 	require.NoError(t, err)
 	go func() {
-		errCh <- s.lightning.RunOnce(s.lightning.ctx, cfg, nil)
+		errCh <- s.lightning.RunOnceWithOptions(s.lightning.ctx, cfg)
 	}()
 	time.Sleep(600 * time.Millisecond)
 

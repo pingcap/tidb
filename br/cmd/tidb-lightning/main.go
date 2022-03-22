@@ -22,12 +22,13 @@ import (
 	"runtime/debug"
 	"syscall"
 
+	"go.uber.org/zap"
+
 	"github.com/pingcap/tidb/br/pkg/lightning"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
-	"go.uber.org/zap"
 )
 
 func main() {
@@ -91,7 +92,7 @@ func main() {
 		if err := cfg.LoadFromGlobal(globalCfg); err != nil {
 			return err
 		}
-		return app.RunOnce(context.Background(), cfg, nil)
+		return app.RunOnceWithOptions(context.Background(), cfg)
 	}()
 
 	finished := true
