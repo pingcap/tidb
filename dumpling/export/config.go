@@ -79,6 +79,7 @@ const (
 // Config is the dump config for dumpling
 type Config struct {
 	storage.BackendOptions
+	ExtStorage storage.ExternalStorage `json:"-"`
 
 	AllowCleartextPasswords  bool
 	SortByPk                 bool
@@ -541,6 +542,9 @@ func ParseCompressType(compressType string) (storage.CompressType, error) {
 }
 
 func (conf *Config) createExternalStorage(ctx context.Context) (storage.ExternalStorage, error) {
+	if conf.ExtStorage != nil {
+		return conf.ExtStorage, nil
+	}
 	b, err := storage.ParseBackend(conf.OutputDirPath, &conf.BackendOptions)
 	if err != nil {
 		return nil, errors.Trace(err)
