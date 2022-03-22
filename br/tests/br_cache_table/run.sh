@@ -17,10 +17,6 @@
 set -eu
 DB="$TEST_NAME"
 
-trim_sql_result() {
-    tail -n1 | sed 's/[^0-9]//g'
-}
-
 run_sql "create schema $DB;"
 run_sql "create table $DB.cache_1 (id int);"
 run_sql "insert into $DB.cache_1 (1);"
