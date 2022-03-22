@@ -390,7 +390,7 @@ var tablesCols = []columnInfo{
 	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
 }
 
-// See: http://dev.mysql.com/doc/refman/5.7/en/columns-table.html
+// See: http://dev.mysql.com/doc/refman/5.7/en/information-schema-columns-table.html
 var columnsCols = []columnInfo{
 	{name: "TABLE_CATALOG", tp: mysql.TypeVarchar, size: 512},
 	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64},
@@ -495,7 +495,7 @@ var keyColumnUsageCols = []columnInfo{
 	{name: "REFERENCED_COLUMN_NAME", tp: mysql.TypeVarchar, size: 64},
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/referential-constraints-table.html
+// See http://dev.mysql.com/doc/refman/5.7/en/information-schema-referential-constraints-table.html
 var referConstCols = []columnInfo{
 	{name: "CONSTRAINT_CATALOG", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
 	{name: "CONSTRAINT_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
@@ -510,13 +510,13 @@ var referConstCols = []columnInfo{
 	{name: "REFERENCED_TABLE_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 }
 
-// See http://dev.mysql.com/doc/refman/5.7/en/variables-table.html
+// See http://dev.mysql.com/doc/refman/5.7/en/information-schema-variables-table.html
 var sessionVarCols = []columnInfo{
 	{name: "VARIABLE_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "VARIABLE_VALUE", tp: mysql.TypeVarchar, size: 1024},
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/plugins-table.html
+// See https://dev.mysql.com/doc/refman/5.7/en/information-schema-plugins-table.html
 var pluginsCols = []columnInfo{
 	{name: "PLUGIN_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "PLUGIN_VERSION", tp: mysql.TypeVarchar, size: 20},
@@ -531,7 +531,7 @@ var pluginsCols = []columnInfo{
 	{name: "LOAD_OPTION", tp: mysql.TypeVarchar, size: 64},
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/partitions-table.html
+// See https://dev.mysql.com/doc/refman/5.7/en/information-schema-partitions-table.html
 var partitionsCols = []columnInfo{
 	{name: "TABLE_CATALOG", tp: mysql.TypeVarchar, size: 512},
 	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64},

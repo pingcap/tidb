@@ -488,3 +488,23 @@ func TestGetTypeThreadSafe(t *testing.T) {
 	ft2 := con.GetType()
 	require.NotSame(t, ft1, ft2)
 }
+
+func TestSpecificConstant(t *testing.T) {
+	one := NewOne()
+	require.Equal(t, one.Value, types.NewDatum(1))
+	require.Equal(t, one.RetType.Tp, mysql.TypeTiny)
+	require.Equal(t, one.RetType.Flen, 1)
+	require.Equal(t, one.RetType.Decimal, 0)
+
+	zero := NewZero()
+	require.Equal(t, zero.Value, types.NewDatum(0))
+	require.Equal(t, zero.RetType.Tp, mysql.TypeTiny)
+	require.Equal(t, zero.RetType.Flen, 1)
+	require.Equal(t, zero.RetType.Decimal, 0)
+
+	null := NewNull()
+	require.Equal(t, null.Value, types.NewDatum(nil))
+	require.Equal(t, null.RetType.Tp, mysql.TypeTiny)
+	require.Equal(t, null.RetType.Flen, 1)
+	require.Equal(t, null.RetType.Decimal, 0)
+}
