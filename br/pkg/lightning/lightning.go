@@ -260,6 +260,8 @@ func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.
 	})
 
 	// pre-check about options
+	// glue should be set when lightning in TiDB, and storages should be set when lightning in DM/dataflow engine,
+	// so they should not both be set.
 	if o.dumpFileStorage != nil && o.glue != nil {
 		return common.ErrInvalidArgument.GenWithStack("WithDumpFileStorage and WithGlue can't be both set")
 	}
