@@ -19,9 +19,9 @@ DB="$TEST_NAME"
 
 run_sql "create schema $DB;"
 run_sql "create table $DB.cache_1 (id int);"
-run_sql "insert into $DB.cache_1 (1);"
+run_sql "insert into $DB.cache_1 values (1);"
 run_sql "alter table $DB.cache_1 cache;"
-run_sql "insert into $DB.cache_1 (2),(3);"
+run_sql "insert into $DB.cache_1 values (2),(3);"
 
 echo "backup start..."
 run_br backup db --db "$DB" -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
@@ -35,5 +35,8 @@ set -x
 
 run_sql "select count(*) from $DB.cache_1;"
 check_contains 'count(*): 3'
+
+run_sql "select create_options from information_schema.tables where table_schema = $DB and table_name = 'cache_1';"
+check_not_contains 'create_options: cached=on'
 
 run_sql "drop schema $DB"
