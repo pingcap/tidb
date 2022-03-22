@@ -324,7 +324,6 @@ func NewRestoreControllerWithPauser(
 			return nil, common.ErrOpenCheckpoint.Wrap(err).GenWithStackByArgs()
 		}
 	} else {
-		// use another function to create file checkpoint
 		cpdb, err = p.Glue.OpenCheckpointsDB(ctx, cfg)
 		if err != nil {
 			if berrors.Is(err, common.ErrUnknownCheckpointDriver) {
