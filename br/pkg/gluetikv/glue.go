@@ -72,8 +72,8 @@ func (Glue) Print(args ...interface{}) {
 	fmt.Print(args...)
 }
 
-// SupportsScan checks whether the shell supports input.
-func (Glue) SupportsScan() bool {
+// IsInteractive checks whether the shell supports input.
+func (Glue) IsInteractive() bool {
 	return true
 }
 

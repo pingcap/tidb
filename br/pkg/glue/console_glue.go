@@ -11,7 +11,7 @@ type ConsoleOperations struct {
 
 // PromptBool prompts a boolean from the user.
 func (ops ConsoleOperations) PromptBool(p string) bool {
-	if !ops.SupportsScan() {
+	if !ops.IsInteractive() {
 		return true
 	}
 	for {
@@ -38,8 +38,8 @@ func (ops ConsoleOperations) Println(args ...interface{}) {
 type ConsoleGlue interface {
 	Print(args ...interface{})
 
-	// SupportsScan checks whether the shell supports input.
-	SupportsScan() bool
+	// IsInteractive checks whether the shell supports input.
+	IsInteractive() bool
 	Scanln(args ...interface{}) (int, error)
 }
 
@@ -47,7 +47,7 @@ type NoOPConsoleGlue struct{}
 
 func (NoOPConsoleGlue) Print(args ...interface{}) {}
 
-func (NoOPConsoleGlue) SupportsScan() bool {
+func (NoOPConsoleGlue) IsInteractive() bool {
 	return false
 }
 
