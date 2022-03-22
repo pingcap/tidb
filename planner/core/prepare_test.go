@@ -2612,10 +2612,16 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`set @a0=%v, @a1=%v, @a2=%v`, rand.Intn(40000), rand.Intn(40000), rand.Intn(40000)))
 
 		var rscan, rlookup, rpoint, rbatch [][]interface{}
+		var expectedFromPlanCache string
 		for id, tbl := range []string{"trangeIdx", "thashIdx", "tnormalIdx"} {
 			scan := tk.MustQuery(fmt.Sprintf(`execute stmt%v_indexscan using @mina, @maxa`, tbl)).Sort()
+			if id == 2 {
+				expectedFromPlanCache = "1"
+			} else {
+				expectedFromPlanCache = "0"
+			}
 			if i > 0 {
-				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+				tk.MustQuery(`select @@last_plan_from_cache /* table: ` + tbl + " */").Check(testkit.Rows(expectedFromPlanCache))
 			}
 			if id == 0 {
 				rscan = scan.Rows()
@@ -2625,7 +2631,7 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 
 			lookup := tk.MustQuery(fmt.Sprintf(`execute stmt%v_indexlookup using @mina, @maxa`, tbl)).Sort()
 			if i > 0 {
-				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(expectedFromPlanCache))
 			}
 			if id == 0 {
 				rlookup = lookup.Rows()
@@ -2637,7 +2643,7 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 			if tbl == `tnormalPK` && i > 0 {
 				// PlanCache cannot support PointGet now since we haven't relocated partition after rebuilding range.
 				// Please see Execute.rebuildRange for more details.
-				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(expectedFromPlanCache))
 			}
 			if id == 0 {
 				rpoint = point.Rows()
@@ -2647,7 +2653,7 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 
 			batch := tk.MustQuery(fmt.Sprintf(`execute stmt%v_batchget_idx using @a0, @a1, @a2`, tbl)).Sort()
 			if i > 0 {
-				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+				tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(expectedFromPlanCache))
 			}
 			if id == 0 {
 				rbatch = batch.Rows()
