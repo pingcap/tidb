@@ -1,4 +1,4 @@
-# Read-Consistency Read With Timestamp Check
+# Read-Committed Read With Timestamp Check
 
 - Author(s): cfzjywxk
 - Last updated: March. 3, 2022
@@ -6,7 +6,7 @@
 
 ## Motivation
 
-For the read-consistency isolation level, each read request in a single transaction will need to fetch a new `ts` to read the latest committed data.
+For the `read-committed` isolation level, each read request in a single transaction will need to fetch a new `ts` to read the latest committed data.
 If the workload is a read-heavy one whose read QPS is significantly higher than writes or there're few read-write conflicts, fetching ts each time will increase the query lantecy.
 
 The new ts itself is used to ensure the most recent data will be returned, if the data version does not change frequently then it's unnecessary to fetch a new timestamp every time.
@@ -14,7 +14,7 @@ The ts fetching could be processed in an optimistic way that ts fetching happens
 
 ## Detailed Design
 
-Introduce another system variable `tidb_rc_read_check_ts` to enable the "lazy ts fetch" read mode. It will take effect for all the in-transaction select statements when the transaction mode is `pessimistic` and the isolation level is `read-consistency`.
+Introduce another system variable `tidb_rc_read_check_ts` to enable the "lazy ts fetch" read mode. It will take effect for all the in-transaction select statements when the transaction mode is `pessimistic` and the isolation level is `read-committed`.
 
 The execution flow is like this:
 
@@ -31,5 +31,5 @@ The execution flow is like this:
 
 ## Compatibility
 
-The default behaviours of the `read-consistency` isolation level will not change. One thing different is that if the user client uses `COM_STMT_FETCH` like utility to read data from `TiDB`,
+The default behaviours of the `read-committed` isolation level will not change. One thing different is that if the user client uses `COM_STMT_FETCH` like utility to read data from `TiDB`,
 there could be problem if the returned first chunk result is already used by the client but an error is reported processing next result chunk.
