@@ -231,17 +231,6 @@ func (rc *Client) GetTruncateSafepoint(ctx context.Context) uint64 {
 	return ts
 }
 
-// SetStorage set ExternalStorage for client.
-func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storage.ExternalStorageOptions) error {
-	var err error
-	rc.storage, err = storage.New(ctx, backend, opts)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	rc.backend = backend
-	return nil
-}
-
 func (rc *Client) GetDomain() *domain.Domain {
 	return rc.dom
 }
@@ -1526,7 +1515,6 @@ func (rc *Client) ReadStreamDataFiles(
 	metas []*backuppb.Metadata,
 	fromTS uint64,
 	restoreTS uint64,
-	fromTS uint64,
 ) (dataFile, metaFile []*backuppb.DataFileInfo, err error) {
 	dFiles := make([]*backuppb.DataFileInfo, 0)
 	mFiles := make([]*backuppb.DataFileInfo, 0)
