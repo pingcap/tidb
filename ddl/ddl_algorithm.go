@@ -18,7 +18,6 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/util/dbterror"
 )
 
 // AlterAlgorithm is used to store supported alter algorithm.
@@ -61,7 +60,7 @@ func getProperAlgorithm(specify ast.AlgorithmType, algorithm *AlterAlgorithm) (a
 
 	var err error
 	if specify != r {
-		err = dbterror.ErrAlterOperationNotSupported.GenWithStackByArgs(fmt.Sprintf("ALGORITHM=%s", specify), fmt.Sprintf("Cannot alter table by %s", specify), fmt.Sprintf("ALGORITHM=%s", algorithm.defAlgorithm))
+		err = ErrAlterOperationNotSupported.GenWithStackByArgs(fmt.Sprintf("ALGORITHM=%s", specify), fmt.Sprintf("Cannot alter table by %s", specify), fmt.Sprintf("ALGORITHM=%s", algorithm.defAlgorithm))
 	}
 	return r, err
 }

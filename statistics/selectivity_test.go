@@ -866,11 +866,7 @@ func prepareSelectivity(testKit *testkit.TestKit, dom *domain.Domain) (*statisti
 		return nil, err
 	}
 	for i := 1; i <= 5; i++ {
-		statsTbl.Columns[int64(i)] = &statistics.Column{
-			Histogram: *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)),
-			Info:      tbl.Columns[i-1],
-			Loaded:    true,
-		}
+		statsTbl.Columns[int64(i)] = &statistics.Column{Histogram: *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)), Info: tbl.Columns[i-1]}
 	}
 
 	// Set the value of two indices' histograms.

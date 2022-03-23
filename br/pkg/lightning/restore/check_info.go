@@ -166,7 +166,7 @@ func (rc *Controller) clusterResource(ctx context.Context, localSource int64) er
 }
 
 // ClusterIsAvailable check cluster is available to import data. this test can be skipped.
-func (rc *Controller) ClusterIsAvailable(ctx context.Context) {
+func (rc *Controller) ClusterIsAvailable(ctx context.Context) error {
 	passed := true
 	message := "Cluster is available"
 	defer func() {
@@ -176,10 +176,10 @@ func (rc *Controller) ClusterIsAvailable(ctx context.Context) {
 		DBMetas: rc.dbMetas,
 	}
 	if err := rc.backend.CheckRequirements(ctx, checkCtx); err != nil {
-		err = common.NormalizeError(err)
 		passed = false
 		message = fmt.Sprintf("cluster available check failed: %s", err.Error())
 	}
+	return nil
 }
 
 func isTiFlash(store *pdtypes.MetaStore) bool {
@@ -358,7 +358,7 @@ func (rc *Controller) StoragePermission(ctx context.Context) error {
 
 	u, err := storage.ParseBackend(rc.cfg.Mydumper.SourceDir, nil)
 	if err != nil {
-		return common.NormalizeError(err)
+		return errors.Annotate(err, "parse backend failed")
 	}
 	_, err = storage.New(ctx, u, &storage.ExternalStorageOptions{
 		CheckPermissions: []storage.Permission{
@@ -376,7 +376,7 @@ func (rc *Controller) StoragePermission(ctx context.Context) error {
 // HasLargeCSV checks whether input csvs is fit for Lightning import.
 // If strictFormat is false, and csv file is large. Lightning will have performance issue.
 // this test cannot be skipped.
-func (rc *Controller) HasLargeCSV(dbMetas []*mydump.MDDatabaseMeta) {
+func (rc *Controller) HasLargeCSV(dbMetas []*mydump.MDDatabaseMeta) error {
 	passed := true
 	message := "Source csv files size is proper"
 	defer func() {
@@ -396,6 +396,7 @@ func (rc *Controller) HasLargeCSV(dbMetas []*mydump.MDDatabaseMeta) {
 	} else {
 		message = "Skip the csv size check, because config.StrictFormat is true"
 	}
+	return nil
 }
 
 func (rc *Controller) estimateSourceData(ctx context.Context) (int64, error) {
@@ -506,18 +507,18 @@ func (rc *Controller) localResource(sourceSize int64) error {
 }
 
 // CheckpointIsValid checks whether we can start this import with this checkpoint.
-func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta) ([]string, bool) {
+func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta) ([]string, bool, error) {
 	msgs := make([]string, 0)
 	uniqueName := common.UniqueTable(tableInfo.DB, tableInfo.Name)
 	tableCheckPoint, err := rc.checkpointsDB.Get(ctx, uniqueName)
 	if err != nil {
 		// there is no checkpoint
 		log.L().Debug("no checkpoint detected", zap.String("table", uniqueName))
-		return nil, true
+		return nil, true, nil
 	}
 	// if checkpoint enable and not missing, we skip the check table empty progress.
 	if tableCheckPoint.Status <= checkpoints.CheckpointStatusMissing {
-		return nil, false
+		return nil, false, nil
 	}
 
 	if tableCheckPoint.Status <= checkpoints.CheckpointStatusMaxInvalid {
@@ -539,7 +540,7 @@ func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.M
 			"You may also run `./tidb-lightning-ctl --checkpoint-error-destroy=all --config=...` to start from scratch,"+
 			"For details of this failure, read the log file from the PREVIOUS run",
 			uniqueName, failedStep.MetricName(), action.String()))
-		return msgs, false
+		return msgs, false, nil
 	}
 
 	dbInfo, ok := rc.dbInfos[tableInfo.DB]
@@ -552,7 +553,7 @@ func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.M
 					"You may also run `./tidb-lightning-ctl --checkpoint-error-destroy=all --config=...` to start from scratch,"+
 					"For details of this failure, read the log file from the PREVIOUS run",
 					uniqueName))
-				return msgs, false
+				return msgs, false, nil
 			}
 		}
 	}
@@ -573,7 +574,7 @@ func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.M
 	}
 	if len(columns) == 0 {
 		log.L().Debug("no valid checkpoint detected", zap.String("table", uniqueName))
-		return nil, false
+		return nil, false, nil
 	}
 	info := rc.dbInfos[tableInfo.DB].Tables[tableInfo.Name]
 	if info != nil {
@@ -587,7 +588,7 @@ func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.M
 				"consider remove this checkpoint, and start import again.", uniqueName))
 		}
 	}
-	return msgs, false
+	return msgs, false, nil
 }
 
 // hasDefault represents col has default value.
@@ -1097,7 +1098,6 @@ func (rc *Controller) checkTableEmpty(ctx context.Context) error {
 	concurrency := utils.MinInt(tableCount, rc.cfg.App.RegionConcurrency)
 	ch := make(chan string, concurrency)
 	eg, gCtx := errgroup.WithContext(ctx)
-
 	for i := 0; i < concurrency; i++ {
 		eg.Go(func() error {
 			for tblName := range ch {
@@ -1126,15 +1126,9 @@ func (rc *Controller) checkTableEmpty(ctx context.Context) error {
 			return nil
 		})
 	}
-loop:
 	for _, db := range rc.dbMetas {
 		for _, tbl := range db.Tables {
-			select {
-			case ch <- common.UniqueTable(tbl.DB, tbl.Name):
-			case <-gCtx.Done():
-				break loop
-			}
-
+			ch <- common.UniqueTable(tbl.DB, tbl.Name)
 		}
 	}
 	close(ch)
@@ -1142,7 +1136,7 @@ loop:
 		if common.IsContextCanceledError(err) {
 			return nil
 		}
-		return errors.Annotate(err, "check table contains data failed")
+		return errors.Trace(err)
 	}
 
 	if len(tableNames) > 0 {
@@ -1154,20 +1148,13 @@ loop:
 	return nil
 }
 
-func tableContainsData(ctx context.Context, db utils.DBExecutor, tableName string) (bool, error) {
-	failpoint.Inject("CheckTableEmptyFailed", func() {
-		failpoint.Return(false, errors.New("mock error"))
-	})
+func tableContainsData(ctx context.Context, db utils.QueryExecutor, tableName string) (bool, error) {
 	query := "select 1 from " + tableName + " limit 1"
-	exec := common.SQLWithRetry{
-		DB:     db,
-		Logger: log.L(),
-	}
 	var dump int
-	err := exec.QueryRow(ctx, "check table empty", query, &dump)
+	err := db.QueryRowContext(ctx, query).Scan(&dump)
 
 	switch {
-	case errors.ErrorEqual(err, sql.ErrNoRows):
+	case err == sql.ErrNoRows:
 		return false, nil
 	case err != nil:
 		return false, errors.Trace(err)

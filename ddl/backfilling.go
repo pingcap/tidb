@@ -38,11 +38,9 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/timeutil"
-	"github.com/pingcap/tidb/util/topsql"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -294,7 +292,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 	logutil.BgLogger().Info("[ddl] backfill worker start", zap.Int("workerID", w.id))
 	defer func() {
-		w.resultCh <- &backfillResult{err: dbterror.ErrReorgPanic}
+		w.resultCh <- &backfillResult{err: errReorgPanic}
 	}()
 	defer util.Recover(metrics.LabelDDL, "backfillWorker.run", nil, false)
 	for {
@@ -311,11 +309,6 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 				w.resultCh <- result
 				failpoint.Continue()
 			}
-		})
-
-		failpoint.Inject("mockHighLoadForAddIndex", func() {
-			sqlPrefixes := []string{"alter"}
-			topsql.MockHighCPULoad(job.Query, sqlPrefixes, 5)
 		})
 
 		// Dynamic change batch size.
@@ -350,7 +343,7 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 	}
 	if len(ranges) == 0 {
 		errMsg := fmt.Sprintf("cannot find region in range [%s, %s]", startKey.String(), endKey.String())
-		return nil, errors.Trace(dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg))
+		return nil, errors.Trace(errInvalidSplitRegionRanges.GenWithStackByArgs(errMsg))
 	}
 	return ranges, nil
 }

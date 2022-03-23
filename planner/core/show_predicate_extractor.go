@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/parser/ast"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -59,11 +60,12 @@ func (e *ShowColumnsTableExtractor) Extract(show *ast.ShowStmt) bool {
 			// It is used in `SHOW COLUMNS FROM t LIKE `abc``.
 			ptn := pattern.Pattern.(*driver.ValueExpr).GetString()
 			patValue, patTypes := stringutil.CompilePattern(ptn, pattern.Escape)
-			if stringutil.IsExactMatch(patTypes) {
+			if !collate.NewCollationEnabled() && stringutil.IsExactMatch(patTypes) {
 				e.Field = strings.ToLower(string(patValue))
 				return true
 			}
-			e.FieldPatterns = strings.ToLower(string(patValue))
+			// (?i) mean to be case-insensitive.
+			e.FieldPatterns = "(?i)" + stringutil.CompileLike2Regexp(string(patValue))
 			return true
 		case *ast.ColumnNameExpr:
 			// It is used in `SHOW COLUMNS FROM t LIKE abc`.
@@ -114,7 +116,8 @@ func (e *ShowTablesTableExtractor) Extract(show *ast.ShowStmt) bool {
 				e.Field = strings.ToLower(string(patValue))
 				return true
 			}
-			e.FieldPatterns = strings.ToLower(string(patValue))
+			// (?i) mean to be case-insensitive.
+			e.FieldPatterns = "(?i)" + stringutil.CompileLike2Regexp(string(patValue))
 			return true
 		}
 	}

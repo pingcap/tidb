@@ -86,7 +86,6 @@ type IndexLookUpJoin struct {
 
 	stats    *indexLookUpJoinRuntimeStats
 	finished *atomic.Value
-	prepared bool
 }
 
 type outerCtx struct {
@@ -175,6 +174,7 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	e.cancelFunc = nil
+	e.startWorkers(ctx)
 	return nil
 }
 
@@ -258,10 +258,6 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 
 // Next implements the Executor interface.
 func (e *IndexLookUpJoin) Next(ctx context.Context, req *chunk.Chunk) error {
-	if !e.prepared {
-		e.startWorkers(ctx)
-		e.prepared = true
-	}
 	if e.isOuterJoin {
 		atomic.StoreInt64(&e.requiredRows, int64(req.RequiredRows()))
 	}
@@ -768,7 +764,6 @@ func (e *IndexLookUpJoin) Close() error {
 	e.memTracker = nil
 	e.task = nil
 	e.finished.Store(false)
-	e.prepared = false
 	return e.baseExecutor.Close()
 }
 

@@ -169,7 +169,6 @@ func MakeTableRegions(
 					break
 				}
 				if err != nil {
-					log.L().Error("make source file region error", zap.Error(err), zap.String("file_path", info.FileMeta.Path))
 					break
 				}
 			}

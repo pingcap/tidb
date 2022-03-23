@@ -22,20 +22,18 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, recursive bool, partitionIDs []int64) error {
+func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, partitionID int64, recursive bool) error {
 	var child *tipb.Executor
 	switch exec.Tp {
 	case tipb.ExecType_TypeTableScan:
-		exec.TblScan.TableId = partitionIDs[0]
+		exec.TblScan.TableId = partitionID
 		// For test coverage.
 		if tmp := ctx.Value("nextPartitionUpdateDAGReq"); tmp != nil {
 			m := tmp.(map[int64]struct{})
-			m[partitionIDs[0]] = struct{}{}
+			m[partitionID] = struct{}{}
 		}
-	case tipb.ExecType_TypePartitionTableScan:
-		exec.PartitionTableScan.PartitionIds = partitionIDs
 	case tipb.ExecType_TypeIndexScan:
-		exec.IdxScan.TableId = partitionIDs[0]
+		exec.IdxScan.TableId = partitionID
 	case tipb.ExecType_TypeSelection:
 		child = exec.Selection.Child
 	case tipb.ExecType_TypeAggregation, tipb.ExecType_TypeStreamAgg:
@@ -56,7 +54,7 @@ func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, recursive b
 		return errors.Trace(fmt.Errorf("unknown new tipb protocol %d", exec.Tp))
 	}
 	if child != nil && recursive {
-		return updateExecutorTableID(ctx, child, recursive, partitionIDs)
+		return updateExecutorTableID(ctx, child, partitionID, recursive)
 	}
 	return nil
 }

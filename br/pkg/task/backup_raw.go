@@ -201,13 +201,10 @@ func RunBackupRaw(c context.Context, g glue.Glue, cmdName string, cfg *RawKvConf
 
 	req := backuppb.BackupRequest{
 		ClusterId:        client.GetClusterID(),
-		StartKey:         backupRange.StartKey,
-		EndKey:           backupRange.EndKey,
 		StartVersion:     0,
 		EndVersion:       0,
 		RateLimit:        cfg.RateLimit,
 		Concurrency:      cfg.Concurrency,
-		StorageBackend:   client.GetStorageBackend(),
 		IsRawKv:          true,
 		Cf:               cfg.CF,
 		CompressionType:  cfg.CompressionType,
@@ -216,7 +213,7 @@ func RunBackupRaw(c context.Context, g glue.Glue, cmdName string, cfg *RawKvConf
 	}
 	metaWriter := metautil.NewMetaWriter(client.GetStorage(), metautil.MetaFileSize, false, &cfg.CipherInfo)
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
-	err = client.BackupRange(ctx, req, metaWriter, progressCallBack)
+	err = client.BackupRange(ctx, backupRange.StartKey, backupRange.EndKey, req, metaWriter, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
 	}

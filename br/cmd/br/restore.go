@@ -95,7 +95,7 @@ func newFullRestoreCommand() *cobra.Command {
 		Short: "restore all tables",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runRestoreCommand(cmd, task.FullRestoreCmd)
+			return runRestoreCommand(cmd, "Full restore")
 		},
 	}
 	task.DefineFilterFlags(command, filterOutSysAndMemTables)
@@ -108,7 +108,7 @@ func newDBRestoreCommand() *cobra.Command {
 		Short: "restore tables in a database from the backup data",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runRestoreCommand(cmd, task.DBRestoreCmd)
+			return runRestoreCommand(cmd, "Database restore")
 		},
 	}
 	task.DefineDatabaseFlags(command)
@@ -121,7 +121,7 @@ func newTableRestoreCommand() *cobra.Command {
 		Short: "restore a table from the backup data",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runRestoreCommand(cmd, task.TableRestoreCmd)
+			return runRestoreCommand(cmd, "Table restore")
 		},
 	}
 	task.DefineTableFlags(command)
@@ -134,7 +134,7 @@ func newRawRestoreCommand() *cobra.Command {
 		Short: "(experimental) restore a raw kv range to TiKV cluster",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runRestoreRawCommand(cmd, task.RawRestoreCmd)
+			return runRestoreRawCommand(cmd, "Raw restore")
 		},
 	}
 

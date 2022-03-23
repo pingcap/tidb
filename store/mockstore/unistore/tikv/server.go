@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore/client"
 	"github.com/pingcap/tidb/store/mockstore/unistore/cophandler"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
-	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/kverrors"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/pberror"
 	"github.com/pingcap/tidb/store/mockstore/unistore/util/lockwaiter"
 	"github.com/pingcap/tipb/go-tipb"
@@ -111,7 +110,7 @@ func newRequestCtx(svr *Server, ctx *kvrpcpb.Context, method string) (*requestCt
 	atomic.AddInt32(&svr.refCount, 1)
 	if atomic.LoadInt32(&svr.stopped) > 0 {
 		atomic.AddInt32(&svr.refCount, -1)
-		return nil, kverrors.ErrRetryable("server is closed")
+		return nil, ErrRetryable("server is closed")
 	}
 	req := &requestCtx{
 		svr:       svr,
@@ -135,17 +134,12 @@ func (req *requestCtx) getDBReader() *dbreader.DBReader {
 		mvccStore := req.svr.mvccStore
 		txn := mvccStore.db.NewTransaction(false)
 		req.reader = dbreader.NewDBReader(req.regCtx.RawStart(), req.regCtx.RawEnd(), txn)
-		req.reader.RcCheckTS = req.isRcCheckTSIsolationLevel()
 	}
 	return req.reader
 }
 
 func (req *requestCtx) isSnapshotIsolation() bool {
 	return req.rpcCtx.IsolationLevel == kvrpcpb.IsolationLevel_SI
-}
-
-func (req *requestCtx) isRcCheckTSIsolationLevel() bool {
-	return req.rpcCtx.IsolationLevel == kvrpcpb.IsolationLevel_RCCheckTS
 }
 
 func (req *requestCtx) finish() {
@@ -212,8 +206,8 @@ func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.Pessimist
 	}
 	if result.DeadlockResp != nil {
 		log.Error("deadlock found", zap.Stringer("entry", &result.DeadlockResp.Entry))
-		errLocked := err.(*kverrors.ErrLocked)
-		deadlockErr := &kverrors.ErrDeadlock{
+		errLocked := err.(*ErrLocked)
+		deadlockErr := &ErrDeadlock{
 			LockKey:         errLocked.Key,
 			LockTS:          errLocked.Lock.StartTS,
 			DeadlockKeyHash: result.DeadlockResp.DeadlockKeyHash,
@@ -230,7 +224,7 @@ func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.Pessimist
 			if err == nil {
 				return resp, nil
 			}
-			if _, ok := err.(*kverrors.ErrLocked); !ok {
+			if _, ok := err.(*ErrLocked); !ok {
 				resp.Errors, resp.RegionError = convertToPBErrors(err)
 				return resp, nil
 			}
@@ -240,7 +234,7 @@ func (svr *Server) KvPessimisticLock(ctx context.Context, req *kvrpcpb.Pessimist
 	// The key is rollbacked, we don't have the exact commitTS, but we can use the server's latest.
 	// Always use the store latest ts since the waiter result commitTs may not be the real conflict ts
 	conflictCommitTS := svr.mvccStore.getLatestTS()
-	err = &kverrors.ErrConflict{
+	err = &ErrConflict{
 		StartTS:          req.GetForUpdateTs(),
 		ConflictTS:       waiter.LockTS,
 		ConflictCommitTS: conflictCommitTS,
@@ -391,7 +385,7 @@ func (svr *Server) KvCleanup(ctx context.Context, req *kvrpcpb.CleanupRequest) (
 	}
 	err = svr.mvccStore.Cleanup(reqCtx, req.Key, req.StartVersion, req.CurrentTs)
 	resp := new(kvrpcpb.CleanupResponse)
-	if committed, ok := err.(kverrors.ErrAlreadyCommitted); ok {
+	if committed, ok := err.(ErrAlreadyCommitted); ok {
 		resp.CommitVersion = uint64(committed)
 	} else if err != nil {
 		log.Error("cleanup failed", zap.Error(err))
@@ -589,13 +583,6 @@ func (svr *Server) BatchCoprocessor(req *coprocessor.BatchRequest, batchCopServe
 			ctx.finish()
 		}
 	}()
-	if req.TableRegions != nil {
-		// Support PartitionTableScan for BatchCop
-		req.Regions = req.Regions[:]
-		for _, tr := range req.TableRegions {
-			req.Regions = append(req.Regions, tr.Regions...)
-		}
-	}
 	for _, ri := range req.Regions {
 		cop := coprocessor.Request{
 			Tp:      kv.ReqTypeDAG,
@@ -656,13 +643,6 @@ func (svr *Server) DispatchMPPTask(_ context.Context, _ *mpp.DispatchTaskRequest
 
 func (svr *Server) executeMPPDispatch(ctx context.Context, req *mpp.DispatchTaskRequest, storeAddr string, storeID uint64, handler *cophandler.MPPTaskHandler) error {
 	var reqCtx *requestCtx
-	if len(req.TableRegions) > 0 {
-		// Simple unistore logic for PartitionTableScan.
-		for _, tr := range req.TableRegions {
-			req.Regions = append(req.Regions, tr.Regions...)
-		}
-	}
-
 	if len(req.Regions) > 0 {
 		kvContext := &kvrpcpb.Context{
 			RegionId:    req.Regions[0].RegionId,
@@ -1007,21 +987,21 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 	}
 	causeErr := errors.Cause(err)
 	switch x := causeErr.(type) {
-	case *kverrors.ErrLocked:
+	case *ErrLocked:
 		return &kvrpcpb.KeyError{
 			Locked: x.Lock.ToLockInfo(x.Key),
 		}
-	case kverrors.ErrRetryable:
+	case ErrRetryable:
 		return &kvrpcpb.KeyError{
 			Retryable: x.Error(),
 		}
-	case *kverrors.ErrKeyAlreadyExists:
+	case *ErrKeyAlreadyExists:
 		return &kvrpcpb.KeyError{
 			AlreadyExist: &kvrpcpb.AlreadyExist{
 				Key: x.Key,
 			},
 		}
-	case *kverrors.ErrConflict:
+	case *ErrConflict:
 		return &kvrpcpb.KeyError{
 			Conflict: &kvrpcpb.WriteConflict{
 				StartTs:          x.StartTS,
@@ -1030,7 +1010,7 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 				Key:              x.Key,
 			},
 		}
-	case *kverrors.ErrDeadlock:
+	case *ErrDeadlock:
 		return &kvrpcpb.KeyError{
 			Deadlock: &kvrpcpb.Deadlock{
 				LockKey:         x.LockKey,
@@ -1039,7 +1019,7 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 				WaitChain:       x.WaitChain,
 			},
 		}
-	case *kverrors.ErrCommitExpire:
+	case *ErrCommitExpire:
 		return &kvrpcpb.KeyError{
 			CommitTsExpired: &kvrpcpb.CommitTsExpired{
 				StartTs:           x.StartTs,
@@ -1048,14 +1028,14 @@ func convertToKeyError(err error) *kvrpcpb.KeyError {
 				MinCommitTs:       x.MinCommitTs,
 			},
 		}
-	case *kverrors.ErrTxnNotFound:
+	case *ErrTxnNotFound:
 		return &kvrpcpb.KeyError{
 			TxnNotFound: &kvrpcpb.TxnNotFound{
 				StartTs:    x.StartTS,
 				PrimaryKey: x.PrimaryKey,
 			},
 		}
-	case *kverrors.ErrAssertionFailed:
+	case *ErrAssertionFailed:
 		return &kvrpcpb.KeyError{
 			AssertionFailed: &kvrpcpb.AssertionFailed{
 				StartTs:          x.StartTS,

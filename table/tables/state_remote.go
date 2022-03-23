@@ -69,11 +69,8 @@ type StateRemote interface {
 	// LockForWrite try to add a write lock to the table with the specified tableID
 	LockForWrite(ctx context.Context, tid int64, leaseDuration time.Duration) (uint64, error)
 
-	// RenewReadLease attempt to renew the read lock lease on the table with the specified tableID
-	RenewReadLease(ctx context.Context, tid int64, oldLocalLease, newValue uint64) (uint64, error)
-
-	// RenewWriteLease attempt to renew the write lock lease on the table with the specified tableID
-	RenewWriteLease(ctx context.Context, tid int64, newTs uint64) (bool, error)
+	// RenewLease attempt to renew the read / write lock on the table with the specified tableID
+	RenewLease(ctx context.Context, tid int64, newTs uint64, op RenewLeaseType) (bool, error)
 }
 
 type sqlExec interface {
@@ -211,28 +208,33 @@ func waitForLeaseExpire(oldReadLease, now uint64) time.Duration {
 	if oldReadLease >= now {
 		t1 := oracle.GetTimeFromTS(oldReadLease)
 		t2 := oracle.GetTimeFromTS(now)
-		if t1.After(t2) {
-			waitDuration := t1.Sub(t2)
-			return waitDuration
-		}
-		return time.Microsecond
+		waitDuration := t1.Sub(t2)
+		return waitDuration
 	}
 	return 0
 }
 
-// RenewReadLease renew the read lock lease.
-// Return the current lease value on success, and return 0 on fail.
-func (h *stateRemoteHandle) RenewReadLease(ctx context.Context, tid int64, oldLocalLease, newValue uint64) (uint64, error) {
+func (h *stateRemoteHandle) RenewLease(ctx context.Context, tid int64, newLease uint64, op RenewLeaseType) (bool, error) {
 	h.Lock()
 	defer h.Unlock()
-	var newLease uint64
+
+	switch op {
+	case RenewReadLease:
+		return h.renewReadLease(ctx, tid, newLease)
+	case RenewWriteLease:
+		return h.renewWriteLease(ctx, tid, newLease)
+	}
+	return false, errors.New("wrong renew lease type")
+}
+
+func (h *stateRemoteHandle) renewReadLease(ctx context.Context, tid int64, newLease uint64) (bool, error) {
+	var succ bool
 	err := h.runInTxn(ctx, func(ctx context.Context, now uint64) error {
-		lockType, remoteLease, _, err := h.loadRow(ctx, tid)
+		lockType, oldLease, _, err := h.loadRow(ctx, tid)
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		if now >= remoteLease {
+		if now >= oldLease {
 			// read lock had already expired, fail to renew
 			return nil
 		}
@@ -241,38 +243,19 @@ func (h *stateRemoteHandle) RenewReadLease(ctx context.Context, tid int64, oldLo
 			return nil
 		}
 
-		// It means that the lease had already been changed by some other TiDB instances.
-		if oldLocalLease != remoteLease {
-			// 1. Data in [cacheDataTS -------- oldLocalLease) time range is also immutable.
-			// 2. Data in [              now ------------------- remoteLease) time range is immutable.
-			//
-			// If now < oldLocalLease, it means data in all the time range is immutable,
-			// so the old cache data is still available.
-			if now < oldLocalLease {
-				newLease = remoteLease
-			}
-			// Otherwise, there might be write operation during the oldLocalLease and the new remoteLease
-			// Make renew lease operation fail.
-			return nil
-		}
-
-		if newValue > remoteLease { // lease should never decrease!
-			err = h.updateRow(ctx, tid, "READ", newValue)
+		if newLease > oldLease { // lease should never decrease!
+			err = h.updateRow(ctx, tid, "READ", newLease)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			newLease = newValue
-		} else {
-			newLease = remoteLease
 		}
+		succ = true
 		return nil
 	})
-	return newLease, err
+	return succ, err
 }
 
-func (h *stateRemoteHandle) RenewWriteLease(ctx context.Context, tid int64, newLease uint64) (bool, error) {
-	h.Lock()
-	defer h.Unlock()
+func (h *stateRemoteHandle) renewWriteLease(ctx context.Context, tid int64, newLease uint64) (bool, error) {
 	var succ bool
 	err := h.runInTxn(ctx, func(ctx context.Context, now uint64) error {
 		lockType, oldLease, _, err := h.loadRow(ctx, tid)
@@ -317,11 +300,6 @@ func (h *stateRemoteHandle) rollbackTxn(ctx context.Context) error {
 
 func (h *stateRemoteHandle) runInTxn(ctx context.Context, fn func(ctx context.Context, txnTS uint64) error) error {
 	err := h.beginTxn(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	_, err = h.execSQL(ctx, "set @@session.tidb_retry_limit = 0")
 	if err != nil {
 		return errors.Trace(err)
 	}

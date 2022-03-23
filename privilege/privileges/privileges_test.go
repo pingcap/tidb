@@ -38,12 +38,11 @@ import (
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -2028,12 +2027,6 @@ func TestSecurityEnhancedModeSysVars(t *testing.T) {
 
 	tk.MustQuery(`SELECT @@session.tidb_force_priority`).Check(testkit.Rows("NO_PRIORITY"))
 	tk.MustQuery(`SELECT @@global.tidb_enable_telemetry`).Check(testkit.Rows("1"))
-
-	tk.MustQuery(`SELECT @@hostname`).Check(testkit.Rows(variable.DefHostname))
-	sem.Disable()
-	if hostname, err := os.Hostname(); err == nil {
-		tk.MustQuery(`SELECT @@hostname`).Check(testkit.Rows(hostname))
-	}
 }
 
 // TestViewDefiner tests that default roles are correctly applied in the algorithm definer

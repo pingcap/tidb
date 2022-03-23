@@ -15,7 +15,6 @@
 package bindinfo
 
 import (
-	"errors"
 	"sync"
 
 	"github.com/cznic/mathutil"
@@ -55,7 +54,7 @@ func newBindCache() *bindCache {
 	cache := kvcache.NewSimpleLRUCache(mathutil.MaxUint, 0, 0)
 	c := bindCache{
 		cache:       cache,
-		memCapacity: variable.MemQuotaBindingCache.Load(),
+		memCapacity: variable.MemQuotaBindCache.Load(),
 		memTracker:  memory.NewTracker(memory.LabelForBindCache, -1),
 	}
 	return &c
@@ -74,30 +73,12 @@ func (c *bindCache) get(key bindCacheKey) []*BindRecord {
 	return typedValue
 }
 
-// getCopiedVal gets a copied cache item according to cache key.
-// The return value can be modified.
-// If you want to modify the return value, use the 'getCopiedVal' function rather than 'get' function.
-// We use the copy on write way to operate the bindRecord in cache for safety and accuracy of memory usage.
-func (c *bindCache) getCopiedVal(key bindCacheKey) []*BindRecord {
-	bindRecords := c.get(key)
-	if bindRecords != nil {
-		copiedRecords := make([]*BindRecord, len(bindRecords))
-		for i, bindRecord := range bindRecords {
-			copiedRecords[i] = bindRecord.shallowCopy()
-		}
-		return copiedRecords
-	}
-	return bindRecords
-}
-
 // set inserts an item to the cache. It's not thread-safe.
 // Only other functions of the bindCache can use this function.
-// The set operation will return error message when the memory usage of binding_cache exceeds its capacity.
-func (c *bindCache) set(key bindCacheKey, value []*BindRecord) (ok bool, err error) {
+func (c *bindCache) set(key bindCacheKey, value []*BindRecord) bool {
 	mem := calcBindCacheKVMem(key, value)
 	if mem > c.memCapacity { // ignore this kv pair if its size is too large
-		err = errors.New("The memory usage of all available bindings exceeds the cache's mem quota. As a result, all available bindings cannot be held on the cache. Please increase the value of the system variable 'tidb_mem_quota_binding_cache' and execute 'admin reload bindings' to ensure that all bindings exist in the cache and can be used normally")
-		return
+		return false
 	}
 	bindRecords := c.get(key)
 	if bindRecords != nil {
@@ -105,17 +86,15 @@ func (c *bindCache) set(key bindCacheKey, value []*BindRecord) (ok bool, err err
 		mem -= calcBindCacheKVMem(key, bindRecords)
 	}
 	for mem+c.memTracker.BytesConsumed() > c.memCapacity {
-		err = errors.New("The memory usage of all available bindings exceeds the cache's mem quota. As a result, all available bindings cannot be held on the cache. Please increase the value of the system variable 'tidb_mem_quota_binding_cache' and execute 'admin reload bindings' to ensure that all bindings exist in the cache and can be used normally")
 		evictedKey, evictedValue, evicted := c.cache.RemoveOldest()
 		if !evicted {
-			return
+			return false
 		}
 		c.memTracker.Consume(-calcBindCacheKVMem(evictedKey.(bindCacheKey), evictedValue.([]*BindRecord)))
 	}
 	c.memTracker.Consume(mem)
 	c.cache.Put(key, value)
-	ok = true
-	return
+	return true
 }
 
 // delete remove an item from the cache. It's not thread-safe.
@@ -126,9 +105,8 @@ func (c *bindCache) delete(key bindCacheKey) bool {
 		mem := calcBindCacheKVMem(key, bindRecords)
 		c.cache.Delete(key)
 		c.memTracker.Consume(-mem)
-		return true
 	}
-	return false
+	return true
 }
 
 // GetBindRecord gets the BindRecord from the cache.
@@ -162,18 +140,17 @@ func (c *bindCache) GetAllBindRecords() []*BindRecord {
 
 // SetBindRecord sets the BindRecord to the cache.
 // The function is thread-safe.
-func (c *bindCache) SetBindRecord(hash string, meta *BindRecord) (err error) {
+func (c *bindCache) SetBindRecord(hash string, meta *BindRecord) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	cacheKey := bindCacheKey(hash)
-	metas := c.getCopiedVal(cacheKey)
+	metas := c.get(cacheKey)
 	for i := range metas {
 		if metas[i].OriginalSQL == meta.OriginalSQL {
 			metas[i] = meta
 		}
 	}
-	_, err = c.set(cacheKey, []*BindRecord{meta})
-	return
+	c.set(cacheKey, []*BindRecord{meta})
 }
 
 // RemoveBindRecord removes the BindRecord which has same originSQL with specified BindRecord.
@@ -181,7 +158,7 @@ func (c *bindCache) SetBindRecord(hash string, meta *BindRecord) (err error) {
 func (c *bindCache) RemoveBindRecord(hash string, meta *BindRecord) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	metas := c.getCopiedVal(bindCacheKey(hash))
+	metas := c.get(bindCacheKey(hash))
 	if metas == nil {
 		return
 	}
@@ -198,9 +175,7 @@ func (c *bindCache) RemoveBindRecord(hash string, meta *BindRecord) {
 			}
 		}
 	}
-	// This function can guarantee the memory usage for the cache will never grow up.
-	// So we don't need to handle the return value here.
-	_, _ = c.set(bindCacheKey(hash), metas)
+	c.set(bindCacheKey(hash), metas)
 }
 
 // SetMemCapacity sets the memory capacity for the cache.
@@ -210,14 +185,6 @@ func (c *bindCache) SetMemCapacity(capacity int64) {
 	defer c.lock.Unlock()
 	// Only change the capacity size without affecting the cached bindRecord
 	c.memCapacity = capacity
-}
-
-// GetMemUsage get the memory Usage for the cache.
-// The function is thread-safe.
-func (c *bindCache) GetMemUsage() int64 {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	return c.memTracker.BytesConsumed()
 }
 
 // GetMemCapacity get the memory capacity for the cache.
@@ -230,22 +197,17 @@ func (c *bindCache) GetMemCapacity() int64 {
 
 // Copy copies a new bindCache from the origin cache.
 // The function is thread-safe.
-func (c *bindCache) Copy() (newCache *bindCache, err error) {
+func (c *bindCache) Copy() *bindCache {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	newCache = newBindCache()
-	if c.memTracker.BytesConsumed() > newCache.GetMemCapacity() {
-		err = errors.New("The memory usage of all available bindings exceeds the cache's mem quota. As a result, all available bindings cannot be held on the cache. Please increase the value of the system variable 'tidb_mem_quota_binding_cache' and execute 'admin reload bindings' to ensure that all bindings exist in the cache and can be used normally")
-	}
+	newCache := newBindCache()
 	keys := c.cache.Keys()
 	for _, key := range keys {
 		cacheKey := key.(bindCacheKey)
 		v := c.get(cacheKey)
 		bindRecords := make([]*BindRecord, len(v))
 		copy(bindRecords, v)
-		// The memory usage of cache has been handled at the beginning of this function.
-		// So we don't need to handle the return value here.
-		_, _ = newCache.set(cacheKey, bindRecords)
+		newCache.set(cacheKey, bindRecords)
 	}
-	return newCache, err
+	return newCache
 }

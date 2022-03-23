@@ -267,7 +267,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 	})
 
 	if err := taskCfg.TiDB.Security.RegisterMySQL(); err != nil {
-		return common.ErrInvalidTLSConfig.Wrap(err)
+		return err
 	}
 	defer func() {
 		// deregister TLS config with name "cluster"
@@ -282,18 +282,18 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 	if g == nil {
 		db, err := restore.DBFromConfig(ctx, taskCfg.TiDB)
 		if err != nil {
-			return common.ErrDBConnect.Wrap(err)
+			return err
 		}
 		g = glue.NewExternalTiDBGlue(db, taskCfg.TiDB.SQLMode)
 	}
 
 	u, err := storage.ParseBackend(taskCfg.Mydumper.SourceDir, nil)
 	if err != nil {
-		return common.NormalizeError(err)
+		return errors.Annotate(err, "parse backend failed")
 	}
 	s, err := storage.New(ctx, u, &storage.ExternalStorageOptions{})
 	if err != nil {
-		return common.NormalizeError(err)
+		return errors.Annotate(err, "create storage failed")
 	}
 
 	// return expectedErr means at least meet one file
@@ -304,9 +304,9 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 	})
 	if !errors.ErrorEqual(walkErr, expectedErr) {
 		if walkErr == nil {
-			return common.ErrEmptySourceDir.GenWithStackByArgs(taskCfg.Mydumper.SourceDir)
+			return errors.Errorf("data-source-dir '%s' doesn't exist or contains no files", taskCfg.Mydumper.SourceDir)
 		}
-		return common.NormalizeOrWrapErr(common.ErrStorageUnknown, walkErr)
+		return errors.Annotatef(walkErr, "visit data-source-dir '%s' failed", taskCfg.Mydumper.SourceDir)
 	}
 
 	loadTask := log.L().Begin(zap.InfoLevel, "load data source")
@@ -319,7 +319,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 	err = checkSystemRequirement(taskCfg, mdl.GetDatabases())
 	if err != nil {
 		log.L().Error("check system requirements failed", zap.Error(err))
-		return common.ErrSystemRequirementNotMet.Wrap(err).GenWithStackByArgs()
+		return errors.Trace(err)
 	}
 	// check table schema conflicts
 	err = checkSchemaConflict(taskCfg, mdl.GetDatabases())
@@ -727,7 +727,7 @@ func checkSchemaConflict(cfg *config.Config, dbsMeta []*mydump.MDDatabaseMeta) e
 			if db.Name == cfg.Checkpoint.Schema {
 				for _, tb := range db.Tables {
 					if checkpoints.IsCheckpointTable(tb.Name) {
-						return common.ErrCheckpointSchemaConflict.GenWithStack("checkpoint table `%s`.`%s` conflict with data files. Please change the `checkpoint.schema` config or set `checkpoint.driver` to \"file\" instead", db.Name, tb.Name)
+						return errors.Errorf("checkpoint table `%s`.`%s` conflict with data files. Please change the `checkpoint.schema` config or set `checkpoint.driver` to \"file\" instead", db.Name, tb.Name)
 					}
 				}
 			}

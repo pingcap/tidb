@@ -82,6 +82,11 @@ type Storage interface {
 	SetIter(iter int)
 	GetIter() int
 
+	// We use this channel to notify reader that Storage is ready to read.
+	// It exists only to solve the special implementation of IndexLookUpJoin.
+	// We will find a better way and remove this later.
+	GetBegCh() chan struct{}
+
 	GetMemTracker() *memory.Tracker
 	GetDiskTracker() *disk.Tracker
 	ActionSpill() *chunk.SpillDiskAction
@@ -232,6 +237,11 @@ func (s *StorageRC) SetIter(iter int) {
 // GetIter impls Storage GetIter interface.
 func (s *StorageRC) GetIter() int {
 	return s.iter
+}
+
+// GetBegCh impls Storage GetBegCh interface.
+func (s *StorageRC) GetBegCh() chan struct{} {
+	return s.begCh
 }
 
 // GetMemTracker impls Storage GetMemTracker interface.

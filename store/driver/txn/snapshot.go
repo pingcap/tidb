@@ -137,8 +137,6 @@ func getTiKVIsolationLevel(level kv.IsoLevel) txnsnapshot.IsoLevel {
 		return txnsnapshot.SI
 	case kv.RC:
 		return txnsnapshot.RC
-	case kv.RCCheckTS:
-		return txnsnapshot.RCCheckTS
 	default:
 		return txnsnapshot.SI
 	}

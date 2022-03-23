@@ -17,7 +17,6 @@ import (
 	"testing"
 
 	. "github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/format"
 	"github.com/stretchr/testify/require"
 )
 
@@ -239,7 +238,7 @@ func TestJoinRestore(t *testing.T) {
 		return node.(*SelectStmt).From.TableRefs
 	}
 	runNodeRestoreTest(t, testCases, "select * from %s", extractNodeFunc)
-	runNodeRestoreTestWithFlagsStmtChange(t, testChangedCases, "select * from %s", extractNodeFunc, format.DefaultRestoreFlags)
+	runNodeRestoreTestWithFlagsStmtChange(t, testChangedCases, "select * from %s", extractNodeFunc)
 }
 
 func TestTableRefsClauseRestore(t *testing.T) {

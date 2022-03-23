@@ -224,7 +224,6 @@ const (
 	RestoreStringWithoutDefaultCharset
 
 	RestoreTiDBSpecialComment
-	SkipPlacementRuleForRestore
 )
 
 const (
@@ -299,10 +298,6 @@ func (rf RestoreFlags) HasStringWithoutCharset() bool {
 
 func (rf RestoreFlags) HasTiDBSpecialCommentFlag() bool {
 	return rf.has(RestoreTiDBSpecialComment)
-}
-
-func (rf RestoreFlags) HasSkipPlacementRuleForRestoreFlag() bool {
-	return rf.has(SkipPlacementRuleForRestore)
 }
 
 // RestoreCtx is `Restore` context to hold flags and writer.

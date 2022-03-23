@@ -38,7 +38,6 @@ type aggregator struct {
 	statsSet   sync.Map // map[*StatementStats]struct{}
 	collectors sync.Map // map[Collector]struct{}
 	running    *atomic.Bool
-	wg         sync.WaitGroup
 }
 
 // newAggregator creates an empty aggregator.
@@ -46,23 +45,15 @@ func newAggregator() *aggregator {
 	return &aggregator{running: atomic.NewBool(false)}
 }
 
-func (m *aggregator) start() {
-	if m.running.Load() {
-		return
-	}
-	m.ctx, m.cancel = context.WithCancel(context.Background())
-	m.running.Store(true)
-	m.wg.Add(1)
-	go m.run()
-}
-
 // run will block the current goroutine and execute the main loop of aggregator.
 func (m *aggregator) run() {
-	tick := time.NewTicker(time.Second)
+	m.ctx, m.cancel = context.WithCancel(context.Background())
+	m.running.Store(true)
 	defer func() {
-		tick.Stop()
-		m.wg.Done()
+		m.running.Store(false)
 	}()
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
 	for {
 		select {
 		case <-m.ctx.Done():
@@ -128,14 +119,7 @@ func (m *aggregator) unregisterCollector(collector Collector) {
 
 // close ends the execution of the current aggregator.
 func (m *aggregator) close() {
-	if !m.running.Load() {
-		return
-	}
-	if m.cancel != nil {
-		m.cancel()
-	}
-	m.running.Store(false)
-	m.wg.Wait()
+	m.cancel()
 }
 
 // closed returns whether the aggregator has been closed.
@@ -146,13 +130,17 @@ func (m *aggregator) closed() bool {
 // SetupAggregator is used to initialize the background aggregator goroutine of the stmtstats module.
 // SetupAggregator is **not** thread-safe.
 func SetupAggregator() {
-	globalAggregator.start()
+	if globalAggregator.closed() {
+		go globalAggregator.run()
+	}
 }
 
 // CloseAggregator is used to stop the background aggregator goroutine of the stmtstats module.
 // SetupAggregator is **not** thread-safe.
 func CloseAggregator() {
-	globalAggregator.close()
+	if !globalAggregator.closed() {
+		globalAggregator.close()
+	}
 }
 
 // RegisterCollector binds a Collector to globalAggregator.

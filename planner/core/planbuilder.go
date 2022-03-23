@@ -24,10 +24,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -46,16 +45,13 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
@@ -64,7 +60,11 @@ import (
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
+
+	"github.com/cznic/mathutil"
+	"github.com/pingcap/tidb/table/tables"
 	"go.uber.org/zap"
 )
 
@@ -87,16 +87,17 @@ type indexNestedLoopJoinTables struct {
 
 type tableHintInfo struct {
 	indexNestedLoopJoinTables
-	sortMergeJoinTables []hintTableInfo
-	broadcastJoinTables []hintTableInfo
-	hashJoinTables      []hintTableInfo
-	indexHintList       []indexHintInfo
-	tiflashTables       []hintTableInfo
-	tikvTables          []hintTableInfo
-	aggHints            aggHintInfo
-	indexMergeHintList  []indexHintInfo
-	timeRangeHint       ast.HintTimeRange
-	limitHints          limitHintInfo
+	sortMergeJoinTables         []hintTableInfo
+	broadcastJoinTables         []hintTableInfo
+	broadcastJoinPreferredLocal []hintTableInfo
+	hashJoinTables              []hintTableInfo
+	indexHintList               []indexHintInfo
+	tiflashTables               []hintTableInfo
+	tikvTables                  []hintTableInfo
+	aggHints                    aggHintInfo
+	indexMergeHintList          []indexHintInfo
+	timeRangeHint               ast.HintTimeRange
+	limitHints                  limitHintInfo
 }
 
 type limitHintInfo struct {
@@ -196,6 +197,22 @@ func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTable
 		return nil
 	}
 	return hintTableInfos
+}
+
+// ifPreferAsLocalInBCJoin checks if there is a data source specified as local read by hint
+func (info *tableHintInfo) ifPreferAsLocalInBCJoin(p LogicalPlan, blockOffset int) bool {
+	alias := extractTableAlias(p, blockOffset)
+	if alias != nil {
+		tableNames := make([]*hintTableInfo, 1)
+		tableNames[0] = alias
+		return info.matchTableName(tableNames, info.broadcastJoinPreferredLocal)
+	}
+	for _, c := range p.Children() {
+		if info.ifPreferAsLocalInBCJoin(c, blockOffset) {
+			return true
+		}
+	}
+	return false
 }
 
 func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*hintTableInfo) bool {
@@ -723,8 +740,6 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		return b.buildCreateBindPlan(x)
 	case *ast.DropBindingStmt:
 		return b.buildDropBindPlan(x)
-	case *ast.SetBindingStmt:
-		return b.buildSetBindingStatusPlan(x)
 	case *ast.ChangeStmt:
 		return b.buildChange(x)
 	case *ast.SplitRegionStmt:
@@ -878,25 +893,6 @@ func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 	return p, nil
 }
 
-func (b *PlanBuilder) buildSetBindingStatusPlan(v *ast.SetBindingStmt) (Plan, error) {
-	p := &SQLBindPlan{
-		SQLBindOp:    OpSetBindingStatus,
-		NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
-		Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
-	}
-	switch v.BindingStatusType {
-	case ast.BindingStatusTypeEnabled:
-		p.NewStatus = bindinfo.Enabled
-	case ast.BindingStatusTypeDisabled:
-		p.NewStatus = bindinfo.Disabled
-	}
-	if v.HintedNode != nil {
-		p.BindSQL = utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB, v.HintedNode.Text())
-	}
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
-	return p, nil
-}
-
 func checkHintedSQL(sql, charset, collation, db string) error {
 	p := parser.New()
 	hintsSet, _, warns, err := hint.ParseHintsSet(p, sql, charset, collation, db)
@@ -1020,8 +1016,8 @@ func isPrimaryIndex(indexName model.CIStr) bool {
 	return indexName.L == "primary"
 }
 
-func genTiFlashPath(tblInfo *model.TableInfo) *util.AccessPath {
-	tiFlashPath := &util.AccessPath{StoreType: kv.TiFlash}
+func genTiFlashPath(tblInfo *model.TableInfo, isGlobalRead bool) *util.AccessPath {
+	tiFlashPath := &util.AccessPath{StoreType: kv.TiFlash, IsTiFlashGlobalRead: isGlobalRead}
 	fillContentForTablePath(tiFlashPath, tblInfo)
 	return tiFlashPath
 }
@@ -1089,7 +1085,8 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	} else if !tblInfo.TiFlashReplica.Available {
 		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because tiflash replicas of table `" + tblInfo.Name.O + "` not ready.")
 	} else {
-		publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
+		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, false))
+		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, true))
 	}
 
 	optimizerUseInvisibleIndexes := ctx.GetSessionVars().OptimizerUseInvisibleIndexes
@@ -1206,6 +1203,16 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 		available = append(available, tablePath)
 	}
 	return available, nil
+}
+
+func filterOutTiFlashPaths(paths []*util.AccessPath) []*util.AccessPath {
+	updatedPaths := make([]*util.AccessPath, 0, len(paths))
+	for _, path := range paths {
+		if path.StoreType != kv.TiFlash {
+			updatedPaths = append(updatedPaths, path)
+		}
+	}
+	return updatedPaths
 }
 
 func filterPathByIsolationRead(ctx sessionctx.Context, paths []*util.AccessPath, tblName model.CIStr, dbName model.CIStr) ([]*util.AccessPath, error) {
@@ -1821,7 +1828,7 @@ func GetPhysicalIDsAndPartitionNames(tblInfo *model.TableInfo, partitionNames []
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		if len(partitionNames) != 0 {
-			return nil, nil, errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
+			return nil, nil, errors.Trace(ddl.ErrPartitionMgmtOnNonpartitioned)
 		}
 		return []int64{tblInfo.ID}, []string{""}, nil
 	}
@@ -1932,7 +1939,7 @@ func (b *PlanBuilder) getPredicateColumns(tbl *ast.TableName, cols *calcOnceMap)
 		return nil, err
 	}
 	if len(colList) == 0 {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("No predicate column has been collected yet for table %s.%s so all columns are analyzed", tbl.Schema.L, tbl.Name.L))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("No predicate column has been collected yet for table %s.%s so all columns are analyzed.", tbl.Schema.L, tbl.Name.L))
 		for _, colInfo := range tblInfo.Columns {
 			cols.data[colInfo.ID] = struct{}{}
 		}
@@ -1969,7 +1976,7 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 	warning bool,
 ) ([]*model.ColumnInfo, []*model.ColumnInfo, error) {
 	if mustAllColumns && warning && (columnChoice == model.PredicateColumns || columnChoice == model.ColumnList) {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Table %s.%s has version 1 statistics so all the columns must be analyzed to overwrite the current statistics", tbl.Schema.L, tbl.Name.L))
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Table %s.%s has version 1 statistics so all the columns must be analyzed to overwrite the current statistics.", tbl.Schema.L, tbl.Name.L))
 	}
 	colSet2colList := func(colSet map[int64]struct{}) []*model.ColumnInfo {
 		colList := make([]*model.ColumnInfo, 0, len(colSet))
@@ -2026,7 +2033,7 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 						missingNames = append(missingNames, col.Name.O)
 					}
 				}
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Columns %s are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats", strings.Join(missingNames, ",")))
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Columns %s are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats.", strings.Join(missingNames, ",")))
 			}
 		}
 		for colID := range mustAnalyzed {
@@ -2303,10 +2310,10 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 	usePersistedOptions := variable.PersistAnalyzeOptions.Load()
 	for _, tbl := range as.TableNames {
 		if tbl.TableInfo.IsView() {
-			return nil, errors.Errorf("analyze view %s is not supported now", tbl.Name.O)
+			return nil, errors.Errorf("analyze view %s is not supported now.", tbl.Name.O)
 		}
 		if tbl.TableInfo.IsSequence() {
-			return nil, errors.Errorf("analyze sequence %s is not supported now", tbl.Name.O)
+			return nil, errors.Errorf("analyze sequence %s is not supported now.", tbl.Name.O)
 		}
 		idxInfo, colInfo := getColsInfo(tbl)
 		physicalIDs, names, err := GetPhysicalIDsAndPartitionNames(tbl.TableInfo, as.PartitionNames)
@@ -2405,7 +2412,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 	versionIsSame := statsHandle.CheckAnalyzeVersion(tblInfo, physicalIDs, &version)
 	if !versionIsSame {
 		if b.ctx.GetSessionVars().EnableFastAnalyze {
-			return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1")
+			return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1.")
 		}
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
@@ -2470,7 +2477,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 	versionIsSame := statsHandle.CheckAnalyzeVersion(tblInfo, physicalIDs, &version)
 	if !versionIsSame {
 		if b.ctx.GetSessionVars().EnableFastAnalyze {
-			return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1")
+			return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1.")
 		}
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
@@ -2582,7 +2589,7 @@ func parseAnalyzeOptionsV2(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]uin
 		}
 	}
 	if sampleNum > 0 && sampleRate > 0 {
-		return nil, errors.Errorf("You can only either set the value of the sample num or set the value of the sample rate. Don't set both of them")
+		return nil, errors.Errorf("You can only either set the value of the sample num or set the value of the sample rate. Don't set both of them.")
 	}
 	return optMap, nil
 }
@@ -2647,7 +2654,7 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeO
 		}
 	}
 	if sampleNum > 0 && sampleRate > 0 {
-		return nil, errors.Errorf("You can only either set the value of the sample num or set the value of the sample rate. Don't set both of them")
+		return nil, errors.Errorf("You can only either set the value of the sample num or set the value of the sample rate. Don't set both of them.")
 	}
 	if optMap[ast.AnalyzeOptCMSketchWidth]*optMap[ast.AnalyzeOptCMSketchDepth] > CMSketchSizeLimit {
 		return nil, errors.Errorf("cm sketch size(depth * width) should not larger than %d", CMSketchSizeLimit)
@@ -2658,11 +2665,11 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeO
 func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 	// If enable fast analyze, the storage must be tikv.Storage.
 	if _, isTikvStorage := b.ctx.GetStore().(tikv.Storage); !isTikvStorage && b.ctx.GetSessionVars().EnableFastAnalyze {
-		return nil, errors.Errorf("Only support fast analyze in tikv storage")
+		return nil, errors.Errorf("Only support fast analyze in tikv storage.")
 	}
 	statsVersion := b.ctx.GetSessionVars().AnalyzeVersion
 	if b.ctx.GetSessionVars().EnableFastAnalyze && statsVersion >= statistics.Version2 {
-		return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently")
+		return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently.")
 	}
 	for _, tbl := range as.TableNames {
 		user := b.ctx.GetSessionVars().User
@@ -3093,10 +3100,6 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 					b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "CONNECTION_ADMIN", false, err)
 					b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, &auth.UserIdentity{Username: pi.User, Hostname: pi.Host}, "RESTRICTED_CONNECTION_ADMIN")
 				}
-			} else if raw.ConnectionID == util2.GetAutoAnalyzeProcID() {
-				// Only the users with SUPER or CONNECTION_ADMIN privilege can kill auto analyze.
-				err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or CONNECTION_ADMIN")
-				b.visitInfo = appendDynamicVisitInfo(b.visitInfo, "CONNECTION_ADMIN", false, err)
 			}
 		}
 	case *ast.UseStmt:
@@ -3118,7 +3121,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 	case *ast.BeginStmt:
 		readTS := b.ctx.GetSessionVars().TxnReadTS.PeakTxnReadTS()
 		if raw.AsOf != nil {
-			startTS, err := staleread.CalculateAsOfTsExpr(b.ctx, raw.AsOf)
+			startTS, err := calculateTsExpr(b.ctx, raw.AsOf)
 			if err != nil {
 				return nil, err
 			}
@@ -3133,6 +3136,36 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 		}
 	}
 	return p, nil
+}
+
+// calculateTsExpr calculates the TsExpr of AsOfClause to get a StartTS.
+func calculateTsExpr(sctx sessionctx.Context, asOfClause *ast.AsOfClause) (uint64, error) {
+	tsVal, err := evalAstExpr(sctx, asOfClause.TsExpr)
+	if err != nil {
+		return 0, err
+	}
+	toTypeTimestamp := types.NewFieldType(mysql.TypeTimestamp)
+	// We need at least the millionsecond here, so set fsp to 3.
+	toTypeTimestamp.Decimal = 3
+	tsTimestamp, err := tsVal.ConvertTo(sctx.GetSessionVars().StmtCtx, toTypeTimestamp)
+	if err != nil {
+		return 0, err
+	}
+	tsTime, err := tsTimestamp.GetMysqlTime().GoTime(sctx.GetSessionVars().Location())
+	if err != nil {
+		return 0, err
+	}
+	return oracle.GoTimeToTS(tsTime), nil
+}
+
+func calculateTsWithReadStaleness(sctx sessionctx.Context, readStaleness time.Duration) (uint64, error) {
+	nowVal, err := expression.GetStmtTimestamp(sctx)
+	if err != nil {
+		return 0, err
+	}
+	tsVal := nowVal.Add(readStaleness)
+	minTsVal := expression.GetMinSafeTime(sctx)
+	return oracle.GoTimeToTS(expression.CalAppropriateTime(tsVal, nowVal, minTsVal)), nil
 }
 
 func collectVisitInfoFromRevokeStmt(sctx sessionctx.Context, vi []visitInfo, stmt *ast.RevokeStmt) ([]visitInfo, error) {
@@ -3321,16 +3354,16 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	}
 	tableInfo := tn.TableInfo
 	if tableInfo.IsView() {
-		err := errors.Errorf("insert into view %s is not supported now", tableInfo.Name.O)
+		err := errors.Errorf("insert into view %s is not supported now.", tableInfo.Name.O)
 		if insert.IsReplace {
-			err = errors.Errorf("replace into view %s is not supported now", tableInfo.Name.O)
+			err = errors.Errorf("replace into view %s is not supported now.", tableInfo.Name.O)
 		}
 		return nil, err
 	}
 	if tableInfo.IsSequence() {
-		err := errors.Errorf("insert into sequence %s is not supported now", tableInfo.Name.O)
+		err := errors.Errorf("insert into sequence %s is not supported now.", tableInfo.Name.O)
 		if insert.IsReplace {
-			err = errors.Errorf("replace into sequence %s is not supported now", tableInfo.Name.O)
+			err = errors.Errorf("replace into sequence %s is not supported now.", tableInfo.Name.O)
 		}
 		return nil, err
 	}
@@ -3341,7 +3374,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	}
 	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
 	if !ok {
-		return nil, errors.Errorf("Can't get table %s", tableInfo.Name.O)
+		return nil, errors.Errorf("Can't get table %s.", tableInfo.Name.O)
 	}
 
 	insertPlan := Insert{
@@ -4268,7 +4301,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 			}
 		}
 		if len(v.Cols) != schema.Len() {
-			return nil, dbterror.ErrViewWrongList
+			return nil, ddl.ErrViewWrongList
 		}
 		if b.ctx.GetSessionVars().User != nil {
 			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", b.ctx.GetSessionVars().User.AuthUsername,
@@ -4712,9 +4745,6 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowBindings:
 		names = []string{"Original_sql", "Bind_sql", "Default_db", "Status", "Create_time", "Update_time", "Charset", "Collation", "Source"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
-	case ast.ShowBindingCacheStatus:
-		names = []string{"bindings_in_cache", "bindings_in_table", "memory_usage", "memory_quota"}
-		ftypes = []byte{mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowAnalyzeStatus:
 		names = []string{"Table_schema", "Table_name", "Partition_name", "Job_info", "Processed_rows", "Start_time", "End_time", "State"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar}

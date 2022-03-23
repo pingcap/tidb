@@ -857,16 +857,12 @@ func TestMPPJoinWithCanNotFoundColumnInSchemaColumnsError(t *testing.T) {
 func TestJoinNotSupportedByTiFlash(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
-
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists table_1")
 	tk.MustExec("create table table_1(id int not null, bit_col bit(2) not null, datetime_col datetime not null)")
 	tk.MustExec("insert into table_1 values(1,b'1','2020-01-01 00:00:00'),(2,b'0','2020-01-01 00:00:00')")
 	tk.MustExec("analyze table table_1")
-
-	tk.MustExec("insert into mysql.expr_pushdown_blacklist values('dayofmonth', 'tiflash', '');")
-	tk.MustExec("admin reload expr_pushdown_blacklist;")
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
@@ -911,6 +907,22 @@ func TestJoinNotSupportedByTiFlash(t *testing.T) {
 		res := tk.MustQuery(tt)
 		res.Check(testkit.Rows(output[i].Plan...))
 	}
+
+	tk.MustExec("set @@session.tidb_allow_mpp = 0")
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_allow_batch_cop = 1")
+	tk.MustExec("set @@session.tidb_opt_broadcast_join = 1")
+	// make cbo force choose broadcast join since sql hint does not work for semi/anti-semi join
+	tk.MustExec("set @@session.tidb_opt_cpu_factor=10000000;")
+	integrationSuiteData.GetTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
 }
 
 func TestMPPWithHashExchangeUnderNewCollation(t *testing.T) {
@@ -943,6 +955,7 @@ func TestMPPWithHashExchangeUnderNewCollation(t *testing.T) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("set @@session.tidb_allow_mpp = 1")
+	tk.MustExec("set @@session.tidb_opt_broadcast_join = 0")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
 	tk.MustExec("set @@session.tidb_hash_exchange_with_new_collation = 1")
@@ -2707,17 +2720,6 @@ func TestBitColumnPushDown(t *testing.T) {
 		{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
-
-	// test collation
-	tk.MustExec("update mysql.tidb set VARIABLE_VALUE='True' where VARIABLE_NAME='new_collation_enabled'")
-	tk.MustQuery("SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME='new_collation_enabled';").Check(
-		testkit.Rows("True"))
-	tk.MustExec("create table t3 (a bit(8));")
-	tk.MustExec("insert into t3 values (65)")
-	tk.MustExec("SET NAMES utf8mb4 COLLATE utf8mb4_bin")
-	tk.MustQuery("select a from t3 where cast(a as char) = 'a'").Check(testkit.Rows())
-	tk.MustExec("SET NAMES utf8mb4 COLLATE utf8mb4_general_ci")
-	tk.MustQuery("select a from t3 where cast(a as char) = 'a'").Check(testkit.Rows("A"))
 }
 
 func TestSysdatePushDown(t *testing.T) {
@@ -2734,12 +2736,12 @@ func TestSysdatePushDown(t *testing.T) {
 	}
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
 		CheckAt([]int{0, 3, 6}, rows)
-	// assert sysdate isn't now after set global tidb_sysdate_is_now in the same session
-	tk.MustExec("set global tidb_sysdate_is_now='1'")
+	// assert sysdate isn't now after set global sysdate_is_now in the same session
+	tk.MustExec("set global sysdate_is_now='1'")
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
 		CheckAt([]int{0, 3, 6}, rows)
 
-	// assert sysdate is now after set global tidb_sysdate_is_now in the new session
+	// assert sysdate is now after set global sysdate_is_now in the new session
 	tk = testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	now := time.Now()
@@ -2749,8 +2751,8 @@ func TestSysdatePushDown(t *testing.T) {
 		CheckAt([]int{0, 3, 6}, rows)
 	failpoint.Disable("github.com/pingcap/tidb/expression/injectNow")
 
-	// assert sysdate isn't now after set session tidb_sysdate_is_now false in the same session
-	tk.MustExec("set tidb_sysdate_is_now='0'")
+	// assert sysdate isn't now after set session sysdate_is_now false in the same session
+	tk.MustExec("set sysdate_is_now='0'")
 	rows[1][2] = "gt(test.t.d, sysdate())"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
 		CheckAt([]int{0, 3, 6}, rows)
@@ -4010,6 +4012,8 @@ func TestPushDownProjectionForTiFlash(t *testing.T) {
 		}
 	}
 
+	tk.MustExec("set @@tidb_opt_broadcast_join=1;")
+
 	var input []string
 	var output []struct {
 		SQL  string
@@ -4050,7 +4054,7 @@ func TestPushDownProjectionForMPP(t *testing.T) {
 		}
 	}
 
-	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_opt_broadcast_join=0; set @@tidb_enforce_mpp=1;")
 
 	var input []string
 	var output []struct {
@@ -4185,7 +4189,7 @@ func TestPushDownAggForMPP(t *testing.T) {
 		}
 	}
 
-	tk.MustExec(" set @@tidb_allow_mpp=1; set @@tidb_broadcast_join_threshold_count = 1; set @@tidb_broadcast_join_threshold_size=1;")
+	tk.MustExec(" set @@tidb_allow_mpp=1; set @@tidb_opt_broadcast_join=0; set @@tidb_broadcast_join_threshold_count = 1; set @@tidb_broadcast_join_threshold_size=1;")
 
 	var input []string
 	var output []struct {
@@ -4720,7 +4724,7 @@ func TestIncrementalAnalyzeStatsVer2(t *testing.T) {
 	require.Len(t, warns, 3)
 	require.EqualError(t, warns[0].Err, "The version 2 would collect all statistics not only the selected indexes")
 	require.EqualError(t, warns[1].Err, "The version 2 stats would ignore the INCREMENTAL keyword and do full sampling")
-	require.EqualError(t, warns[2].Err, "Analyze use auto adjusted sample rate 1.000000 for table test.t")
+	require.EqualError(t, warns[2].Err, "Analyze use auto adjusted sample rate 1.000000 for table test.t.")
 	rows = tk.MustQuery(fmt.Sprintf("select distinct_count from mysql.stats_histograms where table_id = %d and is_index = 1", tblID)).Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "6", rows[0][0])
@@ -5065,7 +5069,7 @@ func TestIssue29834(t *testing.T) {
 	tk.MustQuery("SELECT/*+ INL_JOIN(t1, t2), nth_plan(1) */ t2.* FROM IDT_MC21814 t1 LEFT JOIN IDT_MC21814 t2 ON t1.col1 = t2.col1 WHERE t2.col2 BETWEEN 2593 AND 1971 AND t1.col1 IN (2155, 1901, 1967);").Check(testkit.Rows())
 	tk.MustQuery("SELECT/*+ INL_JOIN(t1, t2), nth_plan(2) */ t2.* FROM IDT_MC21814 t1 LEFT JOIN IDT_MC21814 t2 ON t1.col1 = t2.col1 WHERE t2.col2 BETWEEN 2593 AND 1971 AND t1.col1 IN (2155, 1901, 1967);").Check(testkit.Rows())
 	// Only can generate one index join plan. Because the index join inner child can not be tableDual.
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The parameter of nth_plan() is out of range"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The parameter of nth_plan() is out of range."))
 }
 
 func TestIssue29221(t *testing.T) {
@@ -5623,7 +5627,7 @@ func TestRejectSortForMPP(t *testing.T) {
 		}
 	}
 
-	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_opt_broadcast_join=0; set @@tidb_enforce_mpp=1;")
 
 	var input []string
 	var output []struct {
@@ -6094,10 +6098,9 @@ func TestAggPushToCopForCachedTable(t *testing.T) {
 
 	tk.MustQuery("explain format = 'brief' select /*+AGG_TO_COP()*/ count(*) from t32157 ignore index(primary) where process_code = 'GDEP0071'").Check(testkit.Rows(
 		"StreamAgg 1.00 root  funcs:count(1)->Column#8]\n" +
-			"[└─UnionScan 10.00 root  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
-			"[  └─TableReader 10.00 root  data:Selection]\n" +
-			"[    └─Selection 10.00 cop[tikv]  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
-			"[      └─TableFullScan 10000.00 cop[tikv] table:t32157 keep order:false, stats:pseudo"))
+			"[└─TableReader 10.00 root  data:Selection]\n" +
+			"[  └─Selection 10.00 cop[tikv]  eq(test.t32157.process_code, \"GDEP0071\")]\n" +
+			"[    └─TableFullScan 10000.00 cop[tikv] table:t32157 keep order:false, stats:pseudo"))
 
 	var readFromCacheNoPanic bool
 	for i := 0; i < 10; i++ {
@@ -6204,42 +6207,4 @@ func TestIssue32632(t *testing.T) {
 	}
 	tk.MustExec("drop table if exists partsupp")
 	tk.MustExec("drop table if exists supplier")
-}
-
-func TestTiFlashPartitionTableScan(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
-	tk.MustExec("set @@tidb_enforce_mpp = on")
-	tk.MustExec("set @@tidb_allow_batch_cop = 2")
-	tk.MustExec("drop table if exists rp_t;")
-	tk.MustExec("drop table if exists hp_t;")
-	tk.MustExec("create table rp_t(a int) partition by RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16), PARTITION p3 VALUES LESS THAN (21));")
-	tk.MustExec("create table hp_t(a int) partition by hash(a) partitions 4;")
-	tbl1, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "rp_t", L: "rp_t"})
-	require.NoError(t, err)
-	tbl2, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "hp_t", L: "hp_t"})
-	require.NoError(t, err)
-	// Set the hacked TiFlash replica for explain tests.
-	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
-	tbl2.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-	}
-	integrationSuiteData := core.GetIntegrationSuiteData()
-	integrationSuiteData.GetTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
-	}
-	tk.MustExec("drop table rp_t;")
-	tk.MustExec("drop table hp_t;")
 }

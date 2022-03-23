@@ -33,8 +33,6 @@ type MPPTask struct {
 	ID      int64       // mppTaskID
 	StartTs uint64
 	TableID int64 // physical table id
-
-	PartitionTableIDs []int64
 }
 
 // ToPB generates the pb structure.
@@ -91,6 +89,4 @@ type MPPClient interface {
 type MPPBuildTasksRequest struct {
 	KeyRanges []KeyRange
 	StartTS   uint64
-
-	PartitionIDAndRanges []PartitionIDAndRanges
 }

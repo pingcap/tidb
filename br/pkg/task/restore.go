@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
@@ -38,24 +39,15 @@ const (
 	FlagPDConcurrency = "pd-concurrency"
 	// FlagBatchFlushInterval controls after how long the restore batch would be auto sended.
 	FlagBatchFlushInterval = "batch-flush-interval"
-	// FlagDdlBatchSize controls batch ddl size to create a batch of tables
+	// flagDdlBatchSize controls batch ddl size to create a batch of tables
 	FlagDdlBatchSize = "ddl-batch-size"
-	// FlagWithPlacementPolicy corresponds to tidb config with-tidb-placement-mode
-	// current only support STRICT or IGNORE, the default is STRICT according to tidb.
-	FlagWithPlacementPolicy = "with-tidb-placement-mode"
 
 	defaultRestoreConcurrency = 128
 	maxRestoreBatchSizeLimit  = 10240
 	defaultPDConcurrency      = 1
 	defaultBatchFlushInterval = 16 * time.Second
+	defaultDDLConcurrency     = 16
 	defaultFlagDdlBatchSize   = 128
-)
-
-const (
-	FullRestoreCmd  = "Full Restore"
-	DBRestoreCmd    = "DataBase Restore"
-	TableRestoreCmd = "Table Restore"
-	RawRestoreCmd   = "Raw Restore"
 )
 
 // RestoreCommonConfig is the common configuration for all BR restore tasks.
@@ -130,8 +122,6 @@ type RestoreConfig struct {
 	BatchFlushInterval time.Duration `json:"batch-flush-interval" toml:"batch-flush-interval"`
 	// DdlBatchSize use to define the size of batch ddl to create tables
 	DdlBatchSize uint `json:"ddl-batch-size" toml:"ddl-batch-size"`
-
-	WithPlacementPolicy string `json:"with-tidb-placement-mode" toml:"with-tidb-placement-mode"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -139,7 +129,6 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagNoSchema, false, "skip creating schemas and tables, reuse existing empty ones")
 	// Do not expose this flag
 	_ = flags.MarkHidden(flagNoSchema)
-	flags.String(FlagWithPlacementPolicy, "STRICT", "correspond to tidb global/session variable with-tidb-placement-mode")
 
 	DefineRestoreCommonFlags(flags)
 }
@@ -176,10 +165,6 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagDdlBatchSize)
 	}
-	cfg.WithPlacementPolicy, err = flags.GetString(FlagWithPlacementPolicy)
-	if err != nil {
-		return errors.Annotatef(err, "failed to get flag %s", FlagWithPlacementPolicy)
-	}
 	return nil
 }
 
@@ -209,6 +194,17 @@ func (cfg *RestoreConfig) adjustRestoreConfig() {
 }
 
 func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *RestoreConfig) error {
+	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	opts := storage.ExternalStorageOptions{
+		NoCredentials:   cfg.NoCreds,
+		SendCredentials: cfg.SendCreds,
+	}
+	if err = client.SetStorage(ctx, u, &opts); err != nil {
+		return errors.Trace(err)
+	}
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetConcurrency(uint(cfg.Concurrency))
@@ -220,9 +216,7 @@ func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *Re
 	}
 	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
 	client.SetBatchDdlSize(cfg.DdlBatchSize)
-	client.SetPlacementPolicyMode(cfg.WithPlacementPolicy)
-
-	err := client.LoadRestoreStores(ctx)
+	err = client.LoadRestoreStores(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -265,10 +259,6 @@ func CheckRestoreDBAndTable(client *restore.Client, cfg *RestoreConfig) error {
 	return nil
 }
 
-func isFullRestore(cmdName string) bool {
-	return cmdName == FullRestoreCmd
-}
-
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
 	cfg.adjustRestoreConfig()
@@ -293,18 +283,17 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	defer mgr.Close()
 
 	keepaliveCfg.PermitWithoutStream = true
-	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, false)
+	client, err := restore.NewRestoreClient(g, mgr.GetPDClient(), mgr.GetStorage(), mgr.GetTLSConfig(), keepaliveCfg, false)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer client.Close()
+
 	err = configureRestoreClient(ctx, client, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Init DB connection sessions
-	err = client.Init(g, mgr.GetStorage())
-	defer client.Close()
 
-	if err != nil {
-		return errors.Trace(err)
-	}
 	u, s, backupMeta, err := ReadBackupMeta(ctx, metautil.MetaFile, &cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
@@ -374,23 +363,6 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	restoreDBConfig := enableTiDBConfig()
 	defer restoreDBConfig()
 
-	if client.GetSupportPolicy() {
-		// create policy if backupMeta has policies.
-		policies, err := client.GetPlacementPolicies()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isFullRestore(cmdName) {
-			// we should restore all policies during full restoration.
-			err = client.CreatePolicies(ctx, policies)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		} else {
-			client.SetPolicyMap(policies)
-		}
-	}
-
 	// execute DDL first
 	err = client.ExecDDLs(ctx, ddlJobs)
 	if err != nil {
@@ -414,7 +386,26 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	// We make bigger errCh so we won't block on multi-part failed.
 	errCh := make(chan error, 32)
-	tableStream := client.GoCreateTables(ctx, mgr.GetDomain(), tables, newTS, errCh)
+	// Maybe allow user modify the DDL concurrency isn't necessary,
+	// because executing DDL is really I/O bound (or, algorithm bound?),
+	// and we cost most of time at waiting DDL jobs be enqueued.
+	// So these jobs won't be faster or slower when machine become faster or slower,
+	// hence make it a fixed value would be fine.
+	var dbPool []*restore.DB
+	if g.OwnsStorage() {
+		// Only in binary we can use multi-thread sessions to create tables.
+		// so use OwnStorage() to tell whether we are use binary or SQL.
+		dbPool, err = restore.MakeDBPool(defaultDDLConcurrency, func() (*restore.DB, error) {
+			return restore.NewDB(g, mgr.GetStorage())
+		})
+	}
+	if err != nil {
+		log.Warn("create session pool failed, we will send DDLs only by created sessions",
+			zap.Error(err),
+			zap.Int("sessionCount", len(dbPool)),
+		)
+	}
+	tableStream := client.GoCreateTables(ctx, mgr.GetDomain(), tables, newTS, dbPool, errCh)
 	if len(files) == 0 {
 		log.Info("no files, empty databases and tables are restored")
 		summary.SetSuccessStatus(true)

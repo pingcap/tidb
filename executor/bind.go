@@ -37,7 +37,6 @@ type SQLBindExec struct {
 	db           string
 	isGlobal     bool
 	bindAst      ast.StmtNode
-	newStatus    string
 }
 
 // Next implements the Executor Next interface.
@@ -56,8 +55,6 @@ func (e *SQLBindExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return e.evolveBindings()
 	case plannercore.OpReloadBindings:
 		return e.reloadBindings()
-	case plannercore.OpSetBindingStatus:
-		return e.setBindingStatus()
 	default:
 		return errors.Errorf("unsupported SQL bind operation: %v", e.sqlBindOp)
 	}
@@ -78,23 +75,6 @@ func (e *SQLBindExec) dropSQLBind() error {
 		return handle.DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
 	}
 	return domain.GetDomain(e.ctx).BindHandle().DropBindRecord(e.normdOrigSQL, e.db, bindInfo)
-}
-
-func (e *SQLBindExec) setBindingStatus() error {
-	var bindInfo *bindinfo.Binding
-	if e.bindSQL != "" {
-		bindInfo = &bindinfo.Binding{
-			BindSQL:   e.bindSQL,
-			Charset:   e.charset,
-			Collation: e.collation,
-		}
-	}
-	ok, err := domain.GetDomain(e.ctx).BindHandle().SetBindRecordStatus(e.normdOrigSQL, bindInfo, e.newStatus)
-	if err == nil && !ok {
-		warningMess := errors.New("There are no bindings can be set the status. Please check the SQL text")
-		e.ctx.GetSessionVars().StmtCtx.AppendWarning(warningMess)
-	}
-	return err
 }
 
 func (e *SQLBindExec) createSQLBind() error {

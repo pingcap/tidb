@@ -34,7 +34,6 @@ import (
 
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/kverrors"
 	"go.uber.org/zap"
 )
 
@@ -82,7 +81,7 @@ func NewDetector(ttl time.Duration, urgentSize uint64, expireInterval time.Durat
 }
 
 // Detect detects deadlock for the sourceTxn on a locked key.
-func (d *Detector) Detect(sourceTxn, waitForTxn, keyHash uint64, diagCtx diagnosticContext) *kverrors.ErrDeadlock {
+func (d *Detector) Detect(sourceTxn, waitForTxn, keyHash uint64, diagCtx diagnosticContext) *ErrDeadlock {
 	d.lock.Lock()
 	nowTime := time.Now()
 	d.activeExpire(nowTime)
@@ -108,7 +107,7 @@ func (d *Detector) Detect(sourceTxn, waitForTxn, keyHash uint64, diagCtx diagnos
 	return err
 }
 
-func (d *Detector) doDetect(nowTime time.Time, sourceTxn, waitForTxn uint64) *kverrors.ErrDeadlock {
+func (d *Detector) doDetect(nowTime time.Time, sourceTxn, waitForTxn uint64) *ErrDeadlock {
 	val := d.waitForMap[waitForTxn]
 	if val == nil {
 		return nil
@@ -124,7 +123,7 @@ func (d *Detector) doDetect(nowTime time.Time, sourceTxn, waitForTxn uint64) *kv
 			continue
 		}
 		if keyHashPair.txn == sourceTxn {
-			return &kverrors.ErrDeadlock{DeadlockKeyHash: keyHashPair.keyHash,
+			return &ErrDeadlock{DeadlockKeyHash: keyHashPair.keyHash,
 				WaitChain: []*deadlockpb.WaitForEntry{
 					{
 						Txn:              waitForTxn,

@@ -48,7 +48,6 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/slice"
@@ -135,7 +134,7 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 
 		if tblInfo.TiFlashReplica != nil {
 			// Must set placement rule, and make sure it succeeds.
-			if err := infosync.ConfigureTiFlashPDForPartitions(true, &tblInfo.Partition.AddingDefinitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels, tblInfo.ID); err != nil {
+			if err := infosync.ConfigureTiFlashPDForPartitions(true, &tblInfo.Partition.AddingDefinitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels); err != nil {
 				logutil.BgLogger().Error("ConfigureTiFlashPDForPartitions fails", zap.Error(err))
 				return ver, errors.Trace(err)
 			}
@@ -193,7 +192,7 @@ func (w *worker) onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (v
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionAddTablePartition, TableInfo: tblInfo, PartInfo: partInfo})
 	default:
-		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
+		err = ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
 	}
 
 	return ver, errors.Trace(err)
@@ -210,7 +209,7 @@ func alterTablePartitionBundles(t *meta.Meta, tblInfo *model.TableInfo, addingDe
 	tblInfo.Partition = &p
 
 	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 && tableHasPlacementSettings(tblInfo) {
-		return nil, errors.Trace(dbterror.ErrIncompatibleTiFlashAndPlacement)
+		return nil, errors.Trace(ErrIncompatibleTiFlashAndPlacement)
 	}
 
 	// bundle for table should be recomputed because it includes some default configs for partitions
@@ -272,7 +271,7 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 		newDefs, oldDefs := part.Definitions, meta.Partition.Definitions
 		rangeValue := oldDefs[len(oldDefs)-1].LessThan[0]
 		if strings.EqualFold(rangeValue, "MAXVALUE") {
-			return errors.Trace(dbterror.ErrPartitionMaxvalue)
+			return errors.Trace(ErrPartitionMaxvalue)
 		}
 
 		currentRangeValue, err := strconv.Atoi(rangeValue)
@@ -285,7 +284,7 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 			if ifMaxvalue && i == len(newDefs)-1 {
 				return nil
 			} else if ifMaxvalue && i != len(newDefs)-1 {
-				return errors.Trace(dbterror.ErrPartitionMaxvalue)
+				return errors.Trace(ErrPartitionMaxvalue)
 			}
 
 			nextRangeValue, err := strconv.Atoi(newDefs[i].LessThan[0])
@@ -293,7 +292,7 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 				return errors.Trace(err)
 			}
 			if nextRangeValue <= currentRangeValue {
-				return errors.Trace(dbterror.ErrRangeNotIncreasing)
+				return errors.Trace(ErrRangeNotIncreasing)
 			}
 			currentRangeValue = nextRangeValue
 		}
@@ -382,7 +381,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	}
 
 	if strings.EqualFold(ctx.GetSessionVars().EnableTablePartition, "OFF") {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTablePartitionDisabled)
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errTablePartitionDisabled)
 		return nil
 	}
 
@@ -412,7 +411,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	}
 
 	if !enable {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("Unsupported partition type %v, treat as normal table", s.Tp)))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("Unsupported partition type %v, treat as normal table", s.Tp)))
 		return nil
 	}
 
@@ -641,15 +640,15 @@ func checkPartitionValuesIsInt(ctx sessionctx.Context, def *ast.PartitionDefinit
 		case types.KindUint64, types.KindNull:
 		case types.KindInt64:
 			if mysql.HasUnsignedFlag(tp.Flag) && val.GetInt64() < 0 {
-				return dbterror.ErrPartitionConstDomain.GenWithStackByArgs()
+				return ErrPartitionConstDomain.GenWithStackByArgs()
 			}
 		default:
-			return dbterror.ErrValuesIsNotIntType.GenWithStackByArgs(def.Name)
+			return ErrValuesIsNotIntType.GenWithStackByArgs(def.Name)
 		}
 
 		_, err = val.ConvertTo(ctx.GetSessionVars().StmtCtx, tp)
 		if err != nil && !types.ErrOverflow.Equal(err) {
-			return dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
+			return ErrWrongTypeColumnValue.GenWithStackByArgs()
 		}
 	}
 
@@ -661,7 +660,7 @@ func checkPartitionNameUnique(pi *model.PartitionInfo) error {
 	partNames := make(map[string]struct{}, len(newPars))
 	for _, newPar := range newPars {
 		if _, ok := partNames[newPar.Name.L]; ok {
-			return dbterror.ErrSameNamePartition.GenWithStackByArgs(newPar.Name)
+			return ErrSameNamePartition.GenWithStackByArgs(newPar.Name)
 		}
 		partNames[newPar.Name.L] = struct{}{}
 	}
@@ -679,7 +678,7 @@ func checkAddPartitionNameUnique(tbInfo *model.TableInfo, pi *model.PartitionInf
 	newPars := pi.Definitions
 	for _, newPar := range newPars {
 		if _, ok := partNames[newPar.Name.L]; ok {
-			return dbterror.ErrSameNamePartition.GenWithStackByArgs(newPar.Name)
+			return ErrSameNamePartition.GenWithStackByArgs(newPar.Name)
 		}
 		partNames[newPar.Name.L] = struct{}{}
 	}
@@ -692,15 +691,15 @@ func checkAndOverridePartitionID(newTableInfo, oldTableInfo *model.TableInfo) er
 		return nil
 	}
 	if oldTableInfo.Partition == nil {
-		return dbterror.ErrRepairTableFail.GenWithStackByArgs("Old table doesn't have partitions")
+		return ErrRepairTableFail.GenWithStackByArgs("Old table doesn't have partitions")
 	}
 	if newTableInfo.Partition.Type != oldTableInfo.Partition.Type {
-		return dbterror.ErrRepairTableFail.GenWithStackByArgs("Partition type should be the same")
+		return ErrRepairTableFail.GenWithStackByArgs("Partition type should be the same")
 	}
 	// Check whether partitionType is hash partition.
 	if newTableInfo.Partition.Type == model.PartitionTypeHash {
 		if newTableInfo.Partition.Num != oldTableInfo.Partition.Num {
-			return dbterror.ErrRepairTableFail.GenWithStackByArgs("Hash partition num should be the same")
+			return ErrRepairTableFail.GenWithStackByArgs("Hash partition num should be the same")
 		}
 	}
 	for i, newOne := range newTableInfo.Partition.Definitions {
@@ -715,7 +714,7 @@ func checkAndOverridePartitionID(newTableInfo, oldTableInfo *model.TableInfo) er
 			}
 		}
 		if !found {
-			return dbterror.ErrRepairTableFail.GenWithStackByArgs("Partition " + newOne.Name.L + " has lost")
+			return ErrRepairTableFail.GenWithStackByArgs("Partition " + newOne.Name.L + " has lost")
 		}
 	}
 	return nil
@@ -732,7 +731,7 @@ func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, e
 		return errors.Trace(exprChecker.err)
 	}
 	if len(exprChecker.columns) == 0 {
-		return errors.Trace(dbterror.ErrWrongExprInPartitionFunc)
+		return errors.Trace(ErrWrongExprInPartitionFunc)
 	}
 	return nil
 }
@@ -742,7 +741,7 @@ func checkPartitionFuncValid(ctx sessionctx.Context, tblInfo *model.TableInfo, e
 // Based on mysql code to check whether field is valid, every time related type has check_valid_arguments_processor function.
 func checkResultOK(ok bool) error {
 	if !ok {
-		return errors.Trace(dbterror.ErrWrongExprInPartitionFunc)
+		return errors.Trace(ErrWrongExprInPartitionFunc)
 	}
 
 	return nil
@@ -763,10 +762,10 @@ func checkPartitionFuncType(ctx sessionctx.Context, expr ast.ExprNode, tblInfo *
 	}
 
 	if col, ok := expr.(*ast.ColumnNameExpr); ok {
-		return errors.Trace(dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(col.Name.Name.L))
+		return errors.Trace(ErrNotAllowedTypeInPartition.GenWithStackByArgs(col.Name.Name.L))
 	}
 
-	return errors.Trace(dbterror.ErrPartitionFuncNotAllowed.GenWithStackByArgs("PARTITION"))
+	return errors.Trace(ErrPartitionFuncNotAllowed.GenWithStackByArgs("PARTITION"))
 }
 
 // checkRangePartitionValue checks whether `less than value` is strictly increasing for each partition.
@@ -786,7 +785,7 @@ func checkRangePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 	var prevRangeValue interface{}
 	for i := 0; i < len(defs); i++ {
 		if strings.EqualFold(defs[i].LessThan[0], partitionMaxValue) {
-			return errors.Trace(dbterror.ErrPartitionMaxvalue)
+			return errors.Trace(ErrPartitionMaxvalue)
 		}
 
 		currentRangeValue, fromExpr, err := getRangeValue(ctx, defs[i].LessThan[0], isUnsigned)
@@ -805,11 +804,11 @@ func checkRangePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 
 		if isUnsigned {
 			if currentRangeValue.(uint64) <= prevRangeValue.(uint64) {
-				return errors.Trace(dbterror.ErrRangeNotIncreasing)
+				return errors.Trace(ErrRangeNotIncreasing)
 			}
 		} else {
 			if currentRangeValue.(int64) <= prevRangeValue.(int64) {
-				return errors.Trace(dbterror.ErrRangeNotIncreasing)
+				return errors.Trace(ErrRangeNotIncreasing)
 			}
 		}
 		prevRangeValue = currentRangeValue
@@ -830,7 +829,7 @@ func checkListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) e
 	partitionsValuesMap := make(map[string]struct{})
 	for _, s := range expStr {
 		if _, ok := partitionsValuesMap[s]; ok {
-			return errors.Trace(dbterror.ErrMultipleDefConstInListPart)
+			return errors.Trace(ErrMultipleDefConstInListPart)
 		}
 		partitionsValuesMap[s] = struct{}{}
 	}
@@ -854,7 +853,7 @@ func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 		for _, colName := range pi.Columns {
 			colInfo := findColumnByName(colName.L, tblInfo)
 			if colInfo == nil {
-				return nil, errors.Trace(dbterror.ErrFieldNotFoundPart)
+				return nil, errors.Trace(ErrFieldNotFoundPart)
 			}
 			colTps = append(colTps, colInfo.FieldType.Clone())
 			cols = append(cols, colInfo)
@@ -928,21 +927,21 @@ func getRangeValue(ctx sessionctx.Context, str string, unsigned bool) (interface
 			return res, true, nil
 		}
 	}
-	return 0, false, dbterror.ErrNotAllowedTypeInPartition.GenWithStackByArgs(str)
+	return 0, false, ErrNotAllowedTypeInPartition.GenWithStackByArgs(str)
 }
 
 // checkDropTablePartition checks if the partition exists and does not allow deleting the last existing partition in the table.
 func checkDropTablePartition(meta *model.TableInfo, partLowerNames []string) error {
 	pi := meta.Partition
 	if pi.Type != model.PartitionTypeRange && pi.Type != model.PartitionTypeList {
-		return dbterror.ErrOnlyOnRangeListPartition.GenWithStackByArgs("DROP")
+		return errOnlyOnRangeListPartition.GenWithStackByArgs("DROP")
 	}
 
 	// To be error compatible with MySQL, we need to do this first!
 	// see https://github.com/pingcap/tidb/issues/31681#issuecomment-1015536214
 	oldDefs := pi.Definitions
 	if len(oldDefs) <= len(partLowerNames) {
-		return errors.Trace(dbterror.ErrDropLastPartition)
+		return errors.Trace(ErrDropLastPartition)
 	}
 
 	dupCheck := make(map[string]bool)
@@ -951,7 +950,7 @@ func checkDropTablePartition(meta *model.TableInfo, partLowerNames []string) err
 		for _, def := range oldDefs {
 			if def.Name.L == pn {
 				if _, ok := dupCheck[pn]; ok {
-					return errors.Trace(dbterror.ErrDropPartitionNonExistent.GenWithStackByArgs("DROP"))
+					return errors.Trace(ErrDropPartitionNonExistent.GenWithStackByArgs("DROP"))
 				}
 				dupCheck[pn] = true
 				found = true
@@ -959,7 +958,7 @@ func checkDropTablePartition(meta *model.TableInfo, partLowerNames []string) err
 			}
 		}
 		if !found {
-			return errors.Trace(dbterror.ErrDropPartitionNonExistent.GenWithStackByArgs("DROP"))
+			return errors.Trace(ErrDropPartitionNonExistent.GenWithStackByArgs("DROP"))
 		}
 	}
 	return nil
@@ -1134,12 +1133,12 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (dropIndexErr error) {
 				defer tidbutil.Recover(metrics.LabelDDL, "onDropTablePartition",
 					func() {
-						dropIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("drop partition panic")
+						dropIndexErr = errCancelledDDLJob.GenWithStack("drop partition panic")
 					}, false)
 				return w.cleanupGlobalIndexes(pt, physicalTableIDs, reorgInfo)
 			})
 			if err != nil {
-				if dbterror.ErrWaitReorgTimeout.Equal(err) {
+				if errWaitReorgTimeout.Equal(err) {
 					// if timeout, we should return, check for the owner and re-wait job done.
 					return ver, nil
 				}
@@ -1162,7 +1161,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		// A background job will be created to delete old partition data.
 		job.Args = []interface{}{physicalTableIDs}
 	default:
-		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
+		err = ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
 	}
 	return ver, errors.Trace(err)
 }
@@ -1181,7 +1180,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 	}
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
-		return ver, errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
+		return ver, errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 
 	newPartitions := make([]model.PartitionDefinition, 0, len(oldIDs))
@@ -1207,7 +1206,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 
 	// Clear the tiflash replica available status.
 	if tblInfo.TiFlashReplica != nil {
-		e := infosync.ConfigureTiFlashPDForPartitions(true, &newPartitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels, tblInfo.ID)
+		e := infosync.ConfigureTiFlashPDForPartitions(true, &newPartitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels)
 		failpoint.Inject("FailTiFlashTruncatePartition", func() {
 			e = errors.New("enforced error")
 		})
@@ -1329,7 +1328,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	if pt.State != model.StatePublic {
 		job.State = model.JobStateCancelled
-		return ver, dbterror.ErrInvalidDDLState.GenWithStack("table %s is not in public, but %s", pt.Name, pt.State)
+		return ver, ErrInvalidDDLState.GenWithStack("table %s is not in public, but %s", pt.Name, pt.State)
 	}
 
 	err = checkExchangePartition(pt, nt)
@@ -1567,7 +1566,7 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 			sql, paramList = buildCheckSQLForListColumnsPartition(pi, index, schemaName, tableName)
 		}
 	default:
-		return dbterror.ErrUnsupportedPartitionType.GenWithStackByArgs(pt.Name.O)
+		return errUnsupportedPartitionType.GenWithStackByArgs(pt.Name.O)
 	}
 
 	var ctx sessionctx.Context
@@ -1583,7 +1582,7 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	}
 	rowCount := len(rows)
 	if rowCount != 0 {
-		return errors.Trace(dbterror.ErrRowDoesNotMatchPartition)
+		return errors.Trace(ErrRowDoesNotMatchPartition)
 	}
 	return nil
 }
@@ -1668,14 +1667,14 @@ func getInValues(pi *model.PartitionInfo, index int) []string {
 
 func checkAddPartitionTooManyPartitions(piDefs uint64) error {
 	if piDefs > uint64(PartitionCountLimit) {
-		return errors.Trace(dbterror.ErrTooManyPartitions)
+		return errors.Trace(ErrTooManyPartitions)
 	}
 	return nil
 }
 
 func checkAddPartitionOnTemporaryMode(tbInfo *model.TableInfo) error {
 	if tbInfo.Partition != nil && tbInfo.TempTableType != model.TempTableNone {
-		return dbterror.ErrPartitionNoTemporary
+		return ErrPartitionNoTemporary
 	}
 	return nil
 }
@@ -1687,7 +1686,7 @@ func checkPartitionColumnsUnique(tbInfo *model.TableInfo) error {
 	var columnsMap = make(map[string]struct{})
 	for _, col := range tbInfo.Partition.Columns {
 		if _, ok := columnsMap[col.L]; ok {
-			return dbterror.ErrSameNamePartitionField.GenWithStackByArgs(col.L)
+			return ErrSameNamePartitionField.GenWithStackByArgs(col.L)
 		}
 		columnsMap[col.L] = struct{}{}
 	}
@@ -1752,10 +1751,10 @@ func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTabl
 	for _, index := range tblInfo.Indices {
 		if index.Unique && !checkUniqueKeyIncludePartKey(partCols, index.Columns) {
 			if index.Primary {
-				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
+				return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
 			}
 			if !config.GetGlobalConfig().EnableGlobalIndex {
-				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
+				return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
 			}
 		}
 	}
@@ -1766,7 +1765,7 @@ func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTabl
 			Length: types.UnspecifiedLength,
 		}}
 		if !checkUniqueKeyIncludePartKey(partCols, indexCols) {
-			return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
+			return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
 		}
 	}
 	return nil
@@ -1820,7 +1819,7 @@ func (cne *columnNameExtractor) Leave(node ast.Node) (ast.Node, bool) {
 			cne.extractedColumns = append(cne.extractedColumns, info)
 			return node, true
 		}
-		cne.err = dbterror.ErrBadField.GenWithStackByArgs(c.Name.Name.O, "expression")
+		cne.err = ErrBadField.GenWithStackByArgs(c.Name.Name.O, "expression")
 		return nil, false
 	}
 	return node, true
@@ -1971,7 +1970,7 @@ func (p *partitionExprChecker) extractColumns(_ sessionctx.Context, _ *model.Tab
 	}
 	colInfo := findColumnByName(columnNameExpr.Name.Name.L, p.tbInfo)
 	if colInfo == nil {
-		return errors.Trace(dbterror.ErrBadField.GenWithStackByArgs(columnNameExpr.Name.Name.L, "partition function"))
+		return errors.Trace(ErrBadField.GenWithStackByArgs(columnNameExpr.Name.Name.L, "partition function"))
 	}
 
 	p.columns = append(p.columns, colInfo)
@@ -1996,7 +1995,7 @@ func checkPartitionExprAllowed(_ sessionctx.Context, tb *model.TableInfo, e ast.
 		*ast.TimeUnitExpr:
 		return nil
 	}
-	return errors.Trace(dbterror.ErrPartitionFunctionIsNotAllowed)
+	return errors.Trace(ErrPartitionFunctionIsNotAllowed)
 }
 
 func checkPartitionExprArgs(_ sessionctx.Context, tblInfo *model.TableInfo, e ast.ExprNode) error {
@@ -2028,7 +2027,7 @@ func checkPartitionExprArgs(_ sessionctx.Context, tblInfo *model.TableInfo, e as
 			ast.TimeUnitSecond, ast.TimeUnitMicrosecond, ast.TimeUnitHourMicrosecond, ast.TimeUnitMinuteMicrosecond, ast.TimeUnitSecondMicrosecond:
 			return errors.Trace(checkResultOK(hasTimeArgs(argsType...)))
 		default:
-			return errors.Trace(dbterror.ErrWrongExprInPartitionFunc)
+			return errors.Trace(ErrWrongExprInPartitionFunc)
 		}
 	case ast.DateDiff:
 		return errors.Trace(checkResultOK(slice.AllOf(argsType, func(i int) bool {
@@ -2038,7 +2037,7 @@ func checkPartitionExprArgs(_ sessionctx.Context, tblInfo *model.TableInfo, e as
 	case ast.Abs, ast.Ceiling, ast.Floor, ast.Mod:
 		has := hasTimestampArgs(argsType...)
 		if has {
-			return errors.Trace(dbterror.ErrWrongExprInPartitionFunc)
+			return errors.Trace(ErrWrongExprInPartitionFunc)
 		}
 	}
 	return nil
@@ -2053,7 +2052,7 @@ func collectArgsType(tblInfo *model.TableInfo, exprs ...ast.ExprNode) ([]byte, e
 		}
 		columnInfo := findColumnByName(col.Name.Name.L, tblInfo)
 		if columnInfo == nil {
-			return nil, errors.Trace(dbterror.ErrBadField.GenWithStackByArgs(col.Name.Name.L, "partition function"))
+			return nil, errors.Trace(ErrBadField.GenWithStackByArgs(col.Name.Name.L, "partition function"))
 		}
 		ts = append(ts, columnInfo.Tp)
 	}
@@ -2091,7 +2090,7 @@ func checkNoTimestampArgs(tbInfo *model.TableInfo, exprs ...ast.ExprNode) error 
 		return err
 	}
 	if hasTimestampArgs(argsType...) {
-		return errors.Trace(dbterror.ErrWrongExprInPartitionFunc)
+		return errors.Trace(ErrWrongExprInPartitionFunc)
 	}
 	return nil
 }

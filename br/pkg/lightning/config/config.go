@@ -492,7 +492,7 @@ func (igCols AllIgnoreColumns) GetIgnoreColumns(db string, table string, caseSen
 		}
 		f, err := filter.Parse(ig.TableFilter)
 		if err != nil {
-			return nil, common.ErrInvalidConfig.GenWithStack("invalid table filter %s in ignore columns", strings.Join(ig.TableFilter, ","))
+			return nil, errors.Trace(err)
 		}
 		if f.MatchTable(db, table) {
 			return igCols[i], nil
@@ -806,22 +806,22 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	// Reject problematic CSV configurations.
 	csv := &cfg.Mydumper.CSV
 	if len(csv.Separator) == 0 {
-		return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.separator` must not be empty")
+		return errors.New("invalid config: `mydumper.csv.separator` must not be empty")
 	}
 
 	if len(csv.Delimiter) > 0 && (strings.HasPrefix(csv.Separator, csv.Delimiter) || strings.HasPrefix(csv.Delimiter, csv.Separator)) {
-		return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.separator` and `mydumper.csv.delimiter` must not be prefix of each other")
+		return errors.New("invalid config: `mydumper.csv.separator` and `mydumper.csv.delimiter` must not be prefix of each other")
 	}
 
 	if csv.BackslashEscape {
 		if csv.Separator == `\` {
-			return common.ErrInvalidConfig.GenWithStack("cannot use '\\' as CSV separator when `mydumper.csv.backslash-escape` is true")
+			return errors.New("invalid config: cannot use '\\' as CSV separator when `mydumper.csv.backslash-escape` is true")
 		}
 		if csv.Delimiter == `\` {
-			return common.ErrInvalidConfig.GenWithStack("cannot use '\\' as CSV delimiter when `mydumper.csv.backslash-escape` is true")
+			return errors.New("invalid config: cannot use '\\' as CSV delimiter when `mydumper.csv.backslash-escape` is true")
 		}
 		if csv.Terminator == `\` {
-			return common.ErrInvalidConfig.GenWithStack("cannot use '\\' as CSV terminator when `mydumper.csv.backslash-escape` is true")
+			return errors.New("invalid config: cannot use '\\' as CSV terminator when `mydumper.csv.backslash-escape` is true")
 		}
 	}
 
@@ -830,13 +830,11 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		if filepath.IsAbs(rule.Path) {
 			relPath, err := filepath.Rel(cfg.Mydumper.SourceDir, rule.Path)
 			if err != nil {
-				return common.ErrInvalidConfig.Wrap(err).
-					GenWithStack("cannot find relative path for file route path %s", rule.Path)
+				return errors.Trace(err)
 			}
 			// ".." means that this path is not in source dir, so we should return an error
 			if strings.HasPrefix(relPath, "..") {
-				return common.ErrInvalidConfig.GenWithStack(
-					"file route path '%s' is not in source dir '%s'", rule.Path, cfg.Mydumper.SourceDir)
+				return errors.Errorf("file route path '%s' is not in source dir '%s'", rule.Path, cfg.Mydumper.SourceDir)
 			}
 			rule.Path = relPath
 		}
@@ -852,7 +850,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	}
 	charset, err1 := ParseCharset(cfg.Mydumper.DataCharacterSet)
 	if err1 != nil {
-		return common.ErrInvalidConfig.Wrap(err1).GenWithStack("invalid `mydumper.data-character-set`")
+		return err1
 	}
 	if charset == GBK || charset == GB18030 {
 		log.L().Warn(
@@ -862,7 +860,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	}
 
 	if cfg.TikvImporter.Backend == "" {
-		return common.ErrInvalidConfig.GenWithStack("tikv-importer.backend must not be empty!")
+		return errors.New("tikv-importer.backend must not be empty!")
 	}
 	cfg.TikvImporter.Backend = strings.ToLower(cfg.TikvImporter.Backend)
 	mustHaveInternalConnections := true
@@ -881,7 +879,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		}
 		cfg.DefaultVarsForImporterAndLocalBackend()
 	default:
-		return common.ErrInvalidConfig.GenWithStack("unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)
+		return errors.Errorf("invalid config: unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)
 	}
 
 	// TODO calculate these from the machine's free memory.
@@ -905,15 +903,14 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		switch cfg.TikvImporter.OnDuplicate {
 		case ReplaceOnDup, IgnoreOnDup, ErrorOnDup:
 		default:
-			return common.ErrInvalidConfig.GenWithStack(
-				"unsupported `tikv-importer.on-duplicate` (%s)", cfg.TikvImporter.OnDuplicate)
+			return errors.Errorf("invalid config: unsupported `tikv-importer.on-duplicate` (%s)", cfg.TikvImporter.OnDuplicate)
 		}
 	}
 
 	var err error
 	cfg.TiDB.SQLMode, err = mysql.GetSQLMode(cfg.TiDB.StrSQLMode)
 	if err != nil {
-		return common.ErrInvalidConfig.Wrap(err).GenWithStack("`mydumper.tidb.sql_mode` must be a valid SQL_MODE")
+		return errors.Annotate(err, "invalid config: `mydumper.tidb.sql_mode` must be a valid SQL_MODE")
 	}
 
 	if err := cfg.CheckAndAdjustSecurity(); err != nil {
@@ -924,7 +921,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	if cfg.HasLegacyBlackWhiteList() {
 		log.L().Warn("the config `black-white-list` has been deprecated, please replace with `mydumper.filter`")
 		if !common.StringSliceEqual(cfg.Mydumper.Filter, DefaultFilter) {
-			return common.ErrInvalidConfig.GenWithStack("`mydumper.filter` and `black-white-list` cannot be simultaneously defined")
+			return errors.New("invalid config: `mydumper.filter` and `black-white-list` cannot be simultaneously defined")
 		}
 	}
 
@@ -933,7 +930,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 			rule.ToLower()
 		}
 		if err := rule.Valid(); err != nil {
-			return common.ErrInvalidConfig.Wrap(err).GenWithStack("file route rule is invalid")
+			return errors.Trace(err)
 		}
 	}
 
@@ -947,7 +944,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 
 func (cfg *Config) CheckAndAdjustForLocalBackend() error {
 	if len(cfg.TikvImporter.SortedKVDir) == 0 {
-		return common.ErrInvalidConfig.GenWithStack("tikv-importer.sorted-kv-dir must not be empty!")
+		return errors.Errorf("tikv-importer.sorted-kv-dir must not be empty!")
 	}
 
 	storageSizeDir := filepath.Clean(cfg.TikvImporter.SortedKVDir)
@@ -958,11 +955,10 @@ func (cfg *Config) CheckAndAdjustForLocalBackend() error {
 		return nil
 	case err == nil:
 		if !sortedKVDirInfo.IsDir() {
-			return common.ErrInvalidConfig.
-				GenWithStack("tikv-importer.sorted-kv-dir ('%s') is not a directory", storageSizeDir)
+			return errors.Errorf("tikv-importer.sorted-kv-dir ('%s') is not a directory", storageSizeDir)
 		}
 	default:
-		return common.ErrInvalidConfig.Wrap(err).GenWithStack("invalid tikv-importer.sorted-kv-dir")
+		return errors.Annotate(err, "invalid tikv-importer.sorted-kv-dir")
 	}
 
 	return nil
@@ -1013,7 +1009,7 @@ func (cfg *Config) CheckAndAdjustTiDBPort(ctx context.Context, mustHaveInternalC
 		var settings tidbcfg.Config
 		err = tls.GetJSON(ctx, "/settings", &settings)
 		if err != nil {
-			return common.ErrInvalidConfig.Wrap(err).GenWithStack("cannot fetch settings from TiDB, please manually fill in `tidb.port` and `tidb.pd-addr`")
+			return errors.Annotate(err, "cannot fetch settings from TiDB, please manually fill in `tidb.port` and `tidb.pd-addr`")
 		}
 		if cfg.TiDB.Port <= 0 {
 			cfg.TiDB.Port = int(settings.Port)
@@ -1025,11 +1021,11 @@ func (cfg *Config) CheckAndAdjustTiDBPort(ctx context.Context, mustHaveInternalC
 	}
 
 	if cfg.TiDB.Port <= 0 {
-		return common.ErrInvalidConfig.GenWithStack("invalid `tidb.port` setting")
+		return errors.New("invalid `tidb.port` setting")
 	}
 
 	if mustHaveInternalConnections && len(cfg.TiDB.PdAddr) == 0 {
-		return common.ErrInvalidConfig.GenWithStack("invalid `tidb.pd-addr` setting")
+		return errors.New("invalid `tidb.pd-addr` setting")
 	}
 	return nil
 }
@@ -1049,7 +1045,7 @@ func (cfg *Config) CheckAndAdjustFilePath() error {
 		var err error
 		u, err = url.Parse(cfg.Mydumper.SourceDir)
 		if err != nil {
-			return common.ErrInvalidConfig.Wrap(err).GenWithStack("cannot parse `mydumper.data-source-dir` %s", cfg.Mydumper.SourceDir)
+			return errors.Trace(err)
 		}
 	} else {
 		u = &url.URL{}
@@ -1057,15 +1053,12 @@ func (cfg *Config) CheckAndAdjustFilePath() error {
 
 	// convert path and relative path to a valid file url
 	if u.Scheme == "" {
-		if cfg.Mydumper.SourceDir == "" {
-			return common.ErrInvalidConfig.GenWithStack("`mydumper.data-source-dir` is not set")
-		}
 		if !common.IsDirExists(cfg.Mydumper.SourceDir) {
-			return common.ErrInvalidConfig.GenWithStack("'%s': `mydumper.data-source-dir` does not exist", cfg.Mydumper.SourceDir)
+			return errors.Errorf("%s: mydumper dir does not exist", cfg.Mydumper.SourceDir)
 		}
 		absPath, err := filepath.Abs(cfg.Mydumper.SourceDir)
 		if err != nil {
-			return common.ErrInvalidConfig.Wrap(err).GenWithStack("covert data-source-dir '%s' to absolute path failed", cfg.Mydumper.SourceDir)
+			return errors.Annotatef(err, "covert data-source-dir '%s' to absolute path failed", cfg.Mydumper.SourceDir)
 		}
 		u.Path = filepath.ToSlash(absPath)
 		u.Scheme = "file"
@@ -1080,9 +1073,7 @@ func (cfg *Config) CheckAndAdjustFilePath() error {
 		}
 	}
 	if !found {
-		return common.ErrInvalidConfig.GenWithStack(
-			"unsupported data-source-dir url '%s', supported storage types are %s",
-			cfg.Mydumper.SourceDir, strings.Join(supportedStorageTypes, ","))
+		return errors.Errorf("Unsupported data-source-dir url '%s'", cfg.Mydumper.SourceDir)
 	}
 	return nil
 }
@@ -1153,12 +1144,12 @@ func (cfg *Config) CheckAndAdjustSecurity() error {
 		}
 	case "cluster":
 		if len(cfg.Security.CAPath) == 0 {
-			return common.ErrInvalidConfig.GenWithStack("cannot set `tidb.tls` to 'cluster' without a [security] section")
+			return errors.New("invalid config: cannot set `tidb.tls` to 'cluster' without a [security] section")
 		}
 	case "false", "skip-verify", "preferred":
 		break
 	default:
-		return common.ErrInvalidConfig.GenWithStack("unsupported `tidb.tls` config %s", cfg.TiDB.TLS)
+		return errors.Errorf("invalid config: unsupported `tidb.tls` config %s", cfg.TiDB.TLS)
 	}
 	return nil
 }

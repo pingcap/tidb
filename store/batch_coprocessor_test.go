@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/external"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
@@ -63,7 +62,7 @@ func TestStoreErr(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int not null, b int not null)")
 	tk.MustExec("alter table t set tiflash replica 1")
-	tb := external.GetTableByName(t, tk, "test", "t")
+	tb := tk.GetTableByName("test", "t")
 
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
@@ -99,7 +98,7 @@ func TestStoreSwitchPeer(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int not null, b int not null)")
 	tk.MustExec("alter table t set tiflash replica 1")
-	tb := external.GetTableByName(t, tk, "test", "t")
+	tb := tk.GetTableByName("test", "t")
 
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)

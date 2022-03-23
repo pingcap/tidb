@@ -15,26 +15,22 @@
 package session_test
 
 import (
-	"testing"
-
-	"github.com/pingcap/tidb/testkit"
+	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util"
-	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/util/testkit"
 )
+
+type testIsolationSuite struct {
+	testSessionSuiteBase
+}
 
 /*
 These test cases come from the paper <A Critique of ANSI SQL Isolation Levels>.
 The sign 'P0', 'P1'.... can be found in the paper. These cases will run under snapshot isolation.
 */
-func TestP0DirtyWrite(t *testing.T) {
-	store, clean := createStorage(t)
-	defer clean()
-	session1 := testkit.NewTestKit(t, store)
-	session2 := testkit.NewTestKit(t, store)
-	session1.MustExec("use test;")
-	session2.MustExec("use test;")
-	session1.MustExec("set tidb_txn_mode = 'optimistic'")
-	session2.MustExec("set tidb_txn_mode = 'optimistic'")
+func (s *testIsolationSuite) TestP0DirtyWrite(c *C) {
+	session1 := testkit.NewTestKitWithInit(c, s.store)
+	session2 := testkit.NewTestKitWithInit(c, s.store)
 
 	session1.MustExec("drop table if exists x;")
 	session1.MustExec("create table x (id int primary key, c int);")
@@ -46,7 +42,7 @@ func TestP0DirtyWrite(t *testing.T) {
 	session2.MustExec("update x set c = c+1 where id = 1;")
 	session1.MustExec("commit;")
 	_, err := session2.Exec("commit;")
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 
 	session1.MustExec("set tidb_txn_mode = 'pessimistic'")
 	session2.MustExec("set tidb_txn_mode = 'pessimistic'")
@@ -85,15 +81,9 @@ func TestP0DirtyWrite(t *testing.T) {
 	session2.MustQuery("select * from x").Check(testkit.Rows("1 3"))
 }
 
-func TestP1DirtyRead(t *testing.T) {
-	store, clean := createStorage(t)
-	defer clean()
-	session1 := testkit.NewTestKit(t, store)
-	session2 := testkit.NewTestKit(t, store)
-	session1.MustExec("use test;")
-	session2.MustExec("use test;")
-	session1.MustExec("set tidb_txn_mode = 'optimistic'")
-	session2.MustExec("set tidb_txn_mode = 'optimistic'")
+func (s *testIsolationSuite) TestP1DirtyRead(c *C) {
+	session1 := testkit.NewTestKitWithInit(c, s.store)
+	session2 := testkit.NewTestKitWithInit(c, s.store)
 
 	session1.MustExec("drop table if exists x;")
 	session1.MustExec("create table x (id int primary key, c int);")
@@ -135,15 +125,9 @@ func TestP1DirtyRead(t *testing.T) {
 	session2.MustExec("commit;")
 }
 
-func TestP2NonRepeatableRead(t *testing.T) {
-	store, clean := createStorage(t)
-	defer clean()
-	session1 := testkit.NewTestKit(t, store)
-	session2 := testkit.NewTestKit(t, store)
-	session1.MustExec("use test;")
-	session2.MustExec("use test;")
-	session1.MustExec("set tidb_txn_mode = 'optimistic'")
-	session2.MustExec("set tidb_txn_mode = 'optimistic'")
+func (s *testIsolationSuite) TestP2NonRepeatableRead(c *C) {
+	session1 := testkit.NewTestKitWithInit(c, s.store)
+	session2 := testkit.NewTestKitWithInit(c, s.store)
 
 	session1.MustExec("drop table if exists x;")
 	session1.MustExec("drop table if exists y;")
@@ -206,15 +190,9 @@ func TestP2NonRepeatableRead(t *testing.T) {
 	session1.MustExec("commit;")
 }
 
-func TestP3Phantom(t *testing.T) {
-	store, clean := createStorage(t)
-	defer clean()
-	session1 := testkit.NewTestKit(t, store)
-	session2 := testkit.NewTestKit(t, store)
-	session1.MustExec("use test;")
-	session2.MustExec("use test;")
-	session1.MustExec("set tidb_txn_mode = 'optimistic'")
-	session2.MustExec("set tidb_txn_mode = 'optimistic'")
+func (s *testIsolationSuite) TestP3Phantom(c *C) {
+	session1 := testkit.NewTestKitWithInit(c, s.store)
+	session2 := testkit.NewTestKitWithInit(c, s.store)
 
 	session1.MustExec("drop table if exists x;")
 	session1.MustExec("drop table if exists z;")
@@ -274,15 +252,9 @@ func TestP3Phantom(t *testing.T) {
 	session1.MustExec("commit;")
 }
 
-func TestP4LostUpdate(t *testing.T) {
-	store, clean := createStorage(t)
-	defer clean()
-	session1 := testkit.NewTestKit(t, store)
-	session2 := testkit.NewTestKit(t, store)
-	session1.MustExec("use test;")
-	session2.MustExec("use test;")
-	session1.MustExec("set tidb_txn_mode = 'optimistic'")
-	session2.MustExec("set tidb_txn_mode = 'optimistic'")
+func (s *testIsolationSuite) TestP4LostUpdate(c *C) {
+	session1 := testkit.NewTestKitWithInit(c, s.store)
+	session2 := testkit.NewTestKitWithInit(c, s.store)
 
 	session1.MustExec("drop table if exists x;")
 	session1.MustExec("create table x (id int primary key, c int);")
@@ -296,7 +268,7 @@ func TestP4LostUpdate(t *testing.T) {
 	session2.MustExec("commit;")
 	session1.MustExec("update x set c = c+1 where id = 1;")
 	_, err := session1.Exec("commit;")
-	require.Error(t, err)
+	c.Assert(err, NotNil)
 
 	session1.MustExec("set tidb_txn_mode = 'pessimistic'")
 	session2.MustExec("set tidb_txn_mode = 'pessimistic'")
@@ -333,17 +305,11 @@ func TestP4LostUpdate(t *testing.T) {
 }
 
 // cursor is not supported
-func TestP4CLostUpdate(t *testing.T) {}
+func (s *testIsolationSuite) TestP4CLostUpdate(c *C) {}
 
-func TestA3Phantom(t *testing.T) {
-	store, clean := createStorage(t)
-	defer clean()
-	session1 := testkit.NewTestKit(t, store)
-	session2 := testkit.NewTestKit(t, store)
-	session1.MustExec("use test;")
-	session2.MustExec("use test;")
-	session1.MustExec("set tidb_txn_mode = 'optimistic'")
-	session2.MustExec("set tidb_txn_mode = 'optimistic'")
+func (s *testIsolationSuite) TestA3Phantom(c *C) {
+	session1 := testkit.NewTestKitWithInit(c, s.store)
+	session2 := testkit.NewTestKitWithInit(c, s.store)
 
 	session1.MustExec("drop table if exists x;")
 	session1.MustExec("create table x (id int primary key, c int);")
@@ -388,15 +354,9 @@ func TestA3Phantom(t *testing.T) {
 	session2.MustExec("commit;")
 }
 
-func TestA5AReadSkew(t *testing.T) {
-	store, clean := createStorage(t)
-	defer clean()
-	session1 := testkit.NewTestKit(t, store)
-	session2 := testkit.NewTestKit(t, store)
-	session1.MustExec("use test;")
-	session2.MustExec("use test;")
-	session1.MustExec("set tidb_txn_mode = 'optimistic'")
-	session2.MustExec("set tidb_txn_mode = 'optimistic'")
+func (s *testIsolationSuite) TestA5AReadSkew(c *C) {
+	session1 := testkit.NewTestKitWithInit(c, s.store)
+	session2 := testkit.NewTestKitWithInit(c, s.store)
 
 	session1.MustExec("drop table if exists x;")
 	session1.MustExec("drop table if exists y;")
@@ -453,15 +413,9 @@ func TestA5AReadSkew(t *testing.T) {
 	session1.MustExec("commit;")
 }
 
-func TestA5BWriteSkew(t *testing.T) {
-	store, clean := createStorage(t)
-	defer clean()
-	session1 := testkit.NewTestKit(t, store)
-	session2 := testkit.NewTestKit(t, store)
-	session1.MustExec("use test;")
-	session2.MustExec("use test;")
-	session1.MustExec("set tidb_txn_mode = 'optimistic'")
-	session2.MustExec("set tidb_txn_mode = 'optimistic'")
+func (s *testIsolationSuite) TestA5BWriteSkew(c *C) {
+	session1 := testkit.NewTestKitWithInit(c, s.store)
+	session2 := testkit.NewTestKitWithInit(c, s.store)
 
 	session1.MustExec("drop table if exists x;")
 	session1.MustExec("drop table if exists y;")
@@ -550,15 +504,9 @@ func TestA5BWriteSkew(t *testing.T) {
 These test cases come from the paper <Highly Available Transactions: Virtues and Limitations>
 for tidb, we support read-after-write on cluster level.
 */
-func TestReadAfterWrite(t *testing.T) {
-	store, clean := createStorage(t)
-	defer clean()
-	session1 := testkit.NewTestKit(t, store)
-	session2 := testkit.NewTestKit(t, store)
-	session1.MustExec("use test;")
-	session2.MustExec("use test;")
-	session1.MustExec("set tidb_txn_mode = 'optimistic'")
-	session2.MustExec("set tidb_txn_mode = 'optimistic'")
+func (s *testIsolationSuite) TestReadAfterWrite(c *C) {
+	session1 := testkit.NewTestKitWithInit(c, s.store)
+	session2 := testkit.NewTestKitWithInit(c, s.store)
 
 	session1.MustExec("drop table if exists x;")
 	session1.MustExec("create table x (id int primary key, c int);")
@@ -603,15 +551,9 @@ func TestReadAfterWrite(t *testing.T) {
 /*
 This case will do harm in Innodb, even if in snapshot isolation, but harmless in tidb.
 */
-func TestPhantomReadInInnodb(t *testing.T) {
-	store, clean := createStorage(t)
-	defer clean()
-	session1 := testkit.NewTestKit(t, store)
-	session2 := testkit.NewTestKit(t, store)
-	session1.MustExec("use test;")
-	session2.MustExec("use test;")
-	session1.MustExec("set tidb_txn_mode = 'optimistic'")
-	session2.MustExec("set tidb_txn_mode = 'optimistic'")
+func (s *testIsolationSuite) TestPhantomReadInInnodb(c *C) {
+	session1 := testkit.NewTestKitWithInit(c, s.store)
+	session2 := testkit.NewTestKitWithInit(c, s.store)
 
 	session1.MustExec("drop table if exists x;")
 	session1.MustExec("create table x (id int primary key, c int);")

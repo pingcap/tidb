@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
@@ -70,7 +69,6 @@ func TestDDLStatsInfo(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		ctx.SetValue(sessionctx.QueryString, "skip")
 		done <- d.doDDLJob(ctx, job)
 	}()
 

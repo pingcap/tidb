@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"sort"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -29,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -250,11 +248,6 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 	}
 	if f.TableScan != nil {
 		tasks, err = e.constructMPPTasksImpl(context.Background(), f.TableScan)
-		if err == nil && len(tasks) == 0 {
-			err = errors.New(
-				"In mpp mode, the number of tasks for table scan should not be zero. " +
-					"Please set tidb_allow_mpp = 0, and then rerun sql.")
-		}
 	} else {
 		childrenTasks := make([]*kv.MPPTask, 0)
 		for _, r := range f.ExchangeReceivers {
@@ -319,26 +312,42 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		}
 	}
 
-	var req *kv.MPPBuildTasksRequest
-	var allPartitionsIDs []int64
-	var err error
 	splitedRanges, _ := distsql.SplitRangesAcrossInt64Boundary(ts.Ranges, false, false, ts.Table.IsCommonHandle)
 	if ts.Table.GetPartitionInfo() != nil {
 		tmp, _ := e.is.TableByID(ts.Table.ID)
 		tbl := tmp.(table.PartitionedTable)
-		var partitions []table.PhysicalTable
-		partitions, err = partitionPruning(e.ctx, tbl, ts.PartitionInfo.PruningConds, ts.PartitionInfo.PartitionNames, ts.PartitionInfo.Columns, ts.PartitionInfo.ColumnNames)
+		partitions, err := partitionPruning(e.ctx, tbl, ts.PartitionInfo.PruningConds, ts.PartitionInfo.PartitionNames, ts.PartitionInfo.Columns, ts.PartitionInfo.ColumnNames)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		req, allPartitionsIDs, err = e.constructMPPBuildTaskReqForPartitionedTable(ts, splitedRanges, partitions)
-	} else {
-		req, err = e.constructMPPBuildTaskForNonPartitionTable(ts, splitedRanges)
+		var ret []*kv.MPPTask
+		for _, p := range partitions {
+			pid := p.GetPhysicalID()
+			meta := p.Meta()
+			kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && ts.Table.IsCommonHandle, splitedRanges, nil)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			tasks, err := e.constructMPPTasksForSinglePartitionTable(ctx, kvRanges, pid)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			ret = append(ret, tasks...)
+		}
+		return ret, nil
 	}
+
+	kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{ts.Table.ID}, ts.Table.IsCommonHandle, splitedRanges, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	return e.constructMPPTasksForSinglePartitionTable(ctx, kvRanges, ts.Table.ID)
+}
 
+func (e *mppTaskGenerator) constructMPPTasksForSinglePartitionTable(ctx context.Context, kvRanges []kv.KeyRange, tableID int64) ([]*kv.MPPTask, error) {
+	req := &kv.MPPBuildTasksRequest{
+		KeyRanges: kvRanges,
+	}
 	ttl, err := time.ParseDuration(e.ctx.GetSessionVars().MPPStoreFailTTL)
 	if err != nil {
 		logutil.BgLogger().Warn("MPP store fail ttl is invalid", zap.Error(err))
@@ -348,40 +357,9 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	tasks := make([]*kv.MPPTask, 0, len(metas))
 	for _, meta := range metas {
-		task := &kv.MPPTask{Meta: meta, ID: e.ctx.GetSessionVars().AllocMPPTaskID(e.startTS), StartTs: e.startTS, TableID: ts.Table.ID, PartitionTableIDs: allPartitionsIDs}
-		tasks = append(tasks, task)
+		tasks = append(tasks, &kv.MPPTask{Meta: meta, ID: e.ctx.GetSessionVars().AllocMPPTaskID(e.startTS), StartTs: e.startTS, TableID: tableID})
 	}
 	return tasks, nil
-}
-
-func (e *mppTaskGenerator) constructMPPBuildTaskReqForPartitionedTable(ts *PhysicalTableScan, splitedRanges []*ranger.Range, partitions []table.PhysicalTable) (*kv.MPPBuildTasksRequest, []int64, error) {
-	sort.Slice(partitions, func(i, j int) bool {
-		return partitions[i].GetPhysicalID() < partitions[j].GetPhysicalID()
-	})
-	partitionIDAndRanges := make([]kv.PartitionIDAndRanges, len(partitions))
-	allPartitionsIDs := make([]int64, len(partitions))
-	// Get region info for each partition
-	for i, p := range partitions {
-		pid := p.GetPhysicalID()
-		meta := p.Meta()
-		kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && ts.Table.IsCommonHandle, splitedRanges, nil)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		partitionIDAndRanges[i].ID = pid
-		partitionIDAndRanges[i].KeyRanges = kvRanges
-		allPartitionsIDs[i] = pid
-	}
-	return &kv.MPPBuildTasksRequest{PartitionIDAndRanges: partitionIDAndRanges}, allPartitionsIDs, nil
-}
-
-func (e *mppTaskGenerator) constructMPPBuildTaskForNonPartitionTable(ts *PhysicalTableScan, splitedRanges []*ranger.Range) (*kv.MPPBuildTasksRequest, error) {
-	kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{ts.Table.ID}, ts.Table.IsCommonHandle, splitedRanges, nil)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return &kv.MPPBuildTasksRequest{KeyRanges: kvRanges}, nil
 }

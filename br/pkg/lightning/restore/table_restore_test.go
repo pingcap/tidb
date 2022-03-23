@@ -306,7 +306,7 @@ func (s *tableRestoreSuite) TestPopulateChunks() {
 	s.cfg.Mydumper.MaxRegionSize = 5
 	err = s.tr.populateChunks(context.Background(), rc, cp)
 	require.Error(s.T(), err)
-	require.Regexp(s.T(), `.*unknown columns in header \(1,2,3\)`, err.Error())
+	require.Regexp(s.T(), `.*unknown columns in header \[1 2 3\]`, err.Error())
 	s.cfg.Mydumper.MaxRegionSize = regionSize
 	s.cfg.Mydumper.CSV.Header = false
 }
@@ -667,13 +667,13 @@ func (s *tableRestoreSuite) TestInitializeColumns() {
 			[]string{"_tidb_rowid", "b", "a", "c", "d"},
 			nil,
 			nil,
-			`\[Lightning:Restore:ErrUnknownColumns\]unknown columns in header \(d\) for table table`,
+			`unknown columns in header \[d\]`,
 		},
 		{
 			[]string{"e", "b", "c", "d"},
 			nil,
 			nil,
-			`\[Lightning:Restore:ErrUnknownColumns\]unknown columns in header \(e,d\) for table table`,
+			`unknown columns in header \[e d\]`,
 		},
 	}
 
@@ -1292,7 +1292,8 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 		template := NewSimpleTemplate()
 		cfg := &config.Config{Mydumper: config.MydumperRuntime{StrictFormat: ca.strictFormat}}
 		rc := &Controller{cfg: cfg, checkTemplate: template, store: mockStore}
-		rc.HasLargeCSV(ca.dbMetas)
+		err := rc.HasLargeCSV(ca.dbMetas)
+		require.NoError(s.T(), err)
 		require.Equal(s.T(), ca.expectWarnCount, template.FailedCount(Warn))
 		require.Equal(s.T(), ca.expectResult, template.Success())
 		require.Regexp(s.T(), ca.expectMsg, strings.ReplaceAll(template.Output(), "\n", ""))

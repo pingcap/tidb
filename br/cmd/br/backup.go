@@ -105,7 +105,7 @@ func newFullBackupCommand() *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			// empty db/table means full backup.
-			return runBackupCommand(command, task.FullBackupCmd)
+			return runBackupCommand(command, "Full backup")
 		},
 	}
 	task.DefineFilterFlags(command, acceptAllTables)
@@ -119,7 +119,7 @@ func newDBBackupCommand() *cobra.Command {
 		Short: "backup a database",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			return runBackupCommand(command, task.DBBackupCmd)
+			return runBackupCommand(command, "Database backup")
 		},
 	}
 	task.DefineDatabaseFlags(command)
@@ -133,7 +133,7 @@ func newTableBackupCommand() *cobra.Command {
 		Short: "backup a table",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			return runBackupCommand(command, task.TableBackupCmd)
+			return runBackupCommand(command, "Table backup")
 		},
 	}
 	task.DefineTableFlags(command)
@@ -148,7 +148,7 @@ func newRawBackupCommand() *cobra.Command {
 		Short: "(experimental) backup a raw kv range from TiKV cluster",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			return runBackupRawCommand(command, task.RawBackupCmd)
+			return runBackupRawCommand(command, "Raw backup")
 		},
 	}
 

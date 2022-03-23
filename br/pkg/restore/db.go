@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -16,7 +15,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"go.uber.org/zap"
 )
 
@@ -31,40 +29,23 @@ type UniqueTableName struct {
 }
 
 // NewDB returns a new DB.
-func NewDB(g glue.Glue, store kv.Storage, policyMode string) (*DB, bool, error) {
+func NewDB(g glue.Glue, store kv.Storage) (*DB, error) {
 	se, err := g.CreateSession(store)
 	if err != nil {
-		return nil, false, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	// The session may be nil in raw kv mode
 	if se == nil {
-		return nil, false, nil
+		return nil, nil
 	}
 	// Set SQL mode to None for avoiding SQL compatibility problem
 	err = se.Execute(context.Background(), "set @@sql_mode=''")
 	if err != nil {
-		return nil, false, errors.Trace(err)
-	}
-
-	supportPolicy := false
-	if len(policyMode) != 0 {
-		// Set placement mode for handle placement policy.
-		err = se.Execute(context.Background(), fmt.Sprintf("set @@tidb_placement_mode='%s';", policyMode))
-		if err != nil {
-			if variable.ErrUnknownSystemVar.Equal(err) {
-				// not support placement policy, just ignore it
-				log.Warn("target tidb not support tidb_placement_mode, ignore create policies", zap.Error(err))
-			} else {
-				return nil, false, errors.Trace(err)
-			}
-		} else {
-			log.Info("set tidb_placement_mode success", zap.String("mode", policyMode))
-			supportPolicy = true
-		}
+		return nil, errors.Trace(err)
 	}
 	return &DB{
 		se: se,
-	}, supportPolicy, nil
+	}, nil
 }
 
 // ExecDDL executes the query of a ddl job.
@@ -131,16 +112,6 @@ func (db *DB) UpdateStatsMeta(ctx context.Context, tableID int64, restoreTS uint
 	if err != nil {
 		log.Error("execute update sql failed", zap.Error(err))
 	}
-	return nil
-}
-
-// CreatePlacementPolicy check whether cluster support policy and create the policy.
-func (db *DB) CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error {
-	err := db.se.CreatePlacementPolicy(ctx, policy)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	log.Info("create placement policy succeed", zap.Stringer("name", policy.Name))
 	return nil
 }
 
@@ -257,21 +228,11 @@ func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table,
 }
 
 // CreateTables execute a internal CREATE TABLES.
-func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
-	ddlTables map[UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
+func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table, ddlTables map[UniqueTableName]bool) error {
 	if batchSession, ok := db.se.(glue.BatchCreateTableSession); ok {
 		m := map[string][]*model.TableInfo{}
 		for _, table := range tables {
 			m[table.DB.Name.L] = append(m[table.DB.Name.L], table.Info)
-			if !supportPolicy {
-				log.Info("set placementPolicyRef to nil when target tidb not support policy",
-					zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
-				table.Info.ClearPlacement()
-			} else {
-				if err := db.ensureTablePlacementPolicies(ctx, table.Info, policyMap); err != nil {
-					return errors.Trace(err)
-				}
-			}
 		}
 		if err := batchSession.CreateTables(ctx, m); err != nil {
 			return err
@@ -288,18 +249,7 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 }
 
 // CreateTable executes a CREATE TABLE SQL.
-func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
-	ddlTables map[UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
-	if !supportPolicy {
-		log.Info("set placementPolicyRef to nil when target tidb not support policy",
-			zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
-		table.Info.ClearPlacement()
-	} else {
-		if err := db.ensureTablePlacementPolicies(ctx, table.Info, policyMap); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
+func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, ddlTables map[UniqueTableName]bool) error {
 	err := db.se.CreateTable(ctx, table.DB.Name, table.Info)
 	if err != nil {
 		log.Error("create table failed",
@@ -320,41 +270,6 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 // Close closes the connection.
 func (db *DB) Close() {
 	db.se.Close()
-}
-
-func (db *DB) ensurePlacementPolicy(ctx context.Context, policyName model.CIStr, policies *sync.Map) error {
-	if policies == nil {
-		return nil
-	}
-
-	if policy, ok := policies.LoadAndDelete(policyName.L); ok {
-		return db.CreatePlacementPolicy(ctx, policy.(*model.PolicyInfo))
-	}
-
-	// This means policy already created
-	return nil
-}
-
-func (db *DB) ensureTablePlacementPolicies(ctx context.Context, tableInfo *model.TableInfo, policies *sync.Map) error {
-	if tableInfo.PlacementPolicyRef != nil {
-		if err := db.ensurePlacementPolicy(ctx, tableInfo.PlacementPolicyRef.Name, policies); err != nil {
-			return err
-		}
-	}
-
-	if tableInfo.Partition != nil {
-		for _, def := range tableInfo.Partition.Definitions {
-			if def.PlacementPolicyRef == nil {
-				continue
-			}
-
-			if err := db.ensurePlacementPolicy(ctx, def.PlacementPolicyRef.Name, policies); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
 }
 
 // FilterDDLJobs filters ddl jobs.

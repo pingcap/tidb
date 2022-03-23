@@ -1134,8 +1134,6 @@ func TestDBAStmt(t *testing.T) {
 		// for show pump/drainer status.
 		{"show pump status", true, "SHOW PUMP STATUS"},
 		{"show drainer status", true, "SHOW DRAINER STATUS"},
-		// for show binding_cache status
-		{"show binding_cache status", true, "SHOW BINDING_CACHE STATUS"},
 		{"show analyze status", true, "SHOW ANALYZE STATUS"},
 		{"show analyze status where table_name = 't'", true, "SHOW ANALYZE STATUS WHERE `table_name`=_UTF8MB4't'"},
 		{"show analyze status where table_name like '%'", true, "SHOW ANALYZE STATUS WHERE `table_name` LIKE _UTF8MB4'%'"},
@@ -2402,7 +2400,6 @@ func TestDDL(t *testing.T) {
 		{`create table testTableCompression (c VARCHAR(15000)) compression="ZLIB";`, true, "CREATE TABLE `testTableCompression` (`c` VARCHAR(15000)) COMPRESSION = 'ZLIB'"},
 		{`create table t1 (c1 int) compression="zlib";`, true, "CREATE TABLE `t1` (`c1` INT) COMPRESSION = 'zlib'"},
 		{`create table t1 (c1 int) collate=binary;`, true, "CREATE TABLE `t1` (`c1` INT) DEFAULT COLLATE = BINARY"},
-		{`create table t1 (c1 int) collate=utf8mb4_0900_as_cs;`, true, "CREATE TABLE `t1` (`c1` INT) DEFAULT COLLATE = UTF8MB4_0900_AS_CS"},
 		{`create table t1 (c1 int) default charset=binary collate=binary;`, true, "CREATE TABLE `t1` (`c1` INT) DEFAULT CHARACTER SET = BINARY DEFAULT COLLATE = BINARY"},
 
 		// for table option `UNION`
@@ -3813,12 +3810,12 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "t4", hints[1].Tables[1].TableName.L)
 
 	// TEST BROADCAST_JOIN
-	stmt, _, err = p.Parse("select /*+ BROADCAST_JOIN(t1, T2), broadcast_join(t3, t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	stmt, _, err = p.Parse("select /*+ BROADCAST_JOIN(t1, T2), broadcast_join(t3, t4), BROADCAST_JOIN_LOCAL(t2) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err)
 	selectStmt = stmt[0].(*ast.SelectStmt)
 
 	hints = selectStmt.TableHints
-	require.Len(t, hints, 2)
+	require.Len(t, hints, 3)
 	require.Equal(t, "broadcast_join", hints[0].HintName.L)
 	require.Len(t, hints[0].Tables, 2)
 	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
@@ -3828,6 +3825,10 @@ func TestOptimizerHints(t *testing.T) {
 	require.Len(t, hints[1].Tables, 2)
 	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
 	require.Equal(t, "t4", hints[1].Tables[1].TableName.L)
+
+	require.Equal(t, "broadcast_join_local", hints[2].HintName.L)
+	require.Len(t, hints[2].Tables, 1)
+	require.Equal(t, "t2", hints[2].Tables[0].TableName.L)
 
 	// Test TIDB_INLJ
 	stmt, _, err = p.Parse("select /*+ TIDB_INLJ(t1, T2), tidb_inlj(t3, t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")

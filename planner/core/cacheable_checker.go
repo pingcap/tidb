@@ -129,13 +129,9 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 	case *ast.TableName:
 		if checker.schema != nil {
 			if checker.isPartitionTable(node) {
-				// Temporary disable prepared plan cache until https://github.com/pingcap/tidb/issues/33031
-				// is fixed and additional tests with dynamic partition prune mode has been added.
-				/*
-					if checker.sctx != nil && checker.sctx.GetSessionVars().UseDynamicPartitionPrune() {
-						return in, false // dynamic-mode for partition tables can use plan-cache
-					}
-				*/
+				if checker.sctx != nil && checker.sctx.GetSessionVars().UseDynamicPartitionPrune() {
+					return in, false // dynamic-mode for partition tables can use plan-cache
+				}
 				checker.cacheable = false
 				return in, true
 			}

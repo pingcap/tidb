@@ -43,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -250,7 +250,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		asyncNotifyEvent(d, &ddlutil.Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfos: []*model.ColumnInfo{columnInfo}})
 	default:
-		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", columnInfo.State)
+		err = ErrInvalidDDLState.GenWithStackByArgs("column", columnInfo.State)
 	}
 
 	return ver, errors.Trace(err)
@@ -413,7 +413,7 @@ func onAddColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		asyncNotifyEvent(d, &ddlutil.Event{Tp: model.ActionAddColumns, TableInfo: tblInfo, ColumnInfos: columnInfos})
 	default:
-		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", columnInfos[0].State)
+		err = ErrInvalidDDLState.GenWithStackByArgs("column", columnInfos[0].State)
 	}
 
 	return ver, errors.Trace(err)
@@ -490,7 +490,7 @@ func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			job.Args = append(job.Args, getPartitionIDs(tblInfo))
 		}
 	default:
-		err = dbterror.ErrInvalidDDLJob.GenWithStackByArgs("table", tblInfo.State)
+		err = errInvalidDDLJob.GenWithStackByArgs("table", tblInfo.State)
 	}
 	return ver, errors.Trace(err)
 }
@@ -525,7 +525,7 @@ func checkDropColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 				continue
 			}
 			job.State = model.JobStateCancelled
-			return nil, nil, 0, nil, dbterror.ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
+			return nil, nil, 0, nil, ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 		}
 		if err = isDroppableColumn(job.MultiSchemaInfo != nil, tblInfo, colName); err != nil {
 			job.State = model.JobStateCancelled
@@ -632,7 +632,7 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			job.Args = append(job.Args, getPartitionIDs(tblInfo))
 		}
 	default:
-		err = dbterror.ErrInvalidDDLJob.GenWithStackByArgs("table", tblInfo.State)
+		err = errInvalidDDLJob.GenWithStackByArgs("table", tblInfo.State)
 	}
 	return ver, errors.Trace(err)
 }
@@ -656,7 +656,7 @@ func checkDropColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Col
 	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
 	if colInfo == nil || colInfo.Hidden {
 		job.State = model.JobStateCancelled
-		return nil, nil, nil, dbterror.ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
+		return nil, nil, nil, ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 	}
 	if err = isDroppableColumn(job.MultiSchemaInfo != nil, tblInfo, colName); err != nil {
 		job.State = model.JobStateCancelled
@@ -742,9 +742,13 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	return true
 }
 
-// TODO: it is used for plugins. so change plugin's using and remove it.
+// Column type conversion between varchar to char need reorganization because
+// 1. varchar -> char: char type is stored with the padding removed. All the indexes need to be rewritten.
+// 2. char -> varchar: the index value encoding of secondary index on clustered primary key tables is different.
+// These secondary indexes need to be rewritten.
 func convertBetweenCharAndVarchar(oldCol, newCol byte) bool {
-	return types.ConvertBetweenCharAndVarchar(oldCol, newCol)
+	return (types.IsTypeVarchar(oldCol) && newCol == mysql.TypeString) ||
+		(oldCol == mysql.TypeString && types.IsTypeVarchar(newCol) && collate.NewCollationEnabled())
 }
 
 func isElemsChangedToModifyColumn(oldElems, newElems []string) bool {
@@ -883,7 +887,7 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		if mysql.HasPriKeyFlag(oldCol.Flag) {
 			job.State = model.JobStateCancelled
 			msg := "this column has primary key flag"
-			return ver, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
+			return ver, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 
 		jobParam.changingCol = jobParam.newCol.Clone()
@@ -971,7 +975,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
 			err := modifyColsFromNull2NotNull(w, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, targetCol, oldCol.Tp != changingCol.Tp)
 			if err != nil {
-				if dbterror.ErrWarnDataTruncated.Equal(err) || dbterror.ErrInvalidUseOfNull.Equal(err) {
+				if ErrWarnDataTruncated.Equal(err) || errInvalidUseOfNull.Equal(err) {
 					job.State = model.JobStateRollingback
 				}
 				return ver, err
@@ -1010,7 +1014,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
 			err := modifyColsFromNull2NotNull(w, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, targetCol, oldCol.Tp != changingCol.Tp)
 			if err != nil {
-				if dbterror.ErrWarnDataTruncated.Equal(err) || dbterror.ErrInvalidUseOfNull.Equal(err) {
+				if ErrWarnDataTruncated.Equal(err) || errInvalidUseOfNull.Equal(err) {
 					job.State = model.JobStateRollingback
 				}
 				return ver, err
@@ -1054,7 +1058,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
 			defer util.Recover(metrics.LabelDDL, "onModifyColumn",
 				func() {
-					addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("modify table `%v` column `%v` panic", tblInfo.Name, oldCol.Name)
+					addIndexErr = errCancelledDDLJob.GenWithStack("modify table `%v` column `%v` panic", tblInfo.Name, oldCol.Name)
 				}, false)
 			// Use old column name to generate less confusing error messages.
 			changingColCpy := changingCol.Clone()
@@ -1062,7 +1066,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			return w.updateColumnAndIndexes(tbl, oldCol, changingColCpy, changingIdxs, reorgInfo)
 		})
 		if err != nil {
-			if dbterror.ErrWaitReorgTimeout.Equal(err) {
+			if errWaitReorgTimeout.Equal(err) {
 				// If timeout, we should return, check for the owner and re-wait job done.
 				return ver, nil
 			}
@@ -1126,7 +1130,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		job.Args = []interface{}{oldIdxIDs, getPartitionIDs(tblInfo)}
 		asyncNotifyEvent(d, &ddlutil.Event{Tp: model.ActionModifyColumn, TableInfo: tblInfo, ColumnInfos: []*model.ColumnInfo{changingCol}})
 	default:
-		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
+		err = ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
 	}
 
 	return ver, errors.Trace(err)
@@ -1160,7 +1164,7 @@ func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.Column
 				time.Sleep(30 * time.Millisecond)
 				if w.reorgCtx.isReorgCanceled() {
 					// Job is cancelled. So it can't be done.
-					failpoint.Return(dbterror.ErrCancelledDDLJob)
+					failpoint.Return(errCancelledDDLJob)
 				}
 			}
 		}
@@ -1321,7 +1325,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	sysTZ := w.sessCtx.GetSessionVars().StmtCtx.TimeZone
 	_, err := w.rowDecoder.DecodeTheExistedColumnMap(w.sessCtx, handle, rawRow, sysTZ, w.rowMap)
 	if err != nil {
-		return errors.Trace(dbterror.ErrCantDecodeRecord.GenWithStackByArgs("column", err))
+		return errors.Trace(errCantDecodeRecord.GenWithStackByArgs("column", err))
 	}
 
 	if _, ok := w.rowMap[w.newColInfo.ID]; ok {
@@ -1359,7 +1363,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	failpoint.Inject("MockReorgTimeoutInOneRegion", func(val failpoint.Value) {
 		if val.(bool) {
 			if handle.IntValue() == 3000 && atomic.CompareAndSwapInt32(&TestCheckReorgTimeout, 0, 1) {
-				failpoint.Return(errors.Trace(dbterror.ErrWaitReorgTimeout))
+				failpoint.Return(errors.Trace(errWaitReorgTimeout))
 			}
 		}
 	})
@@ -1422,7 +1426,6 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		txn.SetOption(kv.Priority, w.priority)
-		w.ddlWorker.setResourceGroupTaggerForTopSQL(txn)
 
 		rowRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {
@@ -1474,7 +1477,7 @@ func (w *worker) doModifyColumn(
 	newCol, oldCol *model.ColumnInfo, pos *ast.ColumnPosition) (ver int64, _ error) {
 	if oldCol.ID != newCol.ID {
 		job.State = model.JobStateRollingback
-		return ver, dbterror.ErrKeyColumnDoesNotExits.GenWithStack("column %s id %d does not exist, this column may have been updated by other DDL ran in parallel", oldCol.Name, newCol.ID)
+		return ver, errKeyColumnDoesNotExits.GenWithStack("column %s id %d does not exist, this column may have been updated by other DDL ran in parallel", oldCol.Name, newCol.ID)
 	}
 	// Column from null to not null.
 	if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(newCol.Flag) {
@@ -1489,7 +1492,7 @@ func (w *worker) doModifyColumn(
 		// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
 		err := modifyColsFromNull2NotNull(w, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, newCol, oldCol.Tp != newCol.Tp)
 		if err != nil {
-			if dbterror.ErrWarnDataTruncated.Equal(err) || dbterror.ErrInvalidUseOfNull.Equal(err) {
+			if ErrWarnDataTruncated.Equal(err) || errInvalidUseOfNull.Equal(err) {
 				job.State = model.JobStateRollingback
 			}
 			return ver, err
@@ -1634,7 +1637,7 @@ func checkNewAutoRandomBits(idAccessors meta.AutoIDAccessors, oldCol *model.Colu
 	if usedBits > newLayout.IncrementalBits {
 		overflowCnt := usedBits - newLayout.IncrementalBits
 		errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, newAutoRandBits-overflowCnt, newAutoRandBits, oldCol.Name.O)
-		return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
+		return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 	}
 	return nil
 }
@@ -1651,7 +1654,7 @@ func applyNewAutoRandomBits(d *ddlCtx, m *meta.Meta, dbInfo *model.DBInfo,
 	autoRandAlloc := autoid.NewAllocatorsFromTblInfo(d.store, dbInfo.ID, tblInfo).Get(autoid.AutoRandomType)
 	if autoRandAlloc == nil {
 		errMsg := fmt.Sprintf(autoid.AutoRandomAllocatorNotFound, dbInfo.Name.O, tblInfo.Name.O)
-		return dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
+		return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 	}
 	idAcc := m.GetAutoIDAccessors(dbInfo.ID, tblInfo.ID).RowID()
 	nextAutoIncID, err := idAcc.Get()
@@ -1703,9 +1706,9 @@ func checkForNullValue(ctx context.Context, sctx sessionctx.Context, isDataTrunc
 	rowCount := len(rows)
 	if rowCount != 0 {
 		if isDataTruncated {
-			return dbterror.ErrWarnDataTruncated.GenWithStackByArgs(newCol.Name.L, rowCount)
+			return ErrWarnDataTruncated.GenWithStackByArgs(newCol.Name.L, rowCount)
 		}
-		return dbterror.ErrInvalidUseOfNull
+		return errInvalidUseOfNull
 	}
 	return nil
 }
@@ -1751,12 +1754,12 @@ func isColumnCanDropWithIndex(isMultiSchemaChange bool, colName string, indices 
 		if indexInfo.Primary || len(indexInfo.Columns) > 1 {
 			for _, col := range indexInfo.Columns {
 				if col.Name.L == colName {
-					return dbterror.ErrCantDropColWithIndex.GenWithStack("can't drop column %s with composite index covered or Primary Key covered now", colName)
+					return errCantDropColWithIndex.GenWithStack("can't drop column %s with composite index covered or Primary Key covered now", colName)
 				}
 			}
 		}
 		if len(indexInfo.Columns) == 1 && indexInfo.Columns[0].Name.L == colName && !isMultiSchemaChange {
-			return dbterror.ErrCantDropColWithIndex.GenWithStack("can't drop column %s with tidb_enable_change_multi_schema is disable", colName)
+			return errCantDropColWithIndex.GenWithStack("can't drop column %s with tidb_enable_change_multi_schema is disable", colName)
 		}
 	}
 	return nil
@@ -1790,7 +1793,7 @@ func allocateColumnID(tblInfo *model.TableInfo) int64 {
 
 func checkAddColumnTooManyColumns(colNum int) error {
 	if uint32(colNum) > atomic.LoadUint32(&config.GetGlobalConfig().TableColumnCountLimit) {
-		return dbterror.ErrTooManyFields
+		return errTooManyFields
 	}
 	return nil
 }

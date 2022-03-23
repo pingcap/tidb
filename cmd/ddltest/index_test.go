@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/table"
 	"github.com/stretchr/testify/require"
@@ -38,12 +39,12 @@ func getIndex(t table.Table, name string) table.Index {
 	return nil
 }
 
-func (s *ddlSuite) checkDropIndex(t *testing.T, tableName string) {
+func (s *ddlSuite) checkDropIndex(t *testing.T, indexInfo *model.IndexInfo) {
 	gcWorker, err := gcworker.NewMockGCWorker(s.store)
 	require.NoError(t, err)
 	err = gcWorker.DeleteRanges(goctx.Background(), uint64(math.MaxInt32))
 	require.NoError(t, err)
-	s.mustExec(fmt.Sprintf("admin check table %s", tableName))
+	s.mustExec(fmt.Sprintf("admin check table %s", indexInfo.Table.String()))
 }
 
 // TestIndex operations on table test_index (c int, c1 bigint, c2 double, c3 varchar(256), primary key(c)).
@@ -83,35 +84,39 @@ func TestIndex(t *testing.T) {
 	}
 
 	insertID := int64(*dataNum)
+	var oldIndex table.Index
 	for _, col := range tbl {
-		done := s.runDDL(col.Query)
+		t.Run(col.Query, func(t *testing.T) {
+			done := s.runDDL(col.Query)
 
-		ticker := time.NewTicker(time.Duration(*lease) * time.Second / 2)
-		defer ticker.Stop()
-	LOOP:
-		for {
-			select {
-			case err := <-done:
-				require.NoError(t, err)
-				break LOOP
-			case <-ticker.C:
-				// add count new data
-				// delete count old data randomly
-				// update count old data randomly
-				count := 10
-				s.execIndexOperations(t, workerNum, count, &insertID)
+			ticker := time.NewTicker(time.Duration(*lease) * time.Second / 2)
+			defer ticker.Stop()
+		LOOP:
+			for {
+				select {
+				case err := <-done:
+					require.NoError(t, err)
+					break LOOP
+				case <-ticker.C:
+					// add count new data
+					// delete count old data randomly
+					// update count old data randomly
+					count := 10
+					s.execIndexOperations(t, workerNum, count, &insertID)
+				}
 			}
-		}
 
-		tbl := s.getTable(t, "test_index")
-		index := getIndex(tbl, col.IndexName)
-		if col.Add {
-			require.NotNil(t, index)
-			s.mustExec("admin check table test_index")
-		} else {
-			require.Nil(t, index)
-			s.checkDropIndex(t, "test_index")
-		}
+			tbl := s.getTable(t, "test_index")
+			index := getIndex(tbl, col.IndexName)
+			if col.Add {
+				require.NotNil(t, index)
+				oldIndex = index
+				s.mustExec("admin check table test_index")
+			} else {
+				require.Nil(t, index)
+				s.checkDropIndex(t, oldIndex.Meta())
+			}
+		})
 	}
 }
 

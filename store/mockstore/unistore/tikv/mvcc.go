@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore/lockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore/pd"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
-	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/kverrors"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/store/mockstore/unistore/util/lockwaiter"
 	"github.com/pingcap/tidb/types"
@@ -261,7 +260,7 @@ func (store *MVCCStore) PessimisticLock(reqCtx *requestCtx, req *kvrpcpb.Pessimi
 		if bytes.Equal(m.Key, req.PrimaryLock) {
 			txnStatus := store.checkExtraTxnStatus(reqCtx, m.Key, startTS)
 			if txnStatus.isRollback {
-				return nil, kverrors.ErrAlreadyRollback
+				return nil, ErrAlreadyRollback
 			} else if txnStatus.isOpLockCommitted() {
 				dup = true
 				break
@@ -483,7 +482,7 @@ func (store *MVCCStore) CheckTxnStatus(reqCtx *requestCtx,
 		err = store.dbWriter.Write(batch)
 		return TxnStatus{0, kvrpcpb.Action_LockNotExistRollback, nil}, nil
 	}
-	return TxnStatus{0, kvrpcpb.Action_NoAction, nil}, &kverrors.ErrTxnNotFound{
+	return TxnStatus{0, kvrpcpb.Action_NoAction, nil}, &ErrTxnNotFound{
 		PrimaryKey: req.PrimaryKey,
 		StartTS:    req.LockTs,
 	}
@@ -552,7 +551,7 @@ func (store *MVCCStore) normalizeWaitTime(lockWaitTime int64) time.Duration {
 }
 
 func (store *MVCCStore) handleCheckPessimisticErr(startTS uint64, err error, isFirstLock bool, lockWaitTime int64, key []byte, resourceGroupTag []byte) (*lockwaiter.Waiter, error) {
-	if locked, ok := err.(*kverrors.ErrLocked); ok {
+	if locked, ok := err.(*ErrLocked); ok {
 		if lockWaitTime != lockwaiter.LockNoWait {
 			keyHash := farm.Fingerprint64(locked.Key)
 			waitTimeDuration := store.normalizeWaitTime(lockWaitTime)
@@ -574,7 +573,7 @@ func (store *MVCCStore) buildPessimisticLock(m *kvrpcpb.Mutation, item *badger.I
 		userMeta := mvcc.DBUserMeta(item.UserMeta())
 		if !req.Force {
 			if userMeta.CommitTS() > req.ForUpdateTs {
-				return nil, &kverrors.ErrConflict{
+				return nil, &ErrConflict{
 					StartTS:          req.StartVersion,
 					ConflictTS:       userMeta.StartTS(),
 					ConflictCommitTS: userMeta.CommitTS(),
@@ -583,7 +582,7 @@ func (store *MVCCStore) buildPessimisticLock(m *kvrpcpb.Mutation, item *badger.I
 			}
 		}
 		if m.Assertion == kvrpcpb.Assertion_NotExist && !item.IsEmpty() {
-			return nil, &kverrors.ErrKeyAlreadyExists{Key: m.Key}
+			return nil, &ErrKeyAlreadyExists{Key: m.Key}
 		}
 	}
 	lock := &mvcc.Lock{
@@ -645,7 +644,7 @@ func (store *MVCCStore) prewriteOptimistic(reqCtx *requestCtx, mutations []*kvrp
 		if bytes.Equal(m.Key, req.PrimaryLock) {
 			status := store.checkExtraTxnStatus(reqCtx, m.Key, req.StartVersion)
 			if status.isRollback {
-				return kverrors.ErrAlreadyRollback
+				return ErrAlreadyRollback
 			}
 			if status.isOpLockCommitted() {
 				// duplicated command
@@ -662,7 +661,7 @@ func (store *MVCCStore) prewriteOptimistic(reqCtx *requestCtx, mutations []*kvrp
 		if item != nil {
 			userMeta := mvcc.DBUserMeta(item.UserMeta())
 			if userMeta.CommitTS() > startTS {
-				return &kverrors.ErrConflict{
+				return &ErrConflict{
 					StartTS:          startTS,
 					ConflictTS:       userMeta.StartTS(),
 					ConflictCommitTS: userMeta.CommitTS(),
@@ -678,7 +677,7 @@ func (store *MVCCStore) prewriteOptimistic(reqCtx *requestCtx, mutations []*kvrp
 					return err
 				}
 				if len(val) > 0 {
-					return &kverrors.ErrKeyAlreadyExists{Key: m.Key}
+					return &ErrKeyAlreadyExists{Key: m.Key}
 				}
 			}
 			continue
@@ -692,7 +691,7 @@ func (store *MVCCStore) prewritePessimistic(reqCtx *requestCtx, mutations []*kvr
 	startTS := req.StartVersion
 	for i, m := range mutations {
 		if m.Op == kvrpcpb.Op_CheckNotExists {
-			return kverrors.ErrInvalidOp{Op: m.Op}
+			return ErrInvalidOp{op: m.Op}
 		}
 		lock := store.getLock(reqCtx, m.Key)
 		isPessimisticLock := len(req.IsPessimisticLock) > 0 && req.IsPessimisticLock[i]
@@ -718,7 +717,7 @@ func (store *MVCCStore) prewritePessimistic(reqCtx *requestCtx, mutations []*kvr
 				// Safe to set TTL to zero because the transaction of the lock is committed
 				// or rollbacked or must be rollbacked.
 				lock.TTL = 0
-				return kverrors.BuildLockErr(m.Key, lock)
+				return BuildLockErr(m.Key, lock)
 			}
 			if lockMatch {
 				// Duplicate command.
@@ -868,7 +867,7 @@ func (store *MVCCStore) buildPrewriteLock(reqCtx *requestCtx, m *kvrpcpb.Mutatio
 		if item == nil || item.IsEmpty() {
 			if m.Assertion == kvrpcpb.Assertion_Exist {
 				log.Error("ASSERTION FAIL!!! non-exist for must exist key", zap.Stringer("mutation", m))
-				return nil, &kverrors.ErrAssertionFailed{
+				return nil, &ErrAssertionFailed{
 					StartTS:          req.StartVersion,
 					Key:              m.Key,
 					Assertion:        m.Assertion,
@@ -880,7 +879,7 @@ func (store *MVCCStore) buildPrewriteLock(reqCtx *requestCtx, m *kvrpcpb.Mutatio
 			if m.Assertion == kvrpcpb.Assertion_NotExist {
 				log.Error("ASSERTION FAIL!!! exist for must non-exist key", zap.Stringer("mutation", m))
 				userMeta := mvcc.DBUserMeta(item.UserMeta())
-				return nil, &kverrors.ErrAssertionFailed{
+				return nil, &ErrAssertionFailed{
 					StartTS:          req.StartVersion,
 					Key:              m.Key,
 					Assertion:        m.Assertion,
@@ -894,7 +893,7 @@ func (store *MVCCStore) buildPrewriteLock(reqCtx *requestCtx, m *kvrpcpb.Mutatio
 	lock.Op = uint8(m.Op)
 	if lock.Op == uint8(kvrpcpb.Op_Insert) {
 		if item != nil && item.ValueSize() > 0 {
-			return nil, &kverrors.ErrKeyAlreadyExists{Key: m.Key}
+			return nil, &ErrKeyAlreadyExists{Key: m.Key}
 		}
 		lock.Op = uint8(kvrpcpb.Op_Put)
 	}
@@ -935,7 +934,7 @@ func (store *MVCCStore) checkConflictInLockStore(
 		// Same ts, no need to overwrite.
 		return &lock, nil
 	}
-	return nil, kverrors.BuildLockErr(mutation.Key, &lock)
+	return nil, BuildLockErr(mutation.Key, &lock)
 }
 
 const maxSystemTS uint64 = math.MaxUint64
@@ -961,11 +960,11 @@ func (store *MVCCStore) Commit(req *requestCtx, keys [][]byte, startTS, commitTS
 		if len(buf) == 0 {
 			// We never commit partial keys in Commit request, so if one lock is not found,
 			// the others keys must not be found too.
-			lockErr = kverrors.ErrLockNotFound
+			lockErr = ErrLockNotFound
 		} else {
 			lock = mvcc.DecodeLock(buf)
 			if lock.StartTS != startTS {
-				lockErr = kverrors.ErrReplaced
+				lockErr = ErrReplaced
 			}
 		}
 		if lockErr != nil {
@@ -982,7 +981,7 @@ func (store *MVCCStore) Commit(req *requestCtx, keys [][]byte, startTS, commitTS
 		if commitTS < lock.MinCommitTS {
 			log.Info("trying to commit with smaller commitTs than minCommitTs",
 				zap.Uint64("commit ts", commitTS), zap.Uint64("min commit ts", lock.MinCommitTS), zap.Binary("key", key))
-			return &kverrors.ErrCommitExpire{
+			return &ErrCommitExpire{
 				StartTs:     startTS,
 				CommitTs:    commitTS,
 				MinCommitTs: lock.MinCommitTS,
@@ -1014,14 +1013,14 @@ func (store *MVCCStore) handleLockNotFound(reqCtx *requestCtx, key []byte, start
 		return errors.Trace(err)
 	}
 	if item == nil {
-		return kverrors.ErrLockNotFound
+		return ErrLockNotFound
 	}
 	userMeta := mvcc.DBUserMeta(item.UserMeta())
 	if userMeta.StartTS() == startTS {
 		// Already committed.
 		return nil
 	}
-	return kverrors.ErrLockNotFound
+	return ErrLockNotFound
 }
 
 const (
@@ -1081,7 +1080,7 @@ func (store *MVCCStore) rollbackKeyReadLock(reqCtx *requestCtx, batch mvcc.Write
 		}
 		if lock.StartTS == startTS {
 			if currentTs > 0 && uint64(oracle.ExtractPhysical(lock.StartTS))+uint64(lock.TTL) >= uint64(oracle.ExtractPhysical(currentTs)) {
-				return rollbackStatusLocked, kverrors.BuildLockErr(key, &lock)
+				return rollbackStatusLocked, BuildLockErr(key, &lock)
 			}
 			// We can not simply delete the lock because the prewrite may be sent multiple times.
 			// To prevent that we update it a rollback lock.
@@ -1100,7 +1099,7 @@ func (store *MVCCStore) rollbackKeyReadDB(req *requestCtx, batch mvcc.WriteBatch
 		return err
 	}
 	if commitTS != 0 {
-		return kverrors.ErrAlreadyCommitted(commitTS)
+		return ErrAlreadyCommitted(commitTS)
 	}
 	// commit not found, rollback this key
 	batch.Rollback(key, false)
@@ -1161,42 +1160,9 @@ func checkLock(lock mvcc.Lock, key []byte, startTS uint64, resolved []uint64, co
 		if inTSSet(lock.StartTS, committed) {
 			return &LockPair{safeCopy(key), &lock}, nil
 		}
-		return nil, kverrors.BuildLockErr(safeCopy(key), &lock)
+		return nil, BuildLockErr(safeCopy(key), &lock)
 	}
 	return nil, nil
-}
-
-// checkLockForRcCheckTS checks the lock for `RcCheckTS` isolation level in transaction read.
-func checkLockForRcCheckTS(lock mvcc.Lock, key []byte, startTS uint64, resolved []uint64) error {
-	if inTSSet(lock.StartTS, resolved) {
-		return nil
-	}
-	isWriteLock := lock.Op == uint8(kvrpcpb.Op_Put) || lock.Op == uint8(kvrpcpb.Op_Del)
-	if !isWriteLock {
-		return nil
-	}
-	return &kverrors.ErrConflict{
-		StartTS:    startTS,
-		ConflictTS: lock.StartTS,
-		Key:        safeCopy(key),
-	}
-}
-
-// CheckKeysLockForRcCheckTS is used to check version timestamp if `RcCheckTS` isolation level is used.
-func (store *MVCCStore) CheckKeysLockForRcCheckTS(startTS uint64, resolved []uint64, keys ...[]byte) error {
-	var buf []byte
-	for _, key := range keys {
-		buf = store.lockStore.Get(key, buf)
-		if len(buf) == 0 {
-			continue
-		}
-		lock := mvcc.DecodeLock(buf)
-		err := checkLockForRcCheckTS(lock, key, startTS, resolved)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // CheckKeysLock implements the MVCCStore interface.
@@ -1256,7 +1222,7 @@ func (store *MVCCStore) Cleanup(reqCtx *requestCtx, key []byte, startTS, current
 		}
 		rbStatus := store.checkExtraTxnStatus(reqCtx, key, startTS)
 		if rbStatus.isOpLockCommitted() {
-			return kverrors.ErrAlreadyCommitted(rbStatus.commitTS)
+			return ErrAlreadyCommitted(rbStatus.commitTS)
 		}
 	}
 	err = store.dbWriter.Write(batch)
@@ -1488,11 +1454,6 @@ func (store *MVCCStore) Get(reqCtx *requestCtx, key []byte, version uint64) ([]b
 		if len(lockPairs) != 0 {
 			return getValueFromLock(lockPairs[0].lock), nil
 		}
-	} else if reqCtx.isRcCheckTSIsolationLevel() {
-		err := store.CheckKeysLockForRcCheckTS(version, reqCtx.rpcCtx.ResolvedLocks, key)
-		if err != nil {
-			return nil, err
-		}
 	}
 	val, err := reqCtx.getDBReader().Get(key, version)
 	if val == nil {
@@ -1520,16 +1481,6 @@ func (store *MVCCStore) BatchGet(reqCtx *requestCtx, keys [][]byte, version uint
 				remain = append(remain, key)
 			}
 		}
-	} else if reqCtx.isRcCheckTSIsolationLevel() {
-		remain = make([][]byte, 0, len(keys))
-		for _, key := range keys {
-			err := store.CheckKeysLockForRcCheckTS(version, reqCtx.rpcCtx.ResolvedLocks, key)
-			if err != nil {
-				pairs = append(pairs, &kvrpcpb.KvPair{Key: key, Error: convertToKeyError(err)})
-			} else {
-				remain = append(remain, key)
-			}
-		}
 	} else {
 		remain = keys
 	}
@@ -1546,8 +1497,7 @@ func (store *MVCCStore) BatchGet(reqCtx *requestCtx, keys [][]byte, version uint
 	return pairs
 }
 
-func (store *MVCCStore) collectRangeLock(startTS uint64, startKey, endKey []byte, resolved, committed []uint64,
-	isolationLEvel kvrpcpb.IsolationLevel) []*kvrpcpb.KvPair {
+func (store *MVCCStore) collectRangeLock(startTS uint64, startKey, endKey []byte, resolved, committed []uint64) []*kvrpcpb.KvPair {
 	var pairs []*kvrpcpb.KvPair
 	it := store.lockStore.NewIterator()
 	for it.Seek(startKey); it.Valid(); it.Next() {
@@ -1555,28 +1505,18 @@ func (store *MVCCStore) collectRangeLock(startTS uint64, startKey, endKey []byte
 			break
 		}
 		lock := mvcc.DecodeLock(it.Value())
-		if isolationLEvel == kvrpcpb.IsolationLevel_SI {
-			lockPair, err := checkLock(lock, it.Key(), startTS, resolved, committed)
-			if lockPair != nil {
-				pairs = append(pairs, &kvrpcpb.KvPair{
-					Key: lockPair.key,
-					// deleted key's value is nil
-					Value: getValueFromLock(lockPair.lock),
-				})
-			} else if err != nil {
-				pairs = append(pairs, &kvrpcpb.KvPair{
-					Error: convertToKeyError(err),
-					Key:   safeCopy(it.Key()),
-				})
-			}
-		} else if isolationLEvel == kvrpcpb.IsolationLevel_RCCheckTS {
-			err := checkLockForRcCheckTS(lock, it.Key(), startTS, resolved)
-			if err != nil {
-				pairs = append(pairs, &kvrpcpb.KvPair{
-					Error: convertToKeyError(err),
-					Key:   safeCopy(it.Key()),
-				})
-			}
+		lockPair, err := checkLock(lock, it.Key(), startTS, resolved, committed)
+		if lockPair != nil {
+			pairs = append(pairs, &kvrpcpb.KvPair{
+				Key: lockPair.key,
+				// deleted key's value is nil
+				Value: getValueFromLock(lockPair.lock),
+			})
+		} else if err != nil {
+			pairs = append(pairs, &kvrpcpb.KvPair{
+				Error: convertToKeyError(err),
+				Key:   safeCopy(it.Key()),
+			})
 		}
 	}
 	return pairs
@@ -1638,14 +1578,8 @@ func (store *MVCCStore) Scan(reqCtx *requestCtx, req *kvrpcpb.ScanRequest) []*kv
 	var lockPairs []*kvrpcpb.KvPair
 	limit := req.GetLimit()
 	if req.SampleStep == 0 {
-		if reqCtx.isSnapshotIsolation() || reqCtx.isRcCheckTSIsolationLevel() {
-			if bytes.Compare(startKey, endKey) <= 0 {
-				lockPairs = store.collectRangeLock(req.GetVersion(), startKey, endKey, reqCtx.rpcCtx.ResolvedLocks,
-					reqCtx.rpcCtx.CommittedLocks, reqCtx.rpcCtx.IsolationLevel)
-			} else {
-				lockPairs = store.collectRangeLock(req.GetVersion(), endKey, startKey, reqCtx.rpcCtx.ResolvedLocks,
-					reqCtx.rpcCtx.CommittedLocks, reqCtx.rpcCtx.IsolationLevel)
-			}
+		if reqCtx.isSnapshotIsolation() {
+			lockPairs = store.collectRangeLock(req.GetVersion(), startKey, endKey, reqCtx.rpcCtx.ResolvedLocks, reqCtx.rpcCtx.CommittedLocks)
 		}
 	} else {
 		limit = req.SampleStep * limit

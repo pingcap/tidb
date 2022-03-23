@@ -39,7 +39,6 @@ import (
 func TestMain(m *testing.M) {
 	testbridge.SetupForCommonTest()
 	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 	}
 	goleak.VerifyTestMain(m, opts...)
@@ -263,7 +262,7 @@ func TestTiFlashManager(t *testing.T) {
 			Name:     model.NewCIStr("p"),
 			LessThan: []string{},
 		},
-	}, 3, &[]string{}, 100)
+	}, 3, &[]string{})
 	rules, err = GetTiFlashGroupRules(ctx, "tiflash")
 	require.NoError(t, err)
 	// Have table 1 and 2

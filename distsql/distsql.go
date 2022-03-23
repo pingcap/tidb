@@ -78,7 +78,9 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		hook.(func(*kv.Request))(kvReq)
 	}
 
-	kvReq.Streaming = false
+	if !sctx.GetSessionVars().EnableStreaming {
+		kvReq.Streaming = false
+	}
 	enabledRateLimitAction := sctx.GetSessionVars().EnabledRateLimitAction
 	originalSQL := sctx.GetSessionVars().StmtCtx.OriginalSQL
 	eventCb := func(event trxevents.TransactionEvent) {
@@ -215,6 +217,9 @@ func SetEncodeType(ctx sessionctx.Context, dagReq *tipb.DAGRequest) {
 
 func canUseChunkRPC(ctx sessionctx.Context) bool {
 	if !ctx.GetSessionVars().EnableChunkRPC {
+		return false
+	}
+	if ctx.GetSessionVars().EnableStreaming {
 		return false
 	}
 	if !checkAlignment() {
