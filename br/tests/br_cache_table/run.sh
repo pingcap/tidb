@@ -36,7 +36,7 @@ set -x
 run_sql "select count(*) from $DB.cache_1;"
 check_contains 'count(*): 3'
 
-run_sql "select create_options from information_schema.tables where table_schema = $DB and table_name = 'cache_1';"
+run_sql "select create_options from information_schema.tables where table_schema = '$DB' and table_name = 'cache_1';"
 check_not_contains 'create_options: cached=on'
 
 run_sql "drop schema $DB"
