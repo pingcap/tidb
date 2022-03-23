@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/tracing"
@@ -459,7 +460,7 @@ func (t *Table) PseudoAvgCountPerValue() float64 {
 func GetOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int {
 	for i := range ran.LowVal {
 		a, b := ran.LowVal[i], ran.HighVal[i]
-		cmp, err := a.CompareDatum(sc, &b)
+		cmp, err := a.Compare(sc, &b, ran.Collators[0])
 		if err != nil {
 			return 0
 		}
@@ -607,6 +608,7 @@ func (coll *HistColl) crossValidationSelectivity(sctx sessionctx.Context, idx *I
 				LowExclude:  lowExclude,
 				HighVal:     []types.Datum{idxPointRange.HighVal[i]},
 				HighExclude: highExclude,
+				Collators:   []collate.Collator{idxPointRange.Collators[i]},
 			}
 
 			rowCount, err := col.GetColumnRowCount(sctx, []*ranger.Range{&rang}, coll.Count, col.IsHandle)
@@ -725,6 +727,7 @@ func (coll *HistColl) getIndexRowCount(sctx sessionctx.Context, idxID int64, ind
 				LowExclude:  ran.LowExclude,
 				HighVal:     []types.Datum{ran.HighVal[rangePosition]},
 				HighExclude: ran.HighExclude,
+				Collators:   []collate.Collator{ran.Collators[rangePosition]},
 			}
 			var count float64
 			var err error
@@ -847,7 +850,7 @@ func GetPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount
 		} else if ran.HighVal[colIdx].Kind() == types.KindMaxValue {
 			rowCount += tableRowCount / pseudoLessRate
 		} else {
-			compare, err1 := ran.LowVal[colIdx].CompareDatum(sc, &ran.HighVal[colIdx])
+			compare, err1 := ran.LowVal[colIdx].Compare(sc, &ran.HighVal[colIdx], ran.Collators[colIdx])
 			if err1 != nil {
 				return 0, errors.Trace(err1)
 			}

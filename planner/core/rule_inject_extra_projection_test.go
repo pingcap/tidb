@@ -15,21 +15,18 @@
 package core
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testInjectProjSuite{})
-
-type testInjectProjSuite struct {
-}
-
-func (s *testInjectProjSuite) TestWrapCastForAggFuncs(c *C) {
+func TestWrapCastForAggFuncs(t *testing.T) {
 	aggNames := []string{ast.AggFuncSum}
 	modes := []aggregation.AggFunctionMode{aggregation.CompleteMode,
 		aggregation.FinalMode, aggregation.Partial1Mode, aggregation.Partial1Mode}
@@ -45,7 +42,7 @@ func (s *testInjectProjSuite) TestWrapCastForAggFuncs(c *C) {
 					aggFunc, err := aggregation.NewAggFuncDesc(sctx, name,
 						[]expression.Expression{&expression.Constant{Value: types.Datum{}, RetType: types.NewFieldType(retType)}},
 						hasDistinct)
-					c.Assert(err, IsNil)
+					require.NoError(t, err)
 					aggFunc.Mode = mode
 					aggFuncs = append(aggFuncs, aggFunc)
 				}
@@ -61,9 +58,9 @@ func (s *testInjectProjSuite) TestWrapCastForAggFuncs(c *C) {
 	wrapCastForAggFuncs(mock.NewContext(), aggFuncs)
 	for i := range aggFuncs {
 		if aggFuncs[i].Mode != aggregation.FinalMode && aggFuncs[i].Mode != aggregation.Partial2Mode {
-			c.Assert(aggFuncs[i].RetTp.Tp, Equals, aggFuncs[i].Args[0].GetType().Tp)
+			require.Equal(t, aggFuncs[i].Args[0].GetType().Tp, aggFuncs[i].RetTp.Tp)
 		} else {
-			c.Assert(aggFuncs[i].Args[0].GetType().Tp, Equals, orgAggFuncs[i].Args[0].GetType().Tp)
+			require.Equal(t, orgAggFuncs[i].Args[0].GetType().Tp, aggFuncs[i].Args[0].GetType().Tp)
 		}
 	}
 }

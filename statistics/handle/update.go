@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,8 +38,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -132,13 +135,26 @@ func (m errorRateDeltaMap) clear(tableID int64, histID int64, isIndex bool) {
 	m[tableID] = item
 }
 
-func merge(s *SessionStatsCollector, deltaMap tableDeltaMap, rateMap errorRateDeltaMap, feedback *statistics.QueryFeedbackMap) {
+// colStatsUsageMap maps (tableID, columnID) to the last time when the column stats are used(needed).
+type colStatsUsageMap map[model.TableColumnID]time.Time
+
+func (m colStatsUsageMap) merge(other colStatsUsageMap) {
+	for id, t := range other {
+		if mt, ok := m[id]; !ok || mt.Before(t) {
+			m[id] = t
+		}
+	}
+}
+
+func merge(s *SessionStatsCollector, deltaMap tableDeltaMap, rateMap errorRateDeltaMap, feedback *statistics.QueryFeedbackMap, colMap colStatsUsageMap) {
 	deltaMap.merge(s.mapper)
 	s.mapper = make(tableDeltaMap)
 	rateMap.merge(s.rateMap)
 	s.rateMap = make(errorRateDeltaMap)
 	feedback.Merge(s.feedback)
 	s.feedback = statistics.NewQueryFeedbackMap()
+	colMap.merge(s.colMap)
+	s.colMap = make(colStatsUsageMap)
 }
 
 // SessionStatsCollector is a list item that holds the delta mapper. If you want to write or read mapper, you must lock it.
@@ -148,6 +164,7 @@ type SessionStatsCollector struct {
 	mapper   tableDeltaMap
 	feedback *statistics.QueryFeedbackMap
 	rateMap  errorRateDeltaMap
+	colMap   colStatsUsageMap
 	next     *SessionStatsCollector
 	// deleted is set to true when a session is closed. Every time we sweep the list, we will remove the useless collector.
 	deleted bool
@@ -174,7 +191,7 @@ var (
 	MinLogErrorRate = atomic.NewFloat64(0.5)
 )
 
-// StoreQueryFeedback merges the feedback into stats collector.
+// StoreQueryFeedback merges the feedback into stats collector. Deprecated.
 func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Handle) error {
 	q := feedback.(*statistics.QueryFeedback)
 	if !q.Valid || q.Hist == nil {
@@ -203,6 +220,13 @@ func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Hand
 	return nil
 }
 
+// UpdateColStatsUsage updates the last time when the column stats are used(needed).
+func (s *SessionStatsCollector) UpdateColStatsUsage(colMap colStatsUsageMap) {
+	s.Lock()
+	defer s.Unlock()
+	s.colMap.merge(colMap)
+}
+
 // NewSessionStatsCollector allocates a stats collector for a session.
 func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	h.listHead.Lock()
@@ -212,6 +236,7 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 		rateMap:  make(errorRateDeltaMap),
 		next:     h.listHead.next,
 		feedback: statistics.NewQueryFeedbackMap(),
+		colMap:   make(colStatsUsageMap),
 	}
 	h.listHead.next = newCollector
 	return newCollector
@@ -383,12 +408,13 @@ func (h *Handle) sweepList() {
 	deltaMap := make(tableDeltaMap)
 	errorRateMap := make(errorRateDeltaMap)
 	feedback := statistics.NewQueryFeedbackMap()
+	colMap := make(colStatsUsageMap)
 	prev := h.listHead
 	prev.Lock()
 	for curr := prev.next; curr != nil; curr = curr.next {
 		curr.Lock()
 		// Merge the session stats into deltaMap, errorRateMap and feedback respectively.
-		merge(curr, deltaMap, errorRateMap, feedback)
+		merge(curr, deltaMap, errorRateMap, feedback, colMap)
 		if curr.deleted {
 			prev.next = curr.next
 			// Since the session is already closed, we can safely unlock it here.
@@ -410,6 +436,9 @@ func (h *Handle) sweepList() {
 	h.feedback.data.Merge(feedback)
 	h.feedback.data.SiftFeedbacks()
 	h.feedback.Unlock()
+	h.colMap.Lock()
+	h.colMap.data.merge(colMap)
+	h.colMap.Unlock()
 }
 
 // DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
@@ -439,6 +468,7 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 			deltaMap.update(id, -item.Delta, -item.Count, nil)
 		}
 		if err = h.dumpTableStatColSizeToKV(id, item); err != nil {
+			delete(deltaMap, id)
 			return errors.Trace(err)
 		}
 		if updated {
@@ -454,6 +484,12 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 
 // dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.
 func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (updated bool, err error) {
+	statsVer := uint64(0)
+	defer func() {
+		if err == nil && statsVer != 0 {
+			err = h.recordHistoricalStatsMeta(id, statsVer)
+		}
+	}()
 	if delta.Count == 0 {
 		return true, nil
 	}
@@ -481,6 +517,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 		} else {
 			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
 		}
+		statsVer = startTS
 		return errors.Trace(err)
 	}
 	if err = updateStatsMeta(id); err != nil {
@@ -524,7 +561,7 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 	return errors.Trace(err)
 }
 
-// DumpStatsFeedbackToKV dumps the stats feedback to KV.
+// DumpStatsFeedbackToKV dumps the stats feedback to KV. Deprecated.
 func (h *Handle) DumpStatsFeedbackToKV() error {
 	h.feedback.Lock()
 	feedback := h.feedback.data
@@ -844,6 +881,62 @@ func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.Query
 	return errors.Trace(err)
 }
 
+// DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
+func (h *Handle) DumpColStatsUsageToKV() error {
+	if !variable.EnableColumnTracking.Load() {
+		return nil
+	}
+	h.sweepList()
+	h.colMap.Lock()
+	colMap := h.colMap.data
+	h.colMap.data = make(colStatsUsageMap)
+	h.colMap.Unlock()
+	defer func() {
+		h.colMap.Lock()
+		h.colMap.data.merge(colMap)
+		h.colMap.Unlock()
+	}()
+	type pair struct {
+		tblColID   model.TableColumnID
+		lastUsedAt string
+	}
+	pairs := make([]pair, 0, len(colMap))
+	for id, t := range colMap {
+		pairs = append(pairs, pair{tblColID: id, lastUsedAt: t.UTC().Format(types.TimeFormat)})
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].tblColID.TableID == pairs[j].tblColID.TableID {
+			return pairs[i].tblColID.ColumnID < pairs[j].tblColID.ColumnID
+		}
+		return pairs[i].tblColID.TableID < pairs[j].tblColID.TableID
+	})
+	// Use batch insert to reduce cost.
+	for i := 0; i < len(pairs); i += 10 {
+		end := i + 10
+		if end > len(pairs) {
+			end = len(pairs)
+		}
+		sql := new(strings.Builder)
+		sqlexec.MustFormatSQL(sql, "INSERT INTO mysql.column_stats_usage (table_id, column_id, last_used_at) VALUES ")
+		for j := i; j < end; j++ {
+			// Since we will use some session from session pool to execute the insert statement, we pass in UTC time here and covert it
+			// to the session's time zone when executing the insert statement. In this way we can make the stored time right.
+			sqlexec.MustFormatSQL(sql, "(%?, %?, CONVERT_TZ(%?, '+00:00', @@TIME_ZONE))", pairs[j].tblColID.TableID, pairs[j].tblColID.ColumnID, pairs[j].lastUsedAt)
+			if j < end-1 {
+				sqlexec.MustFormatSQL(sql, ",")
+			}
+		}
+		sqlexec.MustFormatSQL(sql, " ON DUPLICATE KEY UPDATE last_used_at = CASE WHEN last_used_at IS NULL THEN VALUES(last_used_at) ELSE GREATEST(last_used_at, VALUES(last_used_at)) END")
+		if _, _, err := h.execRestrictedSQL(context.Background(), sql.String()); err != nil {
+			return errors.Trace(err)
+		}
+		for j := i; j < end; j++ {
+			delete(colMap, pairs[j].tblColID)
+		}
+	}
+	return nil
+}
+
 const (
 	// StatsOwnerKey is the stats owner path that is saved to etcd.
 	StatsOwnerKey = "/tidb/stats/owner"
@@ -954,6 +1047,9 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 	}
 	pruneMode := h.CurrentPruneMode()
 	for _, db := range dbs {
+		if util.IsMemOrSysDB(strings.ToLower(db)) {
+			continue
+		}
 		tbls := is.SchemaTables(model.NewCIStr(db))
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
@@ -1026,7 +1122,9 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 }
 
 func (h *Handle) autoAnalyzePartitionTable(tblInfo *model.TableInfo, pi *model.PartitionInfo, db string, start, end time.Time, ratio float64) bool {
+	h.mu.RLock()
 	tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
+	h.mu.RUnlock()
 	partitionNames := make([]interface{}, 0, len(pi.Definitions))
 	for _, def := range pi.Definitions {
 		partitionStatsTbl := h.GetPartitionStats(tblInfo, def.ID)
@@ -1092,7 +1190,7 @@ var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 
 func (h *Handle) execAutoAnalyze(statsVer int, sql string, params ...interface{}) {
 	startTime := time.Now()
-	_, _, err := h.execRestrictedSQLWithStatsVer(context.Background(), statsVer, sql, params...)
+	_, _, err := h.execRestrictedSQLWithStatsVer(context.Background(), statsVer, util.GetAutoAnalyzeProcID(), sql, params...)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
@@ -1176,8 +1274,9 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 		}
 		equalityCount := idx.QueryBytes(bytes)
 		rang := ranger.Range{
-			LowVal:  []types.Datum{ran.LowVal[rangePosition]},
-			HighVal: []types.Datum{ran.HighVal[rangePosition]},
+			LowVal:    []types.Datum{ran.LowVal[rangePosition]},
+			HighVal:   []types.Datum{ran.HighVal[rangePosition]},
+			Collators: collate.GetBinaryCollatorSlice(1),
 		}
 		colName := idx.Info.Columns[rangePosition].Name.L
 		// prefer index stats over column stats
@@ -1245,7 +1344,7 @@ func logForPK(prefix string, c *statistics.Column, ranges []*ranger.Range, actua
 	}
 }
 
-// RecalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo.
+// RecalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo. Deprecated.
 func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 	t, ok := h.statsCache.Load().(statsCache).tables[q.PhysicalID]
 	if !ok {
@@ -1359,7 +1458,7 @@ func convertRangeType(ran *ranger.Range, ft *types.FieldType, loc *time.Location
 	return statistics.ConvertDatumsType(ran.HighVal, ft, loc)
 }
 
-// DumpFeedbackForIndex dumps the feedback for index.
+// DumpFeedbackForIndex dumps the feedback for index. Deprecated.
 // For queries that contains both equality and range query, we will split them and Update accordingly.
 func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics.Table) error {
 	idx, ok := t.Indices[q.Hist.ID]
@@ -1401,8 +1500,9 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 		}
 		equalityCount := float64(idx.QueryBytes(bytes)) * idx.GetIncreaseFactor(t.Count)
 		rang := &ranger.Range{
-			LowVal:  []types.Datum{ran.LowVal[rangePosition]},
-			HighVal: []types.Datum{ran.HighVal[rangePosition]},
+			LowVal:    []types.Datum{ran.LowVal[rangePosition]},
+			HighVal:   []types.Datum{ran.HighVal[rangePosition]},
+			Collators: collate.GetBinaryCollatorSlice(1),
 		}
 		colName := idx.Info.Columns[rangePosition].Name.L
 		var rangeCount float64

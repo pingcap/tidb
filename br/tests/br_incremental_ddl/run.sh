@@ -79,3 +79,26 @@ run_sql "INSERT INTO ${DB}.${TABLE}(c2) VALUES ('1');"
 run_sql "INSERT INTO ${DB}.${TABLE}_rename2(c) VALUES ('1');"
 
 run_sql "DROP DATABASE $DB;"
+
+# full restore with batch ddl
+echo "full restore start..."
+run_br restore table --db $DB --table $TABLE -s "local://$TEST_DIR/$DB/full" --pd $PD_ADDR --ddl-batch-size=128
+row_count_full=$(run_sql "SELECT COUNT(*) FROM $DB.$TABLE;" | awk '/COUNT/{print $2}')
+# check full restore
+if [ "${row_count_full}" != "${ROW_COUNT}" ];then
+    echo "TEST: [$TEST_NAME] full restore fail on database $DB"
+    exit 1
+fi
+# incremental restore
+echo "incremental restore start..."
+run_br restore db --db $DB -s "local://$TEST_DIR/$DB/inc" --pd $PD_ADDR --ddl-batch-size=128
+row_count_inc=$(run_sql "SELECT COUNT(*) FROM $DB.$TABLE;" | awk '/COUNT/{print $2}')
+# check full restore
+if [ "${row_count_inc}" != "${ROW_COUNT}" ];then
+    echo "TEST: [$TEST_NAME] incremental restore fail on database $DB"
+    exit 1
+fi
+run_sql "INSERT INTO ${DB}.${TABLE}(c2) VALUES ('1');"
+run_sql "INSERT INTO ${DB}.${TABLE}_rename2(c) VALUES ('1');"
+
+run_sql "DROP DATABASE $DB;"

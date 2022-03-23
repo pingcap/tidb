@@ -29,9 +29,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
+	testbridge.SetupForCommonTest()
 
-	runInGoTest = true // flag for NewServer to known it is running in test environment
+	RunInGoTest = true // flag for NewServer to known it is running in test environment
 
 	// AsyncCommit will make DDL wait 2.5s before changing to the next state.
 	// Set schema lease to avoid it from making CI slow.
@@ -51,6 +51,7 @@ func TestMain(m *testing.M) {
 	}
 
 	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("time.Sleep"),
 		goleak.IgnoreTopFunction("database/sql.(*Tx).awaitDone"),
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
@@ -59,9 +60,8 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/pingcap/tidb/server.NewServer.func1"),
 		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("github.com/go-sql-driver/mysql.(*mysqlConn).startWatcher.func1"),
-		goleak.IgnoreTopFunction("github.com/pingcap/tidb/util/topsql/tracecpu.(*sqlCPUProfiler).startAnalyzeProfileWorker"),
 	}
 
 	goleak.VerifyTestMain(m, opts...)

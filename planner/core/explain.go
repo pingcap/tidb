@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -289,8 +290,8 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	if p.stats.StatsVersion == statistics.PseudoVersion && !normalized {
 		buffer.WriteString(", stats:pseudo")
 	}
-	if p.IsGlobalRead {
-		buffer.WriteString(", global read")
+	if p.StoreType == kv.TiFlash && p.Table.GetPartitionInfo() != nil && p.IsMPPOrBatchCop && p.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+		buffer.WriteString(", PartitionTableScan:true")
 	}
 	return buffer.String()
 }
@@ -431,7 +432,7 @@ func (p *PhysicalIndexReader) ExplainInfo() string {
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalIndexReader) ExplainNormalizedInfo() string {
-	return p.ExplainInfo()
+	return "index:" + p.indexPlan.TP()
 }
 
 func (p *PhysicalIndexReader) accessObject(sctx sessionctx.Context) string {
@@ -456,17 +457,22 @@ func (p *PhysicalIndexReader) accessObject(sctx sessionctx.Context) string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
+	var str strings.Builder
 	// The children can be inferred by the relation symbol.
 	if p.PushedLimit != nil {
-		var str strings.Builder
 		str.WriteString("limit embedded(offset:")
 		str.WriteString(strconv.FormatUint(p.PushedLimit.Offset, 10))
 		str.WriteString(", count:")
 		str.WriteString(strconv.FormatUint(p.PushedLimit.Count, 10))
 		str.WriteString(")")
-		return str.String()
 	}
-	return ""
+	if p.Paging {
+		if p.PushedLimit != nil {
+			str.WriteString(", ")
+		}
+		str.WriteString("paging:true")
+	}
+	return str.String()
 }
 
 func (p *PhysicalIndexLookUpReader) accessObject(sctx sessionctx.Context) string {

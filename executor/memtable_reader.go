@@ -40,15 +40,14 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -272,7 +271,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 	close(ch)
 
 	// Keep the original order to make the result more stable
-	var results []result
+	var results []result // nolint: prealloc
 	for result := range ch {
 		if result.err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
@@ -350,7 +349,7 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 	wg.Wait()
 	close(ch)
 	// Keep the original order to make the result more stable
-	var results []result
+	var results []result // nolint: prealloc
 	for result := range ch {
 		if result.err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(result.err)
@@ -566,7 +565,7 @@ func (e *clusterLogRetriever) startRetrieving(
 	// The retrieve progress may be abort
 	ctx, e.cancel = context.WithCancel(ctx)
 
-	var results []chan logStreamResult
+	var results []chan logStreamResult // nolint: prealloc
 	for _, srv := range serversInfo {
 		typ := srv.ServerType
 		address := srv.Address
@@ -767,19 +766,19 @@ type HistoryHotRegions struct {
 // HistoryHotRegion records each hot region's statistics.
 // it's the response of PD.
 type HistoryHotRegion struct {
-	UpdateTime    int64   `json:"update_time,omitempty"`
-	RegionID      uint64  `json:"region_id,omitempty"`
-	StoreID       uint64  `json:"store_id,omitempty"`
-	PeerID        uint64  `json:"peer_id,omitempty"`
-	IsLearner     bool    `json:"is_learner,omitempty"`
-	IsLeader      bool    `json:"is_leader,omitempty"`
-	HotRegionType string  `json:"hot_region_type,omitempty"`
-	HotDegree     int64   `json:"hot_degree,omitempty"`
-	FlowBytes     float64 `json:"flow_bytes,omitempty"`
-	KeyRate       float64 `json:"key_rate,omitempty"`
-	QueryRate     float64 `json:"query_rate,omitempty"`
-	StartKey      []byte  `json:"start_key,omitempty"`
-	EndKey        []byte  `json:"end_key,omitempty"`
+	UpdateTime    int64   `json:"update_time"`
+	RegionID      uint64  `json:"region_id"`
+	StoreID       uint64  `json:"store_id"`
+	PeerID        uint64  `json:"peer_id"`
+	IsLearner     bool    `json:"is_learner"`
+	IsLeader      bool    `json:"is_leader"`
+	HotRegionType string  `json:"hot_region_type"`
+	HotDegree     int64   `json:"hot_degree"`
+	FlowBytes     float64 `json:"flow_bytes"`
+	KeyRate       float64 `json:"key_rate"`
+	QueryRate     float64 `json:"query_rate"`
+	StartKey      string  `json:"start_key"`
+	EndKey        string  `json:"end_key"`
 }
 
 func (e *hotRegionsHistoryRetriver) initialize(ctx context.Context, sctx sessionctx.Context) ([]chan hotRegionsResult, error) {
@@ -893,8 +892,6 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 	}
 	// Merge the results
 	var finalRows [][]types.Datum
-	allSchemas := sctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
-	tz := sctx.GetSessionVars().Location()
 	tikvStore, ok := sctx.GetStore().(helper.Storage)
 	if !ok {
 		return nil, errors.New("Information about hot region can be gotten only when the storage is TiKV")
@@ -903,14 +900,18 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
+	tz := sctx.GetSessionVars().Location()
+	allSchemas := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema().AllSchemas()
+	schemas := tikvHelper.FilterMemDBs(allSchemas)
+	tables := tikvHelper.GetTablesInfoWithKeyRange(schemas)
 	for e.heap.Len() > 0 && len(finalRows) < hotRegionsHistoryBatchSize {
 		minTimeItem := heap.Pop(e.heap).(hotRegionsResult)
-		row, err := e.getHotRegionRowWithSchemaInfo(minTimeItem.messages.HistoryHotRegion[0], tikvHelper, allSchemas, tz)
+		rows, err := e.getHotRegionRowWithSchemaInfo(minTimeItem.messages.HistoryHotRegion[0], tikvHelper, tables, tz)
 		if err != nil {
 			return nil, err
 		}
-		if row != nil {
-			finalRows = append(finalRows, row)
+		if rows != nil {
+			finalRows = append(finalRows, rows...)
 		}
 		minTimeItem.messages.HistoryHotRegion = minTimeItem.messages.HistoryHotRegion[1:]
 		// Fetch next message item
@@ -926,74 +927,191 @@ func (e *hotRegionsHistoryRetriver) retrieve(ctx context.Context, sctx sessionct
 func (e *hotRegionsHistoryRetriver) getHotRegionRowWithSchemaInfo(
 	hisHotRegion *HistoryHotRegion,
 	tikvHelper *helper.Helper,
-	allSchemas []*model.DBInfo,
+	tables []helper.TableInfoWithKeyRange,
 	tz *time.Location,
-) ([]types.Datum, error) {
-	_, startKey, _ := codec.DecodeBytes(hisHotRegion.StartKey, []byte{})
-	_, endKey, _ := codec.DecodeBytes(hisHotRegion.EndKey, []byte{})
-	region := &tikv.KeyLocation{StartKey: startKey, EndKey: endKey}
-	hotRange, err := helper.NewRegionFrameRange(region)
-	if err != nil {
-		return nil, err
+) ([][]types.Datum, error) {
+	regionsInfo := []*helper.RegionInfo{
+		{
+			ID:       int64(hisHotRegion.RegionID),
+			StartKey: hisHotRegion.StartKey,
+			EndKey:   hisHotRegion.EndKey,
+		}}
+	regionsTableInfos := tikvHelper.ParseRegionsTableInfos(regionsInfo, tables)
+
+	var rows [][]types.Datum
+	// Ignore row without corresponding schema.
+	if tableInfos, ok := regionsTableInfos[int64(hisHotRegion.RegionID)]; ok {
+		for _, tableInfo := range tableInfos {
+			updateTimestamp := time.Unix(hisHotRegion.UpdateTime/1000, (hisHotRegion.UpdateTime%1000)*int64(time.Millisecond))
+			if updateTimestamp.Location() != tz {
+				updateTimestamp.In(tz)
+			}
+			updateTime := types.NewTime(types.FromGoTime(updateTimestamp), mysql.TypeTimestamp, types.MinFsp)
+			row := make([]types.Datum, len(infoschema.TableTiDBHotRegionsHistoryCols))
+
+			row[0].SetMysqlTime(updateTime)
+			row[1].SetString(strings.ToUpper(tableInfo.DB.Name.O), mysql.DefaultCollationName)
+			row[2].SetString(strings.ToUpper(tableInfo.Table.Name.O), mysql.DefaultCollationName)
+			row[3].SetInt64(tableInfo.Table.ID)
+			if tableInfo.IsIndex {
+				row[4].SetString(strings.ToUpper(tableInfo.Index.Name.O), mysql.DefaultCollationName)
+				row[5].SetInt64(tableInfo.Index.ID)
+			} else {
+				row[4].SetNull()
+				row[5].SetNull()
+			}
+			row[6].SetInt64(int64(hisHotRegion.RegionID))
+			row[7].SetInt64(int64(hisHotRegion.StoreID))
+			row[8].SetInt64(int64(hisHotRegion.PeerID))
+			if hisHotRegion.IsLearner {
+				row[9].SetInt64(1)
+			} else {
+				row[9].SetInt64(0)
+			}
+			if hisHotRegion.IsLeader {
+				row[10].SetInt64(1)
+			} else {
+				row[10].SetInt64(0)
+			}
+			row[11].SetString(strings.ToUpper(hisHotRegion.HotRegionType), mysql.DefaultCollationName)
+			row[12].SetInt64(hisHotRegion.HotDegree)
+			row[13].SetFloat64(hisHotRegion.FlowBytes)
+			row[14].SetFloat64(hisHotRegion.KeyRate)
+			row[15].SetFloat64(hisHotRegion.QueryRate)
+			rows = append(rows, row)
+		}
 	}
 
-	f := tikvHelper.FindTableIndexOfRegion(allSchemas, hotRange)
-	// Ignore row without corresponding schema f.
-	if f == nil {
+	return rows, nil
+}
+
+type tikvRegionPeersRetriever struct {
+	dummyCloser
+	extractor *plannercore.TikvRegionPeersExtractor
+	retrieved bool
+}
+
+func (e *tikvRegionPeersRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.extractor.SkipRequest || e.retrieved {
 		return nil, nil
 	}
-	row := make([]types.Datum, len(infoschema.TableTiDBHotRegionsHistoryCols))
-	updateTimestamp := time.Unix(hisHotRegion.UpdateTime/1000, (hisHotRegion.UpdateTime%1000)*int64(time.Millisecond))
-
-	if updateTimestamp.Location() != tz {
-		updateTimestamp.In(tz)
+	e.retrieved = true
+	tikvStore, ok := sctx.GetStore().(helper.Storage)
+	if !ok {
+		return nil, errors.New("Information about hot region can be gotten only when the storage is TiKV")
 	}
-	updateTime := types.NewTime(types.FromGoTime(updateTimestamp), mysql.TypeTimestamp, types.MinFsp)
-	row[0].SetMysqlTime(updateTime)
-	row[1].SetString(strings.ToUpper(f.DBName), mysql.DefaultCollationName)
-	row[2].SetString(strings.ToUpper(f.TableName), mysql.DefaultCollationName)
-	row[3].SetInt64(f.TableID)
-	if f.IndexName != "" {
-		row[4].SetString(strings.ToUpper(f.IndexName), mysql.DefaultCollationName)
-		row[5].SetInt64(f.IndexID)
-	} else {
-		row[4].SetNull()
-		row[5].SetNull()
-	}
-	row[6].SetInt64(int64(hisHotRegion.RegionID))
-	row[7].SetInt64(int64(hisHotRegion.StoreID))
-	row[8].SetInt64(int64(hisHotRegion.PeerID))
-	if hisHotRegion.IsLearner {
-		row[9].SetInt64(1)
-	} else {
-		row[9].SetInt64(0)
-	}
-	if hisHotRegion.IsLeader {
-		row[10].SetInt64(1)
-	} else {
-		row[10].SetInt64(0)
+	tikvHelper := &helper.Helper{
+		Store:       tikvStore,
+		RegionCache: tikvStore.GetRegionCache(),
 	}
 
-	row[11].SetString(strings.ToUpper(hisHotRegion.HotRegionType), mysql.DefaultCollationName)
-	if hisHotRegion.HotDegree != 0 {
-		row[12].SetInt64(hisHotRegion.HotDegree)
-	} else {
-		row[12].SetNull()
+	var regionsInfo, regionsInfoByStoreID []helper.RegionInfo
+	regionMap := make(map[int64]*helper.RegionInfo)
+	storeMap := make(map[int64]struct{})
+
+	if len(e.extractor.StoreIDs) == 0 && len(e.extractor.RegionIDs) == 0 {
+		regionsInfo, err := tikvHelper.GetRegionsInfo()
+		if err != nil {
+			return nil, err
+		}
+		return e.packTiKVRegionPeersRows(regionsInfo.Regions, storeMap)
 	}
-	if hisHotRegion.FlowBytes != 0 {
-		row[13].SetFloat64(hisHotRegion.FlowBytes)
-	} else {
-		row[13].SetNull()
+
+	for _, storeID := range e.extractor.StoreIDs {
+		// if a region_id located in 1, 4, 7 store we will get all of them when request any store_id,
+		// storeMap is used to filter peers on unexpected stores.
+		storeMap[int64(storeID)] = struct{}{}
+		storeRegionsInfo, err := tikvHelper.GetStoreRegionsInfo(storeID)
+		if err != nil {
+			return nil, err
+		}
+		for i, regionInfo := range storeRegionsInfo.Regions {
+			// regionMap is used to remove dup regions and record the region in regionsInfoByStoreID.
+			if _, ok := regionMap[regionInfo.ID]; !ok {
+				regionsInfoByStoreID = append(regionsInfoByStoreID, regionInfo)
+				regionMap[regionInfo.ID] = &storeRegionsInfo.Regions[i]
+			}
+		}
 	}
-	if hisHotRegion.KeyRate != 0 {
-		row[14].SetFloat64(hisHotRegion.KeyRate)
-	} else {
-		row[14].SetNull()
+
+	if len(e.extractor.RegionIDs) == 0 {
+		return e.packTiKVRegionPeersRows(regionsInfoByStoreID, storeMap)
 	}
-	if hisHotRegion.QueryRate != 0 {
-		row[15].SetFloat64(hisHotRegion.QueryRate)
-	} else {
-		row[15].SetNull()
+
+	for _, regionID := range e.extractor.RegionIDs {
+		regionInfoByStoreID, ok := regionMap[int64(regionID)]
+		if !ok {
+			// if there is storeIDs, target region_id is fetched by storeIDs,
+			// otherwise we need to fetch it from PD.
+			if len(e.extractor.StoreIDs) == 0 {
+				regionInfo, err := tikvHelper.GetRegionInfoByID(regionID)
+				if err != nil {
+					return nil, err
+				}
+				regionsInfo = append(regionsInfo, *regionInfo)
+			}
+		} else {
+			regionsInfo = append(regionsInfo, *regionInfoByStoreID)
+		}
 	}
-	return row, nil
+
+	return e.packTiKVRegionPeersRows(regionsInfo, storeMap)
+}
+
+func (e *tikvRegionPeersRetriever) isUnexpectedStoreID(storeID int64, storeMap map[int64]struct{}) bool {
+	if len(e.extractor.StoreIDs) == 0 {
+		return false
+	}
+	if _, ok := storeMap[storeID]; ok {
+		return false
+	}
+	return true
+}
+
+func (e *tikvRegionPeersRetriever) packTiKVRegionPeersRows(
+	regionsInfo []helper.RegionInfo, storeMap map[int64]struct{}) ([][]types.Datum, error) {
+	var rows [][]types.Datum
+	for _, region := range regionsInfo {
+		records := make([][]types.Datum, 0, len(region.Peers))
+		pendingPeerIDSet := set.NewInt64Set()
+		for _, peer := range region.PendingPeers {
+			pendingPeerIDSet.Insert(peer.ID)
+		}
+		downPeerMap := make(map[int64]int64, len(region.DownPeers))
+		for _, peerStat := range region.DownPeers {
+			downPeerMap[peerStat.Peer.ID] = peerStat.DownSec
+		}
+		for _, peer := range region.Peers {
+			// isUnexpectedStoreID return true if we should filter this peer.
+			if e.isUnexpectedStoreID(peer.StoreID, storeMap) {
+				continue
+			}
+
+			row := make([]types.Datum, len(infoschema.TableTiKVRegionPeersCols))
+			row[0].SetInt64(region.ID)
+			row[1].SetInt64(peer.ID)
+			row[2].SetInt64(peer.StoreID)
+			if peer.IsLearner {
+				row[3].SetInt64(1)
+			} else {
+				row[3].SetInt64(0)
+			}
+			if peer.ID == region.Leader.ID {
+				row[4].SetInt64(1)
+			} else {
+				row[4].SetInt64(0)
+			}
+			if downSec, ok := downPeerMap[peer.ID]; ok {
+				row[5].SetString(downPeer, mysql.DefaultCollationName)
+				row[6].SetInt64(downSec)
+			} else if pendingPeerIDSet.Exist(peer.ID) {
+				row[5].SetString(pendingPeer, mysql.DefaultCollationName)
+			} else {
+				row[5].SetString(normalPeer, mysql.DefaultCollationName)
+			}
+			records = append(records, row)
+		}
+		rows = append(rows, records...)
+	}
+	return rows, nil
 }

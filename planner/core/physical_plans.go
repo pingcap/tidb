@@ -108,22 +108,35 @@ func (p *PhysicalTableReader) GetTablePlan() PhysicalPlan {
 	return p.tablePlan
 }
 
-// GetTableScan exports the tableScan that contained in tablePlan.
-func (p *PhysicalTableReader) GetTableScan() *PhysicalTableScan {
-	curPlan := p.tablePlan
-	for {
-		chCnt := len(curPlan.Children())
-		if chCnt == 0 {
-			return curPlan.(*PhysicalTableScan)
-		} else if chCnt == 1 {
-			curPlan = curPlan.Children()[0]
-		} else {
-			join, ok := curPlan.(*PhysicalHashJoin)
-			if !ok {
-				return nil
-			}
-			curPlan = join.children[1-join.globalChildIndex]
+// GetTableScans exports the tableScan that contained in tablePlans.
+func (p *PhysicalTableReader) GetTableScans() []*PhysicalTableScan {
+	tableScans := make([]*PhysicalTableScan, 0, 1)
+	for _, tablePlan := range p.TablePlans {
+		tableScan, ok := tablePlan.(*PhysicalTableScan)
+		if ok {
+			tableScans = append(tableScans, tableScan)
 		}
+	}
+	return tableScans
+}
+
+// GetTableScan exports the tableScan that contained in tablePlans and return error when the count of table scan != 1.
+func (p *PhysicalTableReader) GetTableScan() (*PhysicalTableScan, error) {
+	tableScans := p.GetTableScans()
+	if len(tableScans) != 1 {
+		return nil, errors.New("the count of table scan != 1")
+	}
+	return tableScans[0], nil
+}
+
+// SetMppOrBatchCopForTableScan set IsMPPOrBatchCop for all TableScan.
+func SetMppOrBatchCopForTableScan(curPlan PhysicalPlan) {
+	if ts, ok := curPlan.(*PhysicalTableScan); ok {
+		ts.IsMPPOrBatchCop = true
+	}
+	children := curPlan.Children()
+	for _, child := range children {
+		SetMppOrBatchCopForTableScan(child)
 	}
 }
 
@@ -270,6 +283,7 @@ type PhysicalIndexLookUpReader struct {
 	TablePlans []PhysicalPlan
 	indexPlan  PhysicalPlan
 	tablePlan  PhysicalPlan
+	Paging     bool
 
 	ExtraHandleCol *expression.Column
 	// PushedLimit is used to avoid unnecessary table scan tasks of IndexLookUpReader.
@@ -475,7 +489,7 @@ type PhysicalTableScan struct {
 
 	StoreType kv.StoreType
 
-	IsGlobalRead bool
+	IsMPPOrBatchCop bool // Used for tiflash PartitionTableScan.
 
 	// The table scan may be a partition, rather than a real table.
 	// TODO: clean up this field. After we support dynamic partitioning, table scan
@@ -769,9 +783,8 @@ type PhysicalHashJoin struct {
 	UseOuterToBuild bool
 
 	// on which store the join executes.
-	storeTp          kv.StoreType
-	globalChildIndex int
-	mppShuffleJoin   bool
+	storeTp        kv.StoreType
+	mppShuffleJoin bool
 }
 
 // Clone implements PhysicalPlan interface.
@@ -958,9 +971,8 @@ type PhysicalLock struct {
 
 	Lock *ast.SelectLockInfo
 
-	TblID2Handle     map[int64][]HandleCols
-	PartitionedTable []table.PartitionedTable
-	ExtraPIDInfo     extraPIDInfo
+	TblID2Handle       map[int64][]HandleCols
+	TblID2PhysTblIDCol map[int64]*expression.Column
 }
 
 // PhysicalLimit is the physical operator of Limit.
@@ -1185,8 +1197,6 @@ type PhysicalUnionScan struct {
 	Conditions []expression.Expression
 
 	HandleCols HandleCols
-
-	CacheTable kv.MemBuffer
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -1366,6 +1376,8 @@ type PhysicalShow struct {
 	physicalSchemaProducer
 
 	ShowContents
+
+	Extractor ShowPredicateExtractor
 }
 
 // PhysicalShowDDLJobs is for showing DDL job list.

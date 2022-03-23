@@ -60,20 +60,6 @@ func TestSysVar(t *testing.T) {
 	require.Equal(t, runtime.GOARCH, f.Value)
 }
 
-func TestTxnMode(t *testing.T) {
-	seVar := NewSessionVars()
-	require.NotNil(t, seVar)
-	require.Equal(t, "", seVar.TxnMode)
-	err := seVar.setTxnMode("pessimistic")
-	require.NoError(t, err)
-	err = seVar.setTxnMode("optimistic")
-	require.NoError(t, err)
-	err = seVar.setTxnMode("")
-	require.NoError(t, err)
-	err = seVar.setTxnMode("something else")
-	require.Error(t, err)
-}
-
 func TestError(t *testing.T) {
 	kvErrs := []*terror.Error{
 		ErrUnsupportedValueForVar,
@@ -99,7 +85,7 @@ func TestRegistrationOfNewSysVar(t *testing.T) {
 	}}
 
 	RegisterSysVar(&sv)
-	require.Equal(t, len(GetSysVars()), count+1)
+	require.Len(t, GetSysVars(), count+1)
 
 	sysVar := GetSysVar("mynewsysvar")
 	require.NotNil(t, sysVar)
@@ -260,22 +246,32 @@ func TestScope(t *testing.T) {
 	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
 	require.True(t, sv.HasSessionScope())
 	require.True(t, sv.HasGlobalScope())
+	require.False(t, sv.HasInstanceScope())
 	require.False(t, sv.HasNoneScope())
 
 	sv = SysVar{Scope: ScopeGlobal, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
 	require.False(t, sv.HasSessionScope())
 	require.True(t, sv.HasGlobalScope())
+	require.False(t, sv.HasInstanceScope())
 	require.False(t, sv.HasNoneScope())
 
 	sv = SysVar{Scope: ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
 	require.True(t, sv.HasSessionScope())
 	require.False(t, sv.HasGlobalScope())
+	require.False(t, sv.HasInstanceScope())
 	require.False(t, sv.HasNoneScope())
 
 	sv = SysVar{Scope: ScopeNone, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
 	require.False(t, sv.HasSessionScope())
 	require.False(t, sv.HasGlobalScope())
+	require.False(t, sv.HasInstanceScope())
 	require.True(t, sv.HasNoneScope())
+
+	sv = SysVar{Scope: ScopeInstance, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	require.False(t, sv.HasSessionScope())
+	require.False(t, sv.HasGlobalScope())
+	require.True(t, sv.HasInstanceScope())
+	require.False(t, sv.HasNoneScope())
 }
 
 func TestBuiltInCase(t *testing.T) {
@@ -540,6 +536,43 @@ func TestIsNoop(t *testing.T) {
 	require.True(t, sv.IsNoop)
 }
 
+func TestTiDBReadOnly(t *testing.T) {
+	rro := GetSysVar(TiDBRestrictedReadOnly)
+	sro := GetSysVar(TiDBSuperReadOnly)
+
+	vars := NewSessionVars()
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	// turn on tidb_restricted_read_only should turn on tidb_super_read_only
+	require.NoError(t, mock.SetGlobalSysVar(rro.Name, "ON"))
+	result, err := mock.GetGlobalSysVar(sro.Name)
+	require.NoError(t, err)
+	require.Equal(t, "ON", result)
+
+	// can't turn off tidb_super_read_only if tidb_restricted_read_only is on
+	err = mock.SetGlobalSysVar(sro.Name, "OFF")
+	require.Error(t, err)
+	require.Equal(t, "can't turn off tidb_super_read_only when tidb_restricted_read_only is on", err.Error())
+
+	// turn off tidb_restricted_read_only won't affect tidb_super_read_only
+	require.NoError(t, mock.SetGlobalSysVar(rro.Name, "OFF"))
+	result, err = mock.GetGlobalSysVar(rro.Name)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", result)
+
+	result, err = mock.GetGlobalSysVar(sro.Name)
+	require.NoError(t, err)
+	require.Equal(t, "ON", result)
+
+	// it is ok to turn off tidb_super_read_only now
+	require.NoError(t, mock.SetGlobalSysVar(sro.Name, "OFF"))
+	result, err = mock.GetGlobalSysVar(sro.Name)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", result)
+}
+
 func TestInstanceScopedVars(t *testing.T) {
 	// This tests instance scoped variables through GetSessionOrGlobalSystemVar().
 	// Eventually these should be changed to use getters so that the switch
@@ -616,11 +649,7 @@ func TestInstanceScopedVars(t *testing.T) {
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBCheckMb4ValueInUTF8)
 	require.NoError(t, err)
-	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().CheckMb4ValueInUTF8), val)
-
-	val, err = GetSessionOrGlobalSystemVar(vars, TiDBCapturePlanBaseline)
-	require.NoError(t, err)
-	require.Equal(t, CapturePlanBaseline.GetVal(), val)
+	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().CheckMb4ValueInUTF8.Load()), val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBFoundInPlanCache)
 	require.NoError(t, err)
@@ -668,7 +697,7 @@ func TestSettersandGetters(t *testing.T) {
 			// There are some historial exceptions where global variables are loaded into the session.
 			// Please don't add to this list, the behavior is not MySQL compatible.
 			switch sv.Name {
-			case TiDBEnableChangeMultiSchema, TiDBDDLReorgBatchSize, TiDBEnableAlterPlacement,
+			case TiDBEnableChangeMultiSchema, TiDBDDLReorgBatchSize,
 				TiDBMaxDeltaSchemaCount, InitConnect, MaxPreparedStmtCount,
 				TiDBDDLReorgWorkerCount, TiDBDDLErrorCountLimit, TiDBRowFormatVersion,
 				TiDBEnableTelemetry, TiDBEnablePointGetCache:
@@ -677,7 +706,7 @@ func TestSettersandGetters(t *testing.T) {
 			require.Nil(t, sv.SetSession)
 			require.Nil(t, sv.GetSession)
 		}
-		if !sv.HasGlobalScope() {
+		if !sv.HasGlobalScope() && !sv.HasInstanceScope() {
 			require.Nil(t, sv.SetGlobal)
 			if sv.Name == Timestamp {
 				// The Timestamp sysvar will have GetGlobal func even though it does not have global scope.
@@ -824,4 +853,97 @@ func TestDefaultCharsetAndCollation(t *testing.T) {
 	val, err = GetSessionOrGlobalSystemVar(vars, CollationConnection)
 	require.NoError(t, err)
 	require.Equal(t, val, mysql.DefaultCollationName)
+}
+
+func TestInstanceScope(t *testing.T) {
+	// Instance scope used to be settable via "SET SESSION", which is weird to any MySQL user.
+	// It is now settable via SET GLOBAL, but to work correctly a sysvar can only ever
+	// be INSTANCE scoped or GLOBAL scoped, never *both* at the same time (at least for now).
+	// Otherwise the semantics are confusing to users for how precedence applies.
+
+	for _, sv := range GetSysVars() {
+		require.False(t, sv.HasGlobalScope() && sv.HasInstanceScope(), "sysvar %s has both instance and global scope", sv.Name)
+		if sv.HasInstanceScope() {
+			require.NotNil(t, sv.GetGlobal)
+			require.NotNil(t, sv.SetGlobal)
+		}
+	}
+
+	count := len(GetSysVars())
+	sv := SysVar{Scope: ScopeInstance, Name: "newinstancesysvar", Value: On, Type: TypeBool,
+		SetGlobal: func(s *SessionVars, val string) error {
+			return fmt.Errorf("set should fail")
+		},
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return "", fmt.Errorf("get should fail")
+		},
+	}
+
+	RegisterSysVar(&sv)
+	require.Len(t, GetSysVars(), count+1)
+
+	sysVar := GetSysVar("newinstancesysvar")
+	require.NotNil(t, sysVar)
+
+	vars := NewSessionVars()
+
+	// It is a boolean, try to set it to a bogus value
+	_, err := sysVar.Validate(vars, "ABCD", ScopeInstance)
+	require.Error(t, err)
+
+	// Boolean oN or 1 converts to canonical ON or OFF
+	normalizedVal, err := sysVar.Validate(vars, "oN", ScopeInstance)
+	require.Equal(t, "ON", normalizedVal)
+	require.NoError(t, err)
+	normalizedVal, err = sysVar.Validate(vars, "0", ScopeInstance)
+	require.Equal(t, "OFF", normalizedVal)
+	require.NoError(t, err)
+
+	err = sysVar.SetGlobalFromHook(vars, "OFF", true) // default is on
+	require.Equal(t, "set should fail", err.Error())
+
+	// Test unregistration restores previous count
+	UnregisterSysVar("newinstancesysvar")
+	require.Equal(t, len(GetSysVars()), count)
+}
+
+func TestIndexMergeSwitcher(t *testing.T) {
+	vars := NewSessionVars()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
+	val, err := GetSessionOrGlobalSystemVar(vars, TiDBEnableIndexMerge)
+	require.NoError(t, err)
+	require.Equal(t, DefTiDBEnableIndexMerge, true)
+	require.Equal(t, BoolToOnOff(DefTiDBEnableIndexMerge), val)
+}
+
+func TestNetBufferLength(t *testing.T) {
+	netBufferLength := GetSysVar(NetBufferLength)
+	vars := NewSessionVars()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
+
+	val, err := netBufferLength.Validate(vars, "1", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "1024", val) // converts it to min value
+	val, err = netBufferLength.Validate(vars, "10485760", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "1048576", val) // converts it to max value
+	val, err = netBufferLength.Validate(vars, "524288", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "524288", val) // unchanged
+}
+
+func TestTiDBBatchPendingTiFlashCount(t *testing.T) {
+	sv := GetSysVar(TiDBBatchPendingTiFlashCount)
+	vars := NewSessionVars()
+	val, err := sv.Validate(vars, "-10", ScopeSession)
+	require.NoError(t, err) // it has autoconvert out of range.
+	require.Equal(t, "0", val)
+
+	val, err = sv.Validate(vars, "9999", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "9999", val)
+
+	_, err = sv.Validate(vars, "1.5", ScopeSession)
+	require.Error(t, err)
+	require.EqualError(t, err, "[variable:1232]Incorrect argument type to variable 'tidb_batch_pending_tiflash_count'")
 }

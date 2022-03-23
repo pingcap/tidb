@@ -23,7 +23,8 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/testkit/trequire"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	utilMath "github.com/pingcap/tidb/util/math"
@@ -53,7 +54,7 @@ func TestAbs(t *testing.T) {
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, tt["Ret"][0], v)
+		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
 }
 
@@ -107,7 +108,7 @@ func TestCeil(t *testing.T) {
 				if test.isNil {
 					require.Equal(t, types.KindNull, result.Kind())
 				} else {
-					trequire.DatumEqual(t, types.NewDatum(test.expect), result)
+					testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 				}
 			}
 		}
@@ -223,7 +224,7 @@ func TestFloor(t *testing.T) {
 			if test.isNil {
 				require.Equal(t, types.KindNull, result.Kind())
 			} else {
-				trequire.DatumEqual(t, types.NewDatum(test.expect), result)
+				testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 			}
 		}
 	}
@@ -403,7 +404,7 @@ func TestPow(t *testing.T) {
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, tt["Ret"][0], v)
+		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
 
 	errTbl := []struct {
@@ -480,7 +481,7 @@ func TestRound(t *testing.T) {
 		}
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, tt["Ret"][0], v)
+		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
 }
 
@@ -524,34 +525,42 @@ func TestTruncate(t *testing.T) {
 		require.NotNil(t, f)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, tt["Ret"][0], v)
+		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
 }
 
 func TestCRC32(t *testing.T) {
 	ctx := createContext(t)
 	tbl := []struct {
-		Arg []interface{}
-		Ret interface{}
+		input  []interface{}
+		chs    string
+		result int64
+		isNull bool
 	}{
-		{[]interface{}{nil}, nil},
-		{[]interface{}{""}, 0},
-		{[]interface{}{-1}, 808273962},
-		{[]interface{}{"-1"}, 808273962},
-		{[]interface{}{"mysql"}, 2501908538},
-		{[]interface{}{"MySQL"}, 3259397556},
-		{[]interface{}{"hello"}, 907060870},
+		{[]interface{}{nil}, "utf8", 0, true},
+		{[]interface{}{""}, "utf8", 0, false},
+		{[]interface{}{-1}, "utf8", 808273962, false},
+		{[]interface{}{"-1"}, "utf8", 808273962, false},
+		{[]interface{}{"mysql"}, "utf8", 2501908538, false},
+		{[]interface{}{"MySQL"}, "utf8", 3259397556, false},
+		{[]interface{}{"hello"}, "utf8", 907060870, false},
+		{[]interface{}{"一二三"}, "utf8", 1785250883, false},
+		{[]interface{}{"一"}, "utf8", 2416838398, false},
+		{[]interface{}{"一二三"}, "gbk", 3461331449, false},
+		{[]interface{}{"一"}, "gbk", 2925846374, false},
 	}
-
-	Dtbl := tblToDtbl(tbl)
-
-	for _, tt := range Dtbl {
-		fc := funcs[ast.CRC32]
-		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
+	for _, c := range tbl {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
 		require.NoError(t, err)
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		f, err := newFunctionForTest(ctx, ast.CRC32, primitiveValsToConstants(ctx, c.input)...)
 		require.NoError(t, err)
-		trequire.DatumEqual(t, tt["Ret"][0], v)
+		d, err := f.Eval(chunk.Row{})
+		require.NoError(t, err)
+		if c.isNull {
+			require.True(t, d.IsNull())
+		} else {
+			require.Equal(t, c.result, d.GetInt64())
+		}
 	}
 }
 
@@ -650,7 +659,7 @@ func TestSign(t *testing.T) {
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(tt.ret), v)
+		testutil.DatumEqual(t, types.NewDatum(tt.ret), v)
 	}
 }
 
@@ -717,7 +726,7 @@ func TestSqrt(t *testing.T) {
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(tt.Ret), v)
+		testutil.DatumEqual(t, types.NewDatum(tt.Ret), v)
 	}
 }
 
@@ -728,7 +737,7 @@ func TestPi(t *testing.T) {
 
 	pi, err := evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
-	trequire.DatumEqual(t, types.NewDatum(math.Pi), pi)
+	testutil.DatumEqual(t, types.NewDatum(math.Pi), pi)
 }
 
 func TestRadians(t *testing.T) {
@@ -752,7 +761,7 @@ func TestRadians(t *testing.T) {
 		require.NotNil(t, f)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, tt["Ret"][0], v)
+		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
 
 	invalidArg := "notNum"

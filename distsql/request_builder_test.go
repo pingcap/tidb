@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -72,29 +73,34 @@ func TestTableHandlesToKVRanges(t *testing.T) {
 func TestTableRangesToKVRanges(t *testing.T) {
 	ranges := []*ranger.Range{
 		{
-			LowVal:  []types.Datum{types.NewIntDatum(1)},
-			HighVal: []types.Datum{types.NewIntDatum(2)},
+			LowVal:    []types.Datum{types.NewIntDatum(1)},
+			HighVal:   []types.Datum{types.NewIntDatum(2)},
+			Collators: collate.GetBinaryCollatorSlice(1),
 		},
 		{
 			LowVal:      []types.Datum{types.NewIntDatum(2)},
 			HighVal:     []types.Datum{types.NewIntDatum(4)},
 			LowExclude:  true,
 			HighExclude: true,
+			Collators:   collate.GetBinaryCollatorSlice(1),
 		},
 		{
 			LowVal:      []types.Datum{types.NewIntDatum(4)},
 			HighVal:     []types.Datum{types.NewIntDatum(19)},
 			HighExclude: true,
+			Collators:   collate.GetBinaryCollatorSlice(1),
 		},
 		{
 			LowVal:     []types.Datum{types.NewIntDatum(19)},
 			HighVal:    []types.Datum{types.NewIntDatum(32)},
 			LowExclude: true,
+			Collators:  collate.GetBinaryCollatorSlice(1),
 		},
 		{
 			LowVal:     []types.Datum{types.NewIntDatum(34)},
 			HighVal:    []types.Datum{types.NewIntDatum(34)},
 			LowExclude: true,
+			Collators:  collate.GetBinaryCollatorSlice(1),
 		},
 	}
 
@@ -129,29 +135,34 @@ func TestTableRangesToKVRanges(t *testing.T) {
 func TestIndexRangesToKVRanges(t *testing.T) {
 	ranges := []*ranger.Range{
 		{
-			LowVal:  []types.Datum{types.NewIntDatum(1)},
-			HighVal: []types.Datum{types.NewIntDatum(2)},
+			LowVal:    []types.Datum{types.NewIntDatum(1)},
+			HighVal:   []types.Datum{types.NewIntDatum(2)},
+			Collators: collate.GetBinaryCollatorSlice(1),
 		},
 		{
 			LowVal:      []types.Datum{types.NewIntDatum(2)},
 			HighVal:     []types.Datum{types.NewIntDatum(4)},
 			LowExclude:  true,
 			HighExclude: true,
+			Collators:   collate.GetBinaryCollatorSlice(1),
 		},
 		{
 			LowVal:      []types.Datum{types.NewIntDatum(4)},
 			HighVal:     []types.Datum{types.NewIntDatum(19)},
 			HighExclude: true,
+			Collators:   collate.GetBinaryCollatorSlice(1),
 		},
 		{
 			LowVal:     []types.Datum{types.NewIntDatum(19)},
 			HighVal:    []types.Datum{types.NewIntDatum(32)},
 			LowExclude: true,
+			Collators:  collate.GetBinaryCollatorSlice(1),
 		},
 		{
 			LowVal:     []types.Datum{types.NewIntDatum(34)},
 			HighVal:    []types.Datum{types.NewIntDatum(34)},
 			LowExclude: true,
+			Collators:  collate.GetBinaryCollatorSlice(1),
 		},
 	}
 
@@ -188,29 +199,34 @@ func TestIndexRangesToKVRanges(t *testing.T) {
 func TestRequestBuilder1(t *testing.T) {
 	ranges := []*ranger.Range{
 		{
-			LowVal:  []types.Datum{types.NewIntDatum(1)},
-			HighVal: []types.Datum{types.NewIntDatum(2)},
+			LowVal:    []types.Datum{types.NewIntDatum(1)},
+			HighVal:   []types.Datum{types.NewIntDatum(2)},
+			Collators: collate.GetBinaryCollatorSlice(1),
 		},
 		{
 			LowVal:      []types.Datum{types.NewIntDatum(2)},
 			HighVal:     []types.Datum{types.NewIntDatum(4)},
 			LowExclude:  true,
 			HighExclude: true,
+			Collators:   collate.GetBinaryCollatorSlice(1),
 		},
 		{
 			LowVal:      []types.Datum{types.NewIntDatum(4)},
 			HighVal:     []types.Datum{types.NewIntDatum(19)},
 			HighExclude: true,
+			Collators:   collate.GetBinaryCollatorSlice(1),
 		},
 		{
 			LowVal:     []types.Datum{types.NewIntDatum(19)},
 			HighVal:    []types.Datum{types.NewIntDatum(32)},
 			LowExclude: true,
+			Collators:  collate.GetBinaryCollatorSlice(1),
 		},
 		{
 			LowVal:     []types.Datum{types.NewIntDatum(34)},
 			HighVal:    []types.Datum{types.NewIntDatum(34)},
 			LowExclude: true,
+			Collators:  collate.GetBinaryCollatorSlice(1),
 		},
 	}
 
@@ -254,7 +270,6 @@ func TestRequestBuilder1(t *testing.T) {
 		IsolationLevel:   0,
 		Priority:         0,
 		NotFillCache:     false,
-		SyncLog:          false,
 		Streaming:        false,
 		ReplicaRead:      kv.ReplicaReadLeader,
 		ReadReplicaScope: kv.GlobalReplicaScope,
@@ -265,29 +280,34 @@ func TestRequestBuilder1(t *testing.T) {
 func TestRequestBuilder2(t *testing.T) {
 	ranges := []*ranger.Range{
 		{
-			LowVal:  []types.Datum{types.NewIntDatum(1)},
-			HighVal: []types.Datum{types.NewIntDatum(2)},
+			LowVal:    []types.Datum{types.NewIntDatum(1)},
+			HighVal:   []types.Datum{types.NewIntDatum(2)},
+			Collators: collate.GetBinaryCollatorSlice(1),
 		},
 		{
 			LowVal:      []types.Datum{types.NewIntDatum(2)},
 			HighVal:     []types.Datum{types.NewIntDatum(4)},
 			LowExclude:  true,
 			HighExclude: true,
+			Collators:   collate.GetBinaryCollatorSlice(1),
 		},
 		{
 			LowVal:      []types.Datum{types.NewIntDatum(4)},
 			HighVal:     []types.Datum{types.NewIntDatum(19)},
 			HighExclude: true,
+			Collators:   collate.GetBinaryCollatorSlice(1),
 		},
 		{
 			LowVal:     []types.Datum{types.NewIntDatum(19)},
 			HighVal:    []types.Datum{types.NewIntDatum(32)},
 			LowExclude: true,
+			Collators:  collate.GetBinaryCollatorSlice(1),
 		},
 		{
 			LowVal:     []types.Datum{types.NewIntDatum(34)},
 			HighVal:    []types.Datum{types.NewIntDatum(34)},
 			LowExclude: true,
+			Collators:  collate.GetBinaryCollatorSlice(1),
 		},
 	}
 
@@ -331,7 +351,6 @@ func TestRequestBuilder2(t *testing.T) {
 		IsolationLevel:   0,
 		Priority:         0,
 		NotFillCache:     false,
-		SyncLog:          false,
 		Streaming:        false,
 		ReplicaRead:      kv.ReplicaReadLeader,
 		ReadReplicaScope: kv.GlobalReplicaScope,
@@ -379,7 +398,6 @@ func TestRequestBuilder3(t *testing.T) {
 		IsolationLevel:   0,
 		Priority:         0,
 		NotFillCache:     false,
-		SyncLog:          false,
 		Streaming:        false,
 		ReplicaRead:      kv.ReplicaReadLeader,
 		ReadReplicaScope: kv.GlobalReplicaScope,
@@ -428,7 +446,6 @@ func TestRequestBuilder4(t *testing.T) {
 		Priority:         0,
 		Streaming:        true,
 		NotFillCache:     false,
-		SyncLog:          false,
 		ReplicaRead:      kv.ReplicaReadLeader,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
@@ -472,7 +489,6 @@ func TestRequestBuilder5(t *testing.T) {
 		IsolationLevel:   kv.RC,
 		Priority:         1,
 		NotFillCache:     true,
-		SyncLog:          false,
 		Streaming:        false,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
@@ -503,7 +519,6 @@ func TestRequestBuilder6(t *testing.T) {
 		IsolationLevel:   0,
 		Priority:         0,
 		NotFillCache:     true,
-		SyncLog:          false,
 		Streaming:        false,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
@@ -540,7 +555,6 @@ func TestRequestBuilder7(t *testing.T) {
 				IsolationLevel:   0,
 				Priority:         0,
 				NotFillCache:     false,
-				SyncLog:          false,
 				Streaming:        false,
 				ReplicaRead:      replicaRead.replicaReadType,
 				ReadReplicaScope: kv.GlobalReplicaScope,
@@ -573,8 +587,9 @@ func TestRequestBuilder8(t *testing.T) {
 func TestTableRangesToKVRangesWithFbs(t *testing.T) {
 	ranges := []*ranger.Range{
 		{
-			LowVal:  []types.Datum{types.NewIntDatum(1)},
-			HighVal: []types.Datum{types.NewIntDatum(4)},
+			LowVal:    []types.Datum{types.NewIntDatum(1)},
+			HighVal:   []types.Datum{types.NewIntDatum(4)},
+			Collators: collate.GetBinaryCollatorSlice(1),
 		},
 	}
 	fb := newTestFb()
@@ -594,8 +609,9 @@ func TestTableRangesToKVRangesWithFbs(t *testing.T) {
 func TestIndexRangesToKVRangesWithFbs(t *testing.T) {
 	ranges := []*ranger.Range{
 		{
-			LowVal:  []types.Datum{types.NewIntDatum(1)},
-			HighVal: []types.Datum{types.NewIntDatum(4)},
+			LowVal:    []types.Datum{types.NewIntDatum(1)},
+			HighVal:   []types.Datum{types.NewIntDatum(4)},
+			Collators: collate.GetBinaryCollatorSlice(1),
 		},
 	}
 	fb := newTestFb()

@@ -209,7 +209,9 @@ func appendJoinReorderTraceStep(tracer *joinReorderTrace, plan LogicalPlan, opt 
 	if len(tracer.initial) < 1 || len(tracer.final) < 1 {
 		return
 	}
-	action := fmt.Sprintf("join order becomes %v from original %v", tracer.final, tracer.initial)
+	action := func() string {
+		return fmt.Sprintf("join order becomes %v from original %v", tracer.final, tracer.initial)
+	}
 	reason := func() string {
 		buffer := bytes.NewBufferString("join cost during reorder: [")
 		var joins []string
@@ -225,11 +227,11 @@ func appendJoinReorderTraceStep(tracer *joinReorderTrace, plan LogicalPlan, opt 
 		}
 		buffer.WriteString("]")
 		return buffer.String()
-	}()
+	}
 	opt.appendStepToCurrent(plan.ID(), plan.TP(), reason, action)
 }
 
-func allJoinOrderToString(tt []*tracing.LogicalPlanTrace) string {
+func allJoinOrderToString(tt []*tracing.PlanTrace) string {
 	if len(tt) == 1 {
 		return joinOrderToString(tt[0])
 	}
@@ -245,7 +247,7 @@ func allJoinOrderToString(tt []*tracing.LogicalPlanTrace) string {
 }
 
 // joinOrderToString let Join(DataSource, DataSource) become '(t1*t2)'
-func joinOrderToString(t *tracing.LogicalPlanTrace) string {
+func joinOrderToString(t *tracing.PlanTrace) string {
 	if t.TP == plancodec.TypeJoin {
 		buffer := bytes.NewBufferString("(")
 		for i, child := range t.Children {
@@ -264,12 +266,12 @@ func joinOrderToString(t *tracing.LogicalPlanTrace) string {
 
 // extractJoinAndDataSource will only keep join and dataSource operator and remove other operators.
 // For example: Proj->Join->(Proj->DataSource, DataSource) will become Join->(DataSource, DataSource)
-func extractJoinAndDataSource(t *tracing.LogicalPlanTrace) []*tracing.LogicalPlanTrace {
+func extractJoinAndDataSource(t *tracing.PlanTrace) []*tracing.PlanTrace {
 	roots := findRoots(t)
 	if len(roots) < 1 {
 		return nil
 	}
-	var rr []*tracing.LogicalPlanTrace
+	rr := make([]*tracing.PlanTrace, 0, len(roots))
 	for _, root := range roots {
 		simplify(root)
 		rr = append(rr, root)
@@ -278,13 +280,13 @@ func extractJoinAndDataSource(t *tracing.LogicalPlanTrace) []*tracing.LogicalPla
 }
 
 // simplify only keeps Join and DataSource operators, and discard other operators.
-func simplify(node *tracing.LogicalPlanTrace) {
+func simplify(node *tracing.PlanTrace) {
 	if len(node.Children) < 1 {
 		return
 	}
 	for valid := false; !valid; {
 		valid = true
-		newChildren := make([]*tracing.LogicalPlanTrace, 0)
+		newChildren := make([]*tracing.PlanTrace, 0)
 		for _, child := range node.Children {
 			if child.TP != plancodec.TypeDataSource && child.TP != plancodec.TypeJoin {
 				newChildren = append(newChildren, child.Children...)
@@ -300,11 +302,11 @@ func simplify(node *tracing.LogicalPlanTrace) {
 	}
 }
 
-func findRoots(t *tracing.LogicalPlanTrace) []*tracing.LogicalPlanTrace {
+func findRoots(t *tracing.PlanTrace) []*tracing.PlanTrace {
 	if t.TP == plancodec.TypeJoin || t.TP == plancodec.TypeDataSource {
-		return []*tracing.LogicalPlanTrace{t}
+		return []*tracing.PlanTrace{t}
 	}
-	var r []*tracing.LogicalPlanTrace
+	var r []*tracing.PlanTrace
 	for _, child := range t.Children {
 		r = append(r, findRoots(child)...)
 	}
@@ -323,16 +325,16 @@ func (t *joinReorderTrace) traceJoinReorder(p LogicalPlan) {
 		return
 	}
 	if len(t.initial) > 0 {
-		t.final = allJoinOrderToString(extractJoinAndDataSource(p.buildLogicalPlanTrace(p)))
+		t.final = allJoinOrderToString(extractJoinAndDataSource(p.buildPlanTrace()))
 		return
 	}
-	t.initial = allJoinOrderToString(extractJoinAndDataSource(p.buildLogicalPlanTrace(p)))
+	t.initial = allJoinOrderToString(extractJoinAndDataSource(p.buildPlanTrace()))
 }
 
 func (t *joinReorderTrace) appendLogicalJoinCost(join LogicalPlan, cost float64) {
 	if t == nil || t.opt == nil || t.opt.tracer == nil {
 		return
 	}
-	joinMapKey := allJoinOrderToString(extractJoinAndDataSource(join.buildLogicalPlanTrace(join)))
+	joinMapKey := allJoinOrderToString(extractJoinAndDataSource(join.buildPlanTrace()))
 	t.cost[joinMapKey] = cost
 }

@@ -17,6 +17,7 @@ package restore
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -24,30 +25,33 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
+	"modernc.org/mathutil"
+
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/tikv/pd/server/api"
-	pdconfig "github.com/tikv/pd/server/config"
-
-	"go.uber.org/zap"
-	"modernc.org/mathutil"
 )
 
 const (
@@ -73,7 +77,7 @@ func (rc *Controller) isSourceInLocal() bool {
 }
 
 func (rc *Controller) getReplicaCount(ctx context.Context) (uint64, error) {
-	result := &pdconfig.ReplicationConfig{}
+	result := &pdtypes.ReplicationConfig{}
 	err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON(ctx, pdReplicate, &result)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -82,7 +86,7 @@ func (rc *Controller) getReplicaCount(ctx context.Context) (uint64, error) {
 }
 
 func (rc *Controller) getClusterAvail(ctx context.Context) (uint64, error) {
-	result := &api.StoresInfo{}
+	result := &pdtypes.StoresInfo{}
 	if err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON(ctx, pdStores, result); err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -162,7 +166,7 @@ func (rc *Controller) clusterResource(ctx context.Context, localSource int64) er
 }
 
 // ClusterIsAvailable check cluster is available to import data. this test can be skipped.
-func (rc *Controller) ClusterIsAvailable(ctx context.Context) error {
+func (rc *Controller) ClusterIsAvailable(ctx context.Context) {
 	passed := true
 	message := "Cluster is available"
 	defer func() {
@@ -172,13 +176,13 @@ func (rc *Controller) ClusterIsAvailable(ctx context.Context) error {
 		DBMetas: rc.dbMetas,
 	}
 	if err := rc.backend.CheckRequirements(ctx, checkCtx); err != nil {
+		err = common.NormalizeError(err)
 		passed = false
 		message = fmt.Sprintf("cluster available check failed: %s", err.Error())
 	}
-	return nil
 }
 
-func isTiFlash(store *api.MetaStore) bool {
+func isTiFlash(store *pdtypes.MetaStore) bool {
 	for _, label := range store.Labels {
 		if label.Key == "engine" && label.Value == "tiflash" {
 			return true
@@ -193,7 +197,7 @@ func (rc *Controller) checkEmptyRegion(ctx context.Context) error {
 	defer func() {
 		rc.checkTemplate.Collect(Critical, passed, message)
 	}()
-	storeInfo := &api.StoresInfo{}
+	storeInfo := &pdtypes.StoresInfo{}
 	err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON(ctx, pdStores, storeInfo)
 	if err != nil {
 		return errors.Trace(err)
@@ -202,19 +206,19 @@ func (rc *Controller) checkEmptyRegion(ctx context.Context) error {
 		return nil
 	}
 
-	var result api.RegionsInfo
+	var result pdtypes.RegionsInfo
 	if err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON(ctx, pdEmptyRegions, &result); err != nil {
 		return errors.Trace(err)
 	}
 	regions := make(map[uint64]int)
-	stores := make(map[uint64]*api.StoreInfo)
+	stores := make(map[uint64]*pdtypes.StoreInfo)
 	for _, region := range result.Regions {
 		for _, peer := range region.Peers {
 			regions[peer.StoreId]++
 		}
 	}
 	for _, store := range storeInfo.Stores {
-		stores[store.Store.StoreID] = store
+		stores[store.Store.GetId()] = store
 	}
 	tableCount := 0
 	for _, db := range rc.dbMetas {
@@ -270,12 +274,12 @@ func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
 		rc.checkTemplate.Collect(Critical, passed, message)
 	}()
 
-	result := &api.StoresInfo{}
+	result := &pdtypes.StoresInfo{}
 	err := rc.tls.WithHost(rc.cfg.TiDB.PdAddr).GetJSON(ctx, pdStores, result)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	stores := make([]*api.StoreInfo, 0, len(result.Stores))
+	stores := make([]*pdtypes.StoreInfo, 0, len(result.Stores))
 	for _, store := range result.Stores {
 		if metapb.StoreState(metapb.StoreState_value[store.Store.StateName]) != metapb.StoreState_Up {
 			continue
@@ -310,11 +314,11 @@ func (rc *Controller) checkRegionDistribution(ctx context.Context) error {
 		passed = false
 		message = fmt.Sprintf("Region distribution is unbalanced, the ratio of the regions count of the store(%v) "+
 			"with least regions(%v) to the store(%v) with most regions(%v) is %v, but we expect it must not be less than %v",
-			minStore.Store.StoreID, minStore.Status.RegionCount, maxStore.Store.StoreID, maxStore.Status.RegionCount, ratio, errorRegionCntMinMaxRatio)
+			minStore.Store.GetId(), minStore.Status.RegionCount, maxStore.Store.GetId(), maxStore.Status.RegionCount, ratio, errorRegionCntMinMaxRatio)
 	} else if ratio < warnRegionCntMinMaxRatio {
 		message = fmt.Sprintf("Region distribution is unbalanced, the ratio of the regions count of the store(%v) "+
 			"with least regions(%v) to the store(%v) with most regions(%v) is %v, but we expect it should not be less than %v",
-			minStore.Store.StoreID, minStore.Status.RegionCount, maxStore.Store.StoreID, maxStore.Status.RegionCount, ratio, warnRegionCntMinMaxRatio)
+			minStore.Store.GetId(), minStore.Status.RegionCount, maxStore.Store.GetId(), maxStore.Status.RegionCount, ratio, warnRegionCntMinMaxRatio)
 	}
 	return nil
 }
@@ -354,7 +358,7 @@ func (rc *Controller) StoragePermission(ctx context.Context) error {
 
 	u, err := storage.ParseBackend(rc.cfg.Mydumper.SourceDir, nil)
 	if err != nil {
-		return errors.Annotate(err, "parse backend failed")
+		return common.NormalizeError(err)
 	}
 	_, err = storage.New(ctx, u, &storage.ExternalStorageOptions{
 		CheckPermissions: []storage.Permission{
@@ -372,7 +376,7 @@ func (rc *Controller) StoragePermission(ctx context.Context) error {
 // HasLargeCSV checks whether input csvs is fit for Lightning import.
 // If strictFormat is false, and csv file is large. Lightning will have performance issue.
 // this test cannot be skipped.
-func (rc *Controller) HasLargeCSV(dbMetas []*mydump.MDDatabaseMeta) error {
+func (rc *Controller) HasLargeCSV(dbMetas []*mydump.MDDatabaseMeta) {
 	passed := true
 	message := "Source csv files size is proper"
 	defer func() {
@@ -392,7 +396,6 @@ func (rc *Controller) HasLargeCSV(dbMetas []*mydump.MDDatabaseMeta) error {
 	} else {
 		message = "Skip the csv size check, because config.StrictFormat is true"
 	}
-	return nil
 }
 
 func (rc *Controller) estimateSourceData(ctx context.Context) (int64, error) {
@@ -401,6 +404,7 @@ func (rc *Controller) estimateSourceData(ctx context.Context) (int64, error) {
 	bigTableCount := 0
 	tableCount := 0
 	unSortedTableCount := 0
+	errMgr := errormanager.New(nil, rc.cfg)
 	for _, db := range rc.dbMetas {
 		info, ok := rc.dbInfos[db.Name]
 		if !ok {
@@ -417,10 +421,17 @@ func (rc *Controller) estimateSourceData(ctx context.Context) (int64, error) {
 					tbl.IndexRatio = 1.0
 					tbl.IsRowOrdered = false
 				} else {
-					if err := rc.sampleDataFromTable(ctx, db.Name, tbl, tableInfo.Core); err != nil {
+					if err := rc.sampleDataFromTable(ctx, db.Name, tbl, tableInfo.Core, errMgr); err != nil {
 						return sourceSize, errors.Trace(err)
 					}
-					sourceSize += int64(float64(tbl.TotalSize) * tbl.IndexRatio)
+
+					if tbl.IndexRatio > 0 {
+						sourceSize += int64(float64(tbl.TotalSize) * tbl.IndexRatio)
+					} else {
+						// if sample data failed due to max-error, fallback to use source size
+						sourceSize += tbl.TotalSize
+					}
+
 					if tbl.TotalSize > int64(config.DefaultBatchSize)*2 {
 						bigTableCount += 1
 						if !tbl.IsRowOrdered {
@@ -464,51 +475,49 @@ func (rc *Controller) localResource(sourceSize int64) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	localAvailable := storageSize.Available
+	localAvailable := int64(storageSize.Available)
 
 	var message string
 	var passed bool
 	switch {
-	case localAvailable > uint64(sourceSize):
+	case localAvailable > sourceSize:
 		message = fmt.Sprintf("local disk resources are rich, estimate sorted data size %s, local available is %s",
 			units.BytesSize(float64(sourceSize)), units.BytesSize(float64(localAvailable)))
 		passed = true
+	case int64(rc.cfg.TikvImporter.DiskQuota) > localAvailable:
+		message = fmt.Sprintf("local disk space may not enough to finish import, estimate sorted data size is %s,"+
+			" but local available is %s, please set `tikv-importer.disk-quota` to a smaller value than %s"+
+			" or change `mydumper.sorted-kv-dir` to another disk with enough space to finish imports",
+			units.BytesSize(float64(sourceSize)),
+			units.BytesSize(float64(localAvailable)), units.BytesSize(float64(localAvailable)))
+		passed = false
+		log.L().Error(message)
 	default:
-		if int64(rc.cfg.TikvImporter.DiskQuota) > int64(localAvailable) {
-			message = fmt.Sprintf("local disk space may not enough to finish import"+
-				"estimate sorted data size is %s, but local available is %s,"+
-				"you need a smaller number for tikv-importer.disk-quota (%s) to finish imports",
-				units.BytesSize(float64(sourceSize)),
-				units.BytesSize(float64(localAvailable)), units.BytesSize(float64(rc.cfg.TikvImporter.DiskQuota)))
-			passed = false
-			log.L().Error(message)
-		} else {
-			message = fmt.Sprintf("local disk space may not enough to finish import, "+
-				"estimate sorted data size is %s, but local available is %s,"+
-				"we will use disk-quota (size: %s) to finish imports, which may slow down import",
-				units.BytesSize(float64(sourceSize)),
-				units.BytesSize(float64(localAvailable)), units.BytesSize(float64(rc.cfg.TikvImporter.DiskQuota)))
-			passed = true
-			log.L().Warn(message)
-		}
+		message = fmt.Sprintf("local disk space may not enough to finish import, "+
+			"estimate sorted data size is %s, but local available is %s,"+
+			"we will use disk-quota (size: %s) to finish imports, which may slow down import",
+			units.BytesSize(float64(sourceSize)),
+			units.BytesSize(float64(localAvailable)), units.BytesSize(float64(rc.cfg.TikvImporter.DiskQuota)))
+		passed = true
+		log.L().Warn(message)
 	}
 	rc.checkTemplate.Collect(Critical, passed, message)
 	return nil
 }
 
 // CheckpointIsValid checks whether we can start this import with this checkpoint.
-func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta) ([]string, bool, error) {
+func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.MDTableMeta) ([]string, bool) {
 	msgs := make([]string, 0)
 	uniqueName := common.UniqueTable(tableInfo.DB, tableInfo.Name)
 	tableCheckPoint, err := rc.checkpointsDB.Get(ctx, uniqueName)
 	if err != nil {
 		// there is no checkpoint
 		log.L().Debug("no checkpoint detected", zap.String("table", uniqueName))
-		return nil, true, nil
+		return nil, true
 	}
 	// if checkpoint enable and not missing, we skip the check table empty progress.
 	if tableCheckPoint.Status <= checkpoints.CheckpointStatusMissing {
-		return nil, false, nil
+		return nil, false
 	}
 
 	if tableCheckPoint.Status <= checkpoints.CheckpointStatusMaxInvalid {
@@ -530,7 +539,7 @@ func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.M
 			"You may also run `./tidb-lightning-ctl --checkpoint-error-destroy=all --config=...` to start from scratch,"+
 			"For details of this failure, read the log file from the PREVIOUS run",
 			uniqueName, failedStep.MetricName(), action.String()))
-		return msgs, false, nil
+		return msgs, false
 	}
 
 	dbInfo, ok := rc.dbInfos[tableInfo.DB]
@@ -543,7 +552,7 @@ func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.M
 					"You may also run `./tidb-lightning-ctl --checkpoint-error-destroy=all --config=...` to start from scratch,"+
 					"For details of this failure, read the log file from the PREVIOUS run",
 					uniqueName))
-				return msgs, false, nil
+				return msgs, false
 			}
 		}
 	}
@@ -564,7 +573,7 @@ func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.M
 	}
 	if len(columns) == 0 {
 		log.L().Debug("no valid checkpoint detected", zap.String("table", uniqueName))
-		return nil, false, nil
+		return nil, false
 	}
 	info := rc.dbInfos[tableInfo.DB].Tables[tableInfo.Name]
 	if info != nil {
@@ -578,7 +587,7 @@ func (rc *Controller) CheckpointIsValid(ctx context.Context, tableInfo *mydump.M
 				"consider remove this checkpoint, and start import again.", uniqueName))
 		}
 	}
-	return msgs, false, nil
+	return msgs, false
 }
 
 // hasDefault represents col has default value.
@@ -739,8 +748,8 @@ func (rc *Controller) SchemaIsValid(ctx context.Context, tableInfo *mydump.MDTab
 		if _, ok := defaultCols[col]; ok {
 			continue
 		}
-		msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` doesn't have the default value for %s"+
-			"please give a default value for %s or choose another column to ignore or add this column in data file",
+		msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` doesn't have the default value for %s. "+
+			"Please add default value for column '%s' or choose another column to ignore or add this column in data file",
 			tableInfo.DB, tableInfo.Name, col, col))
 	}
 	return msgs, nil
@@ -795,8 +804,6 @@ outer:
 
 			if tableCSVCount >= 2 && hasUniqueIdx {
 				tableMeta = tblMeta
-				csvCount = tableCSVCount
-				hasUniqueIdx = tableHasUniqueIdx
 				// if a perfect table source is found, we can stop check more tables
 				break outer
 			}
@@ -925,7 +932,13 @@ func checkFieldCompatibility(tbl *model.TableInfo, ignoreCols map[string]struct{
 	return true
 }
 
-func (rc *Controller) sampleDataFromTable(ctx context.Context, dbName string, tableMeta *mydump.MDTableMeta, tableInfo *model.TableInfo) error {
+func (rc *Controller) sampleDataFromTable(
+	ctx context.Context,
+	dbName string,
+	tableMeta *mydump.MDTableMeta,
+	tableInfo *model.TableInfo,
+	errMgr *errormanager.ErrorManager,
+) error {
 	if len(tableMeta.DataFiles) == 0 {
 		return nil
 	}
@@ -942,13 +955,18 @@ func (rc *Controller) sampleDataFromTable(ctx context.Context, dbName string, ta
 	}
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo)
-
+	if err != nil {
+		return errors.Trace(err)
+	}
 	kvEncoder, err := rc.backend.NewEncoder(tbl, &kv.SessionOptions{
 		SQLMode:        rc.cfg.TiDB.SQLMode,
 		Timestamp:      0,
 		SysVars:        rc.sysVars,
 		AutoRandomSeed: 0,
 	})
+	if err != nil {
+		return errors.Trace(err)
+	}
 	blockBufSize := int64(rc.cfg.Mydumper.ReadBlockSize)
 
 	var parser mydump.Parser
@@ -981,7 +999,7 @@ func (rc *Controller) sampleDataFromTable(ctx context.Context, dbName string, ta
 		return errors.Trace(err)
 	}
 
-	initializedColumns, reachEOF := false, false
+	initializedColumns := false
 	var columnPermutation []int
 	var kvSize uint64 = 0
 	var rowSize uint64 = 0
@@ -992,7 +1010,7 @@ func (rc *Controller) sampleDataFromTable(ctx context.Context, dbName string, ta
 	tableMeta.IsRowOrdered = true
 	tableMeta.IndexRatio = 1.0
 outloop:
-	for !reachEOF {
+	for {
 		offset, _ := parser.Pos()
 		err = parser.ReadRow()
 		columnNames := parser.Columns()
@@ -1009,22 +1027,27 @@ outloop:
 				initializedColumns = true
 			}
 		case io.EOF:
-			reachEOF = true
 			break outloop
 		default:
 			err = errors.Annotatef(err, "in file offset %d", offset)
 			return errors.Trace(err)
 		}
 		lastRow := parser.LastRow()
-		rowSize += uint64(lastRow.Length)
 		rowCount += 1
 
 		var dataChecksum, indexChecksum verification.KVChecksum
 		kvs, encodeErr := kvEncoder.Encode(logTask.Logger, lastRow.Row, lastRow.RowID, columnPermutation, sampleFile.Path, offset)
-		parser.RecycleRow(lastRow)
 		if encodeErr != nil {
-			err = errors.Annotatef(encodeErr, "in file at offset %d", offset)
-			return errors.Trace(err)
+			encodeErr = errMgr.RecordTypeError(ctx, log.L(), tableInfo.Name.O, sampleFile.Path, offset,
+				"" /* use a empty string here because we don't actually record */, encodeErr)
+			if encodeErr != nil {
+				return errors.Annotatef(encodeErr, "in file at offset %d", offset)
+			}
+			if rowCount < maxSampleRowCount {
+				continue
+			} else {
+				break
+			}
 		}
 		if tableMeta.IsRowOrdered {
 			kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
@@ -1040,11 +1063,13 @@ outloop:
 			indexKVs = indexKVs.Clear()
 		}
 		kvSize += kvs.Size()
+		rowSize += uint64(lastRow.Length)
+		parser.RecycleRow(lastRow)
 
 		failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
 			kvSize += uint64(val.(int))
 		})
-		if rowSize > maxSampleDataSize && rowCount > maxSampleRowCount {
+		if rowSize > maxSampleDataSize || rowCount > maxSampleRowCount {
 			break
 		}
 	}
@@ -1054,4 +1079,99 @@ outloop:
 	}
 	log.L().Info("Sample source data", zap.String("table", tableMeta.Name), zap.Float64("IndexRatio", tableMeta.IndexRatio), zap.Bool("IsSourceOrder", tableMeta.IsRowOrdered))
 	return nil
+}
+
+func (rc *Controller) checkTableEmpty(ctx context.Context) error {
+	if rc.cfg.TikvImporter.Backend == config.BackendTiDB || rc.cfg.TikvImporter.IncrementalImport {
+		return nil
+	}
+	db, _ := rc.tidbGlue.GetDB()
+
+	tableCount := 0
+	for _, db := range rc.dbMetas {
+		tableCount += len(db.Tables)
+	}
+
+	var lock sync.Mutex
+	tableNames := make([]string, 0)
+	concurrency := utils.MinInt(tableCount, rc.cfg.App.RegionConcurrency)
+	ch := make(chan string, concurrency)
+	eg, gCtx := errgroup.WithContext(ctx)
+
+	for i := 0; i < concurrency; i++ {
+		eg.Go(func() error {
+			for tblName := range ch {
+				// skip tables that have checkpoint
+				if rc.cfg.Checkpoint.Enable {
+					_, err := rc.checkpointsDB.Get(gCtx, tblName)
+					switch {
+					case err == nil:
+						continue
+					case errors.IsNotFound(err):
+					default:
+						return errors.Trace(err)
+					}
+				}
+
+				hasData, err1 := tableContainsData(gCtx, db, tblName)
+				if err1 != nil {
+					return err1
+				}
+				if hasData {
+					lock.Lock()
+					tableNames = append(tableNames, tblName)
+					lock.Unlock()
+				}
+			}
+			return nil
+		})
+	}
+loop:
+	for _, db := range rc.dbMetas {
+		for _, tbl := range db.Tables {
+			select {
+			case ch <- common.UniqueTable(tbl.DB, tbl.Name):
+			case <-gCtx.Done():
+				break loop
+			}
+
+		}
+	}
+	close(ch)
+	if err := eg.Wait(); err != nil {
+		if common.IsContextCanceledError(err) {
+			return nil
+		}
+		return errors.Annotate(err, "check table contains data failed")
+	}
+
+	if len(tableNames) > 0 {
+		// sort the failed names
+		sort.Strings(tableNames)
+		msg := fmt.Sprintf("table(s) [%s] are not empty", strings.Join(tableNames, ", "))
+		rc.checkTemplate.Collect(Critical, false, msg)
+	}
+	return nil
+}
+
+func tableContainsData(ctx context.Context, db utils.DBExecutor, tableName string) (bool, error) {
+	failpoint.Inject("CheckTableEmptyFailed", func() {
+		failpoint.Return(false, errors.New("mock error"))
+	})
+	query := "select 1 from " + tableName + " limit 1"
+	exec := common.SQLWithRetry{
+		DB:     db,
+		Logger: log.L(),
+	}
+	var dump int
+	err := exec.QueryRow(ctx, "check table empty", query, &dump)
+
+	switch {
+	case errors.ErrorEqual(err, sql.ErrNoRows):
+		return false, nil
+	case err != nil:
+		return false, errors.Trace(err)
+	default:
+		return true, nil
+	}
 }

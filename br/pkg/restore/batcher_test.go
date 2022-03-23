@@ -6,9 +6,9 @@ import (
 	"bytes"
 	"context"
 	"sync"
+	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/log"
@@ -16,10 +16,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
-
-type testBatcherSuite struct{}
 
 type drySender struct {
 	mu *sync.Mutex
@@ -151,8 +150,6 @@ func (sender *drySender) BatchCount() int {
 	return sender.nBatch
 }
 
-var _ = Suite(&testBatcherSuite{})
-
 func fakeTableWithRange(id int64, rngs []rtree.Range) restore.TableWithRange {
 	tbl := &metautil.Table{
 		DB: &model.DBInfo{},
@@ -197,7 +194,7 @@ func join(nested [][]rtree.Range) (plain []rtree.Range) {
 }
 
 // TestBasic tests basic workflow of batcher.
-func (*testBatcherSuite) TestBasic(c *C) {
+func TestBasic(t *testing.T) {
 	ctx := context.Background()
 	errCh := make(chan error, 8)
 	sender := newDrySender()
@@ -222,15 +219,15 @@ func (*testBatcherSuite) TestBasic(c *C) {
 	batcher.Close()
 	rngs := sender.Ranges()
 
-	c.Assert(join(tableRanges), DeepEquals, rngs)
+	require.Equal(t, rngs, join(tableRanges))
 	select {
 	case err := <-errCh:
-		c.Fatal(errors.Trace(err))
+		t.Fatal(errors.Trace(err))
 	default:
 	}
 }
 
-func (*testBatcherSuite) TestAutoSend(c *C) {
+func TestAutoSend(t *testing.T) {
 	ctx := context.Background()
 	errCh := make(chan error, 8)
 	sender := newDrySender()
@@ -241,27 +238,27 @@ func (*testBatcherSuite) TestAutoSend(c *C) {
 	simpleTable := fakeTableWithRange(1, []rtree.Range{fakeRange("caa", "cab"), fakeRange("cac", "cad")})
 
 	batcher.Add(simpleTable)
-	c.Assert(batcher.Len(), Greater, 0)
+	require.Greater(t, batcher.Len(), 0)
 
 	// enable auto commit.
 	batcher.EnableAutoCommit(ctx, 100*time.Millisecond)
 	time.Sleep(200 * time.Millisecond)
 
-	c.Assert(sender.RangeLen(), Greater, 0)
-	c.Assert(batcher.Len(), Equals, 0)
+	require.Greater(t, sender.RangeLen(), 0)
+	require.Equal(t, 0, batcher.Len())
 
 	batcher.Close()
 
 	rngs := sender.Ranges()
-	c.Assert(rngs, DeepEquals, simpleTable.Range)
+	require.Equal(t, simpleTable.Range, rngs)
 	select {
 	case err := <-errCh:
-		c.Fatal(errors.Trace(err))
+		t.Fatal(errors.Trace(err))
 	default:
 	}
 }
 
-func (*testBatcherSuite) TestSplitRangeOnSameTable(c *C) {
+func TestSplitRangeOnSameTable(t *testing.T) {
 	ctx := context.Background()
 	errCh := make(chan error, 8)
 	sender := newDrySender()
@@ -278,18 +275,18 @@ func (*testBatcherSuite) TestSplitRangeOnSameTable(c *C) {
 
 	batcher.Add(simpleTable)
 	batcher.Close()
-	c.Assert(sender.BatchCount(), Equals, 4)
+	require.Equal(t, 4, sender.BatchCount())
 
 	rngs := sender.Ranges()
-	c.Assert(rngs, DeepEquals, simpleTable.Range)
+	require.Equal(t, simpleTable.Range, rngs)
 	select {
 	case err := <-errCh:
-		c.Fatal(errors.Trace(err))
+		t.Fatal(errors.Trace(err))
 	default:
 	}
 }
 
-func (*testBatcherSuite) TestRewriteRules(c *C) {
+func TestRewriteRules(t *testing.T) {
 	tableRanges := [][]rtree.Range{
 		{fakeRange("aaa", "aab")},
 		{fakeRange("baa", "bab"), fakeRange("bac", "bad")},
@@ -322,28 +319,28 @@ func (*testBatcherSuite) TestRewriteRules(c *C) {
 
 	batcher.Add(tables[0])
 	waitForSend()
-	c.Assert(sender.RangeLen(), Equals, 0)
+	require.Equal(t, 0, sender.RangeLen())
 
 	batcher.Add(tables[1])
 	waitForSend()
-	c.Assert(sender.HasRewriteRuleOfKey("a"), IsTrue)
-	c.Assert(sender.HasRewriteRuleOfKey("b"), IsTrue)
-	c.Assert(manager.Has(tables[1]), IsTrue)
-	c.Assert(sender.RangeLen(), Equals, 2)
+	require.True(t, sender.HasRewriteRuleOfKey("a"))
+	require.True(t, sender.HasRewriteRuleOfKey("b"))
+	require.True(t, manager.Has(tables[1]))
+	require.Equal(t, 2, sender.RangeLen())
 
 	batcher.Add(tables[2])
 	batcher.Close()
-	c.Assert(sender.HasRewriteRuleOfKey("c"), IsTrue)
-	c.Assert(sender.Ranges(), DeepEquals, join(tableRanges))
+	require.True(t, sender.HasRewriteRuleOfKey("c"))
+	require.Equal(t, join(tableRanges), sender.Ranges())
 
 	select {
 	case err := <-errCh:
-		c.Fatal(errors.Trace(err))
+		t.Fatal(errors.Trace(err))
 	default:
 	}
 }
 
-func (*testBatcherSuite) TestBatcherLen(c *C) {
+func TestBatcherLen(t *testing.T) {
 	ctx := context.Background()
 	errCh := make(chan error, 8)
 	sender := newDrySender()
@@ -367,21 +364,21 @@ func (*testBatcherSuite) TestBatcherLen(c *C) {
 
 	batcher.Add(simpleTable)
 	waitForSend()
-	c.Assert(batcher.Len(), Equals, 8)
-	c.Assert(manager.Has(simpleTable), IsFalse)
-	c.Assert(manager.Has(simpleTable2), IsFalse)
+	require.Equal(t, 8, batcher.Len())
+	require.False(t, manager.Has(simpleTable))
+	require.False(t, manager.Has(simpleTable2))
 
 	batcher.Add(simpleTable2)
 	waitForSend()
-	c.Assert(batcher.Len(), Equals, 1)
-	c.Assert(manager.Has(simpleTable2), IsTrue)
-	c.Assert(manager.Has(simpleTable), IsFalse)
+	require.Equal(t, 1, batcher.Len())
+	require.True(t, manager.Has(simpleTable2))
+	require.False(t, manager.Has(simpleTable))
 	batcher.Close()
-	c.Assert(batcher.Len(), Equals, 0)
+	require.Equal(t, 0, batcher.Len())
 
 	select {
 	case err := <-errCh:
-		c.Fatal(errors.Trace(err))
+		t.Fatal(errors.Trace(err))
 	default:
 	}
 }

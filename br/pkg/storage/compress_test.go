@@ -8,35 +8,36 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
-func (r *testStorageSuite) TestWithCompressReadWriteFile(c *C) {
-	dir := c.MkDir()
+func TestWithCompressReadWriteFile(t *testing.T) {
+	dir := t.TempDir()
 	backend, err := ParseBackend("local://"+filepath.ToSlash(dir), nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	ctx := context.Background()
 	storage, err := Create(ctx, backend, true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	storage = WithCompression(storage, Gzip)
 	name := "with compress test"
 	content := "hello,world!"
 	fileName := strings.ReplaceAll(name, " ", "-") + ".txt.gz"
 	err = storage.WriteFile(ctx, fileName, []byte(content))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// make sure compressed file is written correctly
 	file, err := os.Open(filepath.Join(dir, fileName))
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	uncompressedFile, err := newCompressReader(Gzip, file)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	newContent, err := io.ReadAll(uncompressedFile)
-	c.Assert(err, IsNil)
-	c.Assert(string(newContent), Equals, content)
+	require.NoError(t, err)
+	require.Equal(t, content, string(newContent))
 
 	// test withCompression ReadFile
 	newContent, err = storage.ReadFile(ctx, fileName)
-	c.Assert(err, IsNil)
-	c.Assert(string(newContent), Equals, content)
+	require.NoError(t, err)
+	require.Equal(t, content, string(newContent))
 }

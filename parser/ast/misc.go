@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -50,6 +51,7 @@ var (
 	_ StmtNode = &KillStmt{}
 	_ StmtNode = &CreateBindingStmt{}
 	_ StmtNode = &DropBindingStmt{}
+	_ StmtNode = &SetBindingStmt{}
 	_ StmtNode = &ShutdownStmt{}
 	_ StmtNode = &RestartStmt{}
 	_ StmtNode = &RenameUserStmt{}
@@ -1680,6 +1682,67 @@ func (n *DropBindingStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// BindingStatusType defines the status type for the binding
+type BindingStatusType int8
+
+// Binding status types.
+const (
+	BindingStatusTypeEnabled BindingStatusType = iota
+	BindingStatusTypeDisabled
+)
+
+// SetBindingStmt sets sql binding status.
+type SetBindingStmt struct {
+	stmtNode
+
+	BindingStatusType BindingStatusType
+	OriginNode        StmtNode
+	HintedNode        StmtNode
+}
+
+func (n *SetBindingStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("SET ")
+	ctx.WriteKeyWord("BINDING ")
+	switch n.BindingStatusType {
+	case BindingStatusTypeEnabled:
+		ctx.WriteKeyWord("ENABLED ")
+	case BindingStatusTypeDisabled:
+		ctx.WriteKeyWord("DISABLED ")
+	}
+	ctx.WriteKeyWord("FOR ")
+	if err := n.OriginNode.Restore(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	if n.HintedNode != nil {
+		ctx.WriteKeyWord(" USING ")
+		if err := n.HintedNode.Restore(ctx); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func (n *SetBindingStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*SetBindingStmt)
+	origNode, ok := n.OriginNode.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.OriginNode = origNode.(StmtNode)
+	if n.HintedNode != nil {
+		hintedNode, ok := n.HintedNode.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.HintedNode = hintedNode.(StmtNode)
+	}
+	return v.Leave(n)
+}
+
 // Extended statistics types.
 const (
 	StatsTypeCardinality uint8 = iota
@@ -1856,6 +1919,7 @@ const (
 	AdminShowTelemetry
 	AdminResetTelemetryID
 	AdminReloadStatistics
+	AdminFlushPlanCache
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -1863,6 +1927,15 @@ type HandleRange struct {
 	Begin int64
 	End   int64
 }
+
+type StatementScope int
+
+const (
+	StatementScopeNone StatementScope = iota
+	StatementScopeSession
+	StatementScopeInstance
+	StatementScopeGlobal
+)
 
 // ShowSlowType defines the type for SlowSlow statement.
 type ShowSlowType int
@@ -1929,10 +2002,11 @@ type AdminStmt struct {
 	JobIDs    []int64
 	JobNumber int64
 
-	HandleRanges []HandleRange
-	ShowSlow     *ShowSlow
-	Plugins      []string
-	Where        ExprNode
+	HandleRanges   []HandleRange
+	ShowSlow       *ShowSlow
+	Plugins        []string
+	Where          ExprNode
+	StatementScope StatementScope
 }
 
 // Restore implements Node interface.
@@ -2070,6 +2144,14 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("RESET TELEMETRY_ID")
 	case AdminReloadStatistics:
 		ctx.WriteKeyWord("RELOAD STATS_EXTENDED")
+	case AdminFlushPlanCache:
+		if n.StatementScope == StatementScopeSession {
+			ctx.WriteKeyWord("FLUSH SESSION PLAN_CACHE")
+		} else if n.StatementScope == StatementScopeInstance {
+			ctx.WriteKeyWord("FLUSH INSTANCE PLAN_CACHE")
+		} else if n.StatementScope == StatementScopeGlobal {
+			ctx.WriteKeyWord("FLUSH GLOBAL PLAN_CACHE")
+		}
 	default:
 		return errors.New("Unsupported AdminStmt type")
 	}
@@ -3348,7 +3430,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlainf("%d", n.HintData.(uint64))
 	case "nth_plan":
 		ctx.WritePlainf("%d", n.HintData.(int64))
-	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "merge_join", "inl_join", "broadcast_join", "broadcast_join_local", "inl_hash_join", "inl_merge_join":
+	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "merge_join", "inl_join", "broadcast_join", "inl_hash_join", "inl_merge_join":
 		for i, table := range n.Tables {
 			if i != 0 {
 				ctx.WritePlain(", ")
@@ -3410,6 +3492,33 @@ func (n *TableOptimizerHint) Accept(v Visitor) (Node, bool) {
 	}
 	n = newNode.(*TableOptimizerHint)
 	return v.Leave(n)
+}
+
+// TextString represent a string, it can be a binary literal.
+type TextString struct {
+	Value           string
+	IsBinaryLiteral bool
+}
+
+// TransformTextStrings converts a slice of TextString to strings.
+// This is only used by enum/set strings.
+func TransformTextStrings(ts []*TextString, _ string) []string {
+	// The UTF-8 encoding rather than other encoding is used
+	// because parser is not possible to determine the "real"
+	// charset that a binary literal string should be converted to.
+	enc := charset.EncodingUTF8Impl
+	ret := make([]string, 0, len(ts))
+	for _, t := range ts {
+		if !t.IsBinaryLiteral {
+			ret = append(ret, t.Value)
+		} else {
+			// Validate the binary literal string.
+			// See https://github.com/pingcap/tidb/issues/30740.
+			r, _ := enc.Transform(nil, charset.HackSlice(t.Value), charset.OpDecodeNoErr)
+			ret = append(ret, charset.HackString(r))
+		}
+	}
+	return ret
 }
 
 type BinaryLiteral interface {

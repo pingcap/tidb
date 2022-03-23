@@ -848,8 +848,6 @@ func (b *builtinJSONValidStringSig) evalInt(row chunk.Row) (res int64, isNull bo
 	data := hack.Slice(val)
 	if goJSON.Valid(data) {
 		res = 1
-	} else {
-		res = 0
 	}
 	return res, false, nil
 }

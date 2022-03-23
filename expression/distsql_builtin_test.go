@@ -792,6 +792,83 @@ func TestEval(t *testing.T) {
 	}
 }
 
+func TestPBToExprWithNewCollation(t *testing.T) {
+	collate.SetNewCollationEnabledForTest(false)
+	sc := new(stmtctx.StatementContext)
+	fieldTps := make([]*types.FieldType, 1)
+
+	cases := []struct {
+		name    string
+		expName string
+		id      int32
+		pbID    int32
+	}{
+		{"utf8_general_ci", "utf8_general_ci", 33, 33},
+		{"UTF8MB4_BIN", "utf8mb4_bin", 46, 46},
+		{"utf8mb4_bin", "utf8mb4_bin", 46, 46},
+		{"utf8mb4_general_ci", "utf8mb4_general_ci", 45, 45},
+		{"", "utf8mb4_bin", 46, 46},
+		{"some_error_collation", "utf8mb4_bin", 46, 46},
+		{"utf8_unicode_ci", "utf8_unicode_ci", 192, 192},
+		{"utf8mb4_unicode_ci", "utf8mb4_unicode_ci", 224, 224},
+		{"utf8mb4_zh_pinyin_tidb_as_cs", "utf8mb4_zh_pinyin_tidb_as_cs", 2048, 2048},
+	}
+
+	for _, cs := range cases {
+		ft := types.NewFieldType(mysql.TypeString)
+		ft.Collate = cs.name
+		expr := new(tipb.Expr)
+		expr.Tp = tipb.ExprType_String
+		expr.FieldType = toPBFieldType(ft)
+		require.Equal(t, cs.pbID, expr.FieldType.Collate)
+
+		e, err := PBToExpr(expr, fieldTps, sc)
+		require.NoError(t, err)
+		cons, ok := e.(*Constant)
+		require.True(t, ok)
+		require.Equal(t, cs.expName, cons.Value.Collation())
+	}
+
+	collate.SetNewCollationEnabledForTest(true)
+
+	for _, cs := range cases {
+		ft := types.NewFieldType(mysql.TypeString)
+		ft.Collate = cs.name
+		expr := new(tipb.Expr)
+		expr.Tp = tipb.ExprType_String
+		expr.FieldType = toPBFieldType(ft)
+		require.Equal(t, -cs.pbID, expr.FieldType.Collate)
+
+		e, err := PBToExpr(expr, fieldTps, sc)
+		require.NoError(t, err)
+		cons, ok := e.(*Constant)
+		require.True(t, ok)
+		require.Equal(t, cs.expName, cons.Value.Collation())
+	}
+}
+
+// Test convert various scalar functions.
+func TestPBToScalarFuncExpr(t *testing.T) {
+	sc := new(stmtctx.StatementContext)
+	fieldTps := make([]*types.FieldType, 1)
+	exprs := []*tipb.Expr{
+		{
+			Tp:        tipb.ExprType_ScalarFunc,
+			Sig:       tipb.ScalarFuncSig_RegexpSig,
+			FieldType: ToPBFieldType(newStringFieldType()),
+		},
+		{
+			Tp:        tipb.ExprType_ScalarFunc,
+			Sig:       tipb.ScalarFuncSig_RegexpUTF8Sig,
+			FieldType: ToPBFieldType(newStringFieldType()),
+		},
+	}
+	for _, expr := range exprs {
+		_, err := PBToExpr(expr, fieldTps, sc)
+		require.NoError(t, err)
+	}
+}
+
 func datumExpr(t *testing.T, d types.Datum) *tipb.Expr {
 	expr := new(tipb.Expr)
 	switch d.Kind() {
@@ -908,7 +985,7 @@ func newIntFieldType() *types.FieldType {
 func newDurFieldType() *types.FieldType {
 	return &types.FieldType{
 		Tp:      mysql.TypeDuration,
-		Decimal: int(types.DefaultFsp),
+		Decimal: types.DefaultFsp,
 	}
 }
 
