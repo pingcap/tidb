@@ -358,6 +358,18 @@ func (c *Context) GetStmtStats() *stmtstats.StatementStats {
 	return nil
 }
 
+func (c *Context) GetAdvisoryLock(lockName string, timeout int64) error {
+	return nil
+}
+
+func (c *Context) ReleaseAdvisoryLock(lockName string) bool {
+	return true
+}
+
+func (c *Context) ReleaseAllAdvisoryLocks() int {
+	return 0
+}
+
 // Close implements the sessionctx.Context interface.
 func (c *Context) Close() {
 }

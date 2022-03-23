@@ -148,6 +148,10 @@ type Context interface {
 	GetStmtStats() *stmtstats.StatementStats
 	// ShowProcess returns ProcessInfo running in current Context
 	ShowProcess() *util.ProcessInfo
+
+	GetAdvisoryLock(string, int64) error
+	ReleaseAdvisoryLock(string) bool
+	ReleaseAllAdvisoryLocks() int
 }
 
 type basicCtxType int

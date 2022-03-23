@@ -396,6 +396,10 @@ const (
 		UNIQUE KEY table_version (table_id, version),
 		KEY table_create_time (table_id, create_time)
 	);`
+
+	CreateAdvisoryLocks = `CREATE TABLE mysql.advisory_locks (
+		lock_name VARCHAR(255) NOT NULL PRIMARY KEY
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -585,6 +589,8 @@ const (
 	version85 = 85
 	// version86 changes global variable `tidb_enable_top_sql` value from false to true.
 	version86 = 86
+	// version87 adds the tables mysql.advisory_locks
+	version87 = 87
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
@@ -679,6 +685,7 @@ var (
 		upgradeToVer84,
 		upgradeToVer85,
 		upgradeToVer86,
+		upgradeToVer87,
 	}
 )
 
@@ -1763,6 +1770,14 @@ func upgradeToVer86(s Session, ver int64) {
 	mustExecute(s, "set @@global.tidb_enable_top_sql = 1")
 }
 
+func upgradeToVer87(s Session, ver int64) {
+	if ver >= version87 {
+		return
+	}
+	// Create Advisory Locks
+	doReentrantDDL(s, CreateAdvisoryLocks)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -1853,6 +1868,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsHistory)
 	// Create stats_meta_history table.
 	mustExecute(s, CreateStatsMetaHistory)
+	// Create advisory_locks table.
+	mustExecute(s, CreateAdvisoryLocks)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

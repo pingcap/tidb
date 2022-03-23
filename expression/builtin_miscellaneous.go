@@ -65,6 +65,7 @@ var (
 	_ builtinFunc = &builtinSleepSig{}
 	_ builtinFunc = &builtinLockSig{}
 	_ builtinFunc = &builtinReleaseLockSig{}
+	_ builtinFunc = &builtinReleaseAllLocksSig{}
 	_ builtinFunc = &builtinDecimalAnyValueSig{}
 	_ builtinFunc = &builtinDurationAnyValueSig{}
 	_ builtinFunc = &builtinIntAnyValueSig{}
@@ -186,9 +187,32 @@ func (b *builtinLockSig) Clone() builtinFunc {
 
 // evalInt evals a builtinLockSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_get-lock
-// The lock function will do nothing.
-// Warning: get_lock() function is parsed but ignored.
-func (b *builtinLockSig) evalInt(_ chunk.Row) (int64, bool, error) {
+func (b *builtinLockSig) evalInt(row chunk.Row) (int64, bool, error) {
+	lockName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if err != nil {
+		return 0, isNull, err
+	}
+	timeout, isNullTimeout, err := b.args[1].EvalInt(b.ctx, row)
+	if err != nil {
+		return 0, isNull, err
+	}
+	sessVars := b.ctx.GetSessionVars()
+	// TODO: timeout can be -1 as well?
+	if isNull || isNullTimeout || lockName == "" || timeout < 0 {
+		// for insert ignore stmt, the StrictSQLMode and ignoreErr should both be considered.
+		if !sessVars.StmtCtx.BadNullAsWarning {
+			return 0, false, errIncorrectArgs.GenWithStackByArgs("get_lock")
+		}
+		err := errIncorrectArgs.GenWithStackByArgs("get_lock")
+		sessVars.StmtCtx.AppendWarning(err)
+		return 0, false, nil
+	}
+	err = b.ctx.GetAdvisoryLock(lockName, timeout)
+	if err != nil {
+		// Returns 0 if the lock could not be acquired.
+		// TODO: doesn't return the error message unless itis a DEADLOCK?
+		return 0, false, nil
+	}
 	return 1, false, nil
 }
 
@@ -221,10 +245,16 @@ func (b *builtinReleaseLockSig) Clone() builtinFunc {
 
 // evalInt evals a builtinReleaseLockSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_release-lock
-// The release lock function will do nothing.
-// Warning: release_lock() function is parsed but ignored.
-func (b *builtinReleaseLockSig) evalInt(_ chunk.Row) (int64, bool, error) {
-	return 1, false, nil
+func (b *builtinReleaseLockSig) evalInt(row chunk.Row) (int64, bool, error) {
+	lockName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if err != nil {
+		return 0, isNull, err
+	}
+	released := int64(0)
+	if b.ctx.ReleaseAdvisoryLock(lockName) {
+		released = 1
+	}
+	return released, false, nil
 }
 
 type anyValueFunctionClass struct {
@@ -1062,7 +1092,33 @@ type releaseAllLocksFunctionClass struct {
 }
 
 func (c *releaseAllLocksFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "RELEASE_ALL_LOCKS")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinReleaseAllLocksSig{bf}
+	bf.tp.Flen = 1
+	return sig, nil
+}
+
+type builtinReleaseAllLocksSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinReleaseAllLocksSig) Clone() builtinFunc {
+	newSig := &builtinReleaseAllLocksSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals a builtinReleaseAllLocksSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_release-all-locks
+func (b *builtinReleaseAllLocksSig) evalInt(_ chunk.Row) (int64, bool, error) {
+	count := b.ctx.ReleaseAllAdvisoryLocks()
+	return int64(count), false, nil
 }
 
 type uuidFunctionClass struct {

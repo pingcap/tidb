@@ -245,6 +245,9 @@ type session struct {
 	// all the local data in each session, and finally report them to the remote
 	// regularly.
 	stmtStats *stmtstats.StatementStats
+
+	// Contains a list of sessions used to collect advisory locks.
+	advisoryLocks map[string]*session
 }
 
 var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
@@ -1634,6 +1637,66 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	return stmts[0], nil
 }
 
+func (s *session) GetAdvisoryLock(lockName string, timeout int64) error {
+
+	if _, ok := s.advisoryLocks[lockName]; ok {
+		// TODO: what's the correct behavior for already locked by me?
+		fmt.Printf("advisory lock already exists in session: %s\n\n", lockName)
+		return nil
+	}
+
+	// Each lock needs to be held in a unique session because
+	// we need to be able to ROLLBACK in any arbitrary order
+	// in order to release the locks.
+	sess, err := createSession(s.GetStore())
+	if err != nil {
+		return err
+	}
+
+	// Set the pessimistic lock wait timeout to timeout,
+	// and start a new pessimistic transaction.
+	sess.ExecuteInternal(context.Background(), "SET innodb_lock_wait_timeout = %?", timeout)
+	sess.ExecuteInternal(context.Background(), "BEGIN PESSIMISTIC")
+
+	// Acquire pessimistic lock on the lockName with an insert
+	// We will never COMMIT the transaction, but the err indicates
+	// if the lock was successfully acquired.
+	_, err = sess.ExecuteInternal(context.Background(), "INSERT INTO mysql.advisory_locks (lock_name) VALUES (%?)", lockName)
+	if err != nil {
+		// We couldn't acquire the LOCK so we close the session cleanly
+		// and return the error to the caller.
+		sess.Close()
+		return err
+	}
+	s.advisoryLocks[lockName] = sess
+	return nil
+}
+
+func (s *session) ReleaseAdvisoryLock(lockName string) (released bool) {
+	if sess, ok := s.advisoryLocks[lockName]; ok {
+		sess.ExecuteInternal(context.Background(), "ROLLBACK")
+		sess.Close()
+		delete(s.advisoryLocks, lockName)
+		return true
+	}
+	return false
+}
+
+func (s *session) hasAdvisoryLocks() bool {
+	return len(s.advisoryLocks) != 0
+}
+
+func (s *session) ReleaseAllAdvisoryLocks() int {
+	var count int
+	for lockName, sess := range s.advisoryLocks {
+		sess.ExecuteInternal(context.Background(), "ROLLBACK")
+		sess.Close()
+		delete(s.advisoryLocks, lockName)
+		count++
+	}
+	return count
+}
+
 // ExecRestrictedStmt implements RestrictedSQLExecutor interface.
 func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode, opts ...sqlexec.OptionFuncAlias) (
 	[]chunk.Row, []*ast.ResultField, error) {
@@ -2551,6 +2614,9 @@ func (s *session) Close() {
 			logutil.BgLogger().Error("release table lock failed", zap.Uint64("conn", s.sessionVars.ConnectionID))
 		}
 	}
+	if s.hasAdvisoryLocks() {
+		s.ReleaseAllAdvisoryLocks()
+	}
 	if s.statsCollector != nil {
 		s.statsCollector.Delete()
 	}
@@ -2962,6 +3028,8 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
+	s.advisoryLocks = make(map[string]*session)
+
 	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
