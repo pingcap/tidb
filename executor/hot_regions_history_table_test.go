@@ -22,6 +22,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/stretchr/testify/suite"
 )
@@ -164,25 +166,32 @@ func (s *hotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory() {
 		s.Require().NoError(err)
 		return t.UnixNano() / int64(time.Millisecond)
 	}
+
+	tk := testkit.NewTestKit(s.T(), s.store)
+	tablesPrivTid := external.GetTableByName(s.T(), tk, "mysql", "TABLES_PRIV").Meta().ID
+	tablesPrivTidStr := strconv.FormatInt(tablesPrivTid, 10)
+	statsMetaTid := external.GetTableByName(s.T(), tk, "mysql", "STATS_META").Meta().ID
+	statsMetaTidStr := strconv.FormatInt(statsMetaTid, 10)
+
 	fullHotRegions := [][]string{
 		// mysql table_id = 11, table_name = TABLES_PRIV
-		{"2019-10-10 10:10:11", "MYSQL", "TABLES_PRIV", "11", "<nil>", "<nil>", "1", "1", "11111", "0", "1", "READ", "99", "99", "99", "99"},
-		{"2019-10-10 10:10:12", "MYSQL", "TABLES_PRIV", "11", "<nil>", "<nil>", "2", "2", "22222", "0", "0", "WRITE", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:11", "MYSQL", "TABLES_PRIV", tablesPrivTidStr, "<nil>", "<nil>", "1", "1", "11111", "0", "1", "READ", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:12", "MYSQL", "TABLES_PRIV", tablesPrivTidStr, "<nil>", "<nil>", "2", "2", "22222", "0", "0", "WRITE", "99", "99", "99", "99"},
 		// mysql table_id = 21, table_name = STATS_META
-		{"2019-10-10 10:10:13", "MYSQL", "STATS_META", "21", "<nil>", "<nil>", "3", "3", "33333", "0", "1", "READ", "99", "99", "99", "99"},
-		{"2019-10-10 10:10:14", "MYSQL", "STATS_META", "21", "<nil>", "<nil>", "4", "4", "44444", "0", "0", "WRITE", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:13", "MYSQL", "STATS_META", statsMetaTidStr, "<nil>", "<nil>", "3", "3", "33333", "0", "1", "READ", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:14", "MYSQL", "STATS_META", statsMetaTidStr, "<nil>", "<nil>", "4", "4", "44444", "0", "0", "WRITE", "99", "99", "99", "99"},
 		// table_id = 1313, deleted schema
 		{"2019-10-10 10:10:15", "UNKNOWN", "UNKNOWN", "1313", "UNKNOWN", "<nil>", "5", "5", "55555", "0", "1", "READ", "99", "99", "99", "99"},
 		{"2019-10-10 10:10:16", "UNKNOWN", "UNKNOWN", "1313", "UNKNOWN", "<nil>", "6", "6", "66666", "0", "0", "WRITE", "99", "99", "99", "99"},
 		// mysql table_id = 11, index_id = 1, table_name = TABLES_PRIV, index_name = PRIMARY
-		{"2019-10-10 10:10:17", "MYSQL", "TABLES_PRIV", "11", "PRIMARY", "1", "1", "1", "11111", "0", "1", "READ", "99", "99", "99", "99"},
-		{"2019-10-10 10:10:18", "MYSQL", "TABLES_PRIV", "11", "PRIMARY", "1", "2", "2", "22222", "0", "0", "WRITE", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:17", "MYSQL", "TABLES_PRIV", tablesPrivTidStr, "PRIMARY", "1", "1", "1", "11111", "0", "1", "READ", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:18", "MYSQL", "TABLES_PRIV", tablesPrivTidStr, "PRIMARY", "1", "2", "2", "22222", "0", "0", "WRITE", "99", "99", "99", "99"},
 		// mysql table_id = 21 ,index_id = 1, table_name = STATS_META, index_name = IDX_VER
-		{"2019-10-10 10:10:19", "MYSQL", "STATS_META", "21", "IDX_VER", "1", "3", "3", "33333", "0", "1", "READ", "99", "99", "99", "99"},
-		{"2019-10-10 10:10:20", "MYSQL", "STATS_META", "21", "IDX_VER", "1", "4", "4", "44444", "0", "0", "WRITE", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:19", "MYSQL", "STATS_META", statsMetaTidStr, "IDX_VER", "1", "3", "3", "33333", "0", "1", "READ", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:20", "MYSQL", "STATS_META", statsMetaTidStr, "IDX_VER", "1", "4", "4", "44444", "0", "0", "WRITE", "99", "99", "99", "99"},
 		// mysql table_id = 21 ,index_id = 2, table_name = STATS_META, index_name = TBL
-		{"2019-10-10 10:10:21", "MYSQL", "STATS_META", "21", "TBL", "2", "5", "5", "55555", "0", "1", "READ", "99", "99", "99", "99"},
-		{"2019-10-10 10:10:22", "MYSQL", "STATS_META", "21", "TBL", "2", "6", "6", "66666", "0", "0", "WRITE", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:21", "MYSQL", "STATS_META", statsMetaTidStr, "TBL", "2", "5", "5", "55555", "0", "1", "READ", "99", "99", "99", "99"},
+		{"2019-10-10 10:10:22", "MYSQL", "STATS_META", statsMetaTidStr, "TBL", "2", "6", "6", "66666", "0", "0", "WRITE", "99", "99", "99", "99"},
 		// table_id = 1313, index_id = 1, deleted schema
 		{"2019-10-10 10:10:23", "UNKNOWN", "UNKNOWN", "1313", "UNKNOWN", "1", "7", "7", "77777", "0", "1", "READ", "99", "99", "99", "99"},
 		{"2019-10-10 10:10:24", "UNKNOWN", "UNKNOWN", "1313", "UNKNOWN", "1", "8", "8", "88888", "0", "0", "WRITE", "99", "99", "99", "99"},
@@ -196,14 +205,14 @@ func (s *hotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory() {
 					// mysql table_id = 11, table_name = TABLES_PRIV
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:11"), RegionID: 1, StoreID: 1, PeerID: 11111, IsLearner: false,
 						IsLeader: true, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
-						StartKey: helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: 11}).StartKey,
-						EndKey:   helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: 11}).EndKey,
+						StartKey: helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: tablesPrivTid}).StartKey,
+						EndKey:   helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: tablesPrivTid}).EndKey,
 					},
 					// mysql table_id = 21, table_name = STATS_META
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:13"), RegionID: 3, StoreID: 3, PeerID: 33333, IsLearner: false,
 						IsLeader: true, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
-						StartKey: helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: 21}).StartKey,
-						EndKey:   helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: 21}).EndKey,
+						StartKey: helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}).StartKey,
+						EndKey:   helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}).EndKey,
 					},
 				},
 			},
@@ -212,14 +221,14 @@ func (s *hotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory() {
 					// mysql table_id = 11, table_name = TABLES_PRIV
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:12"), RegionID: 2, StoreID: 2, PeerID: 22222, IsLearner: false,
 						IsLeader: false, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
-						StartKey: helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: 11}).StartKey,
-						EndKey:   helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: 11}).EndKey,
+						StartKey: helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: tablesPrivTid}).StartKey,
+						EndKey:   helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: tablesPrivTid}).EndKey,
 					},
 					// mysql table_id = 21, table_name = STATS_META
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:14"), RegionID: 4, StoreID: 4, PeerID: 44444, IsLearner: false,
 						IsLeader: false, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
-						StartKey: helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: 21}).StartKey,
-						EndKey:   helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: 21}).EndKey,
+						StartKey: helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}).StartKey,
+						EndKey:   helper.NewTableWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}).EndKey,
 					},
 				},
 			},
@@ -236,8 +245,8 @@ func (s *hotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory() {
 					// mysql table_id = 11, index_id = 1, table_name = TABLES_PRIV, index_name = PRIMARY
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:17"), RegionID: 1, StoreID: 1, PeerID: 11111, IsLearner: false,
 						IsLeader: true, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
-						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: 11}, &model.IndexInfo{ID: 1}).StartKey,
-						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: 11}, &model.IndexInfo{ID: 1}).EndKey,
+						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: tablesPrivTid}, &model.IndexInfo{ID: 1}).StartKey,
+						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: tablesPrivTid}, &model.IndexInfo{ID: 1}).EndKey,
 					},
 				},
 			},
@@ -252,8 +261,8 @@ func (s *hotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory() {
 					// mysql table_id = 11, index_id = 1, table_name = TABLES_PRIV, index_name = PRIMARY
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:18"), RegionID: 2, StoreID: 2, PeerID: 22222, IsLearner: false,
 						IsLeader: false, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
-						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: 11}, &model.IndexInfo{ID: 1}).StartKey,
-						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: 11}, &model.IndexInfo{ID: 1}).EndKey,
+						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: tablesPrivTid}, &model.IndexInfo{ID: 1}).StartKey,
+						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: tablesPrivTid}, &model.IndexInfo{ID: 1}).EndKey,
 					},
 				},
 			},
@@ -264,14 +273,14 @@ func (s *hotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory() {
 					// mysql table_id = 21 ,index_id = 1, table_name = STATS_META, index_name = IDX_VER
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:19"), RegionID: 3, StoreID: 3, PeerID: 33333, IsLearner: false,
 						IsLeader: true, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
-						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: 21}, &model.IndexInfo{ID: 1}).StartKey,
-						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: 21}, &model.IndexInfo{ID: 1}).EndKey,
+						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 1}).StartKey,
+						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 1}).EndKey,
 					},
 					// mysql table_id = 21 ,index_id = 2, table_name = STATS_META, index_name = TBL
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:21"), RegionID: 5, StoreID: 5, PeerID: 55555, IsLearner: false,
 						IsLeader: true, HotRegionType: "READ", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
-						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: 21}, &model.IndexInfo{ID: 2}).StartKey,
-						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: 21}, &model.IndexInfo{ID: 2}).EndKey,
+						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 2}).StartKey,
+						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 2}).EndKey,
 					},
 					//      table_id = 1313, index_id = 1, deleted schema
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:23"), RegionID: 7, StoreID: 7, PeerID: 77777, IsLeader: true,
@@ -286,14 +295,14 @@ func (s *hotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory() {
 					// mysql table_id = 21 ,index_id = 1, table_name = STATS_META, index_name = IDX_VER
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:20"), RegionID: 4, StoreID: 4, PeerID: 44444, IsLearner: false,
 						IsLeader: false, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
-						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: 21}, &model.IndexInfo{ID: 1}).StartKey,
-						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: 21}, &model.IndexInfo{ID: 1}).EndKey,
+						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 1}).StartKey,
+						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 1}).EndKey,
 					},
 					// mysql table_id = 21 ,index_id = 2, table_name = STATS_META, index_name = TBL
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:22"), RegionID: 6, StoreID: 6, PeerID: 66666, IsLearner: false,
 						IsLeader: false, HotRegionType: "WRITE", HotDegree: 99, FlowBytes: 99, KeyRate: 99, QueryRate: 99,
-						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: 21}, &model.IndexInfo{ID: 2}).StartKey,
-						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: 21}, &model.IndexInfo{ID: 2}).EndKey,
+						StartKey: helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 2}).StartKey,
+						EndKey:   helper.NewIndexWithKeyRange(mockDB, &model.TableInfo{ID: statsMetaTid}, &model.IndexInfo{ID: 2}).EndKey,
 					},
 					//      table_id = 1313, index_id = 1, deleted schema
 					{UpdateTime: unixTimeMs("2019-10-10 10:10:24"), RegionID: 8, StoreID: 8, PeerID: 88888, IsLearner: false,
@@ -339,7 +348,7 @@ func (s *hotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory() {
 			conditions: []string{
 				"update_time>='2019-10-10 10:10:10'",
 				"update_time<='2019-10-11 10:10:10'",
-				"table_id=11",
+				"table_id=" + tablesPrivTidStr,
 			},
 			expected: [][]string{
 				fullHotRegions[0], fullHotRegions[1], fullHotRegions[6], fullHotRegions[7],
@@ -359,7 +368,7 @@ func (s *hotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory() {
 			conditions: []string{
 				"update_time>='2019-10-10 10:10:10'",
 				"update_time<='2019-10-11 10:10:10'",
-				"table_id=21",
+				"table_id=" + statsMetaTidStr,
 				"index_id=1",
 			},
 			expected: [][]string{
@@ -370,7 +379,7 @@ func (s *hotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory() {
 			conditions: []string{
 				"update_time>='2019-10-10 10:10:10'",
 				"update_time<='2019-10-11 10:10:10'",
-				"table_id=21",
+				"table_id=" + statsMetaTidStr,
 				"index_id=1",
 				"table_name='TABLES_PRIV'",
 			}, // table_id != table_name -> nil
@@ -380,7 +389,7 @@ func (s *hotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory() {
 			conditions: []string{
 				"update_time>='2019-10-10 10:10:10'",
 				"update_time<='2019-10-11 10:10:10'",
-				"table_id=21",
+				"table_id=" + statsMetaTidStr,
 				"index_id=1",
 				"table_name='STATS_META'",
 			}, // table_id = table_name
@@ -392,7 +401,7 @@ func (s *hotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory() {
 			conditions: []string{
 				"update_time>='2019-10-10 10:10:10'",
 				"update_time<='2019-10-11 10:10:10'",
-				"table_id=21",
+				"table_id=" + statsMetaTidStr,
 				"index_id=1",
 				"index_name='UNKNOWN'",
 			}, // index_id != index_name -> nil
@@ -402,7 +411,7 @@ func (s *hotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory() {
 			conditions: []string{
 				"update_time>='2019-10-10 10:10:10'",
 				"update_time<='2019-10-11 10:10:10'",
-				"table_id=21",
+				"table_id=" + statsMetaTidStr,
 				"index_id=1",
 				"index_name='IDX_VER'",
 			}, // index_id = index_name
@@ -416,7 +425,7 @@ func (s *hotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory() {
 				"update_time<='2019-10-11 10:10:10'",
 				"index_id=1",
 				"index_name='IDX_VER'",
-				"table_id>=21", // unpushed down predicates 21>=21
+				"table_id>=" + statsMetaTidStr, // unpushed down predicates 21>=21
 			},
 			expected: [][]string{
 				fullHotRegions[8], fullHotRegions[9],
@@ -428,7 +437,7 @@ func (s *hotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory() {
 				"update_time<='2019-10-11 10:10:10'",
 				"index_id=1",
 				"index_name='IDX_VER'",
-				"table_id>21", // unpushed down predicates
+				"table_id>" + statsMetaTidStr, // unpushed down predicates
 			}, // 21!>21 -> nil
 			expected: [][]string{},
 		},
@@ -438,7 +447,7 @@ func (s *hotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory() {
 				"update_time<='2019-10-11 10:10:10'",
 				"index_id=1",
 				"index_name='IDX_VER'",
-				"table_id>=21", // unpushed down predicates
+				"table_id>=" + statsMetaTidStr, // unpushed down predicates
 				"db_name='MYSQL'",
 			},
 			expected: [][]string{
@@ -451,7 +460,7 @@ func (s *hotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory() {
 				"update_time<='2019-10-11 10:10:10'",
 				"index_id=1",
 				"index_name='IDX_VER'",
-				"table_id>=21", // unpushed down predicates
+				"table_id>=" + statsMetaTidStr, // unpushed down predicates
 				"db_name='MYSQL'",
 				"peer_id>=33334",
 			},
@@ -465,7 +474,7 @@ func (s *hotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory() {
 				"update_time<='2019-10-11 10:10:10'",
 				"index_id=1",
 				"index_name='IDX_VER'",
-				"table_id>=21", // unpushed down predicates
+				"table_id>=" + statsMetaTidStr, // unpushed down predicates
 				"db_name='UNKNOWN'",
 			},
 			expected: [][]string{},
@@ -479,7 +488,7 @@ func (s *hotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory() {
 			hotRegionsResponses[k+store.hosts[i]] = v
 		}
 	}
-	tk := testkit.NewTestKit(s.T(), s.store)
+
 	for _, cas := range cases {
 		sql := "select * from information_schema.tidb_hot_regions_history"
 		if len(cas.conditions) > 0 {
