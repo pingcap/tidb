@@ -48,7 +48,7 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
 		return errors.Trace(err)
 	}
 	ctx.GetSessionVars().StmtCtx.MultiSchemaInfo = nil
-	err = d.doDDLJob(ctx, job)
+	err = d.DoDDLJob(ctx, job)
 	return d.callHookOnChanged(err)
 }
 

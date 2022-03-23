@@ -888,7 +888,7 @@ func TestTransactionWithWriteOnlyColumn(t *testing.T) {
 	dom.DDL().SetHook(hook)
 	done := make(chan error, 1)
 	// test transaction on add column.
-	go backgroundExecT(store, "alter table t1 add column c int not null", done)
+	go backgroundExec(store, "alter table t1 add column c int not null", done)
 	err := <-done
 	require.NoError(t, err)
 	require.NoError(t, checkErr)
@@ -896,7 +896,7 @@ func TestTransactionWithWriteOnlyColumn(t *testing.T) {
 	tk.MustExec("delete from t1")
 
 	// test transaction on drop column.
-	go backgroundExecT(store, "alter table t1 drop column c", done)
+	go backgroundExec(store, "alter table t1 drop column c", done)
 	err = <-done
 	require.NoError(t, err)
 	require.NoError(t, checkErr)
