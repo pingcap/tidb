@@ -1302,23 +1302,17 @@ func TestPlanCacheWithStaleReadByBinaryProto(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int primary key, v int)")
 	tk.MustExec("insert into t1 values(1, 10)")
+	time.Sleep(time.Second)
 	se := tk.Session()
-	tk.MustExec("set @a=now(6)")
-	time.Sleep(time.Millisecond * 5)
+	now := time.Now()
+	time.Sleep(time.Second * 2)
 	tk.MustExec("update t1 set v=100 where id=1")
-
-	stmtID1, _, _, err := se.PrepareStmt("select * from t1 as of timestamp @a where id=1")
+	stmtID1, _, _, err := se.PrepareStmt(fmt.Sprintf("select * from t1 as of timestamp '%v' where id=1", now.Format("2006-1-2 15:04:05")))
 	require.NoError(t, err)
 
-	rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
-
-	rs, err = se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
-
-	rs, err = se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
+	for i := 0; i < 3; i++ {
+		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
+		require.NoError(t, err)
+		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
+	}
 }
