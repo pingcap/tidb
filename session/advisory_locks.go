@@ -12,10 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Copyright 2013 The ql Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSES/QL-LICENSE file.
-
 package session
 
 import "context"
@@ -74,5 +70,6 @@ func (a *advisoryLock) GetLock(lockName string, timeout int64) error {
 		a.Close()
 		return err
 	}
+	a.referenceCount++
 	return nil
 }
