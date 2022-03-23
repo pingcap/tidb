@@ -1151,6 +1151,7 @@ func TestVisitInfo(t *testing.T) {
 				{mysql.IndexPriv, "test", "", "", nil, false, "", false},
 				{mysql.CreateViewPriv, "test", "", "", nil, false, "", false},
 				{mysql.ShowViewPriv, "test", "", "", nil, false, "", false},
+				{mysql.TriggerPriv, "test", "", "", nil, false, "", false},
 			},
 		},
 		{
@@ -1225,6 +1226,7 @@ func TestVisitInfo(t *testing.T) {
 				{mysql.IndexPriv, "test", "", "", nil, false, "", false},
 				{mysql.CreateViewPriv, "test", "", "", nil, false, "", false},
 				{mysql.ShowViewPriv, "test", "", "", nil, false, "", false},
+				{mysql.TriggerPriv, "test", "", "", nil, false, "", false},
 			},
 		},
 		{

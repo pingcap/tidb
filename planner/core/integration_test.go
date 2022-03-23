@@ -2771,10 +2771,6 @@ func TestScalarFunctionPushDown(t *testing.T) {
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where right(c,1);").
 		CheckAt([]int{0, 3, 6}, rows)
 
-	rows[1][2] = "left(test.t.c, 1)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where left(c,1);").
-		CheckAt([]int{0, 3, 6}, rows)
-
 	rows[1][2] = "mod(test.t.id, test.t.id)"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where mod(id, id);").
 		CheckAt([]int{0, 3, 6}, rows)
@@ -4720,7 +4716,7 @@ func TestIncrementalAnalyzeStatsVer2(t *testing.T) {
 	require.Len(t, warns, 3)
 	require.EqualError(t, warns[0].Err, "The version 2 would collect all statistics not only the selected indexes")
 	require.EqualError(t, warns[1].Err, "The version 2 stats would ignore the INCREMENTAL keyword and do full sampling")
-	require.EqualError(t, warns[2].Err, "Analyze use auto adjusted sample rate 1.000000 for table test.t.")
+	require.EqualError(t, warns[2].Err, "Analyze use auto adjusted sample rate 1.000000 for table test.t")
 	rows = tk.MustQuery(fmt.Sprintf("select distinct_count from mysql.stats_histograms where table_id = %d and is_index = 1", tblID)).Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "6", rows[0][0])
@@ -5065,7 +5061,7 @@ func TestIssue29834(t *testing.T) {
 	tk.MustQuery("SELECT/*+ INL_JOIN(t1, t2), nth_plan(1) */ t2.* FROM IDT_MC21814 t1 LEFT JOIN IDT_MC21814 t2 ON t1.col1 = t2.col1 WHERE t2.col2 BETWEEN 2593 AND 1971 AND t1.col1 IN (2155, 1901, 1967);").Check(testkit.Rows())
 	tk.MustQuery("SELECT/*+ INL_JOIN(t1, t2), nth_plan(2) */ t2.* FROM IDT_MC21814 t1 LEFT JOIN IDT_MC21814 t2 ON t1.col1 = t2.col1 WHERE t2.col2 BETWEEN 2593 AND 1971 AND t1.col1 IN (2155, 1901, 1967);").Check(testkit.Rows())
 	// Only can generate one index join plan. Because the index join inner child can not be tableDual.
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The parameter of nth_plan() is out of range."))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The parameter of nth_plan() is out of range"))
 }
 
 func TestIssue29221(t *testing.T) {
@@ -6204,4 +6200,131 @@ func TestIssue32632(t *testing.T) {
 	}
 	tk.MustExec("drop table if exists partsupp")
 	tk.MustExec("drop table if exists supplier")
+}
+
+func TestTiFlashPartitionTableScan(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@tidb_enforce_mpp = on")
+	tk.MustExec("set @@tidb_allow_batch_cop = 2")
+	tk.MustExec("drop table if exists rp_t;")
+	tk.MustExec("drop table if exists hp_t;")
+	tk.MustExec("create table rp_t(a int) partition by RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16), PARTITION p3 VALUES LESS THAN (21));")
+	tk.MustExec("create table hp_t(a int) partition by hash(a) partitions 4;")
+	tbl1, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "rp_t", L: "rp_t"})
+	require.NoError(t, err)
+	tbl2, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "hp_t", L: "hp_t"})
+	require.NoError(t, err)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+	tbl2.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	integrationSuiteData := core.GetIntegrationSuiteData()
+	integrationSuiteData.GetTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+	tk.MustExec("drop table rp_t;")
+	tk.MustExec("drop table hp_t;")
+}
+
+func TestIssue33175(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (id bigint(45) unsigned not null, c varchar(20), primary key(id));")
+	tk.MustExec("insert into t values (9734095886065816707, 'a'), (10353107668348738101, 'b'), (0, 'c');")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (33, 'd');")
+	tk.MustQuery("select max(id) from t;").Check(testkit.Rows("10353107668348738101"))
+	tk.MustExec("rollback")
+
+	tk.MustExec("alter table t cache")
+	for {
+		tk.MustQuery("select max(id) from t;").Check(testkit.Rows("10353107668348738101"))
+		if tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache {
+			break
+		}
+	}
+
+	// // With subquery, like the original issue case.
+	for {
+		tk.MustQuery("select * from t where id > (select  max(id) from t where t.id > 0);").Check(testkit.Rows())
+		if tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache {
+			break
+		}
+	}
+
+	// Test order by desc / asc.
+	tk.MustQuery("select id from t order by id desc;").Check(testkit.Rows(
+		"10353107668348738101",
+		"9734095886065816707",
+		"0"))
+
+	tk.MustQuery("select id from t order by id asc;").Check(testkit.Rows(
+		"0",
+		"9734095886065816707",
+		"10353107668348738101"))
+
+	tk.MustExec("alter table t nocache")
+	tk.MustExec("drop table t")
+
+	// Cover more code that use union scan
+	// TableReader/IndexReader/IndexLookup
+	for idx, q := range []string{
+		"create temporary table t (id bigint unsigned, c int default null, index(id))",
+		"create temporary table t (id bigint unsigned primary key)",
+	} {
+		tk.MustExec(q)
+		tk.MustExec("insert into t(id) values (1), (3), (9734095886065816707), (9734095886065816708)")
+		tk.MustQuery("select min(id) from t").Check(testkit.Rows("1"))
+		tk.MustQuery("select max(id) from t").Check(testkit.Rows("9734095886065816708"))
+		tk.MustQuery("select id from t order by id asc").Check(testkit.Rows(
+			"1", "3", "9734095886065816707", "9734095886065816708"))
+		tk.MustQuery("select id from t order by id desc").Check(testkit.Rows(
+			"9734095886065816708", "9734095886065816707", "3", "1"))
+		if idx == 0 {
+			tk.MustQuery("select * from t order by id asc").Check(testkit.Rows(
+				"1 <nil>",
+				"3 <nil>",
+				"9734095886065816707 <nil>",
+				"9734095886065816708 <nil>"))
+			tk.MustQuery("select * from t order by id desc").Check(testkit.Rows(
+				"9734095886065816708 <nil>",
+				"9734095886065816707 <nil>",
+				"3 <nil>",
+				"1 <nil>"))
+		}
+		tk.MustExec("drop table t")
+	}
+
+	// More and more test
+	tk.MustExec("create global temporary table `tmp1` (id bigint unsigned primary key) on commit delete rows;")
+	tk.MustExec("begin")
+	tk.MustExec("insert into tmp1 values (0),(1),(2),(65536),(9734095886065816707),(9734095886065816708);")
+	tk.MustQuery("select * from tmp1 where id <= 65534 or (id > 65535 and id < 9734095886065816700) or id >= 9734095886065816707 order by id desc;").Check(testkit.Rows(
+		"9734095886065816708", "9734095886065816707", "65536", "2", "1", "0"))
+
+	tk.MustQuery("select * from tmp1 where id <= 65534 or (id > 65535 and id < 9734095886065816700) or id >= 9734095886065816707 order by id asc;").Check(testkit.Rows(
+		"0", "1", "2", "65536", "9734095886065816707", "9734095886065816708"))
+
+	tk.MustExec("create global temporary table `tmp2` (id bigint primary key) on commit delete rows;")
+	tk.MustExec("begin")
+	tk.MustExec("insert into tmp2 values(-2),(-1),(0),(1),(2);")
+	tk.MustQuery("select * from tmp2 where id <= -1 or id > 0 order by id desc;").Check(testkit.Rows("2", "1", "-1", "-2"))
+	tk.MustQuery("select * from tmp2 where id <= -1 or id > 0 order by id asc;").Check(testkit.Rows("-2", "-1", "1", "2"))
 }

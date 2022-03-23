@@ -164,7 +164,7 @@ func (e *InsertValues) initInsertColumns() error {
 		}
 		if col.Name.L == model.ExtraHandleName.L {
 			if !e.ctx.GetSessionVars().AllowWriteRowID {
-				return errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
+				return errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported")
 			}
 			e.hasExtraHandle = true
 		}
@@ -978,7 +978,7 @@ func (e *InsertValues) adjustImplicitRowID(ctx context.Context, d types.Datum, h
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
 		if !e.ctx.GetSessionVars().AllowWriteRowID {
-			return types.Datum{}, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
+			return types.Datum{}, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported")
 		}
 		err = e.rebaseImplicitRowID(ctx, recordID)
 		if err != nil {

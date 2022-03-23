@@ -416,19 +416,19 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery(`select @@global.tidb_enable_parallel_apply`).Check(testkit.Rows("0"))
 	tk.MustQuery(`select @@tidb_enable_parallel_apply`).Check(testkit.Rows("1"))
 
-	tk.MustQuery(`select @@session.tidb_general_log;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@global.tidb_general_log;`).Check(testkit.Rows("0"))
 	tk.MustQuery(`show variables like 'tidb_general_log';`).Check(testkit.Rows("tidb_general_log OFF"))
 	tk.MustExec("set tidb_general_log = 1")
-	tk.MustQuery(`select @@session.tidb_general_log;`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@global.tidb_general_log;`).Check(testkit.Rows("1"))
 	tk.MustQuery(`show variables like 'tidb_general_log';`).Check(testkit.Rows("tidb_general_log ON"))
 	tk.MustExec("set tidb_general_log = 0")
-	tk.MustQuery(`select @@session.tidb_general_log;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@global.tidb_general_log;`).Check(testkit.Rows("0"))
 	tk.MustQuery(`show variables like 'tidb_general_log';`).Check(testkit.Rows("tidb_general_log OFF"))
 	tk.MustExec("set tidb_general_log = on")
-	tk.MustQuery(`select @@session.tidb_general_log;`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@global.tidb_general_log;`).Check(testkit.Rows("1"))
 	tk.MustQuery(`show variables like 'tidb_general_log';`).Check(testkit.Rows("tidb_general_log ON"))
 	tk.MustExec("set tidb_general_log = off")
-	tk.MustQuery(`select @@session.tidb_general_log;`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select @@global.tidb_general_log;`).Check(testkit.Rows("0"))
 	tk.MustQuery(`show variables like 'tidb_general_log';`).Check(testkit.Rows("tidb_general_log OFF"))
 	require.Error(t, tk.ExecToErr("set tidb_general_log = abc"))
 	require.Error(t, tk.ExecToErr("set tidb_general_log = 123"))
@@ -803,6 +803,7 @@ func TestValidateSetVar(t *testing.T) {
 	tk.MustQuery("select @@tidb_constraint_check_in_place;").Check(testkit.Rows("1"))
 
 	tk.MustExec("set @@tidb_general_log=0;")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(fmt.Sprintf("Warning %d modifying tidb_general_log will require SET GLOBAL in a future version of TiDB", errno.ErrInstanceScope)))
 	tk.MustQuery("select @@tidb_general_log;").Check(testkit.Rows("0"))
 
 	tk.MustExec("set @@tidb_pprof_sql_cpu=1;")
@@ -1573,4 +1574,20 @@ func TestSetTopSQLVariables(t *testing.T) {
 
 	tk.MustQuery("show variables like '%top_sql%'").Check(testkit.Rows("tidb_enable_top_sql OFF", "tidb_top_sql_max_meta_count 5000", "tidb_top_sql_max_time_series_count 20"))
 	tk.MustQuery("show global variables like '%top_sql%'").Check(testkit.Rows("tidb_enable_top_sql OFF", "tidb_top_sql_max_meta_count 5000", "tidb_top_sql_max_time_series_count 20"))
+}
+
+func TestInstanceScopeSwitching(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// enable 'switching' to SESSION variables
+	tk.MustExec("set tidb_enable_legacy_instance_scope = 1")
+	tk.MustExec("set tidb_general_log = 1")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(fmt.Sprintf("Warning %d modifying tidb_general_log will require SET GLOBAL in a future version of TiDB", errno.ErrInstanceScope)))
+
+	// disable 'switching' to SESSION variables
+	tk.MustExec("set tidb_enable_legacy_instance_scope = 0")
+	tk.MustGetErrCode("set tidb_general_log = 1", errno.ErrGlobalVariable)
 }
