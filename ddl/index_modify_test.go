@@ -1057,7 +1057,7 @@ func testDropIndexes(t *testing.T, store kv.Storage, createSQL, dropIdxSQL strin
 	}
 	idxIDs := make([]int64, 0, 3)
 	for _, idxName := range idxNames {
-		idxIDs = append(idxIDs, testGetIndexID(t, tk.Session(), "test", "test_drop_indexes", idxName))
+		idxIDs = append(idxIDs, external.GetIndexID(t, tk, "test", "test_drop_indexes", idxName))
 	}
 	jobIDExt, reset := setupJobIDExtCallback(tk.Session())
 	defer reset()
@@ -1255,7 +1255,7 @@ func testDropIndex(t *testing.T, store kv.Storage, createSQL, dropIdxSQL, idxNam
 	for i := 0; i < num; i++ {
 		tk.MustExec("insert into test_drop_index values (?, ?, ?)", i, i, i)
 	}
-	indexID := testGetIndexID(t, tk.Session(), "test", "test_drop_index", idxName)
+	indexID := external.GetIndexID(t, tk, "test", "test_drop_index", idxName)
 	jobIDExt, reset := setupJobIDExtCallback(tk.Session())
 	defer reset()
 	testddlutil.SessionExecInGoroutine(store, "test", dropIdxSQL, done)

@@ -45,6 +45,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	// waitForCleanDataRound indicates how many times should we check data is cleaned or not.
+	waitForCleanDataRound = 150
+	// waitForCleanDataInterval is a min duration between 2 check for data clean.
+	waitForCleanDataInterval = time.Millisecond * 100
+)
+
+const defaultBatchSize = 1024
+const defaultReorgBatchSize = 256
+
 const dbTestLease = 600 * time.Millisecond
 
 // Close issue #24580
