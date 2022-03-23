@@ -67,7 +67,6 @@ func TestTruncateLog(t *testing.T) {
 	require.Len(t, fs, 15)
 
 	s.RemoveDataBefore(17)
-	fmt.Printf("%#v", s)
 	deletedFiles := []string{}
 	modifiedFiles := []string{}
 	s.BeforeDoWriteBack = func(path string, last, current *backuppb.Metadata) bool {
