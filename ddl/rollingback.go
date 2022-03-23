@@ -81,7 +81,7 @@ func convertAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.T
 // to rollback add index operations. job.SnapshotVer == 0 indicates the workers are not started.
 func convertNotStartAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, occuredErr error) (ver int64, err error) {
 	schemaID := job.SchemaID
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -383,7 +383,7 @@ func rollingbackDropTableOrView(t *meta.Meta, job *model.Job) error {
 }
 
 func rollingbackDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, err = getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	_, err = GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -433,7 +433,7 @@ func cancelOnlyNotHandledJob(job *model.Job) (ver int64, err error) {
 }
 
 func rollingbackTruncateTable(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, err = getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	_, err = GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
