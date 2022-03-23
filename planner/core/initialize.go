@@ -414,7 +414,7 @@ func (p PhysicalIndexMergeReader) Init(ctx sessionctx.Context, offset int) *Phys
 	return &p
 }
 
-func (p *PhysicalTableReader) AdjustReadReqType(ctx sessionctx.Context) {
+func (p *PhysicalTableReader) adjustReadReqType(ctx sessionctx.Context) {
 	if p.StoreType == kv.TiFlash {
 		_, ok := p.tablePlan.(*PhysicalExchangeSender)
 		if ok {
@@ -458,7 +458,7 @@ func (p PhysicalTableReader) Init(ctx sessionctx.Context, offset int) *PhysicalT
 	}
 	p.TablePlans = flattenPushDownPlan(p.tablePlan)
 	p.schema = p.tablePlan.Schema()
-	p.AdjustReadReqType(ctx)
+	p.adjustReadReqType(ctx)
 	if p.ReadReqType == BatchCop || p.ReadReqType == MPP {
 		setMppOrBatchCopForTableScan(p.tablePlan)
 	}
