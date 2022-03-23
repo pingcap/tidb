@@ -751,7 +751,6 @@ func (i *idxIDExt) IndexID(name string) int64 {
 
 type cancelOnceHook struct {
 	store     kv.Storage
-	dom       *domain.Domain
 	triggered bool
 	cancelErr error
 	pred      func(job *model.Job) bool

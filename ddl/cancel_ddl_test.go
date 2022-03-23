@@ -758,7 +758,7 @@ func buildDropColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName 
 		Type:            model.ActionDropColumn,
 		BinlogInfo:      &model.HistoryInfo{},
 		MultiSchemaInfo: &model.MultiSchemaInfo{},
-		Args:            []interface{}{model.NewCIStr(colName)},
+		Args:            []interface{}{model.NewCIStr(colName), false},
 	}
 }
 

@@ -558,7 +558,8 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		job.SnapshotVer = 0
 		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
-		done, ver, err := multiSchemaChangeOnCreateIndexFinish(t, job, tblInfo, indexInfo)
+		var done bool
+		done, ver, err = multiSchemaChangeOnCreateIndexFinish(t, job, tblInfo, indexInfo)
 		if done {
 			return ver, err
 		}
