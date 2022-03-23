@@ -384,7 +384,6 @@ func TestIssue17979_2(t *testing.T) {
 }
 
 func TestIssue20900_1(t *testing.T) {
-	t.Skip("test for debug")
 	oomAction := config.GetGlobalConfig().OOMAction
 	defer func() {
 		config.UpdateGlobal(func(conf *config.Config) {

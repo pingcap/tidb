@@ -451,7 +451,6 @@ func TestTiFlashPartitionTableReader(t *testing.T) {
 }
 
 func TestPartitionTable(t *testing.T) {
-	t.Skip("tmp skip")
 	store, clean := createTiFlashStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)

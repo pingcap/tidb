@@ -351,7 +351,7 @@ func (s *infosSchemaClusterTableSuite) TestTableStorageStats() {
 		Hostname: "localhost",
 	}, nil, nil))
 
-	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows("32"))
+	tk.MustQuery("select count(1) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Check(testkit.Rows(strconv.Itoa(result)))
 
 	s.Require().True(tk.Session().Auth(&auth.UserIdentity{
 		Username: "testuser3",
