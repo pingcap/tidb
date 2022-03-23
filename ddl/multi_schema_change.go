@@ -17,6 +17,7 @@ package ddl
 import (
 	"sync"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -24,7 +25,32 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
+
+func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	job := &model.Job{
+		SchemaID:        schema.ID,
+		TableID:         t.Meta().ID,
+		SchemaName:      schema.Name.L,
+		Type:            model.ActionMultiSchemaChange,
+		BinlogInfo:      &model.HistoryInfo{},
+		Args:            nil,
+		MultiSchemaInfo: ctx.GetSessionVars().StmtCtx.MultiSchemaInfo,
+	}
+	err = checkMultiSchemaInfo(ctx.GetSessionVars().StmtCtx.MultiSchemaInfo, t)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ctx.GetSessionVars().StmtCtx.MultiSchemaInfo = nil
+	err = d.doDDLJob(ctx, job)
+	return d.callHookOnChanged(err)
+}
 
 func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	if job.MultiSchemaInfo.Revertible {
@@ -110,7 +136,7 @@ func cloneFromSubJob(job *model.Job, sub *model.SubJob) *model.Job {
 		ErrorCount:      0,
 		RowCount:        0,
 		Mu:              sync.Mutex{},
-		CtxVars:         nil,
+		CtxVars:         sub.CtxVars,
 		Args:            sub.Args,
 		RawArgs:         sub.RawArgs,
 		SchemaState:     sub.SchemaState,
@@ -159,6 +185,23 @@ func isAbnormal(job *model.SubJob) bool {
 		job.State == model.JobStateCancelled ||
 		job.State == model.JobStateRollingback ||
 		job.State == model.JobStateRollbackDone
+}
+
+func appendToSubJobs(m *model.MultiSchemaInfo, job *model.Job) error {
+	err := fillMultiSchemaInfo(m, job)
+	if err != nil {
+		return err
+	}
+	m.SubJobs = append(m.SubJobs, &model.SubJob{
+		Type:        job.Type,
+		Args:        job.Args,
+		RawArgs:     job.RawArgs,
+		SchemaState: job.SchemaState,
+		SnapshotVer: job.SnapshotVer,
+		Revertible:  true,
+		CtxVars:     job.CtxVars,
+	})
+	return nil
 }
 
 func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error) {
@@ -276,4 +319,67 @@ func appendMultiChangeWarningsToOwnerCtx(ctx sessionctx.Context, job *model.Job)
 			ctx.GetSessionVars().StmtCtx.AppendNote(sub.Warning)
 		}
 	}
+}
+
+// rollingBackMultiSchemaChange updates a multi-schema change job
+// from cancelling state to rollingback state.
+func rollingBackMultiSchemaChange(job *model.Job) error {
+	if !job.MultiSchemaInfo.Revertible {
+		// Cannot rolling back because the jobs are non-revertible.
+		// Resume the job state to running.
+		job.State = model.JobStateRunning
+		return nil
+	}
+	// Mark all the jobs to cancelling.
+	for _, sub := range job.MultiSchemaInfo.SubJobs {
+		switch sub.State {
+		case model.JobStateRunning:
+			sub.State = model.JobStateCancelling
+		case model.JobStateNone:
+			sub.State = model.JobStateCancelled
+		}
+	}
+	job.State = model.JobStateRollingback
+	return dbterror.ErrCancelledDDLJob
+}
+
+func multiSchemaChangeOnCreateIndexPending(t *meta.Meta, job *model.Job,
+	tblInfo *model.TableInfo) (done bool, ver int64, err error) {
+	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
+		// For multi-schema change, we don't public the index immediately.
+		// Mark the job non-revertible and wait for other sub-jobs to finish.
+		job.MarkNonRevertible()
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, false)
+		return true, ver, err
+	}
+	return false, 0, nil
+}
+
+func multiSchemaChangeOnCreateIndexFinish(t *meta.Meta, job *model.Job,
+	tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
+	if job.State != model.JobStateCancelling && job.MultiSchemaInfo != nil && !job.MultiSchemaInfo.Revertible {
+		// The multi-schema change steps to a non-revertible state.
+		// Public the index and finish the sub-job.
+		indexInfo.State = model.StatePublic
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+		if err != nil {
+			return true, ver, errors.Trace(err)
+		}
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+		return true, ver, nil
+	}
+	return false, 0, nil
+}
+
+func multiSchemaChangeOnCreateIndexCancelling(err error, t *meta.Meta, job *model.Job,
+	tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (done bool, ver int64, err1 error) {
+	if job.State == model.JobStateCancelling && meta.ErrDDLReorgElementNotExist.Equal(err) && job.MultiSchemaInfo != nil {
+		// For multi-schema change, the absence of the reorg element means the sub-job has finished the reorg.
+		logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback",
+			zap.String("job", job.String()), zap.Error(err))
+
+		ver, err1 = convertAddIdxJob2RollbackJob(t, job, tblInfo, indexInfo, dbterror.ErrCancelledDDLJob)
+		return true, ver, err1
+	}
+	return false, 0, err
 }

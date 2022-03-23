@@ -284,6 +284,7 @@ type SubJob struct {
 	Revertible  bool            `json:"revertible"`
 	State       JobState        `json:"state"`
 	Warning     *terror.Error   `json:"warning"`
+	CtxVars     []interface{}   `json:"-"`
 }
 
 // Job is for a DDL operation.
@@ -550,17 +551,6 @@ func (job *Job) IsDone() bool {
 // IsRunning returns whether job is still running or not.
 func (job *Job) IsRunning() bool {
 	return job.State == JobStateRunning
-}
-
-func (m *MultiSchemaInfo) MergeSubJob(job *Job) {
-	m.SubJobs = append(m.SubJobs, &SubJob{
-		Type:        job.Type,
-		Args:        job.Args,
-		RawArgs:     job.RawArgs,
-		SchemaState: job.SchemaState,
-		SnapshotVer: job.SnapshotVer,
-		Revertible:  true,
-	})
 }
 
 // JobState is for job state.

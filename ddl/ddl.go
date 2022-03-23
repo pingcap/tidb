@@ -570,6 +570,14 @@ func mayNeedReorg(job *model.Job) bool {
 			return ok && needReorg
 		}
 		return false
+	case model.ActionMultiSchemaChange:
+		for _, sub := range job.MultiSchemaInfo.SubJobs {
+			proxyJob := cloneFromSubJob(job, sub)
+			if mayNeedReorg(proxyJob) {
+				return true
+			}
+		}
+		return false
 	default:
 		return false
 	}
@@ -690,11 +698,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	if mci := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; mci != nil {
 		// In multiple schema change, we don't run the job.
 		// Instead, merge all the jobs into one pending job.
-		if err := fillMultiSchemaInfo(mci, job); err != nil {
-			return err
-		}
-		mci.MergeSubJob(job)
-		return nil
+		return appendToSubJobs(mci, job)
 	}
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)

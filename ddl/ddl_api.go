@@ -6826,26 +6826,3 @@ func checkTooBigFieldLengthAndTryAutoConvert(tp *types.FieldType, colName string
 	}
 	return nil
 }
-
-func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
-	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	job := &model.Job{
-		SchemaID:        schema.ID,
-		TableID:         t.Meta().ID,
-		SchemaName:      schema.Name.L,
-		Type:            model.ActionMultiSchemaChange,
-		BinlogInfo:      &model.HistoryInfo{},
-		Args:            nil,
-		MultiSchemaInfo: ctx.GetSessionVars().StmtCtx.MultiSchemaInfo,
-	}
-	err = checkMultiSchemaInfo(ctx.GetSessionVars().StmtCtx.MultiSchemaInfo, t)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	ctx.GetSessionVars().StmtCtx.MultiSchemaInfo = nil
-	err = d.doDDLJob(ctx, job)
-	return d.callHookOnChanged(err)
-}

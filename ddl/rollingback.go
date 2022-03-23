@@ -61,7 +61,7 @@ func convertAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.T
 	}
 
 	// the second args will be used in onDropIndex.
-	job.Args = []interface{}{indexInfo.Name /* ifExists */, false, getPartitionIDs(tblInfo)}
+	job.Args = []interface{}{indexInfo.Name, false /* ifExists */, getPartitionIDs(tblInfo)}
 	// If add index job rollbacks in write reorganization state, its need to delete all keys which has been added.
 	// Its work is the same as drop index job do.
 	// The write reorganization state in add index job that likes write only state in drop index job.
@@ -342,26 +342,6 @@ func rollingbackTruncateTable(t *meta.Meta, job *model.Job) (ver int64, err erro
 		return ver, errors.Trace(err)
 	}
 	return cancelOnlyNotHandledJob(job)
-}
-
-func rollingBackMultiSchemaChange(job *model.Job) error {
-	if !job.MultiSchemaInfo.Revertible {
-		// Cannot rolling back because the jobs are non-revertible.
-		// Resume the job state to running.
-		job.State = model.JobStateRunning
-		return nil
-	}
-	// Mark all the jobs to cancelling.
-	for _, sub := range job.MultiSchemaInfo.SubJobs {
-		switch sub.State {
-		case model.JobStateRunning:
-			sub.State = model.JobStateCancelling
-		case model.JobStateNone:
-			sub.State = model.JobStateCancelled
-		}
-	}
-	job.State = model.JobStateRollingback
-	return dbterror.ErrCancelledDDLJob
 }
 
 func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
