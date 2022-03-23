@@ -972,7 +972,7 @@ func TestModifyColumnRollBack(t *testing.T) {
 
 	dom.DDL().SetHook(hook)
 	done := make(chan error, 1)
-	go backgroundExecT(store, "alter table test.t1 change c2 c2 bigint not null;", done)
+	go backgroundExec(store, "alter table test.t1 change c2 c2 bigint not null;", done)
 
 	err := <-done
 	require.EqualError(t, err, "[ddl:8214]Cancelled DDL job")
