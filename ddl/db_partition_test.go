@@ -2831,7 +2831,7 @@ func testPartitionCancelAddIndex(t *testing.T, store kv.Storage, d ddl.DDL, leas
 	jobIDExt := wrapJobIDExtCallback(hook)
 	d.SetHook(jobIDExt)
 	done := make(chan error, 1)
-	go backgroundExecT(store, addIdxSQL, done)
+	go backgroundExec(store, addIdxSQL, done)
 
 	times := 0
 	ticker := time.NewTicker(lease / 2)
@@ -3619,9 +3619,9 @@ func TestTruncatePartitionMultipleTimes(t *testing.T) {
 		}
 	}
 	done1 := make(chan error, 1)
-	go backgroundExecT(store, "alter table test.t truncate partition p0;", done1)
+	go backgroundExec(store, "alter table test.t truncate partition p0;", done1)
 	done2 := make(chan error, 1)
-	go backgroundExecT(store, "alter table test.t truncate partition p0;", done2)
+	go backgroundExec(store, "alter table test.t truncate partition p0;", done2)
 	<-done1
 	<-done2
 	require.LessOrEqual(t, errCount, int32(1))
