@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
@@ -289,7 +288,7 @@ LOOP:
 
 	// get all row handles
 	require.NoError(t, tk.Session().NewTxn(context.Background()))
-	tbl := external.GetTableByName(t, tk, "test", "test_add_index")
+	tbl := tk.GetTableByName("test", "test_add_index")
 	handles := kv.NewHandleMap()
 	err := tables.IterRecords(tbl, tk.Session(), tbl.Cols(),
 		func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
@@ -335,7 +334,7 @@ func TestAddIndexForGeneratedColumn(t *testing.T) {
 	tk.MustExec("ALTER TABLE t ADD COLUMN y1 year as (y + 2)")
 	tk.MustExec("ALTER TABLE t ADD INDEX idx_y(y1)")
 
-	tbl := external.GetTableByName(t, tk, "test", "t")
+	tbl := tk.GetTableByName("test", "t")
 	for _, idx := range tbl.Indices() {
 		require.False(t, strings.EqualFold(idx.Meta().Name.L, "idx_c2"))
 	}
@@ -442,7 +441,7 @@ LOOP:
 		}
 	}
 
-	tbl := external.GetTableByName(t, tk, "test", "t1")
+	tbl := tk.GetTableByName("test", "t1")
 	for _, tidx := range tbl.Indices() {
 		require.False(t, strings.EqualFold(tidx.Meta().Name.L, idxName))
 	}
@@ -578,13 +577,13 @@ func TestAddAnonymousIndex(t *testing.T) {
 	require.Error(t, err)
 	// The index name is c1 when adding index (c1, c2).
 	tk.MustExec("alter table t_anonymous_index drop index c1")
-	tbl := external.GetTableByName(t, tk, "test", "t_anonymous_index")
+	tbl := tk.GetTableByName("test", "t_anonymous_index")
 	require.Len(t, tbl.Indices(), 0)
 	// for adding some indices that the first column name is c1
 	tk.MustExec("alter table t_anonymous_index add index (c1)")
 	err = tk.ExecToErr("alter table t_anonymous_index add index c1 (c2)")
 	require.Error(t, err)
-	tbl = external.GetTableByName(t, tk, "test", "t_anonymous_index")
+	tbl = tk.GetTableByName("test", "t_anonymous_index")
 	require.Len(t, tbl.Indices(), 1)
 	require.Equal(t, "c1", tbl.Indices()[0].Meta().Name.L)
 	// The MySQL will be a warning.
@@ -592,7 +591,7 @@ func TestAddAnonymousIndex(t *testing.T) {
 	tk.MustExec("alter table t_anonymous_index add index (c1, c2, C3)")
 	// The MySQL will be a warning.
 	tk.MustExec("alter table t_anonymous_index add index (c1)")
-	tbl = external.GetTableByName(t, tk, "test", "t_anonymous_index")
+	tbl = tk.GetTableByName("test", "t_anonymous_index")
 	require.Len(t, tbl.Indices(), 4)
 	tk.MustExec("alter table t_anonymous_index drop index c1")
 	tk.MustExec("alter table t_anonymous_index drop index c1_2")
@@ -605,23 +604,23 @@ func TestAddAnonymousIndex(t *testing.T) {
 	tk.MustExec("alter table t_anonymous_index drop index C3")
 	// for anonymous index with column name `primary`
 	tk.MustExec("create table t_primary (`primary` int, b int, key (`primary`))")
-	tbl = external.GetTableByName(t, tk, "test", "t_primary")
+	tbl = tk.GetTableByName("test", "t_primary")
 	require.Equal(t, "primary_2", tbl.Indices()[0].Meta().Name.L)
 	tk.MustExec("alter table t_primary add index (`primary`);")
-	tbl = external.GetTableByName(t, tk, "test", "t_primary")
+	tbl = tk.GetTableByName("test", "t_primary")
 	require.Equal(t, "primary_2", tbl.Indices()[0].Meta().Name.L)
 	require.Equal(t, "primary_3", tbl.Indices()[1].Meta().Name.L)
 	tk.MustExec("alter table t_primary add primary key(b);")
-	tbl = external.GetTableByName(t, tk, "test", "t_primary")
+	tbl = tk.GetTableByName("test", "t_primary")
 	require.Equal(t, "primary_2", tbl.Indices()[0].Meta().Name.L)
 	require.Equal(t, "primary_3", tbl.Indices()[1].Meta().Name.L)
 	require.Equal(t, "primary", tbl.Indices()[2].Meta().Name.L)
 	tk.MustExec("create table t_primary_2 (`primary` int, key primary_2 (`primary`), key (`primary`))")
-	tbl = external.GetTableByName(t, tk, "test", "t_primary_2")
+	tbl = tk.GetTableByName("test", "t_primary_2")
 	require.Equal(t, "primary_2", tbl.Indices()[0].Meta().Name.L)
 	require.Equal(t, "primary_3", tbl.Indices()[1].Meta().Name.L)
 	tk.MustExec("create table t_primary_3 (`primary_2` int, key(`primary_2`), `primary` int, key(`primary`));")
-	tbl = external.GetTableByName(t, tk, "test", "t_primary_3")
+	tbl = tk.GetTableByName("test", "t_primary_3")
 	require.Equal(t, "primary_2", tbl.Indices()[0].Meta().Name.L)
 	require.Equal(t, "primary_3", tbl.Indices()[1].Meta().Name.L)
 }
@@ -688,7 +687,7 @@ func TestCancelAddPrimaryKey(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	require.NoError(t, tk.Session().NewTxn(context.Background()))
-	tbl := external.GetTableByName(t, tk, "test", "t1")
+	tbl := tk.GetTableByName("test", "t1")
 	col1Flag := tbl.Cols()[1].Flag
 	require.True(t, !mysql.HasNotNullFlag(col1Flag) && !mysql.HasPreventNullInsertFlag(col1Flag) && mysql.HasUnsignedFlag(col1Flag))
 }
@@ -775,7 +774,7 @@ func backgroundExecOnJobUpdatedExported(t *testing.T, tk *testkit.TestKit, store
 			if c3IdxInfo.ID != 0 {
 				return
 			}
-			tbl := external.GetTableByName(t, tk, "test", "t1")
+			tbl := tk.GetTableByName("test", "t1")
 			for _, index := range tbl.Indices() {
 				if !tables.IsIndexWritable(index) {
 					continue
@@ -879,7 +878,7 @@ func TestCancelAddIndex1(t *testing.T) {
 	require.EqualError(t, err, "[ddl:8214]Cancelled DDL job")
 
 	dom.DDL().SetHook(originalHook)
-	tbl := external.GetTableByName(t, tk, "test", "t")
+	tbl := tk.GetTableByName("test", "t")
 	for _, idx := range tbl.Indices() {
 		require.False(t, strings.EqualFold(idx.Meta().Name.L, "idx_c2"))
 	}
@@ -902,7 +901,7 @@ func TestAddGlobalIndex(t *testing.T) {
 	tk.MustExec("insert test_t1 values (1, 1)")
 	tk.MustExec("alter table test_t1 add unique index p_a (a);")
 	tk.MustExec("insert test_t1 values (2, 11)")
-	tbl := external.GetTableByName(t, tk, "test", "test_t1")
+	tbl := tk.GetTableByName("test", "test_t1")
 	tblInfo := tbl.Meta()
 	indexInfo := tblInfo.FindIndexByName("p_a")
 	require.NotNil(t, indexInfo)
@@ -932,7 +931,7 @@ func TestAddGlobalIndex(t *testing.T) {
 	tk.MustExec("insert test_t2 values (1, 1)")
 	tk.MustExec("alter table test_t2 add primary key (a) nonclustered;")
 	tk.MustExec("insert test_t2 values (2, 11)")
-	tbl = external.GetTableByName(t, tk, "test", "test_t2")
+	tbl = tk.GetTableByName("test", "test_t2")
 	tblInfo = tbl.Meta()
 	indexInfo = tblInfo.FindIndexByName("primary")
 	require.NotNil(t, indexInfo)
@@ -1057,7 +1056,7 @@ func testDropIndexes(t *testing.T, store kv.Storage, createSQL, dropIdxSQL strin
 	}
 	idxIDs := make([]int64, 0, 3)
 	for _, idxName := range idxNames {
-		idxIDs = append(idxIDs, external.GetIndexID(t, tk, "test", "test_drop_indexes", idxName))
+		idxIDs = append(idxIDs, tk.GetIndexID("test", "test_drop_indexes", idxName))
 	}
 	jobIDExt, reset := setupJobIDExtCallback(tk.Session())
 	defer reset()
@@ -1198,7 +1197,7 @@ func testCancelDropIndexes(t *testing.T, store kv.Storage, d ddl.DDL) {
 			tk.MustExec(addIdxesSQL)
 		}
 		err := tk.ExecToErr(dropIdxesSQL)
-		tbl := external.GetTableByName(t, tk, "test", "t")
+		tbl := tk.GetTableByName("test", "t")
 
 		var indexInfos []*model.IndexInfo
 		for _, idxName := range indexesName {
@@ -1255,7 +1254,7 @@ func testDropIndex(t *testing.T, store kv.Storage, createSQL, dropIdxSQL, idxNam
 	for i := 0; i < num; i++ {
 		tk.MustExec("insert into test_drop_index values (?, ?, ?)", i, i, i)
 	}
-	indexID := external.GetIndexID(t, tk, "test", "test_drop_index", idxName)
+	indexID := tk.GetIndexID("test", "test_drop_index", idxName)
 	jobIDExt, reset := setupJobIDExtCallback(tk.Session())
 	defer reset()
 	testddlutil.SessionExecInGoroutine(store, "test", dropIdxSQL, done)
@@ -1366,7 +1365,7 @@ func TestAddIndexWithDupIndex(t *testing.T) {
 
 	// When there is another session adding duplicate index with state other than
 	// StatePublic, show explicit error message.
-	tbl := external.GetTableByName(t, tk, "test", "test_add_index_with_dup")
+	tbl := tk.GetTableByName("test", "test_add_index_with_dup")
 	indexInfo := tbl.Meta().FindIndexByName("idx")
 	indexInfo.State = model.StateNone
 	err = tk.ExecToErr("alter table test_add_index_with_dup add index idx (a)")

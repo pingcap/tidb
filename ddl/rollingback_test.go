@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
@@ -50,7 +49,7 @@ func TestCancelAddIndexJobError(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockConvertAddIdxJob2RollbackJobError"))
 	}()
 
-	tbl := external.GetTableByName(t, tk, "test", "t_cancel_add_index") //nolint:typecheck
+	tbl := tk.GetTableByName("test", "t_cancel_add_index") //nolint:typecheck
 	require.NotNil(t, tbl)
 
 	d := dom.DDL()

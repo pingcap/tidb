@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/stretchr/testify/require"
 )
@@ -86,7 +85,7 @@ func TestRepairTable(t *testing.T) {
 	domainutil.RepairInfo.SetRepairTableList([]string{"test.other_table2"})
 	tk.MustExec("CREATE TABLE otHer_tAblE2 (a int, b varchar(1));")
 	tk.MustExec("admin repair table otHer_tAblE2 CREATE TABLE otHeR_tAbLe (a int, b varchar(2));")
-	repairTable := external.GetTableByName(t, tk, "test", "otHeR_tAbLe") //nolint:typecheck
+	repairTable := tk.GetTableByName("test", "otHeR_tAbLe") //nolint:typecheck
 	require.Equal(t, "otHeR_tAbLe", repairTable.Meta().Name.O)
 
 	// Test memory and system database is not for repair.
@@ -135,7 +134,7 @@ func TestRepairTable(t *testing.T) {
 
 	// Check the repaired tableInfo is exactly the same with old one in tableID, indexID, colID.
 	// testGetTableByName will extract the Table from `domain.InfoSchema()` directly.
-	repairTable = external.GetTableByName(t, tk, "test", "origin") //nolint:typecheck
+	repairTable = tk.GetTableByName("test", "origin") //nolint:typecheck
 	require.Equal(t, originTableInfo.ID, repairTable.Meta().ID)
 	require.Equal(t, 3, len(repairTable.Meta().Columns))
 	require.Equal(t, originTableInfo.Columns[0].ID, repairTable.Meta().Columns[0].ID)
@@ -212,7 +211,7 @@ func TestRepairTableWithPartition(t *testing.T) {
 		"partition p30 values less than (30)," +
 		"partition p50 values less than (50)," +
 		"partition p90 values less than (90));")
-	repairTable := external.GetTableByName(t, tk, "test", "origin_rename") //nolint:typecheck
+	repairTable := tk.GetTableByName("test", "origin_rename") //nolint:typecheck
 	require.Equal(t, originTableInfo.ID, repairTable.Meta().ID)
 	require.Equal(t, 1, len(repairTable.Meta().Columns))
 	require.Equal(t, originTableInfo.Columns[0].ID, repairTable.Meta().Columns[0].ID)
@@ -233,7 +232,7 @@ func TestRepairTableWithPartition(t *testing.T) {
 
 	originTableInfo, _ = domainutil.RepairInfo.GetRepairedTableInfoByTableName("test", "origin")
 	tk.MustExec("admin repair table origin create table origin (a varchar(3), b int not null, c int, key idx(c)) partition by hash(b) partitions 30")
-	repairTable = external.GetTableByName(t, tk, "test", "origin") //nolint:typecheck
+	repairTable = tk.GetTableByName("test", "origin") //nolint:typecheck
 	require.Equal(t, originTableInfo.ID, repairTable.Meta().ID)
 	require.Equal(t, 30, len(repairTable.Meta().Partition.Definitions))
 	require.Equal(t, originTableInfo.Partition.Definitions[0].ID, repairTable.Meta().Partition.Definitions[0].ID)

@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -106,7 +105,7 @@ func TestCancelRenameIndex(t *testing.T) {
 	tk.MustGetErrMsg("alter table t rename index idx_c2 to idx_c3", "[ddl:8214]Cancelled DDL job")
 	require.NoError(t, checkErr)
 	dom.DDL().SetHook(originalHook)
-	tt := external.GetTableByName(t, tk, "test", "t")
+	tt := tk.GetTableByName("test", "t")
 	for _, idx := range tt.Indices() {
 		require.False(t, strings.EqualFold(idx.Meta().Name.L, "idx_c3"))
 	}

@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/stretchr/testify/suite"
 )
@@ -168,9 +167,9 @@ func (s *hotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory() {
 	}
 
 	tk := testkit.NewTestKit(s.T(), s.store)
-	tablesPrivTid := external.GetTableByName(s.T(), tk, "mysql", "TABLES_PRIV").Meta().ID
+	tablesPrivTid := tk.GetTableByName("mysql", "TABLES_PRIV").Meta().ID
 	tablesPrivTidStr := strconv.FormatInt(tablesPrivTid, 10)
-	statsMetaTid := external.GetTableByName(s.T(), tk, "mysql", "STATS_META").Meta().ID
+	statsMetaTid := tk.GetTableByName("mysql", "STATS_META").Meta().ID
 	statsMetaTidStr := strconv.FormatInt(statsMetaTid, 10)
 
 	fullHotRegions := [][]string{

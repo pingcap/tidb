@@ -24,10 +24,14 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/assert"
@@ -370,4 +374,47 @@ func (tk *TestKit) MustNoGlobalStats(table string) bool {
 // CheckLastMessage checks last message after executing MustExec
 func (tk *TestKit) CheckLastMessage(msg string) {
 	tk.require.Equal(tk.Session().LastMessage(), msg)
+}
+
+func (tk *TestKit) GetTableByName(db, table string) table.Table {
+	dom := domain.GetDomain(tk.Session())
+	// Make sure the table schema is the new schema.
+	tk.require.NoError(dom.Reload())
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
+	tk.require.NoError(err)
+	return tbl
+}
+
+func (tk *TestKit) GetModifyColumn(db, tbl, colName string, allColumn bool) *table.Column {
+	tt := tk.GetTableByName(db, tbl)
+	colName = strings.ToLower(colName)
+	var cols []*table.Column
+	if allColumn {
+		cols = tt.(*tables.TableCommon).Columns
+	} else {
+		cols = tt.Cols()
+	}
+	for _, col := range cols {
+		if col.Name.L == colName {
+			return col
+		}
+	}
+	return nil
+}
+
+func (tk *TestKit) GetIndexID(dbName, tblName, idxName string) int64 {
+	is := domain.GetDomain(tk.Session()).InfoSchema()
+	tt, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
+	tk.require.NoError(err)
+
+	for _, idx := range tt.Indices() {
+		if idx.Meta().Name.L == idxName {
+			return idx.Meta().ID
+		}
+	}
+
+	tk.require.FailNow(fmt.Sprintf("index %s not found(db: %s, tbl: %s)", idxName, dbName, tblName))
+
+	// unreachable - make the compiler happy
+	return -1
 }

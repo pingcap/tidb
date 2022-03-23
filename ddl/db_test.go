@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
@@ -349,7 +348,7 @@ func TestIssue23473(t *testing.T) {
 	tk.MustExec("create table t_23473 (k int primary key, v int)")
 	tk.MustExec("alter table t_23473 change column k k bigint")
 
-	tbl := external.GetTableByName(t, tk, "test", "t_23473")
+	tbl := tk.GetTableByName("test", "t_23473")
 	require.True(t, mysql.HasNoDefaultValueFlag(tbl.Cols()[0].Flag))
 }
 
@@ -699,7 +698,7 @@ func TestProcessColumnFlags(t *testing.T) {
 	defer tk.MustExec("drop table t;")
 
 	check := func(n string, f func(uint) bool) {
-		tbl := external.GetTableByName(t, tk, "test", "t")
+		tbl := tk.GetTableByName("test", "t")
 		for _, col := range tbl.Cols() {
 			if strings.EqualFold(col.Name.L, n) {
 				require.True(t, f(col.Flag))
@@ -777,7 +776,7 @@ func TestAlterShardRowIDBits(t *testing.T) {
 	// Test reduce shard_row_id_bits will be ok.
 	tk.MustExec("alter table t1 SHARD_ROW_ID_BITS = 3;")
 	checkShardRowID := func(maxShardRowIDBits, shardRowIDBits uint64) {
-		tbl := external.GetTableByName(t, tk, "test", "t1")
+		tbl := tk.GetTableByName("test", "t1")
 		require.True(t, tbl.Meta().MaxShardRowIDBits == maxShardRowIDBits)
 		require.True(t, tbl.Meta().ShardRowIDBits == shardRowIDBits)
 	}

@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/stretchr/testify/require"
 )
@@ -1804,7 +1803,7 @@ func TestMPPQueryExplainInfo(t *testing.T) {
 		  partition p0 values less than (5),
 		  partition p1 values less than (10),
 		  partition p2 values less than (15))`)
-	tb := external.GetTableByName(t, tk, "tiflash_partition_test", "t")
+	tb := tk.GetTableByName("tiflash_partition_test", "t")
 	for _, partition := range tb.Meta().GetPartitionInfo().Definitions {
 		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.ID, true)
 		require.NoError(t, err)

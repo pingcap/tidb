@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/external"
 	"github.com/stretchr/testify/require"
 )
 
@@ -48,24 +47,24 @@ func TestSetTableFlashReplica(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t_flash(a int, b int)")
 
-	tbl := external.GetTableByName(t, tk, "test", "t_flash")
+	tbl := tk.GetTableByName("test", "t_flash")
 	require.Nil(t, tbl.Meta().TiFlashReplica)
 
 	tk.MustExec("alter table t_flash set tiflash replica 2 location labels 'a','b';")
-	tbl = external.GetTableByName(t, tk, "test", "t_flash")
+	tbl = tk.GetTableByName("test", "t_flash")
 	require.NotNil(t, tbl.Meta().TiFlashReplica)
 	require.Equal(t, uint64(2), tbl.Meta().TiFlashReplica.Count)
 	require.Equal(t, "a,b", strings.Join(tbl.Meta().TiFlashReplica.LocationLabels, ","))
 
 	tk.MustExec("alter table t_flash set tiflash replica 0")
-	tbl = external.GetTableByName(t, tk, "test", "t_flash")
+	tbl = tk.GetTableByName("test", "t_flash")
 	require.Nil(t, tbl.Meta().TiFlashReplica)
 
 	// Test set tiflash replica for partition table.
 	tk.MustExec("drop table if exists t_flash;")
 	tk.MustExec("create table t_flash(a int, b int) partition by hash(a) partitions 3")
 	tk.MustExec("alter table t_flash set tiflash replica 2 location labels 'a','b';")
-	tbl = external.GetTableByName(t, tk, "test", "t_flash")
+	tbl = tk.GetTableByName("test", "t_flash")
 	require.NotNil(t, tbl.Meta().TiFlashReplica)
 	require.Equal(t, uint64(2), tbl.Meta().TiFlashReplica.Count)
 	require.Equal(t, "a,b", strings.Join(tbl.Meta().TiFlashReplica.LocationLabels, ","))
@@ -73,14 +72,14 @@ func TestSetTableFlashReplica(t *testing.T) {
 	// Use table ID as physical ID, mock for partition feature was not enabled.
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tbl.Meta().ID, true)
 	require.NoError(t, err)
-	tbl = external.GetTableByName(t, tk, "test", "t_flash")
+	tbl = tk.GetTableByName("test", "t_flash")
 	require.NotNil(t, tbl.Meta().TiFlashReplica)
 	require.True(t, tbl.Meta().TiFlashReplica.Available)
 	require.Len(t, tbl.Meta().TiFlashReplica.AvailablePartitionIDs, 0)
 
 	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tbl.Meta().ID, false)
 	require.NoError(t, err)
-	tbl = external.GetTableByName(t, tk, "test", "t_flash")
+	tbl = tk.GetTableByName("test", "t_flash")
 	require.False(t, tbl.Meta().TiFlashReplica.Available)
 
 	// Mock for partition 0 replica was available.
@@ -88,14 +87,14 @@ func TestSetTableFlashReplica(t *testing.T) {
 	require.Len(t, partition.Definitions, 3)
 	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, true)
 	require.NoError(t, err)
-	tbl = external.GetTableByName(t, tk, "test", "t_flash")
+	tbl = tk.GetTableByName("test", "t_flash")
 	require.False(t, tbl.Meta().TiFlashReplica.Available)
 	require.Equal(t, []int64{partition.Definitions[0].ID}, tbl.Meta().TiFlashReplica.AvailablePartitionIDs)
 
 	// Mock for partition 0 replica become unavailable.
 	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[0].ID, false)
 	require.NoError(t, err)
-	tbl = external.GetTableByName(t, tk, "test", "t_flash")
+	tbl = tk.GetTableByName("test", "t_flash")
 	require.False(t, tbl.Meta().TiFlashReplica.Available)
 	require.Len(t, tbl.Meta().TiFlashReplica.AvailablePartitionIDs, 0)
 
@@ -106,14 +105,14 @@ func TestSetTableFlashReplica(t *testing.T) {
 	require.NoError(t, err)
 	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[2].ID, true)
 	require.NoError(t, err)
-	tbl = external.GetTableByName(t, tk, "test", "t_flash")
+	tbl = tk.GetTableByName("test", "t_flash")
 	require.True(t, tbl.Meta().TiFlashReplica.Available)
 	require.Equal(t, []int64{partition.Definitions[0].ID, partition.Definitions[1].ID, partition.Definitions[2].ID}, tbl.Meta().TiFlashReplica.AvailablePartitionIDs)
 
 	// Mock for partition 1 replica was unavailable.
 	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[1].ID, false)
 	require.NoError(t, err)
-	tbl = external.GetTableByName(t, tk, "test", "t_flash")
+	tbl = tk.GetTableByName("test", "t_flash")
 	require.Equal(t, false, tbl.Meta().TiFlashReplica.Available)
 	require.Equal(t, []int64{partition.Definitions[0].ID, partition.Definitions[2].ID}, tbl.Meta().TiFlashReplica.AvailablePartitionIDs)
 
@@ -220,7 +219,7 @@ func TestSkipSchemaChecker(t *testing.T) {
 	// Test skip schema checker for ActionUpdateTiFlashReplicaStatus.
 	tk.MustExec("begin")
 	tk.MustExec("insert into t1 set a=1;")
-	tb := external.GetTableByName(t, tk, "test", "t1")
+	tb := tk.GetTableByName("test", "t1")
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 	tk.MustExec("commit")
@@ -241,7 +240,7 @@ func TestCreateTableWithLike2(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (a int, b int, c int, index idx1(c));")
 
-	tbl1 := external.GetTableByName(t, tk, "test", "t1")
+	tbl1 := tk.GetTableByName("test", "t1")
 	doneCh := make(chan error, 2)
 	hook := &ddl.TestDDLCallback{Do: dom}
 	var onceChecker sync.Map
@@ -274,7 +273,7 @@ func TestCreateTableWithLike2(t *testing.T) {
 		err := <-doneCh
 		require.NoError(t, err)
 		tk.MustExec("alter table t2 add column e int")
-		t2Info := external.GetTableByName(t, tk, "test", "t2")
+		t2Info := tk.GetTableByName("test", "t2")
 		require.Equal(t, len(t2Info.Cols()), len(t2Info.Meta().Columns))
 	}
 	checkTbl2()
@@ -291,7 +290,7 @@ func TestCreateTableWithLike2(t *testing.T) {
 		err := <-doneCh
 		require.NoError(t, err)
 		tk.MustExec("alter table t2 add column e int")
-		tbl2 := external.GetTableByName(t, tk, "test", "t2")
+		tbl2 := tk.GetTableByName("test", "t2")
 		require.Equal(t, len(tbl2.Cols()), len(tbl2.Meta().Columns))
 
 		for i := 0; i < len(tbl2.Meta().Indices); i++ {
@@ -316,7 +315,7 @@ func TestCreateTableWithLike2(t *testing.T) {
 	tk.MustExec("drop table if exists t1,t2;")
 	tk.MustExec("create table t1 (a int) partition by hash(a) partitions 2;")
 	tk.MustExec("alter table t1 set tiflash replica 3 location labels 'a','b';")
-	t1 := external.GetTableByName(t, tk, "test", "t1")
+	t1 := tk.GetTableByName("test", "t1")
 	// Mock for all partitions replica was available.
 	partition := t1.Meta().Partition
 	require.Equal(t, 2, len(partition.Definitions))
@@ -324,19 +323,19 @@ func TestCreateTableWithLike2(t *testing.T) {
 	require.NoError(t, err)
 	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[1].ID, true)
 	require.NoError(t, err)
-	t1 = external.GetTableByName(t, tk, "test", "t1")
+	t1 = tk.GetTableByName("test", "t1")
 	require.NotNil(t, t1.Meta().TiFlashReplica)
 	require.True(t, t1.Meta().TiFlashReplica.Available)
 	require.Equal(t, []int64{partition.Definitions[0].ID, partition.Definitions[1].ID}, t1.Meta().TiFlashReplica.AvailablePartitionIDs)
 
 	tk.MustExec("create table t2 like t1")
-	t2 := external.GetTableByName(t, tk, "test", "t2")
+	t2 := tk.GetTableByName("test", "t2")
 	require.Equal(t, t1.Meta().TiFlashReplica.Count, t2.Meta().TiFlashReplica.Count)
 	require.Equal(t, t1.Meta().TiFlashReplica.LocationLabels, t2.Meta().TiFlashReplica.LocationLabels)
 	require.False(t, t2.Meta().TiFlashReplica.Available)
 	require.Len(t, t2.Meta().TiFlashReplica.AvailablePartitionIDs, 0)
 	// Test for not affecting the original table.
-	t1 = external.GetTableByName(t, tk, "test", "t1")
+	t1 = tk.GetTableByName("test", "t1")
 	require.NotNil(t, t1.Meta().TiFlashReplica)
 	require.True(t, t1.Meta().TiFlashReplica.Available)
 	require.Equal(t, []int64{partition.Definitions[0].ID, partition.Definitions[1].ID}, t1.Meta().TiFlashReplica.AvailablePartitionIDs)
@@ -398,16 +397,16 @@ func TestTruncateTable2(t *testing.T) {
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1 (a int);")
 	tk.MustExec("alter table t1 set tiflash replica 3 location labels 'a','b';")
-	t1 := external.GetTableByName(t, tk, "test", "t1")
+	t1 := tk.GetTableByName("test", "t1")
 	// Mock for table tiflash replica was available.
 	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), t1.Meta().ID, true)
 	require.NoError(t, err)
-	t1 = external.GetTableByName(t, tk, "test", "t1")
+	t1 = tk.GetTableByName("test", "t1")
 	require.NotNil(t, t1.Meta().TiFlashReplica)
 	require.True(t, t1.Meta().TiFlashReplica.Available)
 
 	tk.MustExec("truncate table t1")
-	t2 := external.GetTableByName(t, tk, "test", "t1")
+	t2 := tk.GetTableByName("test", "t1")
 	require.Equal(t, t1.Meta().TiFlashReplica.Count, t2.Meta().TiFlashReplica.Count)
 	require.Equal(t, t1.Meta().TiFlashReplica.LocationLabels, t2.Meta().TiFlashReplica.LocationLabels)
 	require.False(t, t2.Meta().TiFlashReplica.Available)
@@ -417,7 +416,7 @@ func TestTruncateTable2(t *testing.T) {
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1 (a int) partition by hash(a) partitions 2;")
 	tk.MustExec("alter table t1 set tiflash replica 3 location labels 'a','b';")
-	t1 = external.GetTableByName(t, tk, "test", "t1")
+	t1 = tk.GetTableByName("test", "t1")
 	// Mock for all partitions replica was available.
 	partition := t1.Meta().Partition
 	require.Equal(t, 2, len(partition.Definitions))
@@ -425,20 +424,20 @@ func TestTruncateTable2(t *testing.T) {
 	require.NoError(t, err)
 	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.Definitions[1].ID, true)
 	require.NoError(t, err)
-	t1 = external.GetTableByName(t, tk, "test", "t1")
+	t1 = tk.GetTableByName("test", "t1")
 	require.NotNil(t, t1.Meta().TiFlashReplica)
 	require.True(t, t1.Meta().TiFlashReplica.Available)
 	require.Equal(t, []int64{partition.Definitions[0].ID, partition.Definitions[1].ID}, t1.Meta().TiFlashReplica.AvailablePartitionIDs)
 
 	tk.MustExec("alter table t1 truncate partition p0")
-	t2 = external.GetTableByName(t, tk, "test", "t1")
+	t2 = tk.GetTableByName("test", "t1")
 	require.Equal(t, t1.Meta().TiFlashReplica.Count, t2.Meta().TiFlashReplica.Count)
 	require.Equal(t, t1.Meta().TiFlashReplica.LocationLabels, t2.Meta().TiFlashReplica.LocationLabels)
 	require.False(t, t2.Meta().TiFlashReplica.Available)
 	require.Equal(t, []int64{partition.Definitions[1].ID}, t2.Meta().TiFlashReplica.AvailablePartitionIDs)
 	// Test for truncate twice.
 	tk.MustExec("alter table t1 truncate partition p0")
-	t2 = external.GetTableByName(t, tk, "test", "t1")
+	t2 = tk.GetTableByName("test", "t1")
 	require.Equal(t, t1.Meta().TiFlashReplica.Count, t2.Meta().TiFlashReplica.Count)
 	require.Equal(t, t1.Meta().TiFlashReplica.LocationLabels, t2.Meta().TiFlashReplica.LocationLabels)
 	require.False(t, t2.Meta().TiFlashReplica.Available)

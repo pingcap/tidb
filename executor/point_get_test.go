@@ -29,7 +29,6 @@ import (
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -441,7 +440,7 @@ func TestReturnValues(t *testing.T) {
 	tk.MustExec("insert t values ('a', 1), ('b', 2), ('c', 3)")
 	tk.MustExec("begin pessimistic")
 	tk.MustQuery("select * from t where a = 'b' for update").Check(testkit.Rows("b 2"))
-	tid := external.GetTableByName(t, tk, "test", "t").Meta().ID
+	tid := tk.GetTableByName("test", "t").Meta().ID
 	idxVal, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, types.NewStringDatum("b"))
 	require.NoError(t, err)
 	pk := tablecodec.EncodeIndexSeekKey(tid, 1, idxVal)
