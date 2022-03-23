@@ -510,7 +510,7 @@ func TestCancelDropColumn(t *testing.T) {
 		if testCase.needAddColumn {
 			tk.MustExec("alter table test_drop_column add column c3 int")
 			tk.MustExec("alter table test_drop_column add index idx_c3(c3)")
-			c3IdxID = testGetIndexID(t, tk.Session(), "test", "test_drop_column", "idx_c3")
+			c3IdxID = external.GetIndexID(t, tk, "test", "test_drop_column", "idx_c3")
 		}
 
 		err := tk.ExecToErr("alter table test_drop_column drop column c3")
@@ -620,7 +620,7 @@ func TestCancelDropColumns(t *testing.T) {
 		if testCase.needAddColumn {
 			tk.MustExec("alter table test_drop_column add column c3 int, add column c4 int")
 			tk.MustExec("alter table test_drop_column add index idx_c3(c3)")
-			c3IdxID = testGetIndexID(t, tk.Session(), "test", "test_drop_column", "idx_c3")
+			c3IdxID = external.GetIndexID(t, tk, "test", "test_drop_column", "idx_c3")
 		}
 		err := tk.ExecToErr("alter table test_drop_column drop column c3, drop column c4")
 		tbl := external.GetTableByName(t, tk, "test", "test_drop_column")

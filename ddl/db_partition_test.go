@@ -2739,10 +2739,9 @@ func testPartitionDropIndex(t *testing.T, store kv.Storage, lease time.Duration,
 	}
 	tk.MustExec(addIdxSQL)
 
-	ctx := tk.Session()
-	indexID := testGetIndexID(t, ctx, "test", "partition_drop_idx", idxName)
+	indexID := external.GetIndexID(t, tk, "test", "partition_drop_idx", idxName)
 
-	jobIDExt, reset := setupJobIDExtCallback(ctx)
+	jobIDExt, reset := setupJobIDExtCallback(tk.Session())
 	defer reset()
 	testutil.ExecMultiSQLInGoroutine(store, "test", []string{dropIdxSQL}, done)
 	ticker := time.NewTicker(lease / 2)
