@@ -47,7 +47,7 @@ func testRenameTable(
 		Args:       []interface{}{oldSchemaID, tblInfo.Name, oldSchemaName},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.doDDLJob(ctx, job))
+	require.NoError(t, d.DoDDLJob(ctx, job))
 
 	v := getSchemaVer(t, ctx)
 	tblInfo.State = model.StatePublic
@@ -67,7 +67,7 @@ func testRenameTables(
 		Args:       []interface{}{oldSchemaIDs, newSchemaIDs, newTableNames, oldTableIDs, oldSchemaNames},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.doDDLJob(ctx, job))
+	require.NoError(t, d.DoDDLJob(ctx, job))
 
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: nil})
@@ -90,7 +90,7 @@ func testLockTable(t *testing.T, ctx sessionctx.Context, d *ddl, newSchemaID int
 		Args:       []interface{}{arg},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.doDDLJob(ctx, job)
+	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)
@@ -129,7 +129,7 @@ func testTruncateTable(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *mod
 		Args:       []interface{}{newTableID},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = d.doDDLJob(ctx, job)
+	err = d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)
@@ -274,7 +274,7 @@ func testAlterCacheTable(t *testing.T, ctx sessionctx.Context, d *ddl, newSchema
 		Args:       []interface{}{},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.doDDLJob(ctx, job)
+	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)
@@ -291,7 +291,7 @@ func testAlterNoCacheTable(t *testing.T, ctx sessionctx.Context, d *ddl, newSche
 		Args:       []interface{}{},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.doDDLJob(ctx, job))
+	require.NoError(t, d.DoDDLJob(ctx, job))
 
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v})
@@ -398,7 +398,7 @@ func TestCreateTables(t *testing.T) {
 		Args:       []interface{}{infos},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = d.doDDLJob(ctx, job)
+	err = d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 
 	testGetTable(t, d, dbInfo.ID, genIDs[0])
