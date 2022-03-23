@@ -1163,7 +1163,7 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 		return meta, nil
 	case TableTypeSequence:
 		sequenceName := table.Name
-		createSequenceSQL, err2 := ShowCreateSequence(tctx, conn, db, sequenceName)
+		createSequenceSQL, err2 := ShowCreateSequence(tctx, conn, db, sequenceName, conf)
 		if err2 != nil {
 			return meta, err2
 		}
