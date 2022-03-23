@@ -548,9 +548,90 @@ func (s *testRangeSuite) TestRegionConsistency(c *C) {
 		},
 	}
 	for _, ca := range cases {
+<<<<<<< HEAD
 		c.Assert(
 			restore.CheckRegionConsistency(ca.startKey, ca.endKey, ca.regions),
 			ErrorMatches,
 			ca.err)
+=======
+		err := restore.CheckRegionConsistency(ca.startKey, ca.endKey, ca.regions)
+		require.Error(t, err)
+		require.Regexp(t, ca.err, err.Error())
+	}
+}
+
+type fakeRestorer struct {
+	mu sync.Mutex
+
+	errorInSplit  bool
+	splitRanges   []rtree.Range
+	restoredFiles []*backuppb.File
+}
+
+func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, rewriteRules *restore.RewriteRules, updateCh glue.Progress, isRawKv bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	f.splitRanges = append(f.splitRanges, ranges...)
+	if f.errorInSplit {
+		err := errors.Annotatef(berrors.ErrRestoreSplitFailed,
+			"the key space takes many efforts and finally get together, how dare you split them again... :<")
+		log.Error("error happens :3", logutil.ShortError(err))
+		return err
+	}
+	return nil
+}
+
+func (f *fakeRestorer) RestoreFiles(ctx context.Context, files []*backuppb.File, rewriteRules *restore.RewriteRules, updateCh glue.Progress) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	f.restoredFiles = append(f.restoredFiles, files...)
+	err := errors.Annotatef(berrors.ErrRestoreWriteAndIngest, "the files to restore are taken by a hijacker, meow :3")
+	log.Error("error happens :3", logutil.ShortError(err))
+	return err
+}
+
+func fakeRanges(keys ...string) (r restore.DrainResult) {
+	for i := range keys {
+		if i+1 == len(keys) {
+			return
+		}
+		r.Ranges = append(r.Ranges, rtree.Range{
+			StartKey: []byte(keys[i]),
+			EndKey:   []byte(keys[i+1]),
+			Files:    []*backuppb.File{{Name: "fake.sst"}},
+		})
+	}
+	return
+}
+
+type errorInTimeSink struct {
+	ctx   context.Context
+	errCh chan error
+	t     *testing.T
+}
+
+func (e errorInTimeSink) EmitTables(tables ...restore.CreatedTable) {}
+
+func (e errorInTimeSink) EmitError(err error) {
+	e.errCh <- err
+}
+
+func (e errorInTimeSink) Close() {}
+
+func (e errorInTimeSink) Wait() {
+	select {
+	case <-e.ctx.Done():
+		e.t.Logf("The context is canceled but no error happen")
+		e.t.FailNow()
+	case <-e.errCh:
+>>>>>>> e2ad790a2... br: fix race in test `Test(Split|Restore)Failed` (#33313)
 	}
 }
