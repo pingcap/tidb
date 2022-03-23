@@ -417,34 +417,43 @@ func (p PhysicalIndexMergeReader) Init(ctx sessionctx.Context, offset int) *Phys
 // Init initializes PhysicalTableReader.
 func (p PhysicalTableReader) Init(ctx sessionctx.Context, offset int) *PhysicalTableReader {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeTableReader, &p, offset)
+	p.ReadType = Cop
 	if p.tablePlan != nil {
 		p.TablePlans = flattenPushDownPlan(p.tablePlan)
 		p.schema = p.tablePlan.Schema()
 		if p.StoreType == kv.TiFlash {
-			tableScans := p.GetTableScans()
-			// When PhysicalTableReader's store type is tiflash, has table scan
-			// and all table scans contained are not keepOrder, try to use batch cop.
-			if len(tableScans) > 0 {
-				for _, tableScan := range tableScans {
-					if tableScan.KeepOrder {
-						return &p
-					}
-				}
-
-				// When allow batch cop is 1, only agg / topN uses batch cop.
-				// When allow batch cop is 2, every query uses batch cop.
-				switch ctx.GetSessionVars().AllowBatchCop {
-				case 1:
-					for _, plan := range p.TablePlans {
-						switch plan.(type) {
-						case *PhysicalHashAgg, *PhysicalStreamAgg, *PhysicalTopN:
-							p.BatchCop = true
+			_, ok := p.tablePlan.(*PhysicalExchangeSender)
+			if ok {
+				p.ReadType = MPP
+			} else {
+				tableScans := p.GetTableScans()
+				// When PhysicalTableReader's store type is tiflash, has table scan
+				// and all table scans contained are not keepOrder, try to use batch cop.
+				if len(tableScans) > 0 {
+					for _, tableScan := range tableScans {
+						if tableScan.KeepOrder {
+							return &p
 						}
 					}
-				case 2:
-					p.BatchCop = true
+
+					// When allow batch cop is 1, only agg / topN uses batch cop.
+					// When allow batch cop is 2, every query uses batch cop.
+					switch ctx.GetSessionVars().AllowBatchCop {
+					case 1:
+						for _, plan := range p.TablePlans {
+							switch plan.(type) {
+							case *PhysicalHashAgg, *PhysicalStreamAgg, *PhysicalTopN:
+								p.ReadType = BatchCop
+							}
+						}
+					case 2:
+						p.ReadType = BatchCop
+					}
 				}
 			}
+		}
+		if p.ReadType == BatchCop || p.ReadType == MPP {
+			setMppOrBatchCopForTableScan(p.tablePlan)
 		}
 	}
 	return &p

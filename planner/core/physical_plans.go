@@ -73,6 +73,17 @@ type tableScanAndPartitionInfo struct {
 	partitionInfo PartitionInfo
 }
 
+type ReadReqType uint8
+
+const (
+	// Cop means read from storage by cop request.
+	Cop ReadReqType = iota
+	// BatchCop means read from storage by BatchCop request, only used for TiFlash
+	BatchCop
+	// MPP means read from storage by MPP request, only used for TiFlash
+	MPP
+)
+
 // PhysicalTableReader is the table reader in tidb.
 type PhysicalTableReader struct {
 	physicalSchemaProducer
@@ -85,7 +96,7 @@ type PhysicalTableReader struct {
 	StoreType kv.StoreType
 
 	// BatchCop = true means the cop task in the physical table reader will be executed in batch mode(use in TiFlash only)
-	BatchCop bool
+	ReadType ReadReqType
 
 	IsCommonHandle bool
 
@@ -129,14 +140,13 @@ func (p *PhysicalTableReader) GetTableScan() (*PhysicalTableScan, error) {
 	return tableScans[0], nil
 }
 
-// SetMppOrBatchCopForTableScan set IsMPPOrBatchCop for all TableScan.
-func SetMppOrBatchCopForTableScan(curPlan PhysicalPlan) {
+func setMppOrBatchCopForTableScan(curPlan PhysicalPlan) {
 	if ts, ok := curPlan.(*PhysicalTableScan); ok {
 		ts.IsMPPOrBatchCop = true
 	}
 	children := curPlan.Children()
 	for _, child := range children {
-		SetMppOrBatchCopForTableScan(child)
+		setMppOrBatchCopForTableScan(child)
 	}
 }
 
@@ -173,7 +183,7 @@ func (p *PhysicalTableReader) Clone() (PhysicalPlan, error) {
 	}
 	cloned.physicalSchemaProducer = *base
 	cloned.StoreType = p.StoreType
-	cloned.BatchCop = p.BatchCop
+	cloned.ReadType = p.ReadType
 	cloned.IsCommonHandle = p.IsCommonHandle
 	if cloned.tablePlan, err = p.tablePlan.Clone(); err != nil {
 		return nil, err

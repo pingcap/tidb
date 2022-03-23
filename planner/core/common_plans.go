@@ -1395,9 +1395,14 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 			return errors.Errorf("the store type %v is unknown", x.StoreType)
 		}
 		storeType = x.StoreType.Name()
-		taskName := "cop"
-		if x.BatchCop {
+		taskName := ""
+		switch x.ReadType {
+		case Cop:
+			taskName = "cop"
+		case BatchCop:
 			taskName = "batchCop"
+		case MPP:
+			taskName = "mpp"
 		}
 		err = e.explainPlanInRowFormat(x.tablePlan, taskName+"["+storeType+"]", "", childIndent, true)
 	case *PhysicalIndexReader:
