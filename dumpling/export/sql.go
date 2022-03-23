@@ -193,6 +193,7 @@ func ShowCreateSequence(tctx *tcontext.Context, db *BaseConn, database, sequence
 	createSequenceSQL.WriteString(oneRow[1])
 	createSequenceSQL.WriteString(";\n")
 
+	// Get next not allocated auto increment id of the whole cluster
 	query = fmt.Sprintf("SHOW TABLE `%s`.`%s` NEXT_ROW_ID", escapeString(database), escapeString(sequence))
 	results, err := db.QuerySQLWithColumns(tctx, []string{"NEXT_GLOBAL_ROW_ID", "ID_TYPE"}, query)
 	if err != nil {
