@@ -2734,30 +2734,6 @@ func loadCollationParameter(se *session) (bool, error) {
 	return false, nil
 }
 
-func updateMemoryConfigAndSysVar(se *session) error {
-	if !config.IsMemoryQuotaQuerySetByUser {
-		newMemoryQuotaQuery, err := loadDefMemQuotaQuery(se)
-		if err != nil {
-			return err
-		}
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.MemQuotaQuery = newMemoryQuotaQuery
-		})
-		variable.SetSysVar(variable.TiDBMemQuotaQuery, strconv.FormatInt(config.GetGlobalConfig().MemQuotaQuery, 10))
-	}
-	if !config.IsOOMActionSetByUser {
-		newOOMAction, err := loadDefOOMAction(se)
-		if err != nil {
-			return err
-		}
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.OOMAction = newOOMAction
-		})
-	}
-
-	return nil
-}
-
 // loadDefMemQuotaQuery loads the default value of mem-quota-query.
 // We'll read a tuple if the cluster is upgraded from v3.0.x to v4.0.9+.
 // An empty result will be returned if it's a newly deployed cluster whose
@@ -2812,50 +2788,82 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 		runInBootstrapSession(store, upgrade)
 	}
 
-	concurrency := int(config.GetGlobalConfig().Performance.StatsLoadConcurrency)
-	ses, err := createSessions(store, 7+concurrency)
+	se, err := createSession(store)
 	if err != nil {
 		return nil, err
 	}
-	ses[0].GetSessionVars().InRestrictedSQL = true
+	se.GetSessionVars().InRestrictedSQL = true
 
 	// get system tz from mysql.tidb
-	tz, err := ses[0].getTableValue(context.TODO(), mysql.TiDBTable, tidbSystemTZ)
+	tz, err := se.getTableValue(context.TODO(), mysql.TiDBTable, "system_tz")
 	if err != nil {
 		return nil, err
 	}
 	timeutil.SetSystemTZ(tz)
 
 	// get the flag from `mysql`.`tidb` which indicating if new collations are enabled.
-	newCollationEnabled, err := loadCollationParameter(ses[0])
+	newCollationEnabled, err := loadCollationParameter(se)
 	if err != nil {
 		return nil, err
 	}
+
 	collate.SetNewCollationEnabledForTest(newCollationEnabled)
 
-	err = updateMemoryConfigAndSysVar(ses[0])
+	newMemoryQuotaQuery, err := loadDefMemQuotaQuery(se)
 	if err != nil {
 		return nil, err
 	}
+	if !config.IsMemoryQuotaQuerySetByUser {
+		newCfg := *(config.GetGlobalConfig())
+		newCfg.MemQuotaQuery = newMemoryQuotaQuery
+		config.StoreGlobalConfig(&newCfg)
+		variable.SetSysVar(variable.TiDBMemQuotaQuery, strconv.FormatInt(newCfg.MemQuotaQuery, 10))
+	}
+	newOOMAction, err := loadDefOOMAction(se)
+	if err != nil {
+		return nil, err
+	}
+	if !config.IsOOMActionSetByUser {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.OOMAction = newOOMAction
+		})
+	}
 
-	dom := domain.GetDomain(ses[0])
+	dom := domain.GetDomain(se)
+
+	se2, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
+	se3, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
 	// We should make the load bind-info loop before other loops which has internal SQL.
 	// Because the internal SQL may access the global bind-info handler. As the result, the data race occurs here as the
 	// LoadBindInfoLoop inits global bind-info handler.
-	err = dom.LoadBindInfoLoop(ses[1], ses[2])
+	err = dom.LoadBindInfoLoop(se2, se3)
 	if err != nil {
 		return nil, err
 	}
 
 	if !config.GetGlobalConfig().Security.SkipGrantTable {
-		err = dom.LoadPrivilegeLoop(ses[3])
+		se4, err := createSession(store)
+		if err != nil {
+			return nil, err
+		}
+		err = dom.LoadPrivilegeLoop(se4)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	//  Rebuild sysvar cache in a loop
-	err = dom.LoadSysVarCacheLoop(ses[4])
+	se5, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
+	err = dom.LoadSysVarCacheLoop(se5)
 	if err != nil {
 		return nil, err
 	}
@@ -2866,28 +2874,43 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 			return nil, err
 		}
 	}
-
-	err = executor.LoadExprPushdownBlacklist(ses[5])
+	se6, err := createSession(store)
 	if err != nil {
 		return nil, err
 	}
-	err = executor.LoadOptRuleBlacklist(ses[5])
+	err = executor.LoadExprPushdownBlacklist(se6)
 	if err != nil {
 		return nil, err
 	}
 
-	dom.TelemetryReportLoop(ses[5])
-	dom.TelemetryRotateSubWindowLoop(ses[5])
-
-	// A sub context for update table stats, and other contexts for concurrent stats loading.
-	cnt := 1 + concurrency
-	subCtxs := make([]sessionctx.Context, cnt)
-	for i := 0; i < cnt; i++ {
-		subCtxs[i] = sessionctx.Context(ses[6+i])
-	}
-	if err = dom.LoadAndUpdateStatsLoop(subCtxs); err != nil {
+	err = executor.LoadOptRuleBlacklist(se6)
+	if err != nil {
 		return nil, err
 	}
+
+	dom.TelemetryReportLoop(se6)
+	dom.TelemetryRotateSubWindowLoop(se6)
+
+	se7, err := createSession(store)
+	if err != nil {
+		return nil, err
+	}
+	err = dom.UpdateTableStatsLoop(se7)
+	if err != nil {
+		return nil, err
+	}
+
+	// start sub workers for concurrent stats loading
+	concurrency := config.GetGlobalConfig().Performance.StatsLoadConcurrency
+	subCtxs := make([]sessionctx.Context, concurrency)
+	for i := 0; i < int(concurrency); i++ {
+		subSe, err := createSession(store)
+		if err != nil {
+			return nil, err
+		}
+		subCtxs[i] = subSe
+	}
+	dom.StartLoadStatsSubWorkers(subCtxs)
 
 	dom.PlanReplayerLoop()
 
@@ -2925,19 +2948,6 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 	dom := domain.GetDomain(s)
 	dom.Close()
 	domap.Delete(store)
-}
-
-func createSessions(store kv.Storage, cnt int) ([]*session, error) {
-	ses := make([]*session, cnt)
-	for i := 0; i < cnt; i++ {
-		se, err := createSession(store)
-		if err != nil {
-			return nil, err
-		}
-		ses[i] = se
-	}
-
-	return ses, nil
 }
 
 func createSession(store kv.Storage) (*session, error) {
