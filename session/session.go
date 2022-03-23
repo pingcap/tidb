@@ -1636,6 +1636,12 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	return stmts[0], nil
 }
 
+// ParseWithParams4Test wrapper (s *session) ParseWithParams for test
+func ParseWithParams4Test(s Session,
+	ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error) {
+	return s.(*session).ParseWithParams(ctx, sql, args)
+}
+
 // ExecRestrictedStmt implements RestrictedSQLExecutor interface.
 func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode, opts ...sqlexec.OptionFuncAlias) (
 	[]chunk.Row, []*ast.ResultField, error) {
@@ -1679,6 +1685,13 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	}
 	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
 	return rows, rs.Fields(), err
+}
+
+// ExecRestrictedStmt implements RestrictedSQLExecutor interface.
+func ExecRestrictedStmt4Test(s Session, ctx context.Context,
+	stmtNode ast.StmtNode, opts ...sqlexec.OptionFuncAlias) (
+	[]chunk.Row, []*ast.ResultField, error) {
+	return s.(*session).ExecRestrictedStmt(ctx, stmtNode, opts...)
 }
 
 // only set and clean session with execOption

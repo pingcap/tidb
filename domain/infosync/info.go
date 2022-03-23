@@ -1065,12 +1065,10 @@ func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionD
 func StoreInternalSession(addr unsafe.Pointer) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
-		logutil.BgLogger().Info("Fail to store internal session, infoSyncer is nil")
 		return
 	}
 	sm := is.GetSessionManager()
 	if sm == nil {
-		logutil.BgLogger().Info("Fail to store internal session, session manager is nil")
 		return
 	}
 	sm.StoreInternalSession(addr)
@@ -1080,12 +1078,10 @@ func StoreInternalSession(addr unsafe.Pointer) {
 func DeleteInternalSession(addr unsafe.Pointer) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
-		logutil.BgLogger().Info("Fail to delete internal session, infoSyncer is nil")
 		return
 	}
 	sm := is.GetSessionManager()
 	if sm == nil {
-		logutil.BgLogger().Info("Fail to delete internal session, session manager is nil")
 		return
 	}
 	sm.DeleteInternalSession(addr)

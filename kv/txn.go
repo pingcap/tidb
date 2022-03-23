@@ -187,7 +187,6 @@ func getGlobalInnerTxnTsBox() *innerTxnStartTsBox {
 func wrapStoreInterTxnTS(startTS uint64) {
 	ib := getGlobalInnerTxnTsBox()
 	if ib == nil {
-		logutil.BgLogger().Info("Fail to store internal txn startTS, globalInnerTxnTsBox is nil")
 		return
 	}
 	if !ib.isBoxRunning() {
@@ -207,7 +206,6 @@ func (ib *innerTxnStartTsBox) storeInnerTxnTS(startTS uint64) {
 func wrapDeleteInterTxnTS(startTS uint64) {
 	ib := getGlobalInnerTxnTsBox()
 	if ib == nil {
-		logutil.BgLogger().Info("Fail to delete internal txn startTS, globalInnerTxnTsBox is nil")
 		return
 	}
 	if !ib.isBoxRunning() {

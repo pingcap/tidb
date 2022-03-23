@@ -429,6 +429,19 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		}
 	}
 
+	failpoint.Inject("mockDelayInnerSessionExecute", func() {
+		var curTxnStartTS uint64
+		if cmd != mysql.ComSleep || sctx.GetSessionVars().InTxn() {
+			curTxnStartTS = sctx.GetSessionVars().TxnCtx.StartTS
+		}
+		if sctx.GetSessionVars().SnapshotTS != 0 {
+			curTxnStartTS = sctx.GetSessionVars().SnapshotTS
+		}
+		logutil.BgLogger().Info("Enable mockDelayInnerSessionExecute when execute statment",
+			zap.Uint64("startTS", curTxnStartTS))
+		time.Sleep(200 * time.Millisecond)
+	})
+
 	isPessimistic := sctx.GetSessionVars().TxnCtx.IsPessimistic
 
 	// Special handle for "select for update statement" in pessimistic transaction.
