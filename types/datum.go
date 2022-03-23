@@ -1062,29 +1062,64 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementCon
 		// overflowed part is all whitespaces
 		var overflowed string
 		var characterLen int
-		// Flen is the rune length, not binary length, for Non-binary charset, we need to calculate the
-		// rune count and truncate to Flen runes if it is too long.
+
+		// For  mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob(defined in tidb)
+		// and tinytext, text, mediumtext, longtext(not explicitly defined in tidb, corresponding to blob(s) in tidb) flen is the store length limit regardless of charset.
 		if chs != charset.CharsetBinary {
-			characterLen = utf8.RuneCountInString(s)
-			if characterLen > flen {
-				// 1. If len(s) is 0 and flen is 0, truncateLen will be 0, don't truncate s.
-				//    CREATE TABLE t (a char(0));
-				//    INSERT INTO t VALUES (``);
-				// 2. If len(s) is 10 and flen is 0, truncateLen will be 0 too, but we still need to truncate s.
-				//    SELECT 1, CAST(1234 AS CHAR(0));
-				// So truncateLen is not a suitable variable to determine to do truncate or not.
-				var runeCount int
-				var truncateLen int
-				for i := range s {
-					if runeCount == flen {
-						truncateLen = i
-						break
+			switch tp.Tp {
+			case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+				characterLen = len(s)
+				// We need to truncate the value to a proper length that contains complete word.
+				if characterLen > flen {
+					var r rune
+					var size int
+					var tempStr string
+					truncateLen := flen
+					// Find the truncate position.
+					for {
+						tempStr = truncateStr(s, truncateLen)
+						r, size = utf8.DecodeLastRuneInString(tempStr)
+						if r == utf8.RuneError && size == 0 {
+							// Empty string
+						} else if r == utf8.RuneError && size == 1 {
+							// Invalid string
+						} else {
+							// Get the truncate position
+							break
+						}
+
+						truncateLen--
+						if truncateLen == 0 {
+							break
+						}
 					}
-					runeCount++
+					overflowed = s[truncateLen:]
+					s = truncateStr(s, truncateLen)
 				}
-				overflowed = s[truncateLen:]
-				s = truncateStr(s, truncateLen)
+
+			default:
+				characterLen = utf8.RuneCountInString(s)
+				if characterLen > flen {
+					// 1. If len(s) is 0 and flen is 0, truncateLen will be 0, don't truncate s.
+					//    CREATE TABLE t (a char(0));
+					//    INSERT INTO t VALUES (``);
+					// 2. If len(s) is 10 and flen is 0, truncateLen will be 0 too, but we still need to truncate s.
+					//    SELECT 1, CAST(1234 AS CHAR(0));
+					// So truncateLen is not a suitable variable to determine to do truncate or not.
+					var runeCount int
+					var truncateLen int
+					for i := range s {
+						if runeCount == flen {
+							truncateLen = i
+							break
+						}
+						runeCount++
+					}
+					overflowed = s[truncateLen:]
+					s = truncateStr(s, truncateLen)
+				}
 			}
+
 		} else if len(s) > flen {
 			characterLen = len(s)
 			overflowed = s[flen:]
