@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/sqlexec"
