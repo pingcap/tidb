@@ -209,7 +209,7 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 			}
 
 			if status == metaStatusChecksuming {
-				return common.ErrAllocTableRowIDs.GenWithStack("target table is calculating checksum, please wait unit the checksum is finished and try again.")
+				return common.ErrAllocTableRowIDs.GenWithStack("Target table is calculating checksum. Please wait until the checksum is finished and try again.")
 			}
 
 			if metaTaskID == m.taskID {

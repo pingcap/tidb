@@ -59,6 +59,19 @@ type Dumper struct {
 
 // NewDumper returns a new Dumper
 func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
+	failpoint.Inject("setExtStorage", func(val failpoint.Value) {
+		path := val.(string)
+		b, err := storage.ParseBackend(path, nil)
+		if err != nil {
+			panic(err)
+		}
+		s, err := storage.New(context.Background(), b, &storage.ExternalStorageOptions{})
+		if err != nil {
+			panic(err)
+		}
+		conf.ExtStorage = s
+	})
+
 	tctx, cancelFn := tcontext.Background().WithContext(ctx).WithCancel()
 	d := &Dumper{
 		tctx:                      tctx,

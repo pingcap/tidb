@@ -1083,8 +1083,18 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// DayOfWeek
+	function, err = NewFunction(mock.NewContext(), ast.DayOfWeek, types.NewFieldType(mysql.TypeDatetime), datetimeColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	// DayOfMonth
 	function, err = NewFunction(mock.NewContext(), ast.DayOfMonth, types.NewFieldType(mysql.TypeDatetime), datetimeColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// DayOfYear
+	function, err = NewFunction(mock.NewContext(), ast.DayOfYear, types.NewFieldType(mysql.TypeDatetime), datetimeColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -1233,11 +1243,6 @@ func TestExprPushDownToTiKV(t *testing.T) {
 		},
 		{
 			functionName: ast.Right,
-			retType:      types.NewFieldType(mysql.TypeString),
-			args:         []Expression{stringColumn, intColumn},
-		},
-		{
-			functionName: ast.Left,
 			retType:      types.NewFieldType(mysql.TypeString),
 			args:         []Expression{stringColumn, intColumn},
 		},
@@ -1478,7 +1483,7 @@ func TestExprOnlyPushDownToTiKV(t *testing.T) {
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 
-	function, err := NewFunction(mock.NewContext(), "dayofyear", types.NewFieldType(mysql.TypeLonglong), genColumn(mysql.TypeDatetime, 1))
+	function, err := NewFunction(mock.NewContext(), "weekofyear", types.NewFieldType(mysql.TypeLonglong), genColumn(mysql.TypeDatetime, 1))
 	require.NoError(t, err)
 	var exprs = make([]Expression, 0)
 	exprs = append(exprs, function)
