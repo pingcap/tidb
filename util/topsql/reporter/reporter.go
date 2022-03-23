@@ -48,9 +48,11 @@ type TopSQLReporter interface {
 	// This function should be thread-safe, which means concurrently calling it
 	// in several goroutines should be fine. It should also return immediately,
 	// and do any CPU-intensive job asynchronously.
+	// The sqlDigest will be referenced internally, so do not mutate it.
 	RegisterSQL(sqlDigest []byte, normalizedSQL string, isInternal bool)
 
 	// RegisterPlan like RegisterSQL, but for normalized plan strings.
+	// The planDigest will be referenced internally, so do not mutate it.
 	RegisterPlan(planDigest []byte, normalizedPlan string)
 
 	// Close uses to close and release the reporter resource.
