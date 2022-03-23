@@ -358,7 +358,6 @@ func TestCreateTables(t *testing.T) {
 	defer func() {
 		require.NoError(t, store.Close())
 	}()
-	t.Skip("tmp skip")
 	d, err := testNewDDLAndStart(
 		context.Background(),
 		WithStore(store),
