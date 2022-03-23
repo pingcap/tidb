@@ -259,16 +259,6 @@ func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.
 		o.checkpointName = file
 	})
 
-	// pre-check about options
-	// glue should be set when lightning in TiDB, and storages should be set when lightning in DM/dataflow engine,
-	// so they should not both be set.
-	if o.dumpFileStorage != nil && o.glue != nil {
-		return common.ErrInvalidArgument.GenWithStack("WithDumpFileStorage and WithGlue can't be both set")
-	}
-	if o.checkpointStorage != nil && o.glue != nil {
-		return common.ErrInvalidArgument.GenWithStack("WithCheckpointStorage and WithGlue can't be both set")
-	}
-
 	if o.dumpFileStorage != nil {
 		// we don't use it, set a value to pass Adjust
 		taskCfg.Mydumper.SourceDir = "noop://"
@@ -398,12 +388,13 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	var procedure *restore.Controller
 
 	param := &restore.ControllerParam{
-		DBMetas:         dbMetas,
-		Status:          &l.status,
-		DumpFileStorage: s,
-		OwnExtStorage:   o.dumpFileStorage == nil,
-		Glue:            g,
-		CheckpointName:  o.checkpointName,
+		DBMetas:           dbMetas,
+		Status:            &l.status,
+		DumpFileStorage:   s,
+		OwnExtStorage:     o.dumpFileStorage == nil,
+		Glue:              g,
+		CheckpointStorage: o.checkpointStorage,
+		CheckpointName:    o.checkpointName,
 	}
 
 	procedure, err = restore.NewRestoreController(ctx, taskCfg, param)
