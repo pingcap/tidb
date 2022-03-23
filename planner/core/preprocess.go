@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
@@ -864,6 +865,14 @@ func (p *preprocessor) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
 			p.err = ddl.ErrWrongColumnName.GenWithStackByArgs(col)
 			return
 		}
+	}
+	if len(stmt.Definer.Username) > auth.UserNameMaxLength {
+		p.err = dbterror.ErrWrongStringLength.GenWithStackByArgs(stmt.Definer.Username, "user name", auth.UserNameMaxLength)
+		return
+	}
+	if len(stmt.Definer.Hostname) > auth.HostNameMaxLength {
+		p.err = dbterror.ErrWrongStringLength.GenWithStackByArgs(stmt.Definer.Hostname, "host name", auth.HostNameMaxLength)
+		return
 	}
 }
 

@@ -3006,7 +3006,7 @@ func (s *testSessionSuite2) TestHostLengthMax(c *C) {
 	tk.MustExec(fmt.Sprintf(`CREATE USER 'abcddfjakldfjaldddds'@'%s'`, host1))
 
 	err := tk.ExecToErr(fmt.Sprintf(`CREATE USER 'abcddfjakldfjaldddds'@'%s'`, host2))
-	c.Assert(err.Error(), Equals, "[types:1406]Data too long for column 'Host' at row 1")
+	c.Assert(err.Error(), Equals, "[ddl:1470]String 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' is too long for host name (should be no longer than 255)")
 }
 
 func (s *testSessionSerialSuite) TestKVVars(c *C) {
