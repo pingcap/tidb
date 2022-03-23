@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -41,11 +42,13 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
+	testkit2 "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
@@ -2149,4 +2152,121 @@ func (s *serialTestStateChangeSuite) TestRestrainDropColumnWithIndex(c *C) {
 	tk.MustExec("set @@GLOBAL.tidb_enable_change_multi_schema=1")
 	tk.MustExec("alter table t drop column a;")
 	tk.MustExec("drop table if exists t;")
+}
+
+func TestParallelRenameTable(t *testing.T) {
+	store, d, clean := testkit2.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit2.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create database test2")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int default 0, b int default 0, key idx((b+1)))")
+	tk1 := testkit2.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk3 := testkit2.NewTestKit(t, store)
+	tk3.MustExec("use test")
+
+	var concurrentDDLQueryPre string
+	var concurrentDDLQuery string
+	firstDDL := true
+
+	var wg sync.WaitGroup
+	var checkErr error
+	d2 := d.DDL()
+	originalCallback := d2.GetHook()
+	defer d2.(ddl.DDLForTest).SetHook(originalCallback)
+	callback := &ddl.TestDDLCallback{Do: d}
+	callback.OnJobRunBeforeExported = func(job *model.Job) {
+		switch job.SchemaState {
+		case model.StateNone:
+			if firstDDL {
+				firstDDL = false
+			} else {
+				return
+			}
+			wg.Add(1)
+			go func() {
+				if concurrentDDLQueryPre != "" {
+					go func() {
+						// We assume that no error, we don't want to test it.
+						tk3.MustExec(concurrentDDLQueryPre)
+					}()
+					time.Sleep(10 * time.Millisecond)
+				}
+				_, err := tk1.Exec(concurrentDDLQuery)
+				if err != nil {
+					checkErr = err
+				}
+				wg.Done()
+			}()
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	d2.(ddl.DDLForTest).SetHook(callback)
+
+	// rename then add column
+	concurrentDDLQuery = "alter table t add column g int"
+	tk.MustExec("rename table t to t1")
+	wg.Wait()
+	require.Error(t, checkErr)
+	require.True(t, strings.Contains(checkErr.Error(), "Table 'test.t' doesn't exist"), checkErr.Error())
+	tk.MustExec("rename table t1 to t")
+	checkErr = nil
+
+	// rename then add column, but rename to other database
+	concurrentDDLQuery = "alter table t add column g int"
+	firstDDL = true
+	tk.MustExec("rename table t to test2.t1")
+	wg.Wait()
+	require.Error(t, checkErr)
+	// [schema:1146]Table '(Schema ID 1).(Table ID 65)' doesn't exist
+	require.True(t, strings.Contains(checkErr.Error(), "doesn't exist"), checkErr.Error())
+	tk.MustExec("rename table test2.t1 to test.t")
+	checkErr = nil
+
+	// rename then add column, but rename to other database and create same name table
+	concurrentDDLQuery = "alter table t add column g int"
+	firstDDL = true
+	tk.MustExec("rename table t to test2.t1")
+	concurrentDDLQueryPre = "create table t(a int)"
+	wg.Wait()
+	require.Error(t, checkErr)
+	// [schema:1146]Table '(Schema ID 1).(Table ID 65)' doesn't exist
+	require.True(t, strings.Contains(checkErr.Error(), "doesn't exist"), checkErr.Error())
+	tk.MustExec("rename table test2.t1 to test.t")
+	concurrentDDLQueryPre = ""
+	checkErr = nil
+
+	// rename then rename
+	concurrentDDLQuery = "rename table t to t2"
+	firstDDL = true
+	tk.MustExec("rename table t to t1")
+	wg.Wait()
+	require.Error(t, checkErr)
+	require.True(t, strings.Contains(checkErr.Error(), "Table 'test.t' doesn't exist"), checkErr.Error())
+	tk.MustExec("rename table t1 to t")
+	checkErr = nil
+
+	// rename then rename, but rename to other database
+	concurrentDDLQuery = "rename table t to t2"
+	firstDDL = true
+	tk.MustExec("rename table t to test2.t1")
+	wg.Wait()
+	require.Error(t, checkErr)
+	require.True(t, strings.Contains(checkErr.Error(), "doesn't exist"), checkErr.Error())
+	tk.MustExec("rename table test2.t1 to test.t")
+	checkErr = nil
+
+	// renames then add index on one table
+	tk.MustExec("create table t2(a int)")
+	tk.MustExec("create table t3(a int)")
+	concurrentDDLQuery = "alter table t add index(a)"
+	firstDDL = true
+	tk.MustExec("rename table t to tt, t2 to tt2, t3 to tt3")
+	wg.Wait()
+	require.Error(t, checkErr)
+	require.True(t, strings.Contains(checkErr.Error(), "Table 'test.t' doesn't exist"), checkErr.Error())
+	tk.MustExec("rename table tt to t")
 }
