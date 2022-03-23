@@ -95,8 +95,9 @@ type PhysicalTableReader struct {
 	// StoreType indicates table read from which type of store.
 	StoreType kv.StoreType
 
-	// BatchCop = true means the cop task in the physical table reader will be executed in batch mode(use in TiFlash only)
-	ReadType ReadReqType
+	// ReadReqType is the read request type for current physical table reader, there are 3 kinds of read request: Cop,
+	// BatchCop and MPP, currently, the latter two are only used in TiFlash
+	ReadReqType ReadReqType
 
 	IsCommonHandle bool
 
@@ -183,7 +184,7 @@ func (p *PhysicalTableReader) Clone() (PhysicalPlan, error) {
 	}
 	cloned.physicalSchemaProducer = *base
 	cloned.StoreType = p.StoreType
-	cloned.ReadType = p.ReadType
+	cloned.ReadReqType = p.ReadReqType
 	cloned.IsCommonHandle = p.IsCommonHandle
 	if cloned.tablePlan, err = p.tablePlan.Clone(); err != nil {
 		return nil, err

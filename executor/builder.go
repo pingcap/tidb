@@ -3143,7 +3143,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		plans:            v.TablePlans,
 		tablePlan:        v.GetTablePlan(),
 		storeType:        v.StoreType,
-		batchCop:         v.ReadType == plannercore.BatchCop,
+		batchCop:         v.ReadReqType == plannercore.BatchCop,
 	}
 	e.buildVirtualColumnInfo()
 	if containsLimit(dagReq.Executors) {

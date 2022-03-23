@@ -1396,7 +1396,7 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 		}
 		storeType = x.StoreType.Name()
 		taskName := ""
-		switch x.ReadType {
+		switch x.ReadReqType {
 		case Cop:
 			taskName = "cop"
 		case BatchCop:
