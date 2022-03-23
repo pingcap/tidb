@@ -1423,8 +1423,6 @@ func (s *extractorSuite) TestTiDBHotRegionsHistoryTableExtractor(c *C) {
 		}
 	}
 }
-<<<<<<< HEAD
-=======
 
 func TestTikvRegionPeersExtractor(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
@@ -1700,4 +1698,3 @@ func TestPredicateQuery(t *testing.T) {
 	tk.MustGetErrCode("show columns from t like id", errno.ErrBadField)
 	tk.MustGetErrCode("show columns from t like `id`", errno.ErrBadField)
 }
->>>>>>> ad1c5b508 (*: add pushdown for ShowStmt and implement for show columns (#31742))
