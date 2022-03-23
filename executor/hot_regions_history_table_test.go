@@ -332,161 +332,153 @@ func (s *hotRegionsHistoryTableSuite) TestTiDBHotRegionsHistory() {
 				fullHotRegions[9], fullHotRegions[10], fullHotRegions[11],
 			},
 		},
-		/*
-			{
-				conditions: []string{
-					"update_time>=TIMESTAMP('2019-10-10 10:10:10')",
-					"update_time<=TIMESTAMP('2019-10-11 10:10:10')",
-				}, // test support of timestamp
-				expected: [][]string{
-					fullHotRegions[0], fullHotRegions[1], fullHotRegions[2],
-					fullHotRegions[3],
-					fullHotRegions[6], fullHotRegions[7], fullHotRegions[8],
-					fullHotRegions[9], fullHotRegions[10], fullHotRegions[11],
-				},
+		{
+			conditions: []string{
+				"update_time>=TIMESTAMP('2019-10-10 10:10:10')",
+				"update_time<=TIMESTAMP('2019-10-11 10:10:10')",
+			}, // test support of timestamp
+			expected: [][]string{
+				fullHotRegions[0], fullHotRegions[1], fullHotRegions[2],
+				fullHotRegions[3],
+				fullHotRegions[6], fullHotRegions[7], fullHotRegions[8],
+				fullHotRegions[9], fullHotRegions[10], fullHotRegions[11],
 			},
-			{
-				conditions: []string{
-					"update_time>='2019-10-10 10:10:10'",
-					"update_time<='2019-10-11 10:10:10'",
-					"table_id=" + tablesPrivTidStr,
-				},
-				expected: [][]string{
-					fullHotRegions[0], fullHotRegions[1], fullHotRegions[6], fullHotRegions[7],
-				},
+		},
+		{
+			conditions: []string{
+				"update_time>='2019-10-10 10:10:10'",
+				"update_time<='2019-10-11 10:10:10'",
+				"table_id=" + tablesPrivTidStr,
 			},
-
-				{
-					conditions: []string{
-						"update_time>='2019-10-10 10:10:10'",
-						"update_time<='2019-10-11 10:10:10'",
-						"table_name='TABLES_PRIV'",
-					},
-					expected: [][]string{
-						fullHotRegions[0], fullHotRegions[1], fullHotRegions[6], fullHotRegions[7],
-					},
-				},
-
-					{
-						conditions: []string{
-							"update_time>='2019-10-10 10:10:10'",
-							"update_time<='2019-10-11 10:10:10'",
-							"table_id=" + statsMetaTidStr,
-							"index_id=1",
-						},
-						expected: [][]string{
-							fullHotRegions[8], fullHotRegions[9],
-						},
-					},
-					{
-						conditions: []string{
-							"update_time>='2019-10-10 10:10:10'",
-							"update_time<='2019-10-11 10:10:10'",
-							"table_id=" + statsMetaTidStr,
-							"index_id=1",
-							"table_name='TABLES_PRIV'",
-						}, // table_id != table_name -> nil
-						expected: [][]string{},
-					},
-
-						{
-							conditions: []string{
-								"update_time>='2019-10-10 10:10:10'",
-								"update_time<='2019-10-11 10:10:10'",
-								"table_id=" + statsMetaTidStr,
-								"index_id=1",
-								"table_name='STATS_META'",
-							}, // table_id = table_name
-							expected: [][]string{
-								fullHotRegions[8], fullHotRegions[9],
-							},
-						},
-						{
-							conditions: []string{
-								"update_time>='2019-10-10 10:10:10'",
-								"update_time<='2019-10-11 10:10:10'",
-								"table_id=" + statsMetaTidStr,
-								"index_id=1",
-								"index_name='UNKNOWN'",
-							}, // index_id != index_name -> nil
-							expected: [][]string{},
-						},
-						{
-							conditions: []string{
-								"update_time>='2019-10-10 10:10:10'",
-								"update_time<='2019-10-11 10:10:10'",
-								"table_id=" + statsMetaTidStr,
-								"index_id=1",
-								"index_name='IDX_VER'",
-							}, // index_id = index_name
-							expected: [][]string{
-								fullHotRegions[8], fullHotRegions[9],
-							},
-						},
-
-							{
-								conditions: []string{
-									"update_time>='2019-10-10 10:10:10'",
-									"update_time<='2019-10-11 10:10:10'",
-									"index_id=1",
-									"index_name='IDX_VER'",
-									"table_id>=" + statsMetaTidStr, // unpushed down predicates 21>=21
-								},
-								expected: [][]string{
-									fullHotRegions[8], fullHotRegions[9],
-								},
-							},
-
-								{
-									conditions: []string{
-										"update_time>='2019-10-10 10:10:10'",
-										"update_time<='2019-10-11 10:10:10'",
-										"index_id=1",
-										"index_name='IDX_VER'",
-										"table_id>" + statsMetaTidStr, // unpushed down predicates
-									}, // 21!>21 -> nil
-									expected: [][]string{},
-								},
-								{
-									conditions: []string{
-										"update_time>='2019-10-10 10:10:10'",
-										"update_time<='2019-10-11 10:10:10'",
-										"index_id=1",
-										"index_name='IDX_VER'",
-										"table_id>=" + statsMetaTidStr, // unpushed down predicates
-										"db_name='MYSQL'",
-									},
-									expected: [][]string{
-										fullHotRegions[8], fullHotRegions[9],
-									},
-								},
-								{
-									conditions: []string{
-										"update_time>='2019-10-10 10:10:10'",
-										"update_time<='2019-10-11 10:10:10'",
-										"index_id=1",
-										"index_name='IDX_VER'",
-										"table_id>=" + statsMetaTidStr, // unpushed down predicates
-										"db_name='MYSQL'",
-										"peer_id>=33334",
-									},
-									expected: [][]string{
-										fullHotRegions[9],
-									},
-								},
-								{
-									conditions: []string{
-										"update_time>='2019-10-10 10:10:10'",
-										"update_time<='2019-10-11 10:10:10'",
-										"index_id=1",
-										"index_name='IDX_VER'",
-										"table_id>=" + statsMetaTidStr, // unpushed down predicates
-										"db_name='UNKNOWN'",
-									},
-									expected: [][]string{},
-								},
-
-		*/
+			expected: [][]string{
+				fullHotRegions[0], fullHotRegions[1], fullHotRegions[6], fullHotRegions[7],
+			},
+		},
+		{
+			conditions: []string{
+				"update_time>='2019-10-10 10:10:10'",
+				"update_time<='2019-10-11 10:10:10'",
+				"table_name='TABLES_PRIV'",
+			},
+			expected: [][]string{
+				fullHotRegions[0], fullHotRegions[1], fullHotRegions[6], fullHotRegions[7],
+			},
+		},
+		{
+			conditions: []string{
+				"update_time>='2019-10-10 10:10:10'",
+				"update_time<='2019-10-11 10:10:10'",
+				"table_id=" + statsMetaTidStr,
+				"index_id=1",
+			},
+			expected: [][]string{
+				fullHotRegions[8], fullHotRegions[9],
+			},
+		},
+		{
+			conditions: []string{
+				"update_time>='2019-10-10 10:10:10'",
+				"update_time<='2019-10-11 10:10:10'",
+				"table_id=" + statsMetaTidStr,
+				"index_id=1",
+				"table_name='TABLES_PRIV'",
+			}, // table_id != table_name -> nil
+			expected: [][]string{},
+		},
+		{
+			conditions: []string{
+				"update_time>='2019-10-10 10:10:10'",
+				"update_time<='2019-10-11 10:10:10'",
+				"table_id=" + statsMetaTidStr,
+				"index_id=1",
+				"table_name='STATS_META'",
+			}, // table_id = table_name
+			expected: [][]string{
+				fullHotRegions[8], fullHotRegions[9],
+			},
+		},
+		{
+			conditions: []string{
+				"update_time>='2019-10-10 10:10:10'",
+				"update_time<='2019-10-11 10:10:10'",
+				"table_id=" + statsMetaTidStr,
+				"index_id=1",
+				"index_name='UNKNOWN'",
+			}, // index_id != index_name -> nil
+			expected: [][]string{},
+		},
+		{
+			conditions: []string{
+				"update_time>='2019-10-10 10:10:10'",
+				"update_time<='2019-10-11 10:10:10'",
+				"table_id=" + statsMetaTidStr,
+				"index_id=1",
+				"index_name='IDX_VER'",
+			}, // index_id = index_name
+			expected: [][]string{
+				fullHotRegions[8], fullHotRegions[9],
+			},
+		},
+		{
+			conditions: []string{
+				"update_time>='2019-10-10 10:10:10'",
+				"update_time<='2019-10-11 10:10:10'",
+				"index_id=1",
+				"index_name='IDX_VER'",
+				"table_id>=" + statsMetaTidStr, // unpushed down predicates 21>=21
+			},
+			expected: [][]string{
+				fullHotRegions[8], fullHotRegions[9],
+			},
+		},
+		{
+			conditions: []string{
+				"update_time>='2019-10-10 10:10:10'",
+				"update_time<='2019-10-11 10:10:10'",
+				"index_id=1",
+				"index_name='IDX_VER'",
+				"table_id>" + statsMetaTidStr, // unpushed down predicates
+			}, // 21!>21 -> nil
+			expected: [][]string{},
+		},
+		{
+			conditions: []string{
+				"update_time>='2019-10-10 10:10:10'",
+				"update_time<='2019-10-11 10:10:10'",
+				"index_id=1",
+				"index_name='IDX_VER'",
+				"table_id>=" + statsMetaTidStr, // unpushed down predicates
+				"db_name='MYSQL'",
+			},
+			expected: [][]string{
+				fullHotRegions[8], fullHotRegions[9],
+			},
+		},
+		{
+			conditions: []string{
+				"update_time>='2019-10-10 10:10:10'",
+				"update_time<='2019-10-11 10:10:10'",
+				"index_id=1",
+				"index_name='IDX_VER'",
+				"table_id>=" + statsMetaTidStr, // unpushed down predicates
+				"db_name='MYSQL'",
+				"peer_id>=33334",
+			},
+			expected: [][]string{
+				fullHotRegions[9],
+			},
+		},
+		{
+			conditions: []string{
+				"update_time>='2019-10-10 10:10:10'",
+				"update_time<='2019-10-11 10:10:10'",
+				"index_id=1",
+				"index_name='IDX_VER'",
+				"table_id>=" + statsMetaTidStr, // unpushed down predicates
+				"db_name='UNKNOWN'",
+			},
+			expected: [][]string{},
+		},
 	}
 
 	// mock http resp
