@@ -17,6 +17,7 @@ package common
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,9 +28,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	tmysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"go.uber.org/zap"
 )
@@ -64,13 +68,55 @@ func (param *MySQLConnectParam) ToDSN() string {
 	return dsn
 }
 
-func (param *MySQLConnectParam) Connect() (*sql.DB, error) {
-	db, err := sql.Open("mysql", param.ToDSN())
+func tryConnectMySQL(dsn string) (*sql.DB, error) {
+	driverName := "mysql"
+	failpoint.Inject("MockMySQLDriver", func(val failpoint.Value) {
+		driverName = val.(string)
+	})
+	db, err := sql.Open(driverName, dsn)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if err = db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, errors.Trace(err)
+	}
+	return db, nil
+}
 
-	return db, errors.Trace(db.Ping())
+// ConnectMySQL connects MySQL with the dsn. If access is denied and the password is a valid base64 encoding,
+// we will try to connect MySQL with the base64 decoding of the password.
+func ConnectMySQL(dsn string) (*sql.DB, error) {
+	cfg, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// Try plain password first.
+	db, firstErr := tryConnectMySQL(dsn)
+	if firstErr == nil {
+		return db, nil
+	}
+	// If access is denied and password is encoded by base64, try the decoded string as well.
+	if mysqlErr, ok := errors.Cause(firstErr).(*mysql.MySQLError); ok && mysqlErr.Number == tmysql.ErrAccessDenied {
+		// If password is encoded by base64, try the decoded string as well.
+		if password, decodeErr := base64.StdEncoding.DecodeString(cfg.Passwd); decodeErr == nil && string(password) != cfg.Passwd {
+			cfg.Passwd = string(password)
+			db, err = tryConnectMySQL(cfg.FormatDSN())
+			if err == nil {
+				return db, nil
+			}
+		}
+	}
+	// If we can't connect successfully, return the first error.
+	return nil, errors.Trace(firstErr)
+}
+
+func (param *MySQLConnectParam) Connect() (*sql.DB, error) {
+	db, err := ConnectMySQL(param.ToDSN())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return db, nil
 }
 
 // IsDirExists checks if dir exists.

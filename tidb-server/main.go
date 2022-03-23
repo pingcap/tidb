@@ -67,6 +67,7 @@ import (
 	storageSys "github.com/pingcap/tidb/util/sys/storage"
 	"github.com/pingcap/tidb/util/systimemon"
 	"github.com/pingcap/tidb/util/topsql"
+	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/tikv/client-go/v2/tikv"
@@ -168,13 +169,14 @@ func main() {
 		flag.Usage()
 		os.Exit(0)
 	}
+	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig)
 	if *version {
+		setVersions()
 		fmt.Println(printer.GetTiDBInfo())
 		os.Exit(0)
 	}
 	registerStores()
 	registerMetrics()
-	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		config.GetGlobalConfig().UpdateTempStoragePath()
 		err := disk.InitializeTempDir()
@@ -530,6 +532,19 @@ func overrideConfig(cfg *config.Config) {
 	}
 }
 
+func setVersions() {
+	cfg := config.GetGlobalConfig()
+	if len(cfg.ServerVersion) > 0 {
+		mysql.ServerVersion = cfg.ServerVersion
+	}
+	if len(cfg.TiDBEdition) > 0 {
+		versioninfo.TiDBEdition = cfg.TiDBEdition
+	}
+	if len(cfg.TiDBReleaseVersion) > 0 {
+		mysql.TiDBReleaseVersion = cfg.TiDBReleaseVersion
+	}
+}
+
 func setGlobalVars() {
 	cfg := config.GetGlobalConfig()
 
@@ -577,10 +592,20 @@ func setGlobalVars() {
 		variable.SetSysVar(variable.Version, cfg.ServerVersion)
 	}
 
+	if len(cfg.TiDBEdition) > 0 {
+		versioninfo.TiDBEdition = cfg.TiDBEdition
+		variable.SetSysVar(variable.VersionComment, "TiDB Server (Apache License 2.0) "+versioninfo.TiDBEdition+" Edition, MySQL 5.7 compatible")
+	}
+	if len(cfg.VersionComment) > 0 {
+		variable.SetSysVar(variable.VersionComment, cfg.VersionComment)
+	}
+	if len(cfg.TiDBReleaseVersion) > 0 {
+		mysql.TiDBReleaseVersion = cfg.TiDBReleaseVersion
+	}
+
 	variable.SetSysVar(variable.TiDBForcePriority, mysql.Priority2Str[priority])
 	variable.SetSysVar(variable.TiDBOptDistinctAggPushDown, variable.BoolToOnOff(cfg.Performance.DistinctAggPushDown))
 	variable.SetSysVar(variable.TiDBMemQuotaQuery, strconv.FormatInt(cfg.MemQuotaQuery, 10))
-	variable.SetSysVar(variable.LowerCaseTableNames, strconv.Itoa(cfg.LowerCaseTableNames))
 	variable.SetSysVar(variable.LogBin, variable.BoolToOnOff(cfg.Binlog.Enable))
 	variable.SetSysVar(variable.Port, fmt.Sprintf("%d", cfg.Port))
 	cfg.Socket = strings.Replace(cfg.Socket, "{Port}", fmt.Sprintf("%d", cfg.Port), 1)
@@ -590,7 +615,7 @@ func setGlobalVars() {
 	variable.SetSysVar(variable.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ","))
 	variable.SetSysVar(variable.TiDBEnforceMPPExecution, variable.BoolToOnOff(config.GetGlobalConfig().Performance.EnforceMPP))
 	variable.MemoryUsageAlarmRatio.Store(cfg.Performance.MemoryUsageAlarmRatio)
-	if hostname, err := os.Hostname(); err != nil {
+	if hostname, err := os.Hostname(); err == nil {
 		variable.SetSysVar(variable.Hostname, hostname)
 	}
 	variable.GlobalLogMaxDays.Store(int32(config.GetGlobalConfig().Log.File.MaxDays))

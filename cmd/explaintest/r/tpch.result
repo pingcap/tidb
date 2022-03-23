@@ -392,7 +392,7 @@ id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:sum(Column#20)->Column#18
 └─TableReader	1.00	root		data:StreamAgg
   └─StreamAgg	1.00	cop[tikv]		funcs:sum(mul(tpch.lineitem.l_extendedprice, tpch.lineitem.l_discount))->Column#20
-    └─Selection	3713857.91	cop[tikv]		ge(tpch.lineitem.l_discount, 0.05), ge(tpch.lineitem.l_shipdate, 1994-01-01 00:00:00.000000), le(tpch.lineitem.l_discount, 0.07), lt(tpch.lineitem.l_quantity, 24), lt(tpch.lineitem.l_shipdate, 1995-01-01 00:00:00.000000)
+    └─Selection	3713858.13	cop[tikv]		ge(tpch.lineitem.l_discount, 0.05), ge(tpch.lineitem.l_shipdate, 1994-01-01 00:00:00.000000), le(tpch.lineitem.l_discount, 0.07), lt(tpch.lineitem.l_quantity, 24), lt(tpch.lineitem.l_shipdate, 1995-01-01 00:00:00.000000)
       └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
 /*
 Q7 Volume Shipping Query
@@ -1100,8 +1100,8 @@ StreamAgg	1.00	root		funcs:sum(Column#28)->Column#27
     ├─TableReader(Build)	24323.12	root		data:Selection
     │ └─Selection	24323.12	cop[tikv]		ge(tpch.part.p_size, 1), or(and(eq(tpch.part.p_brand, "Brand#52"), and(in(tpch.part.p_container, "SM CASE", "SM BOX", "SM PACK", "SM PKG"), le(tpch.part.p_size, 5))), or(and(eq(tpch.part.p_brand, "Brand#11"), and(in(tpch.part.p_container, "MED BAG", "MED BOX", "MED PKG", "MED PACK"), le(tpch.part.p_size, 10))), and(eq(tpch.part.p_brand, "Brand#51"), and(in(tpch.part.p_container, "LG CASE", "LG BOX", "LG PACK", "LG PKG"), le(tpch.part.p_size, 15)))))
     │   └─TableFullScan	10000000.00	cop[tikv]	table:part	keep order:false
-    └─TableReader(Probe)	6286493.79	root		data:Selection
-      └─Selection	6286493.79	cop[tikv]		eq(tpch.lineitem.l_shipinstruct, "DELIVER IN PERSON"), in(tpch.lineitem.l_shipmode, "AIR", "AIR REG"), or(and(ge(tpch.lineitem.l_quantity, 4), le(tpch.lineitem.l_quantity, 14)), or(and(ge(tpch.lineitem.l_quantity, 18), le(tpch.lineitem.l_quantity, 28)), and(ge(tpch.lineitem.l_quantity, 29), le(tpch.lineitem.l_quantity, 39))))
+    └─TableReader(Probe)	6286493.57	root		data:Selection
+      └─Selection	6286493.57	cop[tikv]		eq(tpch.lineitem.l_shipinstruct, "DELIVER IN PERSON"), in(tpch.lineitem.l_shipmode, "AIR", "AIR REG"), or(and(ge(tpch.lineitem.l_quantity, 4), le(tpch.lineitem.l_quantity, 14)), or(and(ge(tpch.lineitem.l_quantity, 18), le(tpch.lineitem.l_quantity, 28)), and(ge(tpch.lineitem.l_quantity, 29), le(tpch.lineitem.l_quantity, 39))))
         └─TableFullScan	300005811.00	cop[tikv]	table:lineitem	keep order:false
 /*
 Q20 Potential Part Promotion Query

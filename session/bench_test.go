@@ -445,6 +445,7 @@ func BenchmarkInsertWithIndex(b *testing.B) {
 		do.Close()
 		st.Close()
 	}()
+	mustExecute(se, `set @@tidb_enable_mutation_checker = 0`)
 	mustExecute(se, "drop table if exists t")
 	mustExecute(se, "create table t (pk int primary key, col int, index idx (col))")
 	b.ResetTimer()

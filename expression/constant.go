@@ -32,6 +32,8 @@ import (
 func NewOne() *Constant {
 	retT := types.NewFieldType(mysql.TypeTiny)
 	retT.Flag |= mysql.UnsignedFlag // shrink range to avoid integral promotion
+	retT.Flen = 1
+	retT.Decimal = 0
 	return &Constant{
 		Value:   types.NewDatum(1),
 		RetType: retT,
@@ -42,6 +44,8 @@ func NewOne() *Constant {
 func NewZero() *Constant {
 	retT := types.NewFieldType(mysql.TypeTiny)
 	retT.Flag |= mysql.UnsignedFlag // shrink range to avoid integral promotion
+	retT.Flen = 1
+	retT.Decimal = 0
 	return &Constant{
 		Value:   types.NewDatum(0),
 		RetType: retT,
@@ -50,9 +54,12 @@ func NewZero() *Constant {
 
 // NewNull stands for null constant.
 func NewNull() *Constant {
+	retT := types.NewFieldType(mysql.TypeTiny)
+	retT.Flen = 1
+	retT.Decimal = 0
 	return &Constant{
 		Value:   types.NewDatum(nil),
-		RetType: types.NewFieldType(mysql.TypeTiny),
+		RetType: retT,
 	}
 }
 
@@ -227,6 +234,9 @@ func (c *Constant) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, 
 	} else if c.GetType().Hybrid() || dt.Kind() == types.KindString {
 		res, err := dt.ToInt64(ctx.GetSessionVars().StmtCtx)
 		return res, false, err
+	} else if dt.Kind() == types.KindMysqlBit {
+		uintVal, err := dt.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
+		return int64(uintVal), false, err
 	}
 	return dt.GetInt64(), false, nil
 }
