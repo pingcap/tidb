@@ -1074,9 +1074,9 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementCon
 					var r rune
 					var size int
 					var tempStr string
-					truncateLen := flen
+					var truncateLen int
 					// Find the truncate position.
-					for {
+					for truncateLen = flen; truncateLen > 0; truncateLen-- {
 						tempStr = truncateStr(s, truncateLen)
 						r, size = utf8.DecodeLastRuneInString(tempStr)
 						if r == utf8.RuneError && size == 0 {
@@ -1087,16 +1087,10 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementCon
 							// Get the truncate position
 							break
 						}
-
-						truncateLen--
-						if truncateLen == 0 {
-							break
-						}
 					}
 					overflowed = s[truncateLen:]
 					s = truncateStr(s, truncateLen)
 				}
-
 			default:
 				characterLen = utf8.RuneCountInString(s)
 				if characterLen > flen {
