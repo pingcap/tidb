@@ -247,7 +247,7 @@ type session struct {
 	stmtStats *stmtstats.StatementStats
 
 	// Contains a list of sessions used to collect advisory locks.
-	advisoryLocks map[string]*session
+	advisoryLocks map[string]*advisoryLock
 }
 
 var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
@@ -1637,60 +1637,60 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	return stmts[0], nil
 }
 
-func (s *session) GetAdvisoryLock(lockName string, timeout int64) error {
+func (s *session) hasAdvisoryLocks() bool {
+	return len(s.advisoryLocks) != 0
+}
 
-	if _, ok := s.advisoryLocks[lockName]; ok {
-		// TODO: what's the correct behavior for already locked by me?
-		fmt.Printf("advisory lock already exists in session: %s\n\n", lockName)
+// GetAdvisoryLock acquires an advisory lock of lockName.
+// Note that a lock can be acquired multiple times by the same session,
+// in which case we increment a reference count.
+// Each lock needs to be held in a unique session because
+// we need to be able to ROLLBACK in any arbitrary order
+// in order to release the locks.
+func (s *session) GetAdvisoryLock(lockName string, timeout int64) error {
+	if lock, ok := s.advisoryLocks[lockName]; ok {
+		lock.IncrReferences()
 		return nil
 	}
-
-	// Each lock needs to be held in a unique session because
-	// we need to be able to ROLLBACK in any arbitrary order
-	// in order to release the locks.
 	sess, err := createSession(s.GetStore())
 	if err != nil {
 		return err
 	}
-
-	// Set the pessimistic lock wait timeout to timeout,
-	// and start a new pessimistic transaction.
-	sess.ExecuteInternal(context.Background(), "SET innodb_lock_wait_timeout = %?", timeout)
-	sess.ExecuteInternal(context.Background(), "BEGIN PESSIMISTIC")
-
-	// Acquire pessimistic lock on the lockName with an insert
-	// We will never COMMIT the transaction, but the err indicates
-	// if the lock was successfully acquired.
-	_, err = sess.ExecuteInternal(context.Background(), "INSERT INTO mysql.advisory_locks (lock_name) VALUES (%?)", lockName)
+	lock := &advisoryLock{session: sess, referenceCount: 1}
+	err = lock.GetLock(lockName, timeout)
 	if err != nil {
-		// We couldn't acquire the LOCK so we close the session cleanly
-		// and return the error to the caller.
-		sess.Close()
 		return err
 	}
-	s.advisoryLocks[lockName] = sess
+	s.advisoryLocks[lockName] = lock
 	return nil
 }
 
+// ReleaseAdvisoryLock releases an advisory locks held by the session.
+// It returns FALSE if no lock by this name was held (by this session),
+// and TRUE if a lock was held and "released".
+// Note that the lock is not actually released if there are multiple
+// references to the same lockName by the session, instead the reference
+// count is decremented.
 func (s *session) ReleaseAdvisoryLock(lockName string) (released bool) {
-	if sess, ok := s.advisoryLocks[lockName]; ok {
-		sess.ExecuteInternal(context.Background(), "ROLLBACK")
-		sess.Close()
-		delete(s.advisoryLocks, lockName)
+	if lock, ok := s.advisoryLocks[lockName]; ok {
+		lock.DecrReferences()
+		if lock.ReferenceCount() <= 0 {
+			lock.Close()
+			delete(s.advisoryLocks, lockName)
+		}
 		return true
 	}
 	return false
 }
 
-func (s *session) hasAdvisoryLocks() bool {
-	return len(s.advisoryLocks) != 0
-}
-
+// ReleaseAllAdvisoryLocks releases all advisory locks held by the session
+// and returns a count of the locks that were released.
+// The count is based on unique locks held, so multiple references
+// to the same lock do not need to be accounted for.
 func (s *session) ReleaseAllAdvisoryLocks() int {
 	var count int
-	for lockName, sess := range s.advisoryLocks {
-		sess.ExecuteInternal(context.Background(), "ROLLBACK")
-		sess.Close()
+	for lockName, lock := range s.advisoryLocks {
+		lock.Close()
 		delete(s.advisoryLocks, lockName)
 		count++
 	}
@@ -3028,7 +3028,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	}
 	s.mu.values = make(map[fmt.Stringer]interface{})
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
-	s.advisoryLocks = make(map[string]*session)
+	s.advisoryLocks = make(map[string]*advisoryLock)
 
 	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.

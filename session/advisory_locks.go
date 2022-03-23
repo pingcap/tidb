@@ -1,0 +1,78 @@
+// Copyright 2022 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Copyright 2013 The ql Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/QL-LICENSE file.
+
+package session
+
+import "context"
+
+// Advisory Locks are the locks in GET_LOCK and RELEASE_LOCK.
+// We implement them here in TiDB by using an INSERT into mysql.advisory_locks
+// inside of a pessimistic transaction that is never committed.
+//
+// Each advisory lock requires its own session, since the pessimistic locks
+// need to be potentially rolled back in any order (transactions can't
+// release random locks like this even if savepoints was supported).
+//
+// We use count to track the number of references to the lock in the session.
+// A little known feature of advisory locks is that you can call GET_LOCK
+// multiple times on the same lock, and it will only be released when
+// the reference count reaches zero.
+
+type advisoryLock struct {
+	session        *session
+	referenceCount int
+}
+
+// IncrReferences increments the reference count for the advisory lock.
+func (a *advisoryLock) IncrReferences() {
+	a.referenceCount++
+}
+
+// DecrReferences decrements the reference count for the advisory lock.
+func (a *advisoryLock) DecrReferences() {
+	a.referenceCount--
+}
+
+// References returns the current reference count for the advisory lock.
+func (a *advisoryLock) ReferenceCount() int {
+	return a.referenceCount
+}
+
+// Close releases the advisory lock (rolls back the transaction and closes the session).
+func (a *advisoryLock) Close() {
+	a.session.ExecuteInternal(context.Background(), "ROLLBACK")
+	a.session.Close()
+}
+
+// GetLock acquires a new advisory lock using a pessimistic transaction.
+// The timeout is implemented by using the pessimistic lock timeout.
+// We will never COMMIT the transaction, but the err indicates
+// if the lock was successfully acquired.
+func (a *advisoryLock) GetLock(lockName string, timeout int64) error {
+	a.session.ExecuteInternal(context.Background(), "SET innodb_lock_wait_timeout = %?", timeout)
+	a.session.ExecuteInternal(context.Background(), "BEGIN PESSIMISTIC")
+	_, err := a.session.ExecuteInternal(context.Background(), "INSERT INTO mysql.advisory_locks (lock_name) VALUES (%?)", lockName)
+	if err != nil {
+		// We couldn't acquire the LOCK so we close the session cleanly
+		// and return the error to the caller. The caller will need to interpret
+		// this differently if it is lock wait timeout or a deadlock.
+		a.Close()
+		return err
+	}
+	return nil
+}
