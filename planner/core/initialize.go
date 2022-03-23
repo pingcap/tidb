@@ -439,6 +439,7 @@ func (p PhysicalTableReader) AdjustReadReqType(ctx sessionctx.Context) {
 					switch plan.(type) {
 					case *PhysicalHashAgg, *PhysicalStreamAgg, *PhysicalTopN:
 						p.ReadReqType = BatchCop
+						return
 					}
 				}
 			case 2:

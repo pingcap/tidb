@@ -84,6 +84,19 @@ const (
 	MPP
 )
 
+// Name returns the name of read request type.
+func (r ReadReqType) Name() string {
+	switch r {
+	case BatchCop:
+		return "batchCop"
+	case MPP:
+		return "mpp"
+	default:
+		// return cop by default
+		return "cop"
+	}
+}
+
 // PhysicalTableReader is the table reader in tidb.
 type PhysicalTableReader struct {
 	physicalSchemaProducer
