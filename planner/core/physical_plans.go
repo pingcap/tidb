@@ -154,6 +154,7 @@ func (p *PhysicalTableReader) GetTableScan() (*PhysicalTableScan, error) {
 	return tableScans[0], nil
 }
 
+// setMppOrBatchCopForTableScan set IsMPPOrBatchCop for all TableScan.
 func setMppOrBatchCopForTableScan(curPlan PhysicalPlan) {
 	if ts, ok := curPlan.(*PhysicalTableScan); ok {
 		ts.IsMPPOrBatchCop = true
