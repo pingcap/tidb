@@ -213,15 +213,12 @@ func TestBootstrapWithError(t *testing.T) {
 
 // TestUpgrade tests upgrading
 func TestUpgrade(t *testing.T) {
-	t.Skip("skip for debug")
 	oomAction := config.GetGlobalConfig().OOMAction
 	defer func() {
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.OOMAction = oomAction
 		})
 	}()
-	variable.AllowConcurrencyDDL.Store(false)
-	defer variable.AllowConcurrencyDDL.Store(true)
 	ctx := context.Background()
 
 	store, dom := createStoreAndBootstrap(t)
