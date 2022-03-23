@@ -414,7 +414,7 @@ func (p PhysicalIndexMergeReader) Init(ctx sessionctx.Context, offset int) *Phys
 	return &p
 }
 
-func (p PhysicalTableReader) AdjustReadReqType(ctx sessionctx.Context) {
+func (p *PhysicalTableReader) AdjustReadReqType(ctx sessionctx.Context) {
 	if p.StoreType == kv.TiFlash {
 		_, ok := p.tablePlan.(*PhysicalExchangeSender)
 		if ok {
