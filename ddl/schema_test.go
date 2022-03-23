@@ -50,7 +50,7 @@ func testCreateSchema(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *mode
 		Args:       []interface{}{dbInfo},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, d.doDDLJob(ctx, job))
+	require.NoError(t, d.DoDDLJob(ctx, job))
 
 	v := getSchemaVer(t, ctx)
 	dbInfo.State = model.StatePublic
@@ -70,7 +70,7 @@ func buildDropSchemaJob(dbInfo *model.DBInfo) *model.Job {
 func testDropSchema(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) (*model.Job, int64) {
 	job := buildDropSchemaJob(dbInfo)
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.doDDLJob(ctx, job)
+	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 	ver := getSchemaVer(t, ctx)
 	return job, ver
@@ -179,7 +179,7 @@ func ExportTestSchema(t *testing.T) {
 		BinlogInfo: &model.HistoryInfo{},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = d.doDDLJob(ctx, job)
+	err = d.DoDDLJob(ctx, job)
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrDatabaseDropExists), "err %v", err)
 
 	// Drop a database without a table.
@@ -257,4 +257,32 @@ func testGetSchemaInfoWithError(d *ddl, schemaID int64) (*model.DBInfo, error) {
 		return nil, errors.Trace(err)
 	}
 	return dbInfo, nil
+}
+
+func doDDLJobErr(t *testing.T, schemaID, tableID int64, tp model.ActionType, args []interface{}, ctx sessionctx.Context, d *ddl) *model.Job {
+	job := &model.Job{
+		SchemaID:   schemaID,
+		TableID:    tableID,
+		Type:       tp,
+		Args:       args,
+		BinlogInfo: &model.HistoryInfo{},
+	}
+	// TODO: check error detail
+	require.Error(t, d.DoDDLJob(ctx, job))
+	testCheckJobCancelled(t, d.store, job, nil)
+
+	return job
+}
+
+func testCheckJobCancelled(t *testing.T, store kv.Storage, job *model.Job, state *model.SchemaState) {
+	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		historyJob, err := m.GetHistoryDDLJob(job.ID)
+		require.NoError(t, err)
+		require.True(t, historyJob.IsCancelled() || historyJob.IsRollbackDone(), "history job %s", historyJob)
+		if state != nil {
+			require.Equal(t, historyJob.SchemaState, *state)
+		}
+		return nil
+	}))
 }

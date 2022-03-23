@@ -3333,9 +3333,7 @@ func (s *testSuite) TestEmptyEnum(c *C) {
 }
 
 const (
-	checkRequestOff = iota
-	checkRequestSyncLog
-	checkDDLAddIndexPriority
+	checkDDLAddIndexPriority = 1
 )
 
 type checkRequestClient struct {
@@ -3345,7 +3343,6 @@ type checkRequestClient struct {
 	mu             struct {
 		sync.RWMutex
 		checkFlags uint32
-		syncLog    bool
 	}
 }
 
@@ -3358,17 +3355,7 @@ func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *
 	c.mu.RLock()
 	checkFlags := c.mu.checkFlags
 	c.mu.RUnlock()
-	if checkFlags == checkRequestSyncLog {
-		switch req.Type {
-		case tikvrpc.CmdPrewrite, tikvrpc.CmdCommit:
-			c.mu.RLock()
-			syncLog := c.mu.syncLog
-			c.mu.RUnlock()
-			if syncLog != req.SyncLog {
-				return nil, errors.New("fail to set sync log")
-			}
-		}
-	} else if checkFlags == checkDDLAddIndexPriority {
+	if checkFlags == checkDDLAddIndexPriority {
 		if req.Type == tikvrpc.CmdScan {
 			if c.getCheckPriority() != req.Priority {
 				return nil, errors.New("fail to set priority")
@@ -3505,26 +3492,6 @@ func (s *testSuite) TestNotFillCacheFlag(c *C) {
 		tk.ResultSetToResult(rs[0], Commentf("sql: %v", test.sql))
 	}
 	c.Assert(count, Equals, len(tests)) // Make sure the hook function is called.
-}
-
-func (s *testSuite1) TestSyncLog(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-
-	cli := s.cli
-	cli.mu.Lock()
-	cli.mu.checkFlags = checkRequestSyncLog
-	cli.mu.syncLog = true
-	cli.mu.Unlock()
-	tk.MustExec("create table t (id int primary key)")
-	cli.mu.Lock()
-	cli.mu.syncLog = false
-	cli.mu.Unlock()
-	tk.MustExec("insert into t values (1)")
-
-	cli.mu.Lock()
-	cli.mu.checkFlags = checkRequestOff
-	cli.mu.Unlock()
 }
 
 func (s *testSuite) TestHandleTransfer(c *C) {
