@@ -577,7 +577,7 @@ func checkTableExistAndCancelNonExistJob(t *meta.Meta, job *model.Job, schemaID 
 	tblInfo, err := getTableInfo(t, job.TableID, schemaID)
 	if err == nil {
 		// Check if table name is renamed.
-		if job.TableName != "" && tblInfo.Name.L != job.TableName {
+		if job.TableName != "" && tblInfo.Name.L != job.TableName && job.Type != model.ActionRepairTable {
 			job.State = model.JobStateCancelled
 			return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(job.SchemaName, job.TableName)
 		}
