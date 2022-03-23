@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
@@ -50,14 +51,20 @@ func (s *testDDLSerialSuiteToVerify) SetupSuite() {
 	SetWaitTimeWhenErrorOccurred(time.Microsecond)
 }
 
-func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob) error {
+func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob, sess sessionctx.Context) error {
 	var checkErr error
 	addIndexFirstReorg := (test.act == model.ActionAddIndex || test.act == model.ActionAddPrimaryKey) &&
 		job.SchemaState == model.StateWriteReorganization && job.SnapshotVer == 0
 	// If the action is adding index and the state is writing reorganization, it wants to test the case of cancelling the job when backfilling indexes.
 	// When the job satisfies this case of addIndexFirstReorg, the worker hasn't started to backfill indexes.
 	if test.cancelState == job.SchemaState && !addIndexFirstReorg && !job.IsRollingback() {
-		errs, err := admin.CancelJobs(txn, test.jobIDs)
+		var errs []error
+		var err error
+		if variable.AllowConcurrencyDDL.Load() {
+			errs, err = CancelConcurrencyJobs(sess, test.jobIDs)
+		} else {
+			errs, err = admin.CancelJobs(txn, test.jobIDs)
+		}
 		if err != nil {
 			checkErr = errors.Trace(err)
 			return checkErr
@@ -310,7 +317,7 @@ func (s *testDDLSerialSuiteToVerify) TestCancelJob() {
 			return
 		}
 		mu.Lock()
-		checkErr = checkCancelState(txn, job, test)
+		checkErr = checkCancelState(txn, job, test, ctx)
 		mu.Unlock()
 		if checkErr != nil {
 			return
