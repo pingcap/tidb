@@ -329,6 +329,7 @@ func (d *ddl) generalDDLJob(sctx sessionctx.Context) bool {
 }
 
 func (d *ddl) doGeneralDDLJobWorker(job *model.Job) {
+	injectFailPointForGetJob(job)
 	d.insertRunningDDLJobMap(int(job.ID))
 	d.wg.Run(func() {
 		defer func() {
@@ -372,6 +373,7 @@ func (d *ddl) reorgDDLJob(sctx sessionctx.Context) bool {
 }
 
 func (d *ddl) doReorgDDLJobWorker(job *model.Job) {
+	injectFailPointForGetJob(job)
 	d.insertRunningDDLJobMap(int(job.ID))
 	d.wg.Run(func() {
 		defer func() {

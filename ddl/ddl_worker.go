@@ -378,11 +378,23 @@ func (d *ddl) addConcurrencyDDLJobs(tasks []*limitJobTask) {
 			job.StartTS = startTs
 			job.ID = ids[i]
 			jobTasks[i] = job
+			failpoint.Inject("MockModifyJobArg", func(val failpoint.Value) {
+				if val.(bool) {
+					if len(job.Args) > 0 {
+						job.Args[0] = 1
+					}
+				}
+			})
 		}
 		err = d.addDDLJobs(jobTasks)
 		if err != nil {
 			log.Error("[ddl] addConcurrencyDDLJobs", zap.Error(err))
 		}
+		failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
+			if val.(bool) {
+				err = errors.Errorf("mockAddBatchDDLJobsErr")
+			}
+		})
 	}
 	var jobs strings.Builder
 	for _, task := range tasks {
