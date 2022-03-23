@@ -27,7 +27,6 @@ planner/core TestPrepareCacheNow
 planner/core TestDAGPlanBuilderSplitAvg
 planner/core TestIndexMerge
 planner/core TestUnmatchedTableInHint
-planner/core TestPartitionWithVariedDataSources
 planner/core TestCopPaging
 planner/core TestPlanCachePointGetAndTableDual
 planner/core TestSimplifyOuterJoinWithCast 

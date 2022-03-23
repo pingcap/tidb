@@ -26,7 +26,7 @@ const (
 	Priority
 	// NotFillCache makes this request do not touch the LRU cache of the underlying storage.
 	NotFillCache
-	// SyncLog decides whether the WAL(write-ahead log) of this request should be synchronized.
+	// SyncLog is not used anymore.
 	SyncLog
 	// KeyOnly retrieve only keys, it can be used in scan now.
 	KeyOnly

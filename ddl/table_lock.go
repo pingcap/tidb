@@ -40,7 +40,7 @@ func onLockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
 		for i, tl := range arg.LockTables {
 			job.SchemaID = tl.SchemaID
 			job.TableID = tl.TableID
-			tbInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+			tbInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 			if err != nil {
 				return ver, err
 			}
@@ -60,7 +60,7 @@ func onLockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
 		job.SchemaID = arg.LockTables[arg.IndexOfLock].SchemaID
 		job.TableID = arg.LockTables[arg.IndexOfLock].TableID
 		var tbInfo *model.TableInfo
-		tbInfo, err = getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+		tbInfo, err = GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 		if err != nil {
 			return ver, err
 		}
