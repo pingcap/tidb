@@ -271,7 +271,7 @@ func TestIssue22307(t *testing.T) {
 	dom.DDL().SetHook(hook)
 	done := make(chan error, 1)
 	// test transaction on add column.
-	go backgroundExecT(store, "alter table t drop column b;", done)
+	go backgroundExec(store, "alter table t drop column b;", done)
 	err := <-done
 	require.NoError(t, err)
 	require.EqualError(t, checkErr1, "[planner:1054]Unknown column 'b' in 'where clause'")
