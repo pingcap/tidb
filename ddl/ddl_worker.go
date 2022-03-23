@@ -97,11 +97,11 @@ type worker struct {
 	lockSeqNum      bool
 
 	*ddlCtx
-	ddlJobCache
+	*workerCtx
 }
 
-// ddlJobCache is a cache for each DDL job.
-type ddlJobCache struct {
+// workerCtx is a cache for each DDL job.
+type workerCtx struct {
 	// below fields are cache for top sql
 	ddlJobCtx          context.Context
 	cacheSQL           string
@@ -115,7 +115,7 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRan
 		tp:       tp,
 		ddlJobCh: make(chan struct{}, 1),
 		ctx:      ctx,
-		ddlJobCache: ddlJobCache{
+		workerCtx: &workerCtx{
 			ddlJobCtx:          context.Background(),
 			cacheSQL:           "",
 			cacheNormalizedSQL: "",
@@ -518,8 +518,9 @@ func newMetaWithQueueTp(txn kv.Transaction, tp workerType) *meta.Meta {
 	return meta.NewMeta(txn)
 }
 
-func (w *worker) setDDLLabelForTopSQL(job *model.Job) {
+func (w *workerCtx) setDDLLabelForTopSQL(job *model.Job) {
 	if !topsqlstate.TopSQLEnabled() || job == nil {
+		w.cacheDigest = nil
 		return
 	}
 
@@ -531,7 +532,7 @@ func (w *worker) setDDLLabelForTopSQL(job *model.Job) {
 	w.ddlJobCtx = topsql.AttachSQLInfo(context.Background(), w.cacheNormalizedSQL, w.cacheDigest, "", nil, false)
 }
 
-func (w *worker) setResourceGroupTaggerForTopSQL(txn kv.Transaction, snapshot kv.Snapshot) {
+func (w *workerCtx) setResourceGroupTaggerForTopSQL(txn kv.Transaction, snapshot kv.Snapshot) {
 	if !topsqlstate.TopSQLEnabled() || w.cacheDigest == nil {
 		return
 	}

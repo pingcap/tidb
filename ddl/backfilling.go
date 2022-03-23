@@ -709,7 +709,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 // recordIterFunc is used for low-level record iteration.
 type recordIterFunc func(h kv.Handle, rowKey kv.Key, rawRecord []byte) (more bool, err error)
 
-func iterateSnapshotRows(ddlWorker *worker, store kv.Storage, priority int, t table.Table, version uint64,
+func iterateSnapshotRows(ctx *workerCtx, store kv.Storage, priority int, t table.Table, version uint64,
 	startKey kv.Key, endKey kv.Key, fn recordIterFunc) error {
 	var firstKey kv.Key
 	if startKey == nil {
@@ -728,7 +728,7 @@ func iterateSnapshotRows(ddlWorker *worker, store kv.Storage, priority int, t ta
 	ver := kv.Version{Ver: version}
 	snap := store.GetSnapshot(ver)
 	snap.SetOption(kv.Priority, priority)
-	ddlWorker.setResourceGroupTaggerForTopSQL(nil, snap)
+	ctx.setResourceGroupTaggerForTopSQL(nil, snap)
 
 	it, err := snap.Iter(firstKey, upperBound)
 	if err != nil {
