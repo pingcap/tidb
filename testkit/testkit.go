@@ -376,6 +376,7 @@ func (tk *TestKit) CheckLastMessage(msg string) {
 	tk.require.Equal(tk.Session().LastMessage(), msg)
 }
 
+// GetTableByName gets table by full qualified name.
 func (tk *TestKit) GetTableByName(db, table string) table.Table {
 	dom := domain.GetDomain(tk.Session())
 	// Make sure the table schema is the new schema.
@@ -385,6 +386,7 @@ func (tk *TestKit) GetTableByName(db, table string) table.Table {
 	return tbl
 }
 
+// GetModifyColumn is used to get the changed column name after ALTER TABLE.
 func (tk *TestKit) GetModifyColumn(db, tbl, colName string, allColumn bool) *table.Column {
 	tt := tk.GetTableByName(db, tbl)
 	colName = strings.ToLower(colName)
@@ -402,6 +404,7 @@ func (tk *TestKit) GetModifyColumn(db, tbl, colName string, allColumn bool) *tab
 	return nil
 }
 
+// GetIndexID is used to get the index ID from full qualified name.
 func (tk *TestKit) GetIndexID(dbName, tblName, idxName string) int64 {
 	is := domain.GetDomain(tk.Session()).InfoSchema()
 	tt, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
