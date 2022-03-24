@@ -1387,11 +1387,6 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			args:         []Expression{stringColumn, stringColumn, intColumn},
 		},
 		{
-			functionName: ast.Instr,
-			retType:      types.NewFieldType(mysql.TypeInt24),
-			args:         []Expression{stringColumn, stringColumn},
-		},
-		{
 			functionName: ast.Quote,
 			retType:      types.NewFieldType(mysql.TypeString),
 			args:         []Expression{stringColumn},
