@@ -437,7 +437,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		if sctx.GetSessionVars().SnapshotTS != 0 {
 			curTxnStartTS = sctx.GetSessionVars().SnapshotTS
 		}
-		logutil.BgLogger().Info("Enable mockDelayInnerSessionExecute when execute statment",
+		logutil.BgLogger().Info("Enable mockDelayInnerSessionExecute when execute statement",
 			zap.Uint64("startTS", curTxnStartTS))
 		time.Sleep(200 * time.Millisecond)
 	})

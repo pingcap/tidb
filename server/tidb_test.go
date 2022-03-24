@@ -900,7 +900,7 @@ func TestInternalSessionTxnStartTS(t *testing.T) {
 	count := 10
 	stmts := make([]ast.StmtNode, count)
 	for i := 0; i < count; i++ {
-		stmt, err := session.ParseWithParams4Test(se, context.Background(), "select * from mysql.user limit 1")
+		stmt, err := session.ParseWithParams4Test(context.Background(), se, "select * from mysql.user limit 1")
 		require.NoError(t, err)
 		stmts[i] = stmt
 	}
@@ -911,7 +911,7 @@ func TestInternalSessionTxnStartTS(t *testing.T) {
 	for i := 0; i < count; i++ {
 		s := stmts[i]
 		wg.Run(func() {
-			_, _, err := session.ExecRestrictedStmt4Test(se, context.Background(), s)
+			_, _, err := session.ExecRestrictedStmt4Test(context.Background(), se, s)
 			require.NoError(t, err)
 		})
 	}
