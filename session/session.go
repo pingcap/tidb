@@ -1637,8 +1637,8 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 }
 
 // ParseWithParams4Test wrapper (s *session) ParseWithParams for test
-func ParseWithParams4Test(s Session,
-	ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error) {
+func ParseWithParams4Test(ctx context.Context, s Session,
+	sql string, args ...interface{}) (ast.StmtNode, error) {
 	return s.(*session).ParseWithParams(ctx, sql, args)
 }
 
@@ -1687,8 +1687,8 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	return rows, rs.Fields(), err
 }
 
-// ExecRestrictedStmt implements RestrictedSQLExecutor interface.
-func ExecRestrictedStmt4Test(s Session, ctx context.Context,
+// ExecRestrictedStmt4Test wrapper `(s *session) ExecRestrictedStmt` for test.
+func ExecRestrictedStmt4Test(ctx context.Context, s Session,
 	stmtNode ast.StmtNode, opts ...sqlexec.OptionFuncAlias) (
 	[]chunk.Row, []*ast.ResultField, error) {
 	return s.(*session).ExecRestrictedStmt(ctx, stmtNode, opts...)
