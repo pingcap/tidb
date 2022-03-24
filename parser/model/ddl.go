@@ -283,6 +283,7 @@ type SubJob struct {
 	SnapshotVer uint64          `json:"snapshot_ver"`
 	Revertible  bool            `json:"revertible"`
 	State       JobState        `json:"state"`
+	RowCount    int64           `json:"row_count"'`
 	Warning     *terror.Error   `json:"warning"`
 	CtxVars     []interface{}   `json:"-"`
 }
