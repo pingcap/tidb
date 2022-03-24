@@ -100,6 +100,8 @@ func TestColumnAdd(t *testing.T) {
 			}
 		default:
 			for _, col := range tbl.Cols() {
+				require.NotNil(t, col)
+				require.NotNil(t, dropCol)
 				require.NotEqualf(t, col.ID, dropCol.ID, "column is not dropped")
 			}
 		}
