@@ -728,7 +728,7 @@ func iterateSnapshotRows(ctx *jobContext, store kv.Storage, priority int, t tabl
 	ver := kv.Version{Ver: version}
 	snap := store.GetSnapshot(ver)
 	snap.SetOption(kv.Priority, priority)
-	if tagger := ctx.getResourceGroupTaggerForTopSQL();tagger != nil {
+	if tagger := ctx.getResourceGroupTaggerForTopSQL(); tagger != nil {
 		snap.SetOption(kv.ResourceGroupTagger, tagger)
 	}
 

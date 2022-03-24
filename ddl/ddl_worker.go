@@ -581,7 +581,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			}
 
 			w.setDDLLabelForTopSQL(job)
-			if tagger :=w.getResourceGroupTaggerForTopSQL();tagger != nil {
+			if tagger := w.getResourceGroupTaggerForTopSQL(); tagger != nil {
 				txn.SetOption(kv.ResourceGroupTagger, tagger)
 			}
 			if isDone, err1 := isDependencyJobDone(t, job); err1 != nil || !isDone {

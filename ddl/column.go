@@ -1422,7 +1422,7 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		txn.SetOption(kv.Priority, w.priority)
-		if tagger :=w.ddlWorker.getResourceGroupTaggerForTopSQL();tagger != nil {
+		if tagger := w.ddlWorker.getResourceGroupTaggerForTopSQL(); tagger != nil {
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
 
