@@ -2756,6 +2756,81 @@ func TestSysdatePushDown(t *testing.T) {
 		CheckAt([]int{0, 3, 6}, rows)
 }
 
+func TestNumberFunctionPushDown(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int signed, b int unsigned,c double)")
+	tk.MustExec("insert into t values (-1,61,4.4)")
+	testcases := []struct {
+		sql      string
+		function string
+	}{
+		{
+			sql:      "select a, mod(a,2) from t where mod(-1,2)=mod(a,2);",
+			function: "mod",
+		},
+		{
+			sql:      "select b, mod(b,2) from t where mod(61,2)=mod(b,2);",
+			function: "mod",
+		},
+		{
+			sql:      "select b,unhex(b) from t where unhex(61) = unhex(b)",
+			function: "unhex",
+		},
+		{
+			sql:      "select b, oct(b) from t where oct(61) = oct(b)",
+			function: "oct",
+		},
+		{
+			sql:      "select c, sin(c) from t where sin(4.4) = sin(c)",
+			function: "sin",
+		},
+		{
+			sql:      "select c, asin(c) from t where asin(4.4) = asin(c)",
+			function: "asin",
+		},
+		{
+			sql:      "select c, cos(c) from t where cos(4.4) = cos(c)",
+			function: "cos",
+		},
+		{
+			sql:      "select c, acos(c) from t where acos(4.4) = acos(c)",
+			function: "acos",
+		},
+		{
+			sql:      "select b,tan(b) from t where tan(61)=tan(b)",
+			function: "tan",
+		},
+		{
+			sql:      "select b,atan(b) from t where atan(61)=atan(b)",
+			function: "atan",
+		},
+		{
+			sql:      "select b, atan2(b, c) from t where atan2(61,4.4)=atan2(b,c)",
+			function: "atan2",
+		},
+		{
+			sql:      "select b,cot(b) from t where cot(61)=cot(b)",
+			function: "cot",
+		},
+		{
+			sql:      "select c from t where pi() < c",
+			function: "pi",
+		},
+	}
+	for _, testcase := range testcases {
+		tk.MustExec("delete from mysql.expr_pushdown_blacklist where name != 'date_add'")
+		tk.MustExec("admin reload expr_pushdown_blacklist;")
+		r1 := tk.MustQuery(testcase.sql).Rows()
+		tk.MustExec(fmt.Sprintf("insert into mysql.expr_pushdown_blacklist(name) values('%s');", testcase.function))
+		tk.MustExec("admin reload expr_pushdown_blacklist;")
+		r2 := tk.MustQuery(testcase.sql).Rows()
+		require.EqualValues(t, r2, r1, testcase.sql)
+	}
+}
+
 func TestScalarFunctionPushDown(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -2868,66 +2943,6 @@ func TestScalarFunctionPushDown(t *testing.T) {
 	//tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where truncate(id,0)").
 	//	CheckAt([]int{0, 3, 6}, rows)
 
-	rows[1][2] = "bin(test.t.id)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where bin(id)").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "unhex(test.t.c)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where unhex(c)").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "locate(test.t.c, test.t.c)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where locate(c,c)").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "ord(test.t.c)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where ord(c)").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "lpad(test.t.c, 1, test.t.c)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where lpad(c,1,c)").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "rpad(test.t.c, 1, test.t.c)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where rpad(c,1,c)").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "trim(test.t.c)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where trim(c)").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "from_base64(test.t.c)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where from_base64(c)").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "to_base64(test.t.c)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where to_base64(c)").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "make_set(1, test.t.c, test.t.c)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where make_set(1,c,c)").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "substring_index(test.t.c, test.t.c, 1)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where substring_index(c,c,1)").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "quote(test.t.c)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where quote(c)").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "oct(test.t.id)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where oct(id)").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "find_in_set(test.t.c, test.t.c)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where find_in_set(c,c)").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "repeat(test.t.c, 2)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where repeat(c,2)").
-		CheckAt([]int{0, 3, 6}, rows)
-
 	rows[1][2] = "round(test.t.b)"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where round(b)").
 		CheckAt([]int{0, 3, 6}, rows)
@@ -2958,26 +2973,6 @@ func TestScalarFunctionPushDown(t *testing.T) {
 
 	rows[1][2] = "ascii(cast(test.t.e, var_string(2)))"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where ascii(e);").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "lower(test.t.c)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where lower(c)").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "upper(test.t.c)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where upper(c)").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "insert_func(test.t.c, 1, 1, \"c\")"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where insert_func(c, 1, 1,'c')").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "greatest(test.t.id, 1)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where greatest(id, 1)").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "least(test.t.id, 1)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where least(id, 1)").
 		CheckAt([]int{0, 3, 6}, rows)
 }
 
