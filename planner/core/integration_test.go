@@ -2756,6 +2756,91 @@ func TestSysdatePushDown(t *testing.T) {
 		CheckAt([]int{0, 3, 6}, rows)
 }
 
+func TestStringScalarFunctionPushDownResult(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(col1 char(1)) CHARSET=utf8 COLLATE=utf8_general_ci;")
+	tk.MustExec("insert into t values ('鷳')")
+	testcases := []struct {
+		sql      string
+		function string
+	}{
+		{
+			sql:      "select col1, ord(col1) from t where ord(col1)=ord('鷳');",
+			function: "ord",
+		},
+		{
+			sql:      "select col1, right(col1, 1) from t where right(col1, 1)=right('鷳', 1);",
+			function: "right",
+		},
+		{
+			sql:      "select col1, bin(col1) from t where bin(col1)=bin('鷳');",
+			function: "bin",
+		},
+		{
+			sql:      "select col1, locate(col1, '鷳') from t where locate(col1,'鷳')=locate('鷳', '鷳');",
+			function: "locate",
+		},
+		{
+			function: "lpad",
+			sql:      "select col1, lpad(col1,4,'鷳') from t where lpad(col1,4,'鷳') = lpad('鷳',4,'鷳');",
+		},
+		{
+			function: "rpad",
+			sql:      "select col1, rpad(col1,4,'鷳') from t where rpad(col1,4,'鷳') = rpad('鷳',4,'鷳');",
+		},
+		{
+			function: "trim",
+			sql:      "select col1, trim(col1) from t where trim(col1) = trim('鷳');",
+		},
+		{
+			function: "upper",
+			sql:      "select col1, upper(col1) from t where upper(col1) = upper('鷳')",
+		},
+		{
+			function: "make_set",
+			sql:      "select col1, make_set(5,col1,col1,col1) from t where make_set(5,'鷳','鷳','鷳') = make_set(5,col1,col1,col1)",
+		},
+		{
+			function: "substring_index",
+			sql:      "select col1, substring_index('鷳鷳鷳鷳',col1,2) from t where substring_index('鷳鷳鷳鷳','鷳',2) = substring_index('鷳鷳鷳鷳', col1,2);",
+		},
+		{
+			function: "quote",
+			sql:      "select col1, quote(col1) from t where quote('鷳') = quote(col1);",
+		},
+		{
+			function: "lower",
+			sql:      "select col1, lower(col1) from t where lower('鷳') = lower(col1);",
+		},
+		{
+			function: "find_in_set",
+			sql:      "select col1, find_in_set(col1,'鷳,123') from t where find_in_set('鷳','鷳,123') = find_in_set(col1,'鷳,123')",
+		},
+		{
+			function: "repeat",
+			sql:      "select col1,repeat(col1,2) from t where repeat('鷳',2) = repeat(col1,2)",
+		},
+		{
+			function: "from_base64",
+			sql:      "select col1, from_base64('6bez') from t where col1 = from_base64('6bez')",
+		},
+		{
+			function: "to_base64",
+			sql:      "select col1, to_base64(col1) from t where to_base64('鷳') = to_base64(col1);",
+		},
+	}
+	for _, testcase := range testcases {
+		r1 := tk.MustQuery(testcase.sql)
+		tk.MustExec(fmt.Sprintf("insert into mysql.expr_pushdown_blacklist(name) values('%s');", testcase.function))
+		tk.MustExec("admin reload expr_pushdown_blacklist;")
+		r2 := tk.MustQuery(testcase.sql)
+		require.EqualValues(t, r2, r1, testcase.sql)
+	}
+}
+
 func TestScalarFunctionPushDown(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
