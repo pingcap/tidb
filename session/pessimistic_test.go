@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testutil"
 )
 
 var _ = SerialSuites(&testPessimisticSuite{})
@@ -240,7 +239,7 @@ func (s *testPessimisticSuite) TestDeadlock(c *C) {
 		expectedDeadlockInfo[0], expectedDeadlockInfo[1] = expectedDeadlockInfo[1], expectedDeadlockInfo[0]
 	}
 	res := tk1.MustQuery("select deadlock_id, try_lock_trx_id, trx_holding_lock, current_sql_digest, current_sql_digest_text from information_schema.deadlocks")
-	res.CheckAt([]int{1, 2, 3, 4}, testutil.RowsWithSep("/", expectedDeadlockInfo...))
+	res.CheckAt([]int{1, 2, 3, 4}, testkit.RowsWithSep("/", expectedDeadlockInfo...))
 	c.Assert(res.Rows()[0][0], Equals, res.Rows()[1][0])
 }
 
