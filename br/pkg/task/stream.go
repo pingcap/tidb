@@ -512,14 +512,13 @@ func RunStreamStart(
 			"and restart tikv")
 	}
 
-	if err := streamMgr.setGCSafePoint(ctx); err != nil {
+	if err = streamMgr.setGCSafePoint(ctx); err != nil {
 		return errors.Trace(err)
 	}
 
 	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// It supports single stream log task currently.
-	count, err := cli.GetTaskCount(ctx)
-	if err != nil {
+	if count, err := cli.GetTaskCount(ctx); err != nil {
 		return errors.Trace(err)
 	} else if count > 0 {
 		return errors.Annotate(berrors.ErrStreamLogTaskExist, "It supports single stream log task current")
@@ -529,7 +528,7 @@ func RunStreamStart(
 		return errors.Trace(err)
 	}
 
-	if err := streamMgr.backupFullSchemas(ctx, g); err != nil {
+	if err = streamMgr.backupFullSchemas(ctx, g); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -556,7 +555,7 @@ func RunStreamStart(
 		Pausing: false,
 	}
 
-	if err := cli.PutTask(ctx, ti); err != nil {
+	if err = cli.PutTask(ctx, ti); err != nil {
 		return errors.Trace(err)
 	}
 	summary.Log(cmdName, ti.ZapTaskInfo()...)
@@ -956,7 +955,9 @@ func RunStreamRestore(
 		return errors.Annotate(err, "failed to restore DML files")
 	}
 
-	// fix indices
+	// fix indices.
+	// to do:
+	// No need to fix indices if backup stream all of tables, because the index recored has been observed.
 	pi := g.StartProgress(ctx, "Restore Index", countIndices(fullBackupTables), cfg.LogProgress)
 	err = withProgress(pi, func(p glue.Progress) error {
 		return client.FixIndicesOfTables(ctx, fullBackupTables, p.Inc)
