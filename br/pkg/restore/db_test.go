@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -292,4 +293,71 @@ func TestFilterDDLJobsV2(t *testing.T) {
 		t.Logf("get ddl job: %s", job.Query)
 	}
 	require.Equal(t, 7, len(ddlJobs))
+}
+
+func TestDB_ExecDDL(t *testing.T) {
+	s, clean := createRestoreSchemaSuite(t)
+	defer clean()
+
+	ctx := context.Background()
+	ddlJobs := []*model.Job{
+		{
+			Type:       model.ActionAddIndex,
+			Query:      "CREATE DATABASE IF NOT EXISTS test_db;",
+			BinlogInfo: &model.HistoryInfo{},
+		},
+		{
+			Type:       model.ActionAddIndex,
+			Query:      "",
+			BinlogInfo: &model.HistoryInfo{},
+		},
+		{
+			Type:       model.ActionSetTiFlashReplica,
+			Query:      "CREATE DATABASE IF NOT EXISTS test_db;",
+			BinlogInfo: &model.HistoryInfo{},
+		},
+		{
+			Type:       model.ActionSetTiFlashReplica,
+			Query:      "",
+			BinlogInfo: &model.HistoryInfo{},
+		},
+		{
+			Type:       model.ActionUpdateTiFlashReplicaStatus,
+			Query:      "CREATE DATABASE IF NOT EXISTS test_db;",
+			BinlogInfo: &model.HistoryInfo{},
+		},
+		{
+			Type:       model.ActionUpdateTiFlashReplicaStatus,
+			Query:      "",
+			BinlogInfo: &model.HistoryInfo{},
+		},
+		{
+			Type:       model.ActionLockTable,
+			Query:      "CREATE DATABASE IF NOT EXISTS test_db;",
+			BinlogInfo: &model.HistoryInfo{},
+		},
+		{
+			Type:       model.ActionLockTable,
+			Query:      "",
+			BinlogInfo: &model.HistoryInfo{},
+		},
+		{
+			Type:       model.ActionUnlockTable,
+			Query:      "CREATE DATABASE IF NOT EXISTS test_db;",
+			BinlogInfo: &model.HistoryInfo{},
+		},
+		{
+			Type:       model.ActionUnlockTable,
+			Query:      "",
+			BinlogInfo: &model.HistoryInfo{},
+		},
+	}
+
+	db, _, err := restore.NewDB(gluetidb.New(), s.mock.Storage, "STRICT")
+	require.NoError(t, err)
+
+	for _, ddlJob := range ddlJobs {
+		err = db.ExecDDL(ctx, ddlJob)
+		assert.NoError(t, err)
+	}
 }

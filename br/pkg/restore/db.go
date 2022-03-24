@@ -90,6 +90,11 @@ func (db *DB) ExecDDL(ctx context.Context, ddlJob *model.Job) error {
 		return errors.Trace(err)
 	}
 
+	// If query of the ddl job is empty or type of ddl job is in blacklist, ignore the ddl job.
+	if ddlJob.Query == "" || checkIsInActionList(ddlJob.Type, incrementalRestoreActionBlacklist) {
+		return nil
+	}
+
 	if tableInfo != nil {
 		switchDBSQL := fmt.Sprintf("use %s;", utils.EncloseName(ddlJob.SchemaName))
 		err = db.se.Execute(ctx, switchDBSQL)
@@ -418,4 +423,13 @@ func getDatabases(tables []*metautil.Table) (dbs []*model.DBInfo) {
 		}
 	}
 	return
+}
+
+func checkIsInActionList(action model.ActionType, actionList []model.ActionType) bool {
+	for _, a := range actionList {
+		if action == a {
+			return true
+		}
+	}
+	return false
 }
