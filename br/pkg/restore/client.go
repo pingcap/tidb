@@ -1773,9 +1773,9 @@ func (rc *Client) RestoreMetaKVFile(
 		return errors.Trace(err)
 	}
 
-	if checksum := sha256.Sum256(buff); !bytes.Equal(checksum[:], file.Sha_256) {
+	if checksum := sha256.Sum256(buff); !bytes.Equal(checksum[:], file.GetSha256()) {
 		return errors.Annotatef(berrors.ErrInvalidMetaFile,
-			"checksum mismatch expect %x, got %x", file.Sha_256, checksum[:])
+			"checksum mismatch expect %x, got %x", file.GetSha256(), checksum[:])
 	}
 
 	iter := stream.NewEventIterator(buff)
