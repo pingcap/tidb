@@ -247,15 +247,22 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty, sche
 	if !all {
 		return nil
 	}
+<<<<<<< HEAD
 	for _, item := range prop.Items {
 		isExist := false
+=======
+	for _, item := range prop.SortItems {
+		isExist, hasLeftColInProp, hasRightColInProp := false, false, false
+>>>>>>> 1287eab59... planner: outer merge join cannot keep the prop of its inner child (#33359)
 		for joinKeyPos := 0; joinKeyPos < len(leftJoinKeys); joinKeyPos++ {
 			var key *expression.Column
 			if item.Col.Equal(p.ctx, leftJoinKeys[joinKeyPos]) {
 				key = leftJoinKeys[joinKeyPos]
+				hasLeftColInProp = true
 			}
 			if item.Col.Equal(p.ctx, rightJoinKeys[joinKeyPos]) {
 				key = rightJoinKeys[joinKeyPos]
+				hasRightColInProp = true
 			}
 			if key == nil {
 				continue
@@ -273,6 +280,13 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty, sche
 			break
 		}
 		if !isExist {
+			return nil
+		}
+		// If the output wants the order of the inner side. We should reject it since we might add null-extend rows of that side.
+		if p.JoinType == LeftOuterJoin && hasRightColInProp {
+			return nil
+		}
+		if p.JoinType == RightOuterJoin && hasLeftColInProp {
 			return nil
 		}
 	}
