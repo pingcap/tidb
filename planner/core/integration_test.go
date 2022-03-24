@@ -2832,13 +2832,17 @@ func TestStringScalarFunctionPushDownResult(t *testing.T) {
 			sql:      "select col1, to_base64(col1) from t where to_base64('鷳') = to_base64(col1);",
 		},
 	}
+	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name != 'date_add'")
+	tk.MustExec("admin reload expr_pushdown_blacklist;")
 	for _, testcase := range testcases {
-		r1 := tk.MustQuery(testcase.sql)
+		r1 := tk.MustQuery(testcase.sql).Rows()
 		tk.MustExec(fmt.Sprintf("insert into mysql.expr_pushdown_blacklist(name) values('%s');", testcase.function))
 		tk.MustExec("admin reload expr_pushdown_blacklist;")
-		r2 := tk.MustQuery(testcase.sql)
+		r2 := tk.MustQuery(testcase.sql).Rows()
 		require.EqualValues(t, r2, r1, testcase.sql)
 	}
+	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name != 'date_add'")
+	tk.MustExec("admin reload expr_pushdown_blacklist;")
 }
 
 func TestScalarFunctionPushDown(t *testing.T) {
