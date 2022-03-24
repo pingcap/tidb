@@ -55,17 +55,6 @@ func testCreateColumn(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context,
 	return id
 }
 
-func buildDropColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string) *model.Job {
-	return &model.Job{
-		SchemaID:        dbInfo.ID,
-		TableID:         tblInfo.ID,
-		Type:            model.ActionDropColumn,
-		BinlogInfo:      &model.HistoryInfo{},
-		MultiSchemaInfo: &model.MultiSchemaInfo{},
-		Args:            []interface{}{model.NewCIStr(colName), false},
-	}
-}
-
 func testDropColumnInternal(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, tblID int64, colName string, isError bool, dom *domain.Domain) int64 {
 	sql := fmt.Sprintf("alter table t1 drop column %s ", colName)
 	_, err := tk.Exec(sql)

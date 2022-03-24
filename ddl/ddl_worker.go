@@ -305,7 +305,11 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 			}
 			failpoint.Inject("MockModifyJobArg", func(val failpoint.Value) {
 				if val.(bool) {
-					if len(job.Args) > 0 {
+					if job.Type == model.ActionMultiSchemaChange {
+						if len(job.MultiSchemaInfo.SubJobs) > 0 && len(job.MultiSchemaInfo.SubJobs[0].Args) > 0 {
+							job.MultiSchemaInfo.SubJobs[0].Args[0] = 1
+						}
+					} else if len(job.Args) > 0 {
 						job.Args[0] = 1
 					}
 				}
