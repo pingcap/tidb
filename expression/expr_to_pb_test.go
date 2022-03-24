@@ -1247,11 +1247,6 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			args:         []Expression{stringColumn, intColumn},
 		},
 		{
-			functionName: ast.Left,
-			retType:      types.NewFieldType(mysql.TypeString),
-			args:         []Expression{stringColumn, intColumn},
-		},
-		{
 			functionName: ast.Sin,
 			retType:      types.NewFieldType(mysql.TypeDouble),
 			args:         []Expression{intColumn},
