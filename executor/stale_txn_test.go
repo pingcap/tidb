@@ -1282,3 +1282,29 @@ func TestStaleReadNoExtraTSORequest(t *testing.T) {
 	tk.MustQuery("select * from t")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTSONotRequest"))
 }
+<<<<<<< HEAD
+=======
+
+func TestPlanCacheWithStaleReadByBinaryProto(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int primary key, v int)")
+	tk.MustExec("insert into t1 values(1, 10)")
+	se := tk.Session()
+	time.Sleep(time.Millisecond * 100)
+	tk.MustExec("set @a=now(6)")
+	time.Sleep(time.Second)
+	tk.MustExec("update t1 set v=100 where id=1")
+	stmtID1, _, _, err := se.PrepareStmt("select * from t1 as of timestamp @a where id=1")
+	require.NoError(t, err)
+
+	for i := 0; i < 3; i++ {
+		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
+		require.NoError(t, err)
+		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
+	}
+}
+>>>>>>> 1df16c028... executor: fix unstable test TestPlanCacheWithStaleReadByBinaryProto (#33351)
