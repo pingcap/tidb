@@ -386,14 +386,20 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 			}
 
 			if !conf.NoSchemas {
-				if table.Type == TableTypeView {
+				switch table.Type {
+				case TableTypeView:
 					task := NewTaskViewMeta(dbName, table.Name, meta.ShowCreateTable(), meta.ShowCreateView())
 					ctxDone := d.sendTaskToChan(tctx, task, taskChan)
 					if ctxDone {
 						return tctx.Err()
 					}
-				} else {
-
+				case TableTypeSequence:
+					task := NewTaskSequenceMeta(dbName, table.Name, meta.ShowCreateTable())
+					ctxDone := d.sendTaskToChan(tctx, task, taskChan)
+					if ctxDone {
+						return tctx.Err()
+					}
+				default:
 					// adjust table collation
 					newCreateSQL, err := adjustTableCollation(tctx, d.conf.CollationCompatible, parser1, meta.ShowCreateTable(), d.charsetAndDefaultCollationMap)
 					if err != nil {
@@ -1089,6 +1095,9 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 	if !conf.NoViews {
 		tableTypes = append(tableTypes, TableTypeView)
 	}
+	if !conf.NoSequences {
+		tableTypes = append(tableTypes, TableTypeSequence)
+	}
 
 	ifSeqExists, err := CheckIfSeqExists(db)
 	if err != nil {
@@ -1096,7 +1105,6 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 	}
 	var listType listTableType
 	if ifSeqExists {
-		tctx.L().Warn("dumpling tableType `sequence` is unsupported for now")
 		listType = listTableByShowFullTables
 	} else {
 		listType = getListTableTypeByConf(conf)
@@ -1129,10 +1137,12 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 	}
 
 	// If all columns are generated
-	if selectField == "" {
-		colTypes, err = GetColumnTypes(tctx, conn, "*", db, tbl)
-	} else {
-		colTypes, err = GetColumnTypes(tctx, conn, selectField, db, tbl)
+	if table.Type == TableTypeBase {
+		if selectField == "" {
+			colTypes, err = GetColumnTypes(tctx, conn, "*", db, tbl)
+		} else {
+			colTypes, err = GetColumnTypes(tctx, conn, selectField, db, tbl)
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -1154,7 +1164,8 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 	if conf.NoSchemas {
 		return meta, nil
 	}
-	if table.Type == TableTypeView {
+	switch table.Type {
+	case TableTypeView:
 		viewName := table.Name
 		createTableSQL, createViewSQL, err1 := ShowCreateView(tctx, conn, db, viewName)
 		if err1 != nil {
@@ -1163,7 +1174,16 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 		meta.showCreateTable = createTableSQL
 		meta.showCreateView = createViewSQL
 		return meta, nil
+	case TableTypeSequence:
+		sequenceName := table.Name
+		createSequenceSQL, err2 := ShowCreateSequence(tctx, conn, db, sequenceName, conf)
+		if err2 != nil {
+			return meta, err2
+		}
+		meta.showCreateTable = createSequenceSQL
+		return meta, nil
 	}
+
 	createTableSQL, err := ShowCreateTable(tctx, conn, db, tbl)
 	if err != nil {
 		return nil, err
