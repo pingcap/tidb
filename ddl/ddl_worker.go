@@ -533,9 +533,9 @@ func (w *jobContext) setDDLLabelForTopSQL(job *model.Job) {
 	w.ddlJobCtx = topsql.AttachSQLInfo(context.Background(), w.cacheNormalizedSQL, w.cacheDigest, "", nil, false)
 }
 
-func (w *jobContext) setResourceGroupTaggerForTopSQL(txn kv.Transaction, snapshot kv.Snapshot) {
+func (w *jobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
 	if !topsqlstate.TopSQLEnabled() || w.cacheDigest == nil {
-		return
+		return nil
 	}
 
 	digest := w.cacheDigest
@@ -543,12 +543,7 @@ func (w *jobContext) setResourceGroupTaggerForTopSQL(txn kv.Transaction, snapsho
 		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, nil,
 			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
 	}
-	if txn != nil {
-		txn.SetOption(kv.ResourceGroupTagger, tikvrpc.ResourceGroupTagger(tagger))
-	}
-	if snapshot != nil {
-		snapshot.SetOption(kv.ResourceGroupTagger, tikvrpc.ResourceGroupTagger(tagger))
-	}
+	return tagger
 }
 
 // handleDDLJobQueue handles DDL jobs in DDL Job queue.
@@ -586,7 +581,9 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			}
 
 			w.setDDLLabelForTopSQL(job)
-			w.setResourceGroupTaggerForTopSQL(txn, nil)
+			if tagger :=w.getResourceGroupTaggerForTopSQL();tagger != nil {
+				txn.SetOption(kv.ResourceGroupTagger, tagger)
+			}
 			if isDone, err1 := isDependencyJobDone(t, job); err1 != nil || !isDone {
 				return errors.Trace(err1)
 			}
