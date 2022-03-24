@@ -20,6 +20,7 @@ type StreamMetadataSet struct {
 	BeforeDoWriteBack func(path string, last, current *backuppb.Metadata) (skip bool)
 }
 
+// LoadFrom loads data from an external storage into the stream metadata set.
 func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storage.ExternalStorage) error {
 	ms.metadata = map[string]*backuppb.Metadata{}
 	ms.writeback = map[string]*backuppb.Metadata{}
@@ -144,7 +145,6 @@ func truncateAndWrite(ctx context.Context, s storage.ExternalStorage, path strin
 // swapAndOverrideFile is a slow but safe way for overriding a file in the external storage.
 // Because there isn't formal definition of `WriteFile` over a existing file, this should be safe in generic external storage.
 // It moves the origin file to a swap file and did the file write, finally remove the swap file.
-// The external storage doesn't support rename here, so we actually read-n-write it for renaming.
 func swapAndOverrideFile(ctx context.Context, s storage.ExternalStorage, path string, data []byte) error {
 	ok, err := s.FileExists(ctx, path)
 	if err != nil {
@@ -155,14 +155,7 @@ func swapAndOverrideFile(ctx context.Context, s storage.ExternalStorage, path st
 	}
 
 	backup := path + ".override_swap"
-	originData, err := s.ReadFile(ctx, path)
-	if err != nil {
-		return err
-	}
-	if err := s.WriteFile(ctx, backup, originData); err != nil {
-		return err
-	}
-	if err := s.DeleteFile(ctx, path); err != nil {
+	if err := s.Rename(ctx, path, backup); err != nil {
 		return err
 	}
 	if err := s.WriteFile(ctx, path, data); err != nil {
@@ -200,6 +193,9 @@ func GetTruncateSafepoint(ctx context.Context, s storage.ExternalStorage) (uint6
 	return value, nil
 }
 
+// SetTruncateSafepoint overrides the current truncate safepoint.
+// truncate safepoint is the TS used for last truncating:
+// which means logs before this TS would probably be deleted or incomplete.
 func SetTruncateSafepoint(ctx context.Context, s storage.ExternalStorage, safepoint uint64) error {
 	content := strconv.FormatUint(safepoint, 10)
 	return truncateAndWrite(ctx, s, truncateSafepointFileName, []byte(content))

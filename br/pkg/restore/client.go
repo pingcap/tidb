@@ -222,6 +222,8 @@ func (rc *Client) GetSupportPolicy() bool {
 	return rc.supportPolicy
 }
 
+// GetTruncateSafepoint read the truncate checkpoint from the storage bind to the client.
+// Returns 0 when meeting errors.
 func (rc *Client) GetTruncateSafepoint(ctx context.Context) uint64 {
 	ts, err := GetTruncateSafepoint(ctx, rc.storage)
 	if err != nil {
@@ -1525,9 +1527,6 @@ func (rc *Client) ReadStreamDataFiles(
 				continue
 			}
 			if d.MinTs > restoreTS {
-				continue
-			}
-			if d.MaxTs < fromTS {
 				continue
 			}
 
