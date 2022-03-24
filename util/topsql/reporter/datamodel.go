@@ -615,7 +615,7 @@ func (m *normalizedSQLMap) register(sqlDigest []byte, normalizedSQL string, isIn
 		return
 	}
 	data := m.data.Load().(*sync.Map)
-	_, loaded := data.LoadOrStore(hack.String(sqlDigest), sqlMeta{
+	_, loaded := data.LoadOrStore(string(hack.String(sqlDigest)), sqlMeta{
 		normalizedSQL: normalizedSQL,
 		isInternal:    isInternal,
 	})
@@ -675,7 +675,7 @@ func (m *normalizedPlanMap) register(planDigest []byte, normalizedPlan string) {
 		return
 	}
 	data := m.data.Load().(*sync.Map)
-	_, loaded := data.LoadOrStore(hack.String(planDigest), normalizedPlan)
+	_, loaded := data.LoadOrStore(string(hack.String(planDigest)), normalizedPlan)
 	if !loaded {
 		m.length.Add(1)
 	}
