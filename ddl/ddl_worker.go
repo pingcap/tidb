@@ -100,7 +100,7 @@ type worker struct {
 	*jobContext
 }
 
-// jobContext is a cache for each DDL job.
+// jobContext is the ddl job execution context.
 type jobContext struct {
 	// below fields are cache for top sql
 	ddlJobCtx          context.Context
