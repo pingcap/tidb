@@ -47,7 +47,7 @@ func onCreateSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ err
 		return ver, errors.Trace(err)
 	}
 
-	ver, err = updateSchemaVersion(t, job)
+	ver, err = updateSchemaVersion(d, t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -235,7 +235,7 @@ func alterSequenceOptions(sequenceOptions []*ast.SequenceOption, ident ast.Ident
 	return false, 0, nil
 }
 
-func onAlterSequence(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onAlterSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	var (
 		sequenceOpts []*ast.SequenceOption
@@ -277,7 +277,7 @@ func onAlterSequence(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 
 	// Store the sequence info into kv.
-	ver, err = updateVersionAndTableInfo(t, job, tblInfo, shouldUpdateVer)
+	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, shouldUpdateVer)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}

@@ -300,7 +300,7 @@ func validateRenameIndex(from, to model.CIStr, tbl *model.TableInfo) (ignore boo
 	return false, nil
 }
 
-func onRenameIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onRenameIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, from, to, err := checkRenameIndex(t, job)
 	if err != nil || tblInfo == nil {
 		return ver, errors.Trace(err)
@@ -311,7 +311,7 @@ func onRenameIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 	idx := tblInfo.FindIndexByName(from.L)
 	idx.Name = to
-	if ver, err = updateVersionAndTableInfo(t, job, tblInfo, true); err != nil {
+	if ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -328,14 +328,14 @@ func validateAlterIndexVisibility(indexName model.CIStr, invisible bool, tbl *mo
 	return false, nil
 }
 
-func onAlterIndexVisibility(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onAlterIndexVisibility(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, from, invisible, err := checkAlterIndexVisibility(t, job)
 	if err != nil || tblInfo == nil {
 		return ver, errors.Trace(err)
 	}
 	idx := tblInfo.FindIndexByName(from.L)
 	idx.Invisible = invisible
-	if ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, true); err != nil {
+	if ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -354,7 +354,7 @@ func getNullColInfos(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) ([]*m
 	return nullCols, nil
 }
 
-func checkPrimaryKeyNotNull(w *worker, sqlMode mysql.SQLMode, t *meta.Meta, job *model.Job,
+func checkPrimaryKeyNotNull(d *ddlCtx, w *worker, sqlMode mysql.SQLMode, t *meta.Meta, job *model.Job,
 	tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (warnings []string, err error) {
 	if !indexInfo.Primary {
 		return nil, nil
@@ -376,7 +376,7 @@ func checkPrimaryKeyNotNull(w *worker, sqlMode mysql.SQLMode, t *meta.Meta, job 
 	if err == nil {
 		return nil, nil
 	}
-	_, err = convertAddIdxJob2RollbackJob(t, job, tblInfo, indexInfo, err)
+	_, err = convertAddIdxJob2RollbackJob(d, t, job, tblInfo, indexInfo, err)
 	// TODO: Support non-strict mode.
 	// warnings = append(warnings, ErrWarnDataTruncated.GenWithStackByArgs(oldCol.Name.L, 0).Error())
 	return nil, err
@@ -393,7 +393,7 @@ func updateHiddenColumns(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, sta
 func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK bool) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
-		ver, err = onDropIndex(t, job)
+		ver, err = onDropIndex(d, t, job)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -519,7 +519,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		// none -> delete only
 		indexInfo.State = model.StateDeleteOnly
 		updateHiddenColumns(tblInfo, indexInfo, model.StatePublic)
-		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != indexInfo.State)
+		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
 			return ver, err
 		}
@@ -528,11 +528,11 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	case model.StateDeleteOnly:
 		// delete only -> write only
 		indexInfo.State = model.StateWriteOnly
-		_, err = checkPrimaryKeyNotNull(w, sqlMode, t, job, tblInfo, indexInfo)
+		_, err = checkPrimaryKeyNotNull(d, w, sqlMode, t, job, tblInfo, indexInfo)
 		if err != nil {
 			break
 		}
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
 			return ver, err
 		}
@@ -540,11 +540,11 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	case model.StateWriteOnly:
 		// write only -> reorganization
 		indexInfo.State = model.StateWriteReorganization
-		_, err = checkPrimaryKeyNotNull(w, sqlMode, t, job, tblInfo, indexInfo)
+		_, err = checkPrimaryKeyNotNull(d, w, sqlMode, t, job, tblInfo, indexInfo)
 		if err != nil {
 			break
 		}
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
 			return ver, err
 		}
@@ -585,7 +585,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			}
 			if kv.ErrKeyExists.Equal(err) || dbterror.ErrCancelledDDLJob.Equal(err) || dbterror.ErrCantDecodeRecord.Equal(err) {
 				logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
-				ver, err = convertAddIdxJob2RollbackJob(t, job, tblInfo, indexInfo, err)
+				ver, err = convertAddIdxJob2RollbackJob(d, t, job, tblInfo, indexInfo, err)
 				var err1 error
 				if variable.AllowConcurrencyDDL.Load() {
 					err1 = w.RemoveDDLReorgHandle(job, reorgInfo.elements)
@@ -611,7 +611,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 				return ver, errors.Trace(err)
 			}
 		}
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -624,7 +624,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	return ver, errors.Trace(err)
 }
 
-func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, indexInfo, err := checkDropIndex(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -645,7 +645,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	case model.StatePublic:
 		// public -> write only
 		indexInfo.State = model.StateWriteOnly
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -653,7 +653,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	case model.StateWriteOnly:
 		// write only -> delete only
 		indexInfo.State = model.StateDeleteOnly
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -661,7 +661,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
 		indexInfo.State = model.StateDeleteReorganization
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -693,7 +693,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			}
 		})
 
-		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != model.StateNone)
+		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != model.StateNone)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -748,7 +748,7 @@ func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Inde
 	return tblInfo, indexInfo, nil
 }
 
-func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropIndexes(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, indexNames, ifExists, err := getSchemaInfos(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -785,7 +785,7 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		for _, colInfo := range dependentHiddenCols {
 			adjustColumnInfoInDropColumn(tblInfo, colInfo.Offset)
 		}
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfos[0].State)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfos[0].State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -794,7 +794,7 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// write only -> delete only
 		setIndicesState(indexInfos, model.StateDeleteOnly)
 		setColumnsState(dependentHiddenCols, model.StateDeleteOnly)
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfos[0].State)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfos[0].State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -803,7 +803,7 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// delete only -> reorganization
 		setIndicesState(indexInfos, model.StateDeleteReorganization)
 		setColumnsState(dependentHiddenCols, model.StateDeleteReorganization)
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfos[0].State)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfos[0].State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -832,7 +832,7 @@ func onDropIndexes(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-len(dependentHiddenCols)]
 
-		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != model.StateNone)
+		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != model.StateNone)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
