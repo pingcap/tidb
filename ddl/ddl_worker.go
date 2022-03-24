@@ -103,7 +103,7 @@ type worker struct {
 // jobContext is a cache for each DDL job.
 type jobContext struct {
 	// below fields are cache for top sql
-	ctx                context.Context
+	ddlJobCtx          context.Context
 	cacheSQL           string
 	cacheNormalizedSQL string
 	cacheDigest        *parser.Digest
@@ -116,7 +116,7 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRan
 		ddlJobCh: make(chan struct{}, 1),
 		ctx:      ctx,
 		jobContext: &jobContext{
-			ctx:                context.Background(),
+			ddlJobCtx:          context.Background(),
 			cacheSQL:           "",
 			cacheNormalizedSQL: "",
 			cacheDigest:        nil,
@@ -431,10 +431,10 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 			}
 
 			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
-			err = w.deleteRange(w.jobContext.ctx, job)
+			err = w.deleteRange(w.ddlJobCtx, job)
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
 			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes:
-			err = w.deleteRange(w.jobContext.ctx, job)
+			err = w.deleteRange(w.ddlJobCtx, job)
 		}
 	}
 
@@ -521,6 +521,7 @@ func newMetaWithQueueTp(txn kv.Transaction, tp workerType) *meta.Meta {
 func (w *jobContext) setDDLLabelForTopSQL(job *model.Job) {
 	if !topsqlstate.TopSQLEnabled() || job == nil {
 		w.cacheDigest = nil
+		w.ddlJobCtx = context.Background()
 		return
 	}
 
@@ -529,7 +530,7 @@ func (w *jobContext) setDDLLabelForTopSQL(job *model.Job) {
 		w.cacheSQL = job.Query
 	}
 
-	w.ctx = topsql.AttachSQLInfo(context.Background(), w.cacheNormalizedSQL, w.cacheDigest, "", nil, false)
+	w.ddlJobCtx = topsql.AttachSQLInfo(context.Background(), w.cacheNormalizedSQL, w.cacheDigest, "", nil, false)
 }
 
 func (w *jobContext) setResourceGroupTaggerForTopSQL(txn kv.Transaction, snapshot kv.Snapshot) {

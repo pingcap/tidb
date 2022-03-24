@@ -446,7 +446,7 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			return ver, errors.Wrapf(err, "failed to get old label rules from PD")
 		}
 
-		err = w.delRangeManager.removeFromGCDeleteRange(w.jobContext.ctx, dropJobID, tids)
+		err = w.delRangeManager.removeFromGCDeleteRange(w.ddlJobCtx, dropJobID, tids)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

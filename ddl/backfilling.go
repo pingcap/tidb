@@ -525,7 +525,7 @@ func loadDDLReorgVars(w *worker) error {
 		return errors.Trace(err)
 	}
 	defer w.sessPool.put(ctx)
-	return ddlutil.LoadDDLReorgVars(w.jobContext.ctx, ctx)
+	return ddlutil.LoadDDLReorgVars(w.ddlJobCtx, ctx)
 }
 
 func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table) (map[int64]decoder.Column, error) {
