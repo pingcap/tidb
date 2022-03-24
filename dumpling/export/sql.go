@@ -224,7 +224,7 @@ func ShowCreateSequence(tctx *tcontext.Context, db *BaseConn, database, sequence
 			return "", err
 		}
 		nextNotCachedValue, _ = strconv.ParseInt(oneRow1, 10, 64)
-		fmt.Fprintf(&createSequenceSQL, "DO SETVAL(`%s`,%d);\n", escapeString(sequence), nextNotCachedValue)
+		fmt.Fprintf(&createSequenceSQL, "SELECT SETVAL(`%s`,%d);\n", escapeString(sequence), nextNotCachedValue)
 	}
 	return createSequenceSQL.String(), nil
 }

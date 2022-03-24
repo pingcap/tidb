@@ -404,7 +404,7 @@ func TestShowCreateSequence(t *testing.T) {
 
 	createSequenceSQL, err = ShowCreateSequence(tctx, baseConn, "test", "s", conf)
 	require.NoError(t, err)
-	require.Equal(t, "CREATE SEQUENCE `s` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB;\nDO SETVAL(`s`,1001);\n", createSequenceSQL)
+	require.Equal(t, "CREATE SEQUENCE `s` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB;\nSELECT SETVAL(`s`,1001);\n", createSequenceSQL)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
