@@ -2,9 +2,9 @@
 package stream
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
-	"math"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
@@ -176,34 +176,63 @@ func (t *Task) Ranges(ctx context.Context) (Ranges, error) {
 	return ranges, nil
 }
 
-// MinNextBackupTS query the all next backup ts of a store, returning the minimal next backup ts of the store.
-func (t *Task) MinNextBackupTS(ctx context.Context, store uint64) (uint64, error) {
-	min := uint64(math.MaxUint64)
-	scanner := scanEtcdPrefix(t.cli.Client, CheckPointsOf(t.Info.Name, store))
+// NextBackupTSList lists the backup ts of each store.
+func (t *Task) NextBackupTSList(ctx context.Context) (map[uint64]uint64, error) {
+	result := map[uint64]uint64{}
+	prefix := CheckPointsOf(t.Info.Name)
+	scanner := scanEtcdPrefix(t.cli.Client, prefix)
 	kvs, err := scanner.AllPages(ctx, 1024)
 	if err != nil {
-		return 0, errors.Annotatef(err, "failed to get checkpoints of %s", t.Info.Name)
+		return nil, errors.Annotatef(err, "failed to get checkpoints of %s", t.Info.Name)
 	}
 	for _, kv := range kvs {
 		if len(kv.Value) != 8 {
-			return 0, errors.Annotatef(berrors.ErrPiTRMalformedMetadata,
-				"the next backup ts of store %d isn't 64bits (it is %d bytes, value = %s)",
-				store,
+			return nil, errors.Annotatef(berrors.ErrPiTRMalformedMetadata,
+				"the next backup ts isn't 64bits (it is %d bytes, value = %s)",
 				len(kv.Value),
 				redact.Key(kv.Value))
 		}
 		nextBackupTS := binary.BigEndian.Uint64(kv.Value)
-		if nextBackupTS < min {
-			min = nextBackupTS
+
+		storeIDBinary := bytes.TrimPrefix(kv.Key, []byte(prefix))
+		if len(storeIDBinary) != 8 {
+			return nil, errors.Annotatef(berrors.ErrPiTRMalformedMetadata,
+				"the store id isn't 64bits (it is %d bytes, value = %s)",
+				len(storeIDBinary),
+				redact.Key(storeIDBinary))
 		}
+		storeID := binary.BigEndian.Uint64(storeIDBinary)
+		result[storeID] = nextBackupTS
 	}
-	return min, nil
+	return result, nil
+}
+
+// MinNextBackupTS query the all next backup ts of a store, returning the minimal next backup ts of the store.
+func (t *Task) MinNextBackupTS(ctx context.Context, store uint64) (uint64, error) {
+	key := CheckPointOf(t.Info.Name, store)
+	resp, err := t.cli.KV.Get(ctx, key)
+	if err != nil {
+		return 0, errors.Annotatef(err, "failed to get checkpoints of %s", t.Info.Name)
+	}
+	if resp.Count != 1 {
+		return 0, nil
+	}
+	kv := resp.Kvs[0]
+	if len(kv.Value) != 8 {
+		return 0, errors.Annotatef(berrors.ErrPiTRMalformedMetadata,
+			"the next backup ts of store %d isn't 64bits (it is %d bytes, value = %s)",
+			store,
+			len(kv.Value),
+			redact.Key(kv.Value))
+	}
+	nextBackupTS := binary.BigEndian.Uint64(kv.Value)
+	return nextBackupTS, nil
 }
 
 // Step forwards the progress (next_backup_ts) of some region.
 // The task should be done by TiKV. This function should only be used for test cases.
-func (t *Task) Step(ctx context.Context, store uint64, region uint64, ts uint64) error {
-	_, err := t.cli.KV.Put(ctx, CheckpointOf(t.Info.Name, store, region), string(encodeUint64(ts)))
+func (t *Task) Step(ctx context.Context, store uint64, ts uint64) error {
+	_, err := t.cli.KV.Put(ctx, CheckPointOf(t.Info.Name, store), string(encodeUint64(ts)))
 	if err != nil {
 		return errors.Annotatef(err, "failed forward the progress of %s to %d", t.Info.Name, ts)
 	}

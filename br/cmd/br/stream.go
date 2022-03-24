@@ -174,6 +174,13 @@ func streamCommand(command *cobra.Command, cmdName string) error {
 		if err = cfg.ParseStreamTruncateFromFlags(command.Flags()); err != nil {
 			return errors.Trace(err)
 		}
+	case task.StreamStatus:
+		if err = cfg.ParseStreamStatusFromFlags(command.Flags()); err != nil {
+			return errors.Trace(err)
+		}
+		if err = cfg.ParseStreamCommonFromFlags(command.Flags()); err != nil {
+			return errors.Trace(err)
+		}
 	case task.StreamStart:
 		if err = cfg.ParseStreamStartFromFlags(command.Flags()); err != nil {
 			return errors.Trace(err)

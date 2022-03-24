@@ -68,27 +68,22 @@ func encodeUint64(num uint64) []byte {
 	return items[:]
 }
 
-// CheckpointOf returns the checkpoint of some task, in some region of some store.
-// All binary u64 are encoded as big endian.
-// Normally it would be <prefix>/checkpoint/<store-id(binary-u64)>/<region-id(binary-u64)> -> <next-backup-ts(binary-u64)>
-func CheckpointOf(task string, store uint64, region uint64) string {
+// CheckpointOf returns the checkpoint prefix of some store.
+// Normally it would be <prefix>/checkpoint/
+func CheckPointsOf(task string) string {
 	buf := bytes.NewBuffer(nil)
-	buf.WriteString(strings.TrimSuffix(path.Join(streamKeyPrefix, task), "/"))
+	buf.WriteString(strings.TrimSuffix(path.Join(streamKeyPrefix, taskCheckpointPath, task), "/"))
 	buf.WriteRune('/')
-	writeUint64(buf, store)
-	buf.WriteRune('/')
-	writeUint64(buf, region)
 	return buf.String()
 }
 
-// CheckpointsOf returns the checkpoint prefix of some store.
+// CheckpointOf returns the checkpoint prefix of some store.
 // Normally it would be <prefix>/checkpoint/<store-id(binary-u64)>.
-func CheckPointsOf(task string, store uint64) string {
+func CheckPointOf(task string, store uint64) string {
 	buf := bytes.NewBuffer(nil)
-	buf.WriteString(strings.TrimSuffix(path.Join(streamKeyPrefix, task), "/"))
+	buf.WriteString(strings.TrimSuffix(path.Join(streamKeyPrefix, taskCheckpointPath, task), "/"))
 	buf.WriteRune('/')
 	writeUint64(buf, store)
-	buf.WriteRune('/')
 	return buf.String()
 }
 
