@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fatih/color"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -52,6 +53,9 @@ import (
 )
 
 const (
+	flagYes                     = "yes"
+	flagDryRun                  = "dry-run"
+	flagUntil                   = "until"
 	flagStreamTaskName          = "task-name"
 	flagStreamTaskNameDefault   = "all" // used for get status for all of tasks.
 	flagStreamStartTS           = "start-ts"
@@ -62,21 +66,23 @@ const (
 )
 
 var (
-	StreamStart   = "stream start"
-	StreamStop    = "stream stop"
-	StreamPause   = "stream pause"
-	StreamResume  = "stream resume"
-	StreamStatus  = "stream status"
-	StreamRestore = "stream restore"
+	StreamStart    = "stream start"
+	StreamStop     = "stream stop"
+	StreamPause    = "stream pause"
+	StreamResume   = "stream resume"
+	StreamStatus   = "stream status"
+	StreamRestore  = "stream restore"
+	StreamTruncate = "stream truncate"
 )
 
 var StreamCommandMap = map[string]func(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error{
-	StreamStart:   RunStreamStart,
-	StreamStop:    RunStreamStop,
-	StreamPause:   RunStreamPause,
-	StreamResume:  RunStreamResume,
-	StreamStatus:  RunStreamStatus,
-	StreamRestore: RunStreamRestore,
+	StreamStart:    RunStreamStart,
+	StreamStop:     RunStreamStop,
+	StreamPause:    RunStreamPause,
+	StreamResume:   RunStreamResume,
+	StreamStatus:   RunStreamStatus,
+	StreamRestore:  RunStreamRestore,
+	StreamTruncate: RunStreamTruncate,
 }
 
 // StreamConfig specifies the configure about backup stream
@@ -95,6 +101,27 @@ type StreamConfig struct {
 	// SafePointTTL ensures TiKV can scan entries not being GC at [startTS, currentTS]
 	SafePointTTL int64  `json:"safe-point-ttl" toml:"safe-point-ttl"`
 	RestoreTS    uint64 `json:"restore-ts" toml:"restore-ts"`
+
+	// Spec for the command `truncate`, we should truncate the until when?
+	Until      uint64 `json:"until" toml:"until"`
+	DryRun     bool   `json:"dry-run" toml:"dry-run"`
+	SkipPrompt bool   `json:"skip-prompt" toml:"skip-prompt"`
+}
+
+func (sc *StreamConfig) makeStorage(ctx context.Context) (storage.ExternalStorage, error) {
+	u, err := storage.ParseBackend(sc.Storage, &sc.BackendOptions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	opts := storage.ExternalStorageOptions{
+		NoCredentials:   sc.NoCreds,
+		SendCredentials: sc.SendCreds,
+	}
+	storage, err := storage.New(ctx, u, &opts)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return storage, nil
 }
 
 func (cfg *StreamConfig) adjustRestoreConfig() {
@@ -132,6 +159,30 @@ func DefineStreamStatusCommonFlags(flags *pflag.FlagSet) {
 	flags.String(flagStreamTaskName, flagStreamTaskNameDefault,
 		"The task name for backup stream log. If default, get status of all of tasks",
 	)
+}
+
+func DefineStreamTruncateLogFlags(flags *pflag.FlagSet) {
+	flags.String(flagUntil, "", "Remove all backup data until this TS."+
+		"(support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'.)")
+	flags.Bool(flagDryRun, false, "Run the command but don't really delete the files.")
+	flags.BoolP(flagYes, "y", false, "Skip all prompts and always execute the command.")
+}
+
+func (cfg *StreamConfig) ParseStreamTruncateFromFlags(flags *pflag.FlagSet) error {
+	tsString, err := flags.GetString(flagUntil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.Until, err = ParseTSString(tsString); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.SkipPrompt, err = flags.GetBool(flagYes); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.DryRun, err = flags.GetBool(flagDryRun); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func (cfg *StreamConfig) ParseStreamRestoreFromFlags(flags *pflag.FlagSet) error {
@@ -684,6 +735,96 @@ func RunStreamStatus(
 	return nil
 }
 
+func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error {
+	console := glue.GetConsole(g)
+	em := color.New(color.Bold, color.FgHiWhite).SprintFunc()
+	done := color.New(color.FgGreen).SprintFunc()
+	warn := color.New(color.Bold, color.FgHiRed).SprintFunc()
+	formatTs := func(ts uint64) string {
+		return oracle.GetTimeFromTS(ts).Format("2006-01-02 15:04:05.0000")
+	}
+
+	cfg.adjustRestoreConfig()
+
+	ctx, cancelFn := context.WithCancel(c)
+	defer cancelFn()
+
+	storage, err := cfg.makeStorage(ctx)
+	if err != nil {
+		return err
+	}
+
+	sp, err := restore.GetTruncateSafepoint(ctx, storage)
+	if err != nil {
+		return err
+	}
+
+	if cfg.Until < sp {
+		console.Println("According to the log, you have truncated backup data before", em(formatTs(sp)))
+		if !cfg.SkipPrompt && !console.PromptBool("Continue? ") {
+			return nil
+		}
+	}
+	if cfg.Until > sp && !cfg.DryRun {
+		if err := restore.SetTruncateSafepoint(ctx, storage, cfg.Until); err != nil {
+			return err
+		}
+	}
+
+	metas := restore.StreamMetadataSet{
+		BeforeDoWriteBack: func(path string, last, current *backuppb.Metadata) (skip bool) {
+			log.Info("Updating metadata.", zap.String("file", path),
+				zap.Int("data-file-before", len(last.GetFiles())),
+				zap.Int("data-file-after", len(current.GetFiles())))
+			return cfg.DryRun
+		},
+	}
+	if err := metas.LoadFrom(ctx, storage); err != nil {
+		return err
+	}
+
+	fileCount := 0
+	minTs := oracle.GoTimeToTS(time.Now())
+	metas.IterateFilesFullyBefore(cfg.Until, func(d *backuppb.DataFileInfo) (shouldBreak bool) {
+		if d.MaxTs < minTs {
+			minTs = d.MaxTs
+		}
+		fileCount++
+		return
+	})
+	console.Println("We are going to remove ",
+		em(fileCount),
+		" files, until ",
+		em(formatTs(minTs))+".",
+	)
+	if !cfg.SkipPrompt && !console.PromptBool(warn("Sure? ")) {
+		return nil
+	}
+
+	removed := metas.RemoveDataBefore(cfg.Until)
+
+	console.Print("Removing metadata... ")
+	if !cfg.DryRun {
+		if err := metas.DoWriteBack(ctx, storage); err != nil {
+			return err
+		}
+	}
+	console.Println(done("DONE"))
+
+	console.Print("Clearing data files... ")
+	for _, f := range removed {
+		if !cfg.DryRun {
+			if err := storage.DeleteFile(ctx, f.Path); err != nil {
+				log.Warn("File not deleted.", zap.String("path", f.Path), logutil.ShortError(err))
+				console.Print("\n"+em(f.Path), "not deleted, you may clear it manually:", warn(err))
+			}
+		}
+	}
+	console.Println(done("DONE"))
+
+	return nil
+}
+
 // RunStreamRestore start restore job
 func RunStreamRestore(
 	c context.Context,
@@ -734,6 +875,15 @@ func RunStreamRestore(
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetConcurrency(uint(cfg.Concurrency))
 	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
+	safepoint := client.GetTruncateSafepoint(ctx)
+	if cfg.RestoreTS < safepoint {
+		// TODO: maybe also filter records less than safepoint.
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"the restore ts %d(%s) is truncated, please restore to longer than %d(%s)",
+			cfg.RestoreTS, oracle.GetTimeFromTS(cfg.RestoreTS),
+			safepoint, oracle.GetTimeFromTS(safepoint),
+		)
+	}
 	err = client.LoadRestoreStores(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -768,7 +918,7 @@ func RunStreamRestore(
 		return nil
 	}
 	// read data file by given ts.
-	dmlFiles, ddlFiles, err := client.ReadStreamDataFiles(ctx, metas, cfg.RestoreTS)
+	dmlFiles, ddlFiles, err := client.ReadStreamDataFiles(ctx, metas, safepoint, cfg.RestoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -47,6 +47,7 @@ func NewStreamCommand() *cobra.Command {
 		newStreamResumeCommand(),
 		newStreamStatusCommand(),
 		newStreamRestoreCommand(),
+		newStreamTruncateCommand(),
 	)
 	return command
 }
@@ -139,6 +140,19 @@ func newStreamRestoreCommand() *cobra.Command {
 	return command
 }
 
+func newStreamTruncateCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "truncate",
+		Short: "truncate the incremental data until sometime.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return streamCommand(cmd, task.StreamTruncate)
+		},
+	}
+	task.DefineStreamTruncateLogFlags(command.Flags())
+	return command
+}
+
 func streamCommand(command *cobra.Command, cmdName string) error {
 	var cfg task.StreamConfig
 	var err error
@@ -154,6 +168,10 @@ func streamCommand(command *cobra.Command, cmdName string) error {
 	switch cmdName {
 	case task.StreamRestore:
 		if err = cfg.ParseStreamRestoreFromFlags(command.Flags()); err != nil {
+			return errors.Trace(err)
+		}
+	case task.StreamTruncate:
+		if err = cfg.ParseStreamTruncateFromFlags(command.Flags()); err != nil {
 			return errors.Trace(err)
 		}
 	case task.StreamStart:
