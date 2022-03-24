@@ -82,6 +82,11 @@ func TablePrefix() []byte {
 	return tablePrefix
 }
 
+// MetaPrefix returns meta prefix 'm'.
+func MetaPrefix() []byte {
+	return metaPrefix
+}
+
 // EncodeRowKey encodes the table id and record handle into a kv.Key
 func EncodeRowKey(tableID int64, encodedHandle []byte) kv.Key {
 	buf := make([]byte, 0, prefixLen+len(encodedHandle))

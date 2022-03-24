@@ -47,6 +47,7 @@ func NewStreamCommand() *cobra.Command {
 		newStreamResumeCommand(),
 		newStreamStatusCommand(),
 		newStreamRestoreCommand(),
+		newStreamTruncateCommand(),
 	)
 	return command
 }
@@ -62,7 +63,7 @@ func newStreamStartCommand() *cobra.Command {
 	}
 
 	task.DefineStreamCommonFlags(command.Flags())
-	task.DefineFilterFlags(command, acceptAllTables)
+	task.DefineFilterFlags(command, acceptAllTables, true)
 	task.DefineStreamStartFlags(command.PersistentFlags())
 	return command
 }
@@ -134,8 +135,21 @@ func newStreamRestoreCommand() *cobra.Command {
 			return streamCommand(command, task.StreamRestore)
 		},
 	}
-	task.DefineFilterFlags(command, acceptAllTables)
+	task.DefineFilterFlags(command, acceptAllTables, false)
 	task.DefineStreamRestoreFlags(command.Flags())
+	return command
+}
+
+func newStreamTruncateCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "truncate",
+		Short: "truncate the incremental data until sometime.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return streamCommand(cmd, task.StreamTruncate)
+		},
+	}
+	task.DefineStreamTruncateLogFlags(command.Flags())
 	return command
 }
 
@@ -154,6 +168,10 @@ func streamCommand(command *cobra.Command, cmdName string) error {
 	switch cmdName {
 	case task.StreamRestore:
 		if err = cfg.ParseStreamRestoreFromFlags(command.Flags()); err != nil {
+			return errors.Trace(err)
+		}
+	case task.StreamTruncate:
+		if err = cfg.ParseStreamTruncateFromFlags(command.Flags()); err != nil {
 			return errors.Trace(err)
 		}
 	case task.StreamStart:

@@ -26,9 +26,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var MetaPrefix = []byte("m")
-
-// appendTableObserveRanges specifies building key ranges corresponding to `tblIDS`
+// appendTableObserveRanges builds key ranges corresponding to `tblIDS`.
 func appendTableObserveRanges(tblIDs []int64) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(tblIDs))
 	for _, tid := range tblIDs {
@@ -39,8 +37,8 @@ func appendTableObserveRanges(tblIDs []int64) []kv.KeyRange {
 	return krs
 }
 
-// buildObserveTableKeyRanges specifies building key ranges to observe data KV that belongs to `table`
-func buildObserveTableKeyRanges(table *model.TableInfo) []kv.KeyRange {
+// buildObserveTableRange builds key ranges to observe data KV that belongs to `table`.
+func buildObserveTableRange(table *model.TableInfo) []kv.KeyRange {
 	pis := table.GetPartitionInfo()
 	if pis == nil {
 		// Short path, no partition.
@@ -55,8 +53,8 @@ func buildObserveTableKeyRanges(table *model.TableInfo) []kv.KeyRange {
 	return appendTableObserveRanges(tblIDs)
 }
 
-// BuildObserveDataRanges specifies building key ranges to observe data KV(contains row/index KV)
-func BuildObserveDataRanges(
+// buildObserveTableRanges builds key ranges to observe table kv-events.
+func buildObserveTableRanges(
 	storage kv.Storage,
 	tableFilter filter.Filter,
 	backupTS uint64,
@@ -92,7 +90,7 @@ func BuildObserveDataRanges(
 			}
 
 			log.Info("observer table schema", zap.String("table", dbInfo.Name.O+"."+tableInfo.Name.O))
-			tableRanges := buildObserveTableKeyRanges(tableInfo)
+			tableRanges := buildObserveTableRange(tableInfo)
 			ranges = append(ranges, tableRanges...)
 		}
 	}
@@ -100,10 +98,36 @@ func BuildObserveDataRanges(
 	return ranges, nil
 }
 
-// BuildObserveDataRanges specifies build key ranges to observe meta KV(contains all of metas)
+// buildObserverAllRange build key range to observe all data kv-events.
+func buildObserverAllRange() []kv.KeyRange {
+	var startKey []byte
+	startKey = append(startKey, tablecodec.TablePrefix()...)
+
+	sk := kv.Key(startKey)
+	ek := sk.PrefixNext()
+
+	rgs := make([]kv.KeyRange, 0, 1)
+	return append(rgs, kv.KeyRange{StartKey: sk, EndKey: ek})
+}
+
+// BuildObserveDataRanges builds key ranges to observe data KV.
+func BuildObserveDataRanges(
+	storage kv.Storage,
+	filterStr []string,
+	tableFilter filter.Filter,
+	backupTS uint64,
+) ([]kv.KeyRange, error) {
+	if len(filterStr) == 1 && filterStr[0] == string("*.*") {
+		return buildObserverAllRange(), nil
+	} else {
+		return buildObserveTableRanges(storage, tableFilter, backupTS)
+	}
+}
+
+// BuildObserveMetaRange specifies build key ranges to observe meta KV(contains all of metas)
 func BuildObserveMetaRange() *kv.KeyRange {
 	var startKey []byte
-	startKey = append(startKey, MetaPrefix...)
+	startKey = append(startKey, tablecodec.MetaPrefix()...)
 	sk := kv.Key(startKey)
 	ek := sk.PrefixNext()
 

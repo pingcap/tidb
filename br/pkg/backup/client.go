@@ -421,6 +421,32 @@ func BuildBackupRangeAndSchema(
 	return ranges, backupSchemas, policies, nil
 }
 
+// BuildFullSchema builds a full backup schemas for databases and tables.
+func BuildFullSchema(storage kv.Storage, backupTS uint64) (*Schemas, error) {
+	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
+	m := meta.NewSnapshotMeta(snapshot)
+
+	newBackupSchemas := newBackupSchemas()
+	dbs, err := m.ListDatabases()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	for _, db := range dbs {
+		tables, err := m.ListTables(db.ID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		for _, table := range tables {
+			// add table
+			newBackupSchemas.addSchema(db, table)
+		}
+	}
+
+	return newBackupSchemas, nil
+}
+
 func skipUnsupportedDDLJob(job *model.Job) bool {
 	switch job.Type {
 	// TiDB V5.3.0 supports TableAttributes and TablePartitionAttributes.

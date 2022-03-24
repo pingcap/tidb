@@ -5,6 +5,7 @@ package restore
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
@@ -22,6 +23,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
+	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -37,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/pdtypes"
@@ -46,6 +49,7 @@ import (
 	"github.com/tikv/client-go/v2/rawkv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -220,6 +224,17 @@ func (rc *Client) GetPolicyMap() *sync.Map {
 // GetSupportPolicy tells whether target tidb support placement policy.
 func (rc *Client) GetSupportPolicy() bool {
 	return rc.supportPolicy
+}
+
+// GetTruncateSafepoint read the truncate checkpoint from the storage bind to the client.
+// Returns 0 when meeting errors.
+func (rc *Client) GetTruncateSafepoint(ctx context.Context) uint64 {
+	ts, err := GetTruncateSafepoint(ctx, rc.storage)
+	if err != nil {
+		log.Warn("failed to get truncate safepoint, using 0", logutil.ShortError(err))
+		return 0
+	}
+	return ts
 }
 
 func (rc *Client) GetDomain() *domain.Domain {
@@ -1504,6 +1519,7 @@ func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*
 func (rc *Client) ReadStreamDataFiles(
 	ctx context.Context,
 	metas []*backuppb.Metadata,
+	fromTS uint64,
 	restoreTS uint64,
 ) (dataFile, metaFile []*backuppb.DataFileInfo, err error) {
 	dFiles := make([]*backuppb.DataFileInfo, 0)
@@ -1511,6 +1527,9 @@ func (rc *Client) ReadStreamDataFiles(
 
 	for _, m := range metas {
 		for _, d := range m.Files {
+			if d.MaxTs < fromTS {
+				continue
+			}
 			if d.MinTs > restoreTS {
 				continue
 			}
@@ -1546,8 +1565,30 @@ func (rc *Client) FixIndex(ctx context.Context, schema, table, index string) err
 	return nil
 }
 
+// FixIndicdesOfTables tries to fix the indices of the tables via `ADMIN RECOVERY INDEX`.
+func (rc *Client) FixIndicesOfTables(
+	ctx context.Context,
+	fullBackupTables map[int64]*metautil.Table,
+	onProgress func(),
+) error {
+	for _, table := range fullBackupTables {
+		if name, ok := utils.GetSysDBName(table.DB.Name); utils.IsSysDB(name) && ok {
+			// skip system table for now
+			onProgress()
+			continue
+		}
+
+		if err := rc.FixIndicesOfTable(ctx, table.DB.Name.L, table.Info); err != nil {
+			return errors.Annotatef(err, "failed to fix index for table %s.%s", table.DB.Name, table.Info.Name)
+		}
+		onProgress()
+	}
+
+	return nil
+}
+
 // FixIndicdesOfTable tries to fix the indices of the table via `ADMIN RECOVERY INDEX`.
-func (rc *Client) FixIndicesOfTable(ctx context.Context, schema string, table *model.TableInfo, onProgress func()) error {
+func (rc *Client) FixIndicesOfTable(ctx context.Context, schema string, table *model.TableInfo) error {
 	tableName := table.Name.L
 	// NOTE: Maybe we can create multi sessions and restore indices concurrently?
 	for _, index := range table.Indices {
@@ -1555,10 +1596,9 @@ func (rc *Client) FixIndicesOfTable(ctx context.Context, schema string, table *m
 		if err := rc.FixIndex(ctx, schema, tableName, index.Name.L); err != nil {
 			return errors.Annotatef(err, "failed to fix index %s", index.Name)
 		}
-		onProgress()
+
 		log.Info("Fix index done.", zap.Stringer("take", time.Since(start)),
-			zap.String("table", tableName),
-			zap.String("database", schema),
+			zap.String("table", schema+"."+tableName),
 			zap.Stringer("index", index.Name))
 	}
 	return nil
@@ -1631,36 +1671,64 @@ func (rc *Client) RestoreKVFiles(
 	return nil
 }
 
-// initSchemasReplaceForDDL gets schemas information Mapping from old schemas to new schemas.
+// InitSchemasReplaceForDDL gets schemas information Mapping from old schemas to new schemas.
 // It is used to rewrite meta kv-event.
-func (rc *Client) initSchemasReplaceForDDL(tables *map[int64]*metautil.Table) (*stream.SchemasReplace, error) {
-	var (
-		dbIDmap    = make(map[stream.OldID]stream.NewID)
-		tableIDmap = make(map[stream.OldID]stream.TableReplace)
-	)
+func (rc *Client) InitSchemasReplaceForDDL(
+	tables *map[int64]*metautil.Table,
+	tableFilter filter.Filter,
+) (*stream.SchemasReplace, error) {
+	dbMap := make(map[stream.OldID]*stream.DBReplace)
 
 	for _, t := range *tables {
-		newDBInfo, err := rc.GetDBSchema(rc.GetDomain(), t.DB.Name)
+		name, _ := utils.GetSysDBName(t.DB.Name)
+		dbName := model.NewCIStr(name)
+		newDBInfo, err := rc.GetDBSchema(rc.GetDomain(), dbName)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		newTableInfo, err := rc.GetTableSchema(rc.GetDomain(), t.DB.Name, t.Info.Name)
+		newTableInfo, err := rc.GetTableSchema(rc.GetDomain(), dbName, t.Info.Name)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 
-		dbIDmap[t.DB.ID] = newDBInfo.ID
-
-		tbls := getTableIDMap(newTableInfo, t.Info)
-		for o, n := range tbls {
-			tableIDmap[o] = stream.TableReplace{TableID: n}
+		dbReplace, exist := dbMap[t.DB.ID]
+		if !exist {
+			dbReplace = &stream.DBReplace{
+				DBID:     newDBInfo.ID,
+				OldName:  name,
+				NewName:  newDBInfo.Name.String(),
+				TableMap: make(map[stream.OldID]*stream.TableReplace),
+			}
+			dbMap[t.DB.ID] = dbReplace
 		}
 
-		indexMap := getIndexIDMap(newTableInfo, t.Info)
-		tableIDmap[t.Info.ID] = stream.TableReplace{TableID: newTableInfo.ID, IndexMap: indexMap}
+		dbReplace.TableMap[t.Info.ID] = &stream.TableReplace{
+			TableID:      newTableInfo.ID,
+			OldName:      t.Info.Name.String(),
+			NewName:      newTableInfo.Name.String(),
+			PartitionMap: getTableIDMap(newTableInfo, t.Info),
+			IndexMap:     getIndexIDMap(newTableInfo, t.Info),
+		}
 	}
 
-	return stream.NewSchemasReplace(dbIDmap, tableIDmap, rc.currentTS), nil
+	for oldDBID, dbReplace := range dbMap {
+		log.Info("replace info", func() []zapcore.Field {
+			fields := make([]zapcore.Field, 0, (len(dbReplace.TableMap)+1)*3)
+			fields = append(fields,
+				zap.String("dbName", dbReplace.OldName),
+				zap.Int64("oldID", oldDBID),
+				zap.Int64("newID", dbReplace.DBID))
+			for oldTableID, tableReplace := range dbReplace.TableMap {
+				fields = append(fields,
+					zap.String("table", tableReplace.OldName),
+					zap.Int64("oldID", oldTableID),
+					zap.Int64("newID", tableReplace.TableID))
+			}
+			return fields
+		}()...)
+	}
+
+	return stream.NewSchemasReplace(dbMap, rc.currentTS, tableFilter, rc.GenGlobalID, rc.GenGlobalIDs), nil
 }
 
 // RestoreMetaKVFiles tries to restore files about meta kv-event from stream-backup.
@@ -1668,16 +1736,13 @@ func (rc *Client) RestoreMetaKVFiles(
 	ctx context.Context,
 	rawkvClient *rawkv.Client,
 	files []*backuppb.DataFileInfo,
-	tables *map[int64]*metautil.Table,
+	schemasReplace *stream.SchemasReplace,
+	progressInc func(),
 ) error {
-	schemasReplace, err := rc.initSchemasReplaceForDDL(tables)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	for _, f := range files {
 		// skip these files if file.MinTs > restoreTS
 		if f.MinTs > rc.restoreTs {
+			progressInc()
 			continue
 		}
 
@@ -1687,8 +1752,12 @@ func (rc *Client) RestoreMetaKVFiles(
 		if err != nil {
 			return errors.Trace(err)
 		}
+		progressInc()
 	}
 
+	if err := rc.UpdateSchemaVersion(ctx); err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 
@@ -1702,6 +1771,11 @@ func (rc *Client) RestoreMetaKVFile(
 	buff, err := rc.storage.ReadFile(ctx, file.Path)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	if checksum := sha256.Sum256(buff); !bytes.Equal(checksum[:], file.Sha_256) {
+		return errors.Annotatef(berrors.ErrInvalidMetaFile,
+			"checksum mismatch expect %x, got %x", file.Sha_256, checksum[:])
 	}
 
 	iter := stream.NewEventIterator(buff)
@@ -1719,8 +1793,8 @@ func (rc *Client) RestoreMetaKVFile(
 			break
 		}
 
-		log.Debug("rewrite txn entry",
-			zap.Int("txnKey-len", len(txnEntry.Key)), zap.ByteString("txnKey", txnEntry.Key))
+		log.Debug("txn entry", zap.Int("txnKey-len", len(txnEntry.Key)),
+			zap.Int("txnValue-len", len(txnEntry.Value)), zap.ByteString("txnKey", txnEntry.Key))
 
 		newEntry, err := sr.RewriteKvEntry(&txnEntry, file.Cf)
 		if err != nil {
@@ -1731,8 +1805,8 @@ func (rc *Client) RestoreMetaKVFile(
 			continue
 		}
 
-		log.Debug("rewrite txn entry",
-			zap.Int("newKey-len", len(newEntry.Key)), zap.ByteString("newkey", newEntry.Key))
+		log.Debug("rewrite txn entry", zap.Int("newKey-len", len(newEntry.Key)),
+			zap.Int("newValue-len", len(txnEntry.Value)), zap.ByteString("newkey", newEntry.Key))
 
 		// to do...
 		// use BatchPut instead of put
@@ -1749,4 +1823,62 @@ func transferBoolToValue(enable bool) string {
 		return "ON"
 	}
 	return "OFF"
+}
+
+// GenGlobalIDs generates a global id by transaction way.
+func (rc *Client) GenGlobalID(ctx context.Context) (int64, error) {
+	var id int64
+	storage := rc.GetDomain().Store()
+
+	err := kv.RunInNewTxn(
+		ctx,
+		storage,
+		true,
+		func(ctx context.Context, txn kv.Transaction) error {
+			var e error
+			t := meta.NewMeta(txn)
+			id, e = t.GenGlobalID()
+			return e
+		})
+
+	return id, err
+}
+
+// GenGlobalIDs generates several global ids by transaction way.
+func (rc *Client) GenGlobalIDs(ctx context.Context, n int) ([]int64, error) {
+	ids := make([]int64, 0)
+	storage := rc.GetDomain().Store()
+
+	err := kv.RunInNewTxn(
+		ctx,
+		storage,
+		true,
+		func(ctx context.Context, txn kv.Transaction) error {
+			var e error
+			t := meta.NewMeta(txn)
+			ids, e = t.GenGlobalIDs(n)
+			return e
+		})
+
+	return ids, err
+}
+
+// UpdateSchemaVersion updates schema version by transaction way.
+func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
+	storage := rc.GetDomain().Store()
+
+	err := kv.RunInNewTxn(
+		ctx,
+		storage,
+		true,
+		func(ctx context.Context, txn kv.Transaction) error {
+			t := meta.NewMeta(txn)
+			_, e := t.GenSchemaVersion()
+			return e
+		})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	return nil
 }

@@ -98,7 +98,7 @@ func newFullRestoreCommand() *cobra.Command {
 			return runRestoreCommand(cmd, task.FullRestoreCmd)
 		},
 	}
-	task.DefineFilterFlags(command, filterOutSysAndMemTables)
+	task.DefineFilterFlags(command, filterOutSysAndMemTables, false)
 	return command
 }
 
