@@ -537,17 +537,6 @@ func (s *testSuiteP2) TestAdminChecksumOfPartitionedTable(c *C) {
 	r.Check(testkit.Rows("test admin_checksum_partition_test 1 5 5"))
 }
 
-func (s *baseTestSuite) fillData(tk *testkit.TestKit, table string) {
-	tk.MustExec("use test")
-	tk.MustExec(fmt.Sprintf("create table %s(id int not null default 1, name varchar(255), PRIMARY KEY(id));", table))
-
-	// insert data
-	tk.MustExec(fmt.Sprintf("insert INTO %s VALUES (1, \"hello\");", table))
-	tk.CheckExecResult(1, 0)
-	tk.MustExec(fmt.Sprintf("insert into %s values (2, \"hello\");", table))
-	tk.CheckExecResult(1, 0)
-}
-
 type testCase struct {
 	data1       []byte
 	data2       []byte
