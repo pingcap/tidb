@@ -812,9 +812,7 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}, level
 	ctx, cancel := context.WithTimeout(w.ctx, waitTime)
 	w.waitSchemaChanged(ctx, d, waitTime, schemaVer, job)
 	cancel()
-	//if job.IsDone() || job.IsRollbackDone() {
-	//	return w.HandleDDLJobWhenDoneOrRollbackDone(d, job, t)
-	//}
+
 	if RunInGoTest {
 		// d.mu.hook is initialed from domain / test callback, which will force the owner host update schema diff synchronously.
 		d.mu.RLock()
