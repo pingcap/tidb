@@ -1392,6 +1392,11 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 	return nil
 }
 
+// ConstructResultOfShowCreatePlacementPolicy constructs the result for show create placement policy.
+func ConstructResultOfShowCreatePlacementPolicy(policyInfo *model.PolicyInfo) string {
+	return fmt.Sprintf("CREATE PLACEMENT POLICY `%s` %s", policyInfo.Name.O, policyInfo.PlacementSettings.String())
+}
+
 // fetchShowCreateDatabase composes show create database result.
 func (e *ShowExec) fetchShowCreateDatabase() error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
@@ -1420,7 +1425,7 @@ func (e *ShowExec) fetchShowCreatePlacementPolicy() error {
 	if !found {
 		return infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(e.DBName.O)
 	}
-	showCreate := fmt.Sprintf("CREATE PLACEMENT POLICY `%s` %s", e.DBName.O, policy.PlacementSettings.String())
+	showCreate := ConstructResultOfShowCreatePlacementPolicy(policy)
 	e.appendRow([]interface{}{e.DBName.O, showCreate})
 	return nil
 }

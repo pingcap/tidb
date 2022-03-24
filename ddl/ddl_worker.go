@@ -40,8 +40,10 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -301,6 +303,13 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 			if mayNeedReorg(job) {
 				jobListKey = meta.AddIndexJobListKey
 			}
+			failpoint.Inject("MockModifyJobArg", func(val failpoint.Value) {
+				if val.(bool) {
+					if len(job.Args) > 0 {
+						job.Args[0] = 1
+					}
+				}
+			})
 			if err = t.EnQueueDDLJob(job, jobListKey); err != nil {
 				return errors.Trace(err)
 			}
@@ -340,9 +349,22 @@ func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
 	return job, errors.Trace(err)
 }
 
+func injectFailPointForGetJob(job *model.Job) {
+	if job == nil {
+		return
+	}
+	failpoint.Inject("mockModifyJobSchemaId", func(val failpoint.Value) {
+		job.SchemaID = int64(val.(int))
+	})
+	failpoint.Inject("MockModifyJobTableId", func(val failpoint.Value) {
+		job.TableID = int64(val.(int))
+	})
+}
+
 // getFirstDDLJob gets the first DDL job form DDL queue.
 func (w *worker) getFirstDDLJob(t *meta.Meta) (*model.Job, error) {
 	job, err := t.GetDDLJobByIdx(0)
+	injectFailPointForGetJob(job)
 	return job, errors.Trace(err)
 }
 
@@ -509,6 +531,19 @@ func (w *worker) setDDLLabelForTopSQL(job *model.Job) {
 	w.ddlJobCtx = topsql.AttachSQLInfo(context.Background(), w.cacheNormalizedSQL, w.cacheDigest, "", nil, false)
 }
 
+func (w *worker) setResourceGroupTaggerForTopSQL(txn kv.Transaction) {
+	if !topsqlstate.TopSQLEnabled() || w.cacheDigest == nil {
+		return
+	}
+
+	digest := w.cacheDigest
+	tagger := func(req *tikvrpc.Request) {
+		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, nil,
+			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
+	}
+	txn.SetOption(kv.ResourceGroupTagger, tikvrpc.ResourceGroupTagger(tagger))
+}
+
 // handleDDLJobQueue handles DDL jobs in DDL Job queue.
 func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 	once := true
@@ -544,6 +579,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			}
 
 			w.setDDLLabelForTopSQL(job)
+			w.setResourceGroupTaggerForTopSQL(txn)
 			if isDone, err1 := isDependencyJobDone(t, job); err1 != nil || !isDone {
 				return errors.Trace(err1)
 			}
