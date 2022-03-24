@@ -785,6 +785,20 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		value       string
 		sessionVars = e.ctx.GetSessionVars()
 	)
+	var (
+		fieldPatternsLike collate.WildcardPattern
+		FieldFilterEnable bool
+		fieldFilter       string
+	)
+	if e.Extractor != nil {
+		extractor := (e.Extractor).(*plannercore.ShowVariablesExtractor)
+		if extractor.FieldPatterns != "" {
+			fieldPatternsLike = collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
+			fieldPatternsLike.Compile(extractor.FieldPatterns, byte('\\'))
+		}
+		FieldFilterEnable = extractor.Field != ""
+		fieldFilter = extractor.Field
+	}
 	if e.GlobalScope {
 		// Collect global scope variables,
 		// 1. Exclude the variables of ScopeSession in variable.SysVars;
@@ -792,6 +806,11 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		// 		otherwise, fetch the value from table `mysql.Global_Variables`.
 		for _, v := range variable.GetSysVars() {
 			if v.Scope != variable.ScopeSession {
+				if FieldFilterEnable && v.Name != fieldFilter {
+					continue
+				} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
+					continue
+				}
 				if v.Hidden || e.sysVarHiddenForSem(v.Name) {
 					continue
 				}
@@ -809,6 +828,11 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 	// If it is a session only variable, use the default value defined in code,
 	//   otherwise, fetch the value from table `mysql.Global_Variables`.
 	for _, v := range variable.GetSysVars() {
+		if FieldFilterEnable && v.Name != fieldFilter {
+			continue
+		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
+			continue
+		}
 		if v.Hidden || e.sysVarHiddenForSem(v.Name) {
 			continue
 		}
