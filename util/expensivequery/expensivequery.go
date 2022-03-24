@@ -110,6 +110,12 @@ func (eqh *Handle) LogOnQueryExceedMemQuota(connID uint64) {
 }
 
 func genLogFields(costTime time.Duration, info *util.ProcessInfo) []zap.Field {
+	defer func() {
+		r := recover()
+		if r != nil {
+			logutil.BgLogger().Warn("panic when generating log fields", zap.Any("stack", string(util.GetStack())))
+		}
+	}()
 	logFields := make([]zap.Field, 0, 20)
 	logFields = append(logFields, zap.String("cost_time", strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64)+"s"))
 	execDetail := info.StmtCtx.GetExecDetails()
