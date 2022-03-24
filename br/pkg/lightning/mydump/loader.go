@@ -375,6 +375,12 @@ func (s *mdLoaderSetup) route() error {
 	for _, info := range s.viewSchemas {
 		dbInfo := knownDBNames[info.TableName.Schema]
 		dbInfo.count++
+		knownDBNames[info.TableName.Schema] = dbInfo
+	}
+	for _, info := range s.tableDatas {
+		dbInfo := knownDBNames[info.TableName.Schema]
+		dbInfo.count++
+		knownDBNames[info.TableName.Schema] = dbInfo
 	}
 
 	run := func(arr []FileInfo) error {
@@ -404,6 +410,9 @@ func (s *mdLoaderSetup) route() error {
 		return nil
 	}
 
+	if err := run(s.dbSchemas); err != nil {
+		return errors.Trace(err)
+	}
 	if err := run(s.tableSchemas); err != nil {
 		return errors.Trace(err)
 	}
