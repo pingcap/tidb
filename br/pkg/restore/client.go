@@ -222,6 +222,17 @@ func (rc *Client) GetSupportPolicy() bool {
 	return rc.supportPolicy
 }
 
+// GetTruncateSafepoint read the truncate checkpoint from the storage bind to the client.
+// Returns 0 when meeting errors.
+func (rc *Client) GetTruncateSafepoint(ctx context.Context) uint64 {
+	ts, err := GetTruncateSafepoint(ctx, rc.storage)
+	if err != nil {
+		log.Warn("failed to get truncate safepoint, using 0", logutil.ShortError(err))
+		return 0
+	}
+	return ts
+}
+
 func (rc *Client) GetDomain() *domain.Domain {
 	return rc.dom
 }
@@ -1504,6 +1515,7 @@ func (rc *Client) ReadStreamMetaByTS(ctx context.Context, restoreTS uint64) ([]*
 func (rc *Client) ReadStreamDataFiles(
 	ctx context.Context,
 	metas []*backuppb.Metadata,
+	fromTS uint64,
 	restoreTS uint64,
 ) (dataFile, metaFile []*backuppb.DataFileInfo, err error) {
 	dFiles := make([]*backuppb.DataFileInfo, 0)
@@ -1511,6 +1523,9 @@ func (rc *Client) ReadStreamDataFiles(
 
 	for _, m := range metas {
 		for _, d := range m.Files {
+			if d.MaxTs < fromTS {
+				continue
+			}
 			if d.MinTs > restoreTS {
 				continue
 			}

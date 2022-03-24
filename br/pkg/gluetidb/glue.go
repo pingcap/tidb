@@ -5,6 +5,7 @@ package gluetidb
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -24,6 +25,12 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
+)
+
+// Asserting Glue implements glue.ConsoleGlue and glue.Glue at compile time.
+var (
+	_ glue.ConsoleGlue = Glue{}
+	_ glue.Glue        = Glue{}
 )
 
 const (
@@ -104,6 +111,19 @@ func (g Glue) Record(name string, value uint64) {
 // GetVersion implements glue.Glue.
 func (g Glue) GetVersion() string {
 	return g.tikvGlue.GetVersion()
+}
+
+func (g Glue) Print(args ...interface{}) {
+	fmt.Print(args...)
+}
+
+// IsInteractive checks whether the shell supports input.
+func (g Glue) IsInteractive() bool {
+	return true
+}
+
+func (g Glue) Scanln(args ...interface{}) (int, error) {
+	return fmt.Scanln(args...)
 }
 
 // Execute implements glue.Session.
