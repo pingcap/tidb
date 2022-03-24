@@ -2168,6 +2168,15 @@ func (b *executorBuilder) refreshForUpdateTSForRC() error {
 	defer func() {
 		b.snapshotTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	}()
+	// The first time read-consistency read is executed and `RcReadCheckTS` is enabled, try to use
+	// the last valid ts as the for update read ts.
+	if b.ctx.GetSessionVars().StmtCtx.RCCheckTS {
+		rcReadTS := b.ctx.GetSessionVars().TxnCtx.LastRcReadTs
+		if rcReadTS == 0 {
+			rcReadTS = b.ctx.GetSessionVars().TxnCtx.StartTS
+		}
+		return UpdateForUpdateTS(b.ctx, rcReadTS)
+	}
 	future := b.ctx.GetSessionVars().TxnCtx.GetStmtFutureForRC()
 	if future == nil {
 		return nil
@@ -4014,7 +4023,7 @@ func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*r
 	return pids, ret, nil
 }
 
-func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(_ int64, ranges []*ranger.Range) ([]kv.KeyRange, error) {
+func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(ranges []*ranger.Range) ([]kv.KeyRange, error) {
 	var ret []kv.KeyRange
 	for _, p := range h.partitions {
 		pid := p.GetPhysicalID()
