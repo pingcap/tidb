@@ -367,7 +367,6 @@ func TestMeta(t *testing.T) {
 		OldTableID: 3,
 	}
 	if !variable.AllowConcurrencyDDL.Load() {
-		m.PreSetSchemaDiff(schemaDiff)
 		err = m.SetSchemaDiff(store)
 		require.NoError(t, err)
 		readDiff, err := m.GetSchemaDiff(schemaDiff.Version)

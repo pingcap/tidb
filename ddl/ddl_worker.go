@@ -676,24 +676,12 @@ func (w *worker) HandleDDLJobWhenDoneOrRollbackDone(d *ddlCtx, job *model.Job, t
 		return err
 	}
 	w.sessForJob.StmtCommit()
-	err = func() error {
-		if t.Diff != nil {
-			d.schemaVersionMu.Lock()
-			defer d.schemaVersionMu.Unlock()
-			err := t.SetSchemaDiff(d.store)
-			if err != nil {
-				w.sessForJob.RollbackTxn(w.ctx)
-				log.Error("SetSchemaDiff", zap.Error(err))
-				return err
-			}
-		}
-		err = w.sessForJob.CommitTxn(w.ctx)
-		if err != nil {
-			log.Error("sessForJob.CommitTxn", zap.Error(err))
-			return err
-		}
-		return nil
-	}()
+	err = w.sessForJob.CommitTxn(w.ctx)
+	if err != nil {
+		log.Error("sessForJob.CommitTxn", zap.Error(err))
+		w.unlockSeqNum()
+		return err
+	}
 	if err != nil {
 		w.unlockSeqNum()
 		return err
@@ -802,6 +790,7 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}, level
 	err = w.sessForJob.CommitTxn(w.ctx)
 	if err != nil {
 		log.Error("sessForJob.CommitTxn", zap.Error(err))
+		w.unlockSeqNum()
 		return err
 	}
 	if err != nil {
@@ -1476,7 +1465,7 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error)
 	default:
 		diff.TableID = job.TableID
 	}
-	err = t.SetSchemaDiffOld(diff)
+	err = t.SetSchemaDiff(diff)
 	return schemaVersion, errors.Trace(err)
 }
 

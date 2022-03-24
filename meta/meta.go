@@ -1456,42 +1456,8 @@ func (m *Meta) GetSchemaDiff(schemaVersion int64) (*model.SchemaDiff, error) {
 	return diff, errors.Trace(err)
 }
 
-// PreSetSchemaDiff sets the modification information on a given schema version.
-func (m *Meta) PreSetSchemaDiff(diff *model.SchemaDiff) {
-	m.Diff = diff
-}
-
 // SetSchemaDiff sets the modification information on a given schema version.
-func (m *Meta) SetSchemaDiff(d kv.Storage) error {
-	var ver int64
-	var err error
-	err = kv.RunInNewTxn(context.TODO(), d, true, func(ctx context.Context, txn kv.Transaction) error {
-		nm := NewMeta(txn)
-		ver, err = nm.GenSchemaVersion()
-		if err != nil {
-			return err
-		}
-
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-
-	m.Diff.Version = ver
-	data, err := json.Marshal(m.Diff)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	diffKey := m.schemaDiffKey(ver)
-	startTime := time.Now()
-	err = m.txn.Set(diffKey, data)
-	metrics.MetaHistogram.WithLabelValues(metrics.SetSchemaDiff, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	return errors.Trace(err)
-}
-
-// SetSchemaDiffOld sets the modification information on a given schema version.
-func (m *Meta) SetSchemaDiffOld(diff *model.SchemaDiff) error {
+func (m *Meta) SetSchemaDiff(diff *model.SchemaDiff) error {
 	data, err := json.Marshal(diff)
 	if err != nil {
 		return errors.Trace(err)
