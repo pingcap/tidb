@@ -63,7 +63,7 @@ func newStreamStartCommand() *cobra.Command {
 	}
 
 	task.DefineStreamCommonFlags(command.Flags())
-	task.DefineFilterFlags(command, acceptAllTables)
+	task.DefineFilterFlags(command, acceptAllTables, true)
 	task.DefineStreamStartFlags(command.PersistentFlags())
 	return command
 }
@@ -135,7 +135,7 @@ func newStreamRestoreCommand() *cobra.Command {
 			return streamCommand(command, task.StreamRestore)
 		},
 	}
-	task.DefineFilterFlags(command, acceptAllTables)
+	task.DefineFilterFlags(command, acceptAllTables, false)
 	task.DefineStreamRestoreFlags(command.Flags())
 	return command
 }

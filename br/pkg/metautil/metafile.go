@@ -56,6 +56,10 @@ const (
 )
 
 func Encrypt(content []byte, cipher *backuppb.CipherInfo) (encryptedContent, iv []byte, err error) {
+	if len(content) == 0 || cipher == nil {
+		return content, iv, nil
+	}
+
 	switch cipher.CipherType {
 	case encryptionpb.EncryptionMethod_PLAINTEXT:
 		return content, iv, nil
@@ -76,6 +80,10 @@ func Encrypt(content []byte, cipher *backuppb.CipherInfo) (encryptedContent, iv 
 }
 
 func Decrypt(content []byte, cipher *backuppb.CipherInfo, iv []byte) ([]byte, error) {
+	if len(content) == 0 || cipher == nil {
+		return content, nil
+	}
+
 	switch cipher.CipherType {
 	case encryptionpb.EncryptionMethod_PLAINTEXT:
 		return content, nil
@@ -488,9 +496,12 @@ type MetaWriter struct {
 }
 
 // NewMetaWriter creates MetaWriter.
-func NewMetaWriter(storage storage.ExternalStorage,
+func NewMetaWriter(
+	storage storage.ExternalStorage,
 	metafileSizeLimit int,
-	useV2Meta bool, cipher *backuppb.CipherInfo) *MetaWriter {
+	useV2Meta bool,
+	cipher *backuppb.CipherInfo,
+) *MetaWriter {
 	return &MetaWriter{
 		start:             time.Now(),
 		storage:           storage,
