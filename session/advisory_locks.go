@@ -14,17 +14,21 @@
 
 package session
 
-import "context"
+import (
+	"context"
 
-// Advisory Locks are the locks in GET_LOCK and RELEASE_LOCK.
-// We implement them here in TiDB by using an INSERT into mysql.advisory_locks
+	"github.com/pingcap/tidb/parser/terror"
+)
+
+// Advisory Locks are the locks in GET_LOCK() and RELEASE_LOCK().
+// We implement them in TiDB by using an INSERT into mysql.advisory_locks
 // inside of a pessimistic transaction that is never committed.
 //
 // Each advisory lock requires its own session, since the pessimistic locks
-// need to be potentially rolled back in any order (transactions can't
-// release random locks like this even if savepoints was supported).
+// can be rolled back in any order (transactions can't release random locks
+// like this even if savepoints was supported).
 //
-// We use count to track the number of references to the lock in the session.
+// We use referenceCount to track the number of references to the lock in the session.
 // A little known feature of advisory locks is that you can call GET_LOCK
 // multiple times on the same lock, and it will only be released when
 // the reference count reaches zero.
@@ -49,9 +53,11 @@ func (a *advisoryLock) ReferenceCount() int {
 	return a.referenceCount
 }
 
-// Close releases the advisory lock (rolls back the transaction and closes the session).
+// Close releases the advisory lock, which includes
+// rolling back the transaction and closing the session.
 func (a *advisoryLock) Close() {
-	a.session.ExecuteInternal(context.Background(), "ROLLBACK")
+	_, err := a.session.ExecuteInternal(context.Background(), "ROLLBACK")
+	terror.Log(err)
 	a.session.Close()
 }
 
@@ -60,9 +66,15 @@ func (a *advisoryLock) Close() {
 // We will never COMMIT the transaction, but the err indicates
 // if the lock was successfully acquired.
 func (a *advisoryLock) GetLock(lockName string, timeout int64) error {
-	a.session.ExecuteInternal(context.Background(), "SET innodb_lock_wait_timeout = %?", timeout)
-	a.session.ExecuteInternal(context.Background(), "BEGIN PESSIMISTIC")
-	_, err := a.session.ExecuteInternal(context.Background(), "INSERT INTO mysql.advisory_locks (lock_name) VALUES (%?)", lockName)
+	_, err := a.session.ExecuteInternal(context.Background(), "SET innodb_lock_wait_timeout = %?", timeout)
+	if err != nil {
+		return err
+	}
+	_, err = a.session.ExecuteInternal(context.Background(), "BEGIN PESSIMISTIC")
+	if err != nil {
+		return err
+	}
+	_, err = a.session.ExecuteInternal(context.Background(), "INSERT INTO mysql.advisory_locks (lock_name) VALUES (%?)", lockName)
 	if err != nil {
 		// We couldn't acquire the LOCK so we close the session cleanly
 		// and return the error to the caller. The caller will need to interpret

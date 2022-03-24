@@ -228,18 +228,7 @@ func (b *builtinNameConstDurationSig) vecEvalDuration(input *chunk.Chunk, result
 }
 
 func (b *builtinLockSig) vectorized() bool {
-	return true
-}
-
-// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_get-lock
-func (b *builtinLockSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
-	for i := range i64s {
-		i64s[i] = 1
-	}
-	return nil
+	return false
 }
 
 func (b *builtinDurationAnyValueSig) vectorized() bool {
@@ -632,18 +621,7 @@ func (b *builtinNameConstRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.
 }
 
 func (b *builtinReleaseLockSig) vectorized() bool {
-	return true
-}
-
-// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_release-lock
-func (b *builtinReleaseLockSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
-	for i := range i64s {
-		i64s[i] = 1
-	}
-	return nil
+	return false
 }
 
 func (b *builtinVitessHashSig) vectorized() bool {

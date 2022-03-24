@@ -25,7 +25,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -201,16 +203,24 @@ func (b *builtinLockSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, false, errIncorrectArgs.GenWithStackByArgs("get_lock")
 	}
 	// A timeout less than zero is expected to be treated as unlimited.
-	// Because of our implementation being based on pessimitic locks,
+	// Because of our implementation being based on pessimistic locks,
 	// We set the timeout to the maximum value of innodb_lock_wait_timeout.
 	if timeout < 0 {
-		timeout = 1073741824
+		timeout = int64(variable.GetSysVar("innodb_lock_wait_timeout").MaxValue)
 	}
 	err = b.ctx.GetAdvisoryLock(lockName, timeout)
 	if err != nil {
-		// Returns 0 if the lock could not be acquired.
-		// TODO: doesn't return the error message unless itis a DEADLOCK?
-		return 0, false, nil
+		switch err.(*terror.Error).Code() {
+		case mysql.ErrLockWaitTimeout:
+			return 0, false, nil // Another user has the lock
+		case mysql.ErrLockDeadlock:
+			// TODO: currently this code is not reachable because each Advisory Lock
+			// Uses a separate session. Deadlock detection does not work across
+			// independent sessions.
+			return 0, false, errUserLockDeadlock
+		default:
+			return 0, false, err
+		}
 	}
 	return 1, false, nil
 }
