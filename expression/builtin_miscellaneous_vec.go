@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/vitess"
@@ -240,7 +239,7 @@ func (b *builtinLockSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) er
 	for i := range i64s {
 		i64s[i] = 1
 	}
-	return errors.New("GET_LOCK does not support vectorized evaluation yet")
+	return nil
 }
 
 func (b *builtinDurationAnyValueSig) vectorized() bool {
@@ -644,7 +643,7 @@ func (b *builtinReleaseLockSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	for i := range i64s {
 		i64s[i] = 1
 	}
-	return errors.New("release lock does not support vectorization yet")
+	return nil
 }
 
 func (b *builtinVitessHashSig) vectorized() bool {

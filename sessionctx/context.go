@@ -148,9 +148,11 @@ type Context interface {
 	GetStmtStats() *stmtstats.StatementStats
 	// ShowProcess returns ProcessInfo running in current Context
 	ShowProcess() *util.ProcessInfo
-
+	// GetAdvisoryLock acquires an advisory lock (aka GET_LOCK()).
 	GetAdvisoryLock(string, int64) error
+	// ReleaseAdvisoryLock releases an advisory lock (aka RELEASE_LOCK()).
 	ReleaseAdvisoryLock(string) bool
+	// ReleaseAllAdvisoryLocks releases all advisory locks that this session holds.
 	ReleaseAllAdvisoryLocks() int
 }
 

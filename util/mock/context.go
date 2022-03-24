@@ -358,14 +358,17 @@ func (c *Context) GetStmtStats() *stmtstats.StatementStats {
 	return nil
 }
 
+// GetAdvisoryLock acquires an advisory lock
 func (c *Context) GetAdvisoryLock(lockName string, timeout int64) error {
 	return nil
 }
 
+// ReleaseAdvisoryLock releases an advisory lock
 func (c *Context) ReleaseAdvisoryLock(lockName string) bool {
 	return true
 }
 
+// ReleaseAllAdvisoryLocks releases all advisory locks
 func (c *Context) ReleaseAllAdvisoryLocks() int {
 	return 0
 }

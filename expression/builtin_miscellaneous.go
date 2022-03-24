@@ -196,16 +196,15 @@ func (b *builtinLockSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if err != nil {
 		return 0, isNull, err
 	}
-	sessVars := b.ctx.GetSessionVars()
-	// TODO: timeout can be -1 as well?
-	if isNull || isNullTimeout || lockName == "" || timeout < 0 {
-		// for insert ignore stmt, the StrictSQLMode and ignoreErr should both be considered.
-		if !sessVars.StmtCtx.BadNullAsWarning {
-			return 0, false, errIncorrectArgs.GenWithStackByArgs("get_lock")
-		}
-		err := errIncorrectArgs.GenWithStackByArgs("get_lock")
-		sessVars.StmtCtx.AppendWarning(err)
-		return 0, false, nil
+	// Validate that neither argument is NULL and there is a lockName
+	if isNull || isNullTimeout || lockName == "" {
+		return 0, false, errIncorrectArgs.GenWithStackByArgs("get_lock")
+	}
+	// A timeout less than zero is expected to be treated as unlimited.
+	// Because of our implementation being based on pessimitic locks,
+	// We set the timeout to the maximum value of innodb_lock_wait_timeout.
+	if timeout < 0 {
+		timeout = 1073741824
 	}
 	err = b.ctx.GetAdvisoryLock(lockName, timeout)
 	if err != nil {

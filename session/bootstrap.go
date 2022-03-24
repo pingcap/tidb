@@ -397,7 +397,8 @@ const (
 		KEY table_create_time (table_id, create_time)
 	);`
 
-	CreateAdvisoryLocks = `CREATE TABLE mysql.advisory_locks (
+	// CreateAdvisoryLocks stores the advisory locks (get_lock, release_lock).
+	CreateAdvisoryLocks = `CREATE TABLE IF NOT EXISTS mysql.advisory_locks (
 		lock_name VARCHAR(255) NOT NULL PRIMARY KEY
 	);`
 )
