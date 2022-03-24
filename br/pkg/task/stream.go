@@ -720,6 +720,15 @@ func RunStreamStatus(
 		if err != nil {
 			return s, err
 		}
+		mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+			cfg.CheckRequirements, false)
+		if err != nil {
+			return s, err
+		}
+		s.QPS, err = stream.MaybeQPS(ctx, mgr)
+		if err != nil {
+			return s, err
+		}
 		return s, nil
 	}
 
