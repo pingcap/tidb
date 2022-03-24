@@ -566,7 +566,7 @@
       },
       {
         "SQL": "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1 left outer join t t2 on t1.a = t2.a left outer join t t3 on t2.a = t3.a",
-        "Best": "MergeLeftOuterJoin{MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->TableReader(Table(t))}(test.t.a,test.t.a)"
+        "Best": "MergeLeftOuterJoin{MergeLeftOuterJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Sort->TableReader(Table(t))}(test.t.a,test.t.a)"
       },
       {
         "SQL": "select /*+ TIDB_SMJ(t1,t2,t3)*/ * from t t1 left outer join t t2 on t1.a = t2.a left outer join t t3 on t1.a = t3.a",
