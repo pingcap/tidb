@@ -97,7 +97,7 @@ func (e *MetricRetriever) queryMetric(ctx context.Context, sctx sessionctx.Conte
 	var prometheusAddr string
 	for i := 0; i < 5; i++ {
 		//TODO: the prometheus will be Integrated into the PD, then we need to query the prometheus in PD directly, which need change the quire API
-		prometheusAddr, err = infosync.GetPrometheusAddr()
+		prometheusAddr, err = infosync.GetInfoSyncerFromSession(sctx).GetPrometheusAddr()
 		if err == nil || err == infosync.ErrPrometheusAddrIsNotSet {
 			break
 		}

@@ -107,7 +107,7 @@ func AppendHostInfoToRows(ctx sessionctx.Context, rows [][]types.Datum) ([][]typ
 
 // GetInstanceAddr gets the instance address.
 func GetInstanceAddr(ctx sessionctx.Context) (string, error) {
-	serverInfo, err := infosync.GetServerInfo()
+	serverInfo, err := infosync.GetInfoSyncerFromSession(ctx).GetServerInfo()
 	if err != nil {
 		return "", err
 	}

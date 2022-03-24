@@ -159,10 +159,10 @@ func getSQLSum(sqlTypeData *sqlType) uint64 {
 	return result
 }
 
-func readSQLMetric(timepoint time.Time, SQLResult *sqlUsageData) error {
+func readSQLMetric(timepoint time.Time, is *infosync.InfoSyncer, SQLResult *sqlUsageData) error {
 	ctx := context.TODO()
 	promQL := "avg(tidb_executor_statement_total{}) by (type)"
-	result, err := querySQLMetric(ctx, timepoint, promQL)
+	result, err := querySQLMetric(ctx, is, timepoint, promQL)
 	if err != nil {
 		return err
 	}
@@ -170,12 +170,12 @@ func readSQLMetric(timepoint time.Time, SQLResult *sqlUsageData) error {
 	return nil
 }
 
-func querySQLMetric(ctx context.Context, queryTime time.Time, promQL string) (result pmodel.Value, err error) {
+func querySQLMetric(ctx context.Context, is *infosync.InfoSyncer, queryTime time.Time, promQL string) (result pmodel.Value, err error) {
 	// Add retry to avoid network error.
 	var prometheusAddr string
 	for i := 0; i < 5; i++ {
 		//TODO: the prometheus will be Integrated into the PD, then we need to query the prometheus in PD directly, which need change the quire API
-		prometheusAddr, err = infosync.GetPrometheusAddr()
+		prometheusAddr, err = is.GetPrometheusAddr()
 		if err == nil || err == infosync.ErrPrometheusAddrIsNotSet {
 			break
 		}
@@ -220,7 +220,7 @@ func analysisSQLUsage(promResult pmodel.Value, SQLResult *sqlUsageData) {
 }
 
 // RotateSubWindow rotates the telemetry sub window.
-func RotateSubWindow() {
+func RotateSubWindow(is *infosync.InfoSyncer) {
 	thisSubWindow := windowData{
 		BeginAt:      time.Now(),
 		ExecuteCount: CurrentExecuteCount.Swap(0),
@@ -244,7 +244,7 @@ func RotateSubWindow() {
 		BuiltinFunctionsUsage: GlobalBuiltinFunctionsUsage.Dump(),
 	}
 
-	err := readSQLMetric(time.Now(), &thisSubWindow.SQLUsage)
+	err := readSQLMetric(time.Now(), is, &thisSubWindow.SQLUsage)
 	if err != nil {
 		logutil.BgLogger().Info("Error exists when getting the SQL Metric.")
 	}

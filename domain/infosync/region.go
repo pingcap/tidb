@@ -50,12 +50,7 @@ func (t PlacementScheduleState) String() string {
 }
 
 // GetReplicationState is used to check if regions in the given keyranges are replicated from PD.
-func GetReplicationState(ctx context.Context, startKey []byte, endKey []byte) (PlacementScheduleState, error) {
-	is, err := getGlobalInfoSyncer()
-	if err != nil {
-		return PlacementScheduleStatePending, err
-	}
-
+func (is *InfoSyncer) GetReplicationState(ctx context.Context, startKey []byte, endKey []byte) (PlacementScheduleState, error) {
 	if is.etcdCli == nil {
 		return PlacementScheduleStatePending, nil
 	}

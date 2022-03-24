@@ -946,9 +946,9 @@ func (h flashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 		writeError(w, err)
 	}
 	if available {
-		err = infosync.DeleteTiFlashTableSyncProgress(status.ID)
+		err = do.InfoSyncer().DeleteTiFlashTableSyncProgress(status.ID)
 	} else {
-		err = infosync.UpdateTiFlashTableSyncProgress(context.Background(), status.ID, float64(status.FlashRegionCount)/float64(status.RegionCount))
+		err = do.InfoSyncer().UpdateTiFlashTableSyncProgress(context.Background(), status.ID, float64(status.FlashRegionCount)/float64(status.RegionCount))
 	}
 	if err != nil {
 		writeError(w, err)
@@ -1879,7 +1879,7 @@ func (h serverInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	info := serverInfo{}
-	info.ServerInfo, err = infosync.GetServerInfo()
+	info.ServerInfo, err = do.InfoSyncer().GetServerInfo()
 	if err != nil {
 		writeError(w, err)
 		log.Error("failed to get server info", zap.Error(err))
@@ -1909,7 +1909,7 @@ func (h allServerInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		return
 	}
 	ctx := context.Background()
-	allServersInfo, err := infosync.GetAllServerInfo(ctx)
+	allServersInfo, err := do.InfoSyncer().GetAllServerInfo(ctx)
 	if err != nil {
 		writeError(w, errors.New("ddl server information not found"))
 		log.Error("failed to get all server info", zap.Error(err))

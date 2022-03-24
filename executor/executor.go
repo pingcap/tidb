@@ -435,7 +435,7 @@ func (e *ShowDDLExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}
 
-	serverInfo, err := infosync.GetServerInfoByID(ctx, e.ddlOwnerID)
+	serverInfo, err := infosync.GetInfoSyncerFromSession(e.ctx).GetServerInfoByID(ctx, e.ddlOwnerID)
 	if err != nil {
 		return err
 	}

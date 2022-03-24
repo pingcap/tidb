@@ -195,7 +195,8 @@ type Config struct {
 	// one quarter of the total physical memory in the current system.
 	MaxBallastObjectSize int `toml:"max-ballast-object-size" json:"max-ballast-object-size"`
 	// BallastObjectSize set the initial size of the ballast object, the unit is byte.
-	BallastObjectSize int `toml:"ballast-object-size" json:"ballast-object-size"`
+	BallastObjectSize int    `toml:"ballast-object-size" json:"ballast-object-size"`
+	SharedServices    string `toml:"shared-services" json:"hared-services"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed

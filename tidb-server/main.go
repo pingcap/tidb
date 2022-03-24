@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sharedservices"
 	"github.com/pingcap/tidb/statistics"
 	kvstore "github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/store/driver"
@@ -114,6 +115,7 @@ const (
 
 	nmInitializeSecure   = "initialize-secure"
 	nmInitializeInsecure = "initialize-insecure"
+	nmSharedServices     = "shared-services"
 )
 
 var (
@@ -160,6 +162,9 @@ var (
 	// Security
 	initializeSecure   = flagBoolean(nmInitializeSecure, false, "bootstrap tidb-server in secure mode")
 	initializeInsecure = flagBoolean(nmInitializeInsecure, true, "bootstrap tidb-server in insecure mode")
+
+	// shared services
+	sharedServices = flag.String(nmSharedServices, "", "tidb-server provides shared services")
 )
 
 func main() {
@@ -202,6 +207,7 @@ func main() {
 	setupMetrics()
 
 	storage, dom := createStoreAndDomain()
+	startSharedServices(dom)
 	svr := createServer(storage, dom)
 
 	// Register error API is not thread-safe, the caller MUST NOT register errors after initialization.
@@ -214,6 +220,7 @@ func main() {
 		svr.Close()
 		cleanup(svr, storage, dom, graceful)
 		cpuprofile.StopCPUProfiler()
+		stopSharedServices()
 		close(exited)
 	})
 	topsql.SetupTopSQL()
@@ -530,6 +537,10 @@ func overrideConfig(cfg *config.Config) {
 		err = fmt.Errorf("the option --initialize-secure is not supported on Windows")
 		terror.MustNil(err)
 	}
+
+	if actualFlags[nmSharedServices] {
+		cfg.SharedServices = *sharedServices
+	}
 }
 
 func setVersions() {
@@ -726,6 +737,19 @@ func setupTracing() {
 		log.Fatal("setup jaeger tracer failed", zap.String("error message", err.Error()))
 	}
 	opentracing.SetGlobalTracer(tracer)
+}
+
+func startSharedServices(dom *domain.Domain) {
+	cfg := config.GetGlobalConfig()
+	if cfg.SharedServices != "" {
+		err := sharedservices.StartSharedServices(dom)
+		terror.MustNil(err)
+	}
+}
+
+func stopSharedServices() {
+	err := sharedservices.StopSharedServices()
+	terror.MustNil(err)
 }
 
 func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {

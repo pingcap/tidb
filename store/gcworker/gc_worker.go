@@ -723,6 +723,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 
 		se := createSession(w.store)
 		err = util.CompleteDeleteRange(se, r)
+		infoSyncer := infosync.GetInfoSyncerFromSession(se)
 		se.Close()
 		if err != nil {
 			logutil.Logger(ctx).Error("[gc worker] failed to mark delete range task done",
@@ -733,7 +734,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 			metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save").Inc()
 		}
 
-		if err := w.doGCPlacementRules(safePoint, r, gcPlacementRuleCache); err != nil {
+		if err := w.doGCPlacementRules(infoSyncer, safePoint, r, gcPlacementRuleCache); err != nil {
 			logutil.Logger(ctx).Error("[gc worker] gc placement rules failed on range",
 				zap.String("uuid", w.uuid),
 				zap.Int64("jobID", r.JobID),
@@ -741,7 +742,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 				zap.Error(err))
 			continue
 		}
-		if err := w.doGCLabelRules(r); err != nil {
+		if err := w.doGCLabelRules(infoSyncer, r); err != nil {
 			logutil.Logger(ctx).Error("[gc worker] gc label rules failed on range",
 				zap.String("uuid", w.uuid),
 				zap.Int64("jobID", r.JobID),
@@ -1865,7 +1866,7 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 // GC placement rules when the partitions are removed by the GC worker.
 // Placement rules cannot be removed immediately after drop table / truncate table,
 // because the tables can be flashed back or recovered.
-func (w *GCWorker) doGCPlacementRules(safePoint uint64, dr util.DelRangeTask, gcPlacementRuleCache map[int64]interface{}) (err error) {
+func (w *GCWorker) doGCPlacementRules(infoSyncer *infosync.InfoSyncer, safePoint uint64, dr util.DelRangeTask, gcPlacementRuleCache map[int64]interface{}) (err error) {
 	// Get the job from the job history
 	var historyJob *model.Job
 	failpoint.Inject("mockHistoryJobForGC", func(v failpoint.Value) {
@@ -1929,7 +1930,7 @@ func (w *GCWorker) doGCPlacementRules(safePoint uint64, dr util.DelRangeTask, gc
 		logutil.BgLogger().Info("try delete TiFlash pd rule",
 			zap.Int64("tableID", id), zap.String("endKey", string(dr.EndKey)), zap.Uint64("safePoint", safePoint))
 		ruleID := fmt.Sprintf("table-%v-r", id)
-		if err := infosync.DeleteTiFlashPlacementRule(context.Background(), "tiflash", ruleID); err != nil {
+		if err := infoSyncer.DeleteTiFlashPlacementRule(context.Background(), "tiflash", ruleID); err != nil {
 			// If DeletePlacementRule fails here, the rule will be deleted in `HandlePlacementRuleRoutine`.
 			logutil.BgLogger().Error("delete TiFlash pd rule failed when gc",
 				zap.Error(err), zap.String("ruleID", ruleID), zap.Uint64("safePoint", safePoint))
@@ -1938,10 +1939,10 @@ func (w *GCWorker) doGCPlacementRules(safePoint uint64, dr util.DelRangeTask, gc
 			gcPlacementRuleCache[id] = struct{}{}
 		}
 	}
-	return infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
+	return infoSyncer.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
 }
 
-func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
+func (w *GCWorker) doGCLabelRules(infoSyncer *infosync.InfoSyncer, dr util.DelRangeTask) (err error) {
 	// Get the job from the job history
 	var historyJob *model.Job
 	failpoint.Inject("mockHistoryJob", func(v failpoint.Value) {
@@ -1982,14 +1983,14 @@ func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
 		}
 
 		// TODO: Here we need to get rules from PD and filter the rules which is not elegant. We should find a better way.
-		rules, err = infosync.GetLabelRules(context.TODO(), ruleIDs)
+		rules, err = infoSyncer.GetLabelRules(context.TODO(), ruleIDs)
 		if err != nil {
 			return
 		}
 
 		ruleIDs = getGCRules(append(physicalTableIDs, historyJob.TableID), rules)
 		patch := label.NewRulePatch([]*label.Rule{}, ruleIDs)
-		err = infosync.UpdateLabelRules(context.TODO(), patch)
+		err = infoSyncer.UpdateLabelRules(context.TODO(), patch)
 	}
 	return
 }

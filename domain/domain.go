@@ -24,6 +24,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/google/uuid"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -154,7 +155,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	bundles, err := infosync.GetAllRuleBundles(context.TODO())
+	bundles, err := do.info.GetAllRuleBundles(context.TODO())
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -164,7 +165,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithDBInfos(schemas, bundles, policies, neededSchemaVersion)
+	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.sysFacHack, do.info).InitWithDBInfos(schemas, bundles, policies, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -286,7 +287,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		}
 		diffs = append(diffs, diff)
 	}
-	builder := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithOldInfoSchema(do.infoCache.GetLatest())
+	builder := infoschema.NewBuilder(do.Store(), do.sysFacHack, do.info).InitWithOldInfoSchema(do.infoCache.GetLatest())
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
 	for _, diff := range diffs {
@@ -742,7 +743,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 const serverIDForStandalone = 1 // serverID for standalone deployment.
 
 // Init initializes a domain.
-func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) (pools.Resource, error)) error {
+func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) (pools.Resource, error), disableWorker bool) error {
 	do.sysExecutorFactory = sysExecutorFactory
 	perfschema.Init()
 	if ebd, ok := do.store.(kv.EtcdBackend); ok {
@@ -796,14 +797,22 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		return errors.Trace(err)
 	}
 	callback = newCallbackFunc(do)
+	id := uuid.New().String()
+	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
+	do.info, err = infosync.CreateInfoSyncer(ctx, id, do.ServerID, do.etcdClient, skipRegisterToDashboard)
+	if err != nil {
+		return err
+	}
 	d := do.ddl
 	do.ddl = ddl.NewDDL(
 		ctx,
+		ddl.WithID(id),
 		ddl.WithEtcdClient(do.etcdClient),
 		ddl.WithStore(do.store),
 		ddl.WithInfoCache(do.infoCache),
 		ddl.WithHook(callback),
 		ddl.WithLease(ddlLease),
+		ddl.WithInfoSyncer(do.info),
 	)
 	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
 		if val.(bool) {
@@ -811,12 +820,6 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		}
 	})
 	// step 1: prepare the info/schema syncer which domain reload needed.
-	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
-	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID, do.etcdClient, skipRegisterToDashboard)
-	if err != nil {
-		return err
-	}
-
 	var pdClient pd.Client
 	if store, ok := do.store.(kv.StorageWithPD); ok {
 		pdClient = store.GetPDClient()
@@ -833,7 +836,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		return err
 	}
 	// step 3: start the ddl after the domain reload, avoiding some internal sql running before infoSchema construction.
-	err = do.ddl.Start(sysCtxPool)
+	err = do.ddl.Start(sysCtxPool, disableWorker)
 	if err != nil {
 		return err
 	}
@@ -873,6 +876,10 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 	}
 
 	return nil
+}
+
+func (do *Domain) GetInfoSync() *infosync.InfoSyncer {
+	return do.info
 }
 
 type sessionPool struct {
@@ -1215,7 +1222,7 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 			case <-do.exit:
 				return
 			case <-time.After(telemetry.SubWindowSize):
-				telemetry.RotateSubWindow()
+				telemetry.RotateSubWindow(do.info)
 			}
 		}
 	}()
@@ -1805,6 +1812,9 @@ func init() {
 	initByLDFlagsForGlobalKill()
 	telemetry.GetDomainInfoSchema = func(ctx sessionctx.Context) infoschema.InfoSchema {
 		return GetDomain(ctx).InfoSchema()
+	}
+	infosync.GetInfoSyncerFromSession = func(ctx sessionctx.Context) *infosync.InfoSyncer {
+		return GetDomain(ctx).InfoSyncer()
 	}
 }
 

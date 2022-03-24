@@ -42,12 +42,60 @@ import (
 	"go.uber.org/zap"
 )
 
-type domainMap struct {
+type DomainMap struct {
 	domains map[string]*domain.Domain
 	mu      sync.Mutex
 }
 
-func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
+func NewDomainMap() *DomainMap {
+	return &DomainMap{
+		domains: make(map[string]*domain.Domain),
+	}
+}
+
+func (dm *DomainMap) Register(store kv.Storage) (*domain.Domain, error) {
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+
+	key := store.UUID()
+	d := dm.domains[key]
+	if d != nil {
+		return d, nil
+	}
+
+	ddlLease := time.Duration(atomic.LoadInt64(&schemaLease))
+	statisticLease := time.Duration(atomic.LoadInt64(&statsLease))
+	idxUsageSyncLease := GetIndexUsageSyncLease()
+	planReplayerGCLease := GetPlanReplayerGCLease()
+	inited := false
+
+	logutil.BgLogger().Info("new domain",
+		zap.String("store", store.UUID()),
+		zap.Stringer("ddl lease", ddlLease),
+		zap.Stringer("stats lease", statisticLease),
+		zap.Stringer("index usage sync lease", idxUsageSyncLease))
+	factory := createSessionFunc(store)
+	sysFactory := createSessionWithDomainFunc(store)
+	onClose := func() {
+		if inited {
+			dm.Delete(store)
+		}
+	}
+	d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, planReplayerGCLease, factory, onClose)
+	if err := d.Init(ddlLease, sysFactory, true); err != nil {
+		// If we don't clean it, there are some dirty data when retrying the function of Init.
+		d.Close()
+		logutil.BgLogger().Error("[ddl] init domain failed",
+			zap.Error(err))
+		return nil, err
+	}
+
+	dm.domains[key] = d
+	inited = true
+	return d, nil
+}
+
+func (dm *DomainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
@@ -68,6 +116,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	statisticLease := time.Duration(atomic.LoadInt64(&statsLease))
 	idxUsageSyncLease := GetIndexUsageSyncLease()
 	planReplayerGCLease := GetPlanReplayerGCLease()
+	inited := false
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
 		logutil.BgLogger().Info("new domain",
 			zap.String("store", store.UUID()),
@@ -77,10 +126,12 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		factory := createSessionFunc(store)
 		sysFactory := createSessionWithDomainFunc(store)
 		onClose := func() {
-			dm.Delete(store)
+			if inited {
+				dm.Delete(store)
+			}
 		}
 		d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, planReplayerGCLease, factory, onClose)
-		err1 = d.Init(ddlLease, sysFactory)
+		err1 = d.Init(ddlLease, sysFactory, false)
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
 			d.Close()
@@ -93,20 +144,18 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		return nil, err
 	}
 	dm.domains[key] = d
-
+	inited = true
 	return
 }
 
-func (dm *domainMap) Delete(store kv.Storage) {
+func (dm *DomainMap) Delete(store kv.Storage) {
 	dm.mu.Lock()
 	delete(dm.domains, store.UUID())
 	dm.mu.Unlock()
 }
 
 var (
-	domap = &domainMap{
-		domains: map[string]*domain.Domain{},
-	}
+	domap = NewDomainMap()
 	// store.UUID()-> IfBootstrapped
 	storeBootstrapped     = make(map[string]bool)
 	storeBootstrappedLock sync.Mutex

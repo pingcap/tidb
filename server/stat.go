@@ -64,7 +64,11 @@ func (s *Server) Stats(vars *variable.SessionVars) (map[string]interface{}, erro
 
 	var err error
 	info := serverInfo{}
-	info.ServerInfo, err = infosync.GetServerInfo()
+	is, err := infosync.GetGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	info.ServerInfo, err = is.GetServerInfo()
 	if err != nil {
 		logutil.BgLogger().Error("Failed to get ServerInfo for uptime status", zap.Error(err))
 	} else {

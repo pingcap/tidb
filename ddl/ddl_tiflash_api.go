@@ -326,10 +326,10 @@ func (d *ddl) UpdateTiFlashHTTPAddress(store *helper.StoreStat) error {
 	return nil
 }
 
-func updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
+func (d *ddl) updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
 	// We need the up-to-date information about TiFlash stores.
 	// Since TiFlash Replica synchronize may happen immediately after new TiFlash stores are added.
-	tikvStats, err := infosync.GetTiFlashStoresStat(context.Background())
+	tikvStats, err := d.infoSyncer.GetTiFlashStoresStat(context.Background())
 	// If MockTiFlash is not set, will issue a MockTiFlashError here.
 	if err != nil {
 		return err
@@ -356,7 +356,7 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 
 	updateTiFlash := pollTiFlashContext.UpdateTiFlashStoreCounter%UpdateTiFlashStoreTick.Load() == 0
 	if updateTiFlash {
-		if err := updateTiFlashStores(pollTiFlashContext); err != nil {
+		if err := d.updateTiFlashStores(pollTiFlashContext); err != nil {
 			// If we failed to get from pd, retry everytime.
 			pollTiFlashContext.UpdateTiFlashStoreCounter = 0
 			return false, err
@@ -421,7 +421,7 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 			logutil.BgLogger().Debug("CollectTiFlashStatus", zap.Any("regionReplica", regionReplica), zap.Int64("tableID", tb.ID))
 
 			var stats helper.PDRegionStats
-			if err := infosync.GetTiFlashPDRegionRecordStats(context.Background(), tb.ID, &stats); err != nil {
+			if err := d.infoSyncer.GetTiFlashPDRegionRecordStats(context.Background(), tb.ID, &stats); err != nil {
 				return allReplicaReady, err
 			}
 			regionCount := stats.Count
@@ -434,14 +434,14 @@ func (d *ddl) pollTiFlashReplicaStatus(ctx sessionctx.Context, pollTiFlashContex
 			if !avail {
 				logutil.BgLogger().Info("Tiflash replica is not available", zap.Int64("tableID", tb.ID), zap.Uint64("region need", uint64(regionCount)), zap.Uint64("region have", uint64(flashRegionCount)))
 				pollTiFlashContext.Backoff.Put(tb.ID)
-				err := infosync.UpdateTiFlashTableSyncProgress(context.Background(), tb.ID, float64(flashRegionCount)/float64(regionCount))
+				err := d.infoSyncer.UpdateTiFlashTableSyncProgress(context.Background(), tb.ID, float64(flashRegionCount)/float64(regionCount))
 				if err != nil {
 					return false, err
 				}
 			} else {
 				logutil.BgLogger().Info("Tiflash replica is available", zap.Int64("tableID", tb.ID), zap.Uint64("region need", uint64(regionCount)))
 				pollTiFlashContext.Backoff.Remove(tb.ID)
-				err := infosync.DeleteTiFlashTableSyncProgress(tb.ID)
+				err := d.infoSyncer.DeleteTiFlashTableSyncProgress(tb.ID)
 				if err != nil {
 					return false, err
 				}
@@ -525,7 +525,7 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []TiFl
 		RegionCache: tikvStore.GetRegionCache(),
 	}
 
-	allRulesArr, err := infosync.GetTiFlashGroupRules(c, "tiflash")
+	allRulesArr, err := d.infoSyncer.GetTiFlashGroupRules(c, "tiflash")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -551,7 +551,7 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []TiFl
 			// Mostly because of a previous failure of setting pd rule.
 			logutil.BgLogger().Warn(fmt.Sprintf("Table %v exists, but there are no rule for it", tb.ID))
 			newRule := infosync.MakeNewRule(tb.ID, tb.Count, tb.LocationLabels)
-			_ = infosync.SetTiFlashPlacementRule(context.Background(), *newRule)
+			_ = d.infoSyncer.SetTiFlashPlacementRule(context.Background(), *newRule)
 		}
 		// For every existing table, we do not remove their rules.
 		delete(allRules, ruleID)
@@ -560,7 +560,7 @@ func HandlePlacementRuleRoutine(ctx sessionctx.Context, d *ddl, tableList []TiFl
 	// Remove rules of non-existing table
 	for _, v := range allRules {
 		logutil.BgLogger().Info("Remove TiFlash rule", zap.String("id", v.ID))
-		if err := infosync.DeleteTiFlashPlacementRule(c, "tiflash", v.ID); err != nil {
+		if err := d.infoSyncer.DeleteTiFlashPlacementRule(c, "tiflash", v.ID); err != nil {
 			logutil.BgLogger().Warn("delete TiFlash pd rule failed", zap.Error(err), zap.String("ruleID", v.ID))
 		}
 	}

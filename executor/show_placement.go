@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/pingcap/tidb/sessionctx"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
@@ -151,7 +153,7 @@ func (e *ShowExec) fetchShowPlacementForDB(ctx context.Context) (err error) {
 	}
 
 	if placement != nil {
-		state, err := fetchDBScheduleState(ctx, nil, dbInfo)
+		state, err := fetchDBScheduleState(ctx, e.ctx, nil, dbInfo)
 		if err != nil {
 			return err
 		}
@@ -174,7 +176,7 @@ func (e *ShowExec) fetchShowPlacementForTable(ctx context.Context) (err error) {
 	}
 
 	if placement != nil {
-		state, err := fetchTableScheduleState(ctx, nil, tblInfo)
+		state, err := fetchTableScheduleState(ctx, e.ctx, nil, tblInfo)
 		if err != nil {
 			return err
 		}
@@ -220,7 +222,7 @@ func (e *ShowExec) fetchShowPlacementForPartition(ctx context.Context) (err erro
 	}
 
 	if placement != nil {
-		state, err := fetchPartitionScheduleState(ctx, nil, partition)
+		state, err := fetchPartitionScheduleState(ctx, e.ctx, nil, partition)
 		if err != nil {
 			return err
 		}
@@ -279,7 +281,7 @@ func (e *ShowExec) fetchAllDBPlacements(ctx context.Context, scheduleState map[i
 		}
 
 		if placement != nil {
-			state, err := fetchDBScheduleState(ctx, scheduleState, dbInfo)
+			state, err := fetchDBScheduleState(ctx, e.ctx, scheduleState, dbInfo)
 			if err != nil {
 				return err
 			}
@@ -317,7 +319,7 @@ func (e *ShowExec) fetchAllTablePlacements(ctx context.Context, scheduleState ma
 			}
 
 			if tblPlacement != nil {
-				state, err := fetchTableScheduleState(ctx, scheduleState, tblInfo)
+				state, err := fetchTableScheduleState(ctx, e.ctx, scheduleState, tblInfo)
 				if err != nil {
 					return err
 				}
@@ -333,7 +335,7 @@ func (e *ShowExec) fetchAllTablePlacements(ctx context.Context, scheduleState ma
 					}
 
 					if partitionPlacement != nil {
-						state, err := fetchPartitionScheduleState(ctx, scheduleState, &partition)
+						state, err := fetchPartitionScheduleState(ctx, e.ctx, scheduleState, &partition)
 						if err != nil {
 							return err
 						}
@@ -401,27 +403,27 @@ func (e *ShowExec) getPolicyPlacement(policyRef *model.PolicyRefInfo) (settings 
 	return policy.PlacementSettings, nil
 }
 
-func fetchScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, id int64) (infosync.PlacementScheduleState, error) {
+func fetchScheduleState(ctx context.Context, sctx sessionctx.Context, scheduleState map[int64]infosync.PlacementScheduleState, id int64) (infosync.PlacementScheduleState, error) {
 	if s, ok := scheduleState[id]; ok {
 		return s, nil
 	}
 	startKey := codec.EncodeBytes(nil, tablecodec.GenTablePrefix(id))
 	endKey := codec.EncodeBytes(nil, tablecodec.GenTablePrefix(id+1))
-	schedule, err := infosync.GetReplicationState(ctx, startKey, endKey)
+	schedule, err := infosync.GetInfoSyncerFromSession(sctx).GetReplicationState(ctx, startKey, endKey)
 	if err == nil && scheduleState != nil {
 		scheduleState[id] = schedule
 	}
 	return schedule, err
 }
 
-func fetchPartitionScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, part *model.PartitionDefinition) (infosync.PlacementScheduleState, error) {
-	return fetchScheduleState(ctx, scheduleState, part.ID)
+func fetchPartitionScheduleState(ctx context.Context, sctx sessionctx.Context, scheduleState map[int64]infosync.PlacementScheduleState, part *model.PartitionDefinition) (infosync.PlacementScheduleState, error) {
+	return fetchScheduleState(ctx, sctx, scheduleState, part.ID)
 }
 
-func fetchTableScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, table *model.TableInfo) (infosync.PlacementScheduleState, error) {
+func fetchTableScheduleState(ctx context.Context, sctx sessionctx.Context, scheduleState map[int64]infosync.PlacementScheduleState, table *model.TableInfo) (infosync.PlacementScheduleState, error) {
 	state := infosync.PlacementScheduleStateScheduled
 
-	schedule, err := fetchScheduleState(ctx, scheduleState, table.ID)
+	schedule, err := fetchScheduleState(ctx, sctx, scheduleState, table.ID)
 	if err != nil {
 		return state, err
 	}
@@ -432,7 +434,7 @@ func fetchTableScheduleState(ctx context.Context, scheduleState map[int64]infosy
 
 	if table.GetPartitionInfo() != nil {
 		for _, part := range table.GetPartitionInfo().Definitions {
-			schedule, err = fetchScheduleState(ctx, scheduleState, part.ID)
+			schedule, err = fetchScheduleState(ctx, sctx, scheduleState, part.ID)
 			if err != nil {
 				return infosync.PlacementScheduleStatePending, err
 			}
@@ -446,10 +448,10 @@ func fetchTableScheduleState(ctx context.Context, scheduleState map[int64]infosy
 	return schedule, nil
 }
 
-func fetchDBScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, db *model.DBInfo) (infosync.PlacementScheduleState, error) {
+func fetchDBScheduleState(ctx context.Context, sctx sessionctx.Context, scheduleState map[int64]infosync.PlacementScheduleState, db *model.DBInfo) (infosync.PlacementScheduleState, error) {
 	state := infosync.PlacementScheduleStateScheduled
 	for _, table := range db.Tables {
-		schedule, err := fetchTableScheduleState(ctx, scheduleState, table)
+		schedule, err := fetchTableScheduleState(ctx, sctx, scheduleState, table)
 		if err != nil {
 			return state, err
 		}

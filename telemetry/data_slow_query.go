@@ -94,7 +94,7 @@ func updateCurrentSQB(ctx sessionctx.Context) (err error) {
 	defer cancel()
 	pQueryTs := time.Now().Add(-time.Minute)
 	promQL := "avg(tidb_server_slow_query_process_duration_seconds_bucket{sql_type=\"general\"}) by (le)"
-	value, err := querySQLMetric(pQueryCtx, pQueryTs, promQL)
+	value, err := querySQLMetric(pQueryCtx, infosync.GetInfoSyncerFromSession(ctx), pQueryTs, promQL)
 
 	if err != nil && err != infosync.ErrPrometheusAddrIsNotSet {
 		logutil.BgLogger().Info("querySlowQueryMetric got error")

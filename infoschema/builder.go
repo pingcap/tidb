@@ -49,7 +49,8 @@ type Builder struct {
 	// detach allocators from storage, use passed transaction in the feature
 	store kv.Storage
 
-	factory func() (pools.Resource, error)
+	factory    func() (pools.Resource, error)
+	infoSyncer *infosync.InfoSyncer
 }
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
@@ -593,7 +594,7 @@ func (b *Builder) applyPlacementDelete(id string) {
 }
 
 func (b *Builder) applyPlacementUpdate(id string) error {
-	bundle, err := infosync.GetRuleBundle(context.TODO(), id)
+	bundle, err := b.infoSyncer.GetRuleBundle(context.TODO(), id)
 	if err != nil {
 		return err
 	}
@@ -754,7 +755,7 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 }
 
 // NewBuilder creates a new Builder with a Handle.
-func NewBuilder(store kv.Storage, factory func() (pools.Resource, error)) *Builder {
+func NewBuilder(store kv.Storage, factory func() (pools.Resource, error), infoSyncer *infosync.InfoSyncer) *Builder {
 	return &Builder{
 		store: store,
 		is: &infoSchema{
@@ -763,8 +764,9 @@ func NewBuilder(store kv.Storage, factory func() (pools.Resource, error)) *Build
 			ruleBundleMap:       map[string]*placement.Bundle{},
 			sortedTablesBuckets: make([]sortedTables, bucketCount),
 		},
-		dirtyDB: make(map[string]bool),
-		factory: factory,
+		dirtyDB:    make(map[string]bool),
+		factory:    factory,
+		infoSyncer: infoSyncer,
 	}
 }
 

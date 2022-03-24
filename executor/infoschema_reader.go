@@ -1877,7 +1877,7 @@ func (e *memtableRetriever) setDataForPseudoProfiling(sctx sessionctx.Context) {
 }
 
 func (e *memtableRetriever) setDataForServersInfo(ctx sessionctx.Context) error {
-	serversInfo, err := infosync.GetAllServerInfo(context.Background())
+	serversInfo, err := infosync.GetInfoSyncerFromSession(ctx).GetAllServerInfo(context.Background())
 	if err != nil {
 		return err
 	}
@@ -1939,7 +1939,7 @@ func (e *memtableRetriever) setDataFromSequences(ctx sessionctx.Context, schemas
 // dataForTableTiFlashReplica constructs data for table tiflash replica info.
 func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, schemas []*model.DBInfo) {
 	var rows [][]types.Datum
-	progressMap, err := infosync.GetTiFlashTableSyncProgress(context.Background())
+	progressMap, err := infosync.GetInfoSyncerFromSession(ctx).GetTiFlashTableSyncProgress(context.Background())
 	if err != nil {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 	}
@@ -2768,7 +2768,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 
 func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is infoschema.InfoSchema) error {
 	checker := privilege.GetPrivilegeManager(ctx)
-	rules, err := infosync.GetAllLabelRules(context.TODO())
+	rules, err := infosync.GetInfoSyncerFromSession(ctx).GetAllLabelRules(context.TODO())
 	skipValidateTable := false
 	failpoint.Inject("mockOutputOfAttributes", func() {
 		convert := func(i interface{}) []interface{} {

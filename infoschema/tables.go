@@ -1581,7 +1581,7 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 // GetTiDBServerInfo returns all TiDB nodes information of cluster
 func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	// Get TiDB servers info.
-	tidbNodes, err := infosync.GetAllServerInfo(context.Background())
+	tidbNodes, err := infosync.GetInfoSyncerFromSession(ctx).GetAllServerInfo(context.Background())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -25,13 +25,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -156,7 +156,11 @@ type DDL interface {
 
 	// Start campaigns the owner and starts workers.
 	// ctxPool is used for the worker's delRangeManager and creates sessions.
-	Start(ctxPool *pools.ResourcePool) error
+	Start(ctxPool *pools.ResourcePool, disableWorker bool) error
+	// WorkerEnabled returns whether the worker is enabled
+	WorkerEnabled() bool
+	// EnableWorker enables ddl worker
+	EnableWorker() error
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration
 	// Stats returns the DDL statistics.
@@ -203,6 +207,8 @@ type ddl struct {
 	sessPool          *sessionPool
 	delRangeMgr       delRangeManager
 	enableTiFlashPoll *atomicutil.Bool
+	sysCtxPool        *pools.ResourcePool
+	workerEnabled     bool
 }
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
@@ -219,6 +225,7 @@ type ddlCtx struct {
 	statsHandle  *handle.Handle
 	tableLockCkr util.DeadTableLockChecker
 	etcdCli      *clientv3.Client
+	infoSyncer   *infosync.InfoSyncer
 
 	// hook may be modified.
 	mu struct {
@@ -304,18 +311,21 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		o(opt)
 	}
 
-	id := uuid.New().String()
+	if opt.ID == "" {
+		panic("ID should not be nil")
+	}
+
 	var manager owner.Manager
 	var syncer util.SchemaSyncer
 	var deadLockCkr util.DeadTableLockChecker
 	if etcdCli := opt.EtcdCli; etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and MockSchemaSyncer.
-		manager = owner.NewMockManager(ctx, id)
+		manager = owner.NewMockManager(ctx, opt.ID)
 		syncer = NewMockSchemaSyncer()
 	} else {
-		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
-		syncer = util.NewSchemaSyncer(ctx, etcdCli, id, manager)
+		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, opt.ID, DDLOwnerKey)
+		syncer = util.NewSchemaSyncer(ctx, etcdCli, opt.ID, manager)
 		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
 	}
 
@@ -328,8 +338,12 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		panic("infoCache should not be nil")
 	}
 
+	if opt.InfoSyncer == nil {
+		panic("InfoSyncer should not be nil")
+	}
+
 	ddlCtx := &ddlCtx{
-		uuid:         id,
+		uuid:         opt.ID,
 		store:        opt.Store,
 		lease:        opt.Lease,
 		ddlJobDoneCh: make(chan struct{}, 1),
@@ -339,6 +353,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		infoCache:    opt.InfoCache,
 		tableLockCkr: deadLockCkr,
 		etcdCli:      opt.EtcdCli,
+		infoSyncer:   opt.InfoSyncer,
 	}
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
@@ -376,61 +391,82 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 }
 
 // Start implements DDL.Start interface.
-func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
+func (d *ddl) Start(ctxPool *pools.ResourcePool, disableWorker bool) error {
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
 
 	d.wg.Add(1)
 	go d.limitDDLJobs()
 
+	d.sysCtxPool = ctxPool
 	// If RunWorker is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
-	if RunWorker {
-		err := d.ownerManager.CampaignOwner()
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		d.workers = make(map[workerType]*worker, 2)
-		d.sessPool = newSessionPool(ctxPool)
-		d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
-		d.workers[generalWorker] = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
-		d.workers[addIdxWorker] = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
-		for _, worker := range d.workers {
-			worker.wg.Add(1)
-			w := worker
-			go w.start(d.ddlCtx)
-
-			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, worker.String())).Inc()
-
-			// When the start function is called, we will send a fake job to let worker
-			// checks owner firstly and try to find whether a job exists and run.
-			asyncNotify(worker.ddlJobCh)
-		}
-
-		err = kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
-			t := meta.NewMeta(txn)
-			d.ddlSeqNumMu.seqNum, err = t.GetHistoryDDLCount()
-			return err
-		})
-		if err != nil {
+	if !disableWorker && RunWorker {
+		if err := d.EnableWorker(); err != nil {
 			return err
 		}
-
-		go d.schemaSyncer.StartCleanWork()
-		if config.TableLockEnabled() {
-			d.wg.Add(1)
-			go d.startCleanDeadTableLock()
-		}
-		metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
 	}
 
 	variable.RegisterStatistics(d)
-
 	metrics.DDLCounter.WithLabelValues(metrics.CreateDDLInstance).Inc()
+	return nil
+}
 
+func (d *ddl) WorkerEnabled() bool {
+	d.m.Lock()
+	defer d.m.Unlock()
+
+	return d.workerEnabled
+}
+
+func (d *ddl) EnableWorker() error {
+	d.m.Lock()
+	defer d.m.Unlock()
+
+	if d.workerEnabled {
+		return nil
+	}
+
+	err := d.ownerManager.CampaignOwner()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	d.workers = make(map[workerType]*worker, 2)
+	d.sessPool = newSessionPool(d.sysCtxPool)
+	d.delRangeMgr = d.newDeleteRangeManager(d.sysCtxPool == nil)
+	d.workers[generalWorker] = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
+	d.workers[addIdxWorker] = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
+	for _, worker := range d.workers {
+		worker.wg.Add(1)
+		w := worker
+		go w.start(d.ddlCtx)
+
+		metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, worker.String())).Inc()
+
+		// When the start function is called, we will send a fake job to let worker
+		// checks owner firstly and try to find whether a job exists and run.
+		asyncNotify(worker.ddlJobCh)
+	}
+
+	err = kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		d.ddlSeqNumMu.seqNum, err = t.GetHistoryDDLCount()
+		return err
+	})
+	if err != nil {
+		return err
+	}
+
+	go d.schemaSyncer.StartCleanWork()
+	if config.TableLockEnabled() {
+		d.wg.Add(1)
+		go d.startCleanDeadTableLock()
+	}
+	metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
 	// Start some background routine to manage TiFlash replica.
 	d.wg.Run(d.PollTiFlashRoutine)
 
+	d.workerEnabled = true
 	return nil
 }
 

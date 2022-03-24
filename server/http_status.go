@@ -34,6 +34,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/sharedservices"
+
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -271,6 +273,11 @@ func (s *Server) startHTTPServer() {
 			logutil.BgLogger().Error("new failed", zap.Error(err))
 		}
 		router.PathPrefix("/static/").Handler(http.StripPrefix("/static", http.FileServer(static.Data)))
+	}
+
+	if s.cfg.SharedServices != "" {
+		r := router.PathPrefix("/shared-service").Subrouter()
+		sharedservices.HandleHttp(r)
 	}
 
 	serverMux := http.NewServeMux()

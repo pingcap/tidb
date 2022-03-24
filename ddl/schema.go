@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/label"
-	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -206,7 +205,7 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 			ruleIDs = append(ruleIDs, rules...)
 		}
 		patch := label.NewRulePatch([]*label.Rule{}, ruleIDs)
-		err = infosync.UpdateLabelRules(context.TODO(), patch)
+		err = d.infoSyncer.UpdateLabelRules(context.TODO(), patch)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
