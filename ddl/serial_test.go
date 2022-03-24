@@ -436,10 +436,7 @@ func TestCancelAddIndexPanic(t *testing.T) {
 	store, dom, clean := createMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/errorMockPanic", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/errorMockPanic"))
-	}()
+
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(c1 int, c2 int)")
@@ -451,42 +448,55 @@ func TestCancelAddIndexPanic(t *testing.T) {
 	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
 	ddl.ReorgWaitTimeout = 50 * time.Millisecond
 	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/errorMockPanic", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/errorMockPanic"))
+	}()
 	hook := &ddl.TestDDLCallback{}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 			jobIDs := []int64{job.ID}
-			hookCtx := mock.NewContext()
-			hookCtx.Store = store
-			err := hookCtx.NewTxn(context.Background())
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			txn, err := hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
+			var err error
 			var errs []error
 			if variable.AllowConcurrencyDDL.Load() {
-				errs, err = ddl.CancelConcurrencyJobs(tk.Session(), jobIDs)
+				errs, err = ddl.CancelConcurrencyJobs(testkit.NewTestKit(t, store).Session(), jobIDs)
+				if err != nil {
+					checkErr = errors.Trace(err)
+					return
+				}
+				if err != nil && errs[0] != nil {
+					checkErr = errors.Trace(errs[0])
+					return
+				}
 			} else {
+				hookCtx := mock.NewContext()
+				hookCtx.Store = store
+				err = hookCtx.NewTxn(context.Background())
+				if err != nil {
+					checkErr = errors.Trace(err)
+					return
+				}
+				txn, err := hookCtx.Txn(true)
+				if err != nil {
+					checkErr = errors.Trace(err)
+					return
+				}
 				errs, err = admin.CancelJobs(txn, jobIDs)
+				if err != nil {
+					checkErr = errors.Trace(err)
+					return
+				}
+				if err != nil && errs[0] != nil {
+					checkErr = errors.Trace(errs[0])
+					return
+				}
+				txn, err = hookCtx.Txn(true)
+				if err != nil {
+					checkErr = errors.Trace(err)
+					return
+				}
+				checkErr = txn.Commit(context.Background())
 			}
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			if err != nil && errs[0] != nil {
-				checkErr = errors.Trace(errs[0])
-				return
-			}
-			txn, err = hookCtx.Txn(true)
-			if err != nil {
-				checkErr = errors.Trace(err)
-				return
-			}
-			checkErr = txn.Commit(context.Background())
 		}
 	}
 	dom.DDL().SetHook(hook)
