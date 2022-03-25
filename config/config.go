@@ -196,6 +196,9 @@ type Config struct {
 	MaxBallastObjectSize int `toml:"max-ballast-object-size" json:"max-ballast-object-size"`
 	// BallastObjectSize set the initial size of the ballast object, the unit is byte.
 	BallastObjectSize int `toml:"ballast-object-size" json:"ballast-object-size"`
+
+	// Deprecated config items, keep them for compatibility.
+	StmtSummary StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -585,6 +588,23 @@ func DefaultPessimisticTxn() PessimisticTxn {
 type Plugin struct {
 	Dir  string `toml:"dir" json:"dir"`
 	Load string `toml:"load" json:"load"`
+}
+
+// StmtSummary is the config for statement summary.
+// 	It is deprecated, please use related SQL variables, keep it in config for compatibility.
+type StmtSummary struct {
+	// Enable statement summary or not.
+	Enable bool `toml:"enable" json:"enable"`
+	// Enable summary internal query.
+	EnableInternalQuery bool `toml:"enable-internal-query" json:"enable-internal-query"`
+	// The maximum number of statements kept in memory.
+	MaxStmtCount uint `toml:"max-stmt-count" json:"max-stmt-count"`
+	// The maximum length of displayed normalized SQL and sample SQL.
+	MaxSQLLength uint `toml:"max-sql-length" json:"max-sql-length"`
+	// The refresh interval of statement summary.
+	RefreshInterval int `toml:"refresh-interval" json:"refresh-interval"`
+	// The maximum history size of statement summary.
+	HistorySize int `toml:"history-size" json:"history-size"`
 }
 
 // TopSQL is the config for TopSQL.
@@ -983,8 +1003,18 @@ func (c *Config) Valid() error {
 	}
 
 	// test log level
-	l := zap.NewAtomicLevel()
-	return l.UnmarshalText([]byte(c.Log.Level))
+	if err := zap.NewAtomicLevel().UnmarshalText([]byte(c.Log.Level)); err != nil {
+		return err
+	}
+
+	// check deprecated config items
+	if c.StmtSummary.Enable || c.StmtSummary.EnableInternalQuery || c.StmtSummary.MaxStmtCount != 0 ||
+		c.StmtSummary.MaxSQLLength != 0 || c.StmtSummary.RefreshInterval != 0 || c.StmtSummary.HistorySize != 0 {
+		// logger has not been initialized yet, just log to stdout
+		fmt.Fprintln(os.Stdout, "the config item stmt-summary is deprecated in config file, please use related SQL variables")
+	}
+
+	return nil
 }
 
 // UpdateGlobal updates the global config, and provide a restore function that can be used to restore to the original.
