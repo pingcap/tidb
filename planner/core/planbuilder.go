@@ -2871,10 +2871,8 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 	}.Init(b.ctx)
 	isView := false
 	isSequence := false
+
 	switch show.Tp {
-<<<<<<< HEAD
-	case ast.ShowTables, ast.ShowTableStatus:
-=======
 	case ast.ShowColumns:
 		var extractor ShowColumnsTableExtractor
 		if extractor.Extract(show) {
@@ -2893,7 +2891,6 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			show.Pattern = nil
 		}
 	case ast.ShowTableStatus:
->>>>>>> 93454da4c... *: add show push down for ShowTables (#31919)
 		if p.DBName == "" {
 			return nil, ErrNoDB
 		}
