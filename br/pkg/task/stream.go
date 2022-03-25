@@ -87,8 +87,8 @@ var StreamCommandMap = map[string]func(c context.Context, g glue.Glue, cmdName s
 
 // StreamConfig specifies the configure about backup stream
 type StreamConfig struct {
-	// common part that all of stream commands need
-	Config
+	// config about restore full.
+	RestoreConfig
 
 	// FullBackupStorage is used to find the maps between table name and table id during restoration.
 	// if not specified. we cannot apply kv directly.
@@ -146,8 +146,8 @@ func DefineStreamStartFlags(flags *pflag.FlagSet) {
 func DefineStreamRestoreFlags(flags *pflag.FlagSet) {
 	flags.String(flagStreamRestoreTS, "", "restore ts, used for restore kv.\n"+
 		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'")
-	flags.String(flagStreamFullBackupStorage, "", "find the maps between table id and table name")
-	_ = flags.MarkHidden(flagStreamFullBackupStorage)
+	flags.String(flagStreamFullBackupStorage, "", "specify the url where backup full storage. "+
+		"fill it if want restore-full before restore log, or ignore it.")
 }
 
 // DefineStreamCommonFlags define common flags for `stream task`
@@ -195,9 +195,6 @@ func (cfg *StreamConfig) ParseStreamRestoreFromFlags(flags *pflag.FlagSet) error
 	}
 	if cfg.FullBackupStorage, err = flags.GetString(flagStreamFullBackupStorage); err != nil {
 		return errors.Trace(err)
-	}
-	if len(cfg.FullBackupStorage) == 0 {
-		cfg.FullBackupStorage = cfg.Config.Storage
 	}
 	return nil
 }
@@ -463,7 +460,7 @@ func RunStreamCommand(
 	cmdName string,
 	cfg *StreamConfig,
 ) error {
-	cfg.adjust()
+	cfg.Config.adjust()
 	defer summary.Summary(cmdName)
 	commandFn, exist := StreamCommandMap[cmdName]
 	if !exist {
@@ -824,14 +821,44 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	return nil
 }
 
-// RunStreamRestore start restore job
 func RunStreamRestore(
 	c context.Context,
 	g glue.Glue,
 	cmdName string,
 	cfg *StreamConfig,
 ) error {
-	cfg.adjustRestoreConfig()
+	ctx, cancelFn := context.WithCancel(c)
+	defer cancelFn()
+
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("task.RunStreamStart", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
+	StreamStorage := cfg.RestoreConfig.Config.Storage
+
+	if len(cfg.FullBackupStorage) > 0 {
+		cfg.RestoreConfig.Config.Storage = cfg.FullBackupStorage
+		if err := RunRestore(c, g, FullRestoreCmd, &cfg.RestoreConfig); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	cfg.RestoreConfig.Config.Storage = StreamStorage
+	if err := restoreStream(c, g, cmdName, cfg); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// RunStreamRestore start restore job
+func restoreStream(
+	c context.Context,
+	g glue.Glue,
+	cmdName string,
+	cfg *StreamConfig,
+) error {
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
 
@@ -933,7 +960,7 @@ func RunStreamRestore(
 	}
 	defer rawkvClient.Close()
 
-	pm := g.StartProgress(ctx, "Restore DDL files", int64(len(ddlFiles)), cfg.LogProgress)
+	pm := g.StartProgress(ctx, "Restore DDL files", int64(len(ddlFiles)), !cfg.LogProgress)
 	if err = withProgress(pm, func(p glue.Progress) error {
 		return client.RestoreMetaKVFiles(ctx, rawkvClient, ddlFiles, schemasReplace, p.Inc)
 	}); err != nil {
@@ -947,7 +974,7 @@ func RunStreamRestore(
 	}
 	updateRewriteRules(rewriteRules, schemasReplace)
 
-	pd := g.StartProgress(ctx, "Restore DML Files", int64(len(dmlFiles)), cfg.LogProgress)
+	pd := g.StartProgress(ctx, "Restore DML Files", int64(len(dmlFiles)), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
 		return client.RestoreKVFiles(ctx, rewriteRules, dmlFiles, p.Inc)
 	})
@@ -958,7 +985,7 @@ func RunStreamRestore(
 	// fix indices.
 	// to do:
 	// No need to fix indices if backup stream all of tables, because the index recored has been observed.
-	pi := g.StartProgress(ctx, "Restore Index", countIndices(fullBackupTables), cfg.LogProgress)
+	pi := g.StartProgress(ctx, "Restore Index", countIndices(fullBackupTables), !cfg.LogProgress)
 	err = withProgress(pi, func(p glue.Progress) error {
 		return client.FixIndicesOfTables(ctx, fullBackupTables, p.Inc)
 	})

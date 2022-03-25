@@ -43,12 +43,13 @@ func NewStreamCommand() *cobra.Command {
 	command.AddCommand(
 		newStreamStartCommand(),
 		newStreamStopCommand(),
-		newStreamPauseCommand(),
-		newStreamResumeCommand(),
+		//newStreamPauseCommand(),
+		//newStreamResumeCommand(),
 		newStreamStatusCommand(),
 		newStreamRestoreCommand(),
 		newStreamTruncateCommand(),
 	)
+
 	return command
 }
 
@@ -135,7 +136,8 @@ func newStreamRestoreCommand() *cobra.Command {
 			return streamCommand(command, task.StreamRestore)
 		},
 	}
-	task.DefineFilterFlags(command, acceptAllTables, false)
+	task.DefineRestoreFlags(command.PersistentFlags())
+	task.DefineFilterFlags(command, filterOutSysAndMemTables, false)
 	task.DefineStreamRestoreFlags(command.Flags())
 	return command
 }
@@ -161,12 +163,17 @@ func streamCommand(command *cobra.Command, cmdName string) error {
 			command.SilenceUsage = false
 		}
 	}()
+
+	cfg.Config = task.Config{LogProgress: HasLogFile()}
 	if err = cfg.Config.ParseFromFlags(command.Flags()); err != nil {
 		return errors.Trace(err)
 	}
 
 	switch cmdName {
 	case task.StreamRestore:
+		if err = cfg.RestoreConfig.ParseFromFlags(command.Flags()); err != nil {
+			return errors.Trace(err)
+		}
 		if err = cfg.ParseStreamRestoreFromFlags(command.Flags()); err != nil {
 			return errors.Trace(err)
 		}
