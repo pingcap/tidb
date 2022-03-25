@@ -316,8 +316,8 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 		for _, singleScanIdx := range singleScanIdxs {
 			col2Len := singleScanIdx.GetCol2LenFromAccessConds()
 			for _, uniqueIdxCol2Len := range uniqueIdxAccessCols {
-				accessResult, comparable := util.CompareCol2Len(col2Len, uniqueIdxCol2Len)
-				if comparable && accessResult == 1 {
+				accessResult, comparable1 := util.CompareCol2Len(col2Len, uniqueIdxCol2Len)
+				if comparable1 && accessResult == 1 {
 					if refinedBest == nil || len(singleScanIdx.Ranges) < len(refinedBest.Ranges) {
 						refinedBest = singleScanIdx
 					}
@@ -413,7 +413,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	// Use allConds instread of pushedDownConds,
 	// because we want to use IndexMerge even if some expr cannot be pushed to TiKV.
 	// We will create new Selection for exprs that cannot be pushed in convertToIndexMergeScan.
-	var indexMergeConds []expression.Expression
+	indexMergeConds := make([]expression.Expression, 0, len(ds.allConds))
 	for _, expr := range ds.allConds {
 		indexMergeConds = append(indexMergeConds, expression.PushDownNot(ds.ctx, expr))
 	}
@@ -443,8 +443,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		}
 	}
 
-	readFromTableCache := stmtCtx.ReadFromTableCache
-	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && ds.tableInfo.TempTableType != model.TempTableLocal && !readFromTableCache {
+	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && ds.tableInfo.TempTableType != model.TempTableLocal {
 		err := ds.generateAndPruneIndexMergePath(indexMergeConds, ds.indexMergeHints != nil)
 		if err != nil {
 			return nil, err
@@ -458,8 +457,6 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 			msg = "Got no_index_merge hint or tidb_enable_index_merge is off."
 		} else if ds.tableInfo.TempTableType == model.TempTableLocal {
 			msg = "Cannot use IndexMerge on temporary table."
-		} else if readFromTableCache {
-			msg = "Cannot use IndexMerge on TableCache."
 		}
 		msg = fmt.Sprintf("IndexMerge is inapplicable or disabled. %s", msg)
 		stmtCtx.AppendWarning(errors.Errorf(msg))
@@ -481,7 +478,7 @@ func (ds *DataSource) generateAndPruneIndexMergePath(indexMergeConds []expressio
 	// With hints and without generated IndexMerge paths
 	if regularPathCount == len(ds.possibleAccessPaths) {
 		ds.indexMergeHints = nil
-		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable."))
+		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable"))
 		return nil
 	}
 	// Do not need to consider the regular paths in find_best_task().
@@ -1261,6 +1258,13 @@ func (p *LogicalCTE) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 
 	var err error
 	if p.cte.seedPartPhysicalPlan == nil {
+		// Build push-downed predicates.
+		if len(p.cte.pushDownPredicates) > 0 {
+			newCond := expression.ComposeDNFCondition(p.ctx, p.cte.pushDownPredicates...)
+			newSel := LogicalSelection{Conditions: []expression.Expression{newCond}}.Init(p.SCtx(), p.cte.seedPartLogicalPlan.SelectBlockOffset())
+			newSel.SetChildren(p.cte.seedPartLogicalPlan)
+			p.cte.seedPartLogicalPlan = newSel
+		}
 		p.cte.seedPartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.seedPartLogicalPlan)
 		if err != nil {
 			return nil, err

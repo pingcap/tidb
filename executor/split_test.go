@@ -357,6 +357,34 @@ func TestSplitTable(t *testing.T) {
 	}
 }
 
+func TestStepShouldLargeThanMinStep(t *testing.T) {
+	ctx := mock.NewContext()
+	tbInfo := &model.TableInfo{
+		Name: model.NewCIStr("t1"),
+		ID:   rand.Int63(),
+		Columns: []*model.ColumnInfo{
+			{
+				Name:         model.NewCIStr("c0"),
+				ID:           1,
+				Offset:       1,
+				DefaultValue: 0,
+				State:        model.StatePublic,
+				FieldType:    *types.NewFieldType(mysql.TypeLong),
+			},
+		},
+	}
+	e1 := &SplitTableRegionExec{
+		baseExecutor: newBaseExecutor(ctx, nil, 0),
+		tableInfo:    tbInfo,
+		handleCols:   core.NewIntHandleCols(&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong)}),
+		lower:        []types.Datum{types.NewDatum(0)},
+		upper:        []types.Datum{types.NewDatum(1000)},
+		num:          10,
+	}
+	_, err := e1.getSplitTableKeys()
+	require.Equal(t, "[executor:8212]Failed to split region ranges: the region size is too small, expected at least 1000, but got 100", err.Error())
+}
+
 func TestClusterIndexSplitTable(t *testing.T) {
 	tbInfo := &model.TableInfo{
 		Name:                model.NewCIStr("t"),

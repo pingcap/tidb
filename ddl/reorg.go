@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
@@ -89,7 +90,10 @@ func newContext(store kv.Storage) sessionctx.Context {
 	c := mock.NewContext()
 	c.Store = store
 	c.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, false)
-	c.GetSessionVars().StmtCtx.TimeZone = time.UTC
+
+	tz := *time.UTC
+	c.GetSessionVars().TimeZone = &tz
+	c.GetSessionVars().StmtCtx.TimeZone = &tz
 	return c
 }
 
@@ -199,7 +203,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 			SQLMode:       mysql.ModeNone,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
-			Location:      time.Local,
+			Location:      &model.TimeZoneLocation{Name: time.UTC.String(), Offset: 0},
 		}
 	}
 	if w.reorgCtx.doneCh == nil {
@@ -265,8 +269,8 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		w.reorgCtx.setNextKey(nil)
 		w.reorgCtx.setRowCount(0)
 		w.reorgCtx.resetWarnings()
-		// We return errWaitReorgTimeout here too, so that outer loop will break.
-		return errWaitReorgTimeout
+		// We return dbterror.ErrWaitReorgTimeout here too, so that outer loop will break.
+		return dbterror.ErrWaitReorgTimeout
 	case <-time.After(waitTimeout):
 		rowCount, doneKey, currentElement := w.reorgCtx.getRowCountAndKey()
 		// Update a job's RowCount.
@@ -291,7 +295,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 			zap.String("doneKey", tryDecodeToHandleString(doneKey)),
 			zap.Error(err))
 		// If timeout, we will return, check the owner and retry to wait job done again.
-		return errWaitReorgTimeout
+		return dbterror.ErrWaitReorgTimeout
 	}
 	return nil
 }
@@ -341,11 +345,7 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 		return statistics.PseudoRowCount
 	}
 	sql := "select table_rows from information_schema.tables where tidb_table_id=%?;"
-	stmt, err := executor.ParseWithParamsInternal(w.ddlJobCtx, sql, tblInfo.ID)
-	if err != nil {
-		return statistics.PseudoRowCount
-	}
-	rows, _, err := executor.ExecRestrictedStmt(w.ddlJobCtx, stmt)
+	rows, _, err := executor.ExecRestrictedSQL(w.ddlJobCtx, nil, sql, tblInfo.ID)
 	if err != nil {
 		return statistics.PseudoRowCount
 	}
@@ -358,18 +358,18 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 func (w *worker) isReorgRunnable(d *ddlCtx) error {
 	if isChanClosed(w.ctx.Done()) {
 		// Worker is closed. So it can't do the reorganizational job.
-		return errInvalidWorker.GenWithStack("worker is closed")
+		return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
 	}
 
 	if w.reorgCtx.isReorgCanceled() {
 		// Job is cancelled. So it can't be done.
-		return errCancelledDDLJob
+		return dbterror.ErrCancelledDDLJob
 	}
 
 	if !d.isOwner() {
 		// If it's not the owner, we will try later, so here just returns an error.
 		logutil.BgLogger().Info("[ddl] DDL worker is not the DDL owner", zap.String("ID", d.uuid))
-		return errors.Trace(errNotOwner)
+		return errors.Trace(dbterror.ErrNotOwner)
 	}
 	return nil
 }
@@ -574,7 +574,7 @@ func getValidCurrentVersion(store kv.Storage) (ver kv.Version, err error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	} else if ver.Ver <= 0 {
-		return ver, errInvalidStoreVer.GenWithStack("invalid storage current version %d", ver.Ver)
+		return ver, dbterror.ErrInvalidStoreVer.GenWithStack("invalid storage current version %d", ver.Ver)
 	}
 	return ver, nil
 }

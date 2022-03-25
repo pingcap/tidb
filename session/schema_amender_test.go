@@ -66,7 +66,7 @@ func mutationsEqual(res *transaction.PlainMutations, expected *transaction.Plain
 		}
 		require.GreaterOrEqual(t, foundIdx, 0)
 		require.Equal(t, expected.GetOps()[foundIdx], res.GetOps()[i])
-		require.Equal(t, expected.GetPessimisticFlags()[foundIdx], res.GetPessimisticFlags()[i])
+		require.Equal(t, expected.IsPessimisticLock(foundIdx), res.IsPessimisticLock(i))
 		require.Equal(t, expected.GetKeys()[foundIdx], res.GetKeys()[i])
 		require.Equal(t, expected.GetValues()[foundIdx], res.GetValues()[i])
 	}
@@ -140,7 +140,7 @@ func prepareTestData(
 			oldData.ops = append(oldData.ops, keyOp)
 			oldData.rowValue = append(oldData.rowValue, thisRowValue)
 			if keyOp == kvrpcpb.Op_Del {
-				mutations.Push(keyOp, rowKey, []byte{}, true)
+				mutations.Push(keyOp, rowKey, []byte{}, true, false, false)
 			}
 		}
 		oldRowValues[i] = thisRowValue
@@ -168,9 +168,9 @@ func prepareTestData(
 		}
 		require.NoError(t, err)
 		if keyOp == kvrpcpb.Op_Put || keyOp == kvrpcpb.Op_Insert {
-			mutations.Push(keyOp, rowKey, rowValue, true)
+			mutations.Push(keyOp, rowKey, rowValue, true, false, false)
 		} else if keyOp == kvrpcpb.Op_Lock {
-			mutations.Push(keyOp, rowKey, []byte{}, true)
+			mutations.Push(keyOp, rowKey, []byte{}, true, false, false)
 		}
 		newRowValues[i] = thisRowValue
 		newRowKvMap[string(rowKey)] = thisRowValue
@@ -209,7 +209,7 @@ func prepareTestData(
 					if info.indexInfoAtCommit.Meta().Unique {
 						isPessimisticLock = true
 					}
-					oldIdxKeyMutation.Push(kvrpcpb.Op_Del, idxKey, []byte{}, isPessimisticLock)
+					oldIdxKeyMutation.Push(kvrpcpb.Op_Del, idxKey, []byte{}, isPessimisticLock, false, false)
 				}
 			}
 			if addIndexNeedAddOp(info.AmendOpType) && mayGenPutIndexRowKeyOp(keyOp) {
@@ -221,7 +221,7 @@ func prepareTestData(
 					mutOp = kvrpcpb.Op_Insert
 					isPessimisticLock = true
 				}
-				newIdxKeyMutation.Push(mutOp, idxKey, idxVal, isPessimisticLock)
+				newIdxKeyMutation.Push(mutOp, idxKey, idxVal, isPessimisticLock, false, false)
 			}
 			skipMerge := false
 			if info.AmendOpType == AmendNeedAddDeleteAndInsert {
@@ -436,7 +436,7 @@ func TestAmendCollectAndGenMutations(t *testing.T) {
 				idxKey := tablecodec.EncodeIndexSeekKey(oldTbInfo.Meta().ID, oldTbInfo.Indices()[i].Meta().ID, idxValue)
 				err = txn.Set(idxKey, idxValue)
 				require.NoError(t, err)
-				mutations.Push(kvrpcpb.Op_Put, idxKey, idxValue, false)
+				mutations.Push(kvrpcpb.Op_Put, idxKey, idxValue, false, false, false)
 			}
 
 			res, err := schemaAmender.genAllAmendMutations(ctx, &mutations, collector)
@@ -446,13 +446,13 @@ func TestAmendCollectAndGenMutations(t *testing.T) {
 			// Validate generated results.
 			require.Equal(t, len(res.GetOps()), len(res.GetKeys()))
 			require.Equal(t, len(res.GetOps()), len(res.GetValues()))
-			require.Equal(t, len(res.GetOps()), len(res.GetPessimisticFlags()))
+			require.Equal(t, len(res.GetOps()), len(res.GetFlags()))
 			for i := 0; i < len(expectedMutations.GetKeys()); i++ {
 				logutil.BgLogger().Info("[TEST] expected mutations",
 					zap.Stringer("key", kv.Key(expectedMutations.GetKeys()[i])),
 					zap.Stringer("val", kv.Key(expectedMutations.GetKeys()[i])),
 					zap.Stringer("op_type", expectedMutations.GetOps()[i]),
-					zap.Bool("is_pessimistic", expectedMutations.GetPessimisticFlags()[i]),
+					zap.Bool("is_pessimistic", expectedMutations.IsPessimisticLock(i)),
 				)
 			}
 			for i := 0; i < len(res.GetKeys()); i++ {
@@ -460,7 +460,7 @@ func TestAmendCollectAndGenMutations(t *testing.T) {
 					zap.Stringer("key", kv.Key(res.GetKeys()[i])),
 					zap.Stringer("val", kv.Key(res.GetKeys()[i])),
 					zap.Stringer("op_type", res.GetOps()[i]),
-					zap.Bool("is_pessimistic", res.GetPessimisticFlags()[i]),
+					zap.Bool("is_pessimistic", res.IsPessimisticLock(i)),
 				)
 			}
 			mutationsEqual(res, &expectedMutations, t)

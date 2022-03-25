@@ -32,6 +32,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/stretchr/testify/require"
 )
 
@@ -124,6 +125,14 @@ func ConvertRowsToStrings(rows [][]interface{}) (rs []string) {
 	return rs
 }
 
+// ConvertSQLWarnToStrings converts []SQLWarn to []string.
+func ConvertSQLWarnToStrings(warns []stmtctx.SQLWarn) (rs []string) {
+	for _, warn := range warns {
+		rs = append(rs, fmt.Sprint(warn.Err.Error()))
+	}
+	return rs
+}
+
 // GetTestCases gets the test cases for a test function.
 func (td *TestData) GetTestCases(t *testing.T, in interface{}, out interface{}) {
 	// Extract caller's name.
@@ -148,6 +157,25 @@ func (td *TestData) GetTestCases(t *testing.T, in interface{}, out interface{}) 
 			v.Set(reflect.MakeSlice(v.Type(), inputLen, inputLen))
 		}
 	}
+	td.output[casesIdx].decodedOut = out
+}
+
+// GetTestCasesByName gets the test cases for a test function by its name.
+func (td *TestData) GetTestCasesByName(caseName string, t *testing.T, in interface{}, out interface{}) {
+	casesIdx, ok := td.funcMap[caseName]
+	require.Truef(t, ok, "Case name: %s", caseName)
+	require.NoError(t, json.Unmarshal(*td.input[casesIdx].Cases, in))
+
+	if Record() {
+		inputLen := reflect.ValueOf(in).Elem().Len()
+		v := reflect.ValueOf(out).Elem()
+		if v.Kind() == reflect.Slice {
+			v.Set(reflect.MakeSlice(v.Type(), inputLen, inputLen))
+		}
+	} else {
+		require.NoError(t, json.Unmarshal(*td.output[casesIdx].Cases, out))
+	}
+
 	td.output[casesIdx].decodedOut = out
 }
 

@@ -127,6 +127,16 @@ func TestCreateStorage(t *testing.T) {
 	require.Equal(t, "backup", gcs.Prefix)
 	require.Equal(t, "fakeCreds2", gcs.CredentialsBlob)
 
+	s, err = ParseBackend(`azure://bucket1/prefix/path?account-name=user&account-key=cGFzc3dk&endpoint=http://127.0.0.1/user`, nil)
+	require.NoError(t, err)
+	azblob := s.GetAzureBlobStorage()
+	require.NotNil(t, azblob)
+	require.Equal(t, "bucket1", azblob.Bucket)
+	require.Equal(t, "prefix/path", azblob.Prefix)
+	require.Equal(t, "http://127.0.0.1/user", azblob.Endpoint)
+	require.Equal(t, "user", azblob.AccountName)
+	require.Equal(t, "cGFzc3dk", azblob.SharedKey)
+
 	s, err = ParseBackend("/test", nil)
 	require.NoError(t, err)
 	local := s.GetLocal()
@@ -172,4 +182,15 @@ func TestFormatBackendURL(t *testing.T) {
 		},
 	})
 	require.Equal(t, "gcs://bucket/some%20prefix/", backendURL.String())
+
+	backendURL = FormatBackendURL(&backuppb.StorageBackend{
+		Backend: &backuppb.StorageBackend_AzureBlobStorage{
+			AzureBlobStorage: &backuppb.AzureBlobStorage{
+				Bucket:   "bucket",
+				Prefix:   "/some prefix/",
+				Endpoint: "https://azure.example.com/",
+			},
+		},
+	})
+	require.Equal(t, "azure://bucket/some%20prefix/", backendURL.String())
 }

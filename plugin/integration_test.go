@@ -50,6 +50,7 @@ func TestAuditLogNormal(t *testing.T) {
 		tables   string
 		cmd      string
 		event    plugin.GeneralEvent
+		resCnt   int
 	}
 
 	tests := []normalTest{
@@ -189,14 +190,14 @@ func TestAuditLogNormal(t *testing.T) {
 			sql:      "DROP SESSION BINDING FOR SELECT * FROM t1 WHERE a = 123",
 			stmtType: "DropBinding",
 		},
-		//{
+		// {
 		//	sql: "LOAD STATS '/tmp/stats.json'",
 		//	stmtType: "other",
-		//},
-		//{
+		// },
+		// {
 		//	sql: "DROP STATS t",
 		//	stmtType: "other",
-		//},
+		// },
 		{
 			sql:      "RENAME TABLE t2 TO t5",
 			stmtType: "other",
@@ -209,18 +210,18 @@ func TestAuditLogNormal(t *testing.T) {
 			dbs:      "test",
 			tables:   "t1",
 		},
-		//{
+		// {
 		//	sql: "FLASHBACK TABLE t TO t1",
 		//	stmtType: "other",
 		//	dbs: "test",
 		//	tables: "t1",
-		//},
-		//{
+		// },
+		// {
 		//	sql: "RECOVER TABLE t1",
 		//	stmtType: "other",
 		//	dbs: "test",
 		//	tables: "t1,t2",
-		//},
+		// },
 		{
 			sql:      "ALTER DATABASE test DEFAULT CHARACTER SET = utf8mb4",
 			stmtType: "other",
@@ -230,20 +231,20 @@ func TestAuditLogNormal(t *testing.T) {
 			sql:      "ADMIN RELOAD opt_rule_blacklist",
 			stmtType: "other",
 		},
-		//{
+		// {
 		//	sql: "ADMIN PLUGINS ENABLE audit_test",
 		//	stmtType: "other",
-		//},
+		// },
 		{
 			sql:      "ADMIN FLUSH bindings",
 			stmtType: "other",
 		},
-		//{
+		// {
 		//	sql: "ADMIN REPAIR TABLE t1 CREATE TABLE (id int)",
 		//	stmtType: "other",
 		//	dbs: "test",
 		//	tables: "t1",
-		//},
+		// },
 		{
 			sql:      "ADMIN SHOW SLOW RECENT 10",
 			stmtType: "other",
@@ -252,27 +253,27 @@ func TestAuditLogNormal(t *testing.T) {
 			sql:      "ADMIN SHOW DDL JOBS",
 			stmtType: "other",
 		},
-		//{
+		// {
 		//	sql: "ADMIN CANCEL DDL JOBS 1",
 		//	stmtType: "other",
-		//},
+		// },
 		{
 			sql:      "ADMIN CHECKSUM TABLE t1",
 			stmtType: "other",
-			//dbs: "test",
-			//tables: "t1",
+			// dbs: "test",
+			// tables: "t1",
 		},
 		{
 			sql:      "ADMIN CHECK TABLE t1",
 			stmtType: "other",
-			//dbs: "test",
-			//tables: "t1",
+			// dbs: "test",
+			// tables: "t1",
 		},
 		{
 			sql:      "ADMIN CHECK INDEX t1 a",
 			stmtType: "other",
-			//dbs: "test",
-			//tables: "t1",
+			// dbs: "test",
+			// tables: "t1",
 		},
 		{
 			sql:      "CREATE USER 'newuser' IDENTIFIED BY 'newuserpassword'",
@@ -316,10 +317,10 @@ func TestAuditLogNormal(t *testing.T) {
 			sql:      "SET PASSWORD FOR 'newuser' = 'test'",
 			stmtType: "Set",
 		},
-		//{
+		// {
 		//	sql: "SET ROLE ALL",
 		//	stmtType: "other",
-		//},
+		// },
 		{
 			sql:      "DROP USER 'newuser'",
 			stmtType: "other",
@@ -333,26 +334,26 @@ func TestAuditLogNormal(t *testing.T) {
 		{
 			sql:      "SPLIT TABLE t1 BETWEEN (0) AND (1000000000) REGIONS 16",
 			stmtType: "other",
-			//dbs: "test",
-			//tables: "t1",
+			// dbs: "test",
+			// tables: "t1",
 		},
-		//{
+		// {
 		//	sql: "BACKUP DATABASE `test` TO '.'",
 		//	stmtType: "other",
 		//	dbs: "test",
-		//},
-		//{
+		// },
+		// {
 		//	sql: "RESTORE DATABASE * FROM '.'",
 		//	stmtType: "other",
-		//},
-		//{
+		// },
+		// {
 		//	sql: "CHANGE DRAINER TO NODE_STATE ='paused' FOR NODE_ID 'drainer1'",
 		//	stmtType: "other",
-		//},
-		//{
+		// },
+		// {
 		//	sql: "CHANGE PUMP TO NODE_STATE ='paused' FOR NODE_ID 'pump1'",
 		//	stmtType: "other",
-		//},
+		// },
 		{
 			sql:      "BEGIN",
 			stmtType: "Begin",
@@ -369,30 +370,30 @@ func TestAuditLogNormal(t *testing.T) {
 			sql:      "COMMIT",
 			stmtType: "Commit",
 		},
-		//{
+		// {
 		//	sql: "SHOW DRAINER STATUS",
 		//	stmtType: "Show",
-		//},
-		//{
+		// },
+		// {
 		//	sql: "SHOW PUMP STATUS",
 		//	stmtType: "Show",
-		//},
-		//{
+		// },
+		// {
 		//	sql: "SHOW GRANTS",
 		//	stmtType: "Show",
-		//},
+		// },
 		{
 			sql:      "SHOW PROCESSLIST",
 			stmtType: "Show",
 		},
-		//{
+		// {
 		//	sql: "SHOW BACKUPS",
 		//	stmtType: "Show",
-		//},
-		//{
+		// },
+		// {
 		//	sql: "SHOW RESTORES",
 		//	stmtType: "Show",
-		//},
+		// },
 		{
 			sql:      "show analyze status",
 			stmtType: "Show",
@@ -421,10 +422,10 @@ func TestAuditLogNormal(t *testing.T) {
 			sql:      "show fields from t1",
 			stmtType: "Show",
 		},
-		//{
+		// {
 		//	sql: "SHOW CONFIG",
 		//	stmtType: "Show",
-		//},
+		// },
 		{
 			sql:      "SHOW CREATE TABLE t1",
 			stmtType: "Show",
@@ -467,10 +468,10 @@ func TestAuditLogNormal(t *testing.T) {
 			sql:      "SHOW PROFILES",
 			stmtType: "Show",
 		},
-		//{
+		// {
 		//	sql: "SHOW PUMP STATUS",
 		//	stmtType: "Show",
-		//},
+		// },
 		{
 			sql:      "SHOW SCHEMAS",
 			stmtType: "Show",
@@ -507,6 +508,7 @@ func TestAuditLogNormal(t *testing.T) {
 		{
 			sql:      "SHOW TABLE STATUS LIKE 't1'",
 			stmtType: "Show",
+			resCnt:   3, // Start + SHOW TABLE + Internal SELECT .. FROM IS.TABLES in current session
 		},
 		{
 			sql:      "SHOW TABLES",
@@ -585,12 +587,12 @@ func TestAuditLogNormal(t *testing.T) {
 			sql:      "DO 1",
 			stmtType: "other",
 		},
-		//{
+		// {
 		//	sql: "LOAD DATA LOCAL INFILE 'data.csv' INTO TABLE t1 FIELDS TERMINATED BY ',' ENCLOSED BY '\"' LINES TERMINATED BY '\r\n' IGNORE 1 LINES (id)",
 		//	stmtType: "LoadData",
 		//	dbs: "test",
 		//	tables: "t1",
-		//},
+		// },
 		{
 			sql:      "SELECT * FROM t1",
 			stmtType: "Select",
@@ -609,39 +611,39 @@ func TestAuditLogNormal(t *testing.T) {
 		},
 		{
 			sql:      "EXPLAIN ANALYZE SELECT * FROM t1 WHERE a = 1",
-			stmtType: "Explain",
-			//dbs: "test",
-			//tables: "t1",
+			stmtType: "ExplainAnalyzeSQL",
+			// dbs: "test",
+			// tables: "t1",
 		},
 		{
 			sql:      "EXPLAIN SELECT * FROM t1",
-			stmtType: "Explain",
-			//dbs: "test",
-			//tables: "t1",
+			stmtType: "ExplainSQL",
+			// dbs: "test",
+			// tables: "t1",
 		},
 		{
 			sql:      "EXPLAIN SELECT * FROM t1 WHERE a = 1",
-			stmtType: "Explain",
-			//dbs: "test",
-			//tables: "t1",
+			stmtType: "ExplainSQL",
+			// dbs: "test",
+			// tables: "t1",
 		},
 		{
 			sql:      "DESC SELECT * FROM t1 WHERE a = 1",
-			stmtType: "Explain",
-			//dbs: "test",
-			//tables: "t1",
+			stmtType: "ExplainSQL",
+			// dbs: "test",
+			// tables: "t1",
 		},
 		{
 			sql:      "DESCRIBE SELECT * FROM t1 WHERE a = 1",
-			stmtType: "Explain",
-			//dbs: "test",
-			//tables: "t1",
+			stmtType: "ExplainSQL",
+			// dbs: "test",
+			// tables: "t1",
 		},
 		{
 			sql:      "trace format='row' select * from t1",
 			stmtType: "Trace",
-			//dbs: "test",
-			//tables: "t1",
+			// dbs: "test",
+			// tables: "t1",
 		},
 		{
 			sql:      "flush status",
@@ -651,18 +653,18 @@ func TestAuditLogNormal(t *testing.T) {
 			sql:      "FLUSH TABLES",
 			stmtType: "other",
 		},
-		//{
+		// {
 		//	sql: "KILL TIDB 2",
 		//	stmtType: "other",
-		//},
-		//{
+		// },
+		// {
 		//	sql: "SHUTDOWN",
 		//	stmtType: "Shutdow",
-		//},
-		//{
+		// },
+		// {
 		//	sql: "ALTER INSTANCE RELOAD TLS",
 		//	stmtType: "other",
-		//},
+		// },
 	}
 
 	testResults := make([]normalTest, 0)
@@ -696,12 +698,18 @@ func TestAuditLogNormal(t *testing.T) {
 		query := append([]byte{mysql.ComQuery}, []byte(test.sql)...)
 		err := conn.Dispatch(context.Background(), query)
 		require.NoError(t, err, errMsg)
-		require.Equal(t, 2, len(testResults), errMsg)
+		resultCount := test.resCnt
+		if resultCount == 0 {
+			resultCount = 2
+		}
+		require.Equal(t, resultCount, len(testResults), errMsg)
+
 		result := testResults[0]
-		// TODO: currently, result.text is wrong.
 		require.Equal(t, "Query", result.cmd, errMsg)
 		require.Equal(t, plugin.Starting, result.event, errMsg)
-		result = testResults[1]
+
+		result = testResults[resultCount-1]
+		require.Equal(t, "Query", result.cmd, errMsg)
 		if test.text == "" {
 			require.Equal(t, test.sql, result.text, errMsg)
 		} else {
@@ -713,6 +721,11 @@ func TestAuditLogNormal(t *testing.T) {
 		require.Equal(t, test.tables, result.tables, errMsg)
 		require.Equal(t, "Query", result.cmd, errMsg)
 		require.Equal(t, plugin.Completed, result.event, errMsg)
+		for i := 1; i < resultCount-1; i++ {
+			result = testResults[i]
+			require.Equal(t, "Query", result.cmd, errMsg)
+			require.Equal(t, plugin.Completed, result.event, errMsg)
+		}
 	}
 }
 

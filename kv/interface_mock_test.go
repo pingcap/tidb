@@ -30,6 +30,10 @@ type mockTxn struct {
 	valid bool
 }
 
+func (t *mockTxn) SetAssertion(_ []byte, _ ...FlagsOp) error {
+	return nil
+}
+
 // Commit always returns a retryable error.
 func (t *mockTxn) Commit(ctx context.Context) error {
 	return ErrTxnRetryable

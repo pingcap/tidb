@@ -32,12 +32,12 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
@@ -190,7 +190,7 @@ var (
 	MinLogErrorRate = atomic.NewFloat64(0.5)
 )
 
-// StoreQueryFeedback merges the feedback into stats collector.
+// StoreQueryFeedback merges the feedback into stats collector. Deprecated.
 func (s *SessionStatsCollector) StoreQueryFeedback(feedback interface{}, h *Handle) error {
 	q := feedback.(*statistics.QueryFeedback)
 	if !q.Valid || q.Hist == nil {
@@ -467,6 +467,7 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 			deltaMap.update(id, -item.Delta, -item.Count, nil)
 		}
 		if err = h.dumpTableStatColSizeToKV(id, item); err != nil {
+			delete(deltaMap, id)
 			return errors.Trace(err)
 		}
 		if updated {
@@ -482,6 +483,12 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 
 // dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.
 func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (updated bool, err error) {
+	statsVer := uint64(0)
+	defer func() {
+		if err == nil && statsVer != 0 {
+			err = h.recordHistoricalStatsMeta(id, statsVer)
+		}
+	}()
 	if delta.Count == 0 {
 		return true, nil
 	}
@@ -509,6 +516,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 		} else {
 			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
 		}
+		statsVer = startTS
 		return errors.Trace(err)
 	}
 	if err = updateStatsMeta(id); err != nil {
@@ -552,7 +560,7 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 	return errors.Trace(err)
 }
 
-// DumpStatsFeedbackToKV dumps the stats feedback to KV.
+// DumpStatsFeedbackToKV dumps the stats feedback to KV. Deprecated.
 func (h *Handle) DumpStatsFeedbackToKV() error {
 	h.feedback.Lock()
 	feedback := h.feedback.data
@@ -728,50 +736,32 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 	}
 
 	for _, ptbl := range tables {
-		// this func lets `defer` works normally, where `Close()` should be called before any return
-		err = func() error {
-			tbl := ptbl.GetInt64(0)
-			const sql = "select table_id, hist_id, is_index, feedback from mysql.stats_feedback where table_id=%? order by hist_id, is_index"
-			rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql, tbl)
+		tableID, histID, isIndex := ptbl.GetInt64(0), int64(-1), int64(-1)
+		for {
+			// fetch at most 100000 rows each time to avoid OOM
+			const sql = "select table_id, hist_id, is_index, feedback from mysql.stats_feedback where table_id = %? and is_index >= %? and hist_id > %? order by is_index, hist_id limit 100000"
+			rows, _, err := h.execRestrictedSQL(ctx, sql, tableID, histID, isIndex)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			defer terror.Call(rc.Close)
-			tableID, histID, isIndex := int64(-1), int64(-1), int64(-1)
-			var rows []chunk.Row
-			for {
-				req := rc.NewChunk(nil)
-				iter := chunk.NewIterator4Chunk(req)
-				err := rc.Next(context.TODO(), req)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if req.NumRows() == 0 {
-					if len(rows) > 0 {
-						if err := h.handleSingleHistogramUpdate(is, rows); err != nil {
+			if len(rows) == 0 {
+				break
+			}
+			startIdx := 0
+			for i, row := range rows {
+				if row.GetInt64(1) != histID || row.GetInt64(2) != isIndex {
+					if i > 0 {
+						if err = h.handleSingleHistogramUpdate(is, rows[startIdx:i]); err != nil {
 							return errors.Trace(err)
 						}
 					}
-					break
-				}
-				for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-					// len(rows) > 100000 limits the rows to avoid OOM
-					if row.GetInt64(0) != tableID || row.GetInt64(1) != histID || row.GetInt64(2) != isIndex || len(rows) > 100000 {
-						if len(rows) > 0 {
-							if err := h.handleSingleHistogramUpdate(is, rows); err != nil {
-								return errors.Trace(err)
-							}
-						}
-						tableID, histID, isIndex = row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
-						rows = rows[:0]
-					}
-					rows = append(rows, row)
+					histID, isIndex = row.GetInt64(1), row.GetInt64(2)
+					startIdx = i
 				}
 			}
-			return nil
-		}()
-		if err != nil {
-			return err
+			if err = h.handleSingleHistogramUpdate(is, rows[startIdx:]); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil
@@ -874,6 +864,9 @@ func (h *Handle) dumpStatsUpdateToKV(tableID, isIndex int64, q *statistics.Query
 
 // DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
 func (h *Handle) DumpColStatsUsageToKV() error {
+	if !variable.EnableColumnTracking.Load() {
+		return nil
+	}
 	h.sweepList()
 	h.colMap.Lock()
 	colMap := h.colMap.data
@@ -1035,6 +1028,9 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 	}
 	pruneMode := h.CurrentPruneMode()
 	for _, db := range dbs {
+		if util.IsMemOrSysDB(strings.ToLower(db)) {
+			continue
+		}
 		tbls := is.SchemaTables(model.NewCIStr(db))
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
@@ -1107,7 +1103,9 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 }
 
 func (h *Handle) autoAnalyzePartitionTable(tblInfo *model.TableInfo, pi *model.PartitionInfo, db string, start, end time.Time, ratio float64) bool {
+	h.mu.RLock()
 	tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
+	h.mu.RUnlock()
 	partitionNames := make([]interface{}, 0, len(pi.Definitions))
 	for _, def := range pi.Definitions {
 		partitionStatsTbl := h.GetPartitionStats(tblInfo, def.ID)
@@ -1173,7 +1171,7 @@ var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 
 func (h *Handle) execAutoAnalyze(statsVer int, sql string, params ...interface{}) {
 	startTime := time.Now()
-	_, _, err := h.execRestrictedSQLWithStatsVer(context.Background(), statsVer, sql, params...)
+	_, _, err := h.execRestrictedSQLWithStatsVer(context.Background(), statsVer, util.GetAutoAnalyzeProcID(), sql, params...)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
@@ -1327,7 +1325,7 @@ func logForPK(prefix string, c *statistics.Column, ranges []*ranger.Range, actua
 	}
 }
 
-// RecalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo.
+// RecalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo. Deprecated.
 func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
 	t, ok := h.statsCache.Load().(statsCache).tables[q.PhysicalID]
 	if !ok {
@@ -1441,7 +1439,7 @@ func convertRangeType(ran *ranger.Range, ft *types.FieldType, loc *time.Location
 	return statistics.ConvertDatumsType(ran.HighVal, ft, loc)
 }
 
-// DumpFeedbackForIndex dumps the feedback for index.
+// DumpFeedbackForIndex dumps the feedback for index. Deprecated.
 // For queries that contains both equality and range query, we will split them and Update accordingly.
 func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics.Table) error {
 	idx, ok := t.Indices[q.Hist.ID]

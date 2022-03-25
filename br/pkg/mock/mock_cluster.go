@@ -6,11 +6,8 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/pprof"
-	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,7 +24,6 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/pkg/tempurl"
 	"go.uber.org/zap"
 )
 
@@ -87,52 +83,13 @@ func NewCluster() (*Cluster, error) {
 
 // Start runs a mock cluster.
 func (mock *Cluster) Start() error {
-	var (
-		err       error
-		statusURL *url.URL
-		addrURL   *url.URL
-	)
-	for i := 0; i < 10; i++ {
-		// retry 10 times to get available port
-		statusURL, err = url.Parse(tempurl.Alloc())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		listen, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%s", statusURL.Port()))
-		if err == nil {
-			// release port listening
-			listen.Close()
-			break
-		}
-	}
-	statusPort, err := strconv.ParseInt(statusURL.Port(), 10, 32)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for i := 0; i < 10; i++ {
-		addrURL, err = url.Parse(tempurl.Alloc())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		listen, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%s", addrURL.Port()))
-		if err == nil {
-			// release port listening
-			listen.Close()
-			break
-		}
-	}
-	addrPort, err := strconv.ParseInt(addrURL.Port(), 10, 32)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_ = addrPort
-
+	server.RunInGoTest = true
 	mock.TiDBDriver = server.NewTiDBDriver(mock.Storage)
 	cfg := config.NewConfig()
-	cfg.Port = uint(addrPort)
+	// let tidb random select a port
+	cfg.Port = 0
 	cfg.Store = "tikv"
-	cfg.Status.StatusPort = uint(statusPort)
+	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true
 	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
 
@@ -142,11 +99,11 @@ func (mock *Cluster) Start() error {
 	}
 	mock.Server = svr
 	go func() {
-		if err1 := svr.Run(); err != nil {
+		if err1 := svr.Run(); err1 != nil {
 			panic(err1)
 		}
 	}()
-	mock.DSN = waitUntilServerOnline(addrURL.Host, cfg.Status.StatusPort)
+	mock.DSN = waitUntilServerOnline("127.0.0.1", cfg.Status.StatusPort)
 	return nil
 }
 

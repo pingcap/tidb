@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	fd "github.com/pingcap/tidb/planner/funcdep"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
@@ -66,6 +67,8 @@ type Plan interface {
 	SetOutputNames(names types.NameSlice)
 
 	SelectBlockOffset() int
+
+	buildPlanTrace() *tracing.PlanTrace
 }
 
 func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Context) task {
@@ -240,7 +243,7 @@ type LogicalPlan interface {
 	PredicatePushDown([]expression.Expression, *logicalOptimizeOp) ([]expression.Expression, LogicalPlan)
 
 	// PruneColumns prunes the unused columns.
-	PruneColumns([]*expression.Column) error
+	PruneColumns([]*expression.Column, *logicalOptimizeOp) error
 
 	// findBestTask converts the logical plan to the physical plan. It's a new interface.
 	// It is called recursively from the parent to the children to create the result physical plan.
@@ -250,7 +253,7 @@ type LogicalPlan interface {
 	// If planCounter > 0, the clock_th plan generated in this function will be returned.
 	// If planCounter = 0, the plan generated in this function will not be considered.
 	// If planCounter = -1, then we will not force plan.
-	findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp) (task, int64, error)
+	findBestTask(prop *property.PhysicalProperty, planCounter *PlanCounterTp, op *physicalOptimizeOp) (task, int64, error)
 
 	// BuildKeyInfo will collect the information of unique keys into schema.
 	// Because this method is also used in cascades planner, we cannot use
@@ -307,8 +310,8 @@ type LogicalPlan interface {
 	// canPushToCop check if we might push this plan to a specific store.
 	canPushToCop(store kv.StoreType) bool
 
-	// buildLogicalPlanTrace clone necessary information from LogicalPlan
-	buildLogicalPlanTrace() *tracing.LogicalPlanTrace
+	// ExtractFD derive the FDSet from the tree bottom up.
+	ExtractFD() *fd.FDSet
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -370,6 +373,23 @@ type baseLogicalPlan struct {
 	self         LogicalPlan
 	maxOneRow    bool
 	children     []LogicalPlan
+	// fdSet is a set of functional dependencies(FDs) which powers many optimizations,
+	// including eliminating unnecessary DISTINCT operators, simplifying ORDER BY columns,
+	// removing Max1Row operators, and mapping semi-joins to inner-joins.
+	// for now, it's hard to maintain in individual operator, build it from bottom up when using.
+	fdSet *fd.FDSet
+}
+
+// ExtractFD return the children[0]'s fdSet if there are no adding/removing fd in this logic plan.
+func (p *baseLogicalPlan) ExtractFD() *fd.FDSet {
+	if p.fdSet != nil {
+		return p.fdSet
+	}
+	fds := &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
+	for _, ch := range p.children {
+		fds.AddFrom(ch.ExtractFD())
+	}
+	return fds
 }
 
 func (p *baseLogicalPlan) MaxOneRow() bool {
@@ -379,15 +399,6 @@ func (p *baseLogicalPlan) MaxOneRow() bool {
 // ExplainInfo implements Plan interface.
 func (p *baseLogicalPlan) ExplainInfo() string {
 	return ""
-}
-
-// buildLogicalPlanTrace implements LogicalPlan
-func (p *baseLogicalPlan) buildLogicalPlanTrace() *tracing.LogicalPlanTrace {
-	planTrace := &tracing.LogicalPlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: p.self.ExplainInfo()}
-	for _, child := range p.Children() {
-		planTrace.Children = append(planTrace.Children, child.buildLogicalPlanTrace())
-	}
-	return planTrace
 }
 
 type basePhysicalPlan struct {
@@ -593,11 +604,11 @@ func (p *baseLogicalPlan) ExtractCorrelatedCols() []*expression.CorrelatedColumn
 }
 
 // PruneColumns implements LogicalPlan interface.
-func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column) error {
+func (p *baseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
 	if len(p.children) == 0 {
 		return nil
 	}
-	return p.children[0].PruneColumns(parentUsedCols)
+	return p.children[0].PruneColumns(parentUsedCols, opt)
 }
 
 // basePlan implements base Plan interface.
@@ -710,4 +721,28 @@ func (p *basePhysicalPlan) SetChild(i int, child PhysicalPlan) {
 // Context implements Plan Context interface.
 func (p *basePlan) SCtx() sessionctx.Context {
 	return p.ctx
+}
+
+// buildPlanTrace implements Plan
+func (p *basePhysicalPlan) buildPlanTrace() *tracing.PlanTrace {
+	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: p.self.ExplainInfo(), Cost: p.Cost()}
+	for _, child := range p.Children() {
+		planTrace.Children = append(planTrace.Children, child.buildPlanTrace())
+	}
+	return planTrace
+}
+
+// buildPlanTrace implements Plan
+func (p *baseLogicalPlan) buildPlanTrace() *tracing.PlanTrace {
+	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP(), ExplainInfo: p.self.ExplainInfo()}
+	for _, child := range p.Children() {
+		planTrace.Children = append(planTrace.Children, child.buildPlanTrace())
+	}
+	return planTrace
+}
+
+// buildPlanTrace implements Plan
+func (p *basePlan) buildPlanTrace() *tracing.PlanTrace {
+	planTrace := &tracing.PlanTrace{ID: p.ID(), TP: p.TP()}
+	return planTrace
 }

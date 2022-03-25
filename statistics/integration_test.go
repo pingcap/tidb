@@ -35,6 +35,12 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
+	originalVal1 := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_persist_analyze_options = %v", originalVal1))
+	}()
+	tk.MustExec("set global tidb_persist_analyze_options=false")
+
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
@@ -105,6 +111,88 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	}
 }
 
+func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	originalVal1 := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_persist_analyze_options = %v", originalVal1))
+	}()
+	tk.MustExec("set global tidb_persist_analyze_options=true")
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("set @@session.tidb_analyze_version = 1")
+	tk.MustExec("insert into t values(1, 1), (1, 2), (1, 3)")
+	tk.MustExec("analyze table t")
+	is := dom.InfoSchema()
+	tblT, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	h := dom.StatsHandle()
+	require.NoError(t, h.Update(is))
+	statsTblT := h.GetTableStats(tblT.Meta())
+	// Analyze table with version 1 success, all statistics are version 1.
+	for _, col := range statsTblT.Columns {
+		require.Equal(t, int64(1), col.StatsVer)
+	}
+	for _, idx := range statsTblT.Indices {
+		require.Equal(t, int64(1), idx.StatsVer)
+	}
+	tk.MustExec("set @@session.tidb_analyze_version = 2")
+	tk.MustExec("analyze table t index idx")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
+	require.NoError(t, h.Update(is))
+	statsTblT = h.GetTableStats(tblT.Meta())
+	for _, idx := range statsTblT.Indices {
+		require.Equal(t, int64(1), idx.StatsVer)
+	}
+	tk.MustExec("analyze table t index")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
+	require.NoError(t, h.Update(is))
+	statsTblT = h.GetTableStats(tblT.Meta())
+	for _, idx := range statsTblT.Indices {
+		require.Equal(t, int64(1), idx.StatsVer)
+	}
+	tk.MustExec("analyze table t ")
+	require.NoError(t, h.Update(is))
+	statsTblT = h.GetTableStats(tblT.Meta())
+	for _, col := range statsTblT.Columns {
+		require.Equal(t, int64(2), col.StatsVer)
+	}
+	for _, idx := range statsTblT.Indices {
+		require.Equal(t, int64(2), idx.StatsVer)
+	}
+	tk.MustExec("set @@session.tidb_analyze_version = 1")
+	tk.MustExec("analyze table t index idx")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
+		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t")) // since fallback to ver2 path, should do samplerate adjustment
+	require.NoError(t, h.Update(is))
+	statsTblT = h.GetTableStats(tblT.Meta())
+	for _, idx := range statsTblT.Indices {
+		require.Equal(t, int64(2), idx.StatsVer)
+	}
+	tk.MustExec("analyze table t index")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead",
+		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t"))
+	require.NoError(t, h.Update(is))
+	statsTblT = h.GetTableStats(tblT.Meta())
+	for _, idx := range statsTblT.Indices {
+		require.Equal(t, int64(2), idx.StatsVer)
+	}
+	tk.MustExec("analyze table t ")
+	require.NoError(t, h.Update(is))
+	statsTblT = h.GetTableStats(tblT.Meta())
+	for _, col := range statsTblT.Columns {
+		require.Equal(t, int64(1), col.StatsVer)
+	}
+	for _, idx := range statsTblT.Indices {
+		require.Equal(t, int64(1), idx.StatsVer)
+	}
+}
+
 func TestFastAnalyzeOnVer2(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -116,7 +204,7 @@ func TestFastAnalyzeOnVer2(t *testing.T) {
 	tk.MustExec("insert into t values(1, 1), (1, 2), (1, 3)")
 	_, err := tk.Exec("analyze table t")
 	require.Error(t, err)
-	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently.", err.Error())
+	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently", err.Error())
 	tk.MustExec("set @@session.tidb_enable_fast_analyze = 0")
 	tk.MustExec("analyze table t")
 	is := dom.InfoSchema()
@@ -134,14 +222,14 @@ func TestFastAnalyzeOnVer2(t *testing.T) {
 	tk.MustExec("set @@session.tidb_enable_fast_analyze = 1")
 	err = tk.ExecToErr("analyze table t index idx")
 	require.Error(t, err)
-	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently.", err.Error())
+	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently", err.Error())
 	tk.MustExec("set @@session.tidb_analyze_version = 1")
 	_, err = tk.Exec("analyze table t index idx")
 	require.Error(t, err)
-	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1.", err.Error())
+	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1", err.Error())
 	_, err = tk.Exec("analyze table t index")
 	require.Error(t, err)
-	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1.", err.Error())
+	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1", err.Error())
 	tk.MustExec("analyze table t")
 	require.NoError(t, h.Update(is))
 	statsTblT = h.GetTableStats(tblT.Meta())
@@ -470,4 +558,70 @@ func hasPseudoStats(rows [][]interface{}) bool {
 		}
 	}
 	return false
+}
+
+// TestNotLoadedStatsOnAllNULLCol makes sure that stats on a column that only contains NULLs can be used even when it's
+// not loaded. This is reasonable because it makes no difference whether it's loaded or not.
+func TestNotLoadedStatsOnAllNULLCol(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	h := dom.StatsHandle()
+	oriLease := h.Lease()
+	h.SetLease(1000)
+	defer func() {
+		h.SetLease(oriLease)
+	}()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+	tk.MustExec("insert into t1 values(null), (null), (null), (null)")
+	tk.MustExec("insert into t2 values(null), (null)")
+	tk.MustExec("analyze table t1;")
+	tk.MustExec("analyze table t2;")
+
+	res := tk.MustQuery("explain format = 'brief' select * from t1 left join t2 on t1.a=t2.a order by t1.a, t2.a")
+	res.Check(testkit.Rows(
+		"Sort 4.00 root  test.t1.a, test.t2.a",
+		"└─HashJoin 4.00 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+		"  ├─TableReader(Build) 0.00 root  data:Selection",
+		// If we are not using stats on this column (which means we use pseudo estimation), the row count for the Selection will become 2.
+		"  │ └─Selection 0.00 cop[tikv]  not(isnull(test.t2.a))",
+		"  │   └─TableFullScan 2.00 cop[tikv] table:t2 keep order:false",
+		"  └─TableReader(Probe) 4.00 root  data:TableFullScan",
+		"    └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false"))
+
+	res = tk.MustQuery("explain format = 'brief' select * from t2 left join t1 on t1.a=t2.a order by t1.a, t2.a")
+	res.Check(testkit.Rows(
+		"Sort 2.00 root  test.t1.a, test.t2.a",
+		"└─HashJoin 2.00 root  left outer join, equal:[eq(test.t2.a, test.t1.a)]",
+		// If we are not using stats on this column, the build side will become t2 because of smaller row count.
+		"  ├─TableReader(Build) 0.00 root  data:Selection",
+		// If we are not using stats on this column, the row count for the Selection will become 4.
+		"  │ └─Selection 0.00 cop[tikv]  not(isnull(test.t1.a))",
+		"  │   └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false",
+		"  └─TableReader(Probe) 2.00 root  data:TableFullScan",
+		"    └─TableFullScan 2.00 cop[tikv] table:t2 keep order:false"))
+
+	res = tk.MustQuery("explain format = 'brief' select * from t1 right join t2 on t1.a=t2.a order by t1.a, t2.a")
+	res.Check(testkit.Rows(
+		"Sort 2.00 root  test.t1.a, test.t2.a",
+		"└─HashJoin 2.00 root  right outer join, equal:[eq(test.t1.a, test.t2.a)]",
+		"  ├─TableReader(Build) 0.00 root  data:Selection",
+		"  │ └─Selection 0.00 cop[tikv]  not(isnull(test.t1.a))",
+		"  │   └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false",
+		"  └─TableReader(Probe) 2.00 root  data:TableFullScan",
+		"    └─TableFullScan 2.00 cop[tikv] table:t2 keep order:false"))
+
+	res = tk.MustQuery("explain format = 'brief' select * from t2 right join t1 on t1.a=t2.a order by t1.a, t2.a")
+	res.Check(testkit.Rows(
+		"Sort 4.00 root  test.t1.a, test.t2.a",
+		"└─HashJoin 4.00 root  right outer join, equal:[eq(test.t2.a, test.t1.a)]",
+		"  ├─TableReader(Build) 0.00 root  data:Selection",
+		"  │ └─Selection 0.00 cop[tikv]  not(isnull(test.t2.a))",
+		"  │   └─TableFullScan 2.00 cop[tikv] table:t2 keep order:false",
+		"  └─TableReader(Probe) 4.00 root  data:TableFullScan",
+		"    └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false"))
 }

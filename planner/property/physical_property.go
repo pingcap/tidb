@@ -18,10 +18,12 @@ import (
 	"bytes"
 	"fmt"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
@@ -51,7 +53,24 @@ const (
 	BroadcastType
 	// HashType requires current task to shuffle its data according to some columns.
 	HashType
+	// SinglePartitionType requires all the task pass the data to one node (tidb/tiflash).
+	SinglePartitionType
 )
+
+// ToExchangeType generates ExchangeType from MPPPartitionType
+func (t MPPPartitionType) ToExchangeType() tipb.ExchangeType {
+	switch t {
+	case BroadcastType:
+		return tipb.ExchangeType_Broadcast
+	case HashType:
+		return tipb.ExchangeType_Hash
+	case SinglePartitionType:
+		return tipb.ExchangeType_PassThrough
+	default:
+		log.Warn("generate an exchange with any partition type, which is illegal.")
+		return tipb.ExchangeType_PassThrough
+	}
+}
 
 // MPPPartitionColumn is the column that will be used in MPP Hash Exchange
 type MPPPartitionColumn struct {
@@ -205,7 +224,7 @@ func (p *PhysicalProperty) AllColsFromSchema(schema *expression.Schema) bool {
 
 // IsFlashProp return true if this physical property is only allowed to generate flash related task
 func (p *PhysicalProperty) IsFlashProp() bool {
-	return p.TaskTp == CopTiFlashLocalReadTaskType || p.TaskTp == CopTiFlashGlobalReadTaskType || p.TaskTp == MppTaskType
+	return p.TaskTp == MppTaskType
 }
 
 // GetAllPossibleChildTaskTypes enumrates the possible types of tasks for children.

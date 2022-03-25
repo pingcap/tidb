@@ -70,14 +70,17 @@ type CopClient struct {
 }
 
 // Send builds the request and gets the coprocessor iterator response.
-func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool, eventCb trxevents.EventCallback) kv.Response {
+func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interface{}, option *kv.ClientSendOption) kv.Response {
+	eventCb := option.EventCb
+	enabledRateLimitAction := option.EnabledRateLimitAction
+	sessionMemTracker := option.SessionMemTracker
 	vars, ok := variables.(*tikv.Variables)
 	if !ok {
 		return copErrorResponse{errors.Errorf("unsupported variables:%+v", variables)}
 	}
 	if req.StoreType == kv.TiFlash && req.BatchCop {
 		logutil.BgLogger().Debug("send batch requests")
-		return c.sendBatch(ctx, req, vars)
+		return c.sendBatch(ctx, req, vars, option)
 	}
 	if req.Streaming && req.Paging {
 		return copErrorResponse{errors.New("streaming and paging are both on")}
@@ -137,14 +140,15 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 	if !it.req.Streaming {
 		ctx = context.WithValue(ctx, tikv.RPCCancellerCtxKey{}, it.rpcCancel)
 	}
-	it.open(ctx, enabledRateLimitAction)
+	it.open(ctx, enabledRateLimitAction, option.EnableCollectExecutionInfo)
 	return it
 }
 
 // copTask contains a related Region and KeyRange for a kv.Request.
 type copTask struct {
-	region tikv.RegionVerID
-	ranges *KeyRanges
+	region     tikv.RegionVerID
+	bucketsVer uint64
+	ranges     *KeyRanges
 
 	respChan  chan *copResponse
 	storeAddr string
@@ -154,6 +158,8 @@ type copTask struct {
 	eventCb    trxevents.EventCallback
 	paging     bool
 	pagingSize uint64
+
+	partitionIndex int64 // used by balanceBatchCopTask in PartitionTableScan
 }
 
 func (r *copTask) String() string {
@@ -177,7 +183,8 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 
 	rangesLen := ranges.Len()
 
-	locs, err := cache.SplitKeyRangesByLocations(bo, ranges)
+	// TODO(youjiali1995): is there any request type that needn't be splitted by buckets?
+	locs, err := cache.SplitKeyRangesByBuckets(bo, ranges)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -205,6 +212,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 			}
 			tasks = append(tasks, &copTask{
 				region:     loc.Location.Region,
+				bucketsVer: loc.getBucketVersion(),
 				ranges:     loc.Ranges.Slice(i, nextI),
 				respChan:   make(chan *copResponse, chanSize),
 				cmdType:    cmdType,
@@ -316,7 +324,7 @@ type copIteratorWorker struct {
 
 	replicaReadSeed uint32
 
-	actionOnExceed *rateLimitAction
+	enableCollectExecutionInfo bool
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -421,23 +429,23 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 }
 
 // open starts workers and sender goroutines.
-func (it *copIterator) open(ctx context.Context, enabledRateLimitAction bool) {
+func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableCollectExecutionInfo bool) {
 	taskCh := make(chan *copTask, 1)
 	it.wg.Add(it.concurrency)
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		worker := &copIteratorWorker{
-			taskCh:          taskCh,
-			wg:              &it.wg,
-			store:           it.store,
-			req:             it.req,
-			respChan:        it.respChan,
-			finishCh:        it.finishCh,
-			vars:            it.vars,
-			kvclient:        txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, &it.committedLocks, false),
-			memTracker:      it.memTracker,
-			replicaReadSeed: it.replicaReadSeed,
-			actionOnExceed:  it.actionOnExceed,
+			taskCh:                     taskCh,
+			wg:                         &it.wg,
+			store:                      it.store,
+			req:                        it.req,
+			respChan:                   it.respChan,
+			finishCh:                   it.finishCh,
+			vars:                       it.vars,
+			kvclient:                   txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, &it.committedLocks, false),
+			memTracker:                 it.memTracker,
+			replicaReadSeed:            it.replicaReadSeed,
+			enableCollectExecutionInfo: enableCollectExecutionInfo,
 		}
 		go worker.run(ctx)
 	}
@@ -926,6 +934,9 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 // if we're handling streaming coprocessor response, lastRange is the range of last
 // successful response, otherwise it's nil.
 func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, ch chan<- *copResponse, lastRange *coprocessor.KeyRange, costTime time.Duration) ([]*copTask, error) {
+	if ver := resp.pbResp.GetLatestBucketsVersion(); task.bucketsVer < ver {
+		worker.store.GetRegionCache().UpdateBucketsIfNeeded(task.region, ver)
+	}
 	if regionErr := resp.pbResp.GetRegionError(); regionErr != nil {
 		if rpcCtx != nil && task.storeType == kv.TiDB {
 			resp.err = errors.Errorf("error: %v", regionErr)
@@ -972,6 +983,9 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			zap.Uint64("regionID", task.region.GetID()),
 			zap.String("storeAddr", task.storeAddr),
 			zap.Error(err))
+		if strings.Contains(err.Error(), "write conflict") {
+			return nil, kv.ErrWriteConflict
+		}
 		return nil, errors.Trace(err)
 	}
 	// When the request is using streaming API, the `Range` is not nil.
@@ -980,46 +994,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	} else if task.ranges != nil && task.ranges.Len() > 0 {
 		resp.startKey = task.ranges.At(0).StartKey
 	}
-	if resp.detail == nil {
-		resp.detail = new(CopRuntimeStats)
-	}
-	resp.detail.Stats = worker.kvclient.Stats
-	worker.kvclient.Stats = nil
-	backoffTimes := bo.GetBackoffTimes()
-	resp.detail.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
-	resp.detail.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
-	resp.detail.BackoffTimes = make(map[string]int, len(backoffTimes))
-	for backoff := range backoffTimes {
-		resp.detail.BackoffTimes[backoff] = backoffTimes[backoff]
-		resp.detail.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
-	}
-	if rpcCtx != nil {
-		resp.detail.CalleeAddress = rpcCtx.Addr
-	}
+	worker.handleCollectExecutionInfo(bo, rpcCtx, resp)
 	resp.respTime = costTime
-	sd := &util.ScanDetail{}
-	td := util.TimeDetail{}
-	if pbDetails := resp.pbResp.ExecDetailsV2; pbDetails != nil {
-		// Take values in `ExecDetailsV2` first.
-		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
-			td.MergeFromTimeDetail(timeDetail)
-		}
-		if scanDetailV2 := pbDetails.ScanDetailV2; scanDetailV2 != nil {
-			sd.MergeFromScanDetailV2(scanDetailV2)
-		}
-	} else if pbDetails := resp.pbResp.ExecDetails; pbDetails != nil {
-		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
-			td.MergeFromTimeDetail(timeDetail)
-		}
-		if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
-			if scanDetail.Write != nil {
-				sd.ProcessedKeys = scanDetail.Write.Processed
-				sd.TotalKeys = scanDetail.Write.Total
-			}
-		}
-	}
-	resp.detail.ScanDetail = sd
-	resp.detail.TimeDetail = td
 	if resp.pbResp.IsCacheHit {
 		if cacheValue == nil {
 			return nil, errors.New("Internal error: received illegal TiKV response")
@@ -1048,6 +1024,58 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	}
 	worker.sendToRespCh(resp, ch, true)
 	return nil, nil
+}
+
+func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse) {
+	defer func() {
+		worker.kvclient.Stats = nil
+	}()
+	if !worker.enableCollectExecutionInfo {
+		return
+	}
+	failpoint.Inject("disable-collect-execution", func(val failpoint.Value) {
+		if val.(bool) {
+			panic("shouldn't reachable")
+		}
+	})
+	if resp.detail == nil {
+		resp.detail = new(CopRuntimeStats)
+	}
+	resp.detail.Stats = worker.kvclient.Stats
+	backoffTimes := bo.GetBackoffTimes()
+	resp.detail.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
+	resp.detail.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
+	resp.detail.BackoffTimes = make(map[string]int, len(backoffTimes))
+	for backoff := range backoffTimes {
+		resp.detail.BackoffTimes[backoff] = backoffTimes[backoff]
+		resp.detail.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
+	}
+	if rpcCtx != nil {
+		resp.detail.CalleeAddress = rpcCtx.Addr
+	}
+	sd := &util.ScanDetail{}
+	td := util.TimeDetail{}
+	if pbDetails := resp.pbResp.ExecDetailsV2; pbDetails != nil {
+		// Take values in `ExecDetailsV2` first.
+		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
+			td.MergeFromTimeDetail(timeDetail)
+		}
+		if scanDetailV2 := pbDetails.ScanDetailV2; scanDetailV2 != nil {
+			sd.MergeFromScanDetailV2(scanDetailV2)
+		}
+	} else if pbDetails := resp.pbResp.ExecDetails; pbDetails != nil {
+		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
+			td.MergeFromTimeDetail(timeDetail)
+		}
+		if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
+			if scanDetail.Write != nil {
+				sd.ProcessedKeys = scanDetail.Write.Processed
+				sd.TotalKeys = scanDetail.Write.Total
+			}
+		}
+	}
+	resp.detail.ScanDetail = sd
+	resp.detail.TimeDetail = td
 }
 
 // CopRuntimeStats contains execution detail information.
@@ -1322,6 +1350,8 @@ func isolationLevelToPB(level kv.IsoLevel) kvrpcpb.IsolationLevel {
 		return kvrpcpb.IsolationLevel_RC
 	case kv.SI:
 		return kvrpcpb.IsolationLevel_SI
+	case kv.RCCheckTS:
+		return kvrpcpb.IsolationLevel_RCCheckTS
 	default:
 		return kvrpcpb.IsolationLevel_SI
 	}

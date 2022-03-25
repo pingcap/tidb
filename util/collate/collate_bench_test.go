@@ -16,9 +16,8 @@ package collate
 
 import (
 	"math/rand"
-	"testing"
-
 	_ "net/http/pprof"
+	"testing"
 )
 
 const short = 2 << 4

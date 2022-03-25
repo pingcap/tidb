@@ -214,7 +214,16 @@ func FindColumnInfo(cols []*ColumnInfo, name string) *ColumnInfo {
 			return col
 		}
 	}
+	return nil
+}
 
+// FindColumnInfoByID finds ColumnInfo in cols by id.
+func FindColumnInfoByID(cols []*ColumnInfo, id int64) *ColumnInfo {
+	for _, col := range cols {
+		if col.ID == id {
+			return col
+		}
+	}
 	return nil
 }
 
@@ -224,6 +233,12 @@ const ExtraHandleID = -1
 
 // ExtraPidColID is the column ID of column which store the partitionID decoded in global index values.
 const ExtraPidColID = -2
+
+// ExtraPhysTblID is the column ID of column that should be filled in with the physical table id.
+// Primarily used for table partition dynamic prune mode, to return which partition (physical table id) the row came from.
+// Using a dedicated id for this, since in the future ExtraPidColID and ExtraPhysTblID may be used for the same request.
+// Must be after ExtraPidColID!
+const ExtraPhysTblID = -3
 
 const (
 	// TableInfoVersion0 means the table info version is 0.
@@ -265,6 +280,9 @@ var ExtraHandleName = NewCIStr("_tidb_rowid")
 
 // ExtraPartitionIdName is the name of ExtraPartitionId Column.
 var ExtraPartitionIdName = NewCIStr("_tidb_pid")
+
+// ExtraPhysTblIdName is the name of ExtraPhysTblID Column.
+var ExtraPhysTblIdName = NewCIStr("_tidb_tid")
 
 // TableInfo provides meta data describing a DB table.
 type TableInfo struct {
@@ -340,8 +358,7 @@ type TableInfo struct {
 
 	TempTableType        `json:"temp_table_type"`
 	TableCacheStatusType `json:"cache_table_status"`
-	PlacementPolicyRef   *PolicyRefInfo     `json:"policy_ref_info"`
-	DirectPlacementOpts  *PlacementSettings `json:"placement_settings"`
+	PlacementPolicyRef   *PolicyRefInfo `json:"policy_ref_info"`
 
 	// StatsOptions is used when do analyze/auto-analyze for each table
 	StatsOptions *StatsOptions `json:"stats_options"`
@@ -620,6 +637,17 @@ func (t *TableInfo) IsLocked() bool {
 	return t.Lock != nil && len(t.Lock.Sessions) > 0
 }
 
+// ClearPlacement clears all table and partitions' placement settings
+func (t *TableInfo) ClearPlacement() {
+	t.PlacementPolicyRef = nil
+	if t.Partition != nil {
+		for i := range t.Partition.Definitions {
+			def := &t.Partition.Definitions[i]
+			def.PlacementPolicyRef = nil
+		}
+	}
+}
+
 // NewExtraHandleColInfo mocks a column info for extra handle column.
 func NewExtraHandleColInfo() *ColumnInfo {
 	colInfo := &ColumnInfo{
@@ -638,6 +666,17 @@ func NewExtraPartitionIDColInfo() *ColumnInfo {
 	colInfo := &ColumnInfo{
 		ID:   ExtraPidColID,
 		Name: ExtraPartitionIdName,
+	}
+	colInfo.Tp = mysql.TypeLonglong
+	colInfo.Flen, colInfo.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	return colInfo
+}
+
+// NewExtraPhysTblIDColInfo mocks a column info for extra partition id column.
+func NewExtraPhysTblIDColInfo() *ColumnInfo {
+	colInfo := &ColumnInfo{
+		ID:   ExtraPhysTblID,
+		Name: ExtraPhysTblIdName,
 	}
 	colInfo.Tp = mysql.TypeLonglong
 	colInfo.Flen, colInfo.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
@@ -832,21 +871,10 @@ func (pi *PartitionInfo) GetNameByID(id int64) string {
 	// see https://github.com/pingcap/parser/pull/1072 for the benchmark.
 	for i := range definitions {
 		if id == definitions[i].ID {
-			return definitions[i].Name.L
+			return definitions[i].Name.O
 		}
 	}
 	return ""
-}
-
-// GetPlacementByID gets the partition placement by ID.
-func (pi *PartitionInfo) GetPlacementByID(id int64) (*PolicyRefInfo, *PlacementSettings) {
-	definitions := pi.Definitions
-	for i := range definitions {
-		if id == definitions[i].ID {
-			return definitions[i].PlacementPolicyRef, definitions[i].DirectPlacementOpts
-		}
-	}
-	return nil, nil
 }
 
 func (pi *PartitionInfo) GetStateByID(id int64) SchemaState {
@@ -899,13 +927,12 @@ type PartitionState struct {
 
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
-	ID                  int64              `json:"id"`
-	Name                CIStr              `json:"name"`
-	LessThan            []string           `json:"less_than"`
-	InValues            [][]string         `json:"in_values"`
-	PlacementPolicyRef  *PolicyRefInfo     `json:"policy_ref_info"`
-	DirectPlacementOpts *PlacementSettings `json:"placement_settings"`
-	Comment             string             `json:"comment,omitempty"`
+	ID                 int64          `json:"id"`
+	Name               CIStr          `json:"name"`
+	LessThan           []string       `json:"less_than"`
+	InValues           [][]string     `json:"in_values"`
+	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
+	Comment            string         `json:"comment,omitempty"`
 }
 
 // Clone clones ConstraintInfo.
@@ -1085,14 +1112,13 @@ func (fk *FKInfo) Clone() *FKInfo {
 
 // DBInfo provides meta data describing a DB.
 type DBInfo struct {
-	ID                  int64              `json:"id"`      // Database ID
-	Name                CIStr              `json:"db_name"` // DB name.
-	Charset             string             `json:"charset"`
-	Collate             string             `json:"collate"`
-	Tables              []*TableInfo       `json:"-"` // Tables in the DB.
-	State               SchemaState        `json:"state"`
-	PlacementPolicyRef  *PolicyRefInfo     `json:"policy_ref_info"`
-	DirectPlacementOpts *PlacementSettings `json:"placement_settings"`
+	ID                 int64          `json:"id"`      // Database ID
+	Name               CIStr          `json:"db_name"` // DB name.
+	Charset            string         `json:"charset"`
+	Collate            string         `json:"collate"`
+	Tables             []*TableInfo   `json:"-"` // Tables in the DB.
+	State              SchemaState    `json:"state"`
+	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
 }
 
 // Clone clones DBInfo.
@@ -1185,6 +1211,13 @@ type PolicyInfo struct {
 	State SchemaState `json:"state"`
 }
 
+func (p *PolicyInfo) Clone() *PolicyInfo {
+	var cloned PolicyInfo
+	cloned = *p
+	cloned.PlacementSettings = p.PlacementSettings.Clone()
+	return &cloned
+}
+
 func writeSettingItemToBuilder(sb *strings.Builder, item string) {
 	if sb.Len() != 0 {
 		sb.WriteString(" ")
@@ -1241,6 +1274,12 @@ func (p *PlacementSettings) String() string {
 	return sb.String()
 }
 
+func (p *PlacementSettings) Clone() *PlacementSettings {
+	var cloned PlacementSettings
+	cloned = *p
+	return &cloned
+}
+
 type StatsOptions struct {
 	*StatsWindowSettings
 	AutoRecalc   bool         `json:"auto_recalc"`
@@ -1278,13 +1317,13 @@ const (
 func (s ColumnChoice) String() string {
 	switch s {
 	case AllColumns:
-		return "AllColumns"
+		return "ALL"
 	case PredicateColumns:
-		return "PredicateColumns"
+		return "PREDICATE"
 	case ColumnList:
-		return "ColumnList"
+		return "LIST"
 	default:
-		return ""
+		return "DEFAULT"
 	}
 }
 

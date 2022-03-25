@@ -15,8 +15,6 @@
 package binloginfo
 
 import (
-	"math"
-	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,9 +26,10 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
@@ -45,8 +44,6 @@ func init() {
 // shared by all sessions.
 var pumpsClient *pumpcli.PumpsClient
 var pumpsClientLock sync.RWMutex
-var shardPat = regexp.MustCompile(`(?P<REPLACE>SHARD_ROW_ID_BITS\s*=\s*\d+\s*)`)
-var preSplitPat = regexp.MustCompile(`(?P<REPLACE>PRE_SPLIT_REGIONS\s*=\s*\d+\s*)`)
 
 // BinlogInfo contains binlog data and binlog client.
 type BinlogInfo struct {
@@ -283,7 +280,11 @@ func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, 
 		return
 	}
 
-	ddlQuery = AddSpecialComment(ddlQuery)
+	if commented, err := FormatAndAddTiDBSpecificComment(ddlQuery); err == nil {
+		ddlQuery = commented
+	} else {
+		logutil.BgLogger().Warn("Unable to add TiDB-specified comment for DDL query.", zap.String("DDL Query", ddlQuery), zap.Error(err))
+	}
 	info := &BinlogInfo{
 		Data: &binlog.Binlog{
 			Tp:             binlog.BinlogType_Prewrite,
@@ -294,71 +295,6 @@ func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, 
 		Client: client,
 	}
 	txn.SetOption(kv.BinlogInfo, info)
-}
-
-const specialPrefix = `/*T! `
-
-// AddSpecialComment uses to add comment for table option in DDL query.
-// Used by pingcap/ticdc.
-func AddSpecialComment(ddlQuery string) string {
-	if strings.Contains(ddlQuery, specialPrefix) || strings.Contains(ddlQuery, driver.SpecialCommentVersionPrefix) {
-		return ddlQuery
-	}
-	ddlQuery = addSpecialCommentByRegexps(ddlQuery, specialPrefix, shardPat, preSplitPat)
-	for featureID, pattern := range driver.FeatureIDPatterns {
-		ddlQuery = addSpecialCommentByRegexps(ddlQuery, driver.BuildSpecialCommentPrefix(featureID), pattern)
-	}
-	return ddlQuery
-}
-
-// addSpecialCommentByRegexps uses to add special comment for the worlds in the ddlQuery with match the regexps.
-// addSpecialCommentByRegexps will merge multi pattern regs to one special comment.
-func addSpecialCommentByRegexps(ddlQuery string, prefix string, regs ...*regexp.Regexp) string {
-	upperQuery := strings.ToUpper(ddlQuery)
-	var specialComments []string
-	minIdx := math.MaxInt64
-	for i := 0; i < len(regs); {
-		reg := regs[i]
-		locs := reg.FindStringSubmatchIndex(upperQuery)
-		ns := reg.SubexpNames()
-		var loc []int
-		if len(locs) > 0 {
-			for i, n := range ns {
-				if n == "REPLACE" {
-					loc = locs[i*2 : (i+1)*2]
-					break
-				}
-			}
-		}
-		if len(loc) < 2 {
-			i++
-			continue
-		}
-		specialComments = append(specialComments, ddlQuery[loc[0]:loc[1]])
-		if loc[0] < minIdx {
-			minIdx = loc[0]
-		}
-		ddlQuery = ddlQuery[:loc[0]] + ddlQuery[loc[1]:]
-		upperQuery = upperQuery[:loc[0]] + upperQuery[loc[1]:]
-	}
-	if minIdx != math.MaxInt64 {
-		query := ddlQuery[:minIdx] + prefix
-		for _, comment := range specialComments {
-			if query[len(query)-1] != ' ' {
-				query += " "
-			}
-			query += comment
-		}
-		if query[len(query)-1] != ' ' {
-			query += " "
-		}
-		query += "*/"
-		if len(ddlQuery[minIdx:]) > 0 {
-			return query + " " + ddlQuery[minIdx:]
-		}
-		return query
-	}
-	return ddlQuery
 }
 
 // MockPumpsClient creates a PumpsClient, used for test.
@@ -389,4 +325,29 @@ func MockPumpsClient(client binlog.PumpClient) *pumpcli.PumpsClient {
 	pCli.Selector.SetPumps([]*pumpcli.PumpStatus{pump})
 
 	return pCli
+}
+
+// FormatAndAddTiDBSpecificComment translate tidb feature syntax to tidb-specified comment.
+// ddlQuery can be multiple-statements separated by ';' and the statement can be empty.
+func FormatAndAddTiDBSpecificComment(ddlQuery string) (string, error) {
+	stmts, _, err := parser.New().ParseSQL(ddlQuery)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	var sb strings.Builder
+	// translate TiDB feature to special comment
+	restoreFlags := format.RestoreTiDBSpecialComment
+	// escape the keyword
+	restoreFlags |= format.RestoreNameBackQuotes
+	// upper case keyword
+	restoreFlags |= format.RestoreKeyWordUppercase
+	// wrap string with single quote
+	restoreFlags |= format.RestoreStringSingleQuotes
+	for _, stmt := range stmts {
+		if err = stmt.Restore(format.NewRestoreCtx(restoreFlags, &sb)); err != nil {
+			return "", errors.Trace(err)
+		}
+		sb.WriteString(";")
+	}
+	return sb.String(), nil
 }

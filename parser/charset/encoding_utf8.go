@@ -14,6 +14,7 @@
 package charset
 
 import (
+	"bytes"
 	"unicode/utf8"
 
 	"golang.org/x/text/encoding"
@@ -84,7 +85,7 @@ func (e *encodingUTF8) IsValid(src []byte) bool {
 }
 
 // Transform implements Encoding interface.
-func (e *encodingUTF8) Transform(dest, src []byte, op Op) ([]byte, error) {
+func (e *encodingUTF8) Transform(dest *bytes.Buffer, src []byte, op Op) ([]byte, error) {
 	if e.IsValid(src) {
 		return src, nil
 	}
@@ -127,7 +128,7 @@ func (e *encodingUTF8MB3Strict) Foreach(src []byte, op Op, fn func(srcCh, dstCh 
 }
 
 // Transform implements Encoding interface.
-func (e *encodingUTF8MB3Strict) Transform(dest, src []byte, op Op) ([]byte, error) {
+func (e *encodingUTF8MB3Strict) Transform(dest *bytes.Buffer, src []byte, op Op) ([]byte, error) {
 	if e.IsValid(src) {
 		return src, nil
 	}
