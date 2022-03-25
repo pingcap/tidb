@@ -303,10 +303,10 @@ timezone.*
     }
     ```
 
-    *Hint: On a partitioned table, use the `table(partition)` pattern as the table name, `test(p1)` for example:*
+    *Hint: On a partitioned table, use the `table(partition)` pattern as the table name, `t1(p1)` for example:*
 
     ```shell
-    $curl http://127.0.0.1:10080/mvcc/index/test(p1)/t1/idx/1\?a\=A
+    $curl http://127.0.0.1:10080/mvcc/index/test/t1(p1)/idx/1\?a\=A
     ```
 
    If the handle is clustered, also specify the primary key column values in the query string
