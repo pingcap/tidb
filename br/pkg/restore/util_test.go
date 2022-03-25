@@ -275,7 +275,7 @@ func TestPaginateScanRegion(t *testing.T) {
 
 	tc := NewTestClient(stores, regionMap, 0)
 	tc.InjectErr = true
-	_, err = restore.PaginateScanRegion(ctx, tc,  regions[1].Region.EndKey, regions[5].Region.EndKey, 3)
+	_, err = restore.PaginateScanRegion(ctx, tc, regions[1].Region.EndKey, regions[5].Region.EndKey, 3)
 	require.Error(t, err)
 	require.Regexp(t, ".*mock scan error.*", err.Error())
 
