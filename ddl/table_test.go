@@ -46,7 +46,8 @@ func testRenameTable(
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{oldSchemaID, tblInfo.Name, oldSchemaName},
 	}
-	require.NoError(t, d.doDDLJob(ctx, job))
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	require.NoError(t, d.DoDDLJob(ctx, job))
 
 	v := getSchemaVer(t, ctx)
 	tblInfo.State = model.StatePublic
@@ -65,7 +66,8 @@ func testRenameTables(
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{oldSchemaIDs, newSchemaIDs, newTableNames, oldTableIDs, oldSchemaNames},
 	}
-	require.NoError(t, d.doDDLJob(ctx, job))
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	require.NoError(t, d.DoDDLJob(ctx, job))
 
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: nil})
@@ -87,7 +89,8 @@ func testLockTable(t *testing.T, ctx sessionctx.Context, d *ddl, newSchemaID int
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{arg},
 	}
-	err := d.doDDLJob(ctx, job)
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)
@@ -125,7 +128,8 @@ func testTruncateTable(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *mod
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{newTableID},
 	}
-	err = d.doDDLJob(ctx, job)
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err = d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)
@@ -269,7 +273,8 @@ func testAlterCacheTable(t *testing.T, ctx sessionctx.Context, d *ddl, newSchema
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{},
 	}
-	err := d.doDDLJob(ctx, job)
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)
@@ -285,7 +290,8 @@ func testAlterNoCacheTable(t *testing.T, ctx sessionctx.Context, d *ddl, newSche
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{},
 	}
-	require.NoError(t, d.doDDLJob(ctx, job))
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	require.NoError(t, d.DoDDLJob(ctx, job))
 
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v})
@@ -391,7 +397,8 @@ func TestCreateTables(t *testing.T) {
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{infos},
 	}
-	err = d.doDDLJob(ctx, job)
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err = d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 
 	testGetTable(t, d, dbInfo.ID, genIDs[0])

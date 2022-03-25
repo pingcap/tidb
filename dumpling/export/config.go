@@ -45,6 +45,7 @@ const (
 	flagConsistency              = "consistency"
 	flagSnapshot                 = "snapshot"
 	flagNoViews                  = "no-views"
+	flagNoSequences              = "no-sequences"
 	flagSortByPk                 = "order-by-primary-key"
 	flagStatusAddr               = "status-addr"
 	flagRows                     = "rows"
@@ -79,10 +80,12 @@ const (
 // Config is the dump config for dumpling
 type Config struct {
 	storage.BackendOptions
+	ExtStorage storage.ExternalStorage `json:"-"`
 
 	AllowCleartextPasswords  bool
 	SortByPk                 bool
 	NoViews                  bool
+	NoSequences              bool
 	NoHeader                 bool
 	NoSchemas                bool
 	NoData                   bool
@@ -165,6 +168,7 @@ func DefaultConfig() *Config {
 		Snapshot:            "",
 		Consistency:         consistencyTypeAuto,
 		NoViews:             true,
+		NoSequences:         true,
 		Rows:                UnspecifiedSize,
 		Where:               "",
 		FileType:            "",
@@ -230,6 +234,7 @@ func (conf *Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagConsistency, consistencyTypeAuto, "Consistency level during dumping: {auto|none|flush|lock|snapshot}")
 	flags.String(flagSnapshot, "", "Snapshot position (uint64 or MySQL style string timestamp). Valid only when consistency=snapshot")
 	flags.BoolP(flagNoViews, "W", true, "Do not dump views")
+	flags.Bool(flagNoSequences, true, "Do not dump sequences")
 	flags.Bool(flagSortByPk, true, "Sort dump results by primary key through order by sql")
 	flags.String(flagStatusAddr, ":8281", "dumpling API server and pprof addr")
 	flags.Uint64P(flagRows, "r", UnspecifiedSize, "If specified, dumpling will split table into chunks and concurrently dump them to different files to improve efficiency. For TiDB v3.0+, specify this will make dumpling split table with each file one TiDB region(no matter how many rows is).\n"+
@@ -324,6 +329,10 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	conf.NoViews, err = flags.GetBool(flagNoViews)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.NoSequences, err = flags.GetBool(flagNoSequences)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -541,6 +550,9 @@ func ParseCompressType(compressType string) (storage.CompressType, error) {
 }
 
 func (conf *Config) createExternalStorage(ctx context.Context) (storage.ExternalStorage, error) {
+	if conf.ExtStorage != nil {
+		return conf.ExtStorage, nil
+	}
 	b, err := storage.ParseBackend(conf.OutputDirPath, &conf.BackendOptions)
 	if err != nil {
 		return nil, errors.Trace(err)
