@@ -32,11 +32,11 @@ type UniqueTableName struct {
 
 type DDLJobFilterRule func(ddlJob *model.Job) bool
 
-var incrementalRestoreActionBlacklist = []model.ActionType{
-	model.ActionSetTiFlashReplica,
-	model.ActionUpdateTiFlashReplicaStatus,
-	model.ActionLockTable,
-	model.ActionUnlockTable,
+var incrementalRestoreActionBlacklist = map[model.ActionType]struct{}{
+	model.ActionSetTiFlashReplica:          {},
+	model.ActionUpdateTiFlashReplicaStatus: {},
+	model.ActionLockTable:                  {},
+	model.ActionUnlockTable:                {},
 }
 
 // NewDB returns a new DB.
@@ -444,7 +444,7 @@ func FilterDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) (ds
 
 // DDLJobBlacklistRule rule for filter ddl job with type in blacklist.
 func DDLJobBlacklistRule(ddlJob *model.Job) bool {
-	return checkIsInActionList(ddlJob.Type, incrementalRestoreActionBlacklist)
+	return checkIsInActions(ddlJob.Type, incrementalRestoreActionBlacklist)
 }
 
 func getDatabases(tables []*metautil.Table) (dbs []*model.DBInfo) {
@@ -458,11 +458,7 @@ func getDatabases(tables []*metautil.Table) (dbs []*model.DBInfo) {
 	return
 }
 
-func checkIsInActionList(action model.ActionType, actionList []model.ActionType) bool {
-	for _, a := range actionList {
-		if action == a {
-			return true
-		}
-	}
-	return false
+func checkIsInActions(action model.ActionType, actions map[model.ActionType]struct{}) bool {
+	_, ok := actions[action]
+	return ok
 }
