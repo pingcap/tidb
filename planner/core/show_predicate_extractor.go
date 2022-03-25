@@ -27,6 +27,7 @@ import (
 var (
 	_ ShowPredicateExtractor = &ShowColumnsTableExtractor{}
 	_ ShowPredicateExtractor = &ShowTablesTableExtractor{}
+	_ ShowPredicateExtractor = &ShowVariablesExtractor{}
 )
 
 // ShowPredicateExtractor is used to extract some predicates from `PatternLikeExpr` clause
@@ -43,11 +44,16 @@ type ShowPredicateExtractor interface {
 	explainInfo() string
 }
 
-// ShowColumnsTableExtractor is used to extract some predicates of tables table.
-type ShowColumnsTableExtractor struct {
+// ShowBaseExtractor is the definition of base extractor for derived predicates.
+type ShowBaseExtractor struct {
 	Field string
 
 	FieldPatterns string
+}
+
+// ShowColumnsTableExtractor is used to extract some predicates of tables table.
+type ShowColumnsTableExtractor struct {
+	ShowBaseExtractor
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
@@ -98,7 +104,7 @@ func (e *ShowColumnsTableExtractor) explainInfo() string {
 
 // ShowTablesTableExtractor is used to extract some predicates of tables.
 type ShowTablesTableExtractor struct {
-	ShowColumnsTableExtractor
+	ShowBaseExtractor
 }
 
 // Extract implements the ShowTablesTableExtractor Extract interface
@@ -129,6 +135,49 @@ func (e *ShowTablesTableExtractor) explainInfo() string {
 
 	if len(e.FieldPatterns) > 0 {
 		r.WriteString(fmt.Sprintf("table_pattern:[%s], ", e.FieldPatterns))
+	}
+
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
+}
+
+// ShowVariablesExtractor is used to extract some predicates of variables.
+type ShowVariablesExtractor struct {
+	ShowBaseExtractor
+}
+
+// Extract implements the ShowVariablesExtractor Extract interface
+func (e *ShowVariablesExtractor) Extract(show *ast.ShowStmt) bool {
+	if show.Pattern != nil && show.Pattern.Pattern != nil {
+		pattern := show.Pattern
+		switch pattern.Pattern.(type) {
+		case *driver.ValueExpr:
+			// It is used in `SHOW SESSION VARIABLES LIKE `abc``.
+			ptn := pattern.Pattern.(*driver.ValueExpr).GetString()
+			patValue, patTypes := stringutil.CompilePattern(ptn, pattern.Escape)
+			if stringutil.IsExactMatch(patTypes) {
+				e.Field = strings.ToLower(string(patValue))
+				return true
+			}
+			e.FieldPatterns = strings.ToLower(string(patValue))
+			return true
+		}
+	}
+	return false
+}
+
+func (e *ShowVariablesExtractor) explainInfo() string {
+	r := new(bytes.Buffer)
+	if len(e.Field) > 0 {
+		r.WriteString(fmt.Sprintf("variable:[%s], ", e.Field))
+	}
+
+	if len(e.FieldPatterns) > 0 {
+		r.WriteString(fmt.Sprintf("variable_pattern:[%s], ", e.FieldPatterns))
 	}
 
 	// remove the last ", " in the message info

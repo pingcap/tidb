@@ -2984,6 +2984,14 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			return nil, ErrOptOnTemporaryTable.GenWithStackByArgs("show table regions")
 		}
 	}
+	if show.Tp == ast.ShowVariables {
+		var extractor ShowVariablesExtractor
+		if extractor.Extract(show) {
+			p.Extractor = &extractor
+			// Avoid building Selection.
+			show.Pattern = nil
+		}
+	}
 	schema, names := buildShowSchema(show, isView, isSequence)
 	p.SetSchema(schema)
 	p.names = names
