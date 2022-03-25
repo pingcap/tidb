@@ -41,136 +41,16 @@ const (
 var globalInnerTxnTsBox atomic.Value
 
 type innerTxnStartTsBox struct {
-	wg                  sync.WaitGroup
-	chanToStoreStartTS  chan uint64
-	chanToDeleteStartTS chan uint64
-
-	innerTxnTsBoxRun          atomic.Value
-	innerTxnTsBoxRoutineCount int32
-
 	innerTSLock        sync.Mutex
 	innerTxnStartTsMap map[uint64]uint64
-
-	// `storeInnerTxnStartTsLoop` and `deleteInnerTxnStartTsLoop` run asynchronously,
-	// It can't ensure `storeInnerTxnStartTsLoop` receives startTS before `deleteInnerTxnStartTsLoop`,
-	// though `RunInNewTxn`send startTS to `storeInnerTxnStartTsLoop` firstly. If `deleteInnerTxnStartTsLoop`
-	// recevied startTS before `storeInnerTxnStartTsLoop`, the `startTS` couldn't be deleted from `innerTxnStartTsMap`,
-	// and GC safepoint can't be advanced properly.
-	undeletedTsLock        sync.Mutex
-	chanToProcUndelStartTS chan uint64
-	undeletedStartTsMap    map[uint64]uint64
 }
 
 // InitInnerTxnStartTsBox initializes globalInnerTxnTsBox
 func InitInnerTxnStartTsBox() {
 	iTxnTsBox := &innerTxnStartTsBox{
-		chanToStoreStartTS:     make(chan uint64, chanBufferSize),
-		chanToDeleteStartTS:    make(chan uint64, chanBufferSize),
-		innerTxnStartTsMap:     make(map[uint64]uint64, chanBufferSize),
-		chanToProcUndelStartTS: make(chan uint64, undeletedStartTsBufferSize),
-		undeletedStartTsMap:    make(map[uint64]uint64, undeletedStartTsBufferSize),
+		innerTxnStartTsMap: make(map[uint64]uint64, chanBufferSize),
 	}
 	globalInnerTxnTsBox.Store(iTxnTsBox)
-	iTxnTsBox.wg.Add(3)
-	iTxnTsBox.innerTxnTsBoxRun.Store(true)
-	go iTxnTsBox.storeInnerTxnStartTsLoop()
-	go iTxnTsBox.deleteInnerTxnStartTsLoop()
-	go iTxnTsBox.processUndeletedStartTsLoop()
-}
-
-func (ib *innerTxnStartTsBox) resetGlobalInnerTxnTsBox() {
-	ib.innerTxnTsBoxRun.Store(false)
-}
-
-func (ib *innerTxnStartTsBox) isBoxRunning() bool {
-	return ib.innerTxnTsBoxRun.Load().(bool)
-}
-
-func (ib *innerTxnStartTsBox) storeInnerTxnStartTsLoop() {
-	logutil.BgLogger().Info("storeInnerTxnStartTsLoop started")
-	defer ib.wg.Done()
-	atomic.AddInt32(&ib.innerTxnTsBoxRoutineCount, 1)
-	for startTS := range ib.chanToStoreStartTS {
-		failpoint.Inject("mockDelayStoreInnerTxnStartTs", func() {
-			logutil.BgLogger().Info("Enable mockDelayStoreInnerTxnStartTs ...")
-			time.Sleep(100 * time.Millisecond)
-		})
-
-		ib.storeInnerTxnTS(startTS)
-	}
-	atomic.AddInt32(&ib.innerTxnTsBoxRoutineCount, -1)
-	logutil.BgLogger().Info("storeInnerTxnStartTsLoop exited")
-}
-
-func (ib *innerTxnStartTsBox) deleteInnerTxnStartTsLoop() {
-	logutil.BgLogger().Info("deleteInnerTxnStartTsLoop started")
-	defer ib.wg.Done()
-	atomic.AddInt32(&ib.innerTxnTsBoxRoutineCount, 1)
-	for startTS := range ib.chanToDeleteStartTS {
-		ib.deleteInnerTxnTS(startTS)
-	}
-	atomic.AddInt32(&ib.innerTxnTsBoxRoutineCount, -1)
-	logutil.BgLogger().Info("deleteInnerTxnStartTsLoop exited")
-}
-
-func (ib *innerTxnStartTsBox) processUndeletedStartTsLoop() {
-	logutil.BgLogger().Info("processUndeletedStartTsLoop started")
-	defer ib.wg.Done()
-	defer func() {
-		atomic.AddInt32(&ib.innerTxnTsBoxRoutineCount, -1)
-		logutil.BgLogger().Info("processUndeletedStartTsLoop exited")
-	}()
-
-	atomic.AddInt32(&ib.innerTxnTsBoxRoutineCount, 1)
-	ticker := time.NewTicker(time.Millisecond * 100)
-	defer ticker.Stop()
-	for {
-		select {
-		case startTS, ok := <-ib.chanToProcUndelStartTS:
-			if !ok {
-				return
-			}
-			ib.putToUndeletedTSMap(startTS)
-		case <-ticker.C:
-			ib.processUndeletedStartTS()
-		}
-	}
-}
-
-func (ib *innerTxnStartTsBox) processUndeletedStartTS() {
-	ib.undeletedTsLock.Lock()
-	for startTS := range ib.undeletedStartTsMap { // infinite loop ??
-		if ib.realDeleteInnerTxnTS(startTS) {
-			// modify the map when traverse it, refer to https://go.dev/doc/effective_go#for
-			delete(ib.undeletedStartTsMap, startTS)
-			logutil.BgLogger().Info("[processUndeletedStartTsLoop] processed an internal transaction start timestamp ",
-				zap.Uint64("startTS", startTS))
-		}
-	}
-	ib.undeletedTsLock.Unlock()
-}
-
-// close close chan chanToStoreStartTs and chanToDeleteStartTS
-func (ib *innerTxnStartTsBox) close() {
-	ib.resetGlobalInnerTxnTsBox()
-	close(ib.chanToStoreStartTS)
-	close(ib.chanToDeleteStartTS)
-	close(ib.chanToProcUndelStartTS)
-	ib.wg.Wait()
-}
-
-// CloseGlobalInnerTxnTsBox close chanels
-func CloseGlobalInnerTxnTsBox() {
-	logutil.BgLogger().Info("Begin to close GlobalInnerTxnTsBox")
-	ib := getGlobalInnerTxnTsBox()
-	if ib == nil {
-		return
-	}
-	if !ib.isBoxRunning() {
-		logutil.BgLogger().Info("GlobalInnerTxnTsBox is not running, doesn't need to close")
-		return
-	}
-	ib.close()
 }
 
 func getGlobalInnerTxnTsBox() *innerTxnStartTsBox {
@@ -189,16 +69,14 @@ func wrapStoreInterTxnTS(startTS uint64) {
 	if ib == nil {
 		return
 	}
-	if !ib.isBoxRunning() {
-		return
-	}
-	ib.chanToStoreStartTS <- startTS
+	ib.storeInnerTxnTS(startTS)
 }
 
 func (ib *innerTxnStartTsBox) storeInnerTxnTS(startTS uint64) {
 	ib.innerTSLock.Lock()
 	ib.innerTxnStartTsMap[startTS] = startTS
 	ib.innerTSLock.Unlock()
+
 }
 
 // wrapDeleteInterTxnTS delete the startTS from globalInnerTxnTsBox when the transaciotn is commted
@@ -208,33 +86,13 @@ func wrapDeleteInterTxnTS(startTS uint64) {
 	if ib == nil {
 		return
 	}
-	if !ib.isBoxRunning() {
-		return
-	}
-	ib.chanToDeleteStartTS <- startTS
+	ib.deleteInnerTxnTS(startTS)
 }
 
 func (ib *innerTxnStartTsBox) deleteInnerTxnTS(startTS uint64) {
-	deleted := ib.realDeleteInnerTxnTS(startTS)
-	if !deleted {
-		ib.chanToProcUndelStartTS <- startTS
-	}
-}
-
-func (ib *innerTxnStartTsBox) realDeleteInnerTxnTS(startTS uint64) bool {
 	ib.innerTSLock.Lock()
-	defer ib.innerTSLock.Unlock()
-	if _, ok := ib.innerTxnStartTsMap[startTS]; ok {
-		delete(ib.innerTxnStartTsMap, startTS)
-		return true
-	}
-	return false
-}
-
-func (ib *innerTxnStartTsBox) putToUndeletedTSMap(startTS uint64) {
-	ib.undeletedTsLock.Lock()
-	ib.undeletedStartTsMap[startTS] = startTS
-	ib.undeletedTsLock.Unlock()
+	delete(ib.innerTxnStartTsMap, startTS)
+	ib.innerTSLock.Unlock()
 }
 
 // WrapGetMinStartTs get the min StatTS between startTSLowerLimit and curMinStartTS in globalInnerTxnTsBox
@@ -243,9 +101,6 @@ func WrapGetMinStartTs(now time.Time, startTSLowerLimit uint64,
 	ib := getGlobalInnerTxnTsBox()
 	if ib == nil {
 		logutil.BgLogger().Info("Fail to get internal txn startTS, globalInnerTxnTsBox is nil")
-		return curMinStartTS
-	}
-	if !ib.isBoxRunning() {
 		return curMinStartTS
 	}
 	return ib.getMinStartTs(now, startTSLowerLimit, curMinStartTS)

@@ -745,7 +745,6 @@ func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain, gracefu
 	}
 	plugin.Shutdown(context.Background())
 	closeDomainAndStorage(storage, dom)
-	kv.CloseGlobalInnerTxnTsBox()
 	disk.CleanUp()
 	topsql.Close()
 }

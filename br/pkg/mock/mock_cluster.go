@@ -121,7 +121,6 @@ func (mock *Cluster) Stop() {
 	if mock.HttpServer != nil {
 		_ = mock.HttpServer.Close()
 	}
-	kv.CloseGlobalInnerTxnTsBox()
 }
 
 type configOverrider func(*mysql.Config)
