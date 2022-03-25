@@ -410,11 +410,6 @@ func (a *SpillDiskAction) GetPriority() int64 {
 	return memory.DefSpillPriority
 }
 
-// GetType implements ActionOnExceed
-func (a *SpillDiskAction) GetType() string {
-	return "spill_disk_action"
-}
-
 // WaitForTest waits all goroutine have gone.
 func (a *SpillDiskAction) WaitForTest() {
 	a.testWg.Wait()

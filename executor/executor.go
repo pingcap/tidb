@@ -174,11 +174,6 @@ func (a *globalPanicOnExceed) GetPriority() int64 {
 	return memory.DefPanicPriority
 }
 
-// GetType implements ActionOnExceed
-func (a *globalPanicOnExceed) GetType() string {
-	return "global_panic_on_exceed_action"
-}
-
 // base returns the baseExecutor of an executor, don't override this method!
 func (e *baseExecutor) base() *baseExecutor {
 	return e

@@ -65,6 +65,7 @@ import (
 	newTestkit "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -3992,7 +3993,7 @@ func (s *testSessionSuite2) TestSetEnableRateLimitAction(c *C) {
 	haveRateLimitAction := false
 	action := tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest()
 	for ; action != nil; action = action.GetFallback() {
-		if action.GetType() == "rate_limit_action" {
+		if action.GetPriority() == memory.DefRateLimitPriority {
 			haveRateLimitAction = true
 			break
 		}
@@ -4012,7 +4013,7 @@ func (s *testSessionSuite2) TestSetEnableRateLimitAction(c *C) {
 	haveRateLimitAction = false
 	action = tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest()
 	for ; action != nil; action = action.GetFallback() {
-		if action.GetType() == "rate_limit_action" {
+		if action.GetPriority() == memory.DefRateLimitPriority {
 			haveRateLimitAction = true
 			break
 		}

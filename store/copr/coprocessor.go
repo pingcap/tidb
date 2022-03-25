@@ -1276,11 +1276,6 @@ func (e *rateLimitAction) GetPriority() int64 {
 	return memory.DefRateLimitPriority
 }
 
-// GetType implements ActionOnExceed
-func (e *rateLimitAction) GetType() string {
-	return "rate_limit_action"
-}
-
 // destroyTokenIfNeeded will check the `exceed` flag after copWorker finished one task.
 // If the exceed flag is true and there is no token been destroyed before, one token will be destroyed,
 // or the token would be return back.

@@ -40,8 +40,6 @@ type ActionOnExceed interface {
 	GetFallback() ActionOnExceed
 	// GetPriority get the priority of the Action.
 	GetPriority() int64
-	// GetType gets the type of the Action
-	GetType() string
 }
 
 // BaseOOMAction manages the fallback action for all Action.
@@ -102,11 +100,6 @@ func (a *LogOnExceed) GetPriority() int64 {
 	return DefLogPriority
 }
 
-// GetType implements ActionOnExceed
-func (a *LogOnExceed) GetType() string {
-	return "log_on_exceed_action"
-}
-
 // PanicOnExceed panics when memory usage exceeds memory quota.
 type PanicOnExceed struct {
 	BaseOOMAction
@@ -139,11 +132,6 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 // GetPriority get the priority of the Action
 func (a *PanicOnExceed) GetPriority() int64 {
 	return DefPanicPriority
-}
-
-// GetType implements ActionOnExceed
-func (a *PanicOnExceed) GetType() string {
-	return "panic_on_exceed_action"
 }
 
 var (

@@ -1926,8 +1926,3 @@ func (a *AggSpillDiskAction) GetPriority() int64 {
 
 // SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
 func (a *AggSpillDiskAction) SetLogHook(hook func(uint64)) {}
-
-// GetType implements ActionOnExceed
-func (a *AggSpillDiskAction) GetType() string {
-	return "aggregation_spill_disk_action"
-}

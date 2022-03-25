@@ -139,11 +139,6 @@ func (a *mockAction) GetPriority() int64 {
 	return a.priority
 }
 
-// GetType implements ActionOnExceed
-func (a *mockAction) GetType() string {
-	return "mock_action"
-}
-
 func TestAttachTo(t *testing.T) {
 	oldParent := NewTracker(1, -1)
 	newParent := NewTracker(2, -1)
