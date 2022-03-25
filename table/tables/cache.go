@@ -16,6 +16,7 @@ package tables
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -42,8 +44,8 @@ type cachedTable struct {
 	cacheData atomic.Value
 	handle    StateRemote
 	totalSize int64
-
-	renewReadLease tokenLimit
+	// StateRemote is not thread-safe, this tokenLimit is used to keep only one visitor.
+	tokenLimit
 }
 
 type tokenLimit = chan struct{}
@@ -89,7 +91,7 @@ func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) k
 
 		if distance >= 0 && distance <= leaseDuration/2 || triggerFailpoint {
 			select {
-			case c.renewReadLease <- struct{}{}:
+			case c.tokenLimit <- struct{}{}:
 				go c.renewLease(ts, data, leaseDuration)
 			default:
 			}
@@ -102,8 +104,8 @@ func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) k
 // newCachedTable creates a new CachedTable Instance
 func newCachedTable(tbl *TableCommon) (table.Table, error) {
 	ret := &cachedTable{
-		TableCommon:    *tbl,
-		renewReadLease: make(chan struct{}, 1),
+		TableCommon: *tbl,
+		tokenLimit:  make(chan struct{}, 1),
 	}
 	return ret, nil
 }
@@ -166,7 +168,7 @@ func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage, lease uint64) 
 
 func (c *cachedTable) UpdateLockForRead(ctx context.Context, store kv.Storage, ts uint64, leaseDuration time.Duration) {
 	select {
-	case c.renewReadLease <- struct{}{}:
+	case c.tokenLimit <- struct{}{}:
 		go c.updateLockForRead(ctx, store, ts, leaseDuration)
 	default:
 		// There is a inflight calling already.
@@ -180,7 +182,7 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, store kv.Storage, t
 				zap.Reflect("r", r),
 				zap.Stack("stack trace"))
 		}
-		<-c.renewReadLease
+		<-c.tokenLimit
 	}()
 
 	// Load data from original table and the update lock information.
@@ -192,12 +194,14 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, store kv.Storage, t
 		return
 	}
 	if succ {
+		start := time.Now()
 		mb, startTS, totalSize, err := c.loadDataFromOriginalTable(store, lease)
 		if err != nil {
 			log.Info("load data from table", zap.Error(err))
 			return
 		}
 
+		fmt.Println("lock for read success, now load from table!!!!!!!!!!!!!!!!!!!!!!!!!!! takes:", time.Since(start))
 		c.cacheData.Store(&cacheData{
 			Start:     startTS,
 			Lease:     lease,
@@ -215,11 +219,11 @@ func (c *cachedTable) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	if atomic.LoadInt64(&c.totalSize) > cachedTableSizeLimit {
 		return nil, table.ErrOptOnCacheTable.GenWithStackByArgs("table too large")
 	}
-	txnCtxAddCachedTable(sctx, c.Meta().ID, c.handle)
+	txnCtxAddCachedTable(sctx, c.Meta().ID, c)
 	return c.TableCommon.AddRecord(sctx, r, opts...)
 }
 
-func txnCtxAddCachedTable(sctx sessionctx.Context, tid int64, handle StateRemote) {
+func txnCtxAddCachedTable(sctx sessionctx.Context, tid int64, handle *cachedTable) {
 	txnCtx := sctx.GetSessionVars().TxnCtx
 	if txnCtx.CachedTables == nil {
 		txnCtx.CachedTables = make(map[int64]interface{})
@@ -235,13 +239,13 @@ func (c *cachedTable) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	if atomic.LoadInt64(&c.totalSize) > cachedTableSizeLimit {
 		return table.ErrOptOnCacheTable.GenWithStackByArgs("table too large")
 	}
-	txnCtxAddCachedTable(sctx, c.Meta().ID, c.handle)
+	txnCtxAddCachedTable(sctx, c.Meta().ID, c)
 	return c.TableCommon.UpdateRecord(ctx, sctx, h, oldData, newData, touched)
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
 func (c *cachedTable) RemoveRecord(sctx sessionctx.Context, h kv.Handle, r []types.Datum) error {
-	txnCtxAddCachedTable(sctx, c.Meta().ID, c.handle)
+	txnCtxAddCachedTable(sctx, c.Meta().ID, c)
 	return c.TableCommon.RemoveRecord(sctx, h, r)
 }
 
@@ -249,7 +253,7 @@ func (c *cachedTable) RemoveRecord(sctx sessionctx.Context, h kv.Handle, r []typ
 var TestMockRenewLeaseABA2 chan struct{}
 
 func (c *cachedTable) renewLease(ts uint64, data *cacheData, leaseDuration time.Duration) {
-	defer func() { <-c.renewReadLease }()
+	defer func() { <-c.tokenLimit }()
 
 	failpoint.Inject("mockRenewLeaseABA2", func(_ failpoint.Value) {
 		<-TestMockRenewLeaseABA2
@@ -272,4 +276,56 @@ func (c *cachedTable) renewLease(ts uint64, data *cacheData, leaseDuration time.
 	failpoint.Inject("mockRenewLeaseABA2", func(_ failpoint.Value) {
 		TestMockRenewLeaseABA2 <- struct{}{}
 	})
+}
+
+func (c *cachedTable) WriteLockAndKeepAlive(ctx context.Context, ts uint64, exit chan struct{}, leasePtr *uint64, wg chan error) {
+	writeLockLease, err := c.lockForWrite(ctx, ts)
+	atomic.StoreUint64(leasePtr, writeLockLease)
+	wg <- err
+	if err != nil {
+		logutil.Logger(ctx).Warn("[cached table] lock for write lock fail", zap.Error(err))
+		return
+	}
+
+	t := time.NewTicker(cacheTableWriteLease)
+	defer t.Stop()
+	for {
+		select {
+		case <-t.C:
+			fmt.Println("??????????????????  run to renew lease??")
+			if err := c.renew(ctx, leasePtr); err != nil {
+				logutil.Logger(ctx).Warn("[cached table] renew write lock lease fail", zap.Error(err))
+				return
+			}
+		case <-exit:
+			return
+		}
+	}
+}
+
+func (c *cachedTable) renew(ctx context.Context, leasePtr *uint64) error {
+	oldLease := atomic.LoadUint64(leasePtr)
+	physicalTime := oracle.GetTimeFromTS(oldLease)
+	newLease := oracle.GoTimeToTS(physicalTime.Add(cacheTableWriteLease))
+
+	c.tokenLimit <- struct{}{}
+	defer func() { <-c.tokenLimit }()
+
+	succ, err := c.handle.RenewWriteLease(ctx, c.Meta().ID, newLease)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if succ {
+		atomic.StoreUint64(leasePtr, newLease)
+	}
+	return nil
+}
+
+const cacheTableWriteLease = 5 * time.Second
+
+func (c *cachedTable) lockForWrite(ctx context.Context, ts uint64) (uint64, error) {
+	c.tokenLimit <- struct{}{}
+	defer func() { <-c.tokenLimit }()
+
+	return c.handle.LockForWrite(ctx, c.Meta().ID, cacheTableWriteLease)
 }

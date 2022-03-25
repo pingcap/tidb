@@ -265,4 +265,6 @@ type CachedTable interface {
 	// UpdateLockForRead If you cannot meet the conditions of the read buffer,
 	// you need to update the lock information and read the data from the original table
 	UpdateLockForRead(ctx context.Context, store kv.Storage, ts uint64, leaseDuration time.Duration)
+
+	WriteLockAndKeepAlive(ctx context.Context, ts uint64, exit chan struct{}, leasePtr *uint64, wg chan error)
 }
