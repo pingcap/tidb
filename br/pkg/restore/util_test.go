@@ -10,6 +10,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
@@ -223,9 +224,18 @@ func (s *testRestoreUtilSuite) TestPaginateScanRegion(c *C) {
 
 	ctx := context.Background()
 	regionMap := make(map[uint64]*restore.RegionInfo)
+<<<<<<< HEAD
 	regions := []*restore.RegionInfo{}
 	batch, err := restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
 	c.Assert(err, ErrorMatches, ".*scan region return empty result.*")
+=======
+	var regions []*restore.RegionInfo
+	var batch []*restore.RegionInfo
+	_, err := restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
+	require.Error(t, err)
+	require.True(t, berrors.ErrPDBatchScanRegion.Equal(err))
+	require.Regexp(t, ".*scan region return empty result.*", err.Error())
+>>>>>>> 9129590f5... br: fix the missing retry for pd batch scan error (#33420)
 
 	regionMap, regions = makeRegions(1)
 	batch, err = restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
@@ -264,12 +274,31 @@ func (s *testRestoreUtilSuite) TestPaginateScanRegion(c *C) {
 	c.Assert(batch, DeepEquals, regions[1:2])
 
 	_, err = restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{2}, []byte{1}, 3)
+<<<<<<< HEAD
 	c.Assert(err, ErrorMatches, ".*startKey >= endKey.*")
+=======
+	require.Error(t, err)
+	require.True(t, berrors.ErrRestoreInvalidRange.Equal(err))
+	require.Regexp(t, ".*startKey >= endKey.*", err.Error())
+>>>>>>> 9129590f5... br: fix the missing retry for pd batch scan error (#33420)
+
+	tc := NewTestClient(stores, regionMap, 0)
+	tc.InjectErr = true
+	_, err = restore.PaginateScanRegion(ctx, tc, regions[1].Region.EndKey, regions[5].Region.EndKey, 3)
+	require.Error(t, err)
+	require.Regexp(t, ".*mock scan error.*", err.Error())
 
 	// make the regionMap losing some region, this will cause scan region check fails
 	delete(regionMap, uint64(3))
+<<<<<<< HEAD
 	_, err = restore.PaginateScanRegion(
 		ctx, NewTestClient(stores, regionMap, 0), regions[1].Region.EndKey, regions[5].Region.EndKey, 3)
 	c.Assert(err, ErrorMatches, ".*region endKey not equal to next region startKey.*")
+=======
+	_, err = restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), regions[1].Region.EndKey, regions[5].Region.EndKey, 3)
+	require.Error(t, err)
+	require.True(t, berrors.ErrPDBatchScanRegion.Equal(err))
+	require.Regexp(t, ".*region endKey not equal to next region startKey.*", err.Error())
+>>>>>>> 9129590f5... br: fix the missing retry for pd batch scan error (#33420)
 
 }
