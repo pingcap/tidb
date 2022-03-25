@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/noop"
@@ -62,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	tmock "github.com/pingcap/tidb/util/mock"
+	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
