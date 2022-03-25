@@ -239,6 +239,13 @@ resolve-lock-lite-threshold = 16
 [tikv-client.async-commit]
 keys-limit=123
 total-key-size-limit=1024
+[stmt-summary]
+enable=false
+enable-internal-query=true
+max-stmt-count=1000
+max-sql-length=1024
+refresh-interval=100
+history-size=100
 [experimental]
 allow-expression-index = true
 [isolation-read]
