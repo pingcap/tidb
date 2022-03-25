@@ -75,6 +75,21 @@ func TestShowSubquery(t *testing.T) {
 	))
 }
 
+func TestJoinOperatorRightAssociative(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1,10),(2,20)")
+	// make sure this join won't rewrite as left-associative join like (t0 join t1) join t2 when explicit parent existed.
+	// mysql will detect the t0.a is out of it's join parent scope and errors like ERROR 1054 (42S22): Unknown column 't0.a' in 'on clause'
+	err := tk.ExecToErr("select t1.* from t t0 cross join (t t1 join t t2 on 100=t0.a);")
+	require.Error(t, err)
+	require.EqualError(t, err, "[planner:1054]Unknown column 't0.a' in 'on clause'")
+}
+
 func TestPpdWithSetVar(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
