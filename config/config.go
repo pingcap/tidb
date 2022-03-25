@@ -782,23 +782,6 @@ func StoreGlobalConfig(config *Config) {
 }
 
 var deprecatedConfig = map[string]struct{}{
-<<<<<<< HEAD
-	"pessimistic-txn.ttl":              {},
-	"pessimistic-txn.enable":           {},
-	"log.file.log-rotate":              {},
-	"log.log-slow-query":               {},
-	"txn-local-latches":                {},
-	"txn-local-latches.enabled":        {},
-	"txn-local-latches.capacity":       {},
-	"performance.max-memory":           {},
-	"max-txn-time-use":                 {},
-	"experimental.allow-auto-random":   {},
-	"enable-redact-log":                {}, // use variable tidb_redact_log instead
-	"tikv-client.copr-cache.enable":    {},
-	"alter-primary-key":                {}, // use NONCLUSTERED keyword instead
-	"enable-streaming":                 {},
-	"performance.mem-profile-interval": {},
-=======
 	"pessimistic-txn.ttl":                {},
 	"pessimistic-txn.enable":             {},
 	"log.file.log-rotate":                {},
@@ -814,7 +797,6 @@ var deprecatedConfig = map[string]struct{}{
 	"alter-primary-key":                  {}, // use NONCLUSTERED keyword instead
 	"enable-streaming":                   {},
 	"performance.mem-profile-interval":   {},
-	"lower-case-table-names":             {},
 	"stmt-summary":                       {},
 	"stmt-summary.enable":                {},
 	"stmt-summary.enable-internal-query": {},
@@ -822,7 +804,6 @@ var deprecatedConfig = map[string]struct{}{
 	"stmt-summary.max-sql-length":        {},
 	"stmt-summary.refresh-interval":      {},
 	"stmt-summary.history-size":          {},
->>>>>>> 17408b432... config: be compatible with deprecated stmt-summary config items (#33449)
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
