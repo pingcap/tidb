@@ -567,12 +567,17 @@ func TestRegionConsistency(t *testing.T) {
 }
 
 type fakeRestorer struct {
+	mu sync.Mutex
+
 	errorInSplit  bool
 	splitRanges   []rtree.Range
 	restoredFiles []*backuppb.File
 }
 
 func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, rewriteRules *restore.RewriteRules, updateCh glue.Progress, isRawKv bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -587,6 +592,9 @@ func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, re
 }
 
 func (f *fakeRestorer) RestoreFiles(ctx context.Context, files []*backuppb.File, rewriteRules *restore.RewriteRules, updateCh glue.Progress) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
