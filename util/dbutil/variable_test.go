@@ -21,10 +21,10 @@ import (
 	. "github.com/pingcap/check"
 )
 
-func (*testDBSuite) TestShowGrants(c *C) {
+func TestShowGrants(t *testing.T) {
 	ctx := context.Background()
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	mockGrants := []string{
 		"GRANT ALL PRIVILEGES ON *.* TO 'root'@'localhost' WITH GRANT OPTION",
@@ -37,15 +37,15 @@ func (*testDBSuite) TestShowGrants(c *C) {
 	mock.ExpectQuery("SHOW GRANTS").WillReturnRows(rows)
 
 	grants, err := ShowGrants(ctx, db, "", "")
-	c.Assert(err, IsNil)
-	c.Assert(grants, DeepEquals, mockGrants)
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.NoError(t, err)
+	require.Equal(t, mockGrants, grants)
+	require.Nil(t, mock.ExpectationsWereMet())
 }
 
-func (*testDBSuite) TestShowGrantsWithRoles(c *C) {
+func TestShowGrantsWithRoles(t *testing.T) {
 	ctx := context.Background()
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	mockGrantsWithoutRoles := []string{
 		"GRANT USAGE ON *.* TO `u1`@`localhost`",
@@ -69,15 +69,15 @@ func (*testDBSuite) TestShowGrantsWithRoles(c *C) {
 	mock.ExpectQuery("SHOW GRANTS").WillReturnRows(rows2)
 
 	grants, err := ShowGrants(ctx, db, "", "")
-	c.Assert(err, IsNil)
-	c.Assert(grants, DeepEquals, mockGrantsWithRoles)
-	c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.NoError(t, err)
+	require.Equal(t, mockGrantsWithRoles, grants)
+	require.Nil(t, mock.ExpectationsWereMet())
 }
 
-func (*testDBSuite) TestShowGrantsPasswordMasked(c *C) {
+func TestShowGrantsPasswordMasked(t *testing.T) {
 	ctx := context.Background()
 	db, mock, err := sqlmock.New()
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	cases := []struct {
 		original string
@@ -107,9 +107,9 @@ func (*testDBSuite) TestShowGrantsPasswordMasked(c *C) {
 		mock.ExpectQuery("SHOW GRANTS").WillReturnRows(rows)
 
 		grants, err := ShowGrants(ctx, db, "", "")
-		c.Assert(err, IsNil)
+	require.NoError(t, err)
 		c.Assert(grants, HasLen, 1)
-		c.Assert(grants[0], DeepEquals, ca.expected)
-		c.Assert(mock.ExpectationsWereMet(), IsNil)
+	require.Equal(t, ca.expected, grants[0])
+	require.Nil(t, mock.ExpectationsWereMet())
 	}
 }

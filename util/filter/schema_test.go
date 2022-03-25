@@ -17,18 +17,10 @@ package filter
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
-func TestClient(t *testing.T) {
-	TestingT(t)
-}
-
-type testFilterSuite struct{}
-
-var _ = Suite(&testFilterSuite{})
-
-func (s *testFilterSuite) TestIsSystemSchema(c *C) {
+func TestIsSystemSchema(t *testing.T) {
 	cases := []struct {
 		name     string
 		expected bool
@@ -46,8 +38,8 @@ func (s *testFilterSuite) TestIsSystemSchema(c *C) {
 		{"INSPECTION_SCHEMA", true},
 	}
 
-	for _, t := range cases {
-		c.Assert(IsSystemSchema(t.name), Equals, t.expected, Commentf("schema name = %s", t.name))
+	for _, tt := range cases {
+		require.Equalf(t, tt.expected, "schema name = %s", tt.name, IsSystemSchema(tt.name))
 	}
 
 }
