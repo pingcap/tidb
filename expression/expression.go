@@ -950,7 +950,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 
 		// compare functions.
 		ast.LT, ast.LE, ast.EQ, ast.NE, ast.GE, ast.GT, ast.NullEQ, ast.In, ast.IsNull, ast.Like, ast.IsTruthWithoutNull, ast.IsTruthWithNull, ast.IsFalsity,
-		ast.Greatest, ast.Least, /* ast.Interval */
+		// ast.Greatest, ast.Least, ast.Interval
 
 		// arithmetical functions.
 		ast.PI, /* ast.Truncate */
@@ -968,10 +968,10 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.Case, ast.If, ast.Ifnull, ast.Coalesce,
 
 		// string functions.
-		ast.Bin, ast.Unhex, ast.Locate, ast.Ord, ast.Lpad, ast.Rpad,
-		ast.Trim, ast.FromBase64, ast.ToBase64, ast.Upper, ast.Lower, ast.InsertFunc,
-		ast.MakeSet, ast.SubstringIndex /* ast.Instr */, ast.Quote, ast.Oct,
-		ast.FindInSet, ast.Repeat,
+		// ast.Bin, ast.Unhex, ast.Locate, ast.Ord, ast.Lpad, ast.Rpad,
+		// ast.Trim, ast.FromBase64, ast.ToBase64, ast.Upper, ast.Lower, ast.InsertFunc,
+		// ast.MakeSet, ast.SubstringIndex, ast.Instr, ast.Quote, ast.Oct,
+		// ast.FindInSet, ast.Repeat,
 		ast.Length, ast.BitLength, ast.Concat, ast.ConcatWS, ast.Replace, ast.ASCII, ast.Hex,
 		ast.Reverse, ast.LTrim, ast.RTrim, ast.Strcmp, ast.Space, ast.Elt, ast.Field,
 		InternalFuncFromBinary, InternalFuncToBinary, ast.Mid, ast.Substring, ast.Substr, ast.CharLength,
