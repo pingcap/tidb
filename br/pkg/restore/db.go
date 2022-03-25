@@ -32,6 +32,13 @@ type UniqueTableName struct {
 
 type DDLJobFilterRule func(ddlJob *model.Job) bool
 
+var incrementalRestoreActionBlacklist = []model.ActionType{
+	model.ActionSetTiFlashReplica,
+	model.ActionUpdateTiFlashReplicaStatus,
+	model.ActionLockTable,
+	model.ActionUnlockTable,
+}
+
 // NewDB returns a new DB.
 func NewDB(g glue.Glue, store kv.Storage, policyMode string) (*DB, bool, error) {
 	se, err := g.CreateSession(store)
