@@ -448,7 +448,8 @@ func PaginateScanRegion(
 		regions = []*RegionInfo{}
 		scanStartKey := startKey
 		for {
-			batch, err := client.ScanRegions(ctx, scanStartKey, endKey, limit)
+			var batch []*RegionInfo
+			batch, err = client.ScanRegions(ctx, scanStartKey, endKey, limit)
 			if err != nil {
 				return errors.Trace(err)
 			}
