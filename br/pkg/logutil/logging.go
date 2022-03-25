@@ -100,7 +100,7 @@ func (t zapStreamBackupTaskInfo) MarshalLogObject(enc zapcore.ObjectEncoder) err
 	enc.AddString("taskName", t.Name)
 	enc.AddUint64("startTs", t.StartTs)
 	enc.AddUint64("endTS", t.EndTs)
-	enc.AddString("talbeFilter", strings.Join(t.TableFilter, ","))
+	enc.AddString("tableFilter", strings.Join(t.TableFilter, ","))
 	return nil
 }
 
