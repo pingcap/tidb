@@ -107,9 +107,9 @@ func TestShowGrantsPasswordMasked(t *testing.T) {
 		mock.ExpectQuery("SHOW GRANTS").WillReturnRows(rows)
 
 		grants, err := ShowGrants(ctx, db, "", "")
-	require.NoError(t, err)
+		require.NoError(t, err)
 		c.Assert(grants, HasLen, 1)
-	require.Equal(t, ca.expected, grants[0])
-	require.Nil(t, mock.ExpectationsWereMet())
+		require.Equal(t, ca.expected, grants[0])
+		require.Nil(t, mock.ExpectationsWereMet())
 	}
 }

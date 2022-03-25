@@ -47,7 +47,7 @@ func TestReplacePlaceholder(t *testing.T) {
 
 	for _, testCase := range testCases {
 		str := ReplacePlaceholder(testCase.originStr, testCase.args)
-	require.Equal(t, testCase.expectStr, str)
+		require.Equal(t, testCase.expectStr, str)
 	}
 
 }
@@ -77,7 +77,7 @@ func TestTableName(t *testing.T) {
 
 	for _, testCase := range testCases {
 		tableName := TableName(testCase.schema, testCase.table)
-	require.Equal(t, testCase.expectTableName, tableName)
+		require.Equal(t, testCase.expectTableName, tableName)
 	}
 }
 
@@ -102,7 +102,7 @@ func TestColumnName(t *testing.T) {
 
 	for _, testCase := range testCases {
 		colName := ColumnName(testCase.column)
-	require.Equal(t, testCase.expectColName, colName)
+		require.Equal(t, testCase.expectColName, colName)
 	}
 }
 
@@ -131,7 +131,7 @@ func TestIsIgnoreError(t *testing.T) {
 
 	for _, t := range cases {
 		c.Logf("err %v, expected %v", t.err, t.canIgnore)
-	require.Equal(t, t.canIgnore, ignoreError(t.err))
+		require.Equal(t, t.canIgnore, ignoreError(t.err))
 	}
 }
 
@@ -177,10 +177,10 @@ func TestGetParser(t *testing.T) {
 	for _, testCase := range testCases {
 		parser, err := getParser(testCase.sqlModeStr)
 		if testCase.hasErr {
-	require.Error(t, err)
+			require.Error(t, err)
 		} else {
-	require.NoError(t, err)
-	require.NotNil(t, parser)
+			require.NoError(t, err)
+			require.NotNil(t, parser)
 		}
 	}
 }
@@ -224,9 +224,9 @@ func TestAnalyzeValuesFromBuckets(t *testing.T) {
 	}
 	for _, ca := range cases {
 		val, err := AnalyzeValuesFromBuckets(ca.value, []*model.ColumnInfo{ca.col})
-	require.NoError(t, err)
+		require.NoError(t, err)
 		c.Assert(val, HasLen, 1)
-	require.Equal(t, ca.expect, val[0])
+		require.Equal(t, ca.expect, val[0])
 	}
 }
 
@@ -241,6 +241,6 @@ func TestFormatTimeZoneOffset(t *testing.T) {
 
 	for k, v := range cases {
 		offset := FormatTimeZoneOffset(v)
-	require.Equal(t, offset, k)
+		require.Equal(t, offset, k)
 	}
 }
