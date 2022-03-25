@@ -30,12 +30,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
-	"modernc.org/mathutil"
-
 	"github.com/pingcap/kvproto/pkg/metapb"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -53,6 +48,9 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
+	"modernc.org/mathutil"
 )
 
 const (

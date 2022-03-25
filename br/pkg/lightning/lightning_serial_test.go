@@ -22,12 +22,11 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
-	"github.com/stretchr/testify/require"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/stretchr/testify/require"
 )
 
 func TestInitEnv(t *testing.T) {
