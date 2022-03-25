@@ -41,5 +41,4 @@ func TestIsSystemSchema(t *testing.T) {
 	for _, tt := range cases {
 		require.Equalf(t, tt.expected, IsSystemSchema(tt.name), "schema name = %s", tt.name)
 	}
-
 }
