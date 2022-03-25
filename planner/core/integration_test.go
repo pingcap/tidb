@@ -2821,10 +2821,6 @@ func TestTimeScalarFunctionPushDownResult(t *testing.T) {
 			sql:      "select col1, Week(col1) from t where Week(col1)=Week('2022-03-24 01:02:03.040506');",
 		},
 		{
-			function: "YearWeek",
-			sql:      "select col1, YearWeek(col1) from t where YearWeek(col1)=YearWeek('2022-03-24 01:02:03.040506');",
-		},
-		{
 			function: "to_seconds",
 			sql:      "select col1, to_seconds(col1) from t where to_seconds(col1)=to_seconds('2022-03-24 01:02:03.040506');",
 		},
@@ -2906,10 +2902,6 @@ func TestNumberFunctionPushDown(t *testing.T) {
 			function: "acos",
 		},
 		{
-			sql:      "select b,tan(b) from t where tan(61)=tan(b)",
-			function: "tan",
-		},
-		{
 			sql:      "select b,atan(b) from t where atan(61)=atan(b)",
 			function: "atan",
 		},
@@ -2979,10 +2971,6 @@ func TestScalarFunctionPushDown(t *testing.T) {
 
 	rows[1][2] = "acos(cast(test.t.id, double BINARY))"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where acos(id);").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "tan(cast(test.t.id, double BINARY))"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where tan(id);").
 		CheckAt([]int{0, 3, 6}, rows)
 
 	rows[1][2] = "atan(cast(test.t.id, double BINARY))"
@@ -3059,10 +3047,6 @@ func TestScalarFunctionPushDown(t *testing.T) {
 
 	rows[1][2] = "week(test.t.d)"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where week(d)").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "yearweek(test.t.d)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where yearweek(d)").
 		CheckAt([]int{0, 3, 6}, rows)
 
 	rows[1][2] = "to_seconds(test.t.d)"
