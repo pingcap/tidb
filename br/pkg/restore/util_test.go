@@ -5,6 +5,7 @@ package restore_test
 import (
 	"context"
 	"encoding/binary"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -228,6 +229,7 @@ func TestPaginateScanRegion(t *testing.T) {
 	var batch []*restore.RegionInfo
 	_, err := restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{}, []byte{}, 3)
 	require.Error(t, err)
+	require.True(t, berrors.ErrPDBatchScanRegion.Equal(err))
 	require.Regexp(t, ".*scan region return empty result.*", err.Error())
 
 	regionMap, regions = makeRegions(1)
@@ -268,12 +270,14 @@ func TestPaginateScanRegion(t *testing.T) {
 
 	_, err = restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{2}, []byte{1}, 3)
 	require.Error(t, err)
+	require.True(t, berrors.ErrRestoreInvalidRange.Equal(err))
 	require.Regexp(t, ".*startKey >= endKey.*", err.Error())
 
 	// make the regionMap losing some region, this will cause scan region check fails
 	delete(regionMap, uint64(3))
 	_, err = restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), regions[1].Region.EndKey, regions[5].Region.EndKey, 3)
 	require.Error(t, err)
+	require.True(t, berrors.ErrPDBatchScanRegion.Equal(err))
 	require.Regexp(t, ".*region endKey not equal to next region startKey.*", err.Error())
 
 }
