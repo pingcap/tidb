@@ -442,6 +442,7 @@ func FilterDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) (ds
 	return
 }
 
+// DDLJobBlacklistRule rule for filter ddl job with type in blacklist.
 func DDLJobBlacklistRule(ddlJob *model.Job) bool {
 	return checkIsInActionList(ddlJob.Type, incrementalRestoreActionBlacklist)
 }
