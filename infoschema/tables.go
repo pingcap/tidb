@@ -1496,6 +1496,8 @@ const (
 	PrimaryConstraint = "PRIMARY"
 	// UniqueKeyType is the string constant of UNIQUE.
 	UniqueKeyType = "UNIQUE"
+	// ForeignKeyType is the string constant of Foreign Key.
+	ForeignKeyType = "FOREIGN KEY"
 )
 
 // ServerInfo represents the basic server information of single cluster component
