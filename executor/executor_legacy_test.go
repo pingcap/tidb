@@ -15,13 +15,11 @@
 package executor_test
 
 import (
-	"archive/zip"
 	"context"
 	"fmt"
 	"math"
 	"net"
 	"os"
-	"path/filepath"
 	"reflect"
 	"runtime"
 	"strconv"
@@ -82,7 +80,6 @@ import (
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tipb/go-tipb"
@@ -114,23 +111,17 @@ var _ = Suite(&testSuite8{&baseTestSuite{}})
 var _ = SerialSuites(&testRecoverTable{})
 var _ = SerialSuites(&testClusterTableSuite{})
 var _ = SerialSuites(&testSplitTable{&baseTestSuite{}})
-var _ = Suite(&testSuiteWithData{baseTestSuite: &baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite1{&baseTestSuite{}})
 var _ = SerialSuites(&testSlowQuery{&baseTestSuite{}})
 var _ = SerialSuites(&globalIndexSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testCoprCache{})
-var _ = SerialSuites(&testPrepareSuite{})
 var _ = SerialSuites(&testResourceTagSuite{&baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
 type testSuiteP2 struct{ *baseTestSuite }
 type testSplitTable struct{ *baseTestSuite }
-type testSuiteWithData struct {
-	*baseTestSuite
-	testData testutil.TestData
-}
 type testSlowQuery struct{ *baseTestSuite }
 type globalIndexSuite struct{ *baseTestSuite }
 type testSerialSuite struct{ *baseTestSuite }
@@ -139,7 +130,6 @@ type testCoprCache struct {
 	dom   *domain.Domain
 	cls   testutils.Cluster
 }
-type testPrepareSuite struct{ testData testutil.TestData }
 type testResourceTagSuite struct{ *baseTestSuite }
 
 // MockGC is used to make GC work in the test environment.
@@ -194,28 +184,6 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 	se.Close()
 	d.SetStatsUpdating(true)
 	s.domain = d
-}
-
-func (s *testSuiteWithData) SetUpSuite(c *C) {
-	s.baseTestSuite.SetUpSuite(c)
-	var err error
-	s.testData, err = testutil.LoadTestSuiteData("testdata", "executor_suite")
-	c.Assert(err, IsNil)
-}
-
-func (s *testSuiteWithData) TearDownSuite(c *C) {
-	s.baseTestSuite.TearDownSuite(c)
-	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
-}
-
-func (s *testPrepareSuite) SetUpSuite(c *C) {
-	var err error
-	s.testData, err = testutil.LoadTestSuiteData("testdata", "prepare_suite")
-	c.Assert(err, IsNil)
-}
-
-func (s *testPrepareSuite) TearDownSuite(c *C) {
-	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
 func (s *baseTestSuite) TearDownSuite(c *C) {
@@ -574,92 +542,8 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 		err = txn.Commit(context.Background())
 		require.NoError(t, err)
 		r := tk.MustQuery(selectSQL)
-		r.Check(testutil.RowsWithSep("|", tt.expected...))
+		r.Check(testkit.RowsWithSep("|", tt.expected...))
 		tk.MustExec(deleteSQL)
-	}
-}
-
-func (s *testSuiteWithData) TestSetOperation(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`use test`)
-	tk.MustExec(`drop table if exists t1, t2, t3`)
-	tk.MustExec(`create table t1(a int)`)
-	tk.MustExec(`create table t2 like t1`)
-	tk.MustExec(`create table t3 like t1`)
-	tk.MustExec(`insert into t1 values (1),(1),(2),(3),(null)`)
-	tk.MustExec(`insert into t2 values (1),(2),(null),(null)`)
-	tk.MustExec(`insert into t3 values (2),(3)`)
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-		Res  []string
-	}
-	s.testData.GetTestCases(c, &input, &output)
-	for i, tt := range input {
-		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
-			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
-		})
-		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
-	}
-}
-
-func (s *testSuiteWithData) TestSetOperationOnDiffColType(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`use test`)
-	tk.MustExec(`drop table if exists t1, t2, t3`)
-	tk.MustExec(`create table t1(a int, b int)`)
-	tk.MustExec(`create table t2(a int, b varchar(20))`)
-	tk.MustExec(`create table t3(a int, b decimal(30,10))`)
-	tk.MustExec(`insert into t1 values (1,1),(1,1),(2,2),(3,3),(null,null)`)
-	tk.MustExec(`insert into t2 values (1,'1'),(2,'2'),(null,null),(null,'3')`)
-	tk.MustExec(`insert into t3 values (2,2.1),(3,3)`)
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-		Res  []string
-	}
-	s.testData.GetTestCases(c, &input, &output)
-	for i, tt := range input {
-		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
-			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
-		})
-		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
-	}
-}
-
-// issue-23038: wrong key range of index scan for year column
-func (s *testSuiteWithData) TestIndexScanWithYearCol(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (c1 year(4), c2 int, key(c1));")
-	tk.MustExec("insert into t values(2001, 1);")
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-		Res  []string
-	}
-	s.testData.GetTestCases(c, &input, &output)
-	for i, tt := range input {
-		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
-			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
-		})
-		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
 	}
 }
 
@@ -3367,7 +3251,7 @@ func (s *testSuiteP2) TestAddDateBuiltinWithWarnings(c *C) {
 	tk.MustExec("set @@sql_mode='NO_ZERO_DATE'")
 	result := tk.MustQuery(`select date_add('2001-01-00', interval -2 hour);`)
 	result.Check(testkit.Rows("<nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '2001-01-00'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '2001-01-00'"))
 }
 
 func (s *testSuiteP2) TestStrToDateBuiltinWithWarnings(c *C) {
@@ -3581,19 +3465,6 @@ func (s *testSplitTable) TestClusterIndexShowTableRegion(c *C) {
 	// Check the region start key is int64.
 	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_", tbl.Meta().ID))
 	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_r_50000", tbl.Meta().ID))
-}
-
-func (s *testSuiteWithData) TestClusterIndexOuterJoinElimination(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
-	tk.MustExec("create table t (a int, b int, c int, primary key(a,b))")
-	rows := tk.MustQuery(`explain format = 'brief' select t1.a from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b`).Rows()
-	rowStrs := s.testData.ConvertRowsToStrings(rows)
-	for _, row := range rowStrs {
-		// outer join has been eliminated.
-		c.Assert(strings.Index(row, "Join"), Equals, -1)
-	}
 }
 
 func (s *testSplitTable) TestShowTableRegion(c *C) {
@@ -5025,9 +4896,9 @@ select 7;`
 			tk.MustExec(cas.prepareSQL)
 		}
 		sql := fmt.Sprintf(cas.sql, "slow_query")
-		tk.MustQuery(sql).Check(testutil.RowsWithSep("|", cas.result...))
+		tk.MustQuery(sql).Check(testkit.RowsWithSep("|", cas.result...))
 		sql = fmt.Sprintf(cas.sql, "cluster_slow_query")
-		tk.MustQuery(sql).Check(testutil.RowsWithSep("|", cas.result...))
+		tk.MustQuery(sql).Check(testkit.RowsWithSep("|", cas.result...))
 	}
 }
 
@@ -5122,7 +4993,7 @@ select 10;`
 		if len(cas.prepareSQL) > 0 {
 			tk.MustExec(cas.prepareSQL)
 		}
-		tk.MustQuery(cas.sql).Check(testutil.RowsWithSep("|", cas.result...))
+		tk.MustQuery(cas.sql).Check(testkit.RowsWithSep("|", cas.result...))
 	}
 }
 
@@ -6376,7 +6247,7 @@ func (s *testSerialSuite) TestDeadlocksTable(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("select * from information_schema.deadlocks").Check(
-		testutil.RowsWithSep("/",
+		testkit.RowsWithSep("/",
 			id1+"/2021-05-10 01:02:03.456789/0/101/aabbccdd/<nil>/6B31/<nil>/102",
 			id1+"/2021-05-10 01:02:03.456789/0/102/ddccbbaa/<nil>/6B32/<nil>/101",
 			id2+"/2022-06-11 02:03:04.987654/1/201/<nil>/<nil>/<nil>/<nil>/202",
@@ -6847,35 +6718,6 @@ func checkFileName(s string) bool {
 		}
 	}
 	return false
-}
-
-func (s *testSuiteWithData) TestPlanReplayerDumpSingle(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t_dump_single")
-	tk.MustExec("create table t_dump_single(a int)")
-	res := tk.MustQuery("plan replayer dump explain select * from t_dump_single")
-	path := s.testData.ConvertRowsToStrings(res.Rows())
-
-	reader, err := zip.OpenReader(filepath.Join(domain.GetPlanReplayerDirName(), path[0]))
-	c.Assert(err, IsNil)
-	defer reader.Close()
-	for _, file := range reader.File {
-		c.Assert(checkFileName(file.Name), IsTrue)
-	}
-}
-
-func (s *testSuiteWithData) TestDropColWithPrimaryKey(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id int primary key, c1 int, c2 int, c3 int, index idx1(c1, c2), index idx2(c3))")
-	tk.MustExec("set global tidb_enable_change_multi_schema = off")
-	tk.MustGetErrMsg("alter table t drop column id", "[ddl:8200]Unsupported drop integer primary key")
-	tk.MustGetErrMsg("alter table t drop column c1", "[ddl:8200]can't drop column c1 with composite index covered or Primary Key covered now")
-	tk.MustGetErrMsg("alter table t drop column c3", "[ddl:8200]can't drop column c3 with tidb_enable_change_multi_schema is disable")
-	tk.MustExec("set global tidb_enable_change_multi_schema = on")
-	tk.MustExec("alter table t drop column c3")
 }
 
 // Test invoke Close without invoking Open before for each operators.
