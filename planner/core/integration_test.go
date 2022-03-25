@@ -2912,10 +2912,6 @@ func TestScalarFunctionPushDown(t *testing.T) {
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where substring_index(c,c,1)").
 		CheckAt([]int{0, 3, 6}, rows)
 
-	rows[1][2] = "instr(test.t.c, test.t.c)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where instr(c,c)").
-		CheckAt([]int{0, 3, 6}, rows)
-
 	rows[1][2] = "quote(test.t.c)"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where quote(c)").
 		CheckAt([]int{0, 3, 6}, rows)
