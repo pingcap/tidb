@@ -525,7 +525,7 @@ func (w *jobContext) setDDLLabelForTopSQL(job *model.Job) {
 		return
 	}
 
-	if job.Query != w.cacheSQL {
+	if job.Query != w.cacheSQL || w.cacheDigest == nil{
 		w.cacheNormalizedSQL, w.cacheDigest = parser.NormalizeDigest(job.Query)
 		w.cacheSQL = job.Query
 	}
