@@ -51,6 +51,7 @@ type ShowBaseExtractor struct {
 	FieldPatterns string
 }
 
+// Extract implements the ShowPredicateExtractor interface.
 func (e *ShowBaseExtractor) Extract(show *ast.ShowStmt) bool {
 	if show.Pattern != nil && show.Pattern.Pattern != nil {
 		pattern := show.Pattern
