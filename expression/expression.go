@@ -975,7 +975,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.Length, ast.BitLength, ast.Concat, ast.ConcatWS, ast.Replace, ast.ASCII, ast.Hex,
 		ast.Reverse, ast.LTrim, ast.RTrim, ast.Strcmp, ast.Space, ast.Elt, ast.Field,
 		InternalFuncFromBinary, InternalFuncToBinary, ast.Mid, ast.Substring, ast.Substr, ast.CharLength,
-		/* ast.Left */
+		ast.Right, /* ast.Left */
 
 		// json functions.
 		ast.JSONType, ast.JSONExtract, ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
@@ -1007,11 +1007,6 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.UUID:
 
 		return true
-	case ast.Right:
-		switch sf.Function.PbCode() {
-		case tipb.ScalarFuncSig_Right:
-			return true
-		}
 	case ast.Round:
 		switch sf.Function.PbCode() {
 		case tipb.ScalarFuncSig_RoundReal, tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundDec:
