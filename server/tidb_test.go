@@ -2110,6 +2110,7 @@ func TestTopSQLStatementStats2(t *testing.T) {
 			require.True(t, item.SumDurationNs > 1, sqlStr)
 			foundMap[digest.SQLDigest] = sqlStr
 			tagChecker.checkExist(t, digest.SQLDigest, sqlStr)
+			// The special check uses to test the issue #33202.
 			if strings.Contains(strings.ToLower(sqlStr), "add index") {
 				tagChecker.checkReqExist(t, digest.SQLDigest, sqlStr, tikvrpc.CmdScan)
 			}
