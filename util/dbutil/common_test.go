@@ -16,16 +16,17 @@ package dbutil
 
 import (
 	"context"
+	"testing"
 	"time"
 
 	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-sql-driver/mysql"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	pmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
+	"github.com/stretchr/testify/require"
 )
 
 func TestReplacePlaceholder(t *testing.T) {
@@ -129,9 +130,9 @@ func TestIsIgnoreError(t *testing.T) {
 		{errors.New("unknown error"), false},
 	}
 
-	for _, t := range cases {
-		c.Logf("err %v, expected %v", t.err, t.canIgnore)
-		require.Equal(t, t.canIgnore, ignoreError(t.err))
+	for _, tt := range cases {
+		t.Logf("err %v, expected %v", tt.err, tt.canIgnore)
+		require.Equal(t, tt.canIgnore, ignoreError(tt.err))
 	}
 }
 
@@ -147,7 +148,7 @@ func TestDeleteRows(t *testing.T) {
 	require.NoError(t, err)
 
 	if err := mock.ExpectationsWereMet(); err != nil {
-		c.Errorf("there were unfulfilled expectations: %s", err)
+		t.Errorf("there were unfulfilled expectations: %s", err)
 	}
 }
 
@@ -225,7 +226,7 @@ func TestAnalyzeValuesFromBuckets(t *testing.T) {
 	for _, ca := range cases {
 		val, err := AnalyzeValuesFromBuckets(ca.value, []*model.ColumnInfo{ca.col})
 		require.NoError(t, err)
-		c.Assert(val, HasLen, 1)
+		require.Len(t, val, 1)
 		require.Equal(t, ca.expect, val[0])
 	}
 }

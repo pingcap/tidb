@@ -16,9 +16,10 @@ package dbutil
 
 import (
 	"context"
+	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
 func TestShowGrants(t *testing.T) {
@@ -108,7 +109,7 @@ func TestShowGrantsPasswordMasked(t *testing.T) {
 
 		grants, err := ShowGrants(ctx, db, "", "")
 		require.NoError(t, err)
-		c.Assert(grants, HasLen, 1)
+		require.Len(t, grants, 1)
 		require.Equal(t, ca.expected, grants[0])
 		require.Nil(t, mock.ExpectationsWereMet())
 	}
