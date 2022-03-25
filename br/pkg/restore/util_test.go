@@ -273,6 +273,12 @@ func TestPaginateScanRegion(t *testing.T) {
 	require.True(t, berrors.ErrRestoreInvalidRange.Equal(err))
 	require.Regexp(t, ".*startKey >= endKey.*", err.Error())
 
+	tc := NewTestClient(stores, regionMap, 0)
+	tc.InjectErr = true
+	_, err = restore.PaginateScanRegion(ctx, tc,  regions[1].Region.EndKey, regions[5].Region.EndKey, 3)
+	require.Error(t, err)
+	require.Regexp(t, ".*mock scan error.*", err.Error())
+
 	// make the regionMap losing some region, this will cause scan region check fails
 	delete(regionMap, uint64(3))
 	_, err = restore.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), regions[1].Region.EndKey, regions[5].Region.EndKey, 3)
