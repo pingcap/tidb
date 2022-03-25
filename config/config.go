@@ -1003,7 +1003,8 @@ func (c *Config) Valid() error {
 	}
 
 	// test log level
-	if err := zap.NewAtomicLevel().UnmarshalText([]byte(c.Log.Level)); err != nil {
+	l := zap.NewAtomicLevel()
+	if err := l.UnmarshalText([]byte(c.Log.Level)); err != nil {
 		return err
 	}
 
