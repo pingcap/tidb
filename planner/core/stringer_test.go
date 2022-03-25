@@ -56,7 +56,6 @@ func TestPlanStringer(t *testing.T) {
 			sql:  "desc t a",
 			plan: "Show(field:[a])",
 		},
-<<<<<<< HEAD
 		{
 			sql:  "show tables in test like 't'",
 			plan: "Show(table:[t])",
@@ -73,8 +72,6 @@ func TestPlanStringer(t *testing.T) {
 			sql:  "show tables in test like '%T%'",
 			plan: "Show(table_pattern:[(?i).*T.*])",
 		},
-=======
->>>>>>> 8effbbcd180ecb703575cfb54f4ab9b1e74a12ed
 	}
 	parser := parser.New()
 	for _, tt := range tests {
