@@ -591,7 +591,7 @@ type Plugin struct {
 }
 
 // StmtSummary is the config for statement summary.
-// 	It is deprecated, please use related SQL variables, keep it in config for compatibility.
+// It is deprecated, please use related SQL variables, keep it in config for compatibility.
 type StmtSummary struct {
 	// Enable statement summary or not.
 	Enable bool `toml:"enable" json:"enable"`
