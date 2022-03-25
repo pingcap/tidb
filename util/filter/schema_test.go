@@ -39,7 +39,7 @@ func TestIsSystemSchema(t *testing.T) {
 	}
 
 	for _, tt := range cases {
-		require.Equalf(t, tt.expected, "schema name = %s", tt.name, IsSystemSchema(tt.name))
+		require.Equalf(t, tt.expected, IsSystemSchema(tt.name), "schema name = %s", tt.name)
 	}
 
 }
