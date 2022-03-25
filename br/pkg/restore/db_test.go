@@ -311,46 +311,6 @@ func TestDB_ExecDDL(t *testing.T) {
 			Query:      "",
 			BinlogInfo: &model.HistoryInfo{},
 		},
-		{
-			Type:       model.ActionSetTiFlashReplica,
-			Query:      "CREATE DATABASE IF NOT EXISTS test_db;",
-			BinlogInfo: &model.HistoryInfo{},
-		},
-		{
-			Type:       model.ActionSetTiFlashReplica,
-			Query:      "",
-			BinlogInfo: &model.HistoryInfo{},
-		},
-		{
-			Type:       model.ActionUpdateTiFlashReplicaStatus,
-			Query:      "CREATE DATABASE IF NOT EXISTS test_db;",
-			BinlogInfo: &model.HistoryInfo{},
-		},
-		{
-			Type:       model.ActionUpdateTiFlashReplicaStatus,
-			Query:      "",
-			BinlogInfo: &model.HistoryInfo{},
-		},
-		{
-			Type:       model.ActionLockTable,
-			Query:      "CREATE DATABASE IF NOT EXISTS test_db;",
-			BinlogInfo: &model.HistoryInfo{},
-		},
-		{
-			Type:       model.ActionLockTable,
-			Query:      "",
-			BinlogInfo: &model.HistoryInfo{},
-		},
-		{
-			Type:       model.ActionUnlockTable,
-			Query:      "CREATE DATABASE IF NOT EXISTS test_db;",
-			BinlogInfo: &model.HistoryInfo{},
-		},
-		{
-			Type:       model.ActionUnlockTable,
-			Query:      "",
-			BinlogInfo: &model.HistoryInfo{},
-		},
 	}
 
 	db, _, err := restore.NewDB(gluetidb.New(), s.mock.Storage, "STRICT")
@@ -359,5 +319,52 @@ func TestDB_ExecDDL(t *testing.T) {
 	for _, ddlJob := range ddlJobs {
 		err = db.ExecDDL(ctx, ddlJob)
 		assert.NoError(t, err)
+	}
+}
+
+func TestFilterDDLJobByRules(t *testing.T) {
+	ddlJobs := []*model.Job{
+		{
+			Type: model.ActionSetTiFlashReplica,
+		},
+		{
+			Type: model.ActionAddPrimaryKey,
+		},
+		{
+			Type: model.ActionUpdateTiFlashReplicaStatus,
+		},
+		{
+			Type: model.ActionCreateTable,
+		},
+		{
+			Type: model.ActionLockTable,
+		},
+		{
+			Type: model.ActionAddIndex,
+		},
+		{
+			Type: model.ActionUnlockTable,
+		},
+		{
+			Type: model.ActionCreateSchema,
+		},
+		{
+			Type: model.ActionModifyColumn,
+		},
+	}
+
+	expectedDDLTypes := []model.ActionType{
+		model.ActionAddPrimaryKey,
+		model.ActionCreateTable,
+		model.ActionAddIndex,
+		model.ActionCreateSchema,
+		model.ActionModifyColumn,
+	}
+
+	ddlJobs = restore.FilterDDLJobByRules(ddlJobs, restore.DDLJobBlacklistRule)
+
+	require.Equal(t, len(expectedDDLTypes), len(ddlJobs))
+	for i, ddlJob := range ddlJobs {
+		assert.Equal(t, expectedDDLTypes[i], ddlJob.Type)
 	}
 }
