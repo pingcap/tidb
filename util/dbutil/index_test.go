@@ -15,11 +15,13 @@
 package dbutil
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/tidb/parser"
+	"github.com/stretchr/testify/require"
 )
 
-func (*testDBSuite) TestIndex(c *C) {
+func TestIndex(t *testing.T) {
 	testCases := []struct {
 		sql     string
 		indices []string
@@ -84,16 +86,16 @@ func (*testDBSuite) TestIndex(c *C) {
 
 	for _, testCase := range testCases {
 		tableInfo, err := GetTableInfoBySQL(testCase.sql, parser.New())
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		indices := FindAllIndex(tableInfo)
 		for i, index := range indices {
-			c.Assert(index.Name.O, Equals, testCase.indices[i])
+			require.Equal(t, testCase.indices[i], index.Name.O)
 		}
 
 		cols := FindAllColumnWithIndex(tableInfo)
 		for j, col := range cols {
-			c.Assert(col.Name.O, Equals, testCase.cols[j])
+			require.Equal(t, testCase.cols[j], col.Name.O)
 		}
 	}
 }

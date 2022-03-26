@@ -17,19 +17,11 @@ package router
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
 	selector "github.com/pingcap/tidb/util/table-rule-selector"
+	"github.com/stretchr/testify/require"
 )
 
-func TestClient(t *testing.T) {
-	TestingT(t)
-}
-
-var _ = Suite(&testRouterSuite{})
-
-type testRouterSuite struct{}
-
-func (t *testRouterSuite) TestRoute(c *C) {
+func TestRoute(t *testing.T) {
 	rules := []*TableRule{
 		{SchemaPattern: "Test_1_*", TablePattern: "abc*", TargetSchema: "t1", TargetTable: "abc"},
 		{SchemaPattern: "test_1_*", TablePattern: "test*", TargetSchema: "t2", TargetTable: "test"},
@@ -48,65 +40,65 @@ func (t *testRouterSuite) TestRoute(c *C) {
 
 	// initial table router
 	router, err := NewTableRouter(false, rules)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// insert duplicate rules
 	for _, rule := range rules {
 		err = router.AddRule(rule)
-		c.Assert(err, NotNil)
+		require.Error(t, err)
 	}
 	for _, cs := range cases {
 		schema, table, err := router.Route(cs[0], cs[1])
-		c.Assert(err, IsNil)
-		c.Assert(schema, Equals, cs[2])
-		c.Assert(table, Equals, cs[3])
+		require.NoError(t, err)
+		require.Equal(t, cs[2], schema)
+		require.Equal(t, cs[3], table)
 	}
 
 	// update rules
 	rules[0].TargetTable = "xxx"
 	cases[0][3] = "xxx"
 	err = router.UpdateRule(rules[0])
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	for _, cs := range cases {
 		schema, table, err := router.Route(cs[0], cs[1])
-		c.Assert(err, IsNil)
-		c.Assert(schema, Equals, cs[2])
-		c.Assert(table, Equals, cs[3])
+		require.NoError(t, err)
+		require.Equal(t, cs[2], schema)
+		require.Equal(t, cs[3], table)
 	}
 
 	// remove rule
 	err = router.RemoveRule(rules[0])
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	// remove not existing rule
 	err = router.RemoveRule(rules[0])
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	schema, table, err := router.Route(cases[0][0], cases[0][1])
-	c.Assert(err, IsNil)
-	c.Assert(schema, Equals, "test")
-	c.Assert(table, Equals, "abc1")
+	require.NoError(t, err)
+	require.Equal(t, "test", schema)
+	require.Equal(t, "abc1", table)
 	// delete removed rule
 	rules = rules[1:]
 	cases = cases[1:]
 
 	// mismatched
 	schema, _, err = router.Route("test_3_a", "")
-	c.Assert(err, IsNil)
-	c.Assert(schema, Equals, "test_3_a")
+	require.NoError(t, err)
+	require.Equal(t, "test_3_a", schema)
 	// test multiple schema level rules
 	err = router.AddRule(&TableRule{SchemaPattern: "test_*", TablePattern: "", TargetSchema: "error", TargetTable: ""})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, _, err = router.Route("test_1_a", "")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	// test multiple table level rules
 	err = router.AddRule(&TableRule{SchemaPattern: "test_1_*", TablePattern: "tes*", TargetSchema: "error", TargetTable: "error"})
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, _, err = router.Route("test_1_a", "test")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	// invalid rule
 	err = router.Selector.Insert("test_1_*", "abc*", "error", selector.Insert)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	_, _, err = router.Route("test_1_a", "abc")
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 
 	// Add/Update invalid table route rule
 	inValidRule := &TableRule{
@@ -114,12 +106,12 @@ func (t *testRouterSuite) TestRoute(c *C) {
 		TablePattern:  "abc*",
 	}
 	err = router.AddRule(inValidRule)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 	err = router.UpdateRule(inValidRule)
-	c.Assert(err, NotNil)
+	require.Error(t, err)
 }
 
-func (t *testRouterSuite) TestCaseSensitive(c *C) {
+func TestCaseSensitive(t *testing.T) {
 	// we test case insensitive in TestRoute
 	rules := []*TableRule{
 		{SchemaPattern: "Test_1_*", TablePattern: "abc*", TargetSchema: "t1", TargetTable: "abc"},
@@ -139,22 +131,22 @@ func (t *testRouterSuite) TestCaseSensitive(c *C) {
 
 	// initial table router
 	router, err := NewTableRouter(true, rules)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	// insert duplicate rules
 	for _, rule := range rules {
 		err = router.AddRule(rule)
-		c.Assert(err, NotNil)
+		require.Error(t, err)
 	}
 	for _, cs := range cases {
 		schema, table, err := router.Route(cs[0], cs[1])
-		c.Assert(err, IsNil)
-		c.Assert(schema, Equals, cs[2])
-		c.Assert(table, Equals, cs[3])
+		require.NoError(t, err)
+		require.Equal(t, cs[2], schema)
+		require.Equal(t, cs[3], table)
 	}
 }
 
-func (t *testRouterSuite) TestFetchExtendColumn(c *C) {
+func TestFetchExtendColumn(t *testing.T) {
 	rules := []*TableRule{
 		{
 			SchemaPattern: "schema*",
@@ -189,7 +181,7 @@ func (t *testRouterSuite) TestFetchExtendColumn(c *C) {
 		},
 	}
 	r, err := NewTableRouter(false, rules)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	expected := [][]string{
 		{"table_name", "schema_name", "source_name"},
 		{"t1", "s1", "s1s1"},
@@ -200,11 +192,11 @@ func (t *testRouterSuite) TestFetchExtendColumn(c *C) {
 
 	// table level rules have highest priority
 	extendCol, extendVal := r.FetchExtendColumn("schema_s1", "table_t1", "source_s1_s1")
-	c.Assert(expected[0], DeepEquals, extendCol)
-	c.Assert(expected[1], DeepEquals, extendVal)
+	require.Equal(t, expected[0], extendCol)
+	require.Equal(t, expected[1], extendVal)
 
 	// only schema rules
 	extendCol2, extendVal2 := r.FetchExtendColumn("schema_s2", "a_table_t2", "source_s2")
-	c.Assert(expected[2], DeepEquals, extendCol2)
-	c.Assert(expected[3], DeepEquals, extendVal2)
+	require.Equal(t, expected[2], extendCol2)
+	require.Equal(t, expected[3], extendVal2)
 }
