@@ -17,20 +17,12 @@ package dbutil
 import (
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/schemacmp"
+	"github.com/stretchr/testify/require"
 )
-
-func TestClient(t *testing.T) {
-	TestingT(t)
-}
-
-var _ = Suite(&testDBSuite{})
-
-type testDBSuite struct{}
 
 type testCase struct {
 	sql     string
@@ -41,7 +33,7 @@ type testCase struct {
 	fineCol bool
 }
 
-func (*testDBSuite) TestTable(c *C) {
+func TestTable(t *testing.T) {
 	testCases := []*testCase{
 		{
 			`
@@ -123,51 +115,51 @@ func (*testDBSuite) TestTable(c *C) {
 
 	for _, testCase := range testCases {
 		tableInfo, err := GetTableInfoBySQL(testCase.sql, parser.New())
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 		for i, column := range tableInfo.Columns {
-			c.Assert(testCase.columns[i], Equals, column.Name.O)
+			require.Equal(t, column.Name.O, testCase.columns[i])
 		}
 
-		c.Assert(tableInfo.Indices, HasLen, len(testCase.indexs))
+		require.Len(t, tableInfo.Indices, len(testCase.indexs))
 		for j, index := range tableInfo.Indices {
-			c.Assert(testCase.indexs[j], Equals, index.Name.O)
+			require.Equal(t, index.Name.O, testCase.indexs[j])
 			for k, indexCol := range index.Columns {
-				c.Assert(indexCol.Length, Equals, testCase.colLen[j][k])
+				require.Equal(t, testCase.colLen[j][k], indexCol.Length)
 			}
 		}
 
 		col := FindColumnByName(tableInfo.Columns, testCase.colName)
-		c.Assert(testCase.fineCol, Equals, col != nil)
+		require.Equal(t, col != nil, testCase.fineCol)
 	}
 }
 
-func (*testDBSuite) TestTableStructEqual(c *C) {
+func TestTableStructEqual(t *testing.T) {
 	createTableSQL1 := "CREATE TABLE `test`.`atest` (`id` int(24), `name` varchar(24), `birthday` datetime, `update_time` time, `money` decimal(20,2), primary key(`id`))"
 	tableInfo1, err := GetTableInfoBySQL(createTableSQL1, parser.New())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	createTableSQL2 := "CREATE TABLE `test`.`atest` (`id` int(24) NOT NULL, `name` varchar(24), `birthday` datetime, `update_time` time, `money` decimal(20,2), primary key(`id`))"
 	tableInfo2, err := GetTableInfoBySQL(createTableSQL2, parser.New())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	createTableSQL3 := `CREATE TABLE "test"."atest" ("id" int(24), "name" varchar(24), "birthday" datetime, "update_time" time, "money" decimal(20,2), unique key("id"))`
 	p := parser.New()
 	p.SetSQLMode(mysql.ModeANSIQuotes)
 	tableInfo3, err := GetTableInfoBySQL(createTableSQL3, p)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	equal, _ := EqualTableInfo(tableInfo1, tableInfo2)
-	c.Assert(equal, Equals, true)
+	require.Equal(t, true, equal)
 
 	equal, _ = EqualTableInfo(tableInfo1, tableInfo3)
-	c.Assert(equal, Equals, false)
+	require.Equal(t, false, equal)
 }
 
-func (*testDBSuite) TestSchemacmpEncode(c *C) {
+func TestSchemacmpEncode(t *testing.T) {
 	createTableSQL := "CREATE TABLE `test`.`atest` (`id` int(24), primary key(`id`))"
 	tableInfo, err := GetTableInfoBySQL(createTableSQL, parser.New())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	table := schemacmp.Encode(tableInfo)
-	c.Assert(table.String(), Equals, "CREATE TABLE `tbl`(`id` INT(24) NOT NULL, PRIMARY KEY (`id`)) CHARSET UTF8MB4 COLLATE UTF8MB4_BIN")
+	require.Equal(t, "CREATE TABLE `tbl`(`id` INT(24) NOT NULL, PRIMARY KEY (`id`)) CHARSET UTF8MB4 COLLATE UTF8MB4_BIN", table.String())
 }

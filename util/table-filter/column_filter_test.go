@@ -19,15 +19,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	. "github.com/pingcap/check"
-	"github.com/stretchr/testify/require"
-
 	filter "github.com/pingcap/tidb/util/table-filter"
+	"github.com/stretchr/testify/require"
 )
-
-type columnFilterSuite struct{}
-
-var _ = Suite(&columnFilterSuite{})
 
 func TestMatchColumns(t *testing.T) {
 	cases := []struct {
