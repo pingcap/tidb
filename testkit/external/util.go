@@ -15,6 +15,7 @@
 package external
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -52,4 +53,20 @@ func GetModifyColumn(t *testing.T, tk *testkit.TestKit, db, tbl, colName string,
 		}
 	}
 	return nil
+}
+
+// GetIndexID is used to get the index ID from full qualified name.
+func GetIndexID(t *testing.T, tk *testkit.TestKit, dbName, tblName, idxName string) int64 {
+	is := domain.GetDomain(tk.Session()).InfoSchema()
+	tt, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
+	require.NoError(t, err)
+
+	for _, idx := range tt.Indices() {
+		if idx.Meta().Name.L == idxName {
+			return idx.Meta().ID
+		}
+	}
+
+	require.FailNow(t, fmt.Sprintf("index %s not found(db: %s, tbl: %s)", idxName, dbName, tblName))
+	return -1
 }

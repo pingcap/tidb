@@ -1083,8 +1083,18 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// DayOfWeek
+	function, err = NewFunction(mock.NewContext(), ast.DayOfWeek, types.NewFieldType(mysql.TypeDatetime), datetimeColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	// DayOfMonth
 	function, err = NewFunction(mock.NewContext(), ast.DayOfMonth, types.NewFieldType(mysql.TypeDatetime), datetimeColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// DayOfYear
+	function, err = NewFunction(mock.NewContext(), ast.DayOfYear, types.NewFieldType(mysql.TypeDatetime), datetimeColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -1232,16 +1242,6 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			args:         []Expression{stringColumn},
 		},
 		{
-			functionName: ast.Right,
-			retType:      types.NewFieldType(mysql.TypeString),
-			args:         []Expression{stringColumn, intColumn},
-		},
-		{
-			functionName: ast.Left,
-			retType:      types.NewFieldType(mysql.TypeString),
-			args:         []Expression{stringColumn, intColumn},
-		},
-		{
 			functionName: ast.Sin,
 			retType:      types.NewFieldType(mysql.TypeDouble),
 			args:         []Expression{intColumn},
@@ -1258,11 +1258,6 @@ func TestExprPushDownToTiKV(t *testing.T) {
 		},
 		{
 			functionName: ast.Acos,
-			retType:      types.NewFieldType(mysql.TypeDouble),
-			args:         []Expression{intColumn},
-		},
-		{
-			functionName: ast.Tan,
 			retType:      types.NewFieldType(mysql.TypeDouble),
 			args:         []Expression{intColumn},
 		},
@@ -1327,97 +1322,12 @@ func TestExprPushDownToTiKV(t *testing.T) {
 		//	args:         []Expression{intColumn, intColumn},
 		//},
 		{
-			functionName: ast.Bin,
-			retType:      types.NewFieldType(mysql.TypeString),
-			args:         []Expression{intColumn},
-		},
-		{
-			functionName: ast.Unhex,
-			retType:      types.NewFieldType(mysql.TypeString),
-			args:         []Expression{stringColumn},
-		},
-		{
-			functionName: ast.Locate,
-			retType:      types.NewFieldType(mysql.TypeInt24),
-			args:         []Expression{stringColumn, stringColumn},
-		},
-		{
-			functionName: ast.Ord,
-			retType:      types.NewFieldType(mysql.TypeInt24),
-			args:         []Expression{stringColumn},
-		},
-		{
-			functionName: ast.Lpad,
-			retType:      types.NewFieldType(mysql.TypeString),
-			args:         []Expression{stringColumn, intColumn, stringColumn},
-		},
-		{
-			functionName: ast.Rpad,
-			retType:      types.NewFieldType(mysql.TypeString),
-			args:         []Expression{stringColumn, intColumn, stringColumn},
-		},
-		{
-			functionName: ast.Trim,
-			retType:      types.NewFieldType(mysql.TypeString),
-			args:         []Expression{stringColumn},
-		},
-		{
-			functionName: ast.FromBase64,
-			retType:      types.NewFieldType(mysql.TypeString),
-			args:         []Expression{stringColumn},
-		},
-		{
-			functionName: ast.ToBase64,
-			retType:      types.NewFieldType(mysql.TypeString),
-			args:         []Expression{stringColumn},
-		},
-		{
-			functionName: ast.MakeSet,
-			retType:      types.NewFieldType(mysql.TypeString),
-			args:         []Expression{intColumn, stringColumn},
-		},
-		{
-			functionName: ast.SubstringIndex,
-			retType:      types.NewFieldType(mysql.TypeString),
-			args:         []Expression{stringColumn, stringColumn, intColumn},
-		},
-		{
-			functionName: ast.Instr,
-			retType:      types.NewFieldType(mysql.TypeInt24),
-			args:         []Expression{stringColumn, stringColumn},
-		},
-		{
-			functionName: ast.Quote,
-			retType:      types.NewFieldType(mysql.TypeString),
-			args:         []Expression{stringColumn},
-		},
-		{
-			functionName: ast.Oct,
-			retType:      types.NewFieldType(mysql.TypeString),
-			args:         []Expression{intColumn},
-		},
-		{
-			functionName: ast.FindInSet,
-			retType:      types.NewFieldType(mysql.TypeInt24),
-			args:         []Expression{stringColumn, stringColumn},
-		},
-		{
-			functionName: ast.Repeat,
-			retType:      types.NewFieldType(mysql.TypeString),
-			args:         []Expression{stringColumn, intColumn},
-		},
-		{
 			functionName: ast.Date,
 			retType:      types.NewFieldType(mysql.TypeDate),
 			args:         []Expression{dateColumn},
 		},
 		{
 			functionName: ast.Week,
-			retType:      types.NewFieldType(mysql.TypeDate),
-			args:         []Expression{dateColumn},
-		},
-		{
-			functionName: ast.YearWeek,
 			retType:      types.NewFieldType(mysql.TypeDate),
 			args:         []Expression{dateColumn},
 		},
@@ -1430,31 +1340,6 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			functionName: ast.DateDiff,
 			retType:      types.NewFieldType(mysql.TypeDate),
 			args:         []Expression{dateColumn, dateColumn},
-		},
-		{
-			functionName: ast.Lower,
-			retType:      types.NewFieldType(mysql.TypeString),
-			args:         []Expression{stringColumn},
-		},
-		{
-			functionName: ast.InsertFunc,
-			retType:      types.NewFieldType(mysql.TypeString),
-			args:         []Expression{stringColumn, intColumn, intColumn, stringColumn},
-		},
-		{
-			functionName: ast.Greatest,
-			retType:      types.NewFieldType(mysql.TypeInt24),
-			args:         []Expression{intColumn, intColumn},
-		},
-		{
-			functionName: ast.Least,
-			retType:      types.NewFieldType(mysql.TypeInt24),
-			args:         []Expression{intColumn, intColumn},
-		},
-		{
-			functionName: ast.Upper,
-			retType:      types.NewFieldType(mysql.TypeString),
-			args:         []Expression{stringColumn},
 		},
 		{
 			functionName: ast.Mod,
@@ -1478,7 +1363,7 @@ func TestExprOnlyPushDownToTiKV(t *testing.T) {
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
 
-	function, err := NewFunction(mock.NewContext(), "dayofyear", types.NewFieldType(mysql.TypeLonglong), genColumn(mysql.TypeDatetime, 1))
+	function, err := NewFunction(mock.NewContext(), "weekofyear", types.NewFieldType(mysql.TypeLonglong), genColumn(mysql.TypeDatetime, 1))
 	require.NoError(t, err)
 	var exprs = make([]Expression, 0)
 	exprs = append(exprs, function)
