@@ -17,14 +17,13 @@ import (
 	"github.com/docker/go-units"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
-	"github.com/pingcap/tidb-tools/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/util"
+	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
-
-	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/version"
 )
 
 const (
@@ -616,7 +615,7 @@ func registerTLSConfig(conf *Config) error {
 				return errors.Trace(err)
 			}
 		}
-		tlsConfig, err = utils.ToTLSConfigWithVerifyByRawbytes(conf.Security.SSLCABytes,
+		tlsConfig, err = util.ToTLSConfigWithVerifyByRawbytes(conf.Security.SSLCABytes,
 			conf.Security.SSLCertBytes, conf.Security.SSLKEYBytes, []string{})
 		if err != nil {
 			return errors.Trace(err)
