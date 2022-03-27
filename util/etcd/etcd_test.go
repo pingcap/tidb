@@ -19,9 +19,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/check"
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/tests/v3/integration"
 )
@@ -32,18 +31,10 @@ var (
 	ctx             context.Context
 )
 
-func TestClient(t *testing.T) {
+func TestCreate(t *testing.T) {
 	integration.BeforeTest(t)
 	ctx, etcdCli, etcdMockCluster = testSetup(t)
 	defer etcdMockCluster.Terminate(t)
-	TestingT(t)
-}
-
-var _ = Suite(&testEtcdSuite{})
-
-type testEtcdSuite struct{}
-
-func (t *testEtcdSuite) TestCreate(c *C) {
 	etcdClient := etcdMockCluster.RandClient()
 
 	key := "binlogcreate/testkey"
@@ -51,88 +42,103 @@ func (t *testEtcdSuite) TestCreate(c *C) {
 
 	// verify that kv pair is empty before set
 	getResp, err := etcdClient.KV.Get(ctx, key)
-	c.Assert(err, IsNil)
-	c.Assert(getResp.Kvs, HasLen, 0)
+	require.NoError(t, err)
+	require.Len(t, getResp.Kvs, 0)
 
 	_, err = etcdCli.Create(ctx, key, obj, nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	getResp, err = etcdClient.KV.Get(ctx, key)
-	c.Assert(err, IsNil)
-	c.Assert(getResp.Kvs, HasLen, 1)
+	require.NoError(t, err)
+	require.Len(t, getResp.Kvs, 1)
 }
 
-func (t *testEtcdSuite) TestCreateWithTTL(c *C) {
+func TestCreateWithTTL(t *testing.T) {
+	integration.BeforeTest(t)
+	ctx, etcdCli, etcdMockCluster = testSetup(t)
+	defer etcdMockCluster.Terminate(t)
 	key := "binlogttl/ttlkey"
 	obj := "ttltest"
 
 	lcr, err := etcdCli.client.Lease.Grant(ctx, 1)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	opts := []clientv3.OpOption{clientv3.WithLease(lcr.ID)}
 
 	_, err = etcdCli.Create(ctx, key, obj, opts)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	time.Sleep(2 * time.Second)
 	_, _, err = etcdCli.Get(ctx, key)
-	c.Assert(errors.IsNotFound(err), IsTrue)
+	require.True(t, errors.IsNotFound(err))
 }
 
-func (t *testEtcdSuite) TestCreateWithKeyExist(c *C) {
+func TestCreateWithKeyExist(t *testing.T) {
+	integration.BeforeTest(t)
+	ctx, etcdCli, etcdMockCluster = testSetup(t)
+	defer etcdMockCluster.Terminate(t)
 	obj := "existtest"
 	key := "binlogexist/exist"
 
 	etcdClient := etcdMockCluster.RandClient()
 	_, err := etcdClient.KV.Put(ctx, key, obj, nil...)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	_, err = etcdCli.Create(ctx, key, obj, nil)
-	c.Assert(errors.IsAlreadyExists(err), IsTrue)
+	require.True(t, errors.IsAlreadyExists(err))
 }
 
-func (t *testEtcdSuite) TestUpdate(c *C) {
+func TestUpdate(t *testing.T) {
+	integration.BeforeTest(t)
+	ctx, etcdCli, etcdMockCluster = testSetup(t)
+	defer etcdMockCluster.Terminate(t)
 	obj1 := "updatetest"
 	obj2 := "updatetest2"
 	key := "binlogupdate/updatekey"
 
 	lcr, err := etcdCli.client.Lease.Grant(ctx, 2)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	opts := []clientv3.OpOption{clientv3.WithLease(lcr.ID)}
 	revision0, err := etcdCli.Create(ctx, key, obj1, opts)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	res, revision1, err := etcdCli.Get(ctx, key)
-	c.Assert(err, IsNil)
-	c.Assert(string(res), Equals, obj1)
-	c.Assert(revision0, Equals, revision1)
+	require.NoError(t, err)
+	require.Equal(t, obj1, string(res))
+	require.Equal(t, revision1, revision0)
 
 	time.Sleep(time.Second)
 
 	err = etcdCli.Update(ctx, key, obj2, 3)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	time.Sleep(2 * time.Second)
 
 	// the new revision should greater than the old
 	res, revision2, err := etcdCli.Get(ctx, key)
-	c.Assert(err, IsNil)
-	c.Assert(string(res), Equals, obj2)
-	c.Assert(revision2, check.Greater, revision1)
+	require.NoError(t, err)
+	require.Equal(t, obj2, string(res))
+	require.Greater(t, revision2, revision1)
 
 	time.Sleep(2 * time.Second)
 	_, _, err = etcdCli.Get(ctx, key)
-	c.Assert(errors.IsNotFound(err), IsTrue)
+	require.True(t, errors.IsNotFound(err))
 }
 
-func (t *testEtcdSuite) TestUpdateOrCreate(c *C) {
+func TestUpdateOrCreate(t *testing.T) {
+	integration.BeforeTest(t)
+	ctx, etcdCli, etcdMockCluster = testSetup(t)
+	defer etcdMockCluster.Terminate(t)
 	obj := "updatetest"
 	key := "binlogupdatecreate/updatekey"
 	err := etcdCli.UpdateOrCreate(ctx, key, obj, 3)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 }
 
-func (t *testEtcdSuite) TestList(c *C) {
+func TestList(t *testing.T) {
+	integration.BeforeTest(t)
+	ctx, etcdCli, etcdMockCluster = testSetup(t)
+	defer etcdMockCluster.Terminate(t)
 	key := "binloglist/testkey"
 
 	k1 := key + "/level1"
@@ -141,61 +147,67 @@ func (t *testEtcdSuite) TestList(c *C) {
 	k11 := key + "/level1/level1"
 
 	revision1, err := etcdCli.Create(ctx, k1, k1, nil)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	revision2, err := etcdCli.Create(ctx, k2, k2, nil)
-	c.Assert(err, IsNil)
-	c.Assert(revision2 > revision1, IsTrue)
+	require.NoError(t, err)
+	require.True(t, revision2 > revision1)
 
 	revision3, err := etcdCli.Create(ctx, k3, k3, nil)
-	c.Assert(err, IsNil)
-	c.Assert(revision3 > revision2, IsTrue)
+	require.NoError(t, err)
+	require.True(t, revision3 > revision2)
 
 	revision4, err := etcdCli.Create(ctx, k11, k11, nil)
-	c.Assert(err, IsNil)
-	c.Assert(revision4 > revision3, IsTrue)
+	require.NoError(t, err)
+	require.True(t, revision4 > revision3)
 
 	root, revision5, err := etcdCli.List(ctx, key)
-	c.Assert(err, IsNil)
-	c.Assert(string(root.Childs["level1"].Value), Equals, k1)
-	c.Assert(string(root.Childs["level1"].Childs["level1"].Value), Equals, k11)
-	c.Assert(string(root.Childs["level2"].Value), Equals, k2)
-	c.Assert(string(root.Childs["level3"].Value), Equals, k3)
+	require.NoError(t, err)
+	require.Equal(t, k1, string(root.Childs["level1"].Value))
+	require.Equal(t, k11, string(root.Childs["level1"].Childs["level1"].Value))
+	require.Equal(t, k2, string(root.Childs["level2"].Value))
+	require.Equal(t, k3, string(root.Childs["level3"].Value))
 
 	// the revision of list should equal to the latest update's revision
 	_, revision6, err := etcdCli.Get(ctx, k11)
-	c.Assert(err, IsNil)
-	c.Assert(revision5, Equals, revision6)
+	require.NoError(t, err)
+	require.Equal(t, revision6, revision5)
 }
 
-func (t *testEtcdSuite) TestDelete(c *C) {
+func TestDelete(t *testing.T) {
+	integration.BeforeTest(t)
+	ctx, etcdCli, etcdMockCluster = testSetup(t)
+	defer etcdMockCluster.Terminate(t)
 	key := "binlogdelete/testkey"
 	keys := []string{key + "/level1", key + "/level2", key + "/level1" + "/level1"}
 	for _, k := range keys {
 		_, err := etcdCli.Create(ctx, k, k, nil)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 
 	root, _, err := etcdCli.List(ctx, key)
-	c.Assert(err, IsNil)
-	c.Assert(root.Childs, HasLen, 2)
+	require.NoError(t, err)
+	require.Len(t, root.Childs, 2)
 
 	err = etcdCli.Delete(ctx, keys[1], false)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	root, _, err = etcdCli.List(ctx, key)
-	c.Assert(err, IsNil)
-	c.Assert(root.Childs, HasLen, 1)
+	require.NoError(t, err)
+	require.Len(t, root.Childs, 1)
 
 	err = etcdCli.Delete(ctx, key, true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	root, _, err = etcdCli.List(ctx, key)
-	c.Assert(err, IsNil)
-	c.Assert(root.Childs, HasLen, 0)
+	require.NoError(t, err)
+	require.Len(t, root.Childs, 0)
 }
 
-func (t *testEtcdSuite) TestDoTxn(c *C) {
+func TestDoTxn(t *testing.T) {
+	integration.BeforeTest(t)
+	ctx, etcdCli, etcdMockCluster = testSetup(t)
+	defer etcdMockCluster.Terminate(t)
 	// case1: create two keys in one transaction
 	ops := []*Operation{
 		{
@@ -209,17 +221,17 @@ func (t *testEtcdSuite) TestDoTxn(c *C) {
 		},
 	}
 	revision, err := etcdCli.DoTxn(context.Background(), ops)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	value1, revision1, err := etcdCli.Get(context.Background(), "test1")
-	c.Assert(err, IsNil)
-	c.Assert(string(value1), Equals, "1")
-	c.Assert(revision1, Equals, revision)
+	require.NoError(t, err)
+	require.Equal(t, "1", string(value1))
+	require.Equal(t, revision, revision1)
 
 	value2, revision2, err := etcdCli.Get(context.Background(), "test2")
-	c.Assert(err, IsNil)
-	c.Assert(string(value2), Equals, "2")
-	c.Assert(revision2, Equals, revision)
+	require.NoError(t, err)
+	require.Equal(t, "2", string(value2))
+	require.Equal(t, revision, revision2)
 
 	// case2: delete, update and create in one transaction
 	ops = []*Operation{
@@ -238,20 +250,20 @@ func (t *testEtcdSuite) TestDoTxn(c *C) {
 	}
 
 	revision, err = etcdCli.DoTxn(context.Background(), ops)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	_, _, err = etcdCli.Get(context.Background(), "test1")
-	c.Assert(err, ErrorMatches, ".* not found")
+	require.Regexp(t, ".* not found", err)
 
 	value2, revision2, err = etcdCli.Get(context.Background(), "test2")
-	c.Assert(err, IsNil)
-	c.Assert(string(value2), Equals, "22")
-	c.Assert(revision2, Equals, revision)
+	require.NoError(t, err)
+	require.Equal(t, "22", string(value2))
+	require.Equal(t, revision, revision2)
 
 	value3, revision3, err := etcdCli.Get(context.Background(), "test3")
-	c.Assert(err, IsNil)
-	c.Assert(string(value3), Equals, "3")
-	c.Assert(revision3, Equals, revision)
+	require.NoError(t, err)
+	require.Equal(t, "3", string(value3))
+	require.Equal(t, revision, revision3)
 
 	// case3: create keys with TTL
 	ops = []*Operation{
@@ -267,22 +279,22 @@ func (t *testEtcdSuite) TestDoTxn(c *C) {
 		},
 	}
 	revision, err = etcdCli.DoTxn(context.Background(), ops)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	value4, revision4, err := etcdCli.Get(context.Background(), "test4")
-	c.Assert(err, IsNil)
-	c.Assert(string(value4), Equals, "4")
-	c.Assert(revision4, Equals, revision)
+	require.NoError(t, err)
+	require.Equal(t, "4", string(value4))
+	require.Equal(t, revision, revision4)
 
 	value5, revision5, err := etcdCli.Get(context.Background(), "test5")
-	c.Assert(err, IsNil)
-	c.Assert(string(value5), Equals, "5")
-	c.Assert(revision5, Equals, revision)
+	require.NoError(t, err)
+	require.Equal(t, "5", string(value5))
+	require.Equal(t, revision, revision5)
 
 	// sleep 2 seconds and this key will be deleted
 	time.Sleep(2 * time.Second)
 	_, _, err = etcdCli.Get(context.Background(), "test4")
-	c.Assert(err, ErrorMatches, ".* not found")
+	require.Regexp(t, ".* not found", err)
 
 	// case4: do transaction failed because key is deleted, so can't update
 	ops = []*Operation{
@@ -298,10 +310,10 @@ func (t *testEtcdSuite) TestDoTxn(c *C) {
 	}
 
 	_, err = etcdCli.DoTxn(context.Background(), ops)
-	c.Assert(err, ErrorMatches, "do transaction failed.*")
+	require.Regexp(t, "do transaction failed.*", err)
 
 	_, _, err = etcdCli.Get(context.Background(), "test4")
-	c.Assert(err, ErrorMatches, ".* not found")
+	require.Regexp(t, ".* not found", err)
 
 	// case5: do transaction failed because can't operate one key in one transaction
 	ops = []*Operation{
@@ -317,10 +329,10 @@ func (t *testEtcdSuite) TestDoTxn(c *C) {
 	}
 
 	_, err = etcdCli.DoTxn(context.Background(), ops)
-	c.Assert(err, ErrorMatches, "etcdserver: duplicate key given in txn request")
+	require.Regexp(t, "etcdserver: duplicate key given in txn request", err)
 
 	_, _, err = etcdCli.Get(context.Background(), "test6")
-	c.Assert(err, ErrorMatches, ".* not found")
+	require.Regexp(t, ".* not found", err)
 
 	// case6: do transaction failed because can't create an existing key
 	ops = []*Operation{
@@ -336,15 +348,15 @@ func (t *testEtcdSuite) TestDoTxn(c *C) {
 	}
 
 	_, err = etcdCli.DoTxn(context.Background(), ops)
-	c.Assert(err, ErrorMatches, "do transaction failed.*")
+	require.Regexp(t, "do transaction failed.*", err)
 
 	value2, _, err = etcdCli.Get(context.Background(), "test2")
-	c.Assert(err, IsNil)
-	c.Assert(string(value2), Equals, "22")
+	require.NoError(t, err)
+	require.Equal(t, "22", string(value2))
 
 	value5, _, err = etcdCli.Get(context.Background(), "test5")
-	c.Assert(err, IsNil)
-	c.Assert(string(value5), Equals, "5")
+	require.NoError(t, err)
+	require.Equal(t, "5", string(value5))
 
 	// case7: delete not exist key but will do transaction success
 	ops = []*Operation{
@@ -359,11 +371,11 @@ func (t *testEtcdSuite) TestDoTxn(c *C) {
 	}
 
 	_, err = etcdCli.DoTxn(context.Background(), ops)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	value8, _, err := etcdCli.Get(context.Background(), "test8")
-	c.Assert(err, IsNil)
-	c.Assert(string(value8), Equals, "8")
+	require.NoError(t, err)
+	require.Equal(t, "8", string(value8))
 
 	// case8: do transaction failed because can't set TTL for delete operation
 	ops = []*Operation{
@@ -375,7 +387,7 @@ func (t *testEtcdSuite) TestDoTxn(c *C) {
 	}
 
 	_, err = etcdCli.DoTxn(context.Background(), ops)
-	c.Assert(err, ErrorMatches, "unexpected TTL in delete operation")
+	require.Regexp(t, "unexpected TTL in delete operation", err)
 }
 
 func testSetup(t *testing.T) (context.Context, *Client, *integration.ClusterV3) {
