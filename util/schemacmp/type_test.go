@@ -15,15 +15,13 @@
 package schemacmp_test
 
 import (
-	. "github.com/pingcap/check"
+	"testing"
+
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
 	. "github.com/pingcap/tidb/util/schemacmp"
+	"github.com/stretchr/testify/require"
 )
-
-type typeSchema struct{}
-
-var _ = Suite(&typeSchema{})
 
 const binary = "binary"
 
@@ -315,7 +313,7 @@ var (
 	}
 )
 
-func (*typeSchema) TestTypeUnwrap(c *C) {
+func TestTypeUnwrap(t *testing.T) {
 	testCases := []*types.FieldType{
 		typeInt,
 		typeIntNotNull,
@@ -346,15 +344,12 @@ func (*typeSchema) TestTypeUnwrap(c *C) {
 	}
 
 	for _, tc := range testCases {
-		assert := func(expected interface{}, checker Checker, args ...interface{}) {
-			c.Assert(expected, checker, append(args, Commentf("tc = %s", tc))...)
-		}
-		t := Type(tc)
-		assert(t.Unwrap(), DeepEquals, tc)
+		tt := Type(tc)
+		require.EqualValues(t, tc, tt.Unwrap())
 	}
 }
 
-func (*typeSchema) TestTypeCompareJoin(c *C) {
+func TestTypeCompareJoin(t *testing.T) {
 	testCases := []struct {
 		a             *types.FieldType
 		b             *types.FieldType
@@ -445,46 +440,41 @@ func (*typeSchema) TestTypeCompareJoin(c *C) {
 	}
 
 	for _, tc := range testCases {
-		assert := func(expected interface{}, checker Checker, args ...interface{}) {
-			args = append(args, Commentf("a = %v %#x, b = %v %#x", tc.a, tc.a.Flag, tc.b, tc.b.Flag))
-			c.Assert(expected, checker, args...)
-		}
-
 		a := Type(tc.a)
 		b := Type(tc.b)
 		cmp, err := a.Compare(b)
 		if len(tc.compareError) != 0 {
 			if err == nil {
-				c.Log(cmp)
+				t.Log(cmp)
 			}
-			assert(err, ErrorMatches, tc.compareError)
+			require.Regexp(t, tc.compareError, err)
+
 		} else {
-			assert(err, IsNil)
-			assert(cmp, Equals, tc.compareResult)
+			require.NoError(t, err)
+			require.Equal(t, tc.compareResult, cmp)
 		}
 
 		cmp, err = b.Compare(a)
 		if len(tc.compareError) != 0 {
-			assert(err, ErrorMatches, tc.compareError)
+			require.Regexp(t, tc.compareError, err)
 		} else {
-			assert(err, IsNil)
-			assert(cmp, Equals, -tc.compareResult)
+			require.NoError(t, err)
+			require.Equal(t, -tc.compareResult, cmp)
 		}
 
 		wrappedJoin, err := a.Join(b)
 		if len(tc.joinError) != 0 {
-			assert(err, ErrorMatches, tc.joinError)
+			require.Regexp(t, tc.joinError, err)
 		} else {
-			assert(err, IsNil)
-			assert(wrappedJoin.Unwrap(), DeepEquals, tc.join)
-
+			require.NoError(t, err)
+			require.EqualValues(t, tc.join, wrappedJoin.Unwrap())
 			cmp, err = wrappedJoin.Compare(a)
-			assert(err, IsNil)
-			assert(cmp, GreaterEqual, 0)
+			require.NoError(t, err)
+			require.GreaterOrEqual(t, cmp, 0)
 
 			cmp, err = wrappedJoin.Compare(b)
-			assert(err, IsNil)
-			assert(cmp, GreaterEqual, 0)
+			require.NoError(t, err)
+			require.GreaterOrEqual(t, cmp, 0)
 		}
 	}
 }
