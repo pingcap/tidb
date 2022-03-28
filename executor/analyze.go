@@ -239,11 +239,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 	}
-	err = statsHandle.Update(e.ctx.GetInfoSchema().(infoschema.InfoSchema))
-	if err != nil {
-		return err
-	}
-	return nil
+	return statsHandle.Update(e.ctx.GetInfoSchema().(infoschema.InfoSchema))
 }
 
 func (e *AnalyzeExec) saveAnalyzeOptsV2() error {
