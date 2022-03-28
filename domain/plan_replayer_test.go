@@ -35,7 +35,9 @@ func TestPlanReplayerGC(t *testing.T) {
 	require.NoError(t, err)
 	zf.Close()
 
-	handler := &dumpFileGcChecker{}
+	handler := &dumpFileGcChecker{
+		paths: []string{GetPlanReplayerDirName()},
+	}
 	handler.gcDumpFiles(0)
 
 	_, err = os.Stat(path)
