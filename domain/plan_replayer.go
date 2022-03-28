@@ -28,6 +28,8 @@ import (
 	"go.uber.org/zap"
 )
 
+// dumpFileGcChecker is used to gc dump file in circle
+// For now it is used by `plan replayer` and `trace plan` statement
 type dumpFileGcChecker struct {
 	sync.Mutex
 	gcLease time.Duration
@@ -68,7 +70,7 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, t time.Duration) {
 	files, err := ioutil.ReadDir(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			logutil.BgLogger().Warn("[PlanReplayer] open plan replayer directory failed", zap.Error(err))
+			logutil.BgLogger().Warn("[dumpFileGcChecker] open plan replayer directory failed", zap.Error(err))
 		}
 	}
 
