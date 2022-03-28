@@ -1745,6 +1745,14 @@ func TestIndexHintWarning(t *testing.T) {
 			require.EqualError(t, warns[j].Err, output[i].Warnings[j])
 		}
 	}
+	//Test view with index hint should result error
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop view if exists v1")
+	tk.MustExec("CREATE TABLE t1 (c1 INT PRIMARY KEY, c2 INT, INDEX (c2))")
+	tk.MustExec("INSERT INTO t1 VALUES (1,1), (2,2), (3,3)")
+	tk.MustExec("CREATE VIEW v1 AS SELECT c1, c2 FROM t1")
+	err := tk.ExecToErr("SELECT * FROM v1 USE INDEX (PRIMARY) WHERE c1=2")
+	require.True(t, terror.ErrorEqual(err, core.ErrKeyDoesNotExist))
 }
 
 func TestIssue15546(t *testing.T) {
