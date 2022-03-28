@@ -21,16 +21,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-=======
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/types"
-	"github.com/pingcap/tidb/testkit"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
->>>>>>> 11db01105... br: Ignore ddl jobs with empty query or blacklist type when exec restore (#33384)
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -260,10 +252,7 @@ func (s *testRestoreSchemaSuite) TestFilterDDLJobsV2(c *C) {
 	c.Assert(len(ddlJobs), Equals, 7)
 }
 
-func TestDB_ExecDDL(t *testing.T) {
-	s, clean := createRestoreSchemaSuite(t)
-	defer clean()
-
+func (s *testRestoreSchemaSuite) TestDB_ExecDDL(c *C) {
 	ctx := context.Background()
 	ddlJobs := []*model.Job{
 		{
@@ -278,16 +267,16 @@ func TestDB_ExecDDL(t *testing.T) {
 		},
 	}
 
-	db, _, err := restore.NewDB(gluetidb.New(), s.mock.Storage, "STRICT")
-	require.NoError(t, err)
+	db, err := restore.NewDB(gluetidb.New(), s.mock.Storage)
+	c.Assert(err, IsNil)
 
 	for _, ddlJob := range ddlJobs {
 		err = db.ExecDDL(ctx, ddlJob)
-		assert.NoError(t, err)
+		c.Assert(err, IsNil)
 	}
 }
 
-func TestFilterDDLJobByRules(t *testing.T) {
+func (s *testRestoreSchemaSuite) TestFilterDDLJobByRules(c *C) {
 	ddlJobs := []*model.Job{
 		{
 			Type: model.ActionSetTiFlashReplica,
@@ -328,8 +317,8 @@ func TestFilterDDLJobByRules(t *testing.T) {
 
 	ddlJobs = restore.FilterDDLJobByRules(ddlJobs, restore.DDLJobBlockListRule)
 
-	require.Equal(t, len(expectedDDLTypes), len(ddlJobs))
+	c.Assert(len(ddlJobs), Equals, len(expectedDDLTypes))
 	for i, ddlJob := range ddlJobs {
-		assert.Equal(t, expectedDDLTypes[i], ddlJob.Type)
+		c.Assert(ddlJob.Type, Equals, expectedDDLTypes[i])
 	}
 }
