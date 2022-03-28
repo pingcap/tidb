@@ -1555,3 +1555,52 @@ func (e *ColumnsTableExtractor) explainInfo(p *PhysicalMemTable) string {
 	}
 	return s
 }
+
+// TiKVRegionStatusExtractor is used to extract single table region scan region from predictions
+type TiKVRegionStatusExtractor struct {
+	extractHelper
+	tablesID []int64
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *TiKVRegionStatusExtractor) Extract(_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	remained, _, tableIDSet := e.extractCol(schema, names, predicates, "table_id", true)
+	if tableIDSet.Count() < 1 {
+		return remained
+	}
+	var tableID int64
+	var err error
+	for key := range tableIDSet {
+		tableID, err = strconv.ParseInt(key, 10, 64)
+		if err != nil {
+			e.tablesID = nil
+			return remained
+		}
+		e.tablesID = append(e.tablesID, tableID)
+	}
+	return remained
+}
+
+func (e *TiKVRegionStatusExtractor) explainInfo(p *PhysicalMemTable) string {
+	r := new(bytes.Buffer)
+	if len(e.tablesID) > 0 {
+		r.WriteString("table_id in {")
+		for i, tableID := range e.tablesID {
+			if i > 0 {
+				r.WriteString(",")
+			}
+			r.WriteString(fmt.Sprintf("%v", tableID))
+		}
+		r.WriteString("}")
+	}
+	return r.String()
+}
+
+// GetTablesID returns TablesID
+func (e *TiKVRegionStatusExtractor) GetTablesID() []int64 {
+	return e.tablesID
+}
