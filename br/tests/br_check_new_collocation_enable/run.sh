@@ -54,7 +54,7 @@ if [ $restore_fail -ne 1 ]; then
     exit 1
 fi
 
-if ! grep -i $error_str $test_log; then
+if ! grep -i "$error_str" $test_log; then
     echo "${error_str} not found in log"
     exit 1
 fi
@@ -75,7 +75,7 @@ if [ $restore_fail -ne 1 ]; then
     exit 1
 fi
 
-if ! grep -i $error_str $test_log2; then
+if ! grep -i "$error_str" $test_log2; then
     echo "${error_str} not found in log"
     exit 1
 fi

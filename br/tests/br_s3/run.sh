@@ -101,9 +101,9 @@ for p in $(seq 2); do
       exit 1
   fi
 
-  targe_log="get newCollationEnable for check during restore"
-  if ! grep -i $targe_log $BACKUP_LOG; then
-      echo "${targe_log} not found in log"
+  target_log="get newCollationEnable for check during restore"
+  if ! grep -i "$target_log" $BACKUP_LOG; then
+      echo "${target_log} not found in log"
       exit 1
   fi
 
