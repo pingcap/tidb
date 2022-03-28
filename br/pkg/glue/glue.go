@@ -38,7 +38,7 @@ type Session interface {
 	CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo) error
 	CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error
 	Close()
-	GetGlobalVariables(name string) (string, error)
+	GetGlobalVariable(name string) (string, error)
 }
 
 // BatchCreateTableSession is an interface to batch create table parallelly

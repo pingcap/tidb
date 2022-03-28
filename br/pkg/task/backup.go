@@ -265,7 +265,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if err != nil {
 		return errors.Trace(err)
 	}
-	newCollationEnable, err := se.GetGlobalVariables(tidbNewCollationEnabled)
+	newCollationEnable, err := se.GetGlobalVariable(tidbNewCollationEnabled)
 	if err != nil {
 		return errors.Trace(err)
 	}

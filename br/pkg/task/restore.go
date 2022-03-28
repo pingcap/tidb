@@ -290,7 +290,7 @@ func CheckNewCollationEnable(
 		return errors.Trace(err)
 	}
 
-	newCollationEnable, err := se.GetGlobalVariables(tidbNewCollationEnabled)
+	newCollationEnable, err := se.GetGlobalVariable(tidbNewCollationEnabled)
 	if err != nil {
 		return errors.Trace(err)
 	}
