@@ -224,6 +224,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	var p plannercore.Plan
 	e.ctx.GetSessionVars().PlanID = 0
 	e.ctx.GetSessionVars().PlanColumnID = 0
+	e.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
 	destBuilder, _ := plannercore.NewPlanBuilder().Init(e.ctx, ret.InfoSchema, &hint.BlockHintProcessor{})
 	p, err = destBuilder.Build(ctx, stmt)
 	if err != nil {
@@ -244,6 +245,8 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	preparedObj := &plannercore.CachedPrepareStmt{
 		PreparedAst:         prepared,
+		StmtDB:              e.ctx.GetSessionVars().CurrentDB,
+		StmtText:            stmt.Text(),
 		VisitInfos:          destBuilder.GetVisitInfo(),
 		NormalizedSQL:       normalizedSQL,
 		SQLDigest:           digest,
@@ -330,9 +333,13 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	prepared := preparedObj.PreparedAst
 	delete(vars.PreparedStmtNameToID, e.Name)
 	if plannercore.PreparedPlanCacheEnabled() {
-		e.ctx.PreparedPlanCache().Delete(plannercore.NewPlanCacheKey(
-			vars, id, prepared.SchemaVersion,
-		))
+		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, prepared.SchemaVersion)
+		if err != nil {
+			return err
+		}
+		if !vars.IgnorePreparedCacheCloseStmt { // keep the plan in cache
+			e.ctx.PreparedPlanCache().Delete(cacheKey)
+		}
 	}
 	vars.RemovePreparedStmt(id)
 	return nil

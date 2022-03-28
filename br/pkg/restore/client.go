@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -53,7 +54,13 @@ import (
 // defaultChecksumConcurrency is the default number of the concurrent
 // checksum tasks.
 const defaultChecksumConcurrency = 64
+const defaultDDLConcurrency = 16
 const minBatchDdlSize = 1
+
+const (
+	strictPlacementPolicyMode = "STRICT"
+	ignorePlacementPolicyMode = "IGNORE"
+)
 
 // Client sends requests to restore files.
 type Client struct {
@@ -78,7 +85,10 @@ type Client struct {
 	// Before you do it, you can firstly read discussions at
 	// https://github.com/pingcap/br/pull/377#discussion_r446594501,
 	// this probably isn't as easy as it seems like (however, not hard, too :D)
-	db              *DB
+	db *DB
+
+	// use db pool to speed up restoration in BR binary mode.
+	dbPool          []*DB
 	rateLimit       uint64
 	isOnline        bool
 	noSchema        bool
@@ -87,8 +97,6 @@ type Client struct {
 	restoreStores []uint64
 
 	cipher             *backuppb.CipherInfo
-	storage            storage.ExternalStorage
-	backend            *backuppb.StorageBackend
 	switchModeInterval time.Duration
 	switchCh           chan struct{}
 
@@ -99,42 +107,85 @@ type Client struct {
 	dom          *domain.Domain
 
 	batchDdlSize uint
+
+	// correspond to --tidb-placement-mode config.
+	// STRICT(default) means policy related SQL can be executed in tidb.
+	// IGNORE means policy related SQL will be ignored.
+	policyMode string
+
+	// policy name -> policy info
+	policyMap *sync.Map
+
+	supportPolicy bool
 }
 
 // NewRestoreClient returns a new RestoreClient.
 func NewRestoreClient(
-	g glue.Glue,
 	pdClient pd.Client,
-	store kv.Storage,
 	tlsConf *tls.Config,
 	keepaliveConf keepalive.ClientParameters,
 	isRawKv bool,
-) (*Client, error) {
-	db, err := NewDB(g, store)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	dom, err := g.GetDomain(store)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	var statsHandle *handle.Handle
-	// tikv.Glue will return nil, tidb.Glue will return available domain
-	if dom != nil {
-		statsHandle = dom.StatsHandle()
-	}
-
+) *Client {
 	return &Client{
 		pdClient:      pdClient,
 		toolClient:    NewSplitClient(pdClient, tlsConf, isRawKv),
-		db:            db,
 		tlsConf:       tlsConf,
 		keepaliveConf: keepaliveConf,
 		switchCh:      make(chan struct{}),
-		dom:           dom,
-		statsHandler:  statsHandle,
-	}, nil
+	}
+}
+
+// Init create db connection and domain for storage.
+func (rc *Client) Init(g glue.Glue, store kv.Storage) error {
+	// setDB must happen after set PolicyMode.
+	// we will use policyMode to set session variables.
+	var err error
+	rc.db, rc.supportPolicy, err = NewDB(g, store, rc.policyMode)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rc.dom, err = g.GetDomain(store)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// tikv.Glue will return nil, tidb.Glue will return available domain
+	if rc.dom != nil {
+		rc.statsHandler = rc.dom.StatsHandle()
+	}
+
+	// Only in binary we can use multi-thread sessions to create tables.
+	// so use OwnStorage() to tell whether we are use binary or SQL.
+	if g.OwnsStorage() {
+		// Maybe allow user modify the DDL concurrency isn't necessary,
+		// because executing DDL is really I/O bound (or, algorithm bound?),
+		// and we cost most of time at waiting DDL jobs be enqueued.
+		// So these jobs won't be faster or slower when machine become faster or slower,
+		// hence make it a fixed value would be fine.
+		rc.dbPool, err = makeDBPool(defaultDDLConcurrency, func() (*DB, error) {
+			db, _, err := NewDB(g, store, rc.policyMode)
+			return db, err
+		})
+		if err != nil {
+			log.Warn("create session pool failed, we will send DDLs only by created sessions",
+				zap.Error(err),
+				zap.Int("sessionCount", len(rc.dbPool)),
+			)
+		}
+	}
+	return errors.Trace(err)
+}
+
+// SetPlacementPolicyMode to policy mode.
+func (rc *Client) SetPlacementPolicyMode(withPlacementPolicy string) {
+	switch strings.ToUpper(withPlacementPolicy) {
+	case strictPlacementPolicyMode:
+		rc.policyMode = strictPlacementPolicyMode
+	case ignorePlacementPolicyMode:
+		rc.policyMode = ignorePlacementPolicyMode
+	default:
+		rc.policyMode = strictPlacementPolicyMode
+	}
+	log.Info("set placement policy mode", zap.String("mode", rc.policyMode))
 }
 
 // SetRateLimit to set rateLimit.
@@ -146,15 +197,19 @@ func (rc *Client) SetCrypter(crypter *backuppb.CipherInfo) {
 	rc.cipher = crypter
 }
 
-// SetStorage set ExternalStorage for client.
-func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storage.ExternalStorageOptions) error {
-	var err error
-	rc.storage, err = storage.New(ctx, backend, opts)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	rc.backend = backend
-	return nil
+// SetPolicyMap set policyMap.
+func (rc *Client) SetPolicyMap(p *sync.Map) {
+	rc.policyMap = p
+}
+
+// GetPolicyMap set policyMap.
+func (rc *Client) GetPolicyMap() *sync.Map {
+	return rc.policyMap
+}
+
+// GetSupportPolicy tells whether target tidb support placement policy.
+func (rc *Client) GetSupportPolicy() bool {
+	return rc.supportPolicy
 }
 
 // GetPDClient returns a pd client.
@@ -352,6 +407,20 @@ func (rc *Client) GetDatabase(name string) *utils.Database {
 	return rc.databases[name]
 }
 
+// GetPlacementPolicies returns policies.
+func (rc *Client) GetPlacementPolicies() (*sync.Map, error) {
+	policies := &sync.Map{}
+	for _, p := range rc.backupMeta.Policies {
+		policyInfo := &model.PolicyInfo{}
+		err := json.Unmarshal(p.Info, policyInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		policies.Store(policyInfo.Name.L, policyInfo)
+	}
+	return policies, nil
+}
+
 // GetDDLJobs returns ddl jobs.
 func (rc *Client) GetDDLJobs() []*model.Job {
 	return rc.ddlJobs
@@ -371,12 +440,39 @@ func (rc *Client) GetTableSchema(
 	return table.Meta(), nil
 }
 
+// CreatePolicies creates all policies in full restore.
+func (rc *Client) CreatePolicies(ctx context.Context, policyMap *sync.Map) error {
+	var err error
+	policyMap.Range(func(key, value interface{}) bool {
+		e := rc.db.CreatePlacementPolicy(ctx, value.(*model.PolicyInfo))
+		if e != nil {
+			err = e
+			return false
+		}
+		return true
+	})
+	return err
+}
+
 // CreateDatabase creates a database.
 func (rc *Client) CreateDatabase(ctx context.Context, db *model.DBInfo) error {
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create database", zap.Stringer("database", db.Name))
 		return nil
 	}
+
+	if !rc.supportPolicy {
+		log.Info("set placementPolicyRef to nil when target tidb not support policy",
+			zap.Stringer("database", db.Name))
+		db.PlacementPolicyRef = nil
+	}
+
+	if db.PlacementPolicyRef != nil {
+		if err := rc.db.ensurePlacementPolicy(ctx, db.PlacementPolicyRef.Name, rc.policyMap); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	return rc.db.CreateDatabase(ctx, db)
 }
 
@@ -395,7 +491,7 @@ func (rc *Client) CreateTables(
 	for i, t := range tables {
 		tbMapping[t.Info.Name.String()] = i
 	}
-	dataCh := rc.GoCreateTables(context.TODO(), dom, tables, newTS, nil, errCh)
+	dataCh := rc.GoCreateTables(context.TODO(), dom, tables, newTS, errCh)
 	for et := range dataCh {
 		rules := et.RewriteRule
 		rewriteRules.Data = append(rewriteRules.Data, rules.Data...)
@@ -426,7 +522,7 @@ func (rc *Client) createTables(
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID")
 	} else {
-		err := db.CreateTables(ctx, tables, rc.GetDDLJobsMap())
+		err := db.CreateTables(ctx, tables, rc.GetDDLJobsMap(), rc.GetSupportPolicy(), rc.GetPolicyMap())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -466,7 +562,7 @@ func (rc *Client) createTable(
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID", zap.Stringer("table", table.Info.Name))
 	} else {
-		err := db.CreateTable(ctx, table, rc.GetDDLJobsMap())
+		err := db.CreateTable(ctx, table, rc.GetDDLJobsMap(), rc.GetSupportPolicy(), rc.GetPolicyMap())
 		if err != nil {
 			return CreatedTable{}, errors.Trace(err)
 		}
@@ -499,7 +595,6 @@ func (rc *Client) GoCreateTables(
 	dom *domain.Domain,
 	tables []*metautil.Table,
 	newTS uint64,
-	dbPool []*DB,
 	errCh chan<- error,
 ) <-chan CreatedTable {
 	// Could we have a smaller size of tables?
@@ -516,9 +611,9 @@ func (rc *Client) GoCreateTables(
 
 	var err error
 
-	if rc.batchDdlSize > minBatchDdlSize && len(dbPool) > 0 {
+	if rc.batchDdlSize > minBatchDdlSize && len(rc.dbPool) > 0 {
 
-		err = rc.createTablesInWorkerPool(ctx, dom, tables, dbPool, newTS, outCh)
+		err = rc.createTablesInWorkerPool(ctx, dom, tables, newTS, outCh)
 
 		if err == nil {
 			defer log.Debug("all tables are created")
@@ -565,8 +660,8 @@ func (rc *Client) GoCreateTables(
 		defer close(outCh)
 		defer log.Debug("all tables are created")
 		var err error
-		if len(dbPool) > 0 {
-			err = rc.createTablesWithDBPool(ctx, createOneTable, tables, dbPool)
+		if len(rc.dbPool) > 0 {
+			err = rc.createTablesWithDBPool(ctx, createOneTable, tables)
 		} else {
 			err = rc.createTablesWithSoleDB(ctx, createOneTable, tables)
 		}
@@ -591,23 +686,23 @@ func (rc *Client) createTablesWithSoleDB(ctx context.Context,
 
 func (rc *Client) createTablesWithDBPool(ctx context.Context,
 	createOneTable func(ctx context.Context, db *DB, t *metautil.Table) error,
-	tables []*metautil.Table, dbPool []*DB) error {
+	tables []*metautil.Table) error {
 	eg, ectx := errgroup.WithContext(ctx)
-	workers := utils.NewWorkerPool(uint(len(dbPool)), "DDL workers")
+	workers := utils.NewWorkerPool(uint(len(rc.dbPool)), "DDL workers")
 	for _, t := range tables {
 		table := t
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
-			db := dbPool[id%uint64(len(dbPool))]
+			db := rc.dbPool[id%uint64(len(rc.dbPool))]
 			return createOneTable(ectx, db, table)
 		})
 	}
 	return eg.Wait()
 }
 
-func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Domain, tables []*metautil.Table, dbPool []*DB, newTS uint64, outCh chan<- CreatedTable) error {
+func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Domain, tables []*metautil.Table, newTS uint64, outCh chan<- CreatedTable) error {
 	eg, ectx := errgroup.WithContext(ctx)
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
-	workers := utils.NewWorkerPool(uint(len(dbPool)), "Create Tables Worker")
+	workers := utils.NewWorkerPool(uint(len(rc.dbPool)), "Create Tables Worker")
 	numOfTables := len(tables)
 
 	for lastSent := 0; lastSent < numOfTables; lastSent += int(rc.batchDdlSize) {
@@ -616,7 +711,7 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 
 		tableSlice := tables[lastSent:end]
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
-			db := dbPool[id%uint64(len(dbPool))]
+			db := rc.dbPool[id%uint64(len(rc.dbPool))]
 			cts, err := rc.createTables(ectx, db, dom, tableSlice, newTS) // ddl job for [lastSent:i)
 			failpoint.Inject("restore-createtables-error", func(val failpoint.Value) {
 				if val.(bool) {
@@ -711,6 +806,15 @@ func drainFilesByRange(files []*backuppb.File, supportMulti bool) ([]*backuppb.F
 	}
 
 	return files[:idx], files[idx:]
+}
+
+// SplitRanges implements TiKVRestorer.
+func (rc *Client) SplitRanges(ctx context.Context,
+	ranges []rtree.Range,
+	rewriteRules *RewriteRules,
+	updateCh glue.Progress,
+	isRawKv bool) error {
+	return SplitRanges(ctx, rc, ranges, rewriteRules, updateCh, isRawKv)
 }
 
 // RestoreFiles tries to restore the files.

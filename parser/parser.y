@@ -314,6 +314,7 @@ import (
 	begin                 "BEGIN"
 	bernoulli             "BERNOULLI"
 	binding               "BINDING"
+	bindingCache          "BINDING_CACHE"
 	bindings              "BINDINGS"
 	binlog                "BINLOG"
 	bitType               "BIT"
@@ -370,12 +371,14 @@ import (
 	delayKeyWrite         "DELAY_KEY_WRITE"
 	directory             "DIRECTORY"
 	disable               "DISABLE"
+	disabled              "DISABLED"
 	discard               "DISCARD"
 	disk                  "DISK"
 	do                    "DO"
 	duplicate             "DUPLICATE"
 	dynamic               "DYNAMIC"
 	enable                "ENABLE"
+	enabled               "ENABLED"
 	encryption            "ENCRYPTION"
 	end                   "END"
 	enforced              "ENFORCED"
@@ -3418,13 +3421,13 @@ StatsType:
 	}
 
 BindingStatusType:
-	"ENABLE"
+	"ENABLED"
 	{
-		$$ = ast.BindingStatusTypeEnable
+		$$ = ast.BindingStatusTypeEnabled
 	}
-|	"DISABLE"
+|	"DISABLED"
 	{
-		$$ = ast.BindingStatusTypeDisable
+		$$ = ast.BindingStatusTypeDisabled
 	}
 
 CreateStatisticsStmt:
@@ -5745,6 +5748,7 @@ UnReservedKeyword:
 |	"ADVISE"
 |	"ASCII"
 |	"ATTRIBUTES"
+|	"BINDING_CACHE"
 |	"STATS_OPTIONS"
 |	"STATS_SAMPLE_RATE"
 |	"STATS_COL_CHOICE"
@@ -5891,7 +5895,9 @@ UnReservedKeyword:
 |	"PROCESSLIST"
 |	"SQL_NO_CACHE"
 |	"DISABLE"
+|	"DISABLED"
 |	"ENABLE"
+|	"ENABLED"
 |	"REVERSE"
 |	"PRIVILEGES"
 |	"NO"
@@ -10629,6 +10635,12 @@ ShowTargetFilterable:
 		$$ = &ast.ShowStmt{
 			Tp:     ast.ShowTriggers,
 			DBName: $2,
+		}
+	}
+|	"BINDING_CACHE" "STATUS"
+	{
+		$$ = &ast.ShowStmt{
+			Tp: ast.ShowBindingCacheStatus,
 		}
 	}
 |	"PROCEDURE" "STATUS"

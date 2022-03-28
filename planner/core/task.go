@@ -967,7 +967,18 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 		newTask.cst += sortCPUCost
 	}
 	p.cost = newTask.cst
-	if t.needExtraProj {
+
+	// Do not inject the extra Projection even if t.needExtraProj is set, or the schema between the phase-1 agg and
+	// the final agg would be broken. Please reference comments for the similar logic in
+	// (*copTask).convertToRootTaskImpl() for the PhysicalTableReader case.
+	// We need to refactor these logics.
+	aggPushedDown := false
+	switch p.tablePlan.(type) {
+	case *PhysicalHashAgg, *PhysicalStreamAgg:
+		aggPushedDown = true
+	}
+
+	if t.needExtraProj && !aggPushedDown {
 		schema := t.originSchema
 		proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, t.tablePlan.SelectBlockOffset(), nil)
 		proj.SetSchema(schema)
@@ -2055,6 +2066,9 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 			attachPlan2Task(finalAgg, t)
 			finalAgg.SetCost(cop.cost())
 		}
+	} else if mpp, ok := t.(*mppTask); ok {
+		t = mpp.convertToRootTask(p.ctx)
+		attachPlan2Task(p, t)
 	} else {
 		attachPlan2Task(p, t)
 	}
@@ -2358,6 +2372,13 @@ func collectPartitionInfosFromMPPPlan(p *PhysicalTableReader, mppPlan PhysicalPl
 	}
 }
 
+func collectRowSizeFromMPPPlan(mppPlan PhysicalPlan) (rowSize float64) {
+	if mppPlan != nil && mppPlan.Stats() != nil && mppPlan.Stats().HistColl != nil {
+		return mppPlan.Stats().HistColl.GetAvgRowSize(mppPlan.SCtx(), mppPlan.Schema().Columns, false, false)
+	}
+	return 1 // use 1 as lower-bound for safety
+}
+
 func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	sender := PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_PassThrough,
@@ -2371,15 +2392,17 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	}.Init(ctx, t.p.SelectBlockOffset())
 	p.stats = t.p.statsInfo()
 	collectPartitionInfosFromMPPPlan(p, t.p)
+	rowSize := collectRowSizeFromMPPPlan(sender)
 
-	cst := t.cst + t.count()*ctx.GetSessionVars().GetNetworkFactor(nil)
-	p.cost = cst / p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
+	cst := t.cst + t.count()*rowSize*ctx.GetSessionVars().GetNetworkFactor(nil)
+	cst /= p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
+	p.cost = cst
 	if p.ctx.GetSessionVars().IsMPPEnforced() {
-		p.cost = cst / 1000000000
+		cst /= 1000000000
 	}
 	rt := &rootTask{
 		p:   p,
-		cst: p.cost,
+		cst: cst,
 	}
 	return rt
 }

@@ -226,6 +226,271 @@ error = '''
 the system table isn't supported for restoring yet
 '''
 
+["Lighting:Restore:ErrChecksumMismatch"]
+error = '''
+checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)
+'''
+
+["Lightning:Checkpoint:ErrCheckpointNotFound"]
+error = '''
+checkpoint not found
+'''
+
+["Lightning:Checkpoint:ErrCleanCheckpoint"]
+error = '''
+clean checkpoint error
+'''
+
+["Lightning:Checkpoint:ErrInitCheckpoint"]
+error = '''
+init checkpoint error
+'''
+
+["Lightning:Checkpoint:ErrInvalidCheckpoint"]
+error = '''
+invalid checkpoint
+'''
+
+["Lightning:Checkpoint:ErrOpenCheckpoint"]
+error = '''
+open checkpoint error
+'''
+
+["Lightning:Checkpoint:ErrReadCheckpoint"]
+error = '''
+read checkpoint error
+'''
+
+["Lightning:Checkpoint:ErrUnknownCheckpointDriver"]
+error = '''
+unknown checkpoint driver '%s'
+'''
+
+["Lightning:Checkpoint:ErrUpdateCheckpoint"]
+error = '''
+update checkpoint error
+'''
+
+["Lightning:Common:ErrInvalidArgument"]
+error = '''
+invalid argument
+'''
+
+["Lightning:Common:ErrUnknown"]
+error = '''
+unknown error
+'''
+
+["Lightning:Common:ErrVersionMismatch"]
+error = '''
+version mismatch
+'''
+
+["Lightning:Config:ErrInvalidConfig"]
+error = '''
+invalid config
+'''
+
+["Lightning:Config:ErrInvalidSortedKVDir"]
+error = '''
+invalid sorted-kv-dir '%s' for local backend, please change the config or delete the path
+'''
+
+["Lightning:Config:ErrInvalidTLSConfig"]
+error = '''
+invalid tls config
+'''
+
+["Lightning:Config:ErrParseConfigFile"]
+error = '''
+cannot parse config file '%s'
+'''
+
+["Lightning:Config:ErrReadConfigFile"]
+error = '''
+cannot read config file '%s'
+'''
+
+["Lightning:DB:ErrDBConnect"]
+error = '''
+failed to connect database
+'''
+
+["Lightning:DB:ErrInitErrManager"]
+error = '''
+init error manager error
+'''
+
+["Lightning:DB:ErrInitMetaManager"]
+error = '''
+init meta manager error
+'''
+
+["Lightning:KV:ErrCheckKVVersion"]
+error = '''
+check tikv version error
+'''
+
+["Lightning:KV:ErrCheckMultiIngest"]
+error = '''
+check multi-ingest support error
+'''
+
+["Lightning:KV:ErrCreateKVClient"]
+error = '''
+create kv client error
+'''
+
+["Lightning:Loader:ErrInvalidSchemaFile"]
+error = '''
+invalid schema file
+'''
+
+["Lightning:Loader:ErrTableRoute"]
+error = '''
+table route error
+'''
+
+["Lightning:MetaMgr:ErrMetaMgrUnknown"]
+error = '''
+unknown error occur on meta manager
+'''
+
+["Lightning:PD:ErrCreatePDClient"]
+error = '''
+create pd client error
+'''
+
+["Lightning:PD:ErrPauseGC"]
+error = '''
+pause gc error
+'''
+
+["Lightning:PD:ErrUpdatePD"]
+error = '''
+update pd error
+'''
+
+["Lightning:PreCheck:ErrCheckCSVHeader"]
+error = '''
+check csv header error
+'''
+
+["Lightning:PreCheck:ErrCheckClusterRegion"]
+error = '''
+check tikv cluster region error
+'''
+
+["Lightning:PreCheck:ErrCheckDataSource"]
+error = '''
+check data source error
+'''
+
+["Lightning:PreCheck:ErrCheckLocalResource"]
+error = '''
+check local storage resource error
+'''
+
+["Lightning:PreCheck:ErrCheckTableEmpty"]
+error = '''
+check table empty error
+'''
+
+["Lightning:PreCheck:ErrCheckpointSchemaConflict"]
+error = '''
+checkpoint schema conflict
+'''
+
+["Lightning:PreCheck:ErrPreCheckFailed"]
+error = '''
+tidb-lightning pre-check failed: %s
+'''
+
+["Lightning:PreCheck:ErrSystemRequirementNotMet"]
+error = '''
+system requirement not met
+'''
+
+["Lightning:Restore:ErrAllocTableRowIDs"]
+error = '''
+allocate table row id error
+'''
+
+["Lightning:Restore:ErrCheckLocalFile"]
+error = '''
+cannot find local file for table: %s engineDir: %s
+'''
+
+["Lightning:Restore:ErrCreateSchema"]
+error = '''
+create schema failed, table: %s, stmt: %s
+'''
+
+["Lightning:Restore:ErrEncodeKV"]
+error = '''
+encode kv error in file %s at offset %d
+'''
+
+["Lightning:Restore:ErrInvalidMetaStatus"]
+error = '''
+invalid meta status: '%s'
+'''
+
+["Lightning:Restore:ErrInvalidSchemaStmt"]
+error = '''
+invalid schema statement: '%s'
+'''
+
+["Lightning:Restore:ErrOpenDuplicateDB"]
+error = '''
+open duplicate db error
+'''
+
+["Lightning:Restore:ErrRestoreTable"]
+error = '''
+restore table %s failed
+'''
+
+["Lightning:Restore:ErrSchemaNotExists"]
+error = '''
+table `%s`.`%s` schema not found
+'''
+
+["Lightning:Restore:ErrTableIsChecksuming"]
+error = '''
+table '%s' is checksuming
+'''
+
+["Lightning:Restore:ErrUnknownBackend"]
+error = '''
+unknown backend %s
+'''
+
+["Lightning:Restore:ErrUnknownColumns"]
+error = '''
+unknown columns in header (%s) for table %s
+'''
+
+["Lightning:Storage:ErrEmptySourceDir"]
+error = '''
+data-source-dir '%s' doesn't exist or contains no files
+'''
+
+["Lightning:Storage:ErrInvalidPermission"]
+error = '''
+invalid permission
+'''
+
+["Lightning:Storage:ErrInvalidStorageConfig"]
+error = '''
+invalid data-source-dir
+'''
+
+["Lightning:Storage:ErrStorageUnknown"]
+error = '''
+unknown storage error
+'''
+
 ["admin:8003"]
 error = '''
 TiDB admin check table failed.
@@ -301,6 +566,26 @@ error = '''
 Invalid default value for '%-.192s'
 '''
 
+["ddl:1069"]
+error = '''
+Too many keys specified; max %d keys allowed
+'''
+
+["ddl:1071"]
+error = '''
+Specified key was too long; max key length is %d bytes
+'''
+
+["ddl:1072"]
+error = '''
+Key column '%-.192s' doesn't exist in table
+'''
+
+["ddl:1089"]
+error = '''
+Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
+'''
+
 ["ddl:1090"]
 error = '''
 You can't delete all columns with ALTER TABLE; use DROP TABLE instead
@@ -309,6 +594,11 @@ You can't delete all columns with ALTER TABLE; use DROP TABLE instead
 ["ddl:1091"]
 error = '''
 Can't DROP '%-.192s'; check that column/key exists
+'''
+
+["ddl:1101"]
+error = '''
+BLOB/TEXT/JSON column '%-.192s' can't have a default value
 '''
 
 ["ddl:1102"]
@@ -336,9 +626,29 @@ error = '''
 Unknown character set: '%-.64s'
 '''
 
+["ddl:1117"]
+error = '''
+Too many columns
+'''
+
+["ddl:1138"]
+error = '''
+Invalid use of NULL value
+'''
+
 ["ddl:1166"]
 error = '''
 Incorrect column name '%-.100s'
+'''
+
+["ddl:1167"]
+error = '''
+The used storage engine can't index column '%-.192s'
+'''
+
+["ddl:1170"]
+error = '''
+BLOB/TEXT column '%-.192s' used in key specification without a key length
 '''
 
 ["ddl:1171"]
@@ -349,6 +659,11 @@ All parts of a PRIMARY KEY must be NOT NULL; if you need NULL in a key, use UNIQ
 ["ddl:1177"]
 error = '''
 Can't open table
+'''
+
+["ddl:1205"]
+error = '''
+Timeout waiting for data reorganization
 '''
 
 ["ddl:1214"]
@@ -431,6 +746,16 @@ error = '''
 In definition of view, derived table or common table expression, SELECT list and column names list have different column counts
 '''
 
+["ddl:1391"]
+error = '''
+Key part '%-.192s' length cannot be 0
+'''
+
+["ddl:1470"]
+error = '''
+String '%-.70s' is too long for %s (should be no longer than %d)
+'''
+
 ["ddl:1481"]
 error = '''
 MAXVALUE can only be used in last partition definition
@@ -491,6 +816,11 @@ error = '''
 COALESCE PARTITION can only be used on HASH/KEY partitions
 '''
 
+["ddl:1512"]
+error = '''
+%-.64s PARTITION can only be used on RANGE/LIST partitions
+'''
+
 ["ddl:1517"]
 error = '''
 Duplicate partition name %-.192s
@@ -531,6 +861,11 @@ error = '''
 Field '%-.192s' is of a not allowed type for this type of partitioning
 '''
 
+["ddl:1688"]
+error = '''
+Comment for index '%-.64s' is too long (max = %d)
+'''
+
 ["ddl:1697"]
 error = '''
 VALUES value for partition '%-.64s' must have type INT
@@ -566,6 +901,11 @@ error = '''
 Duplicate foreign key constraint name '%s'
 '''
 
+["ddl:1828"]
+error = '''
+Cannot drop column '%-.192s': needed in a foreign key constraint '%-.192s'
+'''
+
 ["ddl:1846"]
 error = '''
 %s is not supported. Reason: %s. Try %s.
@@ -576,14 +916,34 @@ error = '''
 Expression of generated column '%s' contains a disallowed function.
 '''
 
+["ddl:3104"]
+error = '''
+Cannot define foreign key with %s clause on a generated column.
+'''
+
 ["ddl:3106"]
 error = '''
 '%s' is not supported for generated columns.
 '''
 
+["ddl:3107"]
+error = '''
+Generated column can refer only to generated columns defined prior to it.
+'''
+
+["ddl:3108"]
+error = '''
+Column '%s' has a generated column dependency.
+'''
+
 ["ddl:3109"]
 error = '''
 Generated column '%s' cannot refer to auto-increment column.
+'''
+
+["ddl:3152"]
+error = '''
+JSON column '%-.192s' cannot be used in key specification.
 '''
 
 ["ddl:3505"]
@@ -596,6 +956,16 @@ error = '''
 A primary key index cannot be invisible
 '''
 
+["ddl:3593"]
+error = '''
+You cannot use the window function '%s' in this context.'
+'''
+
+["ddl:3753"]
+error = '''
+Cannot create an expression index on a function that returns a JSON or GEOMETRY value
+'''
+
 ["ddl:3754"]
 error = '''
 Expression index '%s' cannot refer to an auto-increment column
@@ -606,9 +976,19 @@ error = '''
 The primary key cannot be an expression index
 '''
 
+["ddl:3757"]
+error = '''
+Cannot create an expression index on an expression that returns a BLOB or TEXT. Please consider using CAST
+'''
+
 ["ddl:3758"]
 error = '''
 Expression of expression index '%s' contains a disallowed function
+'''
+
+["ddl:3761"]
+error = '''
+The used storage engine cannot index the expression '%s'
 '''
 
 ["ddl:3762"]
@@ -621,9 +1001,19 @@ error = '''
 Expression of generated column '%s' cannot refer to a row value
 '''
 
+["ddl:3780"]
+error = '''
+Referencing column '%s' in foreign key constraint '%s' are incompatible
+'''
+
 ["ddl:3800"]
 error = '''
 Expression of expression index '%s' cannot refer to a row value
+'''
+
+["ddl:3837"]
+error = '''
+Column '%s' has an expression index dependency and cannot be dropped or renamed
 '''
 
 ["ddl:4135"]
@@ -658,12 +1048,57 @@ error = '''
 
 ["ddl:8200"]
 error = '''
-Unsupported partition by range columns
+Unsupported shard_row_id_bits for table with primary key as row id
+'''
+
+["ddl:8201"]
+error = '''
+TiDB server is not a DDL owner
+'''
+
+["ddl:8202"]
+error = '''
+Cannot decode %s value, because %v
+'''
+
+["ddl:8203"]
+error = '''
+Invalid DDL worker
+'''
+
+["ddl:8204"]
+error = '''
+Invalid DDL job
+'''
+
+["ddl:8207"]
+error = '''
+Invalid storage current version: %d
 '''
 
 ["ddl:8210"]
 error = '''
 Invalid %!s(MISSING) state: %!v(MISSING)
+'''
+
+["ddl:8211"]
+error = '''
+Reorg worker panic
+'''
+
+["ddl:8212"]
+error = '''
+Failed to split region ranges: %s
+'''
+
+["ddl:8213"]
+error = '''
+Version %d of DDL job is greater than current one: %d
+'''
+
+["ddl:8214"]
+error = '''
+Cancelled DDL job
 '''
 
 ["ddl:8215"]
@@ -939,6 +1374,11 @@ data inconsistency in table: %s, index: %s, index-count:%d != record-count:%d
 ["executor:8134"]
 error = '''
 data inconsistency in table: %s, index: %s, col: %s, handle: %#v, index-values:%#v != record-values:%#v, compare err:%#v
+'''
+
+["executor:8142"]
+error = '''
+modifying %s will require SET GLOBAL in a future version of TiDB
 '''
 
 ["executor:8212"]

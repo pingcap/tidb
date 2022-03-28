@@ -57,14 +57,14 @@ const (
 	sizeFloat64 = unsafe.Sizeof(float64(0))
 )
 
-func preRealloc(b []byte, vals []types.Datum, comparable bool) []byte {
+func preRealloc(b []byte, vals []types.Datum, comparable1 bool) []byte {
 	var size int
 	for i := range vals {
 		switch vals[i].Kind() {
 		case types.KindInt64, types.KindUint64, types.KindMysqlEnum, types.KindMysqlSet, types.KindMysqlBit, types.KindBinaryLiteral:
-			size += sizeInt(comparable)
+			size += sizeInt(comparable1)
 		case types.KindString, types.KindBytes:
-			size += sizeBytes(vals[i].GetBytes(), comparable)
+			size += sizeBytes(vals[i].GetBytes(), comparable1)
 		case types.KindMysqlTime, types.KindMysqlDuration, types.KindFloat32, types.KindFloat64:
 			size += 9
 		case types.KindNull, types.KindMinNotNull, types.KindMaxValue:
@@ -80,23 +80,23 @@ func preRealloc(b []byte, vals []types.Datum, comparable bool) []byte {
 	return reallocBytes(b, size)
 }
 
-// encode will encode a datum and append it to a byte slice. If comparable is true, the encoded bytes can be sorted as it's original order.
+// encode will encode a datum and append it to a byte slice. If comparable1 is true, the encoded bytes can be sorted as it's original order.
 // If hash is true, the encoded bytes can be checked equal as it's original value.
-func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparable bool) (_ []byte, err error) {
-	b = preRealloc(b, vals, comparable)
+func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparable1 bool) (_ []byte, err error) {
+	b = preRealloc(b, vals, comparable1)
 	for i, length := 0, len(vals); i < length; i++ {
 		switch vals[i].Kind() {
 		case types.KindInt64:
-			b = encodeSignedInt(b, vals[i].GetInt64(), comparable)
+			b = encodeSignedInt(b, vals[i].GetInt64(), comparable1)
 		case types.KindUint64:
-			b = encodeUnsignedInt(b, vals[i].GetUint64(), comparable)
+			b = encodeUnsignedInt(b, vals[i].GetUint64(), comparable1)
 		case types.KindFloat32, types.KindFloat64:
 			b = append(b, floatFlag)
 			b = EncodeFloat(b, vals[i].GetFloat64())
 		case types.KindString:
-			b = encodeString(b, vals[i], comparable)
+			b = encodeString(b, vals[i], comparable1)
 		case types.KindBytes:
-			b = encodeBytes(b, vals[i].GetBytes(), comparable)
+			b = encodeBytes(b, vals[i].GetBytes(), comparable1)
 		case types.KindMysqlTime:
 			b = append(b, uintFlag)
 			b, err = EncodeMySQLTime(sc, vals[i].GetMysqlTime(), mysql.TypeUnspecified, b)
@@ -116,15 +116,15 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 				err = sc.HandleOverflow(err, err)
 			}
 		case types.KindMysqlEnum:
-			b = encodeUnsignedInt(b, vals[i].GetMysqlEnum().Value, comparable)
+			b = encodeUnsignedInt(b, vals[i].GetMysqlEnum().Value, comparable1)
 		case types.KindMysqlSet:
-			b = encodeUnsignedInt(b, vals[i].GetMysqlSet().Value, comparable)
+			b = encodeUnsignedInt(b, vals[i].GetMysqlSet().Value, comparable1)
 		case types.KindMysqlBit, types.KindBinaryLiteral:
 			// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 			var val uint64
 			val, err = vals[i].GetBinaryLiteral().ToInt(sc)
 			terror.Log(errors.Trace(err))
-			b = encodeUnsignedInt(b, val, comparable)
+			b = encodeUnsignedInt(b, val, comparable1)
 		case types.KindMysqlJSON:
 			b = append(b, jsonFlag)
 			j := vals[i].GetMysqlJSON()
@@ -198,15 +198,15 @@ func EncodeMySQLTime(sc *stmtctx.StatementContext, t types.Time, tp byte, b []by
 	return b, nil
 }
 
-func encodeString(b []byte, val types.Datum, comparable bool) []byte {
-	if collate.NewCollationEnabled() && comparable {
+func encodeString(b []byte, val types.Datum, comparable1 bool) []byte {
+	if collate.NewCollationEnabled() && comparable1 {
 		return encodeBytes(b, collate.GetCollator(val.Collation()).Key(val.GetString()), true)
 	}
-	return encodeBytes(b, val.GetBytes(), comparable)
+	return encodeBytes(b, val.GetBytes(), comparable1)
 }
 
-func encodeBytes(b []byte, v []byte, comparable bool) []byte {
-	if comparable {
+func encodeBytes(b []byte, v []byte, comparable1 bool) []byte {
+	if comparable1 {
 		b = append(b, bytesFlag)
 		b = EncodeBytes(b, v)
 	} else {
@@ -220,8 +220,8 @@ func valueSizeOfBytes(v []byte) int {
 	return valueSizeOfSignedInt(int64(len(v))) + len(v)
 }
 
-func sizeBytes(v []byte, comparable bool) int {
-	if comparable {
+func sizeBytes(v []byte, comparable1 bool) int {
+	if comparable1 {
 		reallocSize := (len(v)/encGroupSize + 1) * (encGroupSize + 1)
 		return 1 + reallocSize
 	}
@@ -229,8 +229,8 @@ func sizeBytes(v []byte, comparable bool) int {
 	return 1 + reallocSize
 }
 
-func encodeSignedInt(b []byte, v int64, comparable bool) []byte {
-	if comparable {
+func encodeSignedInt(b []byte, v int64, comparable1 bool) []byte {
+	if comparable1 {
 		b = append(b, intFlag)
 		b = EncodeInt(b, v)
 	} else {
@@ -254,8 +254,8 @@ func valueSizeOfSignedInt(v int64) int {
 	return size
 }
 
-func encodeUnsignedInt(b []byte, v uint64, comparable bool) []byte {
-	if comparable {
+func encodeUnsignedInt(b []byte, v uint64, comparable1 bool) []byte {
+	if comparable1 {
 		b = append(b, uintFlag)
 		b = EncodeUint(b, v)
 	} else {
@@ -276,8 +276,8 @@ func valueSizeOfUnsignedInt(v uint64) int {
 	return size
 }
 
-func sizeInt(comparable bool) int {
-	if comparable {
+func sizeInt(comparable1 bool) int {
+	if comparable1 {
 		return 9
 	}
 	return 1 + binary.MaxVarintLen64
