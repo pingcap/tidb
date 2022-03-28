@@ -182,15 +182,12 @@ func (d *ddl) getReorgJob(sess sessionctx.Context) (*model.Job, error) {
 		logutil.BgLogger().Info("no reorg job")
 		return nil, nil
 	}
-	jobBinary := rows[0].GetBytes(0)
-	job := &model.Job{}
-	err = job.Decode(jobBinary)
-	if err != nil {
-		return nil, err
-	}
-	cnt := 0
-	for {
-		if cnt > 5 {
+
+	for _, row := range rows {
+		jobBinary := row.GetBytes(0)
+		job := &model.Job{}
+		err = job.Decode(jobBinary)
+		if err != nil {
 			return nil, err
 		}
 		canRun, err := d.checkReorgJobIsRunnable(sess, job)
@@ -200,31 +197,9 @@ func (d *ddl) getReorgJob(sess sessionctx.Context) (*model.Job, error) {
 		if canRun {
 			return job, nil
 		}
-		runningOrBlockedIDs = append(runningOrBlockedIDs, strconv.Itoa(int(job.ID)))
-		sql = fmt.Sprintf("select job_meta from mysql.tidb_ddl_job where job_id = (select min(job_id) and not processing from mysql.tidb_ddl_job group by schema_id, table_id having reorg and job_id not in (%s) order by min(job_id) limit 1)", strings.Join(runningOrBlockedIDs, ", "))
-		rs, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
-		if err != nil {
-			return nil, err
-		}
-		rows, err = sqlexec.DrainRecordSet(d.ctx, rs, 8)
-		if err != nil {
-			return nil, err
-		}
-		err = rs.Close()
-		if err != nil {
-			return nil, err
-		}
-		if len(rows) == 0 {
-			return nil, nil
-		}
-		jobBinary = rows[0].GetBytes(0)
-		job = &model.Job{}
-		err = job.Decode(jobBinary)
-		if err != nil {
-			return nil, err
-		}
-		cnt = cnt + 1
 	}
+
+	return nil, nil
 }
 
 func (d *ddl) startDispatchLoop() {
