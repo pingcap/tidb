@@ -58,16 +58,25 @@ func (d *Digest) IsEmpty() bool {
 
 // String returns the hex encoded digest.
 func (d *Digest) String() string {
+	if d == nil {
+		return ""
+	}
 	return d.hexStr
 }
 
 // RawAsBytes returns the raw digest in byte type.
 func (d *Digest) RawAsBytes() []byte {
+	if d == nil {
+		return nil
+	}
 	return d.raw
 }
 
 // RawAsString returns the raw digest in string type. The string contains binary data.
 func (d *Digest) RawAsString() RawDigestString {
+	if d == nil {
+		return ""
+	}
 	// Digest is ensured to be immutable so that this is a safe convert.
 	return RawDigestString(unsafeByteAsString(d.raw))
 }

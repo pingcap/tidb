@@ -197,7 +197,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 	if topsqlstate.TopSQLEnabled() {
-		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil, vars.InRestrictedSQL)
+		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest.RawAsString(), "", "", vars.InRestrictedSQL)
 	}
 
 	var (

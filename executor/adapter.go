@@ -339,7 +339,7 @@ func (a *ExecStmt) setPlanLabelForTopSQL(ctx context.Context) context.Context {
 	vars := a.Ctx.GetSessionVars()
 	normalizedSQL, sqlDigest := vars.StmtCtx.SQLDigest()
 	normalizedPlan, planDigest := getPlanDigest(a.Ctx, a.Plan)
-	return topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, normalizedPlan, planDigest, vars.InRestrictedSQL)
+	return topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest.RawAsString(), normalizedPlan, planDigest.RawAsString(), vars.InRestrictedSQL)
 }
 
 // Exec builds an Executor from a plan. If the Executor doesn't return result,

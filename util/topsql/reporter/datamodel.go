@@ -15,12 +15,12 @@
 package reporter
 
 import (
-	"bytes"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql/collector"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
@@ -140,8 +140,8 @@ var _ sort.Interface = &record{}
 // record do not guarantee the tsItems is sorted by timestamp when there is a time jump backward.
 // record is also sortable, and the tsIndex will be updated while sorting the internal tsItems.
 type record struct {
-	sqlDigest      []byte
-	planDigest     []byte
+	sqlDigest      parser.RawDigestString
+	planDigest     parser.RawDigestString
 	totalCPUTimeMs uint64
 	tsItems        tsItems
 
@@ -149,7 +149,7 @@ type record struct {
 	tsIndex map[uint64]int // timestamp => index of tsItems
 }
 
-func newRecord(sqlDigest, planDigest []byte) *record {
+func newRecord(sqlDigest, planDigest parser.RawDigestString) *record {
 	listCap := topsqlstate.GlobalState.ReportIntervalSeconds.Load()/topsqlstate.GlobalState.PrecisionSeconds.Load() + 1
 	if listCap > maxTsItemsCapacity {
 		listCap = maxTsItemsCapacity
@@ -379,11 +379,20 @@ func (r *record) rebuildTsIndex() {
 	}
 }
 
+func rawDigestToSlice(s parser.RawDigestString) []byte {
+	// TODO: maybe it's fine to be just `[]byte{}`.
+	if s == "" {
+		return nil
+	}
+	return []byte(s)
+}
+
 // toProto converts the record to the corresponding protobuf representation.
 func (r *record) toProto() tipb.TopSQLRecord {
 	return tipb.TopSQLRecord{
-		SqlDigest:  r.sqlDigest,
-		PlanDigest: r.planDigest,
+		// Do slice copy, since we don't know whether tipb.TopSQLRecord will be modified.
+		SqlDigest:  rawDigestToSlice(r.sqlDigest),
+		PlanDigest: rawDigestToSlice(r.planDigest),
 		Items:      r.tsItems.toProto(),
 	}
 }
@@ -431,21 +440,19 @@ func (rs records) toProto() []tipb.TopSQLRecord {
 type collecting struct {
 	records map[string]*record             // sqlPlanDigest => record
 	evicted map[uint64]map[string]struct{} // { sqlPlanDigest }
-	keyBuf  *bytes.Buffer
 }
 
 func newCollecting() *collecting {
 	return &collecting{
 		records: map[string]*record{},
 		evicted: map[uint64]map[string]struct{}{},
-		keyBuf:  bytes.NewBuffer(make([]byte, 0, 64)),
 	}
 }
 
 // getOrCreateRecord gets the record corresponding to sqlDigest + planDigest, if it
 // does not exist, it will be created.
-func (c *collecting) getOrCreateRecord(sqlDigest, planDigest []byte) *record {
-	key := encodeKey(c.keyBuf, sqlDigest, planDigest)
+func (c *collecting) getOrCreateRecord(sqlDigest, planDigest parser.RawDigestString) *record {
+	key := encodeKey(sqlDigest, planDigest) // TODO: Reduce 1 allocation here.
 	r, ok := c.records[key]
 	if !ok {
 		r = newRecord(sqlDigest, planDigest)
@@ -457,18 +464,18 @@ func (c *collecting) getOrCreateRecord(sqlDigest, planDigest []byte) *record {
 // markAsEvicted marks sqlDigest + planDigest under a certain timestamp as "evicted".
 // Later, we can determine whether a certain sqlDigest + planDigest within a certain
 // timestamp has been evicted.
-func (c *collecting) markAsEvicted(timestamp uint64, sqlDigest, planDigest []byte) {
+func (c *collecting) markAsEvicted(timestamp uint64, sqlDigest, planDigest parser.RawDigestString) {
 	if _, ok := c.evicted[timestamp]; !ok {
 		c.evicted[timestamp] = map[string]struct{}{}
 	}
-	c.evicted[timestamp][encodeKey(c.keyBuf, sqlDigest, planDigest)] = struct{}{}
+	c.evicted[timestamp][encodeKey(sqlDigest, planDigest)] = struct{}{}
 }
 
 // hasEvicted determines whether a certain sqlDigest + planDigest has been evicted
 // in a certain timestamp.
-func (c *collecting) hasEvicted(timestamp uint64, sqlDigest, planDigest []byte) bool {
+func (c *collecting) hasEvicted(timestamp uint64, sqlDigest, planDigest parser.RawDigestString) bool {
 	if digestSet, ok := c.evicted[timestamp]; ok {
-		if _, ok := digestSet[encodeKey(c.keyBuf, sqlDigest, planDigest)]; ok {
+		if _, ok := digestSet[encodeKey(sqlDigest, planDigest)]; ok {
 			return true
 		}
 	}
@@ -482,7 +489,7 @@ func (c *collecting) appendOthersCPUTime(timestamp uint64, totalCPUTimeMs uint32
 	}
 	others, ok := c.records[keyOthers]
 	if !ok {
-		others = newRecord(nil, nil)
+		others = newRecord("", "")
 		c.records[keyOthers] = others
 	}
 	others.appendCPUTime(timestamp, totalCPUTimeMs)
@@ -492,7 +499,7 @@ func (c *collecting) appendOthersCPUTime(timestamp uint64, totalCPUTimeMs uint32
 func (c *collecting) appendOthersStmtStatsItem(timestamp uint64, item stmtstats.StatementStatsItem) {
 	others, ok := c.records[keyOthers]
 	if !ok {
-		others = newRecord(nil, nil)
+		others = newRecord("", "")
 		c.records[keyOthers] = others
 	}
 	others.appendStmtStatsItem(timestamp, item)
@@ -501,12 +508,11 @@ func (c *collecting) appendOthersStmtStatsItem(timestamp uint64, item stmtstats.
 // removeInvalidPlanRecord remove "" plan if there are only 1 valid plan in the record.
 // Basically, it should be called once at the end of the collection, currently in `getReportRecords`.
 func (c *collecting) removeInvalidPlanRecord() {
-	sql2PlansMap := make(map[string][][]byte, len(c.records)) // sql_digest => []plan_digest
+	sql2PlansMap := make(map[parser.RawDigestString][]parser.RawDigestString, len(c.records)) // sql_digest => []plan_digest
 	for _, v := range c.records {
-		k := string(v.sqlDigest)
-		sql2PlansMap[k] = append(sql2PlansMap[k], v.planDigest)
+		sql2PlansMap[v.sqlDigest] = append(sql2PlansMap[v.sqlDigest], v.planDigest)
 	}
-	for k, plans := range sql2PlansMap {
+	for sqlDigest, plans := range sql2PlansMap {
 		if len(plans) != 2 {
 			continue
 		}
@@ -514,9 +520,8 @@ func (c *collecting) removeInvalidPlanRecord() {
 			continue
 		}
 
-		sqlDigest := []byte(k)
-		key0 := encodeKey(c.keyBuf, sqlDigest, plans[0])
-		key1 := encodeKey(c.keyBuf, sqlDigest, plans[1])
+		key0 := encodeKey(sqlDigest, plans[0])
+		key1 := encodeKey(sqlDigest, plans[1])
 		record0, ok0 := c.records[key0]
 		record1, ok1 := c.records[key1]
 		if !ok0 || !ok1 {
@@ -554,7 +559,6 @@ func (c *collecting) take() *collecting {
 	r := &collecting{
 		records: c.records,
 		evicted: c.evicted,
-		keyBuf:  bytes.NewBuffer(make([]byte, 0, 64)),
 	}
 	c.records = map[string]*record{}
 	c.evicted = map[uint64]map[string]struct{}{}
@@ -609,13 +613,13 @@ func newNormalizedSQLMap() *normalizedSQLMap {
 
 // register saves the relationship between sqlDigest and normalizedSQL.
 // If the internal map size exceeds the limit, the relationship will be discarded.
-func (m *normalizedSQLMap) register(sqlDigest []byte, normalizedSQL string, isInternal bool) {
+func (m *normalizedSQLMap) register(sqlDigest parser.RawDigestString, normalizedSQL string, isInternal bool) {
 	if m.length.Load() >= topsqlstate.GlobalState.MaxCollect.Load() {
 		ignoreExceedSQLCounter.Inc()
 		return
 	}
 	data := m.data.Load().(*sync.Map)
-	_, loaded := data.LoadOrStore(string(hack.String(sqlDigest)), sqlMeta{
+	_, loaded := data.LoadOrStore(string(sqlDigest), sqlMeta{
 		normalizedSQL: normalizedSQL,
 		isInternal:    isInternal,
 	})
@@ -669,13 +673,13 @@ func newNormalizedPlanMap() *normalizedPlanMap {
 
 // register saves the relationship between planDigest and normalizedPlan.
 // If the internal map size exceeds the limit, the relationship will be discarded.
-func (m *normalizedPlanMap) register(planDigest []byte, normalizedPlan string) {
+func (m *normalizedPlanMap) register(planDigest parser.RawDigestString, normalizedPlan string) {
 	if m.length.Load() >= topsqlstate.GlobalState.MaxCollect.Load() {
 		ignoreExceedPlanCounter.Inc()
 		return
 	}
 	data := m.data.Load().(*sync.Map)
-	_, loaded := data.LoadOrStore(string(hack.String(planDigest)), normalizedPlan)
+	_, loaded := data.LoadOrStore(string(planDigest), normalizedPlan)
 	if !loaded {
 		m.length.Add(1)
 	}
@@ -711,9 +715,11 @@ func (m *normalizedPlanMap) toProto(decodePlan planBinaryDecodeFunc) []tipb.Plan
 	return metas
 }
 
-func encodeKey(buf *bytes.Buffer, sqlDigest, planDigest []byte) string {
-	buf.Reset()
-	buf.Write(sqlDigest)
-	buf.Write(planDigest)
-	return buf.String()
+func encodeKey(sqlDigest, planDigest parser.RawDigestString) string {
+	// TODO: Use sync.Pool to reduce memory allocations
+	sb := strings.Builder{}
+	sb.Grow(len(sqlDigest) + len(planDigest))
+	sb.WriteString(string(sqlDigest))
+	sb.WriteString(string(planDigest))
+	return sb.String()
 }

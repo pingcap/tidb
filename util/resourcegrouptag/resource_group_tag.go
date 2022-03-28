@@ -45,7 +45,7 @@ func EncodeResourceGroupTag(sqlDigest, planDigest *parser.Digest, label tipb.Res
 }
 
 // DecodeResourceGroupTag decodes a resource group tag and return the sql digest.
-func DecodeResourceGroupTag(data []byte) (sqlDigest []byte, err error) {
+func DecodeResourceGroupTag(data []byte) (sqlDigest *parser.Digest, err error) {
 	if len(data) == 0 {
 		return nil, nil
 	}
@@ -54,7 +54,7 @@ func DecodeResourceGroupTag(data []byte) (sqlDigest []byte, err error) {
 	if err != nil {
 		return nil, errors.Errorf("invalid resource group tag data %x", data)
 	}
-	return tag.SqlDigest, nil
+	return parser.NewDigest(tag.SqlDigest), nil
 }
 
 // GetResourceGroupLabelByKey determines the tipb.ResourceGroupTagLabel of key.

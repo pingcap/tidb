@@ -1655,11 +1655,11 @@ func TestTopSQLStatementStats(t *testing.T) {
 		"insert into t values (%d, sleep(0.1)) on duplicate key update b = b+1",
 	}
 	var wg sync.WaitGroup
-	sqlDigests := map[stmtstats.BinaryDigest]string{}
+	sqlDigests := map[parser.RawDigestString]string{}
 	for i, ca := range cases1 {
 		sqlStr := fmt.Sprintf(ca, i)
 		_, digest := parser.NormalizeDigest(sqlStr)
-		sqlDigests[stmtstats.BinaryDigest(digest.Bytes())] = sqlStr
+		sqlDigests[digest.RawAsString()] = sqlStr
 	}
 	wg.Add(1)
 	go func() {
@@ -1749,7 +1749,7 @@ func TestTopSQLStatementStats(t *testing.T) {
 	}
 	for _, ca := range cases2 {
 		_, digest := parser.NormalizeDigest(ca.execStmt)
-		sqlDigests[stmtstats.BinaryDigest(digest.Bytes())] = ca.execStmt
+		sqlDigests[digest.RawAsString()] = ca.execStmt
 	}
 	wg.Add(1)
 	go func() {
@@ -1829,7 +1829,7 @@ func TestTopSQLStatementStats(t *testing.T) {
 	}
 	for _, ca := range cases3 {
 		_, digest := parser.NormalizeDigest(ca.prepare)
-		sqlDigests[stmtstats.BinaryDigest(digest.Bytes())] = ca.prepare
+		sqlDigests[digest.RawAsString()] = ca.prepare
 	}
 	wg.Add(1)
 	go func() {
@@ -1889,10 +1889,10 @@ func TestTopSQLStatementStats(t *testing.T) {
 
 type resourceTagChecker struct {
 	sync.Mutex
-	sqlDigests map[stmtstats.BinaryDigest]struct{}
+	sqlDigests map[parser.RawDigestString]struct{}
 }
 
-func (c *resourceTagChecker) checkExist(t *testing.T, digest stmtstats.BinaryDigest, sqlStr string) {
+func (c *resourceTagChecker) checkExist(t *testing.T, digest parser.RawDigestString, sqlStr string) {
 	if strings.HasPrefix(sqlStr, "set global") {
 		// `set global` statement will use another internal sql to execute, so `set global` statement won't
 		// send RPC request.
@@ -1901,7 +1901,7 @@ func (c *resourceTagChecker) checkExist(t *testing.T, digest stmtstats.BinaryDig
 	if strings.HasPrefix(sqlStr, "trace") {
 		// `trace` statement will use another internal sql to execute, so remove the `trace` prefix before check.
 		_, sqlDigest := parser.NormalizeDigest(strings.TrimPrefix(sqlStr, "trace"))
-		digest = stmtstats.BinaryDigest(sqlDigest.Bytes())
+		digest = sqlDigest.RawAsString()
 	}
 
 	c.Lock()
@@ -1956,7 +1956,7 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 	})
 
 	tagChecker := &resourceTagChecker{
-		sqlDigests: make(map[stmtstats.BinaryDigest]struct{}),
+		sqlDigests: make(map[parser.RawDigestString]struct{}),
 	}
 	unistore.UnistoreRPCClientSendHook = func(req *tikvrpc.Request) {
 		tag := req.GetResourceGroupTag()
@@ -1967,7 +1967,7 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 		require.NoError(t, err)
 		tagChecker.Lock()
 		defer tagChecker.Unlock()
-		tagChecker.sqlDigests[stmtstats.BinaryDigest(sqlDigest)] = struct{}{}
+		tagChecker.sqlDigests[sqlDigest.RawAsString()] = struct{}{}
 	}
 
 	cleanFn := func() {
@@ -1988,7 +1988,7 @@ func TestTopSQLStatementStats2(t *testing.T) {
 	defer cleanFn()
 
 	const ExecCountPerSQL = 3
-	sqlDigests := map[stmtstats.BinaryDigest]string{}
+	sqlDigests := map[parser.RawDigestString]string{}
 
 	// Test case for other statements
 	cases4 := []struct {
@@ -2028,7 +2028,7 @@ func TestTopSQLStatementStats2(t *testing.T) {
 	}
 	for _, ca := range cases4 {
 		_, digest := parser.NormalizeDigest(ca.sql)
-		sqlDigests[stmtstats.BinaryDigest(digest.Bytes())] = ca.sql
+		sqlDigests[digest.RawAsString()] = ca.sql
 	}
 	executeCaseFn(execFn)
 
@@ -2080,13 +2080,13 @@ func TestTopSQLStatementStats2(t *testing.T) {
 	sqlStrs = append(sqlStrs, cases8...)
 	for _, sqlStr := range sqlStrs {
 		_, digest := parser.NormalizeDigest(sqlStr)
-		sqlDigests[stmtstats.BinaryDigest(digest.Bytes())] = sqlStr
+		sqlDigests[digest.RawAsString()] = sqlStr
 	}
 
 	// Wait for collect.
 	waitCollected(collectedNotifyCh)
 
-	foundMap := map[stmtstats.BinaryDigest]string{}
+	foundMap := map[parser.RawDigestString]string{}
 	for digest, item := range total {
 		if sqlStr, ok := sqlDigests[digest.SQLDigest]; ok {
 			require.Equal(t, uint64(ExecCountPerSQL), item.ExecCount, sqlStr)
@@ -2115,7 +2115,7 @@ func TestTopSQLStatementStats3(t *testing.T) {
 		"delete from stmtstats.t limit 1",
 	}
 	var wg sync.WaitGroup
-	sqlDigests := map[stmtstats.BinaryDigest]string{}
+	sqlDigests := map[parser.RawDigestString]string{}
 	for _, ca := range cases {
 		wg.Add(1)
 		go func(sqlStr string) {
@@ -2133,12 +2133,12 @@ func TestTopSQLStatementStats3(t *testing.T) {
 			require.NoError(t, err)
 		}(ca)
 		_, digest := parser.NormalizeDigest(ca)
-		sqlDigests[stmtstats.BinaryDigest(digest.Bytes())] = ca
+		sqlDigests[digest.RawAsString()] = ca
 	}
 	// Wait for collect.
 	waitCollected(collectedNotifyCh)
 
-	foundMap := map[stmtstats.BinaryDigest]string{}
+	foundMap := map[parser.RawDigestString]string{}
 	for digest, item := range total {
 		if sqlStr, ok := sqlDigests[digest.SQLDigest]; ok {
 			// since the SQL doesn't execute finish, the ExecCount should be recorded,
@@ -2187,7 +2187,7 @@ func TestTopSQLStatementStats4(t *testing.T) {
 		{prepare: "delete from stmtstats.t limit ?", sql: "delete from stmtstats.t limit 1", args: []interface{}{1}},
 	}
 	var wg sync.WaitGroup
-	sqlDigests := map[stmtstats.BinaryDigest]string{}
+	sqlDigests := map[parser.RawDigestString]string{}
 	for _, ca := range cases {
 		wg.Add(1)
 		go func(prepare string, args []interface{}) {
@@ -2211,12 +2211,12 @@ func TestTopSQLStatementStats4(t *testing.T) {
 			require.NoError(t, err)
 		}(ca.prepare, ca.args)
 		_, digest := parser.NormalizeDigest(ca.sql)
-		sqlDigests[stmtstats.BinaryDigest(digest.Bytes())] = ca.sql
+		sqlDigests[digest.RawAsString()] = ca.sql
 	}
 	// Wait for collect.
 	waitCollected(collectedNotifyCh)
 
-	foundMap := map[stmtstats.BinaryDigest]string{}
+	foundMap := map[parser.RawDigestString]string{}
 	for digest, item := range total {
 		if sqlStr, ok := sqlDigests[digest.SQLDigest]; ok {
 			// since the SQL doesn't execute finish, the ExecCount should be recorded,

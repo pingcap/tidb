@@ -1798,7 +1798,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			pprof.SetGoroutineLabels(goCtx)
 		}
 		if topsqlstate.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
-			topsql.AttachSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, "", nil, vars.InRestrictedSQL)
+			topsql.AttachSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest.RawAsString(), "", "", vars.InRestrictedSQL)
 		}
 		if s, ok := prepareStmt.PreparedAst.Stmt.(*ast.SelectStmt); ok {
 			if s.LockInfo == nil {

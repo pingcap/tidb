@@ -35,7 +35,7 @@ func TestResourceGroupTagEncoding(t *testing.T) {
 
 	decodedSQLDigest, err := DecodeResourceGroupTag(tag)
 	require.NoError(t, err)
-	require.Len(t, decodedSQLDigest, 0)
+	require.True(t, decodedSQLDigest.IsEmpty())
 
 	sqlDigest = parser.NewDigest([]byte{'a', 'a'})
 	tag = EncodeResourceGroupTag(sqlDigest, nil, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)
@@ -44,19 +44,19 @@ func TestResourceGroupTagEncoding(t *testing.T) {
 
 	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
 	require.NoError(t, err)
-	require.Equal(t, sqlDigest.Bytes(), decodedSQLDigest)
+	require.Equal(t, sqlDigest, decodedSQLDigest)
 
 	sqlDigest = parser.NewDigest(genRandHex(64))
 	tag = EncodeResourceGroupTag(sqlDigest, nil, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)
 	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
 	require.NoError(t, err)
-	require.Equal(t, sqlDigest.Bytes(), decodedSQLDigest)
+	require.Equal(t, sqlDigest, decodedSQLDigest)
 
 	sqlDigest = parser.NewDigest(genRandHex(510))
 	tag = EncodeResourceGroupTag(sqlDigest, nil, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)
 	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
 	require.NoError(t, err)
-	require.Equal(t, sqlDigest.Bytes(), decodedSQLDigest)
+	require.Equal(t, sqlDigest, decodedSQLDigest)
 }
 
 func TestResourceGroupTagEncodingPB(t *testing.T) {

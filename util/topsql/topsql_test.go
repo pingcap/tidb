@@ -124,13 +124,13 @@ func TestTopSQLReporter(t *testing.T) {
 	defer wg.Wait()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	sqlMap := make(map[string]string)
+	sqlMap := make(map[parser.RawDigestString]string)
 	sql2plan := make(map[string]string)
 	recordsCnt := server.RecordsCnt()
 	for _, req := range reqs {
 		sql2plan[req.sql] = req.plan
 		sqlDigest := mock.GenSQLDigest(req.sql)
-		sqlMap[string(sqlDigest.RawAsBytes())] = req.sql
+		sqlMap[sqlDigest.RawAsString()] = req.sql
 		sql, plan := req.sql, req.plan
 		wg.Run(func() {
 			for {
@@ -150,9 +150,9 @@ func TestTopSQLReporter(t *testing.T) {
 		for _, req := range records {
 			require.Greater(t, len(req.Items), 0)
 			require.Greater(t, req.Items[0].CpuTimeMs, uint32(0))
-			sqlMeta, exist := server.GetSQLMetaByDigestBlocking(req.SqlDigest, time.Second)
+			sqlMeta, exist := server.GetSQLMetaByDigestBlocking(parser.RawDigestString(req.SqlDigest), time.Second)
 			require.True(t, exist)
-			expectedNormalizedSQL, exist := sqlMap[string(req.SqlDigest)]
+			expectedNormalizedSQL, exist := sqlMap[parser.RawDigestString(req.SqlDigest)]
 			require.True(t, exist)
 			require.Equal(t, expectedNormalizedSQL, sqlMeta.NormalizedSql)
 
@@ -162,7 +162,7 @@ func TestTopSQLReporter(t *testing.T) {
 				checkSQLPlanMap[expectedNormalizedSQL] = struct{}{}
 				continue
 			}
-			normalizedPlan, exist := server.GetPlanMetaByDigestBlocking(req.PlanDigest, time.Second)
+			normalizedPlan, exist := server.GetPlanMetaByDigestBlocking(parser.RawDigestString(req.PlanDigest), time.Second)
 			require.True(t, exist)
 			require.Equal(t, expectedNormalizedPlan, normalizedPlan)
 			checkSQLPlanMap[expectedNormalizedSQL] = struct{}{}
@@ -187,27 +187,27 @@ func TestMaxSQLAndPlanTest(t *testing.T) {
 	// Test for normal sql and plan
 	sql := "select * from t"
 	sqlDigest := mock.GenSQLDigest(sql)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest, "", nil, false)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest.RawAsString(), "", "", false)
 	plan := "TableReader table:t"
 	planDigest := genDigest(plan)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest, false)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest.RawAsString(), plan, planDigest.RawAsString(), false)
 
-	cSQL := collector.GetSQL(sqlDigest.RawAsBytes())
+	cSQL := collector.GetSQL(sqlDigest.RawAsString())
 	require.Equal(t, sql, cSQL)
-	cPlan := collector.GetPlan(planDigest.RawAsBytes())
+	cPlan := collector.GetPlan(planDigest.RawAsString())
 	require.Equal(t, plan, cPlan)
 
 	// Test for huge sql and plan
 	sql = genStr(topsql.MaxSQLTextSize + 10)
 	sqlDigest = mock.GenSQLDigest(sql)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest, "", nil, false)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest.RawAsString(), "", "", false)
 	plan = genStr(topsql.MaxBinaryPlanSize + 10)
 	planDigest = genDigest(plan)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest, false)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest.RawAsString(), plan, planDigest.RawAsString(), false)
 
-	cSQL = collector.GetSQL(sqlDigest.RawAsBytes())
+	cSQL = collector.GetSQL(sqlDigest.RawAsString())
 	require.Equal(t, sql[:topsql.MaxSQLTextSize], cSQL)
-	cPlan = collector.GetPlan(planDigest.RawAsBytes())
+	cPlan = collector.GetPlan(planDigest.RawAsString())
 	require.Empty(t, cPlan)
 }
 
@@ -260,12 +260,12 @@ func TestTopSQLPubSub(t *testing.T) {
 		{"insert into t values (?)", ""},
 	}
 
-	digest2sql := make(map[string]string)
+	digest2sql := make(map[parser.RawDigestString]string)
 	sql2plan := make(map[string]string)
 	for _, req := range reqs {
 		sql2plan[req.sql] = req.plan
 		sqlDigest := mock.GenSQLDigest(req.sql)
-		digest2sql[string(sqlDigest.RawAsBytes())] = req.sql
+		digest2sql[sqlDigest.RawAsString()] = req.sql
 		sql, plan := req.sql, req.plan
 		wg.Run(func() {
 			for {
@@ -279,9 +279,9 @@ func TestTopSQLPubSub(t *testing.T) {
 		})
 	}
 
-	sqlMetas := make(map[string]*tipb.SQLMeta)
-	planMetas := make(map[string]string)
-	records := make(map[string]*tipb.TopSQLRecord)
+	sqlMetas := make(map[parser.RawDigestString]*tipb.SQLMeta)
+	planMetas := make(map[parser.RawDigestString]string)
+	records := make(map[parser.RawDigestString]*tipb.TopSQLRecord)
 
 	for {
 		r, err := stream.Recv()
@@ -291,10 +291,10 @@ func TestTopSQLPubSub(t *testing.T) {
 
 		if r.GetRecord() != nil {
 			rec := r.GetRecord()
-			if _, ok := records[string(rec.SqlDigest)]; !ok {
-				records[string(rec.SqlDigest)] = rec
+			if _, ok := records[parser.RawDigestString(rec.SqlDigest)]; !ok {
+				records[parser.RawDigestString(rec.SqlDigest)] = rec
 			} else {
-				record := records[string(rec.SqlDigest)]
+				record := records[parser.RawDigestString(rec.SqlDigest)]
 				if rec.PlanDigest != nil {
 					record.PlanDigest = rec.PlanDigest
 				}
@@ -302,13 +302,13 @@ func TestTopSQLPubSub(t *testing.T) {
 			}
 		} else if r.GetSqlMeta() != nil {
 			sql := r.GetSqlMeta()
-			if _, ok := sqlMetas[string(sql.SqlDigest)]; !ok {
-				sqlMetas[string(sql.SqlDigest)] = sql
+			if _, ok := sqlMetas[parser.RawDigestString(sql.SqlDigest)]; !ok {
+				sqlMetas[parser.RawDigestString(sql.SqlDigest)] = sql
 			}
 		} else if r.GetPlanMeta() != nil {
 			plan := r.GetPlanMeta()
-			if _, ok := planMetas[string(plan.PlanDigest)]; !ok {
-				planMetas[string(plan.PlanDigest)] = plan.NormalizedPlan
+			if _, ok := planMetas[parser.RawDigestString(plan.PlanDigest)]; !ok {
+				planMetas[parser.RawDigestString(plan.PlanDigest)] = plan.NormalizedPlan
 			}
 		}
 	}
@@ -318,9 +318,9 @@ func TestTopSQLPubSub(t *testing.T) {
 		record := records[i]
 		require.Greater(t, len(record.Items), 0)
 		require.Greater(t, record.Items[0].CpuTimeMs, uint32(0))
-		sqlMeta, exist := sqlMetas[string(record.SqlDigest)]
+		sqlMeta, exist := sqlMetas[parser.RawDigestString(record.SqlDigest)]
 		require.True(t, exist)
-		expectedNormalizedSQL, exist := digest2sql[string(record.SqlDigest)]
+		expectedNormalizedSQL, exist := digest2sql[parser.RawDigestString(record.SqlDigest)]
 		require.True(t, exist)
 		require.Equal(t, expectedNormalizedSQL, sqlMeta.NormalizedSql)
 
@@ -329,7 +329,7 @@ func TestTopSQLPubSub(t *testing.T) {
 			require.Len(t, record.PlanDigest, 0)
 			continue
 		}
-		normalizedPlan, exist := planMetas[string(record.PlanDigest)]
+		normalizedPlan, exist := planMetas[parser.RawDigestString(record.PlanDigest)]
 		require.True(t, exist)
 		require.Equal(t, expectedNormalizedPlan, normalizedPlan)
 		checkSQLPlanMap[expectedNormalizedSQL] = struct{}{}
@@ -379,10 +379,10 @@ func TestPubSubWhenReporterIsStopped(t *testing.T) {
 func mockExecuteSQL(sql, plan string) {
 	ctx := context.Background()
 	sqlDigest := mock.GenSQLDigest(sql)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest, "", nil, false)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest.RawAsString(), "", "", false)
 	mockExecute(time.Millisecond * 100)
 	planDigest := genDigest(plan)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest, false)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest.RawAsString(), plan, planDigest.RawAsString(), false)
 	mockExecute(time.Millisecond * 300)
 }
 

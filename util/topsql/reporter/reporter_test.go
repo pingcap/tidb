@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/topsql/collector"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
@@ -36,13 +37,13 @@ const (
 func populateCache(tsr *RemoteTopSQLReporter, begin, end int, timestamp uint64) {
 	// register normalized sql
 	for i := begin; i < end; i++ {
-		key := []byte("sqlDigest" + strconv.Itoa(i+1))
+		key := parser.RawDigestString("sqlDigest" + strconv.Itoa(i+1))
 		value := "sqlNormalized" + strconv.Itoa(i+1)
 		tsr.RegisterSQL(key, value, false)
 	}
 	// register normalized plan
 	for i := begin; i < end; i++ {
-		key := []byte("planDigest" + strconv.Itoa(i+1))
+		key := parser.RawDigestString("planDigest" + strconv.Itoa(i+1))
 		value := "planNormalized" + strconv.Itoa(i+1)
 		tsr.RegisterPlan(key, value)
 	}
@@ -50,8 +51,8 @@ func populateCache(tsr *RemoteTopSQLReporter, begin, end int, timestamp uint64) 
 	var records []collector.SQLCPUTimeRecord
 	for i := begin; i < end; i++ {
 		records = append(records, collector.SQLCPUTimeRecord{
-			SQLDigest:  []byte("sqlDigest" + strconv.Itoa(i+1)),
-			PlanDigest: []byte("planDigest" + strconv.Itoa(i+1)),
+			SQLDigest:  parser.RawDigestString("sqlDigest" + strconv.Itoa(i+1)),
+			PlanDigest: parser.RawDigestString("planDigest" + strconv.Itoa(i+1)),
 			CPUTimeMs:  uint32(i + 1),
 		})
 	}
@@ -102,7 +103,7 @@ func setupRemoteTopSQLReporter(maxStatementsNum, interval int) (*RemoteTopSQLRep
 	return ts, ds
 }
 
-func findSQLMeta(metas []tipb.SQLMeta, sqlDigest []byte) (*tipb.SQLMeta, bool) {
+func findSQLMeta(metas []tipb.SQLMeta, sqlDigest parser.RawDigestString) (*tipb.SQLMeta, bool) {
 	for _, m := range metas {
 		if string(m.SqlDigest) == string(sqlDigest) {
 			return &m, true
@@ -111,7 +112,7 @@ func findSQLMeta(metas []tipb.SQLMeta, sqlDigest []byte) (*tipb.SQLMeta, bool) {
 	return nil, false
 }
 
-func findPlanMeta(metas []tipb.PlanMeta, planDigest []byte) (*tipb.PlanMeta, bool) {
+func findPlanMeta(metas []tipb.PlanMeta, planDigest parser.RawDigestString) (*tipb.PlanMeta, bool) {
 	for _, m := range metas {
 		if string(m.PlanDigest) == string(planDigest) {
 			return &m, true
@@ -141,10 +142,10 @@ func TestCollectAndSendBatch(t *testing.T) {
 			require.Equal(t, uint64(1), req.Items[i].TimestampSec)
 			require.Equal(t, uint32(id), req.Items[i].CpuTimeMs)
 		}
-		sqlMeta, exist := findSQLMeta(data.SQLMetas, req.SqlDigest)
+		sqlMeta, exist := findSQLMeta(data.SQLMetas, parser.RawDigestString(req.SqlDigest))
 		require.True(t, exist)
 		require.Equal(t, "sqlNormalized"+strconv.Itoa(id), sqlMeta.NormalizedSql)
-		planMeta, exist := findPlanMeta(data.PlanMetas, req.PlanDigest)
+		planMeta, exist := findPlanMeta(data.PlanMetas, parser.RawDigestString(req.PlanDigest))
 		require.True(t, exist)
 		require.Equal(t, "planNormalized"+strconv.Itoa(id), planMeta.NormalizedPlan)
 	}
@@ -178,27 +179,27 @@ func TestCollectAndEvicted(t *testing.T) {
 		}
 		require.Greater(t, id, maxSQLNum)
 		require.Equal(t, uint32(id), req.Items[0].CpuTimeMs)
-		sqlMeta, exist := findSQLMeta(data.SQLMetas, req.SqlDigest)
+		sqlMeta, exist := findSQLMeta(data.SQLMetas, parser.RawDigestString(req.SqlDigest))
 		require.True(t, exist)
 		require.Equal(t, "sqlNormalized"+strconv.Itoa(id), sqlMeta.NormalizedSql)
-		planMeta, exist := findPlanMeta(data.PlanMetas, req.PlanDigest)
+		planMeta, exist := findPlanMeta(data.PlanMetas, parser.RawDigestString(req.PlanDigest))
 		require.True(t, exist)
 		require.Equal(t, "planNormalized"+strconv.Itoa(id), planMeta.NormalizedPlan)
 	}
 }
 
 func newSQLCPUTimeRecord(tsr *RemoteTopSQLReporter, sqlID int, cpuTimeMs uint32) collector.SQLCPUTimeRecord {
-	key := []byte("sqlDigest" + strconv.Itoa(sqlID))
+	key := parser.RawDigestString("sqlDigest" + strconv.Itoa(sqlID))
 	value := "sqlNormalized" + strconv.Itoa(sqlID)
 	tsr.RegisterSQL(key, value, sqlID%2 == 0)
 
-	key = []byte("planDigest" + strconv.Itoa(sqlID))
+	key = parser.RawDigestString("planDigest" + strconv.Itoa(sqlID))
 	value = "planNormalized" + strconv.Itoa(sqlID)
 	tsr.RegisterPlan(key, value)
 
 	return collector.SQLCPUTimeRecord{
-		SQLDigest:  []byte("sqlDigest" + strconv.Itoa(sqlID)),
-		PlanDigest: []byte("planDigest" + strconv.Itoa(sqlID)),
+		SQLDigest:  parser.RawDigestString("sqlDigest" + strconv.Itoa(sqlID)),
+		PlanDigest: parser.RawDigestString("planDigest" + strconv.Itoa(sqlID)),
 		CPUTimeMs:  cpuTimeMs,
 	}
 }
@@ -308,14 +309,14 @@ func TestCollectCapacity(t *testing.T) {
 	tsr, _ := setupRemoteTopSQLReporter(maxSQLNum, 60)
 	registerSQL := func(n int) {
 		for i := 0; i < n; i++ {
-			key := []byte("sqlDigest" + strconv.Itoa(i))
+			key := parser.RawDigestString("sqlDigest" + strconv.Itoa(i))
 			value := "sqlNormalized" + strconv.Itoa(i)
 			tsr.RegisterSQL(key, value, false)
 		}
 	}
 	registerPlan := func(n int) {
 		for i := 0; i < n; i++ {
-			key := []byte("planDigest" + strconv.Itoa(i))
+			key := parser.RawDigestString("planDigest" + strconv.Itoa(i))
 			value := "planNormalized" + strconv.Itoa(i)
 			tsr.RegisterPlan(key, value)
 		}
@@ -324,8 +325,8 @@ func TestCollectCapacity(t *testing.T) {
 		records := make([]collector.SQLCPUTimeRecord, 0, n)
 		for i := 0; i < n; i++ {
 			records = append(records, collector.SQLCPUTimeRecord{
-				SQLDigest:  []byte("sqlDigest" + strconv.Itoa(i+1)),
-				PlanDigest: []byte("planDigest" + strconv.Itoa(i+1)),
+				SQLDigest:  parser.RawDigestString("sqlDigest" + strconv.Itoa(i+1)),
+				PlanDigest: parser.RawDigestString("planDigest" + strconv.Itoa(i+1)),
 				CPUTimeMs:  uint32(i + 1),
 			})
 		}
@@ -381,7 +382,7 @@ func TestCollectInternal(t *testing.T) {
 			id = n
 		}
 		require.NotEqualf(t, 0, id, "the id should not be 0")
-		sqlMeta, exist := findSQLMeta(data.SQLMetas, req.SqlDigest)
+		sqlMeta, exist := findSQLMeta(data.SQLMetas, parser.RawDigestString(req.SqlDigest))
 		require.True(t, exist)
 		require.Equal(t, id%2 == 0, sqlMeta.IsInternalSql)
 	}
@@ -488,8 +489,8 @@ func TestReporterWorker(t *testing.T) {
 
 	r.Collect(nil)
 	r.Collect([]collector.SQLCPUTimeRecord{{
-		SQLDigest:  []byte("S1"),
-		PlanDigest: []byte("P1"),
+		SQLDigest:  "S1",
+		PlanDigest: "P1",
 		CPUTimeMs:  1,
 	}})
 	r.CollectStmtStatsMap(nil)

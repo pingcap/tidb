@@ -2284,7 +2284,7 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 					// as much information as possible even we can't retrieve some of them.
 					logutil.Logger(ctx).Warn("failed to decode resource group tag", zap.Error(err))
 				} else {
-					digests[i] = hex.EncodeToString(digest)
+					digests[i] = digest.String()
 				}
 			}
 		}

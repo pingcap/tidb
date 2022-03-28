@@ -74,10 +74,10 @@ func TestSingleTargetDataSink(t *testing.T) {
 
 	assert.Len(t, server.GetLatestRecords(), 1)
 	assert.Len(t, server.GetTotalSQLMetas(), 1)
-	sqlMeta, exist := server.GetSQLMetaByDigestBlocking([]byte("S1"), 5*time.Second)
+	sqlMeta, exist := server.GetSQLMetaByDigestBlocking("S1", 5*time.Second)
 	assert.True(t, exist)
 	assert.Equal(t, sqlMeta.NormalizedSql, "SQL-1")
-	normalizedPlan, exist := server.GetPlanMetaByDigestBlocking([]byte("P1"), 5*time.Second)
+	normalizedPlan, exist := server.GetPlanMetaByDigestBlocking("P1", 5*time.Second)
 	assert.True(t, exist)
 	assert.Equal(t, normalizedPlan, "PLAN-1")
 }

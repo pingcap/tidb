@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql/collector"
@@ -49,11 +50,11 @@ type TopSQLReporter interface {
 	// in several goroutines should be fine. It should also return immediately,
 	// and do any CPU-intensive job asynchronously.
 	// The sqlDigest will be referenced internally, so do not mutate it.
-	RegisterSQL(sqlDigest []byte, normalizedSQL string, isInternal bool)
+	RegisterSQL(sqlDigest parser.RawDigestString, normalizedSQL string, isInternal bool)
 
 	// RegisterPlan like RegisterSQL, but for normalized plan strings.
 	// The planDigest will be referenced internally, so do not mutate it.
-	RegisterPlan(planDigest []byte, normalizedPlan string)
+	RegisterPlan(planDigest parser.RawDigestString, normalizedPlan string)
 
 	// Close uses to close and release the reporter resource.
 	Close()
@@ -148,14 +149,14 @@ func (tsr *RemoteTopSQLReporter) CollectStmtStatsMap(data stmtstats.StatementSta
 // RegisterSQL implements TopSQLReporter.
 //
 // This function is thread-safe and efficient.
-func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest []byte, normalizedSQL string, isInternal bool) {
+func (tsr *RemoteTopSQLReporter) RegisterSQL(sqlDigest parser.RawDigestString, normalizedSQL string, isInternal bool) {
 	tsr.normalizedSQLMap.register(sqlDigest, normalizedSQL, isInternal)
 }
 
 // RegisterPlan implements TopSQLReporter.
 //
 // This function is thread-safe and efficient.
-func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest []byte, normalizedPlan string) {
+func (tsr *RemoteTopSQLReporter) RegisterPlan(planDigest parser.RawDigestString, normalizedPlan string) {
 	tsr.normalizedPlanMap.register(planDigest, normalizedPlan)
 }
 
@@ -228,13 +229,12 @@ func (tsr *RemoteTopSQLReporter) processStmtStatsData() {
 
 	for timestamp, data := range tsr.stmtStatsBuffer {
 		for digest, item := range data {
-			sqlDigest, planDigest := []byte(digest.SQLDigest), []byte(digest.PlanDigest)
-			if tsr.collecting.hasEvicted(timestamp, sqlDigest, planDigest) {
+			if tsr.collecting.hasEvicted(timestamp, digest.SQLDigest, digest.PlanDigest) {
 				// This timestamp+sql+plan has been evicted due to low CPUTime.
 				tsr.collecting.appendOthersStmtStatsItem(timestamp, *item)
 				continue
 			}
-			tsr.collecting.getOrCreateRecord(sqlDigest, planDigest).appendStmtStatsItem(timestamp, *item)
+			tsr.collecting.getOrCreateRecord(digest.SQLDigest, digest.PlanDigest).appendStmtStatsItem(timestamp, *item)
 		}
 	}
 	tsr.stmtStatsBuffer = map[uint64]stmtstats.StatementStatsMap{}

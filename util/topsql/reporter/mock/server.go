@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -32,8 +33,8 @@ type mockAgentServer struct {
 	sync.Mutex
 	addr       string
 	grpcServer *grpc.Server
-	sqlMetas   map[string]tipb.SQLMeta
-	planMetas  map[string]string
+	sqlMetas   map[parser.RawDigestString]tipb.SQLMeta
+	planMetas  map[parser.RawDigestString]string
 	records    [][]*tipb.TopSQLRecord
 	hang       struct {
 		beginTime atomic.Value // time.Time
@@ -52,8 +53,8 @@ func StartMockAgentServer() (*mockAgentServer, error) {
 	agentServer := &mockAgentServer{
 		addr:       fmt.Sprintf("127.0.0.1:%d", lis.Addr().(*net.TCPAddr).Port),
 		grpcServer: server,
-		sqlMetas:   make(map[string]tipb.SQLMeta, 5000),
-		planMetas:  make(map[string]string, 5000),
+		sqlMetas:   make(map[parser.RawDigestString]tipb.SQLMeta, 5000),
+		planMetas:  make(map[parser.RawDigestString]string, 5000),
 	}
 	agentServer.hang.beginTime.Store(time.Now())
 	agentServer.hang.endTime.Store(time.Now())
@@ -113,7 +114,7 @@ func (svr *mockAgentServer) ReportSQLMeta(stream tipb.TopSQLAgent_ReportSQLMetaS
 			return err
 		}
 		svr.Lock()
-		svr.sqlMetas[string(req.SqlDigest)] = *req
+		svr.sqlMetas[parser.RawDigestString(req.SqlDigest)] = *req
 		svr.Unlock()
 	}
 	return stream.SendAndClose(&tipb.EmptyResponse{})
@@ -129,7 +130,7 @@ func (svr *mockAgentServer) ReportPlanMeta(stream tipb.TopSQLAgent_ReportPlanMet
 			return err
 		}
 		svr.Lock()
-		svr.planMetas[string(req.PlanDigest)] = req.NormalizedPlan
+		svr.planMetas[parser.RawDigestString(req.PlanDigest)] = req.NormalizedPlan
 		svr.Unlock()
 	}
 	return stream.SendAndClose(&tipb.EmptyResponse{})
@@ -179,11 +180,11 @@ func (svr *mockAgentServer) WaitCollectCntOfSQLMeta(old, cnt int, timeout time.D
 	}
 }
 
-func (svr *mockAgentServer) GetSQLMetaByDigestBlocking(digest []byte, timeout time.Duration) (meta tipb.SQLMeta, exist bool) {
+func (svr *mockAgentServer) GetSQLMetaByDigestBlocking(digest parser.RawDigestString, timeout time.Duration) (meta tipb.SQLMeta, exist bool) {
 	start := time.Now()
 	for {
 		svr.Lock()
-		sqlMeta, exist := svr.sqlMetas[string(digest)]
+		sqlMeta, exist := svr.sqlMetas[digest]
 		svr.Unlock()
 		if exist || time.Since(start) > timeout {
 			return sqlMeta, exist
@@ -192,11 +193,11 @@ func (svr *mockAgentServer) GetSQLMetaByDigestBlocking(digest []byte, timeout ti
 	}
 }
 
-func (svr *mockAgentServer) GetPlanMetaByDigestBlocking(digest []byte, timeout time.Duration) (normalizedPlan string, exist bool) {
+func (svr *mockAgentServer) GetPlanMetaByDigestBlocking(digest parser.RawDigestString, timeout time.Duration) (normalizedPlan string, exist bool) {
 	start := time.Now()
 	for {
 		svr.Lock()
-		normalizedPlan, exist = svr.planMetas[string(digest)]
+		normalizedPlan, exist = svr.planMetas[digest]
 		svr.Unlock()
 		if exist || time.Since(start) > timeout {
 			return normalizedPlan, exist

@@ -15,11 +15,11 @@
 package reporter
 
 import (
-	"bytes"
 	"sort"
 	"sync"
 	"testing"
 
+	"github.com/pingcap/tidb/parser"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-tipb"
@@ -93,7 +93,7 @@ func Test_record_Sort(t *testing.T) {
 }
 
 func Test_record_append(t *testing.T) {
-	r := newRecord(nil, nil)
+	r := newRecord("", "")
 	//   TimestampList: []
 	//     CPUTimeList: []
 	//   ExecCountList: []
@@ -197,8 +197,8 @@ func Test_record_rebuildTsIndex(t *testing.T) {
 
 func Test_record_toProto(t *testing.T) {
 	r := record{
-		sqlDigest:      []byte("SQL-1"),
-		planDigest:     []byte("PLAN-1"),
+		sqlDigest:      "SQL-1",
+		planDigest:     "PLAN-1",
 		totalCPUTimeMs: 123,
 		tsItems:        tsItems{{}, {}, {}},
 	}
@@ -242,18 +242,18 @@ func Test_records_toProto(t *testing.T) {
 
 func Test_collecting_getOrCreateRecord(t *testing.T) {
 	c := newCollecting()
-	r1 := c.getOrCreateRecord([]byte("SQL-1"), []byte("PLAN-1"))
+	r1 := c.getOrCreateRecord("SQL-1", "PLAN-1")
 	require.NotNil(t, r1)
-	r2 := c.getOrCreateRecord([]byte("SQL-1"), []byte("PLAN-1"))
+	r2 := c.getOrCreateRecord("SQL-1", "PLAN-1")
 	require.Equal(t, r1, r2)
 }
 
 func Test_collecting_markAsEvicted_hasEvicted(t *testing.T) {
 	c := newCollecting()
-	c.markAsEvicted(1, []byte("SQL-1"), []byte("PLAN-1"))
-	require.True(t, c.hasEvicted(1, []byte("SQL-1"), []byte("PLAN-1")))
-	require.False(t, c.hasEvicted(1, []byte("SQL-2"), []byte("PLAN-2")))
-	require.False(t, c.hasEvicted(2, []byte("SQL-1"), []byte("PLAN-1")))
+	c.markAsEvicted(1, "SQL-1", "PLAN-1")
+	require.True(t, c.hasEvicted(1, "SQL-1", "PLAN-1"))
+	require.False(t, c.hasEvicted(1, "SQL-2", "PLAN-2"))
+	require.False(t, c.hasEvicted(2, "SQL-1", "PLAN-1"))
 }
 
 func Test_collecting_appendOthers(t *testing.T) {
@@ -277,10 +277,10 @@ func Test_collecting_appendOthers(t *testing.T) {
 
 func Test_collecting_getReportRecords(t *testing.T) {
 	c := newCollecting()
-	c.getOrCreateRecord([]byte("SQL-1"), []byte("PLAN-1")).appendCPUTime(1, 1)
-	c.getOrCreateRecord([]byte("SQL-2"), []byte("PLAN-2")).appendCPUTime(1, 2)
-	c.getOrCreateRecord([]byte("SQL-3"), []byte("PLAN-3")).appendCPUTime(1, 3)
-	c.getOrCreateRecord([]byte(keyOthers), []byte(keyOthers)).appendCPUTime(1, 10)
+	c.getOrCreateRecord("SQL-1", "PLAN-1").appendCPUTime(1, 1)
+	c.getOrCreateRecord("SQL-2", "PLAN-2").appendCPUTime(1, 2)
+	c.getOrCreateRecord("SQL-3", "PLAN-3").appendCPUTime(1, 3)
+	c.getOrCreateRecord(keyOthers, keyOthers).appendCPUTime(1, 10)
 	rs := c.getReportRecords()
 	require.Len(t, rs, 4)
 	require.Equal(t, uint32(10), rs[3].tsItems[0].cpuTimeMs)
@@ -289,11 +289,10 @@ func Test_collecting_getReportRecords(t *testing.T) {
 
 func Test_collecting_take(t *testing.T) {
 	c1 := newCollecting()
-	c1.getOrCreateRecord([]byte("SQL-1"), []byte("PLAN-1")).appendCPUTime(1, 1)
+	c1.getOrCreateRecord("SQL-1", "PLAN-1").appendCPUTime(1, 1)
 	c2 := c1.take()
 	require.Empty(t, c1.records)
 	require.Len(t, c2.records, 1)
-	require.NotEqual(t, c1.keyBuf, c2.keyBuf)
 }
 
 func Test_cpuRecords_Sort(t *testing.T) {
@@ -325,9 +324,9 @@ func Test_cpuRecords_topN(t *testing.T) {
 func Test_normalizedSQLMap_register(t *testing.T) {
 	topsqlstate.GlobalState.MaxCollect.Store(2)
 	m := newNormalizedSQLMap()
-	m.register([]byte("SQL-1"), "SQL-1", true)
-	m.register([]byte("SQL-2"), "SQL-2", false)
-	m.register([]byte("SQL-3"), "SQL-3", true)
+	m.register("SQL-1", "SQL-1", true)
+	m.register("SQL-2", "SQL-2", false)
+	m.register("SQL-3", "SQL-3", true)
 	require.Equal(t, int64(2), m.length.Load())
 	v, ok := m.data.Load().(*sync.Map).Load("SQL-1")
 	meta := v.(sqlMeta)
@@ -346,9 +345,9 @@ func Test_normalizedSQLMap_register(t *testing.T) {
 func Test_normalizedSQLMap_take(t *testing.T) {
 	topsqlstate.GlobalState.MaxCollect.Store(999)
 	m1 := newNormalizedSQLMap()
-	m1.register([]byte("SQL-1"), "SQL-1", true)
-	m1.register([]byte("SQL-2"), "SQL-2", false)
-	m1.register([]byte("SQL-3"), "SQL-3", true)
+	m1.register("SQL-1", "SQL-1", true)
+	m1.register("SQL-2", "SQL-2", false)
+	m1.register("SQL-3", "SQL-3", true)
 	m2 := m1.take()
 	require.Equal(t, int64(0), m1.length.Load())
 	require.Equal(t, int64(3), m2.length.Load())
@@ -371,9 +370,9 @@ func Test_normalizedSQLMap_take(t *testing.T) {
 func Test_normalizedSQLMap_toProto(t *testing.T) {
 	topsqlstate.GlobalState.MaxCollect.Store(999)
 	m := newNormalizedSQLMap()
-	m.register([]byte("SQL-1"), "SQL-1", true)
-	m.register([]byte("SQL-2"), "SQL-2", false)
-	m.register([]byte("SQL-3"), "SQL-3", true)
+	m.register("SQL-1", "SQL-1", true)
+	m.register("SQL-2", "SQL-2", false)
+	m.register("SQL-3", "SQL-3", true)
 	pb := m.toProto()
 	require.Len(t, pb, 3)
 	hash := map[string]tipb.SQLMeta{}
@@ -400,9 +399,9 @@ func Test_normalizedSQLMap_toProto(t *testing.T) {
 func Test_normalizedPlanMap_register(t *testing.T) {
 	topsqlstate.GlobalState.MaxCollect.Store(2)
 	m := newNormalizedPlanMap()
-	m.register([]byte("PLAN-1"), "PLAN-1")
-	m.register([]byte("PLAN-2"), "PLAN-2")
-	m.register([]byte("PLAN-3"), "PLAN-3")
+	m.register("PLAN-1", "PLAN-1")
+	m.register("PLAN-2", "PLAN-2")
+	m.register("PLAN-3", "PLAN-3")
 	require.Equal(t, int64(2), m.length.Load())
 	v, ok := m.data.Load().(*sync.Map).Load("PLAN-1")
 	require.True(t, ok)
@@ -417,9 +416,9 @@ func Test_normalizedPlanMap_register(t *testing.T) {
 func Test_normalizedPlanMap_take(t *testing.T) {
 	topsqlstate.GlobalState.MaxCollect.Store(999)
 	m1 := newNormalizedPlanMap()
-	m1.register([]byte("PLAN-1"), "PLAN-1")
-	m1.register([]byte("PLAN-2"), "PLAN-2")
-	m1.register([]byte("PLAN-3"), "PLAN-3")
+	m1.register("PLAN-1", "PLAN-1")
+	m1.register("PLAN-2", "PLAN-2")
+	m1.register("PLAN-3", "PLAN-3")
 	m2 := m1.take()
 	require.Equal(t, int64(0), m1.length.Load())
 	require.Equal(t, int64(3), m2.length.Load())
@@ -442,9 +441,9 @@ func Test_normalizedPlanMap_take(t *testing.T) {
 func Test_normalizedPlanMap_toProto(t *testing.T) {
 	topsqlstate.GlobalState.MaxCollect.Store(999)
 	m := newNormalizedPlanMap()
-	m.register([]byte("PLAN-1"), "PLAN-1")
-	m.register([]byte("PLAN-2"), "PLAN-2")
-	m.register([]byte("PLAN-3"), "PLAN-3")
+	m.register("PLAN-1", "PLAN-1")
+	m.register("PLAN-2", "PLAN-2")
+	m.register("PLAN-3", "PLAN-3")
 	pb := m.toProto(func(s string) (string, error) { return s, nil })
 	require.Len(t, pb, 3)
 	hash := map[string]tipb.PlanMeta{}
@@ -466,16 +465,15 @@ func Test_normalizedPlanMap_toProto(t *testing.T) {
 }
 
 func Test_encodeKey(t *testing.T) {
-	buf := bytes.NewBuffer(make([]byte, 0, 64))
-	key := encodeKey(buf, []byte("S"), []byte("P"))
+	key := encodeKey("S", "P")
 	require.Equal(t, "SP", key)
 }
 
 func TestRemoveInvalidPlanRecord(t *testing.T) {
 	c1 := newCollecting()
 	rs := []struct {
-		sql  string
-		plan string
+		sql  parser.RawDigestString
+		plan parser.RawDigestString
 		tss  []uint64
 	}{
 		{"SQL-1", "PLAN-1", []uint64{1, 2, 3, 5}},
@@ -488,7 +486,7 @@ func TestRemoveInvalidPlanRecord(t *testing.T) {
 		{"SQL-3", "PLAN-1", []uint64{1, 2, 3, 4, 6}},
 	}
 	for _, r := range rs {
-		record := c1.getOrCreateRecord([]byte(r.sql), []byte(r.plan))
+		record := c1.getOrCreateRecord(r.sql, r.plan)
 		for _, ts := range r.tss {
 			record.appendCPUTime(ts, 1)
 		}
@@ -497,8 +495,8 @@ func TestRemoveInvalidPlanRecord(t *testing.T) {
 	c1.removeInvalidPlanRecord()
 
 	result := []struct {
-		sql  string
-		plan string
+		sql  parser.RawDigestString
+		plan parser.RawDigestString
 		tss  []uint64
 		cpus []uint32
 	}{
@@ -508,14 +506,12 @@ func TestRemoveInvalidPlanRecord(t *testing.T) {
 		{"SQL-3", "PLAN-1", []uint64{1, 2, 3, 4, 5, 6}, []uint32{1, 2, 2, 1, 1, 1}},
 	}
 	require.Equal(t, len(result), len(c1.records))
-	buf := bytes.NewBuffer(make([]byte, 0, 64))
 	for _, r := range result {
-		buf.Reset()
-		k := encodeKey(buf, []byte(r.sql), []byte(r.plan))
+		k := encodeKey(r.sql, r.plan)
 		record, ok := c1.records[k]
 		require.True(t, ok)
-		require.Equal(t, []byte(r.sql), record.sqlDigest)
-		require.Equal(t, []byte(r.plan), record.planDigest)
+		require.Equal(t, r.sql, record.sqlDigest)
+		require.Equal(t, r.plan, record.planDigest)
 		require.Equal(t, len(r.tss), len(record.tsItems))
 		for i, ts := range r.tss {
 			require.Equal(t, ts, record.tsItems[i].timestamp)

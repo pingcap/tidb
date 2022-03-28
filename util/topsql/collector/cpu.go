@@ -21,9 +21,9 @@ import (
 	"time"
 
 	"github.com/google/pprof/profile"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/cpuprofile"
-	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"go.uber.org/zap"
@@ -46,8 +46,8 @@ type Collector interface {
 // 1. some sql statements has no plan, like `COMMIT`
 // 2. when a sql statement is being compiled, there's no plan yet
 type SQLCPUTimeRecord struct {
-	SQLDigest  []byte
-	PlanDigest []byte
+	SQLDigest  parser.RawDigestString
+	PlanDigest parser.RawDigestString
 	CPUTimeMs  uint32
 }
 
@@ -165,7 +165,7 @@ func (sp *SQLCPUCollector) doUnregister(profileConsumer cpuprofile.ProfileConsum
 // Since `SQLCPUCollector` only care about the cpu time that consume by (sql_digest,plan_digest), the other sample data
 // without those label will be ignore.
 func (sp *SQLCPUCollector) parseCPUProfileBySQLLabels(p *profile.Profile) []SQLCPUTimeRecord {
-	sqlMap := make(map[string]*sqlStats)
+	sqlMap := make(map[parser.RawDigestString]*sqlStats)
 	idx := len(p.SampleType) - 1
 	for _, s := range p.Sample {
 		digests, ok := s.Label[labelSQLDigest]
@@ -173,33 +173,35 @@ func (sp *SQLCPUCollector) parseCPUProfileBySQLLabels(p *profile.Profile) []SQLC
 			continue
 		}
 		for _, digest := range digests {
-			stmt, ok := sqlMap[digest]
+			digestKey := parser.RawDigestString(digest)
+			stmt, ok := sqlMap[digestKey]
 			if !ok {
 				stmt = &sqlStats{
-					plans: make(map[string]int64),
+					plans: make(map[parser.RawDigestString]int64),
 					total: 0,
 				}
-				sqlMap[digest] = stmt
+				sqlMap[digestKey] = stmt
 			}
 			stmt.total += s.Value[idx]
 
 			plans := s.Label[labelPlanDigest]
 			for _, plan := range plans {
-				stmt.plans[plan] += s.Value[idx]
+				planKey := parser.RawDigestString(plan)
+				stmt.plans[planKey] += s.Value[idx]
 			}
 		}
 	}
 	return sp.createSQLStats(sqlMap)
 }
 
-func (sp *SQLCPUCollector) createSQLStats(sqlMap map[string]*sqlStats) []SQLCPUTimeRecord {
+func (sp *SQLCPUCollector) createSQLStats(sqlMap map[parser.RawDigestString]*sqlStats) []SQLCPUTimeRecord {
 	stats := make([]SQLCPUTimeRecord, 0, len(sqlMap))
 	for sqlDigest, stmt := range sqlMap {
 		stmt.tune()
 		for planDigest, val := range stmt.plans {
 			stats = append(stats, SQLCPUTimeRecord{
-				SQLDigest:  []byte(sqlDigest),
-				PlanDigest: []byte(planDigest),
+				SQLDigest:  sqlDigest,
+				PlanDigest: planDigest,
 				CPUTimeMs:  uint32(time.Duration(val).Milliseconds()),
 			})
 		}
@@ -208,7 +210,7 @@ func (sp *SQLCPUCollector) createSQLStats(sqlMap map[string]*sqlStats) []SQLCPUT
 }
 
 type sqlStats struct {
-	plans map[string]int64
+	plans map[parser.RawDigestString]int64
 	total int64
 }
 
@@ -253,10 +255,14 @@ func (s *sqlStats) tune() {
 }
 
 // CtxWithDigest wrap the ctx with sql digest, if plan digest is not null, wrap with plan digest too.
-func CtxWithDigest(ctx context.Context, sqlDigest, planDigest []byte) context.Context {
-	if len(planDigest) == 0 {
-		return pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, string(hack.String(sqlDigest))))
+func CtxWithDigest(ctx context.Context, sqlDigest, planDigest parser.RawDigestString) context.Context {
+	if planDigest == "" {
+		return pprof.WithLabels(ctx, pprof.Labels(
+			labelSQLDigest, string(sqlDigest),
+		))
 	}
-	return pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, string(hack.String(sqlDigest)),
-		labelPlanDigest, string(hack.String(planDigest))))
+	return pprof.WithLabels(ctx, pprof.Labels(
+		labelSQLDigest, string(sqlDigest),
+		labelPlanDigest, string(planDigest),
+	))
 }

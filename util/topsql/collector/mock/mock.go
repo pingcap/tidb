@@ -15,12 +15,10 @@
 package mock
 
 import (
-	"bytes"
 	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql/collector"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
@@ -32,9 +30,9 @@ import (
 type TopSQLCollector struct {
 	sync.Mutex
 	// sql_digest -> normalized SQL
-	sqlMap map[string]string
+	sqlMap map[parser.RawDigestString]string
 	// plan_digest -> normalized plan
-	planMap map[string]string
+	planMap map[parser.RawDigestString]string
 	// (sql + plan_digest) -> sql stats
 	sqlStatsMap map[string]*collector.SQLCPUTimeRecord
 	collectCnt  atomic.Int64
@@ -43,8 +41,8 @@ type TopSQLCollector struct {
 // NewTopSQLCollector uses for testing.
 func NewTopSQLCollector() *TopSQLCollector {
 	return &TopSQLCollector{
-		sqlMap:      make(map[string]string),
-		planMap:     make(map[string]string),
+		sqlMap:      make(map[parser.RawDigestString]string),
+		planMap:     make(map[parser.RawDigestString]string),
 		sqlStatsMap: make(map[string]*collector.SQLCPUTimeRecord),
 	}
 }
@@ -72,8 +70,8 @@ func (c *TopSQLCollector) Collect(stats []collector.SQLCPUTimeRecord) {
 		}
 		stats.CPUTimeMs += stmt.CPUTimeMs
 		logutil.BgLogger().Info("mock top sql collector collected sql",
-			zap.String("sql", c.sqlMap[string(stmt.SQLDigest)]),
-			zap.Bool("has-plan", len(c.planMap[string(stmt.PlanDigest)]) > 0))
+			zap.String("sql", c.sqlMap[stmt.SQLDigest]),
+			zap.Bool("has-plan", len(c.planMap[stmt.PlanDigest]) > 0))
 	}
 }
 
@@ -103,9 +101,9 @@ func (c *TopSQLCollector) GetSQLStatsBySQL(sql string, planIsNotNull bool) []*co
 	sqlDigest := GenSQLDigest(sql)
 	c.Lock()
 	for _, stmt := range c.sqlStatsMap {
-		if bytes.Equal(stmt.SQLDigest, sqlDigest.RawAsBytes()) {
+		if stmt.SQLDigest == sqlDigest.RawAsString() {
 			if planIsNotNull {
-				plan := c.planMap[string(stmt.PlanDigest)]
+				plan := c.planMap[stmt.PlanDigest]
 				if len(plan) > 0 {
 					stats = append(stats, stmt)
 				}
@@ -124,7 +122,7 @@ func (c *TopSQLCollector) GetSQLCPUTimeBySQL(sql string) uint32 {
 	cpuTime := uint32(0)
 	c.Lock()
 	for _, stmt := range c.sqlStatsMap {
-		if bytes.Equal(stmt.SQLDigest, sqlDigest.RawAsBytes()) {
+		if stmt.SQLDigest == sqlDigest.RawAsString() {
 			cpuTime += stmt.CPUTimeMs
 		}
 	}
@@ -133,40 +131,38 @@ func (c *TopSQLCollector) GetSQLCPUTimeBySQL(sql string) uint32 {
 }
 
 // GetSQL uses for testing.
-func (c *TopSQLCollector) GetSQL(sqlDigest []byte) string {
+func (c *TopSQLCollector) GetSQL(sqlDigest parser.RawDigestString) string {
 	c.Lock()
-	sql := c.sqlMap[string(sqlDigest)]
+	sql := c.sqlMap[sqlDigest]
 	c.Unlock()
 	return sql
 }
 
 // GetPlan uses for testing.
-func (c *TopSQLCollector) GetPlan(planDigest []byte) string {
+func (c *TopSQLCollector) GetPlan(planDigest parser.RawDigestString) string {
 	c.Lock()
-	plan := c.planMap[string(planDigest)]
+	plan := c.planMap[planDigest]
 	c.Unlock()
 	return plan
 }
 
 // RegisterSQL uses for testing.
-func (c *TopSQLCollector) RegisterSQL(sqlDigest []byte, normalizedSQL string, isInternal bool) {
-	digestStr := string(hack.String(sqlDigest))
+func (c *TopSQLCollector) RegisterSQL(sqlDigest parser.RawDigestString, normalizedSQL string, isInternal bool) {
 	c.Lock()
-	_, ok := c.sqlMap[digestStr]
+	_, ok := c.sqlMap[sqlDigest]
 	if !ok {
-		c.sqlMap[digestStr] = normalizedSQL
+		c.sqlMap[sqlDigest] = normalizedSQL
 	}
 	c.Unlock()
 
 }
 
 // RegisterPlan uses for testing.
-func (c *TopSQLCollector) RegisterPlan(planDigest []byte, normalizedPlan string) {
-	digestStr := string(hack.String(planDigest))
+func (c *TopSQLCollector) RegisterPlan(planDigest parser.RawDigestString, normalizedPlan string) {
 	c.Lock()
-	_, ok := c.planMap[digestStr]
+	_, ok := c.planMap[planDigest]
 	if !ok {
-		c.planMap[digestStr] = normalizedPlan
+		c.planMap[planDigest] = normalizedPlan
 	}
 	c.Unlock()
 }
@@ -193,8 +189,8 @@ func (c *TopSQLCollector) WaitCollectCnt(count int64) {
 func (c *TopSQLCollector) Reset() {
 	c.Lock()
 	defer c.Unlock()
-	c.sqlMap = make(map[string]string)
-	c.planMap = make(map[string]string)
+	c.sqlMap = make(map[parser.RawDigestString]string)
+	c.planMap = make(map[parser.RawDigestString]string)
 	c.sqlStatsMap = make(map[string]*collector.SQLCPUTimeRecord)
 	c.collectCnt.Store(0)
 }

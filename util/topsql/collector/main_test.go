@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/cpuprofile/testutil"
 	"github.com/pingcap/tidb/util/testbridge"
@@ -61,7 +62,7 @@ func TestPProfCPUProfile(t *testing.T) {
 
 	data := <-mc.dataCh
 	require.True(t, len(data) > 0)
-	require.Equal(t, []byte("sql_digest value"), data[0].SQLDigest)
+	require.Equal(t, parser.RawDigestString("sql_digest value"), data[0].SQLDigest)
 
 	// Test after disabled, shouldn't receive any data.
 	topsqlstate.DisableTopSQL()
@@ -79,16 +80,16 @@ func TestPProfCPUProfile(t *testing.T) {
 		}
 	}
 	require.True(t, len(data) > 0)
-	require.Equal(t, []byte("sql_digest value"), data[0].SQLDigest)
+	require.Equal(t, parser.RawDigestString("sql_digest value"), data[0].SQLDigest)
 }
 
 func TestSQLStatsTune(t *testing.T) {
-	s := &sqlStats{plans: map[string]int64{"plan-1": 80}, total: 100}
+	s := &sqlStats{plans: map[parser.RawDigestString]int64{"plan-1": 80}, total: 100}
 	s.tune()
 	require.Equal(t, int64(100), s.total)
 	require.Equal(t, int64(100), s.plans["plan-1"])
 
-	s = &sqlStats{plans: map[string]int64{"plan-1": 30, "plan-2": 30}, total: 100}
+	s = &sqlStats{plans: map[parser.RawDigestString]int64{"plan-1": 30, "plan-2": 30}, total: 100}
 	s.tune()
 	require.Equal(t, int64(100), s.total)
 	require.Equal(t, int64(30), s.plans["plan-1"])

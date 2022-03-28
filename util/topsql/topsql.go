@@ -80,23 +80,23 @@ func Close() {
 }
 
 // AttachSQLInfo attach the sql information info top sql.
-func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.Digest, normalizedPlan string, planDigest *parser.Digest, isInternal bool) context.Context {
-	if len(normalizedSQL) == 0 || sqlDigest == nil || len(sqlDigest.RawAsBytes()) == 0 {
+func AttachSQLInfo(
+	ctx context.Context,
+	normalizedSQL string, sqlDigest parser.RawDigestString,
+	normalizedPlan string, planDigest parser.RawDigestString,
+	isInternal bool,
+) context.Context {
+	if len(normalizedSQL) == 0 || sqlDigest == "" {
 		return ctx
 	}
-	var sqlDigestBytes, planDigestBytes []byte
-	sqlDigestBytes = sqlDigest.RawAsBytes()
-	if planDigest != nil {
-		planDigestBytes = planDigest.RawAsBytes()
-	}
-	ctx = collector.CtxWithDigest(ctx, sqlDigestBytes, planDigestBytes)
+	ctx = collector.CtxWithDigest(ctx, sqlDigest, planDigest)
 	pprof.SetGoroutineLabels(ctx)
 
-	if len(normalizedPlan) == 0 || len(planDigestBytes) == 0 {
+	if len(normalizedPlan) == 0 || planDigest == "" {
 		// If plan digest is '', indicate it is the first time to attach the SQL info, since it only know the sql digest.
-		linkSQLTextWithDigest(sqlDigestBytes, normalizedSQL, isInternal)
+		linkSQLTextWithDigest(sqlDigest, normalizedSQL, isInternal)
 	} else {
-		linkPlanTextWithDigest(planDigestBytes, normalizedPlan)
+		linkPlanTextWithDigest(planDigest, normalizedPlan)
 	}
 	failpoint.Inject("mockHighLoadForEachSQL", func(val failpoint.Value) {
 		// In integration test, some SQL run very fast that Top SQL pprof profile unable to sample data of those SQL,
@@ -141,7 +141,7 @@ func MockHighCPULoad(sql string, sqlPrefixs []string, load int64) bool {
 	return true
 }
 
-func linkSQLTextWithDigest(sqlDigest []byte, normalizedSQL string, isInternal bool) {
+func linkSQLTextWithDigest(sqlDigest parser.RawDigestString, normalizedSQL string, isInternal bool) {
 	if len(normalizedSQL) > MaxSQLTextSize {
 		normalizedSQL = normalizedSQL[:MaxSQLTextSize]
 	}
@@ -149,7 +149,7 @@ func linkSQLTextWithDigest(sqlDigest []byte, normalizedSQL string, isInternal bo
 	globalTopSQLReport.RegisterSQL(sqlDigest, normalizedSQL, isInternal)
 }
 
-func linkPlanTextWithDigest(planDigest []byte, normalizedBinaryPlan string) {
+func linkPlanTextWithDigest(planDigest parser.RawDigestString, normalizedBinaryPlan string) {
 	if len(normalizedBinaryPlan) > MaxBinaryPlanSize {
 		// ignore the huge size plan
 		return

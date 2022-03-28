@@ -229,7 +229,7 @@ func ErrDeadlockToDeadlockRecord(dl *tikverr.ErrDeadlock) *DeadlockRecord {
 		}
 		waitChain = append(waitChain, WaitChainItem{
 			TryLockTxn:     rawItem.Txn,
-			SQLDigest:      hex.EncodeToString(sqlDigest),
+			SQLDigest:      sqlDigest.String(),
 			Key:            rawItem.Key,
 			AllSQLDigests:  nil,
 			TxnHoldingLock: rawItem.WaitForTxn,

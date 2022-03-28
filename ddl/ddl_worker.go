@@ -528,7 +528,10 @@ func (w *worker) setDDLLabelForTopSQL(job *model.Job) {
 		w.cacheSQL = job.Query
 	}
 
-	w.ddlJobCtx = topsql.AttachSQLInfo(context.Background(), w.cacheNormalizedSQL, w.cacheDigest, "", nil, false)
+	w.ddlJobCtx = topsql.AttachSQLInfo(
+		context.Background(),
+		w.cacheNormalizedSQL, w.cacheDigest.RawAsString(),
+		"", "", false)
 }
 
 func (w *worker) setResourceGroupTaggerForTopSQL(txn kv.Transaction) {

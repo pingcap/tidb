@@ -255,8 +255,8 @@ func TestGetDatum(t *testing.T) {
 
 func TestErrDeadlockToDeadlockRecord(t *testing.T) {
 	digest1, digest2 := parser.NewDigest([]byte("aabbccdd")), parser.NewDigest([]byte("ddccbbaa"))
-	tag1 := tipb.ResourceGroupTag{SqlDigest: digest1.Bytes()}
-	tag2 := tipb.ResourceGroupTag{SqlDigest: digest2.Bytes()}
+	tag1 := tipb.ResourceGroupTag{SqlDigest: digest1.RawAsBytes()}
+	tag2 := tipb.ResourceGroupTag{SqlDigest: digest2.RawAsBytes()}
 	tag1Data, _ := tag1.Marshal()
 	tag2Data, _ := tag2.Marshal()
 	err := &tikverr.ErrDeadlock{
