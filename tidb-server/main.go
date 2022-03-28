@@ -203,7 +203,6 @@ func main() {
 
 	storage, dom := createStoreAndDomain()
 	svr := createServer(storage, dom)
-	kv.InitInnerTxnStartTsBox()
 
 	// Register error API is not thread-safe, the caller MUST NOT register errors after initialization.
 	// To prevent misuse, set a flag to indicate that register new error will panic immediately.

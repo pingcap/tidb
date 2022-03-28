@@ -33,7 +33,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/ngaut/pools"
 	"github.com/opentracing/opentracing-go"
@@ -1761,7 +1760,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 	se.sessionVars.PartitionPruneMode.Store(s.sessionVars.PartitionPruneMode.Load())
 
 	// Put the internal session to the map of SessionManager
-	infosync.StoreInternalSession(unsafe.Pointer(se))
+	infosync.StoreInternalSession(se)
 
 	return se, func() {
 		se.sessionVars.AnalyzeVersion = prevStatsVer
@@ -1779,7 +1778,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 		se.sessionVars.OptimizerUseInvisibleIndexes = false
 		se.sessionVars.InspectionTableCache = nil
 		// Delete the internal session to the map of SessionManager
-		infosync.DeleteInternalSession(unsafe.Pointer(se))
+		infosync.DeleteInternalSession(se)
 		s.sysSessionPool().Put(tmp)
 	}, nil
 }
@@ -3228,10 +3227,10 @@ func (s *session) ShowProcess() *util.ProcessInfo {
 
 // GetStartTSFromSession returns the ProcessInfo in the session whose
 // address is `addr`
-func GetStartTSFromSession(addr unsafe.Pointer) uint64 {
+func GetStartTSFromSession(se interface{}) uint64 {
 	var startTS uint64 = 0
-	se := (*session)(addr)
-	txnInfo := se.TxnInfo()
+	tmp := se.(*session)
+	txnInfo := tmp.TxnInfo()
 	if txnInfo != nil {
 		startTS = txnInfo.StartTS
 	}

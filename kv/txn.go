@@ -21,7 +21,6 @@ import (
 	"math"
 	"math/rand"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -38,38 +37,20 @@ const (
 	TimeToPrintLongTimeInternalTxn = time.Minute * 5
 )
 
-var globalInnerTxnTsBox atomic.Value
+var globalInnerTxnTsBox = innerTxnStartTsBox{
+	innerTSLock:        sync.Mutex{},
+	innerTxnStartTsMap: make(map[uint64]uint64, chanBufferSize),
+}
 
 type innerTxnStartTsBox struct {
 	innerTSLock        sync.Mutex
 	innerTxnStartTsMap map[uint64]uint64
 }
 
-// InitInnerTxnStartTsBox initializes globalInnerTxnTsBox
-func InitInnerTxnStartTsBox() {
-	iTxnTsBox := &innerTxnStartTsBox{
-		innerTxnStartTsMap: make(map[uint64]uint64, chanBufferSize),
-	}
-	globalInnerTxnTsBox.Store(iTxnTsBox)
-}
-
-func getGlobalInnerTxnTsBox() *innerTxnStartTsBox {
-	v := globalInnerTxnTsBox.Load()
-	if v == nil {
-		return nil
-	}
-	ib := v.(*innerTxnStartTsBox)
-	return ib
-}
-
 // wrapStoreInterTxnTS is the entry function used to store the startTS of an internal transaction to globalInnerTxnTsBox
 // @param startTS	the startTS of the internal transaction produced by `RunInNewTxn`
 func wrapStoreInterTxnTS(startTS uint64) {
-	ib := getGlobalInnerTxnTsBox()
-	if ib == nil {
-		return
-	}
-	ib.storeInnerTxnTS(startTS)
+	globalInnerTxnTsBox.storeInnerTxnTS(startTS)
 }
 
 func (ib *innerTxnStartTsBox) storeInnerTxnTS(startTS uint64) {
@@ -82,11 +63,7 @@ func (ib *innerTxnStartTsBox) storeInnerTxnTS(startTS uint64) {
 // wrapDeleteInterTxnTS delete the startTS from globalInnerTxnTsBox when the transaciotn is commted
 // @param startTS	the startTS of the internal transaction produced by `RunInNewTxn`
 func wrapDeleteInterTxnTS(startTS uint64) {
-	ib := getGlobalInnerTxnTsBox()
-	if ib == nil {
-		return
-	}
-	ib.deleteInnerTxnTS(startTS)
+	globalInnerTxnTsBox.deleteInnerTxnTS(startTS)
 }
 
 func (ib *innerTxnStartTsBox) deleteInnerTxnTS(startTS uint64) {
@@ -98,12 +75,7 @@ func (ib *innerTxnStartTsBox) deleteInnerTxnTS(startTS uint64) {
 // WrapGetMinStartTs get the min StartTS between startTSLowerLimit and curMinStartTS in globalInnerTxnTsBox
 func WrapGetMinStartTs(now time.Time, startTSLowerLimit uint64,
 	curMinStartTS uint64) uint64 {
-	ib := getGlobalInnerTxnTsBox()
-	if ib == nil {
-		logutil.BgLogger().Info("Fail to get internal txn startTS, globalInnerTxnTsBox is nil")
-		return curMinStartTS
-	}
-	return ib.getMinStartTs(now, startTSLowerLimit, curMinStartTS)
+	return globalInnerTxnTsBox.getMinStartTs(now, startTSLowerLimit, curMinStartTS)
 }
 
 func (ib *innerTxnStartTsBox) getMinStartTs(now time.Time, startTSLowerLimit uint64,

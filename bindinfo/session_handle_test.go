@@ -20,7 +20,6 @@ import (
 	"strconv"
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/errno"
@@ -407,11 +406,9 @@ func (msm *mockSessionManager) ServerID() uint64 {
 	return 1
 }
 
-func (msm *mockSessionManager) StoreInternalSession(addr unsafe.Pointer) {
-}
+func (msm *mockSessionManager) StoreInternalSession(se interface{}) {}
 
-func (msm *mockSessionManager) DeleteInternalSession(addr unsafe.Pointer) {
-}
+func (msm *mockSessionManager) DeleteInternalSession(se interface{}) {}
 
 func (msm *mockSessionManager) GetInternalSessionStartTSList() []uint64 {
 	return nil

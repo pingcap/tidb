@@ -69,24 +69,19 @@ func TestRetryExceedCountError(t *testing.T) {
 }
 
 var wrapStoreInterTxnTSTest = wrapStoreInterTxnTS
-var getGlobalInnerTxnTsBoxTest = getGlobalInnerTxnTsBox
 var wrapDeleteInterTxnTSTest = wrapDeleteInterTxnTS
 
 // fmt.Println("ts0:", ts0, " ts1:", ts1, " ts2:", ts2, " ts3:", ts3, " lowLimit:", lowLimit, " minStartTS:", minStartTS, " newMinStartTS:", newMinStartTS)
 // fmt.Println("innerTxnStartTsMap:", ib.innerTxnStartTsMap)
 func TestInnerTxnStartTsBox(t *testing.T) {
-	InitInnerTxnStartTsBox()
-
-	ib := getGlobalInnerTxnTsBoxTest()
-
 	// case1: store and delete
 	wrapStoreInterTxnTSTest(5)
-	ts, ok := ib.innerTxnStartTsMap[5]
+	ts, ok := globalInnerTxnTsBox.innerTxnStartTsMap[5]
 	assert.Equal(t, true, ok)
 	assert.Equal(t, ts, (uint64)(5))
 
 	wrapDeleteInterTxnTSTest(5)
-	ts, ok = ib.innerTxnStartTsMap[5]
+	ts, ok = globalInnerTxnTsBox.innerTxnStartTsMap[5]
 	assert.Equal(t, false, ok)
 	assert.Equal(t, ts, (uint64)(0))
 

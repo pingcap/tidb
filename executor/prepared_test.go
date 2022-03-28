@@ -21,7 +21,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"unsafe"
 
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
@@ -123,11 +122,9 @@ func (sm *mockSessionManager2) KillAllConnections()           {}
 func (sm *mockSessionManager2) UpdateTLSConfig(_ *tls.Config) {}
 func (sm *mockSessionManager2) ServerID() uint64              { return 1 }
 
-func (sm *mockSessionManager2) StoreInternalSession(addr unsafe.Pointer) {
-}
+func (sm *mockSessionManager2) StoreInternalSession(se interface{}) {}
 
-func (sm *mockSessionManager2) DeleteInternalSession(addr unsafe.Pointer) {
-}
+func (sm *mockSessionManager2) DeleteInternalSession(se interface{}) {}
 
 func (sm *mockSessionManager2) GetInternalSessionStartTSList() []uint64 {
 	return nil

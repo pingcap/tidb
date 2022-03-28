@@ -21,7 +21,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session/txninfo"
@@ -171,9 +170,9 @@ type SessionManager interface {
 	UpdateTLSConfig(cfg *tls.Config)
 	ServerID() uint64
 	// Put the internal session pointer to the map in the SessionManager
-	StoreInternalSession(addr unsafe.Pointer)
+	StoreInternalSession(se interface{})
 	// Delete the internal session pointer from the map in the SessionManager
-	DeleteInternalSession(addr unsafe.Pointer)
+	DeleteInternalSession(se interface{})
 	// Get all startTS of every transactions running in the current internal sessions
 	GetInternalSessionStartTSList() []uint64
 }

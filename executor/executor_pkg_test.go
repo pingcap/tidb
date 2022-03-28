@@ -98,11 +98,9 @@ func (msm *mockSessionManager) SetServerID(serverID uint64) {
 	msm.serverID = serverID
 }
 
-func (msm *mockSessionManager) StoreInternalSession(addr unsafe.Pointer) {
-}
+func (msm *mockSessionManager) StoreInternalSession(se interface{}) {}
 
-func (msm *mockSessionManager) DeleteInternalSession(addr unsafe.Pointer) {
-}
+func (msm *mockSessionManager) DeleteInternalSession(se interface{}) {}
 
 func (msm *mockSessionManager) GetInternalSessionStartTSList() []uint64 {
 	return nil

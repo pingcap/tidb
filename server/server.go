@@ -135,7 +135,7 @@ type Server struct {
 	inShutdownMode bool
 
 	isRwlock         sync.RWMutex
-	internalSessions map[uint64]unsafe.Pointer
+	internalSessions map[interface{}]struct{}
 }
 
 // ConnectionCount gets current connection count.
@@ -195,7 +195,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint64]*clientConn),
 		globalConnID:      util.NewGlobalConnID(0, true),
-		internalSessions:  make(map[uint64]unsafe.Pointer, 100),
+		internalSessions:  make(map[interface{}]struct{}, 100),
 	}
 	s.capability = defaultCapability
 	setTxnScope()
@@ -804,17 +804,17 @@ func (s *Server) ServerID() uint64 {
 
 // StoreInternalSession implements SessionManager interface.
 // @param addr	The address of a session.session struct variable
-func (s *Server) StoreInternalSession(addr unsafe.Pointer) {
+func (s *Server) StoreInternalSession(se interface{}) {
 	s.isRwlock.Lock()
-	s.internalSessions[(uint64)(uintptr(addr))] = addr
+	s.internalSessions[se] = struct{}{}
 	s.isRwlock.Unlock()
 }
 
 // DeleteInternalSession implements SessionManager interface.
 // @param addr	The address of a session.session struct variable
-func (s *Server) DeleteInternalSession(addr unsafe.Pointer) {
+func (s *Server) DeleteInternalSession(se interface{}) {
 	s.isRwlock.Lock()
-	delete(s.internalSessions, (uint64)(uintptr(addr)))
+	delete(s.internalSessions, se)
 	s.isRwlock.Unlock()
 }
 
@@ -823,8 +823,8 @@ func (s *Server) GetInternalSessionStartTSList() []uint64 {
 	s.isRwlock.RLock()
 	defer s.isRwlock.RUnlock()
 	tsList := make([]uint64, 0, len(s.internalSessions))
-	for _, addr := range s.internalSessions {
-		if ts := session.GetStartTSFromSession(addr); ts != 0 {
+	for _, se := range s.internalSessions {
+		if ts := session.GetStartTSFromSession(se); ts != 0 {
 			tsList = append(tsList, ts)
 		}
 	}

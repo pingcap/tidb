@@ -26,7 +26,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -1059,7 +1058,7 @@ func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionD
 }
 
 // StoreInternalSession is the entry function for store an internal session to SessionManager
-func StoreInternalSession(addr unsafe.Pointer) {
+func StoreInternalSession(se interface{}) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return
@@ -1068,11 +1067,11 @@ func StoreInternalSession(addr unsafe.Pointer) {
 	if sm == nil {
 		return
 	}
-	sm.StoreInternalSession(addr)
+	sm.StoreInternalSession(se)
 }
 
 // DeleteInternalSession is the entry function for delete an internal session from SessionManager
-func DeleteInternalSession(addr unsafe.Pointer) {
+func DeleteInternalSession(se interface{}) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return
@@ -1081,5 +1080,5 @@ func DeleteInternalSession(addr unsafe.Pointer) {
 	if sm == nil {
 		return
 	}
-	sm.DeleteInternalSession(addr)
+	sm.DeleteInternalSession(se)
 }
