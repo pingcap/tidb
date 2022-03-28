@@ -713,11 +713,11 @@ func TestPrepareDealloc(t *testing.T) {
 	tk.MustExec("create table prepare_test (id int PRIMARY KEY, c1 int)")
 
 	require.Equal(t, 0, tk.Session().PreparedPlanCache().Size())
-	tk.MustExec(`prepare stmt1 from 'select * from prepare_test'`)
+	tk.MustExec(`prepare stmt1 from 'select id from prepare_test'`)
 	tk.MustExec("execute stmt1")
-	tk.MustExec(`prepare stmt2 from 'select * from prepare_test'`)
+	tk.MustExec(`prepare stmt2 from 'select c1 from prepare_test'`)
 	tk.MustExec("execute stmt2")
-	tk.MustExec(`prepare stmt3 from 'select * from prepare_test'`)
+	tk.MustExec(`prepare stmt3 from 'select id, c1 from prepare_test'`)
 	tk.MustExec("execute stmt3")
 	tk.MustExec(`prepare stmt4 from 'select * from prepare_test'`)
 	tk.MustExec("execute stmt4")
@@ -729,6 +729,20 @@ func TestPrepareDealloc(t *testing.T) {
 	tk.MustExec("deallocate prepare stmt3")
 	tk.MustExec("deallocate prepare stmt4")
 	require.Equal(t, 0, tk.Session().PreparedPlanCache().Size())
+
+	tk.MustExec(`prepare stmt1 from 'select * from prepare_test'`)
+	tk.MustExec(`execute stmt1`)
+	tk.MustExec(`prepare stmt2 from 'select * from prepare_test'`)
+	tk.MustExec(`execute stmt2`)
+	require.Equal(t, 1, tk.Session().PreparedPlanCache().Size()) // use the same cached plan since they have the same statement
+
+	tk.MustExec(`drop database if exists plan_cache`)
+	tk.MustExec(`create database plan_cache`)
+	tk.MustExec(`use plan_cache`)
+	tk.MustExec(`create table prepare_test (id int PRIMARY KEY, c1 int)`)
+	tk.MustExec(`prepare stmt3 from 'select * from prepare_test'`)
+	tk.MustExec(`execute stmt3`)
+	require.Equal(t, 2, tk.Session().PreparedPlanCache().Size()) // stmt3 has different DB
 }
 
 func TestPreparedIssue8153(t *testing.T) {

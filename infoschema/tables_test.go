@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -558,12 +557,12 @@ func TestSlowQuery(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", slowLogFileName))
 	tk.MustExec("set time_zone = '+08:00';")
 	re := tk.MustQuery("select * from information_schema.slow_query")
-	re.Check(testutil.RowsWithSep("|", "2019-02-12 19:33:56.571953|406315658548871171|root|localhost|6|57|0.12|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.00000001|0.000000003|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|100|10|10|10|100|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|0|0|0|0|10||0|1|0|0|1|0|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;",
+	re.Check(testkit.RowsWithSep("|", "2019-02-12 19:33:56.571953|406315658548871171|root|localhost|6|57|0.12|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.00000001|0.000000003|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|100|10|10|10|100|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|0|0|0|0|10||0|1|0|0|1|0|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;",
 		"2021-09-08|14:39:54.506967|427578666238083075|root|172.16.0.0|40507|0|0|25.571605962|0.002923536|0.006800973|0.002100764|0|0|0|0.000015801|25.542014572|0|0.002294647|0.000605473|12.483|[tikvRPC regionMiss tikvRPC regionMiss regionMiss]|0|0|624|172064|60|0|0|0|0|0|0|0|0|0|0|0|0|0|0|rtdb||0|124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc||0|0|0||0|0|0||856544|0|86.635049185|0.015486658|100.054|0|0||0|1|0|0|0|0||||INSERT INTO ...;",
 	))
 	tk.MustExec("set time_zone = '+00:00';")
 	re = tk.MustQuery("select * from information_schema.slow_query")
-	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|localhost|6|57|0.12|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.00000001|0.000000003|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|100|10|10|10|100|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|0|0|0|0|10||0|1|0|0|1|0|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;",
+	re.Check(testkit.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|localhost|6|57|0.12|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.00000001|0.000000003|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|100|10|10|10|100|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|0|0|0|0|10||0|1|0|0|1|0|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;",
 		"2021-09-08|06:39:54.506967|427578666238083075|root|172.16.0.0|40507|0|0|25.571605962|0.002923536|0.006800973|0.002100764|0|0|0|0.000015801|25.542014572|0|0.002294647|0.000605473|12.483|[tikvRPC regionMiss tikvRPC regionMiss regionMiss]|0|0|624|172064|60|0|0|0|0|0|0|0|0|0|0|0|0|0|0|rtdb||0|124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc||0|0|0||0|0|0||856544|0|86.635049185|0.015486658|100.054|0|0||0|1|0|0|0|0||||INSERT INTO ...;",
 	))
 
@@ -699,7 +698,7 @@ func TestFormatVersion(t *testing.T) {
 	}
 }
 
-// Test statements_summary.
+// TestStmtSummaryTable Test statements_summary.
 func TestStmtSummaryTable(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -935,6 +934,62 @@ func TestStmtSummaryTablePrivilege(t *testing.T) {
 	require.Equal(t, 2, len(result.Rows()))
 }
 
+func TestCapturePrivilege(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := newTestKitWithRoot(t, store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
+	defer tk.MustExec("drop table if exists t")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b varchar(10), key k(a))")
+	defer tk.MustExec("drop table if exists t1")
+
+	// Disable refreshing summary.
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 999999999")
+	tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Check(testkit.Rows("999999999"))
+	// Clear all statements.
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+
+	// Create a new user to test statements summary table privilege
+	tk.MustExec("drop user if exists 'test_user'@'localhost'")
+	tk.MustExec("create user 'test_user'@'localhost'")
+	defer tk.MustExec("drop user if exists 'test_user'@'localhost'")
+	tk.MustExec("grant select on test.t1 to 'test_user'@'localhost'")
+	tk.MustExec("select * from t where a=1")
+	tk.MustExec("select * from t where a=1")
+	tk.MustExec("admin capture bindings")
+	rows := tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 1)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.Session().Auth(&auth.UserIdentity{
+		Username:     "test_user",
+		Hostname:     "localhost",
+		AuthUsername: "test_user",
+		AuthHostname: "localhost",
+	}, nil, nil)
+
+	rows = tk1.MustQuery("show global bindings").Rows()
+	// Ordinary users can not see others' records
+	require.Len(t, rows, 0)
+	tk1.MustExec("select * from t1 where b=1")
+	tk1.MustExec("select * from t1 where b=1")
+	tk1.MustExec("admin capture bindings")
+	rows = tk1.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 1)
+
+	tk.MustExec("grant all on *.* to 'test_user'@'localhost'")
+	tk1.MustExec("admin capture bindings")
+	rows = tk1.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 2)
+}
+
 func TestIssue18845(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -950,7 +1005,7 @@ func TestIssue18845(t *testing.T) {
 	tk.MustQuery(`select count(*) from information_schema.columns;`)
 }
 
-// Test statements_summary_history.
+// TestStmtSummaryInternalQuery Test statements_summary_history.
 func TestStmtSummaryInternalQuery(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -1009,7 +1064,7 @@ func TestStmtSummaryInternalQuery(t *testing.T) {
 	require.Contains(t, rows[0][0].(string), "Projection")
 }
 
-// Test error count and warning count.
+// TestStmtSummaryErrorCount Test error count and warning count.
 func TestStmtSummaryErrorCount(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -1080,7 +1135,7 @@ func TestStmtSummarySensitiveQuery(t *testing.T) {
 		))
 }
 
-// test stmtSummaryEvictedCount
+// TestSimpleStmtSummaryEvictedCount test stmtSummaryEvictedCount
 func TestSimpleStmtSummaryEvictedCount(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -1442,4 +1497,17 @@ func TestReferentialConstraints(t *testing.T) {
 	tk.MustExec("CREATE TABLE t2 (id INT NOT NULL PRIMARY KEY, t1_id INT DEFAULT NULL, INDEX (t1_id), CONSTRAINT `fk_to_t1` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`))")
 
 	tk.MustQuery(`SELECT * FROM information_schema.referential_constraints WHERE table_name='t2'`).Check(testkit.Rows("def referconstraints fk_to_t1 def referconstraints PRIMARY NONE NO ACTION NO ACTION t2 t1"))
+}
+
+// TestTableConstraintsContainForeignKeys TiDB Issue: https://github.com/pingcap/tidb/issues/28918
+func TestTableConstraintsContainForeignKeys(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE DATABASE tableconstraints")
+	tk.MustExec("use tableconstraints")
+	tk.MustExec("CREATE TABLE `t1` (`id` int(11) NOT NULL AUTO_INCREMENT, `name` varchar(25) DEFAULT NULL, PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("CREATE TABLE `t2` (`id` int(11) NOT NULL AUTO_INCREMENT, `t1_id` int(11) DEFAULT NULL,	PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,	CONSTRAINT `fk_t2_t1` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustQuery("SELECT *  FROM INFORMATION_SCHEMA.table_constraints WHERE constraint_schema = 'tableconstraints' AND table_name = 't2'").Sort().Check(testkit.Rows("def tableconstraints PRIMARY tableconstraints t2 PRIMARY KEY", "def tableconstraints fk_t2_t1 tableconstraints t2 FOREIGN KEY"))
+	tk.MustQuery("SELECT *  FROM INFORMATION_SCHEMA.table_constraints WHERE constraint_schema = 'tableconstraints' AND table_name = 't1'").Sort().Check(testkit.Rows("def tableconstraints PRIMARY tableconstraints t1 PRIMARY KEY"))
 }

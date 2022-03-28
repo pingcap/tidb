@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore/client"
 	"github.com/pingcap/tidb/store/mockstore/unistore/lockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
+	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/kverrors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -314,6 +315,10 @@ func newRowDecoder(columnInfos []*tipb.ColumnInfo, fieldTps []*types.FieldType, 
 	)
 	for i := range columnInfos {
 		info := columnInfos[i]
+		if info.ColumnId == model.ExtraPhysTblID {
+			// Skip since it needs to be filled in from the key
+			continue
+		}
 		ft := fieldTps[i]
 		col := rowcodec.ColInfo{
 			ID:         info.ColumnId,
@@ -432,12 +437,17 @@ func buildRespWithMPPExec(chunks []tipb.Chunk, counts, ndvs []int64, exec mppExe
 	resp.ExecDetailsV2 = &kvrpcpb.ExecDetailsV2{
 		TimeDetail: resp.ExecDetails.TimeDetail,
 	}
-	data, err := proto.Marshal(selResp)
-	if err != nil {
-		resp.OtherError = err.Error()
+	data, mErr := proto.Marshal(selResp)
+	if mErr != nil {
+		resp.OtherError = mErr.Error()
 		return resp
 	}
 	resp.Data = data
+	if err != nil {
+		if conflictErr, ok := errors.Cause(err).(*kverrors.ErrConflict); ok {
+			resp.OtherError = conflictErr.Error()
+		}
+	}
 	return resp
 }
 

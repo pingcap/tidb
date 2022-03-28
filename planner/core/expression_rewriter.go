@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
@@ -514,7 +513,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 	lexpr := er.ctxStack[len(er.ctxStack)-1]
 	subq, ok := v.R.(*ast.SubqueryExpr)
 	if !ok {
-		er.err = errors.Errorf("Unknown compare type %T.", v.R)
+		er.err = errors.Errorf("Unknown compare type %T", v.R)
 		return v, true
 	}
 	np, err := er.buildSubquery(ctx, subq)
@@ -797,7 +796,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 	defer resetCTECheckForSubQuery(ci)
 	subq, ok := v.Sel.(*ast.SubqueryExpr)
 	if !ok {
-		er.err = errors.Errorf("Unknown exists type %T.", v.Sel)
+		er.err = errors.Errorf("Unknown exists type %T", v.Sel)
 		return v, true
 	}
 	np, err := er.buildSubquery(ctx, subq)
@@ -871,7 +870,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 	lexpr := er.ctxStack[len(er.ctxStack)-1]
 	subq, ok := v.Sel.(*ast.SubqueryExpr)
 	if !ok {
-		er.err = errors.Errorf("Unknown compare type %T.", v.Sel)
+		er.err = errors.Errorf("Unknown compare type %T", v.Sel)
 		return v, true
 	}
 	np, err := er.buildSubquery(ctx, subq)
@@ -1225,7 +1224,7 @@ func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldT
 		return
 	}
 	if scalarFunc, ok := ret.(*expression.ScalarFunction); ok {
-		telemetry.BuiltinFunctionsUsage(er.b.ctx.GetBuiltinFunctionUsage()).Inc(scalarFunc.Function.PbCode().String())
+		er.b.ctx.BuiltinFunctionUsageInc(scalarFunc.Function.PbCode().String())
 	}
 	return
 }
@@ -1292,7 +1291,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 		er.b.visitInfo = appendDynamicVisitInfo(er.b.visitInfo, "RESTRICTED_VARIABLES_ADMIN", false, err)
 	}
 	if v.ExplicitScope && !sysVar.HasNoneScope() {
-		if v.IsGlobal && !sysVar.HasGlobalScope() {
+		if v.IsGlobal && !(sysVar.HasGlobalScope() || sysVar.HasInstanceScope()) {
 			er.err = variable.ErrIncorrectScope.GenWithStackByArgs(name, "SESSION")
 			return
 		}
@@ -2043,9 +2042,10 @@ func hasCurrentDatetimeDefault(col *table.Column) bool {
 }
 
 func decodeKeyFromString(ctx sessionctx.Context, s string) string {
+	sc := ctx.GetSessionVars().StmtCtx
 	key, err := hex.DecodeString(s)
 	if err != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", key))
+		sc.AppendWarning(errors.Errorf("invalid key: %X", key))
 		return s
 	}
 	// Auto decode byte if needed.
@@ -2055,39 +2055,44 @@ func decodeKeyFromString(ctx sessionctx.Context, s string) string {
 	}
 	tableID := tablecodec.DecodeTableID(key)
 	if tableID == 0 {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", key))
+		sc.AppendWarning(errors.Errorf("invalid key: %X", key))
 		return s
 	}
 	dm := domain.GetDomain(ctx)
 	if dm == nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("domain not found when decoding record/index key: %X", key))
+		sc.AppendWarning(errors.Errorf("domain not found when decoding key: %X", key))
 		return s
 	}
-	tbl, _ := dm.InfoSchema().TableByID(tableID)
+	is := dm.InfoSchema()
+	if is == nil {
+		sc.AppendWarning(errors.Errorf("infoschema not found when decoding key: %X", key))
+		return s
+	}
+	tbl, _ := is.TableByID(tableID)
 	loc := ctx.GetSessionVars().Location()
 	if tablecodec.IsRecordKey(key) {
 		ret, err := decodeRecordKey(key, tableID, tbl, loc)
 		if err != nil {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			sc.AppendWarning(err)
 			return s
 		}
 		return ret
 	} else if tablecodec.IsIndexKey(key) {
 		ret, err := decodeIndexKey(key, tableID, tbl, loc)
 		if err != nil {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			sc.AppendWarning(err)
 			return s
 		}
 		return ret
 	} else if tablecodec.IsTableKey(key) {
-		ret, err := decodeTableKey(key, tableID, tbl, loc)
+		ret, err := decodeTableKey(key, tableID)
 		if err != nil {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			sc.AppendWarning(err)
 			return s
 		}
 		return ret
 	}
-	ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", key))
+	sc.AppendWarning(errors.Errorf("invalid key: %X", key))
 	return s
 }
 
@@ -2100,7 +2105,7 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 		ret := make(map[string]interface{})
 		ret["table_id"] = strconv.FormatInt(tableID, 10)
 		// When the clustered index is enabled, we should show the PK name.
-		if tbl.Meta().HasClusteredIndex() {
+		if tbl != nil && tbl.Meta().HasClusteredIndex() {
 			ret[tbl.Meta().GetPkName().String()] = handle.IntValue()
 		} else {
 			ret["_tidb_rowid"] = handle.IntValue()
@@ -2235,7 +2240,7 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 	return string(retStr), nil
 }
 
-func decodeTableKey(key []byte, tableID int64, tbl table.Table, loc *time.Location) (string, error) {
+func decodeTableKey(key []byte, tableID int64) (string, error) {
 	ret := map[string]int64{"table_id": tableID}
 	retStr, err := json.Marshal(ret)
 	if err != nil {

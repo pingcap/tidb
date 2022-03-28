@@ -403,7 +403,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch() {
 	defer kvEncoder.Close()
 
 	_, _, err = s.cr.encodeLoop(ctx, kvsCh, s.tr, s.tr.logger, kvEncoder, deliverCompleteCh, rc)
-	require.Equal(s.T(), "in file db.table.2.sql:0 at offset 4: column count mismatch, expected 3, got 2", err.Error())
+	require.Equal(s.T(), "[Lightning:Restore:ErrEncodeKV]encode kv error in file db.table.2.sql:0 at offset 4: column count mismatch, expected 3, got 2", err.Error())
 	require.Len(s.T(), kvsCh, 0)
 }
 
