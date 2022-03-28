@@ -599,13 +599,17 @@ const (
 	version83 = 83
 	// version84 adds the tables mysql.stats_meta_history
 	version84 = 84
-	// version85 adds the mysql.analyze_jobs table
+	// version85 updates bindings with status 'using' in mysql.bind_info table to 'enabled' status
 	version85 = 85
+	// version86 changes global variable `tidb_enable_top_sql` value from false to true.
+	version86 = 86
+	// version87 adds the mysql.analyze_jobs table
+	version87 = 87
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version85
+var currentBootstrapVersion int64 = version87
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -694,6 +698,8 @@ var (
 		upgradeToVer83,
 		upgradeToVer84,
 		upgradeToVer85,
+		upgradeToVer86,
+		upgradeToVer87,
 	}
 )
 
@@ -1767,6 +1773,21 @@ func upgradeToVer85(s Session, ver int64) {
 	if ver >= version85 {
 		return
 	}
+	mustExecute(s, fmt.Sprintf("UPDATE HIGH_PRIORITY mysql.bind_info SET status= '%s' WHERE status = '%s'", bindinfo.Enabled, bindinfo.Using))
+}
+
+func upgradeToVer86(s Session, ver int64) {
+	if ver >= version86 {
+		return
+	}
+	// Enable Top SQL by default after upgrade
+	mustExecute(s, "set @@global.tidb_enable_top_sql = 1")
+}
+
+func upgradeToVer87(s Session, ver int64) {
+	if ver >= version87 {
+		return
+	}
 	doReentrantDDL(s, CreateAnalyzeJobs)
 }
 
@@ -1924,6 +1945,10 @@ func doDMLWorks(s Session) {
 			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)
+
+			if v.GlobalConfigName != "" {
+				domain.GetDomain(s).NotifyGlobalConfigChange(v.GlobalConfigName, variable.OnOffToTrueFalse(vVal))
+			}
 		}
 	}
 	sql := fmt.Sprintf("INSERT HIGH_PRIORITY INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable,

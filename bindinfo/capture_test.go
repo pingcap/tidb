@@ -120,6 +120,66 @@ func TestCapturePlanBaseline(t *testing.T) {
 	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` )*/ * FROM `test`.`t` WHERE `a` > 10", rows[0][1])
 }
 
+func TestCapturePlanBaseline4DisabledStatus(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+
+	utilCleanBindingEnv(tk, dom)
+	stmtsummary.StmtSummaryByDigestMap.Clear()
+	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
+	defer func() {
+		tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = off")
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, index idx_a(a))")
+	dom.BindHandle().CaptureBaselines()
+	tk.MustQuery("show global bindings").Check(testkit.Rows())
+	tk.MustExec("select /*+ USE_INDEX(t, idx_a) */ * from t where a > 10")
+	tk.MustExec("select /*+ USE_INDEX(t, idx_a) */ * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows := tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 0)
+
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, bindinfo.Enabled, rows[0][3])
+	require.Equal(t, bindinfo.Capture, rows[0][8])
+
+	tk.MustExec("select * from t where a > 10")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+
+	tk.MustExec("set binding disabled for select * from t where a > 10")
+
+	tk.MustExec("select * from t where a > 10")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+	rows = tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, bindinfo.Disabled, rows[0][3])
+
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("select * from t where a > 10")
+	tk.MustExec("admin capture bindings")
+	rows = tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, bindinfo.Disabled, rows[0][3])
+
+	tk.MustExec("select * from t where a > 10")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
+
+	tk.MustExec("drop global binding for select * from t where a > 10")
+	rows = tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 0)
+
+	utilCleanBindingEnv(tk, dom)
+}
+
 func TestCaptureDBCaseSensitivity(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -905,4 +965,67 @@ func TestCaptureFilter(t *testing.T) {
 	rows = tk.MustQuery("show global bindings").Sort().Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `mysql` . `capture_plan_baselines_blacklist`", rows[0][0])
+}
+
+func TestCaptureHints(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")
+	defer func() {
+		tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = off")
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(pk int primary key, a int, b int, key(a), key(b))")
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	captureCases := []struct {
+		query string
+		hint  string
+	}{
+		// agg hints
+		{"select /*+ hash_agg() */ count(1) from t", "hash_agg"},
+		{"select /*+ stream_agg() */ count(1) from t", "stream_agg"},
+		// join hints
+		{"select /*+ merge_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a", "merge_join"},
+		{"select /*+ tidb_smj(t1, t2) */ * from t t1, t t2 where t1.a=t2.a", "merge_join"},
+		{"select /*+ hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a", "hash_join"},
+		{"select /*+ tidb_hj(t1, t2) */ * from t t1, t t2 where t1.a=t2.a", "hash_join"},
+		{"select /*+ inl_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a", "inl_join"},
+		{"select /*+ tidb_inlj(t1, t2) */ * from t t1, t t2 where t1.a=t2.a", "inl_join"},
+		{"select /*+ inl_hash_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a", "inl_hash_join"},
+		// index hints
+		{"select * from t use index(primary)", "use_index(@`sel_1` `test`.`t` )"},
+		{"select /*+ use_index(primary) */ * from t", "use_index(@`sel_1` `test`.`t` )"},
+		{"select * from t use index(a)", "use_index(@`sel_1` `test`.`t` `a`)"},
+		{"select /*+ use_index(a) */ * from t use index(a)", "use_index(@`sel_1` `test`.`t` `a`)"},
+		{"select * from t use index(b)", "use_index(@`sel_1` `test`.`t` `b`)"},
+		{"select /*+ use_index(b) */ * from t use index(b)", "use_index(@`sel_1` `test`.`t` `b`)"},
+		{"select /*+ use_index_merge(t, a, b) */ a, b from t where a=1 or b=1", "use_index_merge(@`sel_1` `t` `a`, `b`)"},
+		{"select /*+ ignore_index(t, a) */ * from t where a=1", "ignore_index(`t` `a`)"},
+		// push-down hints
+		{"select /*+ limit_to_cop() */ * from t limit 10", "limit_to_cop()"},
+		{"select /*+ agg_to_cop() */ a, count(*) from t group by a", "agg_to_cop()"},
+		// index-merge hints
+		{"select /*+ no_index_merge() */ a, b from t where a>1 or b>1", "no_index_merge()"},
+		{"select /*+ use_index_merge(t, a, b) */ a, b from t where a>1 or b>1", "use_index_merge(@`sel_1` `t` `a`, `b`)"},
+		// runtime hints
+		{"select /*+ memory_quota(1024 MB) */ * from t", "memory_quota(1024 mb)"},
+		{"select /*+ max_execution_time(1000) */ * from t", "max_execution_time(1000)"},
+		// storage hints
+		{"select /*+ read_from_storage(tikv[t]) */ * from t", "read_from_storage(tikv[`t`])"},
+		// others
+		{"select /*+ use_toja(true) */ t1.a, t1.b from t t1 where t1.a in (select t2.a from t t2)", "use_toja(true)"},
+	}
+	for _, capCase := range captureCases {
+		stmtsummary.StmtSummaryByDigestMap.Clear()
+		utilCleanBindingEnv(tk, dom)
+		tk.MustExec(capCase.query)
+		tk.MustExec(capCase.query)
+		tk.MustExec("admin capture bindings")
+		res := tk.MustQuery(`show global bindings`).Rows()
+		require.Equal(t, len(res), 1)                                       // this query is captured, and
+		require.True(t, strings.Contains(res[0][1].(string), capCase.hint)) // the binding contains the expected hint
+	}
 }

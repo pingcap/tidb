@@ -22,6 +22,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/placement"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
@@ -157,15 +159,15 @@ func (s *tiflashContext) CheckFlashback(tk *testkit.TestKit, t *testing.T) {
 }
 
 func TempDisableEmulatorGC() func() {
-	ori := ddl.IsEmulatorGCEnable()
+	ori := ddlutil.IsEmulatorGCEnable()
 	f := func() {
 		if ori {
-			ddl.EmulatorGCEnable()
+			ddlutil.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			ddlutil.EmulatorGCDisable()
 		}
 	}
-	ddl.EmulatorGCDisable()
+	ddlutil.EmulatorGCDisable()
 	return f
 }
 
@@ -200,8 +202,9 @@ func TestTiFlashNoRedundantPDRules(t *testing.T) {
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed", `return`))
 	defer func() {
-		failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed")
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/gcworker/ignoreDeleteRangeFailed"))
 	}()
+
 	fCancelPD := s.SetPdLoop(10000)
 	defer fCancelPD()
 
@@ -885,12 +888,17 @@ func TestTiFlashBatchRateLimiter(t *testing.T) {
 
 	// Retrigger, but close session before the whole job ends.
 	var wg util.WaitGroupWrapper
+	var mu sync.Mutex
 	wg.Run(func() {
 		time.Sleep(time.Millisecond * 20)
+		mu.Lock()
+		defer mu.Unlock()
 		tk.Session().Close()
 		logutil.BgLogger().Info("session closed")
 	})
+	mu.Lock()
 	timeOut, err = execWithTimeout(t, tk, time.Second*2, "alter database tiflash_ddl_limit set tiflash replica 1")
+	mu.Unlock()
 	require.NoError(t, err)
 	require.False(t, timeOut)
 	check(5, 5)
