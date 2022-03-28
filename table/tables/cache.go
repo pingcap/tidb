@@ -73,10 +73,10 @@ func newMemBuffer(store kv.Storage) (kv.MemBuffer, error) {
 	return buffTxn.GetMemBuffer(), nil
 }
 
-func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) kv.MemBuffer {
+func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) (kv.MemBuffer, /*loading*/ bool) {
 	tmp := c.cacheData.Load()
 	if tmp == nil {
-		return nil
+		return nil, false
 	}
 	data := tmp.(*cacheData)
 	if ts >= data.Start && ts < data.Lease {
@@ -96,9 +96,9 @@ func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) k
 			default:
 			}
 		}
-		return data.MemBuffer
+		return data.MemBuffer, data.MemBuffer == nil
 	}
-	return nil
+	return nil, false
 }
 
 // newCachedTable creates a new CachedTable Instance
@@ -135,6 +135,9 @@ func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage, lease uint64) 
 		}
 		startTS = txn.StartTS()
 		if startTS >= lease {
+			logutil.BgLogger().Warn("the loaded data is outdated for caching",
+				zap.Uint64("lease", lease),
+				zap.Uint64("startTS", startTS))
 			return errors.New("the loaded data is outdated for caching")
 		}
 		it, err := txn.Iter(prefix, prefix.PrefixNext())
@@ -194,20 +197,33 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, store kv.Storage, t
 		return
 	}
 	if succ {
-		start := time.Now()
-		mb, startTS, totalSize, err := c.loadDataFromOriginalTable(store, lease)
-		if err != nil {
-			log.Info("load data from table", zap.Error(err))
-			return
-		}
-
-		fmt.Println("lock for read success, now load from table!!!!!!!!!!!!!!!!!!!!!!!!!!! takes:", time.Since(start))
 		c.cacheData.Store(&cacheData{
-			Start:     startTS,
-			Lease:     lease,
-			MemBuffer: mb,
+			Start: ts,
+			Lease: lease,
+			MemBuffer: nil, // Async loading
 		})
-		atomic.StoreInt64(&c.totalSize, totalSize)
+
+		// Make the load data process async, in case that loading data takes longer the
+		// lease duration, then the loadad data get staled and that process repeat forever.
+		go func() {
+			start := time.Now()
+			mb, startTS, totalSize, err := c.loadDataFromOriginalTable(store, lease)
+			if err != nil {
+				log.Info("load data from table", zap.Error(err))
+				return
+			}
+
+			fmt.Println("load from table!!!!!!!!!!!!!!!!!!!!!!!!!!! takes:", time.Since(start), "size=", totalSize)
+			tmp := c.cacheData.Load().(*cacheData)
+			if tmp != nil && tmp.Start == ts {
+				c.cacheData.Store(&cacheData{
+					Start:     startTS,
+					Lease:     tmp.Lease,
+					MemBuffer: mb,
+				})
+				atomic.StoreInt64(&c.totalSize, totalSize)
+			}
+		}()
 	}
 	// Current status is not suitable to cache.
 }

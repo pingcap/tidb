@@ -123,7 +123,8 @@ func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, newLease
 		// The old lock is outdated, clear orphan lock.
 		if now > lease {
 			succ = true
-			fmt.Println("read lock success=====, by clean old orphan lease", lease)
+			fmt.Println("read lock success=====, by clean old orphan lease", lease, "now=", now,
+				"tid=", tid)
 			if err := h.updateRow(ctx, tid, "READ", newLease); err != nil {
 				return errors.Trace(err)
 			}
@@ -138,7 +139,8 @@ func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, newLease
 		}
 		succ = true
 		if newLease > lease { // Note the check, don't decrease lease value!
-			fmt.Println("read lock success=====, previous is none or read", lease)
+			fmt.Println("read lock success=====, previous is none or read", lockType, lease, "to newLease", newLease,
+				"tid=", tid)
 			if err := h.updateRow(ctx, tid, "READ", newLease); err != nil {
 				return errors.Trace(err)
 			}
@@ -322,6 +324,13 @@ func (h *stateRemoteHandle) RenewReadLease(ctx context.Context, tid int64, oldLo
 		}
 		return nil
 	})
+
+	if err != nil {
+		fmt.Println("renew lease conflict? err=", err,
+			"oldLocalLease=", oldLocalLease,
+			"remoteLease=", h.lease,
+			"newLease=", newLease)
+	}
 	return newLease, err
 }
 

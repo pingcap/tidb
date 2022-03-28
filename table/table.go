@@ -260,7 +260,7 @@ type CachedTable interface {
 	Init(exec sqlexec.SQLExecutor) error
 
 	// TryReadFromCache checks if the cache table is readable.
-	TryReadFromCache(ts uint64, leaseDuration time.Duration) kv.MemBuffer
+	TryReadFromCache(ts uint64, leaseDuration time.Duration) (kv.MemBuffer, bool)
 
 	// UpdateLockForRead If you cannot meet the conditions of the read buffer,
 	// you need to update the lock information and read the data from the original table
