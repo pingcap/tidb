@@ -94,34 +94,13 @@ func (d *ddl) getGeneralJob(sess sessionctx.Context) (*model.Job, error) {
 			return nil, errors.Trace(err)
 		}
 		if job.Type == model.ActionDropSchema {
-			for {
-				canRun, err := d.checkDropSchemaJobIsRunnable(sess, &job)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-				if canRun {
-					log.Info("get ddl job from table", zap.String("job", job.String()))
-					return &job, nil
-				}
-				runningOrBlockedIDs = append(runningOrBlockedIDs, strconv.FormatInt(job.ID, 10))
-				sql = fmt.Sprintf(getGeneralJobWithoutRunningAgainSQL, strings.Join(runningOrBlockedIDs, ", "))
-				if rs, err = sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql); err != nil {
-					return nil, errors.Trace(err)
-				}
-				if rows, err = sqlexec.DrainRecordSet(d.ctx, rs, 8); err != nil {
-					return nil, errors.Trace(err)
-				}
-				if err = rs.Close(); err != nil {
-					return nil, errors.Trace(err)
-				}
-				if len(rows) == 0 {
-					continue
-				}
-				jobBinary = rows[0].GetBytes(0)
-				var job model.Job
-				if err = job.Decode(jobBinary); err != nil {
-					return nil, errors.Trace(err)
-				}
+			canRun, err := d.checkDropSchemaJobIsRunnable(sess, &job)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if canRun {
+				log.Info("get ddl job from table", zap.String("job", job.String()))
+				return &job, nil
 			}
 		} else {
 			log.Info("get ddl job from table", zap.String("job", job.String()))
@@ -132,7 +111,7 @@ func (d *ddl) getGeneralJob(sess sessionctx.Context) (*model.Job, error) {
 }
 
 func (d *ddl) checkDropSchemaJobIsRunnable(sess sessionctx.Context, job *model.Job) (bool, error) {
-	sql := fmt.Sprintf("select * from mysql.tidb_ddl_job where schema_id = %d and reorg and job_id < %d limit 1", job.SchemaID, job.ID)
+	sql := fmt.Sprintf("select * from mysql.tidb_ddl_job where schema_id = %d and job_id < %d limit 1", job.SchemaID, job.ID)
 	rs, err := sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 	if err != nil {
 		return false, err
