@@ -277,7 +277,7 @@ func CheckNewCollationEnable(
 		if CheckRequirements {
 			return errors.Annotatef(berrors.ErrUnknown,
 				"NewCollactionEnable not found in backupmeta. "+
-					"if you ensure the newCollactionEnable config is same as restore cluster, "+
+					"if you ensure the NewCollactionEnable config of backup cluster is as same as restore cluster, "+
 					"use --check-requirements=false to skip")
 		} else {
 			log.Warn("no NewCollactionEnable in backup")
