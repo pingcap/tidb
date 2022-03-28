@@ -1602,6 +1602,13 @@ func TestShowVar(t *testing.T) {
 			require.Equal(t, variable.GetSysVar(variable.VersionComment), line[len("version_comment "):])
 		}
 	}
+
+	// Test case insensitive case for show session variables
+	tk.MustExec("SET @@SQL_MODE='NO_BACKSLASH_ESCAPES'")
+	tk.MustQuery("SHOW SESSION VARIABLES like 'sql_mode'").Check(
+		testkit.RowsWithSep("|", "sql_mode|NO_BACKSLASH_ESCAPES"))
+	tk.MustQuery("SHOW SESSION VARIABLES like 'SQL_MODE'").Check(
+		testkit.RowsWithSep("|", "sql_mode|NO_BACKSLASH_ESCAPES"))
 }
 
 func TestIssue19507(t *testing.T) {

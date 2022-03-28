@@ -184,7 +184,7 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 }
 
 // adjustRestoreConfig is use for BR(binary) and BR in TiDB.
-// When new config was add and not included in parser.
+// When new config was added and not included in parser.
 // we should set proper value in this function.
 // so that both binary and TiDB will use same default value.
 func (cfg *RestoreConfig) adjustRestoreConfig() {
@@ -359,6 +359,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		newTS = restoreTS
 	}
 	ddlJobs := restore.FilterDDLJobs(client.GetDDLJobs(), tables)
+	ddlJobs = restore.FilterDDLJobByRules(ddlJobs, restore.DDLJobBlockListRule)
 
 	err = client.PreCheckTableTiFlashReplica(ctx, tables)
 	if err != nil {
@@ -532,6 +533,8 @@ func dropToBlackhole(
 	return outCh
 }
 
+// filterRestoreFiles filters tables that can't be processed after applying cfg.TableFilter.MatchTable.
+// if the db has no table that can be processed, the db will be filtered too.
 func filterRestoreFiles(
 	client *restore.Client,
 	cfg *RestoreConfig,
