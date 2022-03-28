@@ -20,6 +20,7 @@ import (
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 
+	"github.com/pingcap/tidb/br/pkg/version"
 	dbconfig "github.com/pingcap/tidb/config"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
@@ -172,6 +173,60 @@ func ShowCreateView(tctx *tcontext.Context, db *BaseConn, database, view string)
 	RestoreCharset(&createViewSQL)
 
 	return createTableSQL.String(), createViewSQL.String(), nil
+}
+
+// ShowCreateSequence constructs the create sequence SQL for a specified sequence
+// returns (createSequenceSQL, error)
+func ShowCreateSequence(tctx *tcontext.Context, db *BaseConn, database, sequence string, conf *Config) (string, error) {
+	var oneRow [2]string
+	handleOneRow := func(rows *sql.Rows) error {
+		return rows.Scan(&oneRow[0], &oneRow[1])
+	}
+	var (
+		createSequenceSQL  strings.Builder
+		nextNotCachedValue int64
+	)
+	query := fmt.Sprintf("SHOW CREATE SEQUENCE `%s`.`%s`", escapeString(database), escapeString(sequence))
+	err := db.QuerySQL(tctx, handleOneRow, func() {
+		oneRow[0], oneRow[1] = "", ""
+	}, query)
+	if err != nil {
+		return "", err
+	}
+	createSequenceSQL.WriteString(oneRow[1])
+	createSequenceSQL.WriteString(";\n")
+
+	switch conf.ServerInfo.ServerType {
+	case version.ServerTypeTiDB:
+		// Get next not allocated auto increment id of the whole cluster
+		query := fmt.Sprintf("SHOW TABLE `%s`.`%s` NEXT_ROW_ID", escapeString(database), escapeString(sequence))
+		results, err := db.QuerySQLWithColumns(tctx, []string{"NEXT_GLOBAL_ROW_ID", "ID_TYPE"}, query)
+		if err != nil {
+			return "", err
+		}
+		for _, oneRow := range results {
+			nextGlobalRowId, idType := oneRow[0], oneRow[1]
+			if idType == "SEQUENCE" {
+				nextNotCachedValue, _ = strconv.ParseInt(nextGlobalRowId, 10, 64)
+			}
+		}
+		fmt.Fprintf(&createSequenceSQL, "SELECT SETVAL(`%s`,%d);\n", escapeString(sequence), nextNotCachedValue)
+	case version.ServerTypeMariaDB:
+		var oneRow1 string
+		handleOneRow1 := func(rows *sql.Rows) error {
+			return rows.Scan(&oneRow1)
+		}
+		query := fmt.Sprintf("SELECT NEXT_NOT_CACHED_VALUE FROM `%s`.`%s`", escapeString(database), escapeString(sequence))
+		err := db.QuerySQL(tctx, handleOneRow1, func() {
+			oneRow1 = ""
+		}, query)
+		if err != nil {
+			return "", err
+		}
+		nextNotCachedValue, _ = strconv.ParseInt(oneRow1, 10, 64)
+		fmt.Fprintf(&createSequenceSQL, "SELECT SETVAL(`%s`,%d);\n", escapeString(sequence), nextNotCachedValue)
+	}
+	return createSequenceSQL.String(), nil
 }
 
 // SetCharset builds the set charset SQLs
