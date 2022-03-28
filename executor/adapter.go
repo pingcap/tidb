@@ -1346,14 +1346,13 @@ func (a *ExecStmt) observeStmtFinishedForTopSQL() {
 	}
 }
 
-func (a *ExecStmt) getSQLPlanDigest() ([]byte, []byte) {
-	var sqlDigest, planDigest []byte
+func (a *ExecStmt) getSQLPlanDigest() (sqlDigest, planDigest parser.RawDigestString) {
 	vars := a.Ctx.GetSessionVars()
 	if _, d := vars.StmtCtx.SQLDigest(); d != nil {
-		sqlDigest = d.Bytes()
+		sqlDigest = d.RawAsString()
 	}
 	if _, d := vars.StmtCtx.GetPlanDigest(); d != nil {
-		planDigest = d.Bytes()
+		planDigest = d.RawAsString()
 	}
-	return sqlDigest, planDigest
+	return
 }

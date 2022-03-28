@@ -26,27 +26,61 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 )
 
+// RawDigestString is the raw digest in string type. The string contains binary data.
+type RawDigestString string
+
+// Digest is a hash of a string. It is used for identifying SQL statements or SQL plans.
+// Digest is immutable.
 type Digest struct {
-	b   []byte
-	str string
+	raw    []byte
+	hexStr string
 }
 
-// NewDigest returns a new digest.
-func NewDigest(b []byte) *Digest {
+// NewDigest wraps the raw digest bytes into a Digest struct for easier use.
+// You must ensure that the passed in byte slice is not mutated later.
+func NewDigest(raw []byte) *Digest {
 	return &Digest{
-		b:   b,
-		str: hex.EncodeToString(b),
+		raw:    raw,
+		hexStr: hex.EncodeToString(raw),
 	}
 }
 
-// String returns the digest hex string.
-func (d *Digest) String() string {
-	return d.str
+// IsEmpty returns whether the digest's length is zero or digest is nil.
+func (d *Digest) IsEmpty() bool {
+	if d == nil {
+		return true
+	}
+	if len(d.raw) == 0 {
+		return true
+	}
+	return false
 }
 
-// Bytes returns the digest byte slice.
-func (d *Digest) Bytes() []byte {
-	return d.b
+// String returns the hex encoded digest.
+func (d *Digest) String() string {
+	return d.hexStr
+}
+
+// RawAsBytes returns the raw digest in byte type.
+func (d *Digest) RawAsBytes() []byte {
+	return d.raw
+}
+
+// RawAsString returns the raw digest in string type. The string contains binary data.
+func (d *Digest) RawAsString() RawDigestString {
+	// Digest is ensured to be immutable so that this is a safe convert.
+	return RawDigestString(unsafeByteAsString(d.raw))
+}
+
+func unsafeByteAsString(b []byte) (s string) {
+	if len(b) == 0 {
+		return ""
+	}
+	pbytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	pstring := (*reflect.StringHeader)(unsafe.Pointer(&s))
+	pstring.Data = pbytes.Data
+	pstring.Len = pbytes.Len
+	return
 }
 
 // DigestHash generates the digest of statements.

@@ -32,10 +32,10 @@ func EncodeResourceGroupTag(sqlDigest, planDigest *parser.Digest, label tipb.Res
 
 	tag := &tipb.ResourceGroupTag{Label: &label}
 	if sqlDigest != nil {
-		tag.SqlDigest = sqlDigest.Bytes()
+		tag.SqlDigest = sqlDigest.RawAsBytes()
 	}
 	if planDigest != nil {
-		tag.PlanDigest = planDigest.Bytes()
+		tag.PlanDigest = planDigest.RawAsBytes()
 	}
 	b, err := tag.Marshal()
 	if err != nil {

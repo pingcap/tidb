@@ -17,7 +17,7 @@ package stmtstats
 import (
 	"sync"
 
-	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/parser"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 )
@@ -25,10 +25,10 @@ import (
 // CreateKvExecCounter creates an associated KvExecCounter from StatementStats.
 // The created KvExecCounter can only be used during a single statement execution
 // and cannot be reused.
-func (s *StatementStats) CreateKvExecCounter(sqlDigest, planDigest []byte) *KvExecCounter {
+func (s *StatementStats) CreateKvExecCounter(sqlDigest, planDigest parser.RawDigestString) *KvExecCounter {
 	return &KvExecCounter{
 		stats:  s,
-		digest: SQLPlanDigest{SQLDigest: BinaryDigest(hack.String(sqlDigest)), PlanDigest: BinaryDigest(hack.String(planDigest))},
+		digest: SQLPlanDigest{SQLDigest: sqlDigest, PlanDigest: planDigest},
 		marked: map[string]struct{}{},
 	}
 }
@@ -69,6 +69,6 @@ func (c *KvExecCounter) mark(target string) {
 	}
 	c.mu.Unlock()
 	if firstMark {
-		c.stats.addKvExecCount(hack.Slice(string(c.digest.SQLDigest)), hack.Slice(string(c.digest.PlanDigest)), target, 1)
+		c.stats.addKvExecCount(c.digest.SQLDigest, c.digest.PlanDigest, target, 1)
 	}
 }

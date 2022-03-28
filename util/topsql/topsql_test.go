@@ -130,7 +130,7 @@ func TestTopSQLReporter(t *testing.T) {
 	for _, req := range reqs {
 		sql2plan[req.sql] = req.plan
 		sqlDigest := mock.GenSQLDigest(req.sql)
-		sqlMap[string(sqlDigest.Bytes())] = req.sql
+		sqlMap[string(sqlDigest.RawAsBytes())] = req.sql
 		sql, plan := req.sql, req.plan
 		wg.Run(func() {
 			for {
@@ -192,9 +192,9 @@ func TestMaxSQLAndPlanTest(t *testing.T) {
 	planDigest := genDigest(plan)
 	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest, false)
 
-	cSQL := collector.GetSQL(sqlDigest.Bytes())
+	cSQL := collector.GetSQL(sqlDigest.RawAsBytes())
 	require.Equal(t, sql, cSQL)
-	cPlan := collector.GetPlan(planDigest.Bytes())
+	cPlan := collector.GetPlan(planDigest.RawAsBytes())
 	require.Equal(t, plan, cPlan)
 
 	// Test for huge sql and plan
@@ -205,9 +205,9 @@ func TestMaxSQLAndPlanTest(t *testing.T) {
 	planDigest = genDigest(plan)
 	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest, false)
 
-	cSQL = collector.GetSQL(sqlDigest.Bytes())
+	cSQL = collector.GetSQL(sqlDigest.RawAsBytes())
 	require.Equal(t, sql[:topsql.MaxSQLTextSize], cSQL)
-	cPlan = collector.GetPlan(planDigest.Bytes())
+	cPlan = collector.GetPlan(planDigest.RawAsBytes())
 	require.Empty(t, cPlan)
 }
 
@@ -265,7 +265,7 @@ func TestTopSQLPubSub(t *testing.T) {
 	for _, req := range reqs {
 		sql2plan[req.sql] = req.plan
 		sqlDigest := mock.GenSQLDigest(req.sql)
-		digest2sql[string(sqlDigest.Bytes())] = req.sql
+		digest2sql[string(sqlDigest.RawAsBytes())] = req.sql
 		sql, plan := req.sql, req.plan
 		wg.Run(func() {
 			for {

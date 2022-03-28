@@ -81,13 +81,13 @@ func Close() {
 
 // AttachSQLInfo attach the sql information info top sql.
 func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.Digest, normalizedPlan string, planDigest *parser.Digest, isInternal bool) context.Context {
-	if len(normalizedSQL) == 0 || sqlDigest == nil || len(sqlDigest.Bytes()) == 0 {
+	if len(normalizedSQL) == 0 || sqlDigest == nil || len(sqlDigest.RawAsBytes()) == 0 {
 		return ctx
 	}
 	var sqlDigestBytes, planDigestBytes []byte
-	sqlDigestBytes = sqlDigest.Bytes()
+	sqlDigestBytes = sqlDigest.RawAsBytes()
 	if planDigest != nil {
-		planDigestBytes = planDigest.Bytes()
+		planDigestBytes = planDigest.RawAsBytes()
 	}
 	ctx = collector.CtxWithDigest(ctx, sqlDigestBytes, planDigestBytes)
 	pprof.SetGoroutineLabels(ctx)

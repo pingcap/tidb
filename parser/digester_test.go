@@ -135,10 +135,14 @@ func TestGenDigest(t *testing.T) {
 	hash := genRandDigest("abc")
 	digest := parser.NewDigest(hash)
 	require.Equal(t, fmt.Sprintf("%x", hash), digest.String())
-	require.Equal(t, hash, digest.Bytes())
+	require.Equal(t, parser.RawDigestString(hash), digest.RawAsString())
+	require.Equal(t, hash, digest.RawAsBytes())
+	require.False(t, digest.IsEmpty())
 	digest = parser.NewDigest(nil)
 	require.Equal(t, "", digest.String())
-	require.Nil(t, digest.Bytes())
+	require.Equal(t, parser.RawDigestString(""), digest.RawAsString())
+	require.Nil(t, digest.RawAsBytes())
+	require.True(t, digest.IsEmpty())
 }
 
 func genRandDigest(str string) []byte {

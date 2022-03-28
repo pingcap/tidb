@@ -18,7 +18,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/parser"
 	"go.uber.org/atomic"
 )
 
@@ -31,10 +31,10 @@ var _ StatementObserver = &StatementStats{}
 // corresponding locations, without paying attention to implementation details.
 type StatementObserver interface {
 	// OnExecutionBegin should be called before statement execution.
-	OnExecutionBegin(sqlDigest, planDigest []byte)
+	OnExecutionBegin(sqlDigest, planDigest parser.RawDigestString)
 
 	// OnExecutionFinished should be called after the statement is executed.
-	OnExecutionFinished(sqlDigest, planDigest []byte, execDuration time.Duration)
+	OnExecutionFinished(sqlDigest, planDigest parser.RawDigestString, execDuration time.Duration)
 }
 
 // StatementStats is a counter used locally in each session.
@@ -58,7 +58,7 @@ func CreateStatementStats() *StatementStats {
 }
 
 // OnExecutionBegin implements StatementObserver.OnExecutionBegin.
-func (s *StatementStats) OnExecutionBegin(sqlDigest, planDigest []byte) {
+func (s *StatementStats) OnExecutionBegin(sqlDigest, planDigest parser.RawDigestString) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
@@ -68,7 +68,7 @@ func (s *StatementStats) OnExecutionBegin(sqlDigest, planDigest []byte) {
 }
 
 // OnExecutionFinished implements StatementObserver.OnExecutionFinished.
-func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte, execDuration time.Duration) {
+func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest parser.RawDigestString, execDuration time.Duration) {
 	ns := execDuration.Nanoseconds()
 	if ns < 0 {
 		return
@@ -87,8 +87,8 @@ func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte, execD
 // for the specified SQLPlanDigest and timestamp if it does not exist before.
 // GetOrCreateStatementStatsItem is just a helper function, not responsible for
 // concurrency control, so GetOrCreateStatementStatsItem is **not** thread-safe.
-func (s *StatementStats) GetOrCreateStatementStatsItem(sqlDigest, planDigest []byte) *StatementStatsItem {
-	key := SQLPlanDigest{SQLDigest: BinaryDigest(hack.String(sqlDigest)), PlanDigest: BinaryDigest(hack.String(planDigest))}
+func (s *StatementStats) GetOrCreateStatementStatsItem(sqlDigest, planDigest parser.RawDigestString) *StatementStatsItem {
+	key := SQLPlanDigest{SQLDigest: sqlDigest, PlanDigest: planDigest}
 	item, ok := s.data[key]
 	if !ok {
 		s.data[key] = NewStatementStatsItem()
@@ -99,7 +99,7 @@ func (s *StatementStats) GetOrCreateStatementStatsItem(sqlDigest, planDigest []b
 
 // addKvExecCount is used to count the number of executions of a certain SQLPlanDigest for a certain target.
 // addKvExecCount is thread-safe.
-func (s *StatementStats) addKvExecCount(sqlDigest, planDigest []byte, target string, n uint64) {
+func (s *StatementStats) addKvExecCount(sqlDigest, planDigest parser.RawDigestString, target string, n uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
@@ -130,15 +130,11 @@ func (s *StatementStats) Finished() bool {
 	return s.finished.Load()
 }
 
-// BinaryDigest is converted from parser.Digest.Bytes(), and the purpose
-// is to be used as the key of the map.
-type BinaryDigest string
-
 // SQLPlanDigest is used as the key of StatementStatsMap to
 // distinguish different sql.
 type SQLPlanDigest struct {
-	SQLDigest  BinaryDigest
-	PlanDigest BinaryDigest
+	SQLDigest  parser.RawDigestString
+	PlanDigest parser.RawDigestString
 }
 
 // StatementStatsMap is the local data type of StatementStats.

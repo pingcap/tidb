@@ -57,8 +57,8 @@ func Test_aggregator_register_collect(t *testing.T) {
 		finished: atomic.NewBool(false),
 	}
 	a.register(stats)
-	stats.OnExecutionBegin([]byte("SQL-1"), []byte(""))
-	stats.OnExecutionFinished([]byte("SQL-1"), []byte(""), time.Millisecond)
+	stats.OnExecutionBegin("SQL-1", "")
+	stats.OnExecutionFinished("SQL-1", "", time.Millisecond)
 	total := StatementStatsMap{}
 	a.registerCollector(newMockCollector(func(data StatementStatsMap) {
 		total.Merge(data)
@@ -103,7 +103,7 @@ func TestAggregatorDisableAggregate(t *testing.T) {
 
 	stats := &StatementStats{
 		data: StatementStatsMap{
-			SQLPlanDigest{SQLDigest: BinaryDigest("")}: &StatementStatsItem{},
+			SQLPlanDigest{SQLDigest: ""}: &StatementStatsItem{},
 		},
 		finished: atomic.NewBool(false),
 	}

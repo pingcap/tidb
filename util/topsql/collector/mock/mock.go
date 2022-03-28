@@ -103,7 +103,7 @@ func (c *TopSQLCollector) GetSQLStatsBySQL(sql string, planIsNotNull bool) []*co
 	sqlDigest := GenSQLDigest(sql)
 	c.Lock()
 	for _, stmt := range c.sqlStatsMap {
-		if bytes.Equal(stmt.SQLDigest, sqlDigest.Bytes()) {
+		if bytes.Equal(stmt.SQLDigest, sqlDigest.RawAsBytes()) {
 			if planIsNotNull {
 				plan := c.planMap[string(stmt.PlanDigest)]
 				if len(plan) > 0 {
@@ -124,7 +124,7 @@ func (c *TopSQLCollector) GetSQLCPUTimeBySQL(sql string) uint32 {
 	cpuTime := uint32(0)
 	c.Lock()
 	for _, stmt := range c.sqlStatsMap {
-		if bytes.Equal(stmt.SQLDigest, sqlDigest.Bytes()) {
+		if bytes.Equal(stmt.SQLDigest, sqlDigest.RawAsBytes()) {
 			cpuTime += stmt.CPUTimeMs
 		}
 	}
