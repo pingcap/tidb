@@ -322,6 +322,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		newTS = restoreTS
 	}
 	ddlJobs := restore.FilterDDLJobs(client.GetDDLJobs(), tables)
+	ddlJobs = restore.FilterDDLJobByRules(ddlJobs, restore.DDLJobBlockListRule)
 
 	err = client.PreCheckTableTiFlashReplica(ctx, tables)
 	if err != nil {
