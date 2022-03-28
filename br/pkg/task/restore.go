@@ -295,7 +295,7 @@ func CheckNewCollationEnable(
 		return errors.Trace(err)
 	}
 
-	if strings.ToLower(backupNewCollationEnable) != strings.ToLower(newCollationEnable) {
+	if !strings.EqualFold(backupNewCollationEnable, newCollationEnable) {
 		return errors.Annotatef(berrors.ErrUnknown,
 			"newCollationEnable not match, upstream:%v, downstream: %v",
 			backupNewCollationEnable, newCollationEnable)
