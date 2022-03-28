@@ -182,6 +182,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			if err := e.recordHistoricalStats(results.TableID.TableID); err != nil {
 				logutil.BgLogger().Error("record historical stats failed", zap.Error(err))
 			}
+			invalidInfoSchemaStatCache(results.TableID.GetStatisticsID())
 		}
 	}
 	for _, task := range e.tasks {
@@ -229,7 +230,6 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
-	invalidInfoSchemaStatCache()
 	return nil
 }
 
