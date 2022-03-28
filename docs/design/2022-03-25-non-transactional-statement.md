@@ -39,9 +39,9 @@ The syntax: `split on <column_name> limit <batch_size> <DML>`
 
 In the first step only `delete` is going to be supported, but `update` and `insert into select` are also worth considering.
 
-There is no other constraints on the DML.
+The split column must be indexed. There is no other constraints on the DML.
 
-There can be a dry run syntax `dryrun split on <column_name> limit <batch_size> <DML>` that just output how the statement will be split and an representative of their query plans.
+There can be a dry run syntax `split on <column_name> limit <batch_size> dry run <DML>` that just output how the statement will be split and an representative of their query plans.
 
 ### Session
 
@@ -120,4 +120,4 @@ An alternative solution is to improve the ability of large transactions. But too
 
 ## Unresolved Questions
 
-User interface, including the syntax, the error messages, and the dry run results, may be curated.
+User interface, including the syntax, the error messages, and the dry run results, may be improved.
