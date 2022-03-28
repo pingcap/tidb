@@ -1648,6 +1648,18 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx sessionctx.Context, 
 				)
 				rows = append(rows, record)
 			}
+			//  TiDB includes foreign key information for compatibility but foreign keys are not yet enforced.
+			for _, fk := range tbl.ForeignKeys {
+				record := types.MakeDatums(
+					infoschema.CatalogVal,     // CONSTRAINT_CATALOG
+					schema.Name.O,             // CONSTRAINT_SCHEMA
+					fk.Name.O,                 // CONSTRAINT_NAME
+					schema.Name.O,             // TABLE_SCHEMA
+					tbl.Name.O,                // TABLE_NAME
+					infoschema.ForeignKeyType, // CONSTRAINT_TYPE
+				)
+				rows = append(rows, record)
+			}
 		}
 	}
 	e.rows = rows
