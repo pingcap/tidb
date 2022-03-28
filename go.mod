@@ -50,10 +50,16 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20211224045212-9687c2b0f87c
 	github.com/pingcap/failpoint v0.0.0-20210316064728-7acb0f0a3dfd
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
+<<<<<<< HEAD
 	github.com/pingcap/kvproto v0.0.0-20211207042851-78a55fb8e69c
 	github.com/pingcap/log v0.0.0-20210906054005-afc726e70354
 	github.com/pingcap/sysutil v0.0.0-20211208032423-041a72e5860d
 	github.com/pingcap/tidb-tools v5.2.2-0.20211019062242-37a8bef2fa17+incompatible
+=======
+	github.com/pingcap/kvproto v0.0.0-20220328072018-6e75c12dbd73
+	github.com/pingcap/log v0.0.0-20211215031037-e024ba4eb0ee
+	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
+>>>>>>> 8f8dfafc1... br: Fix new collaction enable check (#33500)
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20220107024056-3b91949a18a7
 	github.com/prometheus/client_golang v1.5.1

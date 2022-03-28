@@ -250,6 +250,16 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		statsHandle = mgr.GetDomain().StatsHandle()
 	}
 
+	se, err := g.CreateSession(mgr.GetStorage())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	newCollationEnable, err := se.GetGlobalVariable(tidbNewCollationEnabled)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	log.Info("get newCollationEnable for check during restore", zap.String("newCollationEnable", newCollationEnable))
+
 	client, err := backup.NewBackupClient(ctx, mgr)
 	if err != nil {
 		return errors.Trace(err)
@@ -339,6 +349,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		m.ClusterId = req.ClusterId
 		m.ClusterVersion = clusterVersion
 		m.BrVersion = brVersion
+		m.NewCollationsEnabled = newCollationEnable
 	})
 
 	// nothing to backup

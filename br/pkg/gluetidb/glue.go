@@ -151,6 +151,11 @@ func (gs *tidbSession) Close() {
 	gs.se.Close()
 }
 
+// GetGlobalVariables implements glue.Session.
+func (gs *tidbSession) GetGlobalVariable(name string) (string, error) {
+	return gs.se.GetSessionVars().GlobalVarsAccessor.GetTiDBTableValue(name)
+}
+
 // showCreateTable shows the result of SHOW CREATE TABLE from a TableInfo.
 func (gs *tidbSession) showCreateTable(tbl *model.TableInfo) (string, error) {
 	table := tbl.Clone()
