@@ -787,6 +787,7 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}, level
 		return err
 	}
 	writeBinlog(d.binlogCli, txn, job)
+	w.sessForJob.StmtCommit()
 	err = w.sessForJob.CommitTxn(w.ctx)
 	if err != nil {
 		log.Error("sessForJob.CommitTxn", zap.Error(err))
