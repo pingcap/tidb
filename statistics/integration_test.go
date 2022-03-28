@@ -414,3 +414,153 @@ func TestAnalyzeLongString(t *testing.T) {
 	tk.MustExec("insert into t value(repeat(\"b\",65536));")
 	tk.MustExec("analyze table t with 0 topn")
 }
+<<<<<<< HEAD
+=======
+
+func TestOutdatedStatsCheck(t *testing.T) {
+	domain.RunAutoAnalyze = false
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
+	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
+	handle.AutoAnalyzeMinCnt = 0
+	defer func() {
+		handle.AutoAnalyzeMinCnt = 1000
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
+		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
+	}()
+	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
+	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
+
+	h := dom.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 19)) // 20 rows
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	is := dom.InfoSchema()
+	require.NoError(t, h.Update(is))
+	// To pass the stats.Pseudo check in autoAnalyzeTable
+	tk.MustExec("analyze table t")
+	tk.MustExec("explain select * from t where a = 1")
+	require.NoError(t, h.LoadNeededHistograms())
+
+	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 13)) // 34 rows
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.Update(is))
+	require.False(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
+
+	tk.MustExec("insert into t values (1)") // 35 rows
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.Update(is))
+	require.True(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
+
+	tk.MustExec("analyze table t")
+
+	tk.MustExec("delete from t limit 24") // 11 rows
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.Update(is))
+	require.False(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
+
+	tk.MustExec("delete from t limit 1") // 10 rows
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.Update(is))
+	require.True(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
+}
+
+func hasPseudoStats(rows [][]interface{}) bool {
+	for i := range rows {
+		if strings.Contains(rows[i][4].(string), "stats:pseudo") {
+			return true
+		}
+	}
+	return false
+}
+
+// TestNotLoadedStatsOnAllNULLCol makes sure that stats on a column that only contains NULLs can be used even when it's
+// not loaded. This is reasonable because it makes no difference whether it's loaded or not.
+func TestNotLoadedStatsOnAllNULLCol(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	h := dom.StatsHandle()
+	oriLease := h.Lease()
+	h.SetLease(1000)
+	defer func() {
+		h.SetLease(oriLease)
+	}()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+	tk.MustExec("insert into t1 values(null), (null), (null), (null)")
+	tk.MustExec("insert into t2 values(null), (null)")
+	tk.MustExec("analyze table t1;")
+	tk.MustExec("analyze table t2;")
+
+	res := tk.MustQuery("explain format = 'brief' select * from t1 left join t2 on t1.a=t2.a order by t1.a, t2.a")
+	res.Check(testkit.Rows(
+		"Sort 4.00 root  test.t1.a, test.t2.a",
+		"└─HashJoin 4.00 root  left outer join, equal:[eq(test.t1.a, test.t2.a)]",
+		"  ├─TableReader(Build) 0.00 root  data:Selection",
+		// If we are not using stats on this column (which means we use pseudo estimation), the row count for the Selection will become 2.
+		"  │ └─Selection 0.00 cop[tikv]  not(isnull(test.t2.a))",
+		"  │   └─TableFullScan 2.00 cop[tikv] table:t2 keep order:false",
+		"  └─TableReader(Probe) 4.00 root  data:TableFullScan",
+		"    └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false"))
+
+	res = tk.MustQuery("explain format = 'brief' select * from t2 left join t1 on t1.a=t2.a order by t1.a, t2.a")
+	res.Check(testkit.Rows(
+		"Sort 2.00 root  test.t1.a, test.t2.a",
+		"└─HashJoin 2.00 root  left outer join, equal:[eq(test.t2.a, test.t1.a)]",
+		// If we are not using stats on this column, the build side will become t2 because of smaller row count.
+		"  ├─TableReader(Build) 0.00 root  data:Selection",
+		// If we are not using stats on this column, the row count for the Selection will become 4.
+		"  │ └─Selection 0.00 cop[tikv]  not(isnull(test.t1.a))",
+		"  │   └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false",
+		"  └─TableReader(Probe) 2.00 root  data:TableFullScan",
+		"    └─TableFullScan 2.00 cop[tikv] table:t2 keep order:false"))
+
+	res = tk.MustQuery("explain format = 'brief' select * from t1 right join t2 on t1.a=t2.a order by t1.a, t2.a")
+	res.Check(testkit.Rows(
+		"Sort 2.00 root  test.t1.a, test.t2.a",
+		"└─HashJoin 2.00 root  right outer join, equal:[eq(test.t1.a, test.t2.a)]",
+		"  ├─TableReader(Build) 0.00 root  data:Selection",
+		"  │ └─Selection 0.00 cop[tikv]  not(isnull(test.t1.a))",
+		"  │   └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false",
+		"  └─TableReader(Probe) 2.00 root  data:TableFullScan",
+		"    └─TableFullScan 2.00 cop[tikv] table:t2 keep order:false"))
+
+	res = tk.MustQuery("explain format = 'brief' select * from t2 right join t1 on t1.a=t2.a order by t1.a, t2.a")
+	res.Check(testkit.Rows(
+		"Sort 4.00 root  test.t1.a, test.t2.a",
+		"└─HashJoin 4.00 root  right outer join, equal:[eq(test.t2.a, test.t1.a)]",
+		"  ├─TableReader(Build) 0.00 root  data:Selection",
+		"  │ └─Selection 0.00 cop[tikv]  not(isnull(test.t2.a))",
+		"  │   └─TableFullScan 2.00 cop[tikv] table:t2 keep order:false",
+		"  └─TableReader(Probe) 4.00 root  data:TableFullScan",
+		"    └─TableFullScan 4.00 cop[tikv] table:t1 keep order:false"))
+}
+
+func TestCrossValidationSelectivity(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("create table t (a int, b int, c int, primary key (a, b) clustered)")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustExec("insert into t values (1,2,3), (1,4,5)")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	tk.MustExec("analyze table t")
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1 and b > 0 and b < 1000 and c > 1000").Check(testkit.Rows(
+		"TableReader 0.00 root  data:Selection",
+		"└─Selection 0.00 cop[tikv]  gt(test.t.c, 1000)",
+		"  └─TableRangeScan 2.00 cop[tikv] table:t range:(1 0,1 1000), keep order:false"))
+}
+>>>>>>> c671ebc88... statistics: fix wrong point range in crossValidationSelectivity (#33357)
