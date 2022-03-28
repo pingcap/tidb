@@ -34,6 +34,7 @@ type PlanReplayerHandler struct {
 	infoGetter *infosync.InfoSyncer
 	address    string
 	statusPort uint
+	scheme     string
 }
 
 func (s *Server) newPlanReplayerHandler() *PlanReplayerHandler {
@@ -41,9 +42,13 @@ func (s *Server) newPlanReplayerHandler() *PlanReplayerHandler {
 	prh := &PlanReplayerHandler{
 		address:    cfg.AdvertiseAddress,
 		statusPort: cfg.Status.StatusPort,
+		scheme:     "http",
 	}
 	if s.dom != nil && s.dom.InfoSyncer() != nil {
 		prh.infoGetter = s.dom.InfoSyncer()
+	}
+	if len(cfg.Security.ClusterSSLCA) > 0 {
+		prh.scheme = "https"
 	}
 	return prh
 }
@@ -59,6 +64,7 @@ func (prh PlanReplayerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 		statusPort:         prh.statusPort,
 		urlPath:            fmt.Sprintf("plan_replyaer/dump/%s", name),
 		downloadedFilename: "plan_replayer",
+		scheme:             prh.scheme,
 	}
 	handleDownloadFile(handler, w, req)
 }
@@ -121,7 +127,7 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 			continue
 		}
 		remoteAddr := fmt.Sprintf("%s/%v", topo.IP, topo.StatusPort)
-		url := fmt.Sprintf("http://%s/%s?forward=true", remoteAddr, handler.urlPath)
+		url := fmt.Sprintf("%s://%s/%s?forward=true", handler.scheme, remoteAddr, handler.urlPath)
 		resp, err := http.Get(url) // #nosec G107
 		if err != nil {
 			logutil.BgLogger().Error("forward request failed",
@@ -163,6 +169,7 @@ func handleDownloadFile(handler downloadFileHandler, w http.ResponseWriter, req 
 }
 
 type downloadFileHandler struct {
+	scheme             string
 	filePath           string
 	fileName           string
 	infoGetter         *infosync.InfoSyncer
