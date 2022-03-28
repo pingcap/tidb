@@ -41,7 +41,12 @@ run_sql "INSERT INTO $DB.usertable2 VALUES (\"c\", \"d\");"
 
 # backup db
 echo "backup start..."
-bin/brv4.0.8 backup db --db "$DB" -s "local://$TEST_DIR/$DB" --pd $PD_ADDR
+bin/brv4.0.8 backup db --db "$DB" -s "local://$TEST_DIR/$DB" \
+    --ca "$TEST_DIR/certs/ca.pem" \
+    --cert "$TEST_DIR/certs/br.pem" \
+    --key "$TEST_DIR/certs/br.key" \
+    --pd $PD_ADDR \
+    --check-requirements=false
 
 # restore db from v4.0.8 version without `newCollationEnable`
 echo "restore start..."
