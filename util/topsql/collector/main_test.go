@@ -62,7 +62,7 @@ func TestPProfCPUProfile(t *testing.T) {
 
 	data := <-mc.dataCh
 	require.True(t, len(data) > 0)
-	require.Equal(t, parser.RawDigestString("sql_digest value"), data[0].SQLDigest)
+	require.Equal(t, parser.RawDigestString("sql_digest value"), data[0].SQLAndPlan.SQLDigest)
 
 	// Test after disabled, shouldn't receive any data.
 	topsqlstate.DisableTopSQL()
@@ -80,7 +80,7 @@ func TestPProfCPUProfile(t *testing.T) {
 		}
 	}
 	require.True(t, len(data) > 0)
-	require.Equal(t, parser.RawDigestString("sql_digest value"), data[0].SQLDigest)
+	require.Equal(t, parser.RawDigestString("sql_digest value"), data[0].SQLAndPlan.SQLDigest)
 }
 
 func TestSQLStatsTune(t *testing.T) {

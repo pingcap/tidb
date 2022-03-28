@@ -18,6 +18,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/util/topsql/primitives"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 )
@@ -28,7 +29,7 @@ import (
 func (s *StatementStats) CreateKvExecCounter(sqlDigest, planDigest parser.RawDigestString) *KvExecCounter {
 	return &KvExecCounter{
 		stats:  s,
-		digest: SQLPlanDigest{SQLDigest: sqlDigest, PlanDigest: planDigest},
+		digest: primitives.BuildSQLPlanDigest(sqlDigest, planDigest),
 		marked: map[string]struct{}{},
 	}
 }
@@ -38,7 +39,7 @@ func (s *StatementStats) CreateKvExecCounter(sqlDigest, planDigest parser.RawDig
 // ensure the semantic of "SQL execution count of TiKV".
 type KvExecCounter struct {
 	stats  *StatementStats
-	digest SQLPlanDigest
+	digest primitives.SQLPlanDigest
 	mu     sync.Mutex
 	marked map[string]struct{} // HashSet<Target>
 }
@@ -69,6 +70,6 @@ func (c *KvExecCounter) mark(target string) {
 	}
 	c.mu.Unlock()
 	if firstMark {
-		c.stats.addKvExecCount(c.digest.SQLDigest, c.digest.PlanDigest, target, 1)
+		c.stats.addKvExecCount(c.digest, target, 1)
 	}
 }

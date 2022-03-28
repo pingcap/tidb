@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql/collector"
+	"github.com/pingcap/tidb/util/topsql/primitives"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-tipb"
@@ -63,7 +64,7 @@ const (
 
 var (
 	// keyOthers is the key to store the aggregation of all records that is out of Top N.
-	keyOthers = sqlPlanDigest{SQLDigest: "", PlanDigest: ""}
+	keyOthers = primitives.BuildSQLPlanDigest("", "")
 )
 
 // tsItem is a self-contained complete piece of data for a certain timestamp.
@@ -141,8 +142,7 @@ var _ sort.Interface = &record{}
 // record do not guarantee the tsItems is sorted by timestamp when there is a time jump backward.
 // record is also sortable, and the tsIndex will be updated while sorting the internal tsItems.
 type record struct {
-	sqlDigest      parser.RawDigestString
-	planDigest     parser.RawDigestString
+	sqlAndPlan     primitives.SQLPlanDigest
 	totalCPUTimeMs uint64
 	tsItems        tsItems
 
@@ -150,14 +150,13 @@ type record struct {
 	tsIndex map[uint64]int // timestamp => index of tsItems
 }
 
-func newRecord(sqlDigest, planDigest parser.RawDigestString) *record {
+func newRecord(sqlAndPlan primitives.SQLPlanDigest) *record {
 	listCap := topsqlstate.GlobalState.ReportIntervalSeconds.Load()/topsqlstate.GlobalState.PrecisionSeconds.Load() + 1
 	if listCap > maxTsItemsCapacity {
 		listCap = maxTsItemsCapacity
 	}
 	return &record{
-		sqlDigest:  sqlDigest,
-		planDigest: planDigest,
+		sqlAndPlan: sqlAndPlan,
 		tsItems:    make(tsItems, 0, listCap),
 		tsIndex:    make(map[uint64]int, listCap),
 	}
@@ -392,8 +391,8 @@ func rawDigestToSlice(s parser.RawDigestString) []byte {
 func (r *record) toProto() tipb.TopSQLRecord {
 	return tipb.TopSQLRecord{
 		// Do slice copy, since we don't know whether tipb.TopSQLRecord will be modified.
-		SqlDigest:  rawDigestToSlice(r.sqlDigest),
-		PlanDigest: rawDigestToSlice(r.planDigest),
+		SqlDigest:  rawDigestToSlice(r.sqlAndPlan.SQLDigest),
+		PlanDigest: rawDigestToSlice(r.sqlAndPlan.PlanDigest),
 		Items:      r.tsItems.toProto(),
 	}
 }
@@ -437,31 +436,25 @@ func (rs records) toProto() []tipb.TopSQLRecord {
 	return pb
 }
 
-// sqlPlanDigest is used as the key of records.
-type sqlPlanDigest struct {
-	SQLDigest  parser.RawDigestString
-	PlanDigest parser.RawDigestString
-}
-
 // collecting includes the collection of data being collected by the reporter.
 type collecting struct {
-	records map[sqlPlanDigest]*record             // sqlPlanDigest => record
-	evicted map[uint64]map[sqlPlanDigest]struct{} // { sqlPlanDigest }
+	records map[primitives.SQLPlanDigest]*record             // sqlPlanDigest => record
+	evicted map[uint64]map[primitives.SQLPlanDigest]struct{} // { sqlPlanDigest }
 }
 
 func newCollecting() *collecting {
 	return &collecting{
-		records: map[sqlPlanDigest]*record{},
-		evicted: map[uint64]map[sqlPlanDigest]struct{}{},
+		records: map[primitives.SQLPlanDigest]*record{},
+		evicted: map[uint64]map[primitives.SQLPlanDigest]struct{}{},
 	}
 }
 
 // getOrCreateRecord gets the record corresponding to sqlDigest + planDigest, if it
 // does not exist, it will be created.
-func (c *collecting) getOrCreateRecord(key sqlPlanDigest) *record {
+func (c *collecting) getOrCreateRecord(key primitives.SQLPlanDigest) *record {
 	r, ok := c.records[key]
 	if !ok {
-		r = newRecord(key.SQLDigest, key.PlanDigest)
+		r = newRecord(key)
 		c.records[key] = r
 	}
 	return r
@@ -470,18 +463,16 @@ func (c *collecting) getOrCreateRecord(key sqlPlanDigest) *record {
 // markAsEvicted marks sqlDigest + planDigest under a certain timestamp as "evicted".
 // Later, we can determine whether a certain sqlDigest + planDigest within a certain
 // timestamp has been evicted.
-func (c *collecting) markAsEvicted(timestamp uint64, sqlDigest, planDigest parser.RawDigestString) {
+func (c *collecting) markAsEvicted(timestamp uint64, key primitives.SQLPlanDigest) {
 	if _, ok := c.evicted[timestamp]; !ok {
-		c.evicted[timestamp] = map[sqlPlanDigest]struct{}{}
+		c.evicted[timestamp] = map[primitives.SQLPlanDigest]struct{}{}
 	}
-	key := sqlPlanDigest{SQLDigest: sqlDigest, PlanDigest: planDigest}
 	c.evicted[timestamp][key] = struct{}{}
 }
 
 // hasEvicted determines whether a certain sqlDigest + planDigest has been evicted
 // in a certain timestamp.
-func (c *collecting) hasEvicted(timestamp uint64, sqlDigest, planDigest parser.RawDigestString) bool {
-	key := sqlPlanDigest{SQLDigest: sqlDigest, PlanDigest: planDigest}
+func (c *collecting) hasEvicted(timestamp uint64, key primitives.SQLPlanDigest) bool {
 	if digestSet, ok := c.evicted[timestamp]; ok {
 		if _, ok := digestSet[key]; ok {
 			return true
@@ -497,7 +488,7 @@ func (c *collecting) appendOthersCPUTime(timestamp uint64, totalCPUTimeMs uint32
 	}
 	others, ok := c.records[keyOthers]
 	if !ok {
-		others = newRecord("", "")
+		others = newRecord(keyOthers)
 		c.records[keyOthers] = others
 	}
 	others.appendCPUTime(timestamp, totalCPUTimeMs)
@@ -507,7 +498,7 @@ func (c *collecting) appendOthersCPUTime(timestamp uint64, totalCPUTimeMs uint32
 func (c *collecting) appendOthersStmtStatsItem(timestamp uint64, item stmtstats.StatementStatsItem) {
 	others, ok := c.records[keyOthers]
 	if !ok {
-		others = newRecord("", "")
+		others = newRecord(keyOthers)
 		c.records[keyOthers] = others
 	}
 	others.appendStmtStatsItem(timestamp, item)
@@ -518,7 +509,7 @@ func (c *collecting) appendOthersStmtStatsItem(timestamp uint64, item stmtstats.
 func (c *collecting) removeInvalidPlanRecord() {
 	sql2PlansMap := make(map[parser.RawDigestString][]parser.RawDigestString, len(c.records)) // sql_digest => []plan_digest
 	for _, v := range c.records {
-		sql2PlansMap[v.sqlDigest] = append(sql2PlansMap[v.sqlDigest], v.planDigest)
+		sql2PlansMap[v.sqlAndPlan.SQLDigest] = append(sql2PlansMap[v.sqlAndPlan.SQLDigest], v.sqlAndPlan.PlanDigest)
 	}
 	for sqlDigest, plans := range sql2PlansMap {
 		if len(plans) != 2 {
@@ -528,8 +519,8 @@ func (c *collecting) removeInvalidPlanRecord() {
 			continue
 		}
 
-		key0 := sqlPlanDigest{SQLDigest: sqlDigest, PlanDigest: plans[0]}
-		key1 := sqlPlanDigest{SQLDigest: sqlDigest, PlanDigest: plans[1]}
+		key0 := primitives.BuildSQLPlanDigest(sqlDigest, plans[0])
+		key1 := primitives.BuildSQLPlanDigest(sqlDigest, plans[1])
 		record0, ok0 := c.records[key0]
 		record1, ok1 := c.records[key1]
 		if !ok0 || !ok1 {
@@ -568,8 +559,8 @@ func (c *collecting) take() *collecting {
 		records: c.records,
 		evicted: c.evicted,
 	}
-	c.records = map[sqlPlanDigest]*record{}
-	c.evicted = map[uint64]map[sqlPlanDigest]struct{}{}
+	c.records = map[primitives.SQLPlanDigest]*record{}
+	c.evicted = map[uint64]map[primitives.SQLPlanDigest]struct{}{}
 	return r
 }
 

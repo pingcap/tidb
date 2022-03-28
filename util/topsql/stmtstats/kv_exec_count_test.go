@@ -17,6 +17,7 @@ package stmtstats
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/util/topsql/primitives"
 	"github.com/stretchr/testify/assert"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
@@ -38,6 +39,6 @@ func TestKvExecCounter(t *testing.T) {
 	assert.Len(t, counter.marked, 2)
 	assert.Contains(t, counter.marked, "TIKV-1")
 	assert.Contains(t, counter.marked, "TIKV-2")
-	assert.NotNil(t, stats.data[SQLPlanDigest{SQLDigest: "SQL-1"}])
-	assert.Equal(t, uint64(1), stats.data[SQLPlanDigest{SQLDigest: "SQL-1"}].KvStatsItem.KvExecCount["TIKV-1"])
+	assert.NotNil(t, stats.data[primitives.BuildSQLPlanDigest("SQL-1", "")])
+	assert.Equal(t, uint64(1), stats.data[primitives.BuildSQLPlanDigest("SQL-1", "")].KvStatsItem.KvExecCount["TIKV-1"])
 }

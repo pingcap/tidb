@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/util/topsql/primitives"
 	"github.com/pingcap/tidb/util/topsql/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,8 +66,8 @@ func Test_aggregator_register_collect(t *testing.T) {
 	}))
 	a.aggregate(true)
 	assert.NotEmpty(t, total)
-	assert.Equal(t, uint64(1), total[SQLPlanDigest{SQLDigest: "SQL-1"}].ExecCount)
-	assert.Equal(t, uint64(time.Millisecond.Nanoseconds()), total[SQLPlanDigest{SQLDigest: "SQL-1"}].SumDurationNs)
+	assert.Equal(t, uint64(1), total[primitives.BuildSQLPlanDigest("SQL-1", "")].ExecCount)
+	assert.Equal(t, uint64(time.Millisecond.Nanoseconds()), total[primitives.BuildSQLPlanDigest("SQL-1", "")].SumDurationNs)
 }
 
 func Test_aggregator_run_close(t *testing.T) {
@@ -103,7 +104,7 @@ func TestAggregatorDisableAggregate(t *testing.T) {
 
 	stats := &StatementStats{
 		data: StatementStatsMap{
-			SQLPlanDigest{SQLDigest: ""}: &StatementStatsItem{},
+			primitives.BuildSQLPlanDigest("", ""): &StatementStatsItem{},
 		},
 		finished: atomic.NewBool(false),
 	}

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/util/topsql/primitives"
 	"go.uber.org/atomic"
 )
 
@@ -61,7 +62,7 @@ func CreateStatementStats() *StatementStats {
 func (s *StatementStats) OnExecutionBegin(sqlDigest, planDigest parser.RawDigestString) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
+	item := s.GetOrCreateStatementStatsItem(primitives.BuildSQLPlanDigest(sqlDigest, planDigest))
 
 	item.ExecCount++
 	// Count more data here.
@@ -76,7 +77,7 @@ func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest parser.RawDig
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
+	item := s.GetOrCreateStatementStatsItem(primitives.BuildSQLPlanDigest(sqlDigest, planDigest))
 
 	item.SumDurationNs += uint64(ns)
 	item.DurationCount++
@@ -87,8 +88,7 @@ func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest parser.RawDig
 // for the specified SQLPlanDigest and timestamp if it does not exist before.
 // GetOrCreateStatementStatsItem is just a helper function, not responsible for
 // concurrency control, so GetOrCreateStatementStatsItem is **not** thread-safe.
-func (s *StatementStats) GetOrCreateStatementStatsItem(sqlDigest, planDigest parser.RawDigestString) *StatementStatsItem {
-	key := SQLPlanDigest{SQLDigest: sqlDigest, PlanDigest: planDigest}
+func (s *StatementStats) GetOrCreateStatementStatsItem(key primitives.SQLPlanDigest) *StatementStatsItem {
 	item, ok := s.data[key]
 	if !ok {
 		s.data[key] = NewStatementStatsItem()
@@ -99,10 +99,10 @@ func (s *StatementStats) GetOrCreateStatementStatsItem(sqlDigest, planDigest par
 
 // addKvExecCount is used to count the number of executions of a certain SQLPlanDigest for a certain target.
 // addKvExecCount is thread-safe.
-func (s *StatementStats) addKvExecCount(sqlDigest, planDigest parser.RawDigestString, target string, n uint64) {
+func (s *StatementStats) addKvExecCount(key primitives.SQLPlanDigest, target string, n uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
+	item := s.GetOrCreateStatementStatsItem(key)
 	item.KvStatsItem.KvExecCount[target] += n
 }
 
@@ -130,15 +130,8 @@ func (s *StatementStats) Finished() bool {
 	return s.finished.Load()
 }
 
-// SQLPlanDigest is used as the key of StatementStatsMap to
-// distinguish different sql.
-type SQLPlanDigest struct {
-	SQLDigest  parser.RawDigestString
-	PlanDigest parser.RawDigestString
-}
-
 // StatementStatsMap is the local data type of StatementStats.
-type StatementStatsMap map[SQLPlanDigest]*StatementStatsItem
+type StatementStatsMap map[primitives.SQLPlanDigest]*StatementStatsItem
 
 // Merge merges other into StatementStatsMap.
 // Values with the same SQLPlanDigest will be merged.

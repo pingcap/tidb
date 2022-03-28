@@ -1298,8 +1298,8 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		require.Greaterf(t, len(stats), 0, "sql: "+sql)
 
 		for _, s := range stats {
-			sqlStr := mc.GetSQL(s.SQLDigest)
-			encodedPlan := mc.GetPlan(s.PlanDigest)
+			sqlStr := mc.GetSQL(s.SQLAndPlan.SQLDigest)
+			encodedPlan := mc.GetPlan(s.SQLAndPlan.PlanDigest)
 			// Normalize the user SQL before check.
 			normalizedSQL := parser.Normalize(sql)
 			require.Equalf(t, normalizedSQL, sqlStr, "sql: %v", sql)

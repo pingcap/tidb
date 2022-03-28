@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/topsql/primitives"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"go.uber.org/zap"
 )
@@ -46,8 +47,7 @@ type Collector interface {
 // 1. some sql statements has no plan, like `COMMIT`
 // 2. when a sql statement is being compiled, there's no plan yet
 type SQLCPUTimeRecord struct {
-	SQLDigest  parser.RawDigestString
-	PlanDigest parser.RawDigestString
+	SQLAndPlan primitives.SQLPlanDigest
 	CPUTimeMs  uint32
 }
 
@@ -200,8 +200,7 @@ func (sp *SQLCPUCollector) createSQLStats(sqlMap map[parser.RawDigestString]*sql
 		stmt.tune()
 		for planDigest, val := range stmt.plans {
 			stats = append(stats, SQLCPUTimeRecord{
-				SQLDigest:  sqlDigest,
-				PlanDigest: planDigest,
+				SQLAndPlan: primitives.BuildSQLPlanDigest(sqlDigest, planDigest),
 				CPUTimeMs:  uint32(time.Duration(val).Milliseconds()),
 			})
 		}

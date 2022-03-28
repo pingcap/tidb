@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/topsql/collector"
+	"github.com/pingcap/tidb/util/topsql/primitives"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-tipb"
@@ -51,9 +52,11 @@ func populateCache(tsr *RemoteTopSQLReporter, begin, end int, timestamp uint64) 
 	var records []collector.SQLCPUTimeRecord
 	for i := begin; i < end; i++ {
 		records = append(records, collector.SQLCPUTimeRecord{
-			SQLDigest:  parser.RawDigestString("sqlDigest" + strconv.Itoa(i+1)),
-			PlanDigest: parser.RawDigestString("planDigest" + strconv.Itoa(i+1)),
-			CPUTimeMs:  uint32(i + 1),
+			SQLAndPlan: primitives.BuildSQLPlanDigest(
+				parser.RawDigestString("sqlDigest"+strconv.Itoa(i+1)),
+				parser.RawDigestString("planDigest"+strconv.Itoa(i+1)),
+			),
+			CPUTimeMs: uint32(i + 1),
 		})
 	}
 	tsr.processCPUTimeData(timestamp, records)
@@ -198,9 +201,11 @@ func newSQLCPUTimeRecord(tsr *RemoteTopSQLReporter, sqlID int, cpuTimeMs uint32)
 	tsr.RegisterPlan(key, value)
 
 	return collector.SQLCPUTimeRecord{
-		SQLDigest:  parser.RawDigestString("sqlDigest" + strconv.Itoa(sqlID)),
-		PlanDigest: parser.RawDigestString("planDigest" + strconv.Itoa(sqlID)),
-		CPUTimeMs:  cpuTimeMs,
+		SQLAndPlan: primitives.BuildSQLPlanDigest(
+			parser.RawDigestString("sqlDigest"+strconv.Itoa(sqlID)),
+			parser.RawDigestString("planDigest"+strconv.Itoa(sqlID)),
+		),
+		CPUTimeMs: cpuTimeMs,
 	}
 }
 
@@ -325,9 +330,11 @@ func TestCollectCapacity(t *testing.T) {
 		records := make([]collector.SQLCPUTimeRecord, 0, n)
 		for i := 0; i < n; i++ {
 			records = append(records, collector.SQLCPUTimeRecord{
-				SQLDigest:  parser.RawDigestString("sqlDigest" + strconv.Itoa(i+1)),
-				PlanDigest: parser.RawDigestString("planDigest" + strconv.Itoa(i+1)),
-				CPUTimeMs:  uint32(i + 1),
+				SQLAndPlan: primitives.BuildSQLPlanDigest(
+					parser.RawDigestString("sqlDigest"+strconv.Itoa(i+1)),
+					parser.RawDigestString("planDigest"+strconv.Itoa(i+1)),
+				),
+				CPUTimeMs: uint32(i + 1),
 			})
 		}
 		return records
@@ -489,16 +496,12 @@ func TestReporterWorker(t *testing.T) {
 
 	r.Collect(nil)
 	r.Collect([]collector.SQLCPUTimeRecord{{
-		SQLDigest:  "S1",
-		PlanDigest: "P1",
+		SQLAndPlan: primitives.BuildSQLPlanDigest("S1", "P1"),
 		CPUTimeMs:  1,
 	}})
 	r.CollectStmtStatsMap(nil)
 	r.CollectStmtStatsMap(stmtstats.StatementStatsMap{
-		stmtstats.SQLPlanDigest{
-			SQLDigest:  "S1",
-			PlanDigest: "P1",
-		}: &stmtstats.StatementStatsItem{
+		primitives.BuildSQLPlanDigest("S1", "P1"): &stmtstats.StatementStatsItem{
 			ExecCount:     1,
 			SumDurationNs: 1,
 			KvStatsItem:   stmtstats.KvStatementStatsItem{KvExecCount: map[string]uint64{"": 1}},

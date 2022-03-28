@@ -75,8 +75,8 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	for _, req := range reqs {
 		stats := mc.GetSQLStatsBySQLWithRetry(req.sql, len(req.plan) > 0)
 		require.Equal(t, 1, len(stats))
-		sql := mc.GetSQL(stats[0].SQLDigest)
-		plan := mc.GetPlan(stats[0].PlanDigest)
+		sql := mc.GetSQL(stats[0].SQLAndPlan.SQLDigest)
+		plan := mc.GetPlan(stats[0].SQLAndPlan.PlanDigest)
 		require.Equal(t, req.sql, sql)
 		require.Equal(t, req.plan, plan)
 	}

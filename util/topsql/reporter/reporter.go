@@ -206,8 +206,7 @@ func (tsr *RemoteTopSQLReporter) processCPUTimeData(timestamp uint64, data cpuRe
 	// on other components (TiKV) TopN DataRecords.
 	top, evicted := data.topN(int(topsqlstate.GlobalState.MaxStatementCount.Load()))
 	for _, r := range top {
-		key := sqlPlanDigest{SQLDigest: r.SQLDigest, PlanDigest: r.PlanDigest}
-		tsr.collecting.getOrCreateRecord(key).appendCPUTime(timestamp, r.CPUTimeMs)
+		tsr.collecting.getOrCreateRecord(r.SQLAndPlan).appendCPUTime(timestamp, r.CPUTimeMs)
 	}
 	if len(evicted) == 0 {
 		return
@@ -218,7 +217,7 @@ func (tsr *RemoteTopSQLReporter) processCPUTimeData(timestamp uint64, data cpuRe
 		// Mark which digests are evicted under each timestamp.
 		// We will determine whether the corresponding CPUTime has been evicted
 		// when collecting stmtstats. If so, then we can ignore it directly.
-		tsr.collecting.markAsEvicted(timestamp, e.SQLDigest, e.PlanDigest)
+		tsr.collecting.markAsEvicted(timestamp, e.SQLAndPlan)
 	}
 	tsr.collecting.appendOthersCPUTime(timestamp, totalEvictedCPUTime)
 }
@@ -230,13 +229,12 @@ func (tsr *RemoteTopSQLReporter) processStmtStatsData() {
 
 	for timestamp, data := range tsr.stmtStatsBuffer {
 		for digest, item := range data {
-			if tsr.collecting.hasEvicted(timestamp, digest.SQLDigest, digest.PlanDigest) {
+			if tsr.collecting.hasEvicted(timestamp, digest) {
 				// This timestamp+sql+plan has been evicted due to low CPUTime.
 				tsr.collecting.appendOthersStmtStatsItem(timestamp, *item)
 				continue
 			}
-			key := sqlPlanDigest{SQLDigest: digest.SQLDigest, PlanDigest: digest.PlanDigest}
-			tsr.collecting.getOrCreateRecord(key).appendStmtStatsItem(timestamp, *item)
+			tsr.collecting.getOrCreateRecord(digest).appendStmtStatsItem(timestamp, *item)
 		}
 	}
 	tsr.stmtStatsBuffer = map[uint64]stmtstats.StatementStatsMap{}

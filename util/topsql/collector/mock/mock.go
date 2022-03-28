@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/topsql/collector"
+	"github.com/pingcap/tidb/util/topsql/primitives"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -34,7 +35,7 @@ type TopSQLCollector struct {
 	// plan_digest -> normalized plan
 	planMap map[parser.RawDigestString]string
 	// (sql + plan_digest) -> sql stats
-	sqlStatsMap map[string]*collector.SQLCPUTimeRecord
+	sqlStatsMap map[primitives.SQLPlanDigest]*collector.SQLCPUTimeRecord
 	collectCnt  atomic.Int64
 }
 
@@ -43,7 +44,7 @@ func NewTopSQLCollector() *TopSQLCollector {
 	return &TopSQLCollector{
 		sqlMap:      make(map[parser.RawDigestString]string),
 		planMap:     make(map[parser.RawDigestString]string),
-		sqlStatsMap: make(map[string]*collector.SQLCPUTimeRecord),
+		sqlStatsMap: make(map[primitives.SQLPlanDigest]*collector.SQLCPUTimeRecord),
 	}
 }
 
@@ -59,19 +60,17 @@ func (c *TopSQLCollector) Collect(stats []collector.SQLCPUTimeRecord) {
 	c.Lock()
 	defer c.Unlock()
 	for _, stmt := range stats {
-		hash := c.hash(stmt)
-		stats, ok := c.sqlStatsMap[hash]
+		stats, ok := c.sqlStatsMap[stmt.SQLAndPlan]
 		if !ok {
 			stats = &collector.SQLCPUTimeRecord{
-				SQLDigest:  stmt.SQLDigest,
-				PlanDigest: stmt.PlanDigest,
+				SQLAndPlan: stmt.SQLAndPlan,
 			}
-			c.sqlStatsMap[hash] = stats
+			c.sqlStatsMap[stmt.SQLAndPlan] = stats
 		}
 		stats.CPUTimeMs += stmt.CPUTimeMs
 		logutil.BgLogger().Info("mock top sql collector collected sql",
-			zap.String("sql", c.sqlMap[stmt.SQLDigest]),
-			zap.Bool("has-plan", len(c.planMap[stmt.PlanDigest]) > 0))
+			zap.String("sql", c.sqlMap[stmt.SQLAndPlan.SQLDigest]),
+			zap.Bool("has-plan", len(c.planMap[stmt.SQLAndPlan.PlanDigest]) > 0))
 	}
 }
 
@@ -101,9 +100,9 @@ func (c *TopSQLCollector) GetSQLStatsBySQL(sql string, planIsNotNull bool) []*co
 	sqlDigest := GenSQLDigest(sql)
 	c.Lock()
 	for _, stmt := range c.sqlStatsMap {
-		if stmt.SQLDigest == sqlDigest.RawAsString() {
+		if stmt.SQLAndPlan.SQLDigest == sqlDigest.RawAsString() {
 			if planIsNotNull {
-				plan := c.planMap[stmt.PlanDigest]
+				plan := c.planMap[stmt.SQLAndPlan.PlanDigest]
 				if len(plan) > 0 {
 					stats = append(stats, stmt)
 				}
@@ -122,7 +121,7 @@ func (c *TopSQLCollector) GetSQLCPUTimeBySQL(sql string) uint32 {
 	cpuTime := uint32(0)
 	c.Lock()
 	for _, stmt := range c.sqlStatsMap {
-		if stmt.SQLDigest == sqlDigest.RawAsString() {
+		if stmt.SQLAndPlan.SQLDigest == sqlDigest.RawAsString() {
 			cpuTime += stmt.CPUTimeMs
 		}
 	}
@@ -191,7 +190,7 @@ func (c *TopSQLCollector) Reset() {
 	defer c.Unlock()
 	c.sqlMap = make(map[parser.RawDigestString]string)
 	c.planMap = make(map[parser.RawDigestString]string)
-	c.sqlStatsMap = make(map[string]*collector.SQLCPUTimeRecord)
+	c.sqlStatsMap = make(map[primitives.SQLPlanDigest]*collector.SQLCPUTimeRecord)
 	c.collectCnt.Store(0)
 }
 
@@ -202,10 +201,6 @@ func (c *TopSQLCollector) CollectCnt() int64 {
 
 // Close implements the interface.
 func (c *TopSQLCollector) Close() {}
-
-func (c *TopSQLCollector) hash(stat collector.SQLCPUTimeRecord) string {
-	return string(stat.SQLDigest) + string(stat.PlanDigest)
-}
 
 // GenSQLDigest uses for testing.
 func GenSQLDigest(sql string) *parser.Digest {
