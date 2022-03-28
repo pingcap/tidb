@@ -261,6 +261,15 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		statsHandle = mgr.GetDomain().StatsHandle()
 	}
 
+	se, err := g.CreateSession(mgr.GetStorage())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	newCollationEnable, err := se.GetGlobalVariables("new_collation_enabled")
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	client, err := backup.NewBackupClient(ctx, mgr)
 	if err != nil {
 		return errors.Trace(err)

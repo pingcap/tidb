@@ -523,6 +523,11 @@ func (gs *tidbGlueSession) CreatePlacementPolicy(ctx context.Context, policy *mo
 func (gs *tidbGlueSession) Close() {
 }
 
+// GetGlobalVariables implements glue.Session.
+func (gs *tidbGlueSession) GetGlobalVariables(name string) (string, error) {
+	return gs.se.GetSessionVars().GlobalVarsAccessor.GetTiDBTableValue(name)
+}
+
 // Open implements glue.Glue
 func (gs *tidbGlueSession) Open(string, pd.SecurityOption) (kv.Storage, error) {
 	return gs.se.GetStore(), nil
