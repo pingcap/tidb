@@ -31,9 +31,12 @@ type AnalyzeJob struct {
 	Process       AnalyzeProcess
 }
 
+// AnalyzeProcess represents the process of one analyze job.
 type AnalyzeProcess struct {
 	sync.Mutex
-	deltaCount   int64
+	// deltaCount is the newly processed rows after the last time mysql.analyze_jobs.processed_rows is updated.
+	deltaCount int64
+	// lastDumpTime is the last time mysql.analyze_jobs.processed_rows is updated.
 	lastDumpTime time.Time
 }
 
