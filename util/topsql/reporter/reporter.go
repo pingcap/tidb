@@ -206,7 +206,8 @@ func (tsr *RemoteTopSQLReporter) processCPUTimeData(timestamp uint64, data cpuRe
 	// on other components (TiKV) TopN DataRecords.
 	top, evicted := data.topN(int(topsqlstate.GlobalState.MaxStatementCount.Load()))
 	for _, r := range top {
-		tsr.collecting.getOrCreateRecord(r.SQLDigest, r.PlanDigest).appendCPUTime(timestamp, r.CPUTimeMs)
+		key := sqlPlanDigest{SQLDigest: r.SQLDigest, PlanDigest: r.PlanDigest}
+		tsr.collecting.getOrCreateRecord(key).appendCPUTime(timestamp, r.CPUTimeMs)
 	}
 	if len(evicted) == 0 {
 		return
@@ -234,7 +235,8 @@ func (tsr *RemoteTopSQLReporter) processStmtStatsData() {
 				tsr.collecting.appendOthersStmtStatsItem(timestamp, *item)
 				continue
 			}
-			tsr.collecting.getOrCreateRecord(digest.SQLDigest, digest.PlanDigest).appendStmtStatsItem(timestamp, *item)
+			key := sqlPlanDigest{SQLDigest: digest.SQLDigest, PlanDigest: digest.PlanDigest}
+			tsr.collecting.getOrCreateRecord(key).appendStmtStatsItem(timestamp, *item)
 		}
 	}
 	tsr.stmtStatsBuffer = map[uint64]stmtstats.StatementStatsMap{}

@@ -16,7 +16,6 @@ package reporter
 
 import (
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -57,12 +56,14 @@ import (
 // normalizePlanMap: { planDigest => normalizedPlan | planDigest => normalizedPlan | ... }
 
 const (
-	// keyOthers is the key to store the aggregation of all records that is out of Top N.
-	keyOthers = ""
-
 	// maxTsItemsCapacity is a protection to avoid excessive memory usage caused by
 	// incorrect configuration. The corresponding value defaults to 60 (60 s/min).
 	maxTsItemsCapacity = 1000
+)
+
+var (
+	// keyOthers is the key to store the aggregation of all records that is out of Top N.
+	keyOthers = sqlPlanDigest{SQLDigest: "", PlanDigest: ""}
 )
 
 // tsItem is a self-contained complete piece of data for a certain timestamp.
@@ -436,26 +437,31 @@ func (rs records) toProto() []tipb.TopSQLRecord {
 	return pb
 }
 
+// sqlPlanDigest is used as the key of records.
+type sqlPlanDigest struct {
+	SQLDigest  parser.RawDigestString
+	PlanDigest parser.RawDigestString
+}
+
 // collecting includes the collection of data being collected by the reporter.
 type collecting struct {
-	records map[string]*record             // sqlPlanDigest => record
-	evicted map[uint64]map[string]struct{} // { sqlPlanDigest }
+	records map[sqlPlanDigest]*record             // sqlPlanDigest => record
+	evicted map[uint64]map[sqlPlanDigest]struct{} // { sqlPlanDigest }
 }
 
 func newCollecting() *collecting {
 	return &collecting{
-		records: map[string]*record{},
-		evicted: map[uint64]map[string]struct{}{},
+		records: map[sqlPlanDigest]*record{},
+		evicted: map[uint64]map[sqlPlanDigest]struct{}{},
 	}
 }
 
 // getOrCreateRecord gets the record corresponding to sqlDigest + planDigest, if it
 // does not exist, it will be created.
-func (c *collecting) getOrCreateRecord(sqlDigest, planDigest parser.RawDigestString) *record {
-	key := encodeKey(sqlDigest, planDigest) // TODO: Reduce 1 allocation here.
+func (c *collecting) getOrCreateRecord(key sqlPlanDigest) *record {
 	r, ok := c.records[key]
 	if !ok {
-		r = newRecord(sqlDigest, planDigest)
+		r = newRecord(key.SQLDigest, key.PlanDigest)
 		c.records[key] = r
 	}
 	return r
@@ -466,16 +472,18 @@ func (c *collecting) getOrCreateRecord(sqlDigest, planDigest parser.RawDigestStr
 // timestamp has been evicted.
 func (c *collecting) markAsEvicted(timestamp uint64, sqlDigest, planDigest parser.RawDigestString) {
 	if _, ok := c.evicted[timestamp]; !ok {
-		c.evicted[timestamp] = map[string]struct{}{}
+		c.evicted[timestamp] = map[sqlPlanDigest]struct{}{}
 	}
-	c.evicted[timestamp][encodeKey(sqlDigest, planDigest)] = struct{}{}
+	key := sqlPlanDigest{SQLDigest: sqlDigest, PlanDigest: planDigest}
+	c.evicted[timestamp][key] = struct{}{}
 }
 
 // hasEvicted determines whether a certain sqlDigest + planDigest has been evicted
 // in a certain timestamp.
 func (c *collecting) hasEvicted(timestamp uint64, sqlDigest, planDigest parser.RawDigestString) bool {
+	key := sqlPlanDigest{SQLDigest: sqlDigest, PlanDigest: planDigest}
 	if digestSet, ok := c.evicted[timestamp]; ok {
-		if _, ok := digestSet[encodeKey(sqlDigest, planDigest)]; ok {
+		if _, ok := digestSet[key]; ok {
 			return true
 		}
 	}
@@ -520,8 +528,8 @@ func (c *collecting) removeInvalidPlanRecord() {
 			continue
 		}
 
-		key0 := encodeKey(sqlDigest, plans[0])
-		key1 := encodeKey(sqlDigest, plans[1])
+		key0 := sqlPlanDigest{SQLDigest: sqlDigest, PlanDigest: plans[0]}
+		key1 := sqlPlanDigest{SQLDigest: sqlDigest, PlanDigest: plans[1]}
 		record0, ok0 := c.records[key0]
 		record1, ok1 := c.records[key1]
 		if !ok0 || !ok1 {
@@ -560,8 +568,8 @@ func (c *collecting) take() *collecting {
 		records: c.records,
 		evicted: c.evicted,
 	}
-	c.records = map[string]*record{}
-	c.evicted = map[uint64]map[string]struct{}{}
+	c.records = map[sqlPlanDigest]*record{}
+	c.evicted = map[uint64]map[sqlPlanDigest]struct{}{}
 	return r
 }
 
@@ -713,13 +721,4 @@ func (m *normalizedPlanMap) toProto(decodePlan planBinaryDecodeFunc) []tipb.Plan
 		return true
 	})
 	return metas
-}
-
-func encodeKey(sqlDigest, planDigest parser.RawDigestString) string {
-	// TODO: Use sync.Pool to reduce memory allocations
-	sb := strings.Builder{}
-	sb.Grow(len(sqlDigest) + len(planDigest))
-	sb.WriteString(string(sqlDigest))
-	sb.WriteString(string(planDigest))
-	return sb.String()
 }

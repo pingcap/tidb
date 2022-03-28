@@ -240,11 +240,18 @@ func Test_records_toProto(t *testing.T) {
 	require.Len(t, pb, 2)
 }
 
+func buildRecordKey(sqlDigest, planDigest parser.RawDigestString) sqlPlanDigest {
+	return sqlPlanDigest{
+		SQLDigest:  sqlDigest,
+		PlanDigest: planDigest,
+	}
+}
+
 func Test_collecting_getOrCreateRecord(t *testing.T) {
 	c := newCollecting()
-	r1 := c.getOrCreateRecord("SQL-1", "PLAN-1")
+	r1 := c.getOrCreateRecord(buildRecordKey("SQL-1", "PLAN-1"))
 	require.NotNil(t, r1)
-	r2 := c.getOrCreateRecord("SQL-1", "PLAN-1")
+	r2 := c.getOrCreateRecord(buildRecordKey("SQL-1", "PLAN-1"))
 	require.Equal(t, r1, r2)
 }
 
@@ -277,10 +284,10 @@ func Test_collecting_appendOthers(t *testing.T) {
 
 func Test_collecting_getReportRecords(t *testing.T) {
 	c := newCollecting()
-	c.getOrCreateRecord("SQL-1", "PLAN-1").appendCPUTime(1, 1)
-	c.getOrCreateRecord("SQL-2", "PLAN-2").appendCPUTime(1, 2)
-	c.getOrCreateRecord("SQL-3", "PLAN-3").appendCPUTime(1, 3)
-	c.getOrCreateRecord(keyOthers, keyOthers).appendCPUTime(1, 10)
+	c.getOrCreateRecord(buildRecordKey("SQL-1", "PLAN-1")).appendCPUTime(1, 1)
+	c.getOrCreateRecord(buildRecordKey("SQL-2", "PLAN-2")).appendCPUTime(1, 2)
+	c.getOrCreateRecord(buildRecordKey("SQL-3", "PLAN-3")).appendCPUTime(1, 3)
+	c.getOrCreateRecord(keyOthers).appendCPUTime(1, 10)
 	rs := c.getReportRecords()
 	require.Len(t, rs, 4)
 	require.Equal(t, uint32(10), rs[3].tsItems[0].cpuTimeMs)
@@ -289,7 +296,7 @@ func Test_collecting_getReportRecords(t *testing.T) {
 
 func Test_collecting_take(t *testing.T) {
 	c1 := newCollecting()
-	c1.getOrCreateRecord("SQL-1", "PLAN-1").appendCPUTime(1, 1)
+	c1.getOrCreateRecord(buildRecordKey("SQL-1", "PLAN-1")).appendCPUTime(1, 1)
 	c2 := c1.take()
 	require.Empty(t, c1.records)
 	require.Len(t, c2.records, 1)
@@ -464,11 +471,6 @@ func Test_normalizedPlanMap_toProto(t *testing.T) {
 	}, hash["PLAN-3"])
 }
 
-func Test_encodeKey(t *testing.T) {
-	key := encodeKey("S", "P")
-	require.Equal(t, "SP", key)
-}
-
 func TestRemoveInvalidPlanRecord(t *testing.T) {
 	c1 := newCollecting()
 	rs := []struct {
@@ -486,7 +488,7 @@ func TestRemoveInvalidPlanRecord(t *testing.T) {
 		{"SQL-3", "PLAN-1", []uint64{1, 2, 3, 4, 6}},
 	}
 	for _, r := range rs {
-		record := c1.getOrCreateRecord(r.sql, r.plan)
+		record := c1.getOrCreateRecord(buildRecordKey(r.sql, r.plan))
 		for _, ts := range r.tss {
 			record.appendCPUTime(ts, 1)
 		}
@@ -507,7 +509,7 @@ func TestRemoveInvalidPlanRecord(t *testing.T) {
 	}
 	require.Equal(t, len(result), len(c1.records))
 	for _, r := range result {
-		k := encodeKey(r.sql, r.plan)
+		k := sqlPlanDigest{SQLDigest: r.sql, PlanDigest: r.plan}
 		record, ok := c1.records[k]
 		require.True(t, ok)
 		require.Equal(t, r.sql, record.sqlDigest)
