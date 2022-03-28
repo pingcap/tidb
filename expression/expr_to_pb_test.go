@@ -1242,11 +1242,6 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			args:         []Expression{stringColumn},
 		},
 		{
-			functionName: ast.Right,
-			retType:      types.NewFieldType(mysql.TypeString),
-			args:         []Expression{stringColumn, intColumn},
-		},
-		{
 			functionName: ast.Sin,
 			retType:      types.NewFieldType(mysql.TypeDouble),
 			args:         []Expression{intColumn},
@@ -1263,11 +1258,6 @@ func TestExprPushDownToTiKV(t *testing.T) {
 		},
 		{
 			functionName: ast.Acos,
-			retType:      types.NewFieldType(mysql.TypeDouble),
-			args:         []Expression{intColumn},
-		},
-		{
-			functionName: ast.Tan,
 			retType:      types.NewFieldType(mysql.TypeDouble),
 			args:         []Expression{intColumn},
 		},
@@ -1338,11 +1328,6 @@ func TestExprPushDownToTiKV(t *testing.T) {
 		},
 		{
 			functionName: ast.Week,
-			retType:      types.NewFieldType(mysql.TypeDate),
-			args:         []Expression{dateColumn},
-		},
-		{
-			functionName: ast.YearWeek,
 			retType:      types.NewFieldType(mysql.TypeDate),
 			args:         []Expression{dateColumn},
 		},
