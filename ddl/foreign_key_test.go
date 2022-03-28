@@ -19,14 +19,19 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/stretchr/testify/require"
 )
+
+const testLease = 5 * time.Millisecond
 
 func testCreateForeignKey(t *testing.T, d *ddl, ctx sessionctx.Context, dbInfo *model.DBInfo, tblInfo *model.TableInfo, fkName string, keys []string, refTable string, refKeys []string, onDelete ast.ReferOptionType, onUpdate ast.ReferOptionType) *model.Job {
 	FKName := model.NewCIStr(fkName)
@@ -61,7 +66,7 @@ func testCreateForeignKey(t *testing.T, d *ddl, ctx sessionctx.Context, dbInfo *
 	err := ctx.NewTxn(context.Background())
 	require.NoError(t, err)
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err = d.doDDLJob(ctx, job)
+	err = d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 	return job
 }
@@ -75,7 +80,7 @@ func testDropForeignKey(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *mo
 		Args:       []interface{}{model.NewCIStr(foreignKeyName)},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.doDDLJob(ctx, job)
+	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
@@ -218,4 +223,20 @@ func TestForeignKey(t *testing.T) {
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
+}
+
+func testCheckJobDone(t *testing.T, d *ddl, job *model.Job, isAdd bool) {
+	require.NoError(t, kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		historyJob, err := m.GetHistoryDDLJob(job.ID)
+		require.NoError(t, err)
+		checkHistoryJob(t, historyJob)
+		if isAdd {
+			require.Equal(t, historyJob.SchemaState, model.StatePublic)
+		} else {
+			require.Equal(t, historyJob.SchemaState, model.StateNone)
+		}
+
+		return nil
+	}))
 }

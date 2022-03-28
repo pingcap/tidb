@@ -50,10 +50,10 @@ jobs:
       - uses: actions/checkout@v2
       - name: Shutdown Ubuntu MySQL (SUDO)
         run: sudo service mysql stop # Shutdown the Default MySQL, "sudo" is necessary, please not remove it
-      - name: Set up Go 1.16
+      - name: Set up Go 1.18
         uses: actions/setup-go@v2
         with:
-          go-version: 1.16
+          go-version: 1.18
       - uses: actions/cache@v2
         with:
           path: ~/go/pkg/mod
@@ -87,10 +87,10 @@ jobs:
       - uses: actions/checkout@v2
       - name: Shutdown Ubuntu MySQL (SUDO)
         run: sudo service mysql stop # Shutdown the Default MySQL, "sudo" is necessary, please not remove it
-      - name: Set up Go 1.16
+      - name: Set up Go 1.18
         uses: actions/setup-go@v2
         with:
-          go-version: 1.16
+          go-version: 1.18
       - uses: actions/cache@v2
         with:
           path: ~/go/pkg/mod
@@ -124,10 +124,10 @@ jobs:
       - uses: actions/checkout@v2
       - name: Shutdown Ubuntu MySQL (SUDO)
         run: sudo service mysql stop # Shutdown the Default MySQL, "sudo" is necessary, please not remove it
-      - name: Set up Go 1.16
+      - name: Set up Go 1.18
         uses: actions/setup-go@v2
         with:
-          go-version: 1.16
+          go-version: 1.18
       - uses: actions/cache@v2
         with:
           path: ~/go/pkg/mod
