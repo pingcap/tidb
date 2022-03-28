@@ -2340,6 +2340,7 @@ func StartAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
 		return
 	}
 	job.StartTime = time.Now()
+	job.Process.SetLastDumpTime(job.StartTime)
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 	const sql = "UPDATE mysql.analyze_jobs SET start_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %? WHERE id = %?"
 	_, _, err := exec.ExecRestrictedSQL(context.TODO(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, job.StartTime.UTC().Format(types.TimeFormat), statistics.AnalyzeRunning, *job.ID)
@@ -2353,22 +2354,7 @@ func UpdateAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, rowCou
 	if job == nil || job.ID == nil {
 		return
 	}
-	const maxDelta int64 = 10000000
-	const dumpTimeInterval = 5 * time.Second
-	var delta int64
-	job.Delta.Lock()
-	job.Delta.Count += rowCount
-	lastDumpTime := job.Delta.LastDumpTime
-	if lastDumpTime.IsZero() {
-		lastDumpTime = job.StartTime
-	}
-	t := time.Now()
-	if job.Delta.Count > maxDelta && t.Sub(lastDumpTime) > dumpTimeInterval {
-		delta = job.Delta.Count
-		job.Delta.Count = 0
-		job.Delta.LastDumpTime = t
-	}
-	job.Delta.Unlock()
+	delta := job.Process.Update(rowCount)
 	if delta == 0 {
 		return
 	}
@@ -2390,10 +2376,10 @@ func FinishAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, analyz
 	var args []interface{}
 	if analyzeErr != nil {
 		sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, fail_reason = %? WHERE id = %?"
-		args = []interface{}{job.Delta.Count, job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFailed, analyzeErr.Error(), *job.ID}
+		args = []interface{}{job.Process.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFailed, analyzeErr.Error(), *job.ID}
 	} else {
 		sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %? WHERE id = %?"
-		args = []interface{}{job.Delta.Count, job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
+		args = []interface{}{job.Process.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
 	}
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 	_, _, err := exec.ExecRestrictedSQL(context.TODO(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, args...)

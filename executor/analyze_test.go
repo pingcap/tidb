@@ -2856,28 +2856,28 @@ func TestAnalyzeJob(t *testing.T) {
 		// UpdateAnalyzeJob requires the interval between two updates to mysql.analyze_jobs is more than 5 second.
 		// Hence we fake last dump time as 10 second ago in order to make update to mysql.analyze_jobs happen.
 		lastDumpTime := time.Now().Add(-10 * time.Second)
-		job.Delta.LastDumpTime = lastDumpTime
+		job.Process.SetLastDumpTime(lastDumpTime)
 		const smallCount int64 = 100
 		executor.UpdateAnalyzeJob(se, job, smallCount)
 		// Delta count doesn't reach threshold so we don't dump it to mysql.analyze_jobs
-		require.Equal(t, smallCount, job.Delta.Count)
-		require.Equal(t, lastDumpTime, job.Delta.LastDumpTime)
+		require.Equal(t, smallCount, job.Process.GetDeltaCount())
+		require.Equal(t, lastDumpTime, job.Process.GetLastDumpTime())
 		rows = tk.MustQuery("show analyze status").Rows()
 		require.Equal(t, "0", rows[0][4])
 
 		const largeCount int64 = 15000000
 		executor.UpdateAnalyzeJob(se, job, largeCount)
 		// Delta count reaches threshold so we dump it to mysql.analyze_jobs and update last dump time.
-		require.Equal(t, int64(0), job.Delta.Count)
-		require.True(t, job.Delta.LastDumpTime.After(lastDumpTime))
-		lastDumpTime = job.Delta.LastDumpTime
+		require.Equal(t, int64(0), job.Process.GetDeltaCount())
+		require.True(t, job.Process.GetLastDumpTime().After(lastDumpTime))
+		lastDumpTime = job.Process.GetLastDumpTime()
 		rows = tk.MustQuery("show analyze status").Rows()
 		require.Equal(t, strconv.FormatInt(smallCount+largeCount, 10), rows[0][4])
 
 		executor.UpdateAnalyzeJob(se, job, largeCount)
 		// We have just updated mysql.analyze_jobs in the previous step so we don't update it until 5 second passes or the analyze job is over.
-		require.Equal(t, largeCount, job.Delta.Count)
-		require.Equal(t, lastDumpTime, job.Delta.LastDumpTime)
+		require.Equal(t, largeCount, job.Process.GetDeltaCount())
+		require.Equal(t, lastDumpTime, job.Process.GetLastDumpTime())
 		rows = tk.MustQuery("show analyze status").Rows()
 		require.Equal(t, strconv.FormatInt(smallCount+largeCount, 10), rows[0][4])
 
