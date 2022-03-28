@@ -247,7 +247,8 @@ func (m *memTableReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 		m.offsets[i] = m.colIDs[col.ID]
 	}
 	err := iterTxnMemBuffer(m.ctx, m.cacheTable, m.kvRanges, func(key, value []byte) error {
-		err := m.decodeRecordKeyValue(key, value, &resultRows)
+		var err error
+		resultRows, err = m.decodeRecordKeyValue(key, value, &resultRows)
 		if err != nil {
 			return err
 		}
@@ -272,29 +273,29 @@ func (m *memTableReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 	return m.addedRows, nil
 }
 
-func (m *memTableReader) decodeRecordKeyValue(key, value []byte, resultRows *[]types.Datum) error {
+func (m *memTableReader) decodeRecordKeyValue(key, value []byte, resultRows *[]types.Datum) ([]types.Datum, error) {
 	handle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	return m.decodeRowData(handle, value, resultRows)
 }
 
 // decodeRowData uses to decode row data value.
-func (m *memTableReader) decodeRowData(handle kv.Handle, value []byte, resultRows *[]types.Datum) error {
+func (m *memTableReader) decodeRowData(handle kv.Handle, value []byte, resultRows *[]types.Datum) ([]types.Datum, error) {
 	values, err := m.getRowData(handle, value)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for i, col := range m.columns {
 		var datum types.Datum
 		err := tablecodec.DecodeColumnValueWithDatum(values[m.offsets[i]], &col.FieldType, m.ctx.GetSessionVars().Location(), &datum)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		(*resultRows)[i] = datum
 	}
-	return nil
+	return *resultRows, nil
 }
 
 // getRowData decodes raw byte slice to row data.
