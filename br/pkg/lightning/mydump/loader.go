@@ -404,6 +404,7 @@ func (s *mdLoaderSetup) route() error {
 		return nil
 	}
 
+	// route for table and view
 	if err := run(s.tableSchemas); err != nil {
 		return errors.Trace(err)
 	}
@@ -421,6 +422,10 @@ func (s *mdLoaderSetup) route() error {
 		if knownDBNames[info.TableName.Schema].count > 0 {
 			remainingSchemas = append(remainingSchemas, info)
 		}
+	}
+	// if there are no tables in the exported data, we need route s.dbSchemas(remainingSchemas) again
+	if err := run(remainingSchemas); err != nil {
+		return errors.Trace(err)
 	}
 	s.dbSchemas = remainingSchemas
 

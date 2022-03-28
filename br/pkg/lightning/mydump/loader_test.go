@@ -373,6 +373,10 @@ func TestRouter(t *testing.T) {
 			SchemaPattern: "~.bdb.*",
 			TargetSchema:  "db",
 		},
+		{
+			SchemaPattern: "web",
+			TargetSchema:  "web_test",
+		},
 	}
 
 	/*
@@ -402,6 +406,7 @@ func TestRouter(t *testing.T) {
 			zbdb-schema-create.sql
 			zbdb.table-schema.sql
 			zbdb.table.1.sql
+			web-schema-create.sql
 	*/
 
 	s.touch(t, "a0-schema-create.sql")
@@ -436,8 +441,11 @@ func TestRouter(t *testing.T) {
 	s.touch(t, "zbdb.table-schema.sql")
 	s.touch(t, "zbdb.table.1.sql")
 
+	s.touch(t, "web-schema-create.sql")
+
 	mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
 	require.NoError(t, err)
+	dbs := mdl.GetDatabases()
 	require.Equal(t, []*md.MDDatabaseMeta{
 		{
 			Name:       "a1",
@@ -473,6 +481,10 @@ func TestRouter(t *testing.T) {
 		{
 			Name:       "d0",
 			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "d0", Name: ""}, FileMeta: md.SourceFileMeta{Path: "d0-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+		},
+		{
+			Name:       "web_test",
+			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "web_test", Name: ""}, FileMeta: md.SourceFileMeta{Path: "web-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
 		},
 		{
 			Name:       "b",
@@ -558,9 +570,35 @@ func TestRouter(t *testing.T) {
 				},
 			},
 		},
-	}, mdl.GetDatabases())
+	}, dbs)
 }
 
+func TestOnlyRouteSchema(t *testing.T) {
+	s := newTestMydumpLoaderSuite(t)
+	s.cfg.Routes = []*router.TableRule{
+		{
+			SchemaPattern: "web",
+			TargetSchema:  "web_test",
+		},
+	}
+
+	s.touch(t, "web-schema-create.sql")
+
+	mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+	require.NoError(t, err)
+
+	require.Len(t, mdl.GetDatabases(), 1)
+	db := mdl.GetDatabases()[0]
+	require.Equal(t, "web_test", db.SchemaFile.TableName.Schema)
+	require.Len(t, db.Tables, 0)
+
+	require.Equal(t, []*md.MDDatabaseMeta{
+		{
+			Name:       "web_test",
+			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "web_test", Name: ""}, FileMeta: md.SourceFileMeta{Path: "web-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+		},
+	}, mdl.GetDatabases())
+}
 func TestBadRouterRule(t *testing.T) {
 	s := newTestMydumpLoaderSuite(t)
 
