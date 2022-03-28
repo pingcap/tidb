@@ -824,8 +824,8 @@ func (s *Server) GetInternalSessionStartTSList() []uint64 {
 	defer s.isRwlock.RUnlock()
 	tsList := make([]uint64, 0, len(s.internalSessions))
 	for _, addr := range s.internalSessions {
-		if pi := session.ShowProcessByPointer(addr); pi != nil {
-			tsList = append(tsList, pi.CurTxnStartTS)
+		if ts := session.GetStartTSFromSession(addr); ts != 0 {
+			tsList = append(tsList, ts)
 		}
 	}
 	return tsList

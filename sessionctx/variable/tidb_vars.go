@@ -642,7 +642,7 @@ const (
 	// TiDBGCScanLockMode enables the green GC feature (default)
 	TiDBGCScanLockMode = "tidb_gc_scan_lock_mode"
 	// TiDBGCMaxWaitTime sets max time for gc advances the safepoint delayed by active transactions
-	TiDBGCMaxWaitTime = "tidb_gc_txn_max_wait_time"
+	TiDBGCMaxWaitTime = "tidb_gc_max_wait_time"
 	// TiDBEnableEnhancedSecurity restricts SUPER users from certain operations.
 	TiDBEnableEnhancedSecurity = "tidb_enable_enhanced_security"
 	// TiDBEnableHistoricalStats enables the historical statistics feature (default off)

@@ -3226,16 +3226,16 @@ func (s *session) ShowProcess() *util.ProcessInfo {
 	return pi
 }
 
-// ShowProcessByPointer returns the ProcessInfo in the session whose
+// GetStartTSFromSession returns the ProcessInfo in the session whose
 // address is `addr`
-func ShowProcessByPointer(addr unsafe.Pointer) *util.ProcessInfo {
-	var pi *util.ProcessInfo
+func GetStartTSFromSession(addr unsafe.Pointer) uint64 {
+	var startTS uint64 = 0
 	se := (*session)(addr)
-	tmp := se.processInfo.Load()
-	if tmp != nil {
-		pi = tmp.(*util.ProcessInfo)
+	txnInfo := se.TxnInfo()
+	if txnInfo != nil {
+		startTS = txnInfo.StartTS
 	}
-	return pi
+	return startTS
 }
 
 // logStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD/DDL etc and normal SQL

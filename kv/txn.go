@@ -17,6 +17,7 @@ package kv
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"math/rand"
 	"sync"
@@ -32,9 +33,9 @@ import (
 
 const (
 	chanBufferSize = 256
-	// TimeToPrintLongTimeInternalTxn is the duration if the internal transaction lasts more than it, TiDB prints
-	// a log message
-	TimeToPrintLongTimeInternalTxn = time.Minute
+	// TimeToPrintLongTimeInternalTxn is the duration if the internal transaction lasts more than it,
+	// TiDB prints a log message
+	TimeToPrintLongTimeInternalTxn = time.Minute * 5
 )
 
 var globalInnerTxnTsBox atomic.Value
@@ -94,7 +95,7 @@ func (ib *innerTxnStartTsBox) deleteInnerTxnTS(startTS uint64) {
 	ib.innerTSLock.Unlock()
 }
 
-// WrapGetMinStartTs get the min StatTS between startTSLowerLimit and curMinStartTS in globalInnerTxnTsBox
+// WrapGetMinStartTs get the min StartTS between startTSLowerLimit and curMinStartTS in globalInnerTxnTsBox
 func WrapGetMinStartTs(now time.Time, startTSLowerLimit uint64,
 	curMinStartTS uint64) uint64 {
 	ib := getGlobalInnerTxnTsBox()
@@ -110,18 +111,33 @@ func (ib *innerTxnStartTsBox) getMinStartTs(now time.Time, startTSLowerLimit uin
 	minStartTS := curMinStartTS
 	ib.innerTSLock.Lock()
 	for _, innerTS := range ib.innerTxnStartTsMap {
-		innerTxnStartTime := oracle.GetTimeFromTS(innerTS)
-		if now.Sub(innerTxnStartTime) > TimeToPrintLongTimeInternalTxn {
-			logutil.BgLogger().Info("An internal transaction running by RunInNewTxn lasts long time",
-				zap.Duration("time", now.Sub(innerTxnStartTime)))
-		}
-
+		PrintLongTimeInternalTxn(now, innerTS, true)
 		if innerTS > startTSLowerLimit && innerTS < minStartTS {
 			minStartTS = innerTS
 		}
 	}
 	ib.innerTSLock.Unlock()
 	return minStartTS
+}
+
+// PrintLongTimeInternalTxn print the internal transaction information
+// runByFunction	true means the transaction is run by `RunInNewTxn`,
+//					false means the transaction is run by internal session
+func PrintLongTimeInternalTxn(now time.Time, startTS uint64, runByFunction bool) {
+	if startTS > 0 {
+		innerTxnStartTime := oracle.GetTimeFromTS(startTS)
+		if now.Sub(innerTxnStartTime) > TimeToPrintLongTimeInternalTxn {
+			callerName := "internal session"
+			if runByFunction {
+				callerName = "RunInNewTxn"
+			}
+			infoHeder := fmt.Sprintf("An internal transaction running by %s lasts long time", callerName)
+
+			logutil.BgLogger().Info(infoHeder,
+				zap.Duration("time", now.Sub(innerTxnStartTime)), zap.Uint64("startTS", startTS),
+				zap.Time("start time", innerTxnStartTime))
+		}
+	}
 }
 
 // RunInNewTxn will run the f in a new transaction environment.
