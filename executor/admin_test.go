@@ -484,6 +484,18 @@ func TestAdminRecoverIndex1(t *testing.T) {
 	tk.MustExec("admin check index admin_test `primary`")
 }
 
+// https://github.com/pingcap/tidb/issues/32915.
+func TestAdminRecoverIndexEdge(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id bigint(20) primary key, col varchar(255) unique key);")
+	tk.MustExec("insert into t values(9223372036854775807, 'test');")
+	tk.MustQuery("admin recover index t col;").Check(testkit.Rows("0 1"))
+}
+
 func TestAdminCleanupIndex(t *testing.T) {
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
