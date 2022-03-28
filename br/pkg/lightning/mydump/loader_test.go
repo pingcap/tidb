@@ -573,32 +573,6 @@ func TestRouter(t *testing.T) {
 	}, dbs)
 }
 
-func TestOnlyRouteSchema(t *testing.T) {
-	s := newTestMydumpLoaderSuite(t)
-	s.cfg.Routes = []*router.TableRule{
-		{
-			SchemaPattern: "web",
-			TargetSchema:  "web_test",
-		},
-	}
-
-	s.touch(t, "web-schema-create.sql")
-
-	mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
-	require.NoError(t, err)
-
-	require.Len(t, mdl.GetDatabases(), 1)
-	db := mdl.GetDatabases()[0]
-	require.Equal(t, "web_test", db.SchemaFile.TableName.Schema)
-	require.Len(t, db.Tables, 0)
-
-	require.Equal(t, []*md.MDDatabaseMeta{
-		{
-			Name:       "web_test",
-			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "web_test", Name: ""}, FileMeta: md.SourceFileMeta{Path: "web-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
-		},
-	}, mdl.GetDatabases())
-}
 func TestBadRouterRule(t *testing.T) {
 	s := newTestMydumpLoaderSuite(t)
 

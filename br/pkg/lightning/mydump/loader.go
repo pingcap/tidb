@@ -423,7 +423,7 @@ func (s *mdLoaderSetup) route() error {
 			remainingSchemas = append(remainingSchemas, info)
 		}
 	}
-	// if there are no tables in the exported data, we need route s.dbSchemas(remainingSchemas) again
+	// if there are no tables in the exported data, we still need route s.dbSchemas(remainingSchemas)
 	if err := run(remainingSchemas); err != nil {
 		return errors.Trace(err)
 	}
