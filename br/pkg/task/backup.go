@@ -265,10 +265,11 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if err != nil {
 		return errors.Trace(err)
 	}
-	newCollationEnable, err := se.GetGlobalVariables("new_collation_enabled")
+	newCollationEnable, err := se.GetGlobalVariables(tidbNewCollationEnabled)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	log.Info("get newCollationEnable for check during restore", zap.String("newCollationEnable", newCollationEnable))
 
 	client, err := backup.NewBackupClient(ctx, mgr)
 	if err != nil {
@@ -360,6 +361,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		m.ClusterId = req.ClusterId
 		m.ClusterVersion = clusterVersion
 		m.BrVersion = brVersion
+		m.NewCollationsEnabled = newCollationEnable
 	})
 
 	log.Info("get placement policies", zap.Int("count", len(policies)))
