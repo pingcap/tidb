@@ -15,13 +15,11 @@
 package executor_test
 
 import (
-	"archive/zip"
 	"context"
 	"fmt"
 	"math"
 	"net"
 	"os"
-	"path/filepath"
 	"reflect"
 	"runtime"
 	"strconv"
@@ -72,7 +70,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/israce"
@@ -82,7 +79,6 @@ import (
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tipb/go-tipb"
@@ -114,23 +110,17 @@ var _ = Suite(&testSuite8{&baseTestSuite{}})
 var _ = SerialSuites(&testRecoverTable{})
 var _ = SerialSuites(&testClusterTableSuite{})
 var _ = SerialSuites(&testSplitTable{&baseTestSuite{}})
-var _ = Suite(&testSuiteWithData{baseTestSuite: &baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite1{&baseTestSuite{}})
 var _ = SerialSuites(&testSlowQuery{&baseTestSuite{}})
 var _ = SerialSuites(&globalIndexSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testCoprCache{})
-var _ = SerialSuites(&testPrepareSuite{})
 var _ = SerialSuites(&testResourceTagSuite{&baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
 type testSuiteP2 struct{ *baseTestSuite }
 type testSplitTable struct{ *baseTestSuite }
-type testSuiteWithData struct {
-	*baseTestSuite
-	testData testutil.TestData
-}
 type testSlowQuery struct{ *baseTestSuite }
 type globalIndexSuite struct{ *baseTestSuite }
 type testSerialSuite struct{ *baseTestSuite }
@@ -139,7 +129,6 @@ type testCoprCache struct {
 	dom   *domain.Domain
 	cls   testutils.Cluster
 }
-type testPrepareSuite struct{ testData testutil.TestData }
 type testResourceTagSuite struct{ *baseTestSuite }
 
 // MockGC is used to make GC work in the test environment.
@@ -194,28 +183,6 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 	se.Close()
 	d.SetStatsUpdating(true)
 	s.domain = d
-}
-
-func (s *testSuiteWithData) SetUpSuite(c *C) {
-	s.baseTestSuite.SetUpSuite(c)
-	var err error
-	s.testData, err = testutil.LoadTestSuiteData("testdata", "executor_suite")
-	c.Assert(err, IsNil)
-}
-
-func (s *testSuiteWithData) TearDownSuite(c *C) {
-	s.baseTestSuite.TearDownSuite(c)
-	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
-}
-
-func (s *testPrepareSuite) SetUpSuite(c *C) {
-	var err error
-	s.testData, err = testutil.LoadTestSuiteData("testdata", "prepare_suite")
-	c.Assert(err, IsNil)
-}
-
-func (s *testPrepareSuite) TearDownSuite(c *C) {
-	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
 func (s *baseTestSuite) TearDownSuite(c *C) {
@@ -574,92 +541,8 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 		err = txn.Commit(context.Background())
 		require.NoError(t, err)
 		r := tk.MustQuery(selectSQL)
-		r.Check(testutil.RowsWithSep("|", tt.expected...))
+		r.Check(testkit.RowsWithSep("|", tt.expected...))
 		tk.MustExec(deleteSQL)
-	}
-}
-
-func (s *testSuiteWithData) TestSetOperation(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`use test`)
-	tk.MustExec(`drop table if exists t1, t2, t3`)
-	tk.MustExec(`create table t1(a int)`)
-	tk.MustExec(`create table t2 like t1`)
-	tk.MustExec(`create table t3 like t1`)
-	tk.MustExec(`insert into t1 values (1),(1),(2),(3),(null)`)
-	tk.MustExec(`insert into t2 values (1),(2),(null),(null)`)
-	tk.MustExec(`insert into t3 values (2),(3)`)
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-		Res  []string
-	}
-	s.testData.GetTestCases(c, &input, &output)
-	for i, tt := range input {
-		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
-			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
-		})
-		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
-	}
-}
-
-func (s *testSuiteWithData) TestSetOperationOnDiffColType(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`use test`)
-	tk.MustExec(`drop table if exists t1, t2, t3`)
-	tk.MustExec(`create table t1(a int, b int)`)
-	tk.MustExec(`create table t2(a int, b varchar(20))`)
-	tk.MustExec(`create table t3(a int, b decimal(30,10))`)
-	tk.MustExec(`insert into t1 values (1,1),(1,1),(2,2),(3,3),(null,null)`)
-	tk.MustExec(`insert into t2 values (1,'1'),(2,'2'),(null,null),(null,'3')`)
-	tk.MustExec(`insert into t3 values (2,2.1),(3,3)`)
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-		Res  []string
-	}
-	s.testData.GetTestCases(c, &input, &output)
-	for i, tt := range input {
-		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
-			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
-		})
-		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
-	}
-}
-
-// issue-23038: wrong key range of index scan for year column
-func (s *testSuiteWithData) TestIndexScanWithYearCol(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (c1 year(4), c2 int, key(c1));")
-	tk.MustExec("insert into t values(2001, 1);")
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-		Res  []string
-	}
-	s.testData.GetTestCases(c, &input, &output)
-	for i, tt := range input {
-		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
-			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
-		})
-		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
 	}
 }
 
@@ -3367,7 +3250,7 @@ func (s *testSuiteP2) TestAddDateBuiltinWithWarnings(c *C) {
 	tk.MustExec("set @@sql_mode='NO_ZERO_DATE'")
 	result := tk.MustQuery(`select date_add('2001-01-00', interval -2 hour);`)
 	result.Check(testkit.Rows("<nil>"))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '2001-01-00'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Incorrect datetime value: '2001-01-00'"))
 }
 
 func (s *testSuiteP2) TestStrToDateBuiltinWithWarnings(c *C) {
@@ -3393,587 +3276,6 @@ func (s *testSuiteP2) TestReadPartitionedTable(c *C) {
 	tk.MustQuery("select b from pt where b = 3").Check(testkit.Rows("3"))
 	// Index lookup
 	tk.MustQuery("select a from pt where b = 3").Check(testkit.Rows("3"))
-}
-
-func (s *testSplitTable) TestSplitRegion(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t, t1")
-	tk.MustExec("create table t(a varchar(100),b int, index idx1(b,a))")
-	tk.MustExec(`split table t index idx1 by (10000,"abcd"),(10000000);`)
-	_, err := tk.Exec(`split table t index idx1 by ("abcd");`)
-	c.Assert(err, NotNil)
-	terr := errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, errors.ErrCode(mysql.WarnDataTruncated))
-
-	// Test for split index region.
-	// Check min value is more than max value.
-	tk.MustExec(`split table t index idx1 between (0) and (1000000000) regions 10`)
-	tk.MustGetErrCode(`split table t index idx1 between (2,'a') and (1,'c') regions 10`, errno.ErrInvalidSplitRegionRanges)
-
-	// Check min value is invalid.
-	_, err = tk.Exec(`split table t index idx1 between () and (1) regions 10`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Split index `idx1` region lower value count should more than 0")
-
-	// Check max value is invalid.
-	_, err = tk.Exec(`split table t index idx1 between (1) and () regions 10`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Split index `idx1` region upper value count should more than 0")
-
-	// Check pre-split region num is too large.
-	_, err = tk.Exec(`split table t index idx1 between (0) and (1000000000) regions 10000`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Split index region num exceeded the limit 1000")
-
-	// Check pre-split region num 0 is invalid.
-	_, err = tk.Exec(`split table t index idx1 between (0) and (1000000000) regions 0`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Split index region num should more than 0")
-
-	// Test truncate error msg.
-	_, err = tk.Exec(`split table t index idx1 between ("aa") and (1000000000) regions 0`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1265]Incorrect value: 'aa' for column 'b'")
-
-	// Test for split table region.
-	tk.MustExec(`split table t between (0) and (1000000000) regions 10`)
-	// Check the lower value is more than the upper value.
-	tk.MustGetErrCode(`split table t between (2) and (1) regions 10`, errno.ErrInvalidSplitRegionRanges)
-
-	// Check the lower value is invalid.
-	_, err = tk.Exec(`split table t between () and (1) regions 10`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Split table region lower value count should be 1")
-
-	// Check upper value is invalid.
-	_, err = tk.Exec(`split table t between (1) and () regions 10`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Split table region upper value count should be 1")
-
-	// Check pre-split region num is too large.
-	_, err = tk.Exec(`split table t between (0) and (1000000000) regions 10000`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Split table region num exceeded the limit 1000")
-
-	// Check pre-split region num 0 is invalid.
-	_, err = tk.Exec(`split table t between (0) and (1000000000) regions 0`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "Split table region num should more than 0")
-
-	// Test truncate error msg.
-	_, err = tk.Exec(`split table t between ("aa") and (1000000000) regions 10`)
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1265]Incorrect value: 'aa' for column '_tidb_rowid'")
-
-	// Test split table region step is too small.
-	tk.MustGetErrCode(`split table t between (0) and (100) regions 10`, errno.ErrInvalidSplitRegionRanges)
-
-	// Test split region by syntax.
-	tk.MustExec(`split table t by (0),(1000),(1000000)`)
-
-	// Test split region twice to test for multiple batch split region requests.
-	tk.MustExec("create table t1(a int, b int)")
-	tk.MustQuery("split table t1 between(0) and (10000) regions 10;").Check(testkit.Rows("9 1"))
-	tk.MustQuery("split table t1 between(10) and (10010) regions 5;").Check(testkit.Rows("4 1"))
-
-	// Test split region for partition table.
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int,b int) partition by hash(a) partitions 5;")
-	tk.MustQuery("split table t between (0) and (1000000) regions 5;").Check(testkit.Rows("20 1"))
-	// Test for `split for region` syntax.
-	tk.MustQuery("split region for partition table t between (1000000) and (100000000) regions 10;").Check(testkit.Rows("45 1"))
-
-	// Test split region for partition table with specified partition.
-	tk.MustQuery("split table t partition (p1,p2) between (100000000) and (1000000000) regions 5;").Check(testkit.Rows("8 1"))
-	// Test for `split for region` syntax.
-	tk.MustQuery("split region for partition table t partition (p3,p4) between (100000000) and (1000000000) regions 5;").Check(testkit.Rows("8 1"))
-}
-
-func (s *testSplitTable) TestSplitRegionEdgeCase(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a bigint(20) auto_increment primary key);")
-	tk.MustExec("split table t between (-9223372036854775808) and (9223372036854775807) regions 16;")
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int(20) auto_increment primary key);")
-	tk.MustGetErrCode("split table t between (-9223372036854775808) and (9223372036854775807) regions 16;", errno.ErrDataOutOfRange)
-}
-
-func (s *testSplitTable) TestClusterIndexSplitTableIntegration(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("drop database if exists test_cluster_index_index_split_table_integration;")
-	tk.MustExec("create database test_cluster_index_index_split_table_integration;")
-	tk.MustExec("use test_cluster_index_index_split_table_integration;")
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
-
-	tk.MustExec("create table t (a varchar(255), b double, c int, primary key (a, b));")
-
-	// Value list length not match.
-	lowerMsg := "Split table region lower value count should be 2"
-	upperMsg := "Split table region upper value count should be 2"
-	tk.MustGetErrMsg("split table t between ('aaa') and ('aaa', 100.0) regions 10;", lowerMsg)
-	tk.MustGetErrMsg("split table t between ('aaa', 1.0) and ('aaa', 100.0, 11) regions 10;", upperMsg)
-
-	// Value type not match.
-	errMsg := "[types:1265]Incorrect value: 'aaa' for column 'b'"
-	tk.MustGetErrMsg("split table t between ('aaa', 0.0) and (100.0, 'aaa') regions 10;", errMsg)
-
-	// lower bound >= upper bound.
-	errMsg = "[executor:8212]Failed to split region ranges: Split table `t` region lower value (aaa,0) should less than the upper value (aaa,0)"
-	tk.MustGetErrMsg("split table t between ('aaa', 0.0) and ('aaa', 0.0) regions 10;", errMsg)
-	errMsg = "[executor:8212]Failed to split region ranges: Split table `t` region lower value (bbb,0) should less than the upper value (aaa,0)"
-	tk.MustGetErrMsg("split table t between ('bbb', 0.0) and ('aaa', 0.0) regions 10;", errMsg)
-
-	// Exceed limit 1000.
-	errMsg = "Split table region num exceeded the limit 1000"
-	tk.MustGetErrMsg("split table t between ('aaa', 0.0) and ('aaa', 0.1) regions 100000;", errMsg)
-
-	// Split on null values.
-	errMsg = "[planner:1048]Column 'a' cannot be null"
-	tk.MustGetErrMsg("split table t between (null, null) and (null, null) regions 1000;", errMsg)
-	tk.MustGetErrMsg("split table t by (null, null);", errMsg)
-
-	// Success.
-	tk.MustExec("split table t between ('aaa', 0.0) and ('aaa', 100.0) regions 10;")
-	tk.MustExec("split table t by ('aaa', 0.0), ('aaa', 20.0), ('aaa', 100.0);")
-	tk.MustExec("split table t by ('aaa', 100.0), ('qqq', 20.0), ('zzz', 100.0), ('zzz', 1000.0);")
-
-	tk.MustExec("drop table t;")
-	tk.MustExec("create table t (a int, b int, c int, d int, primary key(a, c, d));")
-	tk.MustQuery("split table t between (0, 0, 0) and (0, 0, 1) regions 1000;").Check(testkit.Rows("999 1"))
-
-	tk.MustExec("drop table t;")
-	tk.MustExec("create table t (a int, b int, c int, d int, primary key(d, a, c));")
-	tk.MustQuery("split table t by (0, 0, 0), (1, 2, 3), (65535, 65535, 65535);").Check(testkit.Rows("3 1"))
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a varchar(255), b decimal, c int, primary key (a, b));")
-	errMsg = "[types:1265]Incorrect value: '' for column 'b'"
-	tk.MustGetErrMsg("split table t by ('aaa', '')", errMsg)
-}
-
-func (s *testSplitTable) TestClusterIndexShowTableRegion(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
-	tk.MustExec("set global tidb_scatter_region = 1")
-	tk.MustExec("drop database if exists cluster_index_regions;")
-	tk.MustExec("create database cluster_index_regions;")
-	tk.MustExec("use cluster_index_regions;")
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
-	tk.MustExec("create table t (a int, b int, c int, primary key(a, b));")
-	tk.MustExec("insert t values (1, 1, 1), (2, 2, 2);")
-	tk.MustQuery("split table t between (1, 0) and (2, 3) regions 2;").Check(testkit.Rows("1 1"))
-	rows := tk.MustQuery("show table t regions").Rows()
-	tbl := testGetTableByName(c, tk.Se, "cluster_index_regions", "t")
-	// Check the region start key.
-	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_", tbl.Meta().ID))
-	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_r_03800000000000000183800000000000", tbl.Meta().ID))
-
-	tk.MustExec("drop table t;")
-	tk.MustExec("create table t (a int, b int);")
-	tk.MustQuery("split table t between (0) and (100000) regions 2;").Check(testkit.Rows("1 1"))
-	rows = tk.MustQuery("show table t regions").Rows()
-	tbl = testGetTableByName(c, tk.Se, "cluster_index_regions", "t")
-	// Check the region start key is int64.
-	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_", tbl.Meta().ID))
-	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_r_50000", tbl.Meta().ID))
-}
-
-func (s *testSuiteWithData) TestClusterIndexOuterJoinElimination(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.Se.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
-	tk.MustExec("create table t (a int, b int, c int, primary key(a,b))")
-	rows := tk.MustQuery(`explain format = 'brief' select t1.a from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b`).Rows()
-	rowStrs := s.testData.ConvertRowsToStrings(rows)
-	for _, row := range rowStrs {
-		// outer join has been eliminated.
-		c.Assert(strings.Index(row, "Join"), Equals, -1)
-	}
-}
-
-func (s *testSplitTable) TestShowTableRegion(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t_regions")
-	tk.MustExec("set global tidb_scatter_region = 1")
-	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
-	tk.MustExec("create table t_regions (a int key, b int, c int, index idx(b), index idx2(c))")
-	_, err := tk.Exec("split partition table t_regions partition (p1,p2) index idx between (0) and (20000) regions 2;")
-	c.Assert(err.Error(), Equals, plannercore.ErrPartitionClauseOnNonpartitioned.Error())
-
-	// Test show table regions.
-	tk.MustQuery(`split table t_regions between (-10000) and (10000) regions 4;`).Check(testkit.Rows("4 1"))
-	re := tk.MustQuery("show table t_regions regions")
-
-	// Test show table regions and split table on global temporary table.
-	tk.MustExec("drop table if exists t_regions_temporary_table")
-	tk.MustExec("create global temporary table t_regions_temporary_table (a int key, b int, c int, index idx(b), index idx2(c)) ON COMMIT DELETE ROWS;")
-	// Test show table regions.
-	_, err = tk.Exec("show table t_regions_temporary_table regions")
-	c.Assert(err.Error(), Equals, plannercore.ErrOptOnTemporaryTable.GenWithStackByArgs("show table regions").Error())
-	// Test split table.
-	_, err = tk.Exec("split table t_regions_temporary_table between (-10000) and (10000) regions 4;")
-	c.Assert(err.Error(), Equals, plannercore.ErrOptOnTemporaryTable.GenWithStackByArgs("split table").Error())
-	_, err = tk.Exec("split partition table t_regions_temporary_table partition (p1,p2) index idx between (0) and (20000) regions 2;")
-	c.Assert(err.Error(), Equals, plannercore.ErrOptOnTemporaryTable.GenWithStackByArgs("split table").Error())
-	tk.MustExec("drop table if exists t_regions_temporary_table")
-	// Test pre split regions
-	_, err = tk.Exec("create global temporary table temporary_table_pre_split(id int ) pre_split_regions=2 ON COMMIT DELETE ROWS;")
-	c.Assert(err.Error(), Equals, dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions").Error())
-
-	// Test show table regions and split table on local temporary table
-	tk.MustExec("drop table if exists t_regions_local_temporary_table")
-	tk.MustExec("create temporary table t_regions_local_temporary_table (a int key, b int, c int, index idx(b), index idx2(c));")
-	// Test show table regions.
-	_, err = tk.Exec("show table t_regions_local_temporary_table regions")
-	c.Assert(err.Error(), Equals, plannercore.ErrOptOnTemporaryTable.GenWithStackByArgs("show table regions").Error())
-	// Test split table.
-	_, err = tk.Exec("split table t_regions_local_temporary_table between (-10000) and (10000) regions 4;")
-	c.Assert(err.Error(), Equals, plannercore.ErrOptOnTemporaryTable.GenWithStackByArgs("split table").Error())
-	_, err = tk.Exec("split partition table t_regions_local_temporary_table partition (p1,p2) index idx between (0) and (20000) regions 2;")
-	c.Assert(err.Error(), Equals, plannercore.ErrOptOnTemporaryTable.GenWithStackByArgs("split table").Error())
-	tk.MustExec("drop table if exists t_regions_local_temporary_table")
-	// Test pre split regions
-	_, err = tk.Exec("create temporary table local_temporary_table_pre_split(id int ) pre_split_regions=2;")
-	c.Assert(err.Error(), Equals, dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions").Error())
-
-	rows := re.Rows()
-	// Table t_regions should have 5 regions now.
-	// 4 regions to store record data.
-	// 1 region to store index data.
-	c.Assert(len(rows), Equals, 5)
-	c.Assert(len(rows[0]), Equals, 11)
-	tbl := testGetTableByName(c, tk.Se, "test", "t_regions")
-	// Check the region start key.
-	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_r", tbl.Meta().ID))
-	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_-5000", tbl.Meta().ID))
-	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_0", tbl.Meta().ID))
-	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_5000", tbl.Meta().ID))
-	c.Assert(rows[4][2], Equals, fmt.Sprintf("t_%d_r", tbl.Meta().ID))
-
-	// Test show table index regions.
-	tk.MustQuery(`split table t_regions index idx between (-1000) and (1000) regions 4;`).Check(testkit.Rows("4 1"))
-	re = tk.MustQuery("show table t_regions index idx regions")
-	rows = re.Rows()
-	// The index `idx` of table t_regions should have 4 regions now.
-	c.Assert(len(rows), Equals, 4)
-	// Check the region start key.
-	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d.*", tbl.Meta().ID))
-	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
-	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
-	c.Assert(rows[3][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
-
-	re = tk.MustQuery("show table t_regions regions")
-	rows = re.Rows()
-	// The index `idx` of table t_regions should have 9 regions now.
-	// 4 regions to store record data.
-	// 4 region to store index idx data.
-	// 1 region to store index idx2 data.
-	c.Assert(len(rows), Equals, 9)
-	// Check the region start key.
-	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_r", tbl.Meta().ID))
-	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_-5000", tbl.Meta().ID))
-	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_0", tbl.Meta().ID))
-	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_5000", tbl.Meta().ID))
-	c.Assert(rows[4][1], Matches, fmt.Sprintf("t_%d_", tbl.Meta().ID))
-	c.Assert(rows[5][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
-	c.Assert(rows[6][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
-	c.Assert(rows[7][2], Equals, fmt.Sprintf("t_%d_i_2_", tbl.Meta().ID))
-	c.Assert(rows[8][2], Equals, fmt.Sprintf("t_%d_r", tbl.Meta().ID))
-
-	// Test unsigned primary key and wait scatter finish.
-	tk.MustExec("drop table if exists t_regions")
-	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
-	tk.MustExec("create table t_regions (a int unsigned key, b int, index idx(b))")
-
-	// Test show table regions.
-	tk.MustExec(`set @@session.tidb_wait_split_region_finish=1;`)
-	tk.MustQuery(`split table t_regions by (2500),(5000),(7500);`).Check(testkit.Rows("3 1"))
-	re = tk.MustQuery("show table t_regions regions")
-	rows = re.Rows()
-	// Table t_regions should have 4 regions now.
-	c.Assert(len(rows), Equals, 4)
-	tbl = testGetTableByName(c, tk.Se, "test", "t_regions")
-	// Check the region start key.
-	c.Assert(rows[0][1], Matches, "t_.*")
-	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_2500", tbl.Meta().ID))
-	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_5000", tbl.Meta().ID))
-	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_7500", tbl.Meta().ID))
-
-	// Test show table index regions.
-	tk.MustQuery(`split table t_regions index idx by (250),(500),(750);`).Check(testkit.Rows("4 1"))
-	re = tk.MustQuery("show table t_regions index idx regions")
-	rows = re.Rows()
-	// The index `idx` of table t_regions should have 4 regions now.
-	c.Assert(len(rows), Equals, 4)
-	// Check the region start key.
-	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_", tbl.Meta().ID))
-	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
-	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
-	c.Assert(rows[3][1], Matches, fmt.Sprintf("t_%d_i_1_.*", tbl.Meta().ID))
-
-	// Test show table regions for partition table when disable split region when create table.
-	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
-	tk.MustExec("drop table if exists partition_t;")
-	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
-	tk.MustExec("create table partition_t (a int, b int,index(a)) partition by hash (a) partitions 3")
-	re = tk.MustQuery("show table partition_t regions")
-	rows = re.Rows()
-	c.Assert(len(rows), Equals, 1)
-	c.Assert(rows[0][1], Matches, "t_.*")
-
-	// Test show table regions for partition table when enable split region when create table.
-	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
-	tk.MustExec("set @@global.tidb_scatter_region=1;")
-	tk.MustExec("drop table if exists partition_t;")
-	tk.MustExec("create table partition_t (a int, b int,index(a)) partition by hash (a) partitions 3")
-	re = tk.MustQuery("show table partition_t regions")
-	rows = re.Rows()
-	c.Assert(len(rows), Equals, 3)
-	tbl = testGetTableByName(c, tk.Se, "test", "partition_t")
-	partitionDef := tbl.Meta().GetPartitionInfo().Definitions
-	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[0].ID))
-	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[1].ID))
-	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[2].ID))
-
-	// Test split partition region when add new partition.
-	tk.MustExec("drop table if exists partition_t;")
-	tk.MustExec(`create table partition_t (a int, b int,index(a)) PARTITION BY RANGE (a) (
-		PARTITION p0 VALUES LESS THAN (10),
-		PARTITION p1 VALUES LESS THAN (20),
-		PARTITION p2 VALUES LESS THAN (30));`)
-	tk.MustExec(`alter table partition_t add partition ( partition p3 values less than (40), partition p4 values less than (50) );`)
-	re = tk.MustQuery("show table partition_t regions")
-	rows = re.Rows()
-	c.Assert(len(rows), Equals, 5)
-	tbl = testGetTableByName(c, tk.Se, "test", "partition_t")
-	partitionDef = tbl.Meta().GetPartitionInfo().Definitions
-	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[0].ID))
-	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[1].ID))
-	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[2].ID))
-	c.Assert(rows[3][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[3].ID))
-	c.Assert(rows[4][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[4].ID))
-
-	// Test pre-split table region when create table.
-	tk.MustExec("drop table if exists t_pre")
-	tk.MustExec("create table t_pre (a int, b int) shard_row_id_bits = 2 pre_split_regions=2;")
-	re = tk.MustQuery("show table t_pre regions")
-	rows = re.Rows()
-	// Table t_regions should have 4 regions now.
-	c.Assert(len(rows), Equals, 4)
-	tbl = testGetTableByName(c, tk.Se, "test", "t_pre")
-	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID))
-	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID))
-	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID))
-
-	// Test pre-split table region when create table.
-	tk.MustExec("drop table if exists pt_pre")
-	tk.MustExec("create table pt_pre (a int, b int) shard_row_id_bits = 2 pre_split_regions=2 partition by hash(a) partitions 3;")
-	re = tk.MustQuery("show table pt_pre regions")
-	rows = re.Rows()
-	// Table t_regions should have 4 regions now.
-	c.Assert(len(rows), Equals, 12)
-	tbl = testGetTableByName(c, tk.Se, "test", "pt_pre")
-	pi := tbl.Meta().GetPartitionInfo().Definitions
-	c.Assert(len(pi), Equals, 3)
-	for i, p := range pi {
-		c.Assert(rows[1+4*i][1], Equals, fmt.Sprintf("t_%d_r_2305843009213693952", p.ID))
-		c.Assert(rows[2+4*i][1], Equals, fmt.Sprintf("t_%d_r_4611686018427387904", p.ID))
-		c.Assert(rows[3+4*i][1], Equals, fmt.Sprintf("t_%d_r_6917529027641081856", p.ID))
-	}
-
-	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
-
-	// Test split partition table.
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int,b int) partition by hash(a) partitions 5;")
-	tk.MustQuery("split table t between (0) and (4000000) regions 4;").Check(testkit.Rows("15 1"))
-	re = tk.MustQuery("show table t regions")
-	rows = re.Rows()
-	c.Assert(len(rows), Equals, 20)
-	tbl = testGetTableByName(c, tk.Se, "test", "t")
-	c.Assert(len(tbl.Meta().GetPartitionInfo().Definitions), Equals, 5)
-	for i, p := range tbl.Meta().GetPartitionInfo().Definitions {
-		c.Assert(rows[i*4+0][1], Equals, fmt.Sprintf("t_%d_", p.ID))
-		c.Assert(rows[i*4+1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
-		c.Assert(rows[i*4+2][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
-		c.Assert(rows[i*4+3][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
-	}
-
-	// Test split region for partition table with specified partition.
-	tk.MustQuery("split table t partition (p4) between (1000000) and (2000000) regions 5;").Check(testkit.Rows("4 1"))
-	re = tk.MustQuery("show table t regions")
-	rows = re.Rows()
-	c.Assert(len(rows), Equals, 24)
-	tbl = testGetTableByName(c, tk.Se, "test", "t")
-	c.Assert(len(tbl.Meta().GetPartitionInfo().Definitions), Equals, 5)
-	for i := 0; i < 4; i++ {
-		p := tbl.Meta().GetPartitionInfo().Definitions[i]
-		c.Assert(rows[i*4+0][1], Equals, fmt.Sprintf("t_%d_", p.ID))
-		c.Assert(rows[i*4+1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
-		c.Assert(rows[i*4+2][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
-		c.Assert(rows[i*4+3][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
-	}
-	for i := 4; i < 5; i++ {
-		p := tbl.Meta().GetPartitionInfo().Definitions[i]
-		c.Assert(rows[i*4+0][1], Equals, fmt.Sprintf("t_%d_", p.ID))
-		c.Assert(rows[i*4+1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
-		c.Assert(rows[i*4+2][1], Equals, fmt.Sprintf("t_%d_r_1200000", p.ID))
-		c.Assert(rows[i*4+3][1], Equals, fmt.Sprintf("t_%d_r_1400000", p.ID))
-		c.Assert(rows[i*4+4][1], Equals, fmt.Sprintf("t_%d_r_1600000", p.ID))
-		c.Assert(rows[i*4+5][1], Equals, fmt.Sprintf("t_%d_r_1800000", p.ID))
-		c.Assert(rows[i*4+6][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
-		c.Assert(rows[i*4+7][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
-	}
-
-	// Test for show table partition regions.
-	for i := 0; i < 4; i++ {
-		re = tk.MustQuery(fmt.Sprintf("show table t partition (p%v) regions", i))
-		rows = re.Rows()
-		c.Assert(len(rows), Equals, 4)
-		p := tbl.Meta().GetPartitionInfo().Definitions[i]
-		c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_", p.ID))
-		c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
-		c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
-		c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
-	}
-	re = tk.MustQuery("show table t partition (p0, p4) regions")
-	rows = re.Rows()
-	c.Assert(len(rows), Equals, 12)
-	p := tbl.Meta().GetPartitionInfo().Definitions[0]
-	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_", p.ID))
-	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
-	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
-	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
-	p = tbl.Meta().GetPartitionInfo().Definitions[4]
-	c.Assert(rows[4][1], Equals, fmt.Sprintf("t_%d_", p.ID))
-	c.Assert(rows[5][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
-	c.Assert(rows[6][1], Equals, fmt.Sprintf("t_%d_r_1200000", p.ID))
-	c.Assert(rows[7][1], Equals, fmt.Sprintf("t_%d_r_1400000", p.ID))
-	c.Assert(rows[8][1], Equals, fmt.Sprintf("t_%d_r_1600000", p.ID))
-	c.Assert(rows[9][1], Equals, fmt.Sprintf("t_%d_r_1800000", p.ID))
-	c.Assert(rows[10][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
-	c.Assert(rows[11][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
-	// Test for duplicate partition names.
-	re = tk.MustQuery("show table t partition (p0, p0, p0) regions")
-	rows = re.Rows()
-	c.Assert(len(rows), Equals, 4)
-	p = tbl.Meta().GetPartitionInfo().Definitions[0]
-	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_", p.ID))
-	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
-	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
-	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
-
-	// Test split partition table index.
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int,b int,index idx(a)) partition by hash(a) partitions 5;")
-	tk.MustQuery("split table t between (0) and (4000000) regions 4;").Check(testkit.Rows("20 1"))
-	tk.MustQuery("split table t index idx between (0) and (4000000) regions 4;").Check(testkit.Rows("20 1"))
-	re = tk.MustQuery("show table t regions")
-	rows = re.Rows()
-	c.Assert(len(rows), Equals, 40)
-	tbl = testGetTableByName(c, tk.Se, "test", "t")
-	c.Assert(len(tbl.Meta().GetPartitionInfo().Definitions), Equals, 5)
-	for i := 0; i < 5; i++ {
-		p := tbl.Meta().GetPartitionInfo().Definitions[i]
-		c.Assert(rows[i*8+0][1], Equals, fmt.Sprintf("t_%d_r", p.ID))
-		c.Assert(rows[i*8+1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
-		c.Assert(rows[i*8+2][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
-		c.Assert(rows[i*8+3][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
-		c.Assert(rows[i*8+4][1], Equals, fmt.Sprintf("t_%d_", p.ID))
-		c.Assert(rows[i*8+5][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
-		c.Assert(rows[i*8+6][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
-		c.Assert(rows[i*8+7][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
-	}
-
-	// Test split index region for partition table with specified partition.
-	tk.MustQuery("split table t partition (p4) index idx between (0) and (1000000) regions 5;").Check(testkit.Rows("4 1"))
-	re = tk.MustQuery("show table t regions")
-	rows = re.Rows()
-	c.Assert(len(rows), Equals, 44)
-	tbl = testGetTableByName(c, tk.Se, "test", "t")
-	c.Assert(len(tbl.Meta().GetPartitionInfo().Definitions), Equals, 5)
-	for i := 0; i < 4; i++ {
-		p := tbl.Meta().GetPartitionInfo().Definitions[i]
-		c.Assert(rows[i*8+0][1], Equals, fmt.Sprintf("t_%d_r", p.ID))
-		c.Assert(rows[i*8+1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
-		c.Assert(rows[i*8+2][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
-		c.Assert(rows[i*8+3][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
-		c.Assert(rows[i*8+4][1], Equals, fmt.Sprintf("t_%d_", p.ID))
-		c.Assert(rows[i*8+5][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
-		c.Assert(rows[i*8+6][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
-		c.Assert(rows[i*8+7][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
-	}
-	for i := 4; i < 5; i++ {
-		p := tbl.Meta().GetPartitionInfo().Definitions[i]
-		c.Assert(rows[i*8+0][1], Equals, fmt.Sprintf("t_%d_r", p.ID))
-		c.Assert(rows[i*8+1][1], Equals, fmt.Sprintf("t_%d_r_1000000", p.ID))
-		c.Assert(rows[i*8+2][1], Equals, fmt.Sprintf("t_%d_r_2000000", p.ID))
-		c.Assert(rows[i*8+3][1], Equals, fmt.Sprintf("t_%d_r_3000000", p.ID))
-		c.Assert(rows[i*8+4][1], Equals, fmt.Sprintf("t_%d_", p.ID))
-		c.Assert(rows[i*8+5][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
-		c.Assert(rows[i*8+6][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
-		c.Assert(rows[i*8+7][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
-		c.Assert(rows[i*8+8][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
-		c.Assert(rows[i*8+9][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
-		c.Assert(rows[i*8+10][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
-		c.Assert(rows[i*8+11][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
-	}
-
-	// Test show table partition region on unknown-partition.
-	err = tk.QueryToErr("show table t partition (p_unknown) index idx regions")
-	c.Assert(terror.ErrorEqual(err, table.ErrUnknownPartition), IsTrue)
-
-	// Test show table partition index.
-	for i := 0; i < 4; i++ {
-		re = tk.MustQuery(fmt.Sprintf("show table t partition (p%v) index idx regions", i))
-		rows = re.Rows()
-		c.Assert(len(rows), Equals, 4)
-		p := tbl.Meta().GetPartitionInfo().Definitions[i]
-		c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_", p.ID))
-		c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
-		c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
-		c.Assert(rows[3][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
-	}
-	re = tk.MustQuery("show table t partition (p3,p4) index idx regions")
-	rows = re.Rows()
-	c.Assert(len(rows), Equals, 12)
-	p = tbl.Meta().GetPartitionInfo().Definitions[3]
-	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_", p.ID))
-	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
-	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
-	c.Assert(rows[3][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
-	p = tbl.Meta().GetPartitionInfo().Definitions[4]
-	c.Assert(rows[4][1], Equals, fmt.Sprintf("t_%d_", p.ID))
-	c.Assert(rows[5][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
-	c.Assert(rows[6][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
-	c.Assert(rows[7][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
-	c.Assert(rows[8][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
-	c.Assert(rows[9][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
-	c.Assert(rows[10][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
-	c.Assert(rows[11][1], Matches, fmt.Sprintf("t_%d_i_1_.*", p.ID))
-
-	// Test split for the second index.
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int,b int,index idx(a), index idx2(b))")
-	tk.MustQuery("split table t index idx2 between (0) and (4000000) regions 2;").Check(testkit.Rows("3 1"))
-	re = tk.MustQuery("show table t regions")
-	rows = re.Rows()
-	c.Assert(len(rows), Equals, 4)
-	tbl = testGetTableByName(c, tk.Se, "test", "t")
-	c.Assert(rows[0][1], Equals, fmt.Sprintf("t_%d_i_3_", tbl.Meta().ID))
-	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_", tbl.Meta().ID))
-	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_i_2_.*", tbl.Meta().ID))
-	c.Assert(rows[3][1], Matches, fmt.Sprintf("t_%d_i_2_.*", tbl.Meta().ID))
-
-	// Test show table partition region on non-partition table.
-	err = tk.QueryToErr("show table t partition (p3,p4) index idx regions")
-	c.Assert(terror.ErrorEqual(err, plannercore.ErrPartitionClauseOnNonpartitioned), IsTrue)
 }
 
 func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {
@@ -5025,9 +4327,9 @@ select 7;`
 			tk.MustExec(cas.prepareSQL)
 		}
 		sql := fmt.Sprintf(cas.sql, "slow_query")
-		tk.MustQuery(sql).Check(testutil.RowsWithSep("|", cas.result...))
+		tk.MustQuery(sql).Check(testkit.RowsWithSep("|", cas.result...))
 		sql = fmt.Sprintf(cas.sql, "cluster_slow_query")
-		tk.MustQuery(sql).Check(testutil.RowsWithSep("|", cas.result...))
+		tk.MustQuery(sql).Check(testkit.RowsWithSep("|", cas.result...))
 	}
 }
 
@@ -5122,7 +4424,7 @@ select 10;`
 		if len(cas.prepareSQL) > 0 {
 			tk.MustExec(cas.prepareSQL)
 		}
-		tk.MustQuery(cas.sql).Check(testutil.RowsWithSep("|", cas.result...))
+		tk.MustQuery(cas.sql).Check(testkit.RowsWithSep("|", cas.result...))
 	}
 }
 
@@ -6376,7 +5678,7 @@ func (s *testSerialSuite) TestDeadlocksTable(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("select * from information_schema.deadlocks").Check(
-		testutil.RowsWithSep("/",
+		testkit.RowsWithSep("/",
 			id1+"/2021-05-10 01:02:03.456789/0/101/aabbccdd/<nil>/6B31/<nil>/102",
 			id1+"/2021-05-10 01:02:03.456789/0/102/ddccbbaa/<nil>/6B32/<nil>/101",
 			id2+"/2022-06-11 02:03:04.987654/1/201/<nil>/<nil>/<nil>/<nil>/202",
@@ -6847,35 +6149,6 @@ func checkFileName(s string) bool {
 		}
 	}
 	return false
-}
-
-func (s *testSuiteWithData) TestPlanReplayerDumpSingle(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t_dump_single")
-	tk.MustExec("create table t_dump_single(a int)")
-	res := tk.MustQuery("plan replayer dump explain select * from t_dump_single")
-	path := s.testData.ConvertRowsToStrings(res.Rows())
-
-	reader, err := zip.OpenReader(filepath.Join(domain.GetPlanReplayerDirName(), path[0]))
-	c.Assert(err, IsNil)
-	defer reader.Close()
-	for _, file := range reader.File {
-		c.Assert(checkFileName(file.Name), IsTrue)
-	}
-}
-
-func (s *testSuiteWithData) TestDropColWithPrimaryKey(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id int primary key, c1 int, c2 int, c3 int, index idx1(c1, c2), index idx2(c3))")
-	tk.MustExec("set global tidb_enable_change_multi_schema = off")
-	tk.MustGetErrMsg("alter table t drop column id", "[ddl:8200]Unsupported drop integer primary key")
-	tk.MustGetErrMsg("alter table t drop column c1", "[ddl:8200]can't drop column c1 with composite index covered or Primary Key covered now")
-	tk.MustGetErrMsg("alter table t drop column c3", "[ddl:8200]can't drop column c3 with tidb_enable_change_multi_schema is disable")
-	tk.MustExec("set global tidb_enable_change_multi_schema = on")
-	tk.MustExec("alter table t drop column c3")
 }
 
 // Test invoke Close without invoking Open before for each operators.
