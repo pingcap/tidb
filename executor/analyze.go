@@ -2340,7 +2340,7 @@ func StartAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
 		return
 	}
 	job.StartTime = time.Now()
-	job.Process.SetLastDumpTime(job.StartTime)
+	job.Progress.SetLastDumpTime(job.StartTime)
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 	const sql = "UPDATE mysql.analyze_jobs SET start_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %? WHERE id = %?"
 	_, _, err := exec.ExecRestrictedSQL(context.TODO(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, job.StartTime.UTC().Format(types.TimeFormat), statistics.AnalyzeRunning, *job.ID)
@@ -2354,7 +2354,7 @@ func UpdateAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, rowCou
 	if job == nil || job.ID == nil {
 		return
 	}
-	delta := job.Process.Update(rowCount)
+	delta := job.Progress.Update(rowCount)
 	if delta == 0 {
 		return
 	}
@@ -2376,10 +2376,10 @@ func FinishAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, analyz
 	var args []interface{}
 	if analyzeErr != nil {
 		sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, fail_reason = %? WHERE id = %?"
-		args = []interface{}{job.Process.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFailed, analyzeErr.Error(), *job.ID}
+		args = []interface{}{job.Progress.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFailed, analyzeErr.Error(), *job.ID}
 	} else {
 		sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %? WHERE id = %?"
-		args = []interface{}{job.Process.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
+		args = []interface{}{job.Progress.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
 	}
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 	_, _, err := exec.ExecRestrictedSQL(context.TODO(), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, args...)

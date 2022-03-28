@@ -28,11 +28,11 @@ type AnalyzeJob struct {
 	JobInfo       string
 	StartTime     time.Time
 	EndTime       time.Time
-	Process       AnalyzeProcess
+	Progress      AnalyzeProgress
 }
 
-// AnalyzeProcess represents the process of one analyze job.
-type AnalyzeProcess struct {
+// AnalyzeProgress represents the process of one analyze job.
+type AnalyzeProgress struct {
 	sync.Mutex
 	// deltaCount is the newly processed rows after the last time mysql.analyze_jobs.processed_rows is updated.
 	deltaCount int64
@@ -42,7 +42,7 @@ type AnalyzeProcess struct {
 
 // Update adds rowCount to the delta count. If the updated delta count reaches threshold, it returns the delta count for
 // dumping it into mysql.analyze_jobs and resets the delta count to 0. Otherwise it returns 0.
-func (p *AnalyzeProcess) Update(rowCount int64) (dumpCount int64) {
+func (p *AnalyzeProgress) Update(rowCount int64) (dumpCount int64) {
 	p.Lock()
 	defer p.Unlock()
 	p.deltaCount += rowCount
@@ -59,21 +59,21 @@ func (p *AnalyzeProcess) Update(rowCount int64) (dumpCount int64) {
 }
 
 // GetDeltaCount returns the delta count which hasn't been dumped into mysql.analyze_jobs.
-func (p *AnalyzeProcess) GetDeltaCount() int64 {
+func (p *AnalyzeProgress) GetDeltaCount() int64 {
 	p.Lock()
 	defer p.Unlock()
 	return p.deltaCount
 }
 
 // SetLastDumpTime sets the last dump time.
-func (p *AnalyzeProcess) SetLastDumpTime(t time.Time) {
+func (p *AnalyzeProgress) SetLastDumpTime(t time.Time) {
 	p.Lock()
 	defer p.Unlock()
 	p.lastDumpTime = t
 }
 
 // GetLastDumpTime returns the last dump time.
-func (p *AnalyzeProcess) GetLastDumpTime() time.Time {
+func (p *AnalyzeProgress) GetLastDumpTime() time.Time {
 	p.Lock()
 	defer p.Unlock()
 	return p.lastDumpTime
