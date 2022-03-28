@@ -570,29 +570,30 @@ func BenchmarkCompareDatumByReflect(b *testing.B) {
 
 func TestProduceDecWithSpecifiedTp(t *testing.T) {
 	tests := []struct {
-		dec        string
-		flen       int
-		frac       int
-		newDec     string
-		isOverflow bool
+		dec         string
+		flen        int
+		frac        int
+		newDec      string
+		isOverflow  bool
+		isTruncated bool
 	}{
-		{"0.0000", 4, 3, "0.000", false},
-		{"0.0001", 4, 3, "0.000", false},
-		{"123", 8, 5, "123.00000", false},
-		{"-123", 8, 5, "-123.00000", false},
-		{"123.899", 5, 2, "123.90", false},
-		{"-123.899", 5, 2, "-123.90", false},
-		{"123.899", 6, 2, "123.90", false},
-		{"-123.899", 6, 2, "-123.90", false},
-		{"123.99", 4, 1, "124.0", false},
-		{"123.99", 3, 0, "124", false},
-		{"-123.99", 3, 0, "-124", false},
-		{"123.99", 3, 1, "99.9", true},
-		{"-123.99", 3, 1, "-99.9", true},
-		{"99.9999", 5, 3, "99.999", true},
-		{"-99.9999", 5, 3, "-99.999", true},
-		{"99.9999", 6, 3, "100.000", false},
-		{"-99.9999", 6, 3, "-100.000", false},
+		{"0.0000", 4, 3, "0.000", false, false},
+		{"0.0001", 4, 3, "0.000", false, true},
+		{"123", 8, 5, "123.00000", false, false},
+		{"-123", 8, 5, "-123.00000", false, false},
+		{"123.899", 5, 2, "123.90", false, true},
+		{"-123.899", 5, 2, "-123.90", false, true},
+		{"123.899", 6, 2, "123.90", false, true},
+		{"-123.899", 6, 2, "-123.90", false, true},
+		{"123.99", 4, 1, "124.0", false, true},
+		{"123.99", 3, 0, "124", false, true},
+		{"-123.99", 3, 0, "-124", false, true},
+		{"123.99", 3, 1, "99.9", true, false},
+		{"-123.99", 3, 1, "-99.9", true, false},
+		{"99.9999", 5, 3, "99.999", true, false},
+		{"-99.9999", 5, 3, "-99.999", true, false},
+		{"99.9999", 6, 3, "100.000", false, true},
+		{"-99.9999", 6, 3, "-100.000", false, true},
 	}
 	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
@@ -605,11 +606,21 @@ func TestProduceDecWithSpecifiedTp(t *testing.T) {
 		newDec, err := ProduceDecWithSpecifiedTp(dec, tp, sc)
 		if tt.isOverflow {
 			if !ErrOverflow.Equal(err) {
-				assert.FailNow(t, "Error is not overflow", err)
+				assert.FailNow(t, "Error is not overflow", "err: %v before: %v after: %v", err, tt.dec, dec)
 			}
 		} else {
 			require.NoError(t, err, tt)
 		}
 		require.Equal(t, tt.newDec, newDec.String())
+		warn := sc.TruncateWarnings(0)
+		if tt.isTruncated {
+			if len(warn) != 1 || !ErrTruncatedWrongVal.Equal(warn[0].Err) {
+				assert.FailNow(t, "Warn is not truncated", "warn: %v before: %v after: %v", warn, tt.dec, dec)
+			}
+		} else {
+			if warn != nil {
+				assert.FailNow(t, "Warn is not nil", "warn: %v before: %v after: %v", warn, tt.dec, dec)
+			}
+		}
 	}
 }

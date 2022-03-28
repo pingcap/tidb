@@ -1444,7 +1444,11 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.Statem
 
 		if !isZero {
 			_, digitsInt := dec.removeLeadingZeros()
+			// After rounding decimal, the new decimal may have a longer integer length which may be longer than expected.
+			// So the check of integer length must be after rounding.
+			// E.g. "99.9999", flen 5, decimal 3, Round("99.9999", 3, ModelHalfUp) -> "100.000".
 			if flen-decimal < digitsInt {
+				// Integer length is longer, choose the max or min decimal.
 				dec = NewMaxOrMinDec(dec.IsNegative(), flen, decimal)
 				// select cast(111 as decimal(1)) causes a warning in MySQL.
 				err = ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", flen, decimal))

@@ -52,7 +52,7 @@ const (
 
 	DivFracIncr = 4
 
-	// ModeHalfUp rounds normally.
+	// Round up to the next integer if positive or down to the next integer if negative.
 	ModeHalfUp RoundMode = 5
 	// Truncate just truncates the decimal.
 	ModeTruncate RoundMode = 10
