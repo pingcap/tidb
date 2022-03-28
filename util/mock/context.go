@@ -80,12 +80,12 @@ func (txn *wrapTxn) GetTableInfo(id int64) *model.TableInfo {
 
 // Execute implements sqlexec.SQLExecutor Execute interface.
 func (c *Context) Execute(ctx context.Context, sql string) ([]sqlexec.RecordSet, error) {
-	return nil, errors.Errorf("Not Supported.")
+	return nil, errors.Errorf("Not Supported")
 }
 
 // ExecuteStmt implements sqlexec.SQLExecutor ExecuteStmt interface.
 func (c *Context) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
-	return nil, errors.Errorf("Not Supported.")
+	return nil, errors.Errorf("Not Supported")
 }
 
 // SetDiskFullOpt sets allowed options of current operation in each TiKV disk usage level.
@@ -100,7 +100,12 @@ func (c *Context) ClearDiskFullOpt() {
 
 // ExecuteInternal implements sqlexec.SQLExecutor ExecuteInternal interface.
 func (c *Context) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
-	return nil, errors.Errorf("Not Supported.")
+	return nil, errors.Errorf("Not Supported")
+}
+
+// ShowProcess implements sessionctx.Context ShowProcess interface.
+func (c *Context) ShowProcess() *util.ProcessInfo {
+	return &util.ProcessInfo{}
 }
 
 type mockDDLOwnerChecker struct{}
@@ -176,6 +181,11 @@ func (c *Context) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 // GetBuiltinFunctionUsage implements sessionctx.Context GetBuiltinFunctionUsage interface.
 func (c *Context) GetBuiltinFunctionUsage() map[string]uint32 {
 	return make(map[string]uint32)
+}
+
+// BuiltinFunctionUsageInc implements sessionctx.Context.
+func (c *Context) BuiltinFunctionUsageInc(scalarFuncSigName string) {
+
 }
 
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.

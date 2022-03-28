@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
+	"github.com/pingcap/tidb/util/topsql"
 	"go.uber.org/zap"
 )
 
@@ -176,7 +177,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		originHints := hint.CollectHint(stmtNode)
 		// bindRecord must be not nil when coming here, try to find the best binding.
 		for _, binding := range bindRecord.Bindings {
-			if binding.Status != bindinfo.Using {
+			if !binding.IsBindingEnabled() {
 				continue
 			}
 			metrics.BindUsageCounter.WithLabelValues(scope).Inc()
@@ -321,9 +322,15 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			failpoint.Return(nil, nil, 0, errors.New("gofail wrong optimizerCnt error"))
 		}
 	})
+	failpoint.Inject("mockHighLoadForOptimize", func() {
+		sqlPrefixes := []string{"select"}
+		topsql.MockHighCPULoad(sctx.GetSessionVars().StmtCtx.OriginalSQL, sqlPrefixes, 10)
+	})
+
 	// build logical plan
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
+	sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
 	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
 	node.Accept(hintProcessor)
 
@@ -450,7 +457,7 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 	bindRecord := sessionHandle.GetBindRecord(hash, normalizedSQL, "")
 	if bindRecord != nil {
-		if bindRecord.HasUsingBinding() {
+		if bindRecord.HasEnabledBinding() {
 			return bindRecord, metrics.ScopeSession, nil
 		}
 		return nil, "", nil
@@ -596,6 +603,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 			setVarsOffs = append(setVarsOffs, i)
 		}
 	}
+	stmtHints.OriginalTableHints = hints
 	stmtHints.SetVars = setVars
 
 	// Handle MEMORY_QUOTA
@@ -675,7 +683,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		stmtHints.ForceNthPlan = forceNthPlan.HintData.(int64)
 		if stmtHints.ForceNthPlan < 1 {
 			stmtHints.ForceNthPlan = -1
-			warn := errors.Errorf("the hintdata for NTH_PLAN() is too small, hint ignored.")
+			warn := errors.Errorf("the hintdata for NTH_PLAN() is too small, hint ignored")
 			warns = append(warns, warn)
 		}
 	} else {

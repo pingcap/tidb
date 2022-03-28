@@ -77,6 +77,7 @@ func (rs *RegionSplitter) Split(
 	ctx context.Context,
 	ranges []rtree.Range,
 	rewriteRules *RewriteRules,
+	isRawKv bool,
 	onSplit OnSplitFunc,
 ) error {
 	if len(ranges) == 0 {
@@ -111,7 +112,7 @@ SplitRegions:
 			}
 			return errors.Trace(errScan)
 		}
-		splitKeyMap := getSplitKeys(rewriteRules, sortedRanges, regions)
+		splitKeyMap := getSplitKeys(rewriteRules, sortedRanges, regions, isRawKv)
 		regionMap := make(map[uint64]*RegionInfo)
 		for _, region := range regions {
 			regionMap[region.Region.GetId()] = region
@@ -437,11 +438,18 @@ func PaginateScanRegion(
 	}
 
 	var regions []*RegionInfo
-	err := utils.WithRetry(ctx, func() error {
+	var err error
+	// we don't need to return multierr. since there only 3 times retry.
+	// in most case 3 times retry have the same error. so we just return the last error.
+	// actually we'd better remove all multierr in br/lightning.
+	// because it's not easy to check multierr equals normal error.
+	// see https://github.com/pingcap/tidb/issues/33419.
+	_ = utils.WithRetry(ctx, func() error {
 		regions = []*RegionInfo{}
 		scanStartKey := startKey
 		for {
-			batch, err := client.ScanRegions(ctx, scanStartKey, endKey, limit)
+			var batch []*RegionInfo
+			batch, err = client.ScanRegions(ctx, scanStartKey, endKey, limit)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -457,7 +465,7 @@ func PaginateScanRegion(
 				break
 			}
 		}
-		if err := CheckRegionConsistency(startKey, endKey, regions); err != nil {
+		if err = CheckRegionConsistency(startKey, endKey, regions); err != nil {
 			log.Warn("failed to scan region, retrying", logutil.ShortError(err))
 			return err
 		}
@@ -495,14 +503,14 @@ func (b *scanRegionBackoffer) Attempt() int {
 
 // getSplitKeys checks if the regions should be split by the end key of
 // the ranges, groups the split keys by region id.
-func getSplitKeys(rewriteRules *RewriteRules, ranges []rtree.Range, regions []*RegionInfo) map[uint64][][]byte {
+func getSplitKeys(rewriteRules *RewriteRules, ranges []rtree.Range, regions []*RegionInfo, isRawKv bool) map[uint64][][]byte {
 	splitKeyMap := make(map[uint64][][]byte)
 	checkKeys := make([][]byte, 0)
 	for _, rg := range ranges {
 		checkKeys = append(checkKeys, rg.EndKey)
 	}
 	for _, key := range checkKeys {
-		if region := NeedSplit(key, regions); region != nil {
+		if region := NeedSplit(key, regions, isRawKv); region != nil {
 			splitKeys, ok := splitKeyMap[region.Region.GetId()]
 			if !ok {
 				splitKeys = make([][]byte, 0, 1)
@@ -518,12 +526,14 @@ func getSplitKeys(rewriteRules *RewriteRules, ranges []rtree.Range, regions []*R
 }
 
 // NeedSplit checks whether a key is necessary to split, if true returns the split region.
-func NeedSplit(splitKey []byte, regions []*RegionInfo) *RegionInfo {
+func NeedSplit(splitKey []byte, regions []*RegionInfo, isRawKv bool) *RegionInfo {
 	// If splitKey is the max key.
 	if len(splitKey) == 0 {
 		return nil
 	}
-	splitKey = codec.EncodeBytes(nil, splitKey)
+	if !isRawKv {
+		splitKey = codec.EncodeBytes(nil, splitKey)
+	}
 	for _, region := range regions {
 		// If splitKey is the boundary of the region
 		if bytes.Equal(splitKey, region.Region.GetStartKey()) {
