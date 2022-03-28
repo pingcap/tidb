@@ -267,6 +267,9 @@ func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.
 	}
 
 	taskCfg.TaskID = time.Now().UnixNano()
+	failpoint.Inject("SetTaskID", func(val failpoint.Value) {
+		taskCfg.TaskID = int64(val.(int))
+	})
 
 	return l.run(taskCtx, taskCfg, o)
 }
