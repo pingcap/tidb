@@ -1,4 +1,4 @@
-// Copyright 2020 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,9 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl
+package util
 
-import "github.com/pingcap/tidb/util/dbterror"
+import (
+	"time"
+)
 
-// ErrDupKeyName returns for duplicated key name.
-var ErrDupKeyName = dbterror.ErrDupKeyName
+// TSOToRoughTime translates tso to rough time that used to display
+func TSOToRoughTime(ts int64) time.Time {
+	t := time.Unix(ts>>18/1000, 0)
+	return t
+}

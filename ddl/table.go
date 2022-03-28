@@ -88,12 +88,12 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job) (*model.TableInfo, err
 			replicaInfo := tbInfo.TiFlashReplica
 			if pi := tbInfo.GetPartitionInfo(); pi != nil {
 				logutil.BgLogger().Info("Set TiFlash replica pd rule for partitioned table when creating", zap.Int64("tableID", tbInfo.ID))
-				if e := infosync.ConfigureTiFlashPDForPartitions(false, &pi.Definitions, replicaInfo.Count, &replicaInfo.LocationLabels); e != nil {
+				if e := infosync.ConfigureTiFlashPDForPartitions(false, &pi.Definitions, replicaInfo.Count, &replicaInfo.LocationLabels, tbInfo.ID); e != nil {
 					job.State = model.JobStateCancelled
 					return tbInfo, errors.Trace(e)
 				}
 				// Partitions that in adding mid-state. They have high priorities, so we should set accordingly pd rules.
-				if e := infosync.ConfigureTiFlashPDForPartitions(true, &pi.AddingDefinitions, replicaInfo.Count, &replicaInfo.LocationLabels); e != nil {
+				if e := infosync.ConfigureTiFlashPDForPartitions(true, &pi.AddingDefinitions, replicaInfo.Count, &replicaInfo.LocationLabels, tbInfo.ID); e != nil {
 					job.State = model.JobStateCancelled
 					return tbInfo, errors.Trace(e)
 				}
@@ -558,7 +558,8 @@ func getTable(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) (table
 	return tbl, errors.Trace(err)
 }
 
-func getTableInfoAndCancelFaultJob(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInfo, error) {
+// GetTableInfoAndCancelFaultJob is exported for test.
+func GetTableInfoAndCancelFaultJob(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInfo, error) {
 	tblInfo, err := checkTableExistAndCancelNonExistJob(t, job, schemaID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -617,7 +618,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -684,7 +685,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	if tblInfo.TiFlashReplica != nil {
 		// Set PD rules for TiFlash
 		if pi := tblInfo.GetPartitionInfo(); pi != nil {
-			if e := infosync.ConfigureTiFlashPDForPartitions(true, &pi.Definitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels); e != nil {
+			if e := infosync.ConfigureTiFlashPDForPartitions(true, &pi.Definitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels, tblInfo.ID); e != nil {
 				logutil.BgLogger().Error("ConfigureTiFlashPDForPartitions fails", zap.Error(err))
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(e)
@@ -757,7 +758,7 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job, tp autoid.Al
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -802,7 +803,7 @@ func onModifyTableAutoIDCache(t *meta.Meta, job *model.Job) (int64, error) {
 		return 0, errors.Trace(err)
 	}
 
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -823,7 +824,7 @@ func (w *worker) onShardRowID(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -934,7 +935,7 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 }
 
 func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID, newSchemaID int64, oldSchemaName, tableName *model.CIStr) (ver int64, tblInfo *model.TableInfo, _ error) {
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, oldSchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, oldSchemaID)
 	if err != nil {
 		return ver, tblInfo, errors.Trace(err)
 	}
@@ -996,7 +997,7 @@ func onModifyTableComment(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1023,7 +1024,7 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 		return ver, errors.Trace(err)
 	}
 
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1066,7 +1067,7 @@ func (w *worker) onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64
 		return ver, errors.Trace(err)
 	}
 
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1089,12 +1090,12 @@ func (w *worker) onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64
 	// We should check this first, in order to avoid creating redundant DDL jobs.
 	if pi := tblInfo.GetPartitionInfo(); pi != nil {
 		logutil.BgLogger().Info("Set TiFlash replica pd rule for partitioned table", zap.Int64("tableID", tblInfo.ID))
-		if e := infosync.ConfigureTiFlashPDForPartitions(false, &pi.Definitions, replicaInfo.Count, &replicaInfo.Labels); e != nil {
+		if e := infosync.ConfigureTiFlashPDForPartitions(false, &pi.Definitions, replicaInfo.Count, &replicaInfo.Labels, tblInfo.ID); e != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(e)
 		}
 		// Partitions that in adding mid-state. They have high priorities, so we should set accordingly pd rules.
-		if e := infosync.ConfigureTiFlashPDForPartitions(true, &pi.AddingDefinitions, replicaInfo.Count, &replicaInfo.Labels); e != nil {
+		if e := infosync.ConfigureTiFlashPDForPartitions(true, &pi.AddingDefinitions, replicaInfo.Count, &replicaInfo.Labels, tblInfo.ID); e != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(e)
 		}
@@ -1141,7 +1142,7 @@ func onUpdateFlashReplicaStatus(t *meta.Meta, job *model.Job) (ver int64, _ erro
 		return ver, errors.Trace(err)
 	}
 
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1301,7 +1302,7 @@ func onRepairTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	tblInfo.State = model.StateNone
 
 	// Check the old DB and old table exist.
-	_, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
+	_, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1339,7 +1340,7 @@ func onAlterTableAttributes(t *meta.Meta, job *model.Job) (ver int64, err error)
 		return 0, errors.Trace(err)
 	}
 
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return 0, err
 	}
@@ -1371,7 +1372,7 @@ func onAlterTablePartitionAttributes(t *meta.Meta, job *model.Job) (ver int64, e
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
 	}
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return 0, err
 	}
@@ -1409,7 +1410,7 @@ func onAlterTablePartitionPlacement(t *meta.Meta, job *model.Job) (ver int64, er
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
 	}
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return 0, err
 	}
@@ -1479,7 +1480,7 @@ func onAlterTablePlacement(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		return 0, errors.Trace(err)
 	}
 
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return 0, err
 	}
@@ -1567,7 +1568,7 @@ func updateLabelRules(job *model.Job, tblInfo *model.TableInfo, oldRules map[str
 }
 
 func onAlterCacheTable(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tbInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tbInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -1610,7 +1611,7 @@ func onAlterCacheTable(t *meta.Meta, job *model.Job) (ver int64, err error) {
 }
 
 func onAlterNoCacheTable(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tbInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tbInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

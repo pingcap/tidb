@@ -20,17 +20,18 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	fd "github.com/pingcap/tidb/planner/funcdep"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
@@ -180,6 +181,78 @@ func (p *LogicalJoin) Shallow() *LogicalJoin {
 	return join.Init(p.ctx, p.blockOffset)
 }
 
+// ExtractFD implements the interface LogicalPlan.
+func (p *LogicalJoin) ExtractFD() *fd.FDSet {
+	switch p.JoinType {
+	case InnerJoin:
+		return p.extractFDForInnerJoin(nil)
+	case SemiJoin:
+		return p.extractFDForSemiJoin(nil)
+	default:
+		return &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
+	}
+}
+
+func (p *LogicalJoin) extractFDForSemiJoin(filtersFromApply []expression.Expression) *fd.FDSet {
+	// 1: since semi join will keep the part or all rows of the outer table, it's outer FD can be saved.
+	// 2: the un-projected column will be left for the upper layer projection or already be pruned from bottom up.
+	outerFD, _ := p.children[0].ExtractFD(), p.children[1].ExtractFD()
+	fds := outerFD
+
+	eqCondSlice := expression.ScalarFuncs2Exprs(p.EqualConditions)
+	allConds := append(eqCondSlice, p.OtherConditions...)
+	allConds = append(allConds, filtersFromApply...)
+	notNullColsFromFilters := extractNotNullFromConds(allConds, p)
+
+	constUniqueIDs := extractConstantCols(p.LeftConditions, p.SCtx(), fds)
+
+	fds.MakeNotNull(notNullColsFromFilters)
+	fds.AddConstants(constUniqueIDs)
+	p.fdSet = fds
+	return fds
+}
+
+func (p *LogicalJoin) extractFDForInnerJoin(filtersFromApply []expression.Expression) *fd.FDSet {
+	leftFD, rightFD := p.children[0].ExtractFD(), p.children[1].ExtractFD()
+	fds := leftFD
+	fds.MakeCartesianProduct(rightFD)
+
+	eqCondSlice := expression.ScalarFuncs2Exprs(p.EqualConditions)
+	// some join eq conditions are stored in the OtherConditions.
+	allConds := append(eqCondSlice, p.OtherConditions...)
+	allConds = append(allConds, filtersFromApply...)
+	notNullColsFromFilters := extractNotNullFromConds(allConds, p)
+
+	constUniqueIDs := extractConstantCols(allConds, p.SCtx(), fds)
+
+	equivUniqueIDs := extractEquivalenceCols(allConds, p.SCtx(), fds)
+
+	fds.MakeNotNull(notNullColsFromFilters)
+	fds.AddConstants(constUniqueIDs)
+	for _, equiv := range equivUniqueIDs {
+		fds.AddEquivalence(equiv[0], equiv[1])
+	}
+	// merge the not-null-cols/registered-map from both side together.
+	fds.NotNullCols.UnionWith(rightFD.NotNullCols)
+	if fds.HashCodeToUniqueID == nil {
+		fds.HashCodeToUniqueID = rightFD.HashCodeToUniqueID
+	} else {
+		for k, v := range rightFD.HashCodeToUniqueID {
+			if _, ok := fds.HashCodeToUniqueID[k]; ok {
+				logutil.BgLogger().Warn("Error occurred while maintaining functional dependency")
+				continue
+			}
+			fds.HashCodeToUniqueID[k] = v
+		}
+	}
+	for i, ok := rightFD.GroupByCols.Next(0); ok; i, ok = rightFD.GroupByCols.Next(i + 1) {
+		fds.GroupByCols.Insert(i)
+	}
+	fds.HasAggBuilt = fds.HasAggBuilt || rightFD.HasAggBuilt
+	p.fdSet = fds
+	return fds
+}
+
 // GetJoinKeys extracts join keys(columns) from EqualConditions. It returns left join keys, right
 // join keys and an `isNullEQ` array which means the `joinKey[i]` is a `NullEQ` function. The `hasNullEQ`
 // means whether there is a `NullEQ` of a join key.
@@ -314,6 +387,118 @@ type LogicalProjection struct {
 	AvoidColumnEvaluator bool
 }
 
+// ExtractFD implements the logical plan interface, extracting the FD from bottom up.
+func (p *LogicalProjection) ExtractFD() *fd.FDSet {
+	// basically extract the children's fdSet.
+	fds := p.logicalSchemaProducer.ExtractFD()
+	// collect the output columns' unique ID.
+	outputColsUniqueIDs := fd.NewFastIntSet()
+	notnullColsUniqueIDs := fd.NewFastIntSet()
+	outputColsUniqueIDsArray := make([]int, 0, len(p.Schema().Columns))
+	// here schema extended columns may contain expr, const and column allocated with uniqueID.
+	for _, one := range p.Schema().Columns {
+		outputColsUniqueIDs.Insert(int(one.UniqueID))
+		outputColsUniqueIDsArray = append(outputColsUniqueIDsArray, int(one.UniqueID))
+	}
+	// map the expr hashCode with its unique ID.
+	for idx, expr := range p.Exprs {
+		switch x := expr.(type) {
+		case *expression.Column:
+			continue
+		case *expression.CorrelatedColumn:
+			// t1(a,b,c), t2(m,n)
+			// select a, (select c from t2 where m=b) from t1;
+			// take c as constant column here.
+			continue
+		case *expression.Constant:
+			hashCode := string(x.HashCode(p.ctx.GetSessionVars().StmtCtx))
+			var (
+				ok               bool
+				constantUniqueID int
+			)
+			if constantUniqueID, ok = fds.IsHashCodeRegistered(hashCode); !ok {
+				constantUniqueID = outputColsUniqueIDsArray[idx]
+				fds.RegisterUniqueID(string(x.HashCode(p.ctx.GetSessionVars().StmtCtx)), constantUniqueID)
+			}
+			fds.AddConstants(fd.NewFastIntSet(constantUniqueID))
+		case *expression.ScalarFunction:
+			// t1(a,b,c), t2(m,n)
+			// select a, (select c+n from t2 where m=b) from t1;
+			// expr(c+n) contains correlated column , but we can treat it as constant here.
+			hashCode := string(x.HashCode(p.ctx.GetSessionVars().StmtCtx))
+			var (
+				ok             bool
+				scalarUniqueID int
+			)
+			// If this function is not deterministic, we skip it since it not a stable value.
+			if expression.CheckNonDeterministic(x) {
+				if scalarUniqueID, ok = fds.IsHashCodeRegistered(hashCode); !ok {
+					fds.RegisterUniqueID(hashCode, scalarUniqueID)
+				}
+				continue
+			}
+			if scalarUniqueID, ok = fds.IsHashCodeRegistered(hashCode); !ok {
+				scalarUniqueID = outputColsUniqueIDsArray[idx]
+				fds.RegisterUniqueID(hashCode, scalarUniqueID)
+			} else {
+				// since the scalar's hash code has been registered before, the equivalence exists between the unique ID
+				// allocated by phase of building-projection-for-scalar and that of previous registered unique ID.
+				fds.AddEquivalence(fd.NewFastIntSet(scalarUniqueID), fd.NewFastIntSet(outputColsUniqueIDsArray[idx]))
+			}
+			determinants := fd.NewFastIntSet()
+			extractedColumns := expression.ExtractColumns(x)
+			extractedCorColumns := expression.ExtractCorColumns(x)
+			for _, one := range extractedColumns {
+				determinants.Insert(int(one.UniqueID))
+				// the dependent columns in scalar function should be also considered as output columns as well.
+				outputColsUniqueIDs.Insert(int(one.UniqueID))
+			}
+			for _, one := range extractedCorColumns {
+				determinants.Insert(int(one.UniqueID))
+				// the dependent columns in scalar function should be also considered as output columns as well.
+				outputColsUniqueIDs.Insert(int(one.UniqueID))
+			}
+			notnull := isNullRejected(p.ctx, p.schema, x)
+			if notnull || determinants.SubsetOf(fds.NotNullCols) {
+				notnullColsUniqueIDs.Insert(scalarUniqueID)
+			}
+			fds.AddStrictFunctionalDependency(determinants, fd.NewFastIntSet(scalarUniqueID))
+		}
+	}
+
+	// apply operator's characteristic's FD setting.
+	// since the distinct attribute is built as firstRow agg func, we don't need to think about it here.
+	// let the fds itself to trace the not null, because after the outer join, some not null column can be nullable.
+	fds.MakeNotNull(notnullColsUniqueIDs)
+	// select max(a) from t group by b, we should project both `a` & `b` to maintain the FD down here, even if select-fields only contain `a`.
+	fds.ProjectCols(outputColsUniqueIDs.Union(fds.GroupByCols))
+
+	if fds.GroupByCols.Only1Zero() {
+		// maxOneRow is delayed from agg's ExtractFD logic since some details listed in it.
+		projectionUniqueIDs := fd.NewFastIntSet()
+		for _, expr := range p.Exprs {
+			switch x := expr.(type) {
+			case *expression.Column:
+				projectionUniqueIDs.Insert(int(x.UniqueID))
+			case *expression.ScalarFunction:
+				scalarUniqueID, ok := fds.IsHashCodeRegistered(string(hack.String(x.HashCode(p.SCtx().GetSessionVars().StmtCtx))))
+				if !ok {
+					logutil.BgLogger().Warn("Error occurred while maintaining the functional dependency")
+					continue
+				}
+				projectionUniqueIDs.Insert(scalarUniqueID)
+			}
+		}
+		fds.MaxOneRow(projectionUniqueIDs)
+	}
+	// for select * from view (include agg), outer projection don't have to check select list with the inner group-by flag.
+	fds.HasAggBuilt = false
+
+	// just trace it down in every operator for test checking.
+	p.fdSet = fds
+	return fds
+}
+
 // ExtractCorrelatedCols implements LogicalPlan interface.
 func (p *LogicalProjection) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.Exprs))
@@ -367,6 +552,129 @@ func (la *LogicalAggregation) HasOrderBy() bool {
 		}
 	}
 	return false
+}
+
+// ExtractFD implements the logical plan interface, extracting the FD from bottom up.
+// 1:
+// In most of the cases, using FDs to check the only_full_group_by problem should be done in the buildAggregation phase
+// by extracting the bottom-up FDs graph from the `p` --- the sub plan tree that has already been built.
+//
+// 2:
+// and this requires that some conditions push-down into the `p` like selection should be done before building aggregation,
+// otherwise, 'a=1 and a can occur in the select lists of a group by' will be miss-checked because it doesn't be implied in the known FDs graph.
+//
+// 3:
+// when a logical agg is built, it's schema columns indicates what the permitted-non-agg columns is. Therefore, we shouldn't
+// depend on logicalAgg.ExtractFD() to finish the only_full_group_by checking problem rather than by 1 & 2.
+func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
+	// basically extract the children's fdSet.
+	fds := la.logicalSchemaProducer.ExtractFD()
+	// collect the output columns' unique ID.
+	outputColsUniqueIDs := fd.NewFastIntSet()
+	notnullColsUniqueIDs := fd.NewFastIntSet()
+	groupByColsUniqueIDs := fd.NewFastIntSet()
+	groupByColsOutputCols := fd.NewFastIntSet()
+	// Since the aggregation is build ahead of projection, the latter one will reuse the column with UniqueID allocated in aggregation
+	// via aggMapper, so we don't need unnecessarily maintain the <aggDes, UniqueID> mapping in the FDSet like expr did, just treating
+	// it as normal column.
+	for _, one := range la.Schema().Columns {
+		outputColsUniqueIDs.Insert(int(one.UniqueID))
+	}
+	// For one like sum(a), we don't need to build functional dependency from a --> sum(a), cause it's only determined by the
+	// group-by-item (group-by-item --> sum(a)).
+	for _, expr := range la.GroupByItems {
+		switch x := expr.(type) {
+		case *expression.Column:
+			groupByColsUniqueIDs.Insert(int(x.UniqueID))
+		case *expression.CorrelatedColumn:
+			// shouldn't be here, intercepted by plan builder as unknown column.
+			continue
+		case *expression.Constant:
+			// shouldn't be here, interpreted as pos param by plan builder.
+			continue
+		case *expression.ScalarFunction:
+			hashCode := string(x.HashCode(la.ctx.GetSessionVars().StmtCtx))
+			var (
+				ok             bool
+				scalarUniqueID int
+			)
+			if scalarUniqueID, ok = fds.IsHashCodeRegistered(hashCode); ok {
+				groupByColsUniqueIDs.Insert(scalarUniqueID)
+			} else {
+				// retrieve unique plan column id.  1: completely new one, allocating new unique id. 2: registered by projection earlier, using it.
+				if scalarUniqueID, ok = la.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol[hashCode]; !ok {
+					scalarUniqueID = int(la.ctx.GetSessionVars().AllocPlanColumnID())
+				}
+				fds.RegisterUniqueID(hashCode, scalarUniqueID)
+				groupByColsUniqueIDs.Insert(scalarUniqueID)
+			}
+			determinants := fd.NewFastIntSet()
+			extractedColumns := expression.ExtractColumns(x)
+			extractedCorColumns := expression.ExtractCorColumns(x)
+			for _, one := range extractedColumns {
+				determinants.Insert(int(one.UniqueID))
+				groupByColsOutputCols.Insert(int(one.UniqueID))
+			}
+			for _, one := range extractedCorColumns {
+				determinants.Insert(int(one.UniqueID))
+				groupByColsOutputCols.Insert(int(one.UniqueID))
+			}
+			notnull := isNullRejected(la.ctx, la.schema, x)
+			if notnull || determinants.SubsetOf(fds.NotNullCols) {
+				notnullColsUniqueIDs.Insert(scalarUniqueID)
+			}
+			fds.AddStrictFunctionalDependency(determinants, fd.NewFastIntSet(scalarUniqueID))
+		}
+	}
+
+	// Some details:
+	// For now, select max(a) from t group by c, tidb will see `max(a)` as Max aggDes and `a,b,c` as firstRow aggDes,
+	// and keep them all in the schema columns before projection does the pruning. If we build the fake FD eg: {c} ~~> {b}
+	// here since we have seen b as firstRow aggDes, for the upper layer projection of `select max(a), b from t group by c`,
+	// it will take b as valid projection field of group by statement since it has existed in the FD with {c} ~~> {b}.
+	//
+	// and since any_value will NOT be pushed down to agg schema, which means every firstRow aggDes in the agg logical operator
+	// is meaningless to build the FD with. Let's only store the non-firstRow FD down: {group by items} ~~> {real aggDes}
+	realAggFuncUniqueID := fd.NewFastIntSet()
+	for i, aggDes := range la.AggFuncs {
+		if aggDes.Name != "firstrow" {
+			realAggFuncUniqueID.Insert(int(la.schema.Columns[i].UniqueID))
+		}
+	}
+
+	// apply operator's characteristic's FD setting.
+	if len(la.GroupByItems) == 0 {
+		// 1: as the details shown above, output cols (normal column seen as firstrow) of group by are not validated.
+		// we couldn't merge them as constant FD with origin constant FD together before projection done.
+		// fds.MaxOneRow(outputColsUniqueIDs.Union(groupByColsOutputCols))
+		//
+		// 2: for the convenience of later judgement, when there is no group by items, we will store a FD: {0} -> {real aggDes}
+		// 0 unique id is only used for here.
+		groupByColsUniqueIDs.Insert(0)
+		for i, ok := realAggFuncUniqueID.Next(0); ok; i, ok = realAggFuncUniqueID.Next(i + 1) {
+			fds.AddStrictFunctionalDependency(groupByColsUniqueIDs, fd.NewFastIntSet(i))
+		}
+	} else {
+		// eliminating input columns that are un-projected.
+		fds.ProjectCols(outputColsUniqueIDs.Union(groupByColsOutputCols).Union(groupByColsUniqueIDs))
+
+		// note: {a} --> {b,c} is not same with {a} --> {b} and {a} --> {c}
+		for i, ok := realAggFuncUniqueID.Next(0); ok; i, ok = realAggFuncUniqueID.Next(i + 1) {
+			// group by phrase always produce strict FD.
+			// 1: it can always distinguish and group the all-null/part-null group column rows.
+			// 2: the rows with all/part null group column are unique row after group operation.
+			// 3: there won't be two same group key with different agg values, so strict FD secured.
+			fds.AddStrictFunctionalDependency(groupByColsUniqueIDs, fd.NewFastIntSet(i))
+		}
+
+		// agg funcDes has been tag not null flag when building aggregation.
+		fds.MakeNotNull(notnullColsUniqueIDs)
+	}
+	fds.GroupByCols = groupByColsUniqueIDs
+	fds.HasAggBuilt = true
+	// just trace it down in every operator for test checking.
+	la.fdSet = fds
+	return fds
 }
 
 // CopyAggHints copies the aggHints from another LogicalAggregation.
@@ -458,9 +766,155 @@ type LogicalSelection struct {
 	// but after we converted to CNF(Conjunctive normal form), it can be
 	// split into a list of AND conditions.
 	Conditions []expression.Expression
+}
 
-	// having selection can't be pushed down, because it must above the aggregation.
-	buildByHaving bool
+func extractNotNullFromConds(Conditions []expression.Expression, p LogicalPlan) fd.FastIntSet {
+	// extract the column NOT NULL rejection characteristic from selection condition.
+	// CNF considered only, DNF doesn't have its meanings (cause that condition's eval may don't take effect)
+	//
+	// Take this case: select * from t where (a = 1) and (b is null):
+	//
+	// If we wanna where phrase eval to true, two pre-condition: {a=1} and {b is null} both need to be true.
+	// Hence, we assert that:
+	//
+	// 1: `a` must not be null since `NULL = 1` is evaluated as NULL.
+	// 2: `b` must be null since only `NULL is NULL` is evaluated as true.
+	//
+	// As a result,	`a` will be extracted as not-null column to abound the FDSet.
+	notnullColsUniqueIDs := fd.NewFastIntSet()
+	for _, condition := range Conditions {
+		var cols []*expression.Column
+		cols = expression.ExtractColumnsFromExpressions(cols, []expression.Expression{condition}, nil)
+		if isNullRejected(p.SCtx(), p.Schema(), condition) {
+			for _, col := range cols {
+				notnullColsUniqueIDs.Insert(int(col.UniqueID))
+			}
+		}
+	}
+	return notnullColsUniqueIDs
+}
+
+func extractConstantCols(Conditions []expression.Expression, sctx sessionctx.Context, fds *fd.FDSet) fd.FastIntSet {
+	// extract constant cols
+	// eg: where a=1 and b is null and (1+c)=5.
+	// TODO: Some columns can only be determined to be constant from multiple constraints (e.g. x <= 1 AND x >= 1)
+	var (
+		constObjs      []expression.Expression
+		constUniqueIDs = fd.NewFastIntSet()
+	)
+	constObjs = expression.ExtractConstantEqColumnsOrScalar(sctx, constObjs, Conditions)
+	for _, constObj := range constObjs {
+		switch x := constObj.(type) {
+		case *expression.Column:
+			constUniqueIDs.Insert(int(x.UniqueID))
+		case *expression.ScalarFunction:
+			hashCode := string(x.HashCode(sctx.GetSessionVars().StmtCtx))
+			if uniqueID, ok := fds.IsHashCodeRegistered(hashCode); ok {
+				constUniqueIDs.Insert(uniqueID)
+			} else {
+				scalarUniqueID := int(sctx.GetSessionVars().AllocPlanColumnID())
+				fds.RegisterUniqueID(string(x.HashCode(sctx.GetSessionVars().StmtCtx)), scalarUniqueID)
+				constUniqueIDs.Insert(scalarUniqueID)
+			}
+		}
+	}
+	return constUniqueIDs
+}
+
+func extractEquivalenceCols(Conditions []expression.Expression, sctx sessionctx.Context, fds *fd.FDSet) [][]fd.FastIntSet {
+	var equivObjsPair [][]expression.Expression
+	equivObjsPair = expression.ExtractEquivalenceColumns(equivObjsPair, Conditions)
+	equivUniqueIDs := make([][]fd.FastIntSet, 0, len(equivObjsPair))
+	for _, equivObjPair := range equivObjsPair {
+		// lhs of equivalence.
+		var (
+			lhsUniqueID int
+			rhsUniqueID int
+		)
+		switch x := equivObjPair[0].(type) {
+		case *expression.Column:
+			lhsUniqueID = int(x.UniqueID)
+		case *expression.ScalarFunction:
+			hashCode := string(x.HashCode(sctx.GetSessionVars().StmtCtx))
+			if uniqueID, ok := fds.IsHashCodeRegistered(hashCode); ok {
+				lhsUniqueID = uniqueID
+			} else {
+				scalarUniqueID := int(sctx.GetSessionVars().AllocPlanColumnID())
+				fds.RegisterUniqueID(string(x.HashCode(sctx.GetSessionVars().StmtCtx)), scalarUniqueID)
+				lhsUniqueID = scalarUniqueID
+			}
+		}
+		// rhs of equivalence.
+		switch x := equivObjPair[1].(type) {
+		case *expression.Column:
+			rhsUniqueID = int(x.UniqueID)
+		case *expression.ScalarFunction:
+			hashCode := string(x.HashCode(sctx.GetSessionVars().StmtCtx))
+			if uniqueID, ok := fds.IsHashCodeRegistered(hashCode); ok {
+				rhsUniqueID = uniqueID
+			} else {
+				scalarUniqueID := int(sctx.GetSessionVars().AllocPlanColumnID())
+				fds.RegisterUniqueID(string(x.HashCode(sctx.GetSessionVars().StmtCtx)), scalarUniqueID)
+				rhsUniqueID = scalarUniqueID
+			}
+		}
+		equivUniqueIDs = append(equivUniqueIDs, []fd.FastIntSet{fd.NewFastIntSet(lhsUniqueID), fd.NewFastIntSet(rhsUniqueID)})
+	}
+	return equivUniqueIDs
+}
+
+// ExtractFD implements the LogicalPlan interface.
+func (p *LogicalSelection) ExtractFD() *fd.FDSet {
+	// basically extract the children's fdSet.
+	fds := p.baseLogicalPlan.ExtractFD()
+	// collect the output columns' unique ID.
+	outputColsUniqueIDs := fd.NewFastIntSet()
+	notnullColsUniqueIDs := fd.NewFastIntSet()
+	// eg: select t2.a, count(t2.b) from t1 join t2 using (a) where t1.a = 1
+	// join's schema will miss t2.a while join.full schema has. since selection
+	// itself doesn't contain schema, extracting schema should tell them apart.
+	var columns []*expression.Column
+	if join, ok := p.children[0].(*LogicalJoin); ok {
+		columns = join.fullSchema.Columns
+	} else {
+		columns = p.Schema().Columns
+	}
+	for _, one := range columns {
+		outputColsUniqueIDs.Insert(int(one.UniqueID))
+	}
+
+	// extract the not null attributes from selection conditions.
+	notnullColsUniqueIDs.UnionWith(extractNotNullFromConds(p.Conditions, p))
+
+	// extract the constant cols from selection conditions.
+	constUniqueIDs := extractConstantCols(p.Conditions, p.SCtx(), fds)
+
+	// extract equivalence cols.
+	equivUniqueIDs := extractEquivalenceCols(p.Conditions, p.SCtx(), fds)
+
+	// after left join, according to rule 3.3.3, it may create a lax FD from inner equivalence
+	// cols pointing to outer equivalence cols.  eg: t left join t1 on t.a = t1.b, leading a
+	// lax FD from t1.b ~> t.a, this lax attribute is coming from supplied null value to all
+	// left rows, once there is a null-refusing predicate on the inner side on upper layer, this
+	// can be equivalence again. (the outer rows left are all coming from equal matching)
+	//
+	// why not just makeNotNull of them, because even a non-equiv-related inner col can also
+	// refuse supplied null values.
+	if fds.Rule333Equiv.InnerCols.Len() != 0 && notnullColsUniqueIDs.Intersects(fds.Rule333Equiv.InnerCols) {
+		// restore/re-strength FDs from rule 333
+		fds.MakeRestoreRule333()
+	}
+
+	// apply operator's characteristic's FD setting.
+	fds.MakeNotNull(notnullColsUniqueIDs)
+	fds.AddConstants(constUniqueIDs)
+	for _, equiv := range equivUniqueIDs {
+		fds.AddEquivalence(equiv[0], equiv[1])
+	}
+	fds.ProjectCols(outputColsUniqueIDs)
+	// just trace it down in every operator for test checking.
+	p.fdSet = fds
+	return fds
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -488,6 +942,40 @@ func (la *LogicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 		}
 	}
 	return corCols
+}
+
+// ExtractFD implements the LogicalPlan interface.
+func (la *LogicalApply) ExtractFD() *fd.FDSet {
+	innerPlan := la.children[1]
+	// build the join correlated equal condition for apply join, this equal condition is used for deriving the transitive FD between outer and inner side.
+	correlatedCols := ExtractCorrelatedCols4LogicalPlan(innerPlan)
+	deduplicateCorrelatedCols := make(map[int64]*expression.CorrelatedColumn)
+	for _, cc := range correlatedCols {
+		if _, ok := deduplicateCorrelatedCols[cc.UniqueID]; !ok {
+			deduplicateCorrelatedCols[cc.UniqueID] = cc
+		}
+	}
+	eqCond := make([]expression.Expression, 0, 4)
+	// for case like select (select t1.a from t2) from t1. <t1.a> will be assigned with new UniqueID after sub query projection is built.
+	// we should distinguish them out, building the equivalence relationship from inner <t1.a> == outer <t1.a> in the apply-join for FD derivation.
+	for _, cc := range deduplicateCorrelatedCols {
+		// for every correlated column, find the connection with the inner newly built column.
+		for _, col := range innerPlan.Schema().Columns {
+			if cc.UniqueID == col.CorrelatedColUniqueID {
+				ccc := &cc.Column
+				cond := expression.NewFunctionInternal(la.ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), ccc, col)
+				eqCond = append(eqCond, cond.(*expression.ScalarFunction))
+			}
+		}
+	}
+	switch la.JoinType {
+	case InnerJoin:
+		return la.extractFDForInnerJoin(eqCond)
+	case SemiJoin:
+		return la.extractFDForSemiJoin(eqCond)
+	default:
+		return &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
+	}
 }
 
 // LogicalMaxOneRow checks if a query returns no more than one row.
@@ -533,9 +1021,6 @@ type LogicalUnionScan struct {
 	conditions []expression.Expression
 
 	handleCols HandleCols
-
-	// cacheTable not nil means it's reading from cached table.
-	cacheTable kv.MemBuffer
 }
 
 // DataSource represents a tableScan without condition push down.
@@ -1292,6 +1777,9 @@ type CTEClass struct {
 	LimitBeg  uint64
 	LimitEnd  uint64
 	IsInApply bool
+	// pushDownPredicates may be push-downed by different references.
+	pushDownPredicates []expression.Expression
+	ColumnMap          map[string]*expression.Column
 }
 
 // LogicalCTE is for CTE.

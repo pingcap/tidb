@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -50,6 +49,8 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/versioninfo"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1191,6 +1192,16 @@ func TestInfoBuiltin(t *testing.T) {
 	// for version
 	result = tk.MustQuery("select version()")
 	result.Check(testkit.Rows(mysql.ServerVersion))
+
+	// for tidb_version
+	result = tk.MustQuery("select tidb_version()")
+	tidbVersionResult := ""
+	for _, line := range result.Rows() {
+		tidbVersionResult += fmt.Sprint(line)
+	}
+	lines := strings.Split(tidbVersionResult, "\n")
+	assert.Equal(t, true, strings.Split(lines[0], " ")[2] == mysql.TiDBReleaseVersion, "errors in 'select tidb_version()'")
+	assert.Equal(t, true, strings.Split(lines[1], " ")[1] == versioninfo.TiDBEdition, "errors in 'select tidb_version()'")
 
 	// for row_count
 	tk.MustExec("drop table if exists t")
@@ -2565,7 +2576,7 @@ func TestColumnInfoModified(t *testing.T) {
 	testKit.MustExec("drop table if exists tab0")
 	testKit.MustExec("CREATE TABLE tab0(col0 INTEGER, col1 INTEGER, col2 INTEGER)")
 	testKit.MustExec("SELECT + - (- CASE + col0 WHEN + CAST( col0 AS SIGNED ) THEN col1 WHEN 79 THEN NULL WHEN + - col1 THEN col0 / + col0 END ) * - 16 FROM tab0")
-	ctx := testKit.Session().(sessionctx.Context)
+	ctx := testKit.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, _ := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tab0"))
 	col := table.FindCol(tbl.Cols(), "col1")
@@ -2697,7 +2708,7 @@ func TestFilterExtractFromDNF(t *testing.T) {
 	ctx := context.Background()
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
-		sctx := tk.Session().(sessionctx.Context)
+		sctx := tk.Session()
 		sc := sctx.GetSessionVars().StmtCtx
 		stmts, err := session.Parse(sctx, sql)
 		require.NoError(t, err, "error %v, for expr %s", err, tt.exprStr)
@@ -2785,8 +2796,8 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	// Row Keys
 	result = tk.MustQuery("select tidb_decode_key( '74800000000000002B5F72800000000000A5D3' )")
 	result.Check(testkit.Rows(`{"_tidb_rowid":42451,"table_id":"43"}`))
-	result = tk.MustQuery("select tidb_decode_key( '7480000000000000325f7205bff199999999999a013131000000000000f9' )")
-	result.Check(testkit.Rows(`{"handle":"{1.1, 11}","table_id":50}`))
+	result = tk.MustQuery("select tidb_decode_key( '74800000000000ffff5f7205bff199999999999a013131000000000000f9' )")
+	result.Check(testkit.Rows(`{"handle":"{1.1, 11}","table_id":65535}`))
 
 	// Index Keys
 	result = tk.MustQuery("select tidb_decode_key( '74800000000000019B5F698000000000000001015257303100000000FB013736383232313130FF3900000000000000F8010000000000000000F7' )")
@@ -2803,7 +2814,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	result.Check(testkit.Rows("7480000000000000FF2E5F728000000011FFE1A3000000000000"))
 	warns := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 	require.Len(t, warns, 1)
-	require.Error(t, warns[0].Err, "invalid record/index key: 7480000000000000FF2E5F728000000011FFE1A3000000000000")
+	require.EqualError(t, warns[0].Err, "invalid key: 7480000000000000FF2E5F728000000011FFE1A3000000000000")
 
 	// Test in real tables.
 	tk.MustExec("use test;")
@@ -2866,9 +2877,14 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	result.Check(testkit.Rows(rs))
 
 	// https://github.com/pingcap/tidb/issues/27434.
-	hexKey = "7480000000000000375F69800000000000000103800000000001D4C1023B6458"
-	sql = fmt.Sprintf("select tidb_decode_key( '%s' )", hexKey)
+	hexKey = "7480000000000100375F69800000000000000103800000000001D4C1023B6458"
+	sql = fmt.Sprintf("select tidb_decode_key('%s')", hexKey)
 	tk.MustQuery(sql).Check(testkit.Rows(hexKey))
+
+	// https://github.com/pingcap/tidb/issues/33015.
+	hexKey = "74800000000000012B5F72800000000000A5D3"
+	sql = fmt.Sprintf("select tidb_decode_key('%s')", hexKey)
+	tk.MustQuery(sql).Check(testkit.Rows(`{"_tidb_rowid":42451,"table_id":"299"}`))
 
 	// Test the table with the nonclustered index.
 	const rowID = 10
@@ -3482,29 +3498,33 @@ func TestExprPushdown(t *testing.T) {
 
 	// case 1, index scan without double read, some filters can not be pushed to cop task
 	rows := tk.MustQuery("explain format = 'brief' select col2, col1 from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
-	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[2][2]))
-	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\"), like(test.t.col2, \"5%\", 92)", fmt.Sprintf("%v", rows[2][4]))
+	require.Equal(t, "root", fmt.Sprintf("%v", rows[1][2]))
+	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\")", fmt.Sprintf("%v", rows[1][4]))
+	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[3][2]))
+	require.Equal(t, "like(test.t.col2, \"5%\", 92)", fmt.Sprintf("%v", rows[3][4]))
 	tk.MustQuery("select col2, col1 from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("511 411111"))
 	tk.MustQuery("select count(col2) from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
 
 	// case 2, index scan without double read, none of the filters can be pushed to cop task
 	rows = tk.MustQuery("explain format = 'brief' select col1, col2 from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
-	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[1][2]))
-	require.Equal(t, `eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), "4"), eq(from_base64(to_base64(substr(test.t.col2, 1, 1))), "5")`, fmt.Sprintf("%v", rows[1][4]))
+	require.Equal(t, "root", fmt.Sprintf("%v", rows[0][2]))
+	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\"), eq(from_base64(to_base64(substr(test.t.col2, 1, 1))), \"5\")", fmt.Sprintf("%v", rows[0][4]))
 	tk.MustQuery("select col1, col2 from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("411111 511"))
 	tk.MustQuery("select count(col1) from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
 
 	// case 3, index scan with double read, some filters can not be pushed to cop task
 	rows = tk.MustQuery("explain format = 'brief' select id from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
-	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[2][2]))
-	require.Equal(t, `eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), "4"), like(test.t.col2, "5%", 92)`, fmt.Sprintf("%v", rows[2][4]))
+	require.Equal(t, "root", fmt.Sprintf("%v", rows[1][2]))
+	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\")", fmt.Sprintf("%v", rows[1][4]))
+	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[3][2]))
+	require.Equal(t, "like(test.t.col2, \"5%\", 92)", fmt.Sprintf("%v", rows[3][4]))
 	tk.MustQuery("select id from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("3"))
 	tk.MustQuery("select count(id) from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
 
 	// case 4, index scan with double read, none of the filters can be pushed to cop task
 	rows = tk.MustQuery("explain format = 'brief' select id from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
-	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[2][2]))
-	require.Equal(t, `eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), "4"), eq(from_base64(to_base64(substr(test.t.col2, 1, 1))), "5")`, fmt.Sprintf("%v", rows[2][4]))
+	require.Equal(t, "root", fmt.Sprintf("%v", rows[1][2]))
+	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\"), eq(from_base64(to_base64(substr(test.t.col2, 1, 1))), \"5\")", fmt.Sprintf("%v", rows[1][4]))
 	tk.MustQuery("select id from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("3"))
 	tk.MustQuery("select count(id) from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
 }

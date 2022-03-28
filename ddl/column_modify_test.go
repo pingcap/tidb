@@ -28,12 +28,16 @@ import (
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
@@ -118,7 +122,7 @@ AddLoop:
 		})
 	}
 
-	tbl := tk.GetTableByName("test", "t2")
+	tbl := external.GetTableByName(t, tk, "test", "t2")
 	i := 0
 	j := 0
 	require.NoError(t, tk.Session().NewTxn(context.Background()))
@@ -386,7 +390,7 @@ func TestRenameColumn(t *testing.T) {
 	tk.MustExec("use test")
 
 	assertColNames := func(tableName string, colNames ...string) {
-		cols := tk.GetTableByName("test", tableName).Cols()
+		cols := external.GetTableByName(t, tk, "test", tableName).Cols()
 		require.Equal(t, len(colNames), len(cols))
 		for i := range cols {
 			require.Equal(t, strings.ToLower(colNames[i]), cols[i].Name.L)
@@ -498,13 +502,13 @@ func TestCancelDropColumn(t *testing.T) {
 		if testCase.needAddColumn {
 			tk.MustExec("alter table test_drop_column add column c3 int")
 			tk.MustExec("alter table test_drop_column add index idx_c3(c3)")
-			c3IdxID = testGetIndexID(t, tk.Session(), "test", "test_drop_column", "idx_c3")
+			c3IdxID = external.GetIndexID(t, tk, "test", "test_drop_column", "idx_c3")
 		}
 
 		err := tk.ExecToErr("alter table test_drop_column drop column c3")
 		var col1 *table.Column
 		var idx1 table.Index
-		tbl := tk.GetTableByName("test", "test_drop_column")
+		tbl := external.GetTableByName(t, tk, "test", "test_drop_column")
 		for _, col := range tbl.Cols() {
 			if strings.EqualFold(col.Name.L, "c3") {
 				col1 = col
@@ -602,10 +606,10 @@ func TestCancelDropColumns(t *testing.T) {
 		if testCase.needAddColumn {
 			tk.MustExec("alter table test_drop_column add column c3 int, add column c4 int")
 			tk.MustExec("alter table test_drop_column add index idx_c3(c3)")
-			c3IdxID = testGetIndexID(t, tk.Session(), "test", "test_drop_column", "idx_c3")
+			c3IdxID = external.GetIndexID(t, tk, "test", "test_drop_column", "idx_c3")
 		}
 		err := tk.ExecToErr("alter table test_drop_column drop column c3, drop column c4")
-		tbl := tk.GetTableByName("test", "test_drop_column")
+		tbl := external.GetTableByName(t, tk, "test", "test_drop_column")
 		col3 := table.FindCol(tbl.Cols(), "c3")
 		col4 := table.FindCol(tbl.Cols(), "c4")
 		var idx3 table.Index
@@ -639,4 +643,661 @@ func TestCancelDropColumns(t *testing.T) {
 	dom.DDL().SetHook(originalHook)
 	tk.MustExec("alter table test_drop_column add column c3 int, add column c4 int")
 	tk.MustExec("alter table test_drop_column drop column c3, drop column c4")
+}
+
+func TestVirtualColumnDDL(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create global temporary table test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored) on commit delete rows;`)
+	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_gv_ddl"))
+	require.NoError(t, err)
+	testCases := []struct {
+		generatedExprString string
+		generatedStored     bool
+	}{
+		{"", false},
+		{"`a` + 8", false},
+		{"`b` + 2", true},
+	}
+	for i, column := range tbl.Meta().Columns {
+		require.Equal(t, testCases[i].generatedExprString, column.GeneratedExprString)
+		require.Equal(t, testCases[i].generatedStored, column.GeneratedStored)
+	}
+	result := tk.MustQuery(`DESC test_gv_ddl`)
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
+	tk.MustExec("begin;")
+	tk.MustExec("insert into test_gv_ddl values (1, default, default)")
+	tk.MustQuery("select * from test_gv_ddl").Check(testkit.Rows("1 9 11"))
+	tk.MustExec("commit")
+
+	// for local temporary table
+	tk.MustExec(`create temporary table test_local_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored);`)
+	is = tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_local_gv_ddl"))
+	require.NoError(t, err)
+	for i, column := range tbl.Meta().Columns {
+		require.Equal(t, testCases[i].generatedExprString, column.GeneratedExprString)
+		require.Equal(t, testCases[i].generatedStored, column.GeneratedStored)
+	}
+	result = tk.MustQuery(`DESC test_local_gv_ddl`)
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
+	tk.MustExec("begin;")
+	tk.MustExec("insert into test_local_gv_ddl values (1, default, default)")
+	tk.MustQuery("select * from test_local_gv_ddl").Check(testkit.Rows("1 9 11"))
+	tk.MustExec("commit")
+	tk.MustQuery("select * from test_local_gv_ddl").Check(testkit.Rows("1 9 11"))
+}
+
+func TestGeneratedColumnDDL(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Check create table with virtual and stored generated columns.
+	tk.MustExec(`CREATE TABLE test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored)`)
+
+	// Check desc table with virtual and stored generated columns.
+	result := tk.MustQuery(`DESC test_gv_ddl`)
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
+
+	// Check show create table with virtual and stored generated columns.
+	result = tk.MustQuery(`show create table test_gv_ddl`)
+	result.Check(testkit.Rows(
+		"test_gv_ddl CREATE TABLE `test_gv_ddl` (\n  `a` int(11) DEFAULT NULL,\n  `b` int(11) GENERATED ALWAYS AS (`a` + 8) VIRTUAL,\n  `c` int(11) GENERATED ALWAYS AS (`b` + 2) STORED\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	// Check generated expression with blanks.
+	tk.MustExec("create table table_with_gen_col_blanks (a int, b char(20) as (cast( \r\n\t a \r\n\tas  char)), c int as (a+100))")
+	result = tk.MustQuery(`show create table table_with_gen_col_blanks`)
+	result.Check(testkit.Rows("table_with_gen_col_blanks CREATE TABLE `table_with_gen_col_blanks` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` char(20) GENERATED ALWAYS AS (cast(`a` as char)) VIRTUAL,\n" +
+		"  `c` int(11) GENERATED ALWAYS AS (`a` + 100) VIRTUAL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// Check generated expression with charset latin1 ("latin1" != mysql.DefaultCharset).
+	tk.MustExec("create table table_with_gen_col_latin1 (a int, b char(20) as (cast( \r\n\t a \r\n\tas  char charset latin1)), c int as (a+100))")
+	result = tk.MustQuery(`show create table table_with_gen_col_latin1`)
+	result.Check(testkit.Rows("table_with_gen_col_latin1 CREATE TABLE `table_with_gen_col_latin1` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` char(20) GENERATED ALWAYS AS (cast(`a` as char charset latin1)) VIRTUAL,\n" +
+		"  `c` int(11) GENERATED ALWAYS AS (`a` + 100) VIRTUAL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// Check generated expression with string (issue 9457).
+	tk.MustExec("create table table_with_gen_col_string (first_name varchar(10), last_name varchar(10), full_name varchar(255) AS (CONCAT(first_name,' ',last_name)))")
+	result = tk.MustQuery(`show create table table_with_gen_col_string`)
+	result.Check(testkit.Rows("table_with_gen_col_string CREATE TABLE `table_with_gen_col_string` (\n" +
+		"  `first_name` varchar(10) DEFAULT NULL,\n" +
+		"  `last_name` varchar(10) DEFAULT NULL,\n" +
+		"  `full_name` varchar(255) GENERATED ALWAYS AS (concat(`first_name`, _utf8mb4' ', `last_name`)) VIRTUAL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("alter table table_with_gen_col_string modify column full_name varchar(255) GENERATED ALWAYS AS (CONCAT(last_name,' ' ,first_name) ) VIRTUAL")
+	result = tk.MustQuery(`show create table table_with_gen_col_string`)
+	result.Check(testkit.Rows("table_with_gen_col_string CREATE TABLE `table_with_gen_col_string` (\n" +
+		"  `first_name` varchar(10) DEFAULT NULL,\n" +
+		"  `last_name` varchar(10) DEFAULT NULL,\n" +
+		"  `full_name` varchar(255) GENERATED ALWAYS AS (concat(`last_name`, _utf8mb4' ', `first_name`)) VIRTUAL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	// Test incorrect parameter count.
+	tk.MustGetErrCode("create table test_gv_incorrect_pc(a double, b int as (lower(a, 2)))", errno.ErrWrongParamcountToNativeFct)
+	tk.MustGetErrCode("create table test_gv_incorrect_pc(a double, b int as (lower(a, 2)) stored)", errno.ErrWrongParamcountToNativeFct)
+
+	genExprTests := []struct {
+		stmt string
+		err  int
+	}{
+		// Drop/rename columns dependent by other column.
+		{`alter table test_gv_ddl drop column a`, errno.ErrDependentByGeneratedColumn},
+		{`alter table test_gv_ddl change column a anew int`, errno.ErrBadField},
+
+		// Modify/change stored status of generated columns.
+		{`alter table test_gv_ddl modify column b bigint`, errno.ErrUnsupportedOnGeneratedColumn},
+		{`alter table test_gv_ddl change column c cnew bigint as (a+100)`, errno.ErrUnsupportedOnGeneratedColumn},
+
+		// Modify/change generated columns breaking prior.
+		{`alter table test_gv_ddl modify column b int as (c+100)`, errno.ErrGeneratedColumnNonPrior},
+		{`alter table test_gv_ddl change column b bnew int as (c+100)`, errno.ErrGeneratedColumnNonPrior},
+
+		// Refer not exist columns in generation expression.
+		{`create table test_gv_ddl_bad (a int, b int as (c+8))`, errno.ErrBadField},
+
+		// Refer generated columns non prior.
+		{`create table test_gv_ddl_bad (a int, b int as (c+1), c int as (a+1))`, errno.ErrGeneratedColumnNonPrior},
+
+		// Virtual generated columns cannot be primary key.
+		{`create table test_gv_ddl_bad (a int, b int, c int as (a+b) primary key)`, errno.ErrUnsupportedOnGeneratedColumn},
+		{`create table test_gv_ddl_bad (a int, b int, c int as (a+b), primary key(c))`, errno.ErrUnsupportedOnGeneratedColumn},
+		{`create table test_gv_ddl_bad (a int, b int, c int as (a+b), primary key(a, c))`, errno.ErrUnsupportedOnGeneratedColumn},
+
+		// Add stored generated column through alter table.
+		{`alter table test_gv_ddl add column d int as (b+2) stored`, errno.ErrUnsupportedOnGeneratedColumn},
+		{`alter table test_gv_ddl modify column b int as (a + 8) stored`, errno.ErrUnsupportedOnGeneratedColumn},
+
+		// Add generated column with incorrect parameter count.
+		{`alter table test_gv_ddl add column z int as (lower(a, 2))`, errno.ErrWrongParamcountToNativeFct},
+		{`alter table test_gv_ddl add column z int as (lower(a, 2)) stored`, errno.ErrWrongParamcountToNativeFct},
+
+		// Modify generated column with incorrect parameter count.
+		{`alter table test_gv_ddl modify column b int as (lower(a, 2))`, errno.ErrWrongParamcountToNativeFct},
+		{`alter table test_gv_ddl change column b b int as (lower(a, 2))`, errno.ErrWrongParamcountToNativeFct},
+	}
+	for _, tt := range genExprTests {
+		tk.MustGetErrCode(tt.stmt, tt.err)
+	}
+
+	// Check alter table modify/change generated column.
+	modStoredColErrMsg := "[ddl:3106]'modifying a stored column' is not supported for generated columns."
+	tk.MustGetErrMsg(`alter table test_gv_ddl modify column c bigint as (b+200) stored`, modStoredColErrMsg)
+
+	result = tk.MustQuery(`DESC test_gv_ddl`)
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b int(11) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
+
+	tk.MustExec(`alter table test_gv_ddl change column b b bigint as (a+100) virtual`)
+	result = tk.MustQuery(`DESC test_gv_ddl`)
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(20) YES  <nil> VIRTUAL GENERATED`, `c int(11) YES  <nil> STORED GENERATED`))
+
+	tk.MustExec(`alter table test_gv_ddl change column c cnew bigint`)
+	result = tk.MustQuery(`DESC test_gv_ddl`)
+	result.Check(testkit.Rows(`a int(11) YES  <nil> `, `b bigint(20) YES  <nil> VIRTUAL GENERATED`, `cnew bigint(20) YES  <nil> `))
+
+	// Test generated column `\\`.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t(c0 TEXT AS ('\\\\'));")
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery("select * from t").Check(testkit.Rows("\\"))
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t(c0 TEXT AS ('a\\\\b\\\\c\\\\'))")
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery("select * from t").Check(testkit.Rows("a\\b\\c\\"))
+}
+
+func TestColumnModifyingDefinition(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table test2 (c1 int, c2 int, c3 int default 1, index (c1));")
+	tk.MustExec("alter table test2 change c2 a int not null;")
+	is := domain.GetDomain(tk.Session()).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test2"))
+	require.NoError(t, err)
+	var c2 *table.Column
+	for _, col := range tbl.Cols() {
+		if col.Name.L == "a" {
+			c2 = col
+		}
+	}
+	require.True(t, mysql.HasNotNullFlag(c2.Flag))
+
+	tk.MustExec("drop table if exists test2;")
+	tk.MustExec("create table test2 (c1 int, c2 int, c3 int default 1, index (c1));")
+	tk.MustExec("insert into test2(c2) values (null);")
+	tk.MustGetErrMsg("alter table test2 change c2 a int not null", "[ddl:1265]Data truncated for column 'a' at row 1")
+	tk.MustGetErrCode("alter table test2 change c1 a1 bigint not null;", mysql.WarnDataTruncated)
+}
+
+func TestTransactionWithWriteOnlyColumn(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int key);")
+
+	transactions := [][]string{
+		{
+			"begin",
+			"insert into t1 set a=1",
+			"update t1 set a=2 where a=1",
+			"commit",
+		},
+	}
+
+	hook := &ddl.TestDDLCallback{Do: dom}
+	var checkErr error
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateWriteOnly:
+		default:
+			return
+		}
+		// do transaction.
+		for _, transaction := range transactions {
+			for _, sql := range transaction {
+				if _, checkErr = tk.Exec(sql); checkErr != nil {
+					checkErr = errors.Errorf("err: %s, sql: %s, job schema state: %s", checkErr.Error(), sql, job.SchemaState)
+					return
+				}
+			}
+		}
+	}
+	dom.DDL().SetHook(hook)
+	done := make(chan error, 1)
+	// test transaction on add column.
+	go backgroundExec(store, "alter table t1 add column c int not null", done)
+	err := <-done
+	require.NoError(t, err)
+	require.NoError(t, checkErr)
+	tk.MustQuery("select a from t1").Check(testkit.Rows("2"))
+	tk.MustExec("delete from t1")
+
+	// test transaction on drop column.
+	go backgroundExec(store, "alter table t1 drop column c", done)
+	err = <-done
+	require.NoError(t, err)
+	require.NoError(t, checkErr)
+	tk.MustQuery("select a from t1").Check(testkit.Rows("2"))
+}
+
+func TestColumnCheck(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists column_check")
+	tk.MustExec("create table column_check (pk int primary key, a int check (a > 1))")
+	defer tk.MustExec("drop table if exists column_check")
+	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|8231|CONSTRAINT CHECK is not supported"))
+}
+
+func TestModifyGeneratedColumn(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	modIdxColErrMsg := "[ddl:3106]'modifying an indexed column' is not supported for generated columns."
+	modStoredColErrMsg := "[ddl:3106]'modifying a stored column' is not supported for generated columns."
+
+	// Modify column with single-col-index.
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (a int, b int as (a+1), index idx(b));")
+	tk.MustExec("insert into t1 set a=1;")
+	tk.MustGetErrMsg("alter table t1 modify column b int as (a+2);", modIdxColErrMsg)
+	tk.MustExec("drop index idx on t1;")
+	tk.MustExec("alter table t1 modify b int as (a+2);")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 3"))
+
+	// Modify column with multi-col-index.
+	tk.MustExec("drop table t1;")
+	tk.MustExec("create table t1 (a int, b int as (a+1), index idx(a, b));")
+	tk.MustExec("insert into t1 set a=1;")
+	tk.MustGetErrMsg("alter table t1 modify column b int as (a+2);", modIdxColErrMsg)
+	tk.MustExec("drop index idx on t1;")
+	tk.MustExec("alter table t1 modify b int as (a+2);")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 3"))
+
+	// Modify column with stored status to a different expression.
+	tk.MustExec("drop table t1;")
+	tk.MustExec("create table t1 (a int, b int as (a+1) stored);")
+	tk.MustExec("insert into t1 set a=1;")
+	tk.MustGetErrMsg("alter table t1 modify column b int as (a+2) stored;", modStoredColErrMsg)
+
+	// Modify column with stored status to the same expression.
+	tk.MustExec("drop table t1;")
+	tk.MustExec("create table t1 (a int, b int as (a+1) stored);")
+	tk.MustExec("insert into t1 set a=1;")
+	tk.MustExec("alter table t1 modify column b bigint as (a+1) stored;")
+	tk.MustExec("alter table t1 modify column b bigint as (a + 1) stored;")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 2"))
+
+	// Modify column with index to the same expression.
+	tk.MustExec("drop table t1;")
+	tk.MustExec("create table t1 (a int, b int as (a+1), index idx(b));")
+	tk.MustExec("insert into t1 set a=1;")
+	tk.MustExec("alter table t1 modify column b bigint as (a+1);")
+	tk.MustExec("alter table t1 modify column b bigint as (a + 1);")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 2"))
+
+	// Modify column from non-generated to stored generated.
+	tk.MustExec("drop table t1;")
+	tk.MustExec("create table t1 (a int, b int);")
+	tk.MustGetErrMsg("alter table t1 modify column b bigint as (a+1) stored;", modStoredColErrMsg)
+
+	// Modify column from stored generated to non-generated.
+	tk.MustExec("drop table t1;")
+	tk.MustExec("create table t1 (a int, b int as (a+1) stored);")
+	tk.MustExec("insert into t1 set a=1;")
+	tk.MustExec("alter table t1 modify column b int;")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 2"))
+}
+
+func TestCheckColumnDefaultValue(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists text_default_text;")
+	tk.MustGetErrCode("create table text_default_text(c1 text not null default '');", errno.ErrBlobCantHaveDefault)
+	tk.MustGetErrCode("create table text_default_text(c1 text not null default 'scds');", errno.ErrBlobCantHaveDefault)
+
+	tk.MustExec("drop table if exists text_default_json;")
+	tk.MustGetErrCode("create table text_default_json(c1 json not null default '');", errno.ErrBlobCantHaveDefault)
+	tk.MustGetErrCode("create table text_default_json(c1 json not null default 'dfew555');", errno.ErrBlobCantHaveDefault)
+
+	tk.MustExec("drop table if exists text_default_blob;")
+	tk.MustGetErrCode("create table text_default_blob(c1 blob not null default '');", errno.ErrBlobCantHaveDefault)
+	tk.MustGetErrCode("create table text_default_blob(c1 blob not null default 'scds54');", errno.ErrBlobCantHaveDefault)
+
+	tk.MustExec("set sql_mode='';")
+	tk.MustExec("create table text_default_text(c1 text not null default '');")
+	tk.MustQuery(`show create table text_default_text`).Check(testkit.RowsWithSep("|",
+		"text_default_text CREATE TABLE `text_default_text` (\n"+
+			"  `c1` text NOT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	is := domain.GetDomain(tk.Session()).InfoSchema()
+	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("text_default_text"))
+	require.NoError(t, err)
+	require.Empty(t, tblInfo.Meta().Columns[0].DefaultValue)
+
+	tk.MustExec("create table text_default_blob(c1 blob not null default '');")
+	tk.MustQuery(`show create table text_default_blob`).Check(testkit.RowsWithSep("|",
+		"text_default_blob CREATE TABLE `text_default_blob` (\n"+
+			"  `c1` blob NOT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	is = domain.GetDomain(tk.Session()).InfoSchema()
+	tblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("text_default_blob"))
+	require.NoError(t, err)
+	require.Empty(t, tblInfo.Meta().Columns[0].DefaultValue)
+
+	tk.MustExec("create table text_default_json(c1 json not null default '');")
+	tk.MustQuery(`show create table text_default_json`).Check(testkit.RowsWithSep("|",
+		"text_default_json CREATE TABLE `text_default_json` (\n"+
+			"  `c1` json NOT NULL DEFAULT 'null'\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+	is = domain.GetDomain(tk.Session()).InfoSchema()
+	tblInfo, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("text_default_json"))
+	require.NoError(t, err)
+	require.Equal(t, "null", tblInfo.Meta().Columns[0].DefaultValue)
+}
+
+func TestCheckConvertToCharacter(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a varchar(10) charset binary);")
+	is := domain.GetDomain(tk.Session()).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tk.MustGetErrCode("alter table t modify column a varchar(10) charset utf8 collate utf8_bin", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify column a varchar(10) charset utf8mb4 collate utf8mb4_bin", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t modify column a varchar(10) charset latin1 collate latin1_bin", errno.ErrUnsupportedDDLOperation)
+	require.Equal(t, "binary", tbl.Cols()[0].Charset)
+}
+
+func TestAddMultiColumnsIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists tidb;")
+	tk.MustExec("create database tidb;")
+	tk.MustExec("use tidb;")
+	tk.MustExec("create table tidb.test (a int auto_increment primary key, b int);")
+	tk.MustExec("insert tidb.test values (1, 1);")
+	tk.MustExec("update tidb.test set b = b + 1 where a = 1;")
+	tk.MustExec("insert into tidb.test values (2, 2);")
+	// Test that the b value is nil.
+	tk.MustExec("insert into tidb.test (a) values (3);")
+	tk.MustExec("insert into tidb.test values (4, 4);")
+	// Test that the b value is nil again.
+	tk.MustExec("insert into tidb.test (a) values (5);")
+	tk.MustExec("insert tidb.test values (6, 6);")
+	tk.MustExec("alter table tidb.test add index idx1 (a, b);")
+	tk.MustExec("admin check table test")
+}
+
+// For issue #31735.
+func TestAddGeneratedColumnAndInsert(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, unique kye(a))")
+	tk.MustExec("insert into t1 value (1), (10)")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+
+	d := dom.DDL()
+	hook := &ddl.TestDDLCallback{Do: dom}
+	ctx := mock.NewContext()
+	ctx.Store = store
+	times := 0
+	var checkErr error
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateDeleteOnly:
+			_, checkErr = tk1.Exec("insert into t1 values (1) on duplicate key update a=a+1")
+			if checkErr == nil {
+				_, checkErr = tk1.Exec("replace into t1 values (2)")
+			}
+		case model.StateWriteOnly:
+			_, checkErr = tk1.Exec("insert into t1 values (2) on duplicate key update a=a+1")
+			if checkErr == nil {
+				_, checkErr = tk1.Exec("replace into t1 values (3)")
+			}
+		case model.StateWriteReorganization:
+			if checkErr == nil && job.SchemaState == model.StateWriteReorganization && times == 0 {
+				_, checkErr = tk1.Exec("insert into t1 values (3) on duplicate key update a=a+1")
+				if checkErr == nil {
+					_, checkErr = tk1.Exec("replace into t1 values (4)")
+				}
+				times++
+			}
+		}
+	}
+	d.SetHook(hook)
+
+	tk.MustExec("alter table t1 add column gc int as ((a+1))")
+	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("4 5", "10 11"))
+	require.NoError(t, checkErr)
+}
+
+func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	hook := &ddl.TestDDLCallback{}
+	var checkErr error
+	assertChangingColName := "_col$_c2_0"
+	assertChangingIdxName := "_idx$_idx_0"
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if job.SchemaState == model.StateDeleteOnly && job.Type == model.ActionModifyColumn {
+			var (
+				newCol                *model.ColumnInfo
+				oldColName            *model.CIStr
+				modifyColumnTp        byte
+				updatedAutoRandomBits uint64
+				changingCol           *model.ColumnInfo
+				changingIdxs          []*model.IndexInfo
+			)
+			pos := &ast.ColumnPosition{}
+			err := job.DecodeArgs(&newCol, &oldColName, pos, &modifyColumnTp, &updatedAutoRandomBits, &changingCol, &changingIdxs)
+			if err != nil {
+				checkErr = err
+				return
+			}
+			if changingCol.Name.L != assertChangingColName {
+				checkErr = errors.New("changing column name is incorrect")
+			} else if changingIdxs[0].Name.L != assertChangingIdxName {
+				checkErr = errors.New("changing index name is incorrect")
+			}
+		}
+	}
+	d := dom.DDL()
+	d.SetHook(hook)
+
+	tk.MustExec("create table if not exists t(c1 varchar(256), c2 bigint, `_col$_c2` varchar(10), unique _idx$_idx(c1), unique idx(c2));")
+	tk.MustExec("alter table test.t change column c2 cC2 tinyint after `_col$_c2`")
+	require.NoError(t, checkErr)
+
+	tbl := external.GetTableByName(t, tk, "test", "t")
+	require.Len(t, tbl.Meta().Columns, 3)
+	require.Equal(t, "c1", tbl.Meta().Columns[0].Name.O)
+	require.Equal(t, 0, tbl.Meta().Columns[0].Offset)
+	require.Equal(t, "_col$_c2", tbl.Meta().Columns[1].Name.O)
+	require.Equal(t, 1, tbl.Meta().Columns[1].Offset)
+	require.Equal(t, "cC2", tbl.Meta().Columns[2].Name.O)
+	require.Equal(t, 2, tbl.Meta().Columns[2].Offset)
+
+	require.Len(t, tbl.Meta().Indices, 2)
+	require.Equal(t, "_idx$_idx", tbl.Meta().Indices[0].Name.O)
+	require.Equal(t, "idx", tbl.Meta().Indices[1].Name.O)
+
+	require.Len(t, tbl.Meta().Indices[0].Columns, 1)
+	require.Equal(t, "c1", tbl.Meta().Indices[0].Columns[0].Name.O)
+	require.Equal(t, 0, tbl.Meta().Indices[0].Columns[0].Offset)
+
+	require.Len(t, tbl.Meta().Indices[1].Columns, 1)
+	require.Equal(t, "cC2", tbl.Meta().Indices[1].Columns[0].Name.O)
+	require.Equal(t, 2, tbl.Meta().Indices[1].Columns[0].Offset)
+
+	assertChangingColName1 := "_col$__col$_c1_1"
+	assertChangingColName2 := "_col$__col$__col$_c1_0_1"
+	query1 := "alter table t modify column _col$_c1 tinyint"
+	query2 := "alter table t modify column _col$__col$_c1_0 tinyint"
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if (job.Query == query1 || job.Query == query2) && job.SchemaState == model.StateDeleteOnly && job.Type == model.ActionModifyColumn {
+			var (
+				newCol                *model.ColumnInfo
+				oldColName            *model.CIStr
+				modifyColumnTp        byte
+				updatedAutoRandomBits uint64
+				changingCol           *model.ColumnInfo
+				changingIdxs          []*model.IndexInfo
+			)
+			pos := &ast.ColumnPosition{}
+			err := job.DecodeArgs(&newCol, &oldColName, pos, &modifyColumnTp, &updatedAutoRandomBits, &changingCol, &changingIdxs)
+			if err != nil {
+				checkErr = err
+				return
+			}
+			if job.Query == query1 && changingCol.Name.L != assertChangingColName1 {
+				checkErr = errors.New("changing column name is incorrect")
+			}
+			if job.Query == query2 && changingCol.Name.L != assertChangingColName2 {
+				checkErr = errors.New("changing column name is incorrect")
+			}
+		}
+	}
+	d.SetHook(hook)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table if not exists t(c1 bigint, _col$_c1 bigint, _col$__col$_c1_0 bigint, _col$__col$__col$_c1_0_0 bigint)")
+	tk.MustExec("alter table t modify column c1 tinyint")
+	tk.MustExec("alter table t modify column _col$_c1 tinyint")
+	require.NoError(t, checkErr)
+	tk.MustExec("alter table t modify column _col$__col$_c1_0 tinyint")
+	require.NoError(t, checkErr)
+	tk.MustExec("alter table t change column _col$__col$__col$_c1_0_0  _col$__col$__col$_c1_0_0 tinyint")
+
+	tbl = external.GetTableByName(t, tk, "test", "t")
+	require.Len(t, tbl.Meta().Columns, 4)
+	require.Equal(t, "c1", tbl.Meta().Columns[0].Name.O)
+	require.Equal(t, mysql.TypeTiny, tbl.Meta().Columns[0].Tp)
+	require.Equal(t, 0, tbl.Meta().Columns[0].Offset)
+	require.Equal(t, "_col$_c1", tbl.Meta().Columns[1].Name.O)
+	require.Equal(t, mysql.TypeTiny, tbl.Meta().Columns[1].Tp)
+	require.Equal(t, 1, tbl.Meta().Columns[1].Offset)
+	require.Equal(t, "_col$__col$_c1_0", tbl.Meta().Columns[2].Name.O)
+	require.Equal(t, mysql.TypeTiny, tbl.Meta().Columns[2].Tp)
+	require.Equal(t, 2, tbl.Meta().Columns[2].Offset)
+	require.Equal(t, "_col$__col$__col$_c1_0_0", tbl.Meta().Columns[3].Name.O)
+	require.Equal(t, mysql.TypeTiny, tbl.Meta().Columns[3].Tp)
+	require.Equal(t, 3, tbl.Meta().Columns[3].Offset)
+
+	tk.MustExec("drop table if exists t")
+}
+
+func TestWriteReorgForColumnTypeChangeOnAmendTxn(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_amend_pessimistic_txn = ON")
+	defer tk.MustExec("set global tidb_enable_amend_pessimistic_txn = OFF")
+
+	d := dom.DDL()
+	testInsertOnModifyColumn := func(sql string, startColState, commitColState model.SchemaState, retStrs []string, retErr error) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("create table t1 (c1 int, c2 int, c3 int, unique key(c1))")
+		tk.MustExec("insert into t1 values (20, 20, 20);")
+
+		var checkErr error
+		tk1 := testkit.NewTestKit(t, store)
+		defer func() {
+			if tk1.Session() != nil {
+				tk1.Session().Close()
+			}
+		}()
+		hook := &ddl.TestDDLCallback{Do: dom}
+		times := 0
+		hook.OnJobUpdatedExported = func(job *model.Job) {
+			if job.Type != model.ActionModifyColumn || checkErr != nil ||
+				(job.SchemaState != startColState && job.SchemaState != commitColState) {
+				return
+			}
+
+			if job.SchemaState == startColState {
+				tk1.MustExec("use test")
+				tk1.MustExec("begin pessimistic;")
+				tk1.MustExec("insert into t1 values(101, 102, 103)")
+				return
+			}
+			if times == 0 {
+				_, checkErr = tk1.Exec("commit;")
+			}
+			times++
+		}
+		d.SetHook(hook)
+
+		tk.MustExec(sql)
+		if retErr == nil {
+			require.NoError(t, checkErr)
+		} else {
+			require.Error(t, checkErr)
+			require.Contains(t, checkErr.Error(), retErr.Error())
+		}
+		tk.MustQuery("select * from t1").Check(testkit.Rows(retStrs...))
+		tk.MustExec("admin check table t1")
+	}
+
+	// Testing it needs reorg data.
+	ddlStatement := "alter table t1 change column c2 cc smallint;"
+	testInsertOnModifyColumn(ddlStatement, model.StateNone, model.StateWriteReorganization, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
+	testInsertOnModifyColumn(ddlStatement, model.StateDeleteOnly, model.StateWriteReorganization, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
+	testInsertOnModifyColumn(ddlStatement, model.StateWriteOnly, model.StateWriteReorganization, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
+	testInsertOnModifyColumn(ddlStatement, model.StateNone, model.StatePublic, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
+	testInsertOnModifyColumn(ddlStatement, model.StateDeleteOnly, model.StatePublic, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
+	testInsertOnModifyColumn(ddlStatement, model.StateWriteOnly, model.StatePublic, []string{"20 20 20"}, domain.ErrInfoSchemaChanged)
+
+	// Testing it needs not reorg data. This case only have two states: none, public.
+	ddlStatement = "alter table t1 change column c2 cc bigint;"
+	testInsertOnModifyColumn(ddlStatement, model.StateNone, model.StateWriteReorganization, []string{"20 20 20"}, nil)
+	testInsertOnModifyColumn(ddlStatement, model.StateWriteOnly, model.StateWriteReorganization, []string{"20 20 20"}, nil)
+	testInsertOnModifyColumn(ddlStatement, model.StateNone, model.StatePublic, []string{"20 20 20", "101 102 103"}, nil)
+	testInsertOnModifyColumn(ddlStatement, model.StateWriteOnly, model.StatePublic, []string{"20 20 20"}, nil)
 }
