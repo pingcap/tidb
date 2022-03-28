@@ -1575,21 +1575,18 @@ func TestIssue28792(t *testing.T) {
 	require.Equal(t, r2, r1)
 }
 
-func (s *testSerialSuite) TestExplainForConnectionBrief(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+func TestExplainForConnectionBrief(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
-	rows := tk.MustQuery("SELECT CONNECTION_ID();").Rows()
-	c.Assert(len(rows), Equals, 1)
+	tk := testkit.NewTestKit(t, store)
+	rows := tk.MustQuery("select connection_id();").Rows()
 	connID := rows[0][0].(string)
 
-	tk.MustExec("USE test")
-	tk.MustExec("DROP TABLE IF EXISTS t;")
-	tk.MustExec("CREATE TABLE t (a int);")
-	tk.MustQuery("SELECT * FROM t;")
-
-	tkProcess := tk.Se.ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
-	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int);")
+	tk.MustQuery("select * from t;")
 
 	tk.MustQuery(fmt.Sprintf("EXPLAIN FORMAT = 'brief' FOR CONNECTION %s;", connID)).Check(testkit.Rows(
 		`TableReader_5 10000.00 root  data:TableFullScan_4`,
