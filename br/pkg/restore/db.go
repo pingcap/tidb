@@ -32,7 +32,7 @@ type UniqueTableName struct {
 
 type DDLJobFilterRule func(ddlJob *model.Job) bool
 
-var incrementalRestoreActionBlacklist = map[model.ActionType]struct{}{
+var incrementalRestoreActionBlockList = map[model.ActionType]struct{}{
 	model.ActionSetTiFlashReplica:          {},
 	model.ActionUpdateTiFlashReplicaStatus: {},
 	model.ActionLockTable:                  {},
@@ -100,6 +100,9 @@ func (db *DB) ExecDDL(ctx context.Context, ddlJob *model.Job) error {
 	}
 
 	if ddlJob.Query == "" {
+		log.Warn("query of ddl job is empty, ignore it",
+			zap.Stringer("type", ddlJob.Type),
+			zap.String("db", ddlJob.SchemaName))
 		return nil
 	}
 
@@ -442,9 +445,9 @@ func FilterDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) (ds
 	return
 }
 
-// DDLJobBlacklistRule rule for filter ddl job with type in blacklist.
-func DDLJobBlacklistRule(ddlJob *model.Job) bool {
-	return checkIsInActions(ddlJob.Type, incrementalRestoreActionBlacklist)
+// DDLJobBlockListRule rule for filter ddl job with type in block list.
+func DDLJobBlockListRule(ddlJob *model.Job) bool {
+	return checkIsInActions(ddlJob.Type, incrementalRestoreActionBlockList)
 }
 
 func getDatabases(tables []*metautil.Table) (dbs []*model.DBInfo) {

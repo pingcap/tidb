@@ -361,7 +361,7 @@ func TestFilterDDLJobByRules(t *testing.T) {
 		model.ActionModifyColumn,
 	}
 
-	ddlJobs = restore.FilterDDLJobByRules(ddlJobs, restore.DDLJobBlacklistRule)
+	ddlJobs = restore.FilterDDLJobByRules(ddlJobs, restore.DDLJobBlockListRule)
 
 	require.Equal(t, len(expectedDDLTypes), len(ddlJobs))
 	for i, ddlJob := range ddlJobs {
