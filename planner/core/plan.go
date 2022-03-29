@@ -434,7 +434,8 @@ func (p *basePhysicalPlan) CalRowWidth() float64 {
 	if p.rowWidthInit {
 		return p.rowWidth
 	}
-	p.rowWidth = calRowWidth4Operator(p.Schema().Columns)
+	// TODO: consider more cases, index/table, kv/flash, ...
+	p.rowWidth = p.stats.HistColl.GetTableAvgRowSize(p.ctx, p.Schema().Columns, kv.TiKV, true)
 	p.rowWidthInit = true
 	return p.rowWidth
 }
