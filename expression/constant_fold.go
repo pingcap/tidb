@@ -164,6 +164,10 @@ func foldConstant(expr Expression) (Expression, bool) {
 		hasNullArg := false
 		allConstArg := true
 		isDeferredConst := false
+
+		// We save the OverflowAsWarning when fold constant. When finish function call, we should restore the value.
+		saveOverflowAsWarning := sc.OverflowAsWarning
+
 		for i := 0; i < len(args); i++ {
 			switch x := args[i].(type) {
 			case *Constant:
@@ -190,7 +194,12 @@ func foldConstant(expr Expression) (Expression, bool) {
 			if err != nil {
 				return expr, isDeferredConst
 			}
+
+			// When fold the const function, we ignore the overflow errors to compatiable with MySQL.
+			sc.OverflowAsWarning = true
 			value, err := dummyScalarFunc.Eval(chunk.Row{})
+			sc.OverflowAsWarning = saveOverflowAsWarning
+
 			if err != nil {
 				return expr, isDeferredConst
 			}
@@ -210,7 +219,12 @@ func foldConstant(expr Expression) (Expression, bool) {
 			}
 			return expr, isDeferredConst
 		}
+
+		// When fold the const function, we ignore the overflow errors to compatiable with MySQL.
+		sc.OverflowAsWarning = true
 		value, err := x.Eval(chunk.Row{})
+		sc.OverflowAsWarning = saveOverflowAsWarning
+
 		retType := x.RetType.Clone()
 		if !hasNullArg {
 			// set right not null flag for constant value
