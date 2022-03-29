@@ -78,7 +78,34 @@ func (b *mppExecBuilder) buildMPPTableScan(pb *tipb.TableScan) (*tableScanExec, 
 		ts.lockStore = b.dagCtx.lockStore
 		ts.resolvedLocks = b.dagCtx.resolvedLocks
 	}
-	for _, col := range pb.Columns {
+	for i, col := range pb.Columns {
+		if col.ColumnId == model.ExtraPhysTblID {
+			ts.physTblIDColIdx = new(int)
+			*ts.physTblIDColIdx = i
+		}
+		ft := fieldTypeFromPBColumn(col)
+		ts.fieldTypes = append(ts.fieldTypes, ft)
+	}
+	ts.decoder, err = newRowDecoder(pb.Columns, ts.fieldTypes, pb.PrimaryColumnIds, b.sc.TimeZone)
+	return ts, err
+}
+
+func (b *mppExecBuilder) buildMPPPartitionTableScan(pb *tipb.PartitionTableScan) (*tableScanExec, error) {
+	ranges, err := extractKVRanges(b.dbReader.StartKey, b.dbReader.EndKey, b.dagCtx.keyRanges, false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ts := &tableScanExec{
+		baseMPPExec: baseMPPExec{sc: b.sc, mppCtx: b.mppCtx},
+		startTS:     b.dagCtx.startTS,
+		kvRanges:    ranges,
+		dbReader:    b.dbReader,
+	}
+	for i, col := range pb.Columns {
+		if col.ColumnId == model.ExtraPhysTblID {
+			ts.physTblIDColIdx = new(int)
+			*ts.physTblIDColIdx = i
+		}
 		ft := fieldTypeFromPBColumn(col)
 		ts.fieldTypes = append(ts.fieldTypes, ft)
 	}
@@ -98,9 +125,16 @@ func (b *mppExecBuilder) buildIdxScan(pb *tipb.IndexScan) (*indexScanExec, error
 	primaryColIds := pb.GetPrimaryColumnIds()
 
 	lastCol := pb.Columns[numCols-1]
-	if lastCol.GetColumnId() == model.ExtraPidColID {
-		lastCol = pb.Columns[numCols-2]
+	var physTblIDColIdx *int
+	if lastCol.GetColumnId() == model.ExtraPhysTblID {
 		numIdxCols--
+		physTblIDColIdx = new(int)
+		*physTblIDColIdx = numIdxCols
+		lastCol = pb.Columns[numIdxCols-1]
+	}
+	if lastCol.GetColumnId() == model.ExtraPidColID {
+		numIdxCols--
+		lastCol = pb.Columns[numIdxCols-1]
 	}
 
 	hdlStatus := tablecodec.HandleDefault
@@ -132,19 +166,20 @@ func (b *mppExecBuilder) buildIdxScan(pb *tipb.IndexScan) (*indexScanExec, error
 		prevVals = make([][]byte, numIdxCols)
 	}
 	idxScan := &indexScanExec{
-		baseMPPExec:   baseMPPExec{sc: b.sc, fieldTypes: fieldTypes},
-		startTS:       b.dagCtx.startTS,
-		kvRanges:      ranges,
-		dbReader:      b.dbReader,
-		lockStore:     b.dagCtx.lockStore,
-		resolvedLocks: b.dagCtx.resolvedLocks,
-		counts:        b.counts,
-		ndvs:          b.ndvs,
-		prevVals:      prevVals,
-		colInfos:      colInfos,
-		numIdxCols:    numIdxCols,
-		hdlStatus:     hdlStatus,
-		desc:          pb.Desc,
+		baseMPPExec:     baseMPPExec{sc: b.sc, fieldTypes: fieldTypes},
+		startTS:         b.dagCtx.startTS,
+		kvRanges:        ranges,
+		dbReader:        b.dbReader,
+		lockStore:       b.dagCtx.lockStore,
+		resolvedLocks:   b.dagCtx.resolvedLocks,
+		counts:          b.counts,
+		ndvs:            b.ndvs,
+		prevVals:        prevVals,
+		colInfos:        colInfos,
+		numIdxCols:      numIdxCols,
+		hdlStatus:       hdlStatus,
+		desc:            pb.Desc,
+		physTblIDColIdx: physTblIDColIdx,
 	}
 	return idxScan, nil
 }
@@ -445,6 +480,9 @@ func (b *mppExecBuilder) buildMPPExecutor(exec *tipb.Executor) (mppExec, error) 
 		return b.buildLimit(exec.Limit)
 	case tipb.ExecType_TypeTopN:
 		return b.buildTopN(exec.TopN)
+	case tipb.ExecType_TypePartitionTableScan:
+		ts := exec.PartitionTableScan
+		return b.buildMPPPartitionTableScan(ts)
 	default:
 		return nil, errors.Errorf(ErrExecutorNotSupportedMsg + exec.Tp.String())
 	}

@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
@@ -121,13 +122,10 @@ func TestColumnTypeChangeStateBetweenInteger(t *testing.T) {
 	internalTK := testkit.NewTestKit(t, store)
 	internalTK.MustExec("use test")
 
-	tbl := tk.GetTableByName("test", "t")
+	tbl := external.GetTableByName(t, tk, "test", "t")
 	require.NotNil(t, tbl)
 	require.Equal(t, 2, len(tbl.Cols()))
-	require.NotNil(t, tk.GetModifyColumn("test", "t", "c2", false))
-
-	originalHook := dom.DDL().GetHook()
-	defer dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	require.NotNil(t, external.GetModifyColumn(t, tk, "test", "t", "c2", false))
 
 	hook := &ddl.TestDDLCallback{Do: dom}
 	var checkErr error
@@ -140,38 +138,38 @@ func TestColumnTypeChangeStateBetweenInteger(t *testing.T) {
 		}
 		switch job.SchemaState {
 		case model.StateNone:
-			tbl = internalTK.GetTableByName("test", "t")
+			tbl = external.GetTableByName(t, internalTK, "test", "t")
 			if tbl == nil {
 				checkErr = errors.New("tbl is nil")
 			} else if len(tbl.Cols()) != 2 {
 				checkErr = errors.New("len(cols) is not right")
 			}
 		case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
-			tbl = internalTK.GetTableByName("test", "t")
+			tbl = external.GetTableByName(t, internalTK, "test", "t")
 			if tbl == nil {
 				checkErr = errors.New("tbl is nil")
 			} else if len(tbl.(*tables.TableCommon).Columns) != 3 {
 				// changingCols has been added into meta.
 				checkErr = errors.New("len(cols) is not right")
-			} else if internalTK.GetModifyColumn("test", "t", "c2", true).Flag&mysql.PreventNullInsertFlag == uint(0) {
+			} else if external.GetModifyColumn(t, internalTK, "test", "t", "c2", true).Flag&mysql.PreventNullInsertFlag == uint(0) {
 				checkErr = errors.New("old col's flag is not right")
-			} else if internalTK.GetModifyColumn("test", "t", "_Col$_c2_0", true) == nil {
+			} else if external.GetModifyColumn(t, internalTK, "test", "t", "_Col$_c2_0", true) == nil {
 				checkErr = errors.New("changingCol is nil")
 			}
 		}
 	}
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 	// Alter sql will modify column c2 to tinyint not null.
 	SQL := "alter table t modify column c2 tinyint not null"
 	tk.MustExec(SQL)
 	// Assert the checkErr in the job of every state.
-	require.Nil(t, checkErr)
+	require.NoError(t, checkErr)
 
 	// Check the col meta after the column type change.
-	tbl = tk.GetTableByName("test", "t")
+	tbl = external.GetTableByName(t, tk, "test", "t")
 	require.NotNil(t, tbl)
 	require.Equal(t, 2, len(tbl.Cols()))
-	col := tk.GetModifyColumn("test", "t", "c2", false)
+	col := external.GetModifyColumn(t, tk, "test", "t", "c2", false)
 	require.NotNil(t, col)
 	require.Equal(t, true, mysql.HasNotNullFlag(col.Flag))
 	require.NotEqual(t, 0, col.Flag&mysql.NoDefaultValueFlag)
@@ -189,47 +187,40 @@ func TestRollbackColumnTypeChangeBetweenInteger(t *testing.T) {
 	tk.MustExec("create table t (c1 bigint, c2 bigint)")
 	tk.MustExec("insert into t(c1, c2) values (1, 1)")
 
-	tbl := tk.GetTableByName("test", "t")
+	tbl := external.GetTableByName(t, tk, "test", "t")
 	require.NotNil(t, tbl)
 	require.Equal(t, 2, len(tbl.Cols()))
-	require.NotNil(t, tk.GetModifyColumn("test", "t", "c2", false))
-
-	originalHook := dom.DDL().GetHook()
-	defer dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+	require.NotNil(t, external.GetModifyColumn(t, tk, "test", "t", "c2", false))
 
 	hook := &ddl.TestDDLCallback{Do: dom}
 	// Mock roll back at model.StateNone.
 	customizeHookRollbackAtState(hook, tbl, model.StateNone)
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 	// Alter sql will modify column c2 to bigint not null.
 	SQL := "alter table t modify column c2 int not null"
-	_, err := tk.Exec(SQL)
-	require.Error(t, err)
-	require.Equal(t, "[ddl:1]MockRollingBackInCallBack-queueing", err.Error())
+	err := tk.ExecToErr(SQL)
+	require.EqualError(t, err, "[ddl:1]MockRollingBackInCallBack-queueing")
 	assertRollBackedColUnchanged(t, tk)
 
 	// Mock roll back at model.StateDeleteOnly.
 	customizeHookRollbackAtState(hook, tbl, model.StateDeleteOnly)
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
-	_, err = tk.Exec(SQL)
-	require.Error(t, err)
-	require.Equal(t, "[ddl:1]MockRollingBackInCallBack-delete only", err.Error())
+	dom.DDL().SetHook(hook)
+	err = tk.ExecToErr(SQL)
+	require.EqualError(t, err, "[ddl:1]MockRollingBackInCallBack-delete only")
 	assertRollBackedColUnchanged(t, tk)
 
 	// Mock roll back at model.StateWriteOnly.
 	customizeHookRollbackAtState(hook, tbl, model.StateWriteOnly)
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
-	_, err = tk.Exec(SQL)
-	require.Error(t, err)
-	require.Equal(t, "[ddl:1]MockRollingBackInCallBack-write only", err.Error())
+	dom.DDL().SetHook(hook)
+	err = tk.ExecToErr(SQL)
+	require.EqualError(t, err, "[ddl:1]MockRollingBackInCallBack-write only")
 	assertRollBackedColUnchanged(t, tk)
 
 	// Mock roll back at model.StateWriteReorg.
 	customizeHookRollbackAtState(hook, tbl, model.StateWriteReorganization)
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
-	_, err = tk.Exec(SQL)
-	require.Error(t, err)
-	require.Equal(t, "[ddl:1]MockRollingBackInCallBack-write reorganization", err.Error())
+	dom.DDL().SetHook(hook)
+	err = tk.ExecToErr(SQL)
+	require.EqualError(t, err, "[ddl:1]MockRollingBackInCallBack-write reorganization")
 	assertRollBackedColUnchanged(t, tk)
 }
 
@@ -246,10 +237,10 @@ func customizeHookRollbackAtState(hook *ddl.TestDDLCallback, tbl table.Table, st
 }
 
 func assertRollBackedColUnchanged(t *testing.T, tk *testkit.TestKit) {
-	tbl := tk.GetTableByName("test", "t")
+	tbl := external.GetTableByName(t, tk, "test", "t")
 	require.NotNil(t, tbl)
 	require.Equal(t, 2, len(tbl.Cols()))
-	col := tk.GetModifyColumn("test", "t", "c2", false)
+	col := external.GetModifyColumn(t, tk, "test", "t", "c2", false)
 	require.NotNil(t, col)
 	require.Equal(t, uint(0), col.Flag)
 	require.Equal(t, mysql.TypeLonglong, col.Tp)
@@ -287,37 +278,37 @@ func TestColumnTypeChangeFromIntegerToOthers(t *testing.T) {
 	// integer to string
 	prepare(tk)
 	tk.MustExec("alter table t modify a varchar(10)")
-	modifiedColumn := tk.GetModifyColumn("test", "t", "a", false)
+	modifiedColumn := external.GetModifyColumn(t, tk, "test", "t", "a", false)
 	require.NotNil(t, modifiedColumn)
 	require.Equal(t, mysql.TypeVarchar, modifiedColumn.Tp)
 	tk.MustQuery("select a from t").Check(testkit.Rows("1"))
 
 	tk.MustExec("alter table t modify b char(10)")
-	modifiedColumn = tk.GetModifyColumn("test", "t", "b", false)
+	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "b", false)
 	require.NotNil(t, modifiedColumn)
 	require.Equal(t, mysql.TypeString, modifiedColumn.Tp)
 	tk.MustQuery("select b from t").Check(testkit.Rows("11"))
 
 	tk.MustExec("alter table t modify c binary(10)")
-	modifiedColumn = tk.GetModifyColumn("test", "t", "c", false)
+	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "c", false)
 	require.NotNil(t, modifiedColumn)
 	require.Equal(t, mysql.TypeString, modifiedColumn.Tp)
 	tk.MustQuery("select c from t").Check(testkit.Rows("111\x00\x00\x00\x00\x00\x00\x00"))
 
 	tk.MustExec("alter table t modify d varbinary(10)")
-	modifiedColumn = tk.GetModifyColumn("test", "t", "d", false)
+	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "d", false)
 	require.NotNil(t, modifiedColumn)
 	require.Equal(t, mysql.TypeVarchar, modifiedColumn.Tp)
 	tk.MustQuery("select d from t").Check(testkit.Rows("1111"))
 
 	tk.MustExec("alter table t modify e blob(10)")
-	modifiedColumn = tk.GetModifyColumn("test", "t", "e", false)
+	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "e", false)
 	require.NotNil(t, modifiedColumn)
 	require.Equal(t, mysql.TypeTinyBlob, modifiedColumn.Tp)
 	tk.MustQuery("select e from t").Check(testkit.Rows("11111"))
 
 	tk.MustExec("alter table t modify f text(10)")
-	modifiedColumn = tk.GetModifyColumn("test", "t", "f", false)
+	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "f", false)
 	require.NotNil(t, modifiedColumn)
 	require.Equal(t, mysql.TypeTinyBlob, modifiedColumn.Tp)
 	tk.MustQuery("select f from t").Check(testkit.Rows("111111"))
@@ -325,7 +316,7 @@ func TestColumnTypeChangeFromIntegerToOthers(t *testing.T) {
 	// integer to decimal
 	prepare(tk)
 	tk.MustExec("alter table t modify a decimal(2,1)")
-	modifiedColumn = tk.GetModifyColumn("test", "t", "a", false)
+	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "a", false)
 	require.NotNil(t, modifiedColumn)
 	require.Equal(t, mysql.TypeNewDecimal, modifiedColumn.Tp)
 	tk.MustQuery("select a from t").Check(testkit.Rows("1.0"))
@@ -333,21 +324,21 @@ func TestColumnTypeChangeFromIntegerToOthers(t *testing.T) {
 	// integer to year
 	// For year(2), MySQL converts values in the ranges '0' to '69' and '70' to '99' to YEAR values in the ranges 2000 to 2069 and 1970 to 1999.
 	tk.MustExec("alter table t modify b year")
-	modifiedColumn = tk.GetModifyColumn("test", "t", "b", false)
+	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "b", false)
 	require.NotNil(t, modifiedColumn)
 	require.Equal(t, mysql.TypeYear, modifiedColumn.Tp)
 	tk.MustQuery("select b from t").Check(testkit.Rows("2011"))
 
 	// integer to time
 	tk.MustExec("alter table t modify c time")
-	modifiedColumn = tk.GetModifyColumn("test", "t", "c", false)
+	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "c", false)
 	require.NotNil(t, modifiedColumn)
 	require.Equal(t, mysql.TypeDuration, modifiedColumn.Tp)
 	tk.MustQuery("select c from t").Check(testkit.Rows("00:01:11"))
 
 	// integer to date (mysql will throw `Incorrect date value: '1111' for column 'd' at row 1` error)
 	tk.MustExec("alter table t modify d date")
-	modifiedColumn = tk.GetModifyColumn("test", "t", "d", false)
+	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "d", false)
 	require.NotNil(t, modifiedColumn)
 	require.Equal(t, mysql.TypeDate, modifiedColumn.Tp)
 	tk.MustQuery("select d from t").Check(testkit.Rows("2000-11-11")) // the given number will be left-forward used.
@@ -355,14 +346,14 @@ func TestColumnTypeChangeFromIntegerToOthers(t *testing.T) {
 	// integer to timestamp (according to what timezone you have set)
 	tk.MustExec("alter table t modify e timestamp")
 	tk.MustExec("set @@session.time_zone=UTC")
-	modifiedColumn = tk.GetModifyColumn("test", "t", "e", false)
+	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "e", false)
 	require.NotNil(t, modifiedColumn)
 	require.Equal(t, mysql.TypeTimestamp, modifiedColumn.Tp)
 	tk.MustQuery("select e from t").Check(testkit.Rows("2001-11-10 16:00:00")) // the given number will be left-forward used.
 
 	// integer to datetime
 	tk.MustExec("alter table t modify f datetime")
-	modifiedColumn = tk.GetModifyColumn("test", "t", "f", false)
+	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "f", false)
 	require.NotNil(t, modifiedColumn)
 	require.Equal(t, mysql.TypeDatetime, modifiedColumn.Tp)
 	tk.MustQuery("select f from t").Check(testkit.Rows("2011-11-11 00:00:00")) // the given number will be left-forward used.
@@ -370,20 +361,20 @@ func TestColumnTypeChangeFromIntegerToOthers(t *testing.T) {
 	// integer to floating-point values
 	prepare(tk)
 	tk.MustExec("alter table t modify a float")
-	modifiedColumn = tk.GetModifyColumn("test", "t", "a", false)
+	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "a", false)
 	require.NotNil(t, modifiedColumn)
 	require.Equal(t, mysql.TypeFloat, modifiedColumn.Tp)
 	tk.MustQuery("select a from t").Check(testkit.Rows("1"))
 
 	tk.MustExec("alter table t modify b double")
-	modifiedColumn = tk.GetModifyColumn("test", "t", "b", false)
+	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "b", false)
 	require.NotNil(t, modifiedColumn)
 	require.Equal(t, mysql.TypeDouble, modifiedColumn.Tp)
 	tk.MustQuery("select b from t").Check(testkit.Rows("11"))
 
 	// integer to bit
 	tk.MustExec("alter table t modify c bit(10)")
-	modifiedColumn = tk.GetModifyColumn("test", "t", "c", false)
+	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "c", false)
 	require.NotNil(t, modifiedColumn)
 	require.Equal(t, mysql.TypeBit, modifiedColumn.Tp)
 	// 111 will be stored ad 0x00,0110,1111 = 0x6F, which will be shown as ASCII('o')=111 as well.
@@ -391,7 +382,7 @@ func TestColumnTypeChangeFromIntegerToOthers(t *testing.T) {
 
 	// integer to json
 	tk.MustExec("alter table t modify d json")
-	modifiedColumn = tk.GetModifyColumn("test", "t", "d", false)
+	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "d", false)
 	require.NotNil(t, modifiedColumn)
 	require.Equal(t, mysql.TypeJSON, modifiedColumn.Tp)
 	tk.MustQuery("select d from t").Check(testkit.Rows("1111"))
@@ -400,14 +391,14 @@ func TestColumnTypeChangeFromIntegerToOthers(t *testing.T) {
 	prepareForEnumSet(tk)
 	// TiDB take integer as the enum element offset to cast.
 	tk.MustExec("alter table t modify a enum(\"a\", \"b\")")
-	modifiedColumn = tk.GetModifyColumn("test", "t", "a", false)
+	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "a", false)
 	require.NotNil(t, modifiedColumn)
 	require.Equal(t, mysql.TypeEnum, modifiedColumn.Tp)
 	tk.MustQuery("select a from t").Check(testkit.Rows("a"))
 
 	// TiDB take integer as the set element offset to cast.
 	tk.MustExec("alter table t modify b set(\"a\", \"b\")")
-	modifiedColumn = tk.GetModifyColumn("test", "t", "b", false)
+	modifiedColumn = external.GetModifyColumn(t, tk, "test", "t", "b", false)
 	require.NotNil(t, modifiedColumn)
 	require.Equal(t, mysql.TypeSet, modifiedColumn.Tp)
 	tk.MustQuery("select b from t").Check(testkit.Rows("a"))
@@ -948,12 +939,9 @@ func TestColumnTypeChangeIgnoreDisplayLength(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	originalHook := dom.DDL().GetHook()
-	defer dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
-
 	var assertResult bool
 	assertHasAlterWriteReorg := func(tbl table.Table) {
-		// Restore the assert result to false.
+		// Restore assertResult to false.
 		assertResult = false
 		hook := &ddl.TestDDLCallback{Do: dom}
 		hook.OnJobRunBeforeExported = func(job *model.Job) {
@@ -964,26 +952,26 @@ func TestColumnTypeChangeIgnoreDisplayLength(t *testing.T) {
 				assertResult = true
 			}
 		}
-		dom.DDL().(ddl.DDLForTest).SetHook(hook)
+		dom.DDL().SetHook(hook)
 	}
 
 	// Change int to tinyint.
 	// Although display length is increased, the default flen is decreased, reorg is needed.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int(1))")
-	tbl := tk.GetTableByName("test", "t")
+	tbl := external.GetTableByName(t, tk, "test", "t")
 	assertHasAlterWriteReorg(tbl)
 	tk.MustExec("alter table t modify column a tinyint(3)")
-	require.Equal(t, true, assertResult)
+	require.True(t, assertResult)
 
 	// Change tinyint to tinyint
 	// Although display length is decreased, default flen is the same, reorg is not needed.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a tinyint(3))")
-	tbl = tk.GetTableByName("test", "t")
+	tbl = external.GetTableByName(t, tk, "test", "t")
 	assertHasAlterWriteReorg(tbl)
 	tk.MustExec("alter table t modify column a tinyint(1)")
-	require.Equal(t, false, assertResult)
+	require.False(t, assertResult)
 	tk.MustExec("drop table if exists t")
 }
 
@@ -1593,7 +1581,7 @@ func TestRowFormat(t *testing.T) {
 	tk.MustExec("insert into t values (1, \"123\");")
 	tk.MustExec("alter table t modify column v varchar(5);")
 
-	tbl := tk.GetTableByName("test", "t")
+	tbl := external.GetTableByName(t, tk, "test", "t")
 	encodedKey := tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(1))
 
 	h := helper.NewHelper(store.(helper.Storage))
@@ -1624,7 +1612,7 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 	tk.MustExec("insert into t values(1, 1)")
 	tk.MustExec("insert into t values(2, 2)")
 
-	tbl := tk.GetTableByName("test", "t")
+	tbl := external.GetTableByName(t, tk, "test", "t")
 	originalHook := dom.DDL().GetHook()
 	hook := &ddl.TestDDLCallback{Do: dom}
 	var (
@@ -1642,7 +1630,7 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 		if (job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization) && i < 3 {
 			if !once {
 				once = true
-				tbl := tk.GetTableByName("test", "t")
+				tbl := external.GetTableByName(t, tk, "test", "t")
 				if len(tbl.WritableCols()) != 3 {
 					checkErr = errors.New("assert the writable column number error")
 					return
@@ -1678,10 +1666,10 @@ func TestChangingColOriginDefaultValue(t *testing.T) {
 			i++
 		}
 	}
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t modify column b tinyint NOT NULL")
-	dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
-	require.Nil(t, checkErr)
+	dom.DDL().SetHook(originalHook)
+	require.NoError(t, checkErr)
 	// Since getReorgInfo will stagnate StateWriteReorganization for a ddl round, so insert should exec 3 times.
 	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1 -1", "2 -2", "3 3", "4 4", "5 5"))
 	tk.MustExec("drop table if exists t")
@@ -1703,7 +1691,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
 	tk.MustExec("insert into t values(2, 2)")
 	tk.MustExec("alter table t add column c timestamp default '1971-06-09' not null")
 
-	tbl := tk.GetTableByName("test", "t")
+	tbl := external.GetTableByName(t, tk, "test", "t")
 	originalHook := dom.DDL().GetHook()
 	hook := &ddl.TestDDLCallback{Do: dom}
 	var (
@@ -1721,7 +1709,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
 		if (job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization) && stableTimes < 3 {
 			if !once {
 				once = true
-				tbl := tk.GetTableByName("test", "t")
+				tbl := external.GetTableByName(t, tk, "test", "t")
 				if len(tbl.WritableCols()) != 4 {
 					checkErr = errors.New("assert the writable column number error")
 					return
@@ -1764,10 +1752,10 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastSucc(t *testing.T) {
 		i++
 	}
 
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t modify column c date NOT NULL")
-	dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
-	require.Nil(t, checkErr)
+	dom.DDL().SetHook(originalHook)
+	require.NoError(t, checkErr)
 	// Since getReorgInfo will stagnate StateWriteReorganization for a ddl round, so insert should exec 3 times.
 	tk.MustQuery("select * from t order by a").Check(
 		testkit.Rows("1 -1 1971-06-09", "2 -2 1971-06-09", "5 5 2021-06-06", "6 6 2021-06-06", "7 7 2021-06-06"))
@@ -1789,7 +1777,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 	tk.MustExec("create table t(a VARCHAR(31) NULL DEFAULT 'wwrzfwzb01j6ddj', b DECIMAL(12,0) NULL DEFAULT '-729850476163')")
 	tk.MustExec("ALTER TABLE t ADD COLUMN x CHAR(218) NULL DEFAULT 'lkittuae'")
 
-	tbl := tk.GetTableByName("test", "t")
+	tbl := external.GetTableByName(t, tk, "test", "t")
 	originalHook := dom.DDL().GetHook()
 	hook := &ddl.TestDDLCallback{Do: dom}
 	var checkErr error
@@ -1802,7 +1790,7 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 		}
 
 		if job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization {
-			tbl := tk.GetTableByName("test", "t")
+			tbl := external.GetTableByName(t, tk, "test", "t")
 			if len(tbl.WritableCols()) != 4 {
 				errMsg := fmt.Sprintf("cols len:%v", len(tbl.WritableCols()))
 				checkErr = errors.New("assert the writable column number error" + errMsg)
@@ -1824,10 +1812,10 @@ func TestChangingColOriginDefaultValueAfterAddColAndCastFail(t *testing.T) {
 		}
 	}
 
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t modify column x DATETIME NULL DEFAULT '3771-02-28 13:00:11' AFTER b;")
-	dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
-	require.Nil(t, checkErr)
+	dom.DDL().SetHook(originalHook)
+	require.NoError(t, checkErr)
 	tk.MustQuery("select * from t order by a").Check(testkit.Rows())
 	tk.MustExec("drop table if exists t")
 }
@@ -1849,18 +1837,18 @@ func TestChangingAttributeOfColumnWithFK(t *testing.T) {
 	prepare()
 	// For column with FK, alter action can be performed for changing null/not null, default value, comment and so on, but column type.
 	tk.MustExec("alter table orders modify user_id int null;")
-	tbl := tk.GetTableByName("test", "orders")
+	tbl := external.GetTableByName(t, tk, "test", "orders")
 	require.Equal(t, false, mysql.HasNotNullFlag(tbl.Meta().Columns[1].Flag))
 
 	prepare()
 	tk.MustExec("alter table orders change user_id user_id2 int null")
-	tbl = tk.GetTableByName("test", "orders")
+	tbl = external.GetTableByName(t, tk, "test", "orders")
 	require.Equal(t, "user_id2", tbl.Meta().Columns[1].Name.L)
 	require.Equal(t, false, mysql.HasNotNullFlag(tbl.Meta().Columns[1].Flag))
 
 	prepare()
 	tk.MustExec("alter table orders modify user_id int default -1 comment \"haha\"")
-	tbl = tk.GetTableByName("test", "orders")
+	tbl = external.GetTableByName(t, tk, "test", "orders")
 	require.Equal(t, "haha", tbl.Meta().Columns[1].Comment)
 	require.Equal(t, "-1", tbl.Meta().Columns[1].DefaultValue.(string))
 
@@ -1925,9 +1913,6 @@ func TestDDLExitWhenCancelMeetPanic(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockExceedErrorLimit"))
 	}()
 
-	originalHook := dom.DDL().GetHook()
-	defer dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
-
 	hook := &ddl.TestDDLCallback{Do: dom}
 	var jobID int64
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
@@ -1938,21 +1923,20 @@ func TestDDLExitWhenCancelMeetPanic(t *testing.T) {
 			jobID = job.ID
 		}
 	}
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 
 	// when it panics in write-reorg state, the job will be pulled up as a cancelling job. Since drop-index with
 	// write-reorg can't be cancelled, so it will be converted to running state and try again (dead loop).
-	_, err := tk.Exec("alter table t drop index b")
-	require.Error(t, err)
-	require.Equal(t, "[ddl:-1]panic in handling DDL logic and error count beyond the limitation 3, cancelled", err.Error())
-	require.Equal(t, true, jobID > 0)
+	err := tk.ExecToErr("alter table t drop index b")
+	require.EqualError(t, err, "[ddl:-1]panic in handling DDL logic and error count beyond the limitation 3, cancelled")
+	require.Less(t, int64(0), jobID)
 
 	// Verification of the history job state.
 	var job *model.Job
 	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+		m := meta.NewMeta(txn)
 		var err1 error
-		job, err1 = t.GetHistoryDDLJob(jobID)
+		job, err1 = m.GetHistoryDDLJob(jobID)
 		return errors2.Trace(err1)
 	})
 	require.NoError(t, err)
@@ -2010,7 +1994,7 @@ func TestCancelCTCInReorgStateWillCauseGoroutineLeak(t *testing.T) {
 	tk.MustExec("drop table if exists ctc_goroutine_leak")
 	tk.MustExec("create table ctc_goroutine_leak (a int)")
 	tk.MustExec("insert into ctc_goroutine_leak values(1),(2),(3)")
-	tbl := tk.GetTableByName("test", "ctc_goroutine_leak")
+	tbl := external.GetTableByName(t, tk, "test", "ctc_goroutine_leak")
 
 	hook := &ddl.TestDDLCallback{Do: dom}
 	var jobID int64
@@ -2025,7 +2009,7 @@ func TestCancelCTCInReorgStateWillCauseGoroutineLeak(t *testing.T) {
 			jobID = job.ID
 		}
 	}
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
@@ -2244,53 +2228,41 @@ func TestChangeFromTimeToYear(t *testing.T) {
 
 // Fix issue: https://github.com/pingcap/tidb/issues/26292
 // Cast date to timestamp has two kind behavior: cast("3977-02-22" as date)
-// For select statement, it truncate the string and return no errors. (which is 3977-02-22 00:00:00 here)
-// For ddl reorging or changing column in ctc, it need report some errors.
+// For select statement, it truncates the string and return no errors. (which is 3977-02-22 00:00:00 here)
+// For ddl reorging or changing column in ctc, it needs report some errors.
 func TestCastDateToTimestampInReorgAttribute(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
+	tk.MustExec("use test")
 
-	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE `t` (`a` DATE NULL DEFAULT '8497-01-06')")
 	tk.MustExec("insert into t values(now())")
 
-	originalHook := dom.DDL().GetHook()
-	defer dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
-
-	// use new session to check meta in callback function.
-	internalTK := testkit.NewTestKit(t, store)
-	internalTK.MustExec("use test")
-
-	tbl := tk.GetTableByName("test", "t")
+	tbl := external.GetTableByName(t, tk, "test", "t")
 	require.NotNil(t, tbl)
-	require.Equal(t, 1, len(tbl.Cols()))
+	require.Len(t, tbl.Cols(), 1)
+	var checkErr1 error
+	var checkErr2 error
 
 	hook := &ddl.TestDDLCallback{Do: dom}
-	var (
-		checkErr1 error
-		checkErr2 error
-	)
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if checkErr1 != nil || checkErr2 != nil {
-			return
-		}
-		if tbl.Meta().ID != job.TableID {
+		if checkErr1 != nil || checkErr2 != nil || tbl.Meta().ID != job.TableID {
 			return
 		}
 		switch job.SchemaState {
 		case model.StateWriteOnly:
-			_, checkErr1 = internalTK.Exec("insert into `t` set  `a` = '3977-02-22'") // this(string) will be cast to a as date, then cast a(date) as timestamp to changing column.
-			_, checkErr2 = internalTK.Exec("update t set `a` = '3977-02-22'")
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			checkErr1 = tk.ExecToErr("insert into `t` set  `a` = '3977-02-22'") // this(string) will be cast to a as date, then cast a(date) as timestamp to changing column.
+			checkErr2 = tk.ExecToErr("update t set `a` = '3977-02-22'")
 		}
 	}
-	dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	dom.DDL().SetHook(hook)
 
 	tk.MustExec("alter table t modify column a  TIMESTAMP NULL DEFAULT '2021-04-28 03:35:11' FIRST")
-	require.Equal(t, "[types:1292]Incorrect timestamp value: '3977-02-22'", checkErr1.Error())
-	require.Equal(t, "[types:1292]Incorrect timestamp value: '3977-02-22'", checkErr2.Error())
-	tk.MustExec("drop table if exists t")
+	require.EqualError(t, checkErr1, "[types:1292]Incorrect timestamp value: '3977-02-22'")
+	require.EqualError(t, checkErr2, "[types:1292]Incorrect timestamp value: '3977-02-22'")
 }
 
 // https://github.com/pingcap/tidb/issues/25282.

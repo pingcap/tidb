@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -682,7 +681,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 		sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return
 	}
-	var tableSchemaRegexp, tableNameRegexp, columnsRegexp []*regexp.Regexp
+	var tableSchemaRegexp, tableNameRegexp, columnsRegexp []collate.WildcardPattern
 	var tableSchemaFilterEnable,
 		tableNameFilterEnable, columnsFilterEnable bool
 	if !extractor.SkipRequest {
@@ -690,21 +689,24 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 		tableNameFilterEnable = extractor.TableName.Count() > 0
 		columnsFilterEnable = extractor.ColumnName.Count() > 0
 		if len(extractor.TableSchemaPatterns) > 0 {
-			tableSchemaRegexp = make([]*regexp.Regexp, len(extractor.TableSchemaPatterns))
+			tableSchemaRegexp = make([]collate.WildcardPattern, len(extractor.TableSchemaPatterns))
 			for i, pattern := range extractor.TableSchemaPatterns {
-				tableSchemaRegexp[i] = regexp.MustCompile(pattern)
+				tableSchemaRegexp[i] = collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
+				tableSchemaRegexp[i].Compile(pattern, byte('\\'))
 			}
 		}
 		if len(extractor.TableNamePatterns) > 0 {
-			tableNameRegexp = make([]*regexp.Regexp, len(extractor.TableNamePatterns))
+			tableNameRegexp = make([]collate.WildcardPattern, len(extractor.TableNamePatterns))
 			for i, pattern := range extractor.TableNamePatterns {
-				tableNameRegexp[i] = regexp.MustCompile(pattern)
+				tableNameRegexp[i] = collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
+				tableNameRegexp[i].Compile(pattern, byte('\\'))
 			}
 		}
 		if len(extractor.ColumnNamePatterns) > 0 {
-			columnsRegexp = make([]*regexp.Regexp, len(extractor.ColumnNamePatterns))
+			columnsRegexp = make([]collate.WildcardPattern, len(extractor.ColumnNamePatterns))
 			for i, pattern := range extractor.ColumnNamePatterns {
-				columnsRegexp[i] = regexp.MustCompile(pattern)
+				columnsRegexp[i] = collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
+				columnsRegexp[i].Compile(pattern, byte('\\'))
 			}
 		}
 	}
@@ -724,17 +726,17 @@ ForColumnsTag:
 				continue
 			}
 			for _, re := range tableSchemaRegexp {
-				if !re.MatchString(schema.Name.L) {
+				if !re.DoMatch(schema.Name.L) {
 					continue ForColumnsTag
 				}
 			}
 			for _, re := range tableNameRegexp {
-				if !re.MatchString(tbl.Name.L) {
+				if !re.DoMatch(tbl.Name.L) {
 					continue ForColumnsTag
 				}
 			}
 			for _, re := range columnsRegexp {
-				if !re.MatchString(col.Name.L) {
+				if !re.DoMatch(col.Name.L) {
 					continue ForColumnsTag
 				}
 			}
@@ -1638,6 +1640,18 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx sessionctx.Context, 
 					schema.Name.O,         // TABLE_SCHEMA
 					tbl.Name.O,            // TABLE_NAME
 					ctype,                 // CONSTRAINT_TYPE
+				)
+				rows = append(rows, record)
+			}
+			//  TiDB includes foreign key information for compatibility but foreign keys are not yet enforced.
+			for _, fk := range tbl.ForeignKeys {
+				record := types.MakeDatums(
+					infoschema.CatalogVal,     // CONSTRAINT_CATALOG
+					schema.Name.O,             // CONSTRAINT_SCHEMA
+					fk.Name.O,                 // CONSTRAINT_NAME
+					schema.Name.O,             // TABLE_SCHEMA
+					tbl.Name.O,                // TABLE_NAME
+					infoschema.ForeignKeyType, // CONSTRAINT_TYPE
 				)
 				rows = append(rows, record)
 			}

@@ -19,9 +19,9 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb-tools/tidb-binlog/node"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/tidb-binlog/node"
 	"github.com/pingcap/tidb/util/chunk"
 )
 

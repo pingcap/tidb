@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/ddl"
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
@@ -45,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
@@ -170,12 +170,12 @@ func TestCreateTable(t *testing.T) {
 	tk.MustExec("drop table if exists test_err_multiple_collate;")
 	_, err = tk.Exec("create table test_err_multiple_collate (a char(1) charset utf8mb4 collate utf8_unicode_ci collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
 	require.Error(t, err)
-	require.Equal(t, ddl.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8_unicode_ci", "utf8mb4").Error(), err.Error())
+	require.Equal(t, dbterror.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8_unicode_ci", "utf8mb4").Error(), err.Error())
 
 	tk.MustExec("drop table if exists test_err_multiple_collate;")
 	_, err = tk.Exec("create table test_err_multiple_collate (a char(1) collate utf8_unicode_ci collate utf8mb4_general_ci) charset utf8mb4 collate utf8mb4_bin")
 	require.Error(t, err)
-	require.Equal(t, ddl.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8mb4_general_ci", "utf8").Error(), err.Error())
+	require.Equal(t, dbterror.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8mb4_general_ci", "utf8").Error(), err.Error())
 
 	// table option is auto-increment
 	tk.MustExec("drop table if exists create_auto_increment_test;")
@@ -236,7 +236,7 @@ func TestCreateView(t *testing.T) {
 	tk.MustExec("create view v5 as select * from t1")
 	tk.MustExec("create view v6 (c,d) as select * from t1")
 	_, err = tk.Exec("create view v7 (c,d,e) as select * from t1")
-	require.Equal(t, ddl.ErrViewWrongList.Error(), err.Error())
+	require.Equal(t, dbterror.ErrViewWrongList.Error(), err.Error())
 	// drop multiple views in a statement
 	tk.MustExec("drop view v1,v2,v3,v4,v5,v6")
 	// view with variable
@@ -246,16 +246,16 @@ func TestCreateView(t *testing.T) {
 	tk.MustExec("drop view v1")
 	// view with different col counts
 	_, err = tk.Exec("create view v1 (c,d,e) as select a,b from t1 ")
-	require.Equal(t, ddl.ErrViewWrongList.Error(), err.Error())
+	require.Equal(t, dbterror.ErrViewWrongList.Error(), err.Error())
 	_, err = tk.Exec("create view v1 (c) as select a,b from t1 ")
-	require.Equal(t, ddl.ErrViewWrongList.Error(), err.Error())
+	require.Equal(t, dbterror.ErrViewWrongList.Error(), err.Error())
 	// view with or_replace flag
 	tk.MustExec("drop view if exists v1")
 	tk.MustExec("create view v1 (c,d) as select a,b from t1")
 	tk.MustExec("create or replace view v1 (c,d) as select a,b from t1 ")
 	tk.MustExec("create table if not exists t1 (a int ,b int)")
 	_, err = tk.Exec("create or replace view t1 as select * from t1")
-	require.Equal(t, ddl.ErrWrongObject.GenWithStackByArgs("test", "t1", "VIEW").Error(), err.Error())
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "t1", "VIEW").Error(), err.Error())
 	// create view using prepare
 	tk.MustExec(`prepare stmt from "create view v10 (x) as select 1";`)
 	tk.MustExec("execute stmt")
@@ -306,6 +306,15 @@ func TestCreateView(t *testing.T) {
 	// Refer https://github.com/pingcap/tidb/issues/25876
 	err = tk.ExecToErr("create view v_stale as select * from source_table as of timestamp current_timestamp(3)")
 	require.Truef(t, terror.ErrorEqual(err, executor.ErrViewInvalid), "err %s", err)
+
+	// Refer https://github.com/pingcap/tidb/issues/32682
+	tk.MustExec("drop view if exists v1,v2;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1(a INT, b INT);")
+	err = tk.ExecToErr("CREATE DEFINER=1234567890abcdefGHIKL1234567890abcdefGHIKL@localhost VIEW v1 AS SELECT a FROM t1;")
+	require.Truef(t, terror.ErrorEqual(err, executor.ErrWrongStringLength), "ERROR 1470 (HY000): String '1234567890abcdefGHIKL1234567890abcdefGHIKL' is too long for user name (should be no longer than 32)")
+	err = tk.ExecToErr("CREATE DEFINER=some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890X VIEW v2 AS SELECT b FROM t1;")
+	require.Truef(t, terror.ErrorEqual(err, executor.ErrWrongStringLength), "ERROR 1470 (HY000): String 'host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij12345' is too long for host name (should be no longer than 255)")
 }
 
 func TestViewRecursion(t *testing.T) {
@@ -576,11 +585,11 @@ func TestAlterTableAddColumn(t *testing.T) {
 	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows("CURRENT_TIMESTAMP"))
 	tk.MustExec("create or replace view alter_view as select c1,c2 from alter_test")
 	_, err = tk.Exec("alter table alter_view add column c4 varchar(50)")
-	require.Equal(t, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error(), err.Error())
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error(), err.Error())
 	tk.MustExec("drop view alter_view")
 	tk.MustExec("create sequence alter_seq")
 	_, err = tk.Exec("alter table alter_seq add column c int")
-	require.Equal(t, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_seq", "BASE TABLE").Error(), err.Error())
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "alter_seq", "BASE TABLE").Error(), err.Error())
 	tk.MustExec("drop sequence alter_seq")
 }
 
@@ -604,11 +613,11 @@ func TestAlterTableAddColumns(t *testing.T) {
 	tk.MustQuery("select c3 from alter_test").Check(testkit.Rows("CURRENT_TIMESTAMP"))
 	tk.MustExec("create or replace view alter_view as select c1,c2 from alter_test")
 	_, err = tk.Exec("alter table alter_view add column (c4 varchar(50), c5 varchar(50))")
-	require.Equal(t, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error(), err.Error())
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error(), err.Error())
 	tk.MustExec("drop view alter_view")
 	tk.MustExec("create sequence alter_seq")
 	_, err = tk.Exec("alter table alter_seq add column (c1 int, c2 varchar(10))")
-	require.Equal(t, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_seq", "BASE TABLE").Error(), err.Error())
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "alter_seq", "BASE TABLE").Error(), err.Error())
 	tk.MustExec("drop sequence alter_seq")
 }
 
@@ -661,11 +670,11 @@ func TestAlterTableModifyColumn(t *testing.T) {
 	require.Equal(t, expected, createSQL)
 	tk.MustExec("create or replace view alter_view as select c1,c2 from mc")
 	_, err = tk.Exec("alter table alter_view modify column c2 text")
-	require.Equal(t, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error(), err.Error())
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "alter_view", "BASE TABLE").Error(), err.Error())
 	tk.MustExec("drop view alter_view")
 	tk.MustExec("create sequence alter_seq")
 	_, err = tk.Exec("alter table alter_seq modify column c int")
-	require.Equal(t, ddl.ErrWrongObject.GenWithStackByArgs("test", "alter_seq", "BASE TABLE").Error(), err.Error())
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "alter_seq", "BASE TABLE").Error(), err.Error())
 	tk.MustExec("drop sequence alter_seq")
 
 	// test multiple collate modification in column.
@@ -696,13 +705,13 @@ func TestAlterTableModifyColumn(t *testing.T) {
 	tk.MustExec("create table err_modify_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
 	_, err = tk.Exec("alter table err_modify_multiple_collate modify column a char(1) charset utf8mb4 collate utf8_bin;")
 	require.Error(t, err)
-	require.Equal(t, ddl.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8_bin", "utf8mb4").Error(), err.Error())
+	require.Equal(t, dbterror.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8_bin", "utf8mb4").Error(), err.Error())
 
 	tk.MustExec("drop table if exists err_modify_multiple_collate;")
 	tk.MustExec("create table err_modify_multiple_collate (a char(1) collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
 	_, err = tk.Exec("alter table err_modify_multiple_collate modify column a char(1) collate utf8_bin collate utf8mb4_bin;")
 	require.Error(t, err)
-	require.Equal(t, ddl.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8mb4_bin", "utf8").Error(), err.Error())
+	require.Equal(t, dbterror.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8mb4_bin", "utf8").Error(), err.Error())
 
 }
 
@@ -955,10 +964,6 @@ func TestShardRowIDBits(t *testing.T) {
 	require.Truef(t, autoid.ErrAutoincReadFailed.Equal(err), "err:%v", err)
 	_, err = tk.Exec("insert into t1 values(3)")
 	require.Truef(t, autoid.ErrAutoincReadFailed.Equal(err), "err:%v", err)
-}
-
-type testAutoRandomSuite struct {
-	*baseTestSuite
 }
 
 func TestAutoRandomBitsData(t *testing.T) {
@@ -1325,41 +1330,41 @@ func TestIllegalFunctionCall4GeneratedColumns(t *testing.T) {
 	require.Error(t, err)
 
 	_, err = tk.Exec("create table t1 (b double generated always as (rand()) virtual);")
-	require.Equal(t, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error(), err.Error())
+	require.Equal(t, dbterror.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error(), err.Error())
 
 	_, err = tk.Exec("create table t1 (a varchar(64), b varchar(1024) generated always as (load_file(a)) virtual);")
-	require.Equal(t, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error(), err.Error())
+	require.Equal(t, dbterror.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error(), err.Error())
 
 	_, err = tk.Exec("create table t1 (a datetime generated always as (curdate()) virtual);")
-	require.Equal(t, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error(), err.Error())
+	require.Equal(t, dbterror.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error(), err.Error())
 
 	_, err = tk.Exec("create table t1 (a datetime generated always as (current_time()) virtual);")
-	require.Equal(t, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error(), err.Error())
+	require.Equal(t, dbterror.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error(), err.Error())
 
 	_, err = tk.Exec("create table t1 (a datetime generated always as (current_timestamp()) virtual);")
-	require.Equal(t, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error(), err.Error())
+	require.Equal(t, dbterror.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error(), err.Error())
 
 	_, err = tk.Exec("create table t1 (a datetime, b varchar(10) generated always as (localtime()) virtual);")
-	require.Equal(t, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error(), err.Error())
+	require.Equal(t, dbterror.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error(), err.Error())
 
 	_, err = tk.Exec("create table t1 (a varchar(1024) generated always as (uuid()) virtual);")
-	require.Equal(t, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error(), err.Error())
+	require.Equal(t, dbterror.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("a").Error(), err.Error())
 
 	_, err = tk.Exec("create table t1 (a varchar(1024), b varchar(1024) generated always as (is_free_lock(a)) virtual);")
-	require.Equal(t, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error(), err.Error())
+	require.Equal(t, dbterror.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("b").Error(), err.Error())
 
 	tk.MustExec("create table t1 (a bigint not null primary key auto_increment, b bigint, c bigint as (b + 1));")
 
 	_, err = tk.Exec("alter table t1 add column d varchar(1024) generated always as (database());")
-	require.Equal(t, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("d").Error(), err.Error())
+	require.Equal(t, dbterror.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("d").Error(), err.Error())
 
 	tk.MustExec("alter table t1 add column d bigint generated always as (b + 1); ")
 
 	_, err = tk.Exec("alter table t1 modify column d bigint generated always as (connection_id());")
-	require.Equal(t, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("d").Error(), err.Error())
+	require.Equal(t, dbterror.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("d").Error(), err.Error())
 
 	_, err = tk.Exec("alter table t1 change column c cc bigint generated always as (connection_id());")
-	require.Equal(t, ddl.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("cc").Error(), err.Error())
+	require.Equal(t, dbterror.ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs("cc").Error(), err.Error())
 }
 
 func TestGeneratedColumnRelatedDDL(t *testing.T) {
@@ -1372,24 +1377,24 @@ func TestGeneratedColumnRelatedDDL(t *testing.T) {
 	require.Error(t, err)
 
 	_, err = tk.Exec("create table t1 (a bigint not null primary key auto_increment, b bigint as (a + 1));")
-	require.Equal(t, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("b").Error(), err.Error())
+	require.Equal(t, dbterror.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("b").Error(), err.Error())
 
 	tk.MustExec("create table t1 (a bigint not null primary key auto_increment, b bigint, c bigint as (b + 1));")
 
 	_, err = tk.Exec("alter table t1 add column d bigint generated always as (a + 1);")
-	require.Equal(t, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error(), err.Error())
+	require.Equal(t, dbterror.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error(), err.Error())
 
 	tk.MustExec("alter table t1 add column d bigint generated always as (b + 1);")
 
 	_, err = tk.Exec("alter table t1 modify column d bigint generated always as (a + 1);")
-	require.Equal(t, ddl.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error(), err.Error())
+	require.Equal(t, dbterror.ErrGeneratedColumnRefAutoInc.GenWithStackByArgs("d").Error(), err.Error())
 
 	// This mysql compatibility check can be disabled using tidb_enable_auto_increment_in_generated
 	tk.MustExec("set session tidb_enable_auto_increment_in_generated = 1;")
 	tk.MustExec("alter table t1 modify column d bigint generated always as (a + 1);")
 
 	_, err = tk.Exec("alter table t1 add column e bigint as (z + 1);")
-	require.Equal(t, ddl.ErrBadField.GenWithStackByArgs("z", "generated column function").Error(), err.Error())
+	require.Equal(t, dbterror.ErrBadField.GenWithStackByArgs("z", "generated column function").Error(), err.Error())
 
 	tk.MustExec("drop table t1;")
 
@@ -1603,7 +1608,7 @@ func TestAutoIncrementColumnErrorMessage(t *testing.T) {
 	tk.MustExec("CREATE TABLE t1 (t1_id INT NOT NULL AUTO_INCREMENT PRIMARY KEY);")
 
 	_, err = tk.Exec("CREATE INDEX idx1 ON t1 ((t1_id + t1_id));")
-	require.Equal(t, ddl.ErrExpressionIndexCanNotRefer.GenWithStackByArgs("idx1").Error(), err.Error())
+	require.Equal(t, dbterror.ErrExpressionIndexCanNotRefer.GenWithStackByArgs("idx1").Error(), err.Error())
 
 	// This mysql compatibility check can be disabled using tidb_enable_auto_increment_in_generated
 	tk.MustExec("SET SESSION tidb_enable_auto_increment_in_generated = 1;")
