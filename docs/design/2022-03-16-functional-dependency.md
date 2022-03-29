@@ -11,9 +11,9 @@
 * [Motivation And Background](#motivation-And-background)
 * [Detail Design](#detail-design)
     * [Implementation Overview](#implementation-overview)
-      * [How to store function dependency](#how-to-store-function-dependency)
-      * [How to maintain function dependency](#how-to-maintain-function-dependency)
-      * [How to integrate function dependency with TiDB arch](#how-to-integrate-function-dependency-with-tidb-arch)
+      * [How to store functional dependency](#how-to-store-functional-dependency)
+      * [How to maintain functional dependency](#how-to-maintain-functional-dependency)
+      * [How to integrate functional dependency with TiDB arch](#how-to-integrate-functional-dependency-with-tidb-arch)
     * [Operator Overview](#operator-overview)
       * [Logical Datasource](#logical-datasource)
       * [Logical Selection](#logical-selection)
@@ -39,11 +39,11 @@ After trials and errors of only-full-group-by check, TiDB ultimately seeks to us
 
 ### Implementation Overview
 
-* How to store function dependency
-* How to maintain function dependency
-* How to integrate function dependency with TiDB arch
+* How to store functional dependency
+* How to maintain functional dependency
+* How to integrate functional dependency with TiDB arch
 
-#### How to store function dependency
+#### How to store functional dependency
 
 Generally speaking, functional dependencies essentially store the relationship between columns. According to the paper [Exploiting functional dependence in query optimization](https://cs.uwaterloo.ca/research/tr/2000/11/CS-2000-11.thesis.pdf), this relationship can be constant, equivalence, strict and lax. Except constant is a unary, all others can be regarded as binary relationships. Therefore, we can use graph theory to store functional dependencies, maintaining edge sets between point-set and point-set, and attaching equivalence, strict and lax attributes as a label on each edge. For unary constant property, we can still save it as an edge, and since constant has no starting point-set, let's regard it as a headless edge.
 
@@ -54,7 +54,7 @@ Generally speaking, functional dependencies essentially store the relationship b
 
 For computation convenience, we can optimize equivalence as {a,b} == {a,b}, so we don't have to search from both directions when confirming whether a point is in the equivalence set.
 
-#### How to maintain function dependency
+#### How to maintain functional dependency
 
 For the open-sourced MySQL, the construction and maintenance of FD are still relatively heavy. It uses sub-queries as logical units and uses nested methods to recursively advance FD. For each logical unit, the source for where FD is derived is relatively simple, basically from three elements there: `GROUP BY` clause, `WHERE` clause and the datasource (join/table). However, according to the paper [CS-2000-11.thesis.pdf](https://cs.uwaterloo.ca/research/tr/2000/11/CS-2000-11.thesis.pdf), TiDB chooses to build FDs based on logical operators as an alternative, without the boundary restrictions of logical sub-queries. 
 
@@ -94,7 +94,7 @@ Application:
 
 For the only-full-group-by check of building phase, after getting the FD as illustrated in the last subchapter, we can easily identify from the select list that t1.a is equivalent to the group-by column t2.a, count(t2.b) is strictly functional dependent on group-by column t2.a and t.c is definitely constant after the filter is passed. So it can pass only-full-group-by check here. For more sophisticated cases with recursive sub-queries, maintenance work of this kind of FD architecture will be automatical and reasonable because we're just pulling the request from the top node of the entire logical plan tree, and all things happen naturally.
 
-#### How to integrate function dependency with TiDB arch
+#### How to integrate functional dependency with TiDB arch
 
 Where to put this stuff in and when should the FD collection work be done? In FD logic, the relationship between columns is not limited to base col, but also between expressions, even sub-queries. We need to be able to identify sameness between cols, expressions and even better to have a unique id to tag them. When joining different tables, there are maybe some columns with the same name from difference source, we should still utilize this unified unique id to identify and distinguish them. Obviously, the expression tree after ast rewrite has this convenient functionality, and plus we need to utilize FD functionality to check validation when building a logical plan, so eventually we can only perform FD collection while building the logical plan stage.
 
