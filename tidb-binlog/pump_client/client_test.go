@@ -22,11 +22,11 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/tidb-binlog/node"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	pb "github.com/pingcap/tipb/go-binlog"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
 
@@ -35,10 +35,6 @@ var (
 	testRetryTime      = 5
 )
 
-func TestClient(t *testing.T) {
-	TestingT(t)
-}
-
 type testCase struct {
 	binlogs     []*pb.Binlog
 	choosePumps []*PumpStatus
@@ -46,18 +42,14 @@ type testCase struct {
 	setNodeID   []string
 }
 
-var _ = Suite(&testClientSuite{})
-
-type testClientSuite struct{}
-
-func (t *testClientSuite) TestSelector(c *C) {
+func TestSelector(t *testing.T) {
 	strategys := []string{Hash, Range}
 	for _, strategy := range strategys {
-		t.testSelector(c, strategy)
+		testSelector(t, strategy)
 	}
 }
 
-func (*testClientSuite) testSelector(c *C, strategy string) {
+func testSelector(t *testing.T, strategy string) {
 	pumpsClient := &PumpsClient{
 		Pumps:              NewPumpInfos(),
 		Selector:           NewSelector(strategy),
@@ -115,7 +107,7 @@ func (*testClientSuite) testSelector(c *C, strategy string) {
 		}
 		pump := pumpsClient.Selector.Select(tCase.binlogs[i], 0)
 		pumpsClient.Selector.Feedback(tCase.binlogs[i].StartTs, tCase.binlogs[i].Tp, pump)
-		c.Assert(pump, Equals, tCase.choosePumps[i])
+		require.Equal(t, pump, tCase.choosePumps[i])
 	}
 
 	for j := 0; j < 10; j++ {
@@ -138,7 +130,7 @@ func (*testClientSuite) testSelector(c *C, strategy string) {
 		pump2 := pumpsClient.Selector.Select(commitBinlog, 0)
 		pumpsClient.Selector.Feedback(commitBinlog.StartTs, commitBinlog.Tp, pump2)
 		// prewrite binlog and commit binlog with same start ts should choose same pump
-		c.Assert(pump1.NodeID, Equals, pump2.NodeID)
+		require.Equal(t, pump1.NodeID, pump2.NodeID)
 		pumpsClient.setPumpAvailable(pump1, true)
 
 		// after change strategy, prewrite binlog and commit binlog will choose same pump
@@ -146,21 +138,21 @@ func (*testClientSuite) testSelector(c *C, strategy string) {
 		pumpsClient.Selector.Feedback(prewriteBinlog.StartTs, prewriteBinlog.Tp, pump1)
 		if strategy == Range {
 			err := pumpsClient.SetSelectStrategy(Hash)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 		} else {
 			err := pumpsClient.SetSelectStrategy(Range)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 		}
 		pump2 = pumpsClient.Selector.Select(commitBinlog, 0)
-		c.Assert(pump1.NodeID, Equals, pump2.NodeID)
+		require.Equal(t, pump1.NodeID, pump2.NodeID)
 
 		// set back
 		err := pumpsClient.SetSelectStrategy(strategy)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 	}
 }
 
-func (t *testClientSuite) TestWriteBinlog(c *C) {
+func TestWriteBinlog(t *testing.T) {
 	pumpServerConfig := []struct {
 		addr       string
 		serverMode string
@@ -180,14 +172,14 @@ func (t *testClientSuite) TestWriteBinlog(c *C) {
 
 	for _, cfg := range pumpServerConfig {
 		pumpServer, err := createMockPumpServer(cfg.addr, cfg.serverMode, true)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		opt := grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
 			return net.DialTimeout(cfg.serverMode, addr, timeout)
 		})
 		clientCon, err := grpc.Dial(cfg.addr, opt, grpc.WithInsecure())
-		c.Assert(err, IsNil)
-		c.Assert(clientCon, NotNil)
+		require.NoError(t, err)
+		require.NotNil(t, clientCon)
 		pumpClient := mockPumpsClient(pb.NewPumpClient(clientCon), true)
 
 		// test binlog size bigger than grpc's MaxRecvMsgSize
@@ -196,7 +188,7 @@ func (t *testClientSuite) TestWriteBinlog(c *C) {
 			PrewriteValue: make([]byte, testMaxRecvMsgSize+1),
 		}
 		err = pumpClient.WriteBinlog(blog)
-		c.Assert(err, NotNil)
+		require.Error(t, err)
 
 		for i := 0; i < 10; i++ {
 			// test binlog size small than grpc's MaxRecvMsgSize
@@ -205,11 +197,11 @@ func (t *testClientSuite) TestWriteBinlog(c *C) {
 				PrewriteValue: make([]byte, 1),
 			}
 			err = pumpClient.WriteBinlog(blog)
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 		}
 
 		// after write some binlog, the pump without grpc client will move to unavailable list in pump client.
-		c.Assert(len(pumpClient.Pumps.UnAvaliablePumps), Equals, 1)
+		require.Len(t, pumpClient.Pumps.UnAvaliablePumps, 1)
 
 		// test write commit binlog, will not return error although write binlog failed.
 		preWriteBinlog := &pb.Binlog{
@@ -225,17 +217,17 @@ func (t *testClientSuite) TestWriteBinlog(c *C) {
 		}
 
 		err = pumpClient.WriteBinlog(preWriteBinlog)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		// test when pump is down
 		pumpServer.Close()
 
 		// write commit binlog failed will not return error
 		err = pumpClient.WriteBinlog(commitBinlog)
-		c.Assert(err, IsNil)
+		require.NoError(t, err)
 
 		err = pumpClient.WriteBinlog(blog)
-		c.Assert(err, NotNil)
+		require.Error(t, err)
 	}
 }
 
