@@ -1,14 +1,9 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 )
-
-func calRowWidth4Operator(retCols []*expression.Column) float64 {
-	panic("TODO")
-}
 
 func (p *PhysicalSort) CalPlanCost(taskType property.TaskType) float64 {
 	if p.planCostInit {
