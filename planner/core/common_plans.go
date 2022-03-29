@@ -1387,19 +1387,14 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 
 	switch x := p.(type) {
 	case *PhysicalTableReader:
-		var storeType string
 		switch x.StoreType {
 		case kv.TiKV, kv.TiFlash, kv.TiDB:
 			// expected do nothing
 		default:
 			return errors.Errorf("the store type %v is unknown", x.StoreType)
 		}
-		storeType = x.StoreType.Name()
-		taskName := "cop"
-		if x.BatchCop {
-			taskName = "batchCop"
-		}
-		err = e.explainPlanInRowFormat(x.tablePlan, taskName+"["+storeType+"]", "", childIndent, true)
+		taskName := x.ReadReqType.Name() + "[" + x.StoreType.Name() + "]"
+		err = e.explainPlanInRowFormat(x.tablePlan, taskName, "", childIndent, true)
 	case *PhysicalIndexReader:
 		err = e.explainPlanInRowFormat(x.indexPlan, "cop[tikv]", "", childIndent, true)
 	case *PhysicalIndexLookUpReader:
