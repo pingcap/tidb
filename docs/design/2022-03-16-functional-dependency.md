@@ -1,6 +1,6 @@
 # Functional Dependency
 
-- Author(s): [AilinKid](https://github.com/AilinKid) (Lingxiang Tai) [Winoros](https://github.com/Winoros) (Yiding Cui)
+- Author(s): [AilinKid](https://github.com/AilinKid) (Lingxiang Tai) [winoros](https://github.com/winoros) (Yiding Cui)
 - Last updated: 2022-03-16
 - Motivation Issue: https://github.com/pingcap/tidb/issues/29766
 - Related Document: https://pingcap.feishu.cn/docs/doccndyrRWfcGALhjcyVhOrxWYd
@@ -25,15 +25,15 @@
 
 ## Introduction
 
-Functional Dependency is traditional relation concept with a history as long as database itself. In relational database theory, a functional dependency is a constraint between two sets of attributes in a relation from a database. In other words, a functional dependency is a constraint between two attributes in a relation.
+Functional Dependency (abbreviated as FD below) is a traditional relation concept with a history as long as database itself. In relational database theory, a functional dependency is a constraint between two sets of attributes in a relation from a database. In other words, a functional dependency is a constraint between two attributes in a relation.
 
-Given a relation R and sets of attributes  X,Y ∈ R, X is said to functionally determine Y (written X → Y) if and only if each X value in R is associated with precisely one Y value in R; R is then said to satisfy the functional dependency X → Y. In other words, a dependency FD: X → Y means that the values of Y are determined by the values of X. Two tuples sharing the same values of X will necessarily have the same values of Y. 
+Given a relation R and sets of attributes X,Y ∈ R, X is said to functionally determine Y (written as X → Y) if and only if each X value in R is associated with precisely one Y value in R; R is then said to satisfy the functional dependency X → Y. In other words, a dependency FD: X → Y means that the values of Y are determined by the values of X. Two tuples sharing the same values of X will necessarily have the same values of Y. 
 
 ## Motivation And Background
 
-Since we have already known the dependencies between sets of attributes (columns) after the FD has been built, we can take use of this relationship to do optimization in many scenarios. Eg: in only-full-group-by mode, for non-aggregated columns in the select list, as long as it is functionally dependent on the group-by clause columns, then we can consider it legal. Otherwise, to extract the constant, equivalence, dependency relationship between columns everytime we use it is tricky and costly.  
+Since we have already known the dependencies between sets of attributes (columns) after the FD has been built, we can make use of this relationship to do optimization in many scenarios. Eg: in only-full-group-by mode, for non-aggregated columns in the select list, as long as it is functionally dependent on the group-by clause columns, then we can consider it legal. Otherwise, extracting the constant, equivalence, dependency relationship between columns everytime we use it is tricky and costly.  
 
-After trials and errors of only-full-group-by check, TiDB ultimately seek to functional dependency to solve it's only-full-group-by check problem completely. Besides, functional dependency can also be applied to many other scenarios to reduce complexity, for example, distinct elimination with/without order by, selectivity for the correlated column and so on.
+After trials and errors of only-full-group-by check, TiDB ultimately seeks to use functional dependency to solve its only-full-group-by check problem completely. Besides, functional dependency can also be applied to many other scenarios to reduce complexity, for example, distinct elimination with/without order by, selectivity for the correlated column and so on.
 
 ## Detail Design
 
@@ -45,25 +45,25 @@ After trials and errors of only-full-group-by check, TiDB ultimately seek to fun
 
 #### How to store function dependency
 
-Generally speaking, functional dependencies essentially store the relationship between columns. According to paper [CS-2000-11.thesis.pdf](https://cs.uwaterloo.ca/research/tr/2000/11/CS-2000-11.thesis.pdf), this relationship can be constant, equivalence, strict and lax. Except constant is a unary, all others can be regarded as binary relationships. Therefore, we can use graph theory to store functional dependencies, maintaining edge sets between point-set and point-set, and attaching equivalence, strict and lax attributes as a label on each edge. For unary constant property, we can still save it as an edge, and since constant has no starting point-set, let's regard it as a headless edge.
+Generally speaking, functional dependencies essentially store the relationship between columns. According to the paper [Exploiting functional dependence in query optimization](https://cs.uwaterloo.ca/research/tr/2000/11/CS-2000-11.thesis.pdf), this relationship can be constant, equivalence, strict and lax. Except constant is a unary, all others can be regarded as binary relationships. Therefore, we can use graph theory to store functional dependencies, maintaining edge sets between point-set and point-set, and attaching equivalence, strict and lax attributes as a label on each edge. For unary constant property, we can still save it as an edge, and since constant has no starting point-set, let's regard it as a headless edge.
 
 * equivalence: {a} == {b}
 * strict FD:   {a} -> {b}
 * lax FD:      {a} ~> {b}
 * constant:    { } -> {b}
 
-For computation convenience, we can optimize equivalence as {a,b} == {a,b}, so we don't have to search for the both direction side when confirming whether a point is in the equivalence set.
+For computation convenience, we can optimize equivalence as {a,b} == {a,b}, so we don't have to search from both directions when confirming whether a point is in the equivalence set.
 
 #### How to maintain function dependency
 
-For open-sourced mysql, the construction and maintenance of FD is still relatively heavy. It uses sub-queries as logical units and uses nested methods to recursively advance FD. For each logical unit, the source for where FD is derived is relatively simple, basically from three elements there: group-by, where-clause and datasource(join/table). However, according to the paper [CS-2000-11.thesis.pdf](https://cs.uwaterloo.ca/research/tr/2000/11/CS-2000-11.thesis.pdf), TiDB chooses to build FDs based on logical operators as an alternative, without the boundary restrictions of logical sub-queries. 
+For the open-sourced MySQL, the construction and maintenance of FD are still relatively heavy. It uses sub-queries as logical units and uses nested methods to recursively advance FD. For each logical unit, the source for where FD is derived is relatively simple, basically from three elements there: `GROUP BY` clause, `WHERE` clause and the datasource (join/table). However, according to the paper [CS-2000-11.thesis.pdf](https://cs.uwaterloo.ca/research/tr/2000/11/CS-2000-11.thesis.pdf), TiDB chooses to build FDs based on logical operators as an alternative, without the boundary restrictions of logical sub-queries. 
 
 Example:
 
 ```sql
 create table t1(a int, c int)
 create table t2(a int, b int)
-select t1.a from t1 join t2 on t2.a=t1.a group by t2.a where c=1;
+explain select t1.a, count(t2.b), t1.c from t1 join t2 on t2.a=t1.a where t1.c=1 group by t2.a;
 ```
 
 Result:
@@ -92,7 +92,7 @@ When building the FD through these logical operators, we are calling a function 
 
 Application:
 
-For the only-full-group-check of building phase, after getting the FD as illustrated in the last subchapter, we can easily identify the select list that t1.a are equivalent to the group-by column t2.a, count(t2.b) are strictly functional dependent on group-by column t2.a and t.c are definitely constant after the filter is passed. So only full group check is valid here. For more sophisticated cases with recursive sub-queries, maintenance work of this kind of FD architecture will be automatically and reasonable when we're just pulling the request from the top node of the entire logical plan tree, all things are naturally.
+For the only-full-group-by check of building phase, after getting the FD as illustrated in the last subchapter, we can easily identify from the select list that t1.a is equivalent to the group-by column t2.a, count(t2.b) is strictly functional dependent on group-by column t2.a and t.c is definitely constant after the filter is passed. So it can pass only-full-group-by check here. For more sophisticated cases with recursive sub-queries, maintenance work of this kind of FD architecture will be automatical and reasonable because we're just pulling the request from the top node of the entire logical plan tree, and all things happen naturally.
 
 #### How to integrate function dependency with TiDB arch
 
@@ -135,10 +135,10 @@ For outer join, we need to consider more, because outer join will choose the con
 
 both cases will keep all rows from the outer side, but the time to apply the filter depends on where the conditions come from, which leading whether append the null rows on the inner side. So what's the big deal between this two? the former one can be seen as a inner join, but the later can only keep the FD from the outer side join, inner side's FD and filter FD has many complicated rules to infer with, we are not going to expand all of this here.
 
-## Investigation
+## References
 
-- [mysql source code](https://github.com/mysql/mysql-server/blob/8.0/sql/aggregate_check.h)
-- [CS-2000-11.thesis.pdf](https://cs.uwaterloo.ca/research/tr/2000/11/CS-2000-11.thesis.pdf).
+- [MySQL source code](https://github.com/mysql/mysql-server/blob/8.0/sql/aggregate_check.h)
+- [Exploiting functional dependence in query optimization](https://cs.uwaterloo.ca/research/tr/2000/11/CS-2000-11.thesis.pdf).
 - [functional dependency reduce](https://www.inf.usi.ch/faculty/soule/teaching/2014-spring/cover.pdf).
 - [Canonical Cover of Functional Dependencies in DBMS](https://www.geeksforgeeks.org/canonical-cover-of-functional-dependencies-in-dbms/)
 
