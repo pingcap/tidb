@@ -82,18 +82,6 @@ const (
 	tiflashCheckPendingTablesRetry = 7
 )
 
-// ColumnDefaultType is the default type for column
-type ColumnDefaultType int
-
-const (
-	// ColumnDefaultLiteral indicates that the default value is a literal like integer, float or string, etc.
-	ColumnDefaultLiteral ColumnDefaultType = iota
-	// ColumnDefaultExpression indicates that the default value is a function call like 'current_timestamp(6)'
-	ColumnDefaultExpression
-	// ColumnDefaultSequence indicates that the default value is a next value of a sequence
-	ColumnDefaultSequence
-)
-
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt, placementPolicyRef *model.PolicyRefInfo) (err error) {
 	dbInfo := &model.DBInfo{Name: schema}
 	if charsetInfo != nil {
@@ -1050,14 +1038,12 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 // getDefaultValue will get the default value for column.
 // 1: get the expr restored string for the column which uses sequence next value as default value.
 // 2: get specific default value for the other column.
-func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOption) (interface{}, ColumnDefaultType, error) {
+func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOption) (interface{}, bool, error) {
 	tp, fsp := col.FieldType.Tp, col.FieldType.Decimal
 	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
-		colDefaultType := ColumnDefaultLiteral
 		switch x := c.Expr.(type) {
 		case *ast.FuncCallExpr:
 			if x.FnName.L == ast.CurrentTimestamp || x.FnName.L == ast.Now {
-				colDefaultType = ColumnDefaultExpression
 				defaultFsp := 0
 				if len(x.Args) == 1 {
 					if val := x.Args[0].(*driver.ValueExpr); val != nil {
@@ -1065,34 +1051,34 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 					}
 				}
 				if defaultFsp != fsp {
-					return nil, colDefaultType, dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+					return nil, false, dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
 				}
 			}
 		}
 		vd, err := expression.GetTimeValue(ctx, c.Expr, tp, fsp)
 		value := vd.GetValue()
 		if err != nil {
-			return nil, colDefaultType, dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+			return nil, false, dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
 		}
 
 		// Value is nil means `default null`.
 		if value == nil {
-			return nil, colDefaultType, nil
+			return nil, false, nil
 		}
 
 		// If value is types.Time, convert it to string.
 		if vv, ok := value.(types.Time); ok {
-			return vv.String(), colDefaultType, nil
+			return vv.String(), false, nil
 		}
 
-		return value, colDefaultType, nil
+		return value, false, nil
 	}
 
 	switch x := c.Expr.(type) {
 	case *ast.FuncCallExpr:
 		if x.FnName.L == ast.Rand {
 			if err := expression.VerifyArgsWrapper(ast.Rand, len(x.Args)); err != nil {
-				return nil, ColumnDefaultExpression, expression.ErrIncorrectParameterCount.GenWithStackByArgs(ast.Rand)
+				return nil, false, expression.ErrIncorrectParameterCount.GenWithStackByArgs(ast.Rand)
 			}
 			col.DefaultIsExpr = true
 			var sb strings.Builder
@@ -1100,36 +1086,36 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 				format.RestoreSpacesAroundBinaryOperation
 			restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 			if err := c.Expr.Restore(restoreCtx); err != nil {
-				return "", ColumnDefaultExpression, err
+				return "", false, err
 			}
-			return sb.String(), ColumnDefaultExpression, nil
+			return sb.String(), false, nil
 		}
 	}
 
 	// handle default next value of sequence. (keep the expr string)
-	str, defaultType, err := tryToGetSequenceDefaultValue(c)
+	str, isSeqExpr, err := tryToGetSequenceDefaultValue(c)
 	if err != nil {
-		return nil, ColumnDefaultLiteral, errors.Trace(err)
+		return nil, false, errors.Trace(err)
 	}
-	if defaultType == ColumnDefaultSequence {
-		return str, ColumnDefaultSequence, nil
+	if isSeqExpr {
+		return str, true, nil
 	}
 
 	// evaluate the non-sequence expr to a certain value.
 	v, err := expression.EvalAstExpr(ctx, c.Expr)
 	if err != nil {
-		return nil, ColumnDefaultLiteral, errors.Trace(err)
+		return nil, false, errors.Trace(err)
 	}
 
 	if v.IsNull() {
-		return nil, ColumnDefaultLiteral, nil
+		return nil, false, nil
 	}
 
 	if v.Kind() == types.KindBinaryLiteral || v.Kind() == types.KindMysqlBit {
 		if types.IsTypeBlob(tp) || tp == mysql.TypeJSON {
 			// BLOB/TEXT/JSON column cannot have a default value.
 			// Skip the unnecessary decode procedure.
-			return v.GetString(), ColumnDefaultLiteral, err
+			return v.GetString(), false, err
 		}
 		if tp == mysql.TypeBit || tp == mysql.TypeString || tp == mysql.TypeVarchar ||
 			tp == mysql.TypeVarString || tp == mysql.TypeEnum || tp == mysql.TypeSet {
@@ -1139,50 +1125,50 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 				// Overwrite the decoding error with invalid default value error.
 				err = dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
 			}
-			return str, ColumnDefaultLiteral, err
+			return str, false, err
 		}
 		// For other kind of fields (e.g. INT), we supply its integer as string value.
 		value, err := v.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
 		if err != nil {
-			return nil, ColumnDefaultLiteral, err
+			return nil, false, err
 		}
-		return strconv.FormatUint(value, 10), ColumnDefaultLiteral, nil
+		return strconv.FormatUint(value, 10), false, nil
 	}
 
 	switch tp {
 	case mysql.TypeSet:
 		val, err := getSetDefaultValue(v, col)
-		return val, ColumnDefaultLiteral, err
+		return val, false, err
 	case mysql.TypeEnum:
 		val, err := getEnumDefaultValue(v, col)
-		return val, ColumnDefaultLiteral, err
+		return val, false, err
 	case mysql.TypeDuration:
 		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldType); err != nil {
-			return "", ColumnDefaultLiteral, errors.Trace(err)
+			return "", false, errors.Trace(err)
 		}
 	case mysql.TypeBit:
 		if v.Kind() == types.KindInt64 || v.Kind() == types.KindUint64 {
 			// For BIT fields, convert int into BinaryLiteral.
-			return types.NewBinaryLiteralFromUint(v.GetUint64(), -1).ToString(), ColumnDefaultLiteral, nil
+			return types.NewBinaryLiteralFromUint(v.GetUint64(), -1).ToString(), false, nil
 		}
 	}
 
 	val, err := v.ToString()
-	return val, ColumnDefaultLiteral, err
+	return val, false, err
 }
 
-func tryToGetSequenceDefaultValue(c *ast.ColumnOption) (expr string, tp ColumnDefaultType, err error) {
+func tryToGetSequenceDefaultValue(c *ast.ColumnOption) (expr string, isExpr bool, err error) {
 	if f, ok := c.Expr.(*ast.FuncCallExpr); ok && f.FnName.L == ast.NextVal {
 		var sb strings.Builder
 		restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
 			format.RestoreSpacesAroundBinaryOperation
 		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 		if err := c.Expr.Restore(restoreCtx); err != nil {
-			return "", ColumnDefaultSequence, err
+			return "", true, err
 		}
-		return sb.String(), ColumnDefaultSequence, nil
+		return sb.String(), true, nil
 	}
-	return "", ColumnDefaultLiteral, nil
+	return "", false, nil
 }
 
 // getSetDefaultValue gets the default value for the set type. See https://dev.mysql.com/doc/refman/5.7/en/set.html.
@@ -3441,11 +3427,11 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 		// known rows with specific sequence next value under current add column logic.
 		// More explanation can refer: TestSequenceDefaultLogic's comment in sequence_test.go
 		if option.Tp == ast.ColumnOptionDefaultValue {
-			_, columnDefaultType, err := tryToGetSequenceDefaultValue(option)
+			_, isSeqExpr, err := tryToGetSequenceDefaultValue(option)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			if columnDefaultType == ColumnDefaultSequence {
+			if isSeqExpr {
 				return nil, errors.Trace(dbterror.ErrAddColumnWithSequenceAsDefault.GenWithStackByArgs(specNewColumn.Name.Name.O))
 			}
 		}
@@ -4207,15 +4193,15 @@ func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types
 
 func setDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (bool, error) {
 	hasDefaultValue := false
-	value, columnDefaultType, err := getDefaultValue(ctx, col, option)
+	value, isSeqExpr, err := getDefaultValue(ctx, col, option)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	if columnDefaultType == ColumnDefaultSequence {
+	if isSeqExpr {
 		if err := checkSequenceDefaultValue(col); err != nil {
 			return false, errors.Trace(err)
 		}
-		col.DefaultIsExpr = true
+		col.DefaultIsExpr = isSeqExpr
 	}
 
 	if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
