@@ -13,6 +13,8 @@ func TestOnlyFullGroupByOldCases(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 
+	tk.MustExec("set @@session.tidb_enable_new_only_full_group_by_check = 'on';")
+
 	// test case 1
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")

@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -48,6 +49,9 @@ ut list
 // list test cases of a single package
 ut list $package
 
+// list test cases that match a pattern
+ut list $package 'r:$regex'
+
 // run all tests
 ut run
 
@@ -56,6 +60,9 @@ ut run $package
 
 // run test cases of a single package
 ut run $package $test
+
+// run test cases that match a pattern
+ut run $package 'r:$regex'
 
 // build all test package
 ut build
@@ -101,7 +108,7 @@ func cmdList(args ...string) bool {
 	}
 
 	// list test case of a single package
-	if len(args) == 1 {
+	if len(args) == 1 || len(args) == 2 {
 		pkg := args[0]
 		pkgs = filter(pkgs, func(s string) bool { return s == pkg })
 		if len(pkgs) != 1 {
@@ -129,6 +136,15 @@ func cmdList(args ...string) bool {
 			fmt.Println("list test cases for package error", err)
 			return false
 		}
+
+		if len(args) == 2 {
+			res, err = filterTestCases(res, args[1])
+			if err != nil {
+				fmt.Println("filter test cases error", err)
+				return false
+			}
+		}
+
 		for _, x := range res {
 			fmt.Println(x.test)
 		}
@@ -249,14 +265,11 @@ func cmdRun(args ...string) bool {
 			fmt.Println("list test cases error", err)
 			return false
 		}
-		// filter the test case to run
-		tmp := tasks[:0]
-		for _, task := range tasks {
-			if strings.Contains(task.test, args[1]) {
-				tmp = append(tmp, task)
-			}
+		tasks, err = filterTestCases(tasks, args[1])
+		if err != nil {
+			fmt.Println("filter test cases error", err)
+			return false
 		}
-		tasks = tmp
 	}
 
 	if except != "" {
@@ -606,6 +619,29 @@ func listTestCases(pkg string, tasks []task) ([]task, error) {
 		tasks = append(tasks, task{pkg, c, true})
 	}
 	return tasks, nil
+}
+
+func filterTestCases(tasks []task, arg1 string) ([]task, error) {
+	if strings.HasPrefix(arg1, "r:") {
+		r, err := regexp.Compile(arg1[2:])
+		if err != nil {
+			return nil, err
+		}
+		tmp := tasks[:0]
+		for _, task := range tasks {
+			if r.MatchString(task.test) {
+				tmp = append(tmp, task)
+			}
+		}
+		return tmp, nil
+	}
+	tmp := tasks[:0]
+	for _, task := range tasks {
+		if strings.Contains(task.test, arg1) {
+			tmp = append(tmp, task)
+		}
+	}
+	return tmp, nil
 }
 
 func listPackages() ([]string, error) {

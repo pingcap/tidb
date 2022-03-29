@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -295,15 +294,11 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 func buildRecoverIndexKeyRanges(sctx *stmtctx.StatementContext, tid int64, startHandle kv.Handle) ([]kv.KeyRange, error) {
 	var startKey []byte
 	if startHandle == nil {
-		startKey = tablecodec.EncodeRowKey(tid, []byte{codec.NilFlag})
+		startKey = tablecodec.GenTableRecordPrefix(tid).Next()
 	} else {
-		startKey = tablecodec.EncodeRowKey(tid, startHandle.Next().Encoded())
+		startKey = tablecodec.EncodeRowKey(tid, startHandle.Encoded()).PrefixNext()
 	}
-	maxVal, err := codec.EncodeKey(sctx, nil, types.MaxValueDatum())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	endKey := tablecodec.EncodeRowKey(tid, maxVal)
+	endKey := tablecodec.GenTableRecordPrefix(tid).PrefixNext()
 	return []kv.KeyRange{{StartKey: startKey, EndKey: endKey}}, nil
 }
 
@@ -344,6 +339,9 @@ func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, int64, err
 			break
 		}
 		currentHandle = result.currentHandle
+		if currentHandle.Next().Compare(result.currentHandle) <= 0 {
+			break // There is no more handles in the table.
+		}
 	}
 	return totalAddedCnt, totalScanCnt, nil
 }

@@ -505,9 +505,9 @@ PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 explain format = 'brief' SELECT COUNT(1) FROM (SELECT COALESCE(b.region_name, '不详') region_name, SUM(a.registration_num) registration_num FROM (SELECT stat_date, show_date, region_id, 0 registration_num FROM test01 WHERE period = 1 AND stat_date >= 20191202 AND stat_date <= 20191202 UNION ALL SELECT stat_date, show_date, region_id, registration_num registration_num FROM test01 WHERE period = 1 AND stat_date >= 20191202 AND stat_date <= 20191202) a LEFT JOIN test02 b ON a.region_id = b.id WHERE registration_num > 0 AND a.stat_date >= '20191202' AND a.stat_date <= '20191202' GROUP BY a.stat_date , a.show_date , COALESCE(b.region_name, '不详') ) JLS;
 id	estRows	task	access object	operator info
-StreamAgg	1.00	root		funcs:count(1)->Column#22
-└─HashAgg	1.00	root		group by:Column#32, Column#33, Column#34, funcs:count(1)->Column#31
-  └─Projection	0.01	root		Column#14, Column#15, coalesce(test.test02.region_name, 不详)->Column#34
+StreamAgg	1.00	root		funcs:count(1)->Column#23
+└─HashAgg	1.00	root		group by:Column#33, Column#34, Column#35, funcs:count(1)->Column#32
+  └─Projection	0.01	root		Column#14, Column#15, coalesce(test.test02.region_name, 不详)->Column#35
     └─IndexJoin	0.01	root		left outer join, inner:TableReader, outer key:Column#16, inner key:test.test02.id, equal cond:eq(Column#16, test.test02.id)
       ├─Union(Build)	0.01	root		
       │ ├─TableDual	0.00	root		rows:0
