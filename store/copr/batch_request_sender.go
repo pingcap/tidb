@@ -35,6 +35,7 @@ type RegionInfo struct {
 	Ranges         *KeyRanges
 	AllStores      []uint64
 	PartitionIndex int64 // used by PartitionTableScan, indicates the n-th partition of the partition table
+	Addr           string
 }
 
 func (ri *RegionInfo) toCoprocessorRegionInfo() *coprocessor.RegionInfo {

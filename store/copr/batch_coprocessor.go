@@ -526,7 +526,8 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 }
 
 func buildBatchCopTasksForNonPartitionedTable(bo *backoff.Backoffer, store *kvStore, ranges *KeyRanges, storeType kv.StoreType, mppStoreLastFailTime map[string]time.Time, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64) ([]*batchCopTask, error) {
-	return buildBatchCopTasksCore(bo, store, []*KeyRanges{ranges}, storeType, mppStoreLastFailTime, ttl, balanceWithContinuity, balanceContinuousRegionCount)
+	// return buildBatchCopTasksCore(bo, store, []*KeyRanges{ranges}, storeType, mppStoreLastFailTime, ttl, balanceWithContinuity, balanceContinuousRegionCount)
+	return buildBatchCopTasksRandomly(bo, store, []*KeyRanges{ranges}, storeType)
 }
 
 func buildBatchCopTasksForPartitionedTable(bo *backoff.Backoffer, store *kvStore, rangesForEachPhysicalTable []*KeyRanges, storeType kv.StoreType, mppStoreLastFailTime map[string]time.Time, ttl time.Duration, balanceWithContinuity bool, balanceContinuousRegionCount int64, partitionIDs []int64) ([]*batchCopTask, error) {
@@ -537,6 +538,119 @@ func buildBatchCopTasksForPartitionedTable(bo *backoff.Backoffer, store *kvStore
 	// generate tableRegions for batchCopTasks
 	convertRegionInfosToPartitionTableRegions(batchTasks, partitionIDs)
 	return batchTasks, nil
+}
+
+// 1. The returned batchCopTask num equals to realted TiFlash node num
+// 2. The region of first copTask in one batchCopTask is located in TiFlash specified in batchCopTask.storeAddr.
+// 3. But the remaining copTasks in one batchCopTask is randomly dispatched (using golang map).
+func buildBatchCopTasksRandomly(bo *backoff.Backoffer, store *kvStore, rangesForEachPhysicalTable []*KeyRanges, storeType kv.StoreType) (res []*batchCopTask, _ error) {
+	const cmdType = tikvrpc.CmdBatchCop
+	var rangesLen int
+	var retryNum int
+	var addrMap map[string]bool
+	var taskCtxMap map[*copTask]*tikv.RPCContext
+	var tasks []*copTask
+    cache := store.GetRegionCache()
+
+	for {
+		retryNum++
+		if retryNum >= 10 {
+			return nil, errors.New("too many times of retry to GetTiFlashRPCContext()")
+		}
+
+		rangesLen = 0
+		addrMap = make(map[string]bool)
+		taskCtxMap = make(map[*copTask]*tikv.RPCContext)
+		tasks = make([]*copTask, 0)
+
+		for i, ranges := range rangesForEachPhysicalTable {
+			rangesLen += ranges.Len()
+			locations, err := cache.SplitKeyRangesByLocations(bo, ranges)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			for _, lo := range locations {
+				tasks = append(tasks, &copTask{
+					region:         lo.Location.Region,
+					ranges:         lo.Ranges,
+					cmdType:        cmdType,
+					storeType:      storeType,
+					partitionIndex: int64(i),
+				})
+			}
+		}
+
+		for _, task := range tasks {
+			// todo: check this func
+			rpcCtx, err := cache.GetTiFlashRPCContext(bo.TiKVBackoffer(), task.region, false)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if rpcCtx == nil {
+				// todo: looks like it happens, why
+				logutil.BgLogger().Info(fmt.Sprintf("GetTiFlashRPCContext failed: %v", task.region))
+				err := bo.Backoff(tikv.BoTiFlashRPC(), errors.New("Cannot find region with TiFlash peer"))
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				break
+			}
+			addrMap[rpcCtx.Addr] = true
+			taskCtxMap[task] = rpcCtx
+		}
+		if len(taskCtxMap) == len(tasks) {
+			break
+		}
+	}
+
+	nodeNum := len(addrMap)
+	copTaskNumForEachNode := len(tasks)/nodeNum + 1
+	var taskIdxInOneNode int
+	var handledNum int
+	for task, rpcCtx := range taskCtxMap {
+		allStores := cache.GetAllValidTiFlashStores(task.region, rpcCtx.Store)
+		regionInfo := RegionInfo{
+			Region:         task.region,
+			Meta:           rpcCtx.Meta,
+			Ranges:         task.ranges,
+			AllStores:      allStores,
+			PartitionIndex: task.partitionIndex,
+			Addr:           rpcCtx.Addr,
+		}
+
+		if taskIdxInOneNode == copTaskNumForEachNode {
+			taskIdxInOneNode = 0
+		}
+
+		if taskIdxInOneNode == 0 {
+			res = append(res, &batchCopTask{
+				storeAddr:   rpcCtx.Addr,
+				cmdType:     cmdType,
+				ctx:         rpcCtx,
+				regionInfos: []RegionInfo{regionInfo},
+			})
+		} else if taskIdxInOneNode < copTaskNumForEachNode {
+			lastBatchCopTask := res[len(res)-1]
+			lastBatchCopTask.regionInfos = append(lastBatchCopTask.regionInfos, regionInfo)
+		} else {
+			panic("cannot reach here")
+		}
+		handledNum++
+		taskIdxInOneNode++
+	}
+
+	if handledNum != len(tasks) {
+		panic(fmt.Sprintf("handled %v tasks, but expect %v, len(taskCtxMap): %v, nodeNum: %v, copTaskNumForEachNode: %v", handledNum, len(tasks), len(taskCtxMap), nodeNum, copTaskNumForEachNode))
+	}
+
+	for _, batchTask := range res {
+		logMsg := fmt.Sprintf("batchCopTask Addr: %s", batchTask.storeAddr)
+		for i, perTaskRegionInfo := range batchTask.regionInfos {
+			logMsg += fmt.Sprintf(", copTask[%d]: %s", i, perTaskRegionInfo.Addr)
+		}
+		logutil.BgLogger().Info(logMsg)
+	}
+	return res, nil
 }
 
 // When `partitionIDs != nil`, it means that buildBatchCopTasksCore is constructing a batch cop tasks for PartitionTableScan.

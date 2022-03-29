@@ -16,7 +16,9 @@ package copr
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"math/rand"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -80,6 +82,7 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 		}
 		ranges := NewKeyRanges(req.KeyRanges)
 		tasks, err = buildBatchCopTasksForNonPartitionedTable(bo, c.store, ranges, kv.TiFlash, mppStoreLastFailTime, ttl, true, 20)
+		// tasks = disruptTaskAddr(tasks)
 	}
 
 	if err != nil {
@@ -90,6 +93,25 @@ func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasks
 		mppTasks = append(mppTasks, copTask)
 	}
 	return mppTasks, nil
+}
+
+func disruptTaskAddr(tasks []*batchCopTask) []*batchCopTask {
+	addrs := make([]string, 0, len(tasks))
+	var logMsg string
+	for _, t := range tasks {
+		addrs = append(addrs, t.GetAddress())
+		logMsg += fmt.Sprintf("%s;", t.GetAddress())
+	}
+	logutil.BgLogger().Info("batchCopTask Addr before disrupt: " + logMsg)
+
+	rand.Shuffle(len(addrs), func(i, j int) { addrs[i], addrs[j] = addrs[j], addrs[i] })
+	logMsg = ""
+	for i, addr := range addrs {
+		tasks[i].storeAddr = addr
+		logMsg += fmt.Sprintf("%s;", addr)
+	}
+	logutil.BgLogger().Info("batchCopTask Addr after disrupt: " + logMsg)
+	return tasks
 }
 
 // mppResponse wraps mpp data packet.
@@ -300,7 +322,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 			if index < 10 || log.GetLevel() <= zap.DebugLevel {
 				logutil.BgLogger().Info("invalid region because tiflash detected stale region", zap.String("region id", id.String()))
 			}
-			m.store.GetRegionCache().InvalidateCachedRegionWithReason(id, tikv.EpochNotMatch)
+			// m.store.GetRegionCache().InvalidateCachedRegionWithReason(id, tikv.EpochNotMatch)
 		}
 	}
 	failpoint.Inject("mppNonRootTaskError", func(val failpoint.Value) {
