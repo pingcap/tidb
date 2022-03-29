@@ -811,6 +811,25 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 			do.ddl = d
 		}
 	})
+
+	if config.GetGlobalConfig().Experimental.EnableGlobalKill {
+		if do.etcdClient != nil {
+			err := do.acquireServerID(ctx)
+			if err != nil {
+				logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
+				do.isLostConnectionToPD.Store(1) // will retry in `do.serverIDKeeper`
+			} else {
+				do.isLostConnectionToPD.Store(0)
+			}
+
+			do.wg.Add(1)
+			go do.serverIDKeeper()
+		} else {
+			// set serverID for standalone deployment to enable 'KILL'.
+			atomic.StoreUint64(&do.serverID, serverIDForStandalone)
+		}
+	}
+
 	// step 1: prepare the info/schema syncer which domain reload needed.
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID, do.etcdClient, skipRegisterToDashboard)
@@ -833,6 +852,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		return err
 	}
 
+<<<<<<< HEAD
 	if config.GetGlobalConfig().Experimental.EnableGlobalKill {
 		if do.etcdClient != nil {
 			err := do.acquireServerID(ctx)
@@ -851,6 +871,8 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 		}
 	}
 
+=======
+>>>>>>> 4e708d1ec... domain: adjust the order of acquireServerID and GlobalInfoSyncerInit to fix global kill test (#33536)
 	// Only when the store is local that the lease value is 0.
 	// If the store is local, it doesn't need loadSchemaInLoop.
 	if ddlLease > 0 {
