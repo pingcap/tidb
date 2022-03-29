@@ -83,6 +83,7 @@ func newStreamStopCommand() *cobra.Command {
 	return command
 }
 
+//nolint:unused,deadcode
 func newStreamPauseCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "pause",
@@ -97,6 +98,7 @@ func newStreamPauseCommand() *cobra.Command {
 	return command
 }
 
+//nolint:unused,deadcode
 func newStreamResumeCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "resume",

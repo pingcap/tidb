@@ -600,7 +600,7 @@ func RunStreamStop(
 	return nil
 }
 
-// RunStreamPause specifies pausing a stream task
+// RunStreamPause specifies pausing a stream task.
 func RunStreamPause(
 	c context.Context,
 	g glue.Glue,
@@ -640,7 +640,7 @@ func RunStreamPause(
 	return nil
 }
 
-// RunStreamResume specifies resuming a stream task
+// RunStreamResume specifies resuming a stream task.
 func RunStreamResume(
 	c context.Context,
 	g glue.Glue,
@@ -831,7 +831,7 @@ func RunStreamRestore(
 	defer cancelFn()
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("task.RunStreamStart", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("task.RunStreamRestore", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
@@ -840,13 +840,13 @@ func RunStreamRestore(
 
 	if len(cfg.FullBackupStorage) > 0 {
 		cfg.RestoreConfig.Config.Storage = cfg.FullBackupStorage
-		if err := RunRestore(c, g, FullRestoreCmd, &cfg.RestoreConfig); err != nil {
+		if err := RunRestore(ctx, g, FullRestoreCmd, &cfg.RestoreConfig); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
 	cfg.RestoreConfig.Config.Storage = StreamStorage
-	if err := restoreStream(c, g, cmdName, cfg); err != nil {
+	if err := restoreStream(ctx, g, cmdName, cfg); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -864,7 +864,7 @@ func restoreStream(
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan(
-			"task.RunStreamRestore",
+			"restoreStream",
 			opentracing.ChildOf(span.Context()),
 		)
 		defer span1.Finish()
@@ -929,7 +929,7 @@ func restoreStream(
 	log.Info("start restore on point", zap.Uint64("ts", cfg.RestoreTS))
 
 	// get full backup meta to generate rewrite rules.
-	fullBackupTables, err := initFullBackupTables(ctx, cfg.FullBackupStorage, cfg)
+	fullBackupTables, err := initFullBackupTables(ctx, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1013,10 +1013,9 @@ func countIndices(ts map[int64]*metautil.Table) int64 {
 
 func initFullBackupTables(
 	ctx context.Context,
-	fullBackupStorage string,
 	cfg *StreamConfig,
 ) (map[int64]*metautil.Table, error) {
-	_, s, err := GetStorage(ctx, fullBackupStorage, &cfg.Config)
+	_, s, err := GetStorage(ctx, cfg.Config.Storage, &cfg.Config)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
