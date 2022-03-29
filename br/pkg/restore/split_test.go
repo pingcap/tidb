@@ -39,6 +39,7 @@ type TestClient struct {
 	supportBatchScatter bool
 
 	scattered map[uint64]bool
+	InjectErr bool
 }
 
 func NewTestClient(
@@ -215,6 +216,10 @@ func (c *TestClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.Ge
 }
 
 func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*restore.RegionInfo, error) {
+	if c.InjectErr {
+		return nil, errors.New("mock scan error")
+	}
+
 	infos := c.regionsInfo.ScanRange(key, endKey, limit)
 	regions := make([]*restore.RegionInfo, 0, len(infos))
 	for _, info := range infos {
@@ -567,12 +572,17 @@ func TestRegionConsistency(t *testing.T) {
 }
 
 type fakeRestorer struct {
+	mu sync.Mutex
+
 	errorInSplit  bool
 	splitRanges   []rtree.Range
 	restoredFiles []*backuppb.File
 }
 
 func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, rewriteRules *restore.RewriteRules, updateCh glue.Progress, isRawKv bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -587,6 +597,9 @@ func (f *fakeRestorer) SplitRanges(ctx context.Context, ranges []rtree.Range, re
 }
 
 func (f *fakeRestorer) RestoreFiles(ctx context.Context, files []*backuppb.File, rewriteRules *restore.RewriteRules, updateCh glue.Progress) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}

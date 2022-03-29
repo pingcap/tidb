@@ -71,7 +71,7 @@ func TestDDLStatsInfo(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		ctx.SetValue(sessionctx.QueryString, "skip")
-		done <- d.doDDLJob(ctx, job)
+		done <- d.DoDDLJob(ctx, job)
 	}()
 
 	exit := false
