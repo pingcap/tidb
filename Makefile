@@ -120,7 +120,6 @@ CLEAN_UT_BINARY := find . -name '*.test.bin'| xargs rm
 ut: tools/bin/ut tools/bin/xprog failpoint-enable
 	tools/bin/ut $(X) || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
-	@$(CLEAN_UT_BINARY)
 
 gotest: failpoint-enable
 	@echo "Running in native mode."

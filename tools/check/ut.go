@@ -192,7 +192,7 @@ func cmdRun(args ...string) bool {
 	start := time.Now()
 	// run all tests
 	if len(args) == 0 {
-		err := buildTestBinaryMulti(pkgs)
+		err := buildTestBinaryMultiDebug(pkgs)
 		if err != nil {
 			fmt.Println("build package error", pkgs, err)
 			return false
@@ -804,6 +804,18 @@ func buildTestBinary(pkg string) error {
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return withTrace(err)
+	}
+	return nil
+}
+
+// buildTestBinaryMultiDebug is much faster than build the test packages one by one.
+func buildTestBinaryMultiDebug(pkgs []string) error {
+	for _, pkg := range pkgs {
+		err := buildTestBinary(pkg)
+		if err != nil {
+			fmt.Println("build package error", pkg, err)
+			return err
+		}
 	}
 	return nil
 }
