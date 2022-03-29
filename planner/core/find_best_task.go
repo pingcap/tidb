@@ -282,6 +282,11 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
 			bestTask = curTask
 		}
+
+		//// TODO: introduce a new variable as a switch to control this
+		//if curTask.plan().CalPlanCost(property.RootTaskType) < bestTask.plan().CalPlanCost(property.RootTaskType) || (bestTask.invalid() && !curTask.invalid()) {
+		//	bestTask = curTask
+		//}
 	}
 	return bestTask, cntPlan, nil
 }

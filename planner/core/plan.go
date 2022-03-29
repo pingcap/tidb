@@ -314,9 +314,20 @@ type LogicalPlan interface {
 	ExtractFD() *fd.FDSet
 }
 
+// CostCalculator is used to calculate costs for plans.
+type CostCalculator interface {
+	// CalPlanCost returns the cost of current plan
+	CalPlanCost(taskType property.TaskType) float64
+
+	// CalRowWidth returns estimated row width of this plan, which can be used to calculate cost
+	CalRowWidth() float64
+}
+
 // PhysicalPlan is a tree of the physical operators.
 type PhysicalPlan interface {
 	Plan
+
+	CostCalculator
 
 	// attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
@@ -349,10 +360,10 @@ type PhysicalPlan interface {
 	// Stats returns the StatsInfo of the plan.
 	Stats() *property.StatsInfo
 
-	// Cost returns the estimated cost of the subplan.
+	// Deprecated: Cost returns the estimated cost of the subplan.
 	Cost() float64
 
-	// SetCost set the cost of the subplan.
+	// Deprecated: SetCost set the cost of the subplan.
 	SetCost(cost float64)
 
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
@@ -401,13 +412,31 @@ func (p *baseLogicalPlan) ExplainInfo() string {
 	return ""
 }
 
+type basePhysicalCost struct {
+	planCostInit bool
+	planCost     float64
+	rowWidthInit bool
+	rowWidth     float64
+}
+
 type basePhysicalPlan struct {
 	basePlan
+	basePhysicalCost
 
 	childrenReqProps []*property.PhysicalProperty
 	self             PhysicalPlan
 	children         []PhysicalPlan
 	cost             float64
+}
+
+// CalRowWidth ...
+func (p *basePhysicalPlan) CalRowWidth() float64 {
+	if p.rowWidthInit {
+		return p.rowWidth
+	}
+	p.rowWidth = calRowWidth4Operator(p.Schema().Columns)
+	p.rowWidthInit = true
+	return p.rowWidth
 }
 
 // Cost implements PhysicalPlan interface.
