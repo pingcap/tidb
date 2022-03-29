@@ -431,7 +431,18 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 			}
 			cachedVals := cacheValue.([]*PSTMTPlanCacheValue)
 			for _, cachedVal := range cachedVals {
+<<<<<<< HEAD
 				if !cachedVal.UserVarTypes.Equal(tps) {
+=======
+				if cachedVal.BindSQL != bindSQL {
+					// When BindSQL does not match, it means that we have added a new binding,
+					// and the original cached plan will be invalid,
+					// so the original cached plan can be cleared directly
+					sctx.PreparedPlanCache().Delete(cacheKey)
+					break
+				}
+				if !cachedVal.UserVarTypes.CheckTypesCompatibility4PC(tps) {
+>>>>>>> eec518648... planner: restrict plan cache for decimal parameter types (#31769)
 					continue
 				}
 				planValid := true
@@ -497,8 +508,13 @@ REBUILD:
 		stmtCtx.SetPlanDigest(preparedStmt.NormalizedPlan, preparedStmt.PlanDigest)
 		if cacheVals, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			hitVal := false
+<<<<<<< HEAD
 			for i, cacheVal := range cacheVals.([]*PSTMTPlanCacheValue) {
 				if cacheVal.UserVarTypes.Equal(tps) {
+=======
+			for i, cacheVal := range cacheVals.([]*PlanCacheValue) {
+				if cacheVal.UserVarTypes.CheckTypesCompatibility4PC(tps) {
+>>>>>>> eec518648... planner: restrict plan cache for decimal parameter types (#31769)
 					hitVal = true
 					cacheVals.([]*PSTMTPlanCacheValue)[i] = cached
 					break

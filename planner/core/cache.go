@@ -149,9 +149,10 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 // FieldSlice is the slice of the types.FieldType
 type FieldSlice []types.FieldType
 
-// Equal compares FieldSlice with []*types.FieldType
-// Currently this is only used in plan cache to invalidate cache when types of variables are different.
-func (s FieldSlice) Equal(tps []*types.FieldType) bool {
+// CheckTypesCompatibility4PC compares FieldSlice with []*types.FieldType
+// Currently this is only used in plan cache to check whether the types of parameters are compatible.
+// If the types of parameters are compatible, we can use the cached plan.
+func (s FieldSlice) CheckTypesCompatibility4PC(tps []*types.FieldType) bool {
 	if len(s) != len(tps) {
 		return false
 	}
@@ -165,6 +166,12 @@ func (s FieldSlice) Equal(tps []*types.FieldType) bool {
 			(s[i].Tp == mysql.TypeNull || tps[i].Tp == mysql.TypeNull)
 		if !tpEqual || s[i].Charset != tps[i].Charset || s[i].Collate != tps[i].Collate ||
 			(s[i].EvalType() == types.ETInt && mysql.HasUnsignedFlag(s[i].Flag) != mysql.HasUnsignedFlag(tps[i].Flag)) {
+			return false
+		}
+		// When the type is decimal, we should compare the Flen and Decimal.
+		// We can only use the plan when both Flen and Decimal should less equal than the cached one.
+		// We assume here that there is no correctness problem when the precision of the parameters is less than the precision of the parameters in the cache.
+		if tpEqual && s[i].Tp == mysql.TypeNewDecimal && !(s[i].Flen >= tps[i].Flen && s[i].Decimal >= tps[i].Decimal) {
 			return false
 		}
 	}
