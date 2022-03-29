@@ -53,9 +53,8 @@ func (d *ddl) deleteRunningDDLJobMap(id int) {
 }
 
 const (
-	getGeneralJobSQL                    = "select job_meta from mysql.tidb_ddl_job where job_id in (select min(job_id) from mysql.tidb_ddl_job group by schema_id, table_id order by min(job_id)) and not reorg"
-	getGeneralJobWithoutRunningSQL      = "select job_meta from mysql.tidb_ddl_job where job_id in (select min(job_id) from mysql.tidb_ddl_job group by schema_id, table_id order by min(job_id)) and not reorg and job_id not in (%s)"
-	getGeneralJobWithoutRunningAgainSQL = "select job_meta from mysql.tidb_ddl_job where job_id in (select min(job_id) from mysql.tidb_ddl_job group by schema_id, table_id order by min(job_id) limit 20) and not reorg and job_id not in (%s)"
+	getGeneralJobSQL               = "select job_meta from mysql.tidb_ddl_job where job_id in (select min(job_id) from mysql.tidb_ddl_job group by schema_id, table_id order by min(job_id)) and not reorg"
+	getGeneralJobWithoutRunningSQL = "select job_meta from mysql.tidb_ddl_job where job_id in (select min(job_id) from mysql.tidb_ddl_job group by schema_id, table_id order by min(job_id)) and not reorg and job_id not in (%s)"
 )
 
 func (d *ddl) getGeneralJob(sess sessionctx.Context) (*model.Job, error) {
