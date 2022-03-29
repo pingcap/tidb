@@ -3143,7 +3143,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		plans:            v.TablePlans,
 		tablePlan:        v.GetTablePlan(),
 		storeType:        v.StoreType,
-		batchCop:         v.BatchCop,
+		batchCop:         v.ReadReqType == plannercore.BatchCop,
 	}
 	e.buildVirtualColumnInfo()
 	if containsLimit(dagReq.Executors) {
@@ -3208,16 +3208,12 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		}
 	})
 	if useMPPExecution(b.ctx, v) {
-		plannercore.SetMppOrBatchCopForTableScan(v.GetTablePlan())
 		return b.buildMPPGather(v)
 	}
 	ts, err := v.GetTableScan()
 	if err != nil {
 		b.err = err
 		return nil
-	}
-	if v.BatchCop {
-		ts.IsMPPOrBatchCop = true
 	}
 	ret, err := buildNoRangeTableReader(b, v)
 	if err != nil {
