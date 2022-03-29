@@ -2374,11 +2374,13 @@ func FinishAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob, analyz
 	job.EndTime = time.Now()
 	var sql string
 	var args []interface{}
+	// process_id is used to see which process is running the analyze job and kill the analyze job. After the analyze job
+	// is finished(or failed), process_id is useless and we set it to NULL to avoid `kill tidb process_id` wrongly.
 	if analyzeErr != nil {
-		sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, fail_reason = %? WHERE id = %?"
+		sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, fail_reason = %?, process_id = NULL WHERE id = %?"
 		args = []interface{}{job.Progress.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFailed, analyzeErr.Error(), *job.ID}
 	} else {
-		sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %? WHERE id = %?"
+		sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, process_id = NULL WHERE id = %?"
 		args = []interface{}{job.Progress.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
 	}
 	exec := ctx.(sqlexec.RestrictedSQLExecutor)

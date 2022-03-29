@@ -2895,5 +2895,7 @@ func TestAnalyzeJob(t *testing.T) {
 		} else {
 			require.Equal(t, "<nil>", rows[0][8])
 		}
+		// process_id is set to NULL after the analyze job is finished/failed.
+		require.Equal(t, "<nil>", rows[0][10])
 	}
 }

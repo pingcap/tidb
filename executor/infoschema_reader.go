@@ -1862,7 +1862,10 @@ func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum, 
 			failReason = chunkRow.GetString(8)
 		}
 		instance := chunkRow.GetString(9)
-		procID := chunkRow.GetUint64(10)
+		var procID interface{}
+		if !chunkRow.IsNull(10) {
+			procID = chunkRow.GetUint64(10)
+		}
 		rows = append(rows, types.MakeDatums(
 			dbName,        // TABLE_SCHEMA
 			tableName,     // TABLE_NAME
