@@ -2376,7 +2376,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 			*sampleRate = b.getAdjustedSampleRate(b.ctx, task)
 			if task.PartitionName != "" {
 				sc.AppendNote(errors.Errorf(
-					"Analyze use auto adjusted sample rate %f for table %s.%s's partition %s.",
+					"Analyze use auto adjusted sample rate %f for table %s.%s's partition %s",
 					*sampleRate,
 					task.DBName,
 					task.TableName,
@@ -2384,7 +2384,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 				))
 			} else {
 				sc.AppendNote(errors.Errorf(
-					"Analyze use auto adjusted sample rate %f for table %s.%s.",
+					"Analyze use auto adjusted sample rate %f for table %s.%s",
 					*sampleRate,
 					task.DBName,
 					task.TableName,
