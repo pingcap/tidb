@@ -2031,6 +2031,22 @@ func TestDefaultValueIsString(t *testing.T) {
 	require.Equal(t, "1", tbl.Meta().Columns[0].DefaultValue)
 }
 
+func TestDefaultColumnWithRand(t *testing.T) {
+	// Related issue: https://github.com/pingcap/tidb/issues/10377
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, testLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t, t1, t2")
+	tk.MustExec("create table t (a int(10) default rand())")
+	tk.MustExec("create table t1 (c int, c1 double default rand())")
+	tk.MustExec("create table t2 (c int, c1 double default rand(1))")
+	tk.MustExec("insert into t1(c) values (1),(2),(3)")
+
+	tk.MustExec("alter table t add column b int(10) default rand(2)")
+}
+
 func TestChangingDBCharset(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

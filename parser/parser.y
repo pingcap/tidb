@@ -836,6 +836,7 @@ import (
 	NowSymOptionFraction   "NowSym with optional fraction part"
 	CharsetNameOrDefault   "Character set name or default"
 	NextValueForSequence   "Default nextval expression"
+	BuiltinFunction        "Default builtin functions"
 	FunctionNameSequence   "Function with sequence function call"
 	WindowFuncCall         "WINDOW function call"
 	RepeatableOpt          "Repeatable optional in sample clause"
@@ -3332,9 +3333,49 @@ ReferOpt:
  *      https://github.com/mysql/mysql-server/blob/5.7/sql/sql_yacc.yy#L6832
  */
 DefaultValueExpr:
-	NowSymOptionFraction
+	BuiltinFunction
 |	SignedLiteral
 |	NextValueForSequence
+
+BuiltinFunction:
+	NowSymFunc
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}
+	}
+|	NowSymFunc '(' ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}
+	}
+|	NowSymFunc '(' NUM ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP"), Args: []ast.ExprNode{ast.NewValueExpr($3, parser.charset, parser.collation)}}
+	}
+|	FunctionNameConflict '(' ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+		}
+	}
+|	FunctionNameConflict '(' ExpressionList ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args:   $3.([]ast.ExprNode),
+		}
+	}
+|	identifier '(' ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+		}
+	}
+|	identifier '(' ExpressionList ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args:   $3.([]ast.ExprNode),
+		}
+	}
 
 NowSymOptionFraction:
 	NowSym
@@ -6967,7 +7008,6 @@ FunctionNameConflict:
 |	"MICROSECOND"
 |	"MINUTE"
 |	"MONTH"
-|	builtinNow
 |	"QUARTER"
 |	"REPEAT"
 |	"REPLACE"
@@ -7003,6 +7043,10 @@ FunctionNameDatetimePrecision:
 
 FunctionCallKeyword:
 	FunctionNameConflict '(' ExpressionListOpt ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
+|	builtinNow '(' ExpressionListOpt ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
