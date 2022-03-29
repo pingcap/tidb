@@ -39,7 +39,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bufio.Reader, logNum int) ([][]types.Datum, error) {
+func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datum, error) {
 	retriever.taskList = make(chan slowLogTask, 100)
 	ctx := context.Background()
 	retriever.parseSlowLog(ctx, sctx, reader, 64)
@@ -67,14 +67,14 @@ func newSlowQueryRetriever() (*slowQueryRetriever, error) {
 	return &slowQueryRetriever{outputCols: tbl.Meta().Columns}, nil
 }
 
-func parseSlowLog(sctx sessionctx.Context, reader *bufio.Reader, logNum int) ([][]types.Datum, error) {
+func parseSlowLog(sctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datum, error) {
 	retriever, err := newSlowQueryRetriever()
 	if err != nil {
 		return nil, err
 	}
 	// Ignore the error is ok for test.
 	terror.Log(retriever.initialize(context.Background(), sctx))
-	rows, err := parseLog(retriever, sctx, reader, logNum)
+	rows, err := parseLog(retriever, sctx, reader)
 	return rows, err
 }
 
@@ -108,7 +108,7 @@ select * from t;`
 	require.NoError(t, err)
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().TimeZone = loc
-	_, err = parseSlowLog(sctx, reader, 64)
+	_, err = parseSlowLog(sctx, reader)
 	require.Error(t, err)
 	require.Equal(t, err.Error(), "panic test")
 }
@@ -145,7 +145,7 @@ select * from t;`
 	require.NoError(t, err)
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().TimeZone = loc
-	rows, err := parseSlowLog(ctx, reader, 64)
+	rows, err := parseSlowLog(ctx, reader)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	recordString := ""
@@ -168,7 +168,7 @@ select * from t;`
 
 	// Issue 20928
 	reader = bufio.NewReader(bytes.NewBufferString(slowLogStr))
-	rows, err = parseSlowLog(ctx, reader, 1)
+	rows, err = parseSlowLog(ctx, reader)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	recordString = ""
@@ -204,7 +204,7 @@ select a# from t;
 select * from t;
 `)
 	reader = bufio.NewReader(slowLog)
-	_, err = parseSlowLog(ctx, reader, 64)
+	_, err = parseSlowLog(ctx, reader)
 	require.NoError(t, err)
 
 	// test for time format compatibility.
@@ -215,7 +215,7 @@ select * from t;
 select * from t;
 `)
 	reader = bufio.NewReader(slowLog)
-	rows, err = parseSlowLog(ctx, reader, 64)
+	rows, err = parseSlowLog(ctx, reader)
 	require.NoError(t, err)
 	require.Len(t, rows, 2)
 	t0Str, err := rows[0][0].ToString()
@@ -232,7 +232,7 @@ select * from t;
 select * from t;
 `)
 	reader = bufio.NewReader(slowLog)
-	_, err = parseSlowLog(ctx, reader, 64)
+	_, err = parseSlowLog(ctx, reader)
 	require.NoError(t, err)
 	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 	require.Len(t, warnings, 1)
@@ -256,13 +256,13 @@ select * from t;
 	sql := strings.Repeat("x", int(variable.MaxOfMaxAllowedPacket+1))
 	slowLog.WriteString(sql)
 	reader := bufio.NewReader(slowLog)
-	_, err = parseSlowLog(ctx, reader, 64)
+	_, err = parseSlowLog(ctx, reader)
 	require.Error(t, err)
 	require.EqualError(t, err, "single line length exceeds limit: 65536")
 
 	variable.MaxOfMaxAllowedPacket = originValue
 	reader = bufio.NewReader(slowLog)
-	_, err = parseSlowLog(ctx, reader, 64)
+	_, err = parseSlowLog(ctx, reader)
 	require.NoError(t, err)
 }
 
@@ -313,7 +313,7 @@ select * from t;`)
 	require.NoError(t, err)
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().TimeZone = loc
-	_, err = parseSlowLog(ctx, scanner, 64)
+	_, err = parseSlowLog(ctx, scanner)
 	require.NoError(t, err)
 
 	// Test parser error.
@@ -323,7 +323,7 @@ select * from t;`)
 select * from t;
 `)
 	scanner = bufio.NewReader(slowLog)
-	_, err = parseSlowLog(ctx, scanner, 64)
+	_, err = parseSlowLog(ctx, scanner)
 	require.NoError(t, err)
 	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 	require.Len(t, warnings, 1)
@@ -469,7 +469,7 @@ select 7;`
 		require.Equal(t, len(retriever.files), len(cas.files), comment)
 		if len(retriever.files) > 0 {
 			reader := bufio.NewReader(retriever.files[0].file)
-			rows, err := parseLog(retriever, sctx, reader, 64)
+			rows, err := parseLog(retriever, sctx, reader)
 			require.NoError(t, err)
 			require.Equal(t, len(rows), len(cas.querys), comment)
 			for i, row := range rows {
