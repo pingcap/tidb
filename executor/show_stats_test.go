@@ -16,7 +16,6 @@ package executor_test
 
 import (
 	"fmt"
-	"strconv"
 	"testing"
 	"time"
 
@@ -389,8 +388,7 @@ func TestShowAnalyzeStatus(t *testing.T) {
 	require.NoError(t, err)
 	addr := fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
 	require.Equal(t, addr, rows[0][9])
-	connID := strconv.FormatUint(tk.Session().GetSessionVars().ConnectionID, 10)
-	require.Equal(t, connID, rows[0][10])
+	require.Equal(t, "<nil>", rows[0][10])
 
 	tk.MustExec("delete from mysql.analyze_jobs")
 	tk.MustExec("set @@tidb_analyze_version=1")
@@ -408,7 +406,7 @@ func TestShowAnalyzeStatus(t *testing.T) {
 	require.Equal(t, "test", rows[1][0])
 	require.Equal(t, "<nil>", rows[0][8])
 	require.Equal(t, addr, rows[0][9])
-	require.Equal(t, connID, rows[0][10])
+	require.Equal(t, "<nil>", rows[0][10])
 	require.Equal(t, "t", rows[1][1])
 	require.Equal(t, "", rows[1][2])
 	require.Equal(t, "analyze index idx", rows[1][3])
@@ -418,5 +416,5 @@ func TestShowAnalyzeStatus(t *testing.T) {
 	require.Equal(t, "finished", rows[1][7])
 	require.Equal(t, "<nil>", rows[1][8])
 	require.Equal(t, addr, rows[1][9])
-	require.Equal(t, connID, rows[1][10])
+	require.Equal(t, "<nil>", rows[1][10])
 }
