@@ -31,7 +31,6 @@ import (
 )
 
 const (
-	chanBufferSize = 256
 	// TimeToPrintLongTimeInternalTxn is the duration if the internal transaction lasts more than it,
 	// TiDB prints a log message
 	TimeToPrintLongTimeInternalTxn = time.Minute * 5
@@ -39,12 +38,12 @@ const (
 
 var globalInnerTxnTsBox = innerTxnStartTsBox{
 	innerTSLock:        sync.Mutex{},
-	innerTxnStartTsMap: make(map[uint64]uint64, chanBufferSize),
+	innerTxnStartTsMap: make(map[uint64]struct{}, 256),
 }
 
 type innerTxnStartTsBox struct {
 	innerTSLock        sync.Mutex
-	innerTxnStartTsMap map[uint64]uint64
+	innerTxnStartTsMap map[uint64]struct{}
 }
 
 // wrapStoreInterTxnTS is the entry function used to store the startTS of an internal transaction to globalInnerTxnTsBox
@@ -55,7 +54,7 @@ func wrapStoreInterTxnTS(startTS uint64) {
 
 func (ib *innerTxnStartTsBox) storeInnerTxnTS(startTS uint64) {
 	ib.innerTSLock.Lock()
-	ib.innerTxnStartTsMap[startTS] = startTS
+	ib.innerTxnStartTsMap[startTS] = struct{}{}
 	ib.innerTSLock.Unlock()
 
 }
@@ -82,7 +81,7 @@ func (ib *innerTxnStartTsBox) getMinStartTs(now time.Time, startTSLowerLimit uin
 	curMinStartTS uint64) uint64 {
 	minStartTS := curMinStartTS
 	ib.innerTSLock.Lock()
-	for _, innerTS := range ib.innerTxnStartTsMap {
+	for innerTS := range ib.innerTxnStartTsMap {
 		PrintLongTimeInternalTxn(now, innerTS, true)
 		if innerTS > startTSLowerLimit && innerTS < minStartTS {
 			minStartTS = innerTS
