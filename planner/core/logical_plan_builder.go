@@ -25,6 +25,8 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/pingcap/tidb/util/logutil"
+
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
@@ -1348,7 +1350,8 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 					}
 					scalarUniqueID, ok := fds.IsHashCodeRegistered(string(hack.String(x.HashCode(p.SCtx().GetSessionVars().StmtCtx))))
 					if !ok {
-						panic("selected expr must have been registered, shouldn't be here")
+						logutil.BgLogger().Warn("Error occurred while maintaining the functional dependency")
+						continue
 					}
 					item.Insert(scalarUniqueID)
 				default:
@@ -1412,7 +1415,8 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 					case *expression.ScalarFunction:
 						scalarUniqueID, ok := fds.IsHashCodeRegistered(string(hack.String(x.HashCode(p.SCtx().GetSessionVars().StmtCtx))))
 						if !ok {
-							panic("selected expr must have been registered, shouldn't be here")
+							logutil.BgLogger().Warn("Error occurred while maintaining the functional dependency")
+							continue
 						}
 						projectionUniqueIDs.Insert(scalarUniqueID)
 					}
