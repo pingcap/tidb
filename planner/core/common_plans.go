@@ -487,7 +487,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 					sctx.PreparedPlanCache().Delete(cacheKey)
 					break
 				}
-				if !cachedVal.UserVarTypes.Equal(tps) {
+				if !cachedVal.UserVarTypes.CheckTypesCompatibility4PC(tps) {
 					continue
 				}
 				planValid := true
@@ -564,7 +564,7 @@ REBUILD:
 		if cacheVals, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
 			hitVal := false
 			for i, cacheVal := range cacheVals.([]*PlanCacheValue) {
-				if cacheVal.UserVarTypes.Equal(tps) {
+				if cacheVal.UserVarTypes.CheckTypesCompatibility4PC(tps) {
 					hitVal = true
 					cacheVals.([]*PlanCacheValue)[i] = cached
 					break
