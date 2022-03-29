@@ -1570,7 +1570,7 @@ func (e *TiKVRegionStatusExtractor) Extract(_ sessionctx.Context,
 ) (remained []expression.Expression) {
 	remained, _, tableIDSet := e.extractCol(schema, names, predicates, "table_id", true)
 	if tableIDSet.Count() < 1 {
-		return remained
+		return predicates
 	}
 	var tableID int64
 	var err error
@@ -1578,7 +1578,7 @@ func (e *TiKVRegionStatusExtractor) Extract(_ sessionctx.Context,
 		tableID, err = strconv.ParseInt(key, 10, 64)
 		if err != nil {
 			e.tablesID = nil
-			return remained
+			return predicates
 		}
 		e.tablesID = append(e.tablesID, tableID)
 	}
