@@ -76,14 +76,12 @@ var wrapDeleteInterTxnTSTest = wrapDeleteInterTxnTS
 func TestInnerTxnStartTsBox(t *testing.T) {
 	// case1: store and delete
 	wrapStoreInterTxnTSTest(5)
-	ts, ok := globalInnerTxnTsBox.innerTxnStartTsMap[5]
+	_, ok := globalInnerTxnTsBox.innerTxnStartTsMap[5]
 	assert.Equal(t, true, ok)
-	assert.Equal(t, ts, (uint64)(5))
 
 	wrapDeleteInterTxnTSTest(5)
-	ts, ok = globalInnerTxnTsBox.innerTxnStartTsMap[5]
+	_, ok = globalInnerTxnTsBox.innerTxnStartTsMap[5]
 	assert.Equal(t, false, ok)
-	assert.Equal(t, ts, (uint64)(0))
 
 	// case2: test for WrapGetMinStartTs
 	tm0 := time.Date(2022, time.March, 8, 12, 10, 01, 0, time.UTC)
