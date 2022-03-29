@@ -59,7 +59,7 @@ type printByTable struct {
 }
 
 func (t TaskStatus) getCheckpoint() uint64 {
-	checkpoint := uint64(0)
+	checkpoint := t.Info.StartTs
 	for _, ts := range t.Progress {
 		if checkpoint == 0 || ts < checkpoint {
 			checkpoint = ts
@@ -141,6 +141,7 @@ func (p *printByJSON) PrintTasks() {
 			Progress:    sp,
 			Storage:     s.String(),
 			Checkpoint:  t.getCheckpoint(),
+			EstQPS:      t.QPS,
 		}
 	}
 	mustMarshal := func(i interface{}) string {
