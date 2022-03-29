@@ -698,7 +698,7 @@ func TestFormatVersion(t *testing.T) {
 	}
 }
 
-// Test statements_summary.
+// TestStmtSummaryTable Test statements_summary.
 func TestStmtSummaryTable(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -934,6 +934,62 @@ func TestStmtSummaryTablePrivilege(t *testing.T) {
 	require.Equal(t, 2, len(result.Rows()))
 }
 
+func TestCapturePrivilege(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := newTestKitWithRoot(t, store)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
+	defer tk.MustExec("drop table if exists t")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b varchar(10), key k(a))")
+	defer tk.MustExec("drop table if exists t1")
+
+	// Disable refreshing summary.
+	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 999999999")
+	tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Check(testkit.Rows("999999999"))
+	// Clear all statements.
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+
+	// Create a new user to test statements summary table privilege
+	tk.MustExec("drop user if exists 'test_user'@'localhost'")
+	tk.MustExec("create user 'test_user'@'localhost'")
+	defer tk.MustExec("drop user if exists 'test_user'@'localhost'")
+	tk.MustExec("grant select on test.t1 to 'test_user'@'localhost'")
+	tk.MustExec("select * from t where a=1")
+	tk.MustExec("select * from t where a=1")
+	tk.MustExec("admin capture bindings")
+	rows := tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 1)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.Session().Auth(&auth.UserIdentity{
+		Username:     "test_user",
+		Hostname:     "localhost",
+		AuthUsername: "test_user",
+		AuthHostname: "localhost",
+	}, nil, nil)
+
+	rows = tk1.MustQuery("show global bindings").Rows()
+	// Ordinary users can not see others' records
+	require.Len(t, rows, 0)
+	tk1.MustExec("select * from t1 where b=1")
+	tk1.MustExec("select * from t1 where b=1")
+	tk1.MustExec("admin capture bindings")
+	rows = tk1.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 1)
+
+	tk.MustExec("grant all on *.* to 'test_user'@'localhost'")
+	tk1.MustExec("admin capture bindings")
+	rows = tk1.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 2)
+}
+
 func TestIssue18845(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -949,7 +1005,7 @@ func TestIssue18845(t *testing.T) {
 	tk.MustQuery(`select count(*) from information_schema.columns;`)
 }
 
-// Test statements_summary_history.
+// TestStmtSummaryInternalQuery Test statements_summary_history.
 func TestStmtSummaryInternalQuery(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -1008,7 +1064,7 @@ func TestStmtSummaryInternalQuery(t *testing.T) {
 	require.Contains(t, rows[0][0].(string), "Projection")
 }
 
-// Test error count and warning count.
+// TestStmtSummaryErrorCount Test error count and warning count.
 func TestStmtSummaryErrorCount(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -1079,7 +1135,7 @@ func TestStmtSummarySensitiveQuery(t *testing.T) {
 		))
 }
 
-// test stmtSummaryEvictedCount
+// TestSimpleStmtSummaryEvictedCount test stmtSummaryEvictedCount
 func TestSimpleStmtSummaryEvictedCount(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -1441,4 +1497,17 @@ func TestReferentialConstraints(t *testing.T) {
 	tk.MustExec("CREATE TABLE t2 (id INT NOT NULL PRIMARY KEY, t1_id INT DEFAULT NULL, INDEX (t1_id), CONSTRAINT `fk_to_t1` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`))")
 
 	tk.MustQuery(`SELECT * FROM information_schema.referential_constraints WHERE table_name='t2'`).Check(testkit.Rows("def referconstraints fk_to_t1 def referconstraints PRIMARY NONE NO ACTION NO ACTION t2 t1"))
+}
+
+// TestTableConstraintsContainForeignKeys TiDB Issue: https://github.com/pingcap/tidb/issues/28918
+func TestTableConstraintsContainForeignKeys(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE DATABASE tableconstraints")
+	tk.MustExec("use tableconstraints")
+	tk.MustExec("CREATE TABLE `t1` (`id` int(11) NOT NULL AUTO_INCREMENT, `name` varchar(25) DEFAULT NULL, PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("CREATE TABLE `t2` (`id` int(11) NOT NULL AUTO_INCREMENT, `t1_id` int(11) DEFAULT NULL,	PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,	CONSTRAINT `fk_t2_t1` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustQuery("SELECT *  FROM INFORMATION_SCHEMA.table_constraints WHERE constraint_schema = 'tableconstraints' AND table_name = 't2'").Sort().Check(testkit.Rows("def tableconstraints PRIMARY tableconstraints t2 PRIMARY KEY", "def tableconstraints fk_t2_t1 tableconstraints t2 FOREIGN KEY"))
+	tk.MustQuery("SELECT *  FROM INFORMATION_SCHEMA.table_constraints WHERE constraint_schema = 'tableconstraints' AND table_name = 't1'").Sort().Check(testkit.Rows("def tableconstraints PRIMARY tableconstraints t1 PRIMARY KEY"))
 }

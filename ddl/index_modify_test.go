@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -409,7 +410,7 @@ func testAddIndexRollback(t *testing.T, idxName, addIdxSQL, errMsg string, hasNu
 	}
 
 	done := make(chan error, 1)
-	go backgroundExecT(store, addIdxSQL, done)
+	go backgroundExec(store, addIdxSQL, done)
 
 	times := 0
 	ticker := time.NewTicker(indexModifyLease / 2)
@@ -729,7 +730,7 @@ func testCancelAddIndex(t *testing.T, store kv.Storage, dom *domain.Domain, idxN
 	jobIDExt := wrapJobIDExtCallback(hook)
 	d.SetHook(jobIDExt)
 	done := make(chan error, 1)
-	go backgroundExecT(store, addIdxSQL, done)
+	go backgroundExec(store, addIdxSQL, done)
 
 	times := 0
 	ticker := time.NewTicker(indexModifyLease / 2)
@@ -1056,7 +1057,7 @@ func testDropIndexes(t *testing.T, store kv.Storage, createSQL, dropIdxSQL strin
 	}
 	idxIDs := make([]int64, 0, 3)
 	for _, idxName := range idxNames {
-		idxIDs = append(idxIDs, testGetIndexID(t, tk.Session(), "test", "test_drop_indexes", idxName))
+		idxIDs = append(idxIDs, external.GetIndexID(t, tk, "test", "test_drop_indexes", idxName))
 	}
 	jobIDExt, reset := setupJobIDExtCallback(tk.Session())
 	defer reset()
@@ -1254,7 +1255,7 @@ func testDropIndex(t *testing.T, store kv.Storage, createSQL, dropIdxSQL, idxNam
 	for i := 0; i < num; i++ {
 		tk.MustExec("insert into test_drop_index values (?, ?, ?)", i, i, i)
 	}
-	indexID := testGetIndexID(t, tk.Session(), "test", "test_drop_index", idxName)
+	indexID := external.GetIndexID(t, tk, "test", "test_drop_index", idxName)
 	jobIDExt, reset := setupJobIDExtCallback(tk.Session())
 	defer reset()
 	testddlutil.SessionExecInGoroutine(store, "test", dropIdxSQL, done)
@@ -1345,4 +1346,29 @@ func TestAnonymousIndex(t *testing.T) {
 	require.Len(t, rows, 1)
 	rows = tk.MustQuery("show index from t where key_name='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb_2'").Rows()
 	require.Len(t, rows, 1)
+}
+
+func TestAddIndexWithDupIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	err1 := dbterror.ErrDupKeyName.GenWithStack("index already exist %s", "idx")
+	err2 := dbterror.ErrDupKeyName.GenWithStack("index already exist %s; "+
+		"a background job is trying to add the same index, "+
+		"please check by `ADMIN SHOW DDL JOBS`", "idx")
+
+	// When there is already an duplicate index, show error message.
+	tk.MustExec("create table test_add_index_with_dup (a int, key idx (a))")
+	err := tk.ExecToErr("alter table test_add_index_with_dup add index idx (a)")
+	require.ErrorIs(t, err, errors.Cause(err1))
+
+	// When there is another session adding duplicate index with state other than
+	// StatePublic, show explicit error message.
+	tbl := external.GetTableByName(t, tk, "test", "test_add_index_with_dup")
+	indexInfo := tbl.Meta().FindIndexByName("idx")
+	indexInfo.State = model.StateNone
+	err = tk.ExecToErr("alter table test_add_index_with_dup add index idx (a)")
+	require.ErrorIs(t, err, errors.Cause(err2))
 }

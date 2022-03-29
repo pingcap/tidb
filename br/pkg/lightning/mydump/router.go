@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb-tools/pkg/filter"
+	"github.com/pingcap/tidb/util/filter"
 	"github.com/pingcap/tidb/util/slice"
 	"go.uber.org/zap"
 

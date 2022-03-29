@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -459,21 +460,19 @@ func (rc *Client) CreateDatabase(ctx context.Context, db *model.DBInfo) error {
 		log.Info("skip create database", zap.Stringer("database", db.Name))
 		return nil
 	}
+
 	if !rc.supportPolicy {
 		log.Info("set placementPolicyRef to nil when target tidb not support policy",
 			zap.Stringer("database", db.Name))
 		db.PlacementPolicyRef = nil
 	}
-	if db.PlacementPolicyRef != nil && rc.policyMap != nil {
-		if policy, ok := rc.policyMap.Load(db.PlacementPolicyRef.Name.L); ok {
-			err := rc.db.CreatePlacementPolicy(ctx, policy.(*model.PolicyInfo))
-			if err != nil {
-				return errors.Trace(err)
-			}
-			// delete policy in cache after restore succeed
-			rc.policyMap.Delete(db.PlacementPolicyRef.Name.L)
+
+	if db.PlacementPolicyRef != nil {
+		if err := rc.db.ensurePlacementPolicy(ctx, db.PlacementPolicyRef.Name, rc.policyMap); err != nil {
+			return errors.Trace(err)
 		}
 	}
+
 	return rc.db.CreateDatabase(ctx, db)
 }
 
@@ -807,6 +806,15 @@ func drainFilesByRange(files []*backuppb.File, supportMulti bool) ([]*backuppb.F
 	}
 
 	return files[:idx], files[idx:]
+}
+
+// SplitRanges implements TiKVRestorer.
+func (rc *Client) SplitRanges(ctx context.Context,
+	ranges []rtree.Range,
+	rewriteRules *RewriteRules,
+	updateCh glue.Progress,
+	isRawKv bool) error {
+	return SplitRanges(ctx, rc, ranges, rewriteRules, updateCh, isRawKv)
 }
 
 // RestoreFiles tries to restore the files.

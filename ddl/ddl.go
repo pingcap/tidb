@@ -29,7 +29,6 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
+	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	goutil "github.com/pingcap/tidb/util"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/gcutil"
@@ -180,6 +181,8 @@ type DDL interface {
 	GetHook() Callback
 	// SetHook sets the hook.
 	SetHook(h Callback)
+	// DoDDLJob does the DDL job, it's exported for test.
+	DoDDLJob(ctx sessionctx.Context, job *model.Job) error
 }
 
 type limitJobTask struct {
@@ -610,13 +613,85 @@ func recordLastDDLInfo(ctx sessionctx.Context, job *model.Job) {
 	ctx.GetSessionVars().LastDDLInfo.SeqNum = job.SeqNum
 }
 
-// doDDLJob will return
+// DoDDLJob will return
+func checkHistoryJobInTest(ctx sessionctx.Context, historyJob *model.Job) {
+	if !(flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil) {
+		return
+	}
+
+	// Check binlog.
+	if historyJob.BinlogInfo.FinishedTS == 0 {
+		panic(fmt.Sprintf("job ID %d, BinlogInfo.FinishedTS is 0", historyJob.ID))
+	}
+
+	// Check DDL query.
+	switch historyJob.Type {
+	case model.ActionUpdateTiFlashReplicaStatus, model.ActionUnlockTable:
+		if historyJob.Query != "" {
+			panic(fmt.Sprintf("job ID %d, type %s, query %s", historyJob.ID, historyJob.Type.String(), historyJob.Query))
+		}
+		return
+	default:
+		if historyJob.Query == "skip" {
+			// Skip the check if the test explicitly set the query.
+			return
+		}
+	}
+	p := parser.New()
+	p.SetSQLMode(ctx.GetSessionVars().SQLMode)
+	p.SetParserConfig(ctx.GetSessionVars().BuildParserConfig())
+	stmt, _, err := p.ParseSQL(historyJob.Query)
+	if err != nil {
+		panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s, err %s", historyJob.ID, historyJob.Query, err.Error()))
+	}
+	if len(stmt) != 1 && historyJob.Type != model.ActionCreateTables {
+		panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+	}
+	for _, st := range stmt {
+		switch historyJob.Type {
+		case model.ActionCreatePlacementPolicy:
+			if _, ok := st.(*ast.CreatePlacementPolicyStmt); !ok {
+				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+			}
+		case model.ActionCreateTable:
+			if _, ok := st.(*ast.CreateTableStmt); !ok {
+				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+			}
+		case model.ActionCreateSchema:
+			if _, ok := st.(*ast.CreateDatabaseStmt); !ok {
+				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+			}
+		case model.ActionCreateTables:
+			_, isCreateTable := st.(*ast.CreateTableStmt)
+			_, isCreateSeq := st.(*ast.CreateSequenceStmt)
+			_, isCreateView := st.(*ast.CreateViewStmt)
+			if !isCreateTable && !isCreateSeq && !isCreateView {
+				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+			}
+		default:
+			if _, ok := st.(ast.DDLNode); !ok {
+				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+			}
+		}
+	}
+}
+
+func setDDLJobQuery(ctx sessionctx.Context, job *model.Job) {
+	switch job.Type {
+	case model.ActionUpdateTiFlashReplicaStatus, model.ActionUnlockTable:
+		job.Query = ""
+	default:
+		job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
+	}
+}
+
+// DoDDLJob will return
 // - nil: found in history DDL job and no job error
 // - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
 // - other: found in history DDL job and return that job error
-func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
+func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	// Get a global job ID and put the DDL job in the queue.
-	job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
+	setDDLJobQuery(ctx, job)
 	task := &limitJobTask{job, make(chan error)}
 	d.limitJobCh <- task
 	// worker should restart to continue handling tasks in limitJobCh, and send back through task.err
@@ -659,7 +734,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			i++
 			ticker = updateTickerInterval(ticker, 10*d.lease, job, i)
 		case <-d.ctx.Done():
-			logutil.BgLogger().Info("[ddl] doDDLJob will quit because context done")
+			logutil.BgLogger().Info("[ddl] DoDDLJob will quit because context done")
 			return context.Canceled
 		}
 
@@ -672,6 +747,8 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			logutil.BgLogger().Debug("[ddl] DDL job is not in history, maybe not run", zap.Int64("jobID", jobID))
 			continue
 		}
+
+		checkHistoryJobInTest(ctx, historyJob)
 
 		// If a job is a history job, the state must be JobStateSynced or JobStateRollbackDone or JobStateCancelled.
 		if historyJob.IsSynced() {
