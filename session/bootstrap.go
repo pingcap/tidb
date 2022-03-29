@@ -583,13 +583,11 @@ const (
 	version84 = 84
 	// version85 updates bindings with status 'using' in mysql.bind_info table to 'enabled' status
 	version85 = 85
-	// version86 changes global variable `tidb_enable_top_sql` value from false to true.
-	version86 = 86
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version86
+var currentBootstrapVersion int64 = version85
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -678,7 +676,6 @@ var (
 		upgradeToVer83,
 		upgradeToVer84,
 		upgradeToVer85,
-		upgradeToVer86,
 	}
 )
 
@@ -1755,14 +1752,6 @@ func upgradeToVer85(s Session, ver int64) {
 	mustExecute(s, fmt.Sprintf("UPDATE HIGH_PRIORITY mysql.bind_info SET status= '%s' WHERE status = '%s'", bindinfo.Enabled, bindinfo.Using))
 }
 
-func upgradeToVer86(s Session, ver int64) {
-	if ver >= version86 {
-		return
-	}
-	// Enable Top SQL by default after upgrade
-	mustExecute(s, "set @@global.tidb_enable_top_sql = 1")
-}
-
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -1915,10 +1904,6 @@ func doDMLWorks(s Session) {
 			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)
-
-			if v.GlobalConfigName != "" {
-				domain.GetDomain(s).NotifyGlobalConfigChange(v.GlobalConfigName, variable.OnOffToTrueFalse(vVal))
-			}
 		}
 	}
 	sql := fmt.Sprintf("INSERT HIGH_PRIORITY INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable,
