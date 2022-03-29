@@ -823,7 +823,7 @@ func (s *Server) GetInternalSessionStartTSList() []uint64 {
 	s.isRwlock.RLock()
 	defer s.isRwlock.RUnlock()
 	tsList := make([]uint64, 0, len(s.internalSessions))
-	for _, se := range s.internalSessions {
+	for se := range s.internalSessions {
 		if ts := session.GetStartTSFromSession(se); ts != 0 {
 			tsList = append(tsList, ts)
 		}
