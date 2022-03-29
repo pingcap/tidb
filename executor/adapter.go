@@ -677,7 +677,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		keys = filterTemporaryTableKeys(sctx.GetSessionVars(), keys)
 		seVars := sctx.GetSessionVars()
 		keys = filterLockTableKeys(seVars.StmtCtx, keys)
-		lockCtx := newLockCtx(seVars, seVars.LockWaitTimeout)
+		lockCtx := newLockCtx(seVars, seVars.LockWaitTimeout, len(keys))
 		var lockKeyStats *util.LockKeysDetails
 		ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)
 		startLocking := time.Now()
@@ -728,6 +728,7 @@ func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
 	}
 	seCtx.GetSessionVars().TxnCtx.SetForUpdateTS(newForUpdateTS)
 	txn.SetOption(kv.SnapshotTS, seCtx.GetSessionVars().TxnCtx.GetForUpdateTS())
+	seCtx.GetSessionVars().TxnCtx.LastRcReadTs = newForUpdateTS
 	return nil
 }
 
@@ -966,6 +967,10 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	sessVars.DurationParse = 0
 	// Clean the stale read flag when statement execution finish
 	sessVars.StmtCtx.IsStaleness = false
+
+	if sessVars.StmtCtx.ReadFromTableCache {
+		metrics.ReadFromTableCacheCounter.Inc()
+	}
 }
 
 // CloseRecordSet will finish the execution of current statement and do some record work
@@ -1167,6 +1172,17 @@ func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool) (
 	}
 	if genHint {
 		hints := plannercore.GenHintsFromPhysicalPlan(p)
+		for _, tableHint := range sctx.GetSessionVars().StmtCtx.OriginalTableHints {
+			// some hints like 'memory_quota' cannot be extracted from the PhysicalPlan directly,
+			// so we have to iterate all hints from the customer and keep some other necessary hints.
+			switch tableHint.HintName.L {
+			case "memory_quota", "use_toja", "no_index_merge", "max_execution_time",
+				plannercore.HintAggToCop, plannercore.HintIgnoreIndex,
+				plannercore.HintReadFromStorage, plannercore.HintLimitToCop:
+				hints = append(hints, tableHint)
+			}
+		}
+
 		hintStr = hint.RestoreOptimizerHints(hints)
 		sctx.GetSessionVars().StmtCtx.SetPlanHint(hintStr)
 	}

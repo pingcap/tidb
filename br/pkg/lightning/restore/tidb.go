@@ -159,7 +159,7 @@ loopCreate:
 	for tbl, sqlCreateTable := range tablesSchema {
 		task.Debug("create table", zap.String("schema", sqlCreateTable))
 
-		sqlCreateStmts, err = createTableIfNotExistsStmt(g.GetParser(), sqlCreateTable, database, tbl)
+		sqlCreateStmts, err = createIfNotExistsStmt(g.GetParser(), sqlCreateTable, database, tbl)
 		if err != nil {
 			break
 		}
@@ -182,17 +182,10 @@ loopCreate:
 	return errors.Trace(err)
 }
 
-func createDatabaseIfNotExistStmt(dbName string) string {
-	var createDatabase strings.Builder
-	createDatabase.WriteString("CREATE DATABASE IF NOT EXISTS ")
-	common.WriteMySQLIdentifier(&createDatabase, dbName)
-	return createDatabase.String()
-}
-
-func createTableIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
+func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
 	stmts, _, err := p.ParseSQL(createTable)
 	if err != nil {
-		return []string{}, err
+		return []string{}, common.ErrInvalidSchemaStmt.Wrap(err).GenWithStackByArgs(createTable)
 	}
 
 	var res strings.Builder
@@ -201,6 +194,9 @@ func createTableIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName s
 	retStmts := make([]string, 0, len(stmts))
 	for _, stmt := range stmts {
 		switch node := stmt.(type) {
+		case *ast.CreateDatabaseStmt:
+			node.Name = dbName
+			node.IfNotExists = true
 		case *ast.CreateTableStmt:
 			node.Table.Schema = model.NewCIStr(dbName)
 			node.Table.Name = model.NewCIStr(tblName)
@@ -214,7 +210,7 @@ func createTableIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName s
 			node.IfExists = true
 		}
 		if err := stmt.Restore(ctx); err != nil {
-			return []string{}, err
+			return []string{}, common.ErrInvalidSchemaStmt.Wrap(err).GenWithStackByArgs(createTable)
 		}
 		ctx.WritePlain(";")
 		retStmts = append(retStmts, res.String())
@@ -257,7 +253,7 @@ func LoadSchemaInfo(
 		for _, tbl := range schema.Tables {
 			tblInfo, ok := tableMap[strings.ToLower(tbl.Name)]
 			if !ok {
-				return nil, errors.Errorf("table '%s' schema not found", tbl.Name)
+				return nil, common.ErrSchemaNotExists.GenWithStackByArgs(tbl.DB, tbl.Name)
 			}
 			tableName := tblInfo.Name.String()
 			if tblInfo.State != model.StatePublic {
@@ -269,13 +265,15 @@ func LoadSchemaInfo(
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			// Table names are case-sensitive in mydump.MDTableMeta.
+			// We should always use the original tbl.Name in checkpoints.
 			tableInfo := &checkpoints.TidbTableInfo{
 				ID:   tblInfo.ID,
 				DB:   schema.Name,
-				Name: tableName,
+				Name: tbl.Name,
 				Core: tblInfo,
 			}
-			dbInfo.Tables[tableName] = tableInfo
+			dbInfo.Tables[tbl.Name] = tableInfo
 		}
 
 		result[schema.Name] = dbInfo

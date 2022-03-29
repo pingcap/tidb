@@ -209,6 +209,20 @@ func (p *basePhysicalPlan) attach2Task(tasks ...task) task {
 
 func (p *PhysicalUnionScan) attach2Task(tasks ...task) task {
 	p.cost = tasks[0].cost()
+	// We need to pull the projection under unionScan upon unionScan.
+	// Since the projection only prunes columns, it's ok the put it upon unionScan.
+	if sel, ok := tasks[0].plan().(*PhysicalSelection); ok {
+		if pj, ok := sel.children[0].(*PhysicalProjection); ok {
+			// Convert unionScan->selection->projection to projection->unionScan->selection.
+			sel.SetChildren(pj.children...)
+			p.SetChildren(sel)
+			p.stats = tasks[0].plan().statsInfo()
+			rt, _ := tasks[0].(*rootTask)
+			rt.p = p
+			pj.SetChildren(p)
+			return pj.attach2Task(tasks...)
+		}
+	}
 	if pj, ok := tasks[0].plan().(*PhysicalProjection); ok {
 		// Convert unionScan->projection to projection->unionScan, because unionScan can't handle projection as its children.
 		p.SetChildren(pj.children...)
@@ -745,7 +759,7 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *mppTask) (*m
 	if lChanged {
 		nlTask := lTask.copy().(*mppTask)
 		nlTask.p = lProj
-		nlTask = nlTask.enforceExchangerImpl(&property.PhysicalProperty{
+		nlTask = nlTask.enforceExchanger(&property.PhysicalProperty{
 			TaskTp:           property.MppTaskType,
 			MPPPartitionTp:   property.HashType,
 			MPPPartitionCols: lPartKeys,
@@ -757,7 +771,7 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *mppTask) (*m
 	if rChanged {
 		nrTask := rTask.copy().(*mppTask)
 		nrTask.p = rProj
-		nrTask = nrTask.enforceExchangerImpl(&property.PhysicalProperty{
+		nrTask = nrTask.enforceExchanger(&property.PhysicalProperty{
 			TaskTp:           property.MppTaskType,
 			MPPPartitionTp:   property.HashType,
 			MPPPartitionCols: rPartKeys,
@@ -953,7 +967,18 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 		newTask.cst += sortCPUCost
 	}
 	p.cost = newTask.cst
-	if t.needExtraProj {
+
+	// Do not inject the extra Projection even if t.needExtraProj is set, or the schema between the phase-1 agg and
+	// the final agg would be broken. Please reference comments for the similar logic in
+	// (*copTask).convertToRootTaskImpl() for the PhysicalTableReader case.
+	// We need to refactor these logics.
+	aggPushedDown := false
+	switch p.tablePlan.(type) {
+	case *PhysicalHashAgg, *PhysicalStreamAgg:
+		aggPushedDown = true
+	}
+
+	if t.needExtraProj && !aggPushedDown {
 		schema := t.originSchema
 		proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, t.tablePlan.SelectBlockOffset(), nil)
 		proj.SetSchema(schema)
@@ -1018,8 +1043,6 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	// the number of regions involved, we simply use DistSQLScanConcurrency.
 	copIterWorkers := float64(t.plan().SCtx().GetSessionVars().DistSQLScanConcurrency())
 	t.finishIndexPlan()
-	needExtraProj := false
-	var prevSchema *expression.Schema
 	// Network cost of transferring rows of table scan to TiDB.
 	if t.tablePlan != nil {
 		t.cst += t.count() * sessVars.GetNetworkFactor(nil) * t.tblColHists.GetAvgRowSize(ctx, t.tablePlan.Schema().Columns, false, false)
@@ -1035,11 +1058,12 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		}
 		ts := tp.(*PhysicalTableScan)
 		prevColumnLen := len(ts.Columns)
-		prevSchema = ts.schema.Clone()
+		prevSchema := ts.schema.Clone()
 		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
-		if len(ts.Columns) > prevColumnLen {
+		if !t.needExtraProj && len(ts.Columns) > prevColumnLen {
 			// Add an projection to make sure not to output extract columns.
-			needExtraProj = true
+			t.needExtraProj = true
+			t.originSchema = prevSchema
 		}
 	}
 	t.cst /= copIterWorkers
@@ -1106,9 +1130,9 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 			aggPushedDown = true
 		}
 
-		if needExtraProj && !aggPushedDown {
-			proj := PhysicalProjection{Exprs: expression.Column2Exprs(prevSchema.Columns)}.Init(ts.ctx, ts.stats, ts.SelectBlockOffset(), nil)
-			proj.SetSchema(prevSchema)
+		if t.needExtraProj && !aggPushedDown {
+			proj := PhysicalProjection{Exprs: expression.Column2Exprs(t.originSchema.Columns)}.Init(ts.ctx, ts.stats, ts.SelectBlockOffset(), nil)
+			proj.SetSchema(t.originSchema)
 			proj.SetChildren(p)
 			proj.cost = t.cost()
 			newTask.p = proj
@@ -1576,11 +1600,13 @@ type AggInfo struct {
 
 // BuildFinalModeAggregation splits either LogicalAggregation or PhysicalAggregation to finalAgg and partial1Agg,
 // returns the information of partial and final agg.
-// partialIsCop means whether partial agg is a cop task.
+// partialIsCop means whether partial agg is a cop task. When partialIsCop is false,
+// we do not set the AggMode for partialAgg cause it may be split further when
+// building the aggregate executor(e.g. buildHashAgg will split the AggDesc further for parallel executing).
+// firstRowFuncMap is a map between partial first_row to final first_row, will be used in RemoveUnnecessaryFirstRow
 func BuildFinalModeAggregation(
-	sctx sessionctx.Context, original *AggInfo, partialIsCop bool, isMPPTask bool) (partial, final *AggInfo, funcMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) {
-
-	funcMap = make(map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc, len(original.AggFuncs))
+	sctx sessionctx.Context, original *AggInfo, partialIsCop bool, isMPPTask bool) (partial, final *AggInfo, firstRowFuncMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) {
+	firstRowFuncMap = make(map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc, len(original.AggFuncs))
 	partial = &AggInfo{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, len(original.AggFuncs)),
 		GroupByItems: original.GroupByItems,
@@ -1610,7 +1636,7 @@ func BuildFinalModeAggregation(
 	}
 
 	// TODO: Refactor the way of constructing aggregation functions.
-	// This fop loop is ugly, but I do not find a proper way to reconstruct
+	// This for loop is ugly, but I do not find a proper way to reconstruct
 	// it right away.
 
 	// group_concat is special when pushing down, it cannot take the two phase execution if no distinct but with orderBy, and other cases are also different:
@@ -1772,20 +1798,23 @@ func BuildFinalModeAggregation(
 				partial.Schema.Columns[partialCursor-1].RetType = sumAgg.RetTp
 				partial.AggFuncs = append(partial.AggFuncs, cntAgg, sumAgg)
 			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct || aggFunc.Name == ast.AggFuncGroupConcat {
-				newAggFunc := *aggFunc
+				newAggFunc := aggFunc.Clone()
 				newAggFunc.Name = aggFunc.Name
 				newAggFunc.RetTp = partial.Schema.Columns[partialCursor-1].GetType()
-				partial.AggFuncs = append(partial.AggFuncs, &newAggFunc)
+				partial.AggFuncs = append(partial.AggFuncs, newAggFunc)
 				if aggFunc.Name == ast.AggFuncGroupConcat {
 					// append the last separator arg
 					args = append(args, aggFunc.Args[len(aggFunc.Args)-1])
 				}
 			} else {
-				partial.AggFuncs = append(partial.AggFuncs, aggFunc)
+				partialFuncDesc := aggFunc.Clone()
+				partial.AggFuncs = append(partial.AggFuncs, partialFuncDesc)
+				if aggFunc.Name == ast.AggFuncFirstRow {
+					firstRowFuncMap[partialFuncDesc] = finalAggFunc
+				}
 			}
 
 			finalAggFunc.Mode = aggregation.FinalMode
-			funcMap[aggFunc] = finalAggFunc
 		}
 
 		finalAggFunc.Args = args
@@ -1793,6 +1822,11 @@ func BuildFinalModeAggregation(
 		final.AggFuncs[i] = finalAggFunc
 	}
 	partial.Schema.Append(partialGbySchema.Columns...)
+	if partialIsCop {
+		for _, f := range partial.AggFuncs {
+			f.Mode = aggregation.Partial1Mode
+		}
+	}
 	return
 }
 
@@ -1871,7 +1905,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTas
 	if !CheckAggCanPushCop(p.ctx, p.AggFuncs, p.GroupByItems, copTaskType) {
 		return nil, p.self
 	}
-	partialPref, finalPref, funcMap := BuildFinalModeAggregation(p.ctx, &AggInfo{
+	partialPref, finalPref, firstRowFuncMap := BuildFinalModeAggregation(p.ctx, &AggInfo{
 		AggFuncs:     p.AggFuncs,
 		GroupByItems: p.GroupByItems,
 		Schema:       p.Schema().Clone(),
@@ -1884,8 +1918,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTas
 	}
 	// Remove unnecessary FirstRow.
 	partialPref.AggFuncs = RemoveUnnecessaryFirstRow(p.ctx,
-		finalPref.AggFuncs, finalPref.GroupByItems,
-		partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, funcMap)
+		finalPref.GroupByItems, partialPref.AggFuncs, partialPref.GroupByItems, partialPref.Schema, firstRowFuncMap)
 	if copTaskType == kv.TiDB {
 		// For partial agg of TiDB cop task, since TiDB coprocessor reuse the TiDB executor,
 		// and TiDB aggregation executor won't output the group by value,
@@ -1942,12 +1975,11 @@ func genFirstRowAggForGroupBy(ctx sessionctx.Context, groupByItems []expression.
 // Can optimize the schema to [count(b), a] , and change the index to get value.
 func RemoveUnnecessaryFirstRow(
 	sctx sessionctx.Context,
-	finalAggFuncs []*aggregation.AggFuncDesc,
 	finalGbyItems []expression.Expression,
 	partialAggFuncs []*aggregation.AggFuncDesc,
 	partialGbyItems []expression.Expression,
 	partialSchema *expression.Schema,
-	funcMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) []*aggregation.AggFuncDesc {
+	firstRowFuncMap map[*aggregation.AggFuncDesc]*aggregation.AggFuncDesc) []*aggregation.AggFuncDesc {
 
 	partialCursor := 0
 	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, len(partialAggFuncs))
@@ -1967,7 +1999,7 @@ func RemoveUnnecessaryFirstRow(
 				}
 				if gbyExpr.Equal(sctx, aggFunc.Args[0]) {
 					canOptimize = true
-					funcMap[aggFunc].Args[0] = finalGbyItems[j]
+					firstRowFuncMap[aggFunc].Args[0] = finalGbyItems[j]
 					break
 				}
 			}
@@ -2034,6 +2066,9 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 			attachPlan2Task(finalAgg, t)
 			finalAgg.SetCost(cop.cost())
 		}
+	} else if mpp, ok := t.(*mppTask); ok {
+		t = mpp.convertToRootTask(p.ctx)
+		attachPlan2Task(p, t)
 	} else {
 		attachPlan2Task(p, t)
 	}
@@ -2075,6 +2110,20 @@ func (p *PhysicalHashAgg) cpuCostDivisor(hasDistinct bool) (float64, float64) {
 	return math.Min(float64(finalCon), float64(partialCon)), float64(finalCon + partialCon)
 }
 
+func (p *PhysicalHashAgg) attach2TaskForMpp1Phase(mpp *mppTask) task {
+	inputRows := mpp.count()
+	// 1-phase agg: when the partition columns can be satisfied, where the plan does not need to enforce Exchange
+	// only push down the original agg
+	proj := p.convertAvgForMPP()
+	attachPlan2Task(p.self, mpp)
+	if proj != nil {
+		attachPlan2Task(proj, mpp)
+	}
+	mpp.addCost(p.GetCost(inputRows, false, true))
+	p.cost = mpp.cost()
+	return mpp
+}
+
 func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 	t := tasks[0].copy()
 	mpp, ok := t.(*mppTask)
@@ -2095,6 +2144,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		p.cost = mpp.cost()
 		return mpp
 	case Mpp2Phase:
+		// TODO: when partition property is matched by sub-plan, we actually needn't do extra an exchange and final agg.
 		proj := p.convertAvgForMPP()
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
 		if partialAgg == nil {
@@ -2149,6 +2199,10 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		finalAgg.SetCost(t.cost())
 		return t
 	case MppScalar:
+		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.SinglePartitionType}
+		if !mpp.needEnforceExchanger(prop) {
+			return p.attach2TaskForMpp1Phase(mpp)
+		}
 		proj := p.convertAvgForMPP()
 		partialAgg, finalAgg := p.newPartialAggregate(kv.TiFlash, true)
 		if finalAgg == nil {
@@ -2158,8 +2212,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		if partialAgg != nil {
 			attachPlan2Task(partialAgg, mpp)
 		}
-		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType}
-		newMpp := mpp.enforceExchangerImpl(prop)
+		newMpp := mpp.enforceExchanger(prop)
 		attachPlan2Task(finalAgg, newMpp)
 		if proj == nil {
 			proj = PhysicalProjection{
@@ -2319,6 +2372,13 @@ func collectPartitionInfosFromMPPPlan(p *PhysicalTableReader, mppPlan PhysicalPl
 	}
 }
 
+func collectRowSizeFromMPPPlan(mppPlan PhysicalPlan) (rowSize float64) {
+	if mppPlan != nil && mppPlan.Stats() != nil && mppPlan.Stats().HistColl != nil {
+		return mppPlan.Stats().HistColl.GetAvgRowSize(mppPlan.SCtx(), mppPlan.Schema().Columns, false, false)
+	}
+	return 1 // use 1 as lower-bound for safety
+}
+
 func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	sender := PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_PassThrough,
@@ -2332,30 +2392,36 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	}.Init(ctx, t.p.SelectBlockOffset())
 	p.stats = t.p.statsInfo()
 	collectPartitionInfosFromMPPPlan(p, t.p)
+	rowSize := collectRowSizeFromMPPPlan(sender)
 
-	cst := t.cst + t.count()*ctx.GetSessionVars().GetNetworkFactor(nil)
-	p.cost = cst / p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
+	cst := t.cst + t.count()*rowSize*ctx.GetSessionVars().GetNetworkFactor(nil)
+	cst /= p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
+	p.cost = cst
 	if p.ctx.GetSessionVars().IsMPPEnforced() {
-		p.cost = cst / 1000000000
+		cst /= 1000000000
 	}
 	rt := &rootTask{
 		p:   p,
-		cst: p.cost,
+		cst: cst,
 	}
 	return rt
 }
 
-func (t *mppTask) needEnforce(prop *property.PhysicalProperty) bool {
+func (t *mppTask) needEnforceExchanger(prop *property.PhysicalProperty) bool {
 	switch prop.MPPPartitionTp {
 	case property.AnyType:
 		return false
 	case property.BroadcastType:
 		return true
+	case property.SinglePartitionType:
+		return t.partTp != property.SinglePartitionType
 	default:
 		if t.partTp != property.HashType {
 			return true
 		}
 		// TODO: consider equalivant class
+		// TODO: `prop.IsSubsetOf` is enough, instead of equal.
+		// for example, if already partitioned by hash(B,C), then same (A,B,C) must distribute on a same node.
 		if len(prop.MPPPartitionCols) != len(t.hashCols) {
 			return true
 		}
@@ -2373,7 +2439,7 @@ func (t *mppTask) enforceExchanger(prop *property.PhysicalProperty) *mppTask {
 		t.p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `Sort` is not supported now.")
 		return &mppTask{}
 	}
-	if !t.needEnforce(prop) {
+	if !t.needEnforceExchanger(prop) {
 		return t
 	}
 	return t.copy().(*mppTask).enforceExchangerImpl(prop)
@@ -2390,7 +2456,7 @@ func (t *mppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *mppTask
 	}
 	ctx := t.p.SCtx()
 	sender := PhysicalExchangeSender{
-		ExchangeType: tipb.ExchangeType(prop.MPPPartitionTp),
+		ExchangeType: prop.MPPPartitionTp.ToExchangeType(),
 		HashCols:     prop.MPPPartitionCols,
 	}.Init(ctx, t.p.statsInfo())
 	sender.SetChildren(t.p)

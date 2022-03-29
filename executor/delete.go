@@ -122,7 +122,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 
 			datumRow := make([]types.Datum, 0, len(fields))
 			for i, field := range fields {
-				if columns[i].ID == model.ExtraPidColID {
+				if columns[i].ID == model.ExtraPidColID || columns[i].ID == model.ExtraPhysTblID {
 					continue
 				}
 
@@ -159,6 +159,9 @@ func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
 func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []plannercore.TblColPosInfo, joinedRow []types.Datum) error {
 	// iterate all the joined tables, and got the copresonding rows in joinedRow.
 	for _, info := range colPosInfos {
+		if unmatchedOuterRow(info, joinedRow) {
+			continue
+		}
 		if tblRowMap[info.TblID] == nil {
 			tblRowMap[info.TblID] = kv.NewHandleMap()
 		}

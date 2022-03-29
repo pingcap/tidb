@@ -345,7 +345,7 @@ func (d *Datum) SetMysqlDecimal(b *MyDecimal) {
 
 // GetMysqlDuration gets Duration value
 func (d *Datum) GetMysqlDuration() Duration {
-	return Duration{Duration: time.Duration(d.i), Fsp: int8(d.decimal)}
+	return Duration{Duration: time.Duration(d.i), Fsp: int(int8(d.decimal))}
 }
 
 // SetMysqlDuration sets Duration value
@@ -1062,29 +1062,58 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, sc *stmtctx.StatementCon
 		// overflowed part is all whitespaces
 		var overflowed string
 		var characterLen int
-		// Flen is the rune length, not binary length, for Non-binary charset, we need to calculate the
-		// rune count and truncate to Flen runes if it is too long.
+
+		// For  mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob(defined in tidb)
+		// and tinytext, text, mediumtext, longtext(not explicitly defined in tidb, corresponding to blob(s) in tidb) flen is the store length limit regardless of charset.
 		if chs != charset.CharsetBinary {
-			characterLen = utf8.RuneCountInString(s)
-			if characterLen > flen {
-				// 1. If len(s) is 0 and flen is 0, truncateLen will be 0, don't truncate s.
-				//    CREATE TABLE t (a char(0));
-				//    INSERT INTO t VALUES (``);
-				// 2. If len(s) is 10 and flen is 0, truncateLen will be 0 too, but we still need to truncate s.
-				//    SELECT 1, CAST(1234 AS CHAR(0));
-				// So truncateLen is not a suitable variable to determine to do truncate or not.
-				var runeCount int
-				var truncateLen int
-				for i := range s {
-					if runeCount == flen {
-						truncateLen = i
-						break
+			switch tp.Tp {
+			case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+				characterLen = len(s)
+				// We need to truncate the value to a proper length that contains complete word.
+				if characterLen > flen {
+					var r rune
+					var size int
+					var tempStr string
+					var truncateLen int
+					// Find the truncate position.
+					for truncateLen = flen; truncateLen > 0; truncateLen-- {
+						tempStr = truncateStr(s, truncateLen)
+						r, size = utf8.DecodeLastRuneInString(tempStr)
+						if r == utf8.RuneError && size == 0 {
+							// Empty string
+						} else if r == utf8.RuneError && size == 1 {
+							// Invalid string
+						} else {
+							// Get the truncate position
+							break
+						}
 					}
-					runeCount++
+					overflowed = s[truncateLen:]
+					s = truncateStr(s, truncateLen)
 				}
-				overflowed = s[truncateLen:]
-				s = truncateStr(s, truncateLen)
+			default:
+				characterLen = utf8.RuneCountInString(s)
+				if characterLen > flen {
+					// 1. If len(s) is 0 and flen is 0, truncateLen will be 0, don't truncate s.
+					//    CREATE TABLE t (a char(0));
+					//    INSERT INTO t VALUES (``);
+					// 2. If len(s) is 10 and flen is 0, truncateLen will be 0 too, but we still need to truncate s.
+					//    SELECT 1, CAST(1234 AS CHAR(0));
+					// So truncateLen is not a suitable variable to determine to do truncate or not.
+					var runeCount int
+					var truncateLen int
+					for i := range s {
+						if runeCount == flen {
+							truncateLen = i
+							break
+						}
+						runeCount++
+					}
+					overflowed = s[truncateLen:]
+					s = truncateStr(s, truncateLen)
+				}
 			}
+
 		} else if len(s) > flen {
 			characterLen = len(s)
 			overflowed = s[flen:]
@@ -1136,10 +1165,9 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 			return ret, errors.Trace(err1)
 		}
 		val, err = ConvertUintToUint(uval, upperBound, tp)
-		if err != nil {
-			return ret, errors.Trace(err)
+		if err == nil {
+			err = err1
 		}
-		err = err1
 	case KindMysqlTime:
 		dec := d.GetMysqlTime().ToNumber()
 		err = dec.Round(dec, 0, ModeHalfEven)
@@ -1191,7 +1219,7 @@ func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *Fi
 	)
 	fsp := DefaultFsp
 	if target.Decimal != UnspecifiedLength {
-		fsp = int8(target.Decimal)
+		fsp = target.Decimal
 	}
 	switch d.k {
 	case KindMysqlTime:
@@ -1239,7 +1267,7 @@ func (d *Datum) convertToMysqlTime(sc *stmtctx.StatementContext, target *FieldTy
 	tp := target.Tp
 	fsp := DefaultFsp
 	if target.Decimal != UnspecifiedLength {
-		fsp = int8(target.Decimal)
+		fsp = target.Decimal
 	}
 	var (
 		ret Datum
@@ -1302,7 +1330,7 @@ func (d *Datum) convertToMysqlDuration(sc *stmtctx.StatementContext, target *Fie
 	tp := target.Tp
 	fsp := DefaultFsp
 	if target.Decimal != UnspecifiedLength {
-		fsp = int8(target.Decimal)
+		fsp = target.Decimal
 	}
 	var ret Datum
 	switch d.k {
@@ -1960,7 +1988,7 @@ func (d *Datum) ToMysqlJSON() (j json.BinaryJSON, err error) {
 }
 
 func invalidConv(d *Datum, tp byte) (Datum, error) {
-	return Datum{}, errors.Errorf("cannot convert datum from %s to type %s.", KindStr(d.Kind()), TypeStr(tp))
+	return Datum{}, errors.Errorf("cannot convert datum from %s to type %s", KindStr(d.Kind()), TypeStr(tp))
 }
 
 // NewDatum creates a new Datum from an interface{}.

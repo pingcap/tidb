@@ -12,343 +12,302 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package ddl
+package ddl_test
 
 import (
 	"context"
 	"fmt"
 	"reflect"
+	"strconv"
 	"sync"
 	"testing"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
-var _ = Suite(&testColumnSuite{})
-
-type testColumnSuite struct {
-	store  kv.Storage
-	dbInfo *model.DBInfo
-}
-
-func (s *testColumnSuite) SetUpSuite(c *C) {
-	s.store = testCreateStore(c, "test_column")
-	d, err := testNewDDLAndStart(
-		context.Background(),
-		WithStore(s.store),
-		WithLease(testLease),
-	)
-	c.Assert(err, IsNil)
-
-	s.dbInfo, err = testSchemaInfo(d, "test_column")
-	c.Assert(err, IsNil)
-	testCreateSchema(c, testNewContext(d), d, s.dbInfo)
-	c.Assert(d.Stop(), IsNil)
-}
-
-func (s *testColumnSuite) TearDownSuite(c *C) {
-	err := s.store.Close()
-	c.Assert(err, IsNil)
-}
-
-func buildCreateColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string,
-	pos *ast.ColumnPosition, defaultValue interface{}) *model.Job {
-	col := &model.ColumnInfo{
-		Name:               model.NewCIStr(colName),
-		Offset:             len(tblInfo.Columns),
-		DefaultValue:       defaultValue,
-		OriginDefaultValue: defaultValue,
+func testCreateColumn(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, tblID int64,
+	colName string, pos string, defaultValue interface{}, dom *domain.Domain) int64 {
+	sql := fmt.Sprintf("alter table t1 add column %s int ", colName)
+	if defaultValue != nil {
+		sql += fmt.Sprintf("default %v ", defaultValue)
 	}
-	col.ID = allocateColumnID(tblInfo)
-	col.FieldType = *types.NewFieldType(mysql.TypeLong)
-
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionAddColumn,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{col, pos, 0},
-	}
-	return job
+	sql += pos
+	tk.MustExec(sql)
+	idi, _ := strconv.Atoi(tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string))
+	id := int64(idi)
+	v := getSchemaVer(t, ctx)
+	require.NoError(t, dom.Reload())
+	tblInfo, exist := dom.InfoSchema().TableByID(tblID)
+	require.True(t, exist)
+	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
+	return id
 }
 
-func testCreateColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
-	colName string, pos *ast.ColumnPosition, defaultValue interface{}) *model.Job {
-	job := buildCreateColumnJob(dbInfo, tblInfo, colName, pos, defaultValue)
-	err := d.doDDLJob(ctx, job)
-	c.Assert(err, IsNil)
-	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
-	return job
-}
-
-func buildCreateColumnsJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNames []string,
-	positions []*ast.ColumnPosition, defaultValue interface{}) *model.Job {
-	colInfos := make([]*model.ColumnInfo, len(colNames))
-	offsets := make([]int, len(colNames))
-	ifNotExists := make([]bool, len(colNames))
+func testCreateColumns(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, tblID int64,
+	colNames []string, positions []string, defaultValue interface{}, dom *domain.Domain) int64 {
+	sql := "alter table t1 add column "
 	for i, colName := range colNames {
-		col := &model.ColumnInfo{
-			Name:               model.NewCIStr(colName),
-			Offset:             len(tblInfo.Columns),
-			DefaultValue:       defaultValue,
-			OriginDefaultValue: defaultValue,
+		if i != 0 {
+			sql += ", add column "
 		}
-		col.ID = allocateColumnID(tblInfo)
-		col.FieldType = *types.NewFieldType(mysql.TypeLong)
-		colInfos[i] = col
+		sql += fmt.Sprintf("%s int %s", colName, positions[i])
+		if defaultValue != nil {
+			sql += fmt.Sprintf(" default %v", defaultValue)
+		}
 	}
-
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionAddColumns,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{colInfos, positions, offsets, ifNotExists},
-	}
-	return job
+	tk.MustExec(sql)
+	idi, _ := strconv.Atoi(tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string))
+	id := int64(idi)
+	v := getSchemaVer(t, ctx)
+	require.NoError(t, dom.Reload())
+	tblInfo, exist := dom.InfoSchema().TableByID(tblID)
+	require.True(t, exist)
+	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
+	return id
 }
 
-func testCreateColumns(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
-	colNames []string, positions []*ast.ColumnPosition, defaultValue interface{}) *model.Job {
-	job := buildCreateColumnsJob(dbInfo, tblInfo, colNames, positions, defaultValue)
-	err := d.doDDLJob(ctx, job)
-	c.Assert(err, IsNil)
-	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
-	return job
-}
-
-func buildDropColumnJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string) *model.Job {
-	return &model.Job{
-		SchemaID:        dbInfo.ID,
-		TableID:         tblInfo.ID,
-		Type:            model.ActionDropColumn,
-		BinlogInfo:      &model.HistoryInfo{},
-		MultiSchemaInfo: &model.MultiSchemaInfo{},
-		Args:            []interface{}{model.NewCIStr(colName)},
-	}
-}
-
-func testDropColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colName string, isError bool) *model.Job {
-	job := buildDropColumnJob(dbInfo, tblInfo, colName)
-	err := d.doDDLJob(ctx, job)
+func testDropColumnInternal(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, tblID int64, colName string, isError bool, dom *domain.Domain) int64 {
+	sql := fmt.Sprintf("alter table t1 drop column %s ", colName)
+	_, err := tk.Exec(sql)
 	if isError {
-		c.Assert(err, NotNil)
-		return nil
+		require.Error(t, err)
+	} else {
+		require.NoError(t, err)
 	}
-	c.Assert(err, IsNil)
-	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
-	return job
+
+	idi, _ := strconv.Atoi(tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string))
+	id := int64(idi)
+	v := getSchemaVer(t, ctx)
+	require.NoError(t, dom.Reload())
+	tblInfo, exist := dom.InfoSchema().TableByID(tblID)
+	require.True(t, exist)
+	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
+	return id
 }
 
-func buildDropColumnsJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNames []string) *model.Job {
-	columnNames := make([]model.CIStr, len(colNames))
-	ifExists := make([]bool, len(colNames))
-	for i, colName := range colNames {
-		columnNames[i] = model.NewCIStr(colName)
-	}
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionDropColumns,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{columnNames, ifExists},
-	}
-	return job
+func testDropTable(tk *testkit.TestKit, t *testing.T, tblName string, dom *domain.Domain) int64 {
+	sql := fmt.Sprintf("drop table %s ", tblName)
+	tk.MustExec(sql)
+
+	idi, _ := strconv.Atoi(tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string))
+	id := int64(idi)
+	require.NoError(t, dom.Reload())
+	_, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr(tblName))
+	require.Error(t, err)
+	return id
 }
 
-func testDropColumns(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, colNames []string, isError bool) *model.Job {
-	job := buildDropColumnsJob(dbInfo, tblInfo, colNames)
-	err := d.doDDLJob(ctx, job)
+func testCreateIndex(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, tblID int64, unique bool, indexName string, colName string, dom *domain.Domain) int64 {
+	un := ""
+	if unique {
+		un = "unique"
+	}
+	sql := fmt.Sprintf("alter table t1 add %s index %s(%s)", un, indexName, colName)
+	tk.MustExec(sql)
+
+	idi, _ := strconv.Atoi(tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string))
+	id := int64(idi)
+	v := getSchemaVer(t, ctx)
+	require.NoError(t, dom.Reload())
+	tblInfo, exist := dom.InfoSchema().TableByID(tblID)
+	require.True(t, exist)
+	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
+	return id
+}
+
+func testDropColumns(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, tblID int64, colName []string, isError bool, dom *domain.Domain) int64 {
+	sql := "alter table t1 drop column "
+	for i, name := range colName {
+		if i != 0 {
+			sql += ", drop column "
+		}
+		sql += name
+	}
+	_, err := tk.Exec(sql)
 	if isError {
-		c.Assert(err, NotNil)
-		return nil
+		require.Error(t, err)
+	} else {
+		require.NoError(t, err)
 	}
-	c.Assert(err, IsNil)
-	v := getSchemaVer(c, ctx)
-	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
-	return job
+
+	idi, _ := strconv.Atoi(tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string))
+	id := int64(idi)
+	v := getSchemaVer(t, ctx)
+	require.NoError(t, dom.Reload())
+	tblInfo, exist := dom.InfoSchema().TableByID(tblID)
+	require.True(t, exist)
+	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
+	return id
 }
 
-func (s *testColumnSuite) TestColumnBasic(c *C) {
-	d, err := testNewDDLAndStart(
-		context.Background(),
-		WithStore(s.store),
-		WithLease(testLease),
-	)
-	c.Assert(err, IsNil)
-	defer func() {
-		err := d.Stop()
-		c.Assert(err, IsNil)
-	}()
-
-	tblInfo, err := testTableInfo(d, "t1", 3)
-	c.Assert(err, IsNil)
-	ctx := testNewContext(d)
-
-	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
-	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+func TestColumnBasic(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (c1 int, c2 int, c3 int);")
 
 	num := 10
 	for i := 0; i < num; i++ {
-		_, err := t.AddRecord(ctx, types.MakeDatums(i, 10*i, 100*i))
-		c.Assert(err, IsNil)
+		tk.MustExec(fmt.Sprintf("insert into t1 values(%d, %d, %d)", i, 10*i, 100*i))
 	}
 
-	err = ctx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
+	ctx := testNewContext(store)
+	err := ctx.NewTxn(context.Background())
+	require.NoError(t, err)
 
-	i := int64(0)
-	err = tables.IterRecords(t, ctx, t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-		c.Assert(data, HasLen, 3)
-		c.Assert(data[0].GetInt64(), Equals, i)
-		c.Assert(data[1].GetInt64(), Equals, 10*i)
-		c.Assert(data[2].GetInt64(), Equals, 100*i)
+	var tableID int64
+	rs := tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where table_name='t1' and table_schema='test';")
+	tableIDi, _ := strconv.Atoi(rs.Rows()[0][0].(string))
+	tableID = int64(tableIDi)
+
+	tbl := testGetTable(t, dom, tableID)
+
+	i := 0
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		require.Len(t, data, 3)
+		require.Equal(t, data[0].GetInt64(), int64(i))
+		require.Equal(t, data[1].GetInt64(), int64(10*i))
+		require.Equal(t, data[2].GetInt64(), int64(100*i))
 		i++
 		return true, nil
 	})
-	c.Assert(err, IsNil)
-	c.Assert(i, Equals, int64(num))
+	require.NoError(t, err)
+	require.Equal(t, i, num)
 
-	c.Assert(table.FindCol(t.Cols(), "c4"), IsNil)
+	require.Nil(t, table.FindCol(tbl.Cols(), "c4"))
 
-	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c4", &ast.ColumnPosition{Tp: ast.ColumnPositionAfter, RelativeColumn: &ast.ColumnName{Name: model.NewCIStr("c3")}}, 100)
-	testCheckJobDone(c, d, job, true)
+	jobID := testCreateColumn(tk, t, testNewContext(store), tableID, "c4", "after c3", 100, dom)
+	testCheckJobDone(t, store, jobID, true)
 
-	t = testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-	c.Assert(table.FindCol(t.Cols(), "c4"), NotNil)
+	tbl = testGetTable(t, dom, tableID)
+	require.NotNil(t, table.FindCol(tbl.Cols(), "c4"))
 
-	i = int64(0)
-	err = tables.IterRecords(t, ctx, t.Cols(),
+	i = 0
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(),
 		func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-			c.Assert(data, HasLen, 4)
-			c.Assert(data[0].GetInt64(), Equals, i)
-			c.Assert(data[1].GetInt64(), Equals, 10*i)
-			c.Assert(data[2].GetInt64(), Equals, 100*i)
-			c.Assert(data[3].GetInt64(), Equals, int64(100))
+			require.Len(t, data, 4)
+			require.Equal(t, data[0].GetInt64(), int64(i))
+			require.Equal(t, data[1].GetInt64(), int64(10*i))
+			require.Equal(t, data[2].GetInt64(), int64(100*i))
+			require.Equal(t, data[3].GetInt64(), int64(100))
 			i++
 			return true, nil
 		})
-	c.Assert(err, IsNil)
-	c.Assert(i, Equals, int64(num))
+	require.NoError(t, err)
+	require.Equal(t, i, num)
 
-	h, err := t.AddRecord(ctx, types.MakeDatums(11, 12, 13, 14))
-	c.Assert(err, IsNil)
+	h, err := tbl.AddRecord(ctx, types.MakeDatums(11, 12, 13, 14))
+	require.NoError(t, err)
 	err = ctx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
-	values, err := tables.RowWithCols(t, ctx, h, t.Cols())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
+	values, err := tables.RowWithCols(tbl, ctx, h, tbl.Cols())
+	require.NoError(t, err)
 
-	c.Assert(values, HasLen, 4)
-	c.Assert(values[3].GetInt64(), Equals, int64(14))
+	require.Len(t, values, 4)
+	require.Equal(t, values[3].GetInt64(), int64(14))
 
-	job = testDropColumn(c, ctx, d, s.dbInfo, tblInfo, "c4", false)
-	testCheckJobDone(c, d, job, false)
+	jobID = testDropColumnInternal(tk, t, testNewContext(store), tableID, "c4", false, dom)
+	testCheckJobDone(t, store, jobID, false)
 
-	t = testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-	values, err = tables.RowWithCols(t, ctx, h, t.Cols())
-	c.Assert(err, IsNil)
+	tbl = testGetTable(t, dom, tableID)
+	values, err = tables.RowWithCols(tbl, ctx, h, tbl.Cols())
+	require.NoError(t, err)
 
-	c.Assert(values, HasLen, 3)
-	c.Assert(values[2].GetInt64(), Equals, int64(13))
+	require.Len(t, values, 3)
+	require.Equal(t, values[2].GetInt64(), int64(13))
 
-	job = testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c4", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 111)
-	testCheckJobDone(c, d, job, true)
+	jobID = testCreateColumn(tk, t, testNewContext(store), tableID, "c4", "", 111, dom)
+	testCheckJobDone(t, store, jobID, true)
 
-	t = testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-	values, err = tables.RowWithCols(t, ctx, h, t.Cols())
-	c.Assert(err, IsNil)
+	tbl = testGetTable(t, dom, tableID)
+	values, err = tables.RowWithCols(tbl, ctx, h, tbl.Cols())
+	require.NoError(t, err)
 
-	c.Assert(values, HasLen, 4)
-	c.Assert(values[3].GetInt64(), Equals, int64(111))
+	require.Len(t, values, 4)
+	require.Equal(t, values[3].GetInt64(), int64(111))
 
-	job = testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c5", &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, 101)
-	testCheckJobDone(c, d, job, true)
+	jobID = testCreateColumn(tk, t, testNewContext(store), tableID, "c5", "", 101, dom)
+	testCheckJobDone(t, store, jobID, true)
 
-	t = testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-	values, err = tables.RowWithCols(t, ctx, h, t.Cols())
-	c.Assert(err, IsNil)
+	tbl = testGetTable(t, dom, tableID)
+	values, err = tables.RowWithCols(tbl, ctx, h, tbl.Cols())
+	require.NoError(t, err)
 
-	c.Assert(values, HasLen, 5)
-	c.Assert(values[4].GetInt64(), Equals, int64(101))
+	require.Len(t, values, 5)
+	require.Equal(t, values[4].GetInt64(), int64(101))
 
-	job = testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, "c6", &ast.ColumnPosition{Tp: ast.ColumnPositionFirst}, 202)
-	testCheckJobDone(c, d, job, true)
+	jobID = testCreateColumn(tk, t, testNewContext(store), tableID, "c6", "first", 202, dom)
+	testCheckJobDone(t, store, jobID, true)
 
-	t = testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-	cols := t.Cols()
-	c.Assert(cols, HasLen, 6)
-	c.Assert(cols[0].Offset, Equals, 0)
-	c.Assert(cols[0].Name.L, Equals, "c6")
-	c.Assert(cols[1].Offset, Equals, 1)
-	c.Assert(cols[1].Name.L, Equals, "c1")
-	c.Assert(cols[2].Offset, Equals, 2)
-	c.Assert(cols[2].Name.L, Equals, "c2")
-	c.Assert(cols[3].Offset, Equals, 3)
-	c.Assert(cols[3].Name.L, Equals, "c3")
-	c.Assert(cols[4].Offset, Equals, 4)
-	c.Assert(cols[4].Name.L, Equals, "c4")
-	c.Assert(cols[5].Offset, Equals, 5)
-	c.Assert(cols[5].Name.L, Equals, "c5")
+	tbl = testGetTable(t, dom, tableID)
+	cols := tbl.Cols()
+	require.Len(t, cols, 6)
+	require.Equal(t, cols[0].Offset, 0)
+	require.Equal(t, cols[0].Name.L, "c6")
+	require.Equal(t, cols[1].Offset, 1)
+	require.Equal(t, cols[1].Name.L, "c1")
+	require.Equal(t, cols[2].Offset, 2)
+	require.Equal(t, cols[2].Name.L, "c2")
+	require.Equal(t, cols[3].Offset, 3)
+	require.Equal(t, cols[3].Name.L, "c3")
+	require.Equal(t, cols[4].Offset, 4)
+	require.Equal(t, cols[4].Name.L, "c4")
+	require.Equal(t, cols[5].Offset, 5)
+	require.Equal(t, cols[5].Name.L, "c5")
 
-	values, err = tables.RowWithCols(t, ctx, h, cols)
-	c.Assert(err, IsNil)
+	values, err = tables.RowWithCols(tbl, ctx, h, cols)
+	require.NoError(t, err)
 
-	c.Assert(values, HasLen, 6)
-	c.Assert(values[0].GetInt64(), Equals, int64(202))
-	c.Assert(values[5].GetInt64(), Equals, int64(101))
+	require.Len(t, values, 6)
+	require.Equal(t, values[0].GetInt64(), int64(202))
+	require.Equal(t, values[5].GetInt64(), int64(101))
 
-	job = testDropColumn(c, ctx, d, s.dbInfo, tblInfo, "c2", false)
-	testCheckJobDone(c, d, job, false)
+	jobID = testDropColumnInternal(tk, t, testNewContext(store), tableID, "c2", false, dom)
+	testCheckJobDone(t, store, jobID, false)
 
-	t = testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+	tbl = testGetTable(t, dom, tableID)
 
-	values, err = tables.RowWithCols(t, ctx, h, t.Cols())
-	c.Assert(err, IsNil)
-	c.Assert(values, HasLen, 5)
-	c.Assert(values[0].GetInt64(), Equals, int64(202))
-	c.Assert(values[4].GetInt64(), Equals, int64(101))
+	values, err = tables.RowWithCols(tbl, ctx, h, tbl.Cols())
+	require.NoError(t, err)
+	require.Len(t, values, 5)
+	require.Equal(t, values[0].GetInt64(), int64(202))
+	require.Equal(t, values[4].GetInt64(), int64(101))
 
-	job = testDropColumn(c, ctx, d, s.dbInfo, tblInfo, "c1", false)
-	testCheckJobDone(c, d, job, false)
+	jobID = testDropColumnInternal(tk, t, testNewContext(store), tableID, "c1", false, dom)
+	testCheckJobDone(t, store, jobID, false)
 
-	job = testDropColumn(c, ctx, d, s.dbInfo, tblInfo, "c3", false)
-	testCheckJobDone(c, d, job, false)
+	jobID = testDropColumnInternal(tk, t, testNewContext(store), tableID, "c3", false, dom)
+	testCheckJobDone(t, store, jobID, false)
 
-	job = testDropColumn(c, ctx, d, s.dbInfo, tblInfo, "c4", false)
-	testCheckJobDone(c, d, job, false)
+	jobID = testDropColumnInternal(tk, t, testNewContext(store), tableID, "c4", false, dom)
+	testCheckJobDone(t, store, jobID, false)
 
-	job = testCreateIndex(c, ctx, d, s.dbInfo, tblInfo, false, "c5_idx", "c5")
-	testCheckJobDone(c, d, job, true)
+	jobID = testCreateIndex(tk, t, testNewContext(store), tableID, false, "c5_idx", "c5", dom)
+	testCheckJobDone(t, store, jobID, true)
 
-	job = testDropColumn(c, ctx, d, s.dbInfo, tblInfo, "c5", false)
-	testCheckJobDone(c, d, job, false)
+	jobID = testDropColumnInternal(tk, t, testNewContext(store), tableID, "c5", false, dom)
+	testCheckJobDone(t, store, jobID, false)
 
-	testDropColumn(c, ctx, d, s.dbInfo, tblInfo, "c6", true)
+	jobID = testDropColumnInternal(tk, t, testNewContext(store), tableID, "c6", true, dom)
+	testCheckJobDone(t, store, jobID, false)
 
-	testDropTable(c, ctx, d, s.dbInfo, tblInfo)
+	testDropTable(tk, t, "t1", dom)
 }
 
-func (s *testColumnSuite) checkColumnKVExist(ctx sessionctx.Context, t table.Table, handle kv.Handle, col *table.Column, columnValue interface{}, isExist bool) error {
+func checkColumnKVExist(ctx sessionctx.Context, t table.Table, handle kv.Handle, col *table.Column, columnValue interface{}, isExist bool) error {
 	err := ctx.NewTxn(context.Background())
 	if err != nil {
 		return errors.Trace(err)
@@ -394,440 +353,277 @@ func (s *testColumnSuite) checkColumnKVExist(ctx sessionctx.Context, t table.Tab
 	return nil
 }
 
-func (s *testColumnSuite) checkNoneColumn(ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo, handle kv.Handle, col *table.Column, columnValue interface{}) error {
-	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = s.checkColumnKVExist(ctx, t, handle, col, columnValue, false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = s.testGetColumn(t, col.Name.L, false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+func checkNoneColumn(t *testing.T, ctx sessionctx.Context, tableID int64, handle kv.Handle, col *table.Column, columnValue interface{}, dom *domain.Domain) {
+	tbl := testGetTable(t, dom, tableID)
+	err := checkColumnKVExist(ctx, tbl, handle, col, columnValue, false)
+	require.NoError(t, err)
+	err = testGetColumn(tbl, col.Name.L, false)
+	require.NoError(t, err)
 }
 
-func (s *testColumnSuite) checkDeleteOnlyColumn(ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo, handle kv.Handle, col *table.Column, row []types.Datum, columnValue interface{}) error {
-	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = ctx.NewTxn(context.Background())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	i := int64(0)
-	err = tables.IterRecords(t, ctx, t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-		if !reflect.DeepEqual(data, row) {
-			return false, errors.Errorf("%v not equal to %v", data, row)
-		}
+func checkDeleteOnlyColumn(t *testing.T, ctx sessionctx.Context, tableID int64, handle kv.Handle, col *table.Column, row []types.Datum, columnValue interface{}, dom *domain.Domain) {
+	tbl := testGetTable(t, dom, tableID)
+	err := ctx.NewTxn(context.Background())
+	require.NoError(t, err)
+	i := 0
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		require.Truef(t, reflect.DeepEqual(data, row), "%v not equal to %v", data, row)
 		i++
 		return true, nil
 	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if i != 1 {
-		return errors.Errorf("expect 1, got %v", i)
-	}
-	err = s.checkColumnKVExist(ctx, t, handle, col, columnValue, false)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	require.NoError(t, err)
+	require.Equalf(t, 1, i, "expect 1, got %v", i)
+	err = checkColumnKVExist(ctx, tbl, handle, col, columnValue, false)
+	require.NoError(t, err)
 	// Test add a new row.
 	err = ctx.NewTxn(context.Background())
-	if err != nil {
-		return errors.Trace(err)
-	}
+	require.NoError(t, err)
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
-	newHandle, err := t.AddRecord(ctx, newRow)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	newHandle, err := tbl.AddRecord(ctx, newRow)
+	require.NoError(t, err)
 	err = ctx.NewTxn(context.Background())
-	if err != nil {
-		return errors.Trace(err)
-	}
+	require.NoError(t, err)
 
 	rows := [][]types.Datum{row, newRow}
 
-	i = int64(0)
-	err = tables.IterRecords(t, ctx, t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-		if !reflect.DeepEqual(data, rows[i]) {
-			return false, errors.Errorf("%v not equal to %v", data, rows[i])
-		}
+	i = 0
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		require.Truef(t, reflect.DeepEqual(data, rows[i]), "%v not equal to %v", data, rows[i])
 		i++
 		return true, nil
 	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if i != 2 {
-		return errors.Errorf("expect 2, got %v", i)
-	}
+	require.NoError(t, err)
+	require.Equalf(t, 2, i, "expect 2, got %v", i)
 
-	err = s.checkColumnKVExist(ctx, t, handle, col, columnValue, false)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	err = checkColumnKVExist(ctx, tbl, handle, col, columnValue, false)
+	require.NoError(t, err)
 	// Test remove a row.
 	err = ctx.NewTxn(context.Background())
-	if err != nil {
-		return errors.Trace(err)
-	}
+	require.NoError(t, err)
 
-	err = t.RemoveRecord(ctx, newHandle, newRow)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	err = tbl.RemoveRecord(ctx, newHandle, newRow)
+	require.NoError(t, err)
 	err = ctx.NewTxn(context.Background())
-	if err != nil {
-		return errors.Trace(err)
-	}
-	i = int64(0)
-	err = tables.IterRecords(t, ctx, t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	require.NoError(t, err)
+	i = 0
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		i++
 		return true, nil
 	})
-	if err != nil {
-		return errors.Trace(err)
-	}
+	require.NoError(t, err)
 
-	if i != 1 {
-		return errors.Errorf("expect 1, got %v", i)
-	}
-	err = s.checkColumnKVExist(ctx, t, newHandle, col, columnValue, false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = s.testGetColumn(t, col.Name.L, false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	require.Equalf(t, 1, i, "expect 1, got %v", i)
+	err = checkColumnKVExist(ctx, tbl, newHandle, col, columnValue, false)
+	require.NoError(t, err)
+	err = testGetColumn(tbl, col.Name.L, false)
+	require.NoError(t, err)
 }
 
-func (s *testColumnSuite) checkWriteOnlyColumn(ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo, handle kv.Handle, col *table.Column, row []types.Datum, columnValue interface{}) error {
-	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = ctx.NewTxn(context.Background())
-	if err != nil {
-		return errors.Trace(err)
-	}
+func checkWriteOnlyColumn(t *testing.T, ctx sessionctx.Context, tableID int64, handle kv.Handle, col *table.Column, row []types.Datum, columnValue interface{}, dom *domain.Domain) {
+	tbl := testGetTable(t, dom, tableID)
+	err := ctx.NewTxn(context.Background())
+	require.NoError(t, err)
 
-	i := int64(0)
-	err = tables.IterRecords(t, ctx, t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-		if !reflect.DeepEqual(data, row) {
-			return false, errors.Errorf("%v not equal to %v", data, row)
-		}
+	i := 0
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		require.Truef(t, reflect.DeepEqual(data, row), "%v not equal to %v", data, row)
 		i++
 		return true, nil
 	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if i != 1 {
-		return errors.Errorf("expect 1, got %v", i)
-	}
+	require.NoError(t, err)
+	require.Equalf(t, 1, i, "expect 1, got %v", i)
 
-	err = s.checkColumnKVExist(ctx, t, handle, col, columnValue, false)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	err = checkColumnKVExist(ctx, tbl, handle, col, columnValue, false)
+	require.NoError(t, err)
 
 	// Test add a new row.
 	err = ctx.NewTxn(context.Background())
-	if err != nil {
-		return errors.Trace(err)
-	}
+	require.NoError(t, err)
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
-	newHandle, err := t.AddRecord(ctx, newRow)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	newHandle, err := tbl.AddRecord(ctx, newRow)
+	require.NoError(t, err)
 	err = ctx.NewTxn(context.Background())
-	if err != nil {
-		return errors.Trace(err)
-	}
+	require.NoError(t, err)
 
 	rows := [][]types.Datum{row, newRow}
 
-	i = int64(0)
-	err = tables.IterRecords(t, ctx, t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-		if !reflect.DeepEqual(data, rows[i]) {
-			return false, errors.Errorf("%v not equal to %v", data, rows[i])
-		}
+	i = 0
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		require.Truef(t, reflect.DeepEqual(data, rows[i]), "%v not equal to %v", data, rows[i])
 		i++
 		return true, nil
 	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if i != 2 {
-		return errors.Errorf("expect 2, got %v", i)
-	}
+	require.NoError(t, err)
+	require.Equalf(t, 2, i, "expect 2, got %v", i)
 
-	err = s.checkColumnKVExist(ctx, t, newHandle, col, columnValue, true)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	err = checkColumnKVExist(ctx, tbl, newHandle, col, columnValue, true)
+	require.NoError(t, err)
 	// Test remove a row.
 	err = ctx.NewTxn(context.Background())
-	if err != nil {
-		return errors.Trace(err)
-	}
+	require.NoError(t, err)
 
-	err = t.RemoveRecord(ctx, newHandle, newRow)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	err = tbl.RemoveRecord(ctx, newHandle, newRow)
+	require.NoError(t, err)
 	err = ctx.NewTxn(context.Background())
-	if err != nil {
-		return errors.Trace(err)
-	}
+	require.NoError(t, err)
 
-	i = int64(0)
-	err = tables.IterRecords(t, ctx, t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	i = 0
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		i++
 		return true, nil
 	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if i != 1 {
-		return errors.Errorf("expect 1, got %v", i)
-	}
+	require.NoError(t, err)
+	require.Equalf(t, 1, i, "expect 1, got %v", i)
 
-	err = s.checkColumnKVExist(ctx, t, newHandle, col, columnValue, false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = s.testGetColumn(t, col.Name.L, false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	err = checkColumnKVExist(ctx, tbl, newHandle, col, columnValue, false)
+	require.NoError(t, err)
+	err = testGetColumn(tbl, col.Name.L, false)
+	require.NoError(t, err)
 }
 
-func (s *testColumnSuite) checkReorganizationColumn(ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo, col *table.Column, row []types.Datum, columnValue interface{}) error {
-	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = ctx.NewTxn(context.Background())
-	if err != nil {
-		return errors.Trace(err)
-	}
+func checkReorganizationColumn(t *testing.T, ctx sessionctx.Context, tableID int64, col *table.Column, row []types.Datum, columnValue interface{}, dom *domain.Domain) {
+	tbl := testGetTable(t, dom, tableID)
+	err := ctx.NewTxn(context.Background())
+	require.NoError(t, err)
 
-	i := int64(0)
-	err = tables.IterRecords(t, ctx, t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-		if !reflect.DeepEqual(data, row) {
-			return false, errors.Errorf("%v not equal to %v", data, row)
-		}
+	i := 0
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		require.Truef(t, reflect.DeepEqual(data, row), "%v not equal to %v", data, row)
 		i++
 		return true, nil
 	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if i != 1 {
-		return errors.Errorf("expect 1 got %v", i)
-	}
+	require.NoError(t, err)
+	require.Equalf(t, 1, i, "expect 1, got %v", i)
 
 	// Test add a new row.
 	err = ctx.NewTxn(context.Background())
-	if err != nil {
-		return errors.Trace(err)
-	}
+	require.NoError(t, err)
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
-	newHandle, err := t.AddRecord(ctx, newRow)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	newHandle, err := tbl.AddRecord(ctx, newRow)
+	require.NoError(t, err)
 	err = ctx.NewTxn(context.Background())
-	if err != nil {
-		return errors.Trace(err)
-	}
+	require.NoError(t, err)
 
 	rows := [][]types.Datum{row, newRow}
 
-	i = int64(0)
-	err = tables.IterRecords(t, ctx, t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-		if !reflect.DeepEqual(data, rows[i]) {
-			return false, errors.Errorf("%v not equal to %v", data, rows[i])
-		}
+	i = 0
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		require.Truef(t, reflect.DeepEqual(data, rows[i]), "%v not equal to %v", data, rows[i])
 		i++
 		return true, nil
 	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if i != 2 {
-		return errors.Errorf("expect 2, got %v", i)
-	}
+	require.NoError(t, err)
+	require.Equalf(t, 2, i, "expect 2, got %v", i)
 
-	err = s.checkColumnKVExist(ctx, t, newHandle, col, columnValue, true)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	err = checkColumnKVExist(ctx, tbl, newHandle, col, columnValue, true)
+	require.NoError(t, err)
 
 	// Test remove a row.
 	err = ctx.NewTxn(context.Background())
-	if err != nil {
-		return errors.Trace(err)
-	}
+	require.NoError(t, err)
 
-	err = t.RemoveRecord(ctx, newHandle, newRow)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	err = tbl.RemoveRecord(ctx, newHandle, newRow)
+	require.NoError(t, err)
 	err = ctx.NewTxn(context.Background())
-	if err != nil {
-		return errors.Trace(err)
-	}
+	require.NoError(t, err)
 
-	i = int64(0)
-	err = tables.IterRecords(t, ctx, t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+	i = 0
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		i++
 		return true, nil
 	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if i != 1 {
-		return errors.Errorf("expect 1, got %v", i)
-	}
-	err = s.testGetColumn(t, col.Name.L, false)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	require.NoError(t, err)
+	require.Equalf(t, 1, i, "expect 1, got %v", i)
+	err = testGetColumn(tbl, col.Name.L, false)
+	require.NoError(t, err)
 }
 
-func (s *testColumnSuite) checkPublicColumn(ctx sessionctx.Context, d *ddl, tblInfo *model.TableInfo, newCol *table.Column, oldRow []types.Datum, columnValue interface{}) error {
-	t, err := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = ctx.NewTxn(context.Background())
-	if err != nil {
-		return errors.Trace(err)
-	}
+func checkPublicColumn(t *testing.T, ctx sessionctx.Context, tableID int64, newCol *table.Column, oldRow []types.Datum, columnValue interface{}, dom *domain.Domain, columnCnt int) {
+	tbl := testGetTable(t, dom, tableID)
+	err := ctx.NewTxn(context.Background())
+	require.NoError(t, err)
 
-	i := int64(0)
-	updatedRow := append(oldRow, types.NewDatum(columnValue))
-	err = tables.IterRecords(t, ctx, t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-		if !reflect.DeepEqual(data, updatedRow) {
-			return false, errors.Errorf("%v not equal to %v", data, updatedRow)
-		}
+	i := 0
+	var updatedRow []types.Datum
+	updatedRow = append(updatedRow, oldRow...)
+	for j := 0; j < columnCnt; j++ {
+		updatedRow = append(updatedRow, types.NewDatum(columnValue))
+	}
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		require.Truef(t, reflect.DeepEqual(data, updatedRow), "%v not equal to %v", data, updatedRow)
 		i++
 		return true, nil
 	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if i != 1 {
-		return errors.Errorf("expect 1, got %v", i)
-	}
+	require.NoError(t, err)
+	require.Equalf(t, 1, i, "expect 1, got %v", i)
 
 	// Test add a new row.
 	err = ctx.NewTxn(context.Background())
-	if err != nil {
-		return errors.Trace(err)
-	}
+	require.NoError(t, err)
 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33), int64(44))
-	handle, err := t.AddRecord(ctx, newRow)
-	if err != nil {
-		return errors.Trace(err)
+	for j := 1; j < columnCnt; j++ {
+		newRow = append(newRow, types.NewDatum(int64(44)))
 	}
+	handle, err := tbl.AddRecord(ctx, newRow)
+	require.NoError(t, err)
 	err = ctx.NewTxn(context.Background())
-	if err != nil {
-		return errors.Trace(err)
-	}
+	require.NoError(t, err)
 
 	rows := [][]types.Datum{updatedRow, newRow}
 
-	i = int64(0)
-	err = tables.IterRecords(t, ctx, t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-		if !reflect.DeepEqual(data, rows[i]) {
-			return false, errors.Errorf("%v not equal to %v", data, rows[i])
-		}
+	i = 0
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		require.Truef(t, reflect.DeepEqual(data, rows[i]), "%v not equal to %v", data, rows[i])
 		i++
 		return true, nil
 	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if i != 2 {
-		return errors.Errorf("expect 2, got %v", i)
-	}
+	require.NoError(t, err)
+	require.Equalf(t, 2, i, "expect 2, got %v", i)
 
 	// Test remove a row.
 	err = ctx.NewTxn(context.Background())
-	if err != nil {
-		return errors.Trace(err)
-	}
+	require.NoError(t, err)
 
-	err = t.RemoveRecord(ctx, handle, newRow)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	err = tbl.RemoveRecord(ctx, handle, newRow)
+	require.NoError(t, err)
 
 	err = ctx.NewTxn(context.Background())
-	if err != nil {
-		return errors.Trace(err)
-	}
+	require.NoError(t, err)
 
-	i = int64(0)
-	err = tables.IterRecords(t, ctx, t.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
-		if !reflect.DeepEqual(data, updatedRow) {
-			return false, errors.Errorf("%v not equal to %v", data, updatedRow)
-		}
+	i = 0
+	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		require.Truef(t, reflect.DeepEqual(data, rows[i]), "%v not equal to %v", data, rows[i])
 		i++
 		return true, nil
 	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if i != 1 {
-		return errors.Errorf("expect 1, got %v", i)
-	}
+	require.NoError(t, err)
+	require.Equalf(t, 1, i, "expect 1, got %v", i)
 
-	err = s.testGetColumn(t, newCol.Name.L, true)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	err = testGetColumn(tbl, newCol.Name.L, true)
+	require.NoError(t, err)
 }
 
-func (s *testColumnSuite) checkAddColumn(state model.SchemaState, d *ddl, tblInfo *model.TableInfo, handle kv.Handle, newCol *table.Column, oldRow []types.Datum, columnValue interface{}) error {
-	ctx := testNewContext(d)
-	var err error
+func checkAddColumn(t *testing.T, state model.SchemaState, tableID int64, handle kv.Handle, newCol *table.Column, oldRow []types.Datum, columnValue interface{}, dom *domain.Domain, store kv.Storage, columnCnt int) {
+	ctx := testNewContext(store)
 	switch state {
 	case model.StateNone:
-		err = errors.Trace(s.checkNoneColumn(ctx, d, tblInfo, handle, newCol, columnValue))
+		checkNoneColumn(t, ctx, tableID, handle, newCol, columnValue, dom)
 	case model.StateDeleteOnly:
-		err = errors.Trace(s.checkDeleteOnlyColumn(ctx, d, tblInfo, handle, newCol, oldRow, columnValue))
+		checkDeleteOnlyColumn(t, ctx, tableID, handle, newCol, oldRow, columnValue, dom)
 	case model.StateWriteOnly:
-		err = errors.Trace(s.checkWriteOnlyColumn(ctx, d, tblInfo, handle, newCol, oldRow, columnValue))
+		checkWriteOnlyColumn(t, ctx, tableID, handle, newCol, oldRow, columnValue, dom)
 	case model.StateWriteReorganization, model.StateDeleteReorganization:
-		err = errors.Trace(s.checkReorganizationColumn(ctx, d, tblInfo, newCol, oldRow, columnValue))
+		checkReorganizationColumn(t, ctx, tableID, newCol, oldRow, columnValue, dom)
 	case model.StatePublic:
-		err = errors.Trace(s.checkPublicColumn(ctx, d, tblInfo, newCol, oldRow, columnValue))
+		checkPublicColumn(t, ctx, tableID, newCol, oldRow, columnValue, dom, columnCnt)
 	}
-	return err
 }
 
-func (s *testColumnSuite) testGetColumn(t table.Table, name string, isExist bool) error {
+func testGetColumn(t table.Table, name string, isExist bool) error {
 	col := table.FindCol(t.Cols(), name)
 	if isExist {
 		if col == nil {
@@ -841,62 +637,50 @@ func (s *testColumnSuite) testGetColumn(t table.Table, name string, isExist bool
 	return nil
 }
 
-func (s *testColumnSuite) TestAddColumn(c *C) {
-	d, err := testNewDDLAndStart(
-		context.Background(),
-		WithStore(s.store),
-		WithLease(testLease),
-	)
-	c.Assert(err, IsNil)
-	tblInfo, err := testTableInfo(d, "t", 3)
-	c.Assert(err, IsNil)
-	ctx := testNewContext(d)
+func TestAddColumn(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (c1 int, c2 int, c3 int);")
 
-	err = ctx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
+	var tableID int64
+	rs := tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where table_name='t1' and table_schema='test';")
+	tableIDi, _ := strconv.Atoi(rs.Rows()[0][0].(string))
+	tableID = int64(tableIDi)
+	tbl := testGetTable(t, dom, tableID)
 
-	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
-	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-
+	ctx := testNewContext(store)
+	err := ctx.NewTxn(context.Background())
+	require.NoError(t, err)
 	oldRow := types.MakeDatums(int64(1), int64(2), int64(3))
-	handle, err := t.AddRecord(ctx, oldRow)
-	c.Assert(err, IsNil)
+	handle, err := tbl.AddRecord(ctx, oldRow)
+	require.NoError(t, err)
 
 	txn, err := ctx.Txn(true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	newColName := "c4"
 	defaultColValue := int64(4)
 
-	var mu sync.Mutex
-	var hookErr error
 	checkOK := false
 
-	tc := &TestDDLCallback{}
-	tc.onJobUpdated = func(job *model.Job) {
-		mu.Lock()
-		defer mu.Unlock()
+	d := dom.DDL()
+	tc := &ddl.TestDDLCallback{Do: dom}
+	tc.OnJobUpdatedExported = func(job *model.Job) {
 		if checkOK {
 			return
 		}
 
-		t, err1 := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
-		if err1 != nil {
-			hookErr = errors.Trace(err1)
-			return
-		}
-		newCol := table.FindCol(t.(*tables.TableCommon).Columns, newColName)
+		tbl := testGetTable(t, dom, tableID)
+		newCol := table.FindCol(tbl.(*tables.TableCommon).Columns, newColName)
 		if newCol == nil {
 			return
 		}
 
-		err1 = s.checkAddColumn(newCol.State, d, tblInfo, handle, newCol, oldRow, defaultColValue)
-		if err1 != nil {
-			hookErr = errors.Trace(err1)
-			return
-		}
+		checkAddColumn(t, newCol.State, tableID, handle, newCol, oldRow, defaultColValue, dom, store, 1)
 
 		if newCol.State == model.StatePublic {
 			checkOK = true
@@ -905,61 +689,26 @@ func (s *testColumnSuite) TestAddColumn(c *C) {
 
 	d.SetHook(tc)
 
-	job := testCreateColumn(c, ctx, d, s.dbInfo, tblInfo, newColName, &ast.ColumnPosition{Tp: ast.ColumnPositionNone}, defaultColValue)
+	jobID := testCreateColumn(tk, t, testNewContext(store), tableID, newColName, "", defaultColValue, dom)
+	testCheckJobDone(t, store, jobID, true)
 
-	testCheckJobDone(c, d, job, true)
-	mu.Lock()
-	hErr := hookErr
-	ok := checkOK
-	mu.Unlock()
-	c.Assert(hErr, IsNil)
-	c.Assert(ok, IsTrue)
+	require.True(t, checkOK)
 
-	err = ctx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
-
-	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
-	testCheckJobDone(c, d, job, false)
-
-	txn, err = ctx.Txn(true)
-	c.Assert(err, IsNil)
-	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-
-	err = d.Stop()
-	c.Assert(err, IsNil)
+	jobID = testDropTable(tk, t, "t1", dom)
+	testCheckJobDone(t, store, jobID, false)
 }
 
-func (s *testColumnSuite) TestAddColumns(c *C) {
-	d, err := testNewDDLAndStart(
-		context.Background(),
-		WithStore(s.store),
-		WithLease(testLease),
-	)
-	c.Assert(err, IsNil)
-	tblInfo, err := testTableInfo(d, "t", 3)
-	c.Assert(err, IsNil)
-	ctx := testNewContext(d)
+func TestAddColumns(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (c1 int, c2 int, c3 int);")
 
-	err = ctx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
-
-	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
-	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-
-	oldRow := types.MakeDatums(int64(1), int64(2), int64(3))
-	handle, err := t.AddRecord(ctx, oldRow)
-	c.Assert(err, IsNil)
-
-	txn, err := ctx.Txn(true)
-	c.Assert(err, IsNil)
-	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-
-	newColNames := []string{"c4,c5,c6"}
-	positions := make([]*ast.ColumnPosition, 3)
+	newColNames := []string{"c4", "c5", "c6"}
+	positions := make([]string, 3)
 	for i := range positions {
-		positions[i] = &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
+		positions[i] = ""
 	}
 	defaultColValue := int64(4)
 
@@ -967,30 +716,41 @@ func (s *testColumnSuite) TestAddColumns(c *C) {
 	var hookErr error
 	checkOK := false
 
-	tc := &TestDDLCallback{}
-	tc.onJobUpdated = func(job *model.Job) {
+	var tableID int64
+	rs := tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where table_name='t1' and table_schema='test';")
+	tableIDi, _ := strconv.Atoi(rs.Rows()[0][0].(string))
+	tableID = int64(tableIDi)
+	tbl := testGetTable(t, dom, tableID)
+
+	ctx := testNewContext(store)
+	err := ctx.NewTxn(context.Background())
+	require.NoError(t, err)
+	oldRow := types.MakeDatums(int64(1), int64(2), int64(3))
+	handle, err := tbl.AddRecord(ctx, oldRow)
+	require.NoError(t, err)
+
+	txn, err := ctx.Txn(true)
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	d := dom.DDL()
+	tc := &ddl.TestDDLCallback{Do: dom}
+	tc.OnJobUpdatedExported = func(job *model.Job) {
 		mu.Lock()
 		defer mu.Unlock()
 		if checkOK {
 			return
 		}
 
-		t, err1 := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
-		if err1 != nil {
-			hookErr = errors.Trace(err1)
-			return
-		}
+		tbl := testGetTable(t, dom, tableID)
 		for _, newColName := range newColNames {
-			newCol := table.FindCol(t.(*tables.TableCommon).Columns, newColName)
+			newCol := table.FindCol(tbl.(*tables.TableCommon).Columns, newColName)
 			if newCol == nil {
 				return
 			}
 
-			err1 = s.checkAddColumn(newCol.State, d, tblInfo, handle, newCol, oldRow, defaultColValue)
-			if err1 != nil {
-				hookErr = errors.Trace(err1)
-				return
-			}
+			checkAddColumn(t, newCol.State, tableID, handle, newCol, oldRow, defaultColValue, dom, store, 3)
 
 			if newCol.State == model.StatePublic {
 				checkOK = true
@@ -1000,67 +760,61 @@ func (s *testColumnSuite) TestAddColumns(c *C) {
 
 	d.SetHook(tc)
 
-	job := testCreateColumns(c, ctx, d, s.dbInfo, tblInfo, newColNames, positions, defaultColValue)
+	jobID := testCreateColumns(tk, t, testNewContext(store), tableID, newColNames, positions, defaultColValue, dom)
 
-	testCheckJobDone(c, d, job, true)
+	testCheckJobDone(t, store, jobID, true)
 	mu.Lock()
 	hErr := hookErr
 	ok := checkOK
 	mu.Unlock()
-	c.Assert(hErr, IsNil)
-	c.Assert(ok, IsTrue)
+	require.NoError(t, hErr)
+	require.True(t, ok)
 
-	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
-	testCheckJobDone(c, d, job, false)
-	err = d.Stop()
-	c.Assert(err, IsNil)
+	jobID = testDropTable(tk, t, "t1", dom)
+	testCheckJobDone(t, store, jobID, false)
 }
 
-func (s *testColumnSuite) TestDropColumn(c *C) {
-	d, err := testNewDDLAndStart(
-		context.Background(),
-		WithStore(s.store),
-		WithLease(testLease),
-	)
-	c.Assert(err, IsNil)
-	tblInfo, err := testTableInfo(d, "t2", 4)
-	c.Assert(err, IsNil)
-	ctx := testNewContext(d)
+func TestDropColumnInColumnTest(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (c1 int, c2 int, c3 int, c4 int);")
 
-	err = ctx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
+	var tableID int64
+	rs := tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where table_name='t1' and table_schema='test';")
+	tableIDi, _ := strconv.Atoi(rs.Rows()[0][0].(string))
+	tableID = int64(tableIDi)
+	tbl := testGetTable(t, dom, tableID)
 
-	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
-	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-
+	ctx := testNewContext(store)
 	colName := "c4"
 	defaultColValue := int64(4)
 	row := types.MakeDatums(int64(1), int64(2), int64(3))
-	_, err = t.AddRecord(ctx, append(row, types.NewDatum(defaultColValue)))
-	c.Assert(err, IsNil)
+	err := ctx.NewTxn(context.Background())
+	require.NoError(t, err)
+	_, err = tbl.AddRecord(ctx, append(row, types.NewDatum(defaultColValue)))
+	require.NoError(t, err)
 
 	txn, err := ctx.Txn(true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	checkOK := false
 	var hookErr error
 	var mu sync.Mutex
 
-	tc := &TestDDLCallback{}
-	tc.onJobUpdated = func(job *model.Job) {
+	d := dom.DDL()
+	tc := &ddl.TestDDLCallback{Do: dom}
+	tc.OnJobUpdatedExported = func(job *model.Job) {
 		mu.Lock()
 		defer mu.Unlock()
 		if checkOK {
 			return
 		}
-		t, err1 := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
-		if err1 != nil {
-			hookErr = errors.Trace(err1)
-			return
-		}
-		col := table.FindCol(t.(*tables.TableCommon).Columns, colName)
+		tbl := testGetTable(t, dom, tableID)
+		col := table.FindCol(tbl.(*tables.TableCommon).Columns, colName)
 		if col == nil {
 			checkOK = true
 			return
@@ -1069,76 +823,62 @@ func (s *testColumnSuite) TestDropColumn(c *C) {
 
 	d.SetHook(tc)
 
-	job := testDropColumn(c, ctx, d, s.dbInfo, tblInfo, colName, false)
-	testCheckJobDone(c, d, job, false)
+	jobID := testDropColumnInternal(tk, t, testNewContext(store), tableID, colName, false, dom)
+	testCheckJobDone(t, store, jobID, false)
 	mu.Lock()
 	hErr := hookErr
 	ok := checkOK
 	mu.Unlock()
-	c.Assert(hErr, IsNil)
-	c.Assert(ok, IsTrue)
+	require.NoError(t, hErr)
+	require.True(t, ok)
 
-	err = ctx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
-
-	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
-	testCheckJobDone(c, d, job, false)
-
-	txn, err = ctx.Txn(true)
-	c.Assert(err, IsNil)
-	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-
-	err = d.Stop()
-	c.Assert(err, IsNil)
+	jobID = testDropTable(tk, t, "t1", dom)
+	testCheckJobDone(t, store, jobID, false)
 }
 
-func (s *testColumnSuite) TestDropColumns(c *C) {
-	d, err := testNewDDLAndStart(
-		context.Background(),
-		WithStore(s.store),
-		WithLease(testLease),
-	)
-	c.Assert(err, IsNil)
-	tblInfo, err := testTableInfo(d, "t2", 4)
-	c.Assert(err, IsNil)
-	ctx := testNewContext(d)
+func TestDropColumns(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (c1 int, c2 int, c3 int, c4 int);")
 
-	err = ctx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
+	var tableID int64
+	rs := tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where table_name='t1' and table_schema='test';")
+	tableIDi, _ := strconv.Atoi(rs.Rows()[0][0].(string))
+	tableID = int64(tableIDi)
+	tbl := testGetTable(t, dom, tableID)
 
-	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
-	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
+	ctx := testNewContext(store)
+	err := ctx.NewTxn(context.Background())
+	require.NoError(t, err)
 
 	colNames := []string{"c3", "c4"}
 	defaultColValue := int64(4)
 	row := types.MakeDatums(int64(1), int64(2), int64(3))
-	_, err = t.AddRecord(ctx, append(row, types.NewDatum(defaultColValue)))
-	c.Assert(err, IsNil)
+	_, err = tbl.AddRecord(ctx, append(row, types.NewDatum(defaultColValue)))
+	require.NoError(t, err)
 
 	txn, err := ctx.Txn(true)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 
 	checkOK := false
 	var hookErr error
 	var mu sync.Mutex
 
-	tc := &TestDDLCallback{}
-	tc.onJobUpdated = func(job *model.Job) {
+	d := dom.DDL()
+	tc := &ddl.TestDDLCallback{Do: dom}
+	tc.OnJobUpdatedExported = func(job *model.Job) {
 		mu.Lock()
 		defer mu.Unlock()
 		if checkOK {
 			return
 		}
-		t, err1 := testGetTableWithError(d, s.dbInfo.ID, tblInfo.ID)
-		if err1 != nil {
-			hookErr = errors.Trace(err1)
-			return
-		}
+		tbl := testGetTable(t, dom, tableID)
 		for _, colName := range colNames {
-			col := table.FindCol(t.(*tables.TableCommon).Columns, colName)
+			col := table.FindCol(tbl.(*tables.TableCommon).Columns, colName)
 			if col == nil {
 				checkOK = true
 				return
@@ -1148,150 +888,22 @@ func (s *testColumnSuite) TestDropColumns(c *C) {
 
 	d.SetHook(tc)
 
-	job := testDropColumns(c, ctx, d, s.dbInfo, tblInfo, colNames, false)
-	testCheckJobDone(c, d, job, false)
+	jobID := testDropColumns(tk, t, testNewContext(store), tableID, colNames, false, dom)
+	testCheckJobDone(t, store, jobID, false)
 	mu.Lock()
 	hErr := hookErr
 	ok := checkOK
 	mu.Unlock()
-	c.Assert(hErr, IsNil)
-	c.Assert(ok, IsTrue)
+	require.NoError(t, hErr)
+	require.True(t, ok)
 
-	job = testDropTable(c, ctx, d, s.dbInfo, tblInfo)
-	testCheckJobDone(c, d, job, false)
-	err = d.Stop()
-	c.Assert(err, IsNil)
+	jobID = testDropTable(tk, t, "t1", dom)
+	testCheckJobDone(t, store, jobID, false)
 }
 
-func TestModifyColumn(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	d, err := testNewDDLAndStart(
-		context.Background(),
-		WithStore(store),
-		WithLease(testLease),
-	)
-
-	require.NoError(t, err)
-	ctx := testNewContext(d)
-
-	defer func() {
-		err := d.Stop()
-		require.NoError(t, err)
-		err = store.Close()
-		require.NoError(t, err)
-	}()
-
-	tests := []struct {
-		origin string
-		to     string
-		err    error
-	}{
-		{"int", "bigint", nil},
-		{"int", "int unsigned", nil},
-		{"varchar(10)", "text", nil},
-		{"varbinary(10)", "blob", nil},
-		{"text", "blob", errUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8mb4 to binary")},
-		{"varchar(10)", "varchar(8)", nil},
-		{"varchar(10)", "varchar(11)", nil},
-		{"varchar(10) character set utf8 collate utf8_bin", "varchar(10) character set utf8", nil},
-		{"decimal(2,1)", "decimal(3,2)", nil},
-		{"decimal(2,1)", "decimal(2,2)", nil},
-		{"decimal(2,1)", "decimal(2,1)", nil},
-		{"decimal(2,1)", "int", nil},
-		{"decimal", "int", nil},
-		{"decimal(2,1)", "bigint", nil},
-		{"int", "varchar(10) character set gbk", errUnsupportedModifyCharset.GenWithStackByArgs("charset from binary to gbk")},
-		{"varchar(10) character set gbk", "int", errUnsupportedModifyCharset.GenWithStackByArgs("charset from gbk to binary")},
-		{"varchar(10) character set gbk", "varchar(10) character set utf8", errUnsupportedModifyCharset.GenWithStackByArgs("charset from gbk to utf8")},
-		{"varchar(10) character set gbk", "char(10) character set utf8", errUnsupportedModifyCharset.GenWithStackByArgs("charset from gbk to utf8")},
-		{"varchar(10) character set utf8", "char(10) character set gbk", errUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8 to gbk")},
-		{"varchar(10) character set utf8", "varchar(10) character set gbk", errUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8 to gbk")},
-		{"varchar(10) character set gbk", "varchar(255) character set gbk", nil},
-	}
-	for _, tt := range tests {
-		ftA := colDefStrToFieldType(t, tt.origin)
-		ftB := colDefStrToFieldType(t, tt.to)
-		err := checkModifyTypes(ctx, ftA, ftB, false)
-		if err == nil {
-			require.NoErrorf(t, tt.err, "origin:%v, to:%v", tt.origin, tt.to)
-		} else {
-			require.EqualError(t, err, tt.err.Error())
-		}
-	}
-}
-
-func colDefStrToFieldType(t *testing.T, str string) *types.FieldType {
-	sqlA := "alter table t modify column a " + str
-	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
-	require.NoError(t, err)
-	colDef := stmt.(*ast.AlterTableStmt).Specs[0].NewColumns[0]
-	chs, coll := charset.GetDefaultCharsetAndCollate()
-	col, _, err := buildColumnAndConstraint(nil, 0, colDef, nil, chs, coll)
-	require.NoError(t, err)
-	return &col.FieldType
-}
-
-func TestFieldCase(t *testing.T) {
-	var fields = []string{"field", "Field"}
-	colObjects := make([]*model.ColumnInfo, len(fields))
-	for i, name := range fields {
-		colObjects[i] = &model.ColumnInfo{
-			Name: model.NewCIStr(name),
-		}
-	}
-	err := checkDuplicateColumn(colObjects)
-	require.EqualError(t, err, infoschema.ErrColumnExists.GenWithStackByArgs("Field").Error())
-}
-
-func (s *testColumnSuite) TestAutoConvertBlobTypeByLength(c *C) {
-	d, err := testNewDDLAndStart(
-		context.Background(),
-		WithStore(s.store),
-		WithLease(testLease),
-	)
-	c.Assert(err, IsNil)
-	// Close the customized ddl(worker goroutine included) after the test is finished, otherwise, it will
-	// cause go routine in TiDB leak test.
-	defer func() {
-		err := d.Stop()
-		c.Assert(err, IsNil)
-	}()
-
-	sql := fmt.Sprintf("create table t0(c0 Blob(%d), c1 Blob(%d), c2 Blob(%d), c3 Blob(%d))",
-		tinyBlobMaxLength-1, blobMaxLength-1, mediumBlobMaxLength-1, longBlobMaxLength-1)
-	stmt, err := parser.New().ParseOneStmt(sql, "", "")
-	c.Assert(err, IsNil)
-	tblInfo, err := BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
-	c.Assert(err, IsNil)
-	genIDs, err := d.genGlobalIDs(1)
-	c.Assert(err, IsNil)
-	tblInfo.ID = genIDs[0]
-
-	ctx := testNewContext(d)
-	err = ctx.NewTxn(context.Background())
-	c.Assert(err, IsNil)
-	testCreateTable(c, ctx, d, s.dbInfo, tblInfo)
-	t := testGetTable(c, d, s.dbInfo.ID, tblInfo.ID)
-
-	c.Assert(t.Cols()[0].Tp, Equals, mysql.TypeTinyBlob)
-	c.Assert(t.Cols()[0].Flen, Equals, tinyBlobMaxLength)
-	c.Assert(t.Cols()[1].Tp, Equals, mysql.TypeBlob)
-	c.Assert(t.Cols()[1].Flen, Equals, blobMaxLength)
-	c.Assert(t.Cols()[2].Tp, Equals, mysql.TypeMediumBlob)
-	c.Assert(t.Cols()[2].Flen, Equals, mediumBlobMaxLength)
-	c.Assert(t.Cols()[3].Tp, Equals, mysql.TypeLongBlob)
-	c.Assert(t.Cols()[3].Flen, Equals, longBlobMaxLength)
-
-	oldRow := types.MakeDatums([]byte("a"), []byte("a"), []byte("a"), []byte("a"))
-	_, err = t.AddRecord(ctx, oldRow)
-	c.Assert(err, IsNil)
-
-	txn, err := ctx.Txn(true)
-	c.Assert(err, IsNil)
-	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
+func testGetTable(t *testing.T, dom *domain.Domain, tableID int64) table.Table {
+	require.NoError(t, dom.Reload())
+	tbl, exist := dom.InfoSchema().TableByID(tableID)
+	require.True(t, exist)
+	return tbl
 }

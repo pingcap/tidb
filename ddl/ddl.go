@@ -29,7 +29,6 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -45,10 +45,13 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/table"
+	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	goutil "github.com/pingcap/tidb/util"
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.etcd.io/etcd/clientv3"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -93,8 +96,8 @@ var (
 
 // DDL is responsible for updating schema in data store and maintaining in-memory InfoSchema cache.
 type DDL interface {
-	CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt, directPlacementOpts *model.PlacementSettings, placementPolicyRef *model.PolicyRefInfo) error
-	AlterSchema(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error
+	CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt, placementPolicyRef *model.PolicyRefInfo) error
+	AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error
 	DropSchema(ctx sessionctx.Context, schema model.CIStr) error
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
@@ -145,6 +148,12 @@ type DDL interface {
 		info []*model.TableInfo,
 		onExist OnExist) error
 
+	// CreatePlacementPolicyWithInfo creates a placement policy
+	//
+	// WARNING: the DDL owns the `policy` after calling this function, and will modify its fields
+	// in-place. If you want to keep using `policy`, please call Clone() first.
+	CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *model.PolicyInfo, onExist OnExist) error
+
 	// Start campaigns the owner and starts workers.
 	// ctxPool is used for the worker's delRangeManager and creates sessions.
 	Start(ctxPool *pools.ResourcePool) error
@@ -172,6 +181,8 @@ type DDL interface {
 	GetHook() Callback
 	// SetHook sets the hook.
 	SetHook(h Callback)
+	// DoDDLJob does the DDL job, it's exported for test.
+	DoDDLJob(ctx sessionctx.Context, job *model.Job) error
 }
 
 type limitJobTask struct {
@@ -184,13 +195,14 @@ type ddl struct {
 	m          sync.RWMutex
 	ctx        context.Context
 	cancel     context.CancelFunc
-	wg         sync.WaitGroup // It's only used to deal with data race in restart_test.
+	wg         tidbutil.WaitGroupWrapper // It's only used to deal with data race in restart_test.
 	limitJobCh chan *limitJobTask
 
 	*ddlCtx
-	workers     map[workerType]*worker
-	sessPool    *sessionPool
-	delRangeMgr delRangeManager
+	workers           map[workerType]*worker
+	sessPool          *sessionPool
+	delRangeMgr       delRangeManager
+	enableTiFlashPoll *atomicutil.Bool
 }
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
@@ -214,6 +226,11 @@ type ddlCtx struct {
 		hook        Callback
 		interceptor Interceptor
 	}
+
+	ddlSeqNumMu struct {
+		sync.Mutex
+		seqNum uint64
+	}
 }
 
 func (dc *ddlCtx) isOwner() bool {
@@ -223,6 +240,25 @@ func (dc *ddlCtx) isOwner() bool {
 		metrics.DDLCounter.WithLabelValues(metrics.DDLOwner + "_" + mysql.TiDBReleaseVersion).Inc()
 	}
 	return isOwner
+}
+
+// EnableTiFlashPoll enables TiFlash poll loop aka PollTiFlashReplicaStatus.
+func EnableTiFlashPoll(d interface{}) {
+	if dd, ok := d.(*ddl); ok {
+		dd.enableTiFlashPoll.Store(true)
+	}
+}
+
+// DisableTiFlashPoll disables TiFlash poll loop aka PollTiFlashReplicaStatus.
+func DisableTiFlashPoll(d interface{}) {
+	if dd, ok := d.(*ddl); ok {
+		dd.enableTiFlashPoll.Store(false)
+	}
+}
+
+// IsTiFlashPollEnabled reveals enableTiFlashPoll
+func (d *ddl) IsTiFlashPollEnabled() bool {
+	return d.enableTiFlashPoll.Load()
 }
 
 // RegisterStatsHandle registers statistics handle and its corresponding even channel for ddl.
@@ -307,10 +343,11 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	d := &ddl{
-		ctx:        ctx,
-		ddlCtx:     ddlCtx,
-		limitJobCh: make(chan *limitJobTask, batchAddingJobs),
+		ddlCtx:            ddlCtx,
+		limitJobCh:        make(chan *limitJobTask, batchAddingJobs),
+		enableTiFlashPoll: atomicutil.NewBool(true),
 	}
+	d.ctx, d.cancel = context.WithCancel(ctx)
 
 	return d
 }
@@ -341,7 +378,6 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 // Start implements DDL.Start interface.
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
-	d.ctx, d.cancel = context.WithCancel(d.ctx)
 
 	d.wg.Add(1)
 	go d.limitDDLJobs()
@@ -357,8 +393,8 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		d.workers = make(map[workerType]*worker, 2)
 		d.sessPool = newSessionPool(ctxPool)
 		d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
-		d.workers[generalWorker] = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr)
-		d.workers[addIdxWorker] = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr)
+		d.workers[generalWorker] = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
+		d.workers[addIdxWorker] = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr, d.ddlCtx)
 		for _, worker := range d.workers {
 			worker.wg.Add(1)
 			w := worker
@@ -369,6 +405,15 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			// When the start function is called, we will send a fake job to let worker
 			// checks owner firstly and try to find whether a job exists and run.
 			asyncNotify(worker.ddlJobCh)
+		}
+
+		err = kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+			t := meta.NewMeta(txn)
+			d.ddlSeqNumMu.seqNum, err = t.GetHistoryDDLCount()
+			return err
+		})
+		if err != nil {
+			return err
 		}
 
 		go d.schemaSyncer.StartCleanWork()
@@ -382,6 +427,10 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	variable.RegisterStatistics(d)
 
 	metrics.DDLCounter.WithLabelValues(metrics.CreateDDLInstance).Inc()
+
+	// Start some background routine to manage TiFlash replica.
+	d.wg.Run(d.PollTiFlashRoutine)
+
 	return nil
 }
 
@@ -442,6 +491,18 @@ func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
 		m := meta.NewMeta(txn)
 		var err error
 		ret, err = m.GenGlobalIDs(count)
+		return err
+	})
+
+	return ret, err
+}
+
+func (d *ddl) genPlacementPolicyID() (int64, error) {
+	var ret int64
+	err := kv.RunInNewTxn(context.Background(), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		var err error
+		ret, err = m.GenPlacementPolicyID()
 		return err
 	})
 
@@ -544,13 +605,93 @@ func updateTickerInterval(ticker *time.Ticker, lease time.Duration, job *model.J
 	return time.NewTicker(chooseLeaseTime(lease, interval))
 }
 
-// doDDLJob will return
+func recordLastDDLInfo(ctx sessionctx.Context, job *model.Job) {
+	if job == nil {
+		return
+	}
+	ctx.GetSessionVars().LastDDLInfo.Query = job.Query
+	ctx.GetSessionVars().LastDDLInfo.SeqNum = job.SeqNum
+}
+
+// DoDDLJob will return
+func checkHistoryJobInTest(ctx sessionctx.Context, historyJob *model.Job) {
+	if !(flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil) {
+		return
+	}
+
+	// Check binlog.
+	if historyJob.BinlogInfo.FinishedTS == 0 {
+		panic(fmt.Sprintf("job ID %d, BinlogInfo.FinishedTS is 0", historyJob.ID))
+	}
+
+	// Check DDL query.
+	switch historyJob.Type {
+	case model.ActionUpdateTiFlashReplicaStatus, model.ActionUnlockTable:
+		if historyJob.Query != "" {
+			panic(fmt.Sprintf("job ID %d, type %s, query %s", historyJob.ID, historyJob.Type.String(), historyJob.Query))
+		}
+		return
+	default:
+		if historyJob.Query == "skip" {
+			// Skip the check if the test explicitly set the query.
+			return
+		}
+	}
+	p := parser.New()
+	p.SetSQLMode(ctx.GetSessionVars().SQLMode)
+	p.SetParserConfig(ctx.GetSessionVars().BuildParserConfig())
+	stmt, _, err := p.ParseSQL(historyJob.Query)
+	if err != nil {
+		panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s, err %s", historyJob.ID, historyJob.Query, err.Error()))
+	}
+	if len(stmt) != 1 && historyJob.Type != model.ActionCreateTables {
+		panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+	}
+	for _, st := range stmt {
+		switch historyJob.Type {
+		case model.ActionCreatePlacementPolicy:
+			if _, ok := st.(*ast.CreatePlacementPolicyStmt); !ok {
+				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+			}
+		case model.ActionCreateTable:
+			if _, ok := st.(*ast.CreateTableStmt); !ok {
+				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+			}
+		case model.ActionCreateSchema:
+			if _, ok := st.(*ast.CreateDatabaseStmt); !ok {
+				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+			}
+		case model.ActionCreateTables:
+			_, isCreateTable := st.(*ast.CreateTableStmt)
+			_, isCreateSeq := st.(*ast.CreateSequenceStmt)
+			_, isCreateView := st.(*ast.CreateViewStmt)
+			if !isCreateTable && !isCreateSeq && !isCreateView {
+				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+			}
+		default:
+			if _, ok := st.(ast.DDLNode); !ok {
+				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
+			}
+		}
+	}
+}
+
+func setDDLJobQuery(ctx sessionctx.Context, job *model.Job) {
+	switch job.Type {
+	case model.ActionUpdateTiFlashReplicaStatus, model.ActionUnlockTable:
+		job.Query = ""
+	default:
+		job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
+	}
+}
+
+// DoDDLJob will return
 // - nil: found in history DDL job and no job error
 // - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
 // - other: found in history DDL job and return that job error
-func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
+func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	// Get a global job ID and put the DDL job in the queue.
-	job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
+	setDDLJobQuery(ctx, job)
 	task := &limitJobTask{job, make(chan error)}
 	d.limitJobCh <- task
 	// worker should restart to continue handling tasks in limitJobCh, and send back through task.err
@@ -579,6 +720,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		ticker.Stop()
 		metrics.JobsGauge.WithLabelValues(job.Type.String()).Dec()
 		metrics.HandleJobHistogram.WithLabelValues(job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+		recordLastDDLInfo(ctx, historyJob)
 	}()
 	i := 0
 	for {
@@ -592,7 +734,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			i++
 			ticker = updateTickerInterval(ticker, 10*d.lease, job, i)
 		case <-d.ctx.Done():
-			logutil.BgLogger().Info("[ddl] doDDLJob will quit because context done")
+			logutil.BgLogger().Info("[ddl] DoDDLJob will quit because context done")
 			return context.Canceled
 		}
 
@@ -605,6 +747,8 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			logutil.BgLogger().Debug("[ddl] DDL job is not in history, maybe not run", zap.Int64("jobID", jobID))
 			continue
 		}
+
+		checkHistoryJobInTest(ctx, historyJob)
 
 		// If a job is a history job, the state must be JobStateSynced or JobStateRollbackDone or JobStateCancelled.
 		if historyJob.IsSynced() {

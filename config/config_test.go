@@ -252,6 +252,7 @@ spilled-file-encryption-method = "plaintext"
 [pessimistic-txn]
 deadlock-history-capacity = 123
 deadlock-history-collect-retryable = true
+pessimistic-auto-commit = true
 [top-sql]
 receiver-address = "127.0.0.1:10100"
 [status]
@@ -308,6 +309,7 @@ grpc-max-send-msg-size = 40960
 	require.Equal(t, uint64(30), conf.StoresRefreshInterval)
 	require.Equal(t, uint(123), conf.PessimisticTxn.DeadlockHistoryCapacity)
 	require.True(t, conf.PessimisticTxn.DeadlockHistoryCollectRetryable)
+	require.True(t, conf.PessimisticTxn.PessimisticAutoCommit.Load())
 	require.Equal(t, "127.0.0.1:10100", conf.TopSQL.ReceiverAddress)
 	require.True(t, conf.Experimental.AllowsExpressionIndex)
 	require.Equal(t, uint(20), conf.Status.GRPCKeepAliveTime)
@@ -325,7 +327,14 @@ grpc-max-send-msg-size = 40960
 [log.file]
 log-rotate = true
 [performance]
-mem-profile-interval="1m"`)
+mem-profile-interval="1m"
+[stmt-summary]
+enable=false
+enable-internal-query=true
+max-stmt-count=1000
+max-sql-length=1024
+refresh-interval=100
+history-size=100`)
 	require.NoError(t, err)
 	err = conf.Load(configFile)
 	tmp := err.(*ErrConfigValidationFailed)
@@ -643,7 +652,7 @@ func TestSecurityValid(t *testing.T) {
 
 func TestTcpNoDelay(t *testing.T) {
 	c1 := NewConfig()
-	//check default value
+	// check default value
 	require.True(t, c1.Performance.TCPNoDelay)
 }
 

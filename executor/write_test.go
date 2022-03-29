@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/core"
@@ -38,9 +37,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -304,16 +301,16 @@ func TestInsert(t *testing.T) {
 
 	tk.MustExec("create view v as select * from t")
 	_, err = tk.Exec("insert into v values(1,2)")
-	require.EqualError(t, err, "insert into view v is not supported now.")
+	require.EqualError(t, err, "insert into view v is not supported now")
 	_, err = tk.Exec("replace into v values(1,2)")
-	require.EqualError(t, err, "replace into view v is not supported now.")
+	require.EqualError(t, err, "replace into view v is not supported now")
 	tk.MustExec("drop view v")
 
 	tk.MustExec("create sequence seq")
 	_, err = tk.Exec("insert into seq values()")
-	require.EqualError(t, err, "insert into sequence seq is not supported now.")
+	require.EqualError(t, err, "insert into sequence seq is not supported now")
 	_, err = tk.Exec("replace into seq values()")
-	require.EqualError(t, err, "replace into sequence seq is not supported now.")
+	require.EqualError(t, err, "replace into sequence seq is not supported now")
 	tk.MustExec("drop sequence seq")
 
 	// issue 22851
@@ -952,7 +949,7 @@ func TestInsertOnDupUpdateDefault(t *testing.T) {
 	err := tk.ExecToErr("insert into t values (21,'black warlock'), (22, 'dark sloth'), (21,  'cyan song') on duplicate key update c_int = c_int + 1, c_string = concat(c_int, ':', c_string);")
 	require.True(t, kv.ErrKeyExists.Equal(err))
 	tk.MustExec("commit;")
-	tk.MustQuery("select * from t order by c_int;").Check(testutil.RowsWithSep("|", "21|silver sight", "22|gold witch", "24|gray singer"))
+	tk.MustQuery("select * from t order by c_int;").Check(testkit.RowsWithSep("|", "21|silver sight", "22|gold witch", "24|gray singer"))
 	tk.MustExec("drop table t;")
 }
 
@@ -1140,8 +1137,6 @@ func TestReplace(t *testing.T) {
 }
 
 func TestReplaceWithCICollation(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -1734,7 +1729,7 @@ func TestDelete(t *testing.T) {
 
 	tk.MustExec("create sequence seq")
 	_, err = tk.Exec("delete from seq")
-	require.EqualError(t, err, "delete sequence seq is not supported now.")
+	require.EqualError(t, err, "delete sequence seq is not supported now")
 	tk.MustExec("drop sequence seq")
 }
 
@@ -2159,31 +2154,12 @@ func TestLoadDataEscape(t *testing.T) {
 		{nil, []byte("7\trtn0ZbN\n"), []string{"7|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}, nil, trivialMsg},
 		{nil, []byte("8\trtn0Zb\\N\n"), []string{"8|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}, nil, trivialMsg},
 		{nil, []byte("9\ttab\\	tab\n"), []string{"9|tab	tab"}, nil, trivialMsg},
+		// data broken at escape character.
+		{[]byte("1\ta string\\"), []byte("\n1\n"), []string{"1|a string\n1"}, nil, trivialMsg},
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
 	checkCases(tests, ld, t, tk, ctx, selectSQL, deleteSQL)
-}
-
-func TestLoadDataWithLongContent(t *testing.T) {
-	e := &executor.LoadDataInfo{
-		FieldsInfo: &ast.FieldsClause{Terminated: ",", Escaped: '\\', Enclosed: '"'},
-		LinesInfo:  &ast.LinesClause{Terminated: "\n"},
-	}
-	tests := []struct {
-		content       string
-		inQuoter      bool
-		expectedIndex int
-	}{
-		{"123,123\n123,123", false, 7},
-		{"123123\\n123123", false, -1},
-		{"123123\n123123", true, -1},
-		{"123123\n123123\"\n", true, 14},
-	}
-
-	for _, tt := range tests {
-		require.Equal(t, tt.expectedIndex, e.IndexOfTerminator([]byte(tt.content), tt.inQuoter))
-	}
 }
 
 // TestLoadDataSpecifiedColumns reuse TestLoadDataEscape's test case :-)
@@ -4276,9 +4252,6 @@ func TestListColumnsPartitionWithGlobalIndex(t *testing.T) {
 }
 
 func TestIssue20724(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -4292,9 +4265,6 @@ func TestIssue20724(t *testing.T) {
 }
 
 func TestIssue20840(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -4309,9 +4279,6 @@ func TestIssue20840(t *testing.T) {
 }
 
 func TestIssueInsertPrefixIndexForNonUTF8Collation(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)

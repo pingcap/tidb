@@ -786,6 +786,12 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 
 	users := make([]*auth.UserIdentity, 0, len(s.Specs))
 	for _, spec := range s.Specs {
+		if len(spec.User.Username) > auth.UserNameMaxLength {
+			return ErrWrongStringLength.GenWithStackByArgs(spec.User.Username, "user name", auth.UserNameMaxLength)
+		}
+		if len(spec.User.Hostname) > auth.HostNameMaxLength {
+			return ErrWrongStringLength.GenWithStackByArgs(spec.User.Hostname, "host name", auth.HostNameMaxLength)
+		}
 		if len(users) > 0 {
 			sqlexec.MustFormatSQL(sql, ",")
 		}
@@ -967,25 +973,17 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if !ok {
 				return errors.Trace(ErrPasswordFormat)
 			}
-			stmt, err := exec.ParseWithParams(ctx, true,
+			_, _, err := exec.ExecRestrictedSQL(ctx, nil,
 				`UPDATE %n.%n SET authentication_string=%?, plugin=%? WHERE Host=%? and User=%?;`,
 				mysql.SystemDB, mysql.UserTable, pwd, spec.AuthOpt.AuthPlugin, strings.ToLower(spec.User.Hostname), spec.User.Username,
 			)
-			if err != nil {
-				return err
-			}
-			_, _, err = exec.ExecRestrictedStmt(ctx, stmt)
 			if err != nil {
 				failedUsers = append(failedUsers, spec.User.String())
 			}
 		}
 
 		if len(privData) > 0 {
-			stmt, err := exec.ParseWithParams(ctx, true, "INSERT INTO %n.%n (Host, User, Priv) VALUES (%?,%?,%?) ON DUPLICATE KEY UPDATE Priv = values(Priv)", mysql.SystemDB, mysql.GlobalPrivTable, spec.User.Hostname, spec.User.Username, string(hack.String(privData)))
-			if err != nil {
-				return err
-			}
-			_, _, err = exec.ExecRestrictedStmt(ctx, stmt)
+			_, _, err := exec.ExecRestrictedSQL(ctx, nil, "INSERT INTO %n.%n (Host, User, Priv) VALUES (%?,%?,%?) ON DUPLICATE KEY UPDATE Priv = values(Priv)", mysql.SystemDB, mysql.GlobalPrivTable, spec.User.Hostname, spec.User.Username, string(hack.String(privData)))
 			if err != nil {
 				failedUsers = append(failedUsers, spec.User.String())
 			}
@@ -1089,6 +1087,12 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 
 	for _, userToUser := range s.UserToUsers {
 		oldUser, newUser := userToUser.OldUser, userToUser.NewUser
+		if len(newUser.Username) > auth.UserNameMaxLength {
+			return ErrWrongStringLength.GenWithStackByArgs(newUser.Username, "user name", auth.UserNameMaxLength)
+		}
+		if len(newUser.Hostname) > auth.HostNameMaxLength {
+			return ErrWrongStringLength.GenWithStackByArgs(newUser.Hostname, "host name", auth.HostNameMaxLength)
+		}
 		exists, err := userExistsInternal(sqlExecutor, oldUser.Username, oldUser.Hostname)
 		if err != nil {
 			return err
@@ -1359,11 +1363,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 
 func userExists(ctx context.Context, sctx sessionctx.Context, name string, host string) (bool, error) {
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(ctx, true, `SELECT * FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
-	if err != nil {
-		return false, err
-	}
-	rows, _, err := exec.ExecRestrictedStmt(ctx, stmt)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT * FROM %n.%n WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
 	if err != nil {
 		return false, err
 	}
@@ -1442,11 +1442,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 
 	// update mysql.user
 	exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-	stmt, err := exec.ParseWithParams(ctx, true, `UPDATE %n.%n SET authentication_string=%? WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, u, strings.ToLower(h))
-	if err != nil {
-		return err
-	}
-	_, _, err = exec.ExecRestrictedStmt(ctx, stmt)
+	_, _, err = exec.ExecRestrictedSQL(ctx, nil, `UPDATE %n.%n SET authentication_string=%? WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, u, strings.ToLower(h))
 	if err != nil {
 		return err
 	}

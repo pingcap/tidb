@@ -52,6 +52,8 @@ func introselect(data Interface, left, right, k int, depth int) int {
 	}
 }
 
+// quickselect is used in test for comparison.
+// nolint: unused
 func quickselect(data Interface, left, right, k int) int {
 	if left == right {
 		return left

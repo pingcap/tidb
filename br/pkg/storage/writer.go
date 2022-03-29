@@ -36,6 +36,7 @@ type interceptBuffer interface {
 	Cap() int
 	Bytes() []byte
 	Reset()
+	Compressed() bool
 }
 
 func newInterceptBuffer(chunkSize int, compressType CompressType) interceptBuffer {
@@ -75,6 +76,10 @@ func (b *noCompressionBuffer) Close() error {
 	return nil
 }
 
+func (b *noCompressionBuffer) Compressed() bool {
+	return false
+}
+
 func newNoCompressionBuffer(chunkSize int) *noCompressionBuffer {
 	return &noCompressionBuffer{bytes.NewBuffer(make([]byte, 0, chunkSize))}
 }
@@ -87,18 +92,16 @@ type simpleCompressWriter interface {
 type simpleCompressBuffer struct {
 	*bytes.Buffer
 	compressWriter simpleCompressWriter
-	len            int
 	cap            int
 }
 
 func (b *simpleCompressBuffer) Write(p []byte) (int, error) {
 	written, err := b.compressWriter.Write(p)
-	b.len += written
 	return written, errors.Trace(err)
 }
 
 func (b *simpleCompressBuffer) Len() int {
-	return b.len
+	return b.Buffer.Len()
 }
 
 func (b *simpleCompressBuffer) Cap() int {
@@ -106,7 +109,6 @@ func (b *simpleCompressBuffer) Cap() int {
 }
 
 func (b *simpleCompressBuffer) Reset() {
-	b.len = 0
 	b.Buffer.Reset()
 }
 
@@ -118,11 +120,14 @@ func (b *simpleCompressBuffer) Close() error {
 	return b.compressWriter.Close()
 }
 
+func (b *simpleCompressBuffer) Compressed() bool {
+	return true
+}
+
 func newSimpleCompressBuffer(chunkSize int, compressType CompressType) *simpleCompressBuffer {
 	bf := bytes.NewBuffer(make([]byte, 0, chunkSize))
 	return &simpleCompressBuffer{
 		Buffer:         bf,
-		len:            0,
 		cap:            chunkSize,
 		compressWriter: newCompressWriter(compressType, bf),
 	}
@@ -149,6 +154,10 @@ func (u *bufferedWriter) Write(ctx context.Context, p []byte) (int, error) {
 				return bytesWritten, errors.Trace(err)
 			}
 			p = p[w:]
+			// continue buf because compressed data size may be less than Cap - Len
+			if u.buf.Compressed() {
+				continue
+			}
 		}
 		u.buf.Flush()
 		err := u.uploadChunk(ctx)

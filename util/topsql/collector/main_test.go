@@ -29,7 +29,12 @@ import (
 
 func TestMain(m *testing.M) {
 	testbridge.SetupForCommonTest()
-	goleak.VerifyTestMain(m)
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+	}
+	goleak.VerifyTestMain(m, opts...)
 }
 
 func TestPProfCPUProfile(t *testing.T) {
@@ -75,6 +80,20 @@ func TestPProfCPUProfile(t *testing.T) {
 	}
 	require.True(t, len(data) > 0)
 	require.Equal(t, []byte("sql_digest value"), data[0].SQLDigest)
+}
+
+func TestSQLStatsTune(t *testing.T) {
+	s := &sqlStats{plans: map[string]int64{"plan-1": 80}, total: 100}
+	s.tune()
+	require.Equal(t, int64(100), s.total)
+	require.Equal(t, int64(100), s.plans["plan-1"])
+
+	s = &sqlStats{plans: map[string]int64{"plan-1": 30, "plan-2": 30}, total: 100}
+	s.tune()
+	require.Equal(t, int64(100), s.total)
+	require.Equal(t, int64(30), s.plans["plan-1"])
+	require.Equal(t, int64(30), s.plans["plan-2"])
+	require.Equal(t, int64(40), s.plans[""])
 }
 
 type mockCollector struct {

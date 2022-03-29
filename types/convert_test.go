@@ -1175,7 +1175,7 @@ func TestNumberToDuration(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		dur, err := NumberToDuration(tc.number, int8(tc.fsp))
+		dur, err := NumberToDuration(tc.number, tc.fsp)
 		if tc.hasErr {
 			require.Error(t, err)
 			continue
@@ -1205,13 +1205,15 @@ func TestStrToDuration(t *testing.T) {
 	sc := new(stmtctx.StatementContext)
 	var tests = []struct {
 		str        string
-		fsp        int8
+		fsp        int
 		isDuration bool
 	}{
 		{"20190412120000", 4, false},
 		{"20190101180000", 6, false},
 		{"20190101180000", 1, false},
 		{"20190101181234", 3, false},
+		{"00:00:00.000000", 6, true},
+		{"00:00:00", 0, true},
 	}
 	for _, tt := range tests {
 		_, _, isDuration, err := StrToDuration(sc, tt.str, tt.fsp)

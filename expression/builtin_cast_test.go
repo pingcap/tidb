@@ -323,7 +323,7 @@ func TestCastFuncSig(t *testing.T) {
 	var sig builtinFunc
 
 	durationColumn := &Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0}
-	durationColumn.RetType.Decimal = int(types.DefaultFsp)
+	durationColumn.RetType.Decimal = types.DefaultFsp
 	// Test cast as Decimal.
 	castToDecCases := []struct {
 		before *Column
@@ -817,7 +817,7 @@ func TestCastFuncSig(t *testing.T) {
 	for i, c := range castToTimeCases {
 		args := []Expression{c.before}
 		tp := types.NewFieldType(mysql.TypeDatetime)
-		tp.Decimal = int(types.DefaultFsp)
+		tp.Decimal = types.DefaultFsp
 		timeFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
 		require.NoError(t, err)
 		timeFunc.tp = tp
@@ -846,7 +846,7 @@ func TestCastFuncSig(t *testing.T) {
 	castToTimeCases2 := []struct {
 		before *Column
 		after  types.Time
-		fsp    int8
+		fsp    int
 		tp     byte
 		row    chunk.MutRow
 	}{
@@ -902,7 +902,7 @@ func TestCastFuncSig(t *testing.T) {
 	for i, c := range castToTimeCases2 {
 		args := []Expression{c.before}
 		tp := types.NewFieldType(c.tp)
-		tp.Decimal = int(c.fsp)
+		tp.Decimal = c.fsp
 		timeFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
 		require.NoError(t, err)
 		timeFunc.tp = tp
@@ -926,7 +926,7 @@ func TestCastFuncSig(t *testing.T) {
 		resAfter := c.after.String()
 		if c.fsp > 0 {
 			resAfter += "."
-			for i := 0; i < int(c.fsp); i++ {
+			for i := 0; i < c.fsp; i++ {
 				resAfter += "0"
 			}
 		}
@@ -984,7 +984,7 @@ func TestCastFuncSig(t *testing.T) {
 	for i, c := range castToDurationCases {
 		args := []Expression{c.before}
 		tp := types.NewFieldType(mysql.TypeDuration)
-		tp.Decimal = int(types.DefaultFsp)
+		tp.Decimal = types.DefaultFsp
 		durationFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
 		require.NoError(t, err)
 		durationFunc.tp = tp
@@ -1166,7 +1166,7 @@ func TestWrapWithCastAsTypesClasses(t *testing.T) {
 	ctx := createContext(t)
 
 	durationColumn0 := &Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0}
-	durationColumn0.RetType.Decimal = int(types.DefaultFsp)
+	durationColumn0.RetType.Decimal = types.DefaultFsp
 	durationColumn3 := &Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0}
 	durationColumn3.RetType.Decimal = 3
 	cases := []struct {
@@ -1496,5 +1496,81 @@ func TestCastStringAsDecimalSigWithUnsignedFlagInUnion(t *testing.T) {
 		require.Equal(t, false, isNull)
 		require.NoError(t, err)
 		require.Equal(t, 0, res.Compare(c.res))
+	}
+}
+
+func TestCastConstAsDecimalFieldType(t *testing.T) {
+	type testCase struct {
+		input         *Constant
+		resultFlen    int
+		resultDecimal int
+	}
+	allTestCase := []testCase{
+		// test int
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeLonglong}, Value: types.NewIntDatum(0)}, 1, 0},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeLonglong}, Value: types.NewIntDatum(1)}, 1, 0},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeLonglong}, Value: types.NewIntDatum(-1)}, 1, 0},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeLonglong}, Value: types.NewIntDatum(11111)}, 5, 0},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeLonglong}, Value: types.NewIntDatum(-11111)}, 5, 0},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeLonglong}, Value: types.NewIntDatum(1111111111)}, 10, 0},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeLonglong}, Value: types.NewIntDatum(-1111111111)}, 10, 0},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeLonglong}, Value: types.NewIntDatum(111111111111111)}, 15, 0},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeLonglong}, Value: types.NewIntDatum(-111111111111111)}, 15, 0},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeLonglong}, Value: types.NewIntDatum(9223372036854775807)}, 19, 0},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeLonglong}, Value: types.NewIntDatum(-9223372036854775808)}, 19, 0},
+		// test uint
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}, Value: types.NewUintDatum(0)}, 1, 0},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}, Value: types.NewUintDatum(1)}, 1, 0},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}, Value: types.NewUintDatum(11111)}, 5, 0},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}, Value: types.NewUintDatum(1111111111)}, 10, 0},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}, Value: types.NewUintDatum(111111111111111)}, 15, 0},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}, Value: types.NewUintDatum(9223372036854775807)}, 19, 0},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}, Value: types.NewUintDatum(18446744073709551615)}, 20, 0},
+		// test decimal, use origin fieldType
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeNewDecimal, Flen: 10, Decimal: 5}, Value: types.NewDecimalDatum(types.NewDecFromStringForTest("12345"))}, 10, 5},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeNewDecimal, Flen: 2, Decimal: 1}, Value: types.NewDecimalDatum(types.NewDecFromStringForTest("1"))}, 2, 1},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeNewDecimal, Flen: 30, Decimal: 0}, Value: types.NewDecimalDatum(types.NewDecFromStringForTest("12345"))}, 30, 0},
+		// test real
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeDouble, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength}, Value: types.NewFloat64Datum(1.234)}, 4, 3},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeDouble, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength}, Value: types.NewFloat64Datum(1.23456789)}, 9, 8},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeDouble, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength}, Value: types.NewFloat64Datum(-1234567890.123456789)}, 17, 7},           // float precision lost
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeDouble, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength}, Value: types.NewFloat64Datum(-1234567890.1234567890123456789)}, 17, 7}, // float precision lost
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeDouble, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength}, Value: types.NewFloat64Datum(1e10)}, 11, 0},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeDouble, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength}, Value: types.NewFloat64Datum(1e20)}, 21, 0},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeDouble, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength}, Value: types.NewFloat64Datum(1e40)}, 41, 0},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeDouble, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength}, Value: types.NewFloat64Datum(1e60)}, 61, 0},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeDouble, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength}, Value: types.NewFloat64Datum(1e80)}, 65, 0},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeDouble, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength}, Value: types.NewFloat64Datum(1e-10)}, 10, 10},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeDouble, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength}, Value: types.NewFloat64Datum(1e-20)}, 20, 20},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeDouble, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength}, Value: types.NewFloat64Datum(1e-40)}, 40, 30},
+		// test string
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeString, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength}, Value: types.NewStringDatum("123.456")}, 6, 3},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeString, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength}, Value: types.NewStringDatum("123.4560")}, 7, 4},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeString, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength}, Value: types.NewStringDatum("123.456000000")}, 12, 9},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeString, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength}, Value: types.NewStringDatum("123abcde")}, 3, 0},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeString, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength}, Value: types.NewStringDatum("1e80")}, 65, 0},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeString, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength}, Value: types.NewStringDatum("1e-40")}, 40, 30},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeString, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength}, Value: types.NewStringDatum("-1234567890.123456789")}, 19, 9},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeString, Flen: types.UnspecifiedLength, Decimal: types.UnspecifiedLength}, Value: types.NewStringDatum("-1234567890.1234567890123456789")}, 29, 19},
+		// test time
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeDuration, Flen: types.UnspecifiedLength, Decimal: 3}, Value: types.NewDurationDatum(types.NewDuration(10, 10, 10, 110, 3))}, 9, 3},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeDuration, Flen: types.UnspecifiedLength, Decimal: 6}, Value: types.NewDurationDatum(types.NewDuration(10, 10, 10, 110, 6))}, 12, 6},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeDuration, Flen: types.UnspecifiedLength, Decimal: 0}, Value: types.NewDurationDatum(types.NewDuration(10, 10, 10, 110, 0))}, 6, 0},
+		// test timestamp
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeTimestamp, Flen: types.UnspecifiedLength, Decimal: 0}, Value: types.NewTimeDatum(types.NewTime(types.FromDate(2020, 10, 10, 10, 10, 10, 110), mysql.TypeTimestamp, 0))}, 14, 0},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeTimestamp, Flen: types.UnspecifiedLength, Decimal: 3}, Value: types.NewTimeDatum(types.NewTime(types.FromDate(2020, 10, 10, 10, 10, 10, 110), mysql.TypeTimestamp, 0))}, 17, 3},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeTimestamp, Flen: types.UnspecifiedLength, Decimal: 6}, Value: types.NewTimeDatum(types.NewTime(types.FromDate(2020, 10, 10, 10, 10, 10, 110), mysql.TypeTimestamp, 0))}, 20, 6},
+		// test datetime
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeDatetime, Flen: types.UnspecifiedLength, Decimal: 0}, Value: types.NewTimeDatum(types.NewTime(types.FromDate(2020, 10, 10, 10, 10, 10, 110), mysql.TypeDatetime, 0))}, 14, 0},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeDatetime, Flen: types.UnspecifiedLength, Decimal: 3}, Value: types.NewTimeDatum(types.NewTime(types.FromDate(2020, 10, 10, 10, 10, 10, 110), mysql.TypeDatetime, 0))}, 17, 3},
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeDatetime, Flen: types.UnspecifiedLength, Decimal: 6}, Value: types.NewTimeDatum(types.NewTime(types.FromDate(2020, 10, 10, 10, 10, 10, 110), mysql.TypeDatetime, 0))}, 20, 6},
+		// test date
+		{&Constant{RetType: &types.FieldType{Tp: mysql.TypeDate, Flen: types.UnspecifiedLength, Decimal: 0}, Value: types.NewTimeDatum(types.NewTime(types.FromDate(2020, 10, 10, 10, 10, 10, 110), mysql.TypeDate, 0))}, 8, 0},
+	}
+	ctx := createContext(t)
+	for _, tc := range allTestCase {
+		expr := WrapWithCastAsDecimal(ctx, tc.input)
+		require.Equal(t, tc.resultFlen, expr.GetType().Flen)
+		require.Equal(t, tc.resultDecimal, expr.GetType().Decimal)
 	}
 }
