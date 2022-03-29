@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/rand"
 	"sort"
 	"strconv"
 	"sync"
@@ -547,10 +548,9 @@ func buildBatchCopTasksRandomly(bo *backoff.Backoffer, store *kvStore, rangesFor
 	const cmdType = tikvrpc.CmdBatchCop
 	var rangesLen int
 	var retryNum int
-	var addrMap map[string]bool
 	var taskCtxMap map[*copTask]*tikv.RPCContext
 	var tasks []*copTask
-    cache := store.GetRegionCache()
+	cache := store.GetRegionCache()
 
 	for {
 		retryNum++
@@ -559,7 +559,6 @@ func buildBatchCopTasksRandomly(bo *backoff.Backoffer, store *kvStore, rangesFor
 		}
 
 		rangesLen = 0
-		addrMap = make(map[string]bool)
 		taskCtxMap = make(map[*copTask]*tikv.RPCContext)
 		tasks = make([]*copTask, 0)
 
@@ -595,7 +594,6 @@ func buildBatchCopTasksRandomly(bo *backoff.Backoffer, store *kvStore, rangesFor
 				}
 				break
 			}
-			addrMap[rpcCtx.Addr] = true
 			taskCtxMap[task] = rpcCtx
 		}
 		if len(taskCtxMap) == len(tasks) {
@@ -603,17 +601,22 @@ func buildBatchCopTasksRandomly(bo *backoff.Backoffer, store *kvStore, rangesFor
 		}
 	}
 
-	nodeNum := len(addrMap)
+	allStores := cache.GetTiFlashStores()
+	nodeNum := len(allStores)
+	if nodeNum == 0 {
+		panic("tiflash stores num is zero")
+	}
+
 	copTaskNumForEachNode := len(tasks)/nodeNum + 1
 	var taskIdxInOneNode int
 	var handledNum int
 	for task, rpcCtx := range taskCtxMap {
-		allStores := cache.GetAllValidTiFlashStores(task.region, rpcCtx.Store)
+		rpcCtx.Addr = allStores[rand.Intn(len(allStores))].GetAddr()
 		regionInfo := RegionInfo{
 			Region:         task.region,
 			Meta:           rpcCtx.Meta,
 			Ranges:         task.ranges,
-			AllStores:      allStores,
+			AllStores:      cache.GetAllValidTiFlashStores(task.region, rpcCtx.Store),
 			PartitionIndex: task.partitionIndex,
 			Addr:           rpcCtx.Addr,
 		}
@@ -640,13 +643,20 @@ func buildBatchCopTasksRandomly(bo *backoff.Backoffer, store *kvStore, rangesFor
 	}
 
 	if handledNum != len(tasks) {
-		panic(fmt.Sprintf("handled %v tasks, but expect %v, len(taskCtxMap): %v, nodeNum: %v, copTaskNumForEachNode: %v", handledNum, len(tasks), len(taskCtxMap), nodeNum, copTaskNumForEachNode))
+		panic(fmt.Sprintf("handled %v tasks, but expect %v, len(taskCtxMap): %v, nodeNum: %v, copTaskNumForEachNode: %v",
+			handledNum, len(tasks), len(taskCtxMap), nodeNum, copTaskNumForEachNode))
 	}
+
+	var logMsg string
+	for i, s := range allStores {
+		logMsg += fmt.Sprintf("store[%d]: %s, ", i, s.GetAddr())
+	}
+	logutil.BgLogger().Info(fmt.Sprintf("nodeNum: %v. ", nodeNum) + logMsg)
 
 	for _, batchTask := range res {
 		logMsg := fmt.Sprintf("batchCopTask Addr: %s", batchTask.storeAddr)
 		for i, perTaskRegionInfo := range batchTask.regionInfos {
-			logMsg += fmt.Sprintf(", copTask[%d]: %s", i, perTaskRegionInfo.Addr)
+			logMsg += fmt.Sprintf(", copTask[%d]: %s(regid:%v)", i, perTaskRegionInfo.Addr, perTaskRegionInfo.Region)
 		}
 		logutil.BgLogger().Info(logMsg)
 	}
