@@ -2229,17 +2229,31 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.Sele
 				}
 				correlatedCols := ExtractCorrelatedCols4LogicalPlan(np)
 				for _, cone := range correlatedCols {
+					var colName *ast.ColumnName
 					for idx, pone := range p.Schema().Columns {
 						if cone.UniqueID == pone.UniqueID {
 							pname := p.OutputNames()[idx]
-							colName := &ast.ColumnName{
+							colName = &ast.ColumnName{
 								Schema: pname.DBName,
 								Table:  pname.TblName,
 								Name:   pname.ColName,
 							}
+							break
+						}
+					}
+					if colName != nil {
+						columnNameExpr := &ast.ColumnNameExpr{Name: colName}
+						for _, field := range sel.Fields.Fields {
+							if c, ok := field.Expr.(*ast.ColumnNameExpr); ok && colMatch(c.Name, columnNameExpr.Name) {
+								// don't append it again once it has one.
+								columnNameExpr = nil
+								break
+							}
+						}
+						if columnNameExpr != nil {
 							sel.Fields.Fields = append(sel.Fields.Fields, &ast.SelectField{
 								Auxiliary: true,
-								Expr:      &ast.ColumnNameExpr{Name: colName},
+								Expr:      columnNameExpr,
 							})
 						}
 					}
@@ -3784,6 +3798,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "select * from (select 1 as a") {
+		fmt.Println(1)
 	}
 
 	if sel.OrderBy != nil {
