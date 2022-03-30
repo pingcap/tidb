@@ -271,16 +271,16 @@ func CheckNewCollationEnable(
 	backupNewCollationEnable string,
 	g glue.Glue,
 	storage kv.Storage,
-	CheckRequirements bool,
+	SkipCollactionCheck bool,
 ) error {
 	if backupNewCollationEnable == "" {
-		if CheckRequirements {
+		if !SkipCollactionCheck {
 			return errors.Annotatef(berrors.ErrUnknown,
 				"NewCollactionEnable not found in backupmeta. "+
 					"if you ensure the NewCollactionEnable config of backup cluster is as same as restore cluster, "+
-					"use --check-requirements=false to skip")
+					"use --skip-collaction-check=true to skip")
 		} else {
-			log.Warn("no NewCollactionEnable in backup")
+			log.Warn("no NewCollactionEnable in backup, skip check NewCollactionEnable currently.")
 			return nil
 		}
 	}
@@ -353,7 +353,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			return errors.Trace(versionErr)
 		}
 	}
-	if err = CheckNewCollationEnable(backupMeta.GetNewCollationsEnabled(), g, mgr.GetStorage(), cfg.CheckRequirements); err != nil {
+	if err = CheckNewCollationEnable(backupMeta.GetNewCollationsEnabled(), g, mgr.GetStorage(), cfg.SkipCollactionCheck); err != nil {
 		return errors.Trace(err)
 	}
 
