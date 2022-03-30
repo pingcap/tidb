@@ -16,6 +16,7 @@ package handle
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 
 	"github.com/cznic/mathutil"
@@ -54,7 +55,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache *statsCache
 			Version:  row.GetUint64(0),
 			Name:     getFullTableName(is, tableInfo),
 		}
-		cache.tables[physicalID] = tbl
+		cache.Put(physicalID, tbl)
 	}
 }
 
@@ -65,7 +66,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 		return statsCache{}, errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	tables := statsCache{tables: make(map[int64]*statistics.Table)}
+	tables := newStatsCache()
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
@@ -81,14 +82,83 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 	return tables, nil
 }
 
-func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *statsCache, iter *chunk.Iterator4Chunk) {
+func (h *Handle) initStatsCMSketch(is infoschema.InfoSchema, cache *statsCache) error {
+	for _, tableID := range cache.Keys() {
+		var err error
+		_, err = h.initStatsCMSketchByTableID(is, cache, tableID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		h.updateStatsCache(*cache)
+	}
+	return nil
+}
+
+func (h *Handle) initStatsCMSketchByTableID(is infoschema.InfoSchema, cache *statsCache, physicalTableID int64) (int64, error) {
+	consumed := int64(0)
+	sql := fmt.Sprintf("select HIGH_PRIORITY hist_id, cm_sketch from mysql.stats_histograms where is_index > 0 and table_id = %v", physicalTableID)
+	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	defer terror.Call(rc.Close)
+	req := rc.NewChunk(nil)
+	iter := chunk.NewIterator4Chunk(req)
+	for {
+		err := rc.Next(context.TODO(), req)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		consumed += h.initStatsCMSketch4ChunkByTableID(is, cache, iter, physicalTableID)
+	}
+	cache.minorVersion += uint64(1)
+	return consumed, nil
+}
+
+func (h *Handle) initStatsCMSketch4ChunkByTableID(is infoschema.InfoSchema, cache *statsCache, iter *chunk.Iterator4Chunk, tblID int64) int64 {
+	consumed := int64(0)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		tblID, statsVer := row.GetInt64(0), row.GetInt64(8)
-		table, ok := cache.tables[tblID]
+		table, ok := cache.Get(tblID)
 		if !ok {
 			continue
 		}
-		id, ndv, nullCount, version, totColSize := row.GetInt64(2), row.GetInt64(3), row.GetInt64(5), row.GetUint64(4), row.GetInt64(7)
+		histID := row.GetInt64(0)
+		cmsBytes := row.GetBytes(1)
+		tbl, _ := h.getTableByPhysicalID(is, table.PhysicalID)
+		var idxInfo *model.IndexInfo
+		for _, idx := range tbl.Meta().Indices {
+			if idx.ID == histID {
+				idxInfo = idx
+				break
+			}
+		}
+		index, ok := table.Indices[histID]
+		if idxInfo == nil || !ok {
+			continue
+		}
+		cms, topN, err := statistics.DecodeCMSketchAndTopN(cmsBytes, nil)
+		if err != nil {
+			cms = nil
+			terror.Log(errors.Trace(err))
+		}
+		index.CMSketch = cms
+		index.TopN = topN
+		consumed += cms.MemoryUsage()
+	}
+	return consumed
+}
+
+func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *statsCache, iter *chunk.Iterator4Chunk) {
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		tblID, statsVer := row.GetInt64(0), row.GetInt64(7)
+		table, ok := cache.Get(tblID)
+		if !ok {
+			continue
+		}
+		id, ndv, nullCount, version, totColSize := row.GetInt64(2), row.GetInt64(3), row.GetInt64(5), row.GetUint64(4), row.GetInt64(6)
 		lastAnalyzePos := row.GetDatum(11, types.NewFieldType(mysql.TypeBlob))
 		tbl, _ := h.getTableByPhysicalID(is, table.PhysicalID)
 		if row.GetInt64(1) > 0 {
@@ -102,16 +172,9 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 			if idxInfo == nil {
 				continue
 			}
-			cms, topN, err := statistics.DecodeCMSketchAndTopN(row.GetBytes(6), nil)
-			if err != nil {
-				cms = nil
-				terror.Log(errors.Trace(err))
-			}
 			hist := statistics.NewHistogram(id, ndv, nullCount, version, types.NewFieldType(mysql.TypeBlob), chunk.InitialCapacity, 0)
 			index := &statistics.Index{
 				Histogram: *hist,
-				CMSketch:  cms,
-				TopN:      topN,
 				Info:      idxInfo,
 				StatsVer:  statsVer,
 				Flag:      row.GetInt64(10),
@@ -157,7 +220,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 }
 
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache *statsCache) error {
-	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
+	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -181,7 +244,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache *statsCache
 func (h *Handle) initStatsTopN4Chunk(cache *statsCache, iter *chunk.Iterator4Chunk) {
 	affectedIndexes := make(map[int64]*statistics.Index)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		table, ok := cache.tables[row.GetInt64(0)]
+		table, ok := cache.Get(row.GetInt64(0))
 		if !ok {
 			continue
 		}
@@ -226,7 +289,7 @@ func (h *Handle) initStatsTopN(cache *statsCache) error {
 
 func (h *Handle) initStatsFMSketch4Chunk(cache *statsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		table, ok := cache.tables[row.GetInt64(0)]
+		table, ok := cache.Get(row.GetInt64(0))
 		if !ok {
 			continue
 		}
@@ -275,7 +338,7 @@ func (h *Handle) initStatsFMSketch(cache *statsCache) error {
 func (h *Handle) initStatsBuckets4Chunk(cache *statsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
-		table, ok := cache.tables[tableID]
+		table, ok := cache.Get(tableID)
 		if !ok {
 			continue
 		}
@@ -362,7 +425,7 @@ func (h *Handle) initStatsBuckets(cache *statsCache) error {
 		h.initStatsBuckets4Chunk(cache, iter)
 	}
 	lastVersion := uint64(0)
-	for _, table := range cache.tables {
+	for _, table := range cache.Values() {
 		lastVersion = mathutil.MaxUint64(lastVersion, table.Version)
 		for _, idx := range table.Indices {
 			for i := 1; i < idx.Len(); i++ {
@@ -415,8 +478,11 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cache.initMemoryUsage()
 	h.updateStatsCache(cache)
+	err = h.initStatsCMSketch(is, &cache)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 

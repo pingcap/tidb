@@ -54,23 +54,6 @@ const (
 	TiDBGlobalStats = "global"
 )
 
-// statsCache caches the tables in memory for Handle.
-type statsCache struct {
-	tables map[int64]*statistics.Table
-	// version is the latest version of cache. It is bumped when new records of `mysql.stats_meta` are loaded into cache.
-	version uint64
-	// minorVersion is to differentiate the cache when the version is unchanged while the cache contents are
-	// modified indeed. This can happen when we load extra column histograms into cache, or when we modify the cache with
-	// statistics feedbacks, etc. We cannot bump the version then because no new changes of `mysql.stats_meta` are loaded,
-	// while the override of statsCache is in a copy-on-write way, to make sure the statsCache is unchanged by others during the
-	// the interval of 'copy' and 'write', every 'write' should bump / check this minorVersion if the version keeps
-	// unchanged.
-	// This bump / check logic is encapsulated in `statsCache.update` and `updateStatsCache`, callers don't need to care
-	// about this minorVersion actually.
-	minorVersion uint64
-	memUsage     int64
-}
-
 // Handle can update stats info periodically.
 type Handle struct {
 	mu struct {
@@ -154,7 +137,7 @@ func (h *Handle) Clear() {
 	// TODO: Here h.mu seems to protect all the fields of Handle. Is is reasonable?
 	h.mu.Lock()
 	h.statsCache.Lock()
-	h.statsCache.Store(statsCache{tables: make(map[int64]*statistics.Table)})
+	h.statsCache.Store(newStatsCache())
 	h.statsCache.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
 	h.statsCache.Unlock()
 	for len(h.ddlEventCh) > 0 {
@@ -197,7 +180,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration, pool sessionPool, tr
 	handle.statsCache.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
-	handle.statsCache.Store(statsCache{tables: make(map[int64]*statistics.Table)})
+	handle.statsCache.Store(newStatsCache())
 	handle.globalMap.data = make(tableDeltaMap)
 	handle.feedback.data = statistics.NewQueryFeedbackMap()
 	handle.colMap.data = make(colStatsUsageMap)
@@ -275,7 +258,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 			continue
 		}
 		tableInfo := table.Meta()
-		if oldTbl, ok := oldCache.tables[physicalID]; ok && oldTbl.Version >= version && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
+		if oldTbl, ok := oldCache.Get(physicalID); ok && oldTbl.Version >= version && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
 			continue
 		}
 		tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, false, 0)
@@ -518,7 +501,7 @@ func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
 // GetPartitionStats retrieves the partition stats from cache.
 func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
 	statsCache := h.statsCache.Load().(statsCache)
-	tbl, ok := statsCache.tables[pid]
+	tbl, ok := statsCache.Get(pid)
 	if !ok {
 		tbl = statistics.PseudoTable(tblInfo)
 		tbl.PhysicalID = pid
@@ -535,60 +518,12 @@ func (h *Handle) updateStatsCache(newCache statsCache) (updated bool) {
 	h.statsCache.Lock()
 	oldCache := h.statsCache.Load().(statsCache)
 	if oldCache.version < newCache.version || (oldCache.version == newCache.version && oldCache.minorVersion < newCache.minorVersion) {
-		h.statsCache.memTracker.Consume(newCache.memUsage - oldCache.memUsage)
+		h.statsCache.memTracker.Consume(newCache.Cost() - oldCache.Cost())
 		h.statsCache.Store(newCache)
 		updated = true
 	}
 	h.statsCache.Unlock()
 	return
-}
-
-func (sc statsCache) copy() statsCache {
-	newCache := statsCache{tables: make(map[int64]*statistics.Table, len(sc.tables)),
-		version:      sc.version,
-		minorVersion: sc.minorVersion,
-		memUsage:     sc.memUsage,
-	}
-	for k, v := range sc.tables {
-		newCache.tables[k] = v
-	}
-	return newCache
-}
-
-//initMemoryUsage calc total memory usage of statsCache and set statsCache.memUsage
-//should be called after the tables and their stats are initilazed
-func (sc statsCache) initMemoryUsage() {
-	sum := int64(0)
-	for _, tb := range sc.tables {
-		sum += tb.MemoryUsage()
-	}
-	sc.memUsage = sum
-}
-
-// update updates the statistics table cache using copy on write.
-func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64) statsCache {
-	newCache := sc.copy()
-	if newVersion == newCache.version {
-		newCache.minorVersion += uint64(1)
-	} else {
-		newCache.version = newVersion
-		newCache.minorVersion = uint64(0)
-	}
-	for _, tbl := range tables {
-		id := tbl.PhysicalID
-		if ptbl, ok := newCache.tables[id]; ok {
-			newCache.memUsage -= ptbl.MemoryUsage()
-		}
-		newCache.tables[id] = tbl
-		newCache.memUsage += tbl.MemoryUsage()
-	}
-	for _, id := range deletedIDs {
-		if ptbl, ok := newCache.tables[id]; ok {
-			newCache.memUsage -= ptbl.MemoryUsage()
-		}
-		delete(newCache.tables, id)
-	}
-	return newCache
 }
 
 // LoadNeededHistograms will load histograms for those needed columns.
@@ -608,7 +543,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 
 	for _, col := range cols {
 		oldCache := h.statsCache.Load().(statsCache)
-		tbl, ok := oldCache.tables[col.TableID]
+		tbl, ok := oldCache.Get(col.TableID)
 		if !ok {
 			continue
 		}
@@ -652,7 +587,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 		// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 		// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 		oldCache = h.statsCache.Load().(statsCache)
-		tbl, ok = oldCache.tables[col.TableID]
+		tbl, ok = oldCache.Get(col.TableID)
 		if !ok {
 			continue
 		}
@@ -871,7 +806,7 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 			err = err1
 		}
 	}()
-	table, ok := h.statsCache.Load().(statsCache).tables[physicalID]
+	table, ok := h.statsCache.Load().(statsCache).Get(physicalID)
 	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
 	// the average error rate of it is small.
 	if !ok || snapshot > 0 {
@@ -1600,7 +1535,7 @@ const updateStatsCacheRetryCnt = 5
 func (h *Handle) removeExtendedStatsItem(tableID int64, statsName string) {
 	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
 		oldCache := h.statsCache.Load().(statsCache)
-		tbl, ok := oldCache.tables[tableID]
+		tbl, ok := oldCache.Get(tableID)
 		if !ok || tbl.ExtendedStats == nil || len(tbl.ExtendedStats.Stats) == 0 {
 			return
 		}
@@ -1631,8 +1566,9 @@ func (h *Handle) ReloadExtendedStatistics() error {
 	}()
 	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
 		oldCache := h.statsCache.Load().(statsCache)
-		tables := make([]*statistics.Table, 0, len(oldCache.tables))
-		for physicalID, tbl := range oldCache.tables {
+		tables := make([]*statistics.Table, 0, oldCache.Len())
+		for _, physicalID := range oldCache.Keys() {
+			tbl, _ := oldCache.Get(physicalID)
 			t, err := h.extendedStatsFromStorage(reader, tbl.Copy(), physicalID, true)
 			if err != nil {
 				return err
