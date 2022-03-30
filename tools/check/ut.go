@@ -777,8 +777,9 @@ func (n *numa) testCommand(pkg string, fn string, old bool) *exec.Cmd {
 		// session.test -test.run TestClusteredPrefixColum
 		args = append(args, "-test.run", fn)
 	}
-
-	return exec.Command(exe, args...)
+	cmd := exec.Command(exe, args...)
+	SetSysProcAttr(cmd)
+	return cmd
 }
 
 func skipDIR(pkg string) bool {
