@@ -23,6 +23,6 @@ import (
 
 func SetSysProcAttr(c *exec.Cmd) {
 	c.SysProcAttr = &syscall.SysProcAttr{
-		Cloneflags: uintptr(syscall.CLONE_VFORK | syscall.SIGCHLD),
+		Cloneflags: uintptr(syscall.SIGCHLD),
 	}
 }
