@@ -220,13 +220,13 @@ func TestInvalidReadCacheTable(t *testing.T) {
 	tk.MustExec("commit")
 
 	for _, query := range queries {
-		tk.MustExec(query.sql)
+		tk.MustQuery(query.sql)
 	}
 
 	// Test normal table when cache table exits.
 	tk.MustExec("insert into cache_tmp5 values(1);")
+	time.Sleep(100 * time.Millisecond)
 	tk.MustExec("set @a=now(6);")
-	time.Sleep(time.Microsecond)
 	tk.MustExec("drop table cache_tmp5")
 	tk.MustExec("create table cache_tmp5 (id int primary key);")
 	tk.MustQuery("select * from cache_tmp5 as of timestamp(@a) where id=1;").Check(testkit.Rows("1"))
