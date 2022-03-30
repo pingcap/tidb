@@ -1847,8 +1847,8 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 	if tbl.IsView() {
 		if sv := sctx.GetSessionVars(); sv != nil {
 			var prevSQL string
-			if sv.PrevStmt != nil {
-				prevSQL = sv.PrevStmt.String()
+			if sv.StmtCtx != nil {
+				prevSQL = sv.StmtCtx.OriginalSQL
 			}
 			logutil.BgLogger().Info("tryFillViewColumnType",
 				zap.Uint64("conn ID", sv.ConnectionID),
