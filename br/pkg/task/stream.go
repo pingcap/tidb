@@ -56,6 +56,7 @@ const (
 	flagYes                     = "yes"
 	flagDryRun                  = "dry-run"
 	flagUntil                   = "until"
+	flagStreamJSONOutput        = "json"
 	flagStreamTaskName          = "task-name"
 	flagStreamTaskNameDefault   = "all" // used for get status for all of tasks.
 	flagStreamStartTS           = "start-ts"
@@ -73,6 +74,11 @@ var (
 	StreamStatus   = "stream status"
 	StreamRestore  = "stream restore"
 	StreamTruncate = "stream truncate"
+
+	skipSummaryCommandList = map[string]struct{}{
+		StreamStatus:   {},
+		StreamTruncate: {},
+	}
 )
 
 var StreamCommandMap = map[string]func(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error{
@@ -106,6 +112,9 @@ type StreamConfig struct {
 	Until      uint64 `json:"until" toml:"until"`
 	DryRun     bool   `json:"dry-run" toml:"dry-run"`
 	SkipPrompt bool   `json:"skip-prompt" toml:"skip-prompt"`
+
+	// Spec for the command `status`.
+	JSONOutput bool `json:"json-output" toml:"json-output"`
 }
 
 func (sc *StreamConfig) makeStorage(ctx context.Context) (storage.ExternalStorage, error) {
@@ -159,6 +168,9 @@ func DefineStreamStatusCommonFlags(flags *pflag.FlagSet) {
 	flags.String(flagStreamTaskName, flagStreamTaskNameDefault,
 		"The task name for backup stream log. If default, get status of all of tasks",
 	)
+	flags.Bool(flagStreamJSONOutput, false,
+		"Print JSON as the output.",
+	)
 }
 
 func DefineStreamTruncateLogFlags(flags *pflag.FlagSet) {
@@ -166,6 +178,15 @@ func DefineStreamTruncateLogFlags(flags *pflag.FlagSet) {
 		"(support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'.)")
 	flags.Bool(flagDryRun, false, "Run the command but don't really delete the files.")
 	flags.BoolP(flagYes, "y", false, "Skip all prompts and always execute the command.")
+}
+
+func (cfg *StreamConfig) ParseStreamStatusFromFlags(flags *pflag.FlagSet) error {
+	var err error
+	cfg.JSONOutput, err = flags.GetBool(flagStreamJSONOutput)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 func (cfg *StreamConfig) ParseStreamTruncateFromFlags(flags *pflag.FlagSet) error {
@@ -252,8 +273,7 @@ type streamMgr struct {
 	httpCli *http.Client
 }
 
-func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamStart bool,
-) (*streamMgr, error) {
+func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamStart bool) (*streamMgr, error) {
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
 		cfg.CheckRequirements, true)
 	if err != nil {
@@ -464,7 +484,11 @@ func RunStreamCommand(
 	cfg *StreamConfig,
 ) error {
 	cfg.Config.adjust()
-	defer summary.Summary(cmdName)
+	defer func() {
+		if _, ok := skipSummaryCommandList[cmdName]; !ok {
+			summary.Summary(cmdName)
+		}
+	}()
 	commandFn, exist := StreamCommandMap[cmdName]
 	if !exist {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "invalid command %s", cmdName)
@@ -690,6 +714,7 @@ func RunStreamStatus(
 	cmdName string,
 	cfg *StreamConfig,
 ) error {
+	console := glue.GetConsole(g)
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
 
@@ -702,13 +727,39 @@ func RunStreamStatus(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	streamMgr, err := NewStreamMgr(ctx, cfg, g, false)
+	etcdCLI, err := dialEtcdWithCfg(ctx, cfg.Config)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
-	defer streamMgr.close()
+	cli := stream.NewMetaDataClient(etcdCLI)
 
-	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
+	var printer stream.TaskPrinter
+	if !cfg.JSONOutput {
+		printer = stream.PrintTaskByTable(console.CreateTable())
+	} else {
+		printer = stream.PrintTaskWithJSON(console)
+	}
+
+	fillTaskExtraInfo := func(task stream.Task) (stream.TaskStatus, error) {
+		var err error
+		s := stream.TaskStatus{
+			Info: task.Info,
+		}
+		s.Progress, err = task.NextBackupTSList(ctx)
+		if err != nil {
+			return s, err
+		}
+		mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+			cfg.CheckRequirements, false)
+		if err != nil {
+			return s, err
+		}
+		s.QPS, err = stream.MaybeQPS(ctx, mgr)
+		if err != nil {
+			return s, err
+		}
+		return s, nil
+	}
 
 	// to add backoff
 	if flagStreamTaskNameDefault == cfg.TaskName {
@@ -718,19 +769,26 @@ func RunStreamStatus(
 			return errors.Trace(err)
 		}
 
-		fields := make([]zapcore.Field, 0, len(tasks))
 		for _, task := range tasks {
-			fields = append(fields, logutil.StreamBackupTaskInfo(&task.Info))
+			status, err := fillTaskExtraInfo(task)
+			if err != nil {
+				return err
+			}
+			printer.AddTask(status)
 		}
-		summary.Log(cmdName, fields...)
 	} else {
 		// get status about TaskName
 		task, err := cli.GetTask(ctx, cfg.TaskName)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		summary.Log(cmdName, logutil.StreamBackupTaskInfo(&task.Info))
+		status, err := fillTaskExtraInfo(*task)
+		if err != nil {
+			return err
+		}
+		printer.AddTask(status)
 	}
+	printer.PrintTasks()
 	return nil
 }
 

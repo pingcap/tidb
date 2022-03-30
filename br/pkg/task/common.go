@@ -32,7 +32,9 @@ import (
 	"github.com/spf13/pflag"
 	pd "github.com/tikv/pd/client"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -117,6 +119,41 @@ func (tls *TLSConfig) ToTLSConfig() (*tls.Config, error) {
 func (tls *TLSConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
 	tls.CA, tls.Cert, tls.Key, err = ParseTLSTripleFromFlags(flags)
 	return
+}
+
+func dialEtcdWithCfg(ctx context.Context, cfg Config) (*clientv3.Client, error) {
+	var (
+		tlsConfig *tls.Config
+		err       error
+	)
+
+	if cfg.TLS.IsEnabled() {
+		tlsConfig, err = cfg.TLS.ToTLSConfig()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	log.Info("trying to connect to etcd", zap.Strings("addr", cfg.PD))
+	etcdCLI, err := clientv3.New(clientv3.Config{
+		TLS:              tlsConfig,
+		Endpoints:        cfg.PD,
+		AutoSyncInterval: 30 * time.Second,
+		DialTimeout:      5 * time.Second,
+		DialOptions: []grpc.DialOption{
+			grpc.WithKeepaliveParams(keepalive.ClientParameters{
+				Time:                cfg.GRPCKeepaliveTime,
+				Timeout:             cfg.GRPCKeepaliveTimeout,
+				PermitWithoutStream: false,
+			}),
+			grpc.WithBlock(),
+			grpc.WithReturnConnectionError(),
+		},
+		Context: ctx,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return etcdCLI, nil
 }
 
 // Config is the common configuration for all BRIE tasks.

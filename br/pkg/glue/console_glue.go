@@ -2,7 +2,12 @@
 
 package glue
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/fatih/color"
+)
 
 // ConsoleOperations are some operations based on ConsoleGlue.
 type ConsoleOperations struct {
@@ -31,9 +36,42 @@ func (ops ConsoleOperations) PromptBool(p string) bool {
 	}
 }
 
+func (ops *ConsoleOperations) CreateTable() *Table {
+	return &Table{
+		console: ops,
+	}
+}
+
 func (ops ConsoleOperations) Println(args ...interface{}) {
 	ops.Print(args...)
 	ops.Print("\n")
+}
+
+type Table struct {
+	console *ConsoleOperations
+	items   [][2]string
+}
+
+func (t *Table) Add(key, value string) {
+	t.items = append(t.items, [...]string{key, value})
+}
+
+func (t *Table) maxKeyLen() int {
+	maxLen := 0
+	for _, item := range t.items {
+		if len(item[0]) > maxLen {
+			maxLen = len(item[0])
+		}
+	}
+	return maxLen
+}
+
+func (t *Table) Print() {
+	value := color.New(color.Bold)
+	maxLen := t.maxKeyLen()
+	for _, item := range t.items {
+		t.console.Println(fmt.Sprintf("%*s: %s", maxLen, item[0], value.Sprint(item[1])))
+	}
 }
 
 // ConsoleGlue is the glue between BR and some type of console,
