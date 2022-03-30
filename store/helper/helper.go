@@ -547,6 +547,32 @@ type RegionsInfo struct {
 	Regions []RegionInfo `json:"regions"`
 }
 
+// NewRegionsInfo returns RegionsInfo
+func NewRegionsInfo() *RegionsInfo {
+	return &RegionsInfo{
+		Regions: make([]RegionInfo, 0),
+	}
+}
+
+// Merge merged 2 regionsInfo into one
+func (r *RegionsInfo) Merge(other *RegionsInfo) *RegionsInfo {
+	newRegionsInfo := &RegionsInfo{
+		Regions: make([]RegionInfo, 0, r.Count+other.Count),
+	}
+	m := make(map[int64]RegionInfo, r.Count+other.Count)
+	for _, region := range r.Regions {
+		m[region.ID] = region
+	}
+	for _, region := range other.Regions {
+		m[region.ID] = region
+	}
+	for _, region := range m {
+		newRegionsInfo.Regions = append(newRegionsInfo.Regions, region)
+	}
+	newRegionsInfo.Count = int64(len(newRegionsInfo.Regions))
+	return newRegionsInfo
+}
+
 // ReplicationStatus represents the replication mode status of the region.
 type ReplicationStatus struct {
 	State   string `json:"state"`
@@ -783,6 +809,21 @@ func (h *Helper) GetStoreRegionsInfo(storeID uint64) (*RegionsInfo, error) {
 func (h *Helper) GetRegionInfoByID(regionID uint64) (*RegionInfo, error) {
 	var regionInfo RegionInfo
 	err := h.requestPD("GET", pdapi.RegionByID+"/"+strconv.FormatUint(regionID, 10), nil, &regionInfo)
+	return &regionInfo, err
+}
+
+// GetRegionsInfoByRange scans region by key range
+func (h *Helper) GetRegionsInfoByRange(sk, ek []byte) (*RegionsInfo, error) {
+	var regionsInfo RegionsInfo
+	err := h.requestPD("GET", fmt.Sprintf("%v?key=%s&end_key=%s", pdapi.ScanRegions,
+		url.QueryEscape(string(sk)), url.QueryEscape(string(ek))), nil, &regionsInfo)
+	return &regionsInfo, err
+}
+
+// GetRegionByKey gets regioninfo by key
+func (h *Helper) GetRegionByKey(k []byte) (*RegionInfo, error) {
+	var regionInfo RegionInfo
+	err := h.requestPD("GET", fmt.Sprintf("%v/%v", pdapi.RegionKey, url.QueryEscape(string(k))), nil, &regionInfo)
 	return &regionInfo, err
 }
 
