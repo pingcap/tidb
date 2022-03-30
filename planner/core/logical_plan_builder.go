@@ -3799,11 +3799,6 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			return nil, err
 		}
 	}
-
-	if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "select * from (select 1 as a") {
-		fmt.Println(1)
-	}
-
 	if sel.OrderBy != nil {
 		if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
 			p, err = b.buildSortWithCheck(ctx, p, sel.OrderBy.Items, orderMap, windowMapper, projExprs, oldLen, sel.Distinct)
