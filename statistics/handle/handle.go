@@ -1571,7 +1571,7 @@ func (h *Handle) ReloadExtendedStatistics() error {
 	}()
 	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
 		oldCache := h.statsCache.Load().(statsCache)
-		tables := make([]*statistics.Table, 0, len(oldCache.Keys()))
+		tables := make([]*statistics.Table, 0, oldCache.Len())
 		for _, physicalID := range oldCache.Keys() {
 			tbl, _ := oldCache.Get(physicalID)
 			t, err := h.extendedStatsFromStorage(reader, tbl.Copy(), physicalID, true)
