@@ -335,8 +335,14 @@ func (c *cachedTable) renew(ctx context.Context, leasePtr *uint64) error {
 }
 
 func (c *cachedTable) lockForWrite(ctx context.Context, ts uint64) (uint64, error) {
-	c.tokenLimit <- struct{}{}
-	defer func() { <-c.tokenLimit }()
+	var triggerFailpoint bool
+	failpoint.Inject("mockRenewLeaseABA1", func(_ failpoint.Value) {
+		triggerFailpoint = true
+	})
+	if !triggerFailpoint {
+		c.tokenLimit <- struct{}{}
+		defer func() { <-c.tokenLimit }()
+	}
 
 	return c.handle.LockForWrite(ctx, c.Meta().ID, cacheTableWriteLease)
 }
