@@ -2290,9 +2290,13 @@ func describeV2AnalyzeJobInfo(task plannercore.AnalyzeColumnsTask, autoAnalyze s
 	var b strings.Builder
 	b.WriteString(autoAnalyze)
 	b.WriteString("analyze table")
-	if len(task.ColsInfo) < len(task.TblInfo.Columns) {
+	cols := task.ColsInfo
+	if cols[len(cols)-1].ID == model.ExtraHandleID {
+		cols = cols[:len(cols)-1]
+	}
+	if len(cols) < len(task.TblInfo.Columns) {
 		b.WriteString(" columns ")
-		for i, col := range task.ColsInfo {
+		for i, col := range cols {
 			if i > 0 {
 				b.WriteString(", ")
 			}

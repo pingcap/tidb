@@ -2899,3 +2899,42 @@ func TestAnalyzeJob(t *testing.T) {
 		require.Equal(t, "<nil>", rows[0][10])
 	}
 }
+
+func TestShowAanalyzeStatusJobInfo(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	originalVal1 := tk.MustQuery("select @@tidb_persist_analyze_options").Rows()[0][0].(string)
+	originalVal2 := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set global tidb_persist_analyze_options = %v", originalVal1))
+		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal2))
+	}()
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("set global tidb_persist_analyze_options = 0")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int, d int, index idx_b_d(b, d))")
+	tk.MustExec("insert into t values (1,1,null,1), (2,1,9,1), (1,1,8,1), (2,2,7,2), (1,3,7,3), (2,4,6,4), (1,4,6,5), (2,4,6,5), (1,5,6,5)")
+	tk.MustExec("analyze table t columns c with 2 topn, 2 buckets")
+	checkJobInfo := func(expected string) {
+		rows := tk.MustQuery("show analyze status where table_schema = 'test' and table_name = 't'").Rows()
+		require.Equal(t, 1, len(rows))
+		require.Equal(t, expected, rows[0][3])
+		tk.MustExec("delete from mysql.analyze_jobs")
+	}
+	checkJobInfo("analyze table columns b, c, d with 2 buckets, 2 topn, 1 samplerate")
+	tk.MustExec("set global tidb_enable_column_tracking = 1")
+	tk.MustExec("select * from t where c > 1")
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpColStatsUsageToKV())
+	tk.MustExec("analyze table t predicate columns with 2 topn, 2 buckets")
+	checkJobInfo("analyze table columns b, c, d with 2 buckets, 2 topn, 1 samplerate")
+	tk.MustExec("analyze table t")
+	checkJobInfo("analyze table all columns with 256 buckets, 500 topn, 1 samplerate")
+	tk.MustExec("set global tidb_persist_analyze_options = 1")
+	tk.MustExec("analyze table t columns a with 1 topn, 3 buckets")
+	checkJobInfo("analyze table columns a, b, d with 3 buckets, 1 topn, 1 samplerate")
+	tk.MustExec("analyze table t")
+	checkJobInfo("analyze table columns a, b, d with 3 buckets, 1 topn, 1 samplerate")
+}
