@@ -585,6 +585,8 @@ const (
 	version85 = 85
 	// version86 changes global variable `tidb_enable_top_sql` value from false to true.
 	version86 = 86
+	// version87 update mysql.tables_priv from SET('Select','Insert','Update') to SET('Select','Insert','Update','References').
+	version87 = 87
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
@@ -679,6 +681,7 @@ var (
 		upgradeToVer84,
 		upgradeToVer85,
 		upgradeToVer86,
+		upgradeToVer87,
 	}
 )
 
@@ -1761,6 +1764,13 @@ func upgradeToVer86(s Session, ver int64) {
 	}
 	// Enable Top SQL by default after upgrade
 	mustExecute(s, "set @@global.tidb_enable_top_sql = 1")
+}
+
+func upgradeToVer87(s Session, ver int64) {
+	if ver >= version87 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY COLUMN Column_priv SET('Select','Insert','Update','References')")
 }
 
 func writeOOMAction(s Session) {
