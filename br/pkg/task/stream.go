@@ -93,8 +93,8 @@ var StreamCommandMap = map[string]func(c context.Context, g glue.Glue, cmdName s
 
 // StreamConfig specifies the configure about backup stream
 type StreamConfig struct {
-	// common part that all of stream commands need
-	Config
+	// config about restore full.
+	RestoreConfig
 
 	// FullBackupStorage is used to find the maps between table name and table id during restoration.
 	// if not specified. we cannot apply kv directly.
@@ -155,7 +155,8 @@ func DefineStreamStartFlags(flags *pflag.FlagSet) {
 func DefineStreamRestoreFlags(flags *pflag.FlagSet) {
 	flags.String(flagStreamRestoreTS, "", "restore ts, used for restore kv.\n"+
 		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'")
-	flags.String(flagStreamFullBackupStorage, "", "find the maps between table id and table name")
+	flags.String(flagStreamFullBackupStorage, "", "specify the url where backup full storage. "+
+		"fill it if want restore-full before restore log, or ignore it.")
 }
 
 // DefineStreamCommonFlags define common flags for `stream task`
@@ -215,9 +216,6 @@ func (cfg *StreamConfig) ParseStreamRestoreFromFlags(flags *pflag.FlagSet) error
 	}
 	if cfg.FullBackupStorage, err = flags.GetString(flagStreamFullBackupStorage); err != nil {
 		return errors.Trace(err)
-	}
-	if len(cfg.FullBackupStorage) == 0 {
-		return errors.New("must specify full backup storage.")
 	}
 	return nil
 }
@@ -390,6 +388,7 @@ func (s *streamMgr) getTS(ctx context.Context) (uint64, error) {
 func (s *streamMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, error) {
 	dRanges, err := stream.BuildObserveDataRanges(
 		s.mgr.GetStorage(),
+		s.cfg.FilterStr,
 		s.cfg.TableFilter,
 		s.cfg.StartTS,
 	)
@@ -414,7 +413,7 @@ func (s *streamMgr) checkRequirements(ctx context.Context) (bool, error) {
 	}
 
 	type backupStream struct {
-		EnableStreaming bool `json:"enable-streaming"`
+		EnableStreaming bool `json:"enable"`
 	}
 	type config struct {
 		BackupStream backupStream `json:"backup-stream"`
@@ -430,6 +429,9 @@ func (s *streamMgr) checkRequirements(ctx context.Context) (bool, error) {
 		// we need make sure every available store support backup-stream otherwise we might lose data.
 		// so check every store's config
 		addr := fmt.Sprintf("%s/config", store.GetStatusAddress())
+		if !strings.HasPrefix(addr, "http") {
+			addr = "http://" + addr
+		}
 		err = utils.WithRetry(ctx, func() error {
 			resp, e := s.httpCli.Get(addr)
 			if e != nil {
@@ -452,6 +454,28 @@ func (s *streamMgr) checkRequirements(ctx context.Context) (bool, error) {
 	return hasTiKV && supportBackupStream, err
 }
 
+func (s *streamMgr) backupFullSchemas(ctx context.Context, g glue.Glue) error {
+	metaWriter := metautil.NewMetaWriter(s.bc.GetStorage(), metautil.MetaFileSize, false, nil)
+	schemas, err := backup.BuildFullSchema(s.mgr.GetStorage(), s.cfg.StartTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	schemasConcurrency := uint(utils.MinInt(backup.DefaultSchemaConcurrency, schemas.Len()))
+	updateCh := g.StartProgress(ctx, "Checksum", int64(schemas.Len()), !s.cfg.LogProgress)
+
+	err = schemas.BackupSchemas(ctx, metaWriter, s.mgr.GetStorage(), nil,
+		s.cfg.StartTS, schemasConcurrency, 0, true, updateCh)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if err = metaWriter.FlushBackupMeta(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // RunStreamCommand run all kinds of `stream task``
 func RunStreamCommand(
 	ctx context.Context,
@@ -459,7 +483,7 @@ func RunStreamCommand(
 	cmdName string,
 	cfg *StreamConfig,
 ) error {
-	cfg.adjust()
+	cfg.Config.adjust()
 	defer func() {
 		if _, ok := skipSummaryCommandList[cmdName]; !ok {
 			summary.Summary(cmdName)
@@ -515,7 +539,20 @@ func RunStreamStart(
 	if err = streamMgr.setGCSafePoint(ctx); err != nil {
 		return errors.Trace(err)
 	}
+
+	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
+	// It supports single stream log task currently.
+	if count, err := cli.GetTaskCount(ctx); err != nil {
+		return errors.Trace(err)
+	} else if count > 0 {
+		return errors.Annotate(berrors.ErrStreamLogTaskExist, "It supports single stream log task current")
+	}
+
 	if err = streamMgr.setLock(ctx); err != nil {
+		return errors.Trace(err)
+	}
+
+	if err = streamMgr.backupFullSchemas(ctx, g); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -541,16 +578,8 @@ func RunStreamStart(
 		Ranges:  ranges,
 		Pausing: false,
 	}
-	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
-	// It supports single stream log task current
-	count, err := cli.GetTaskCount(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	} else if count > 0 {
-		return errors.Annotate(berrors.ErrStreamLogTaskExist, "It supports single stream log task current")
-	}
 
-	if err := cli.PutTask(ctx, ti); err != nil {
+	if err = cli.PutTask(ctx, ti); err != nil {
 		return errors.Trace(err)
 	}
 	summary.Log(cmdName, ti.ZapTaskInfo()...)
@@ -598,7 +627,7 @@ func RunStreamStop(
 	return nil
 }
 
-// RunStreamPause specifies pausing a stream task
+// RunStreamPause specifies pausing a stream task.
 func RunStreamPause(
 	c context.Context,
 	g glue.Glue,
@@ -638,7 +667,7 @@ func RunStreamPause(
 	return nil
 }
 
-// RunStreamResume specifies resuming a stream task
+// RunStreamResume specifies resuming a stream task.
 func RunStreamResume(
 	c context.Context,
 	g glue.Glue,
@@ -853,21 +882,50 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	return nil
 }
 
-// RunStreamRestore start restore job
 func RunStreamRestore(
 	c context.Context,
 	g glue.Glue,
 	cmdName string,
 	cfg *StreamConfig,
 ) error {
-	cfg.adjustRestoreConfig()
+	ctx, cancelFn := context.WithCancel(c)
+	defer cancelFn()
 
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("task.RunStreamRestore", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
+	StreamStorage := cfg.RestoreConfig.Config.Storage
+
+	if len(cfg.FullBackupStorage) > 0 {
+		cfg.RestoreConfig.Config.Storage = cfg.FullBackupStorage
+		if err := RunRestore(ctx, g, FullRestoreCmd, &cfg.RestoreConfig); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	cfg.RestoreConfig.Config.Storage = StreamStorage
+	if err := restoreStream(ctx, g, cmdName, cfg); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// RunStreamRestore start restore job
+func restoreStream(
+	c context.Context,
+	g glue.Glue,
+	cmdName string,
+	cfg *StreamConfig,
+) error {
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan(
-			"task.RunStreamRestore",
+			"restoreStream",
 			opentracing.ChildOf(span.Context()),
 		)
 		defer span1.Finish()
@@ -932,11 +990,7 @@ func RunStreamRestore(
 	log.Info("start restore on point", zap.Uint64("ts", cfg.RestoreTS))
 
 	// get full backup meta to generate rewrite rules.
-	fullBackupTables, err := initFullBackupTables(ctx, cfg.FullBackupStorage, cfg)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	rewriteRules, err := initRewriteRules(client, fullBackupTables)
+	fullBackupTables, err := initFullBackupTables(ctx, cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -951,46 +1005,50 @@ func RunStreamRestore(
 		return nil
 	}
 	// read data file by given ts.
-	dFiles, mFiles, err := client.ReadStreamDataFiles(ctx, metas, safepoint, cfg.RestoreTS)
+	dmlFiles, ddlFiles, err := client.ReadStreamDataFiles(ctx, metas, safepoint, cfg.RestoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	// perform restore meta kv files
-	errChMeta := make(chan error)
-	go func() {
-		rawkvClient, err := newRawkvClient(ctx, cfg.PD, cfg.TLS)
-		if err != nil {
-			errChMeta <- err
-			return
-		}
-		defer rawkvClient.Close()
-
-		err = client.RestoreMetaKVFiles(ctx, rawkvClient, mFiles, &fullBackupTables)
-		errChMeta <- err
-	}()
-
-	// perform restore kv files
-	pd := g.StartProgress(ctx, "Restore KV Files", int64(len(dFiles)), cfg.LogProgress)
-	err = withProgress(pd, func(p glue.Progress) error {
-		return client.RestoreKVFiles(ctx, rewriteRules, dFiles, p.Inc)
-	})
+	schemasReplace, err := client.InitSchemasReplaceForDDL(&fullBackupTables, cfg.TableFilter)
 	if err != nil {
-		return errors.Annotate(err, "failed to restore kv files")
-	}
-
-	if err := <-errChMeta; err != nil {
 		return errors.Trace(err)
 	}
+	rawkvClient, err := newRawkvClient(ctx, cfg.PD, cfg.TLS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer rawkvClient.Close()
 
-	pi := g.StartProgress(ctx, "Restore Index", countIndices(fullBackupTables), cfg.LogProgress)
+	pm := g.StartProgress(ctx, "Restore DDL files", int64(len(ddlFiles)), !cfg.LogProgress)
+	if err = withProgress(pm, func(p glue.Progress) error {
+		return client.RestoreMetaKVFiles(ctx, rawkvClient, ddlFiles, schemasReplace, p.Inc)
+	}); err != nil {
+		return errors.Annotate(err, "failed to restore DDL files")
+	}
+
+	// perform restore kv files
+	rewriteRules, err := initRewriteRules(client, fullBackupTables)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	updateRewriteRules(rewriteRules, schemasReplace)
+
+	pd := g.StartProgress(ctx, "Restore DML Files", int64(len(dmlFiles)), !cfg.LogProgress)
+	err = withProgress(pd, func(p glue.Progress) error {
+		return client.RestoreKVFiles(ctx, rewriteRules, dmlFiles, p.Inc)
+	})
+	if err != nil {
+		return errors.Annotate(err, "failed to restore DML files")
+	}
+
+	// fix indices.
+	// to do:
+	// No need to fix indices if backup stream all of tables, because the index recored has been observed.
+	pi := g.StartProgress(ctx, "Restore Index", countIndices(fullBackupTables), !cfg.LogProgress)
 	err = withProgress(pi, func(p glue.Progress) error {
-		for _, table := range fullBackupTables {
-			if err := client.FixIndicesOfTable(ctx, table.DB.Name.L, table.Info, p.Inc); err != nil {
-				return errors.Annotatef(err, "failed to fix index for table %s.%s", table.DB.Name, table.Info.Name)
-			}
-		}
-		return nil
+		return client.FixIndicesOfTables(ctx, fullBackupTables, p.Inc)
 	})
 	if err != nil {
 		return errors.Annotate(err, "failed to fix index for some table")
@@ -1016,10 +1074,9 @@ func countIndices(ts map[int64]*metautil.Table) int64 {
 
 func initFullBackupTables(
 	ctx context.Context,
-	fullBackupStorage string,
 	cfg *StreamConfig,
 ) (map[int64]*metautil.Table, error) {
-	_, s, err := GetStorage(ctx, fullBackupStorage, &cfg.Config)
+	_, s, err := GetStorage(ctx, cfg.Config.Storage, &cfg.Config)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1074,7 +1131,11 @@ func initRewriteRules(client *restore.Client, tables map[int64]*metautil.Table) 
 			return nil, errors.Trace(err)
 		}
 		// we don't handle index rule in pitr. since we only support pitr on non-exists table.
-		rules[t.Info.ID] = restore.GetRewriteRules(newTableInfo, t.Info, 0, false)
+		tableRules := restore.GetRewriteRulesMap(newTableInfo, t.Info, 0, false)
+		for tableID, tableRule := range tableRules {
+			rules[tableID] = tableRule
+		}
+
 		log.Info("Using rewrite rule for table.", zap.Stringer("table", t.Info.Name),
 			zap.Stringer("database", t.DB.Name),
 			zap.Int("old-id", int(t.Info.ID)),
@@ -1091,6 +1152,41 @@ func initRewriteRules(client *restore.Client, tables map[int64]*metautil.Table) 
 		)
 	}
 	return rules, nil
+}
+
+func updateRewriteRules(rules map[int64]*restore.RewriteRules, schemasReplace *stream.SchemasReplace) {
+	filter := schemasReplace.TableFilter
+
+	for _, dbReplace := range schemasReplace.DbMap {
+		if utils.IsSysDB(dbReplace.OldName) || utils.IsSysDB(dbReplace.NewName) {
+			continue
+		}
+		if !filter.MatchSchema(dbReplace.NewName) && !filter.MatchSchema(dbReplace.OldName) {
+			continue
+		}
+
+		for oldTableID, tableReplace := range dbReplace.TableMap {
+			if !filter.MatchTable(dbReplace.OldName, tableReplace.OldName) &&
+				!filter.MatchTable(dbReplace.NewName, tableReplace.NewName) {
+				continue
+			}
+
+			if _, exist := rules[oldTableID]; !exist {
+				log.Info("add rewrite rule", zap.String("tableName", dbReplace.NewName+"."+tableReplace.NewName),
+					zap.Int64("oldID", oldTableID), zap.Int64("newID", tableReplace.TableID))
+				rules[oldTableID] = restore.GetRewriteRuleOfTable(
+					oldTableID, tableReplace.TableID, 0, tableReplace.IndexMap, false)
+			}
+
+			for oldID, newID := range tableReplace.PartitionMap {
+				if _, exist := rules[oldID]; !exist {
+					log.Info("add rewrite rule", zap.String("tableName", dbReplace.NewName+"."+tableReplace.NewName),
+						zap.Int64("oldID", oldID), zap.Int64("newID", newID))
+					rules[oldID] = restore.GetRewriteRuleOfTable(oldID, newID, 0, tableReplace.IndexMap, false)
+				}
+			}
+		}
+	}
 }
 
 func newRawkvClient(ctx context.Context, pdAddrs []string, tlsConfig TLSConfig) (*rawkv.Client, error) {

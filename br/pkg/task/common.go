@@ -278,10 +278,15 @@ func DefineTableFlags(command *cobra.Command) {
 }
 
 // DefineFilterFlags defines the --filter and --case-sensitive flags for `full` subcommand.
-func DefineFilterFlags(command *cobra.Command, defaultFilter []string) {
+func DefineFilterFlags(command *cobra.Command, defaultFilter []string, setHidden bool) {
 	flags := command.Flags()
 	flags.StringArrayP(flagFilter, "f", defaultFilter, "select tables to process")
 	flags.Bool(flagCaseSensitive, false, "whether the table names used in --filter should be case-sensitive")
+
+	if setHidden {
+		_ = flags.MarkHidden(flagFilter)
+		_ = flags.MarkHidden(flagCaseSensitive)
+	}
 }
 
 // ParseTLSTripleFromFlags parses the (ca, cert, key) triple from flags.
