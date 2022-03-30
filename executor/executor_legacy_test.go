@@ -62,8 +62,6 @@ import (
 	"github.com/pingcap/tidb/store/copr"
 	error2 "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	testkit2 "github.com/pingcap/tidb/testkit"
@@ -72,7 +70,6 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/gcutil"
-	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
@@ -80,7 +77,6 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/timeutil"
-	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -3278,16 +3274,6 @@ func (s *testSuiteP2) TestReadPartitionedTable(c *C) {
 	tk.MustQuery("select a from pt where b = 3").Check(testkit.Rows("3"))
 }
 
-func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {
-	dom := domain.GetDomain(ctx)
-	// Make sure the table schema is the new schema.
-	err := dom.Reload()
-	c.Assert(err, IsNil)
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
-	c.Assert(err, IsNil)
-	return tbl
-}
-
 func (s *testSuiteP2) TestIssue10435(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -5761,187 +5747,6 @@ func (s testSerialSuite) TestExprBlackListForEnum(c *C) {
 	c.Assert(checkFuncPushDown(rows, "index:idx(b, a)"), IsTrue)
 	rows = tk.MustQuery("desc format='brief' select * from t where b = 1 and a > 'a'").Rows()
 	c.Assert(checkFuncPushDown(rows, "index:idx(b, a)"), IsTrue)
-}
-
-func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
-	if israce.RaceEnabled {
-		c.Skip("unstable, skip it and fix it before 20210622")
-	}
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int, b int, unique index idx(a));")
-	tbInfo := testGetTableByName(c, tk.Se, "test", "t")
-
-	// Enable Top SQL
-	topsqlstate.EnableTopSQL()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TopSQL.ReceiverAddress = "mock-agent"
-	})
-
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook", `return(true)`), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook")
-
-	var sqlDigest, planDigest *parser.Digest
-	var tagLabel tipb.ResourceGroupTagLabel
-	checkFn := func() {}
-	unistore.UnistoreRPCClientSendHook = func(req *tikvrpc.Request) {
-		var startKey []byte
-		var ctx *kvrpcpb.Context
-		switch req.Type {
-		case tikvrpc.CmdGet:
-			request := req.Get()
-			startKey = request.Key
-			ctx = request.Context
-		case tikvrpc.CmdBatchGet:
-			request := req.BatchGet()
-			startKey = request.Keys[0]
-			ctx = request.Context
-		case tikvrpc.CmdPrewrite:
-			request := req.Prewrite()
-			startKey = request.Mutations[0].Key
-			ctx = request.Context
-		case tikvrpc.CmdCommit:
-			request := req.Commit()
-			startKey = request.Keys[0]
-			ctx = request.Context
-		case tikvrpc.CmdCop:
-			request := req.Cop()
-			startKey = request.Ranges[0].Start
-			ctx = request.Context
-		case tikvrpc.CmdPessimisticLock:
-			request := req.PessimisticLock()
-			startKey = request.PrimaryLock
-			ctx = request.Context
-		}
-		tid := tablecodec.DecodeTableID(startKey)
-		if tid != tbInfo.Meta().ID {
-			return
-		}
-		if ctx == nil {
-			return
-		}
-		tag := &tipb.ResourceGroupTag{}
-		err := tag.Unmarshal(ctx.ResourceGroupTag)
-		c.Assert(err, IsNil)
-		sqlDigest = parser.NewDigest(tag.SqlDigest)
-		planDigest = parser.NewDigest(tag.PlanDigest)
-		tagLabel = *tag.Label
-		checkFn()
-	}
-
-	resetVars := func() {
-		sqlDigest = parser.NewDigest(nil)
-		planDigest = parser.NewDigest(nil)
-	}
-
-	cases := []struct {
-		sql       string
-		tagLabels map[tipb.ResourceGroupTagLabel]struct{}
-		ignore    bool
-	}{
-		{
-			sql: "insert into t values(1,1),(2,2),(3,3)",
-			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
-			},
-		},
-		{
-			sql: "select * from t use index (idx) where a=1",
-			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow:   {},
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
-			},
-		},
-		{
-			sql: "select * from t use index (idx) where a in (1,2,3)",
-			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow:   {},
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
-			},
-		},
-		{
-			sql: "select * from t use index (idx) where a>1",
-			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow:   {},
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
-			},
-		},
-		{
-			sql: "select * from t where b>1",
-			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow: {},
-			},
-		},
-		{
-			sql: "select a from t use index (idx) where a>1",
-			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
-			},
-		},
-		{
-			sql:    "begin pessimistic",
-			ignore: true,
-		},
-		{
-			sql: "insert into t values(4,4)",
-			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow:   {},
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
-			},
-		},
-		{
-			sql:    "commit",
-			ignore: true,
-		},
-		{
-			sql: "update t set a=5,b=5 where a=5",
-			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
-			},
-		},
-		{
-			sql: "replace into t values(6,6)",
-			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
-			},
-		},
-	}
-	for _, ca := range cases {
-		resetVars()
-		commentf := Commentf("%v", ca.sql)
-
-		_, expectSQLDigest := parser.NormalizeDigest(ca.sql)
-		var expectPlanDigest *parser.Digest
-		checkCnt := 0
-		checkFn = func() {
-			if ca.ignore {
-				return
-			}
-			if expectPlanDigest == nil {
-				info := tk.Se.ShowProcess()
-				c.Assert(info, NotNil)
-				p, ok := info.Plan.(plannercore.Plan)
-				c.Assert(ok, IsTrue)
-				_, expectPlanDigest = plannercore.NormalizePlan(p)
-			}
-			c.Assert(sqlDigest.String(), Equals, expectSQLDigest.String(), commentf)
-			c.Assert(planDigest.String(), Equals, expectPlanDigest.String())
-			_, ok := ca.tagLabels[tagLabel]
-			c.Assert(ok, Equals, true)
-			checkCnt++
-		}
-
-		if strings.HasPrefix(ca.sql, "select") {
-			tk.MustQuery(ca.sql)
-		} else {
-			tk.MustExec(ca.sql)
-		}
-		if ca.ignore {
-			continue
-		}
-		c.Assert(checkCnt > 0, IsTrue, commentf)
-	}
 }
 
 func (s *testSuite) TestIssue24933(c *C) {
