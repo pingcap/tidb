@@ -322,7 +322,7 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set session tidb_backoff_weight = -1")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_backoff_weight value: '-1'"))
 	tk.MustExec("set global tidb_backoff_weight = 0")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_backoff_weight value: '0'"))
+	tk.MustQuery("select @@global.tidb_backoff_weight;").Check(testkit.Rows("0"))
 	tk.MustExec("set global tidb_backoff_weight = 10")
 	tk.MustQuery("select @@global.tidb_backoff_weight;").Check(testkit.Rows("10"))
 
