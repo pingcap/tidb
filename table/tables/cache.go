@@ -16,7 +16,6 @@ package tables
 
 import (
 	"context"
-	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -73,7 +73,7 @@ func newMemBuffer(store kv.Storage) (kv.MemBuffer, error) {
 	return buffTxn.GetMemBuffer(), nil
 }
 
-func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) (kv.MemBuffer, /*loading*/ bool) {
+func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) (kv.MemBuffer /*loading*/, bool) {
 	tmp := c.cacheData.Load()
 	if tmp == nil {
 		return nil, false
@@ -96,6 +96,8 @@ func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) (
 			default:
 			}
 		}
+		// If data is not nil, but data.MemBuffer is nil, it means the data is being
+		// loading by a background goroutine.
 		return data.MemBuffer, data.MemBuffer == nil
 	}
 	return nil, false
@@ -121,7 +123,7 @@ func (c *cachedTable) Init(exec sqlexec.SQLExecutor) error {
 	return nil
 }
 
-func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage, lease uint64) (kv.MemBuffer, uint64, int64, error) {
+func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage) (kv.MemBuffer, uint64, int64, error) {
 	buffer, err := newMemBuffer(store)
 	if err != nil {
 		return nil, 0, 0, err
@@ -134,12 +136,6 @@ func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage, lease uint64) 
 			return errors.Trace(err)
 		}
 		startTS = txn.StartTS()
-		if startTS >= lease {
-			logutil.BgLogger().Warn("the loaded data is outdated for caching",
-				zap.Uint64("lease", lease),
-				zap.Uint64("startTS", startTS))
-			return errors.New("the loaded data is outdated for caching")
-		}
 		it, err := txn.Iter(prefix, prefix.PrefixNext())
 		if err != nil {
 			return errors.Trace(err)
@@ -198,22 +194,22 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, store kv.Storage, t
 	}
 	if succ {
 		c.cacheData.Store(&cacheData{
-			Start: ts,
-			Lease: lease,
-			MemBuffer: nil, // Async loading
+			Start:     ts,
+			Lease:     lease,
+			MemBuffer: nil, // Async loading, this will be set later.
 		})
 
 		// Make the load data process async, in case that loading data takes longer the
-		// lease duration, then the loadad data get staled and that process repeat forever.
+		// lease duration, then the loadad data get staled and that process repeats forever.
 		go func() {
 			start := time.Now()
-			mb, startTS, totalSize, err := c.loadDataFromOriginalTable(store, lease)
+			mb, startTS, totalSize, err := c.loadDataFromOriginalTable(store)
+			metrics.LoadTableCacheDurationHistogram.Observe(float64(time.Since(start).Seconds()))
 			if err != nil {
-				log.Info("load data from table", zap.Error(err))
+				log.Info("load data from table fail", zap.Error(err))
 				return
 			}
 
-			fmt.Println("load from table!!!!!!!!!!!!!!!!!!!!!!!!!!! takes:", time.Since(start), "size=", totalSize)
 			tmp := c.cacheData.Load().(*cacheData)
 			if tmp != nil && tmp.Start == ts {
 				c.cacheData.Store(&cacheData{
@@ -294,6 +290,8 @@ func (c *cachedTable) renewLease(ts uint64, data *cacheData, leaseDuration time.
 	})
 }
 
+const cacheTableWriteLease = 5 * time.Second
+
 func (c *cachedTable) WriteLockAndKeepAlive(ctx context.Context, ts uint64, exit chan struct{}, leasePtr *uint64, wg chan error) {
 	writeLockLease, err := c.lockForWrite(ctx, ts)
 	atomic.StoreUint64(leasePtr, writeLockLease)
@@ -308,7 +306,6 @@ func (c *cachedTable) WriteLockAndKeepAlive(ctx context.Context, ts uint64, exit
 	for {
 		select {
 		case <-t.C:
-			fmt.Println("??????????????????  run to renew lease??")
 			if err := c.renew(ctx, leasePtr); err != nil {
 				logutil.Logger(ctx).Warn("[cached table] renew write lock lease fail", zap.Error(err))
 				return
@@ -336,8 +333,6 @@ func (c *cachedTable) renew(ctx context.Context, leasePtr *uint64) error {
 	}
 	return nil
 }
-
-const cacheTableWriteLease = 5 * time.Second
 
 func (c *cachedTable) lockForWrite(ctx context.Context, ts uint64) (uint64, error) {
 	c.tokenLimit <- struct{}{}

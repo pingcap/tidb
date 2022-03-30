@@ -16,7 +16,6 @@ package tables
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"time"
 
@@ -85,6 +84,8 @@ type stateRemoteHandle struct {
 	exec sqlExec
 
 	// local state, this could be staled.
+	// Since stateRemoteHandle is used in single thread, it's safe for all operations
+	// to check the local state first to avoid unnecessary remote TiKV access.
 	lockType     CachedTableLockType
 	lease        uint64
 	oldReadLease uint64
@@ -107,10 +108,9 @@ func (h *stateRemoteHandle) Load(ctx context.Context, tid int64) (CachedTableLoc
 func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, newLease uint64) ( /*succ*/ bool, error) {
 	succ := false
 	if h.lease >= newLease {
-		// There is a write lock or intention, don't cache for read.
+		// There is a write lock or intention, don't lock for read.
 		switch h.lockType {
 		case CachedTableLockIntend, CachedTableLockWrite:
-			// fmt.Println("don't lock for read because current lock type is intend/write")
 			return false, nil
 		}
 	}
@@ -123,8 +123,6 @@ func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, newLease
 		// The old lock is outdated, clear orphan lock.
 		if now > lease {
 			succ = true
-			fmt.Println("read lock success=====, by clean old orphan lease", lease, "now=", now,
-				"tid=", tid)
 			if err := h.updateRow(ctx, tid, "READ", newLease); err != nil {
 				return errors.Trace(err)
 			}
@@ -139,8 +137,6 @@ func (h *stateRemoteHandle) LockForRead(ctx context.Context, tid int64, newLease
 		}
 		succ = true
 		if newLease > lease { // Note the check, don't decrease lease value!
-			fmt.Println("read lock success=====, previous is none or read", lockType, lease, "to newLease", newLease,
-				"tid=", tid)
 			if err := h.updateRow(ctx, tid, "READ", newLease); err != nil {
 				return errors.Trace(err)
 			}
@@ -158,7 +154,6 @@ func (h *stateRemoteHandle) LockForWrite(ctx context.Context, tid int64, leaseDu
 	if h.lockType == CachedTableLockWrite {
 		safe := oracle.GoTimeToTS(time.Now().Add(leaseDuration / 2))
 		if h.lease > safe {
-			// fmt.Println("lock for write return because has been in write locked state")
 			// It means the remote has already been write locked and the lock will be valid for a while.
 			// So we can return directly.
 			return h.lease, nil
@@ -235,7 +230,8 @@ func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, lea
 			if now > oldReadLease {
 				if err = h.updateRow(ctx, tid, "WRITE", ts); err != nil {
 					return errors.Trace(err)
-				} else {
+				}
+				{
 					_updateLocal = true
 					_lockType = CachedTableLockWrite
 					_lease = ts
@@ -248,7 +244,8 @@ func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, lea
 		case CachedTableLockWrite:
 			if err = h.updateRow(ctx, tid, "WRITE", ts); err != nil {
 				return errors.Trace(err)
-			} else {
+			}
+			{
 				_updateLocal = true
 				_lockType = CachedTableLockWrite
 				_lease = ts
@@ -325,12 +322,6 @@ func (h *stateRemoteHandle) RenewReadLease(ctx context.Context, tid int64, oldLo
 		return nil
 	})
 
-	if err != nil {
-		fmt.Println("renew lease conflict? err=", err,
-			"oldLocalLease=", oldLocalLease,
-			"remoteLease=", h.lease,
-			"newLease=", newLease)
-	}
 	return newLease, err
 }
 
@@ -355,7 +346,6 @@ func (h *stateRemoteHandle) RenewWriteLease(ctx context.Context, tid int64, newL
 		}
 
 		if newLease > oldLease { // lease should never decrease!
-			fmt.Println("renew write lease from ", oldLease, "to", newLease)
 			err = h.updateRow(ctx, tid, "WRITE", newLease)
 			if err != nil {
 				return errors.Trace(err)
@@ -377,7 +367,7 @@ func (h *stateRemoteHandle) RenewWriteLease(ctx context.Context, tid int64, newL
 func (h *stateRemoteHandle) beginTxn(ctx context.Context, pessimistic bool) error {
 	var err error
 	if pessimistic {
-		_, err = h.execSQL(ctx, "begin optimistic")
+		_, err = h.execSQL(ctx, "begin pessimistic")
 	} else {
 		_, err = h.execSQL(ctx, "begin optimistic")
 	}

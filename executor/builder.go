@@ -4898,7 +4898,7 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 		sessVars.StmtCtx.ReadFromTableCache = true
 		return cacheData
 	} else if loading {
-		return nil
+		// continue
 	} else {
 		if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
 			tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS, leaseDuration)

@@ -634,7 +634,6 @@ func (c *cachedTableRenewLease) start(ctx context.Context, startTS uint64) error
 	for _, raw := range c.tables {
 		tbl := raw.(table.CachedTable)
 		go tbl.WriteLockAndKeepAlive(ctx, startTS, c.exit, &c.lease[ith], wg)
-		// go c.keepAlive(ctx, wg, raw.(tables.StateRemote), tid, &c.lease[ith])
 		ith++
 	}
 
