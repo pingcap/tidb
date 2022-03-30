@@ -16,6 +16,7 @@ package kvcache
 
 import (
 	"container/list"
+	"sync"
 )
 
 // cacheEntry wraps Key and Value. It's the value of list.Element.
@@ -27,6 +28,7 @@ type cacheItem struct {
 
 // StandardLRUCache is a simple least recently used cache, not thread-safe.
 type StandardLRUCache struct {
+	sync.RWMutex
 	capacity uint64
 	cost     uint64
 	elements map[string]*list.Element
@@ -48,6 +50,8 @@ func NewStandardLRUCache(capacity uint64) *StandardLRUCache {
 
 // Get tries to find the corresponding value according to the given key.
 func (l *StandardLRUCache) Get(key Key) (value Value, ok bool) {
+	l.Lock()
+	defer l.Unlock()
 	element, exists := l.elements[string(key.Hash())]
 	if !exists {
 		return nil, false
@@ -58,6 +62,8 @@ func (l *StandardLRUCache) Get(key Key) (value Value, ok bool) {
 
 // Put puts the (key, value) pair into the LRU Cache.
 func (l *StandardLRUCache) Put(key Key, value Value, cost uint64) {
+	l.Lock()
+	defer l.Unlock()
 	hash := string(key.Hash())
 	element, exists := l.elements[hash]
 	if exists {
@@ -87,6 +93,8 @@ func (l *StandardLRUCache) Put(key Key, value Value, cost uint64) {
 
 // Delete deletes the key-value pair from the LRU Cache.
 func (l *StandardLRUCache) Delete(key Key) {
+	l.Lock()
+	defer l.Unlock()
 	k := string(key.Hash())
 	element := l.elements[k]
 	if element == nil {
@@ -99,11 +107,15 @@ func (l *StandardLRUCache) Delete(key Key) {
 
 // Cost returns the current cost
 func (l *StandardLRUCache) Cost() uint64 {
+	l.RLock()
+	defer l.RUnlock()
 	return l.cost
 }
 
 // Copy returns a replication of LRU
 func (l *StandardLRUCache) Copy() *StandardLRUCache {
+	l.RLock()
+	defer l.RUnlock()
 	newCache := NewStandardLRUCache(l.capacity)
 	node := l.cache.Back()
 	for node != nil {
@@ -118,6 +130,8 @@ func (l *StandardLRUCache) Copy() *StandardLRUCache {
 
 // Keys returns the current Keys
 func (l *StandardLRUCache) Keys() []Key {
+	l.RLock()
+	defer l.RUnlock()
 	r := make([]Key, 0)
 	for _, v := range l.elements {
 		r = append(r, v.Value.(*cacheItem).key)
@@ -127,6 +141,8 @@ func (l *StandardLRUCache) Keys() []Key {
 
 // Values returns the current Values
 func (l *StandardLRUCache) Values() []Value {
+	l.RLock()
+	defer l.RUnlock()
 	r := make([]Value, 0)
 	for _, v := range l.elements {
 		r = append(r, v.Value.(*cacheItem).value)
@@ -136,5 +152,7 @@ func (l *StandardLRUCache) Values() []Value {
 
 // Len returns the current length
 func (l *StandardLRUCache) Len() int {
+	l.RLock()
+	defer l.RUnlock()
 	return len(l.elements)
 }

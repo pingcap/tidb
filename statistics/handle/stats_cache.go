@@ -16,7 +16,6 @@ package handle
 
 import (
 	"encoding/binary"
-	"sync"
 
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/kvcache"
@@ -156,7 +155,6 @@ func (m *internapMapCache) Copy() kvCache {
 }
 
 type internalLRUKVCache struct {
-	sync.RWMutex
 	cache *kvcache.StandardLRUCache
 }
 
@@ -175,8 +173,6 @@ func (key statsCacheKey) Hash() []byte {
 }
 
 func (c *internalLRUKVCache) Get(key int64) (*statistics.Table, bool) {
-	c.Lock()
-	defer c.Unlock()
 	k := statsCacheKey(key)
 	v, ok := c.cache.Get(k)
 	if !ok {
@@ -186,28 +182,20 @@ func (c *internalLRUKVCache) Get(key int64) (*statistics.Table, bool) {
 }
 
 func (c *internalLRUKVCache) Put(key int64, t *statistics.Table) {
-	c.Lock()
-	defer c.Unlock()
 	k := statsCacheKey(key)
 	c.cache.Put(k, t, uint64(t.MemoryUsage()))
 }
 
 func (c *internalLRUKVCache) Del(key int64) {
-	c.Lock()
-	defer c.Unlock()
 	k := statsCacheKey(key)
 	c.cache.Delete(k)
 }
 
 func (c *internalLRUKVCache) Cost() int64 {
-	c.RLock()
-	defer c.RUnlock()
 	return int64(c.cache.Cost())
 }
 
 func (c *internalLRUKVCache) Keys() []int64 {
-	c.RLock()
-	defer c.RUnlock()
 	ks := c.cache.Keys()
 	r := make([]int64, 0)
 	for _, k := range ks {
@@ -217,8 +205,6 @@ func (c *internalLRUKVCache) Keys() []int64 {
 }
 
 func (c *internalLRUKVCache) Values() []*statistics.Table {
-	c.RLock()
-	defer c.RUnlock()
 	vs := c.cache.Values()
 	r := make([]*statistics.Table, 0)
 	for _, v := range vs {
@@ -228,14 +214,10 @@ func (c *internalLRUKVCache) Values() []*statistics.Table {
 }
 
 func (c *internalLRUKVCache) Len() int {
-	c.RLock()
-	defer c.RUnlock()
 	return c.cache.Len()
 }
 
 func (c *internalLRUKVCache) Copy() kvCache {
-	c.RLock()
-	defer c.RUnlock()
 	newC := &internalLRUKVCache{}
 	newC.cache = c.cache.Copy()
 	return newC
