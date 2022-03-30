@@ -214,7 +214,7 @@ failpoint-disable: tools/bin/failpoint-ctl
 
 tools/bin/ut: tools/check/ut.go
 	cd tools/check; \
-	$(GO) build -o ../bin/ut ut.go
+	$(GO) build -o ../bin/ut ut.go ut_linux.go
 
 tools/bin/xprog: tools/check/xprog.go
 	cd tools/check; \
