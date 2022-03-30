@@ -17,6 +17,8 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"math"
 	"regexp"
 	"sort"
@@ -1577,6 +1579,7 @@ func (e *TiKVRegionStatusExtractor) Extract(_ sessionctx.Context,
 	for key := range tableIDSet {
 		tableID, err = strconv.ParseInt(key, 10, 64)
 		if err != nil {
+			logutil.BgLogger().Error("extract table_id failed", zap.Error(err), zap.String("tableID", key))
 			e.tablesID = nil
 			return predicates
 		}
