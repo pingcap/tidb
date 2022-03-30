@@ -46,6 +46,9 @@ const (
 	// current only support STRICT or IGNORE, the default is STRICT according to tidb.
 	FlagWithPlacementPolicy = "with-tidb-placement-mode"
 
+	// flagSkipCollactionCheck is used for whether skip to check  the config `new-collaction-enable`
+	flagSkipCollactionCheck = "skip-collaction-check"
+
 	defaultRestoreConcurrency = 128
 	maxRestoreBatchSizeLimit  = 10240
 	defaultPDConcurrency      = 1
@@ -63,6 +66,8 @@ const (
 // RestoreCommonConfig is the common configuration for all BR restore tasks.
 type RestoreCommonConfig struct {
 	Online bool `json:"online" toml:"online"`
+	// Whether to skip checking NewCollactionEnable.
+	SkipCollactionCheck bool `json:"skip-collaction-check" toml:"skip-collaction-check"`
 
 	// MergeSmallRegionSizeBytes is the threshold of merging small regions (Default 96MB, region split size).
 	// MergeSmallRegionKeyCount is the threshold of merging smalle regions (Default 960_000, region split key count).
@@ -86,6 +91,8 @@ func (cfg *RestoreCommonConfig) adjust() {
 func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	// TODO remove experimental tag if it's stable
 	flags.Bool(flagOnline, false, "(experimental) Whether online when restore")
+	flags.Bool(flagSkipCollactionCheck, false,
+		"Whether skip to check config parameter 'NewCollactionEnable'")
 
 	flags.Uint64(FlagMergeRegionSizeBytes, restore.DefaultMergeRegionSizeBytes,
 		"the threshold of merging small regions (Default 96MB, region split size)")
@@ -108,6 +115,10 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 func (cfg *RestoreCommonConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	var err error
 	cfg.Online, err = flags.GetBool(flagOnline)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.SkipCollactionCheck, err = flags.GetBool(flagSkipCollactionCheck)
 	if err != nil {
 		return errors.Trace(err)
 	}

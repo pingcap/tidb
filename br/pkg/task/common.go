@@ -64,7 +64,6 @@ const (
 	flagCaseSensitive       = "case-sensitive"
 	flagRemoveTiFlash       = "remove-tiflash"
 	flagCheckRequirement    = "check-requirements"
-	flagSkipCollactionCheck = "skip-collaction-check"
 	flagSwitchModeInterval  = "switch-mode-interval"
 	// flagGrpcKeepaliveTime is the interval of pinging the server.
 	flagGrpcKeepaliveTime = "grpc-keepalive-time"
@@ -148,9 +147,6 @@ type Config struct {
 
 	CheckRequirements bool `json:"check-requirements" toml:"check-requirements"`
 
-	// Whether to skip checking NewCollactionEnable.
-	SkipCollactionCheck bool `json:"skip-collaction-check" toml:"skip-collaction-check"`
-
 	// EnableOpenTracing is whether to enable opentracing
 	EnableOpenTracing bool `json:"enable-opentracing" toml:"enable-opentracing"`
 	// SkipCheckPath skips verifying the path
@@ -206,8 +202,6 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 
 	flags.Bool(flagCheckRequirement, true,
 		"Whether start version check before execute command")
-	flags.Bool(flagSkipCollactionCheck, false,
-		"Whether skip to check config parameter 'NewCollactionEnable'")
 	flags.Duration(flagSwitchModeInterval, defaultSwitchInterval, "maintain import mode on TiKV during restore")
 	flags.Duration(flagGrpcKeepaliveTime, defaultGRPCKeepaliveTime,
 		"the interval of pinging gRPC peer, must keep the same value with TiKV and PD")
@@ -453,10 +447,6 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	cfg.CheckRequirements, err = flags.GetBool(flagCheckRequirement)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cfg.SkipCollactionCheck, err = flags.GetBool(flagSkipCollactionCheck)
 	if err != nil {
 		return errors.Trace(err)
 	}

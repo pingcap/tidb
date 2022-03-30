@@ -76,9 +76,10 @@ rm -rf "$test_log"
 
 echo "restore start ... with --skip-collaction-check=true"
 warn_str="skip check NewCollactionEnable currently"
+unset BR_LOG_TO_TERM
 run_br restore db --db $DB -s "local://$cur/${DB}" --pd $PD_ADDR --log-file $test_log --skip-collaction-check=true
-if grep -i "$warn_str" $test_log; then
-    echo "${error_str} not found in log"
+if ! grep -i "$warn_str" $test_log; then
+    echo "${warn_str} not found in log"
     echo "TEST: [$TEST_NAME] test restore failed!"
     exit 1
 fi
@@ -90,11 +91,11 @@ rm -rf "$test_log"
 echo "Restart cluster with new_collation_enable=false"
 start_services --tidb-cfg $cur/config/new_collation_enable_false.toml
 
-echo "backup start ... wich NewCollactionEnable=false in TiDB"
-run_br --pd $PD_ADDR backup db --db "$DB" -s "local://$cur/${DB}"
+echo "backup start ... with NewCollactionEnable=false in TiDB"
+run_br --pd $PD_ADDR backup full -s "local://$cur/${DB}"
 
 echo "restore start ... with NewCollactionEnable=false in TiDB"
-run_br restore db --db $DB -s "local://$cur/${DB}" --pd $PD_ADDR
+run_br restore full -s "local://$cur/${DB}" --pd $PD_ADDR
 
 echo "Restart cluster with new_collation_enable=true"
 start_services --tidb-cfg $cur/config/new_collation_enable_true.toml
@@ -103,7 +104,7 @@ echo "restore start ... with NewCollactionEnable=True in TiDB"
 restore_fail=0
 error_str="newCollationEnable not match"
 unset BR_LOG_TO_TERM
-run_br restore db --db $DB -s "local://$cur/${DB}" --pd $PD_ADDR --log-file $test_log || restore_fail=1
+run_br restore full -s "local://$cur/${DB}" --pd $PD_ADDR --log-file $test_log || restore_fail=1
 if [ $restore_fail -ne 1 ]; then
     echo "TEST: [$TEST_NAME] test restore failed!"
     exit 1
