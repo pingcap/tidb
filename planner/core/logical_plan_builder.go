@@ -2247,7 +2247,7 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.Sele
 						columnNameExpr := &ast.ColumnNameExpr{Name: colName}
 						for _, field := range sel.Fields.Fields {
 							if c, ok := field.Expr.(*ast.ColumnNameExpr); ok && colMatch(c.Name, columnNameExpr.Name) {
-								// deduplicate select fields: don't append it again once it has one.
+								// deduplicate select fields: don't append it once it already has one.
 								columnNameExpr = nil
 								break
 							}
