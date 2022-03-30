@@ -54,7 +54,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache *statsCache
 			Version:  row.GetUint64(0),
 			Name:     getFullTableName(is, tableInfo),
 		}
-		cache.tables[physicalID] = tbl
+		cache.Put(physicalID, tbl)
 	}
 }
 
@@ -65,7 +65,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 		return statsCache{}, errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	tables := statsCache{tables: make(map[int64]*statistics.Table)}
+	tables := newStatsCache()
 	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
@@ -84,7 +84,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *statsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID, statsVer := row.GetInt64(0), row.GetInt64(8)
-		table, ok := cache.tables[tblID]
+		table, ok := cache.Get(tblID)
 		if !ok {
 			continue
 		}
@@ -181,7 +181,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache *statsCache
 func (h *Handle) initStatsTopN4Chunk(cache *statsCache, iter *chunk.Iterator4Chunk) {
 	affectedIndexes := make(map[int64]*statistics.Index)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		table, ok := cache.tables[row.GetInt64(0)]
+		table, ok := cache.Get(row.GetInt64(0))
 		if !ok {
 			continue
 		}
@@ -226,7 +226,7 @@ func (h *Handle) initStatsTopN(cache *statsCache) error {
 
 func (h *Handle) initStatsFMSketch4Chunk(cache *statsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		table, ok := cache.tables[row.GetInt64(0)]
+		table, ok := cache.Get(row.GetInt64(0))
 		if !ok {
 			continue
 		}
@@ -275,7 +275,7 @@ func (h *Handle) initStatsFMSketch(cache *statsCache) error {
 func (h *Handle) initStatsBuckets4Chunk(cache *statsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
-		table, ok := cache.tables[tableID]
+		table, ok := cache.Get(tableID)
 		if !ok {
 			continue
 		}
@@ -362,7 +362,7 @@ func (h *Handle) initStatsBuckets(cache *statsCache) error {
 		h.initStatsBuckets4Chunk(cache, iter)
 	}
 	lastVersion := uint64(0)
-	for _, table := range cache.tables {
+	for _, table := range cache.Values() {
 		lastVersion = mathutil.MaxUint64(lastVersion, table.Version)
 		for _, idx := range table.Indices {
 			for i := 1; i < idx.Len(); i++ {
