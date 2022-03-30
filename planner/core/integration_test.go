@@ -6454,7 +6454,7 @@ func TestIssue33042(t *testing.T) {
 	)
 }
 
-func TestIssue29663(t *testing.T) {
+func TestIssue26945(t *testing.T) {
 	store, _, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
