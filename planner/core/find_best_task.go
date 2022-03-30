@@ -284,11 +284,24 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 
 		//// TODO: introduce a new variable as a switch to control this
-		//if curTask.plan().CalPlanCost(property.RootTaskType) < bestTask.plan().CalPlanCost(property.RootTaskType) || (bestTask.invalid() && !curTask.invalid()) {
+		//if curTask.plan().CalPlanCost(getTaskType(curTask)) < bestTask.plan().CalPlanCost(getTaskType(bestTask)) || (bestTask.invalid() && !curTask.invalid()) {
 		//	bestTask = curTask
 		//}
 	}
 	return bestTask, cntPlan, nil
+}
+
+func getTaskType(t task) property.TaskType {
+	switch t.(type) {
+	case *rootTask:
+		return property.RootTaskType
+	case *copTask:
+		return property.CopSingleReadTaskType
+	case *mppTask:
+		return property.MppTaskType
+	default:
+		panic("TODO")
+	}
 }
 
 type physicalOptimizeOp struct {
