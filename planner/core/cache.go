@@ -222,7 +222,6 @@ type CachedPrepareStmt struct {
 	PreparedAst         *ast.Prepared
 	StmtDB              string // which DB the statement will be processed over
 	VisitInfos          []visitInfo
-	ColumnInfos         interface{}
 	Executor            interface{}
 	NormalizedSQL       string
 	NormalizedPlan      string
