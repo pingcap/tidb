@@ -63,10 +63,12 @@ import (
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"go.uber.org/zap"
 )
 
 var etcdDialTimeout = 5 * time.Second
@@ -1843,6 +1845,15 @@ func (e *ShowExec) fetchShowBuiltins() error {
 // To avoid this situation we need to generate a logical plan and extract current column types from Schema.
 func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, dbName model.CIStr, tbl *model.TableInfo) error {
 	if tbl.IsView() {
+		if sv := sctx.GetSessionVars(); sv != nil {
+			var prevSQL string
+			if sv.PrevStmt != nil {
+				prevSQL = sv.PrevStmt.String()
+			}
+			logutil.BgLogger().Info("tryFillViewColumnType",
+				zap.Uint64("conn ID", sv.ConnectionID),
+				zap.String("prev SQL", prevSQL))
+		}
 		// Retrieve view columns info.
 		planBuilder, _ := plannercore.NewPlanBuilder().Init(sctx, is, &hint.BlockHintProcessor{})
 		if viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl); err == nil {
