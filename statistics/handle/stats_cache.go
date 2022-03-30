@@ -16,6 +16,7 @@ package handle
 
 import (
 	"encoding/binary"
+
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/kvcache"
 )
