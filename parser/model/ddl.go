@@ -283,6 +283,7 @@ type SubJob struct {
 	SnapshotVer uint64          `json:"snapshot_ver"`
 	Revertible  bool            `json:"revertible"`
 	State       JobState        `json:"state"`
+	RowCount    int64           `json:"row_count"`
 	Warning     *terror.Error   `json:"warning"`
 	CtxVars     []interface{}   `json:"-"`
 }
@@ -469,8 +470,12 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
-	return fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v",
+	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v",
 		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer)
+	if job.Type != ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
+		ret += fmt.Sprintf(", RawArgs:%s", job.RawArgs)
+	}
+	return ret
 }
 
 func (job *Job) hasDependentSchema(other *Job) (bool, error) {

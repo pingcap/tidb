@@ -134,7 +134,7 @@ func cloneFromSubJob(job *model.Job, sub *model.SubJob) *model.Job {
 		Warning:         sub.Warning,
 		Error:           nil,
 		ErrorCount:      0,
-		RowCount:        0,
+		RowCount:        sub.RowCount,
 		Mu:              sync.Mutex{},
 		CtxVars:         sub.CtxVars,
 		Args:            sub.Args,
@@ -161,6 +161,7 @@ func mergeBackToSubJob(job *model.Job, sub *model.SubJob) {
 	sub.Args = job.Args
 	sub.State = job.State
 	sub.Warning = job.Warning
+	sub.RowCount = job.RowCount
 }
 
 func handleRevertibleException(job *model.Job, subJob *model.SubJob, idx int, err *terror.Error) {
