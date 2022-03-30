@@ -15,7 +15,9 @@
 package handle
 
 import (
+	"encoding/binary"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/util/kvcache"
 )
 
 type kvCache interface {
@@ -31,7 +33,7 @@ type kvCache interface {
 
 func newStatsCache() statsCache {
 	return statsCache{
-		kvCache: newInternalMapCache(),
+		kvCache: newInternalLRUKVCache(),
 	}
 }
 
@@ -57,10 +59,7 @@ func (sc statsCache) copy() statsCache {
 		version:      sc.version,
 		minorVersion: sc.minorVersion,
 	}
-	for _, k := range sc.kvCache.Keys() {
-		v, _ := sc.kvCache.Get(k)
-		newCache.kvCache.Put(k, v)
-	}
+	newCache.kvCache = sc.kvCache.Copy()
 	return newCache
 }
 
@@ -152,4 +151,73 @@ func (m *internapMapCache) Copy() kvCache {
 		newM.cache[k] = v
 	}
 	return newM
+}
+
+type internalLRUKVCache struct {
+	cache *kvcache.StandardLRUCache
+}
+
+func newInternalLRUKVCache() kvCache {
+	c := &internalLRUKVCache{}
+	c.cache = kvcache.NewStandardLRUCache(1 << 30)
+	return c
+}
+
+type statsCacheKey int64
+
+func (key statsCacheKey) Hash() []byte {
+	var buf = make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, uint64(key))
+	return buf
+}
+
+func (c *internalLRUKVCache) Get(key int64) (*statistics.Table, bool) {
+	k := statsCacheKey(key)
+	v, ok := c.cache.Get(k)
+	if !ok {
+		return nil, false
+	}
+	return v.(*statistics.Table), true
+}
+
+func (c *internalLRUKVCache) Put(key int64, t *statistics.Table) {
+	k := statsCacheKey(key)
+	c.cache.Put(k, t, uint64(t.MemoryUsage()))
+}
+
+func (c *internalLRUKVCache) Del(key int64) {
+	k := statsCacheKey(key)
+	c.cache.Delete(k)
+}
+
+func (c *internalLRUKVCache) Cost() int64 {
+	return int64(c.cache.Cost())
+}
+
+func (c *internalLRUKVCache) Keys() []int64 {
+	ks := c.cache.Keys()
+	r := make([]int64, 0)
+	for _, k := range ks {
+		r = append(r, int64(k.(statsCacheKey)))
+	}
+	return r
+}
+
+func (c *internalLRUKVCache) Values() []*statistics.Table {
+	vs := c.cache.Values()
+	r := make([]*statistics.Table, 0)
+	for _, v := range vs {
+		r = append(r, v.(*statistics.Table))
+	}
+	return r
+}
+
+func (c *internalLRUKVCache) Len() int {
+	return c.cache.Len()
+}
+
+func (c *internalLRUKVCache) Copy() kvCache {
+	newC := &internalLRUKVCache{}
+	newC.cache = c.cache.Copy()
+	return newC
 }
