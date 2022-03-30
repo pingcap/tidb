@@ -283,3 +283,7 @@ func TestReorgOwner(t *testing.T) {
 	})
 	require.NoError(t, err)
 }
+
+func testCheckOwner(t *testing.T, d *ddl, expectedVal bool) {
+	require.Equal(t, d.isOwner(), expectedVal)
+}

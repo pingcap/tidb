@@ -3143,7 +3143,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		plans:            v.TablePlans,
 		tablePlan:        v.GetTablePlan(),
 		storeType:        v.StoreType,
-		batchCop:         v.BatchCop,
+		batchCop:         v.ReadReqType == plannercore.BatchCop,
 	}
 	e.buildVirtualColumnInfo()
 	if containsLimit(dagReq.Executors) {
@@ -3208,16 +3208,12 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		}
 	})
 	if useMPPExecution(b.ctx, v) {
-		plannercore.SetMppOrBatchCopForTableScan(v.GetTablePlan())
 		return b.buildMPPGather(v)
 	}
 	ts, err := v.GetTableScan()
 	if err != nil {
 		b.err = err
 		return nil
-	}
-	if v.BatchCop {
-		ts.IsMPPOrBatchCop = true
 	}
 	ret, err := buildNoRangeTableReader(b, v)
 	if err != nil {
@@ -3921,6 +3917,8 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		if len(lookUpContents) > 0 && keyColumnsIncludeAllPartitionColumns(lookUpContents[0].keyCols, pe) {
 			locateKey := make([]types.Datum, e.Schema().Len())
 			kvRanges = make([]kv.KeyRange, 0, len(lookUpContents))
+			// lookUpContentsByPID groups lookUpContents by pid(partition) so that kv ranges for same partition can be merged.
+			lookUpContentsByPID := make(map[int64][]*indexJoinLookUpContent)
 			for _, content := range lookUpContents {
 				for i, date := range content.keys {
 					locateKey[content.keyCols[i]] = date
@@ -3933,7 +3931,11 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 				if _, ok := usedPartitions[pid]; !ok {
 					continue
 				}
-				tmp, err := buildKvRangesForIndexJoin(e.ctx, pid, -1, []*indexJoinLookUpContent{content}, indexRanges, keyOff2IdxOff, cwc, nil, interruptSignal)
+				lookUpContentsByPID[pid] = append(lookUpContentsByPID[pid], content)
+			}
+			for pid, contents := range lookUpContentsByPID {
+				// buildKvRanges for each partition.
+				tmp, err := buildKvRangesForIndexJoin(e.ctx, pid, -1, contents, indexRanges, keyOff2IdxOff, cwc, nil, interruptSignal)
 				if err != nil {
 					return nil, err
 				}
