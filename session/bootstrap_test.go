@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/sessionctx"
@@ -1094,56 +1093,4 @@ func TestUpgradeToVer85(t *testing.T) {
 
 	require.NoError(t, r.Close())
 	mustExec(t, se, "delete from mysql.bind_info where default_db = 'test'")
-}
-
-func TestUpgradeVersion86(t *testing.T) {
-	ctx := context.Background()
-	store, dom := createStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-
-	seV85 := createSessionAndSetID(t, store)
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMeta(txn)
-	err = m.FinishBootstrap(int64(85))
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-	mustExec(t, seV85, "update mysql.tidb set variable_value='85' where variable_name='tidb_server_version'")
-	mustExec(t, seV85, "set @@global.tidb_enable_top_sql = 0")
-	mustExec(t, seV85, "commit")
-	unsetStoreBootstrapped(store.UUID())
-	ver, err := getBootstrapVersion(seV85)
-	require.NoError(t, err)
-	require.Equal(t, int64(85), ver)
-	// Top SQL is disabled in old version TiDB by default.
-	r := mustExec(t, seV85, `SELECT @@global.tidb_enable_top_sql`)
-	req := r.NewChunk(nil)
-	require.NoError(t, r.Next(ctx, req))
-	require.Equal(t, 1, req.NumRows())
-	row := req.GetRow(0)
-	require.Equal(t, int64(0), row.GetInt64(0))
-	dom.Close()
-
-	// after upgrade.
-	domV86, err := BootstrapSession(store)
-	require.NoError(t, err)
-	defer domV86.Close()
-	seV86 := createSessionAndSetID(t, store)
-	ver, err = getBootstrapVersion(seV86)
-	require.NoError(t, err)
-	require.Equal(t, currentBootstrapVersion, ver)
-	r = mustExec(t, seV86, `SELECT @@global.tidb_enable_top_sql`)
-	req = r.NewChunk(nil)
-	require.NoError(t, r.Next(ctx, req))
-	require.Equal(t, 1, req.NumRows())
-	row = req.GetRow(0)
-	require.Equal(t, int64(1), row.GetInt64(0))
-
-	storeWithePD, ok := store.(kv.StorageWithPD)
-	require.True(t, ok)
-	items, err := storeWithePD.GetPDClient().LoadGlobalConfig(ctx, []string{"enable_resource_metering"})
-	require.NoError(t, err)
-	require.Equal(t, 1, len(items))
-	require.Equal(t, "true", items[0].Value)
 }
