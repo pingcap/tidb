@@ -393,7 +393,7 @@ func (s *streamMgr) checkRequirements(ctx context.Context) (bool, error) {
 	}
 
 	type backupStream struct {
-		EnableStreaming bool `json:"enable-streaming"`
+		EnableStreaming bool `json:"enable"`
 	}
 	type config struct {
 		BackupStream backupStream `json:"backup-stream"`
@@ -409,6 +409,9 @@ func (s *streamMgr) checkRequirements(ctx context.Context) (bool, error) {
 		// we need make sure every available store support backup-stream otherwise we might lose data.
 		// so check every store's config
 		addr := fmt.Sprintf("%s/config", store.GetStatusAddress())
+		if !strings.HasPrefix(addr, "http") {
+			addr = "http://" + addr
+		}
 		err = utils.WithRetry(ctx, func() error {
 			resp, e := s.httpCli.Get(addr)
 			if e != nil {

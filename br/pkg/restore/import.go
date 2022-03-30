@@ -809,6 +809,7 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 		RestoreTs: restoreTs,
 		StartKey:  regionInfo.Region.GetStartKey(),
 		EndKey:    regionInfo.Region.GetEndKey(),
+		Sha256:    file.GetSha256(),
 	}
 
 	reqCtx := &kvrpcpb.Context{
