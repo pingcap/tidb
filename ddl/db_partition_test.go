@@ -2889,7 +2889,7 @@ func backgroundExecOnJobUpdatedExportedT(t *testing.T, tk *testkit.TestKit, stor
 			return
 		}
 		// The job satisfies the case of addIndexNotFirst for the first time, the worker hasn't finished a batch of backfill indexes.
-		if first {
+		if first && !variable.AllowConcurrencyDDL.Load() {
 			first = false
 			return
 		}
