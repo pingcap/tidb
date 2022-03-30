@@ -510,3 +510,47 @@ func (s *testPartitionPruneSuit) TestHashPartitionPruning(c *C) {
 	tk.MustExec("insert into t(col1, col3) values(0, 3522101843073676459);")
 	tk.MustQuery("SELECT col1, COL3 FROM t WHERE COL1 IN (0,14158354938390,0) AND COL3 IN (3522101843073676459,-2846203247576845955,838395691793635638);").Check(testkit.Rows("0 3522101843073676459"))
 }
+<<<<<<< HEAD
+=======
+
+func TestIssue32007(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database Issue32007")
+	tk.MustExec("USE Issue32007")
+	tk.MustExec("create table t1 (a int, b tinyint, primary key (a)) partition by range (a) (" +
+		"partition p0 values less than (5)," +
+		"partition p1 values less than (20)," +
+		"partition p2 values less than (30)," +
+		"partition p3 values less than (40)," +
+		"partition p4 values less than MAXVALUE)")
+	tk.MustExec("insert into t1 values (0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (10, 10), (11, 11), (12, 12), (13, 13), (14, 14), (15, 15), (20, 20), (21, 21), (22, 22), (23, 23), (24, 24), (25, 25), (30, 30), (31, 31), (32, 32), (33, 33), (34, 34), (35, 35), (36, 36), (40, 40), (50, 50), (80, 80), (90, 90), (100, 100)")
+	tk.MustExec("create table t3 (a int, b mediumint, primary key (a))")
+	tk.MustExec("insert into t3 values (0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (10, 10), (11, 11), (12, 12), (13, 13), (14, 14), (15, 15), (16, 16), (17, 17), (18, 18), (19, 19), (20, 20), (21, 21), (22, 22), (23, 23)")
+
+	tk.MustExec("set @@tidb_partition_prune_mode='static'")
+	tk.MustQuery("select * from t3 where t3.a <> ALL (select t1.a from t1 partition (p0)) order by t3.a").Sort().Check(testkit.Rows("10 10", "11 11", "12 12", "13 13", "14 14", "15 15", "16 16", "17 17", "18 18", "19 19", "20 20", "21 21", "22 22", "23 23", "5 5", "6 6", "7 7", "8 8", "9 9"))
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustQuery("select * from t3 where t3.a <> ALL (select t1.a from t1 partition (p0)) order by t3.a").Sort().Check(testkit.Rows("10 10", "11 11", "12 12", "13 13", "14 14", "15 15", "16 16", "17 17", "18 18", "19 19", "20 20", "21 21", "22 22", "23 23", "5 5", "6 6", "7 7", "8 8", "9 9"))
+}
+
+func TestIssue33231(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database issue33231")
+	tk.MustExec("use issue33231")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic';")
+	tk.MustExec("create table t1 (c_int int, c_str varchar(40), primary key (c_int, c_str) clustered, key(c_int) ) partition by hash (c_int) partitions 4;")
+	tk.MustExec("create table t2 like t1;")
+	tk.MustExec("insert into t1 values(6, 'beautiful curran');")
+	tk.MustExec("insert into t1 values(7, 'epic kalam');")
+	tk.MustExec("insert into t1 values(7, 'affectionate curie');")
+	tk.MustExec("insert into t2 values(6, 'vigorous rhodes');")
+	tk.MustExec("insert into t2 values(7, 'sweet aryabhata');")
+	tk.MustQuery("select /*+ INL_JOIN(t2) */ * from t1, t2 where t1.c_int = t2.c_int and t1.c_str <= t2.c_str and t2.c_int in (6, 7, 6);").
+		Sort().
+		Check(testkit.Rows("6 beautiful curran 6 vigorous rhodes", "7 affectionate curie 7 sweet aryabhata", "7 epic kalam 7 sweet aryabhata"))
+}
+>>>>>>> e56013779... executor: fix KVRange bug for index join with dynamic partition pruning (#33483)
