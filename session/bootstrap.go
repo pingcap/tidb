@@ -678,11 +678,7 @@ var (
 		upgradeToVer83,
 		upgradeToVer84,
 		upgradeToVer85,
-<<<<<<< HEAD
 		upgradeToVer86,
-		upgradeToVer87,
-=======
->>>>>>> master
 	}
 )
 
