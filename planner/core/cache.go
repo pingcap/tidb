@@ -187,6 +187,7 @@ func NewPSTMTPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*mod
 
 // CachedPrepareStmt store prepared ast from PrepareExec and other related fields
 type CachedPrepareStmt struct {
+<<<<<<< HEAD
 	PreparedAst    *ast.Prepared
 	VisitInfos     []visitInfo
 	ColumnInfos    interface{}
@@ -196,4 +197,44 @@ type CachedPrepareStmt struct {
 	SQLDigest      string
 	PlanDigest     string
 	ForUpdateRead  bool
+=======
+	PreparedAst         *ast.Prepared
+	StmtDB              string // which DB the statement will be processed over
+	VisitInfos          []visitInfo
+	Executor            interface{}
+	NormalizedSQL       string
+	NormalizedPlan      string
+	SQLDigest           *parser.Digest
+	PlanDigest          *parser.Digest
+	ForUpdateRead       bool
+	SnapshotTSEvaluator func(sessionctx.Context) (uint64, error)
+	NormalizedSQL4PC    string
+	SQLDigest4PC        string
+
+	// the different between NormalizedSQL, NormalizedSQL4PC and StmtText:
+	//  for the query `select * from t where a>1 and b<?`, then
+	//  NormalizedSQL: select * from `t` where `a` > ? and `b` < ? --> constants are normalized to '?',
+	//  NormalizedSQL4PC: select * from `test` . `t` where `a` > ? and `b` < ? --> schema name is added,
+	//  StmtText: select * from t where a>1 and b <? --> just format the original query;
+	StmtText string
+}
+
+// GetPreparedStmt extract the prepared statement from the execute statement.
+func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*CachedPrepareStmt, error) {
+	var ok bool
+	execID := stmt.ExecID
+	if stmt.Name != "" {
+		if execID, ok = vars.PreparedStmtNameToID[stmt.Name]; !ok {
+			return nil, ErrStmtNotFound
+		}
+	}
+	if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
+		preparedObj, ok := preparedPointer.(*CachedPrepareStmt)
+		if !ok {
+			return nil, errors.Errorf("invalid CachedPrepareStmt type")
+		}
+		return preparedObj, nil
+	}
+	return nil, ErrStmtNotFound
+>>>>>>> 5004a8133... executor: fix execute failed when table schema changed (#33519)
 }
