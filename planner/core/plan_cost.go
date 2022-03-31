@@ -1,9 +1,9 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/kv"
 	"math"
 
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 )
 
