@@ -59,7 +59,15 @@ func (p *PhysicalProjection) CalPlanCost(taskType property.TaskType) float64 {
 // ============================== DataSource ==============================
 
 func (p *PhysicalIndexLookUpReader) CalPlanCost(taskType property.TaskType) float64 {
-	panic("TODO")
+	if p.planCostInit {
+		return p.planCost
+	}
+	for _, child := range p.children {
+		p.planCost += child.CalPlanCost(taskType)
+	}
+	p.planCost += p.GetCost()
+	p.planCostInit = true
+	return p.planCost
 }
 
 func (p *PhysicalIndexReader) CalPlanCost(taskType property.TaskType) float64 {
