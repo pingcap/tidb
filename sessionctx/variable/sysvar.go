@@ -1375,6 +1375,12 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableNewCostInterface, Value: BoolToOnOff(false), Type:TypeBool,
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.EnableNewCostInterface = TiDBOptOn(s)
+			return nil
+		},
+	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRCReadCheckTS, Type: TypeBool, Value: BoolToOnOff(DefRCReadCheckTS), SetSession: func(s *SessionVars, val string) error {
 		s.RcReadCheckTS = TiDBOptOn(val)
 		return nil

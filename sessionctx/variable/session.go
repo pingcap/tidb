@@ -1020,6 +1020,8 @@ type SessionVars struct {
 	AssertionLevel AssertionLevel
 	// IgnorePreparedCacheCloseStmt controls if ignore the close-stmt command for prepared statement.
 	IgnorePreparedCacheCloseStmt bool
+	// EnableNewCostInterface ...
+	EnableNewCostInterface bool
 	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
 	BatchPendingTiFlashCount int
 	// RcReadCheckTS indicates if ts check optimization is enabled for current session.

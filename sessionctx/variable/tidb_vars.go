@@ -614,6 +614,9 @@ const (
 	// TiDBIgnorePreparedCacheCloseStmt indicates whether to ignore close-stmt commands for prepared statements.
 	TiDBIgnorePreparedCacheCloseStmt = "tidb_ignore_prepared_cache_close_stmt"
 
+	// TiDBEnableNewCostInterface ...
+	TiDBEnableNewCostInterface = "tidb_enable_new_cost_interface"
+
 	// TiDBBatchPendingTiFlashCount indicates the maximum count of non-available TiFlash tables.
 	TiDBBatchPendingTiFlashCount = "tidb_batch_pending_tiflash_count"
 )
