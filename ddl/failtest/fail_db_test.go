@@ -317,7 +317,7 @@ func TestGenGlobalIDFail(t *testing.T) {
 	tk.MustExec("admin check table t2")
 }
 
-// TestRunDDLJobPanic tests recover panic when run ddl job panic.
+// TestRunDDLJobPanicEnableClusteredIndex tests recover panic with cluster index when run ddl job panic.
 func TestRunDDLJobPanicEnableClusteredIndex(t *testing.T) {
 	s, clean := createFailDBSuite(t)
 	defer clean()
@@ -327,6 +327,7 @@ func TestRunDDLJobPanicEnableClusteredIndex(t *testing.T) {
 	})
 }
 
+// TestRunDDLJobPanicDisableClusteredIndex tests recover panic without cluster index when run ddl job panic.
 func TestRunDDLJobPanicDisableClusteredIndex(t *testing.T) {
 	s, clean := createFailDBSuite(t)
 	defer clean()
