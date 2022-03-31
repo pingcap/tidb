@@ -529,6 +529,14 @@ var defaultSysVars = []*SysVar{
 		tikvstore.StoreLimit.Store(TidbOptInt64(val, DefTiDBStoreLimit))
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBTxnCommitBatchSize, Value: strconv.FormatUint(tikvstore.DefTxnCommitBatchSize, 10), Type: TypeUnsigned, MinValue: 1, MaxValue: 1 << 30,
+		GetGlobal: func(sv *SessionVars) (string, error) {
+			return strconv.FormatUint(tikvstore.TxnCommitBatchSize.Load(), 10), nil
+		},
+		SetGlobal: func(s *SessionVars, val string) error {
+			tikvstore.TxnCommitBatchSize.Store(uint64(TidbOptInt64(val, int64(tikvstore.DefTxnCommitBatchSize))))
+			return nil
+		}},
 	{Scope: ScopeGlobal, Name: TiDBRestrictedReadOnly, Value: BoolToOnOff(DefTiDBRestrictedReadOnly), Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
 		on := TiDBOptOn(val)
 		if on {

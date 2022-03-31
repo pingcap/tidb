@@ -579,8 +579,15 @@ const (
 
 	// TiDBEnableLocalTxn indicates whether to enable Local Txn.
 	TiDBEnableLocalTxn = "tidb_enable_local_txn"
+
 	// TiDBTSOClientBatchMaxWaitTime indicates the max value of the TSO Batch Wait interval time of PD client.
 	TiDBTSOClientBatchMaxWaitTime = "tidb_tso_client_batch_max_wait_time"
+
+	// TiDBTxnCommitBatchSize is used to control the batch size of transaction commit related requests sent by TiDB to TiKV.
+	// If a single transaction has a large amount of writes, you can increase the batch size to improve the batch effect,
+	// setting too large will exceed TiKV's raft-entry-max-size limit and cause commit failure.
+	TiDBTxnCommitBatchSize = "tidb_txn_commit_batch_size"
+
 	// TiDBEnableTSOFollowerProxy indicates whether to enable the TSO Follower Proxy feature of PD client.
 	TiDBEnableTSOFollowerProxy = "tidb_enable_tso_follower_proxy"
 
