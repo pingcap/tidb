@@ -741,30 +741,30 @@ type modifyingColInfo struct {
 }
 
 func getModifyColumnInfo(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.TableInfo, *model.ColumnInfo, *modifyingColInfo, error) {
-	modifyCol := &modifyingColInfo{pos: &ast.ColumnPosition{}}
-	err := job.DecodeArgs(&modifyCol.newCol, &modifyCol.oldColName, modifyCol.pos, &modifyCol.modifyColumnTp, &modifyCol.updatedAutoRandomBits, &modifyCol.changingCol, &modifyCol.changingIdxs)
+	modifyInfo := &modifyingColInfo{pos: &ast.ColumnPosition{}}
+	err := job.DecodeArgs(&modifyInfo.newCol, &modifyInfo.oldColName, modifyInfo.pos, &modifyInfo.modifyColumnTp, &modifyInfo.updatedAutoRandomBits, &modifyInfo.changingCol, &modifyInfo.changingIdxs)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return nil, nil, nil, modifyCol, errors.Trace(err)
+		return nil, nil, nil, modifyInfo, errors.Trace(err)
 	}
 
 	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
-		return nil, nil, nil, modifyCol, errors.Trace(err)
+		return nil, nil, nil, modifyInfo, errors.Trace(err)
 	}
 
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
-		return nil, nil, nil, modifyCol, errors.Trace(err)
+		return nil, nil, nil, modifyInfo, errors.Trace(err)
 	}
 
-	oldCol := model.FindColumnInfo(tblInfo.Columns, modifyCol.oldColName.L)
+	oldCol := model.FindColumnInfo(tblInfo.Columns, modifyInfo.oldColName.L)
 	if oldCol == nil || oldCol.State != model.StatePublic {
 		job.State = model.JobStateCancelled
-		return nil, nil, nil, modifyCol, errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(*(modifyCol.oldColName), tblInfo.Name))
+		return nil, nil, nil, modifyInfo, errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(*(modifyInfo.oldColName), tblInfo.Name))
 	}
 
-	return dbInfo, tblInfo, oldCol, modifyCol, errors.Trace(err)
+	return dbInfo, tblInfo, oldCol, modifyInfo, errors.Trace(err)
 }
 
 // getOriginDefaultValueForModifyColumn gets the original default value for modifying column.
@@ -898,19 +898,19 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 }
 
 // rollbackModifyColumnJobWithData is used to rollback modify-column job which need to reorg the data.
-func rollbackModifyColumnJobWithData(t *meta.Meta, tblInfo *model.TableInfo, job *model.Job, oldCol *model.ColumnInfo, jobParam *modifyingColInfo) (ver int64, err error) {
+func rollbackModifyColumnJobWithData(t *meta.Meta, tblInfo *model.TableInfo, job *model.Job, oldCol *model.ColumnInfo, modifyInfo *modifyingColInfo) (ver int64, err error) {
 	// If the not-null change is included, we should clean the flag info in oldCol.
-	if jobParam.modifyColumnTp == mysql.TypeNull {
+	if modifyInfo.modifyColumnTp == mysql.TypeNull {
 		// Reset NotNullFlag flag.
 		tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.NotNullFlag
 		// Reset PreventNullInsertFlag flag.
 		tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.PreventNullInsertFlag
 	}
-	if jobParam.changingCol != nil {
+	if modifyInfo.changingCol != nil {
 		// changingCol isn't nil means the job has been in the mid state. These appended changingCol and changingIndex should
 		// be removed from the tableInfo as well.
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
-		tblInfo.Indices = tblInfo.Indices[:len(tblInfo.Indices)-len(jobParam.changingIdxs)]
+		tblInfo.Indices = tblInfo.Indices[:len(tblInfo.Indices)-len(modifyInfo.changingIdxs)]
 	}
 	ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, true)
 	if err != nil {
@@ -918,8 +918,8 @@ func rollbackModifyColumnJobWithData(t *meta.Meta, tblInfo *model.TableInfo, job
 	}
 	job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 	// Refactor the job args to add the abandoned temporary index ids into delete range table.
-	idxIDs := make([]int64, 0, len(jobParam.changingIdxs))
-	for _, idx := range jobParam.changingIdxs {
+	idxIDs := make([]int64, 0, len(modifyInfo.changingIdxs))
+	for _, idx := range modifyInfo.changingIdxs {
 		idxIDs = append(idxIDs, idx.ID)
 	}
 	job.Args = []interface{}{idxIDs, getPartitionIDs(tblInfo)}
