@@ -135,7 +135,36 @@ func (p *PhysicalIndexMergeReader) CalPlanCost(taskType property.TaskType) float
 // ============================== Scan ==============================
 
 func (p *PhysicalTableScan) CalPlanCost(taskType property.TaskType) float64 {
-	panic("TODO")
+	if p.planCostInit {
+		return p.planCost
+	}
+	p.planCost = 0
+
+	// scan cost
+	rowCount := p.StatsCount()
+	var rowWidth float64
+	switch p.StoreType {
+	case kv.TiKV:
+		rowWidth = p.stats.HistColl.GetTableAvgRowSize(p.ctx, p.schema.Columns, kv.TiKV, true)
+	default:
+		rowWidth = p.stats.HistColl.GetTableAvgRowSize(p.ctx, p.schema.Columns, p.StoreType, p.HandleCols != nil)
+	}
+	scanFactor := p.ctx.GetSessionVars().GetScanFactor(nil)
+	if p.Desc {
+		scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(nil)
+	}
+	p.planCost += rowCount * rowWidth * scanFactor
+
+	// request cost
+	switch p.StoreType {
+	case kv.TiKV:
+		p.planCost += float64(len(p.Ranges)) * p.ctx.GetSessionVars().GetSeekFactor(nil)
+	case kv.TiFlash:
+		p.planCost += float64(len(p.Ranges)) * float64(len(p.Columns)) * p.ctx.GetSessionVars().GetSeekFactor(nil)
+	}
+
+	p.planCostInit = true
+	return p.planCost
 }
 
 func (p *PhysicalIndexScan) CalPlanCost(taskType property.TaskType) float64 {
