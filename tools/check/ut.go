@@ -660,20 +660,39 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
 			Name:      fn,
 		},
 	}
-	cmd := n.testCommand(pkg, fn, old)
-	cmd.Dir = path.Join(workDir, pkg)
-	// Combine the test case output, so the run result for failed cases can be displayed.
+
 	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
-	start := time.Now()
-	if err := cmd.Run(); err != nil {
+	var err error
+	var start time.Time
+	for i := 0; i < 3; i++ {
+		cmd := n.testCommand(pkg, fn, old)
+		cmd.Dir = path.Join(workDir, pkg)
+		// Combine the test case output, so the run result for failed cases can be displayed.
+		cmd.Stdout = &buf
+		cmd.Stderr = &buf
+
+		start = time.Now()
+		err = cmd.Run()
+		if err != nil {
+			if _, ok := err.(*exec.ExitError); ok {
+				// Retry 3 times to get rid of the weird error:
+				// err=signal: segmentation fault (core dumped)
+				if err.Error() == "signal: segmentation fault (core dumped)" {
+					buf.Reset()
+					continue
+				}
+			}
+		}
+		break
+	}
+	if err != nil {
 		res.Failure = &JUnitFailure{
 			Message:  "Failed",
 			Contents: buf.String(),
 		}
 		res.err = err
 	}
+
 	res.d = time.Since(start)
 	res.Time = formatDurationAsSeconds(res.d)
 	return res
