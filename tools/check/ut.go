@@ -795,9 +795,9 @@ func buildTestBinary(pkg string) error {
 	// go test -c
 	var cmd *exec.Cmd
 	if coverprofile != "" {
-		cmd = exec.Command("go", "test", "-c", "-cover", "-vet", "off", "-o", testFileName(pkg))
+		cmd = exec.Command("go", "test", "-asan", "-asan", "-c", "-cover", "-vet", "off", "-o", testFileName(pkg))
 	} else {
-		cmd = exec.Command("go", "test", "-c", "-vet", "off", "-o", testFileName(pkg))
+		cmd = exec.Command("go", "test", "-asan", "-asan", "-c", "-vet", "off", "-o", testFileName(pkg))
 	}
 	cmd.Dir = path.Join(workDir, pkg)
 	cmd.Stdout = os.Stdout
@@ -819,9 +819,9 @@ func buildTestBinaryMulti(pkgs []string) error {
 
 	var cmd *exec.Cmd
 	if coverprofile != "" {
-		cmd = exec.Command("go", "test", "--exec", xprogPath, "-cover", "-vet", "off", "-count", "0")
+		cmd = exec.Command("go", "test", "-asan", "--exec", xprogPath, "-cover", "-vet", "off", "-count", "0")
 	} else {
-		cmd = exec.Command("go", "test", "--exec", xprogPath, "-vet", "off", "-count", "0")
+		cmd = exec.Command("go", "test", "-asan", "--exec", xprogPath, "-vet", "off", "-count", "0")
 	}
 	cmd.Args = append(cmd.Args, packages...)
 	cmd.Dir = workDir
