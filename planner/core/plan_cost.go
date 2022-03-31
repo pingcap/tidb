@@ -3,6 +3,7 @@ package core
 import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
+	"math"
 )
 
 func (p *PhysicalSort) CalPlanCost(taskType property.TaskType) float64 {
@@ -54,7 +55,16 @@ func (p *PhysicalHashAgg) CalPlanCost(taskType property.TaskType) float64 {
 }
 
 func (p *PhysicalUnionAll) CalPlanCost(taskType property.TaskType) float64 {
-	panic("TODO")
+	if p.planCostInit {
+		return p.planCost
+	}
+	var childMaxCost float64
+	for _, child := range p.children {
+		childMaxCost = math.Max(childMaxCost, child.CalPlanCost(taskType))
+	}
+	p.planCost = childMaxCost + float64(1+len(p.children))*p.ctx.GetSessionVars().ConcurrencyFactor
+	p.planCostInit = true
+	return p.planCost
 }
 
 func (p *PhysicalExchangeReceiver) CalPlanCost(taskType property.TaskType) float64 {
@@ -160,11 +170,33 @@ func (p *PhysicalTableReader) CalPlanCost(taskType property.TaskType) float64 {
 }
 
 func (p *PhysicalSelection) CalPlanCost(taskType property.TaskType) float64 {
-	panic("TODO")
+	if p.planCostInit {
+		return p.planCost
+	}
+	var cpuFactor float64
+	switch taskType {
+	case property.RootTaskType:
+		cpuFactor = p.ctx.GetSessionVars().CPUFactor
+	case property.CopSingleReadTaskType, property.CopDoubleReadTaskType:
+		cpuFactor = p.ctx.GetSessionVars().CopCPUFactor
+	case property.MppTaskType:
+		cpuFactor = p.ctx.GetSessionVars().CPUFactor // TODO: introduce a new factor for TiFlash?
+	default:
+		panic("TODO")
+	}
+	p.planCost = p.children[0].CalPlanCost(taskType)
+	p.planCost += cpuFactor * p.children[0].StatsCount()
+	p.planCostInit = true
+	return p.planCost
 }
 
 func (p *PhysicalLimit) CalPlanCost(taskType property.TaskType) float64 {
-	panic("TODO")
+	if p.planCostInit {
+		return p.planCost
+	}
+	p.planCost = p.children[0].CalPlanCost(taskType) // no cost for Limit
+	p.planCostInit = true
+	return p.planCost
 }
 
 func (p PhysicalMaxOneRow) CalPlanCost(taskType property.TaskType) float64 {
@@ -176,7 +208,12 @@ func (p *PhysicalTableDual) CalPlanCost(taskType property.TaskType) float64 {
 }
 
 func (p *NominalSort) CalPlanCost(taskType property.TaskType) float64 {
-	panic("TODO")
+	if p.planCostInit {
+		return p.planCost
+	}
+	p.planCost = p.children[0].CalPlanCost(taskType)
+	p.planCostInit = true
+	return p.planCost
 }
 
 func (p *PhysicalIndexMergeReader) CalPlanCost(taskType property.TaskType) float64 {
