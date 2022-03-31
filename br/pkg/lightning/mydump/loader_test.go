@@ -373,9 +373,17 @@ func TestRouter(t *testing.T) {
 			SchemaPattern: "~.bdb.*",
 			TargetSchema:  "db",
 		},
+		// only route schema
 		{
 			SchemaPattern: "web",
 			TargetSchema:  "web_test",
+		},
+		// only route table
+		{
+			SchemaPattern: "x",
+			TablePattern:  "t1*",
+			TargetSchema:  "x2",
+			TargetTable:   "t",
 		},
 	}
 
@@ -406,7 +414,6 @@ func TestRouter(t *testing.T) {
 			zbdb-schema-create.sql
 			zbdb.table-schema.sql
 			zbdb.table.1.sql
-			web-schema-create.sql
 	*/
 
 	s.touch(t, "a0-schema-create.sql")
@@ -440,8 +447,6 @@ func TestRouter(t *testing.T) {
 	s.touch(t, "zbdb-schema-create.sql")
 	s.touch(t, "zbdb.table-schema.sql")
 	s.touch(t, "zbdb.table.1.sql")
-
-	s.touch(t, "web-schema-create.sql")
 
 	mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
 	require.NoError(t, err)
@@ -482,10 +487,7 @@ func TestRouter(t *testing.T) {
 			Name:       "d0",
 			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "d0", Name: ""}, FileMeta: md.SourceFileMeta{Path: "d0-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
 		},
-		{
-			Name:       "web_test",
-			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "web_test", Name: ""}, FileMeta: md.SourceFileMeta{Path: "web-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
-		},
+
 		{
 			Name:       "b",
 			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "b", Name: ""}, FileMeta: md.SourceFileMeta{Path: "a0-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
@@ -571,6 +573,70 @@ func TestRouter(t *testing.T) {
 			},
 		},
 	}, dbs)
+
+	// new case for only route db and only route some tables
+	{
+		s2 := newTestMydumpLoaderSuite(t)
+		s2.cfg.Routes = []*router.TableRule{
+			// only route schema
+			{
+				SchemaPattern: "web",
+				TargetSchema:  "web_test",
+			},
+			// only route one table
+			{
+				SchemaPattern: "x",
+				TablePattern:  "t1*",
+				TargetSchema:  "x2",
+				TargetTable:   "t",
+			},
+		}
+
+		s2.touch(t, "web-schema-create.sql")
+		s2.touch(t, "x-schema-create.sql")
+		s2.touch(t, "x.t10-schema.sql") // hit rules, new name is x2.t
+		s2.touch(t, "x.t20-schema.sql") // not hit rules, name is x.t20
+
+		mdl2, err := md.NewMyDumpLoader(context.Background(), s2.cfg)
+		require.NoError(t, err)
+		dbs2 := mdl2.GetDatabases()
+		expectedDBS := []*md.MDDatabaseMeta{
+			{
+				Name:       "web_test",
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "web_test", Name: ""}, FileMeta: md.SourceFileMeta{Path: "web-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+			},
+			{
+				Name:       "x",
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "x", Name: ""}, FileMeta: md.SourceFileMeta{Path: "x-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+				Tables: []*md.MDTableMeta{
+					{
+						DB:           "x",
+						Name:         "t20",
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "x", Name: "t20"}, FileMeta: md.SourceFileMeta{Path: "x.t20-schema.sql", Type: md.SourceTypeTableSchema}},
+						IndexRatio:   0.0,
+						IsRowOrdered: true,
+						DataFiles:    []md.FileInfo{},
+					},
+				},
+			},
+			{
+				Name:       "x2",
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "x2", Name: ""}, FileMeta: md.SourceFileMeta{Path: "x-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+				Tables: []*md.MDTableMeta{
+					{
+						DB:           "x2",
+						Name:         "t",
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "x2", Name: "t"}, FileMeta: md.SourceFileMeta{Path: "x.t10-schema.sql", Type: md.SourceTypeTableSchema}},
+						IndexRatio:   0.0,
+						IsRowOrdered: true,
+						DataFiles:    []md.FileInfo{},
+					},
+				},
+			},
+		}
+		require.Equal(t, expectedDBS, dbs2)
+	}
+
 }
 
 func TestBadRouterRule(t *testing.T) {
