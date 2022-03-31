@@ -182,13 +182,11 @@ func (p *PhysicalIndexScan) CalPlanCost(taskType property.TaskType) float64 {
 	p.planCost = 0
 
 	// scan cost
-	rowCount := p.StatsCount()
-	rowWidth := p.indexScanRowSize(p.Index, nil, true) // TODO: ds=nil
 	scanFactor := p.ctx.GetSessionVars().GetScanFactor(nil)
 	if p.Desc {
 		scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(nil)
 	}
-	p.planCost += rowCount * rowWidth * scanFactor
+	p.planCost += p.StatsCount() * p.indexRowWidth * scanFactor
 
 	// request cost
 	p.planCost += float64(len(p.Ranges)) * p.ctx.GetSessionVars().GetSeekFactor(nil)

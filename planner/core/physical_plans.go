@@ -437,6 +437,9 @@ type PhysicalIndexScan struct {
 	DoubleRead bool
 
 	NeedCommonHandle bool
+
+	// required by cost model
+	indexRowWidth float64
 }
 
 // Clone implements PhysicalPlan interface.
