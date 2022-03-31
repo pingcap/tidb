@@ -554,9 +554,9 @@ func buildCommonHandleFromChunkRow(sctx *stmtctx.StatementContext, tblInfo *mode
 }
 
 // getTableRange gets the start and end handle of a table (or partition).
-func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, priority int) (startHandleKey, endHandleKey kv.Key, err error) {
+func getTableRange(ctx *jobContext, d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, priority int) (startHandleKey, endHandleKey kv.Key, err error) {
 	// Get the start handle of this partition.
-	err = iterateSnapshotRows(d.store, priority, tbl, snapshotVer, nil, nil,
+	err = iterateSnapshotRows(ctx, d.store, priority, tbl, snapshotVer, nil, nil,
 		func(h kv.Handle, rowKey kv.Key, rawRecord []byte) (bool, error) {
 			startHandleKey = rowKey
 			return false, nil
@@ -591,7 +591,7 @@ func getValidCurrentVersion(store kv.Storage) (ver kv.Version, err error) {
 	return ver, nil
 }
 
-func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elements []*meta.Element, wk *worker) (*reorgInfo, error) {
+func getReorgInfo(ctx *jobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elements []*meta.Element, wk *worker) (*reorgInfo, error) {
 	var (
 		element *meta.Element
 		start   kv.Key
@@ -628,7 +628,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elem
 		} else {
 			tb = tbl.(table.PhysicalTable)
 		}
-		start, end, err = getTableRange(d, tb, ver.Ver, job.Priority)
+		start, end, err = getTableRange(ctx, d, tb, ver.Ver, job.Priority)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -691,7 +691,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elem
 	return &info, nil
 }
 
-func getReorgInfoFromPartitions(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, partitionIDs []int64, elements []*meta.Element, wk *worker) (*reorgInfo, error) {
+func getReorgInfoFromPartitions(ctx *jobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, partitionIDs []int64, elements []*meta.Element, wk *worker) (*reorgInfo, error) {
 	var (
 		element *meta.Element
 		start   kv.Key
@@ -708,7 +708,7 @@ func getReorgInfoFromPartitions(d *ddlCtx, t *meta.Meta, job *model.Job, tbl tab
 		}
 		pid = partitionIDs[0]
 		tb := tbl.(table.PartitionedTable).GetPartition(pid)
-		start, end, err = getTableRange(d, tb, ver.Ver, job.Priority)
+		start, end, err = getTableRange(ctx, d, tb, ver.Ver, job.Priority)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

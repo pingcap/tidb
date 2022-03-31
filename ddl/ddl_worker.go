@@ -102,11 +102,11 @@ type worker struct {
 	lockSeqNum      bool
 
 	*ddlCtx
-	ddlJobCache
+	*jobContext
 }
 
-// ddlJobCache is a cache for each DDL job.
-type ddlJobCache struct {
+// jobContext is the ddl job execution context.
+type jobContext struct {
 	// below fields are cache for top sql
 	ddlJobCtx          context.Context
 	cacheSQL           string
@@ -124,7 +124,7 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRan
 		tp:       tp,
 		ddlJobCh: make(chan struct{}, 1),
 		ctx:      ctx,
-		ddlJobCache: ddlJobCache{
+		jobContext: &jobContext{
 			ddlJobCtx:          context.Background(),
 			cacheSQL:           "",
 			cacheNormalizedSQL: "",
@@ -154,9 +154,9 @@ func (w *worker) typeStr() string {
 	return str
 }
 
-func (w *worker) getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elements []*meta.Element) (*reorgInfo, error) {
+func (w *worker) getReorgInfo(ctx *jobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elements []*meta.Element) (*reorgInfo, error) {
 	//TODO: remove getReorgInfo code, after refactor the old ddl test.
-	return getReorgInfo(d, t, job, tbl, elements, w)
+	return getReorgInfo(ctx, d, t, job, tbl, elements, w)
 }
 
 func (w *worker) String() string {
@@ -603,12 +603,14 @@ func newMetaWithQueueTp(txn kv.Transaction, tp workerType) *meta.Meta {
 	return meta.NewMeta(txn)
 }
 
-func (w *worker) setDDLLabelForTopSQL(job *model.Job) {
+func (w *jobContext) setDDLLabelForTopSQL(job *model.Job) {
 	if !topsqlstate.TopSQLEnabled() || job == nil {
+		w.cacheDigest = nil
+		w.ddlJobCtx = context.Background()
 		return
 	}
 
-	if job.Query != w.cacheSQL {
+	if job.Query != w.cacheSQL || w.cacheDigest == nil {
 		w.cacheNormalizedSQL, w.cacheDigest = parser.NormalizeDigest(job.Query)
 		w.cacheSQL = job.Query
 	}
@@ -719,7 +721,6 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}, level
 	)
 
 	w.sessForJob.SetDiskFullOpt(level)
-	w.setDDLLabelForTopSQL(job)
 	err := w.sessForJob.NewTxn(w.ctx)
 	if err != nil {
 		return err
@@ -730,7 +731,10 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}, level
 		return err
 	}
 	txn.SetDiskFullOpt(level)
-	w.setResourceGroupTaggerForTopSQL(txn)
+	w.setDDLLabelForTopSQL(job)
+	if tagger := w.getResourceGroupTaggerForTopSQL(); tagger != nil {
+		txn.SetOption(kv.ResourceGroupTagger, tagger)
+	}
 	w.sessForJob.GetSessionVars().SetInTxn(true)
 	t := meta.NewMeta(txn)
 	if job.IsDone() || job.IsRollbackDone() {
@@ -832,9 +836,9 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}, level
 	return nil
 }
 
-func (w *worker) setResourceGroupTaggerForTopSQL(txn kv.Transaction) {
+func (w *jobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
 	if !topsqlstate.TopSQLEnabled() || w.cacheDigest == nil {
-		return
+		return nil
 	}
 
 	digest := w.cacheDigest
@@ -842,7 +846,7 @@ func (w *worker) setResourceGroupTaggerForTopSQL(txn kv.Transaction) {
 		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, nil,
 			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
 	}
-	txn.SetOption(kv.ResourceGroupTagger, tikvrpc.ResourceGroupTagger(tagger))
+	return tagger
 }
 
 // handleDDLJobQueue handles DDL jobs in DDL Job queue.
@@ -880,7 +884,9 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			}
 
 			w.setDDLLabelForTopSQL(job)
-			w.setResourceGroupTaggerForTopSQL(txn)
+			if tagger := w.getResourceGroupTaggerForTopSQL(); tagger != nil {
+				txn.SetOption(kv.ResourceGroupTagger, tagger)
+			}
 			if isDone, err1 := isDependencyJobDone(t, job); err1 != nil || !isDone {
 				return errors.Trace(err1)
 			}
