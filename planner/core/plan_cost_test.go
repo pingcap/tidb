@@ -92,6 +92,11 @@ func TestNewCostInterface(t *testing.T) {
 		"select * from t use index(b) where b+200 < 1000",            // pushed down to lookup index-side
 		"select * from t use index(b) where c+200 < 1000",            // pushed down to lookup table-side
 		"select * from t use index(b) where mod(b+c, 200) < 100",     // not pushed down
+		// aggregation
+		"select /*+ hash_agg() */ count(*) from t use index(primary) where a < 200",
+		"select /*+ hash_agg() */ sum(a) from t use index(primary) where a < 200",
+		"select /*+ hash_agg() */ max(a) from t use index(primary) where a < 200",
+		"select /*+ hash_agg() */ avg(a), b from t use index(primary) where a < 200 group by b",
 	}
 
 	for _, q := range queries {
