@@ -26,12 +26,6 @@ import (
 	"database/sql"
 	"encoding/pem"
 	"fmt"
-	"github.com/pingcap/tidb/ddl/testutil"
-	ddlutil "github.com/pingcap/tidb/ddl/util"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/tikv/client-go/v2/oracle"
-	"go.uber.org/zap"
 	"math/big"
 	"net/http"
 	"os"
@@ -45,6 +39,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/testutil"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
@@ -52,9 +48,11 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/cpuprofile"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/topsql"
@@ -63,7 +61,9 @@ import (
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"go.uber.org/zap"
 )
 
 type tidbTestSuite struct {
@@ -1996,8 +1996,11 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 			if tablecodec.IsIndexKey(startKey) {
 				tid, _, _, err = tablecodec.DecodeIndexKey(startKey)
 			}
-			// since the error maybe "invalid record key", should just ignore check resource tag for this request.
-			if err == nil && tid != 0 && txnTs > startTimestamp {
+			if err != nil {
+				// since the error maybe "invalid record key", should just ignore check resource tag for this request.
+				return
+			}
+			if tid != 0 && txnTs > startTimestamp {
 				tbl, ok := ts.domain.InfoSchema().TableByID(tid)
 				if ok {
 					logutil.BgLogger().Error("FAIL-- rpc request does not set the resource tag", zap.String("req", req.Type.String()), zap.String("table", tbl.Meta().Name.O), zap.Stack("stack"))
@@ -2006,6 +2009,7 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 			}
 			return
 		} else if ddlutil.IsInternalResourceGroupTaggerForTopSQL(tag) {
+			// Ignore for internal background request.
 			return
 		}
 		sqlDigest, err := resourcegrouptag.DecodeResourceGroupTag(tag)
@@ -2307,7 +2311,7 @@ func TestTopSQLResourceTag(t *testing.T) {
 	}()
 
 	// Test case for other statements
-	cases1 := []struct {
+	cases := []struct {
 		sql     string
 		isQuery bool
 		reqs    []tikvrpc.CmdType
@@ -2332,8 +2336,8 @@ func TestTopSQLResourceTag(t *testing.T) {
 		{"alter  table test_db0.test_t0 add column c int", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit}},
 		{"drop   table test_db0.test_t0", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit}},
 		{"drop   database test_db0", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit}},
-		{"alter  table t modify column b double", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdScan}},
-		{"alter  table t add index idx2 (b,a)", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdScan}},
+		{"alter  table t modify column b double", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdScan, tikvrpc.CmdCop}},
+		{"alter  table t add index idx2 (b,a)", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdScan, tikvrpc.CmdCop}},
 		{"alter  table t drop index idx2", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit}},
 
 		// Test for transaction
@@ -2365,7 +2369,7 @@ func TestTopSQLResourceTag(t *testing.T) {
 	}
 	execFn := func(db *sql.DB) {
 		dbt := testkit.NewDBTestKit(t, db)
-		for _, ca := range cases1 {
+		for _, ca := range cases {
 			if ca.isQuery {
 				mustQuery(t, dbt, ca.sql)
 			} else {
@@ -2375,7 +2379,7 @@ func TestTopSQLResourceTag(t *testing.T) {
 	}
 	executeCaseFn(execFn)
 
-	for _, ca := range cases1 {
+	for _, ca := range cases {
 		_, digest := parser.NormalizeDigest(ca.sql)
 		tagChecker.checkReqExist(t, stmtstats.BinaryDigest(digest.Bytes()), ca.sql, ca.reqs...)
 	}

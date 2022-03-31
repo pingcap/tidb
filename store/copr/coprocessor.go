@@ -17,7 +17,6 @@ package copr
 import (
 	"context"
 	"fmt"
-	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"io"
 	"strconv"
 	"strings"
@@ -92,9 +91,6 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 	tasks, err := buildCopTasks(bo, c.store.GetRegionCache(), ranges, req, eventCb)
 	if err != nil {
 		return copErrorResponse{err}
-	}
-	if topsqlstate.TopSQLEnabled() && req.ResourceGroupTagger == nil {
-		logutil.BgLogger().Info("cop request does not set tag", zap.Stack("stack"))
 	}
 	it := &copIterator{
 		store:           c.store,

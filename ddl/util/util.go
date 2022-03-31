@@ -230,6 +230,7 @@ func IsEmulatorGCEnable() bool {
 
 var intervalResourceGroupTag = []byte{0}
 
+// GetInternalResourceGroupTaggerForTopSQL only use for testing.
 func GetInternalResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
 	tagger := func(req *tikvrpc.Request) {
 		req.ResourceGroupTag = intervalResourceGroupTag
@@ -237,6 +238,7 @@ func GetInternalResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
 	return tagger
 }
 
+// IsInternalResourceGroupTaggerForTopSQL use for testing.
 func IsInternalResourceGroupTaggerForTopSQL(tag []byte) bool {
 	return bytes.Equal(tag, intervalResourceGroupTag)
 }

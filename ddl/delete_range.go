@@ -181,6 +181,7 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 		dr.keys = dr.keys[:0]
 		err := kv.RunInNewTxn(context.Background(), dr.store, false, func(ctx context.Context, txn kv.Transaction) error {
 			if topsqlstate.TopSQLEnabled() {
+				// Only test logic will run into here, so just set a mock internal resource tagger.
 				txn.SetOption(kv.ResourceGroupTagger, util.GetInternalResourceGroupTaggerForTopSQL())
 			}
 			iter, err := txn.Iter(oldStartKey, r.EndKey)
