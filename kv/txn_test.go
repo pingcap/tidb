@@ -68,18 +68,15 @@ func TestRetryExceedCountError(t *testing.T) {
 	assert.NotNil(t, err)
 }
 
-var wrapStoreInterTxnTSTest = wrapStoreInterTxnTS
-var wrapDeleteInterTxnTSTest = wrapDeleteInterTxnTS
-
 // fmt.Println("ts0:", ts0, " ts1:", ts1, " ts2:", ts2, " ts3:", ts3, " lowLimit:", lowLimit, " minStartTS:", minStartTS, " newMinStartTS:", newMinStartTS)
 // fmt.Println("innerTxnStartTsMap:", ib.innerTxnStartTsMap)
 func TestInnerTxnStartTsBox(t *testing.T) {
 	// case1: store and delete
-	wrapStoreInterTxnTSTest(5)
+	globalInnerTxnTsBox.storeInnerTxnTS(5)
 	_, ok := globalInnerTxnTsBox.innerTxnStartTsMap[5]
 	assert.Equal(t, true, ok)
 
-	wrapDeleteInterTxnTSTest(5)
+	globalInnerTxnTsBox.deleteInnerTxnTS(5)
 	_, ok = globalInnerTxnTsBox.innerTxnStartTsMap[5]
 	assert.Equal(t, false, ok)
 
@@ -96,16 +93,16 @@ func TestInnerTxnStartTsBox(t *testing.T) {
 	lowLimit := oracle.GoTimeToLowerLimitStartTS(tm4, 24*60*60*1000)
 	minStartTS := oracle.GoTimeToTS(tm4)
 
-	wrapStoreInterTxnTSTest(ts0)
-	wrapStoreInterTxnTSTest(ts1)
-	wrapStoreInterTxnTSTest(ts2)
-	wrapStoreInterTxnTSTest(ts3)
+	globalInnerTxnTsBox.storeInnerTxnTS(ts0)
+	globalInnerTxnTsBox.storeInnerTxnTS(ts1)
+	globalInnerTxnTsBox.storeInnerTxnTS(ts2)
+	globalInnerTxnTsBox.storeInnerTxnTS(ts3)
 
 	newMinStartTS := WrapGetMinStartTs(tm4, lowLimit, minStartTS)
 	require.Equal(t, newMinStartTS, ts1)
 
-	wrapDeleteInterTxnTSTest(ts0)
-	wrapDeleteInterTxnTSTest(ts1)
-	wrapDeleteInterTxnTSTest(ts2)
-	wrapDeleteInterTxnTSTest(ts3)
+	globalInnerTxnTsBox.deleteInnerTxnTS(ts0)
+	globalInnerTxnTsBox.deleteInnerTxnTS(ts1)
+	globalInnerTxnTsBox.deleteInnerTxnTS(ts2)
+	globalInnerTxnTsBox.deleteInnerTxnTS(ts3)
 }

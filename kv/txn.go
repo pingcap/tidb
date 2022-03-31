@@ -46,23 +46,11 @@ type innerTxnStartTsBox struct {
 	innerTxnStartTsMap map[uint64]struct{}
 }
 
-// wrapStoreInterTxnTS is the entry function used to store the startTS of an internal transaction to globalInnerTxnTsBox
-// @param startTS	the startTS of the internal transaction produced by `RunInNewTxn`
-func wrapStoreInterTxnTS(startTS uint64) {
-	globalInnerTxnTsBox.storeInnerTxnTS(startTS)
-}
-
 func (ib *innerTxnStartTsBox) storeInnerTxnTS(startTS uint64) {
 	ib.innerTSLock.Lock()
 	ib.innerTxnStartTsMap[startTS] = struct{}{}
 	ib.innerTSLock.Unlock()
 
-}
-
-// wrapDeleteInterTxnTS delete the startTS from globalInnerTxnTsBox when the transaciotn is commted
-// @param startTS	the startTS of the internal transaction produced by `RunInNewTxn`
-func wrapDeleteInterTxnTS(startTS uint64) {
-	globalInnerTxnTsBox.deleteInnerTxnTS(startTS)
 }
 
 func (ib *innerTxnStartTsBox) deleteInnerTxnTS(startTS uint64) {
@@ -104,7 +92,7 @@ func PrintLongTimeInternalTxn(now time.Time, startTS uint64, runByFunction bool)
 			}
 			infoHeader := fmt.Sprintf("An internal transaction running by %s lasts long time", callerName)
 
-			logutil.BgLogger().Info(infoHeder,
+			logutil.BgLogger().Info(infoHeader,
 				zap.Duration("time", now.Sub(innerTxnStartTime)), zap.Uint64("startTS", startTS),
 				zap.Time("start time", innerTxnStartTime))
 		}
@@ -120,7 +108,7 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 	)
 
 	defer func() {
-		wrapDeleteInterTxnTS(originalTxnTS)
+		globalInnerTxnTsBox.deleteInnerTxnTS(originalTxnTS)
 	}()
 
 	for i := uint(0); i < maxRetryCnt; i++ {
@@ -133,7 +121,7 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 		// originalTxnTS is used to trace the original transaction when the function is retryable.
 		if i == 0 {
 			originalTxnTS = txn.StartTS()
-			wrapStoreInterTxnTS(originalTxnTS)
+			globalInnerTxnTsBox.storeInnerTxnTS(originalTxnTS)
 		}
 
 		err = f(ctx, txn)

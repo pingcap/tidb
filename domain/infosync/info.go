@@ -621,6 +621,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		return
 	}
 	now := oracle.GetTimeFromTS(currentVer.Ver)
+	// GCMaxWaitTime is in seconds, GCMaxWaitTime * 1000 converts it to milliseconds
 	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, variable.GCMaxWaitTime.Load()*1000)
 
 	minStartTS := oracle.GoTimeToTS(now)
