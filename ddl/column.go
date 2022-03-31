@@ -1086,7 +1086,6 @@ func (w *worker) doModifyColumnTypeWithData(
 		updateChangingObjState(changingCol, changingIdxs, model.StatePublic)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
-
 			return ver, errors.Trace(err)
 		}
 
