@@ -214,8 +214,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowBindingCacheStatus:
 		return e.fetchShowBindingCacheStatus(ctx)
 	case ast.ShowAnalyzeStatus:
-		e.fetchShowAnalyzeStatus()
-		return nil
+		return e.fetchShowAnalyzeStatus()
 	case ast.ShowRegions:
 		return e.fetchShowTableRegions()
 	case ast.ShowBuiltins:
