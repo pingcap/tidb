@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -302,16 +301,16 @@ func TestInsert(t *testing.T) {
 
 	tk.MustExec("create view v as select * from t")
 	_, err = tk.Exec("insert into v values(1,2)")
-	require.EqualError(t, err, "insert into view v is not supported now.")
+	require.EqualError(t, err, "insert into view v is not supported now")
 	_, err = tk.Exec("replace into v values(1,2)")
-	require.EqualError(t, err, "replace into view v is not supported now.")
+	require.EqualError(t, err, "replace into view v is not supported now")
 	tk.MustExec("drop view v")
 
 	tk.MustExec("create sequence seq")
 	_, err = tk.Exec("insert into seq values()")
-	require.EqualError(t, err, "insert into sequence seq is not supported now.")
+	require.EqualError(t, err, "insert into sequence seq is not supported now")
 	_, err = tk.Exec("replace into seq values()")
-	require.EqualError(t, err, "replace into sequence seq is not supported now.")
+	require.EqualError(t, err, "replace into sequence seq is not supported now")
 	tk.MustExec("drop sequence seq")
 
 	// issue 22851
@@ -950,7 +949,7 @@ func TestInsertOnDupUpdateDefault(t *testing.T) {
 	err := tk.ExecToErr("insert into t values (21,'black warlock'), (22, 'dark sloth'), (21,  'cyan song') on duplicate key update c_int = c_int + 1, c_string = concat(c_int, ':', c_string);")
 	require.True(t, kv.ErrKeyExists.Equal(err))
 	tk.MustExec("commit;")
-	tk.MustQuery("select * from t order by c_int;").Check(testutil.RowsWithSep("|", "21|silver sight", "22|gold witch", "24|gray singer"))
+	tk.MustQuery("select * from t order by c_int;").Check(testkit.RowsWithSep("|", "21|silver sight", "22|gold witch", "24|gray singer"))
 	tk.MustExec("drop table t;")
 }
 
@@ -1730,7 +1729,7 @@ func TestDelete(t *testing.T) {
 
 	tk.MustExec("create sequence seq")
 	_, err = tk.Exec("delete from seq")
-	require.EqualError(t, err, "delete sequence seq is not supported now.")
+	require.EqualError(t, err, "delete sequence seq is not supported now")
 	tk.MustExec("drop sequence seq")
 }
 

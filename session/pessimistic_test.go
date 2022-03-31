@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testutil"
 )
 
 var _ = SerialSuites(&testPessimisticSuite{})
@@ -240,7 +239,7 @@ func (s *testPessimisticSuite) TestDeadlock(c *C) {
 		expectedDeadlockInfo[0], expectedDeadlockInfo[1] = expectedDeadlockInfo[1], expectedDeadlockInfo[0]
 	}
 	res := tk1.MustQuery("select deadlock_id, try_lock_trx_id, trx_holding_lock, current_sql_digest, current_sql_digest_text from information_schema.deadlocks")
-	res.CheckAt([]int{1, 2, 3, 4}, testutil.RowsWithSep("/", expectedDeadlockInfo...))
+	res.CheckAt([]int{1, 2, 3, 4}, testkit.RowsWithSep("/", expectedDeadlockInfo...))
 	c.Assert(res.Rows()[0][0], Equals, res.Rows()[1][0])
 }
 
@@ -258,10 +257,10 @@ func (s *testPessimisticSuite) TestSingleStatementRollback(c *C) {
 	tableStart := tablecodec.GenTableRecordPrefix(tblID)
 	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 2)
 	region1Key := codec.EncodeBytes(nil, tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(1)))
-	region1, _ := s.cluster.GetRegionByKey(region1Key)
+	region1, _, _ := s.cluster.GetRegionByKey(region1Key)
 	region1ID := region1.Id
 	region2Key := codec.EncodeBytes(nil, tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(3)))
-	region2, _ := s.cluster.GetRegionByKey(region2Key)
+	region2, _, _ := s.cluster.GetRegionByKey(region2Key)
 	region2ID := region2.Id
 
 	syncCh := make(chan bool)
@@ -733,6 +732,10 @@ func (s *testPessimisticSuite) TestInnodbLockWaitTimeout(c *C) {
 	tk2.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 3"))
 	tk2.MustExec("set innodb_lock_wait_timeout = 2")
 	tk2.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 2"))
+	// to check whether it will set to innodb_lock_wait_timeout to max value
+	tk2.MustExec("set innodb_lock_wait_timeout = 3602")
+	tk2.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 3600"))
+	tk2.MustExec("set innodb_lock_wait_timeout = 2")
 
 	tk3 := testkit.NewTestKitWithInit(c, s.store)
 	tk3.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 3"))
@@ -2465,6 +2468,7 @@ func (s *testPessimisticSuite) TestIssue21498(c *C) {
 		tk.MustQuery("select * from t s, t t1 where s.v = 23 and s.id = t1.id").Check(testkit.Rows("2 23 200 2 23 200"))
 		tk.MustQuery("select * from t s, t t1 where s.v = 24 and s.id = t1.id").Check(testkit.Rows())
 		tk.MustQuery("select * from t s, t t1 where s.v = 23 and s.id = t1.id for update").Check(testkit.Rows())
+		// TODO: Do the same with Partitioned Table!!! Since this query leads to two columns in SelectLocExec.tblID2Handle!!!
 		tk.MustQuery("select * from t s, t t1 where s.v = 24 and s.id = t1.id for update").Check(testkit.Rows("2 24 200 2 24 200"))
 		tk.MustExec("delete from t where v = 24")
 		tk.CheckExecResult(1, 0)

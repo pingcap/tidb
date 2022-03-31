@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -230,39 +229,43 @@ func TestSelectClusterTable(t *testing.T) {
 	slowLogFileName := "tidb-slow.log"
 	prepareSlowLogfile(t, slowLogFileName)
 	defer func() { require.NoError(t, os.Remove(slowLogFileName)) }()
-	for i := 0; i < 2; i++ {
-		tk.MustExec("use information_schema")
-		tk.MustExec(fmt.Sprintf("set @@tidb_enable_streaming=%d", i))
-		tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
-		tk.MustExec("set time_zone = '+08:00';")
-		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("2"))
-		tk.MustQuery("select time from `CLUSTER_SLOW_QUERY` where time='2019-02-12 19:33:56.571953'").Check(testutil.RowsWithSep("|", "2019-02-12 19:33:56.571953"))
-		tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
-		tk.MustQuery("select * from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(fmt.Sprintf(":10080 1 root 127.0.0.1 <nil> Query 9223372036 %s <nil>  0 0 ", "")))
-		tk.MustQuery("select query_time, conn_id from `CLUSTER_SLOW_QUERY` order by time limit 1").Check(testkit.Rows("4.895492 6"))
-		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1", "1"))
-		tk.MustQuery("select digest, count(*) from `CLUSTER_SLOW_QUERY` group by digest order by digest").Check(testkit.Rows("124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc 1", "42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
-		tk.MustQuery(`select length(query) as l,time from information_schema.cluster_slow_query where time > "2019-02-12 19:33:56" order by abs(l) desc limit 10;`).Check(testkit.Rows("21 2019-02-12 19:33:56.571953"))
-		tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` where time > now() group by digest").Check(testkit.Rows())
-		re := tk.MustQuery("select * from `CLUSTER_statements_summary`")
-		require.NotNil(t, re)
-		require.Greater(t, len(re.Rows()), 0)
-		// Test for TiDB issue 14915.
-		re = tk.MustQuery("select sum(exec_count*avg_mem) from cluster_statements_summary_history group by schema_name,digest,digest_text;")
-		require.NotNil(t, re)
-		require.Greater(t, len(re.Rows()), 0)
-		tk.MustQuery("select * from `CLUSTER_statements_summary_history`")
-		require.NotNil(t, re)
-		require.Greater(t, len(re.Rows()), 0)
-		tk.MustExec("set @@global.tidb_enable_stmt_summary=0")
-		re = tk.MustQuery("select * from `CLUSTER_statements_summary`")
-		require.NotNil(t, re)
-		require.Equal(t, 0, len(re.Rows()))
-		tk.MustQuery("select * from `CLUSTER_statements_summary_history`")
-		require.NotNil(t, re)
-		require.Equal(t, 0, len(re.Rows()))
-	}
 
+	tk.MustExec("use information_schema")
+	tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
+	tk.MustExec("set time_zone = '+08:00';")
+	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("2"))
+	tk.MustQuery("select time from `CLUSTER_SLOW_QUERY` where time='2019-02-12 19:33:56.571953'").Check(testkit.RowsWithSep("|", "2019-02-12 19:33:56.571953"))
+	tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
+	// skip instance and host column because it now includes the TCP socket details (unstable)
+	tk.MustQuery("select id, user, db, command, time, state, info, digest, mem, disk, txnstart from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(fmt.Sprintf("1 root <nil> Query 9223372036 %s <nil>  0 0 ", "")))
+	tk.MustQuery("select query_time, conn_id from `CLUSTER_SLOW_QUERY` order by time limit 1").Check(testkit.Rows("4.895492 6"))
+	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1", "1"))
+	tk.MustQuery("select digest, count(*) from `CLUSTER_SLOW_QUERY` group by digest order by digest").Check(testkit.Rows("124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc 1", "42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
+	tk.MustQuery(`select length(query) as l,time from information_schema.cluster_slow_query where time > "2019-02-12 19:33:56" order by abs(l) desc limit 10;`).Check(testkit.Rows("21 2019-02-12 19:33:56.571953"))
+	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` where time > now() group by digest").Check(testkit.Rows())
+	re := tk.MustQuery("select * from `CLUSTER_statements_summary`")
+	require.NotNil(t, re)
+	require.Greater(t, len(re.Rows()), 0)
+	re = tk.MustQuery("select * from `CLUSTER_statements_summary` where table_names REGEXP '\\binformation_schema\\.'")
+	require.NotNil(t, re)
+	require.Equal(t, len(re.Rows()), 0)
+	re = tk.MustQuery("select * from `CLUSTER_statements_summary` where table_names REGEXP 'information_schema\\.'")
+	require.NotNil(t, re)
+	require.Greater(t, len(re.Rows()), 0)
+	// Test for TiDB issue 14915.
+	re = tk.MustQuery("select sum(exec_count*avg_mem) from cluster_statements_summary_history group by schema_name,digest,digest_text;")
+	require.NotNil(t, re)
+	require.Greater(t, len(re.Rows()), 0)
+	tk.MustQuery("select * from `CLUSTER_statements_summary_history`")
+	require.NotNil(t, re)
+	require.Greater(t, len(re.Rows()), 0)
+	tk.MustExec("set @@global.tidb_enable_stmt_summary=0")
+	re = tk.MustQuery("select * from `CLUSTER_statements_summary`")
+	require.NotNil(t, re)
+	require.Equal(t, 0, len(re.Rows()))
+	tk.MustQuery("select * from `CLUSTER_statements_summary_history`")
+	require.NotNil(t, re)
+	require.Equal(t, 0, len(re.Rows()))
 }
 
 func SubTestSelectClusterTablePrivilege(t *testing.T) {
@@ -415,20 +418,30 @@ func TestStmtSummaryHistoryTableWithUserTimezone(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec("set time_zone = '+08:00';")
 	tk.MustExec("select sleep(0.1);")
-	r := tk.MustQuery("select FIRST_SEEN, LAST_SEEN from INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY order by LAST_SEEN limit 1;")
+	r := tk.MustQuery("select FIRST_SEEN, LAST_SEEN, SUMMARY_BEGIN_TIME, SUMMARY_END_TIME from INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY order by LAST_SEEN limit 1;")
 	date8First, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][0].(string))
 	require.NoError(t, err)
 	date8Last, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][1].(string))
 	require.NoError(t, err)
+	date8Begin, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][2].(string))
+	require.NoError(t, err)
+	date8End, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][3].(string))
+	require.NoError(t, err)
 	tk.MustExec("set time_zone = '+01:00';")
-	r = tk.MustQuery("select FIRST_SEEN, LAST_SEEN from INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY order by LAST_SEEN limit 1;")
+	r = tk.MustQuery("select FIRST_SEEN, LAST_SEEN, SUMMARY_BEGIN_TIME, SUMMARY_END_TIME from INFORMATION_SCHEMA.STATEMENTS_SUMMARY_HISTORY order by LAST_SEEN limit 1;")
 	date1First, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][0].(string))
 	require.NoError(t, err)
 	date1Last, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][1].(string))
 	require.NoError(t, err)
+	date1Begin, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][2].(string))
+	require.NoError(t, err)
+	date1End, err := time.Parse("2006-01-02 15:04:05", r.Rows()[0][3].(string))
+	require.NoError(t, err)
 
 	require.Less(t, date1First.Unix(), date8First.Unix())
 	require.Less(t, date1Last.Unix(), date8Last.Unix())
+	require.Less(t, date1Begin.Unix(), date8Begin.Unix())
+	require.Less(t, date1End.Unix(), date8End.Unix())
 }
 
 func TestStmtSummaryHistoryTable(t *testing.T) {

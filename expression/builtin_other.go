@@ -85,7 +85,8 @@ type inFunctionClass struct {
 }
 
 func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
-	if err := c.verifyArgs(args); err != nil {
+	args, err = c.verifyArgs(ctx, args)
+	if err != nil {
 		return nil, err
 	}
 	argTps := make([]types.EvalType, len(args))
@@ -154,6 +155,27 @@ func (c *inFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		sig.setPbCode(tipb.ScalarFuncSig_InJson)
 	}
 	return sig, nil
+}
+
+func (c *inFunctionClass) verifyArgs(ctx sessionctx.Context, args []Expression) ([]Expression, error) {
+	columnType := args[0].GetType()
+	validatedArgs := make([]Expression, 0, len(args))
+	for _, arg := range args {
+		if constant, ok := arg.(*Constant); ok {
+			switch {
+			case columnType.Tp == mysql.TypeBit && constant.Value.Kind() == types.KindInt64:
+				if constant.Value.GetInt64() < 0 {
+					if MaybeOverOptimized4PlanCache(ctx, args) {
+						ctx.GetSessionVars().StmtCtx.SkipPlanCache = true
+					}
+					continue
+				}
+			}
+		}
+		validatedArgs = append(validatedArgs, arg)
+	}
+	err := c.baseFunctionClass.verifyArgs(validatedArgs)
+	return validatedArgs, err
 }
 
 // nolint:structcheck

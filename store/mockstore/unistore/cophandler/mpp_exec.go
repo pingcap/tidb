@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -118,9 +119,13 @@ type tableScanExec struct {
 	chk    *chunk.Chunk
 	result chan scanResult
 	done   chan struct{}
+	wg     util.WaitGroupWrapper
 
 	decoder *rowcodec.ChunkDecoder
 	desc    bool
+
+	// if ExtraPhysTblIDCol is requested, fill in the physical table id in this column position
+	physTblIDColIdx *int
 }
 
 func (e *tableScanExec) SkipValue() bool { return false }
@@ -134,6 +139,10 @@ func (e *tableScanExec) Process(key, value []byte) error {
 	err = e.decoder.DecodeToChunk(value, handle, e.chk)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if e.physTblIDColIdx != nil {
+		tblID := tablecodec.DecodeTableID(key)
+		e.chk.AppendInt64(*e.physTblIDColIdx, tblID)
 	}
 	e.rowCnt++
 
@@ -166,7 +175,7 @@ func (e *tableScanExec) open() error {
 	e.chk = chunk.NewChunkWithCapacity(e.fieldTypes, DefaultBatchSize)
 	e.result = make(chan scanResult, 1)
 	e.done = make(chan struct{})
-	go func() {
+	e.wg.Run(func() {
 		// close the channel when done scanning, so that next() will got nil chunk
 		defer close(e.result)
 		for i, ran := range e.kvRanges {
@@ -195,7 +204,7 @@ func (e *tableScanExec) open() error {
 			}
 			return
 		}
-	}()
+	})
 
 	return nil
 }
@@ -214,6 +223,7 @@ func (e *tableScanExec) stop() error {
 	if e.done != nil {
 		close(e.done)
 	}
+	e.wg.Wait()
 	return nil
 }
 
@@ -238,6 +248,9 @@ type indexScanExec struct {
 	colInfos   []rowcodec.ColInfo
 	numIdxCols int
 	hdlStatus  tablecodec.HandleStatus
+
+	// if ExtraPhysTblIDCol is requested, fill in the physical table id in this column position
+	physTblIDColIdx *int
 }
 
 func (e *indexScanExec) SkipValue() bool { return false }
@@ -271,6 +284,10 @@ func (e *indexScanExec) Process(key, value []byte) error {
 				return errors.Trace(err)
 			}
 		}
+	}
+	if e.physTblIDColIdx != nil {
+		tblID := tablecodec.DecodeTableID(key)
+		e.chk.AppendInt64(*e.physTblIDColIdx, tblID)
 	}
 	if e.chk.IsFull() {
 		e.chunks = append(e.chunks, e.chk)

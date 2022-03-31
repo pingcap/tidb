@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/stretchr/testify/require"
 )
 
@@ -228,17 +229,17 @@ func TestJoinRestore(t *testing.T) {
 		//{"(select a from t) t1 join t t2, t3;", "((SELECT `a` FROM `t`) AS `t1` JOIN `t` AS `t2`) JOIN `t3`"},
 	}
 	testChangedCases := []NodeRestoreTestCase{
-		{"(a al left join b bl on al.a1 > bl.b1) join (a ar right join b br on ar.a1 > br.b1)", "((`a` AS `al` LEFT JOIN `b` AS `bl` ON `al`.`a1`>`bl`.`b1`) JOIN `b` AS `br`) LEFT JOIN `a` AS `ar` ON `ar`.`a1`>`br`.`b1`"},
+		{"(a al left join b bl on al.a1 > bl.b1) join (a ar right join b br on ar.a1 > br.b1)", "(`a` AS `al` LEFT JOIN `b` AS `bl` ON `al`.`a1`>`bl`.`b1`) JOIN (`a` AS `ar` RIGHT JOIN `b` AS `br` ON `ar`.`a1`>`br`.`b1`)"},
 		{"a al left join b bl on al.a1 > bl.b1, a ar right join b br on ar.a1 > br.b1", "(`a` AS `al` LEFT JOIN `b` AS `bl` ON `al`.`a1`>`bl`.`b1`) JOIN (`a` AS `ar` RIGHT JOIN `b` AS `br` ON `ar`.`a1`>`br`.`b1`)"},
-		{"t1 join (t2 right join t3 on t2.a > t3.a join (t4 right join t5 on t4.a > t5.a))", "(((`t1` JOIN `t2`) RIGHT JOIN `t3` ON `t2`.`a`>`t3`.`a`) JOIN `t5`) LEFT JOIN `t4` ON `t4`.`a`>`t5`.`a`"},
+		{"t1 join (t2 right join t3 on t2.a > t3.a join (t4 right join t5 on t4.a > t5.a))", "`t1` JOIN ((`t2` RIGHT JOIN `t3` ON `t2`.`a`>`t3`.`a`) JOIN (`t4` RIGHT JOIN `t5` ON `t4`.`a`>`t5`.`a`))"},
 		{"t1 join t2 right join t3 on t2.a=t3.a", "(`t1` JOIN `t2`) RIGHT JOIN `t3` ON `t2`.`a`=`t3`.`a`"},
-		{"t1 join (t2 right join t3 on t2.a=t3.a)", "(`t1` JOIN `t3`) LEFT JOIN `t2` ON `t2`.`a`=`t3`.`a`"},
+		{"t1 join (t2 right join t3 on t2.a=t3.a)", "`t1` JOIN (`t2` RIGHT JOIN `t3` ON `t2`.`a`=`t3`.`a`)"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).From.TableRefs
 	}
 	runNodeRestoreTest(t, testCases, "select * from %s", extractNodeFunc)
-	runNodeRestoreTestWithFlagsStmtChange(t, testChangedCases, "select * from %s", extractNodeFunc)
+	runNodeRestoreTestWithFlagsStmtChange(t, testChangedCases, "select * from %s", extractNodeFunc, format.DefaultRestoreFlags)
 }
 
 func TestTableRefsClauseRestore(t *testing.T) {

@@ -24,13 +24,14 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	// Set the correct when it runs inside docker.
+	// Set the correct value when it runs inside docker.
 	_ "go.uber.org/automaxprocs"
 	"golang.org/x/tools/cover"
 )
@@ -48,6 +49,9 @@ ut list
 // list test cases of a single package
 ut list $package
 
+// list test cases that match a pattern
+ut list $package 'r:$regex'
+
 // run all tests
 ut run
 
@@ -56,6 +60,9 @@ ut run $package
 
 // run test cases of a single package
 ut run $package $test
+
+// run test cases that match a pattern
+ut run $package 'r:$regex'
 
 // build all test package
 ut build
@@ -78,6 +85,10 @@ type task struct {
 	old  bool
 }
 
+func (t *task) String() string {
+	return t.pkg + " " + t.test
+}
+
 var P int
 var workDir string
 
@@ -97,7 +108,7 @@ func cmdList(args ...string) bool {
 	}
 
 	// list test case of a single package
-	if len(args) == 1 {
+	if len(args) == 1 || len(args) == 2 {
 		pkg := args[0]
 		pkgs = filter(pkgs, func(s string) bool { return s == pkg })
 		if len(pkgs) != 1 {
@@ -125,6 +136,15 @@ func cmdList(args ...string) bool {
 			fmt.Println("list test cases for package error", err)
 			return false
 		}
+
+		if len(args) == 2 {
+			res, err = filterTestCases(res, args[1])
+			if err != nil {
+				fmt.Println("filter test cases error", err)
+				return false
+			}
+		}
+
 		for _, x := range res {
 			fmt.Println(x.test)
 		}
@@ -245,15 +265,43 @@ func cmdRun(args ...string) bool {
 			fmt.Println("list test cases error", err)
 			return false
 		}
-		// filter the test case to run
+		tasks, err = filterTestCases(tasks, args[1])
+		if err != nil {
+			fmt.Println("filter test cases error", err)
+			return false
+		}
+	}
+
+	if except != "" {
+		list, err := parseCaseListFromFile(except)
+		if err != nil {
+			fmt.Println("parse --except file error", err)
+			return false
+		}
 		tmp := tasks[:0]
 		for _, task := range tasks {
-			if strings.Contains(task.test, args[1]) {
+			if _, ok := list[task.String()]; !ok {
 				tmp = append(tmp, task)
 			}
 		}
 		tasks = tmp
 	}
+
+	if only != "" {
+		list, err := parseCaseListFromFile(only)
+		if err != nil {
+			fmt.Println("parse --only file error", err)
+			return false
+		}
+		tmp := tasks[:0]
+		for _, task := range tasks {
+			if _, ok := list[task.String()]; ok {
+				tmp = append(tmp, task)
+			}
+		}
+		tasks = tmp
+	}
+
 	fmt.Printf("building task finish, count=%d, takes=%v\n", len(tasks), time.Since(start))
 
 	taskCh := make(chan task, 100)
@@ -298,6 +346,25 @@ func cmdRun(args ...string) bool {
 	return true
 }
 
+func parseCaseListFromFile(fileName string) (map[string]struct{}, error) {
+	f, err := os.Open(fileName)
+	if err != nil {
+		return nil, withTrace(err)
+	}
+	defer f.Close()
+
+	ret := make(map[string]struct{})
+	s := bufio.NewScanner(f)
+	for s.Scan() {
+		line := s.Bytes()
+		ret[string(line)] = struct{}{}
+	}
+	if err := s.Err(); err != nil {
+		return nil, withTrace(err)
+	}
+	return ret, nil
+}
+
 // handleFlags strip the '--flag xxx' from the command line os.Args
 // Example of the os.Args changes
 // Before: ut run sessoin TestXXX --coverprofile xxx --junitfile yyy
@@ -334,9 +401,14 @@ var junitfile string
 var coverprofile string
 var coverFileTempDir string
 
+var except string
+var only string
+
 func main() {
 	junitfile = handleFlags("--junitfile")
 	coverprofile = handleFlags("--coverprofile")
+	except = handleFlags("--except")
+	only = handleFlags("--only")
 	if coverprofile != "" {
 		var err error
 		coverFileTempDir, err = os.MkdirTemp(os.TempDir(), "cov")
@@ -356,14 +428,13 @@ func main() {
 		fmt.Println("os.Getwd() error", err)
 	}
 
+	var isSucceed bool
 	if len(os.Args) == 1 {
 		// run all tests
-		cmdRun()
-		return
+		isSucceed = cmdRun()
 	}
 
 	if len(os.Args) >= 2 {
-		var isSucceed bool
 		switch os.Args[1] {
 		case "list":
 			isSucceed = cmdList(os.Args[2:]...)
@@ -374,9 +445,9 @@ func main() {
 		default:
 			isSucceed = usage()
 		}
-		if !isSucceed {
-			os.Exit(1)
-		}
+	}
+	if !isSucceed {
+		os.Exit(1)
 	}
 }
 
@@ -550,6 +621,29 @@ func listTestCases(pkg string, tasks []task) ([]task, error) {
 	return tasks, nil
 }
 
+func filterTestCases(tasks []task, arg1 string) ([]task, error) {
+	if strings.HasPrefix(arg1, "r:") {
+		r, err := regexp.Compile(arg1[2:])
+		if err != nil {
+			return nil, err
+		}
+		tmp := tasks[:0]
+		for _, task := range tasks {
+			if r.MatchString(task.test) {
+				tmp = append(tmp, task)
+			}
+		}
+		return tmp, nil
+	}
+	tmp := tasks[:0]
+	for _, task := range tasks {
+		if strings.Contains(task.test, arg1) {
+			tmp = append(tmp, task)
+		}
+	}
+	return tmp, nil
+}
+
 func listPackages() ([]string, error) {
 	cmd := exec.Command("go", "list", "./...")
 	ss, err := cmdToLines(cmd)
@@ -581,8 +675,8 @@ func (n *numa) worker(wg *sync.WaitGroup, ch chan task) {
 	for t := range ch {
 		res := n.runTestCase(t.pkg, t.test, t.old)
 		if res.Failure != nil {
-			fmt.Println("[FAIL] ", t.pkg, t.test, t.old)
-			fmt.Fprintf(os.Stderr, "%s", res.Failure.Contents)
+			fmt.Println("[FAIL] ", t.pkg, t.test)
+			fmt.Fprintf(os.Stderr, "err=%s\n%s", res.err, res.Failure.Contents)
 			n.Fail = true
 		}
 		n.results = append(n.results, res)
@@ -591,7 +685,8 @@ func (n *numa) worker(wg *sync.WaitGroup, ch chan task) {
 
 type testResult struct {
 	JUnitTestCase
-	d time.Duration
+	d   time.Duration
+	err error
 }
 
 func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
@@ -601,19 +696,39 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
 			Name:      fn,
 		},
 	}
-	cmd := n.testCommand(pkg, fn, old)
-	cmd.Dir = path.Join(workDir, pkg)
-	// Combine the test case output, so the run result for failed cases can be displayed.
+
 	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
-	start := time.Now()
-	if err := cmd.Run(); err != nil {
+	var err error
+	var start time.Time
+	for i := 0; i < 3; i++ {
+		cmd := n.testCommand(pkg, fn, old)
+		cmd.Dir = path.Join(workDir, pkg)
+		// Combine the test case output, so the run result for failed cases can be displayed.
+		cmd.Stdout = &buf
+		cmd.Stderr = &buf
+
+		start = time.Now()
+		err = cmd.Run()
+		if err != nil {
+			if _, ok := err.(*exec.ExitError); ok {
+				// Retry 3 times to get rid of the weird error:
+				// err=signal: segmentation fault (core dumped)
+				if err.Error() == "signal: segmentation fault (core dumped)" {
+					buf.Reset()
+					continue
+				}
+			}
+		}
+		break
+	}
+	if err != nil {
 		res.Failure = &JUnitFailure{
 			Message:  "Failed",
 			Contents: buf.String(),
 		}
+		res.err = err
 	}
+
 	res.d = time.Since(start)
 	res.Time = formatDurationAsSeconds(res.d)
 	return res

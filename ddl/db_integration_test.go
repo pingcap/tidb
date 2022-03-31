@@ -27,30 +27,28 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/testutils"
 )
 
 func TestNoZeroDateMode(t *testing.T) {
@@ -816,7 +814,7 @@ func TestChangingTableCharset(t *testing.T) {
 	tk.MustExec("create table t(a varchar(10)) charset utf8")
 	tk.MustExec("alter table t convert to charset utf8mb4;")
 	checkCharset := func(chs, coll string) {
-		tbl := testkit.TestGetTableByName(t, tk.Session(), "test", "t")
+		tbl := external.GetTableByName(t, tk, "test", "t")
 		require.NotNil(t, tbl)
 		require.Equal(t, chs, tbl.Meta().Charset)
 		require.Equal(t, coll, tbl.Meta().Collate)
@@ -846,7 +844,7 @@ func TestChangingTableCharset(t *testing.T) {
 	// Mock table info with charset is "". Old TiDB maybe create table with charset is "".
 	db, ok := dom.InfoSchema().SchemaByName(model.NewCIStr("test"))
 	require.True(t, ok)
-	tbl := testkit.TestGetTableByName(t, tk.Session(), "test", "t")
+	tbl := external.GetTableByName(t, tk, "test", "t")
 	tblInfo := tbl.Meta().Clone()
 	tblInfo.Charset = ""
 	tblInfo.Collate = ""
@@ -868,7 +866,7 @@ func TestChangingTableCharset(t *testing.T) {
 
 	// check table charset is ""
 	tk.MustExec("alter table t add column b varchar(10);") //  load latest schema.
-	tbl = testkit.TestGetTableByName(t, tk.Session(), "test", "t")
+	tbl = external.GetTableByName(t, tk, "test", "t")
 	require.NotNil(t, tbl)
 	require.Equal(t, "", tbl.Meta().Charset)
 	require.Equal(t, "", tbl.Meta().Collate)
@@ -877,14 +875,14 @@ func TestChangingTableCharset(t *testing.T) {
 	checkCharset(charset.CharsetUTF8MB4, charset.CollationUTF8MB4)
 
 	// Test when column charset is "".
-	tbl = testkit.TestGetTableByName(t, tk.Session(), "test", "t")
+	tbl = external.GetTableByName(t, tk, "test", "t")
 	tblInfo = tbl.Meta().Clone()
 	tblInfo.Columns[0].Charset = ""
 	tblInfo.Columns[0].Collate = ""
 	updateTableInfo(tblInfo)
 	// check table charset is ""
 	tk.MustExec("alter table t drop column b;") //  load latest schema.
-	tbl = testkit.TestGetTableByName(t, tk.Session(), "test", "t")
+	tbl = external.GetTableByName(t, tk, "test", "t")
 	require.NotNil(t, tbl)
 	require.Equal(t, "", tbl.Meta().Columns[0].Charset)
 	require.Equal(t, "", tbl.Meta().Columns[0].Collate)
@@ -894,7 +892,7 @@ func TestChangingTableCharset(t *testing.T) {
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t (a blob) character set utf8;")
 	tk.MustExec("alter table t charset=utf8mb4 collate=utf8mb4_bin;")
-	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` blob DEFAULT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
@@ -903,7 +901,7 @@ func TestChangingTableCharset(t *testing.T) {
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a varchar(5) charset utf8) charset utf8")
 	tk.MustExec("alter table t charset utf8mb4")
-	tbl = testkit.TestGetTableByName(t, tk.Session(), "test", "t")
+	tbl = external.GetTableByName(t, tk, "test", "t")
 	require.NotNil(t, tbl)
 	require.Equal(t, "utf8mb4", tbl.Meta().Charset)
 	require.Equal(t, "utf8mb4_bin", tbl.Meta().Collate)
@@ -916,7 +914,7 @@ func TestChangingTableCharset(t *testing.T) {
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a varchar(5) charset utf8 collate utf8_unicode_ci) charset utf8 collate utf8_unicode_ci")
 	tk.MustExec("alter table t collate utf8_general_ci")
-	tbl = testkit.TestGetTableByName(t, tk.Session(), "test", "t")
+	tbl = external.GetTableByName(t, tk, "test", "t")
 	require.NotNil(t, tbl)
 	require.Equal(t, "utf8", tbl.Meta().Charset)
 	require.Equal(t, "utf8_general_ci", tbl.Meta().Collate)
@@ -1090,7 +1088,7 @@ func TestCaseInsensitiveCharsetAndCollate(t *testing.T) {
 
 	db, ok := dom.InfoSchema().SchemaByName(model.NewCIStr("test_charset_collate"))
 	require.True(t, ok)
-	tbl := testkit.TestGetTableByName(t, tk.Session(), "test_charset_collate", "t5")
+	tbl := external.GetTableByName(t, tk, "test_charset_collate", "t5")
 	tblInfo := tbl.Meta().Clone()
 	require.Equal(t, "utf8mb4", tblInfo.Charset)
 	require.Equal(t, "utf8mb4", tblInfo.Columns[0].Charset)
@@ -1115,7 +1113,7 @@ func TestCaseInsensitiveCharsetAndCollate(t *testing.T) {
 	updateTableInfo(tblInfo)
 	tk.MustExec("alter table t5 add column b varchar(10);") //  load latest schema.
 
-	tblInfo = testkit.TestGetTableByName(t, tk.Session(), "test_charset_collate", "t5").Meta()
+	tblInfo = external.GetTableByName(t, tk, "test_charset_collate", "t5").Meta()
 	require.Equal(t, "utf8mb4", tblInfo.Charset)
 	require.Equal(t, "utf8mb4", tblInfo.Columns[0].Charset)
 
@@ -1126,7 +1124,7 @@ func TestCaseInsensitiveCharsetAndCollate(t *testing.T) {
 	updateTableInfo(tblInfo)
 	tk.MustExec("alter table t5 add column c varchar(10);") //  load latest schema.
 
-	tblInfo = testkit.TestGetTableByName(t, tk.Session(), "test_charset_collate", "t5").Meta()
+	tblInfo = external.GetTableByName(t, tk, "test_charset_collate", "t5").Meta()
 	require.Equal(t, "UTF8MB4", tblInfo.Charset)
 	require.Equal(t, "utf8mb4", tblInfo.Columns[0].Charset)
 }
@@ -1230,86 +1228,20 @@ func TestBitDefaultValue(t *testing.T) {
 	);`)
 }
 
-func TestBackwardCompatibility(t *testing.T) {
-	var cluster testutils.Cluster
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
-		mockstore.BootstrapWithSingleStore(c)
-		cluster = c
-	}))
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database if not exists test_backward_compatibility")
-	defer tk.MustExec("drop database test_backward_compatibility")
-	tk.MustExec("use test_backward_compatibility")
-	tk.MustExec("create table t(a int primary key, b int)")
-	for i := 0; i < 200; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
+func backgroundExec(s kv.Storage, sql string, done chan error) {
+	se, err := session.CreateSession4Test(s)
+	if err != nil {
+		done <- errors.Trace(err)
+		return
 	}
-
-	// alter table t add index idx_b(b);
-	is := dom.InfoSchema()
-	schemaName := model.NewCIStr("test_backward_compatibility")
-	tableName := model.NewCIStr("t")
-	schema, ok := is.SchemaByName(schemaName)
-	require.True(t, ok)
-	tbl, err := is.TableByName(schemaName, tableName)
-	require.NoError(t, err)
-
-	// Split the table.
-	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
-	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 10)
-
-	unique := false
-	indexName := model.NewCIStr("idx_b")
-	indexPartSpecification := &ast.IndexPartSpecification{
-		Column: &ast.ColumnName{
-			Schema: schemaName,
-			Table:  tableName,
-			Name:   model.NewCIStr("b"),
-		},
-		Length: types.UnspecifiedLength,
+	defer se.Close()
+	_, err = se.Execute(context.Background(), "use test")
+	if err != nil {
+		done <- errors.Trace(err)
+		return
 	}
-	indexPartSpecifications := []*ast.IndexPartSpecification{indexPartSpecification}
-	var indexOption *ast.IndexOption
-	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tbl.Meta().ID,
-		Type:       model.ActionAddIndex,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption},
-	}
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	tt := meta.NewMeta(txn)
-	job.ID, err = tt.GenGlobalID()
-	require.NoError(t, err)
-	job.Version = 1
-	job.StartTS = txn.StartTS()
-
-	// Simulate old TiDB init the add index job, old TiDB will not init the model.Job.ReorgMeta field,
-	// if we set job.SnapshotVer here, can simulate the behavior.
-	job.SnapshotVer = txn.StartTS()
-	err = tt.EnQueueDDLJob(job)
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-	ticker := time.NewTicker(50 * time.Millisecond)
-	defer ticker.Stop()
-	for range ticker.C {
-		historyJob, err := getHistoryDDLJob(store, job.ID)
-		require.NoError(t, err)
-		if historyJob == nil {
-			continue
-		}
-		require.Nil(t, historyJob.Error)
-
-		if historyJob.IsSynced() {
-			break
-		}
-	}
-
-	// finished add index
-	tk.MustExec("admin check index t idx_b")
+	_, err = se.Execute(context.Background(), sql)
+	done <- errors.Trace(err)
 }
 
 func getHistoryDDLJob(store kv.Storage, id int64) (*model.Job, error) {
@@ -1469,6 +1401,79 @@ func TestResolveCharset(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "binary", tbl.Cols()[0].Charset)
 	require.Equal(t, "binary", tbl.Meta().Charset)
+}
+
+func TestAddColumnDefaultNow(t *testing.T) {
+	// Related Issue: https://github.com/pingcap/tidb/issues/31968
+	mockStore, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, mockStore)
+	const dateHourLength = len("yyyy-mm-dd hh:")
+
+	tk.MustExec("SET timestamp = 1000")
+	tk.MustExec("USE test")
+	tk.MustExec("DROP TABLE IF EXISTS t1")
+	tk.MustExec("CREATE TABLE t1 ( i INT )")
+	tk.MustExec("INSERT INTO t1 VALUES (1)")
+
+	// test datetime
+	tk.MustExec("ALTER TABLE t1 ADD COLUMN c4 DATETIME(6) DEFAULT NOW(6) ON UPDATE NOW(6) FIRST")
+	tk.MustExec("ALTER TABLE t1 ADD COLUMN c3 DATETIME(6) DEFAULT NOW(6) FIRST")
+
+	// test timestamp
+	tk.MustExec("ALTER TABLE t1 ADD COLUMN c2 TIMESTAMP(6) DEFAULT NOW(6) ON UPDATE NOW(6) FIRST")
+	tk.MustExec("ALTER TABLE t1 ADD COLUMN c1 TIMESTAMP(6) DEFAULT NOW(6) FIRST")
+
+	tk.MustExec("SET time_zone = 'Europe/Amsterdam'")
+	rows := tk.MustQuery("select * from t1").Sort().Rows()
+	require.Len(t, rows, 1, "Result should has only 1 row")
+	row := rows[0]
+	if c3, ok := row[0].(string); ok {
+		require.Equal(t, "19", c3[:len("19")], "The datetime should start with '19'")
+	}
+	if c4, ok := row[1].(string); ok {
+		require.Equal(t, "19", c4[:len("19")], "The datetime should start with '19'")
+	}
+
+	var amsterdamC1YMDH, shanghaiC1YMDH, amsterdamC1MS, shanghaiC1MS string
+	var amsterdamC2YMDH, shanghaiC2YMDH, amsterdamC2MS, shanghaiC2MS string
+
+	if c1, ok := row[0].(string); ok {
+		require.Equal(t, "19", c1[:len("19")], "The timestamp should start with '19'")
+
+		amsterdamC1YMDH = c1[:dateHourLength] // YMDH means "yyyy-mm-dd hh"
+		amsterdamC1MS = c1[dateHourLength:]   // MS means "mm-ss.fractional"
+	}
+	if c2, ok := row[1].(string); ok {
+		require.Equal(t, "19", c2[:len("19")], "The timestamp should start with '19'")
+
+		amsterdamC2YMDH = c2[:dateHourLength] // YMDH means "yyyy-mm-dd hh"
+		amsterdamC2MS = c2[dateHourLength:]   // MS means "mm-ss.fractional"
+	}
+
+	tk.MustExec("SET time_zone = 'Asia/Shanghai'")
+	rows = tk.MustQuery("select * from t1").Sort().Rows()
+	require.Len(t, rows, 1, "Result should has only 1 row")
+	row = rows[0]
+
+	if c1, ok := row[0].(string); ok {
+		require.Equal(t, "19", c1[:len("19")], "The timestamp should start with '19'")
+
+		shanghaiC1YMDH = c1[:dateHourLength] // YMDH means "yyyy-mm-dd hh"
+		shanghaiC1MS = c1[dateHourLength:]   // MS means "mm-ss.fractional"
+	}
+	if c2, ok := row[1].(string); ok {
+		require.Equal(t, "19", c2[:len("19")], "The timestamp should start with '19'")
+
+		shanghaiC2YMDH = c2[:dateHourLength] // YMDH means "yyyy-mm-dd hh"
+		shanghaiC2MS = c2[dateHourLength:]   // MS means "mm-ss.fractional"
+	}
+
+	require.True(t, amsterdamC1YMDH != shanghaiC1YMDH, "The timestamp before 'hour' should not be equivalent")
+	require.True(t, amsterdamC2YMDH != shanghaiC2YMDH, "The timestamp before 'hour' should not be equivalent")
+	require.Equal(t, amsterdamC1MS, shanghaiC1MS, "The timestamp after 'hour' should be equivalent")
+	require.Equal(t, amsterdamC2MS, shanghaiC2MS, "The timestamp after 'hour' should be equivalent")
+
 }
 
 func TestAddColumnTooMany(t *testing.T) {
@@ -1743,7 +1748,7 @@ func assertWarningExec(tk *testkit.TestKit, t *testing.T, sql string, expectedWa
 }
 
 func assertAlterWarnExec(tk *testkit.TestKit, t *testing.T, sql string) {
-	assertWarningExec(tk, t, sql, ddl.ErrAlterOperationNotSupported)
+	assertWarningExec(tk, t, sql, dbterror.ErrAlterOperationNotSupported)
 }
 
 func TestAlterAlgorithm(t *testing.T) {
@@ -1851,8 +1856,8 @@ func TestFulltextIndexIgnore(t *testing.T) {
 	tk.MustExec("drop table if exists t_ft")
 	defer tk.MustExec("drop table if exists t_ft")
 	// Make sure that creating and altering to add a fulltext key gives the correct warning
-	assertWarningExec(tk, t, "create table t_ft (a text, fulltext key (a))", ddl.ErrTableCantHandleFt)
-	assertWarningExec(tk, t, "alter table t_ft add fulltext key (a)", ddl.ErrTableCantHandleFt)
+	assertWarningExec(tk, t, "create table t_ft (a text, fulltext key (a))", dbterror.ErrTableCantHandleFt)
+	assertWarningExec(tk, t, "alter table t_ft add fulltext key (a)", dbterror.ErrTableCantHandleFt)
 
 	// Make sure table t_ft still has no indexes even after it was created and altered
 	r := tk.MustQuery("show index from t_ft")
@@ -1881,7 +1886,7 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 
 	// Mock old version table info with column charset is utf8.
 	db, ok := domain.GetDomain(tk.Session()).InfoSchema().SchemaByName(model.NewCIStr("test"))
-	tbl := testkit.TestGetTableByName(t, tk.Session(), "test", "t")
+	tbl := external.GetTableByName(t, tk, "test", "t")
 	tblInfo := tbl.Meta().Clone()
 	tblInfo.Version = model.TableInfoVersion0
 	tblInfo.Columns[0].Version = model.ColumnInfoVersion0
@@ -1919,7 +1924,7 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// Mock old version table info with table and column charset is utf8.
-	tbl = testkit.TestGetTableByName(t, tk.Session(), "test", "t")
+	tbl = external.GetTableByName(t, tk, "test", "t")
 	tblInfo = tbl.Meta().Clone()
 	tblInfo.Charset = charset.CharsetUTF8
 	tblInfo.Collate = charset.CollationUTF8
@@ -1953,7 +1958,7 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 		conf.TreatOldVersionUTF8AsUTF8MB4 = true
 	})
 	tk.MustExec("alter table t modify column a varchar(10) character set utf8mb4") //  change column charset.
-	tbl = testkit.TestGetTableByName(t, tk.Session(), "test", "t")
+	tbl = external.GetTableByName(t, tk, "test", "t")
 	require.Equal(t, charset.CharsetUTF8MB4, tbl.Meta().Columns[0].Charset)
 	require.Equal(t, charset.CollationUTF8MB4, tbl.Meta().Columns[0].Collate)
 	require.Equal(t, model.ColumnInfoVersion0, tbl.Meta().Columns[0].Version)
@@ -1964,13 +1969,13 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	// Test for change column should not modify the column version.
 	tk.MustExec("alter table t change column a a varchar(20)") //  change column.
-	tbl = testkit.TestGetTableByName(t, tk.Session(), "test", "t")
+	tbl = external.GetTableByName(t, tk, "test", "t")
 	require.Equal(t, charset.CharsetUTF8MB4, tbl.Meta().Columns[0].Charset)
 	require.Equal(t, charset.CollationUTF8MB4, tbl.Meta().Columns[0].Collate)
 	require.Equal(t, model.ColumnInfoVersion0, tbl.Meta().Columns[0].Version)
 
 	// Test for v2.1.5 and v2.1.6 that table version is 1 but column version is 0.
-	tbl = testkit.TestGetTableByName(t, tk.Session(), "test", "t")
+	tbl = external.GetTableByName(t, tk, "test", "t")
 	tblInfo = tbl.Meta().Clone()
 	tblInfo.Charset = charset.CharsetUTF8
 	tblInfo.Collate = charset.CollationUTF8
@@ -2022,7 +2027,7 @@ func TestDefaultValueIsString(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int default b'1');")
-	tbl := testkit.TestGetTableByName(t, tk.Session(), "test", "t")
+	tbl := external.GetTableByName(t, tk, "test", "t")
 	require.Equal(t, "1", tbl.Meta().Columns[0].DefaultValue)
 }
 
@@ -2146,6 +2151,10 @@ func TestDropAutoIncrementIndex(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int(11) not null auto_increment key, b int(11), c bigint, unique key (a, b, c))")
+	tk.MustExec("alter table t1 drop index a")
 
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int auto_increment, unique key (a))")
@@ -2860,13 +2869,13 @@ func TestEnumAndSetDefaultValue(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a enum(0x61, 'b') not null default 0x61, b set(0x61, 'b') not null default 0x61) character set latin1")
-	tbl := testkit.TestGetTableByName(t, tk.Session(), "test", "t")
+	tbl := external.GetTableByName(t, tk, "test", "t")
 	require.Equal(t, "a", tbl.Meta().Columns[0].DefaultValue)
 	require.Equal(t, "a", tbl.Meta().Columns[1].DefaultValue)
 
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t (a enum(0x61, 'b') not null default 0x61, b set(0x61, 'b') not null default 0x61) character set utf8mb4")
-	tbl = testkit.TestGetTableByName(t, tk.Session(), "test", "t")
+	tbl = external.GetTableByName(t, tk, "test", "t")
 	require.Equal(t, "a", tbl.Meta().Columns[0].DefaultValue)
 	require.Equal(t, "a", tbl.Meta().Columns[1].DefaultValue)
 }
@@ -3307,7 +3316,7 @@ func TestDropTemporaryTable(t *testing.T) {
 	tk.MustExec("create temporary table if not exists b_table_local_and_normal (id int)")
 	tk.MustQuery("select * from b_table_local_and_normal").Check(testkit.Rows())
 	tk.MustExec("drop table b_table_local_and_normal")
-	sequenceTable := testkit.TestGetTableByName(t, tk.Session(), "test", "b_table_local_and_normal")
+	sequenceTable := external.GetTableByName(t, tk, "test", "b_table_local_and_normal")
 	require.Equal(t, model.TempTableNone, sequenceTable.Meta().TempTableType)
 	tk.MustExec("drop table if exists b_table_local_and_normal")
 	_, err = tk.Exec("select * from b_table_local_and_normal")
@@ -3851,14 +3860,39 @@ func TestInvalidPartitionNameWhenCreateTable(t *testing.T) {
 
 	_, err := tk.Exec("create table t(a int) partition by range (a) (partition p0 values less than (0), partition `p1 ` values less than (3))")
 	require.Error(t, err)
-	require.Truef(t, terror.ErrorEqual(err, ddl.ErrWrongPartitionName), "err %v", err)
+	require.Truef(t, terror.ErrorEqual(err, dbterror.ErrWrongPartitionName), "err %v", err)
 
 	_, err = tk.Exec("create table t(a int) partition by range (a) (partition `` values less than (0), partition `p1` values less than (3))")
 	require.Error(t, err)
-	require.Truef(t, terror.ErrorEqual(err, ddl.ErrWrongPartitionName), "err %v", err)
+	require.Truef(t, terror.ErrorEqual(err, dbterror.ErrWrongPartitionName), "err %v", err)
 
 	tk.MustExec("create table t(a int) partition by range (a) (partition `p0` values less than (0), partition `p1` values less than (3))")
 	_, err = tk.Exec("alter table t add partition (partition `p2 ` values less than (5))")
 	require.Error(t, err)
-	require.Truef(t, terror.ErrorEqual(err, ddl.ErrWrongPartitionName), "err %v", err)
+	require.Truef(t, terror.ErrorEqual(err, dbterror.ErrWrongPartitionName), "err %v", err)
+}
+
+func TestDDLLastInfo(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test;`)
+	tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.seq_num')").Check(testkit.Rows("\"\" 0"))
+	tk.MustExec("create table t(a int)")
+	firstSequence := 0
+	res := tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.seq_num')")
+	require.Len(t, res.Rows(), 1)
+	require.Equal(t, "\"create table t(a int)\"", res.Rows()[0][0])
+	var err error
+	firstSequence, err = strconv.Atoi(fmt.Sprintf("%v", res.Rows()[0][1]))
+	require.NoError(t, err)
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec(`use test;`)
+	tk.MustExec("create table t2(a int)")
+	tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.seq_num')").Check(testkit.Rows(fmt.Sprintf("\"create table t2(a int)\" %d", firstSequence+1)))
+
+	tk.MustExec("drop table t, t2")
+	tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.query'), json_extract(@@tidb_last_ddl_info, '$.seq_num')").Check(testkit.Rows(fmt.Sprintf("\"drop table t, t2\" %d", firstSequence+3)))
 }
