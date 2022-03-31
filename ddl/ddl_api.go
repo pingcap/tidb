@@ -1123,7 +1123,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 	case mysql.TypeEnum:
 		val, err := getEnumDefaultValue(v, col)
 		return val, false, err
-	case mysql.TypeDuration:
+	case mysql.TypeDuration, mysql.TypeDate:
 		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldType); err != nil {
 			return "", false, errors.Trace(err)
 		}
@@ -6955,7 +6955,7 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 	// The operation shouldn't fail in most cases, and if it does, return the error directly.
 	// This DML and the following DDL is not atomic, that's not a problem.
 	_, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(),
-		"insert ignore into mysql.table_cache_meta values (%?, 'NONE', 0, 0)", t.Meta().ID)
+		"replace into mysql.table_cache_meta values (%?, 'NONE', 0, 0)", t.Meta().ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
