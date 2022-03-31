@@ -601,13 +601,15 @@ const (
 	version84 = 84
 	// version85 updates bindings with status 'using' in mysql.bind_info table to 'enabled' status
 	version85 = 85
-	// version86 adds the mysql.analyze_jobs table
+	// version86 update mysql.tables_priv from SET('Select','Insert','Update') to SET('Select','Insert','Update','References').
 	version86 = 86
+	// version87 adds the mysql.analyze_jobs table
+	version87 = 87
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version86
+var currentBootstrapVersion int64 = version87
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -697,6 +699,7 @@ var (
 		upgradeToVer84,
 		upgradeToVer85,
 		upgradeToVer86,
+		upgradeToVer87,
 	}
 )
 
@@ -1775,6 +1778,13 @@ func upgradeToVer85(s Session, ver int64) {
 
 func upgradeToVer86(s Session, ver int64) {
 	if ver >= version86 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY COLUMN Column_priv SET('Select','Insert','Update','References')")
+}
+
+func upgradeToVer87(s Session, ver int64) {
+	if ver >= version87 {
 		return
 	}
 	doReentrantDDL(s, CreateAnalyzeJobs)
