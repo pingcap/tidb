@@ -136,10 +136,9 @@ type StatsReaderContext struct {
 }
 
 // SubLoadWorker loads hist data for each column
-func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitWg *sync.WaitGroup) {
+func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}) {
 	readerCtx := &StatsReaderContext{}
 	defer func() {
-		exitWg.Done()
 		logutil.BgLogger().Info("SubLoadWorker exited.")
 		if readerCtx.reader != nil {
 			err := h.releaseStatsReader(readerCtx.reader, ctx.(sqlexec.RestrictedSQLExecutor))
