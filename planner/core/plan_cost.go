@@ -63,7 +63,22 @@ func (p *PhysicalIndexLookUpReader) CalPlanCost(taskType property.TaskType) floa
 }
 
 func (p *PhysicalIndexReader) CalPlanCost(taskType property.TaskType) float64 {
-	panic("TODO")
+	if p.planCostInit {
+		return p.planCost
+	}
+	p.planCost = p.indexPlan.CalPlanCost(property.CopSingleReadTaskType) // accumulate child's cost
+
+	// accumulate net-cost
+	rowCount := p.indexPlan.StatsCount()
+	netFactor := p.ctx.GetSessionVars().GetNetworkFactor(nil)
+	rowWidth := p.indexPlan.CalRowWidth()
+	p.planCost += rowCount * rowWidth * netFactor
+
+	// consider concurrency
+	copIterWorkers := float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
+	p.planCost /= copIterWorkers
+	p.planCostInit = true
+	return p.planCost
 }
 
 func (p *PhysicalTableReader) CalPlanCost(taskType property.TaskType) float64 {
