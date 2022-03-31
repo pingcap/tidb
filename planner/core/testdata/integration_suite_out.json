@@ -4564,10 +4564,10 @@
         "Plan": [
           "HashAgg 1.00 root  funcs:count(Column#17)->Column#14",
           "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(Column#18)->Column#17",
-          "      └─Projection 10000.00 batchCop[tiflash]  plus(test.t.id, 1)->Column#18",
-          "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(Column#18)->Column#17",
+          "      └─Projection 10000.00 mpp[tiflash]  plus(test.t.id, 1)->Column#18",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -4575,9 +4575,9 @@
         "Plan": [
           "HashAgg 1.00 root  funcs:count(Column#16)->Column#14",
           "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:count(1)->Column#16",
-          "      └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#16",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -4585,10 +4585,10 @@
         "Plan": [
           "HashAgg 1.00 root  funcs:sum(Column#17)->Column#14",
           "└─TableReader 1.00 root  data:ExchangeSender",
-          "  └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 batchCop[tiflash]  funcs:sum(Column#18)->Column#17",
-          "      └─Projection 10000.00 batchCop[tiflash]  cast(plus(test.t.id, 1), decimal(20,0) BINARY)->Column#18",
-          "        └─TableFullScan 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#18)->Column#17",
+          "      └─Projection 10000.00 mpp[tiflash]  cast(plus(test.t.id, 1), decimal(20,0) BINARY)->Column#18",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -4690,26 +4690,26 @@
         "SQL": "desc format = 'brief' select A.id from t as A where exists (select 1 from t where t.id=A.id)",
         "Plan": [
           "TableReader 7992.00 root  data:ExchangeSender",
-          "└─ExchangeSender 7992.00 cop[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 7992.00 cop[tiflash]  semi join, equal:[eq(test.t.id, test.t.id)]",
-          "    ├─ExchangeReceiver(Build) 9990.00 cop[tiflash]  ",
-          "    │ └─ExchangeSender 9990.00 cop[tiflash]  ExchangeType: Broadcast",
-          "    │   └─Selection 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "    │     └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
-          "    └─Selection(Probe) 9990.00 cop[tiflash]  not(isnull(test.t.id))",
-          "      └─TableFullScan 10000.00 cop[tiflash] table:A keep order:false, stats:pseudo"
+          "└─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 7992.00 mpp[tiflash]  semi join, equal:[eq(test.t.id, test.t.id)]",
+          "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
+          "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
+          "      └─TableFullScan 10000.00 mpp[tiflash] table:A keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "desc format = 'brief' select A.id from t as A where not exists  (select 1 from t where t.id=A.id)",
         "Plan": [
           "TableReader 8000.00 root  data:ExchangeSender",
-          "└─ExchangeSender 8000.00 cop[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 8000.00 cop[tiflash]  anti semi join, equal:[eq(test.t.id, test.t.id)]",
-          "    ├─ExchangeReceiver(Build) 10000.00 cop[tiflash]  ",
-          "    │ └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: Broadcast",
-          "    │   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
-          "    └─TableFullScan(Probe) 10000.00 cop[tiflash] table:A keep order:false, stats:pseudo"
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin 8000.00 mpp[tiflash]  anti semi join, equal:[eq(test.t.id, test.t.id)]",
+          "    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "    │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "    └─TableFullScan(Probe) 10000.00 mpp[tiflash] table:A keep order:false, stats:pseudo"
         ]
       },
       {
