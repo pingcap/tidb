@@ -2042,9 +2042,10 @@ func TestDefaultColumnWithRand(t *testing.T) {
 	tk.MustExec("create table t (a int(10) default rand())")
 	tk.MustExec("create table t1 (c int, c1 double default rand())")
 	tk.MustExec("create table t2 (c int, c1 double default rand(1))")
-	tk.MustExec("insert into t1(c) values (1),(2),(3)")
-
 	tk.MustExec("alter table t add column b int(10) default rand(2)")
+	tk.MustExec("insert into t(c) values (1),(2),(3)")
+	tk.MustExec("insert into t1(c) values (1),(2),(3)")
+	tk.MustExec("insert into t2(c) values (1),(2),(3)")
 }
 
 func TestChangingDBCharset(t *testing.T) {
