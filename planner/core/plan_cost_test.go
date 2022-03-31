@@ -60,6 +60,12 @@ func TestNewCostInterface(t *testing.T) {
 		"select c, d from t use index(cd) where c in (1, 2, 3, 100, 200, 300, 1000)",
 		"select c, d from t use index(cd) where c = 200 and d < 200",
 		"select c, d from t use index(cd) where c in (1, 2, 3, 100, 200, 300, 1000) and d = 200",
+		"select d from t use index(cd)",
+		"select d from t use index(cd) where c < 200",
+		"select d from t use index(cd) where c = 200",
+		"select d from t use index(cd) where c in (1, 2, 3, 100, 200, 300, 1000)",
+		"select d from t use index(cd) where c = 200 and d < 200",
+		"select d from t use index(cd) where c in (1, 2, 3, 100, 200, 300, 1000) and d = 200",
 	}
 
 	for _, q := range queries {
