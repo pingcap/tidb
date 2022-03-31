@@ -1176,11 +1176,11 @@ func replaceOldIndexes(tblInfo *model.TableInfo, changingIdxs []*model.IndexInfo
 	}
 }
 
-func updateNewIndexesCols(tblInfo *model.TableInfo, old, new model.CIStr, newOffset int) {
+func updateNewIndexesCols(tblInfo *model.TableInfo, oldName, newName model.CIStr, newOffset int) {
 	for _, idx := range tblInfo.Indices {
 		for i, col := range idx.Columns {
-			if col.Name.L == old.L {
-				idx.Columns[i].Name = new
+			if col.Name.L == oldName.L {
+				idx.Columns[i].Name = newName
 				idx.Columns[i].Offset = newOffset
 				break
 			}
@@ -2052,16 +2052,6 @@ func genChangingIndexUniqueName(tblInfo *model.TableInfo, idxInfo *model.IndexIn
 		newIndexLowerName = fmt.Sprintf("%s_%d", strings.ToLower(newIndexNamePrefix), suffix)
 	}
 	return fmt.Sprintf("%s_%d", newIndexNamePrefix, suffix)
-}
-
-func getChangingColumnOriginName(changingColName string) string {
-	colName := strings.ToLower(strings.TrimPrefix(changingColName, changingColumnPrefix))
-	// Since the unique colName may contain the suffix number (columnName_num), better trim the suffix.
-	var pos int
-	if pos = strings.LastIndex(colName, "_"); pos == -1 {
-		return colName
-	}
-	return colName[:pos]
 }
 
 func getChangingIndexOriginName(changingIdx *model.IndexInfo) string {
