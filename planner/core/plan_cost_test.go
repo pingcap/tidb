@@ -84,6 +84,14 @@ func TestNewCostInterface(t *testing.T) {
 		"select * from t use index(cd) where c = 200 and d < 200",
 		"select * from t use index(cd) where c in (1, 2, 3, 100, 200, 300, 1000) and d = 200",
 		// TODO: index-merge
+		// selection + projection
+		"select * from t use index(primary) where a+200 < 1000",      // pushed down to table-scan
+		"select * from t use index(primary) where mod(a, 200) < 100", // not pushed down
+		"select b from t use index(b) where b+200 < 1000",            // pushed down to index-scan
+		"select b from t use index(b) where mod(a, 200) < 100",       // not pushed down
+		"select * from t use index(b) where b+200 < 1000",            // pushed down to lookup index-side
+		"select * from t use index(b) where c+200 < 1000",            // pushed down to lookup table-side
+		"select * from t use index(b) where mod(b+c, 200) < 100",     // not pushed down
 	}
 
 	for _, q := range queries {
