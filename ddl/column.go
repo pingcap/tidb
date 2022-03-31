@@ -1010,7 +1010,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			return ver, errors.Trace(err)
 		}
 
-		reorgInfo, err := w.getReorgInfo(w.jobContext, d, t, job, tbl, BuildElements(changingCol, changingIdxs))
+		reorgInfo, err := w.getReorgInfo(d, t, job, tbl, BuildElements(changingCol, changingIdxs))
 
 		if err != nil || reorgInfo.first {
 			// If we run reorg firstly, we should update the job snapshot version

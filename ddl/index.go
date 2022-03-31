@@ -561,7 +561,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
 		var reorgInfo *reorgInfo
 		if variable.AllowConcurrencyDDL.Load() {
-			reorgInfo, err = w.getReorgInfo(w.jobContext, d, t, job, tbl, elements)
+			reorgInfo, err = w.getReorgInfo(d, t, job, tbl, elements)
 		} else {
 			reorgInfo, err = getReorgInfo(w.jobContext, d, t, job, tbl, elements, nil)
 		}

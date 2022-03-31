@@ -154,9 +154,9 @@ func (w *worker) typeStr() string {
 	return str
 }
 
-func (w *worker) getReorgInfo(ctx *jobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elements []*meta.Element) (*reorgInfo, error) {
+func (w *worker) getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elements []*meta.Element) (*reorgInfo, error) {
 	//TODO: remove getReorgInfo code, after refactor the old ddl test.
-	return getReorgInfo(ctx, d, t, job, tbl, elements, w)
+	return getReorgInfo(w.jobContext, d, t, job, tbl, elements, w)
 }
 
 func (w *worker) String() string {
