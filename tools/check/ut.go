@@ -18,7 +18,6 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/xml"
-	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -697,24 +696,25 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
 			Name:      fn,
 		},
 	}
-	cmd := n.testCommand(pkg, fn, old)
-	cmd.Dir = path.Join(workDir, pkg)
-	// Combine the test case output, so the run result for failed cases can be displayed.
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
 
-	var start time.Time
+	var buf bytes.Buffer
 	var err error
+	var start time.Time
 	for i := 0; i < 3; i++ {
+		cmd := n.testCommand(pkg, fn, old)
+		cmd.Dir = path.Join(workDir, pkg)
+		// Combine the test case output, so the run result for failed cases can be displayed.
+		cmd.Stdout = &buf
+		cmd.Stderr = &buf
+
 		start = time.Now()
 		err = cmd.Run()
 		if err != nil {
-			var exitErr exec.ExitError
-			if errors.Is(err, &exitErr) {
+			if _, ok := err.(*exec.ExitError); ok {
 				// Retry 3 times to get rid of the weird error:
 				// err=signal: segmentation fault (core dumped)
 				if err.Error() == "signal: segmentation fault (core dumped)" {
+					buf.Reset()
 					continue
 				}
 			}
