@@ -102,7 +102,7 @@ func PrintLongTimeInternalTxn(now time.Time, startTS uint64, runByFunction bool)
 			if runByFunction {
 				callerName = "RunInNewTxn"
 			}
-			infoHeder := fmt.Sprintf("An internal transaction running by %s lasts long time", callerName)
+			infoHeader := fmt.Sprintf("An internal transaction running by %s lasts long time", callerName)
 
 			logutil.BgLogger().Info(infoHeder,
 				zap.Duration("time", now.Sub(innerTxnStartTime)), zap.Uint64("startTS", startTS),
