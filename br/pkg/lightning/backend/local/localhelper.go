@@ -59,10 +59,32 @@ var (
 	splitRetryTimes = 8
 )
 
-// TODO remove this file and use br internal functions
-// This File include region split & scatter operation just like br.
+// SplitAndScatterRegionInBatches splits&scatter regions in batches.
+// Too many split&scatter requests may put a lot of pressure on TiKV and PD.
+func (local *local) SplitAndScatterRegionInBatches(
+	ctx context.Context,
+	ranges []Range,
+	tableInfo *checkpoints.TidbTableInfo,
+	needSplit bool,
+	regionSplitSize int64,
+	batchCnt int,
+) error {
+	for i := 0; i < len(ranges); i += batchCnt {
+		batch := ranges[i:]
+		if len(batch) > batchCnt {
+			batch = batch[:batchCnt]
+		}
+		if err := local.SplitAndScatterRegionByRanges(ctx, batch, tableInfo, needSplit, regionSplitSize); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+// SplitAndScatterRegionByRanges include region split & scatter operation just like br.
 // we can simply call br function, but we need to change some function signature of br
 // When the ranges total size is small, we can skip the split to avoid generate empty regions.
+// TODO: remove this file and use br internal functions
 func (local *local) SplitAndScatterRegionByRanges(
 	ctx context.Context,
 	ranges []Range,
@@ -428,9 +450,15 @@ func (local *local) waitForScatterRegion(ctx context.Context, regionInfo *split.
 	for i := 0; i < split.ScatterWaitMaxRetryTimes; i++ {
 		ok, err := local.isScatterRegionFinished(ctx, regionID)
 		if err != nil {
-			log.L().Warn("scatter region failed: do not have the region",
-				logutil.Region(regionInfo.Region))
-			return
+			log.L().Warn(
+				"wait for scatter region failed, will scatter again",
+				logutil.Region(regionInfo.Region),
+				zap.Error(err),
+			)
+			if err := local.splitCli.ScatterRegion(ctx, regionInfo); err != nil {
+				log.L().Warn("scatter region failed", zap.Error(err))
+			}
+			continue
 		}
 		if ok {
 			break
@@ -462,9 +490,18 @@ func (local *local) isScatterRegionFinished(ctx context.Context, regionID uint64
 		return false, errors.Errorf("get operator error: %s", respErr.GetType())
 	}
 	// If the current operator of the region is not 'scatter-region', we could assume
-	// that 'scatter-operator' has finished or timeout
-	ok := string(resp.GetDesc()) != "scatter-region" || resp.GetStatus() != pdpb.OperatorStatus_RUNNING
-	return ok, nil
+	// that 'scatter-operator' has finished.
+	if string(resp.GetDesc()) != "scatter-region" {
+		return true, nil
+	}
+	switch resp.GetStatus() {
+	case pdpb.OperatorStatus_RUNNING:
+		return false, nil
+	case pdpb.OperatorStatus_SUCCESS:
+		return true, nil
+	default:
+		return false, errors.Errorf("operator status is %v", resp.GetStatus())
+	}
 }
 
 func getSplitKeysByRanges(ranges []Range, regions []*split.RegionInfo) map[uint64][][]byte {
