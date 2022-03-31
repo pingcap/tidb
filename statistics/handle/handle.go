@@ -526,11 +526,6 @@ func (h *Handle) updateStatsCache(newCache statsCache) (updated bool) {
 	return
 }
 
-//initMemoryUsage calc total memory usage of statsCache and set statsCache.memUsage
-//should be called after the tables and their stats are initilazed
-func (sc statsCache) initMemoryUsage() {
-}
-
 // LoadNeededHistograms will load histograms for those needed columns.
 func (h *Handle) LoadNeededHistograms() (err error) {
 	cols := statistics.HistogramNeededColumns.AllCols()

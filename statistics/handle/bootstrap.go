@@ -153,6 +153,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *stat
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			table.Columns[hist.ID] = col
 		}
+		cache.CalculateTableCost(tblID)
 	}
 }
 
@@ -415,7 +416,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cache.initMemoryUsage()
+	cache.CalculateCost()
 	h.updateStatsCache(cache)
 	return nil
 }
