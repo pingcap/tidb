@@ -310,7 +310,24 @@ func (p *PhysicalTopN) CalPlanCost(taskType property.TaskType) float64 {
 	p.planCost += p.GetCost(p.children[0].StatsCount(), taskType == property.RootTaskType)
 	p.planCostInit = true
 	return p.planCost
+}
 
+// ============================== PointGet ==============================
+
+func (p *BatchPointGetPlan) CalPlanCost(taskType property.TaskType) float64 {
+	return 0
+}
+
+func (p *BatchPointGetPlan) CalRowWidth() float64 {
+	panic("TODO")
+}
+
+func (p *PointGetPlan) CalRowWidth() float64 {
+	panic("TODO")
+}
+
+func (p *PointGetPlan) CalPlanCost(taskType property.TaskType) float64 {
+	return 0
 }
 
 // ============================== Others ==============================
@@ -333,13 +350,5 @@ func (p *PhysicalExchangeReceiver) CalPlanCost(taskType property.TaskType) float
 }
 
 func (p *PhysicalExchangeSender) CalPlanCost(taskType property.TaskType) float64 {
-	panic("TODO")
-}
-
-func (p *BatchPointGetPlan) CalRowWidth() float64 {
-	panic("TODO")
-}
-
-func (p *PointGetPlan) CalRowWidth() float64 {
 	panic("TODO")
 }
