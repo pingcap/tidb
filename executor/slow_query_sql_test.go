@@ -15,6 +15,7 @@
 package executor_test
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"testing"
@@ -61,6 +62,7 @@ func TestSlowQuerySensitiveQuery(t *testing.T) {
 	}()
 	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
 
+	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
 	tk.MustExec("set tidb_slow_log_threshold=0;")
 	tk.MustExec("drop user if exists user_sensitive;")
 	tk.MustExec("create user user_sensitive identified by '123456789';")
@@ -96,6 +98,7 @@ func TestSlowQueryPrepared(t *testing.T) {
 	}()
 	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
 
+	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
 	tk.MustExec("set tidb_slow_log_threshold=0;")
 	tk.MustExec(`prepare mystmt1 from 'select sleep(?), 1';`)
 	tk.MustExec("SET @num = 0.01;")
@@ -126,6 +129,7 @@ func TestLogSlowLogIndex(t *testing.T) {
 	})
 	require.NoError(t, logutil.InitLogger(config.GetGlobalConfig().Log.ToLogConfig()))
 
+	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, b int,index idx(a));")
 	tk.MustExec("set tidb_slow_log_threshold=0;")
@@ -163,6 +167,7 @@ select * from t;
 	}()
 	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
 
+	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
 	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time > '2020-10-16 20:08:13' and time < '2020-10-16 21:08:13'").Check(testkit.Rows("1"))
 	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time > '2019-10-13 20:08:13' and time < '2020-10-16 21:08:13'").Check(testkit.Rows("2"))
 }
