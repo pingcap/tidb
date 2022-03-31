@@ -907,3 +907,53 @@ func testGetTable(t *testing.T, dom *domain.Domain, tableID int64) table.Table {
 	require.True(t, exist)
 	return tbl
 }
+
+func TestGetDefaultValueOfColumn(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (da date default '1962-03-03 23:33:34', dt datetime default '1962-03-03'," +
+		" ti time default '2020-10-11 12:23:23', ts timestamp default '2020-10-13 12:23:23')")
+
+	tk.MustQuery("show create table t1").Check(testkit.RowsWithSep("|", ""+
+		"t1 CREATE TABLE `t1` (\n"+
+		"  `da` date DEFAULT '1962-03-03',\n"+
+		"  `dt` datetime DEFAULT '1962-03-03 00:00:00',\n"+
+		"  `ti` time DEFAULT '12:23:23',\n"+
+		"  `ts` timestamp DEFAULT '2020-10-13 12:23:23'\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("insert into t1 values()")
+
+	tk.MustQuery("select * from t1").Check(testkit.RowsWithSep("|", ""+
+		"1962-03-03 1962-03-03 00:00:00 12:23:23 2020-10-13 12:23:23"))
+
+	tk.MustExec("alter table t1 add column da1 date default '2020-03-27 20:20:20 123456'")
+
+	tk.MustQuery("show create table t1").Check(testkit.RowsWithSep("|", ""+
+		"t1 CREATE TABLE `t1` (\n"+
+		"  `da` date DEFAULT '1962-03-03',\n"+
+		"  `dt` datetime DEFAULT '1962-03-03 00:00:00',\n"+
+		"  `ti` time DEFAULT '12:23:23',\n"+
+		"  `ts` timestamp DEFAULT '2020-10-13 12:23:23',\n"+
+		"  `da1` date DEFAULT '2020-03-27'\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustQuery("select * from t1").Check(testkit.RowsWithSep("|", ""+
+		"1962-03-03 1962-03-03 00:00:00 12:23:23 2020-10-13 12:23:23 2020-03-27"))
+
+	tk.MustExec("alter table t1 change ts da2 date default '2020-10-10 20:20:20'")
+
+	tk.MustQuery("show create table t1").Check(testkit.RowsWithSep("|", ""+
+		"t1 CREATE TABLE `t1` (\n"+
+		"  `da` date DEFAULT '1962-03-03',\n"+
+		"  `dt` datetime DEFAULT '1962-03-03 00:00:00',\n"+
+		"  `ti` time DEFAULT '12:23:23',\n"+
+		"  `da2` date DEFAULT '2020-10-10',\n"+
+		"  `da1` date DEFAULT '2020-03-27'\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustQuery("select * from t1").Check(testkit.RowsWithSep("|", ""+
+		"1962-03-03 1962-03-03 00:00:00 12:23:23 2020-10-13 2020-03-27"))
+}
