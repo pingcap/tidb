@@ -204,7 +204,7 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, store kv.Storage, t
 		go func() {
 			start := time.Now()
 			mb, startTS, totalSize, err := c.loadDataFromOriginalTable(store)
-			metrics.LoadTableCacheDurationHistogram.Observe(float64(time.Since(start).Seconds()))
+			metrics.LoadTableCacheDurationHistogram.Observe(time.Since(start).Seconds())
 			if err != nil {
 				log.Info("load data from table fail", zap.Error(err))
 				return
