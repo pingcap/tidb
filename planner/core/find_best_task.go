@@ -283,7 +283,6 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 			if curTask.plan().CalPlanCost(getTaskType(curTask)) < bestTask.plan().CalPlanCost(getTaskType(bestTask)) || (bestTask.invalid() && !curTask.invalid()) {
 				bestTask = curTask
 			}
-			continue
 		} else {
 			if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
 				bestTask = curTask
