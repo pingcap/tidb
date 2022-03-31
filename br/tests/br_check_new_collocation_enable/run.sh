@@ -55,9 +55,9 @@ echo "Restart cluster with new_collation_enable=false"
 start_services --tidb-cfg $cur/config/new_collation_enable_false.toml
 
 # restore db from v4.0.8 version backup
-echo "restore start ... without --skip-collaction-check=true"
+echo "restore start ... without --check-new-collations-enable=false"
 restore_fail=0
-error_str="NewCollactionEnable not found in backupmeta"
+error_str="NewCollationEnable not found in backupmeta"
 test_log="new_collotion_enable_test.log"
 unset BR_LOG_TO_TERM
 run_br restore db --db $DB -s "local://$cur/${DB}" --pd $PD_ADDR --log-file $test_log || restore_fail=1
@@ -74,10 +74,10 @@ fi
 
 rm -rf "$test_log"
 
-echo "restore start ... with --skip-collaction-check=true"
-warn_str="skip check NewCollactionEnable currently"
+echo "restore start ... with --check-new-collations-enable=false"
+warn_str="skip check NewCollationEnable currently"
 unset BR_LOG_TO_TERM
-run_br restore db --db $DB -s "local://$cur/${DB}" --pd $PD_ADDR --log-file $test_log --skip-collaction-check=true
+run_br restore db --db $DB -s "local://$cur/${DB}" --pd $PD_ADDR --log-file $test_log --check-new-collations-enable=false
 if ! grep -i "$warn_str" $test_log; then
     echo "${warn_str} not found in log"
     echo "TEST: [$TEST_NAME] test restore failed!"
