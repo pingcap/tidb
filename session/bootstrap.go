@@ -583,6 +583,8 @@ const (
 	version84 = 84
 	// version85 updates bindings with status 'using' in mysql.bind_info table to 'enabled' status
 	version85 = 85
+	// version86 update mysql.tables_priv from SET('Select','Insert','Update') to SET('Select','Insert','Update','References').
+	version86 = 86
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
@@ -676,6 +678,7 @@ var (
 		upgradeToVer83,
 		upgradeToVer84,
 		upgradeToVer85,
+		upgradeToVer86,
 	}
 )
 
@@ -1750,6 +1753,13 @@ func upgradeToVer85(s Session, ver int64) {
 		return
 	}
 	mustExecute(s, fmt.Sprintf("UPDATE HIGH_PRIORITY mysql.bind_info SET status= '%s' WHERE status = '%s'", bindinfo.Enabled, bindinfo.Using))
+}
+
+func upgradeToVer86(s Session, ver int64) {
+	if ver >= version86 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY COLUMN Column_priv SET('Select','Insert','Update','References')")
 }
 
 func writeOOMAction(s Session) {
