@@ -730,7 +730,7 @@ func isElemsChangedToModifyColumn(oldElems, newElems []string) bool {
 	return false
 }
 
-type modifyColumnJobParameter struct {
+type modifyingColInfo struct {
 	newCol                *model.ColumnInfo
 	oldColName            *model.CIStr
 	modifyColumnTp        byte
@@ -740,31 +740,31 @@ type modifyColumnJobParameter struct {
 	pos                   *ast.ColumnPosition
 }
 
-func getModifyColumnInfo(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.TableInfo, *model.ColumnInfo, *modifyColumnJobParameter, error) {
-	jobParam := &modifyColumnJobParameter{pos: &ast.ColumnPosition{}}
-	err := job.DecodeArgs(&jobParam.newCol, &jobParam.oldColName, jobParam.pos, &jobParam.modifyColumnTp, &jobParam.updatedAutoRandomBits, &jobParam.changingCol, &jobParam.changingIdxs)
+func getModifyColumnInfo(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.TableInfo, *model.ColumnInfo, *modifyingColInfo, error) {
+	modifyCol := &modifyingColInfo{pos: &ast.ColumnPosition{}}
+	err := job.DecodeArgs(&modifyCol.newCol, &modifyCol.oldColName, modifyCol.pos, &modifyCol.modifyColumnTp, &modifyCol.updatedAutoRandomBits, &modifyCol.changingCol, &modifyCol.changingIdxs)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return nil, nil, nil, jobParam, errors.Trace(err)
+		return nil, nil, nil, modifyCol, errors.Trace(err)
 	}
 
 	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
-		return nil, nil, nil, jobParam, errors.Trace(err)
+		return nil, nil, nil, modifyCol, errors.Trace(err)
 	}
 
 	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
-		return nil, nil, nil, jobParam, errors.Trace(err)
+		return nil, nil, nil, modifyCol, errors.Trace(err)
 	}
 
-	oldCol := model.FindColumnInfo(tblInfo.Columns, jobParam.oldColName.L)
+	oldCol := model.FindColumnInfo(tblInfo.Columns, modifyCol.oldColName.L)
 	if oldCol == nil || oldCol.State != model.StatePublic {
 		job.State = model.JobStateCancelled
-		return nil, nil, nil, jobParam, errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(*(jobParam.oldColName), tblInfo.Name))
+		return nil, nil, nil, modifyCol, errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(*(modifyCol.oldColName), tblInfo.Name))
 	}
 
-	return dbInfo, tblInfo, oldCol, jobParam, errors.Trace(err)
+	return dbInfo, tblInfo, oldCol, modifyCol, errors.Trace(err)
 }
 
 // getOriginDefaultValueForModifyColumn gets the original default value for modifying column.
@@ -801,53 +801,53 @@ func getOriginDefaultValueForModifyColumn(d *ddlCtx, changingCol, oldCol *model.
 }
 
 func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	dbInfo, tblInfo, oldCol, jobParam, err := getModifyColumnInfo(t, job)
+	dbInfo, tblInfo, oldCol, modifyInfo, err := getModifyColumnInfo(t, job)
 	if err != nil {
 		return ver, err
 	}
 
 	if job.IsRollingback() {
 		// For those column-type-change jobs which don't reorg the data.
-		if !needChangeColumnData(oldCol, jobParam.newCol) {
-			return rollbackModifyColumnJob(t, tblInfo, job, jobParam.newCol, oldCol, jobParam.modifyColumnTp)
+		if !needChangeColumnData(oldCol, modifyInfo.newCol) {
+			return rollbackModifyColumnJob(t, tblInfo, job, modifyInfo.newCol, oldCol, modifyInfo.modifyColumnTp)
 		}
 		// For those column-type-change jobs which reorg the data.
-		return rollbackModifyColumnJobWithData(t, tblInfo, job, oldCol, jobParam)
+		return rollbackModifyColumnJobWithData(t, tblInfo, job, oldCol, modifyInfo)
 	}
 
 	// If we want to rename the column name, we need to check whether it already exists.
-	if jobParam.newCol.Name.L != jobParam.oldColName.L {
-		c := model.FindColumnInfo(tblInfo.Columns, jobParam.newCol.Name.L)
+	if modifyInfo.newCol.Name.L != modifyInfo.oldColName.L {
+		c := model.FindColumnInfo(tblInfo.Columns, modifyInfo.newCol.Name.L)
 		if c != nil {
 			job.State = model.JobStateCancelled
-			return ver, errors.Trace(infoschema.ErrColumnExists.GenWithStackByArgs(jobParam.newCol.Name))
+			return ver, errors.Trace(infoschema.ErrColumnExists.GenWithStackByArgs(modifyInfo.newCol.Name))
 		}
 	}
 
 	failpoint.Inject("uninitializedOffsetAndState", func(val failpoint.Value) {
 		if val.(bool) {
-			if jobParam.newCol.State != model.StatePublic {
+			if modifyInfo.newCol.State != model.StatePublic {
 				failpoint.Return(ver, errors.New("the column state is wrong"))
 			}
 		}
 	})
 
-	err = checkAndApplyAutoRandomBits(d, t, dbInfo, tblInfo, oldCol, jobParam.newCol, jobParam.updatedAutoRandomBits)
+	err = checkAndApplyAutoRandomBits(d, t, dbInfo, tblInfo, oldCol, modifyInfo.newCol, modifyInfo.updatedAutoRandomBits)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	if !needChangeColumnData(oldCol, jobParam.newCol) {
-		return w.doModifyColumn(d, t, job, dbInfo, tblInfo, jobParam.newCol, oldCol, jobParam.pos)
+	if !needChangeColumnData(oldCol, modifyInfo.newCol) {
+		return w.doModifyColumn(d, t, job, dbInfo, tblInfo, modifyInfo.newCol, oldCol, modifyInfo.pos)
 	}
 
-	if err = isGeneratedRelatedColumn(tblInfo, jobParam.newCol, oldCol); err != nil {
+	if err = isGeneratedRelatedColumn(tblInfo, modifyInfo.newCol, oldCol); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	if jobParam.changingCol == nil {
+	if modifyInfo.changingCol == nil {
 		changingColPos := &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
 		newColName := model.NewCIStr(genChangingColumnUniqueName(tblInfo, oldCol))
 		if mysql.HasPriKeyFlag(oldCol.Flag) {
@@ -856,49 +856,49 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			return ver, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 
-		jobParam.changingCol = jobParam.newCol.Clone()
-		jobParam.changingCol.Name = newColName
-		jobParam.changingCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: oldCol.Offset}
-		originDefVal, err := getOriginDefaultValueForModifyColumn(d, jobParam.changingCol, oldCol)
+		modifyInfo.changingCol = modifyInfo.newCol.Clone()
+		modifyInfo.changingCol.Name = newColName
+		modifyInfo.changingCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: oldCol.Offset}
+		originDefVal, err := getOriginDefaultValueForModifyColumn(d, modifyInfo.changingCol, oldCol)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		if err = jobParam.changingCol.SetOriginDefaultValue(originDefVal); err != nil {
+		if err = modifyInfo.changingCol.SetOriginDefaultValue(originDefVal); err != nil {
 			return ver, errors.Trace(err)
 		}
 
-		_, _, _, err = createColumnInfo(tblInfo, jobParam.changingCol, changingColPos)
+		_, _, _, err = createColumnInfo(tblInfo, modifyInfo.changingCol, changingColPos)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 
 		idxInfos, offsets := findIndexesByColName(tblInfo.Indices, oldCol.Name.L)
-		jobParam.changingIdxs = make([]*model.IndexInfo, 0, len(idxInfos))
+		modifyInfo.changingIdxs = make([]*model.IndexInfo, 0, len(idxInfos))
 		for i, idxInfo := range idxInfos {
 			newIdxInfo := idxInfo.Clone()
 			newIdxInfo.Name = model.NewCIStr(genChangingIndexUniqueName(tblInfo, idxInfo))
 			newIdxInfo.ID = allocateIndexID(tblInfo)
 			newIdxChangingCol := newIdxInfo.Columns[offsets[i]]
 			newIdxChangingCol.Name = newColName
-			newIdxChangingCol.Offset = jobParam.changingCol.Offset
-			canPrefix := types.IsTypePrefixable(jobParam.changingCol.Tp)
-			if !canPrefix || (canPrefix && jobParam.changingCol.Flen < newIdxChangingCol.Length) {
+			newIdxChangingCol.Offset = modifyInfo.changingCol.Offset
+			canPrefix := types.IsTypePrefixable(modifyInfo.changingCol.Tp)
+			if !canPrefix || (canPrefix && modifyInfo.changingCol.Flen < newIdxChangingCol.Length) {
 				newIdxChangingCol.Length = types.UnspecifiedLength
 			}
-			jobParam.changingIdxs = append(jobParam.changingIdxs, newIdxInfo)
+			modifyInfo.changingIdxs = append(modifyInfo.changingIdxs, newIdxInfo)
 		}
-		tblInfo.Indices = append(tblInfo.Indices, jobParam.changingIdxs...)
+		tblInfo.Indices = append(tblInfo.Indices, modifyInfo.changingIdxs...)
 	} else {
-		tblInfo.Columns[len(tblInfo.Columns)-1] = jobParam.changingCol
-		copy(tblInfo.Indices[len(tblInfo.Indices)-len(jobParam.changingIdxs):], jobParam.changingIdxs)
+		tblInfo.Columns[len(tblInfo.Columns)-1] = modifyInfo.changingCol
+		copy(tblInfo.Indices[len(tblInfo.Indices)-len(modifyInfo.changingIdxs):], modifyInfo.changingIdxs)
 	}
 
-	return w.doModifyColumnTypeWithData(d, t, job, dbInfo, tblInfo, jobParam.changingCol, oldCol, jobParam.newCol.Name, jobParam.pos, jobParam.changingIdxs)
+	return w.doModifyColumnTypeWithData(d, t, job, dbInfo, tblInfo, modifyInfo.changingCol, oldCol, modifyInfo.newCol.Name, modifyInfo.pos, modifyInfo.changingIdxs)
 }
 
 // rollbackModifyColumnJobWithData is used to rollback modify-column job which need to reorg the data.
-func rollbackModifyColumnJobWithData(t *meta.Meta, tblInfo *model.TableInfo, job *model.Job, oldCol *model.ColumnInfo, jobParam *modifyColumnJobParameter) (ver int64, err error) {
+func rollbackModifyColumnJobWithData(t *meta.Meta, tblInfo *model.TableInfo, job *model.Job, oldCol *model.ColumnInfo, jobParam *modifyingColInfo) (ver int64, err error) {
 	// If the not-null change is included, we should clean the flag info in oldCol.
 	if jobParam.modifyColumnTp == mysql.TypeNull {
 		// Reset NotNullFlag flag.
@@ -948,7 +948,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 		}
 		// none -> delete only
-		updateChangingInfo(changingCol, changingIdxs, model.StateDeleteOnly)
+		updateChangingObjState(changingCol, changingIdxs, model.StateDeleteOnly)
 		failpoint.Inject("mockInsertValueAfterCheckNull", func(val failpoint.Value) {
 			if valStr, ok := val.(string); ok {
 				var ctx sessionctx.Context
@@ -987,7 +987,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 		}
 		// delete only -> write only
-		updateChangingInfo(changingCol, changingIdxs, model.StateWriteOnly)
+		updateChangingObjState(changingCol, changingIdxs, model.StateWriteOnly)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -995,7 +995,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// write only -> reorganization
-		updateChangingInfo(changingCol, changingIdxs, model.StateWriteReorganization)
+		updateChangingObjState(changingCol, changingIdxs, model.StateWriteReorganization)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -1054,39 +1054,39 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
 		w.reorgCtx.cleanNotifyReorgCancel()
 
-		// Remove the old column and indexes. Update the relative column name and index names.
-		oldIdxIDs := make([]int64, 0, len(changingIdxs))
-		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
-		for _, cIdx := range changingIdxs {
-			idxName := getChangingIndexOriginName(cIdx)
-			for i, idx := range tblInfo.Indices {
-				if strings.EqualFold(idxName, idx.Name.O) {
-					cIdx.Name = model.NewCIStr(idxName)
-					tblInfo.Indices[i] = cIdx
-					oldIdxIDs = append(oldIdxIDs, idx.ID)
-					break
-				}
+		oldIdxIDs := getOldIndexesID(tblInfo, oldCol) // used by GC delete range.
+
+		internalColName := changingCol.Name
+		changingCol, err = replaceOldColumn(tblInfo, oldCol.ID, changingCol.ID, colName)
+		if err != nil {
+			job.State = model.JobStateRollingback
+			return ver, errors.Trace(err)
+		}
+		if len(changingIdxs) > 0 {
+			replaceOldIndexes(tblInfo, changingIdxs)
+			updateNewIndexesCols(tblInfo, internalColName, colName, changingCol.Offset)
+		}
+
+		// Move the new column to a correct offset.
+		offset, err := locateOffsetForColumn(pos, tblInfo)
+		if err != nil {
+			job.State = model.JobStateRollingback
+			return ver, errors.Trace(err)
+		}
+		if offset > 0 {
+			if changingCol.Offset < offset {
+				tblInfo.MoveColumnInfo(changingCol.Offset, offset-1)
+			} else {
+				tblInfo.MoveColumnInfo(changingCol.Offset, offset)
 			}
 		}
-		changingColumnUniqueName := changingCol.Name
-		changingCol.Name = colName
-		changingCol.ChangeStateInfo = nil
-		// After changing the column, the column's type is change, so it needs to set OriginDefaultValue back
-		// so that there is no error in getting the default value from OriginDefaultValue.
-		// Besides, nil data that was not backfilled in the "add column" is backfilled after the column is changed.
-		// So it can set OriginDefaultValue to nil.
-		if err = changingCol.SetOriginDefaultValue(nil); err != nil {
-			return ver, errors.Trace(err)
-		}
-		tblInfo.Indices = tblInfo.Indices[:len(tblInfo.Indices)-len(changingIdxs)]
-		// Adjust table column offset.
-		if err = adjustColumnInfoInModifyColumn(job, tblInfo, changingCol, oldCol, pos, changingColumnUniqueName.L); err != nil {
-			// TODO: Do rollback.
-			return ver, errors.Trace(err)
-		}
-		updateChangingInfo(changingCol, changingIdxs, model.StatePublic)
+
+		checkOffsets(tblInfo)
+
+		updateChangingObjState(changingCol, changingIdxs, model.StatePublic)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
+
 			return ver, errors.Trace(err)
 		}
 
@@ -1100,6 +1100,138 @@ func (w *worker) doModifyColumnTypeWithData(
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func checkOffsets(tbl *model.TableInfo) {
+	for _, col := range tbl.Columns {
+		for _, idx := range tbl.Indices {
+			for _, idxCol := range idx.Columns {
+				if col.Name.L != idxCol.Name.L {
+					continue
+				}
+				if col.Offset != idxCol.Offset {
+					logutil.BgLogger().Error("table meta data is corrupted",
+						zap.String("column name", col.Name.O),
+						zap.Int("table column offset", col.Offset),
+						zap.Int("index column offset", idxCol.Offset))
+				}
+			}
+		}
+	}
+}
+
+func replaceOldColumn(tblInfo *model.TableInfo, oldID, newID int64,
+	newName model.CIStr) (changingCol *model.ColumnInfo, err error) {
+	// Locate the old column and new column.
+	oldCol := model.FindColumnInfoByID(tblInfo.Columns, oldID)
+	if oldCol == nil {
+		return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name)
+	}
+	changingCol = model.FindColumnInfoByID(tblInfo.Columns, newID)
+	if changingCol == nil {
+		return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name)
+	}
+	// Replace the old column.
+	tblInfo.Columns[oldCol.Offset] = changingCol
+	tblInfo.Columns[changingCol.Offset] = nil
+	changingCol = updateChangingCol(changingCol, newName, oldCol.Offset)
+	// Remove nil column.
+	tmp := tblInfo.Columns[:0]
+	for _, c := range tblInfo.Columns {
+		if c != nil {
+			tmp = append(tmp, c)
+		}
+	}
+	tblInfo.Columns = tmp
+	return changingCol, nil
+}
+
+func replaceOldIndexes(tblInfo *model.TableInfo, changingIdxs []*model.IndexInfo) {
+	// Remove the changing indexes.
+	for i, idx := range tblInfo.Indices {
+		for _, cIdx := range changingIdxs {
+			if cIdx.ID == idx.ID {
+				tblInfo.Indices[i] = nil
+				break
+			}
+		}
+	}
+	tmp := tblInfo.Indices[:0]
+	for _, idx := range tblInfo.Indices {
+		if idx != nil {
+			tmp = append(tmp, idx)
+		}
+	}
+	tblInfo.Indices = tmp
+	// Replace the old indexes with changing indexes.
+	for _, cIdx := range changingIdxs {
+		idxName := getChangingIndexOriginName(cIdx)
+		for i, idx := range tblInfo.Indices {
+			if strings.EqualFold(idxName, idx.Name.O) {
+				cIdx.Name = model.NewCIStr(idxName)
+				tblInfo.Indices[i] = cIdx
+				break
+			}
+		}
+	}
+}
+
+func updateNewIndexesCols(tblInfo *model.TableInfo, old, new model.CIStr, newOffset int) {
+	for _, idx := range tblInfo.Indices {
+		for i, col := range idx.Columns {
+			if col.Name.L == old.L {
+				idx.Columns[i].Name = new
+				idx.Columns[i].Offset = newOffset
+				break
+			}
+		}
+	}
+}
+
+func updateChangingCol(col *model.ColumnInfo, newName model.CIStr, newOffset int) *model.ColumnInfo {
+	col.Name = newName
+	col.ChangeStateInfo = nil
+	col.Offset = newOffset
+	// After changing the column, the column's type is change, so it needs to set OriginDefaultValue back
+	// so that there is no error in getting the default value from OriginDefaultValue.
+	// Besides, nil data that was not backfilled in the "add column" is backfilled after the column is changed.
+	// So it can set OriginDefaultValue to nil.
+	col.OriginDefaultValue = nil
+	return col
+}
+
+func getOldIndexesID(tblInfo *model.TableInfo, oldCol *model.ColumnInfo) []int64 {
+	var oldIdxIDs []int64
+	for _, idx := range tblInfo.Indices {
+		for _, idxCol := range idx.Columns {
+			if tblInfo.Columns[idxCol.Offset].ID == oldCol.ID {
+				oldIdxIDs = append(oldIdxIDs, idx.ID)
+				break
+			}
+		}
+	}
+	return oldIdxIDs
+}
+
+func locateOffsetForColumn(pos *ast.ColumnPosition, tblInfo *model.TableInfo) (offset int, err error) {
+	if pos == nil {
+		return -1, nil
+	}
+	// Get column offset.
+	switch pos.Tp {
+	case ast.ColumnPositionFirst:
+		return 0, nil
+	case ast.ColumnPositionAfter:
+		c := model.FindColumnInfo(tblInfo.Columns, pos.RelativeColumn.Name.L)
+		if c == nil || c.State != model.StatePublic {
+			return 0, infoschema.ErrColumnNotExists.GenWithStackByArgs(pos.RelativeColumn, tblInfo.Name)
+		}
+		return c.Offset + 1, nil
+	case ast.ColumnPositionNone:
+		return -1, nil
+	default:
+		return 0, errors.Errorf("unknown column position type")
+	}
 }
 
 // BuildElements is exported for testing.
@@ -1431,7 +1563,7 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 	return
 }
 
-func updateChangingInfo(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo, schemaState model.SchemaState) {
+func updateChangingObjState(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo, schemaState model.SchemaState) {
 	changingCol.State = schemaState
 	for _, idx := range changingIdxs {
 		idx.State = schemaState
@@ -1470,7 +1602,7 @@ func (w *worker) doModifyColumn(
 		}
 	}
 
-	if err := adjustColumnInfoInModifyColumn(job, tblInfo, newCol, oldCol, pos, ""); err != nil {
+	if err := adjustColumnInfoInModifyColumn(job, tblInfo, newCol, oldCol, pos); err != nil {
 		return ver, errors.Trace(err)
 	}
 
@@ -1488,7 +1620,7 @@ func (w *worker) doModifyColumn(
 }
 
 func adjustColumnInfoInModifyColumn(
-	job *model.Job, tblInfo *model.TableInfo, newCol, oldCol *model.ColumnInfo, pos *ast.ColumnPosition, changingColUniqueLowerName string) error {
+	job *model.Job, tblInfo *model.TableInfo, newCol, oldCol *model.ColumnInfo, pos *ast.ColumnPosition) error {
 	// We need the latest column's offset and state. This information can be obtained from the store.
 	newCol.Offset = oldCol.Offset
 	newCol.State = oldCol.State
@@ -1550,13 +1682,6 @@ func adjustColumnInfoInModifyColumn(
 	for _, idx := range tblInfo.Indices {
 		for _, c := range idx.Columns {
 			cName := c.Name.L
-			// With the unique changing column name, the format is designed as `_Col$_xx_uniqueNum`.
-			// The suffix `_uniqueNum` will be trimmed when we get the origin changing column name.
-			// There is a possibility that some other column named as `xx_xx_xx`, and it will be get
-			// trimmed as `xx_xx`. So here we check here and only do the trim for the changing index column.
-			if len(changingColUniqueLowerName) != 0 && c.Name.L == changingColUniqueLowerName {
-				cName = strings.ToLower(getChangingColumnOriginName(c))
-			}
 			if newCol, ok := columnChanged[cName]; ok {
 				c.Name = newCol.Name
 				c.Offset = newCol.Offset
@@ -1929,8 +2054,8 @@ func genChangingIndexUniqueName(tblInfo *model.TableInfo, idxInfo *model.IndexIn
 	return fmt.Sprintf("%s_%d", newIndexNamePrefix, suffix)
 }
 
-func getChangingColumnOriginName(changingCol *model.IndexColumn) string {
-	colName := strings.ToLower(strings.TrimPrefix(changingCol.Name.O, changingColumnPrefix))
+func getChangingColumnOriginName(changingColName string) string {
+	colName := strings.ToLower(strings.TrimPrefix(changingColName, changingColumnPrefix))
 	// Since the unique colName may contain the suffix number (columnName_num), better trim the suffix.
 	var pos int
 	if pos = strings.LastIndex(colName, "_"); pos == -1 {
