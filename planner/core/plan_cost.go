@@ -6,6 +6,19 @@ import (
 	"math"
 )
 
+func (p *basePhysicalPlan) CalPlanCost(taskType property.TaskType) float64 {
+	if p.planCostInit {
+		return p.planCost
+	}
+	// the default implementation, the operator have no cost
+	p.planCost = 0
+	for _, child := range p.children {
+		p.planCost += child.CalPlanCost(taskType)
+	}
+	p.planCostInit = true
+	return p.planCost
+}
+
 func (p *PhysicalSort) CalPlanCost(taskType property.TaskType) float64 {
 	if p.planCostInit {
 		return p.planCost
@@ -101,6 +114,10 @@ func (p *PhysicalHashJoin) CalPlanCost(taskType property.TaskType) float64 {
 	return p.planCost
 }
 
+func (p *PhysicalApply) CalPlanCost(taskType property.TaskType) float64 {
+	panic("TODO")
+}
+
 func (p *PhysicalTopN) CalPlanCost(taskType property.TaskType) float64 {
 	if p.planCostInit {
 		return p.planCost
@@ -190,30 +207,12 @@ func (p *PhysicalSelection) CalPlanCost(taskType property.TaskType) float64 {
 	return p.planCost
 }
 
-func (p *PhysicalLimit) CalPlanCost(taskType property.TaskType) float64 {
-	if p.planCostInit {
-		return p.planCost
-	}
-	p.planCost = p.children[0].CalPlanCost(taskType) // no cost for Limit
-	p.planCostInit = true
-	return p.planCost
-}
-
 func (p PhysicalMaxOneRow) CalPlanCost(taskType property.TaskType) float64 {
 	panic("TODO")
 }
 
 func (p *PhysicalTableDual) CalPlanCost(taskType property.TaskType) float64 {
 	panic("TODO")
-}
-
-func (p *NominalSort) CalPlanCost(taskType property.TaskType) float64 {
-	if p.planCostInit {
-		return p.planCost
-	}
-	p.planCost = p.children[0].CalPlanCost(taskType)
-	p.planCostInit = true
-	return p.planCost
 }
 
 func (p *PhysicalIndexMergeReader) CalPlanCost(taskType property.TaskType) float64 {
@@ -242,10 +241,6 @@ func (p *PhysicalIndexMergeReader) CalPlanCost(taskType property.TaskType) float
 	return p.planCost
 }
 
-func (p *PhysicalLock) CalPlanCost(taskType property.TaskType) float64 {
-	panic("TODO")
-}
-
 func (p *PhysicalIndexJoin) CalPlanCost(taskType property.TaskType) float64 {
 	panic("TODO")
 }
@@ -254,62 +249,10 @@ func (p *PhysicalUnionScan) CalPlanCost(taskType property.TaskType) float64 {
 	panic("TODO")
 }
 
-func (p *PhysicalWindow) CalPlanCost(taskType property.TaskType) float64 {
-	panic("TODO")
-}
-
-func (p *PhysicalShuffle) CalPlanCost(taskType property.TaskType) float64 {
-	panic("TODO")
-}
-
-func (p *PhysicalShuffleReceiverStub) CalPlanCost(taskType property.TaskType) float64 {
-	panic("TODO")
-}
-
-func (p *PhysicalTableSample) CalPlanCost(taskType property.TaskType) float64 {
-	return 0
-}
-
-func (p *BatchPointGetPlan) CalPlanCost(taskType property.TaskType) float64 {
-	return 0
-}
-
 func (p *BatchPointGetPlan) CalRowWidth() float64 {
 	panic("TODO")
 }
 
-func (p *PointGetPlan) CalPlanCost(taskType property.TaskType) float64 {
-	return 0
-}
-
 func (p *PointGetPlan) CalRowWidth() float64 {
 	panic("TODO")
-}
-
-func (p *PhysicalShow) CalPlanCost(taskType property.TaskType) float64 {
-	return 0
-}
-
-func (p *PhysicalShowDDLJobs) CalPlanCost(taskType property.TaskType) float64 {
-	return 0
-}
-
-func (p *PhysicalMemTable) CalPlanCost(taskType property.TaskType) float64 {
-	panic("TODO")
-}
-
-func (p *PhysicalCTE) CalPlanCost(taskType property.TaskType) float64 {
-	panic("TODO")
-}
-
-func (p *PhysicalCTETable) CalPlanCost(taskType property.TaskType) float64 {
-	panic("TODO")
-}
-
-func (p *basePhysicalAgg) CalPlanCost(taskType property.TaskType) float64 {
-	panic("TODO")
-}
-
-func (p *PhysicalSimpleWrapper) CalPlanCost(taskType property.TaskType) float64 {
-	return 0
 }
