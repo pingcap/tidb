@@ -373,18 +373,6 @@ func TestRouter(t *testing.T) {
 			SchemaPattern: "~.bdb.*",
 			TargetSchema:  "db",
 		},
-		// only route schema
-		{
-			SchemaPattern: "web",
-			TargetSchema:  "web_test",
-		},
-		// only route table
-		{
-			SchemaPattern: "x",
-			TablePattern:  "t1*",
-			TargetSchema:  "x2",
-			TargetTable:   "t",
-		},
 	}
 
 	/*
