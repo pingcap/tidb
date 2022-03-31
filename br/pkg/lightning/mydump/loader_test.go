@@ -20,11 +20,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
-	router "github.com/pingcap/tidb-tools/pkg/table-router"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	md "github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	filter "github.com/pingcap/tidb/util/table-filter"
+	router "github.com/pingcap/tidb/util/table-router"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

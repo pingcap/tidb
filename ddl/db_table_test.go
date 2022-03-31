@@ -308,7 +308,7 @@ func TestTransactionOnAddDropColumn(t *testing.T) {
 	dom.DDL().SetHook(hook)
 	done := make(chan error, 1)
 	// test transaction on add column.
-	go backgroundExecT(store, "alter table t1 add column c int not null after a", done)
+	go backgroundExec(store, "alter table t1 add column c int not null after a", done)
 	err := <-done
 	require.NoError(t, err)
 	require.Nil(t, checkErr)
@@ -316,7 +316,7 @@ func TestTransactionOnAddDropColumn(t *testing.T) {
 	tk.MustExec("delete from t1")
 
 	// test transaction on drop column.
-	go backgroundExecT(store, "alter table t1 drop column c", done)
+	go backgroundExec(store, "alter table t1 drop column c", done)
 	err = <-done
 	require.NoError(t, err)
 	require.Nil(t, checkErr)
@@ -1052,7 +1052,7 @@ func TestAddColumn2(t *testing.T) {
 	dom.DDL().SetHook(hook)
 	done := make(chan error, 1)
 	// test transaction on add column.
-	go backgroundExecT(store, "alter table t1 add column c int not null", done)
+	go backgroundExec(store, "alter table t1 add column c int not null", done)
 	err := <-done
 	require.NoError(t, err)
 
@@ -1094,7 +1094,7 @@ func TestAddColumn2(t *testing.T) {
 	}
 	dom.DDL().SetHook(hook)
 
-	go backgroundExecT(store, "alter table t2 add column b int not null default 3", done)
+	go backgroundExec(store, "alter table t2 add column b int not null default 3", done)
 	err = <-done
 	require.NoError(t, err)
 	re.Check(testkit.Rows("1 2"))
