@@ -445,7 +445,7 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 	}
 	t := &rootTask{
 		p:   p,
-		cst: p.GetCost(outerTask, innerTask),
+		cst: outerTask.cost() + p.GetCost(outerTask.count(), innerTask.count(), innerTask.cost()),
 	}
 	p.cost = t.cost()
 	return t
@@ -453,9 +453,8 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 
 // GetCost computes the cost of index join operator and its children.
 // TODO: move this method to plan_cost.go
-func (p *PhysicalIndexJoin) GetCost(outerTask, innerTask task) float64 {
+func (p *PhysicalIndexJoin) GetCost(outerCnt, innerCnt float64, innerCost float64) float64 {
 	var cpuCost float64
-	outerCnt, innerCnt := outerTask.count(), innerTask.count()
 	sessVars := p.ctx.GetSessionVars()
 	// Add the cost of evaluating outer filter, since inner filter of index join
 	// is always empty, we can simply tell whether outer filter is empty using the
@@ -498,8 +497,8 @@ func (p *PhysicalIndexJoin) GetCost(outerTask, innerTask task) float64 {
 	// since the executor is pipelined and not all workers are always in full load.
 	memoryCost := innerConcurrency * (batchSize * distinctFactor) * innerCnt * sessVars.MemoryFactor
 	// Cost of inner child plan, i.e, mainly I/O and network cost.
-	innerPlanCost := outerCnt * innerTask.cost()
-	return outerTask.cost() + innerPlanCost + cpuCost + memoryCost
+	innerPlanCost := outerCnt * innerCost
+	return innerPlanCost + cpuCost + memoryCost
 }
 
 func getAvgRowSize(stats *property.StatsInfo, schema *expression.Schema) (size float64) {

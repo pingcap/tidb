@@ -200,7 +200,15 @@ func (p *PhysicalIndexScan) CalPlanCost(taskType property.TaskType) float64 {
 // ============================== Join ==============================
 
 func (p *PhysicalIndexJoin) CalPlanCost(taskType property.TaskType) float64 {
-	panic("TODO")
+	if p.planCostInit {
+		return p.planCost
+	}
+	p.planCost = 0
+	outerChild, innerChild := p.children[1-p.InnerChildIdx], p.children[p.InnerChildIdx]
+	p.planCost += outerChild.CalPlanCost(taskType)
+	p.planCost += p.GetCost(outerChild.StatsCount(), innerChild.StatsCount(), innerChild.CalPlanCost(taskType))
+	p.planCostInit = true
+	return p.planCost
 }
 
 func (p *PhysicalMergeJoin) CalPlanCost(taskType property.TaskType) float64 {
