@@ -1043,7 +1043,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
 		switch x := c.Expr.(type) {
 		case *ast.FuncCallExpr:
-			if x.FnName.L == ast.CurrentTimestamp || x.FnName.L == ast.Now {
+			if x.FnName.L == ast.CurrentTimestamp {
 				defaultFsp := 0
 				if len(x.Args) == 1 {
 					if val := x.Args[0].(*driver.ValueExpr); val != nil {
