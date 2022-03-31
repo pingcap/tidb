@@ -214,6 +214,7 @@ failpoint-disable: tools/bin/failpoint-ctl
 
 tools/bin/ut: tools/check/ut.go
 	cd tools/check; \
+	sudo yum install -y asan
 	$(GO) build -o ../bin/ut ut.go
 
 tools/bin/xprog: tools/check/xprog.go
