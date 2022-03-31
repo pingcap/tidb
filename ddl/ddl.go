@@ -174,7 +174,7 @@ type DDL interface {
 	// GetID gets the ddl ID.
 	GetID() string
 	// GetTableMaxHandle gets the max row ID of a normal table or a partition.
-	GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error)
+	GetTableMaxHandle(ctx *jobContext, startTS uint64, tbl table.PhysicalTable) (kv.Handle, bool, error)
 	// SetBinlogClient sets the binlog client for DDL worker. It's exported for testing.
 	SetBinlogClient(*pumpcli.PumpsClient)
 	// GetHook gets the hook. It's exported for testing.

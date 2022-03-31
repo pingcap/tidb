@@ -26,6 +26,12 @@ import (
 	"database/sql"
 	"encoding/pem"
 	"fmt"
+	"github.com/pingcap/tidb/ddl/testutil"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
 	"math/big"
 	"net/http"
 	"os"
@@ -1911,6 +1917,9 @@ func (c *resourceTagChecker) checkExist(t *testing.T, digest stmtstats.BinaryDig
 }
 
 func (c *resourceTagChecker) checkReqExist(t *testing.T, digest stmtstats.BinaryDigest, sqlStr string, reqs ...tikvrpc.CmdType) {
+	if len(reqs) == 0 {
+		return
+	}
 	c.Lock()
 	defer c.Unlock()
 	reqMap, ok := c.sqlDigest2Reqs[digest]
@@ -1966,12 +1975,37 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 		conf.TopSQL.ReceiverAddress = "mock-agent"
 	})
 
+	startTimestamp, err := ts.store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+
 	tagChecker := &resourceTagChecker{
 		sqlDigest2Reqs: make(map[stmtstats.BinaryDigest]map[tikvrpc.CmdType]struct{}),
 	}
 	unistore.UnistoreRPCClientSendHook = func(req *tikvrpc.Request) {
 		tag := req.GetResourceGroupTag()
 		if len(tag) == 0 {
+			startKey, txnTs, err := testutil.GetReqStartKeyAndTxnTs(req)
+			if err != nil {
+				logutil.BgLogger().Error("FAIL-- get request start key meet error", zap.String("err", err.Error()), zap.Stack("stack"))
+			}
+			require.NoError(t, err)
+			var tid int64
+			if tablecodec.IsRecordKey(startKey) {
+				tid, _, err = tablecodec.DecodeRecordKey(startKey)
+			}
+			if tablecodec.IsIndexKey(startKey) {
+				tid, _, _, err = tablecodec.DecodeIndexKey(startKey)
+			}
+			// since the error maybe "invalid record key", should just ignore check resource tag for this request.
+			if err == nil && tid != 0 && txnTs > startTimestamp {
+				tbl, ok := ts.domain.InfoSchema().TableByID(tid)
+				if ok {
+					logutil.BgLogger().Error("FAIL-- rpc request does not set the resource tag", zap.String("req", req.Type.String()), zap.String("table", tbl.Meta().Name.O), zap.Stack("stack"))
+					require.Fail(t, "")
+				}
+			}
+			return
+		} else if ddlutil.IsInternalResourceGroupTaggerForTopSQL(tag) {
 			return
 		}
 		sqlDigest, err := resourcegrouptag.DecodeResourceGroupTag(tag)
@@ -2262,6 +2296,92 @@ func TestTopSQLStatementStats4(t *testing.T) {
 			foundMap[digest.SQLDigest] = sqlStr
 			tagChecker.checkExist(t, digest.SQLDigest, sqlStr)
 		}
+	}
+}
+
+func TestTopSQLResourceTag(t *testing.T) {
+	ts, _, tagChecker, _, cleanFn := setupForTestTopSQLStatementStats(t)
+	defer func() {
+		topsqlstate.DisableTopSQL()
+		cleanFn()
+	}()
+
+	// Test case for other statements
+	cases1 := []struct {
+		sql     string
+		isQuery bool
+		reqs    []tikvrpc.CmdType
+	}{
+		// Test for curd.
+		{"insert into t values (1,1), (3,3)", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit}},
+		{"insert into t values (1,2) on duplicate key update a = 2", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdBatchGet}},
+		{"update t set b=b+1 where a=3", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdGet}},
+		{"update t set b=b+1 where a>1", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdCop}},
+		{"delete from t where a=3", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdGet}},
+		{"delete from t where a>1", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdCop}},
+		{"insert ignore into t values (2,2), (3,3)", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdBatchGet}},
+		{"select * from t where a in (1,2,3,4)", true, []tikvrpc.CmdType{tikvrpc.CmdBatchGet}},
+		{"select * from t where a = 1", true, []tikvrpc.CmdType{tikvrpc.CmdGet}},
+		{"select * from t where b > 0", true, []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"replace into t values (2,2), (4,4)", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdBatchGet}},
+
+		// Test for DDL
+		{"create database test_db0", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit}},
+		{"create table test_db0.test_t0 (a int, b int, index idx(a))", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit}},
+		{"create table test_db0.test_t1 (a int, b int, index idx(a))", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit}},
+		{"alter  table test_db0.test_t0 add column c int", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit}},
+		{"drop   table test_db0.test_t0", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit}},
+		{"drop   database test_db0", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit}},
+		{"alter  table t modify column b double", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdScan}},
+		{"alter  table t add index idx2 (b,a)", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdScan}},
+		{"alter  table t drop index idx2", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit}},
+
+		// Test for transaction
+		{"begin", false, nil},
+		{"insert into t2 values (10,10), (11,11)", false, nil},
+		{"insert ignore into t2 values (20,20), (21,21)", false, []tikvrpc.CmdType{tikvrpc.CmdBatchGet}},
+		{"commit", false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit}},
+
+		// Test for other statements.
+		{"set @@global.tidb_enable_1pc = 1", false, nil},
+	}
+
+	internalCases := []struct {
+		sql  string
+		reqs []tikvrpc.CmdType
+	}{
+		{"replace into mysql.global_variables (variable_name,variable_value) values ('tidb_enable_1pc', '1')", []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdBatchGet}},
+	}
+	executeCaseFn := func(execFn func(db *sql.DB)) {
+		db, err := sql.Open("mysql", ts.getDSN())
+		require.NoError(t, err)
+		dbt := testkit.NewDBTestKit(t, db)
+		dbt.MustExec("use stmtstats;")
+		require.NoError(t, err)
+
+		execFn(db)
+		err = db.Close()
+		require.NoError(t, err)
+	}
+	execFn := func(db *sql.DB) {
+		dbt := testkit.NewDBTestKit(t, db)
+		for _, ca := range cases1 {
+			if ca.isQuery {
+				mustQuery(t, dbt, ca.sql)
+			} else {
+				dbt.MustExec(ca.sql)
+			}
+		}
+	}
+	executeCaseFn(execFn)
+
+	for _, ca := range cases1 {
+		_, digest := parser.NormalizeDigest(ca.sql)
+		tagChecker.checkReqExist(t, stmtstats.BinaryDigest(digest.Bytes()), ca.sql, ca.reqs...)
+	}
+	for _, ca := range internalCases {
+		_, digest := parser.NormalizeDigest(ca.sql)
+		tagChecker.checkReqExist(t, stmtstats.BinaryDigest(digest.Bytes()), ca.sql, ca.reqs...)
 	}
 }
 

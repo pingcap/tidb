@@ -15,6 +15,7 @@
 package util
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"strings"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	atomicutil "go.uber.org/atomic"
 )
 
@@ -224,4 +226,17 @@ func EmulatorGCDisable() {
 // IsEmulatorGCEnable indicates whether emulator GC enabled. It exports for testing.
 func IsEmulatorGCEnable() bool {
 	return emulatorGCEnable.Load() == 1
+}
+
+var intervalResourceGroupTag = []byte{0}
+
+func GetInternalResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
+	tagger := func(req *tikvrpc.Request) {
+		req.ResourceGroupTag = intervalResourceGroupTag
+	}
+	return tagger
+}
+
+func IsInternalResourceGroupTaggerForTopSQL(tag []byte) bool {
+	return bytes.Equal(tag, intervalResourceGroupTag)
 }
