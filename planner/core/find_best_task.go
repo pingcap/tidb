@@ -280,7 +280,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		opt.appendCandidate(p, curTask.plan(), prop)
 		// Get the most efficient one.
 		if p.ctx.GetSessionVars().EnableNewCostInterface {
-			if curTask.plan().CalPlanCost(getTaskType(curTask)) < bestTask.plan().CalPlanCost(getTaskType(bestTask)) || (bestTask.invalid() && !curTask.invalid()) {
+			if getTaskPlanCost(curTask) < getTaskPlanCost(bestTask) || (bestTask.invalid() && !curTask.invalid()) {
 				bestTask = curTask
 			}
 		} else {
@@ -292,17 +292,22 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 	return bestTask, cntPlan, nil
 }
 
-func getTaskType(t task) property.TaskType {
+func getTaskPlanCost(t task) float64 {
+	if t.invalid() {
+		return math.MaxFloat64
+	}
+	var taskType property.TaskType
 	switch t.(type) {
 	case *rootTask:
-		return property.RootTaskType
+		taskType = property.RootTaskType
 	case *copTask:
-		return property.CopSingleReadTaskType
+		taskType = property.CopSingleReadTaskType
 	case *mppTask:
-		return property.MppTaskType
+		taskType = property.MppTaskType
 	default:
 		panic("TODO")
 	}
+	return t.plan().CalPlanCost(taskType)
 }
 
 type physicalOptimizeOp struct {
@@ -436,7 +441,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 	}
 	opt.appendCandidate(p, curTask.plan(), prop)
 	if p.ctx.GetSessionVars().EnableNewCostInterface {
-		if curTask.plan().CalPlanCost(getTaskType(curTask)) < bestTask.plan().CalPlanCost(getTaskType(bestTask)) || (bestTask.invalid() && !curTask.invalid()) {
+		if getTaskPlanCost(curTask) < getTaskPlanCost(bestTask) || (bestTask.invalid() && !curTask.invalid()) {
 			bestTask = curTask
 		}
 	} else {
