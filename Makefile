@@ -213,8 +213,8 @@ failpoint-disable: tools/bin/failpoint-ctl
 	@$(FAILPOINT_DISABLE)
 
 tools/bin/ut: tools/check/ut.go
+	sudo yum install -y libasan; \
 	cd tools/check; \
-	sudo yum install -y libasan
 	$(GO) build -o ../bin/ut ut.go
 
 tools/bin/xprog: tools/check/xprog.go
