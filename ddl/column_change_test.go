@@ -38,7 +38,6 @@ import (
 )
 
 func TestColumnAdd(t *testing.T) {
-	)
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)

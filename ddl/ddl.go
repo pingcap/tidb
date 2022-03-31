@@ -1023,6 +1023,11 @@ func GetDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint ui
 
 // CancelConcurrencyJobs cancels the DDL jobs that are in the concurrent state.
 func CancelConcurrencyJobs(sess sessionctx.Context, ids []int64) ([]error, error) {
+	failpoint.Inject("mockCancelConcurencyDDL", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, errors.New("mock commit error"))
+		}
+	})
 	if len(ids) == 0 {
 		return nil, nil
 	}
