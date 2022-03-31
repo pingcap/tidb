@@ -36,7 +36,19 @@ func TestNewCostInterface(t *testing.T) {
 	tk.MustExec(`set @@session.tidb_stats_load_sync_wait=2000`)
 
 	queries := []string{
-		"select * from t use index(primary)", // table-scan
+		// table-scan
+		"select * from t use index(primary)",
+		"select * from t use index(primary) where a < 200",
+		"select * from t use index(primary) where a = 200",
+		"select * from t use index(primary) where a in (1, 2, 3, 100, 200, 300, 1000)",
+		"select a, b, d from t use index(primary)",
+		"select a, b, d from t use index(primary) where a < 200",
+		"select a, b, d from t use index(primary) where a = 200",
+		"select a, b, d from t use index(primary) where a in (1, 2, 3, 100, 200, 300, 1000)",
+		"select a from t use index(primary)",
+		"select a from t use index(primary) where a < 200",
+		"select a from t use index(primary) where a = 200",
+		"select a from t use index(primary) where a in (1, 2, 3, 100, 200, 300, 1000)",
 	}
 
 	for _, q := range queries {
