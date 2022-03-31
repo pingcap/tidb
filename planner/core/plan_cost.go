@@ -168,7 +168,25 @@ func (p *PhysicalTableScan) CalPlanCost(taskType property.TaskType) float64 {
 }
 
 func (p *PhysicalIndexScan) CalPlanCost(taskType property.TaskType) float64 {
-	panic("TODO")
+	if p.planCostInit {
+		return p.planCost
+	}
+	p.planCost = 0
+
+	// scan cost
+	rowCount := p.StatsCount()
+	rowWidth := p.indexScanRowSize(p.Index, nil, true) // TODO: ds=nil
+	scanFactor := p.ctx.GetSessionVars().GetScanFactor(nil)
+	if p.Desc {
+		scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(nil)
+	}
+	p.planCost += rowCount * rowWidth * scanFactor
+
+	// request cost
+	p.planCost += float64(len(p.Ranges)) * p.ctx.GetSessionVars().GetSeekFactor(nil)
+
+	p.planCostInit = true
+	return p.planCost
 }
 
 // ============================== Join ==============================
