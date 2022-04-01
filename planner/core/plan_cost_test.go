@@ -11,13 +11,17 @@ import (
 	"github.com/pingcap/tidb/testkit"
 )
 
-func explainQuery(tk *testkit.TestKit, q string) (result string) {
+func checkCost(t *testing.T, tk *testkit.TestKit, q, info string) {
 	//| id | estRows | estCost   | task | access object | operator info |
+	tk.MustExec(`set @@tidb_enable_new_cost_interface=0`)
 	rs := tk.MustQuery("explain format=verbose " + q).Rows()
-	for _, r := range rs {
-		result = result + fmt.Sprintf("%v\n", r)
+	oldRoot := fmt.Sprintf("%v", rs[0])
+	tk.MustExec(`set @@tidb_enable_new_cost_interface=1`)
+	rs = tk.MustQuery("explain format=verbose " + q).Rows()
+	newRoot := fmt.Sprintf("%v", rs[0])
+	if oldRoot != newRoot {
+		t.Fatalf("run %v failed, info: %v, expected \n%v\n, but got \n%v\n", q, info, oldRoot, newRoot)
 	}
-	return
 }
 
 func TestNewCostInterfaceTiKV(t *testing.T) {
@@ -190,13 +194,7 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 
 	tk.Session().GetSessionVars().DEBUG = true
 	for _, q := range queries {
-		tk.MustExec(`set @@tidb_enable_new_cost_interface=0`)
-		oldResult := explainQuery(tk, q)
-		tk.MustExec(`set @@tidb_enable_new_cost_interface=1`)
-		newResult := explainQuery(tk, q)
-		if oldResult != newResult {
-			t.Fatalf("run %v failed, expected \n%v\n, but got \n%v\n", q, oldResult, newResult)
-		}
+		checkCost(t, tk, q, "")
 	}
 }
 
@@ -239,7 +237,7 @@ func TestNewCostInterfaceTiFlash(t *testing.T) {
 		"select max(a) from t where a < 200",
 		"select avg(a), b from t where a < 200 group by b",
 	}
-	for _, mpp := range []bool {false, true} {
+	for _, mpp := range []bool{false, true} {
 		if mpp {
 			tk.MustExec(`set @@session.tidb_allow_mpp=1`)
 			tk.MustExec(`set @@session.tidb_enforce_mpp=1`)
@@ -249,13 +247,7 @@ func TestNewCostInterfaceTiFlash(t *testing.T) {
 		}
 
 		for _, q := range queries {
-			tk.MustExec(`set @@tidb_enable_new_cost_interface=0`)
-			oldResult := explainQuery(tk, q)
-			tk.MustExec(`set @@tidb_enable_new_cost_interface=1`)
-			newResult := explainQuery(tk, q)
-			if oldResult != newResult {
-				t.Fatalf("run %v failed, mpp-mode=%v, expected \n%v\n, but got \n%v\n", q, mpp, oldResult, newResult)
-			}
+			checkCost(t, tk, q, fmt.Sprintf("mpp=%v", mpp))
 		}
 	}
 }
