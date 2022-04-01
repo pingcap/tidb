@@ -980,6 +980,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		RowCount:     math.Min(1.0, countAfterAccess),
 		StatsVersion: ds.stats.StatsVersion,
 		// NDV would not be used in cost computation of IndexJoin, set leave it as default nil.
+		HistColl: ds.stats.HistColl, // used to calculate rowWidth
 	}
 	rowSize := ds.TblColHists.GetTableAvgRowSize(p.ctx, ds.TblCols, ts.StoreType, true)
 	sessVars := ds.ctx.GetSessionVars()
