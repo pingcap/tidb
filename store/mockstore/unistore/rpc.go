@@ -433,7 +433,7 @@ func checkResourceTagForTopSQL(req *tikvrpc.Request) error {
 		return nil
 	}
 
-	startKey, _, err := testutil.GetReqStartKeyAndTxnTs(req)
+	startKey, err := testutil.GetReqStartKey(req)
 	if err != nil {
 		return err
 	}

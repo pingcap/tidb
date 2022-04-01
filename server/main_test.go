@@ -16,15 +16,15 @@ package server
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/store/mockstore/unistore"
-	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"os"
 	"reflect"
 	"testing"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
@@ -34,8 +34,10 @@ func TestMain(m *testing.M) {
 	testbridge.SetupForCommonTest()
 
 	RunInGoTest = true // flag for NewServer to known it is running in test environment
-	unistore.CheckResourceTagForTopSQLInGoTest = true
+	// Enable TopSQL for all test, and check the resource tag for each RPC request.
+	// This is used to detect which codes are not tracked by TopSQL.
 	topsqlstate.EnableTopSQL()
+	unistore.CheckResourceTagForTopSQLInGoTest = true
 
 	// AsyncCommit will make DDL wait 2.5s before changing to the next state.
 	// Set schema lease to avoid it from making CI slow.
