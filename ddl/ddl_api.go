@@ -2681,11 +2681,6 @@ func checkTwoRangeColumns(ctx sessionctx.Context, curr, prev *model.PartitionDef
 			return false, nil
 		}
 
-		// Current and previous is the same.
-		if strings.EqualFold(curr.LessThan[i], prev.LessThan[i]) {
-			continue
-		}
-
 		// The tuples of column values used to define the partitions are strictly increasing:
 		// PARTITION p0 VALUES LESS THAN (5,10,'ggg')
 		// PARTITION p1 VALUES LESS THAN (10,20,'mmm')
