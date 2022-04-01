@@ -1316,6 +1316,8 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 		do.wg.Add(1)
 		go do.autoAnalyzeWorker(owner)
 	}
+	do.wg.Add(1)
+	go do.gcAnalyzeHistory(owner)
 	return nil
 }
 
@@ -1498,6 +1500,33 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 		case <-analyzeTicker.C:
 			if owner.IsOwner() {
 				statsHandle.HandleAutoAnalyze(do.InfoSchema())
+			}
+		case <-do.exit:
+			return
+		}
+	}
+}
+
+func (do *Domain) gcAnalyzeHistory(owner owner.Manager) {
+	defer util.Recover(metrics.LabelDomain, "gcAnalyzeHistory", nil, false)
+	const gcInterval = time.Hour
+	statsHandle := do.StatsHandle()
+	gcTicker := time.NewTicker(gcInterval)
+	defer func() {
+		gcTicker.Stop()
+		do.wg.Done()
+		logutil.BgLogger().Info("gcAnalyzeHistory exited.")
+	}()
+	for {
+		select {
+		case <-gcTicker.C:
+			if owner.IsOwner() {
+				const DaysToKeep = 7
+				updateTime := time.Now().AddDate(0, 0, -DaysToKeep)
+				err := statsHandle.DeleteAnalyzeJobs(updateTime)
+				if err != nil {
+					logutil.BgLogger().Warn("gc analyze history failed", zap.Error(err))
+				}
 			}
 		case <-do.exit:
 			return
