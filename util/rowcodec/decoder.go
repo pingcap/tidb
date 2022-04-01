@@ -15,6 +15,7 @@
 package rowcodec
 
 import (
+	"encoding/binary"
 	"fmt"
 	"time"
 
@@ -452,7 +453,7 @@ func (decoder *BytesDecoder) tryDecodeHandle(values [][]byte, offset int, col *C
 	return false
 }
 
-// DecodeToBytesNoHandle decodes raw byte slice to row dat without handle.
+// DecodeToBytesNoHandle decodes raw byte slice to row data without handle.
 func (decoder *BytesDecoder) DecodeToBytesNoHandle(outputOffset map[int64]int, value []byte) ([][]byte, error) {
 	return decoder.decodeToBytesInternal(outputOffset, nil, value, nil)
 }
@@ -463,7 +464,7 @@ func (decoder *BytesDecoder) DecodeToBytes(outputOffset map[int64]int, handle kv
 }
 
 func (decoder *BytesDecoder) encodeOldDatum(tp byte, val []byte) []byte {
-	var buf []byte
+	buf := make([]byte, 0, 1+binary.MaxVarintLen64+len(val))
 	switch tp {
 	case BytesFlag:
 		buf = append(buf, CompactBytesFlag)
