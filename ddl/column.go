@@ -1616,19 +1616,13 @@ func adjustColumnInfoInModifyColumn(
 		job.State = model.JobStateRollingback
 		return infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name)
 	}
-	offset, err := locateOffsetToMove(pos, tblInfo)
+	destOffset, err := locateOffsetToMove(oldCol.Offset, pos, tblInfo)
 	if err != nil {
 		job.State = model.JobStateRollingback
 		return infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name)
 	}
 	tblInfo.Columns[oldCol.Offset] = newCol
-	if offset >= 0 {
-		if oldCol.Offset < offset {
-			tblInfo.MoveColumnInfo(oldCol.Offset, offset-1)
-		} else {
-			tblInfo.MoveColumnInfo(oldCol.Offset, offset)
-		}
-	}
+	tblInfo.MoveColumnInfo(oldCol.Offset, destOffset)
 	updateNewIndexesCols(tblInfo, oldCol.Name, newCol.Name, newCol.Offset)
 	return nil
 }
