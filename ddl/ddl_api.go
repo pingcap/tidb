@@ -2700,11 +2700,6 @@ func checkTwoRangeColumns(ctx sessionctx.Context, curr, prev *model.PartitionDef
 			return false, nil
 		}
 
-		// Current and previous is the same.
-		if strings.EqualFold(curr.LessThan[i], prev.LessThan[i]) {
-			continue
-		}
-
 		// The tuples of column values used to define the partitions are strictly increasing:
 		// PARTITION p0 VALUES LESS THAN (5,10,'ggg')
 		// PARTITION p1 VALUES LESS THAN (10,20,'mmm')
@@ -3266,10 +3261,17 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	}
 
 	if !force {
-		newBase, err = adjustNewBaseToNextGlobalID(ctx, t, tp, newBase)
+		newBaseTemp, err := adjustNewBaseToNextGlobalID(ctx, t, tp, newBase)
 		if err != nil {
 			return err
 		}
+		if newBase != newBaseTemp {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(
+				fmt.Errorf("Can't reset AUTO_INCREMENT to %d without FORCE option, using %d instead",
+					newBase, newBaseTemp,
+				))
+		}
+		newBase = newBaseTemp
 	}
 	job := &model.Job{
 		SchemaID:   schema.ID,
