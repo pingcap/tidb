@@ -536,6 +536,8 @@ type PhysicalTableScan struct {
 	PartitionInfo PartitionInfo
 
 	SampleInfo *TableSampleInfo
+
+	rowWidth float64
 }
 
 // Clone implements PhysicalPlan interface.
