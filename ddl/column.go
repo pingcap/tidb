@@ -1083,6 +1083,7 @@ func (w *worker) doModifyColumnTypeWithData(
 func adjustTableInfoAfterModifyColumnWithData(tblInfo *model.TableInfo, pos *ast.ColumnPosition,
 	oldCol, changingCol *model.ColumnInfo, newName model.CIStr, changingIdxs []*model.IndexInfo) (err error) {
 	if pos != nil && pos.RelativeColumn != nil && oldCol.Name.L == pos.RelativeColumn.Name.L {
+		// For cases like `modify column b after b`, it should report this error.
 		return errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name))
 	}
 	internalColName := changingCol.Name
@@ -1603,6 +1604,7 @@ func adjustTableInfoAfterModifyColumn(
 	newCol.Offset = oldCol.Offset
 	newCol.State = oldCol.State
 	if pos != nil && pos.RelativeColumn != nil && oldCol.Name.L == pos.RelativeColumn.Name.L {
+		// For cases like `modify column b after b`, it should report this error.
 		return errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name))
 	}
 	destOffset, err := locateOffsetToMove(oldCol.Offset, pos, tblInfo)
