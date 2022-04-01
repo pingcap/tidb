@@ -81,11 +81,11 @@ In bootstrap step, TiDB will build these tables meta and put it into tikv direct
 
 ### DDL job manager
 
-DDL job manager will find the runnable DDL job and dispatch the jobs to DDL worker.
+DDL job manager will find the runnable DDL job and dispatch the jobs to DDL workers.
 ```golang
 for {
     if !isOwner {
-        // sleep while
+        // sleep a while
         continue
     }
 
@@ -104,7 +104,7 @@ for {
 }
 ```
 
-To prevent all the worker occupied by the long run job like `add index`, TiDB will keep the original `addIndex` worker and `general` worker, then the DDL job manager will be
+To prevent all the workers in worker pool occupied by the long run job like `add index`, TiDB will divide the pool into two types: `addIndex` worker pool and `general` worker pool, then the DDL job manager will be
 
 ```golang
 for {
@@ -198,6 +198,9 @@ if needDoUpgrade {
 ### Compatibility with CDC
 
 CDC will watch the key of the finished job in **queue** and sync the DDLs to other cluster, after concurrent DDL is implemented, CDC should watch the key of the finished job in **table**.
+
+When upgrading a cluster, CDC should upgrade before TiDB and be able to watch the key of the finished job in **table** and **queue** at the same time. 
+After several versions, CDC can remove the code of watching the key in **queue**.
 
 ## Test Design
 
