@@ -71,7 +71,7 @@ func TestHandle(t *testing.T) {
 	require.Error(t, err)
 
 	// test DDL
-	_, poss, err = m.HandleDDL("test", "xxx", []string{"id", "age"}, "create table xxx")
+	_, _, err = m.HandleDDL("test", "xxx", []string{"id", "age"}, "create table xxx")
 	require.Error(t, err)
 
 	statement, poss, err := m.HandleDDL("abc", "xxx", []string{"id", "age"}, "create table xxx")
@@ -110,6 +110,7 @@ func TestQueryColumnInfo(t *testing.T) {
 	m.resetCache()
 	SetPartitionRule(0, 0, 3)
 	info, err = m.queryColumnInfo("test_2", "xxx_1", []string{"id", "name"})
+	require.NoError(t, err)
 	require.EqualValues(t, &mappingInfo{
 		sourcePosition: -1,
 		targetPosition: 0,

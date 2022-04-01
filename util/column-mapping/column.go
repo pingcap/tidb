@@ -255,7 +255,7 @@ func (m *Mapping) HandleRowValue(schema, table string, columns []string, vals []
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	if info.ignore == true {
+	if info.ignore {
 		return vals, nil, nil
 	}
 
@@ -288,7 +288,7 @@ func (m *Mapping) HandleDDL(schema, table string, columns []string, statement st
 		return statement, nil, errors.Trace(err)
 	}
 
-	if info.ignore == true {
+	if info.ignore {
 		return statement, nil, nil
 	}
 

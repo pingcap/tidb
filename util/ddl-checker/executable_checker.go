@@ -37,11 +37,14 @@ type ExecutableChecker struct {
 
 // NewExecutableChecker creates a new ExecutableChecker
 func NewExecutableChecker() (*ExecutableChecker, error) {
-	logutil.InitLogger(&logutil.LogConfig{
+	err := logutil.InitLogger(&logutil.LogConfig{
 		Config: log.Config{
 			Level: "error",
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
 	mockTikv, err := mockstore.NewMockStore()
 	if err != nil {
 		return nil, errors.Trace(err)
