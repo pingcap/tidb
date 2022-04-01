@@ -14,7 +14,6 @@ func explainQuery(tk *testkit.TestKit, q string) (result string) {
 	for _, r := range rs {
 		result = result + fmt.Sprintf("%v\n", r)
 	}
-	tk.MustQuery("show warnings").Check(testkit.Rows()) // no warning
 	return
 }
 
@@ -180,7 +179,7 @@ func TestNewCostInterface(t *testing.T) {
 		"select /*+ inl_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a and t1.b<1000 and t1.b>1000",
 		"select /*+ inl_hash_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a+2 and t1.b>1000",
 		"select /*+ inl_hash_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a and t1.b<1000 and t1.b>1000",
-		//"select * from t t1 where t1.b in (select sum(t2.b) from t t2 where t1.a < t2.a)", // apply
+		"select * from t t1 where t1.b in (select sum(t2.b) from t t2 where t1.a < t2.a)", // apply
 		// point get
 		"select * from t where a = 1",
 		"select * from t where a in (1, 2, 3, 4, 5)",

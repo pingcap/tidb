@@ -435,7 +435,7 @@ func (p *basePhysicalPlan) CalRowWidth() float64 {
 		return p.rowWidth
 	}
 	// TODO: consider more cases, index/table, kv/flash, ...
-	if p.stats.HistColl != nil {
+	if p.stats != nil && p.stats.HistColl != nil {
 		p.rowWidth = p.stats.HistColl.GetTableAvgRowSize(p.ctx, p.self.Schema().Columns, kv.TiKV, true)
 	} else {
 		// some operators like Selection may have no stats, then just use their child's RowWidth
