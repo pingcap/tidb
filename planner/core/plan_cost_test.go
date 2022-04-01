@@ -226,6 +226,17 @@ func TestNewCostInterfaceTiFlash(t *testing.T) {
 	queries := []string{
 		"select a from t",
 		"select a from t where a < 200",
+		"select * from t where a+200 < 1000",
+		"select * from t where mod(a, 200) < 100",
+		"select b from t where b+200 < 1000",
+		"select b from t where mod(a, 200) < 100",
+		"select * from t where b+200 < 1000",
+		"select * from t where c+200 < 1000",
+		"select * from t where mod(b+c, 200) < 100",
+		"select count(*) from t where a < 200",
+		"select sum(a) from t where a < 200",
+		"select max(a) from t where a < 200",
+		"select avg(a), b from t where a < 200 group by b",
 	}
 	for _, mpp := range []bool {false, true} {
 		if mpp {
@@ -242,7 +253,7 @@ func TestNewCostInterfaceTiFlash(t *testing.T) {
 			tk.MustExec(`set @@tidb_enable_new_cost_interface=1`)
 			newResult := explainQuery(tk, q)
 			if oldResult != newResult {
-				t.Fatalf(`run %v failed, mpp-mode=%v, expected \n%v\n, but got \n%v\n`, q, mpp, oldResult, newResult)
+				t.Fatalf("run %v failed, mpp-mode=%v, expected \n%v\n, but got \n%v\n", q, mpp, oldResult, newResult)
 			}
 		}
 	}
