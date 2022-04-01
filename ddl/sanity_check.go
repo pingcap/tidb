@@ -82,7 +82,7 @@ func (d *ddl) checkDeleteRangeCnt(job *model.Job) {
 	req := rs.NewChunk(nil)
 	err = rs.Next(context.TODO(), req)
 	if err != nil {
-		panic("should not happened")
+		panic("should not happened, err:"+err.Error())
 	}
 	cnt, _ := req.GetRow(0).GetMyDecimal(0).ToInt()
 
