@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -996,9 +995,14 @@ func (s *tableRestoreSuite) TestSaveStatusCheckpoint() {
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 0, len(rc.errorSummaries.summary))
 
-	err = rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), indexEngineID, &net.DNSError{IsTimeout: true}, checkpoints.CheckpointStatusImported)
+	err = rc.saveStatusCheckpoint(
+		context.Background(),
+		common.UniqueTable("test", "tbl"), indexEngineID,
+		common.ErrChecksumMismatch.GenWithStackByArgs(0, 0, 0, 0, 0, 0),
+		checkpoints.CheckpointStatusImported,
+	)
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), 0, len(rc.errorSummaries.summary))
+	require.Equal(s.T(), 1, len(rc.errorSummaries.summary))
 
 	start := time.Now()
 	err = rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), indexEngineID, nil, checkpoints.CheckpointStatusImported)
