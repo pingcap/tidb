@@ -1468,7 +1468,9 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.Statem
 			*old = *dec
 		}
 		if int(dec.digitsFrac) != decimal {
-			dec.Round(dec, decimal, ModeHalfUp)
+			// Error doesn't matter because the following code will check the new decimal
+			// and set error if any.
+			_ = dec.Round(dec, decimal, ModeHalfUp)
 		}
 
 		_, digitsInt := dec.removeLeadingZeros()
