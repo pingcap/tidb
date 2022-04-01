@@ -1073,15 +1073,13 @@ func (w *worker) doModifyColumnTypeWithData(
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
-		if offset > 0 {
+		if offset >= 0 {
 			if changingCol.Offset < offset {
 				tblInfo.MoveColumnInfo(changingCol.Offset, offset-1)
 			} else {
 				tblInfo.MoveColumnInfo(changingCol.Offset, offset)
 			}
 		}
-
-		checkOffsets(tblInfo)
 
 		updateChangingObjState(changingCol, changingIdxs, model.StatePublic)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != changingCol.State)
@@ -1099,24 +1097,6 @@ func (w *worker) doModifyColumnTypeWithData(
 	}
 
 	return ver, errors.Trace(err)
-}
-
-func checkOffsets(tbl *model.TableInfo) {
-	for _, col := range tbl.Columns {
-		for _, idx := range tbl.Indices {
-			for _, idxCol := range idx.Columns {
-				if col.Name.L != idxCol.Name.L {
-					continue
-				}
-				if col.Offset != idxCol.Offset {
-					logutil.BgLogger().Error("table meta data is corrupted",
-						zap.String("column name", col.Name.O),
-						zap.Int("table column offset", col.Offset),
-						zap.Int("index column offset", idxCol.Offset))
-				}
-			}
-		}
-	}
 }
 
 func replaceOldColumn(tblInfo *model.TableInfo, oldID, newID int64,
@@ -1623,70 +1603,26 @@ func adjustColumnInfoInModifyColumn(
 	// We need the latest column's offset and state. This information can be obtained from the store.
 	newCol.Offset = oldCol.Offset
 	newCol.State = oldCol.State
-	// Calculate column's new position.
-	oldPos, newPos := oldCol.Offset, oldCol.Offset
-	if pos.Tp == ast.ColumnPositionAfter {
-		// TODO: The check of "RelativeColumn" can be checked in advance. When "EnableChangeColumnType" is true, unnecessary state changes can be reduced.
-		if oldCol.Name.L == pos.RelativeColumn.Name.L {
-			// `alter table tableName modify column b int after b` will return ver,ErrColumnNotExists.
-			// Modified the type definition of 'null' to 'not null' before this, so rollback the job when an error occurs.
-			job.State = model.JobStateRollingback
-			return infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name)
-		}
-
-		relative := model.FindColumnInfo(tblInfo.Columns, pos.RelativeColumn.Name.L)
-		if relative == nil || relative.State != model.StatePublic {
-			job.State = model.JobStateRollingback
-			return infoschema.ErrColumnNotExists.GenWithStackByArgs(pos.RelativeColumn, tblInfo.Name)
-		}
-
-		if relative.Offset < oldPos {
-			newPos = relative.Offset + 1
+	if pos != nil && pos.RelativeColumn != nil && oldCol.Name.L == pos.RelativeColumn.Name.L {
+		// `alter table tableName modify column b int after b` will return ver, ErrColumnNotExists.
+		// Modified the type definition of 'null' to 'not null' before this, so rollback the job when an error occurs.
+		job.State = model.JobStateRollingback
+		return infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name)
+	}
+	offset, err := locateOffsetForColumn(pos, tblInfo)
+	if err != nil {
+		job.State = model.JobStateRollingback
+		return infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name)
+	}
+	tblInfo.Columns[oldCol.Offset] = newCol
+	if offset >= 0 {
+		if oldCol.Offset < offset {
+			tblInfo.MoveColumnInfo(oldCol.Offset, offset-1)
 		} else {
-			newPos = relative.Offset
-		}
-	} else if pos.Tp == ast.ColumnPositionFirst {
-		newPos = 0
-	}
-
-	columnChanged := make(map[string]*model.ColumnInfo)
-	columnChanged[oldCol.Name.L] = newCol
-
-	if newPos == oldPos {
-		tblInfo.Columns[newPos] = newCol
-	} else {
-		cols := tblInfo.Columns
-
-		// Reorder columns in place.
-		if newPos < oldPos {
-			// ******** +(new) ****** -(old) ********
-			// [newPos:old-1] should shift one step to the right.
-			copy(cols[newPos+1:], cols[newPos:oldPos])
-		} else {
-			// ******** -(old) ****** +(new) ********
-			// [old+1:newPos] should shift one step to the left.
-			copy(cols[oldPos:], cols[oldPos+1:newPos+1])
-		}
-		cols[newPos] = newCol
-
-		for i, col := range tblInfo.Columns {
-			if col.Offset != i {
-				columnChanged[col.Name.L] = col
-				col.Offset = i
-			}
+			tblInfo.MoveColumnInfo(oldCol.Offset, offset)
 		}
 	}
-
-	// Change offset and name in indices.
-	for _, idx := range tblInfo.Indices {
-		for _, c := range idx.Columns {
-			cName := c.Name.L
-			if newCol, ok := columnChanged[cName]; ok {
-				c.Name = newCol.Name
-				c.Offset = newCol.Offset
-			}
-		}
-	}
+	updateNewIndexesCols(tblInfo, oldCol.Name, newCol.Name, newCol.Offset)
 	return nil
 }
 
