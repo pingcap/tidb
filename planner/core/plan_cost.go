@@ -60,18 +60,19 @@ func (p *PhysicalIndexLookUpReader) CalPlanCost(taskType property.TaskType) floa
 		return p.planCost
 	}
 	p.planCost = p.indexPlan.CalPlanCost(taskType) // index-scan cost
-	rowCount := p.indexPlan.StatsCount()
+	idxCount := p.indexPlan.StatsCount()
 
 	indexWidth := p.stats.HistColl.GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
-	p.planCost += rowCount * indexWidth * p.ctx.GetSessionVars().GetNetworkFactor(nil) // index-scan net-cost
+	p.planCost += idxCount * indexWidth * p.ctx.GetSessionVars().GetNetworkFactor(nil) // index-scan net-cost
 
 	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
 	var tbl PhysicalPlan
 	for tbl = p.tablePlan; len(tbl.Children()) > 0; tbl = tbl.Children()[0] {
 	}
-	p.planCost += rowCount * tbl.(*PhysicalTableScan).rowWidth * p.ctx.GetSessionVars().GetScanFactor(nil) // table-scan cost
+	p.planCost += idxCount * tbl.(*PhysicalTableScan).rowWidth * p.ctx.GetSessionVars().GetScanFactor(nil) // table-scan cost
 	tblScanWidth := p.stats.HistColl.GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
-	p.planCost += rowCount * p.ctx.GetSessionVars().GetNetworkFactor(nil) * tblScanWidth // table net cost
+	tblCount := p.tablePlan.StatsCount()
+	p.planCost += tblCount * p.ctx.GetSessionVars().GetNetworkFactor(nil) * tblScanWidth // table net cost
 
 	// consider concurrency
 	p.planCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
