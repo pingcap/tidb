@@ -317,101 +317,92 @@ func TestGenGlobalIDFail(t *testing.T) {
 	tk.MustExec("admin check table t2")
 }
 
-func TestAddIndexWorkerNum(t *testing.T) {
+// TestRunDDLJobPanicEnableClusteredIndex tests recover panic with cluster index when run ddl job panic.
+func TestRunDDLJobPanicEnableClusteredIndex(t *testing.T) {
 	s, clean := createFailDBSuite(t)
 	defer clean()
+	testAddIndexWorkerNum(t, s, func(tk *testkit.TestKit) {
+		tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1, c3))")
+	})
+}
 
-	tests := []struct {
-		name        string
-		createTable func(*testkit.TestKit)
-	}{
-		{
-			"EnableClusteredIndex",
-			func(tk *testkit.TestKit) {
-				tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
-				tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1, c3))")
-			},
-		},
-		{
-			"DisableClusteredIndex",
-			func(tk *testkit.TestKit) {
-				tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
-			},
-		},
+// TestRunDDLJobPanicDisableClusteredIndex tests recover panic without cluster index when run ddl job panic.
+func TestRunDDLJobPanicDisableClusteredIndex(t *testing.T) {
+	s, clean := createFailDBSuite(t)
+	defer clean()
+	testAddIndexWorkerNum(t, s, func(tk *testkit.TestKit) {
+		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
+	})
+}
+
+func testAddIndexWorkerNum(t *testing.T, s *failedSuite, test func(*testkit.TestKit)) {
+	tk := testkit.NewTestKit(t, s.store)
+	tk.MustExec("create database if not exists test_db")
+	tk.MustExec("use test_db")
+	tk.MustExec("drop table if exists test_add_index")
+
+	test(tk)
+
+	done := make(chan error, 1)
+	start := -10
+
+	// first add some rows
+	for i := start; i < 4090; i += 100 {
+		dml := "insert into test_add_index values"
+		end := i + 100
+		for k := i; k < end; k++ {
+			dml += fmt.Sprintf("(%d, %d, %d)", k, k, k)
+			if k != end-1 {
+				dml += ","
+			}
+		}
+		tk.MustExec(dml)
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			tk := testkit.NewTestKit(t, s.store)
-			tk.MustExec("create database if not exists test_db")
-			tk.MustExec("use test_db")
-			tk.MustExec("drop table if exists test_add_index")
+	is := s.dom.InfoSchema()
+	schemaName := model.NewCIStr("test_db")
+	tableName := model.NewCIStr("test_add_index")
+	tbl, err := is.TableByName(schemaName, tableName)
+	require.NoError(t, err)
 
-			test.createTable(tk)
+	splitCount := 100
+	// Split table to multi region.
+	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
+	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), splitCount)
 
-			done := make(chan error, 1)
-			start := -10
+	err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
+	require.NoError(t, err)
+	originDDLAddIndexWorkerCnt := variable.GetDDLReorgWorkerCounter()
+	lastSetWorkerCnt := originDDLAddIndexWorkerCnt
+	atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
+	ddl.TestCheckWorkerNumber = lastSetWorkerCnt
+	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", originDDLAddIndexWorkerCnt))
 
-			// first add some rows
-			for i := start; i < 4090; i += 100 {
-				dml := "insert into test_add_index values"
-				end := i + 100
-				for k := i; k < end; k++ {
-					dml += fmt.Sprintf("(%d, %d, %d)", k, k, k)
-					if k != end-1 {
-						dml += ","
-					}
-				}
-				tk.MustExec(dml)
-			}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum", `return(true)`))
 
-			is := s.dom.InfoSchema()
-			schemaName := model.NewCIStr("test_db")
-			tableName := model.NewCIStr("test_add_index")
-			tbl, err := is.TableByName(schemaName, tableName)
+	testutil.SessionExecInGoroutine(s.store, "test_db", "create index c3_index on test_add_index (c3)", done)
+	checkNum := 0
+
+	running := true
+	for running {
+		select {
+		case err = <-done:
 			require.NoError(t, err)
-
-			splitCount := 100
-			// Split table to multi region.
-			tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
-			s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), splitCount)
-
-			err = ddlutil.LoadDDLReorgVars(context.Background(), tk.Session())
-			require.NoError(t, err)
-			originDDLAddIndexWorkerCnt := variable.GetDDLReorgWorkerCounter()
-			lastSetWorkerCnt := originDDLAddIndexWorkerCnt
+			running = false
+		case wg := <-ddl.TestCheckWorkerNumCh:
+			lastSetWorkerCnt = int32(rand.Intn(8) + 8)
+			tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", lastSetWorkerCnt))
 			atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
-			ddl.TestCheckWorkerNumber = lastSetWorkerCnt
-			defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", originDDLAddIndexWorkerCnt))
-
-			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum", `return(true)`))
-			defer func() {
-				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum"))
-			}()
-
-			testutil.SessionExecInGoroutine(s.store, "test_db", "create index c3_index on test_add_index (c3)", done)
-			checkNum := 0
-
-			running := true
-			for running {
-				select {
-				case err = <-done:
-					require.NoError(t, err)
-					running = false
-				case wg := <-ddl.TestCheckWorkerNumCh:
-					lastSetWorkerCnt = int32(rand.Intn(8) + 8)
-					tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", lastSetWorkerCnt))
-					atomic.StoreInt32(&ddl.TestCheckWorkerNumber, lastSetWorkerCnt)
-					checkNum++
-					wg.Done()
-				}
-			}
-
-			require.Greater(t, checkNum, 5)
-			tk.MustExec("admin check table test_add_index")
-			tk.MustExec("drop table test_add_index")
-		})
+			checkNum++
+			wg.Done()
+		}
 	}
+
+	require.Greater(t, checkNum, 5)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum"))
+	tk.MustExec("admin check table test_add_index")
+	tk.MustExec("drop table test_add_index")
 }
 
 // TestRunDDLJobPanic tests recover panic when run ddl job panic.
