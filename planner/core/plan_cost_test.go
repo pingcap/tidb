@@ -172,6 +172,10 @@ func TestNewCostInterface(t *testing.T) {
 		"select * from t use index(cd) where c = 200 order by c limit 10",
 		"select * from t use index(cd) where c = 200 and d < 200 order by c, d limit 10",
 		// join
+		"select /*+ hash_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a+2 and t1.b>1000",
+		"select /*+ hash_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a<t2.a+2 and t1.b>1000",
+		"select /*+ merge_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a+2 and t1.b>1000",
+		"select /*+ merge_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a<t2.a+2 and t1.b>1000",
 		// point get
 		// mpp plans
 		// rand-gen queries
