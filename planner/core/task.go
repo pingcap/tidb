@@ -2310,7 +2310,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	// To make it simple, we also treat 2-phase parallel hash aggregation in TiDB layer as
 	// 1-phase when computing cost.
 	t.addCost(p.GetCost(inputRows, true, false))
-	p.cost = t.cost()
+	t.plan().SetCost(t.cost())
 	return t
 }
 
