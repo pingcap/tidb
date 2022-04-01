@@ -2042,10 +2042,25 @@ func TestDefaultColumnWithRand(t *testing.T) {
 	tk.MustExec("create table t (c int(10) default (rand()))")
 	tk.MustExec("create table t1 (c int default (rand()), c1 double default (rand()))")
 	tk.MustExec("create table t2 (c int default (rand(1)), c1 double default (rand(1)))")
-	tk.MustExec("alter table t add column c1 int(10) default (rand(2))")
+	tk.MustExec("alter table t add column c1 double default (rand(2))")
 	tk.MustExec("insert into t(c) values (1),(2),(3)")
 	tk.MustExec("insert into t1(c) values (1),(2),(3)")
 	tk.MustExec("insert into t2(c) values (1),(2),(3)")
+
+	queryStmts := []string{
+		"SELECT c1 from t",
+		"SELECT c1 from t1",
+		"SELECT c1 from t2",
+	}
+	for _, queryStmt := range queryStmts {
+		r := tk.MustQuery(queryStmt).Rows()
+		for _, row := range r {
+			d, ok := row[0].(float64)
+			if ok {
+				require.True(t, 0.0 <= d && d < 1.0, "rand() return a random floating-point value in the range 0 <= v < 1.0.")
+			}
+		}
+	}
 }
 
 func TestChangingDBCharset(t *testing.T) {

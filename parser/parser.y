@@ -3339,7 +3339,11 @@ DefaultValueExpr:
 |	BuiltinFunction
 
 BuiltinFunction:
-	identifier '(' ')'
+	'(' BuiltinFunction ')'
+	{
+		$$ = $2.(*ast.FuncCallExpr)
+	}
+|	identifier '(' ')'
 	{
 		$$ = &ast.FuncCallExpr{
 			FnName: model.NewCIStr($1),
@@ -3352,22 +3356,13 @@ BuiltinFunction:
 			Args:   $3.([]ast.ExprNode),
 		}
 	}
-|	'(' identifier '(' ')' ')'
-	{
-		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($2),
-		}
-	}
-|	'(' identifier '(' ExpressionList ')' ')'
-	{
-		$$ = &ast.FuncCallExpr{
-			FnName: model.NewCIStr($2),
-			Args:   $4.([]ast.ExprNode),
-		}
-	}
 
 NowSymOptionFraction:
-	NowSym
+	'(' NowSymOptionFraction ')'
+	{
+		$$ = $2.(*ast.FuncCallExpr)
+	}
+|	NowSym
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}
 	}
