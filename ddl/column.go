@@ -1081,36 +1081,24 @@ func (w *worker) doModifyColumnTypeWithData(
 }
 
 func adjustTableInfoAfterModifyColumn(tblInfo *model.TableInfo, pos *ast.ColumnPosition,
-	oldCol, newCol *model.ColumnInfo, newName model.CIStr, changingIdxs []*model.IndexInfo) (err error) {
-	internalColName := newCol.Name
-	newCol, err = replaceOldColumn(tblInfo, oldCol.ID, newCol.ID, newName)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	oldCol, changingCol *model.ColumnInfo, newName model.CIStr, changingIdxs []*model.IndexInfo) (err error) {
+	internalColName := changingCol.Name
+	changingCol = replaceOldColumn(tblInfo, oldCol, changingCol, newName)
 	if len(changingIdxs) > 0 {
 		replaceOldIndexes(tblInfo, changingIdxs)
-		updateNewIndexesCols(tblInfo, internalColName, newName, newCol.Offset)
+		updateNewIndexesCols(tblInfo, internalColName, newName, changingCol.Offset)
 	}
 	// Move the new column to a correct offset.
-	destOffset, err := locateOffsetToMove(newCol.Offset, pos, tblInfo)
+	destOffset, err := locateOffsetToMove(changingCol.Offset, pos, tblInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	tblInfo.MoveColumnInfo(newCol.Offset, destOffset)
+	tblInfo.MoveColumnInfo(changingCol.Offset, destOffset)
 	return nil
 }
 
-func replaceOldColumn(tblInfo *model.TableInfo, oldID, newID int64,
-	newName model.CIStr) (changingCol *model.ColumnInfo, err error) {
-	// Locate the old column and new column.
-	oldCol := model.FindColumnInfoByID(tblInfo.Columns, oldID)
-	if oldCol == nil {
-		return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name)
-	}
-	changingCol = model.FindColumnInfoByID(tblInfo.Columns, newID)
-	if changingCol == nil {
-		return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name)
-	}
+func replaceOldColumn(tblInfo *model.TableInfo, oldCol, changingCol *model.ColumnInfo,
+	newName model.CIStr) *model.ColumnInfo {
 	// Replace the old column.
 	tblInfo.Columns[oldCol.Offset] = changingCol
 	tblInfo.Columns[changingCol.Offset] = nil
@@ -1123,7 +1111,7 @@ func replaceOldColumn(tblInfo *model.TableInfo, oldID, newID int64,
 		}
 	}
 	tblInfo.Columns = tmp
-	return changingCol, nil
+	return changingCol
 }
 
 func replaceOldIndexes(tblInfo *model.TableInfo, changingIdxs []*model.IndexInfo) {
