@@ -104,6 +104,33 @@ func IsRetryableError(err error) bool {
 	return true
 }
 
+// IsRecoverableError attempts to catch network issue especially timeout error
+// in order to resume lightning automatically
+func IsAutoRecoverableError(err error) bool {
+	for _, singleError := range errors.Errors(err) {
+		if !isSingleAutoRecoverableError(singleError) {
+			return false
+		}
+	}
+	return true
+}
+
+func isSingleAutoRecoverableError(err error) bool {
+	err = errors.Cause(err)
+	switch nerr := err.(type) {
+	case net.Error:
+		return nerr.Timeout()
+	case *mysql.MySQLError:
+		switch nerr.Number {
+		case tmysql.ErrPDServerTimeout, tmysql.ErrTiKVServerTimeout, tmysql.ErrTiKVServerBusy, tmysql.ErrResolveLockTimeout:
+			return true
+		default:
+			return false
+		}
+	}
+	return false
+}
+
 func isSingleRetryableError(err error) bool {
 	err = errors.Cause(err)
 
