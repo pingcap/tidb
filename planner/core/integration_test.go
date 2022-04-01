@@ -2792,10 +2792,6 @@ func TestTimeScalarFunctionPushDownResult(t *testing.T) {
 		function string
 	}{
 		{
-			sql:      "select now(), now() from t where sysdate()-now()<2;",
-			function: "sysdate",
-		},
-		{
 			sql:      "select col1, to_days(col1) from t where to_days(col1)=to_days('2022-03-24 01:02:03.040506');",
 			function: "to_days",
 		},
