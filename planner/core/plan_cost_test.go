@@ -194,7 +194,7 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 		tk.MustExec(`set @@tidb_enable_new_cost_interface=1`)
 		newResult := explainQuery(tk, q)
 		if oldResult != newResult {
-			t.Fatalf(`run %v failed, expected \n%v\n, but got \n%v\n`, q, oldResult, newResult)
+			t.Fatalf("run %v failed, expected \n%v\n, but got \n%v\n", q, oldResult, newResult)
 		}
 	}
 }
