@@ -94,22 +94,17 @@ func (p *PhysicalTableReader) CalPlanCost(taskType property.TaskType) float64 {
 		return p.planCost
 	}
 	p.planCost = 0
-	// accumulate child's cost
-	childTaskType := property.CopSingleReadTaskType
-	if p.StoreType == kv.TiFlash {
-		childTaskType = property.MppTaskType
-	}
-	p.planCost += p.tablePlan.CalPlanCost(childTaskType)
-
-	// accumulate net-cost
-	rowCount := p.tablePlan.StatsCount()
 	netFactor := p.ctx.GetSessionVars().GetNetworkFactor(nil)
-	rowWidth := p.tablePlan.CalRowWidth()
-	p.planCost += rowCount * rowWidth * netFactor
-
-	// take concurrency into account
-	copIterWorkers := float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
-	p.planCost /= copIterWorkers
+	switch p.StoreType {
+	case kv.TiKV:
+		p.planCost += p.tablePlan.CalPlanCost(property.CopSingleReadTaskType)          //  child's cost
+		p.planCost += p.tablePlan.StatsCount() * p.tablePlan.CalRowWidth() * netFactor // net cost
+		p.planCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
+	case kv.TiFlash:
+		p.planCost += p.tablePlan.CalPlanCost(property.MppTaskType)                                   //  child's cost
+		p.planCost += p.tablePlan.StatsCount() * collectRowSizeFromMPPPlan(p.children[0]) * netFactor // net cost
+		p.planCost /= p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
+	}
 	p.planCostInit = true
 	return p.planCost
 }
@@ -344,9 +339,13 @@ func (p *PhysicalUnionAll) CalPlanCost(taskType property.TaskType) float64 {
 }
 
 func (p *PhysicalExchangeReceiver) CalPlanCost(taskType property.TaskType) float64 {
-	panic("TODO")
-}
-
-func (p *PhysicalExchangeSender) CalPlanCost(taskType property.TaskType) float64 {
-	panic("TODO")
+	if p.planCostInit {
+		return p.planCost
+	}
+	p.planCost = p.children[0].CalPlanCost(taskType)
+	// accumulate net cost
+	// TODO: this formula is wrong since it doesn't consider rowWidth, fix it later
+	p.planCost += p.children[0].StatsCount() * p.ctx.GetSessionVars().GetNetworkFactor(nil)
+	p.planCostInit = true
+	return p.planCost
 }
