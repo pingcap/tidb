@@ -125,7 +125,52 @@ func TestNewCostInterface(t *testing.T) {
 		"select * from t use index(cd) where c < 200 limit 10",
 		"select * from t use index(cd) where c = 200 limit 10",
 		"select * from t use index(cd) where c = 200 and d < 200 limit 10",
-		// sort + topN
+		// sort
+		"select * from t use index(primary) where a < 200 order by a", // table-scan + sort
+		"select * from t use index(primary) where a = 200  order by a",
+		"select a, b, d from t use index(primary) where a < 200 order by a",
+		"select a, b, d from t use index(primary) where a = 200 order by a",
+		"select a from t use index(primary) where a < 200 order by a",
+		"select a from t use index(primary) where a = 200 order by a",
+		"select b from t use index(b) where b < 200 order by b", // index-scan + sort
+		"select b from t use index(b) where b = 200 order by b",
+		"select c, d from t use index(cd) where c < 200 order by c",
+		"select c, d from t use index(cd) where c = 200 order by c",
+		"select c, d from t use index(cd) where c = 200 and d < 200 order by c, d",
+		"select d from t use index(cd) where c < 200 order by c",
+		"select d from t use index(cd) where c = 200 order by c",
+		"select d from t use index(cd) where c = 200 and d < 200 order by c, d",
+		"select * from t use index(b) where b < 200 order by b", // look-up + sort
+		"select * from t use index(b) where b = 200 order by b",
+		"select a, b from t use index(cd) where c < 200 order by c",
+		"select a, b from t use index(cd) where c = 200 order by c",
+		"select a, b from t use index(cd) where c = 200 and d < 200 order by c, d",
+		"select * from t use index(cd) where c < 200 order by c",
+		"select * from t use index(cd) where c = 200 order by c",
+		"select * from t use index(cd) where c = 200 and d < 200 order by c, d",
+		// topN
+		"select * from t use index(primary) where a < 200 order by a limit 10", // table-scan + topN
+		"select * from t use index(primary) where a = 200  order by a limit 10",
+		"select a, b, d from t use index(primary) where a < 200 order by a limit 10",
+		"select a, b, d from t use index(primary) where a = 200 order by a limit 10",
+		"select a from t use index(primary) where a < 200 order by a limit 10",
+		"select a from t use index(primary) where a = 200 order by a limit 10",
+		"select b from t use index(b) where b < 200 order by b limit 10", // index-scan + topN
+		"select b from t use index(b) where b = 200 order by b limit 10",
+		"select c, d from t use index(cd) where c < 200 order by c limit 10",
+		"select c, d from t use index(cd) where c = 200 order by c limit 10",
+		"select c, d from t use index(cd) where c = 200 and d < 200 order by c, d limit 10",
+		"select d from t use index(cd) where c < 200 order by c limit 10",
+		"select d from t use index(cd) where c = 200 order by c limit 10",
+		"select d from t use index(cd) where c = 200 and d < 200 order by c, d limit 10",
+		"select * from t use index(b) where b < 200 order by b limit 10", // look-up + topN
+		"select * from t use index(b) where b = 200 order by b limit 10",
+		"select a, b from t use index(cd) where c < 200 order by c limit 10",
+		"select a, b from t use index(cd) where c = 200 order by c limit 10",
+		"select a, b from t use index(cd) where c = 200 and d < 200 order by c, d limit 10",
+		"select * from t use index(cd) where c < 200 order by c limit 10",
+		"select * from t use index(cd) where c = 200 order by c limit 10",
+		"select * from t use index(cd) where c = 200 and d < 200 order by c, d limit 10",
 		// join
 		// point get
 		// mpp plans
