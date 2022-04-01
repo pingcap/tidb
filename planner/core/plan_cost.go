@@ -365,6 +365,7 @@ func (p *PhysicalExchangeReceiver) CalPlanCost(taskType property.TaskType) float
 	return p.planCost
 }
 
+// HistColl may not be propagated to some upper operators, so get HistColl recursively for safety.
 func getHistCollSafely(p PhysicalPlan) *statistics.HistColl {
 	if p.Stats().HistColl != nil {
 		return p.Stats().HistColl
