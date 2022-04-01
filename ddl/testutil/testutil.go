@@ -16,6 +16,7 @@ package testutil
 
 import (
 	"context"
+	"runtime"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
@@ -113,9 +114,6 @@ func GetReqStartKeyAndTxnTs(req *tikvrpc.Request) ([]byte, uint64, error) {
 	case tikvrpc.CmdPessimisticLock:
 		request := req.PessimisticLock()
 		return request.PrimaryLock, request.StartVersion, nil
-	case tikvrpc.CmdPessimisticRollback:
-		request := req.PessimisticRollback()
-		return request.Keys[0], request.StartVersion, nil
 	case tikvrpc.CmdCheckSecondaryLocks:
 		request := req.CheckSecondaryLocks()
 		return request.Keys[0], request.StartVersion, nil
@@ -133,10 +131,19 @@ func GetReqStartKeyAndTxnTs(req *tikvrpc.Request) ([]byte, uint64, error) {
 	case tikvrpc.CmdBatchCop, tikvrpc.CmdMPPTask, tikvrpc.CmdMPPConn, tikvrpc.CmdMPPCancel, tikvrpc.CmdMPPAlive:
 		// Ignore mpp requests.
 		return nil, 0, nil
-	case tikvrpc.CmdResolveLock, tikvrpc.CmdCheckTxnStatus:
+	case tikvrpc.CmdResolveLock, tikvrpc.CmdCheckTxnStatus, tikvrpc.CmdPessimisticRollback:
 		// TODO: add resource tag for those request. https://github.com/pingcap/tidb/issues/33621
 		return nil, 0, nil
 	default:
 		return nil, 0, errors.New("unknown request, check the new type RPC request here")
 	}
+}
+
+// GetStack gets the stacktrace.
+func GetStack() []byte {
+	const size = 1024 * 64
+	buf := make([]byte, size)
+	stackSize := runtime.Stack(buf, false)
+	buf = buf[:stackSize]
+	return buf
 }

@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -48,11 +47,9 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/cpuprofile"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/topsql"
@@ -61,9 +58,7 @@ import (
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikvrpc"
-	"go.uber.org/zap"
 )
 
 type tidbTestSuite struct {
@@ -1975,40 +1970,12 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 		conf.TopSQL.ReceiverAddress = "mock-agent"
 	})
 
-	startTimestamp, err := ts.store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
-	require.NoError(t, err)
-
 	tagChecker := &resourceTagChecker{
 		sqlDigest2Reqs: make(map[stmtstats.BinaryDigest]map[tikvrpc.CmdType]struct{}),
 	}
 	unistore.UnistoreRPCClientSendHook = func(req *tikvrpc.Request) {
 		tag := req.GetResourceGroupTag()
-		if len(tag) == 0 {
-			startKey, txnTs, err := testutil.GetReqStartKeyAndTxnTs(req)
-			if err != nil {
-				logutil.BgLogger().Error("FAIL-- get request start key meet error", zap.String("err", err.Error()), zap.Stack("stack"))
-			}
-			require.NoError(t, err)
-			var tid int64
-			if tablecodec.IsRecordKey(startKey) {
-				tid, _, err = tablecodec.DecodeRecordKey(startKey)
-			}
-			if tablecodec.IsIndexKey(startKey) {
-				tid, _, _, err = tablecodec.DecodeIndexKey(startKey)
-			}
-			if err != nil {
-				// since the error maybe "invalid record key", should just ignore check resource tag for this request.
-				return
-			}
-			if tid != 0 && txnTs > startTimestamp {
-				tbl, ok := ts.domain.InfoSchema().TableByID(tid)
-				if ok {
-					logutil.BgLogger().Error("FAIL-- rpc request does not set the resource tag", zap.String("req", req.Type.String()), zap.String("table", tbl.Meta().Name.O), zap.Stack("stack"))
-					require.Fail(t, "")
-				}
-			}
-			return
-		} else if ddlutil.IsInternalResourceGroupTaggerForTopSQL(tag) {
+		if len(tag) == 0 || ddlutil.IsInternalResourceGroupTaggerForTopSQL(tag) {
 			// Ignore for internal background request.
 			return
 		}
@@ -2310,6 +2277,21 @@ func TestTopSQLResourceTag(t *testing.T) {
 		cleanFn()
 	}()
 
+	loadDataFile, err := os.CreateTemp("", "load_data_test0.csv")
+	require.NoError(t, err)
+	defer func() {
+		path := loadDataFile.Name()
+		err = loadDataFile.Close()
+		require.NoError(t, err)
+		err = os.Remove(path)
+		require.NoError(t, err)
+	}()
+	_, err = loadDataFile.WriteString(
+		"31	31\n" +
+			"32	32\n" +
+			"33	33\n")
+	require.NoError(t, err)
+
 	// Test case for other statements
 	cases := []struct {
 		sql     string
@@ -2348,6 +2330,7 @@ func TestTopSQLResourceTag(t *testing.T) {
 
 		// Test for other statements.
 		{"set @@global.tidb_enable_1pc = 1", false, nil},
+		{fmt.Sprintf("load data local infile %q into table t2", loadDataFile.Name()), false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdBatchGet}},
 	}
 
 	internalCases := []struct {
@@ -2357,7 +2340,11 @@ func TestTopSQLResourceTag(t *testing.T) {
 		{"replace into mysql.global_variables (variable_name,variable_value) values ('tidb_enable_1pc', '1')", []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdBatchGet}},
 	}
 	executeCaseFn := func(execFn func(db *sql.DB)) {
-		db, err := sql.Open("mysql", ts.getDSN())
+		dsn := ts.getDSN(func(config *mysql.Config) {
+			config.AllowAllFiles = true
+			config.Params["sql_mode"] = "''"
+		})
+		db, err := sql.Open("mysql", dsn)
 		require.NoError(t, err)
 		dbt := testkit.NewDBTestKit(t, db)
 		dbt.MustExec("use stmtstats;")

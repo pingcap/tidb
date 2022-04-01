@@ -16,6 +16,8 @@ package server
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/store/mockstore/unistore"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"os"
 	"reflect"
 	"testing"
@@ -32,6 +34,8 @@ func TestMain(m *testing.M) {
 	testbridge.SetupForCommonTest()
 
 	RunInGoTest = true // flag for NewServer to known it is running in test environment
+	unistore.CheckResourceTagForTopSQLInGoTest = true
+	topsqlstate.EnableTopSQL()
 
 	// AsyncCommit will make DDL wait 2.5s before changing to the next state.
 	// Set schema lease to avoid it from making CI slow.
