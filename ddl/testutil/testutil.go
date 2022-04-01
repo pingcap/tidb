@@ -16,7 +16,6 @@ package testutil
 
 import (
 	"context"
-	"runtime"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
@@ -26,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 // SessionExecInGoroutine export for testing.
@@ -82,68 +80,4 @@ func ExtractAllTableHandles(se session.Session, dbName, tbName string) ([]int64,
 			return true, nil
 		})
 	return allHandles, err
-}
-
-// GetReqStartKey gets start key of the request.
-func GetReqStartKey(req *tikvrpc.Request) ([]byte, error) {
-	switch req.Type {
-	case tikvrpc.CmdGet:
-		request := req.Get()
-		return request.Key, nil
-	case tikvrpc.CmdScan:
-		request := req.Scan()
-		return request.StartKey, nil
-	case tikvrpc.CmdPrewrite:
-		request := req.Prewrite()
-		return request.Mutations[0].Key, nil
-	case tikvrpc.CmdCommit:
-		request := req.Commit()
-		return request.Keys[0], nil
-	case tikvrpc.CmdCleanup:
-		request := req.Cleanup()
-		return request.Key, nil
-	case tikvrpc.CmdBatchGet:
-		request := req.BatchGet()
-		return request.Keys[0], nil
-	case tikvrpc.CmdBatchRollback:
-		request := req.BatchRollback()
-		return request.Keys[0], nil
-	case tikvrpc.CmdScanLock:
-		request := req.ScanLock()
-		return request.StartKey, nil
-	case tikvrpc.CmdPessimisticLock:
-		request := req.PessimisticLock()
-		return request.PrimaryLock, nil
-	case tikvrpc.CmdCheckSecondaryLocks:
-		request := req.CheckSecondaryLocks()
-		return request.Keys[0], nil
-	case tikvrpc.CmdCop, tikvrpc.CmdCopStream:
-		request := req.Cop()
-		return request.Ranges[0].Start, nil
-	case tikvrpc.CmdGC, tikvrpc.CmdDeleteRange, tikvrpc.CmdTxnHeartBeat, tikvrpc.CmdRawGet,
-		tikvrpc.CmdRawBatchGet, tikvrpc.CmdRawPut, tikvrpc.CmdRawBatchPut, tikvrpc.CmdRawDelete, tikvrpc.CmdRawBatchDelete, tikvrpc.CmdRawDeleteRange,
-		tikvrpc.CmdRawScan, tikvrpc.CmdGetKeyTTL, tikvrpc.CmdRawCompareAndSwap, tikvrpc.CmdUnsafeDestroyRange, tikvrpc.CmdRegisterLockObserver,
-		tikvrpc.CmdCheckLockObserver, tikvrpc.CmdRemoveLockObserver, tikvrpc.CmdPhysicalScanLock, tikvrpc.CmdStoreSafeTS,
-		tikvrpc.CmdLockWaitInfo, tikvrpc.CmdMvccGetByKey, tikvrpc.CmdMvccGetByStartTs, tikvrpc.CmdSplitRegion,
-		tikvrpc.CmdDebugGetRegionProperties, tikvrpc.CmdEmpty:
-		// Ignore those requests since now, since it is no business with TopSQL.
-		return nil, nil
-	case tikvrpc.CmdBatchCop, tikvrpc.CmdMPPTask, tikvrpc.CmdMPPConn, tikvrpc.CmdMPPCancel, tikvrpc.CmdMPPAlive:
-		// Ignore mpp requests.
-		return nil, nil
-	case tikvrpc.CmdResolveLock, tikvrpc.CmdCheckTxnStatus, tikvrpc.CmdPessimisticRollback:
-		// TODO: add resource tag for those request. https://github.com/pingcap/tidb/issues/33621
-		return nil, nil
-	default:
-		return nil, errors.New("unknown request, check the new type RPC request here")
-	}
-}
-
-// GetStack gets the stacktrace.
-func GetStack() []byte {
-	const size = 1024 * 64
-	buf := make([]byte, size)
-	stackSize := runtime.Stack(buf, false)
-	buf = buf[:stackSize]
-	return buf
 }

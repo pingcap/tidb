@@ -97,11 +97,11 @@ type worker struct {
 	lockSeqNum      bool
 
 	*ddlCtx
-	*jobContext
+	*JobContext
 }
 
-// jobContext is the ddl job execution context.
-type jobContext struct {
+// JobContext is the ddl job execution context.
+type JobContext struct {
 	// below fields are cache for top sql
 	ddlJobCtx          context.Context
 	cacheSQL           string
@@ -115,7 +115,7 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRan
 		tp:       tp,
 		ddlJobCh: make(chan struct{}, 1),
 		ctx:      ctx,
-		jobContext: &jobContext{
+		JobContext: &JobContext{
 			ddlJobCtx:          context.Background(),
 			cacheSQL:           "",
 			cacheNormalizedSQL: "",
@@ -466,7 +466,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		updateRawArgs = false
 	}
 	w.writeDDLSeqNum(job)
-	w.jobContext.resetWhenJobFinish()
+	w.JobContext.resetWhenJobFinish()
 	err = t.AddHistoryDDLJob(job, updateRawArgs)
 	return errors.Trace(err)
 }
@@ -519,7 +519,7 @@ func newMetaWithQueueTp(txn kv.Transaction, tp workerType) *meta.Meta {
 	return meta.NewMeta(txn)
 }
 
-func (w *jobContext) setDDLLabelForTopSQL(job *model.Job) {
+func (w *JobContext) setDDLLabelForTopSQL(job *model.Job) {
 	if !topsqlstate.TopSQLEnabled() || job == nil {
 		return
 	}
@@ -533,7 +533,7 @@ func (w *jobContext) setDDLLabelForTopSQL(job *model.Job) {
 	}
 }
 
-func (w *jobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
+func (w *JobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
 	if !topsqlstate.TopSQLEnabled() || w.cacheDigest == nil {
 		return nil
 	}
@@ -546,7 +546,7 @@ func (w *jobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagg
 	return tagger
 }
 
-func (w *jobContext) resetWhenJobFinish() {
+func (w *JobContext) resetWhenJobFinish() {
 	w.ddlJobCtx = context.Background()
 	w.cacheSQL = ""
 	w.cacheDigest = nil

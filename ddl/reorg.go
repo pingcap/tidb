@@ -438,7 +438,7 @@ func getColumnsTypes(columns []*model.ColumnInfo) []*types.FieldType {
 }
 
 // buildDescTableScan builds a desc table scan upon tblInfo.
-func (dc *ddlCtx) buildDescTableScan(ctx *jobContext, startTS uint64, tbl table.PhysicalTable,
+func (dc *ddlCtx) buildDescTableScan(ctx *JobContext, startTS uint64, tbl table.PhysicalTable,
 	handleCols []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
 	sctx := newContext(dc.store)
 	dagPB, err := buildDescTableScanDAG(sctx, tbl, handleCols, limit)
@@ -476,7 +476,7 @@ func (dc *ddlCtx) buildDescTableScan(ctx *jobContext, startTS uint64, tbl table.
 }
 
 // GetTableMaxHandle gets the max handle of a PhysicalTable.
-func (dc *ddlCtx) GetTableMaxHandle(ctx *jobContext, startTS uint64, tbl table.PhysicalTable) (maxHandle kv.Handle, emptyTable bool, err error) {
+func (dc *ddlCtx) GetTableMaxHandle(ctx *JobContext, startTS uint64, tbl table.PhysicalTable) (maxHandle kv.Handle, emptyTable bool, err error) {
 	var handleCols []*model.ColumnInfo
 	var pkIdx *model.IndexInfo
 	tblInfo := tbl.Meta()
@@ -542,7 +542,7 @@ func buildCommonHandleFromChunkRow(sctx *stmtctx.StatementContext, tblInfo *mode
 }
 
 // getTableRange gets the start and end handle of a table (or partition).
-func getTableRange(ctx *jobContext, d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, priority int) (startHandleKey, endHandleKey kv.Key, err error) {
+func getTableRange(ctx *JobContext, d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, priority int) (startHandleKey, endHandleKey kv.Key, err error) {
 	// Get the start handle of this partition.
 	err = iterateSnapshotRows(ctx, d.store, priority, tbl, snapshotVer, nil, nil,
 		func(h kv.Handle, rowKey kv.Key, rawRecord []byte) (bool, error) {
@@ -579,7 +579,7 @@ func getValidCurrentVersion(store kv.Storage) (ver kv.Version, err error) {
 	return ver, nil
 }
 
-func getReorgInfo(ctx *jobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elements []*meta.Element) (*reorgInfo, error) {
+func getReorgInfo(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elements []*meta.Element) (*reorgInfo, error) {
 	var (
 		element *meta.Element
 		start   kv.Key
@@ -671,7 +671,7 @@ func getReorgInfo(ctx *jobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl 
 	return &info, nil
 }
 
-func getReorgInfoFromPartitions(ctx *jobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {
+func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {
 	var (
 		element *meta.Element
 		start   kv.Key

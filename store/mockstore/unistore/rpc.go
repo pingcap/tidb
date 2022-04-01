@@ -15,7 +15,6 @@
 package unistore
 
 import (
-	"fmt"
 	"io"
 	"math"
 	"os"
@@ -32,12 +31,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
-	"github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/parser/terror"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
-	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/metadata"
@@ -421,35 +417,6 @@ func (c *RPCClient) Close() error {
 
 // CloseAddr implements tikv.Client interface and it does nothing.
 func (c *RPCClient) CloseAddr(addr string) error {
-	return nil
-}
-
-func checkResourceTagForTopSQL(req *tikvrpc.Request) error {
-	if !topsqlstate.TopSQLEnabled() {
-		return nil
-	}
-	tag := req.GetResourceGroupTag()
-	if len(tag) > 0 {
-		return nil
-	}
-
-	startKey, err := testutil.GetReqStartKey(req)
-	if err != nil {
-		return err
-	}
-	var tid int64
-	if tablecodec.IsRecordKey(startKey) {
-		tid, _, _ = tablecodec.DecodeRecordKey(startKey)
-	}
-	if tablecodec.IsIndexKey(startKey) {
-		tid, _, _, _ = tablecodec.DecodeIndexKey(startKey)
-	}
-	// since the error maybe "invalid record key", should just ignore check resource tag for this request.
-	if tid > 0 {
-		stack := testutil.GetStack()
-		return fmt.Errorf("%v req does not set the resource tag, tid: %v, stack: %v",
-			req.Type.String(), tid, string(stack))
-	}
 	return nil
 }
 
