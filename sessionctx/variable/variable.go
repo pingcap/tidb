@@ -188,6 +188,18 @@ func (sv *SysVar) GetSessionFromHook(s *SessionVars) (string, error) {
 
 // SetSessionFromHook calls the SetSession func if it exists.
 func (sv *SysVar) SetSessionFromHook(s *SessionVars, val string) error {
+	if sv.Name == MaxAllowedPacket {
+		u, err := strconv.ParseUint(val, 10, 64)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// The value should be a multiple of 1024; nonmultiples are rounded down to the nearest multiple.
+		if u%1024 != 0 {
+			s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(MaxAllowedPacket, val))
+			u = (u / 1024) * 1024
+			val = strconv.FormatUint(u, 10)
+		}
+	}
 	if sv.SetSession != nil {
 		if err := sv.SetSession(s, val); err != nil {
 			return err
