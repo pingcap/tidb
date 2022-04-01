@@ -1889,7 +1889,7 @@ func TestTopSQLStatementStats(t *testing.T) {
 
 type resourceTagChecker struct {
 	sync.Mutex
-	sqlDigests map[stmtstats.BinaryDigest]struct{}
+	sqlDigest2Reqs map[stmtstats.BinaryDigest]map[tikvrpc.CmdType]struct{}
 }
 
 func (c *resourceTagChecker) checkExist(t *testing.T, digest stmtstats.BinaryDigest, sqlStr string) {
@@ -1906,8 +1906,19 @@ func (c *resourceTagChecker) checkExist(t *testing.T, digest stmtstats.BinaryDig
 
 	c.Lock()
 	defer c.Unlock()
-	_, ok := c.sqlDigests[digest]
+	_, ok := c.sqlDigest2Reqs[digest]
 	require.True(t, ok, sqlStr)
+}
+
+func (c *resourceTagChecker) checkReqExist(t *testing.T, digest stmtstats.BinaryDigest, sqlStr string, reqs ...tikvrpc.CmdType) {
+	c.Lock()
+	defer c.Unlock()
+	reqMap, ok := c.sqlDigest2Reqs[digest]
+	require.True(t, ok, sqlStr)
+	for _, req := range reqs {
+		_, ok := reqMap[req]
+		require.True(t, ok, sqlStr+"--"+req.String())
+	}
 }
 
 func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.StatementStatsMap, *resourceTagChecker, chan struct{}, func()) {
@@ -1956,7 +1967,7 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 	})
 
 	tagChecker := &resourceTagChecker{
-		sqlDigests: make(map[stmtstats.BinaryDigest]struct{}),
+		sqlDigest2Reqs: make(map[stmtstats.BinaryDigest]map[tikvrpc.CmdType]struct{}),
 	}
 	unistore.UnistoreRPCClientSendHook = func(req *tikvrpc.Request) {
 		tag := req.GetResourceGroupTag()
@@ -1967,7 +1978,13 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 		require.NoError(t, err)
 		tagChecker.Lock()
 		defer tagChecker.Unlock()
-		tagChecker.sqlDigests[stmtstats.BinaryDigest(sqlDigest)] = struct{}{}
+
+		reqMap, ok := tagChecker.sqlDigest2Reqs[stmtstats.BinaryDigest(sqlDigest)]
+		if !ok {
+			reqMap = make(map[tikvrpc.CmdType]struct{})
+		}
+		reqMap[req.Type] = struct{}{}
+		tagChecker.sqlDigest2Reqs[stmtstats.BinaryDigest(sqlDigest)] = reqMap
 	}
 
 	cleanFn := func() {
@@ -2093,6 +2110,10 @@ func TestTopSQLStatementStats2(t *testing.T) {
 			require.True(t, item.SumDurationNs > 1, sqlStr)
 			foundMap[digest.SQLDigest] = sqlStr
 			tagChecker.checkExist(t, digest.SQLDigest, sqlStr)
+			// The special check uses to test the issue #33202.
+			if strings.Contains(strings.ToLower(sqlStr), "add index") {
+				tagChecker.checkReqExist(t, digest.SQLDigest, sqlStr, tikvrpc.CmdScan)
+			}
 		}
 	}
 	require.Equal(t, len(sqlDigests), len(foundMap), fmt.Sprintf("%v !=\n %v", sqlDigests, foundMap))

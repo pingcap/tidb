@@ -4,6 +4,7 @@ package task
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -21,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/spf13/pflag"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -184,7 +186,7 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 }
 
 // adjustRestoreConfig is use for BR(binary) and BR in TiDB.
-// When new config was add and not included in parser.
+// When new config was added and not included in parser.
 // we should set proper value in this function.
 // so that both binary and TiDB will use same default value.
 func (cfg *RestoreConfig) adjustRestoreConfig() {
@@ -265,6 +267,42 @@ func CheckRestoreDBAndTable(client *restore.Client, cfg *RestoreConfig) error {
 	return nil
 }
 
+func CheckNewCollationEnable(
+	backupNewCollationEnable string,
+	g glue.Glue,
+	storage kv.Storage,
+	CheckRequirements bool,
+) error {
+	if backupNewCollationEnable == "" {
+		if CheckRequirements {
+			return errors.Annotatef(berrors.ErrUnknown,
+				"NewCollactionEnable not found in backupmeta. "+
+					"if you ensure the NewCollactionEnable config of backup cluster is as same as restore cluster, "+
+					"use --check-requirements=false to skip")
+		} else {
+			log.Warn("no NewCollactionEnable in backup")
+			return nil
+		}
+	}
+
+	se, err := g.CreateSession(storage)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	newCollationEnable, err := se.GetGlobalVariable(tidbNewCollationEnabled)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if !strings.EqualFold(backupNewCollationEnable, newCollationEnable) {
+		return errors.Annotatef(berrors.ErrUnknown,
+			"newCollationEnable not match, upstream:%v, downstream: %v",
+			backupNewCollationEnable, newCollationEnable)
+	}
+	return nil
+}
+
 func isFullRestore(cmdName string) bool {
 	return cmdName == FullRestoreCmd
 }
@@ -315,6 +353,10 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			return errors.Trace(versionErr)
 		}
 	}
+	if err = CheckNewCollationEnable(backupMeta.GetNewCollationsEnabled(), g, mgr.GetStorage(), cfg.CheckRequirements); err != nil {
+		return errors.Trace(err)
+	}
+
 	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
 	if err = client.InitBackupMeta(c, backupMeta, u, s, reader); err != nil {
 		return errors.Trace(err)
@@ -359,6 +401,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		newTS = restoreTS
 	}
 	ddlJobs := restore.FilterDDLJobs(client.GetDDLJobs(), tables)
+	ddlJobs = restore.FilterDDLJobByRules(ddlJobs, restore.DDLJobBlockListRule)
 
 	err = client.PreCheckTableTiFlashReplica(ctx, tables)
 	if err != nil {
@@ -532,6 +575,8 @@ func dropToBlackhole(
 	return outCh
 }
 
+// filterRestoreFiles filters tables that can't be processed after applying cfg.TableFilter.MatchTable.
+// if the db has no table that can be processed, the db will be filtered too.
 func filterRestoreFiles(
 	client *restore.Client,
 	cfg *RestoreConfig,

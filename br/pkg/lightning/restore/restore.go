@@ -262,6 +262,7 @@ type Controller struct {
 
 	closedEngineLimit *worker.Pool
 	store             storage.ExternalStorage
+	ownStore          bool
 	metaMgrBuilder    metaMgrBuilder
 	errorMgr          *errormanager.ErrorManager
 	taskMgr           taskMetaMgr
@@ -277,37 +278,60 @@ type LightningStatus struct {
 	TotalFileSize    atomic.Int64
 }
 
+// ControllerParam contains many parameters for creating a Controller.
+type ControllerParam struct {
+	// databases that dumper created
+	DBMetas []*mydump.MDDatabaseMeta
+	// a pointer to status to report it to caller
+	Status *LightningStatus
+	// storage interface to read the dump data
+	DumpFileStorage storage.ExternalStorage
+	// true if DumpFileStorage is created by lightning. In some cases where lightning is a library, the framework may pass an DumpFileStorage
+	OwnExtStorage bool
+	// used by lightning server mode to pause tasks
+	Pauser *common.Pauser
+	// lightning via SQL will implement its glue, to let lightning use host TiDB's environment
+	Glue glue.Glue
+	// storage interface to write file checkpoints
+	CheckpointStorage storage.ExternalStorage
+	// when CheckpointStorage is not nil, save file checkpoint to it with this name
+	CheckpointName string
+}
+
 func NewRestoreController(
 	ctx context.Context,
-	dbMetas []*mydump.MDDatabaseMeta,
 	cfg *config.Config,
-	status *LightningStatus,
-	s storage.ExternalStorage,
-	g glue.Glue,
+	param *ControllerParam,
 ) (*Controller, error) {
-	return NewRestoreControllerWithPauser(ctx, dbMetas, cfg, status, s, DeliverPauser, g)
+	param.Pauser = DeliverPauser
+	return NewRestoreControllerWithPauser(ctx, cfg, param)
 }
 
 func NewRestoreControllerWithPauser(
 	ctx context.Context,
-	dbMetas []*mydump.MDDatabaseMeta,
 	cfg *config.Config,
-	status *LightningStatus,
-	s storage.ExternalStorage,
-	pauser *common.Pauser,
-	g glue.Glue,
+	p *ControllerParam,
 ) (*Controller, error) {
 	tls, err := cfg.ToTLS()
 	if err != nil {
 		return nil, err
 	}
 
-	cpdb, err := g.OpenCheckpointsDB(ctx, cfg)
-	if err != nil {
-		if berrors.Is(err, common.ErrUnknownCheckpointDriver) {
-			return nil, err
+	var cpdb checkpoints.DB
+	// if CheckpointStorage is set, we should use given ExternalStorage to create checkpoints.
+	if p.CheckpointStorage != nil {
+		cpdb, err = checkpoints.NewFileCheckpointsDBWithExstorageFileName(ctx, p.CheckpointStorage.URI(), p.CheckpointStorage, p.CheckpointName)
+		if err != nil {
+			return nil, common.ErrOpenCheckpoint.Wrap(err).GenWithStackByArgs()
 		}
-		return nil, common.ErrOpenCheckpoint.Wrap(err).GenWithStackByArgs()
+	} else {
+		cpdb, err = p.Glue.OpenCheckpointsDB(ctx, cfg)
+		if err != nil {
+			if berrors.Is(err, common.ErrUnknownCheckpointDriver) {
+				return nil, err
+			}
+			return nil, common.ErrOpenCheckpoint.Wrap(err).GenWithStackByArgs()
+		}
 	}
 
 	taskCp, err := cpdb.TaskCheckpoint(ctx)
@@ -323,7 +347,7 @@ func NewRestoreControllerWithPauser(
 	}
 
 	// TODO: support Lightning via SQL
-	db, err := g.GetDB()
+	db, err := p.Glue.GetDB()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -365,7 +389,7 @@ func NewRestoreControllerWithPauser(
 			}
 		}
 
-		backend, err = local.NewLocalBackend(ctx, tls, cfg, g, maxOpenFiles, errorMgr)
+		backend, err = local.NewLocalBackend(ctx, tls, cfg, p.Glue, maxOpenFiles, errorMgr)
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
 		}
@@ -395,15 +419,15 @@ func NewRestoreControllerWithPauser(
 
 	rc := &Controller{
 		cfg:           cfg,
-		dbMetas:       dbMetas,
+		dbMetas:       p.DBMetas,
 		tableWorkers:  nil,
 		indexWorkers:  nil,
 		regionWorkers: worker.NewPool(ctx, cfg.App.RegionConcurrency, "region"),
 		ioWorkers:     worker.NewPool(ctx, cfg.App.IOConcurrency, "io"),
 		checksumWorks: worker.NewPool(ctx, cfg.TiDB.ChecksumTableConcurrency, "checksum"),
-		pauser:        pauser,
+		pauser:        p.Pauser,
 		backend:       backend,
-		tidbGlue:      g,
+		tidbGlue:      p.Glue,
 		sysVars:       defaultImportantVariables,
 		tls:           tls,
 		checkTemplate: NewSimpleTemplate(),
@@ -413,11 +437,12 @@ func NewRestoreControllerWithPauser(
 		saveCpCh:          make(chan saveCp),
 		closedEngineLimit: worker.NewPool(ctx, cfg.App.TableConcurrency*2, "closed-engine"),
 
-		store:          s,
+		store:          p.DumpFileStorage,
+		ownStore:       p.OwnExtStorage,
 		metaMgrBuilder: metaBuilder,
 		errorMgr:       errorMgr,
 		diskQuotaLock:  newDiskQuotaLock(),
-		status:         status,
+		status:         p.Status,
 		taskMgr:        nil,
 	}
 
@@ -947,11 +972,14 @@ func (rc *Controller) saveStatusCheckpoint(ctx context.Context, tableName string
 	switch {
 	case err == nil:
 		break
-	case !common.IsContextCanceledError(err):
+	case utils.MessageIsRetryableStorageError(err.Error()), common.IsContextCanceledError(err):
+		// recoverable error, should not be recorded in checkpoint
+		// which will prevent lightning from automatically recovering
+		return nil
+	default:
+		// unrecoverable error
 		merger.SetInvalid()
 		rc.errorSummaries.record(tableName, err, statusIfSucceed)
-	default:
-		return nil
 	}
 
 	if engineID == checkpoints.WholeTableEngineID {
@@ -1863,8 +1891,10 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 	if rc.cfg.App.CheckRequirements {
 		rc.ClusterIsAvailable(ctx)
 
-		if err := rc.StoragePermission(ctx); err != nil {
-			return errors.Trace(err)
+		if rc.ownStore {
+			if err := rc.StoragePermission(ctx); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 

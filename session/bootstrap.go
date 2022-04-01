@@ -396,6 +396,24 @@ const (
 		UNIQUE KEY table_version (table_id, version),
 		KEY table_create_time (table_id, create_time)
 	);`
+	// CreateAnalyzeJobs stores the analyze jobs.
+	CreateAnalyzeJobs = `CREATE TABLE IF NOT EXISTS mysql.analyze_jobs (
+		id BIGINT(64) UNSIGNED NOT NULL AUTO_INCREMENT,
+		update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		table_schema CHAR(64) NOT NULL DEFAULT '',
+		table_name CHAR(64) NOT NULL DEFAULT '',
+		partition_name CHAR(64) NOT NULL DEFAULT '',
+		job_info TEXT NOT NULL,
+		processed_rows BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		start_time TIMESTAMP,
+		end_time TIMESTAMP,
+		state ENUM('pending', 'running', 'finished', 'failed') NOT NULL,
+		fail_reason TEXT,
+		instance CHAR(64) NOT NULL comment 'address of the TiDB instance executing the analyze job',
+		process_id BIGINT(64) UNSIGNED comment 'ID of the process executing the analyze job',
+		PRIMARY KEY (id),
+		KEY (update_time)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -583,13 +601,15 @@ const (
 	version84 = 84
 	// version85 updates bindings with status 'using' in mysql.bind_info table to 'enabled' status
 	version85 = 85
-	// version86 changes global variable `tidb_enable_top_sql` value from false to true.
+	// version86 update mysql.tables_priv from SET('Select','Insert','Update') to SET('Select','Insert','Update','References').
 	version86 = 86
+	// version87 adds the mysql.analyze_jobs table
+	version87 = 87
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version86
+var currentBootstrapVersion int64 = version87
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -679,6 +699,7 @@ var (
 		upgradeToVer84,
 		upgradeToVer85,
 		upgradeToVer86,
+		upgradeToVer87,
 	}
 )
 
@@ -1759,8 +1780,14 @@ func upgradeToVer86(s Session, ver int64) {
 	if ver >= version86 {
 		return
 	}
-	// Enable Top SQL by default after upgrade
-	mustExecute(s, "set @@global.tidb_enable_top_sql = 1")
+	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY COLUMN Column_priv SET('Select','Insert','Update','References')")
+}
+
+func upgradeToVer87(s Session, ver int64) {
+	if ver >= version87 {
+		return
+	}
+	doReentrantDDL(s, CreateAnalyzeJobs)
 }
 
 func writeOOMAction(s Session) {
@@ -1853,6 +1880,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateStatsHistory)
 	// Create stats_meta_history table.
 	mustExecute(s, CreateStatsMetaHistory)
+	// Create analyze_jobs table.
+	mustExecute(s, CreateAnalyzeJobs)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
@@ -1915,10 +1944,6 @@ func doDMLWorks(s Session) {
 			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)
-
-			if v.GlobalConfigName != "" {
-				domain.GetDomain(s).NotifyGlobalConfigChange(v.GlobalConfigName, variable.OnOffToTrueFalse(vVal))
-			}
 		}
 	}
 	sql := fmt.Sprintf("INSERT HIGH_PRIORITY INTO %s.%s VALUES %s;", mysql.SystemDB, mysql.GlobalVariablesTable,

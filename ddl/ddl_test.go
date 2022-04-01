@@ -22,12 +22,15 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -149,7 +152,7 @@ func testCreatePrimaryKey(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *
 	job := buildCreateIdxJob(dbInfo, tblInfo, true, "primary", colName)
 	job.Type = model.ActionAddPrimaryKey
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.doDDLJob(ctx, job)
+	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
@@ -159,7 +162,7 @@ func testCreatePrimaryKey(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *
 func testCreateIndex(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bool, indexName string, colName string) *model.Job {
 	job := buildCreateIdxJob(dbInfo, tblInfo, unique, indexName, colName)
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.doDDLJob(ctx, job)
+	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
@@ -174,8 +177,9 @@ func testAddColumn(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.D
 		Args:       args,
 		BinlogInfo: &model.HistoryInfo{},
 	}
+
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.doDDLJob(ctx, job)
+	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
@@ -190,8 +194,9 @@ func testAddColumns(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.
 		Args:       args,
 		BinlogInfo: &model.HistoryInfo{},
 	}
+
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.doDDLJob(ctx, job)
+	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
@@ -214,22 +219,13 @@ func buildDropIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName s
 
 func testDropIndex(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName string) *model.Job {
 	job := buildDropIdxJob(dbInfo, tblInfo, indexName)
+
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.doDDLJob(ctx, job)
+	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
-}
-
-func buildRebaseAutoIDJobJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, newBaseID int64) *model.Job {
-	return &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionRebaseAutoID,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{newBaseID},
-	}
 }
 
 func TestGetIntervalFromPolicy(t *testing.T) {
@@ -257,4 +253,258 @@ func TestGetIntervalFromPolicy(t *testing.T) {
 	val, changed = getIntervalFromPolicy(policy, 3)
 	require.Equal(t, val, 2*time.Second)
 	require.False(t, changed)
+}
+
+func colDefStrToFieldType(t *testing.T, str string, ctx sessionctx.Context) *types.FieldType {
+	sqlA := "alter table t modify column a " + str
+	stmt, err := parser.New().ParseOneStmt(sqlA, "", "")
+	require.NoError(t, err)
+	colDef := stmt.(*ast.AlterTableStmt).Specs[0].NewColumns[0]
+	chs, coll := charset.GetDefaultCharsetAndCollate()
+	col, _, err := buildColumnAndConstraint(ctx, 0, colDef, nil, chs, coll)
+	require.NoError(t, err)
+	return &col.FieldType
+}
+
+func TestModifyColumn(t *testing.T) {
+	ctx := mock.NewContext()
+	tests := []struct {
+		origin string
+		to     string
+		err    error
+	}{
+		{"int", "bigint", nil},
+		{"int", "int unsigned", nil},
+		{"varchar(10)", "text", nil},
+		{"varbinary(10)", "blob", nil},
+		{"text", "blob", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8mb4 to binary")},
+		{"varchar(10)", "varchar(8)", nil},
+		{"varchar(10)", "varchar(11)", nil},
+		{"varchar(10) character set utf8 collate utf8_bin", "varchar(10) character set utf8", nil},
+		{"decimal(2,1)", "decimal(3,2)", nil},
+		{"decimal(2,1)", "decimal(2,2)", nil},
+		{"decimal(2,1)", "decimal(2,1)", nil},
+		{"decimal(2,1)", "int", nil},
+		{"decimal", "int", nil},
+		{"decimal(2,1)", "bigint", nil},
+		{"int", "varchar(10) character set gbk", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from binary to gbk")},
+		{"varchar(10) character set gbk", "int", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from gbk to binary")},
+		{"varchar(10) character set gbk", "varchar(10) character set utf8", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from gbk to utf8")},
+		{"varchar(10) character set gbk", "char(10) character set utf8", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from gbk to utf8")},
+		{"varchar(10) character set utf8", "char(10) character set gbk", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8 to gbk")},
+		{"varchar(10) character set utf8", "varchar(10) character set gbk", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8 to gbk")},
+		{"varchar(10) character set gbk", "varchar(255) character set gbk", nil},
+	}
+	for _, tt := range tests {
+		ftA := colDefStrToFieldType(t, tt.origin, ctx)
+		ftB := colDefStrToFieldType(t, tt.to, ctx)
+		err := checkModifyTypes(ctx, ftA, ftB, false)
+		if err == nil {
+			require.NoErrorf(t, tt.err, "origin:%v, to:%v", tt.origin, tt.to)
+		} else {
+			require.EqualError(t, err, tt.err.Error())
+		}
+	}
+}
+
+func TestFieldCase(t *testing.T) {
+	var fields = []string{"field", "Field"}
+	colObjects := make([]*model.ColumnInfo, len(fields))
+	for i, name := range fields {
+		colObjects[i] = &model.ColumnInfo{
+			Name: model.NewCIStr(name),
+		}
+	}
+	err := checkDuplicateColumn(colObjects)
+	require.EqualError(t, err, infoschema.ErrColumnExists.GenWithStackByArgs("Field").Error())
+}
+
+func TestIgnorableSpec(t *testing.T) {
+	specs := []ast.AlterTableType{
+		ast.AlterTableOption,
+		ast.AlterTableAddColumns,
+		ast.AlterTableAddConstraint,
+		ast.AlterTableDropColumn,
+		ast.AlterTableDropPrimaryKey,
+		ast.AlterTableDropIndex,
+		ast.AlterTableDropForeignKey,
+		ast.AlterTableModifyColumn,
+		ast.AlterTableChangeColumn,
+		ast.AlterTableRenameTable,
+		ast.AlterTableAlterColumn,
+	}
+	for _, spec := range specs {
+		require.False(t, isIgnorableSpec(spec))
+	}
+
+	ignorableSpecs := []ast.AlterTableType{
+		ast.AlterTableLock,
+		ast.AlterTableAlgorithm,
+	}
+	for _, spec := range ignorableSpecs {
+		require.True(t, isIgnorableSpec(spec))
+	}
+}
+
+func TestBuildJobDependence(t *testing.T) {
+	store := createMockStore(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	// Add some non-add-index jobs.
+	job1 := &model.Job{ID: 1, TableID: 1, Type: model.ActionAddColumn}
+	job2 := &model.Job{ID: 2, TableID: 1, Type: model.ActionCreateTable}
+	job3 := &model.Job{ID: 3, TableID: 2, Type: model.ActionDropColumn}
+	job6 := &model.Job{ID: 6, TableID: 1, Type: model.ActionDropTable}
+	job7 := &model.Job{ID: 7, TableID: 2, Type: model.ActionModifyColumn}
+	job9 := &model.Job{ID: 9, SchemaID: 111, Type: model.ActionDropSchema}
+	job11 := &model.Job{ID: 11, TableID: 2, Type: model.ActionRenameTable, Args: []interface{}{int64(111), "old db name"}}
+	err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		require.NoError(t, m.EnQueueDDLJob(job1))
+		require.NoError(t, m.EnQueueDDLJob(job2))
+		require.NoError(t, m.EnQueueDDLJob(job3))
+		require.NoError(t, m.EnQueueDDLJob(job6))
+		require.NoError(t, m.EnQueueDDLJob(job7))
+		require.NoError(t, m.EnQueueDDLJob(job9))
+		require.NoError(t, m.EnQueueDDLJob(job11))
+		return nil
+	})
+	require.NoError(t, err)
+	job4 := &model.Job{ID: 4, TableID: 1, Type: model.ActionAddIndex}
+	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		err := buildJobDependence(m, job4)
+		require.NoError(t, err)
+		require.Equal(t, job4.DependencyID, int64(2))
+		return nil
+	})
+	require.NoError(t, err)
+	job5 := &model.Job{ID: 5, TableID: 2, Type: model.ActionAddIndex}
+	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		err := buildJobDependence(m, job5)
+		require.NoError(t, err)
+		require.Equal(t, job5.DependencyID, int64(3))
+		return nil
+	})
+	require.NoError(t, err)
+	job8 := &model.Job{ID: 8, TableID: 3, Type: model.ActionAddIndex}
+	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		err := buildJobDependence(m, job8)
+		require.NoError(t, err)
+		require.Equal(t, job8.DependencyID, int64(0))
+		return nil
+	})
+	require.NoError(t, err)
+	job10 := &model.Job{ID: 10, SchemaID: 111, TableID: 3, Type: model.ActionAddIndex}
+	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		err := buildJobDependence(m, job10)
+		require.NoError(t, err)
+		require.Equal(t, job10.DependencyID, int64(9))
+		return nil
+	})
+	require.NoError(t, err)
+	job12 := &model.Job{ID: 12, SchemaID: 112, TableID: 2, Type: model.ActionAddIndex}
+	err = kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		err := buildJobDependence(m, job12)
+		require.NoError(t, err)
+		require.Equal(t, job12.DependencyID, int64(11))
+		return nil
+	})
+	require.NoError(t, err)
+}
+
+func TestNotifyDDLJob(t *testing.T) {
+	store := createMockStore(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	getFirstNotificationAfterStartDDL := func(d *ddl) {
+		select {
+		case <-d.workers[addIdxWorker].ddlJobCh:
+		default:
+			// The notification may be received by the worker.
+		}
+		select {
+		case <-d.workers[generalWorker].ddlJobCh:
+		default:
+			// The notification may be received by the worker.
+		}
+	}
+
+	d, err := testNewDDLAndStart(
+		context.Background(),
+		WithStore(store),
+		WithLease(testLease),
+	)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, d.Stop())
+	}()
+	getFirstNotificationAfterStartDDL(d)
+	// Ensure that the notification is not handled in workers `start` function.
+	d.cancel()
+	for _, worker := range d.workers {
+		worker.close()
+	}
+
+	job := &model.Job{
+		SchemaID:   1,
+		TableID:    2,
+		Type:       model.ActionCreateTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{},
+	}
+	// Test the notification mechanism of the owner and the server receiving the DDL request on the same TiDB.
+	// This DDL request is a general DDL job.
+	d.asyncNotifyWorker(job)
+	select {
+	case <-d.workers[generalWorker].ddlJobCh:
+	default:
+		require.FailNow(t, "do not get the general job notification")
+	}
+	// Test the notification mechanism of the owner and the server receiving the DDL request on the same TiDB.
+	// This DDL request is a add index DDL job.
+	job.Type = model.ActionAddIndex
+	d.asyncNotifyWorker(job)
+	select {
+	case <-d.workers[addIdxWorker].ddlJobCh:
+	default:
+		require.FailNow(t, "do not get the add index job notification")
+	}
+
+	// Test the notification mechanism that the owner and the server receiving the DDL request are not on the same TiDB.
+	// And the etcd client is nil.
+	d1, err := testNewDDLAndStart(
+		context.Background(),
+		WithStore(store),
+		WithLease(testLease),
+	)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, d1.Stop())
+	}()
+	getFirstNotificationAfterStartDDL(d1)
+	// Ensure that the notification is not handled by worker's "start".
+	d1.cancel()
+	for _, worker := range d1.workers {
+		worker.close()
+	}
+	d1.ownerManager.RetireOwner()
+	d1.asyncNotifyWorker(job)
+	job.Type = model.ActionCreateTable
+	d1.asyncNotifyWorker(job)
+	testCheckOwner(t, d1, false)
+	select {
+	case <-d1.workers[addIdxWorker].ddlJobCh:
+		require.FailNow(t, "should not get the add index job notification")
+	case <-d1.workers[generalWorker].ddlJobCh:
+		require.FailNow(t, "should not get the general job notification")
+	default:
+	}
 }
