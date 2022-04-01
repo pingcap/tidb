@@ -48,9 +48,9 @@ func checkRangeCntByTableIDsAndIndexIDs(partitionTableIDs []int64, indexIDs []in
 	}
 	uniqueIndexIDs := make(map[int64]struct{})
 	for _, id := range indexIDs {
-		uniqueIndexIds[id] = struct{}{}
+		uniqueIndexIDs[id] = struct{}{}
 	}
-	expectedCnt := len(uniqueIndexIds)
+	expectedCnt := len(uniqueIndexIDs)
 	if len(partitionTableIDs) > 0 {
 		expectedCnt *= len(partitionTableIDs)
 	}
@@ -82,7 +82,7 @@ func (d *ddl) checkDeleteRangeCnt(job *model.Job) {
 	req := rs.NewChunk(nil)
 	err = rs.Next(context.TODO(), req)
 	if err != nil {
-		panic("should not happened, err:"+err.Error())
+		panic("should not happened, err:" + err.Error())
 	}
 	cnt, _ := req.GetRow(0).GetMyDecimal(0).ToInt()
 
@@ -125,14 +125,14 @@ func (d *ddl) checkDeleteRangeCnt(job *model.Job) {
 		if err := job.DecodeArgs(&indexName, &indexID, &partitionIDs); err != nil {
 			panic("should not happened")
 		}
-		checkRangeCntByTableIDsAndIndexIds(partitionIDs, []int64{indexID}, cnt)
+		checkRangeCntByTableIDsAndIndexIDs(partitionIDs, []int64{indexID}, cnt)
 	case model.ActionDropIndexes:
 		var indexIDs []int64
 		var partitionIDs []int64
 		if err := job.DecodeArgs(&[]model.CIStr{}, &[]bool{}, &indexIDs, &partitionIDs); err != nil {
 			panic("should not happened")
 		}
-		checkRangeCntByTableIDsAndIndexIds(partitionIDs, indexIDs, cnt)
+		checkRangeCntByTableIDsAndIndexIDs(partitionIDs, indexIDs, cnt)
 	case model.ActionDropColumn:
 		var colName model.CIStr
 		var indexIDs []int64
@@ -140,7 +140,7 @@ func (d *ddl) checkDeleteRangeCnt(job *model.Job) {
 		if err := job.DecodeArgs(&colName, &indexIDs, &partitionIDs); err != nil {
 			panic("should not happened")
 		}
-		checkRangeCntByTableIDsAndIndexIds(partitionIDs, indexIDs, cnt)
+		checkRangeCntByTableIDsAndIndexIDs(partitionIDs, indexIDs, cnt)
 	case model.ActionDropColumns:
 		var colNames []model.CIStr
 		var ifExists []bool
@@ -149,14 +149,14 @@ func (d *ddl) checkDeleteRangeCnt(job *model.Job) {
 		if err := job.DecodeArgs(&colNames, &ifExists, &indexIDs, &partitionIDs); err != nil {
 			panic("should not happened")
 		}
-		checkRangeCntByTableIDsAndIndexIds(partitionIDs, indexIDs, cnt)
+		checkRangeCntByTableIDsAndIndexIDs(partitionIDs, indexIDs, cnt)
 	case model.ActionModifyColumn:
 		var indexIDs []int64
 		var partitionIDs []int64
 		if err := job.DecodeArgs(&indexIDs, &partitionIDs); err != nil {
 			panic("should not happened")
 		}
-		checkRangeCntByTableIDsAndIndexIds(partitionIDs, indexIDs, cnt)
+		checkRangeCntByTableIDsAndIndexIDs(partitionIDs, indexIDs, cnt)
 	}
 }
 
@@ -169,20 +169,8 @@ func (d *ddl) checkHistoryJobInTest(ctx sessionctx.Context, historyJob *model.Jo
 	}
 
 	// Check delete range.
-	// Keep it the same as finishDDLJob.
-	if !historyJob.IsCancelled() {
-		switch historyJob.Type {
-		case model.ActionAddIndex, model.ActionAddPrimaryKey:
-			if historyJob.State != model.JobStateRollbackDone {
-				break
-			}
-			fallthrough
-		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
-			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes:
-			d.checkDeleteRangeCnt(historyJob)
-		default:
-			// No need to check.
-		}
+	if jobNeedGC(historyJob) {
+		d.checkDeleteRangeCnt(historyJob)
 	}
 
 	// Check binlog.
