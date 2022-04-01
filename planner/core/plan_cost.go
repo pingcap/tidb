@@ -47,10 +47,7 @@ func (p *PhysicalProjection) CalPlanCost(taskType property.TaskType) float64 {
 	if p.planCostInit {
 		return p.planCost
 	}
-	p.planCost = 0
-	for _, child := range p.children {
-		p.planCost += child.CalPlanCost(taskType)
-	}
+	p.planCost = p.children[0].CalPlanCost(taskType)
 	p.planCost += p.GetCost(p.children[0].StatsCount())
 	p.planCostInit = true
 	return p.planCost
