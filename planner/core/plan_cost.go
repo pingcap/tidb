@@ -1,6 +1,7 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/statistics"
 	"math"
 
 	"github.com/pingcap/tidb/kv"
@@ -64,11 +65,11 @@ func (p *PhysicalIndexLookUpReader) CalPlanCost(taskType property.TaskType) floa
 
 	// index net-cost
 	idxCount := p.indexPlan.StatsCount()
-	indexWidth := p.stats.HistColl.GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
+	indexWidth := getHistCollSafely(p).GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
 	p.planCost += idxCount * indexWidth * p.ctx.GetSessionVars().GetNetworkFactor(nil)
 
 	// table net cost
-	tblScanWidth := p.stats.HistColl.GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
+	tblScanWidth := getHistCollSafely(p).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
 	tblCount := p.tablePlan.StatsCount()
 	p.planCost += tblCount * p.ctx.GetSessionVars().GetNetworkFactor(nil) * tblScanWidth
 
@@ -89,7 +90,7 @@ func (p *PhysicalIndexReader) CalPlanCost(taskType property.TaskType) float64 {
 	// accumulate net-cost
 	rowCount := p.indexPlan.StatsCount()
 	netFactor := p.ctx.GetSessionVars().GetNetworkFactor(nil)
-	rowWidth := p.stats.HistColl.GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
+	rowWidth :=  getHistCollSafely(p).GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
 	p.planCost += rowCount * rowWidth * netFactor
 
 	// consider concurrency
@@ -108,7 +109,7 @@ func (p *PhysicalTableReader) CalPlanCost(taskType property.TaskType) float64 {
 	switch p.StoreType {
 	case kv.TiKV:
 		p.planCost += p.tablePlan.CalPlanCost(property.CopSingleReadTaskType) //  child's cost
-		rowWidth := p.stats.HistColl.GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
+		rowWidth := getHistCollSafely(p).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
 		p.planCost += p.tablePlan.StatsCount() * rowWidth * netFactor // net cost
 		p.planCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 	case kv.TiFlash:
@@ -161,9 +162,9 @@ func (p *PhysicalTableScan) CalPlanCost(taskType property.TaskType) float64 {
 	if rowWidth == 0 {
 		switch p.StoreType {
 		case kv.TiKV:
-			rowWidth = p.stats.HistColl.GetTableAvgRowSize(p.ctx, p.schema.Columns, kv.TiKV, true)
+			rowWidth = getHistCollSafely(p).GetTableAvgRowSize(p.ctx, p.schema.Columns, kv.TiKV, true)
 		default:
-			rowWidth = p.stats.HistColl.GetTableAvgRowSize(p.ctx, p.schema.Columns, p.StoreType, p.HandleCols != nil)
+			rowWidth = getHistCollSafely(p).GetTableAvgRowSize(p.ctx, p.schema.Columns, p.StoreType, p.HandleCols != nil)
 		}
 	}
 	scanFactor := p.ctx.GetSessionVars().GetScanFactor(nil)
@@ -362,4 +363,30 @@ func (p *PhysicalExchangeReceiver) CalPlanCost(taskType property.TaskType) float
 	p.planCost += p.children[0].StatsCount() * p.ctx.GetSessionVars().GetNetworkFactor(nil)
 	p.planCostInit = true
 	return p.planCost
+}
+
+func getHistCollSafely(p PhysicalPlan) *statistics.HistColl {
+	if p.Stats().HistColl != nil {
+		return p.Stats().HistColl
+	}
+	var children []PhysicalPlan
+	switch x := p.(type) {
+	case *PhysicalTableReader:
+		children = append(children, x.tablePlan)
+	case *PhysicalIndexReader:
+		children = append(children, x.indexPlan)
+	case *PhysicalIndexLookUpReader:
+		children = append(children, x.tablePlan, x.indexPlan)
+	case *PhysicalIndexMergeReader:
+		children = append(children, x.tablePlan)
+		children = append(children, x.partialPlans...)
+	default:
+		children = append(children, p.Children()...)
+	}
+	for _, c := range children {
+		if hist := getHistCollSafely(c); hist != nil {
+			return hist
+		}
+	}
+	return nil
 }
