@@ -46,7 +46,7 @@ func checkRangeCntByTableIDsAndIndexIDs(partitionTableIDs []int64, indexIDs []in
 	if len(indexIDs) == 0 {
 		return
 	}
-	uniqueIndexIds := make(map[int64]struct{})
+	uniqueIndexIDs := make(map[int64]struct{})
 	for _, id := range indexIDs {
 		uniqueIndexIds[id] = struct{}{}
 	}
