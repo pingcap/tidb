@@ -110,11 +110,9 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 		// aggregation
 		"select /*+ hash_agg() */ count(*) from t use index(primary) where a < 200",
 		"select /*+ hash_agg() */ sum(a) from t use index(primary) where a < 200",
-		"select /*+ hash_agg() */ max(a) from t use index(primary) where a < 200",
 		"select /*+ hash_agg() */ avg(a), b from t use index(primary) where a < 200 group by b",
 		"select /*+ stream_agg() */ count(*) from t use index(primary) where a < 200",
 		"select /*+ stream_agg() */ sum(a) from t use index(primary) where a < 200",
-		"select /*+ stream_agg() */ max(a) from t use index(primary) where a < 200",
 		"select /*+ stream_agg() */ avg(a), b from t use index(primary) where a < 200 group by b",
 		// limit
 		"select * from t use index(primary) where a < 200 limit 10", // table-scan + limit
