@@ -2092,7 +2092,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 		attachPlan2Task(p, t)
 	}
 	t.addCost(p.GetCost(inputRows, true))
-	p.SetCost(t.cost())
+	t.plan().SetCost(t.cost())
 	return t
 }
 
