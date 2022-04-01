@@ -42,13 +42,30 @@ var (
 type cachedTable struct {
 	TableCommon
 	cacheData atomic.Value
-	handle    StateRemote
 	totalSize int64
 	// StateRemote is not thread-safe, this tokenLimit is used to keep only one visitor.
 	tokenLimit
 }
 
-type tokenLimit = chan struct{}
+type tokenLimit chan StateRemote
+
+func (t tokenLimit) TakeStateRemoteHandle() StateRemote {
+	handle := <-t
+	return handle
+}
+
+func (t tokenLimit) TakeStateRemoteHandleNoWait() StateRemote {
+	select {
+	case handle := <-t:
+		return handle
+	default:
+		return nil
+	}
+}
+
+func (t tokenLimit) PutStateRemoteHandle(handle StateRemote) {
+	t <- handle
+}
 
 // cacheData pack the cache data and lease.
 type cacheData struct {
@@ -90,10 +107,8 @@ func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) (
 		})
 
 		if distance >= 0 && distance <= leaseDuration/2 || triggerFailpoint {
-			select {
-			case c.tokenLimit <- struct{}{}:
-				go c.renewLease(ts, data, leaseDuration)
-			default:
+			if h := c.TakeStateRemoteHandleNoWait(); h != nil {
+				go c.renewLease(h, ts, data, leaseDuration)
 			}
 		}
 		// If data is not nil, but data.MemBuffer is nil, it means the data is being
@@ -107,7 +122,7 @@ func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) (
 func newCachedTable(tbl *TableCommon) (table.Table, error) {
 	ret := &cachedTable{
 		TableCommon: *tbl,
-		tokenLimit:  make(chan struct{}, 1),
+		tokenLimit:  make(chan StateRemote, 1),
 	}
 	return ret, nil
 }
@@ -119,7 +134,8 @@ func (c *cachedTable) Init(exec sqlexec.SQLExecutor) error {
 	if !ok {
 		return errors.New("Need sqlExec rather than sqlexec.SQLExecutor")
 	}
-	c.handle = NewStateRemote(raw)
+	handle := NewStateRemote(raw)
+	c.PutStateRemoteHandle(handle)
 	return nil
 }
 
@@ -166,28 +182,25 @@ func (c *cachedTable) loadDataFromOriginalTable(store kv.Storage) (kv.MemBuffer,
 }
 
 func (c *cachedTable) UpdateLockForRead(ctx context.Context, store kv.Storage, ts uint64, leaseDuration time.Duration) {
-	select {
-	case c.tokenLimit <- struct{}{}:
-		go c.updateLockForRead(ctx, store, ts, leaseDuration)
-	default:
-		// There is a inflight calling already.
+	if h := c.TakeStateRemoteHandle(); h != nil {
+		go c.updateLockForRead(ctx, h, store, ts, leaseDuration)
 	}
 }
 
-func (c *cachedTable) updateLockForRead(ctx context.Context, store kv.Storage, ts uint64, leaseDuration time.Duration) {
+func (c *cachedTable) updateLockForRead(ctx context.Context, handle StateRemote, store kv.Storage, ts uint64, leaseDuration time.Duration) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error("panic in the recoverable goroutine",
 				zap.Reflect("r", r),
 				zap.Stack("stack trace"))
 		}
-		<-c.tokenLimit
+		c.PutStateRemoteHandle(handle)
 	}()
 
 	// Load data from original table and the update lock information.
 	tid := c.Meta().ID
 	lease := leaseFromTS(ts, leaseDuration)
-	succ, err := c.handle.LockForRead(ctx, tid, lease)
+	succ, err := handle.LockForRead(ctx, tid, lease)
 	if err != nil {
 		log.Warn("lock cached table for read", zap.Error(err))
 		return
@@ -264,16 +277,18 @@ func (c *cachedTable) RemoveRecord(sctx sessionctx.Context, h kv.Handle, r []typ
 // TestMockRenewLeaseABA2 is used by test function TestRenewLeaseABAFailPoint.
 var TestMockRenewLeaseABA2 chan struct{}
 
-func (c *cachedTable) renewLease(ts uint64, data *cacheData, leaseDuration time.Duration) {
-	defer func() { <-c.tokenLimit }()
-
+func (c *cachedTable) renewLease(handle StateRemote, ts uint64, data *cacheData, leaseDuration time.Duration) {
 	failpoint.Inject("mockRenewLeaseABA2", func(_ failpoint.Value) {
+		c.PutStateRemoteHandle(handle)
 		<-TestMockRenewLeaseABA2
+		c.TakeStateRemoteHandle()
 	})
+
+	defer c.PutStateRemoteHandle(handle)
 
 	tid := c.Meta().ID
 	lease := leaseFromTS(ts, leaseDuration)
-	newLease, err := c.handle.RenewReadLease(context.Background(), tid, data.Lease, lease)
+	newLease, err := handle.RenewReadLease(context.Background(), tid, data.Lease, lease)
 	if err != nil && !kv.IsTxnRetryableError(err) {
 		log.Warn("Renew read lease error", zap.Error(err))
 	}
@@ -292,8 +307,8 @@ func (c *cachedTable) renewLease(ts uint64, data *cacheData, leaseDuration time.
 
 const cacheTableWriteLease = 5 * time.Second
 
-func (c *cachedTable) WriteLockAndKeepAlive(ctx context.Context, ts uint64, exit chan struct{}, leasePtr *uint64, wg chan error) {
-	writeLockLease, err := c.lockForWrite(ctx, ts)
+func (c *cachedTable) WriteLockAndKeepAlive(ctx context.Context, exit chan struct{}, leasePtr *uint64, wg chan error) {
+	writeLockLease, err := c.lockForWrite(ctx)
 	atomic.StoreUint64(leasePtr, writeLockLease)
 	wg <- err
 	if err != nil {
@@ -321,10 +336,10 @@ func (c *cachedTable) renew(ctx context.Context, leasePtr *uint64) error {
 	physicalTime := oracle.GetTimeFromTS(oldLease)
 	newLease := oracle.GoTimeToTS(physicalTime.Add(cacheTableWriteLease))
 
-	c.tokenLimit <- struct{}{}
-	defer func() { <-c.tokenLimit }()
+	h := c.TakeStateRemoteHandle()
+	defer c.PutStateRemoteHandle(h)
 
-	succ, err := c.handle.RenewWriteLease(ctx, c.Meta().ID, newLease)
+	succ, err := h.RenewWriteLease(ctx, c.Meta().ID, newLease)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -334,15 +349,9 @@ func (c *cachedTable) renew(ctx context.Context, leasePtr *uint64) error {
 	return nil
 }
 
-func (c *cachedTable) lockForWrite(ctx context.Context, ts uint64) (uint64, error) {
-	var triggerFailpoint bool
-	failpoint.Inject("mockRenewLeaseABA1", func(_ failpoint.Value) {
-		triggerFailpoint = true
-	})
-	if !triggerFailpoint {
-		c.tokenLimit <- struct{}{}
-		defer func() { <-c.tokenLimit }()
-	}
+func (c *cachedTable) lockForWrite(ctx context.Context) (uint64, error) {
+	handle := c.TakeStateRemoteHandle()
+	defer c.PutStateRemoteHandle(handle)
 
-	return c.handle.LockForWrite(ctx, c.Meta().ID, cacheTableWriteLease)
+	return handle.LockForWrite(ctx, c.Meta().ID, cacheTableWriteLease)
 }

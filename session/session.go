@@ -633,7 +633,7 @@ func (c *cachedTableRenewLease) start(ctx context.Context, startTS uint64) error
 	ith := 0
 	for _, raw := range c.tables {
 		tbl := raw.(table.CachedTable)
-		go tbl.WriteLockAndKeepAlive(ctx, startTS, c.exit, &c.lease[ith], wg)
+		go tbl.WriteLockAndKeepAlive(ctx, c.exit, &c.lease[ith], wg)
 		ith++
 	}
 

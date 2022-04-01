@@ -267,7 +267,7 @@ type CachedTable interface {
 	UpdateLockForRead(ctx context.Context, store kv.Storage, ts uint64, leaseDuration time.Duration)
 
 	// WriteLockAndKeepAlive first obtain the write lock, then it renew the lease to keep the lock alive.
-	// 'ts' is the transaction start tso, 'exit' is a channel to tell the keep alive goroutine to exit.
+	// 'exit' is a channel to tell the keep alive goroutine to exit.
 	// The result is sent to the 'wg' channel.
-	WriteLockAndKeepAlive(ctx context.Context, ts uint64, exit chan struct{}, leasePtr *uint64, wg chan error)
+	WriteLockAndKeepAlive(ctx context.Context, exit chan struct{}, leasePtr *uint64, wg chan error)
 }
