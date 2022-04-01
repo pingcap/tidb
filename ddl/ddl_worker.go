@@ -475,6 +475,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		updateRawArgs = false
 	}
 	w.writeDDLSeqNum(job)
+	w.jobContext.resetWhenJobFinish()
 	err = t.AddHistoryDDLJob(job, updateRawArgs)
 	return errors.Trace(err)
 }
@@ -529,17 +530,16 @@ func newMetaWithQueueTp(txn kv.Transaction, tp workerType) *meta.Meta {
 
 func (w *jobContext) setDDLLabelForTopSQL(job *model.Job) {
 	if !topsqlstate.TopSQLEnabled() || job == nil {
-		w.cacheDigest = nil
-		w.ddlJobCtx = context.Background()
 		return
 	}
 
 	if job.Query != w.cacheSQL || w.cacheDigest == nil {
 		w.cacheNormalizedSQL, w.cacheDigest = parser.NormalizeDigest(job.Query)
 		w.cacheSQL = job.Query
+		w.ddlJobCtx = topsql.AttachSQLInfo(context.Background(), w.cacheNormalizedSQL, w.cacheDigest, "", nil, false)
+	} else {
+		topsql.AttachSQLInfo(w.ddlJobCtx, w.cacheNormalizedSQL, w.cacheDigest, "", nil, false)
 	}
-
-	w.ddlJobCtx = topsql.AttachSQLInfo(context.Background(), w.cacheNormalizedSQL, w.cacheDigest, "", nil, false)
 }
 
 func (w *jobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
@@ -553,6 +553,13 @@ func (w *jobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagg
 			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
 	}
 	return tagger
+}
+
+func (w *jobContext) resetWhenJobFinish() {
+	w.ddlJobCtx = context.Background()
+	w.cacheSQL = ""
+	w.cacheDigest = nil
+	w.cacheNormalizedSQL = ""
 }
 
 // handleDDLJobQueue handles DDL jobs in DDL Job queue.

@@ -3759,13 +3759,19 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}
 
 	if sel.OrderBy != nil {
-		if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
-			p, err = b.buildSortWithCheck(ctx, p, sel.OrderBy.Items, orderMap, windowMapper, projExprs, oldLen, sel.Distinct)
-		} else {
-			p, err = b.buildSort(ctx, p, sel.OrderBy.Items, orderMap, windowMapper)
-		}
-		if err != nil {
-			return nil, err
+		// We need to keep the ORDER BY clause for the following cases:
+		// 1. The select is top level query, order should be honored
+		// 2. The query has LIMIT clause
+		// 3. The control flag requires keeping ORDER BY explicitly
+		if len(b.selectOffset) == 1 || sel.Limit != nil || !b.ctx.GetSessionVars().RemoveOrderbyInSubquery {
+			if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
+				p, err = b.buildSortWithCheck(ctx, p, sel.OrderBy.Items, orderMap, windowMapper, projExprs, oldLen, sel.Distinct)
+			} else {
+				p, err = b.buildSort(ctx, p, sel.OrderBy.Items, orderMap, windowMapper)
+			}
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -3935,7 +3941,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 					LimitEnd: limitEnd, pushDownPredicates: make([]expression.Expression, 0), ColumnMap: make(map[string]*expression.Column)}
 			}
 			var p LogicalPlan
-			lp := LogicalCTE{cteAsName: tn.Name, cte: cte.cteClass, seedStat: cte.seedStat}.Init(b.ctx, b.getSelectOffset())
+			lp := LogicalCTE{cteAsName: tn.Name, cte: cte.cteClass, seedStat: cte.seedStat, isOuterMostCTE: !b.buildingCTE}.Init(b.ctx, b.getSelectOffset())
 			prevSchema := cte.seedLP.Schema().Clone()
 			lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
 			for i, col := range lp.schema.Columns {
@@ -6386,6 +6392,12 @@ func containDifferentJoinTypes(preferJoinType uint) bool {
 }
 
 func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpression, isRecursive bool) (p LogicalPlan, err error) {
+	saveBuildingCTE := b.buildingCTE
+	b.buildingCTE = true
+	defer func() {
+		b.buildingCTE = saveBuildingCTE
+	}()
+
 	if isRecursive {
 		// buildingRecursivePartForCTE likes a stack. We save it before building a recursive CTE and restore it after building.
 		// We need a stack because we need to handle the nested recursive CTE. And buildingRecursivePartForCTE indicates the innermost CTE.
