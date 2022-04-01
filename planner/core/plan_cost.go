@@ -79,7 +79,7 @@ func (p *PhysicalIndexReader) CalPlanCost(taskType property.TaskType) float64 {
 	// accumulate net-cost
 	rowCount := p.indexPlan.StatsCount()
 	netFactor := p.ctx.GetSessionVars().GetNetworkFactor(nil)
-	rowWidth := p.indexPlan.CalRowWidth()
+	rowWidth := p.stats.HistColl.GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
 	p.planCost += rowCount * rowWidth * netFactor
 
 	// consider concurrency
