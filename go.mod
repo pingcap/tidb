@@ -21,7 +21,7 @@ require (
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548
 	github.com/cznic/sortutil v0.0.0-20181122101858-f5f958428db8
 	github.com/danjacques/gofslock v0.0.0-20191023191349-0a45f885bc37
-	github.com/dgraph-io/ristretto v0.1.0
+	github.com/dgraph-io/ristretto v0.1.1-0.20211108053508-297c39e6640f
 	github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13
 	github.com/docker/go-units v0.4.0
 	github.com/fsouza/fake-gcs-server v1.19.0
@@ -83,7 +83,7 @@ require (
 	golang.org/x/net v0.0.0-20220127200216-cd36cc0744dd
 	golang.org/x/oauth2 v0.0.0-20211104180415-d3ed0bb246c8
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
-	golang.org/x/sys v0.0.0-20220310020820-b874c991c1a5
+	golang.org/x/sys v0.0.0-20220330033206-e17cdc41300f
 	golang.org/x/text v0.3.7
 	golang.org/x/time v0.0.0-20220224211638-0e9765cccd65
 	golang.org/x/tools v0.1.8
