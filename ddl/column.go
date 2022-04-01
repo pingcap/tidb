@@ -1054,9 +1054,9 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
 		w.reorgCtx.cleanNotifyReorgCancel()
 
-		oldIdxIDs := getOldIndexesID(tblInfo, oldCol) // used by GC delete range.
+		oldIdxIDs := getOldIndexIDs(tblInfo, oldCol) // used by GC delete range.
 
-		err = adjustTableInfoAfterModifyColumn(tblInfo, pos, oldCol, changingCol, colName, changingIdxs)
+		err = adjustTableInfoAfterModifyColumnWithData(tblInfo, pos, oldCol, changingCol, colName, changingIdxs)
 		if err != nil {
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
@@ -1080,8 +1080,11 @@ func (w *worker) doModifyColumnTypeWithData(
 	return ver, errors.Trace(err)
 }
 
-func adjustTableInfoAfterModifyColumn(tblInfo *model.TableInfo, pos *ast.ColumnPosition,
+func adjustTableInfoAfterModifyColumnWithData(tblInfo *model.TableInfo, pos *ast.ColumnPosition,
 	oldCol, changingCol *model.ColumnInfo, newName model.CIStr, changingIdxs []*model.IndexInfo) (err error) {
+	if pos != nil && pos.RelativeColumn != nil && oldCol.Name.L == pos.RelativeColumn.Name.L {
+		return errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name))
+	}
 	internalColName := changingCol.Name
 	changingCol = replaceOldColumn(tblInfo, oldCol, changingCol, newName)
 	if len(changingIdxs) > 0 {
@@ -1169,7 +1172,7 @@ func updateChangingCol(col *model.ColumnInfo, newName model.CIStr, newOffset int
 	return col
 }
 
-func getOldIndexesID(tblInfo *model.TableInfo, oldCol *model.ColumnInfo) []int64 {
+func getOldIndexIDs(tblInfo *model.TableInfo, oldCol *model.ColumnInfo) []int64 {
 	var oldIdxIDs []int64
 	for _, idx := range tblInfo.Indices {
 		for _, idxCol := range idx.Columns {
@@ -1576,7 +1579,8 @@ func (w *worker) doModifyColumn(
 		}
 	}
 
-	if err := adjustColumnInfoInModifyColumn(job, tblInfo, newCol, oldCol, pos); err != nil {
+	if err := adjustTableInfoAfterModifyColumn(tblInfo, newCol, oldCol, pos); err != nil {
+		job.State = model.JobStateRollingback
 		return ver, errors.Trace(err)
 	}
 
@@ -1593,21 +1597,17 @@ func (w *worker) doModifyColumn(
 	return ver, nil
 }
 
-func adjustColumnInfoInModifyColumn(
-	job *model.Job, tblInfo *model.TableInfo, newCol, oldCol *model.ColumnInfo, pos *ast.ColumnPosition) error {
+func adjustTableInfoAfterModifyColumn(
+	tblInfo *model.TableInfo, newCol, oldCol *model.ColumnInfo, pos *ast.ColumnPosition) error {
 	// We need the latest column's offset and state. This information can be obtained from the store.
 	newCol.Offset = oldCol.Offset
 	newCol.State = oldCol.State
 	if pos != nil && pos.RelativeColumn != nil && oldCol.Name.L == pos.RelativeColumn.Name.L {
-		// `alter table tableName modify column b int after b` will return ver, ErrColumnNotExists.
-		// Modified the type definition of 'null' to 'not null' before this, so rollback the job when an error occurs.
-		job.State = model.JobStateRollingback
-		return infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name)
+		return errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name))
 	}
 	destOffset, err := locateOffsetToMove(oldCol.Offset, pos, tblInfo)
 	if err != nil {
-		job.State = model.JobStateRollingback
-		return infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name)
+		return errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name))
 	}
 	tblInfo.Columns[oldCol.Offset] = newCol
 	tblInfo.MoveColumnInfo(oldCol.Offset, destOffset)
