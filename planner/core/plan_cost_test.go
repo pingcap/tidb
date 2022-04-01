@@ -2,6 +2,9 @@ package core_test
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
 
@@ -17,7 +20,7 @@ func explainQuery(tk *testkit.TestKit, q string) (result string) {
 	return
 }
 
-func TestNewCostInterface(t *testing.T) {
+func TestNewCostInterfaceTiKV(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -183,8 +186,6 @@ func TestNewCostInterface(t *testing.T) {
 		// point get
 		"select * from t where a = 1",
 		"select * from t where a in (1, 2, 3, 4, 5)",
-		// mpp plans
-		// rand-gen queries
 	}
 
 	for _, q := range queries {
@@ -196,4 +197,57 @@ func TestNewCostInterface(t *testing.T) {
 			t.Fatalf(`run %v failed, expected \n%v\n, but got \n%v\n`, q, oldResult, newResult)
 		}
 	}
+}
+
+func TestNewCostInterfaceTiFlash(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, c int, d int)`)
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_allow_mpp = 1")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	queries := []string{
+		"select a from t",
+		"select a from t where a < 200",
+	}
+	for _, mpp := range []bool {false, true} {
+		if mpp {
+			tk.MustExec(`set @@session.tidb_allow_mpp=1`)
+			tk.MustExec(`set @@session.tidb_enforce_mpp=1`)
+		} else {
+			tk.MustExec(`set @@session.tidb_allow_mpp=0`)
+			tk.MustExec(`set @@session.tidb_enforce_mpp=0`)
+		}
+
+		for _, q := range queries {
+			tk.MustExec(`set @@tidb_enable_new_cost_interface=0`)
+			oldResult := explainQuery(tk, q)
+			tk.MustExec(`set @@tidb_enable_new_cost_interface=1`)
+			newResult := explainQuery(tk, q)
+			if oldResult != newResult {
+				t.Fatalf(`run %v failed, mpp-mode=%v, expected \n%v\n, but got \n%v\n`, q, mpp, oldResult, newResult)
+			}
+		}
+	}
+}
+
+func TestNewCostInterfaceRandgen(t *testing.T) {
+	// TODO
 }

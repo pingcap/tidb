@@ -102,7 +102,7 @@ func (p *PhysicalTableReader) CalPlanCost(taskType property.TaskType) float64 {
 		p.planCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 	case kv.TiFlash:
 		p.planCost += p.tablePlan.CalPlanCost(property.MppTaskType)                                   //  child's cost
-		p.planCost += p.tablePlan.StatsCount() * collectRowSizeFromMPPPlan(p.children[0]) * netFactor // net cost
+		p.planCost += p.tablePlan.StatsCount() * collectRowSizeFromMPPPlan(p.tablePlan) * netFactor // net cost
 		p.planCost /= p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
 	}
 	p.planCostInit = true
