@@ -97,11 +97,11 @@ type worker struct {
 	lockSeqNum      bool
 
 	*ddlCtx
-	ddlJobCache
+	*jobContext
 }
 
-// ddlJobCache is a cache for each DDL job.
-type ddlJobCache struct {
+// jobContext is the ddl job execution context.
+type jobContext struct {
 	// below fields are cache for top sql
 	ddlJobCtx          context.Context
 	cacheSQL           string
@@ -115,7 +115,7 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRan
 		tp:       tp,
 		ddlJobCh: make(chan struct{}, 1),
 		ctx:      ctx,
-		ddlJobCache: ddlJobCache{
+		jobContext: &jobContext{
 			ddlJobCtx:          context.Background(),
 			cacheSQL:           "",
 			cacheNormalizedSQL: "",
@@ -466,6 +466,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		updateRawArgs = false
 	}
 	w.writeDDLSeqNum(job)
+	w.jobContext.resetWhenJobFinish()
 	err = t.AddHistoryDDLJob(job, updateRawArgs)
 	return errors.Trace(err)
 }
@@ -518,22 +519,23 @@ func newMetaWithQueueTp(txn kv.Transaction, tp workerType) *meta.Meta {
 	return meta.NewMeta(txn)
 }
 
-func (w *worker) setDDLLabelForTopSQL(job *model.Job) {
+func (w *jobContext) setDDLLabelForTopSQL(job *model.Job) {
 	if !topsqlstate.TopSQLEnabled() || job == nil {
 		return
 	}
 
-	if job.Query != w.cacheSQL {
+	if job.Query != w.cacheSQL || w.cacheDigest == nil {
 		w.cacheNormalizedSQL, w.cacheDigest = parser.NormalizeDigest(job.Query)
 		w.cacheSQL = job.Query
+		w.ddlJobCtx = topsql.AttachSQLInfo(context.Background(), w.cacheNormalizedSQL, w.cacheDigest, "", nil, false)
+	} else {
+		topsql.AttachSQLInfo(w.ddlJobCtx, w.cacheNormalizedSQL, w.cacheDigest, "", nil, false)
 	}
-
-	w.ddlJobCtx = topsql.AttachSQLInfo(context.Background(), w.cacheNormalizedSQL, w.cacheDigest, "", nil, false)
 }
 
-func (w *worker) setResourceGroupTaggerForTopSQL(txn kv.Transaction) {
+func (w *jobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
 	if !topsqlstate.TopSQLEnabled() || w.cacheDigest == nil {
-		return
+		return nil
 	}
 
 	digest := w.cacheDigest
@@ -541,7 +543,14 @@ func (w *worker) setResourceGroupTaggerForTopSQL(txn kv.Transaction) {
 		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, nil,
 			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
 	}
-	txn.SetOption(kv.ResourceGroupTagger, tikvrpc.ResourceGroupTagger(tagger))
+	return tagger
+}
+
+func (w *jobContext) resetWhenJobFinish() {
+	w.ddlJobCtx = context.Background()
+	w.cacheSQL = ""
+	w.cacheDigest = nil
+	w.cacheNormalizedSQL = ""
 }
 
 // handleDDLJobQueue handles DDL jobs in DDL Job queue.
@@ -579,7 +588,9 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			}
 
 			w.setDDLLabelForTopSQL(job)
-			w.setResourceGroupTaggerForTopSQL(txn)
+			if tagger := w.getResourceGroupTaggerForTopSQL(); tagger != nil {
+				txn.SetOption(kv.ResourceGroupTagger, tagger)
+			}
 			if isDone, err1 := isDependencyJobDone(t, job); err1 != nil || !isDone {
 				return errors.Trace(err1)
 			}
