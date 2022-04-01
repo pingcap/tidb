@@ -188,6 +188,7 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 		"select * from t where a in (1, 2, 3, 4, 5)",
 	}
 
+	tk.Session().GetSessionVars().DEBUG = true
 	for _, q := range queries {
 		tk.MustExec(`set @@tidb_enable_new_cost_interface=0`)
 		oldResult := explainQuery(tk, q)
