@@ -38,7 +38,7 @@ func checkRangeCntByTableIDs(physicalTableIDs []int64, cnt int64) {
 	}
 }
 
-func checkRangeCntByTableIDsAndIndexIds(partitionTableIDs []int64, indexIDs []int64, cnt int64) {
+func checkRangeCntByTableIDsAndIndexIDs(partitionTableIDs []int64, indexIDs []int64, cnt int64) {
 	if len(indexIDs) > 0 && len(partitionTableIDs) > 0 {
 		// Add this check after fixing the bug.
 		return
