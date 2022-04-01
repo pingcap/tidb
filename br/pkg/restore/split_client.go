@@ -294,6 +294,26 @@ func splitRegionWithFailpoint(
 	})
 }
 
+func (c *pdClient) sendSplitRegionRequest(
+	ctx context.Context, regionInfo *RegionInfo, keys [][]byte,
+) (*kvrpcpb.SplitRegionResponse, error) {
+	var splitErrors error
+	for i := 0; i < splitRegionMaxRetryTime; i++ {
+		retry, result, err := sendSplitRegionRequest(c, ctx, regionInfo, keys, &splitErrors, i)
+		if retry {
+			continue
+		}
+		if err != nil {
+			return nil, multierr.Append(splitErrors, err)
+		}
+		if result != nil {
+			return result, nil
+		}
+		return nil, errors.Trace(splitErrors)
+	}
+	return nil, errors.Trace(splitErrors)
+}
+
 func sendSplitRegionRequest(c *pdClient, ctx context.Context, regionInfo *RegionInfo, keys [][]byte, splitErrors *error, retry int) (bool, *kvrpcpb.SplitRegionResponse, error) {
 	var peer *metapb.Peer
 	// scanRegions may return empty Leader in https://github.com/tikv/pd/blob/v4.0.8/server/grpc_service.go#L524
@@ -369,26 +389,6 @@ func sendSplitRegionRequest(c *pdClient, ctx context.Context, regionInfo *Region
 		return false, nil, nil
 	}
 	return false, resp, nil
-}
-
-func (c *pdClient) sendSplitRegionRequest(
-	ctx context.Context, regionInfo *RegionInfo, keys [][]byte,
-) (*kvrpcpb.SplitRegionResponse, error) {
-	var splitErrors error
-	for i := 0; i < splitRegionMaxRetryTime; i++ {
-		retry, result, err := sendSplitRegionRequest(c, ctx, regionInfo, keys, &splitErrors, i)
-		if retry {
-			continue
-		}
-		if err != nil {
-			return nil, multierr.Append(splitErrors, err)
-		}
-		if result != nil {
-			return result, nil
-		}
-		return nil, errors.Trace(splitErrors)
-	}
-	return nil, errors.Trace(splitErrors)
 }
 
 func (c *pdClient) BatchSplitRegionsWithOrigin(
