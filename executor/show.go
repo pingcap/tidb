@@ -26,9 +26,6 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb-tools/pkg/etcd"
-	"github.com/pingcap/tidb-tools/pkg/utils"
-	"github.com/pingcap/tidb-tools/tidb-binlog/node"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -54,11 +51,13 @@ import (
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tidb-binlog/node"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/etcd"
 	"github.com/pingcap/tidb/util/format"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
@@ -785,6 +784,20 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		value       string
 		sessionVars = e.ctx.GetSessionVars()
 	)
+	var (
+		fieldPatternsLike collate.WildcardPattern
+		FieldFilterEnable bool
+		fieldFilter       string
+	)
+	if e.Extractor != nil {
+		extractor := (e.Extractor).(*plannercore.ShowVariablesExtractor)
+		if extractor.FieldPatterns != "" {
+			fieldPatternsLike = collate.GetCollatorByID(collate.CollationName2ID(mysql.UTF8MB4DefaultCollation)).Pattern()
+			fieldPatternsLike.Compile(extractor.FieldPatterns, byte('\\'))
+		}
+		FieldFilterEnable = extractor.Field != ""
+		fieldFilter = extractor.Field
+	}
 	if e.GlobalScope {
 		// Collect global scope variables,
 		// 1. Exclude the variables of ScopeSession in variable.SysVars;
@@ -792,6 +805,11 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		// 		otherwise, fetch the value from table `mysql.Global_Variables`.
 		for _, v := range variable.GetSysVars() {
 			if v.Scope != variable.ScopeSession {
+				if FieldFilterEnable && v.Name != fieldFilter {
+					continue
+				} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
+					continue
+				}
 				if v.Hidden || e.sysVarHiddenForSem(v.Name) {
 					continue
 				}
@@ -809,6 +827,11 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 	// If it is a session only variable, use the default value defined in code,
 	//   otherwise, fetch the value from table `mysql.Global_Variables`.
 	for _, v := range variable.GetSysVars() {
+		if FieldFilterEnable && v.Name != fieldFilter {
+			continue
+		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(v.Name) {
+			continue
+		}
 		if v.Hidden || e.sysVarHiddenForSem(v.Name) {
 			continue
 		}
@@ -1392,6 +1415,11 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 	return nil
 }
 
+// ConstructResultOfShowCreatePlacementPolicy constructs the result for show create placement policy.
+func ConstructResultOfShowCreatePlacementPolicy(policyInfo *model.PolicyInfo) string {
+	return fmt.Sprintf("CREATE PLACEMENT POLICY `%s` %s", policyInfo.Name.O, policyInfo.PlacementSettings.String())
+}
+
 // fetchShowCreateDatabase composes show create database result.
 func (e *ShowExec) fetchShowCreateDatabase() error {
 	checker := privilege.GetPrivilegeManager(e.ctx)
@@ -1420,7 +1448,7 @@ func (e *ShowExec) fetchShowCreatePlacementPolicy() error {
 	if !found {
 		return infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(e.DBName.O)
 	}
-	showCreate := fmt.Sprintf("CREATE PLACEMENT POLICY `%s` %s", e.DBName.O, policy.PlacementSettings.String())
+	showCreate := ConstructResultOfShowCreatePlacementPolicy(policy)
 	e.appendRow([]interface{}{e.DBName.O, showCreate})
 	return nil
 }
@@ -1650,7 +1678,7 @@ func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
 		if n.State == node.Offline {
 			continue
 		}
-		e.appendRow([]interface{}{n.NodeID, n.Addr, n.State, n.MaxCommitTS, utils.TSOToRoughTime(n.UpdateTS).Format(types.TimeFormat)})
+		e.appendRow([]interface{}{n.NodeID, n.Addr, n.State, n.MaxCommitTS, util.TSOToRoughTime(n.UpdateTS).Format(types.TimeFormat)})
 	}
 
 	return nil
@@ -1658,7 +1686,7 @@ func (e *ShowExec) fetchShowPumpOrDrainerStatus(kind string) error {
 
 // createRegistry returns an ectd registry
 func createRegistry(urls string) (*node.EtcdRegistry, error) {
-	ectdEndpoints, err := utils.ParseHostPortAddr(urls)
+	ectdEndpoints, err := util.ParseHostPortAddr(urls)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

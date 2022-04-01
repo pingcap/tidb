@@ -82,6 +82,7 @@ type memtableRetriever struct {
 	rowIdx      int
 	retrieved   bool
 	initialized bool
+	extractor   plannercore.MemTablePredicateExtractor
 }
 
 // retrieve implements the infoschemaRetriever interface
@@ -1482,7 +1483,7 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 	return rows
 }
 
-func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) error {
+func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) (err error) {
 	tikvStore, ok := ctx.GetStore().(helper.Storage)
 	if !ok {
 		return errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
@@ -1491,22 +1492,60 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) e
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
-	regionsInfo, err := tikvHelper.GetRegionsInfo()
-	if err != nil {
-		return err
+	requestByTableRange := false
+	allRegionsInfo := helper.NewRegionsInfo()
+	if e.extractor != nil {
+		extractor, ok := e.extractor.(*plannercore.TiKVRegionStatusExtractor)
+		if ok && len(extractor.GetTablesID()) > 0 {
+			for _, tableID := range extractor.GetTablesID() {
+				regionsInfo, err := e.getRegionsInfoForSingleTable(tikvHelper, tableID)
+				if err != nil {
+					return err
+				}
+				allRegionsInfo = allRegionsInfo.Merge(regionsInfo)
+			}
+			requestByTableRange = true
+		}
+	}
+	if !requestByTableRange {
+		allRegionsInfo, err = tikvHelper.GetRegionsInfo()
+		if err != nil {
+			return err
+		}
 	}
 	allSchemas := ctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
-	tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, allSchemas)
-	for i := range regionsInfo.Regions {
-		tableList := tableInfos[regionsInfo.Regions[i].ID]
+	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, allSchemas)
+	for i := range allRegionsInfo.Regions {
+		tableList := tableInfos[allRegionsInfo.Regions[i].ID]
 		if len(tableList) == 0 {
-			e.setNewTiKVRegionStatusCol(&regionsInfo.Regions[i], nil)
+			e.setNewTiKVRegionStatusCol(&allRegionsInfo.Regions[i], nil)
 		}
 		for j := range tableList {
-			e.setNewTiKVRegionStatusCol(&regionsInfo.Regions[i], &tableList[j])
+			e.setNewTiKVRegionStatusCol(&allRegionsInfo.Regions[i], &tableList[j])
 		}
 	}
 	return nil
+}
+
+func (e *memtableRetriever) getRegionsInfoForSingleTable(helper *helper.Helper, tableID int64) (*helper.RegionsInfo, error) {
+	sk, ek := tablecodec.GetTableHandleKeyRange(tableID)
+	sRegion, err := helper.GetRegionByKey(codec.EncodeBytes(nil, sk))
+	if err != nil {
+		return nil, err
+	}
+	eRegion, err := helper.GetRegionByKey(codec.EncodeBytes(nil, ek))
+	if err != nil {
+		return nil, err
+	}
+	sk, err = hex.DecodeString(sRegion.StartKey)
+	if err != nil {
+		return nil, err
+	}
+	ek, err = hex.DecodeString(eRegion.EndKey)
+	if err != nil {
+		return nil, err
+	}
+	return helper.GetRegionsInfoByRange(sk, ek)
 }
 
 func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *helper.RegionInfo, table *helper.TableInfo) {
@@ -1640,6 +1679,18 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx sessionctx.Context, 
 					schema.Name.O,         // TABLE_SCHEMA
 					tbl.Name.O,            // TABLE_NAME
 					ctype,                 // CONSTRAINT_TYPE
+				)
+				rows = append(rows, record)
+			}
+			//  TiDB includes foreign key information for compatibility but foreign keys are not yet enforced.
+			for _, fk := range tbl.ForeignKeys {
+				record := types.MakeDatums(
+					infoschema.CatalogVal,     // CONSTRAINT_CATALOG
+					schema.Name.O,             // CONSTRAINT_SCHEMA
+					fk.Name.O,                 // CONSTRAINT_NAME
+					schema.Name.O,             // TABLE_SCHEMA
+					tbl.Name.O,                // TABLE_NAME
+					infoschema.ForeignKeyType, // CONSTRAINT_TYPE
 				)
 				rows = append(rows, record)
 			}

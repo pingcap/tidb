@@ -51,36 +51,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// adjustColumnInfoInAddColumn is used to set the correct position of column info when adding column.
-// 1. The added column was append at the end of tblInfo.Columns, due to ddl state was not public then.
-//    It should be moved to the correct position when the ddl state to be changed to public.
-// 2. The offset of column should also to be set to the right value.
-func adjustColumnInfoInAddColumn(tblInfo *model.TableInfo, offset int) {
-	oldCols := tblInfo.Columns
-	newCols := make([]*model.ColumnInfo, 0, len(oldCols))
-	newCols = append(newCols, oldCols[:offset]...)
-	newCols = append(newCols, oldCols[len(oldCols)-1])
-	newCols = append(newCols, oldCols[offset:len(oldCols)-1]...)
-	// Adjust column offset.
-	offsetChanged := make(map[int]int, len(newCols)-offset-1)
-	for i := offset + 1; i < len(newCols); i++ {
-		offsetChanged[newCols[i].Offset] = i
-		newCols[i].Offset = i
-	}
-	newCols[offset].Offset = offset
-	// Update index column offset info.
-	// TODO: There may be some corner cases for index column offsets, we may check this later.
-	for _, idx := range tblInfo.Indices {
-		for _, col := range idx.Columns {
-			newOffset, ok := offsetChanged[col.Offset]
-			if ok {
-				col.Offset = newOffset
-			}
-		}
-	}
-	tblInfo.Columns = newCols
-}
-
 // adjustColumnInfoInDropColumn is used to set the correct position of column info when dropping column.
 // 1. The offset of column should to be set to the last of the columns.
 // 2. The dropped column is moved to the end of tblInfo.Columns, due to it was not public any more.
@@ -147,7 +117,7 @@ func createColumnInfo(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, pos *
 
 func checkAddColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ColumnInfo, *model.ColumnInfo, *ast.ColumnPosition, int, error) {
 	schemaID := job.SchemaID
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return nil, nil, nil, nil, 0, errors.Trace(err)
 	}
@@ -239,7 +209,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		// Adjust table column offset.
-		adjustColumnInfoInAddColumn(tblInfo, offset)
+		tblInfo.MoveColumnInfo(columnInfo.Offset, offset)
 		columnInfo.State = model.StatePublic
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
@@ -258,7 +228,7 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 
 func checkAddColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.ColumnInfo, []*model.ColumnInfo, []*ast.ColumnPosition, []int, []bool, error) {
 	schemaID := job.SchemaID
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, errors.Trace(err)
 	}
@@ -402,7 +372,7 @@ func onAddColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error
 				}
 			}
 			tblInfo.Columns = append(tblInfo.Columns, newCols[i])
-			adjustColumnInfoInAddColumn(tblInfo, offsets[i])
+			tblInfo.MoveColumnInfo(len(tblInfo.Columns)-1, offsets[i])
 		}
 		setColumnsState(columnInfos, model.StatePublic)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfos[0].State)
@@ -497,7 +467,7 @@ func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 func checkDropColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.ColumnInfo, int, []*model.IndexInfo, error) {
 	schemaID := job.SchemaID
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return nil, nil, 0, nil, errors.Trace(err)
 	}
@@ -639,7 +609,7 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 func checkDropColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ColumnInfo, []*model.IndexInfo, error) {
 	schemaID := job.SchemaID
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
@@ -783,7 +753,7 @@ func getModifyColumnInfo(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.Ta
 		return nil, nil, nil, jobParam, errors.Trace(err)
 	}
 
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return nil, nil, nil, jobParam, errors.Trace(err)
 	}
@@ -1422,6 +1392,7 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		txn.SetOption(kv.Priority, w.priority)
+		w.ddlWorker.setResourceGroupTaggerForTopSQL(txn)
 
 		rowRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {
@@ -1710,7 +1681,7 @@ func checkForNullValue(ctx context.Context, sctx sessionctx.Context, isDataTrunc
 }
 
 func updateColumnDefaultValue(t *meta.Meta, job *model.Job, newCol *model.ColumnInfo, oldColName *model.CIStr) (ver int64, _ error) {
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
