@@ -936,11 +936,14 @@ var tableAnalyzeStatusCols = []columnInfo{
 	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64},
 	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "PARTITION_NAME", tp: mysql.TypeVarchar, size: 64},
-	{name: "JOB_INFO", tp: mysql.TypeVarchar, size: 64},
-	{name: "PROCESSED_ROWS", tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: "JOB_INFO", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},
+	{name: "PROCESSED_ROWS", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
 	{name: "START_TIME", tp: mysql.TypeDatetime},
 	{name: "END_TIME", tp: mysql.TypeDatetime},
 	{name: "STATE", tp: mysql.TypeVarchar, size: 64},
+	{name: "FAIL_REASON", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},
+	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 64},
+	{name: "PROCESS_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
 }
 
 // TableTiKVRegionStatusCols is TiKV region status mem table columns.
@@ -1496,6 +1499,8 @@ const (
 	PrimaryConstraint = "PRIMARY"
 	// UniqueKeyType is the string constant of UNIQUE.
 	UniqueKeyType = "UNIQUE"
+	// ForeignKeyType is the string constant of Foreign Key.
+	ForeignKeyType = "FOREIGN KEY"
 )
 
 // ServerInfo represents the basic server information of single cluster component

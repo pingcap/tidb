@@ -17,14 +17,13 @@ import (
 	"github.com/docker/go-units"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
-	"github.com/pingcap/tidb-tools/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/util"
+	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
-
-	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/version"
 )
 
 const (
@@ -45,6 +44,7 @@ const (
 	flagConsistency              = "consistency"
 	flagSnapshot                 = "snapshot"
 	flagNoViews                  = "no-views"
+	flagNoSequences              = "no-sequences"
 	flagSortByPk                 = "order-by-primary-key"
 	flagStatusAddr               = "status-addr"
 	flagRows                     = "rows"
@@ -84,6 +84,7 @@ type Config struct {
 	AllowCleartextPasswords  bool
 	SortByPk                 bool
 	NoViews                  bool
+	NoSequences              bool
 	NoHeader                 bool
 	NoSchemas                bool
 	NoData                   bool
@@ -166,6 +167,7 @@ func DefaultConfig() *Config {
 		Snapshot:            "",
 		Consistency:         consistencyTypeAuto,
 		NoViews:             true,
+		NoSequences:         true,
 		Rows:                UnspecifiedSize,
 		Where:               "",
 		FileType:            "",
@@ -231,6 +233,7 @@ func (conf *Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagConsistency, consistencyTypeAuto, "Consistency level during dumping: {auto|none|flush|lock|snapshot}")
 	flags.String(flagSnapshot, "", "Snapshot position (uint64 or MySQL style string timestamp). Valid only when consistency=snapshot")
 	flags.BoolP(flagNoViews, "W", true, "Do not dump views")
+	flags.Bool(flagNoSequences, true, "Do not dump sequences")
 	flags.Bool(flagSortByPk, true, "Sort dump results by primary key through order by sql")
 	flags.String(flagStatusAddr, ":8281", "dumpling API server and pprof addr")
 	flags.Uint64P(flagRows, "r", UnspecifiedSize, "If specified, dumpling will split table into chunks and concurrently dump them to different files to improve efficiency. For TiDB v3.0+, specify this will make dumpling split table with each file one TiDB region(no matter how many rows is).\n"+
@@ -325,6 +328,10 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	conf.NoViews, err = flags.GetBool(flagNoViews)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.NoSequences, err = flags.GetBool(flagNoSequences)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -608,7 +615,7 @@ func registerTLSConfig(conf *Config) error {
 				return errors.Trace(err)
 			}
 		}
-		tlsConfig, err = utils.ToTLSConfigWithVerifyByRawbytes(conf.Security.SSLCABytes,
+		tlsConfig, err = util.ToTLSConfigWithVerifyByRawbytes(conf.Security.SSLCABytes,
 			conf.Security.SSLCertBytes, conf.Security.SSLKEYBytes, []string{})
 		if err != nil {
 			return errors.Trace(err)
