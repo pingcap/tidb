@@ -1056,29 +1056,10 @@ func (w *worker) doModifyColumnTypeWithData(
 
 		oldIdxIDs := getOldIndexesID(tblInfo, oldCol) // used by GC delete range.
 
-		internalColName := changingCol.Name
-		changingCol, err = replaceOldColumn(tblInfo, oldCol.ID, changingCol.ID, colName)
+		err = adjustTableInfoAfterModifyColumn(tblInfo, pos, oldCol, changingCol, colName, changingIdxs)
 		if err != nil {
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
-		}
-		if len(changingIdxs) > 0 {
-			replaceOldIndexes(tblInfo, changingIdxs)
-			updateNewIndexesCols(tblInfo, internalColName, colName, changingCol.Offset)
-		}
-
-		// Move the new column to a correct offset.
-		offset, err := locateOffsetForColumn(pos, tblInfo)
-		if err != nil {
-			job.State = model.JobStateRollingback
-			return ver, errors.Trace(err)
-		}
-		if offset >= 0 {
-			if changingCol.Offset < offset {
-				tblInfo.MoveColumnInfo(changingCol.Offset, offset-1)
-			} else {
-				tblInfo.MoveColumnInfo(changingCol.Offset, offset)
-			}
 		}
 
 		updateChangingObjState(changingCol, changingIdxs, model.StatePublic)
@@ -1097,6 +1078,26 @@ func (w *worker) doModifyColumnTypeWithData(
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func adjustTableInfoAfterModifyColumn(tblInfo *model.TableInfo, pos *ast.ColumnPosition,
+	oldCol, newCol *model.ColumnInfo, newName model.CIStr, changingIdxs []*model.IndexInfo) (err error) {
+	internalColName := newCol.Name
+	newCol, err = replaceOldColumn(tblInfo, oldCol.ID, newCol.ID, newName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(changingIdxs) > 0 {
+		replaceOldIndexes(tblInfo, changingIdxs)
+		updateNewIndexesCols(tblInfo, internalColName, newName, newCol.Offset)
+	}
+	// Move the new column to a correct offset.
+	destOffset, err := locateOffsetToMove(newCol.Offset, pos, tblInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tblInfo.MoveColumnInfo(newCol.Offset, destOffset)
+	return nil
 }
 
 func replaceOldColumn(tblInfo *model.TableInfo, oldID, newID int64,
@@ -1144,6 +1145,7 @@ func replaceOldIndexes(tblInfo *model.TableInfo, changingIdxs []*model.IndexInfo
 	tblInfo.Indices = tmp
 	// Replace the old indexes with changing indexes.
 	for _, cIdx := range changingIdxs {
+		// The index name should be changed from '_Idx$_name' to 'name'.
 		idxName := getChangingIndexOriginName(cIdx)
 		for i, idx := range tblInfo.Indices {
 			if strings.EqualFold(idxName, idx.Name.O) {
@@ -1192,9 +1194,9 @@ func getOldIndexesID(tblInfo *model.TableInfo, oldCol *model.ColumnInfo) []int64
 	return oldIdxIDs
 }
 
-func locateOffsetForColumn(pos *ast.ColumnPosition, tblInfo *model.TableInfo) (offset int, err error) {
+func locateOffsetToMove(currentOffset int, pos *ast.ColumnPosition, tblInfo *model.TableInfo) (destOffset int, err error) {
 	if pos == nil {
-		return -1, nil
+		return currentOffset, nil
 	}
 	// Get column offset.
 	switch pos.Tp {
@@ -1205,9 +1207,12 @@ func locateOffsetForColumn(pos *ast.ColumnPosition, tblInfo *model.TableInfo) (o
 		if c == nil || c.State != model.StatePublic {
 			return 0, infoschema.ErrColumnNotExists.GenWithStackByArgs(pos.RelativeColumn, tblInfo.Name)
 		}
+		if currentOffset <= c.Offset {
+			return c.Offset, nil
+		}
 		return c.Offset + 1, nil
 	case ast.ColumnPositionNone:
-		return -1, nil
+		return currentOffset, nil
 	default:
 		return 0, errors.Errorf("unknown column position type")
 	}
@@ -1611,7 +1616,7 @@ func adjustColumnInfoInModifyColumn(
 		job.State = model.JobStateRollingback
 		return infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name)
 	}
-	offset, err := locateOffsetForColumn(pos, tblInfo)
+	offset, err := locateOffsetToMove(pos, tblInfo)
 	if err != nil {
 		job.State = model.JobStateRollingback
 		return infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name)
