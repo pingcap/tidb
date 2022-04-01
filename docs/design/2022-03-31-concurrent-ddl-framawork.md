@@ -36,7 +36,7 @@ This proposal force on the concurrency between different table, for the DDLs on 
 
 ## Detailed Design
 
-Several tables will be provided to maintain the DDL meta in thire life cycle.
+Several tables will be provided to maintain the DDL meta in the DDL job's life cycle.
 
 Table `mysql.tidb_ddl_job` stores all the queueing DDL meta.
 ```
@@ -48,7 +48,6 @@ Table `mysql.tidb_ddl_job` stores all the queueing DDL meta.
 | schema_id      | bigint(20) | YES  |      | The schema ID relate to this DDL |
 | table_id       | bigint(20) | YES  |      | The table ID relate to this DDL  |
 | job_meta       | blob       | YES  |      | The arguments of this DDL job    |
-| processing     | bigint(20) | YES  |      |                                  |
 | is_drop_schema | bigint(20) | YES  |      | True if the DDL is a drop schema |
 +----------------+------------+------+------+---------+------------------------+
 ```
@@ -154,6 +153,8 @@ select * from mysql.tidb_ddl_job where job_id < {job.id} limit 1;
 ```
 
 For reorg job, the process is almost the same.
+
+![ddl-job-manager](./imgs/ddl-job-manager.png)
 
 ### Show DDL jobs
 
