@@ -2002,8 +2002,4 @@ func TestIssue32213(t *testing.T) {
 	tk.MustExec("insert into test.t1 values(99.9999)")
 	tk.MustQuery("select cast(test.t1.c1 as decimal(5, 3)) from test.t1").Check(testkit.Rows("99.999"))
 	tk.MustQuery("select cast(test.t1.c1 as decimal(6, 3)) from test.t1").Check(testkit.Rows("100.000"))
-
-	tk.MustExec("drop table if exists test.t1")
-	tk.MustExec("create table test.t1(a decimal(10,2))")
-	tk.MustGetErrCode("insert into t1 values (\"1e+1000\"),(\"1e-1000\"),(\"-1e+1000\")", errno.ErrWarnDataOutOfRange)
 }

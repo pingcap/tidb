@@ -57,7 +57,7 @@ const (
 	// Truncate just truncates the decimal.
 	ModeTruncate RoundMode = 10
 	// Ceiling is not supported now.
-	modeCeiling RoundMode = 0
+	ModeCeiling RoundMode = 0
 
 	pow10off int = 81
 )
@@ -803,14 +803,14 @@ func (d *MyDecimal) doMiniRightShift(shift, beg, end int) {
 //    frac			- to what position after fraction point to round. can be negative!
 //    roundMode		- round to nearest even or truncate
 // 			ModeHalfUp rounds normally.
-// 			Truncate just truncates the decimal.
+// 			ModeTruncate just truncates the decimal.
 //
 // NOTES
 //  frac can be negative !
 //  one TRUNCATED error (line XXX below) isn't treated very logical :(
 //
 // RETURN VALUE
-//  eDecOK/eDecTruncated
+//  nil/ErrTruncated/ErrOverflow
 func (d *MyDecimal) Round(to *MyDecimal, frac int, roundMode RoundMode) (err error) {
 	// wordsFracTo is the number of fraction words in buffer.
 	wordsFracTo := (frac + 1) / digitsPerWord
@@ -860,7 +860,7 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int, roundMode RoundMode) (err err
 		doInc := false
 		switch roundMode {
 		// Notice: No support for ceiling mode now.
-		case modeCeiling:
+		case ModeCeiling:
 			// If any word after scale is not zero, do increment.
 			// e.g ceiling 3.0001 to scale 1, gets 3.1
 			idx := toIdx + (wordsFrac - wordsFracTo)

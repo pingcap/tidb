@@ -1436,12 +1436,15 @@ func (d *Datum) convertToMysqlDecimal(sc *stmtctx.StatementContext, target *Fiel
 	default:
 		return invalidConv(d, target.Tp)
 	}
-	var err1 error
-	dec, err1 = ProduceDecWithSpecifiedTp(dec, target, sc)
+	dec1, err1 := ProduceDecWithSpecifiedTp(dec, target, sc)
+	// If there is a error, dec1 may be nil.
+	if dec1 != nil {
+		dec = dec1
+	}
 	if err == nil && err1 != nil {
 		err = err1
 	}
-	if dec != nil && dec.negative && mysql.HasUnsignedFlag(target.Flag) {
+	if dec.negative && mysql.HasUnsignedFlag(target.Flag) {
 		*dec = zeroMyDecimal
 		if err == nil {
 			err = ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", target.Flen, target.Decimal))
@@ -1460,30 +1463,25 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.Statem
 		}
 
 		var old *MyDecimal
-		isZero := dec.IsZero()
-
-		if !isZero && int(dec.digitsFrac) > decimal {
+		if int(dec.digitsFrac) > decimal {
 			old = new(MyDecimal)
 			*old = *dec
 		}
-		err = dec.Round(dec, decimal, ModeHalfUp)
-		if err != nil {
-			return nil, err
+		if int(dec.digitsFrac) != decimal {
+			dec.Round(dec, decimal, ModeHalfUp)
 		}
 
-		if !isZero {
-			_, digitsInt := dec.removeLeadingZeros()
-			// After rounding decimal, the new decimal may have a longer integer length which may be longer than expected.
-			// So the check of integer length must be after rounding.
-			// E.g. "99.9999", flen 5, decimal 3, Round("99.9999", 3, ModelHalfUp) -> "100.000".
-			if flen-decimal < digitsInt {
-				// Integer length is longer, choose the max or min decimal.
-				dec = NewMaxOrMinDec(dec.IsNegative(), flen, decimal)
-				// select cast(111 as decimal(1)) causes a warning in MySQL.
-				err = ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", flen, decimal))
-			} else if old != nil && dec.Compare(old) != 0 {
-				sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", old))
-			}
+		_, digitsInt := dec.removeLeadingZeros()
+		// After rounding decimal, the new decimal may have a longer integer length which may be longer than expected.
+		// So the check of integer length must be after rounding.
+		// E.g. "99.9999", flen 5, decimal 3, Round("99.9999", 3, ModelHalfUp) -> "100.000".
+		if flen-decimal < digitsInt {
+			// Integer length is longer, choose the max or min decimal.
+			dec = NewMaxOrMinDec(dec.IsNegative(), flen, decimal)
+			// select cast(111 as decimal(1)) causes a warning in MySQL.
+			err = ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", flen, decimal))
+		} else if old != nil && dec.Compare(old) != 0 {
+			sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", old))
 		}
 	}
 
