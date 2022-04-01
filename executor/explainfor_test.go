@@ -1574,3 +1574,22 @@ func TestIssue28792(t *testing.T) {
 	r2 := tk.MustQuery("EXPLAIN SELECT t12.a, t12.b FROM t12 LEFT JOIN t97 use index () on t12.b = t97.b;").Rows()
 	require.Equal(t, r2, r1)
 }
+
+func TestExplainForConnectionBrief(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	rows := tk.MustQuery("select connection_id();").Rows()
+	connID := rows[0][0].(string)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int);")
+	tk.MustQuery("select * from t;")
+
+	tk.MustQuery(fmt.Sprintf("EXPLAIN FORMAT = 'brief' FOR CONNECTION %s;", connID)).Check(testkit.Rows(
+		`TableReader_5 10000.00 root  data:TableFullScan_4`,
+		`└─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+
+}
