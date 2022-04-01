@@ -123,11 +123,32 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		sessionVars.StmtCtx.AppendWarning(ErrInstanceScope.GenWithStackByArgs(sysVar.Name))
 	}
 
+	var (
+		valStr string
+		err    error
+	)
 	if v.IsGlobal {
-		valStr, err := e.getVarValue(v, sysVar)
+		valStr, err = e.getVarValue(v, sysVar)
+	} else {
+		valStr, err = e.getVarValue(v, nil)
+	}
+	if err != nil {
+		return err
+	}
+	if sysVar.Name == variable.MaxAllowedPacket {
+		u, err := strconv.ParseUint(valStr, 10, 64)
 		if err != nil {
-			return err
+			return errors.Trace(err)
 		}
+		// The value should be a multiple of 1024; nonmultiples are rounded down to the nearest multiple.
+		if u%1024 != 0 {
+			sessionVars.StmtCtx.AppendWarning(variable.ErrTruncatedWrongValue.GenWithStackByArgs(variable.MaxAllowedPacket, valStr))
+			u = (u / 1024) * 1024
+			valStr = strconv.FormatUint(u, 10)
+		}
+	}
+
+	if v.IsGlobal {
 		err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(name, valStr)
 		if err != nil {
 			return err
@@ -148,10 +169,6 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		return err
 	}
 	// Set session variable
-	valStr, err := e.getVarValue(v, nil)
-	if err != nil {
-		return err
-	}
 	getSnapshotTSByName := func() uint64 {
 		if name == variable.TiDBSnapshot {
 			return sessionVars.SnapshotTS

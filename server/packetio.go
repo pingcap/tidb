@@ -54,6 +54,7 @@ var (
 )
 
 // packetIO is a helper to read and write data in packet format.
+// MySQL Packets: https://dev.mysql.com/doc/internals/en/mysql-packet.html
 type packetIO struct {
 	bufReadConn *bufferedReadConn
 	bufWriter   *bufio.Writer
@@ -76,7 +77,8 @@ func (p *packetIO) setReadTimeout(timeout time.Duration) {
 	p.readTimeout = timeout
 }
 
-func (p *packetIO) readOnePacket() ([]byte, error) {
+// maxAllowedPacket is the maximum size of one packet. accumulatedLength count the length of received data totally.
+func (p *packetIO) readOnePacket(maxAllowedPacket uint64, accumulatedLength uint64) ([]byte, error) {
 	var header [4]byte
 	if p.readTimeout > 0 {
 		if err := p.bufReadConn.SetReadDeadline(time.Now().Add(p.readTimeout)); err != nil {
@@ -96,6 +98,12 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 
 	length := int(uint32(header[0]) | uint32(header[1])<<8 | uint32(header[2])<<16)
 
+	// Accumulated data length exceeds the limit.
+	if accumulatedLength+uint64(length) > maxAllowedPacket {
+		terror.Log(errNetPacketTooLarge)
+		return nil, errNetPacketTooLarge
+	}
+
 	data := make([]byte, length)
 	if p.readTimeout > 0 {
 		if err := p.bufReadConn.SetReadDeadline(time.Now().Add(p.readTimeout)); err != nil {
@@ -108,13 +116,13 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 	return data, nil
 }
 
-func (p *packetIO) readPacket() ([]byte, error) {
+func (p *packetIO) readPacket(maxAllowedPacket uint64) ([]byte, error) {
 	if p.readTimeout == 0 {
 		if err := p.bufReadConn.SetReadDeadline(time.Time{}); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	data, err := p.readOnePacket()
+	data, err := p.readOnePacket(maxAllowedPacket, 0)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -124,14 +132,16 @@ func (p *packetIO) readPacket() ([]byte, error) {
 		return data, nil
 	}
 
+	accumulatedLength := len(data)
 	// handle multi-packet
 	for {
-		buf, err := p.readOnePacket()
+		buf, err := p.readOnePacket(maxAllowedPacket, uint64(accumulatedLength))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 
 		data = append(data, buf...)
+		accumulatedLength += len(data)
 
 		if len(buf) < mysql.MaxPayloadLen {
 			break

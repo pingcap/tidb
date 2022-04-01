@@ -601,6 +601,16 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_remove_orderby_in_subquery").Check(testkit.Rows("0")) // default value is 0
 	tk.MustExec("set global tidb_remove_orderby_in_subquery=1")
 	tk.MustQuery("select @@global.tidb_remove_orderby_in_subquery").Check(testkit.Rows("1"))
+
+	// the value of max_allowed_packet should be a multiple of 1024
+	tk.MustExec("set @@global.max_allowed_packet=16385")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_allowed_packet value: '16385'"))
+	result := tk.MustQuery("select @@global.max_allowed_packet;")
+	result.Check(testkit.Rows("16384"))
+	tk.MustExec("set @@max_allowed_packet=2047")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_allowed_packet value: '2047'"))
+	result = tk.MustQuery("select @@max_allowed_packet;")
+	result.Check(testkit.Rows("1024"))
 }
 
 func TestTruncateIncorrectIntSessionVar(t *testing.T) {

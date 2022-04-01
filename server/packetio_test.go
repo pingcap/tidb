@@ -57,7 +57,8 @@ func TestPacketIORead(t *testing.T) {
 	// Test read one packet
 	brc := newBufferedReadConn(&bytesConn{inBuffer})
 	pkt := newPacketIO(brc)
-	bytes, err := pkt.readPacket()
+	var defMaxAllowedPacket uint64 = 67108864
+	bytes, err := pkt.readPacket(defMaxAllowedPacket)
 	require.NoError(t, err)
 	require.Equal(t, uint8(1), pkt.sequence)
 	require.Equal(t, []byte{0x01}, bytes)
@@ -79,7 +80,7 @@ func TestPacketIORead(t *testing.T) {
 	// Test read multiple packets
 	brc = newBufferedReadConn(&bytesConn{inBuffer})
 	pkt = newPacketIO(brc)
-	bytes, err = pkt.readPacket()
+	bytes, err = pkt.readPacket(defMaxAllowedPacket)
 	require.NoError(t, err)
 	require.Equal(t, uint8(2), pkt.sequence)
 	require.Equal(t, mysql.MaxPayloadLen+1, len(bytes))

@@ -394,7 +394,19 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 }
 
 func (cc *clientConn) readPacket() ([]byte, error) {
-	return cc.pkt.readPacket()
+	// Default MaxAllowedPacket is 16MB.
+	maxAllowedPacket := uint64(16777216)
+	var err error
+	if cc.ctx != nil {
+		if valStr, _ := cc.ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket); len(valStr) > 0 {
+			maxAllowedPacket, err = strconv.ParseUint(valStr, 10, 64)
+			if err != nil {
+				terror.Log(err)
+				return nil, err
+			}
+		}
+	}
+	return cc.pkt.readPacket(maxAllowedPacket)
 }
 
 func (cc *clientConn) writePacket(data []byte) error {
@@ -1074,6 +1086,11 @@ func (cc *clientConn) Run(ctx context.Context) {
 							zap.Uint64("waitTimeout", waitTimeout),
 							zap.Error(err),
 						)
+					}
+				} else if errors.ErrorEqual(err, errNetPacketTooLarge) {
+					err := cc.writeError(ctx, err)
+					if err != nil {
+						terror.Log(err)
 					}
 				} else {
 					errStack := errors.ErrorStack(err)
