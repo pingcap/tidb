@@ -1107,7 +1107,7 @@ func (decoder *Decoder) DecodeOne(b []byte, colIdx int, ft *types.FieldType) (re
 		}
 		if ft.Decimal != types.UnspecifiedLength && frac > ft.Decimal {
 			to := new(types.MyDecimal)
-			err := dec.Round(to, ft.Decimal, types.ModeHalfEven)
+			err := dec.Round(to, ft.Decimal, types.ModeHalfUp)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
