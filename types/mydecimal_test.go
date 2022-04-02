@@ -330,7 +330,7 @@ func TestRoundWithHalfEven(t *testing.T) {
 		err := dec.FromString([]byte(ca.input))
 		require.NoError(t, err)
 		var rounded MyDecimal
-		err = dec.Round(&rounded, ca.scale, ModeHalfEven)
+		err = dec.Round(&rounded, ca.scale, ModeHalfUp)
 		require.Equal(t, ca.err, err)
 		result := rounded.ToString()
 		require.Equal(t, ca.output, string(result))
@@ -403,7 +403,7 @@ func TestRoundWithCeil(t *testing.T) {
 		err := dec.FromString([]byte(ca.input))
 		require.NoError(t, err)
 		var rounded MyDecimal
-		err = dec.Round(&rounded, ca.scale, modeCeiling)
+		err = dec.Round(&rounded, ca.scale, ModeCeiling)
 		require.Equal(t, ca.err, err)
 		result := rounded.ToString()
 		require.Equal(t, ca.output, string(result))

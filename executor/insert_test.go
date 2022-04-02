@@ -1813,3 +1813,22 @@ func (s *testAutoRandomSuite) TestInsertIssue29892(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(strings.Contains(err.Error(), "Duplicate entry"), Equals, true)
 }
+
+// https://github.com/pingcap/tidb/issues/32213.
+func TestIssue32213(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+
+	tk.MustExec("create table test.t1(c1 float)")
+	tk.MustExec("insert into test.t1 values(999.99)")
+	tk.MustQuery("select cast(test.t1.c1 as decimal(4, 1)) from test.t1").Check(testkit.Rows("999.9"))
+	tk.MustQuery("select cast(test.t1.c1 as decimal(5, 1)) from test.t1").Check(testkit.Rows("1000.0"))
+
+	tk.MustExec("drop table if exists test.t1")
+	tk.MustExec("create table test.t1(c1 decimal(6, 4))")
+	tk.MustExec("insert into test.t1 values(99.9999)")
+	tk.MustQuery("select cast(test.t1.c1 as decimal(5, 3)) from test.t1").Check(testkit.Rows("99.999"))
+	tk.MustQuery("select cast(test.t1.c1 as decimal(6, 3)) from test.t1").Check(testkit.Rows("100.000"))
+}
