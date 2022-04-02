@@ -915,6 +915,7 @@ func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
 	return t
 }
 
+// GetCost computes cost of index lookup operator itself.
 func (p *PhysicalIndexLookUpReader) GetCost() (cost float64) {
 	indexPlan, tablePlan := p.indexPlan, p.tablePlan
 	ctx := p.ctx
