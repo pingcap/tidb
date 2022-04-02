@@ -31,6 +31,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
+	pd "github.com/tikv/pd/client"
+	"go.uber.org/atomic"
+	"go.uber.org/multierr"
+	"go.uber.org/zap"
+	"modernc.org/mathutil"
+
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
@@ -57,11 +63,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/collate"
-	pd "github.com/tikv/pd/client"
-	"go.uber.org/atomic"
-	"go.uber.org/multierr"
-	"go.uber.org/zap"
-	"modernc.org/mathutil"
 )
 
 const (
@@ -1447,6 +1448,7 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 			finalErr = err
 			return
 		}
+		logTask.End(zap.ErrorLevel, nil)
 		// clean up task metas
 		if cleanup {
 			logTask.Info("cleanup task metas")
@@ -1477,7 +1479,7 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 				err = common.NormalizeOrWrapErr(common.ErrRestoreTable, err, task.tr.tableName)
 				tableLogTask.End(zap.ErrorLevel, err)
 				web.BroadcastError(task.tr.tableName, err)
-				metric.RecordTableCount("completed", err)
+				metric.RecordTableCount(metric.TableStateCompleted, err)
 				restoreErr.Set(err)
 				if needPostProcess {
 					postProcessTaskChan <- task

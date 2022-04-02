@@ -34,6 +34,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/shurcooL/httpgzip"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
@@ -50,10 +55,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/shurcooL/httpgzip"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 type Lightning struct {
@@ -133,6 +134,50 @@ func (l *Lightning) GoServe() error {
 	return l.goServe(statusAddr, io.Discard)
 }
 
+// TODO: maybe handle http request using gin
+type loggingResponseWriter struct {
+	http.ResponseWriter
+	statusCode int
+	body       string
+}
+
+func newLoggingResponseWriter(w http.ResponseWriter) *loggingResponseWriter {
+	return &loggingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+}
+
+func (lrw *loggingResponseWriter) WriteHeader(code int) {
+	lrw.statusCode = code
+	lrw.ResponseWriter.WriteHeader(code)
+}
+
+func (lrw *loggingResponseWriter) Write(d []byte) (int, error) {
+	// keep first part of the response for logging, max 1K
+	if lrw.body == "" && len(d) > 0 {
+		length := len(d)
+		if length > 1024 {
+			length = 1024
+		}
+		lrw.body = string(d[:length])
+	}
+	return lrw.ResponseWriter.Write(d)
+}
+
+func httpHandleWrapper(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		logger := log.L().With(zap.String("method", r.Method), zap.Stringer("url", r.URL)).
+			Begin(zapcore.InfoLevel, "process http request")
+
+		newWriter := newLoggingResponseWriter(w)
+		h.ServeHTTP(newWriter, r)
+
+		bodyField := zap.Skip()
+		if newWriter.Header().Get("Content-Encoding") != "gzip" {
+			bodyField = zap.String("body", newWriter.body)
+		}
+		logger.End(zapcore.InfoLevel, nil, zap.Int("status", newWriter.statusCode), bodyField)
+	}
+}
+
 func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	mux := http.NewServeMux()
 	mux.Handle("/", http.RedirectHandler("/web/", http.StatusFound))
@@ -145,13 +190,13 @@ func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
 	handleTasks := http.StripPrefix("/tasks", http.HandlerFunc(l.handleTask))
-	mux.Handle("/tasks", handleTasks)
-	mux.Handle("/tasks/", handleTasks)
-	mux.HandleFunc("/progress/task", handleProgressTask)
-	mux.HandleFunc("/progress/table", handleProgressTable)
-	mux.HandleFunc("/pause", handlePause)
-	mux.HandleFunc("/resume", handleResume)
-	mux.HandleFunc("/loglevel", handleLogLevel)
+	mux.Handle("/tasks", httpHandleWrapper(handleTasks.ServeHTTP))
+	mux.Handle("/tasks/", httpHandleWrapper(handleTasks.ServeHTTP))
+	mux.HandleFunc("/progress/task", httpHandleWrapper(handleProgressTask))
+	mux.HandleFunc("/progress/table", httpHandleWrapper(handleProgressTable))
+	mux.HandleFunc("/pause", httpHandleWrapper(handlePause))
+	mux.HandleFunc("/resume", httpHandleWrapper(handleResume))
+	mux.HandleFunc("/loglevel", httpHandleWrapper(handleLogLevel))
 
 	mux.Handle("/web/", http.StripPrefix("/web", httpgzip.FileServer(web.Res, httpgzip.FileServerOptions{
 		IndexHTML: true,
@@ -559,7 +604,7 @@ func (l *Lightning) handlePostTask(w http.ResponseWriter, req *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "cannot read request", err)
 		return
 	}
-	log.L().Debug("received task config", zap.ByteString("content", data))
+	log.L().Info("received task config", zap.ByteString("content", data))
 
 	cfg := config.NewConfig()
 	if err = cfg.LoadFromGlobal(l.globalCfg); err != nil {
