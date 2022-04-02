@@ -1296,10 +1296,6 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	}
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(statsHandle))
 	do.ddl.RegisterStatsHandle(statsHandle)
-	// Negative stats lease indicates that it is in test, it does not need update.
-	if do.statsLease >= 0 {
-		do.wg.Run(do.loadStatsWorker)
-	}
 	owner := do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
 	if do.indexUsageSyncLease > 0 {
 		do.wg.Add(1)
@@ -1343,46 +1339,6 @@ func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 	return statsOwner
 }
 
-func (do *Domain) loadStatsWorker() {
-	defer util.Recover(metrics.LabelDomain, "loadStatsWorker", nil, false)
-	lease := do.statsLease
-	if lease == 0 {
-		lease = 3 * time.Second
-	}
-	loadTicker := time.NewTicker(lease)
-	defer func() {
-		loadTicker.Stop()
-		logutil.BgLogger().Info("loadStatsWorker exited.")
-	}()
-	statsHandle := do.StatsHandle()
-	t := time.Now()
-	err := statsHandle.InitStats(do.InfoSchema())
-	if err != nil {
-		logutil.BgLogger().Debug("init stats info failed", zap.Error(err))
-	} else {
-		logutil.BgLogger().Info("init stats info time", zap.Duration("take time", time.Since(t)))
-	}
-	for {
-		select {
-		case <-loadTicker.C:
-			err = statsHandle.RefreshVars()
-			if err != nil {
-				logutil.BgLogger().Debug("refresh variables failed", zap.Error(err))
-			}
-			err = statsHandle.Update(do.InfoSchema())
-			if err != nil {
-				logutil.BgLogger().Debug("update stats info failed", zap.Error(err))
-			}
-			err = statsHandle.LoadNeededHistograms()
-			if err != nil {
-				logutil.BgLogger().Debug("load histograms failed", zap.Error(err))
-			}
-		case <-do.exit:
-			return
-		}
-	}
-}
-
 func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 	defer util.Recover(metrics.LabelDomain, "syncIndexUsageWorker", nil, false)
 	idxUsageSyncTicker := time.NewTicker(do.indexUsageSyncLease)
@@ -1415,6 +1371,11 @@ func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 
 func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
 	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
+	loadlease := do.statsLease
+	if loadlease == 0 {
+		loadlease = 3 * time.Second
+	}
+	loadTicker := time.NewTicker(loadlease)
 	lease := do.statsLease
 	deltaUpdateTicker := time.NewTicker(20 * lease)
 	gcStatsTicker := time.NewTicker(100 * lease)
@@ -1422,7 +1383,15 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	loadFeedbackTicker := time.NewTicker(5 * lease)
 	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
 	statsHandle := do.StatsHandle()
+	t := time.Now()
+	err := statsHandle.InitStats(do.InfoSchema())
+	if err != nil {
+		logutil.BgLogger().Debug("init stats info failed", zap.Error(err))
+	} else {
+		logutil.BgLogger().Info("init stats info time", zap.Duration("take time", time.Since(t)))
+	}
 	defer func() {
+		loadTicker.Stop()
 		dumpColStatsUsageTicker.Stop()
 		loadFeedbackTicker.Stop()
 		dumpFeedbackTicker.Stop()
@@ -1476,7 +1445,21 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			if err != nil {
 				logutil.BgLogger().Debug("dump column stats usage failed", zap.Error(err))
 			}
+		case <-loadTicker.C:
+			err = statsHandle.RefreshVars()
+			if err != nil {
+				logutil.BgLogger().Debug("refresh variables failed", zap.Error(err))
+			}
+			err = statsHandle.Update(do.InfoSchema())
+			if err != nil {
+				logutil.BgLogger().Debug("update stats info failed", zap.Error(err))
+			}
+			err = statsHandle.LoadNeededHistograms()
+			if err != nil {
+				logutil.BgLogger().Debug("load histograms failed", zap.Error(err))
+			}
 		}
+
 	}
 }
 
