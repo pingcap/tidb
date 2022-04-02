@@ -1305,7 +1305,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 		return nil
 	}
 	do.SetStatsUpdating(true)
-	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) })
+	do.wg.Run(func() { do.statsWorker(owner) })
 	if RunAutoAnalyze {
 		do.wg.Run(func() { do.autoAnalyzeWorker(owner) })
 	}
@@ -1369,14 +1369,11 @@ func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 	}
 }
 
-func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
-	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
-	loadlease := do.statsLease
-	if loadlease == 0 {
-		loadlease = 3 * time.Second
-	}
-	loadTicker := time.NewTicker(loadlease)
+func (do *Domain) statsWorker(owner owner.Manager) {
+	defer util.Recover(metrics.LabelDomain, "statsWorker", nil, false)
 	lease := do.statsLease
+
+	loadTicker := time.NewTicker(lease)
 	deltaUpdateTicker := time.NewTicker(20 * lease)
 	gcStatsTicker := time.NewTicker(100 * lease)
 	dumpFeedbackTicker := time.NewTicker(200 * lease)
@@ -1398,7 +1395,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		gcStatsTicker.Stop()
 		deltaUpdateTicker.Stop()
 		do.SetStatsUpdating(false)
-		logutil.BgLogger().Info("updateStatsWorker exited.")
+		logutil.BgLogger().Info("statsWorker exited.")
 	}()
 	for {
 		select {
