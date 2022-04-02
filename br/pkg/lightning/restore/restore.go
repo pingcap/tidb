@@ -1163,6 +1163,8 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 				case <-logProgressChan:
 					// log the current progress periodically, so OPS will know that we're still working
 					nanoseconds := float64(time.Since(start).Nanoseconds())
+					totalRestoreBytes := metric.ReadCounter(metric.BytesCounter.WithLabelValues(metric.BytesStateTotalRestore))
+					restoredBytes := metric.ReadCounter(metric.BytesCounter.WithLabelValues(metric.BytesStateRestored))
 					// the estimated chunk is not accurate(likely under estimated), but the actual count is not accurate
 					// before the last table start, so use the bigger of the two should be a workaround
 					estimated := metric.ReadCounter(metric.ChunkCounter.WithLabelValues(metric.ChunkStateEstimated))
@@ -1180,8 +1182,8 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 						engineEstimated = enginePending
 					}
 					engineFinished := metric.ReadCounter(metric.ProcessedEngineCounter.WithLabelValues(metric.TableStateImported, metric.TableResultSuccess))
-					bytesWritten := metric.ReadCounter(metric.BytesCounter.WithLabelValues(metric.TableStateWritten))
-					bytesImported := metric.ReadCounter(metric.BytesCounter.WithLabelValues(metric.TableStateImported))
+					bytesWritten := metric.ReadCounter(metric.BytesCounter.WithLabelValues(metric.BytesStateRestoreWritten))
+					bytesImported := metric.ReadCounter(metric.BytesCounter.WithLabelValues(metric.BytesStateImported))
 
 					var state string
 					var remaining zap.Field
@@ -1198,37 +1200,60 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 						state = "preparing"
 					}
 
-					// since we can't accurately estimate the extra time cost by import after all writing are finished,
-					// so here we use estimatedWritingProgress * 0.8 + estimatedImportingProgress * 0.2 as the total
-					// progress.
+					// lightning restore is separated into restore engine and import engine, they are both parallelized
+					// and pipelined between engines, so we can only weight the progress of those 2 phase to get the
+					// total progress.
+					//
+					// for local & importer backend:
+					// in most case import engine is faster since there's little computations, 2:1 would be a good
+					// weight, but import engine determines the end time of the whole restore, when downstream, network
+					// or disk read becomes bottleneck, the result total progress will before the real progress, so we
+					// increase its weight during calculation. 5:5 for now, so the result progress may fall behind the
+					// real progress.
+					//
+					// for tidb backend, we do nothing during import engine, so we use restore engine progress as the
+					// total progress.
+					restoreBytesField := zap.Skip()
+					importBytesField := zap.Skip()
 					remaining = zap.Skip()
 					totalPercent := 0.0
-					if finished > 0 {
-						writePercent := math.Min(finished/estimated, 1.0)
-						importPercent := 1.0
-						if bytesWritten > 0 {
-							totalBytes := bytesWritten / writePercent
-							importPercent = math.Min(bytesImported/totalBytes, 1.0)
+					if restoredBytes > 0 {
+						restorePercent := math.Min(restoredBytes/totalRestoreBytes, 1.0)
+						metric.ProgressGauge.WithLabelValues(metric.ProgressPhaseRestore).Set(restorePercent)
+						if rc.cfg.TikvImporter.Backend != config.BackendTiDB {
+							importPercent := 1.0
+							if bytesWritten > 0 {
+								// estimate total import bytes from written bytes
+								totalImportBytes := bytesWritten / restorePercent
+								importPercent = math.Min(bytesImported/totalImportBytes, 1.0)
+								importBytesField = zap.String("import-bytes", fmt.Sprintf("%s/%s(estimated)",
+									units.BytesSize(bytesImported), units.BytesSize(totalImportBytes)))
+							}
+							metric.ProgressGauge.WithLabelValues(metric.ProgressPhaseImport).Set(importPercent)
+							totalPercent = (restorePercent + importPercent) / 2
+						} else {
+							totalPercent = restorePercent
 						}
-						totalPercent = writePercent*0.8 + importPercent*0.2
 						if totalPercent < 1.0 {
 							remainNanoseconds := (1.0 - totalPercent) / totalPercent * nanoseconds
 							remaining = zap.Duration("remaining", time.Duration(remainNanoseconds).Round(time.Second))
 						}
+						restoreBytesField = zap.String("restore-bytes", fmt.Sprintf("%s/%s",
+							units.BytesSize(restoredBytes), units.BytesSize(totalRestoreBytes)))
 					}
+					metric.ProgressGauge.WithLabelValues(metric.ProgressPhaseTotal).Set(totalPercent)
 
-					formatPercent := func(finish, estimate float64) string {
-						speed := ""
-						if estimated > 0 {
-							speed = fmt.Sprintf(" (%.1f%%)", finish/estimate*100)
+					formatPercent := func(num, denom float64) string {
+						if denom > 0 {
+							return fmt.Sprintf(" (%.1f%%)", num/denom*100)
 						}
-						return speed
+						return ""
 					}
 
 					// avoid output bytes speed if there are no unfinished chunks
-					chunkSpeed := zap.Skip()
+					encodeSpeedField := zap.Skip()
 					if bytesRead > 0 {
-						chunkSpeed = zap.Float64("speed(MiB/s)", bytesRead/(1048576e-9*nanoseconds))
+						encodeSpeedField = zap.Float64("encode speed(MiB/s)", bytesRead/(1048576e-9*nanoseconds))
 					}
 
 					// Note: a speed of 28 MiB/s roughly corresponds to 100 GiB/hour.
@@ -1238,7 +1263,8 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 						zap.String("tables", fmt.Sprintf("%.0f/%.0f%s", completedTables, totalTables, formatPercent(completedTables, totalTables))),
 						zap.String("chunks", fmt.Sprintf("%.0f/%.0f%s", finished, estimated, formatPercent(finished, estimated))),
 						zap.String("engines", fmt.Sprintf("%.f/%.f%s", engineFinished, engineEstimated, formatPercent(engineFinished, engineEstimated))),
-						chunkSpeed,
+						restoreBytesField, importBytesField,
+						encodeSpeedField,
 						zap.String("state", state),
 						remaining,
 					)
@@ -1489,6 +1515,8 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 		}()
 	}
 
+	var allTasks []task
+	var totalDataSizeToRestore int64
 	for _, dbMeta := range rc.dbMetas {
 		dbInfo := rc.dbInfos[dbMeta.Name]
 		for _, tableMeta := range dbMeta.Tables {
@@ -1510,12 +1538,30 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 				return errors.Trace(err)
 			}
 
-			wg.Add(1)
-			select {
-			case taskCh <- task{tr: tr, cp: cp}:
-			case <-ctx.Done():
-				return ctx.Err()
+			allTasks = append(allTasks, task{tr: tr, cp: cp})
+
+			if len(cp.Engines) == 0 {
+				for _, fi := range tableMeta.DataFiles {
+					totalDataSizeToRestore += fi.FileMeta.FileSize
+				}
+			} else {
+				for _, eng := range cp.Engines {
+					for _, chunk := range eng.Chunks {
+						totalDataSizeToRestore += chunk.Chunk.EndOffset - chunk.Chunk.Offset
+					}
+				}
 			}
+		}
+	}
+
+	metric.BytesCounter.WithLabelValues(metric.BytesStateTotalRestore).Add(float64(totalDataSizeToRestore))
+
+	for i := range allTasks {
+		wg.Add(1)
+		select {
+		case taskCh <- allTasks[i]:
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
 
@@ -2156,7 +2202,8 @@ func (cr *chunkRestore) deliverLoop(
 		var kvPacket []deliveredKVs
 		// init these two field as checkpoint current value, so even if there are no kv pairs delivered,
 		// chunk checkpoint should stay the same
-		offset := cr.chunk.Chunk.Offset
+		startOffset := cr.chunk.Chunk.Offset
+		currOffset := startOffset
 		rowID := cr.chunk.Chunk.PrevRowIDMax
 
 	populate:
@@ -2170,7 +2217,7 @@ func (cr *chunkRestore) deliverLoop(
 				for _, p := range kvPacket {
 					p.kvs.ClassifyAndAppend(&dataKVs, &dataChecksum, &indexKVs, &indexChecksum)
 					columns = p.columns
-					offset = p.offset
+					currOffset = p.offset
 					rowID = p.rowID
 				}
 			case <-ctx.Done():
@@ -2233,8 +2280,10 @@ func (cr *chunkRestore) deliverLoop(
 		// In local mode, we should write these checkpoint after engine flushed.
 		cr.chunk.Checksum.Add(&dataChecksum)
 		cr.chunk.Checksum.Add(&indexChecksum)
-		cr.chunk.Chunk.Offset = offset
+		cr.chunk.Chunk.Offset = currOffset
 		cr.chunk.Chunk.PrevRowIDMax = rowID
+
+		metric.BytesCounter.WithLabelValues(metric.BytesStateRestored).Add(float64(currOffset - startOffset))
 
 		if dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0 {
 			// No need to save checkpoint if nothing was delivered.
