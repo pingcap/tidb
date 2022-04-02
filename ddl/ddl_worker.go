@@ -109,18 +109,22 @@ type JobContext struct {
 	cacheDigest        *parser.Digest
 }
 
+func NewJobContext() *JobContext{
+	return &JobContext{
+		ddlJobCtx:          context.Background(),
+		cacheSQL:           "",
+		cacheNormalizedSQL: "",
+		cacheDigest:        nil,
+	}
+}
+
 func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRangeMgr delRangeManager, dCtx *ddlCtx) *worker {
 	worker := &worker{
 		id:       atomic.AddInt32(&ddlWorkerID, 1),
 		tp:       tp,
 		ddlJobCh: make(chan struct{}, 1),
 		ctx:      ctx,
-		JobContext: &JobContext{
-			ddlJobCtx:          context.Background(),
-			cacheSQL:           "",
-			cacheNormalizedSQL: "",
-			cacheDigest:        nil,
-		},
+		JobContext: NewJobContext(),
 		ddlCtx:          dCtx,
 		reorgCtx:        &reorgCtx{notifyCancelReorgJob: 0},
 		sessPool:        sessPool,
