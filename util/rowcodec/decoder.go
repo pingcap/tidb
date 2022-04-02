@@ -298,7 +298,7 @@ func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData 
 		}
 		if col.Ft.Decimal != types.UnspecifiedLength && frac > col.Ft.Decimal {
 			to := new(types.MyDecimal)
-			err := dec.Round(to, col.Ft.Decimal, types.ModeHalfEven)
+			err := dec.Round(to, col.Ft.Decimal, types.ModeHalfUp)
 			if err != nil {
 				return errors.Trace(err)
 			}
