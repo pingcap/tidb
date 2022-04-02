@@ -11,7 +11,6 @@
 
 - Discussion PR: https://github.com/tikv/pd/issues/4095
 
-- Tracking Issue: https://github.com/pingcap/tidb/issues/29034
 
 ## Table of Contents
 
@@ -23,7 +22,7 @@
 
 ## Introduction
 
-The original region split and scatter are handled by tikv and pd respectively, in order to improve efficiency, the split is also changed to be handled and controlled by pd.
+The original region split and scatter are handled by tikv and PD respectively, in order to improve efficiency, the split is also changed to be handled and controlled by PD.
 
 ## Motivation or Background
 
