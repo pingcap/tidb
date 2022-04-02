@@ -79,6 +79,16 @@ Table `mysql.tidb_ddl_history` stores the finished DDL job.
 
 In bootstrap step, TiDB will build these tables meta and put it into tikv directly. For new cluster, TiDB will also build `mysql` schema meta.
 
+### DDL operations
+
+Use the following DDL operations to manage the DDL jobs:
+```sql
+insert into mysql.tidb_ddl_job values (...) -- add ddl jobs
+delete from mysql.tidb_ddl_job where job_id = ... -- delete ddl jobs
+update mysql.tidb_ddl_job set job_meta = ... where job_id = ... -- update ddl jobs
+select * from mysql.tidb_ddl_job -- get ddl jobs
+```
+
 ### DDL job manager
 
 DDL job manager will find the runnable DDL job and dispatch the jobs to DDL workers.
@@ -201,6 +211,12 @@ CDC will watch the key of the finished job in **queue** and sync the DDLs to oth
 
 When upgrading a cluster, CDC should upgrade before TiDB and be able to watch the key of the finished job in **table** and **queue** at the same time. 
 After several versions, CDC can remove the code of watching the key in **queue**.
+
+### How to change the tables(`tidb_ddl_job`, `tidb_ddl_reorg`, `tidb_ddl_history`) meta?
+
+If a new field is required in `tidb_ddl_job`, we can use a `ALTER TABLE` statement to add the field, the important thing is make this DDL run successfully.
+Consider the rolling upgrade progress, only the first instance will run the upgrade SQL, at this time, the DDL owner will be the other TiDB instance, so that the DDL will
+be executed successfully by the other old TiDB instance.
 
 ## Test Design
 
