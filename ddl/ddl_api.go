@@ -1099,9 +1099,8 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 				return "", false, err
 			}
 			return sb.String(), false, nil
-		} else {
-			return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), x.FnName.String())
 		}
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), x.FnName.String())
 	}
 
 	// evaluate the non-sequence expr to a certain value.
