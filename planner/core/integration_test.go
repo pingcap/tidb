@@ -17,6 +17,7 @@ package core_test
 import (
 	"bytes"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1753,6 +1754,25 @@ func TestIndexHintWarning(t *testing.T) {
 	tk.MustExec("CREATE VIEW v1 AS SELECT c1, c2 FROM t1")
 	err := tk.ExecToErr("SELECT * FROM v1 USE INDEX (PRIMARY) WHERE c1=2")
 	require.True(t, terror.ErrorEqual(err, core.ErrKeyDoesNotExist))
+}
+
+func TestIssue32672(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	for _, agg := range []string{"stream", "hash"} {
+		rs := tk.MustQuery(fmt.Sprintf("explain format='verbose' select /*+ %v_agg() */ count(*) from t", agg)).Rows()
+		// cols: id, estRows, estCost, ...
+		operator := rs[0][0].(string)
+		cost, err := strconv.ParseFloat(rs[0][2].(string), 64)
+		require.NoError(t, err)
+		require.True(t, strings.Contains(strings.ToLower(operator), agg))
+		require.True(t, cost > 0)
+	}
 }
 
 func TestIssue15546(t *testing.T) {
