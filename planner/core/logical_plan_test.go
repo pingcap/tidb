@@ -1505,7 +1505,7 @@ func TestUnion(t *testing.T) {
 			require.Error(t, err)
 			continue
 		}
-		require.NoError(t, err)
+		require.NoError(t, err, comment)
 		p := plan.(LogicalPlan)
 		p, err = logicalOptimize(ctx, builder.optFlag, p)
 		testdata.OnRecord(func() {
