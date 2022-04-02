@@ -1297,6 +1297,8 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
 		txn.SetOption(kv.Priority, w.priority)
+		txn.SetOption(kv.EnableAsyncCommit, w.sessCtx.GetSessionVars().EnableAsyncCommit)
+		txn.SetOption(kv.Enable1PC, w.sessCtx.GetSessionVars().Enable1PC)
 		if tagger := w.ddlWorker.getResourceGroupTaggerForTopSQL(); tagger != nil {
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}

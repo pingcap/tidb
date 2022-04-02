@@ -26,8 +26,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	atomicutil "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 const (
@@ -185,6 +187,10 @@ func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []str
 		for _, row := range rows {
 			varName := row.GetString(0)
 			varValue := row.GetString(1)
+			logutil.Logger(ctx).Debug("loaded global variables",
+				zap.String("varName", varName),
+				zap.String("varValue", varValue),
+			)
 			if err = sctx.GetSessionVars().SetSystemVar(varName, varValue); err != nil {
 				return err
 			}
