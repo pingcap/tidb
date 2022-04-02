@@ -1039,22 +1039,48 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 // 1: get the expr restored string for the column which uses sequence next value as default value.
 // 2: get specific default value for the other column.
 func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOption) (interface{}, bool, error) {
+	// handle default next value of sequence. (keep the expr string)
+	str, isSeqExpr, err := tryToGetSequenceDefaultValue(c)
+	if err != nil {
+		return nil, false, errors.Trace(err)
+	}
+	if isSeqExpr {
+		return str, true, nil
+	}
+
+	// handle default value with function call
 	tp, fsp := col.FieldType.Tp, col.FieldType.Decimal
-	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
-		switch x := c.Expr.(type) {
-		case *ast.FuncCallExpr:
-			if x.FnName.L == ast.CurrentTimestamp {
-				defaultFsp := 0
-				if len(x.Args) == 1 {
-					if val := x.Args[0].(*driver.ValueExpr); val != nil {
-						defaultFsp = int(val.GetInt64())
-					}
-				}
-				if defaultFsp != fsp {
-					return nil, false, dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+	if x, ok := c.Expr.(*ast.FuncCallExpr); ok {
+		switch x.FnName.L {
+		case ast.Rand:
+			if err := expression.VerifyArgsWrapper(ast.Rand, len(x.Args)); err != nil {
+				return nil, false, expression.ErrIncorrectParameterCount.GenWithStackByArgs(ast.Rand)
+			}
+			col.DefaultIsExpr = true
+			var sb strings.Builder
+			restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
+				format.RestoreSpacesAroundBinaryOperation
+			restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+			if err := c.Expr.Restore(restoreCtx); err != nil {
+				return "", false, err
+			}
+			return sb.String(), false, nil
+		case ast.CurrentTimestamp:
+			defaultFsp := 0
+			if len(x.Args) == 1 {
+				if val := x.Args[0].(*driver.ValueExpr); val != nil {
+					defaultFsp = int(val.GetInt64())
 				}
 			}
+			if defaultFsp != fsp {
+				return nil, false, dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+			}
+		default:
+			return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), x.FnName.String())
 		}
+	}
+
+	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
 		vd, err := expression.GetTimeValue(ctx, c.Expr, tp, fsp)
 		value := vd.GetValue()
 		if err != nil {
@@ -1072,35 +1098,6 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 		}
 
 		return value, false, nil
-	}
-
-	// handle default next value of sequence. (keep the expr string)
-	str, isSeqExpr, err := tryToGetSequenceDefaultValue(c)
-	if err != nil {
-		return nil, false, errors.Trace(err)
-	}
-	if isSeqExpr {
-		return str, true, nil
-	}
-
-	// handle default value with function call
-	switch x := c.Expr.(type) {
-	case *ast.FuncCallExpr:
-		if x.FnName.L == ast.Rand {
-			if err := expression.VerifyArgsWrapper(ast.Rand, len(x.Args)); err != nil {
-				return nil, false, expression.ErrIncorrectParameterCount.GenWithStackByArgs(ast.Rand)
-			}
-			col.DefaultIsExpr = true
-			var sb strings.Builder
-			restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
-				format.RestoreSpacesAroundBinaryOperation
-			restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
-			if err := c.Expr.Restore(restoreCtx); err != nil {
-				return "", false, err
-			}
-			return sb.String(), false, nil
-		}
-		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), x.FnName.String())
 	}
 
 	// evaluate the non-sequence expr to a certain value.
