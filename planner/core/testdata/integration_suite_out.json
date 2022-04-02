@@ -2338,18 +2338,18 @@
       {
         "SQL": "explain format = 'verbose' select count(*) from t3",
         "Plan": [
-          "StreamAgg_20 1.00 137.00 root  funcs:count(Column#9)->Column#4",
+          "StreamAgg_20 1.00 12.68 root  funcs:count(Column#9)->Column#4",
           "└─TableReader_21 1.00 9.68 root  data:StreamAgg_8",
-          "  └─StreamAgg_8 1.00 12.68 cop[tikv]  funcs:count(1)->Column#9",
+          "  └─StreamAgg_8 1.00 137.00 cop[tikv]  funcs:count(1)->Column#9",
           "    └─TableFullScan_18 3.00 128.00 cop[tikv] table:t3 keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'verbose' select count(*) from t2",
         "Plan": [
-          "StreamAgg_25 1.00 69.50 root  funcs:count(Column#7)->Column#4",
+          "StreamAgg_25 1.00 8.18 root  funcs:count(Column#7)->Column#4",
           "└─TableReader_26 1.00 5.17 root  data:StreamAgg_9",
-          "  └─StreamAgg_9 1.00 8.18 batchCop[tiflash]  funcs:count(1)->Column#7",
+          "  └─StreamAgg_9 1.00 69.50 batchCop[tiflash]  funcs:count(1)->Column#7",
           "    └─TableFullScan_24 3.00 60.50 batchCop[tiflash] table:t2 keep order:false"
         ]
       },
@@ -2475,9 +2475,9 @@
         "Plan": [
           "HashJoin_19 3.00 127.40 root  CARTESIAN left outer semi join",
           "├─Selection_39(Build) 0.80 11.18 root  eq(2, Column#18)",
-          "│ └─StreamAgg_60 1.00 69.50 root  funcs:count(Column#32)->Column#18",
+          "│ └─StreamAgg_60 1.00 8.18 root  funcs:count(Column#32)->Column#18",
           "│   └─TableReader_61 1.00 5.17 root  data:StreamAgg_44",
-          "│     └─StreamAgg_44 1.00 8.18 batchCop[tiflash]  funcs:count(1)->Column#32",
+          "│     └─StreamAgg_44 1.00 69.50 batchCop[tiflash]  funcs:count(1)->Column#32",
           "│       └─TableFullScan_59 3.00 60.50 batchCop[tiflash] table:t1 keep order:false",
           "└─Projection_20(Probe) 3.00 95.82 root  1->Column#28",
           "  └─Apply_22 3.00 76.02 root  CARTESIAN left outer join",
