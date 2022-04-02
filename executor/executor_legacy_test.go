@@ -109,7 +109,6 @@ var _ = SerialSuites(&testSerialSuite1{&baseTestSuite{}})
 var _ = SerialSuites(&globalIndexSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testCoprCache{})
-var _ = SerialSuites(&testResourceTagSuite{&baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
@@ -122,7 +121,6 @@ type testCoprCache struct {
 	dom   *domain.Domain
 	cls   testutils.Cluster
 }
-type testResourceTagSuite struct{ *baseTestSuite }
 
 // MockGC is used to make GC work in the test environment.
 func MockGC(tk *testkit.TestKit) (string, string, string, func()) {
