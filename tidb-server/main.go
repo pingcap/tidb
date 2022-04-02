@@ -207,7 +207,7 @@ func main() {
 	setupMetrics()
 
 	storage, dom := createStoreAndDomain()
-	startSharedServices(dom)
+	startSharedServices()
 	svr := createServer(storage, dom)
 
 	// Register error API is not thread-safe, the caller MUST NOT register errors after initialization.
@@ -739,10 +739,10 @@ func setupTracing() {
 	opentracing.SetGlobalTracer(tracer)
 }
 
-func startSharedServices(dom *domain.Domain) {
+func startSharedServices() {
 	cfg := config.GetGlobalConfig()
 	if cfg.SharedServices != "" {
-		err := sharedservices.StartSharedServices(dom)
+		err := sharedservices.StartSharedServices()
 		terror.MustNil(err)
 	}
 }

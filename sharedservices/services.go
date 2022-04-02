@@ -18,26 +18,37 @@ import (
 	"context"
 	"net/http"
 	"sync/atomic"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 var globalServiceManager atomic.Value
 
-func StartSharedServices(do *domain.Domain) error {
+func StartSharedServices() error {
 	ctx, cancel := context.WithCancel(context.Background())
+	etcd, err := clientv3.New(clientv3.Config{
+		Endpoints:   []string{"http://127.0.0.1:2379"},
+		DialTimeout: 2 * time.Second,
+	})
+
+	if err != nil {
+		cancel()
+		return err
+	}
 
 	manager := &ServicesManager{
-		do:      do,
 		domains: session.NewDomainMap(),
 		ctx:     ctx,
+		etcd:    etcd,
 		cancel:  cancel,
 	}
 
 	if err := manager.Start(); err != nil {
+		_ = etcd.Close()
 		return err
 	}
 
@@ -70,9 +81,9 @@ func HandleHttp(router *mux.Router) {
 			return
 		}
 
-		err = manager.doRegisterService(&ServiceDesc{
+		err = manager.registerServiceInfo(&ServiceDesc{
 			Tp: "ddl",
-			Domain: &DomainDesc{
+			Domain: &DomainInfo{
 				Addr: "tikv://127.0.0.1:2379",
 			},
 		})
