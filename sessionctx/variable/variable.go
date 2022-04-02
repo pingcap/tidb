@@ -599,7 +599,7 @@ func TruncateMaxAllowedPacket(sctx *stmtctx.StatementContext, val *string) error
 		return errors.Trace(err)
 	}
 	if u%1024 != 0 {
-		sctx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(MaxAllowedPacket, val))
+		sctx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(MaxAllowedPacket, *val))
 		u = (u / 1024) * 1024
 		*val = strconv.FormatUint(u, 10)
 	}
