@@ -260,7 +260,8 @@ func (l *Lightning) RunServer() error {
 		if err != nil {
 			return err
 		}
-		err = l.run(context.Background(), task, nil)
+		o := &options{}
+		err = l.run(context.Background(), task, o)
 		if err != nil && !common.IsContextCanceledError(err) {
 			restore.DeliverPauser.Pause() // force pause the progress on error
 			log.L().Error("tidb lightning encountered error", zap.Error(err))
