@@ -16,12 +16,15 @@ package sharedservices
 
 import (
 	"context"
+	"encoding/json"
+	"io/ioutil"
 	"net/http"
 	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
@@ -73,25 +76,61 @@ func getManager() (*ServicesManager, error) {
 }
 
 func HandleHttp(router *mux.Router) {
-	router.HandleFunc("/register", func(writer http.ResponseWriter, request *http.Request) {
-		manager, err := getManager()
-		if err != nil {
-			writer.WriteHeader(500)
-			_, _ = writer.Write([]byte(err.Error()))
+	router.HandleFunc("/clusters", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != "POST" {
+			writeError(w, http.StatusMethodNotAllowed, errors.Errorf("Method '%s' not supported", req.Method))
+		}
+
+		var info ClusterInfo
+		if err := unmarshalJsonRequest(req, &info); err != nil {
+			writeError(w, http.StatusBadRequest, err)
 			return
 		}
 
-		err = manager.registerServiceInfo(&ServiceDesc{
-			Tp: "ddl",
-			Domain: &DomainInfo{
-				Addr: "tikv://127.0.0.1:2379",
-			},
-		})
-
+		manager, err := getManager()
 		if err != nil {
-			writer.WriteHeader(400)
-			_, _ = writer.Write([]byte(err.Error()))
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+
+		if err = manager.RegisterCluster(&info); err != nil {
+			writeError(w, http.StatusBadRequest, err)
 			return
 		}
 	})
+
+	router.HandleFunc("/clusters/{clusterID}/services/{serviceTp}", func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != "PUT" {
+			writeError(w, http.StatusMethodNotAllowed, errors.Errorf("Method '%s' not supported", req.Method))
+		}
+
+		vars := mux.Vars(req)
+		clusterID := vars["clusterID"]
+		serviceTp := vars["serviceTp"]
+		manager, err := getManager()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+
+		if err = manager.EnableClusterService(clusterID, ServiceTp(serviceTp)); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+	})
+}
+
+func unmarshalJsonRequest(req *http.Request, v any) error {
+	data, err := ioutil.ReadAll(req.Body)
+	if err != nil {
+		return err
+	}
+
+	return json.Unmarshal(data, v)
+}
+
+func writeError(w http.ResponseWriter, status int, err error) {
+	w.WriteHeader(status)
+	_, err = w.Write([]byte(err.Error()))
+	terror.Log(errors.Trace(err))
 }

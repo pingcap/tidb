@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/session"
@@ -33,37 +34,33 @@ import (
 const SharedServiceKeyPrefix = "/tidb/shared-service"
 const SharedServiceClustersPrefix = SharedServiceKeyPrefix + "/clusters/"
 
-func GetServiceKey(id string, service ServiceTp) string {
-	return fmt.Sprintf(SharedServiceClustersPrefix+"%s/%s", id, service)
+func GetClusterServiceKey(clusterID string, service ServiceTp) string {
+	return fmt.Sprintf(SharedServiceClustersPrefix+"%s/%s", clusterID, service)
 }
 
-func GetClusterDomainKey(id string) string {
-	return fmt.Sprintf(SharedServiceClustersPrefix+"%s/domain", id)
+func GetClusterInfoKey(clusterID string) string {
+	return fmt.Sprintf(SharedServiceClustersPrefix+"%s/info", clusterID)
 }
 
-func GetDomainUUID(addr string) (uuid string, err error) {
+func CheckDomainAddr(addr string) (err error) {
 	store, err := kvstore.New(addr)
 	if err != nil {
-		return "", err
+		return err
 	}
 
 	defer func() {
 		err = store.Close()
 	}()
 
-	return store.UUID(), nil
+	return nil
 }
 
-type DomainInfo struct {
+type ClusterInfo struct {
+	ID   string `json:"id"`
 	Addr string `json:"addr"`
 }
 
 type ServiceTp string
-
-type ServiceDesc struct {
-	Tp     ServiceTp   `json:"type"`
-	Domain *DomainInfo `json:"domain"`
-}
 
 const (
 	ServiceTpDDL ServiceTp = "ddl"
@@ -90,8 +87,9 @@ func (m *ServicesManager) Stop() error {
 }
 
 func (m *ServicesManager) manage() {
-	ticker := time.NewTicker(time.Second * 60)
+	ticker := time.NewTicker(time.Second)
 	watch := m.etcd.Watch(m.ctx, SharedServiceClustersPrefix, clientv3.WithPrefix())
+	lastSyncTime := int64(0)
 	for {
 		select {
 		case <-m.ctx.Done():
@@ -102,6 +100,12 @@ func (m *ServicesManager) manage() {
 				log.Error("sync failed")
 			}
 		case <-ticker.C:
+			now := time.Now().Unix()
+			if now < lastSyncTime || now-lastSyncTime < 60 {
+				continue
+			}
+			lastSyncTime = now
+
 			if err := m.sync(); err != nil {
 				log.Error("sync failed")
 			}
@@ -115,8 +119,8 @@ func (m *ServicesManager) sync() error {
 		return err
 	}
 
-	domains := make(map[string]*DomainInfo)
-	domainServices := make(map[string][]ServiceTp)
+	clusters := make(map[string]*ClusterInfo)
+	clusterServices := make(map[string][]ServiceTp)
 
 	for _, kv := range resp.Kvs {
 		key := string(kv.Key)
@@ -127,27 +131,27 @@ func (m *ServicesManager) sync() error {
 			continue
 		}
 		serviceID := items[0]
-		if items[1] == "domain" {
-			var domainInfo DomainInfo
-			if err = json.Unmarshal(kv.Value, &domainInfo); err != nil {
+		if items[1] == "info" {
+			var info ClusterInfo
+			if err = json.Unmarshal(kv.Value, &info); err != nil {
 				log.Warn("invalid domain info", zap.ByteString("key", kv.Value))
 			}
-			domains[serviceID] = &domainInfo
+			clusters[serviceID] = &info
 		} else {
 			srvTp := ServiceTp(items[1])
-			domainServices[serviceID] = append(domainServices[serviceID], srvTp)
+			clusterServices[serviceID] = append(clusterServices[serviceID], srvTp)
 		}
 	}
 
-	for serviceID, domainInfo := range domains {
-		services, ok := domainServices[serviceID]
+	for clusterID, clusterInfo := range clusters {
+		services, ok := clusterServices[clusterID]
 		if !ok {
 			continue
 		}
 
-		dom, err := m.registerLocalDomain(domainInfo.Addr)
+		dom, err := m.registerLocalDomain(clusterInfo.Addr)
 		if err != nil {
-			log.Warn("register domain failed", zap.String("addr", domainInfo.Addr))
+			log.Warn("register domain failed", zap.String("addr", clusterInfo.Addr))
 		}
 
 		for _, srvTp := range services {
@@ -178,26 +182,56 @@ func (m *ServicesManager) registerLocalDomain(addr string) (*domain.Domain, erro
 	return dom, nil
 }
 
-func (m *ServicesManager) registerServiceInfo(srv *ServiceDesc) error {
-	serviceID, err := GetDomainUUID(srv.Domain.Addr)
-	if err != nil {
-		return nil
-	}
-
-	data, err := json.Marshal(srv.Domain)
+func (m *ServicesManager) RegisterCluster(info *ClusterInfo) error {
+	data, err := json.Marshal(info)
 	if err != nil {
 		return err
 	}
 
-	_, err = m.etcd.Put(m.ctx, GetClusterDomainKey(serviceID), string(data))
+	if info.ID == "" {
+		return errors.New("id cannot be empty")
+	}
+
+	if err := CheckDomainAddr(info.Addr); err != nil {
+		return err
+	}
+
+	key := GetClusterInfoKey(info.ID)
+	resp, err := m.etcd.Txn(m.ctx).If(clientv3.Compare(clientv3.CreateRevision(key), "=", 0)).Then(
+		clientv3.OpPut(key, string(data)),
+	).Commit()
+
 	if err != nil {
 		return err
 	}
 
-	_, err = m.etcd.Put(m.ctx, GetServiceKey(serviceID, srv.Tp), "")
-	if err != nil {
-		return err
+	if !resp.Succeeded {
+		return errors.New("cluster: " + info.ID + " registered")
 	}
 
 	return nil
+}
+
+func (m *ServicesManager) EnableClusterService(clusterID string, serviceTp ServiceTp) error {
+	if clusterID == "" {
+		return errors.New("clusterID cannot be empty")
+	}
+
+	switch serviceTp {
+	case ServiceTpDDL:
+	default:
+		return errors.New("Unknown service: " + string(serviceTp))
+	}
+
+	resp, err := m.etcd.Get(m.ctx, GetClusterInfoKey(clusterID))
+	if err != nil {
+		return err
+	}
+
+	if resp.Count == 0 {
+		return errors.New("Cluster id not registered: " + clusterID)
+	}
+
+	_, err = m.etcd.Put(m.ctx, GetClusterServiceKey(clusterID, serviceTp), "")
+	return err
 }
