@@ -19,6 +19,7 @@ import (
 	"context"
 	gjson "encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -138,7 +139,25 @@ func (e *ShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *ShowExec) fetchAll(ctx context.Context) error {
+func (e *ShowExec) fetchAll(ctx context.Context) (err error) {
+	// Temporary disables select limit to avoid miss the result.
+	// Because some of below fetch show result stmt functions will generate
+	// a SQL stmt and then execute the new SQL stmt to do the fetch result task
+	// for the up-level show stmt.
+	// Here, the problem is the new SQL stmt will be influenced by SelectLimit value
+	// and return a limited result set back to up level show stmt. This, in fact, may
+	// cause a filter effect on result set that may exclude the qualified record outside of
+	// result set.
+	// Finally, when above result set, may not include qualified record, is returned to up
+	// level show stmt's selection, which really applies the filter operation on returned
+	// result set, it may return empty result to client.
+	oldSelectLimit := e.ctx.GetSessionVars().SelectLimit
+	e.ctx.GetSessionVars().SelectLimit = math.MaxUint64
+	defer func() {
+		// Restore session Var SelectLimit value.
+		e.ctx.GetSessionVars().SelectLimit = oldSelectLimit
+	}()
+
 	switch e.Tp {
 	case ast.ShowCharset:
 		return e.fetchShowCharset()
