@@ -1408,7 +1408,11 @@ func (s *testPlanSuite) TestUnion(c *C) {
 			c.Assert(err, NotNil)
 			continue
 		}
+<<<<<<< HEAD
 		c.Assert(err, IsNil)
+=======
+		require.NoError(t, err, comment)
+>>>>>>> 334508e13... planner: fix order by sub-query couldn't find outer correlated columns (#33640)
 		p := plan.(LogicalPlan)
 		p, err = logicalOptimize(ctx, builder.optFlag, p)
 		s.testData.OnRecord(func() {
