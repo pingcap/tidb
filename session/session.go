@@ -1211,7 +1211,7 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = variable.SetSessionSystemVar(se.sessionVars, variable.MaxAllowedPacket, "67108864")
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.MaxAllowedPacket, strconv.FormatUint(variable.DefMaxAllowedPacket, 10))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1341,9 +1341,11 @@ func (s *session) SetGlobalSysVar(name, value string) (err error) {
 		return err
 	}
 	if name == variable.MaxAllowedPacket {
-		if err := variable.TruncateMaxAllowedPacket(s.sessionVars.StmtCtx, &value); err != nil {
+		u, err := variable.TruncateMaxAllowedPacket(s.sessionVars.StmtCtx, value)
+		if err != nil {
 			return err
 		}
+		value = strconv.FormatUint(u, 10)
 	}
 	if err = sv.SetGlobalFromHook(s.sessionVars, value, false); err != nil {
 		return err

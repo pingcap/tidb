@@ -643,7 +643,7 @@ func testTxnLazyInitialize(s *testSessionSuite, c *C, isPessimistic bool) {
 
 func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	varName := "max_allowed_packet"
-	varValue := "67108864" // This is the default value for max_allowed_packet
+	varValue := strconv.FormatUint(variable.DefMaxAllowedPacket, 10) // This is the default value for max_allowed_packet
 
 	// The value of max_allowed_packet should be a multiple of 1024,
 	// so the setting of varValue1 and varValue2 would be truncated to varValue0

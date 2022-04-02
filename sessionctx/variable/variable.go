@@ -190,9 +190,11 @@ func (sv *SysVar) GetSessionFromHook(s *SessionVars) (string, error) {
 // SetSessionFromHook calls the SetSession func if it exists.
 func (sv *SysVar) SetSessionFromHook(s *SessionVars, val string) error {
 	if sv.Name == MaxAllowedPacket {
-		if err := TruncateMaxAllowedPacket(s.StmtCtx, &val); err != nil {
+		u, err := TruncateMaxAllowedPacket(s.StmtCtx, val)
+		if err != nil {
 			return err
 		}
+		val = strconv.FormatUint(u, 10)
 	}
 	if sv.SetSession != nil {
 		if err := sv.SetSession(s, val); err != nil {
@@ -593,17 +595,17 @@ func init() {
 
 // TruncateMaxAllowedPacket is used to truncate the value of max_allowed_packet to be a multiple of 1024,
 // nonmultiples are rounded down to the nearest multiple.
-func TruncateMaxAllowedPacket(sctx *stmtctx.StatementContext, val *string) error {
-	u, err := strconv.ParseUint(*val, 10, 64)
+func TruncateMaxAllowedPacket(sctx *stmtctx.StatementContext, val string) (uint64, error) {
+	maxAllowedPacket, err := strconv.ParseUint(val, 10, 64)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
-	if u%1024 != 0 {
-		sctx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(MaxAllowedPacket, *val))
-		u = (u / 1024) * 1024
-		*val = strconv.FormatUint(u, 10)
+	remainder := maxAllowedPacket % 1024
+	if remainder != 0 {
+		sctx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(MaxAllowedPacket, val))
+		maxAllowedPacket -= remainder
 	}
-	return nil
+	return maxAllowedPacket, nil
 }
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.
