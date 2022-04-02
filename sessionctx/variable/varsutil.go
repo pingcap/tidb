@@ -524,15 +524,15 @@ func checkGCTxnMaxWaitTime(vars *SessionVars,
 	return normalizedValue, nil
 }
 
-func checkTikvGcLifeTime(vars *SessionVars,
+func checkTiKVGCLifetime(vars *SessionVars,
 	normalizedValue string,
 	originalValue string,
 	scope ScopeFlag) (string, error) {
-	GcLifeTimeDuration, err := time.ParseDuration(normalizedValue)
+	gcLifetimeDuration, err := time.ParseDuration(normalizedValue)
 	if err != nil {
 		return originalValue, errors.Trace(err)
 	}
-	if GcLifeTimeDuration.Seconds() > float64(GCMaxWaitTime.Load()) {
+	if gcLifetimeDuration.Seconds() > float64(GCMaxWaitTime.Load()) {
 		return originalValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(TiDBGCLifetime, normalizedValue))
 	}
 	return normalizedValue, nil
