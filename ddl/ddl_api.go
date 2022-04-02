@@ -1039,15 +1039,6 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 // 1: get the expr restored string for the column which uses sequence next value as default value.
 // 2: get specific default value for the other column.
 func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOption) (interface{}, bool, error) {
-	// handle default next value of sequence. (keep the expr string)
-	str, isSeqExpr, err := tryToGetSequenceDefaultValue(c)
-	if err != nil {
-		return nil, false, errors.Trace(err)
-	}
-	if isSeqExpr {
-		return str, true, nil
-	}
-
 	// handle default value with function call
 	tp, fsp := col.FieldType.Tp, col.FieldType.Decimal
 	if x, ok := c.Expr.(*ast.FuncCallExpr); ok {
@@ -1066,14 +1057,25 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 			}
 			return sb.String(), false, nil
 		case ast.CurrentTimestamp:
-			defaultFsp := 0
-			if len(x.Args) == 1 {
-				if val := x.Args[0].(*driver.ValueExpr); val != nil {
-					defaultFsp = int(val.GetInt64())
+			if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
+				defaultFsp := 0
+				if len(x.Args) == 1 {
+					if val := x.Args[0].(*driver.ValueExpr); val != nil {
+						defaultFsp = int(val.GetInt64())
+					}
+				}
+				if defaultFsp != fsp {
+					return nil, false, dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
 				}
 			}
-			if defaultFsp != fsp {
-				return nil, false, dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+		case ast.NextVal:
+			// handle default next value of sequence. (keep the expr string)
+			str, isSeqExpr, err := tryToGetSequenceDefaultValue(c)
+			if err != nil {
+				return nil, false, errors.Trace(err)
+			}
+			if isSeqExpr {
+				return str, true, nil
 			}
 		default:
 			return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), x.FnName.String())
