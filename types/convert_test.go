@@ -841,7 +841,7 @@ func TestConvert(t *testing.T) {
 	dec := NewDecFromInt(-123)
 	err := dec.Shift(-5)
 	require.NoError(t, err)
-	err = dec.Round(dec, 5, ModeHalfEven)
+	err = dec.Round(dec, 5, ModeHalfUp)
 	require.NoError(t, err)
 	signedAccept(t, mysql.TypeNewDecimal, dec, "-0.00123")
 }

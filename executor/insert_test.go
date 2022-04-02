@@ -1865,3 +1865,42 @@ func (s *testSuite13) TestReplaceAllocatingAutoID(c *C) {
 	// Note that this error is different from MySQL's duplicated primary key error.
 	tk.MustGetErrCode("REPLACE INTO t1 VALUES (0,'newmaxvalue');", errno.ErrAutoincReadFailed)
 }
+<<<<<<< HEAD
+=======
+
+func TestInsertIntoSelectError(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1(a INT) ENGINE = InnoDB;")
+	tk.MustExec("INSERT IGNORE into t1(SELECT SLEEP(NULL));")
+	tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows("Warning 1210 Incorrect arguments to sleep"))
+	tk.MustExec("INSERT IGNORE into t1(SELECT SLEEP(-1));")
+	tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows("Warning 1210 Incorrect arguments to sleep"))
+	tk.MustExec("INSERT IGNORE into t1(SELECT SLEEP(1));")
+	tk.MustQuery("SELECT * FROM t1;").Check(testkit.Rows("0", "0", "0"))
+	tk.MustExec("DROP TABLE t1;")
+}
+
+// https://github.com/pingcap/tidb/issues/32213.
+func TestIssue32213(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+
+	tk.MustExec("create table test.t1(c1 float)")
+	tk.MustExec("insert into test.t1 values(999.99)")
+	tk.MustQuery("select cast(test.t1.c1 as decimal(4, 1)) from test.t1").Check(testkit.Rows("999.9"))
+	tk.MustQuery("select cast(test.t1.c1 as decimal(5, 1)) from test.t1").Check(testkit.Rows("1000.0"))
+
+	tk.MustExec("drop table if exists test.t1")
+	tk.MustExec("create table test.t1(c1 decimal(6, 4))")
+	tk.MustExec("insert into test.t1 values(99.9999)")
+	tk.MustQuery("select cast(test.t1.c1 as decimal(5, 3)) from test.t1").Check(testkit.Rows("99.999"))
+	tk.MustQuery("select cast(test.t1.c1 as decimal(6, 3)) from test.t1").Check(testkit.Rows("100.000"))
+}
+>>>>>>> 0beac1800... expression: fix the wrong rounding behavior of Decimal (#33278)
