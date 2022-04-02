@@ -557,7 +557,8 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			return ver, errors.Trace(err)
 		}
 
-		done, ver, err := doReorgWorkForCreateIndex(w, d, t, job, tbl, indexInfo)
+		var done bool
+		done, ver, err = doReorgWorkForCreateIndex(w, d, t, job, tbl, indexInfo)
 		if !done {
 			return ver, err
 		}
