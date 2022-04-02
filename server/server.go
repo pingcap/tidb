@@ -134,7 +134,7 @@ type Server struct {
 	grpcServer     *grpc.Server
 	inShutdownMode bool
 
-	isRwlock         sync.RWMutex
+	sessionMapMutex  sync.Mutex
 	internalSessions map[interface{}]struct{}
 }
 
@@ -805,23 +805,23 @@ func (s *Server) ServerID() uint64 {
 // StoreInternalSession implements SessionManager interface.
 // @param addr	The address of a session.session struct variable
 func (s *Server) StoreInternalSession(se interface{}) {
-	s.isRwlock.Lock()
+	s.sessionMapMutex.Lock()
 	s.internalSessions[se] = struct{}{}
-	s.isRwlock.Unlock()
+	s.sessionMapMutex.Unlock()
 }
 
 // DeleteInternalSession implements SessionManager interface.
 // @param addr	The address of a session.session struct variable
 func (s *Server) DeleteInternalSession(se interface{}) {
-	s.isRwlock.Lock()
+	s.sessionMapMutex.Lock()
 	delete(s.internalSessions, se)
-	s.isRwlock.Unlock()
+	s.sessionMapMutex.Unlock()
 }
 
 // GetInternalSessionStartTSList implements SessionManager interface.
 func (s *Server) GetInternalSessionStartTSList() []uint64 {
-	s.isRwlock.RLock()
-	defer s.isRwlock.RUnlock()
+	s.sessionMapMutex.Lock()
+	defer s.sessionMapMutex.Unlock()
 	tsList := make([]uint64, 0, len(s.internalSessions))
 	for se := range s.internalSessions {
 		if ts := session.GetStartTSFromSession(se); ts != 0 {

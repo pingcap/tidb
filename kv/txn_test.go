@@ -80,7 +80,7 @@ func TestInnerTxnStartTsBox(t *testing.T) {
 	_, ok = globalInnerTxnTsBox.innerTxnStartTsMap[5]
 	assert.Equal(t, false, ok)
 
-	// case2: test for WrapGetMinStartTs
+	// case2: test for GetMinInnerTxnStartTS
 	tm0 := time.Date(2022, time.March, 8, 12, 10, 01, 0, time.UTC)
 	ts0 := oracle.GoTimeToTS(tm0)
 	tm1 := time.Date(2022, time.March, 10, 12, 10, 01, 0, time.UTC)
@@ -98,7 +98,7 @@ func TestInnerTxnStartTsBox(t *testing.T) {
 	globalInnerTxnTsBox.storeInnerTxnTS(ts2)
 	globalInnerTxnTsBox.storeInnerTxnTS(ts3)
 
-	newMinStartTS := WrapGetMinStartTs(tm4, lowLimit, minStartTS)
+	newMinStartTS := GetMinInnerTxnStartTS(tm4, lowLimit, minStartTS)
 	require.Equal(t, newMinStartTS, ts1)
 
 	globalInnerTxnTsBox.deleteInnerTxnTS(ts0)

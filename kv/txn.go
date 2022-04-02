@@ -59,13 +59,13 @@ func (ib *innerTxnStartTsBox) deleteInnerTxnTS(startTS uint64) {
 	ib.innerTSLock.Unlock()
 }
 
-// WrapGetMinStartTs get the min StartTS between startTSLowerLimit and curMinStartTS in globalInnerTxnTsBox
-func WrapGetMinStartTs(now time.Time, startTSLowerLimit uint64,
+// GetMinInnerTxnStartTS get the min StartTS between startTSLowerLimit and curMinStartTS in globalInnerTxnTsBox
+func GetMinInnerTxnStartTS(now time.Time, startTSLowerLimit uint64,
 	curMinStartTS uint64) uint64 {
-	return globalInnerTxnTsBox.getMinStartTs(now, startTSLowerLimit, curMinStartTS)
+	return globalInnerTxnTsBox.getMinStartTS(now, startTSLowerLimit, curMinStartTS)
 }
 
-func (ib *innerTxnStartTsBox) getMinStartTs(now time.Time, startTSLowerLimit uint64,
+func (ib *innerTxnStartTsBox) getMinStartTS(now time.Time, startTSLowerLimit uint64,
 	curMinStartTS uint64) uint64 {
 	minStartTS := curMinStartTS
 	ib.innerTSLock.Lock()

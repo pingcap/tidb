@@ -524,7 +524,7 @@ func checkGCTxnMaxWaitTime(vars *SessionVars,
 	return normalizedValue, nil
 }
 
-func checkTiKVGCLifetime(vars *SessionVars,
+func checkTiKVGCLifeTime(vars *SessionVars,
 	normalizedValue string,
 	originalValue string,
 	scope ScopeFlag) (string, error) {

@@ -638,7 +638,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		}
 	}
 
-	is.minStartTS = kv.WrapGetMinStartTs(now, startTSLowerLimit, minStartTS)
+	is.minStartTS = kv.GetMinInnerTxnStartTS(now, startTSLowerLimit, minStartTS)
 
 	err = is.storeMinStartTS(context.Background())
 	if err != nil {

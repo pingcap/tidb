@@ -3225,13 +3225,13 @@ func (s *session) ShowProcess() *util.ProcessInfo {
 	return pi
 }
 
-// GetStartTSFromSession returns the ProcessInfo in the session whose
-// address is `addr`
+// GetStartTSFromSession returns the startTS in the session `se`
 func GetStartTSFromSession(se interface{}) uint64 {
 	var startTS uint64
 	tmp, ok := se.(*session)
 	if !ok {
 		logutil.BgLogger().Error("GetStartTSFromSession failed, can't transform to session struct")
+		return 0
 	}
 	txnInfo := tmp.TxnInfo()
 	if txnInfo != nil {
