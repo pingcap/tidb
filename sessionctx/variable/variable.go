@@ -591,8 +591,9 @@ func init() {
 	}
 }
 
+// TruncateMaxAllowedPacket is used to truncate the value of max_allowed_packet to be a multiple of 1024,
+// nonmultiples are rounded down to the nearest multiple.
 func TruncateMaxAllowedPacket(sctx *stmtctx.StatementContext, val *string) error {
-	// The value should be a multiple of 1024; nonmultiples are rounded down to the nearest multiple.
 	u, err := strconv.ParseUint(*val, 10, 64)
 	if err != nil {
 		return errors.Trace(err)
