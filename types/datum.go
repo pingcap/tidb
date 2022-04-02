@@ -1141,7 +1141,7 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 		}
 	case KindMysqlTime:
 		dec := d.GetMysqlTime().ToNumber()
-		err = dec.Round(dec, 0, ModeHalfEven)
+		err = dec.Round(dec, 0, ModeHalfUp)
 		ival, err1 := dec.ToInt()
 		if err == nil {
 			err = err1
@@ -1152,7 +1152,7 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 		}
 	case KindMysqlDuration:
 		dec := d.GetMysqlDuration().ToNumber()
-		err = dec.Round(dec, 0, ModeHalfEven)
+		err = dec.Round(dec, 0, ModeHalfUp)
 		ival, err1 := dec.ToInt()
 		if err1 == nil {
 			val, err = ConvertIntToUint(sc, ival, upperBound, tp)
@@ -1407,8 +1407,11 @@ func (d *Datum) convertToMysqlDecimal(sc *stmtctx.StatementContext, target *Fiel
 	default:
 		return invalidConv(d, target.Tp)
 	}
-	var err1 error
-	dec, err1 = ProduceDecWithSpecifiedTp(dec, target, sc)
+	dec1, err1 := ProduceDecWithSpecifiedTp(dec, target, sc)
+	// If there is a error, dec1 may be nil.
+	if dec1 != nil {
+		dec = dec1
+	}
 	if err == nil && err1 != nil {
 		err = err1
 	}
@@ -1429,21 +1432,29 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.Statem
 		if flen < decimal {
 			return nil, ErrMBiggerThanD.GenWithStackByArgs("")
 		}
-		prec, frac := dec.PrecisionAndFrac()
-		if !dec.IsZero() && prec-frac > flen-decimal {
+
+		var old *MyDecimal
+		if int(dec.digitsFrac) > decimal {
+			old = new(MyDecimal)
+			*old = *dec
+		}
+		if int(dec.digitsFrac) != decimal {
+			// Error doesn't matter because the following code will check the new decimal
+			// and set error if any.
+			_ = dec.Round(dec, decimal, ModeHalfUp)
+		}
+
+		_, digitsInt := dec.removeLeadingZeros()
+		// After rounding decimal, the new decimal may have a longer integer length which may be longer than expected.
+		// So the check of integer length must be after rounding.
+		// E.g. "99.9999", flen 5, decimal 3, Round("99.9999", 3, ModelHalfUp) -> "100.000".
+		if flen-decimal < digitsInt {
+			// Integer length is longer, choose the max or min decimal.
 			dec = NewMaxOrMinDec(dec.IsNegative(), flen, decimal)
-			// select (cast 111 as decimal(1)) causes a warning in MySQL.
+			// select cast(111 as decimal(1)) causes a warning in MySQL.
 			err = ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", flen, decimal))
-		} else if frac != decimal {
-			old := *dec
-			err = dec.Round(dec, decimal, ModeHalfEven)
-			if err != nil {
-				return nil, err
-			}
-			if !old.IsZero() && frac > decimal && dec.Compare(&old) != 0 {
-				sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", &old))
-				err = nil
-			}
+		} else if old != nil && dec.Compare(old) != 0 {
+			sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", old))
 		}
 	}
 
@@ -1806,7 +1817,7 @@ func (d *Datum) toSignedInteger(sc *stmtctx.StatementContext, tp byte) (int64, e
 		return ival, errors.Trace(err)
 	case KindMysqlDecimal:
 		var to MyDecimal
-		err := d.GetMysqlDecimal().Round(&to, 0, ModeHalfEven)
+		err := d.GetMysqlDecimal().Round(&to, 0, ModeHalfUp)
 		ival, err1 := to.ToInt()
 		if err == nil {
 			err = err1
