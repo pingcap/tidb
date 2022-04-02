@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -189,15 +190,8 @@ func (sv *SysVar) GetSessionFromHook(s *SessionVars) (string, error) {
 // SetSessionFromHook calls the SetSession func if it exists.
 func (sv *SysVar) SetSessionFromHook(s *SessionVars, val string) error {
 	if sv.Name == MaxAllowedPacket {
-		u, err := strconv.ParseUint(val, 10, 64)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// The value should be a multiple of 1024; nonmultiples are rounded down to the nearest multiple.
-		if u%1024 != 0 {
-			s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(MaxAllowedPacket, val))
-			u = (u / 1024) * 1024
-			val = strconv.FormatUint(u, 10)
+		if err := TruncateMaxAllowedPacket(s.StmtCtx, &val); err != nil {
+			return err
 		}
 	}
 	if sv.SetSession != nil {
@@ -595,6 +589,20 @@ func init() {
 		v.IsNoop = true
 		RegisterSysVar(v)
 	}
+}
+
+func TruncateMaxAllowedPacket(sctx *stmtctx.StatementContext, val *string) error {
+	// The value should be a multiple of 1024; nonmultiples are rounded down to the nearest multiple.
+	u, err := strconv.ParseUint(*val, 10, 64)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if u%1024 != 0 {
+		sctx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(MaxAllowedPacket, val))
+		u = (u / 1024) * 1024
+		*val = strconv.FormatUint(u, 10)
+	}
+	return nil
 }
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.

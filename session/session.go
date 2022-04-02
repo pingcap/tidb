@@ -1341,15 +1341,8 @@ func (s *session) SetGlobalSysVar(name, value string) (err error) {
 		return err
 	}
 	if name == variable.MaxAllowedPacket {
-		u, err := strconv.ParseUint(value, 10, 64)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// The value should be a multiple of 1024; nonmultiples are rounded down to the nearest multiple.
-		if u%1024 != 0 {
-			s.sessionVars.StmtCtx.AppendWarning(variable.ErrTruncatedWrongValue.GenWithStackByArgs(variable.MaxAllowedPacket, value))
-			u = (u / 1024) * 1024
-			value = strconv.FormatUint(u, 10)
+		if err := variable.TruncateMaxAllowedPacket(s.sessionVars.StmtCtx, &value); err != nil {
+			return err
 		}
 	}
 	if err = sv.SetGlobalFromHook(s.sessionVars, value, false); err != nil {
