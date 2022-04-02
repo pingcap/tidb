@@ -1205,11 +1205,10 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					// total progress.
 					//
 					// for local & importer backend:
-					// in most case import engine is faster since there's little computations, 2:1 would be a good
-					// weight, but import engine determines the end time of the whole restore, when downstream, network
-					// or disk read becomes bottleneck, the result total progress will before the real progress, so we
-					// increase its weight during calculation. 5:5 for now, so the result progress may fall behind the
-					// real progress.
+					// in most case import engine is faster since there's little computations, but inside one engine
+					// restore and import is serialized, the progress of those two will not differ too much, and
+					// import engine determines the end time of the whole restore, so we average them for now.
+					// the result progress may fall behind the real progress if import is faster.
 					//
 					// for tidb backend, we do nothing during import engine, so we use restore engine progress as the
 					// total progress.
@@ -1221,11 +1220,16 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 						restorePercent := math.Min(restoredBytes/totalRestoreBytes, 1.0)
 						metric.ProgressGauge.WithLabelValues(metric.ProgressPhaseRestore).Set(restorePercent)
 						if rc.cfg.TikvImporter.Backend != config.BackendTiDB {
-							importPercent := 1.0
+							var importPercent float64
 							if bytesWritten > 0 {
 								// estimate total import bytes from written bytes
+								// when importPercent = 1, totalImportBytes = bytesWritten, but there's case
+								// bytesImported may bigger or smaller than bytesWritten such as when deduplicate
+								// we calculate progress using engines then use the bigger one in case bytesImported is
+								// smaller.
 								totalImportBytes := bytesWritten / restorePercent
-								importPercent = math.Min(bytesImported/totalImportBytes, 1.0)
+								biggerPercent := math.Max(bytesImported/totalImportBytes, engineFinished/engineEstimated)
+								importPercent = math.Min(biggerPercent, 1.0)
 								importBytesField = zap.String("import-bytes", fmt.Sprintf("%s/%s(estimated)",
 									units.BytesSize(bytesImported), units.BytesSize(totalImportBytes)))
 							}
@@ -1501,7 +1505,9 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 			for task := range taskCh {
 				tableLogTask := task.tr.logger.Begin(zap.InfoLevel, "restore table")
 				web.BroadcastTableCheckpoint(task.tr.tableName, task.cp)
+
 				needPostProcess, err := task.tr.restoreTable(ctx2, rc, task.cp)
+
 				err = common.NormalizeOrWrapErr(common.ErrRestoreTable, err, task.tr.tableName)
 				tableLogTask.End(zap.ErrorLevel, err)
 				web.BroadcastError(task.tr.tableName, err)
