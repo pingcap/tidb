@@ -557,39 +557,10 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			return ver, errors.Trace(err)
 		}
 
-		elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
-		reorgInfo, err := getReorgInfo(w.jobContext, d, t, job, tbl, elements)
-		if err != nil || reorgInfo.first {
-			// If we run reorg firstly, we should update the job snapshot version
-			// and then run the reorg next time.
-			return ver, errors.Trace(err)
+		done, ver, err := doReorgWorkForCreateIndex(w, d, t, job, tbl, indexInfo)
+		if !done {
+			return ver, err
 		}
-
-		err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
-			defer util.Recover(metrics.LabelDDL, "onCreateIndex",
-				func() {
-					addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tblInfo.Name, indexInfo.Name)
-				}, false)
-			return w.addTableIndex(tbl, indexInfo, reorgInfo)
-		})
-		if err != nil {
-			if dbterror.ErrWaitReorgTimeout.Equal(err) {
-				// if timeout, we should return, check for the owner and re-wait job done.
-				return ver, nil
-			}
-			if kv.ErrKeyExists.Equal(err) || dbterror.ErrCancelledDDLJob.Equal(err) || dbterror.ErrCantDecodeRecord.Equal(err) {
-				logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
-				ver, err = convertAddIdxJob2RollbackJob(t, job, tblInfo, indexInfo, err)
-				if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
-					logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback, RemoveDDLReorgHandle failed", zap.String("job", job.String()), zap.Error(err1))
-				}
-			}
-			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
-			w.reorgCtx.cleanNotifyReorgCancel()
-			return ver, errors.Trace(err)
-		}
-		// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
-		w.reorgCtx.cleanNotifyReorgCancel()
 
 		indexInfo.State = model.StatePublic
 		// Set column index flag.
@@ -610,6 +581,44 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
+	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
+	elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
+	reorgInfo, err := getReorgInfo(w.jobContext, d, t, job, tbl, elements)
+	if err != nil || reorgInfo.first {
+		// If we run reorg firstly, we should update the job snapshot version
+		// and then run the reorg next time.
+		return false, ver, errors.Trace(err)
+	}
+
+	err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
+		defer util.Recover(metrics.LabelDDL, "onCreateIndex",
+			func() {
+				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tbl.Meta().Name, indexInfo.Name)
+			}, false)
+		return w.addTableIndex(tbl, indexInfo, reorgInfo)
+	})
+	if err != nil {
+		if dbterror.ErrWaitReorgTimeout.Equal(err) {
+			// if timeout, we should return, check for the owner and re-wait job done.
+			return false, ver, nil
+		}
+		if kv.ErrKeyExists.Equal(err) || dbterror.ErrCancelledDDLJob.Equal(err) || dbterror.ErrCantDecodeRecord.Equal(err) {
+			logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
+			ver, err = convertAddIdxJob2RollbackJob(t, job, tbl.Meta(), indexInfo, err)
+			if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+				logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback, RemoveDDLReorgHandle failed", zap.String("job", job.String()), zap.Error(err1))
+			}
+		}
+		// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
+		w.reorgCtx.cleanNotifyReorgCancel()
+		return false, ver, errors.Trace(err)
+	}
+	// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
+	w.reorgCtx.cleanNotifyReorgCancel()
+	return true, ver, errors.Trace(err)
 }
 
 func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
