@@ -205,3 +205,6 @@ replace github.com/pingcap/tidb/parser => ./parser
 
 // fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
+
+// it can be removed after merging https://github.com/dgraph-io/ristretto/pull/294
+replace github.com/dgraph-io/ristretto => github.com/hawkingrei/ristretto v0.1.1-0.20220402052934-7556ec01f9db
