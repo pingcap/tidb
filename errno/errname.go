@@ -826,6 +826,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrRowInWrongPartition:                                   mysql.Message("Found a row in wrong partition %s", []int{0}),
 	ErrGeneratedColumnFunctionIsNotAllowed:                   mysql.Message("Expression of generated column '%s' contains a disallowed function.", nil),
 	ErrGeneratedColumnRowValueIsNotAllowed:                   mysql.Message("Expression of generated column '%s' cannot refer to a row value", nil),
+	ErrDefValGeneratedNamedFunctionIsNotAllowed:              mysql.Message("Default value expression of column '%s' contains a disallowed function: `%s`.", nil),
 	ErrUnsupportedAlterInplaceOnVirtualColumn:                mysql.Message("INPLACE ADD or DROP of virtual columns cannot be combined with other ALTER TABLE actions.", nil),
 	ErrWrongFKOptionForGeneratedColumn:                       mysql.Message("Cannot define foreign key with %s clause on a generated column.", nil),
 	ErrBadGeneratedColumn:                                    mysql.Message("The value specified for generated column '%s' in table '%s' is not allowed.", nil),

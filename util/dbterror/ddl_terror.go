@@ -119,6 +119,8 @@ var (
 	ErrTooLongIndexComment = ClassDDL.NewStd(mysql.ErrTooLongIndexComment)
 	// ErrInvalidDefaultValue returns for invalid default value for columns.
 	ErrInvalidDefaultValue = ClassDDL.NewStd(mysql.ErrInvalidDefault)
+	// ErrDefValGeneratedNamedFunctionIsNotAllowed returns for disallowed function as default value expression of column.
+	ErrDefValGeneratedNamedFunctionIsNotAllowed = ClassDDL.NewStd(mysql.ErrDefValGeneratedNamedFunctionIsNotAllowed)
 	// ErrGeneratedColumnRefAutoInc forbids to refer generated columns to auto-increment columns .
 	ErrGeneratedColumnRefAutoInc = ClassDDL.NewStd(mysql.ErrGeneratedColumnRefAutoInc)
 	// ErrExpressionIndexCanNotRefer forbids to refer expression index to auto-increment column.

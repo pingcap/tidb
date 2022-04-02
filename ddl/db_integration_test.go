@@ -2061,6 +2061,9 @@ func TestDefaultColumnWithRand(t *testing.T) {
 			}
 		}
 	}
+
+	// use a non-existent function name
+	tk.MustGetErrCode("CREATE TABLE t3 (c int, c1 int default a_function_not_supported_yet());", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
 }
 
 func TestChangingDBCharset(t *testing.T) {

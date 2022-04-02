@@ -1001,6 +1001,11 @@ error = '''
 Expression of generated column '%s' cannot refer to a row value
 '''
 
+["ddl:3770"]
+error = '''
+Default value expression of column '%s' contains a disallowed function: `%s`.
+'''
+
 ["ddl:3780"]
 error = '''
 Referencing column '%s' in foreign key constraint '%s' are incompatible
