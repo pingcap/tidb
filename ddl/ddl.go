@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/owner"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -613,69 +612,6 @@ func recordLastDDLInfo(ctx sessionctx.Context, job *model.Job) {
 	ctx.GetSessionVars().LastDDLInfo.SeqNum = job.SeqNum
 }
 
-// DoDDLJob will return
-func checkHistoryJobInTest(ctx sessionctx.Context, historyJob *model.Job) {
-	if !(flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil) {
-		return
-	}
-
-	// Check binlog.
-	if historyJob.BinlogInfo.FinishedTS == 0 {
-		panic(fmt.Sprintf("job ID %d, BinlogInfo.FinishedTS is 0", historyJob.ID))
-	}
-
-	// Check DDL query.
-	switch historyJob.Type {
-	case model.ActionUpdateTiFlashReplicaStatus, model.ActionUnlockTable:
-		if historyJob.Query != "" {
-			panic(fmt.Sprintf("job ID %d, type %s, query %s", historyJob.ID, historyJob.Type.String(), historyJob.Query))
-		}
-		return
-	default:
-		if historyJob.Query == "skip" {
-			// Skip the check if the test explicitly set the query.
-			return
-		}
-	}
-	p := parser.New()
-	p.SetSQLMode(ctx.GetSessionVars().SQLMode)
-	p.SetParserConfig(ctx.GetSessionVars().BuildParserConfig())
-	stmt, _, err := p.ParseSQL(historyJob.Query)
-	if err != nil {
-		panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s, err %s", historyJob.ID, historyJob.Query, err.Error()))
-	}
-	if len(stmt) != 1 && historyJob.Type != model.ActionCreateTables {
-		panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
-	}
-	for _, st := range stmt {
-		switch historyJob.Type {
-		case model.ActionCreatePlacementPolicy:
-			if _, ok := st.(*ast.CreatePlacementPolicyStmt); !ok {
-				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
-			}
-		case model.ActionCreateTable:
-			if _, ok := st.(*ast.CreateTableStmt); !ok {
-				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
-			}
-		case model.ActionCreateSchema:
-			if _, ok := st.(*ast.CreateDatabaseStmt); !ok {
-				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
-			}
-		case model.ActionCreateTables:
-			_, isCreateTable := st.(*ast.CreateTableStmt)
-			_, isCreateSeq := st.(*ast.CreateSequenceStmt)
-			_, isCreateView := st.(*ast.CreateViewStmt)
-			if !isCreateTable && !isCreateSeq && !isCreateView {
-				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
-			}
-		default:
-			if _, ok := st.(ast.DDLNode); !ok {
-				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
-			}
-		}
-	}
-}
-
 func setDDLJobQuery(ctx sessionctx.Context, job *model.Job) {
 	switch job.Type {
 	case model.ActionUpdateTiFlashReplicaStatus, model.ActionUnlockTable:
@@ -748,7 +684,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			continue
 		}
 
-		checkHistoryJobInTest(ctx, historyJob)
+		d.checkHistoryJobInTest(ctx, historyJob)
 
 		// If a job is a history job, the state must be JobStateSynced or JobStateRollbackDone or JobStateCancelled.
 		if historyJob.IsSynced() {
