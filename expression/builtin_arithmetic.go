@@ -689,7 +689,7 @@ func (s *builtinArithmeticDivideDecimalSig) evalDecimal(row chunk.Row) (*types.M
 	} else if err == nil {
 		_, frac := c.PrecisionAndFrac()
 		if frac < s.baseBuiltinFunc.tp.Decimal {
-			err = c.Round(c, s.baseBuiltinFunc.tp.Decimal, types.ModeHalfEven)
+			err = c.Round(c, s.baseBuiltinFunc.tp.Decimal, types.ModeHalfUp)
 		}
 	}
 	return c, false, err

@@ -361,7 +361,18 @@ func (e *maxMin4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
+<<<<<<< HEAD
 	err := p.val.Round(&p.val, e.frac, types.ModeHalfEven)
+=======
+	if e.retTp == nil {
+		return errors.New("e.retTp of max or min should not be nil")
+	}
+	frac := e.retTp.Decimal
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	err := p.val.Round(&p.val, frac, types.ModeHalfUp)
+>>>>>>> 0beac1800... expression: fix the wrong rounding behavior of Decimal (#33278)
 	if err != nil {
 		return err
 	}

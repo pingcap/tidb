@@ -404,8 +404,13 @@ func (s *testMyDecimalSuite) TestRoundWithHalfEven(c *C) {
 		var dec MyDecimal
 		dec.FromString([]byte(ca.input))
 		var rounded MyDecimal
+<<<<<<< HEAD
 		err := dec.Round(&rounded, ca.scale, ModeHalfEven)
 		c.Check(err, Equals, ca.err)
+=======
+		err = dec.Round(&rounded, ca.scale, ModeHalfUp)
+		require.Equal(t, ca.err, err)
+>>>>>>> 0beac1800... expression: fix the wrong rounding behavior of Decimal (#33278)
 		result := rounded.ToString()
 		c.Check(string(result), Equals, ca.output)
 	}
@@ -473,8 +478,13 @@ func (s *testMyDecimalSuite) TestRoundWithCeil(c *C) {
 		var dec MyDecimal
 		dec.FromString([]byte(ca.input))
 		var rounded MyDecimal
+<<<<<<< HEAD
 		err := dec.Round(&rounded, ca.scale, modeCeiling)
 		c.Check(err, Equals, ca.err)
+=======
+		err = dec.Round(&rounded, ca.scale, ModeCeiling)
+		require.Equal(t, ca.err, err)
+>>>>>>> 0beac1800... expression: fix the wrong rounding behavior of Decimal (#33278)
 		result := rounded.ToString()
 		c.Check(string(result), Equals, ca.output)
 	}

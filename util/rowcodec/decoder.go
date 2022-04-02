@@ -286,7 +286,11 @@ func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData 
 		}
 		if col.Decimal != types.UnspecifiedLength && frac > col.Decimal {
 			to := new(types.MyDecimal)
+<<<<<<< HEAD
 			err := dec.Round(to, col.Decimal, types.ModeHalfEven)
+=======
+			err := dec.Round(to, col.Ft.Decimal, types.ModeHalfUp)
+>>>>>>> 0beac1800... expression: fix the wrong rounding behavior of Decimal (#33278)
 			if err != nil {
 				return errors.Trace(err)
 			}

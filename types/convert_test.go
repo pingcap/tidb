@@ -755,9 +755,17 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeNewDecimal, "-123.456", "-123.456")
 	signedAccept(c, mysql.TypeNewDecimal, NewDecFromInt(12300000), "12300000")
 	dec := NewDecFromInt(-123)
+<<<<<<< HEAD
 	dec.Shift(-5)
 	dec.Round(dec, 5, ModeHalfEven)
 	signedAccept(c, mysql.TypeNewDecimal, dec, "-0.00123")
+=======
+	err := dec.Shift(-5)
+	require.NoError(t, err)
+	err = dec.Round(dec, 5, ModeHalfUp)
+	require.NoError(t, err)
+	signedAccept(t, mysql.TypeNewDecimal, dec, "-0.00123")
+>>>>>>> 0beac1800... expression: fix the wrong rounding behavior of Decimal (#33278)
 }
 
 func (s *testTypeConvertSuite) TestRoundIntStr(c *C) {
