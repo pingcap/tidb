@@ -607,7 +607,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 	elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
 	reorgInfo, err := getReorgInfo(w.jobContext, d, t, job, tbl, elements)
 	if err != nil || reorgInfo.first {
-		done, ver, err1 := multiSchemaChangeOnCreateIndexCancelling(err, t, job, tblInfo, indexInfo)
+		done, ver, err1 := multiSchemaChangeOnCreateIndexCancelling(err, t, job, tbl.Meta(), indexInfo)
 		if done {
 			// Remove the cancelling signal before converting to rollback job.
 			w.reorgCtx.cleanNotifyReorgCancel()
