@@ -419,6 +419,30 @@ func (w *worker) deleteRange(ctx context.Context, job *model.Job) error {
 	return errors.Trace(err)
 }
 
+func jobNeedGC(job *model.Job) bool {
+	if !job.IsCancelled() {
+		if job.Warning != nil && dbterror.ErrCantDropFieldOrKey.Equal(job.Warning) {
+			// For the field/key not exists warnings, there is no need to
+			// delete the ranges.
+			return false
+		}
+		switch job.Type {
+		case model.ActionAddIndex, model.ActionAddPrimaryKey:
+			if job.State != model.JobStateRollbackDone {
+				break
+			}
+			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
+			return true
+		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
+			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionModifyColumn:
+			return true
+		case model.ActionMultiSchemaChange:
+			return true
+		}
+	}
+	return false
+}
+
 // finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.
 // If the DDL job need to handle in background, it will prepare a background job.
 func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
@@ -466,35 +490,18 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 }
 
 func deleteRangeForDropSchemaObjectJob(w *worker, job *model.Job) error {
-	if job.IsCancelled() {
-		return nil
-	}
-	if job.Warning != nil {
-		// For the field/key not exists warnings, there is no need to
-		// delete the ranges.
-		if dbterror.ErrCantDropFieldOrKey.Equal(job.Warning) {
+	if jobNeedGC(job) {
+		if job.Type == model.ActionMultiSchemaChange {
+			for _, sub := range job.MultiSchemaInfo.SubJobs {
+				proxyJob := cloneFromSubJob(job, sub)
+				err := deleteRangeForDropSchemaObjectJob(w, proxyJob)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
 			return nil
 		}
-	}
-	switch job.Type {
-	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		if job.State != model.JobStateRollbackDone {
-			break
-		}
-		// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
 		return w.deleteRange(w.ddlJobCtx, job)
-	case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
-		model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionModifyColumn:
-		return w.deleteRange(w.ddlJobCtx, job)
-	case model.ActionMultiSchemaChange:
-		for _, sub := range job.MultiSchemaInfo.SubJobs {
-			proxyJob := cloneFromSubJob(job, sub)
-			err := deleteRangeForDropSchemaObjectJob(w, proxyJob)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-		return nil
 	}
 	return nil
 }
