@@ -25,12 +25,15 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 // NewOne stands for a number 1.
 func NewOne() *Constant {
 	retT := types.NewFieldType(mysql.TypeTiny)
 	retT.Flag |= mysql.UnsignedFlag // shrink range to avoid integral promotion
+	retT.Flen = 1
+	retT.Decimal = 0
 	return &Constant{
 		Value:   types.NewDatum(1),
 		RetType: retT,
@@ -41,6 +44,8 @@ func NewOne() *Constant {
 func NewZero() *Constant {
 	retT := types.NewFieldType(mysql.TypeTiny)
 	retT.Flag |= mysql.UnsignedFlag // shrink range to avoid integral promotion
+	retT.Flen = 1
+	retT.Decimal = 0
 	return &Constant{
 		Value:   types.NewDatum(0),
 		RetType: retT,
@@ -49,9 +54,12 @@ func NewZero() *Constant {
 
 // NewNull stands for null constant.
 func NewNull() *Constant {
+	retT := types.NewFieldType(mysql.TypeTiny)
+	retT.Flen = 1
+	retT.Decimal = 0
 	return &Constant{
 		Value:   types.NewDatum(nil),
-		RetType: types.NewFieldType(mysql.TypeTiny),
+		RetType: retT,
 	}
 }
 
@@ -226,6 +234,9 @@ func (c *Constant) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, 
 	} else if c.GetType().Hybrid() || dt.Kind() == types.KindString {
 		res, err := dt.ToInt64(ctx.GetSessionVars().StmtCtx)
 		return res, false, err
+	} else if dt.Kind() == types.KindMysqlBit {
+		uintVal, err := dt.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx)
+		return int64(uintVal), false, err
 	}
 	return dt.GetInt64(), false, nil
 }
@@ -284,7 +295,7 @@ func (c *Constant) EvalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.My
 	// The decimal may be modified during plan building.
 	_, frac := res.PrecisionAndFrac()
 	if frac < c.GetType().Decimal {
-		err = res.Round(res, c.GetType().Decimal, types.ModeHalfEven)
+		err = res.Round(res, c.GetType().Decimal, types.ModeHalfUp)
 	}
 	return res, false, err
 }
@@ -345,7 +356,7 @@ func (c *Constant) Equal(ctx sessionctx.Context, b Expression) bool {
 	if err1 != nil || err2 != nil {
 		return false
 	}
-	con, err := c.Value.CompareDatum(ctx.GetSessionVars().StmtCtx, &y.Value)
+	con, err := c.Value.Compare(ctx.GetSessionVars().StmtCtx, &y.Value, collate.GetBinaryCollator())
 	if err != nil || con != 0 {
 		return false
 	}
@@ -389,10 +400,7 @@ func (c *Constant) HashCode(sc *stmtctx.StatementContext) []byte {
 		terror.Log(err)
 	}
 	c.hashcode = append(c.hashcode, constantFlag)
-	c.hashcode, err = codec.EncodeValue(sc, c.hashcode, c.Value)
-	if err != nil {
-		terror.Log(err)
-	}
+	c.hashcode = codec.HashCode(c.hashcode, c.Value)
 	return c.hashcode
 }
 

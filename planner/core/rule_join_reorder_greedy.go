@@ -41,16 +41,18 @@ type joinReorderGreedySolver struct {
 //
 // For the nodes and join trees which don't have a join equal condition to
 // connect them, we make a bushy join tree to do the cartesian joins finally.
-func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan) (LogicalPlan, error) {
+func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan, tracer *joinReorderTrace) (LogicalPlan, error) {
 	for _, node := range joinNodePlans {
 		_, err := node.recursiveDeriveStats(nil)
 		if err != nil {
 			return nil, err
 		}
+		cost := s.baseNodeCumCost(node)
 		s.curJoinGroup = append(s.curJoinGroup, &jrNode{
 			p:       node,
-			cumCost: s.baseNodeCumCost(node),
+			cumCost: cost,
 		})
+		tracer.appendLogicalJoinCost(node, cost)
 	}
 	sort.SliceStable(s.curJoinGroup, func(i, j int) bool {
 		return s.curJoinGroup[i].cumCost < s.curJoinGroup[j].cumCost
@@ -58,7 +60,7 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan) (LogicalPla
 
 	var cartesianGroup []LogicalPlan
 	for len(s.curJoinGroup) > 0 {
-		newNode, err := s.constructConnectedJoinTree()
+		newNode, err := s.constructConnectedJoinTree(tracer)
 		if err != nil {
 			return nil, err
 		}
@@ -68,7 +70,7 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan) (LogicalPla
 	return s.makeBushyJoin(cartesianGroup), nil
 }
 
-func (s *joinReorderGreedySolver) constructConnectedJoinTree() (*jrNode, error) {
+func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorderTrace) (*jrNode, error) {
 	curJoinTree := s.curJoinGroup[0]
 	s.curJoinGroup = s.curJoinGroup[1:]
 	for {
@@ -86,6 +88,7 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree() (*jrNode, error) 
 				return nil, err
 			}
 			curCost := s.calcJoinCumCost(newJoin, curJoinTree, node)
+			tracer.appendLogicalJoinCost(newJoin, curCost)
 			if bestCost > curCost {
 				bestCost = curCost
 				bestJoin = newJoin

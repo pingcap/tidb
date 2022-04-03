@@ -11,7 +11,7 @@ SEQUENCE_NAME="s"
 
 # Test for simple case.
 run_sql "drop database if exists \`$DB_NAME\`;"
-run_sql "create database \`$DB_NAME\`;"
+run_sql "create database \`$DB_NAME\` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
 run_sql "create table \`$DB_NAME\`.\`$TABLE_NAME\` (a int);"
 run_sql "insert into \`$DB_NAME\`.\`$TABLE_NAME\` values (1), (2);"
 
@@ -28,7 +28,7 @@ echo "version info count is ${cnt}"
 
 # Test for simple WHERE case.
 run_sql "drop database if exists \`$DB_NAME\`;"
-run_sql "create database \`$DB_NAME\`;"
+run_sql "create database \`$DB_NAME\` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
 run_sql "create table \`$DB_NAME\`.\`$TABLE_NAME\` (a int);"
 
 seq 10 | xargs -I_ run_sql "insert into \`$DB_NAME\`.\`$TABLE_NAME\` values (_);"
@@ -43,7 +43,7 @@ echo "expected ${expected}, actual ${actual}"
 # Test for OR WHERE case. Better dump MySQL here because Dumpling has some special handle for concurrently dump TiDB tables.
 export DUMPLING_TEST_PORT=3306
 run_sql "drop database if exists \`$DB_NAME\`;"
-run_sql "create database \`$DB_NAME\`;"
+run_sql "create database \`$DB_NAME\` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
 run_sql "create table \`$DB_NAME\`.\`$TABLE_NAME\` (a int primary key, b int);"
 
 seq 0 99 | xargs -I_ run_sql "insert into \`$DB_NAME\`.\`$TABLE_NAME\` (a,b) values (_, 99-_);"
@@ -73,24 +73,30 @@ echo "expected 1 return error when specifying --filetype sql and --sql, actual $
 export DUMPLING_TEST_PORT=4000
 # Test for --sql option.
 run_sql "drop database if exists \`$DB_NAME\`;"
-run_sql "create database \`$DB_NAME\`;"
+run_sql "create database \`$DB_NAME\` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
 run_sql "create sequence \`$DB_NAME\`.\`$SEQUENCE_NAME\` increment by 1;"
 
 run_dumpling --sql "select nextval(\`$DB_NAME\`.\`$SEQUENCE_NAME\`)"
 
-actual=$(sed -n '2p' ${DUMPLING_OUTPUT_DIR}/result.000000000.csv)
-echo "expected 1, actual ${actual}"
-[ "$actual" = 1 ]
+actual=$(sed -n '2p' ${DUMPLING_OUTPUT_DIR}/result.000000000.csv | sed "s/\r/r/g")
+echo "expected 1r, actual ${actual}"
+[ "$actual" = "1r" ]
 
 run_dumpling --sql "select nextval(\`$DB_NAME\`.\`$SEQUENCE_NAME\`)"
 
-actual=$(sed -n '2p' ${DUMPLING_OUTPUT_DIR}/result.000000000.csv)
-echo "expected 2, actual ${actual}"
-[ "$actual" = 2 ]
+actual=$(sed -n '2p' ${DUMPLING_OUTPUT_DIR}/result.000000000.csv  | sed "s/\r/r/g")
+echo "expected 2r, actual ${actual}"
+[ "$actual" = "2r" ]
+
+# Test for dump with sequence
+run_dumpling | tee ${DUMPLING_OUTPUT_DIR}/dumpling.log
+actual=$(grep -w "dump failed" ${DUMPLING_OUTPUT_DIR}/dumpling.log|wc -l)
+echo "expected 0, actual ${actual}"
+[ "$actual" = 0 ]
 
 # Test for tidb_mem_quota_query configuration
 export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/export/PrintTiDBMemQuotaQuery=1*return"
-run_dumpling > ${DUMPLING_OUTPUT_DIR}/dumpling.log
+run_dumpling | tee ${DUMPLING_OUTPUT_DIR}/dumpling.log
 actual=$(grep -w "tidb_mem_quota_query == 1073741824" ${DUMPLING_OUTPUT_DIR}/dumpling.log|wc -l)
 echo "expected 1, actual ${actual}"
 [ "$actual" = 1 ]

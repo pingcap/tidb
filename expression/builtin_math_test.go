@@ -23,15 +23,16 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/testkit/trequire"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	utilMath "github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
 func TestAbs(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		Arg interface{}
@@ -53,12 +54,11 @@ func TestAbs(t *testing.T) {
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, tt["Ret"][0], v)
+		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
 }
 
 func TestCeil(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	tmpIT := sc.IgnoreTruncate
@@ -108,7 +108,7 @@ func TestCeil(t *testing.T) {
 				if test.isNil {
 					require.Equal(t, types.KindNull, result.Kind())
 				} else {
-					trequire.DatumEqual(t, types.NewDatum(test.expect), result)
+					testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 				}
 			}
 		}
@@ -124,7 +124,6 @@ func TestCeil(t *testing.T) {
 }
 
 func TestExp(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		args       interface{}
@@ -176,7 +175,6 @@ func TestExp(t *testing.T) {
 }
 
 func TestFloor(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	tmpIT := sc.IgnoreTruncate
@@ -226,7 +224,7 @@ func TestFloor(t *testing.T) {
 			if test.isNil {
 				require.Equal(t, types.KindNull, result.Kind())
 			} else {
-				trequire.DatumEqual(t, types.NewDatum(test.expect), result)
+				testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 			}
 		}
 	}
@@ -247,7 +245,6 @@ func TestFloor(t *testing.T) {
 }
 
 func TestLog(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		args         []interface{}
@@ -291,7 +288,6 @@ func TestLog(t *testing.T) {
 }
 
 func TestLog2(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		args         interface{}
@@ -330,7 +326,6 @@ func TestLog2(t *testing.T) {
 }
 
 func TestLog10(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		args         interface{}
@@ -369,7 +364,6 @@ func TestLog10(t *testing.T) {
 }
 
 func TestRand(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	fc := funcs[ast.Rand]
 	f, err := fc.getFunction(ctx, nil)
@@ -382,7 +376,7 @@ func TestRand(t *testing.T) {
 	// issue 3211
 	f2, err := fc.getFunction(ctx, []Expression{&Constant{Value: types.NewIntDatum(20160101), RetType: types.NewFieldType(mysql.TypeLonglong)}})
 	require.NoError(t, err)
-	randGen := NewWithSeed(20160101)
+	randGen := utilMath.NewWithSeed(20160101)
 	for i := 0; i < 3; i++ {
 		v, err = evalBuiltinFunc(f2, chunk.Row{})
 		require.NoError(t, err)
@@ -391,7 +385,6 @@ func TestRand(t *testing.T) {
 }
 
 func TestPow(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		Arg []interface{}
@@ -411,7 +404,7 @@ func TestPow(t *testing.T) {
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, tt["Ret"][0], v)
+		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
 
 	errTbl := []struct {
@@ -439,7 +432,6 @@ func TestPow(t *testing.T) {
 }
 
 func TestRound(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	newDec := types.NewDecFromStringForTest
 	tbl := []struct {
@@ -489,12 +481,11 @@ func TestRound(t *testing.T) {
 		}
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, tt["Ret"][0], v)
+		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
 }
 
 func TestTruncate(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	newDec := types.NewDecFromStringForTest
 	tbl := []struct {
@@ -534,40 +525,46 @@ func TestTruncate(t *testing.T) {
 		require.NotNil(t, f)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, tt["Ret"][0], v)
+		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
 }
 
 func TestCRC32(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
-		Arg []interface{}
-		Ret interface{}
+		input  []interface{}
+		chs    string
+		result int64
+		isNull bool
 	}{
-		{[]interface{}{nil}, nil},
-		{[]interface{}{""}, 0},
-		{[]interface{}{-1}, 808273962},
-		{[]interface{}{"-1"}, 808273962},
-		{[]interface{}{"mysql"}, 2501908538},
-		{[]interface{}{"MySQL"}, 3259397556},
-		{[]interface{}{"hello"}, 907060870},
+		{[]interface{}{nil}, "utf8", 0, true},
+		{[]interface{}{""}, "utf8", 0, false},
+		{[]interface{}{-1}, "utf8", 808273962, false},
+		{[]interface{}{"-1"}, "utf8", 808273962, false},
+		{[]interface{}{"mysql"}, "utf8", 2501908538, false},
+		{[]interface{}{"MySQL"}, "utf8", 3259397556, false},
+		{[]interface{}{"hello"}, "utf8", 907060870, false},
+		{[]interface{}{"一二三"}, "utf8", 1785250883, false},
+		{[]interface{}{"一"}, "utf8", 2416838398, false},
+		{[]interface{}{"一二三"}, "gbk", 3461331449, false},
+		{[]interface{}{"一"}, "gbk", 2925846374, false},
 	}
-
-	Dtbl := tblToDtbl(tbl)
-
-	for _, tt := range Dtbl {
-		fc := funcs[ast.CRC32]
-		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
+	for _, c := range tbl {
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, c.chs)
 		require.NoError(t, err)
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		f, err := newFunctionForTest(ctx, ast.CRC32, primitiveValsToConstants(ctx, c.input)...)
 		require.NoError(t, err)
-		trequire.DatumEqual(t, tt["Ret"][0], v)
+		d, err := f.Eval(chunk.Row{})
+		require.NoError(t, err)
+		if c.isNull {
+			require.True(t, d.IsNull())
+		} else {
+			require.Equal(t, c.result, d.GetInt64())
+		}
 	}
 }
 
 func TestConv(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args     []interface{}
@@ -632,7 +629,6 @@ func TestConv(t *testing.T) {
 }
 
 func TestSign(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	tmpIT := sc.IgnoreTruncate
@@ -663,12 +659,11 @@ func TestSign(t *testing.T) {
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(tt.ret), v)
+		testutil.DatumEqual(t, types.NewDatum(tt.ret), v)
 	}
 }
 
 func TestDegrees(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.IgnoreTruncate = false
@@ -712,7 +707,6 @@ func TestDegrees(t *testing.T) {
 }
 
 func TestSqrt(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		Arg []interface{}
@@ -732,23 +726,21 @@ func TestSqrt(t *testing.T) {
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, types.NewDatum(tt.Ret), v)
+		testutil.DatumEqual(t, types.NewDatum(tt.Ret), v)
 	}
 }
 
 func TestPi(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	f, err := funcs[ast.PI].getFunction(ctx, nil)
 	require.NoError(t, err)
 
 	pi, err := evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
-	trequire.DatumEqual(t, types.NewDatum(math.Pi), pi)
+	testutil.DatumEqual(t, types.NewDatum(math.Pi), pi)
 }
 
 func TestRadians(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tbl := []struct {
 		Arg interface{}
@@ -769,7 +761,7 @@ func TestRadians(t *testing.T) {
 		require.NotNil(t, f)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, tt["Ret"][0], v)
+		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
 
 	invalidArg := "notNum"
@@ -782,7 +774,6 @@ func TestRadians(t *testing.T) {
 }
 
 func TestSin(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args       interface{}
@@ -827,7 +818,6 @@ func TestSin(t *testing.T) {
 }
 
 func TestCos(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args       interface{}
@@ -869,7 +859,6 @@ func TestCos(t *testing.T) {
 }
 
 func TestAcos(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		args       interface{}
@@ -909,7 +898,6 @@ func TestAcos(t *testing.T) {
 }
 
 func TestAsin(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		args       interface{}
@@ -949,7 +937,6 @@ func TestAsin(t *testing.T) {
 }
 
 func TestAtan(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		args       []interface{}
@@ -989,7 +976,6 @@ func TestAtan(t *testing.T) {
 }
 
 func TestTan(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	cases := []struct {
 		args       interface{}
@@ -1030,7 +1016,6 @@ func TestTan(t *testing.T) {
 }
 
 func TestCot(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tests := []struct {
 		args   interface{}

@@ -161,7 +161,6 @@ func BenchmarkVectorizedBuiltinOpFunc(b *testing.B) {
 }
 
 func TestBuiltinUnaryMinusIntSig(t *testing.T) {
-	t.Parallel()
 	ctx := mock.NewContext()
 	ft := eType2FieldType(types.ETInt)
 	col0 := &Column{RetType: ft, Index: 0}

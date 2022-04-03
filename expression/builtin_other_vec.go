@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -190,7 +189,7 @@ func (b *builtinSetStringVarSig) vecEvalString(input *chunk.Chunk, result *chunk
 		}
 		varName := strings.ToLower(buf0.GetString(i))
 		res := buf1.GetString(i)
-		sessionVars.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(res), collation, collate.DefaultLen)
+		sessionVars.Users[varName] = types.NewCollationStringDatum(stringutil.Copy(res), collation)
 		result.AppendString(res)
 	}
 	return nil

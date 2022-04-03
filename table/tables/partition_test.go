@@ -18,7 +18,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/ddl"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -27,11 +26,12 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPartitionBasic(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -63,7 +63,6 @@ PARTITION BY RANGE COLUMNS ( id ) (
 }
 
 func TestPartitionAddRecord(t *testing.T) {
-	t.Parallel()
 	createTable1 := `CREATE TABLE test.t1 (id int(11), index(id))
 PARTITION BY RANGE ( id ) (
 		PARTITION p0 VALUES LESS THAN (6),
@@ -166,7 +165,6 @@ PARTITION BY RANGE ( id ) (
 }
 
 func TestHashPartitionAddRecord(t *testing.T) {
-	t.Parallel()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -236,7 +234,6 @@ func TestHashPartitionAddRecord(t *testing.T) {
 
 // TestPartitionGetPhysicalID tests partition.GetPhysicalID().
 func TestPartitionGetPhysicalID(t *testing.T) {
-	t.Parallel()
 	createTable1 := `CREATE TABLE test.t1 (id int(11), index(id))
 PARTITION BY RANGE ( id ) (
 		PARTITION p0 VALUES LESS THAN (6),
@@ -264,7 +261,6 @@ PARTITION BY RANGE ( id ) (
 }
 
 func TestGeneratePartitionExpr(t *testing.T) {
-	t.Parallel()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -298,7 +294,6 @@ func TestGeneratePartitionExpr(t *testing.T) {
 }
 
 func TestLocateRangeColumnPartitionErr(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -317,7 +312,6 @@ func TestLocateRangeColumnPartitionErr(t *testing.T) {
 }
 
 func TestLocateRangePartitionErr(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -336,7 +330,6 @@ func TestLocateRangePartitionErr(t *testing.T) {
 }
 
 func TestLocatePartitionWithExtraHandle(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -356,7 +349,6 @@ func TestLocatePartitionWithExtraHandle(t *testing.T) {
 }
 
 func TestMultiTableUpdate(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -380,7 +372,6 @@ func TestMultiTableUpdate(t *testing.T) {
 }
 
 func TestLocatePartitionSingleColumn(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -410,8 +401,48 @@ func TestLocatePartitionSingleColumn(t *testing.T) {
 	require.True(t, table.ErrNoPartitionForGivenValue.Equal(err))
 }
 
+func TestLocatePartition(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_list_partition = ON;")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	tk.MustExec("drop table if exists t;")
+
+	tk.MustExec(`CREATE TABLE t (
+    	id bigint(20) DEFAULT NULL,
+    	type varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT NULL
+    	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    	PARTITION BY LIST COLUMNS(type)
+    	(PARTITION push_event VALUES IN ("PushEvent"),
+    	PARTITION watch_event VALUES IN ("WatchEvent")
+    );`)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk3 := testkit.NewTestKit(t, store)
+	tks := []*testkit.TestKit{tk1, tk2, tk3}
+
+	wg := util.WaitGroupWrapper{}
+	exec := func(tk0 *testkit.TestKit) {
+		tk0.MustExec("use test")
+		tk0.MustQuery("desc select id, type from t where  type = 'WatchEvent';").Check(testkit.Rows("TableReader_7 10.00 root partition:watch_event data:Selection_6]\n[└─Selection_6 10.00 cop[tikv]  eq(test.t.type, \"WatchEvent\")]\n[  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	}
+
+	run := func(num int) {
+		tk := tks[num]
+		wg.Run(func() {
+			exec(tk)
+		})
+	}
+	for i := 0; i < len(tks); i++ {
+		run(i)
+	}
+	wg.Wait()
+}
+
 func TestTimeZoneChange(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -430,12 +461,12 @@ func TestTimeZoneChange(t *testing.T) {
 		"  `id` int(11) NOT NULL,\n" +
 		"  `creation_dt` timestamp DEFAULT CURRENT_TIMESTAMP\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE ( UNIX_TIMESTAMP(`creation_dt`) ) (\n" +
-		"  PARTITION `p5` VALUES LESS THAN (1578035400),\n" +
-		"  PARTITION `p6` VALUES LESS THAN (1578035700),\n" +
-		"  PARTITION `p7` VALUES LESS THAN (1578036000),\n" +
-		"  PARTITION `p8` VALUES LESS THAN (1578036300),\n" +
-		"  PARTITION `p9` VALUES LESS THAN (MAXVALUE)\n)"))
+		"PARTITION BY RANGE (UNIX_TIMESTAMP(`creation_dt`))\n" +
+		"(PARTITION `p5` VALUES LESS THAN (1578035400),\n" +
+		" PARTITION `p6` VALUES LESS THAN (1578035700),\n" +
+		" PARTITION `p7` VALUES LESS THAN (1578036000),\n" +
+		" PARTITION `p8` VALUES LESS THAN (1578036300),\n" +
+		" PARTITION `p9` VALUES LESS THAN (MAXVALUE))"))
 	tk.MustExec("DROP TABLE timezone_test")
 
 	// Note that the result of "show create table" varies with time_zone.
@@ -445,12 +476,12 @@ func TestTimeZoneChange(t *testing.T) {
 		"  `id` int(11) NOT NULL,\n" +
 		"  `creation_dt` timestamp DEFAULT CURRENT_TIMESTAMP\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE ( UNIX_TIMESTAMP(`creation_dt`) ) (\n" +
-		"  PARTITION `p5` VALUES LESS THAN (1578064200),\n" +
-		"  PARTITION `p6` VALUES LESS THAN (1578064500),\n" +
-		"  PARTITION `p7` VALUES LESS THAN (1578064800),\n" +
-		"  PARTITION `p8` VALUES LESS THAN (1578065100),\n" +
-		"  PARTITION `p9` VALUES LESS THAN (MAXVALUE)\n)"))
+		"PARTITION BY RANGE (UNIX_TIMESTAMP(`creation_dt`))\n" +
+		"(PARTITION `p5` VALUES LESS THAN (1578064200),\n" +
+		" PARTITION `p6` VALUES LESS THAN (1578064500),\n" +
+		" PARTITION `p7` VALUES LESS THAN (1578064800),\n" +
+		" PARTITION `p8` VALUES LESS THAN (1578065100),\n" +
+		" PARTITION `p9` VALUES LESS THAN (MAXVALUE))"))
 
 	// Change time zone and insert data, check the data locates in the correct partition.
 	tk.MustExec("SET @@time_zone = 'Asia/Shanghai'")
@@ -471,23 +502,21 @@ func TestTimeZoneChange(t *testing.T) {
 }
 
 func TestCreatePartitionTableNotSupport(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	_, err := tk.Exec(`create table t7 (a int) partition by range (mod((select * from t), 5)) (partition p1 values less than (1));`)
-	require.True(t, ddl.ErrPartitionFunctionIsNotAllowed.Equal(err))
+	require.True(t, dbterror.ErrPartitionFunctionIsNotAllowed.Equal(err))
 	_, err = tk.Exec(`create table t7 (a int) partition by range (1 + (select * from t)) (partition p1 values less than (1));`)
-	require.True(t, ddl.ErrPartitionFunctionIsNotAllowed.Equal(err))
+	require.True(t, dbterror.ErrPartitionFunctionIsNotAllowed.Equal(err))
 	_, err = tk.Exec(`create table t7 (a int) partition by range (a + row(1, 2, 3)) (partition p1 values less than (1));`)
-	require.True(t, ddl.ErrPartitionFunctionIsNotAllowed.Equal(err))
+	require.True(t, dbterror.ErrPartitionFunctionIsNotAllowed.Equal(err))
 	_, err = tk.Exec(`create table t7 (a int) partition by range (-(select * from t)) (partition p1 values less than (1));`)
-	require.True(t, ddl.ErrPartitionFunctionIsNotAllowed.Equal(err))
+	require.True(t, dbterror.ErrPartitionFunctionIsNotAllowed.Equal(err))
 }
 
 func TestRangePartitionUnderNoUnsigned(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -513,7 +542,6 @@ func TestRangePartitionUnderNoUnsigned(t *testing.T) {
 }
 
 func TestIntUint(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -550,7 +578,6 @@ partition p4 values less than (9223372036854775806))`)
 }
 
 func TestHashPartitionAndConditionConflict(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -576,7 +603,6 @@ func TestHashPartitionAndConditionConflict(t *testing.T) {
 }
 
 func TestHashPartitionInsertValue(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -595,7 +621,6 @@ func TestHashPartitionInsertValue(t *testing.T) {
 }
 
 func TestIssue21574(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -609,7 +634,6 @@ func TestIssue21574(t *testing.T) {
 }
 
 func TestIssue24746(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -625,4 +649,82 @@ func TestIssue24746(t *testing.T) {
 	// Actual bug, before the fix this was updating the row in p0 (deleting it in p0 and inserting in p1):
 	err = tk.ExecToErr("insert into t_24746 partition (p1) values(4,'ERROR, not allowed to read from partition p0',4) on duplicate key update a = a + 1, b = 'ERROR, not allowed to read from p0!'")
 	require.True(t, table.ErrRowDoesNotMatchGivenPartitionSet.Equal(err))
+}
+
+func TestIssue31629(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_enable_list_partition = 1")
+	tk.MustExec("create database Issue31629")
+	defer tk.MustExec("drop database Issue31629")
+	tk.MustExec("use Issue31629")
+	// Test following partition types:
+	// HASH, RANGE, LIST:
+	// - directly on a single int column
+	// - with expression on multiple columns
+	// RANGE/LIST COLUMNS single column
+	// RANGE/LIST COLUMNS -- Verify that only single column is allowed and no expression
+	tests := []struct {
+		create string
+		fail   bool
+		cols   []string
+	}{
+		{"(col1 int, col2 varchar(60), col3 int, primary key(col1)) partition by range(col1) (partition p0 values less than (5),partition p1 values less than (10), partition p2 values less than maxvalue)", false, []string{"col1"}},
+		{"(Col1 int, col2 varchar(60), col3 int, primary key(Col1,col3)) partition by range(Col1+col3) (partition p0 values less than (5),partition p1 values less than (10), partition p2 values less than maxvalue)", false, []string{"Col1", "col3"}},
+		{"(col1 int, col2 varchar(60), col3 int, primary key(col1)) partition by hash(col1) partitions 3", false, []string{"col1"}},
+		{"(Col1 int, col2 varchar(60), col3 int, primary key(Col1,col3)) partition by hash(Col1+col3) partitions 3", false, []string{"Col1", "col3"}},
+		{"(col1 int, col2 varchar(60), col3 int, primary key(col1)) partition by list(col1) (partition p0 values in (5,6,7,8,9),partition p1 values in (10,11,12,13,14), partition p2 values in (20,21,22,23,24))", false, []string{"col1"}},
+		{"(Col1 int, col2 varchar(60), col3 int, primary key(Col1,col3)) partition by list(Col1+col3) (partition p0 values in (5,6,7,8,9),partition p1 values in (10,11,12,13,14), partition p2 values in (20,21,22,23,24))", false, []string{"Col1", "col3"}},
+		{`(col1 int, col2 varchar(60), col3 int, primary key(col2)) partition by range columns (col2) (partition p0 values less than (""),partition p1 values less than ("MID"), partition p2 values less than maxvalue)`, false, []string{"col2"}},
+		{`(col1 int, col2 varchar(60), col3 int, primary key(col2)) partition by range columns (col2,col3) (partition p0 values less than (""),partition p1 values less than ("MID"), partition p2 values less than maxvalue)`, true, nil},
+		{`(col1 int, col2 varchar(60), col3 int, primary key(col2)) partition by range columns (col1+1) (partition p0 values less than (""),partition p1 values less than ("MID"), partition p2 values less than maxvalue)`, true, nil},
+		{`(col1 int, col2 varchar(60), col3 int, primary key(col2)) partition by list columns (col2) (partition p0 values in ("","First"),partition p1 values in ("MID","Middle"), partition p2 values in ("Last","Unknown"))`, false, []string{"col2"}},
+		{`(col1 int, col2 varchar(60), col3 int, primary key(col2)) partition by list columns (col2,col3) (partition p0 values in ("","First"),partition p1 values in ("MID","Middle"), partition p2 values in ("Last","Unknown"))`, true, nil},
+		{`(col1 int, col2 varchar(60), col3 int, primary key(col2)) partition by list columns (col1+1) (partition p0 values in ("","First"),partition p1 values in ("MID","Middle"), partition p2 values in ("Last","Unknown"))`, true, nil},
+	}
+
+	for i, tt := range tests {
+
+		createTable := "create table t1 " + tt.create
+		res, err := tk.Exec(createTable)
+		if res != nil {
+			res.Close()
+		}
+		if err != nil {
+			if tt.fail {
+				continue
+			}
+		}
+		require.Falsef(t, tt.fail, "test %d succeeded but was expected to fail! %s", i, createTable)
+		require.NoError(t, err)
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+
+		tb, err := dom.InfoSchema().TableByName(model.NewCIStr("Issue31629"), model.NewCIStr("t1"))
+		require.NoError(t, err)
+		tbp, ok := tb.(table.PartitionedTable)
+		require.Truef(t, ok, "test %d does not generate a table.PartitionedTable: %s (%T, %+v)", i, createTable, tb, tb)
+		colNames := tbp.GetPartitionColumnNames()
+		checkNames := []model.CIStr{model.NewCIStr(tt.cols[0])}
+		for i := 1; i < len(tt.cols); i++ {
+			checkNames = append(checkNames, model.NewCIStr(tt.cols[i]))
+		}
+		require.ElementsMatchf(t, colNames, checkNames, "test %d %s", i, createTable)
+		tk.MustExec("drop table t1")
+	}
+}
+
+func TestIssue31721(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_list_partition=on;")
+	tk.MustExec("drop tables if exists t_31721")
+	tk.MustExec("CREATE TABLE `t_31721` (`COL1` char(1) NOT NULL) CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY LIST COLUMNS(`COL1`) " +
+		"(PARTITION `P0` VALUES IN ('1')," +
+		"PARTITION `P1` VALUES IN ('2')," +
+		"PARTITION `P2` VALUES IN ('3'));")
+	tk.MustExec("insert into t_31721 values ('1')")
+	tk.MustExec("select * from t_31721 partition(p0, p1) where col1 != 2;")
 }

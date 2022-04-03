@@ -43,7 +43,7 @@ type baseFuncDesc struct {
 
 func newBaseFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression) (baseFuncDesc, error) {
 	b := baseFuncDesc{Name: strings.ToLower(name), Args: args}
-	err := b.typeInfer(ctx)
+	err := b.TypeInfer(ctx)
 	return b, err
 }
 
@@ -84,8 +84,8 @@ func (a *baseFuncDesc) String() string {
 	return buffer.String()
 }
 
-// typeInfer infers the arguments and return types of an function.
-func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
+// TypeInfer infers the arguments and return types of an function.
+func (a *baseFuncDesc) TypeInfer(ctx sessionctx.Context) error {
 	switch a.Name {
 	case ast.AggFuncCount:
 		a.typeInfer4Count(ctx)
@@ -178,7 +178,7 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx sessionctx.Context) error 
 	return nil
 }
 
-// typeInfer4Sum should returns a "decimal", otherwise it returns a "double".
+// typeInfer4Sum should return a "decimal", otherwise it returns a "double".
 // Because child returns integer or decimal type.
 func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 	switch a.Args[0].GetType().Tp {
@@ -205,6 +205,14 @@ func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
 	}
 	types.SetBinChsClnFlag(a.RetTp)
+}
+
+// TypeInfer4AvgSum infers the type of sum from avg, which should extend the precision of decimal
+// compatible with mysql.
+func (a *baseFuncDesc) TypeInfer4AvgSum(avgRetType *types.FieldType) {
+	if avgRetType.Tp == mysql.TypeNewDecimal {
+		a.RetTp.Flen = mathutil.Min(mysql.MaxDecimalWidth, a.RetTp.Flen+22)
+	}
 }
 
 // typeInfer4Avg should returns a "decimal", otherwise it returns a "double".
@@ -246,6 +254,12 @@ func (a *baseFuncDesc) typeInfer4GroupConcat(ctx sessionctx.Context) {
 
 	a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxBlobWidth, 0
 	// TODO: a.Args[i] = expression.WrapWithCastAsString(ctx, a.Args[i])
+	for i := 0; i < len(a.Args)-1; i++ {
+		if tp := a.Args[i].GetType(); tp.Tp == mysql.TypeNewDecimal {
+			a.Args[i] = expression.BuildCastFunction(ctx, a.Args[i], tp)
+		}
+	}
+
 }
 
 func (a *baseFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {
@@ -370,18 +384,6 @@ var noNeedCastAggFuncs = map[string]struct{}{
 	ast.AggFuncJsonObjectAgg:       {},
 }
 
-// WrapCastAsDecimalForAggArgs wraps the args of some specific aggregate functions
-// with a cast as decimal function. See issue #19426
-func (a *baseFuncDesc) WrapCastAsDecimalForAggArgs(ctx sessionctx.Context) {
-	if a.Name == ast.AggFuncGroupConcat {
-		for i := 0; i < len(a.Args)-1; i++ {
-			if tp := a.Args[i].GetType(); tp.Tp == mysql.TypeNewDecimal {
-				a.Args[i] = expression.BuildCastFunction(ctx, a.Args[i], tp)
-			}
-		}
-	}
-}
-
 // WrapCastForAggArgs wraps the args of an aggregate function with a cast function.
 func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 	if len(a.Args) == 0 {
@@ -419,6 +421,7 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		if a.Args[i].GetType().Tp == mysql.TypeNull {
 			continue
 		}
+		tpOld := a.Args[i].GetType().Tp
 		a.Args[i] = castFunc(ctx, a.Args[i])
 		if a.Name != ast.AggFuncAvg && a.Name != ast.AggFuncSum {
 			continue
@@ -441,5 +444,37 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		originTp := a.Args[i].GetType().Tp
 		*(a.Args[i].GetType()) = *(a.RetTp)
 		a.Args[i].GetType().Tp = originTp
+
+		// refine each mysql integer type to the needed decimal precision for sum
+		if a.Name == ast.AggFuncSum {
+			adjustDecimalLenForSumInteger(a.Args[i].GetType(), tpOld)
+		}
+	}
+}
+
+func adjustDecimalLenForSumInteger(ft *types.FieldType, tpOld byte) {
+	if types.IsTypeInteger(tpOld) && ft.Tp == mysql.TypeNewDecimal {
+		if flen, err := minimalDecimalLenForHoldingInteger(tpOld); err == nil {
+			ft.Flen = mathutil.Min(ft.Flen, flen+ft.Decimal)
+		}
+	}
+}
+
+func minimalDecimalLenForHoldingInteger(tp byte) (int, error) {
+	switch tp {
+	case mysql.TypeTiny:
+		return 3, nil
+	case mysql.TypeShort:
+		return 5, nil
+	case mysql.TypeInt24:
+		return 8, nil
+	case mysql.TypeLong:
+		return 10, nil
+	case mysql.TypeLonglong:
+		return 20, nil
+	case mysql.TypeYear:
+		return 4, nil
+	default:
+		return -1, errors.Errorf("Invalid type: %v", tp)
 	}
 }

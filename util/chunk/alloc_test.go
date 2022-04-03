@@ -114,5 +114,91 @@ func TestColumnAllocator(t *testing.T) {
 	// Check max column size.
 	freeList := alloc1.pool[getFixedLen(ft)]
 	require.NotNil(t, freeList)
-	require.Equal(t, len(freeList.data), maxFreeColumnsPerType)
+	require.Len(t, freeList, maxFreeColumnsPerType)
+}
+
+func TestNoDuplicateColumnReuse(t *testing.T) {
+	// For issue https://github.com/pingcap/tidb/issues/29554
+	// Some chunk columns are just references to other chunk columns.
+	// So when reusing Chunk, some columns may point to the same memory address.
+
+	fieldTypes := []*types.FieldType{
+		{Tp: mysql.TypeVarchar},
+		{Tp: mysql.TypeJSON},
+		{Tp: mysql.TypeFloat},
+		{Tp: mysql.TypeNewDecimal},
+		{Tp: mysql.TypeDouble},
+		{Tp: mysql.TypeLonglong},
+		{Tp: mysql.TypeTimestamp},
+		{Tp: mysql.TypeDatetime},
+	}
+	alloc := NewAllocator()
+	for i := 0; i < maxFreeChunks+10; i++ {
+		chk := alloc.Alloc(fieldTypes, 5, 10)
+		chk.MakeRef(1, 3)
+	}
+	alloc.Reset()
+
+	a := alloc.columnAlloc
+	// Make sure no duplicated column in the pool.
+	for _, p := range a.pool {
+		dup := make(map[*Column]struct{})
+		for !p.empty() {
+			c := p.pop()
+			_, exist := dup[c]
+			require.False(t, exist)
+			dup[c] = struct{}{}
+		}
+	}
+}
+
+func TestAvoidColumnReuse(t *testing.T) {
+	// For issue: https://github.com/pingcap/tidb/issues/31981
+	// Some chunk columns are references to rpc message.
+	// So when reusing Chunk, we should ignore them.
+
+	fieldTypes := []*types.FieldType{
+		{Tp: mysql.TypeVarchar},
+		{Tp: mysql.TypeJSON},
+		{Tp: mysql.TypeFloat},
+		{Tp: mysql.TypeNewDecimal},
+		{Tp: mysql.TypeDouble},
+		{Tp: mysql.TypeLonglong},
+		{Tp: mysql.TypeTimestamp},
+		{Tp: mysql.TypeDatetime},
+	}
+	alloc := NewAllocator()
+	for i := 0; i < maxFreeChunks+10; i++ {
+		chk := alloc.Alloc(fieldTypes, 5, 10)
+		for _, col := range chk.columns {
+			col.avoidReusing = true
+		}
+	}
+	alloc.Reset()
+
+	a := alloc.columnAlloc
+	// Make sure no duplicated column in the pool.
+	for _, p := range a.pool {
+		require.True(t, p.empty())
+	}
+
+	// test decoder will set avoid reusing flag.
+	chk := alloc.Alloc(fieldTypes, 5, 1024)
+	for i := 0; i <= 10; i++ {
+		for _, col := range chk.columns {
+			col.AppendNull()
+		}
+	}
+	codec := &Codec{fieldTypes}
+	buf := codec.Encode(chk)
+
+	decoder := NewDecoder(
+		NewChunkWithCapacity(fieldTypes, 0),
+		fieldTypes,
+	)
+	decoder.Reset(buf)
+	decoder.ReuseIntermChk(chk)
+	for _, col := range chk.columns {
+		require.True(t, col.avoidReusing)
+	}
 }

@@ -6,6 +6,7 @@ coverage.out
 *.iml
 *.swp
 *.log
+*.test.bin
 tags
 profile.coverprofile
 explain_test
@@ -24,3 +25,7 @@ coverage.txt
 var
 fix.sql
 export-20*/
+*-coverage.xml
+*-junit-report.xml
+# Files generated when testing
+out

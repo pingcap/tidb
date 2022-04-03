@@ -1,5 +1,5 @@
 run:
-  timeout: 7m
+  timeout: 10m
 linters:
   disable-all: true
   enable:
@@ -18,8 +18,13 @@ linters:
     - gosec
     - asciicheck
     - bodyclose
+    - exportloopref
     - rowserrcheck
     - unconvert
+    - makezero
+    - durationcheck
+    - prealloc
+    - predeclared
 
 linters-settings:
   staticcheck:
@@ -27,8 +32,10 @@ linters-settings:
   stylecheck:
     checks: ["-ST1003"]
   gosec:
+    severity: "low"
+    confidence: "low"
     excludes:
-      - G601
+      - G101
 issues:
   exclude-rules:
     - path: _test\.go
@@ -36,3 +43,4 @@ issues:
         - errcheck
         - gosec
         - rowserrcheck
+        - makezero

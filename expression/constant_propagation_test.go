@@ -15,41 +15,18 @@
 package expression_test
 
 import (
-	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testutil"
+	"testing"
+
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
 )
 
-var _ = Suite(&testSuite{})
+func TestOuterJoinPropConst(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 
-type testSuite struct {
-	store    kv.Storage
-	dom      *domain.Domain
-	ctx      sessionctx.Context
-	testData testutil.TestData
-}
-
-func (s *testSuite) SetUpSuite(c *C) {
-	var err error
-	s.store, s.dom, err = newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	s.ctx = mock.NewContext()
-	s.testData, err = testutil.LoadTestSuiteData("testdata", "expression_suite")
-	c.Assert(err, IsNil)
-}
-
-func (s *testSuite) TearDownSuite(c *C) {
-	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
-	s.dom.Close()
-	s.store.Close()
-}
-
-func (s *testSuite) TestOuterJoinPropConst(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2;")
 	tk.MustExec("create table t1(id bigint primary key, a int, b int);")
@@ -60,11 +37,13 @@ func (s *testSuite) TestOuterJoinPropConst(c *C) {
 		SQL    string
 		Result []string
 	}
-	s.testData.GetTestCases(c, &input, &output)
+
+	expressionSuiteData := expression.GetExpressionSuiteData()
+	expressionSuiteData.GetTestCases(t, &input, &output)
 	for i, tt := range input {
-		s.testData.OnRecord(func() {
+		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}

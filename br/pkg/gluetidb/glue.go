@@ -5,6 +5,7 @@ package gluetidb
 import (
 	"bytes"
 	"context"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -21,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/zap"
 )
 
 const (
@@ -108,6 +110,11 @@ func (gs *tidbSession) Execute(ctx context.Context, sql string) error {
 	return errors.Trace(err)
 }
 
+func (gs *tidbSession) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) error {
+	_, err := gs.se.ExecuteInternal(ctx, sql, args...)
+	return errors.Trace(err)
+}
+
 // CreateDatabase implements glue.Session.
 func (gs *tidbSession) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
 	d := domain.GetDomain(gs.se).DDL()
@@ -120,7 +127,57 @@ func (gs *tidbSession) CreateDatabase(ctx context.Context, schema *model.DBInfo)
 	if len(schema.Charset) == 0 {
 		schema.Charset = mysql.DefaultCharset
 	}
-	return d.CreateSchemaWithInfo(gs.se, schema, ddl.OnExistIgnore, true)
+	return d.CreateSchemaWithInfo(gs.se, schema, ddl.OnExistIgnore)
+
+}
+
+// CreatePlacementPolicy implements glue.Session.
+func (gs *tidbSession) CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error {
+	d := domain.GetDomain(gs.se).DDL()
+	gs.se.SetValue(sessionctx.QueryString, gs.showCreatePlacementPolicy(policy))
+	// the default behaviour is ignoring duplicated policy during restore.
+	return d.CreatePlacementPolicyWithInfo(gs.se, policy, ddl.OnExistIgnore)
+}
+
+// CreateTables implements glue.BatchCreateTableSession.
+func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo) error {
+	d := domain.GetDomain(gs.se).DDL()
+	var dbName model.CIStr
+
+	for db, tablesInDB := range tables {
+		dbName = model.NewCIStr(db)
+		queryBuilder := strings.Builder{}
+		cloneTables := make([]*model.TableInfo, 0, len(tablesInDB))
+		for _, table := range tablesInDB {
+			query, err := gs.showCreateTable(table)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			queryBuilder.WriteString(query)
+			queryBuilder.WriteString(";")
+
+			table = table.Clone()
+			// Clone() does not clone partitions yet :(
+			if table.Partition != nil {
+				newPartition := *table.Partition
+				newPartition.Definitions = append([]model.PartitionDefinition{}, table.Partition.Definitions...)
+				table.Partition = &newPartition
+			}
+			cloneTables = append(cloneTables, table)
+		}
+		gs.se.SetValue(sessionctx.QueryString, queryBuilder.String())
+		err := d.BatchCreateTableWithInfo(gs.se, dbName, cloneTables, ddl.OnExistIgnore)
+		if err != nil {
+			//It is possible to failure when TiDB does not support model.ActionCreateTables.
+			//In this circumstance, BatchCreateTableWithInfo returns errno.ErrInvalidDDLJob,
+			//we fall back to old way that creating table one by one
+			log.Warn("batch create table from tidb failure", zap.Error(err))
+			return err
+		}
+	}
+
+	return nil
 }
 
 // CreateTable implements glue.Session.
@@ -138,12 +195,17 @@ func (gs *tidbSession) CreateTable(ctx context.Context, dbName model.CIStr, tabl
 		newPartition.Definitions = append([]model.PartitionDefinition{}, table.Partition.Definitions...)
 		table.Partition = &newPartition
 	}
-	return d.CreateTableWithInfo(gs.se, dbName, table, ddl.OnExistIgnore, true)
+	return d.CreateTableWithInfo(gs.se, dbName, table, ddl.OnExistIgnore)
 }
 
 // Close implements glue.Session.
 func (gs *tidbSession) Close() {
 	gs.se.Close()
+}
+
+// GetGlobalVariables implements glue.Session.
+func (gs *tidbSession) GetGlobalVariable(name string) (string, error) {
+	return gs.se.GetSessionVars().GlobalVarsAccessor.GetTiDBTableValue(name)
 }
 
 // showCreateTable shows the result of SHOW CREATE TABLE from a TableInfo.
@@ -168,4 +230,8 @@ func (gs *tidbSession) showCreateDatabase(db *model.DBInfo) (string, error) {
 		return "", errors.Trace(err)
 	}
 	return result.String(), nil
+}
+
+func (gs *tidbSession) showCreatePlacementPolicy(policy *model.PolicyInfo) string {
+	return executor.ConstructResultOfShowCreatePlacementPolicy(policy)
 }

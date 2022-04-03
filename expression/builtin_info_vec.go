@@ -114,7 +114,7 @@ func (b *builtinCurrentUserSig) vecEvalString(input *chunk.Chunk, result *chunk.
 		return errors.Errorf("Missing session variable when eval builtin")
 	}
 	for i := 0; i < n; i++ {
-		result.AppendString(data.User.AuthIdentityString())
+		result.AppendString(data.User.String())
 	}
 	return nil
 }
@@ -168,7 +168,7 @@ func (b *builtinUserSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
-		result.AppendString(data.User.String())
+		result.AppendString(data.User.LoginString())
 	}
 	return nil
 }

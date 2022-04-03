@@ -19,10 +19,11 @@ import (
 	"os"
 	"testing"
 
-	"github.com/pingcap/tidb/dumpling/log"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
+
+	"github.com/pingcap/tidb/dumpling/log"
 )
 
 var appLogger log.Logger
@@ -48,6 +49,7 @@ func TestMain(m *testing.M) {
 	RegisterMetrics(registry)
 
 	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 

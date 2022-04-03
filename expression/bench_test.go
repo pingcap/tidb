@@ -23,6 +23,7 @@ import (
 	"net"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -218,8 +219,26 @@ type defaultRandGen struct {
 	*rand.Rand
 }
 
+type lockedSource struct {
+	lk  sync.Mutex
+	src rand.Source
+}
+
+func (r *lockedSource) Int63() (n int64) {
+	r.lk.Lock()
+	n = r.src.Int63()
+	r.lk.Unlock()
+	return
+}
+
+func (r *lockedSource) Seed(seed int64) {
+	r.lk.Lock()
+	r.src.Seed(seed)
+	r.lk.Unlock()
+}
+
 func newDefaultRandGen() *defaultRandGen {
-	return &defaultRandGen{rand.New(rand.NewSource(int64(rand.Uint64())))}
+	return &defaultRandGen{rand.New(&lockedSource{src: rand.NewSource(int64(rand.Uint64()))})}
 }
 
 type defaultGener struct {
@@ -1099,8 +1118,6 @@ func genVecExprBenchCase(ctx sessionctx.Context, funcName string, testCase vecEx
 // testVectorizedEvalOneVec is used to verify that the vectorized
 // expression is evaluated correctly during projection
 func testVectorizedEvalOneVec(t *testing.T, vecExprCases vecExprBenchCases) {
-	t.Parallel()
-
 	ctx := mock.NewContext()
 	for funcName, testCases := range vecExprCases {
 		for _, testCase := range testCases {
@@ -1302,8 +1319,6 @@ func removeTestOptions(args []string) []string {
 // testVectorizedBuiltinFunc is used to verify that the vectorized
 // expression is evaluated correctly
 func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
-	t.Parallel()
-
 	testFunc := make(map[string]bool)
 	argList := removeTestOptions(flag.Args())
 	testAll := len(argList) == 0
@@ -1487,8 +1502,6 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 // testVectorizedBuiltinFuncForRand is used to verify that the vectorized
 // expression is evaluated correctly
 func testVectorizedBuiltinFuncForRand(t *testing.T, vecExprCases vecExprBenchCases) {
-	t.Parallel()
-
 	for funcName, testCases := range vecExprCases {
 		require.True(t, strings.EqualFold("rand", funcName))
 

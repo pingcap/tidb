@@ -28,8 +28,6 @@ import (
 )
 
 func TestScalarFunction(t *testing.T) {
-	t.Parallel()
-
 	ctx := mock.NewContext()
 	a := &Column{
 		UniqueID: 1,
@@ -50,13 +48,13 @@ func TestScalarFunction(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "values", newSf.FuncName.O)
 	require.Equal(t, mysql.TypeLonglong, newSf.RetType.Tp)
+	require.Equal(t, sf.Coercibility(), newSf.Coercibility())
+	require.Equal(t, sf.Repertoire(), newSf.Repertoire())
 	_, ok = newSf.Function.(*builtinValuesIntSig)
 	require.True(t, ok)
 }
 
 func TestIssue23309(t *testing.T) {
-	t.Parallel()
-
 	a := &Column{
 		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeDouble),
@@ -72,8 +70,6 @@ func TestIssue23309(t *testing.T) {
 }
 
 func TestScalarFuncs2Exprs(t *testing.T) {
-	t.Parallel()
-
 	ctx := mock.NewContext()
 	a := &Column{
 		UniqueID: 1,

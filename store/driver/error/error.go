@@ -12,9 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package error
+package error //nolint:predeclared
 
 import (
+	stderrs "errors"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -64,95 +66,99 @@ var (
 
 // ToTiDBErr checks and converts a tikv error to a tidb error.
 func ToTiDBErr(err error) error {
-	originErr := err
 	if err == nil {
 		return nil
 	}
-	err = errors.Cause(err)
 	if tikverr.IsErrNotFound(err) {
 		return kv.ErrNotExist
 	}
 
-	if e, ok := err.(*tikverr.ErrWriteConflictInLatch); ok {
-		return kv.ErrWriteConflictInTiDB.FastGenByArgs(e.StartTS)
+	var writeConflictInLatch *tikverr.ErrWriteConflictInLatch
+	if stderrs.As(err, &writeConflictInLatch) {
+		return kv.ErrWriteConflictInTiDB.FastGenByArgs(writeConflictInLatch.StartTS)
 	}
 
-	if e, ok := err.(*tikverr.ErrTxnTooLarge); ok {
-		return kv.ErrTxnTooLarge.GenWithStackByArgs(e.Size)
+	var txnTooLarge *tikverr.ErrTxnTooLarge
+	if stderrs.As(err, &txnTooLarge) {
+		return kv.ErrTxnTooLarge.GenWithStackByArgs(txnTooLarge.Size)
 	}
 
-	if errors.ErrorEqual(err, tikverr.ErrCannotSetNilValue) {
+	if stderrs.Is(err, tikverr.ErrCannotSetNilValue) {
 		return kv.ErrCannotSetNilValue
 	}
 
-	if e, ok := err.(*tikverr.ErrEntryTooLarge); ok {
-		return kv.ErrEntryTooLarge.GenWithStackByArgs(e.Limit, e.Size)
+	var entryTooLarge *tikverr.ErrEntryTooLarge
+	if stderrs.As(err, &entryTooLarge) {
+		return kv.ErrEntryTooLarge.GenWithStackByArgs(entryTooLarge.Limit, entryTooLarge.Size)
 	}
 
-	if errors.ErrorEqual(err, tikverr.ErrInvalidTxn) {
+	if stderrs.Is(err, tikverr.ErrInvalidTxn) {
 		return kv.ErrInvalidTxn
 	}
 
-	if errors.ErrorEqual(err, tikverr.ErrTiKVServerTimeout) {
+	if stderrs.Is(err, tikverr.ErrTiKVServerTimeout) {
 		return ErrTiKVServerTimeout
 	}
 
-	if e, ok := err.(*tikverr.ErrPDServerTimeout); ok {
-		if len(e.Error()) == 0 {
+	var pdServerTimeout *tikverr.ErrPDServerTimeout
+	if stderrs.As(err, &pdServerTimeout) {
+		if len(pdServerTimeout.Error()) == 0 {
 			return ErrPDServerTimeout
 		}
-		return ErrPDServerTimeout.GenWithStackByArgs(e.Error())
+		return ErrPDServerTimeout.GenWithStackByArgs(pdServerTimeout.Error())
 	}
 
-	if errors.ErrorEqual(err, tikverr.ErrTiFlashServerTimeout) {
+	if stderrs.Is(err, tikverr.ErrTiFlashServerTimeout) {
 		return ErrTiFlashServerTimeout
 	}
 
-	if errors.ErrorEqual(err, tikverr.ErrQueryInterrupted) {
+	if stderrs.Is(err, tikverr.ErrQueryInterrupted) {
 		return ErrQueryInterrupted
 	}
 
-	if errors.ErrorEqual(err, tikverr.ErrTiKVServerBusy) {
+	if stderrs.Is(err, tikverr.ErrTiKVServerBusy) {
 		return ErrTiKVServerBusy
 	}
 
-	if errors.ErrorEqual(err, tikverr.ErrTiFlashServerBusy) {
+	if stderrs.Is(err, tikverr.ErrTiFlashServerBusy) {
 		return ErrTiFlashServerBusy
 	}
 
-	if e, ok := err.(*tikverr.ErrGCTooEarly); ok {
-		return ErrGCTooEarly.GenWithStackByArgs(e.TxnStartTS, e.GCSafePoint)
+	var gcTooEarly *tikverr.ErrGCTooEarly
+	if stderrs.As(err, &gcTooEarly) {
+		return ErrGCTooEarly.GenWithStackByArgs(gcTooEarly.TxnStartTS, gcTooEarly.GCSafePoint)
 	}
 
-	if errors.ErrorEqual(err, tikverr.ErrTiKVStaleCommand) {
+	if stderrs.Is(err, tikverr.ErrTiKVStaleCommand) {
 		return ErrTiKVStaleCommand
 	}
 
-	if errors.ErrorEqual(err, tikverr.ErrTiKVMaxTimestampNotSynced) {
+	if stderrs.Is(err, tikverr.ErrTiKVMaxTimestampNotSynced) {
 		return ErrTiKVMaxTimestampNotSynced
 	}
 
-	if errors.ErrorEqual(err, tikverr.ErrLockAcquireFailAndNoWaitSet) {
+	if stderrs.Is(err, tikverr.ErrLockAcquireFailAndNoWaitSet) {
 		return ErrLockAcquireFailAndNoWaitSet
 	}
 
-	if errors.ErrorEqual(err, tikverr.ErrResolveLockTimeout) {
+	if stderrs.Is(err, tikverr.ErrResolveLockTimeout) {
 		return ErrResolveLockTimeout
 	}
 
-	if errors.ErrorEqual(err, tikverr.ErrLockWaitTimeout) {
+	if stderrs.Is(err, tikverr.ErrLockWaitTimeout) {
 		return ErrLockWaitTimeout
 	}
 
-	if errors.ErrorEqual(err, tikverr.ErrRegionUnavailable) {
+	if stderrs.Is(err, tikverr.ErrRegionUnavailable) {
 		return ErrRegionUnavailable
 	}
 
-	if e, ok := err.(*tikverr.ErrTokenLimit); ok {
-		return ErrTokenLimit.GenWithStackByArgs(e.StoreID)
+	var tokenLimit *tikverr.ErrTokenLimit
+	if stderrs.As(err, &tokenLimit) {
+		return ErrTokenLimit.GenWithStackByArgs(tokenLimit.StoreID)
 	}
 
-	if errors.ErrorEqual(err, tikverr.ErrUnknown) {
+	if stderrs.Is(err, tikverr.ErrUnknown) {
 		return ErrUnknown
 	}
 
@@ -160,5 +166,5 @@ func ToTiDBErr(err error) error {
 		return terror.ErrResultUndetermined
 	}
 
-	return errors.Trace(originErr)
+	return errors.Trace(err)
 }

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,7 +47,6 @@ func rewriteSimpleExpr(ctx sessionctx.Context, str string, schema *expression.Sc
 }
 
 func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
-	t.Parallel()
 	ctx := MockContext()
 
 	ctx.GetSessionVars().PlanID = -1
@@ -284,10 +284,13 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 		require.NoError(t, err)
 		joinNode.OtherConditions = others
 		helper := &indexJoinBuildHelper{join: joinNode, lastColManager: nil, innerPlan: dataSourceNode}
-		_, err = helper.analyzeLookUpFilters(path, dataSourceNode, tt.innerKeys, tt.innerKeys)
+		_, err = helper.analyzeLookUpFilters(path, dataSourceNode, tt.innerKeys, tt.innerKeys, false)
+		if helper.chosenRanges == nil {
+			helper.chosenRanges = ranger.Ranges{}
+		}
 		require.NoError(t, err)
 		require.Equal(t, tt.accesses, fmt.Sprintf("%v", helper.chosenAccess))
-		require.Equal(t, tt.ranges, fmt.Sprintf("%v", helper.chosenRanges), "test case: ", i)
+		require.Equal(t, tt.ranges, fmt.Sprintf("%v", helper.chosenRanges.Range()), "test case: ", i)
 		require.Equal(t, tt.idxOff2KeyOff, fmt.Sprintf("%v", helper.idxOff2KeyOff))
 		require.Equal(t, tt.remained, fmt.Sprintf("%v", helper.chosenRemained))
 		require.Equal(t, tt.compareFilters, fmt.Sprintf("%v", helper.lastColManager))

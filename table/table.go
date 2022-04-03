@@ -20,6 +20,7 @@ package table
 
 import (
 	"context"
+	"time"
 
 	"github.com/opentracing/opentracing-go"
 	mysql "github.com/pingcap/tidb/errno"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 // Type is used to distinguish between different tables that store data in different ways.
@@ -100,6 +102,8 @@ var (
 	ErrRowDoesNotMatchGivenPartitionSet = dbterror.ClassTable.NewStd(mysql.ErrRowDoesNotMatchGivenPartitionSet)
 	// ErrTempTableFull returns a table is full error, it's used by temporary table now.
 	ErrTempTableFull = dbterror.ClassTable.NewStd(mysql.ErrRecordFileFull)
+	// ErrOptOnCacheTable returns when exec unsupported opt at cache mode
+	ErrOptOnCacheTable = dbterror.ClassDDL.NewStd(mysql.ErrOptOnCacheTable)
 )
 
 // RecordIterFunc is used for low-level record iteration.
@@ -237,6 +241,7 @@ type PartitionedTable interface {
 	GetPartition(physicalID int64) PhysicalTable
 	GetPartitionByRow(sessionctx.Context, []types.Datum) (PhysicalTable, error)
 	GetAllPartitionIDs() []int64
+	GetPartitionColumnNames() []model.CIStr
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.
@@ -245,3 +250,19 @@ var TableFromMeta func(allocators autoid.Allocators, tblInfo *model.TableInfo) (
 
 // MockTableFromMeta only serves for test.
 var MockTableFromMeta func(tableInfo *model.TableInfo) Table
+
+// CachedTable is a Table, and it has a UpdateLockForRead() method
+// UpdateLockForRead() according to the reasons for not meeting the read conditions, update the lock information,
+// And at the same time reload data from the original table.
+type CachedTable interface {
+	Table
+
+	Init(exec sqlexec.SQLExecutor) error
+
+	// TryReadFromCache checks if the cache table is readable.
+	TryReadFromCache(ts uint64, leaseDuration time.Duration) kv.MemBuffer
+
+	// UpdateLockForRead If you cannot meet the conditions of the read buffer,
+	// you need to update the lock information and read the data from the original table
+	UpdateLockForRead(ctx context.Context, store kv.Storage, ts uint64, leaseDuration time.Duration)
+}

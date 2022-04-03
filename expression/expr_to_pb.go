@@ -19,14 +19,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
+	ast "github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -38,15 +37,14 @@ func ExpressionsToPBList(sc *stmtctx.StatementContext, exprs []Expression, clien
 	for _, expr := range exprs {
 		v := pc.ExprToPB(expr)
 		if v == nil {
-			return nil, dbterror.ClassOptimizer.NewStd(mysql.ErrInternal).
-				GenWithStack("expression %v cannot be pushed down", expr)
+			return nil, ErrInternal.GenWithStack("expression %v cannot be pushed down", expr)
 		}
 		pbExpr = append(pbExpr, v)
 	}
 	return
 }
 
-// PbConverter supplys methods to convert TiDB expressions to TiPB.
+// PbConverter supplies methods to convert TiDB expressions to TiPB.
 type PbConverter struct {
 	client kv.Client
 	sc     *stmtctx.StatementContext
@@ -111,6 +109,9 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 	case types.KindString, types.KindBinaryLiteral:
 		tp = tipb.ExprType_String
 		val = d.GetBytes()
+	case types.KindMysqlBit:
+		tp = tipb.ExprType_MysqlBit
+		val = d.GetBytes()
 	case types.KindBytes:
 		tp = tipb.ExprType_Bytes
 		val = d.GetBytes()
@@ -159,7 +160,7 @@ func ToPBFieldType(ft *types.FieldType) *tipb.FieldType {
 		Flen:    int32(ft.Flen),
 		Decimal: int32(ft.Decimal),
 		Charset: ft.Charset,
-		Collate: collationToProto(ft.Collate),
+		Collate: collate.CollationToProto(ft.Collate),
 		Elems:   ft.Elems,
 	}
 }
@@ -172,37 +173,9 @@ func FieldTypeFromPB(ft *tipb.FieldType) *types.FieldType {
 		Flen:    int(ft.Flen),
 		Decimal: int(ft.Decimal),
 		Charset: ft.Charset,
-		Collate: protoToCollation(ft.Collate),
+		Collate: collate.ProtoToCollation(ft.Collate),
 		Elems:   ft.Elems,
 	}
-}
-
-func collationToProto(c string) int32 {
-	if coll, err := charset.GetCollationByName(c); err == nil {
-		return collate.RewriteNewCollationIDIfNeeded(int32(coll.ID))
-	}
-	v := collate.RewriteNewCollationIDIfNeeded(int32(mysql.DefaultCollationID))
-	logutil.BgLogger().Warn(
-		"Unable to get collation ID by name, use ID of the default collation instead",
-		zap.String("name", c),
-		zap.Int32("default collation ID", v),
-		zap.String("default collation", mysql.DefaultCollationName),
-	)
-	return v
-}
-
-func protoToCollation(c int32) string {
-	coll, err := charset.GetCollationByID(int(collate.RestoreCollationIDIfNeeded(c)))
-	if err == nil {
-		return coll.Name
-	}
-	logutil.BgLogger().Warn(
-		"Unable to get collation name from ID, use name of the default collation instead",
-		zap.Int32("id", c),
-		zap.Int("default collation ID", mysql.DefaultCollationID),
-		zap.String("default collation", mysql.DefaultCollationName),
-	)
-	return mysql.DefaultCollationName
 }
 
 func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
@@ -210,7 +183,11 @@ func (pc PbConverter) columnToPBExpr(column *Column) *tipb.Expr {
 		return nil
 	}
 	switch column.GetType().Tp {
-	case mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
+	case mysql.TypeBit:
+		if !IsPushDownEnabled(ast.TypeStr(column.GetType().Tp), kv.TiKV) {
+			return nil
+		}
+	case mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
 		return nil
 	case mysql.TypeEnum:
 		if !IsPushDownEnabled("enum", kv.UnSpecified) {
@@ -274,7 +251,7 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	// put collation information into the RetType enforcedly and push it down to TiKV/MockTiKV
 	tp := *expr.RetType
 	if collate.NewCollationEnabled() {
-		_, tp.Collate = expr.CharsetAndCollation(expr.GetCtx())
+		_, tp.Collate = expr.CharsetAndCollation()
 	}
 
 	// Construct expression ProtoBuf.

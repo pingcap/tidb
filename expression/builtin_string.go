@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
-	"golang.org/x/text/transform"
 )
 
 var (
@@ -174,10 +173,12 @@ func reverseRunes(origin []rune) []rune {
 
 // SetBinFlagOrBinStr sets resTp to binary string if argTp is a binary string,
 // if not, sets the binary flag of resTp to true if argTp has binary flag.
+// We need to check if the tp is enum or set, if so, don't add binary flag directly unless it has binary flag.
 func SetBinFlagOrBinStr(argTp *types.FieldType, resTp *types.FieldType) {
+	nonEnumOrSet := !(argTp.Tp == mysql.TypeEnum || argTp.Tp == mysql.TypeSet)
 	if types.IsBinaryStr(argTp) {
 		types.SetBinChsClnFlag(resTp)
-	} else if mysql.HasBinaryFlag(argTp.Flag) || !types.IsNonBinaryStr(argTp) {
+	} else if mysql.HasBinaryFlag(argTp.Flag) || (!types.IsNonBinaryStr(argTp) && nonEnumOrSet) {
 		resTp.Flag |= mysql.BinaryFlag
 	}
 }
@@ -222,15 +223,6 @@ func (b *builtinLengthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-
-	argTp := b.args[0].GetType()
-	if !types.IsBinaryStr(argTp) {
-		dBytes, err := charset.NewEncoding(argTp.Charset).EncodeString(val)
-		if err == nil {
-			return int64(len(dBytes)), false, nil
-		}
-	}
-
 	return int64(len([]byte(val))), false, nil
 }
 
@@ -272,13 +264,6 @@ func (b *builtinASCIISig) evalInt(row chunk.Row) (int64, bool, error) {
 	if len(val) == 0 {
 		return 0, false, nil
 	}
-	argTp := b.args[0].GetType()
-	if !types.IsBinaryStr(argTp) {
-		dBytes, err := charset.NewEncoding(argTp.Charset).EncodeString(val)
-		if err == nil {
-			return int64(dBytes[0]), false, nil
-		}
-	}
 	return int64(val[0]), false, nil
 }
 
@@ -305,7 +290,7 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 
 		if argType.Flen < 0 {
 			bf.tp.Flen = mysql.MaxBlobWidth
-			logutil.BgLogger().Warn("unexpected `Flen` value(-1) in CONCAT's args", zap.Int("arg's index", i))
+			logutil.BgLogger().Debug("unexpected `Flen` value(-1) in CONCAT's args", zap.Int("arg's index", i))
 		}
 		bf.tp.Flen += argType.Flen
 	}
@@ -346,8 +331,7 @@ func (b *builtinConcatSig) evalString(row chunk.Row) (d string, isNull bool, err
 			return d, isNull, err
 		}
 		if uint64(len(s)+len(d)) > b.maxAllowedPacket {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("concat", b.maxAllowedPacket))
-			return "", true, nil
+			return "", true, handleAllowedPacketOverflowed(b.ctx, "concat", b.maxAllowedPacket)
 		}
 		s = append(s, []byte(d)...)
 	}
@@ -381,7 +365,7 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		if i != 0 {
 			if argType.Flen < 0 {
 				bf.tp.Flen = mysql.MaxBlobWidth
-				logutil.BgLogger().Warn("unexpected `Flen` value(-1) in CONCAT_WS's args", zap.Int("arg's index", i))
+				logutil.BgLogger().Debug("unexpected `Flen` value(-1) in CONCAT_WS's args", zap.Int("arg's index", i))
 			}
 			bf.tp.Flen += argType.Flen
 		}
@@ -451,8 +435,7 @@ func (b *builtinConcatWSSig) evalString(row chunk.Row) (string, bool, error) {
 			targetLength += len(sep)
 		}
 		if uint64(targetLength) > b.maxAllowedPacket {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("concat_ws", b.maxAllowedPacket))
-			return "", true, nil
+			return "", true, handleAllowedPacketOverflowed(b.ctx, "concat_ws", b.maxAllowedPacket)
 		}
 		strs = append(strs, val)
 	}
@@ -656,6 +639,7 @@ func (c *repeatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, errors.Trace(err)
 	}
 	sig := &builtinRepeatSig{bf, maxAllowedPacket}
+	sig.setPbCode(tipb.ScalarFuncSig_Repeat)
 	return sig, nil
 }
 
@@ -692,13 +676,9 @@ func (b *builtinRepeatSig) evalString(row chunk.Row) (d string, isNull bool, err
 	}
 
 	if uint64(byteLength)*uint64(num) > b.maxAllowedPacket {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("repeat", b.maxAllowedPacket))
-		return "", true, nil
+		return "", true, handleAllowedPacketOverflowed(b.ctx, "repeat", b.maxAllowedPacket)
 	}
 
-	if int64(byteLength) > int64(b.tp.Flen)/num {
-		return "", true, nil
-	}
 	return strings.Repeat(str, int(num)), false, nil
 }
 
@@ -722,7 +702,7 @@ func (c *lowerFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		sig = &builtinLowerSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Lower)
 	} else {
-		sig = &builtinLowerUTF8Sig{bf, charset.NewEncoding(argTp.Charset)}
+		sig = &builtinLowerUTF8Sig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_LowerUTF8)
 	}
 	return sig, nil
@@ -730,15 +710,11 @@ func (c *lowerFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 
 type builtinLowerUTF8Sig struct {
 	baseBuiltinFunc
-	encoding *charset.Encoding
 }
 
 func (b *builtinLowerUTF8Sig) Clone() builtinFunc {
 	newSig := &builtinLowerUTF8Sig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	if b.encoding != nil {
-		newSig.encoding = charset.NewEncoding(b.encoding.Name())
-	}
 	return newSig
 }
 
@@ -749,8 +725,8 @@ func (b *builtinLowerUTF8Sig) evalString(row chunk.Row) (d string, isNull bool, 
 	if isNull || err != nil {
 		return d, isNull, err
 	}
-
-	return b.encoding.ToLower(d), false, nil
+	enc := charset.FindEncoding(b.args[0].GetType().Charset)
+	return enc.ToLower(d), false, nil
 }
 
 type builtinLowerSig struct {
@@ -786,12 +762,12 @@ func (c *reverseFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err != nil {
 		return nil, err
 	}
-	retTp := *args[0].GetType()
-	retTp.Tp = mysql.TypeVarString
-	retTp.Decimal = types.UnspecifiedLength
-	bf.tp = &retTp
+
+	argTp := args[0].GetType()
+	bf.tp.Flen = args[0].GetType().Flen
+	addBinFlag(bf.tp)
 	var sig builtinFunc
-	if types.IsBinaryStr(bf.tp) {
+	if types.IsBinaryStr(argTp) {
 		sig = &builtinReverseSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Reverse)
 	} else {
@@ -892,8 +868,7 @@ func (b *builtinSpaceSig) evalString(row chunk.Row) (d string, isNull bool, err 
 		x = 0
 	}
 	if uint64(x) > b.maxAllowedPacket {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("space", b.maxAllowedPacket))
-		return d, true, nil
+		return d, true, handleAllowedPacketOverflowed(b.ctx, "space", b.maxAllowedPacket)
 	}
 	if x > mysql.MaxBlobWidth {
 		return d, true, nil
@@ -921,7 +896,7 @@ func (c *upperFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 		sig = &builtinUpperSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Upper)
 	} else {
-		sig = &builtinUpperUTF8Sig{bf, charset.NewEncoding(argTp.Charset)}
+		sig = &builtinUpperUTF8Sig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_UpperUTF8)
 	}
 	return sig, nil
@@ -929,15 +904,11 @@ func (c *upperFunctionClass) getFunction(ctx sessionctx.Context, args []Expressi
 
 type builtinUpperUTF8Sig struct {
 	baseBuiltinFunc
-	encoding *charset.Encoding
 }
 
 func (b *builtinUpperUTF8Sig) Clone() builtinFunc {
 	newSig := &builtinUpperUTF8Sig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	if b.encoding != nil {
-		newSig.encoding = charset.NewEncoding(b.encoding.Name())
-	}
 	return newSig
 }
 
@@ -948,8 +919,8 @@ func (b *builtinUpperUTF8Sig) evalString(row chunk.Row) (d string, isNull bool, 
 	if isNull || err != nil {
 		return d, isNull, err
 	}
-
-	return b.encoding.ToUpper(d), false, nil
+	enc := charset.FindEncoding(b.args[0].GetType().Charset)
+	return enc.ToUpper(d), false, nil
 }
 
 type builtinUpperSig struct {
@@ -1118,6 +1089,13 @@ func (c *convertFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err != nil {
 		return nil, errUnknownCharacterSet.GenWithStackByArgs(transcodingName)
 	}
+	// convert function should always derive to CoercibilityImplicit
+	bf.SetCoercibility(CoercibilityImplicit)
+	if bf.tp.Charset == charset.CharsetASCII {
+		bf.SetRepertoire(ASCII)
+	} else {
+		bf.SetRepertoire(UNICODE)
+	}
 	// Result will be a binary string if converts charset to BINARY.
 	// See https://dev.mysql.com/doc/refman/5.7/en/charset-binary-set.html
 	if types.IsBinaryStr(bf.tp) {
@@ -1150,18 +1128,27 @@ func (b *builtinConvertSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", true, err
 	}
-
-	// Since charset is already validated and set from getFunction(), there's no
-	// need to get charset from args again.
-	encoding, _ := charset.Lookup(b.tp.Charset)
-	// However, if `b.tp.Charset` is abnormally set to a wrong charset, we still
-	// return with error.
-	if encoding == nil {
-		return "", true, errUnknownCharacterSet.GenWithStackByArgs(b.tp.Charset)
+	argTp, resultTp := b.args[0].GetType(), b.tp
+	if !charset.IsSupportedEncoding(resultTp.Charset) {
+		return "", false, errUnknownCharacterSet.GenWithStackByArgs(resultTp.Charset)
 	}
-
-	target, _, err := transform.String(encoding.NewDecoder(), expr)
-	return target, err != nil, err
+	if types.IsBinaryStr(argTp) {
+		// Convert charset binary -> utf8. If it meets error, NULL is returned.
+		enc := charset.FindEncoding(resultTp.Charset)
+		ret, err := enc.Transform(nil, hack.Slice(expr), charset.OpDecodeReplace)
+		return string(ret), err != nil, nil
+	} else if types.IsBinaryStr(resultTp) {
+		// Convert charset utf8 -> binary.
+		enc := charset.FindEncoding(argTp.Charset)
+		ret, err := enc.Transform(nil, hack.Slice(expr), charset.OpEncode)
+		return string(ret), false, err
+	}
+	enc := charset.FindEncoding(resultTp.Charset)
+	if !enc.IsValid(hack.Slice(expr)) {
+		replace, _ := enc.Transform(nil, hack.Slice(expr), charset.OpReplaceNoErr)
+		return string(replace), false, nil
+	}
+	return expr, false, nil
 }
 
 type substringFunctionClass struct {
@@ -1642,7 +1629,7 @@ func (c *hexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 		argFieldTp := args[0].GetType()
 		// Use UTF8MB4 as default.
 		bf.tp.Flen = argFieldTp.Flen * 4 * 2
-		sig := &builtinHexStrArgSig{bf, charset.NewEncoding(argFieldTp.Charset)}
+		sig := &builtinHexStrArgSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_HexStrArg)
 		return sig, nil
 	case types.ETInt, types.ETReal, types.ETDecimal:
@@ -1662,15 +1649,11 @@ func (c *hexFunctionClass) getFunction(ctx sessionctx.Context, args []Expression
 
 type builtinHexStrArgSig struct {
 	baseBuiltinFunc
-	encoding *charset.Encoding
 }
 
 func (b *builtinHexStrArgSig) Clone() builtinFunc {
 	newSig := &builtinHexStrArgSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	if b.encoding != nil {
-		newSig.encoding = charset.NewEncoding(b.encoding.Name())
-	}
 	return newSig
 }
 
@@ -1681,12 +1664,7 @@ func (b *builtinHexStrArgSig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return d, isNull, err
 	}
-	dBytes := hack.Slice(d)
-	dBytes, err = b.encoding.Encode(nil, dBytes)
-	if err != nil {
-		return d, false, err
-	}
-	return strings.ToUpper(hex.EncodeToString(dBytes)), false, nil
+	return strings.ToUpper(hex.EncodeToString(hack.Slice(d))), false, nil
 }
 
 type builtinHexIntArgSig struct {
@@ -2100,8 +2078,7 @@ func (b *builtinLpadSig) evalString(row chunk.Row) (string, bool, error) {
 	targetLength := int(length)
 
 	if uint64(targetLength) > b.maxAllowedPacket {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("lpad", b.maxAllowedPacket))
-		return "", true, nil
+		return "", true, handleAllowedPacketOverflowed(b.ctx, "lpad", b.maxAllowedPacket)
 	}
 
 	padStr, isNull, err := b.args[2].EvalString(b.ctx, row)
@@ -2149,8 +2126,7 @@ func (b *builtinLpadUTF8Sig) evalString(row chunk.Row) (string, bool, error) {
 	targetLength := int(length)
 
 	if uint64(targetLength)*uint64(mysql.MaxBytesOfCharacter) > b.maxAllowedPacket {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("lpad", b.maxAllowedPacket))
-		return "", true, nil
+		return "", true, handleAllowedPacketOverflowed(b.ctx, "lpad", b.maxAllowedPacket)
 	}
 
 	padStr, isNull, err := b.args[2].EvalString(b.ctx, row)
@@ -2231,8 +2207,7 @@ func (b *builtinRpadSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 	targetLength := int(length)
 	if uint64(targetLength) > b.maxAllowedPacket {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("rpad", b.maxAllowedPacket))
-		return "", true, nil
+		return "", true, handleAllowedPacketOverflowed(b.ctx, "rpad", b.maxAllowedPacket)
 	}
 
 	padStr, isNull, err := b.args[2].EvalString(b.ctx, row)
@@ -2280,8 +2255,7 @@ func (b *builtinRpadUTF8Sig) evalString(row chunk.Row) (string, bool, error) {
 	targetLength := int(length)
 
 	if uint64(targetLength)*uint64(mysql.MaxBytesOfCharacter) > b.maxAllowedPacket {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("rpad", b.maxAllowedPacket))
-		return "", true, nil
+		return "", true, handleAllowedPacketOverflowed(b.ctx, "rpad", b.maxAllowedPacket)
 	}
 
 	padStr, isNull, err := b.args[2].EvalString(b.ctx, row)
@@ -2336,7 +2310,6 @@ func (b *builtinBitLengthSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-
 	return int64(len(val) * 8), false, nil
 }
 
@@ -2424,8 +2397,17 @@ func (b *builtinCharSig) evalString(row chunk.Row) (string, bool, error) {
 		}
 		bigints = append(bigints, val)
 	}
-	result := string(b.convertToBytes(bigints))
-	return result, false, nil
+
+	dBytes := b.convertToBytes(bigints)
+	enc := charset.FindEncoding(b.tp.Charset)
+	res, err := enc.Transform(nil, dBytes, charset.OpDecode)
+	if err != nil {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		if b.ctx.GetSessionVars().StrictSQLMode {
+			return "", true, nil
+		}
+	}
+	return string(res), false, nil
 }
 
 type charLengthFunctionClass struct {
@@ -2892,41 +2874,19 @@ func (b *builtinOrdSig) evalInt(row chunk.Row) (int64, bool, error) {
 		return 0, isNull, err
 	}
 
-	ord, err := chooseOrdFunc(b.args[0].GetType().Charset)
+	strBytes := hack.Slice(str)
+	enc := charset.FindEncoding(b.args[0].GetType().Charset)
+	w := len(charset.EncodingUTF8Impl.Peek(strBytes))
+	res, err := enc.Transform(nil, strBytes[:w], charset.OpEncode)
 	if err != nil {
-		return 0, false, err
+		// Fallback to the first byte.
+		return calcOrd(strBytes[:1]), false, nil
 	}
-	return ord(str), false, nil
+	// Only the first character is considered.
+	return calcOrd(res[:len(enc.Peek(res))]), false, nil
 }
 
-func chooseOrdFunc(charSet string) (func(string) int64, error) {
-	// use utf8 by default
-	if charSet == "" {
-		charSet = charset.CharsetUTF8
-	}
-	desc, err := charset.GetCharsetInfo(charSet)
-	if err != nil {
-		return nil, err
-	}
-	if desc.Maxlen == 1 {
-		return ordSingleByte, nil
-	}
-	return ordUtf8, nil
-}
-
-func ordSingleByte(str string) int64 {
-	if len(str) == 0 {
-		return 0
-	}
-	return int64(str[0])
-}
-
-func ordUtf8(str string) int64 {
-	if len(str) == 0 {
-		return 0
-	}
-	_, size := utf8.DecodeRuneInString(str)
-	leftMost := str[:size]
+func calcOrd(leftMost []byte) int64 {
 	var result int64
 	var factor int64 = 1
 	for i := len(leftMost) - 1; i >= 0; i-- {
@@ -3485,6 +3445,7 @@ func (c *fromBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 
 	types.SetBinChsClnFlag(bf.tp)
 	sig := &builtinFromBase64Sig{bf, maxAllowedPacket}
+	sig.setPbCode(tipb.ScalarFuncSig_FromBase64)
 	return sig, nil
 }
 
@@ -3525,8 +3486,7 @@ func (b *builtinFromBase64Sig) evalString(row chunk.Row) (string, bool, error) {
 		return "", true, nil
 	}
 	if needDecodeLen > int(b.maxAllowedPacket) {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("from_base64", b.maxAllowedPacket))
-		return "", true, nil
+		return "", true, handleAllowedPacketOverflowed(b.ctx, "from_base64", b.maxAllowedPacket)
 	}
 
 	str = strings.Replace(str, "\t", "", -1)
@@ -3561,6 +3521,7 @@ func (c *toBase64FunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 
 	sig := &builtinToBase64Sig{bf, maxAllowedPacket}
+	sig.setPbCode(tipb.ScalarFuncSig_ToBase64)
 	return sig, nil
 }
 
@@ -3606,19 +3567,12 @@ func (b *builtinToBase64Sig) evalString(row chunk.Row) (d string, isNull bool, e
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	argTp := b.args[0].GetType()
-	if !types.IsBinaryStr(argTp) {
-		if encodedStr, err := charset.NewEncoding(argTp.Charset).EncodeString(str); err == nil {
-			str = encodedStr
-		}
-	}
 	needEncodeLen := base64NeededEncodedLength(len(str))
 	if needEncodeLen == -1 {
 		return "", true, nil
 	}
 	if needEncodeLen > int(b.maxAllowedPacket) {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("to_base64", b.maxAllowedPacket))
-		return "", true, nil
+		return "", true, handleAllowedPacketOverflowed(b.ctx, "to_base64", b.maxAllowedPacket)
 	}
 	if b.tp.Flen == -1 || b.tp.Flen > mysql.MaxBlobWidth {
 		b.tp.Flen = mysql.MaxBlobWidth
@@ -3669,7 +3623,7 @@ func (c *insertFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, errors.Trace(err)
 	}
 
-	if types.IsBinaryStr(args[0].GetType()) {
+	if types.IsBinaryStr(bf.tp) {
 		sig = &builtinInsertSig{bf, maxAllowedPacket}
 		sig.setPbCode(tipb.ScalarFuncSig_Insert)
 	} else {
@@ -3723,8 +3677,7 @@ func (b *builtinInsertSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 
 	if uint64(strLength-length+int64(len(newstr))) > b.maxAllowedPacket {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("insert", b.maxAllowedPacket))
-		return "", true, nil
+		return "", true, handleAllowedPacketOverflowed(b.ctx, "insert", b.maxAllowedPacket)
 	}
 
 	return str[0:pos-1] + newstr + str[pos+length-1:], false, nil
@@ -3777,8 +3730,7 @@ func (b *builtinInsertUTF8Sig) evalString(row chunk.Row) (string, bool, error) {
 	strHead := string(runes[0 : pos-1])
 	strTail := string(runes[pos+length-1:])
 	if uint64(len(strHead)+len(newstr)+len(strTail)) > b.maxAllowedPacket {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("insert", b.maxAllowedPacket))
-		return "", true, nil
+		return "", true, handleAllowedPacketOverflowed(b.ctx, "insert", b.maxAllowedPacket)
 	}
 	return strHead + newstr + strTail, false, nil
 }
@@ -4046,8 +3998,7 @@ func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error)
 			str = string(runes[:b.length])
 		} else if b.length > lenRunes {
 			if uint64(b.length-lenRunes) > b.maxAllowedPacket {
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("weight_string", b.maxAllowedPacket))
-				return "", true, nil
+				return "", true, handleAllowedPacketOverflowed(b.ctx, "weight_string", b.maxAllowedPacket)
 			}
 			str += strings.Repeat(" ", b.length-lenRunes)
 		}
@@ -4060,8 +4011,7 @@ func (b *builtinWeightStringSig) evalString(row chunk.Row) (string, bool, error)
 			str = str[:b.length]
 		} else if b.length > lenStr {
 			if uint64(b.length-lenStr) > b.maxAllowedPacket {
-				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnAllowedPacketOverflowed.GenWithStackByArgs("cast_as_binary", b.maxAllowedPacket))
-				return "", true, nil
+				return "", true, handleAllowedPacketOverflowed(b.ctx, "cast_as_binary", b.maxAllowedPacket)
 			}
 			str += strings.Repeat("\x00", b.length-lenStr)
 		}

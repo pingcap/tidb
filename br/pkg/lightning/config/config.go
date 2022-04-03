@@ -33,12 +33,12 @@ import (
 	"github.com/docker/go-units"
 	gomysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
-	router "github.com/pingcap/tidb-tools/pkg/table-router"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
+	filter "github.com/pingcap/tidb/util/table-filter"
+	router "github.com/pingcap/tidb/util/table-router"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -70,7 +70,6 @@ const (
 	ErrorOnDup = "error"
 
 	defaultDistSQLScanConcurrency     = 15
-	distSQLScanConcurrencyPerStore    = 4
 	defaultBuildStatsConcurrency      = 20
 	defaultIndexSerialScanConcurrency = 20
 	defaultChecksumTableConcurrency   = 2
@@ -88,20 +87,16 @@ const (
 	//
 	// With cron.check-disk-quota = 1m, region-concurrency = 40, this should
 	// contribute 2.3 GiB to the reserved size.
-	autoDiskQuotaLocalReservedSpeed uint64 = 1 * units.KiB
-	defaultEngineMemCacheSize              = 512 * units.MiB
-	defaultLocalWriterMemCacheSize         = 128 * units.MiB
-
-	maxRetryTimes           = 4
-	defaultRetryBackoffTime = 100 * time.Millisecond
-	pdStores                = "/pd/api/v1/stores"
+	// autoDiskQuotaLocalReservedSpeed uint64 = 1 * units.KiB
+	defaultEngineMemCacheSize      = 512 * units.MiB
+	defaultLocalWriterMemCacheSize = 128 * units.MiB
 
 	defaultCSVDataCharacterSet       = "binary"
 	defaultCSVDataInvalidCharReplace = utf8.RuneError
 )
 
 var (
-	supportedStorageTypes = []string{"file", "local", "s3", "noop", "gcs"}
+	supportedStorageTypes = []string{"file", "local", "s3", "noop", "gcs", "gs"}
 
 	DefaultFilter = []string{
 		"*.*",
@@ -342,6 +337,10 @@ type MaxError struct {
 func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
 	switch val := v.(type) {
 	case int64:
+		// ignore val that is smaller than 0
+		if val < 0 {
+			val = 0
+		}
 		cfg.Syntax.Store(0)
 		cfg.Charset.Store(math.MaxInt64)
 		cfg.Type.Store(val)
@@ -358,26 +357,22 @@ func (cfg *MaxError) UnmarshalTOML(v interface{}) error {
 type DuplicateResolutionAlgorithm int
 
 const (
-	// DupeResAlgUnsafeNoop does not perform resolution. This is unsafe as the
-	// table will be left in an inconsistent state.
-	DupeResAlgUnsafeNoop DuplicateResolutionAlgorithm = iota
+	// DupeResAlgNone doesn't detect duplicate.
+	DupeResAlgNone DuplicateResolutionAlgorithm = iota
 
-	// DupeResAlgDelete deletes all information related to the duplicated rows.
-	// Users need to analyze the lightning_task_info.conflict_error_v1 table to
-	// add back the correct rows.
-	DupeResAlgDelete
+	// DupeResAlgRecord only records duplicate records to `lightning_task_info.conflict_error_v1` table on the target TiDB.
+	DupeResAlgRecord
 
-	// DupeResAlgKeepAnyOne keeps a single row from the any transitive set of
-	// duplicated rows. The choice is arbitrary.
-	// This algorithm is not implemented yet.
-	DupeResAlgKeepAnyOne
+	// DupeResAlgRemove records all duplicate records like the 'record' algorithm and remove all information related to the
+	// duplicated rows. Users need to analyze the lightning_task_info.conflict_error_v1 table to add back the correct rows.
+	DupeResAlgRemove
 )
 
 func (dra *DuplicateResolutionAlgorithm) UnmarshalTOML(v interface{}) error {
 	if val, ok := v.(string); ok {
 		return dra.FromStringValue(val)
 	}
-	return errors.Errorf("invalid duplicate-resolution '%v', please choose valid option between ['unsafe-noop', 'delete']", v)
+	return errors.Errorf("invalid duplicate-resolution '%v', please choose valid option between ['record', 'none', 'remove']", v)
 }
 
 func (dra DuplicateResolutionAlgorithm) MarshalText() ([]byte, error) {
@@ -386,12 +381,14 @@ func (dra DuplicateResolutionAlgorithm) MarshalText() ([]byte, error) {
 
 func (dra *DuplicateResolutionAlgorithm) FromStringValue(s string) error {
 	switch strings.ToLower(s) {
-	case "unsafe-noop":
-		*dra = DupeResAlgUnsafeNoop
-	case "delete":
-		*dra = DupeResAlgDelete
+	case "record":
+		*dra = DupeResAlgRecord
+	case "none":
+		*dra = DupeResAlgNone
+	case "remove":
+		*dra = DupeResAlgRemove
 	default:
-		return errors.Errorf("invalid duplicate-resolution '%s', please choose valid option between ['unsafe-noop', 'delete']", s)
+		return errors.Errorf("invalid duplicate-resolution '%s', please choose valid option between ['record', 'none', 'remove']", s)
 	}
 	return nil
 }
@@ -406,12 +403,12 @@ func (dra *DuplicateResolutionAlgorithm) UnmarshalJSON(data []byte) error {
 
 func (dra DuplicateResolutionAlgorithm) String() string {
 	switch dra {
-	case DupeResAlgUnsafeNoop:
-		return "unsafe-noop"
-	case DupeResAlgDelete:
-		return "delete"
-	case DupeResAlgKeepAnyOne:
-		return "keep-any-one"
+	case DupeResAlgRecord:
+		return "record"
+	case DupeResAlgNone:
+		return "none"
+	case DupeResAlgRemove:
+		return "remove"
 	default:
 		panic(fmt.Sprintf("invalid duplicate-resolution type '%d'", dra))
 	}
@@ -475,6 +472,14 @@ type IgnoreColumns struct {
 	Columns     []string `toml:"columns" json:"columns"`
 }
 
+func (ic *IgnoreColumns) ColumnsMap() map[string]struct{} {
+	columnMap := make(map[string]struct{}, len(ic.Columns))
+	for _, c := range ic.Columns {
+		columnMap[c] = struct{}{}
+	}
+	return columnMap
+}
+
 // GetIgnoreColumns gets Ignore config by schema name/regex and table name/regex.
 func (igCols AllIgnoreColumns) GetIgnoreColumns(db string, table string, caseSensitive bool) (*IgnoreColumns, error) {
 	if !caseSensitive {
@@ -487,7 +492,7 @@ func (igCols AllIgnoreColumns) GetIgnoreColumns(db string, table string, caseSen
 		}
 		f, err := filter.Parse(ig.TableFilter)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, common.ErrInvalidConfig.GenWithStack("invalid table filter %s in ignore columns", strings.Join(ig.TableFilter, ","))
 		}
 		if f.MatchTable(db, table) {
 			return igCols[i], nil
@@ -504,25 +509,26 @@ type FileRouteRule struct {
 	Type        string `json:"type" toml:"type" yaml:"type"`
 	Key         string `json:"key" toml:"key" yaml:"key"`
 	Compression string `json:"compression" toml:"compression" yaml:"compression"`
-	// TODO: DataCharacterSet here can overide the same field in [mydumper.csv] with a higher level.
-	// This could provide users a more flexable usage to configure different files with
+	// unescape the schema/table name only used in lightning's internal logic now.
+	Unescape bool `json:"-" toml:"-" yaml:"-"`
+	// TODO: DataCharacterSet here can override the same field in [mydumper.csv] with a higher level.
+	// This could provide users a more flexible usage to configure different files with
 	// different data charsets.
 	// DataCharacterSet string `toml:"data-character-set" json:"data-character-set"`
 }
 
 type TikvImporter struct {
-	Addr               string   `toml:"addr" json:"addr"`
-	Backend            string   `toml:"backend" json:"backend"`
-	OnDuplicate        string   `toml:"on-duplicate" json:"on-duplicate"`
-	MaxKVPairs         int      `toml:"max-kv-pairs" json:"max-kv-pairs"`
-	SendKVPairs        int      `toml:"send-kv-pairs" json:"send-kv-pairs"`
-	RegionSplitSize    ByteSize `toml:"region-split-size" json:"region-split-size"`
-	SortedKVDir        string   `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
-	DiskQuota          ByteSize `toml:"disk-quota" json:"disk-quota"`
-	RangeConcurrency   int      `toml:"range-concurrency" json:"range-concurrency"`
-	DuplicateDetection bool     `toml:"duplicate-detection" json:"duplicate-detection"`
-
+	Addr                string                       `toml:"addr" json:"addr"`
+	Backend             string                       `toml:"backend" json:"backend"`
+	OnDuplicate         string                       `toml:"on-duplicate" json:"on-duplicate"`
+	MaxKVPairs          int                          `toml:"max-kv-pairs" json:"max-kv-pairs"`
+	SendKVPairs         int                          `toml:"send-kv-pairs" json:"send-kv-pairs"`
+	RegionSplitSize     ByteSize                     `toml:"region-split-size" json:"region-split-size"`
+	SortedKVDir         string                       `toml:"sorted-kv-dir" json:"sorted-kv-dir"`
+	DiskQuota           ByteSize                     `toml:"disk-quota" json:"disk-quota"`
+	RangeConcurrency    int                          `toml:"range-concurrency" json:"range-concurrency"`
 	DuplicateResolution DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
+	IncrementalImport   bool                         `toml:"incremental-import" json:"incremental-import"`
 
 	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
 	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
@@ -548,25 +554,35 @@ type Security struct {
 	KeyPath  string `toml:"key-path" json:"key-path"`
 	// RedactInfoLog indicates that whether enabling redact log
 	RedactInfoLog bool `toml:"redact-info-log" json:"redact-info-log"`
+
+	// TLSConfigName is used to set tls config for lightning in DM, so we don't expose this field to user
+	// DM may running many lightning instances at same time, so we need to set different tls config name for each lightning
+	TLSConfigName string `toml:"-" json:"-"`
 }
 
-// RegistersMySQL registers (or deregisters) the TLS config with name "cluster"
+// RegisterMySQL registers the TLS config with name "cluster" or security.TLSConfigName
 // for use in `sql.Open()`. This method is goroutine-safe.
 func (sec *Security) RegisterMySQL() error {
 	if sec == nil {
 		return nil
 	}
 	tlsConfig, err := common.ToTLSConfig(sec.CAPath, sec.CertPath, sec.KeyPath)
-	switch {
-	case err != nil:
+	if err != nil {
 		return errors.Trace(err)
-	case tlsConfig != nil:
+	}
+	if tlsConfig != nil {
 		// error happens only when the key coincides with the built-in names.
-		_ = gomysql.RegisterTLSConfig("cluster", tlsConfig)
-	default:
-		gomysql.DeregisterTLSConfig("cluster")
+		_ = gomysql.RegisterTLSConfig(sec.TLSConfigName, tlsConfig)
 	}
 	return nil
+}
+
+// DeregisterMySQL deregisters the TLS config with security.TLSConfigName
+func (sec *Security) DeregisterMySQL() {
+	if sec == nil || len(sec.CAPath) == 0 {
+		return
+	}
+	gomysql.DeregisterTLSConfig(sec.TLSConfigName)
 }
 
 // A duration which can be deserialized from a TOML string.
@@ -587,6 +603,48 @@ func (d Duration) MarshalText() ([]byte, error) {
 
 func (d *Duration) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf(`"%s"`, d.Duration)), nil
+}
+
+// Charset defines character set
+type Charset int
+
+const (
+	Binary Charset = iota
+	UTF8MB4
+	GB18030
+	GBK
+)
+
+// String return the string value of charset
+func (c Charset) String() string {
+	switch c {
+	case Binary:
+		return "binary"
+	case UTF8MB4:
+		return "utf8mb4"
+	case GB18030:
+		return "gb18030"
+	case GBK:
+		return "gbk"
+	default:
+		return "unknown_charset"
+	}
+}
+
+// ParseCharset parser character set for string
+func ParseCharset(dataCharacterSet string) (Charset, error) {
+	switch strings.ToLower(dataCharacterSet) {
+	case "", "binary":
+		return Binary, nil
+	case "utf8mb4":
+		return UTF8MB4, nil
+	case "gb18030":
+		return GB18030, nil
+	case "gbk":
+		return GBK, nil
+	default:
+		return Binary, errors.Errorf("found unsupported data-character-set: %s", dataCharacterSet)
+	}
 }
 
 func NewConfig() *Config {
@@ -646,7 +704,7 @@ func NewConfig() *Config {
 			SendKVPairs:         32768,
 			RegionSplitSize:     0,
 			DiskQuota:           ByteSize(math.MaxInt64),
-			DuplicateResolution: DupeResAlgDelete,
+			DuplicateResolution: DupeResAlgNone,
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,
@@ -748,22 +806,22 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	// Reject problematic CSV configurations.
 	csv := &cfg.Mydumper.CSV
 	if len(csv.Separator) == 0 {
-		return errors.New("invalid config: `mydumper.csv.separator` must not be empty")
+		return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.separator` must not be empty")
 	}
 
 	if len(csv.Delimiter) > 0 && (strings.HasPrefix(csv.Separator, csv.Delimiter) || strings.HasPrefix(csv.Delimiter, csv.Separator)) {
-		return errors.New("invalid config: `mydumper.csv.separator` and `mydumper.csv.delimiter` must not be prefix of each other")
+		return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.separator` and `mydumper.csv.delimiter` must not be prefix of each other")
 	}
 
 	if csv.BackslashEscape {
 		if csv.Separator == `\` {
-			return errors.New("invalid config: cannot use '\\' as CSV separator when `mydumper.csv.backslash-escape` is true")
+			return common.ErrInvalidConfig.GenWithStack("cannot use '\\' as CSV separator when `mydumper.csv.backslash-escape` is true")
 		}
 		if csv.Delimiter == `\` {
-			return errors.New("invalid config: cannot use '\\' as CSV delimiter when `mydumper.csv.backslash-escape` is true")
+			return common.ErrInvalidConfig.GenWithStack("cannot use '\\' as CSV delimiter when `mydumper.csv.backslash-escape` is true")
 		}
 		if csv.Terminator == `\` {
-			return errors.New("invalid config: cannot use '\\' as CSV terminator when `mydumper.csv.backslash-escape` is true")
+			return common.ErrInvalidConfig.GenWithStack("cannot use '\\' as CSV terminator when `mydumper.csv.backslash-escape` is true")
 		}
 	}
 
@@ -772,11 +830,13 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		if filepath.IsAbs(rule.Path) {
 			relPath, err := filepath.Rel(cfg.Mydumper.SourceDir, rule.Path)
 			if err != nil {
-				return errors.Trace(err)
+				return common.ErrInvalidConfig.Wrap(err).
+					GenWithStack("cannot find relative path for file route path %s", rule.Path)
 			}
 			// ".." means that this path is not in source dir, so we should return an error
 			if strings.HasPrefix(relPath, "..") {
-				return errors.Errorf("file route path '%s' is not in source dir '%s'", rule.Path, cfg.Mydumper.SourceDir)
+				return common.ErrInvalidConfig.GenWithStack(
+					"file route path '%s' is not in source dir '%s'", rule.Path, cfg.Mydumper.SourceDir)
 			}
 			rule.Path = relPath
 		}
@@ -790,9 +850,19 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	if len(cfg.Mydumper.DataCharacterSet) == 0 {
 		cfg.Mydumper.DataCharacterSet = defaultCSVDataCharacterSet
 	}
+	charset, err1 := ParseCharset(cfg.Mydumper.DataCharacterSet)
+	if err1 != nil {
+		return common.ErrInvalidConfig.Wrap(err1).GenWithStack("invalid `mydumper.data-character-set`")
+	}
+	if charset == GBK || charset == GB18030 {
+		log.L().Warn(
+			"incompatible strings may be encountered during the transcoding process and will be replaced, please be aware of the risk of not being able to retain the original information",
+			zap.String("source-character-set", charset.String()),
+			zap.ByteString("invalid-char-replacement", []byte(cfg.Mydumper.DataInvalidCharReplace)))
+	}
 
 	if cfg.TikvImporter.Backend == "" {
-		return errors.New("tikv-importer.backend must not be empty!")
+		return common.ErrInvalidConfig.GenWithStack("tikv-importer.backend must not be empty!")
 	}
 	cfg.TikvImporter.Backend = strings.ToLower(cfg.TikvImporter.Backend)
 	mustHaveInternalConnections := true
@@ -803,7 +873,6 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		cfg.PostRestore.Checksum = OpLevelOff
 		cfg.PostRestore.Analyze = OpLevelOff
 		cfg.PostRestore.Compact = false
-		cfg.TikvImporter.DuplicateDetection = false
 	case BackendImporter, BackendLocal:
 		// RegionConcurrency > NumCPU is meaningless.
 		cpuCount := runtime.NumCPU()
@@ -812,7 +881,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		}
 		cfg.DefaultVarsForImporterAndLocalBackend()
 	default:
-		return errors.Errorf("invalid config: unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)
+		return common.ErrInvalidConfig.GenWithStack("unsupported `tikv-importer.backend` (%s)", cfg.TikvImporter.Backend)
 	}
 
 	// TODO calculate these from the machine's free memory.
@@ -827,8 +896,8 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		if err := cfg.CheckAndAdjustForLocalBackend(); err != nil {
 			return err
 		}
-	} else if cfg.TikvImporter.DuplicateDetection {
-		return errors.Errorf("invalid config: unsupported backend (%s) for duplicate-detection", cfg.TikvImporter.Backend)
+	} else {
+		cfg.TikvImporter.DuplicateResolution = DupeResAlgNone
 	}
 
 	if cfg.TikvImporter.Backend == BackendTiDB {
@@ -836,14 +905,15 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		switch cfg.TikvImporter.OnDuplicate {
 		case ReplaceOnDup, IgnoreOnDup, ErrorOnDup:
 		default:
-			return errors.Errorf("invalid config: unsupported `tikv-importer.on-duplicate` (%s)", cfg.TikvImporter.OnDuplicate)
+			return common.ErrInvalidConfig.GenWithStack(
+				"unsupported `tikv-importer.on-duplicate` (%s)", cfg.TikvImporter.OnDuplicate)
 		}
 	}
 
 	var err error
 	cfg.TiDB.SQLMode, err = mysql.GetSQLMode(cfg.TiDB.StrSQLMode)
 	if err != nil {
-		return errors.Annotate(err, "invalid config: `mydumper.tidb.sql_mode` must be a valid SQL_MODE")
+		return common.ErrInvalidConfig.Wrap(err).GenWithStack("`mydumper.tidb.sql_mode` must be a valid SQL_MODE")
 	}
 
 	if err := cfg.CheckAndAdjustSecurity(); err != nil {
@@ -854,7 +924,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 	if cfg.HasLegacyBlackWhiteList() {
 		log.L().Warn("the config `black-white-list` has been deprecated, please replace with `mydumper.filter`")
 		if !common.StringSliceEqual(cfg.Mydumper.Filter, DefaultFilter) {
-			return errors.New("invalid config: `mydumper.filter` and `black-white-list` cannot be simultaneously defined")
+			return common.ErrInvalidConfig.GenWithStack("`mydumper.filter` and `black-white-list` cannot be simultaneously defined")
 		}
 	}
 
@@ -863,7 +933,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 			rule.ToLower()
 		}
 		if err := rule.Valid(); err != nil {
-			return errors.Trace(err)
+			return common.ErrInvalidConfig.Wrap(err).GenWithStack("file route rule is invalid")
 		}
 	}
 
@@ -877,7 +947,7 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 
 func (cfg *Config) CheckAndAdjustForLocalBackend() error {
 	if len(cfg.TikvImporter.SortedKVDir) == 0 {
-		return errors.Errorf("tikv-importer.sorted-kv-dir must not be empty!")
+		return common.ErrInvalidConfig.GenWithStack("tikv-importer.sorted-kv-dir must not be empty!")
 	}
 
 	storageSizeDir := filepath.Clean(cfg.TikvImporter.SortedKVDir)
@@ -885,15 +955,14 @@ func (cfg *Config) CheckAndAdjustForLocalBackend() error {
 
 	switch {
 	case os.IsNotExist(err):
-		// the sorted-kv-dir does not exist, meaning we will create it automatically.
-		// so we extract the storage size from its parent directory.
-		storageSizeDir = filepath.Dir(storageSizeDir)
+		return nil
 	case err == nil:
 		if !sortedKVDirInfo.IsDir() {
-			return errors.Errorf("tikv-importer.sorted-kv-dir ('%s') is not a directory", storageSizeDir)
+			return common.ErrInvalidConfig.
+				GenWithStack("tikv-importer.sorted-kv-dir ('%s') is not a directory", storageSizeDir)
 		}
 	default:
-		return errors.Annotate(err, "invalid tikv-importer.sorted-kv-dir")
+		return common.ErrInvalidConfig.Wrap(err).GenWithStack("invalid tikv-importer.sorted-kv-dir")
 	}
 
 	return nil
@@ -944,7 +1013,7 @@ func (cfg *Config) CheckAndAdjustTiDBPort(ctx context.Context, mustHaveInternalC
 		var settings tidbcfg.Config
 		err = tls.GetJSON(ctx, "/settings", &settings)
 		if err != nil {
-			return errors.Annotate(err, "cannot fetch settings from TiDB, please manually fill in `tidb.port` and `tidb.pd-addr`")
+			return common.ErrInvalidConfig.Wrap(err).GenWithStack("cannot fetch settings from TiDB, please manually fill in `tidb.port` and `tidb.pd-addr`")
 		}
 		if cfg.TiDB.Port <= 0 {
 			cfg.TiDB.Port = int(settings.Port)
@@ -956,10 +1025,11 @@ func (cfg *Config) CheckAndAdjustTiDBPort(ctx context.Context, mustHaveInternalC
 	}
 
 	if cfg.TiDB.Port <= 0 {
-		return errors.New("invalid `tidb.port` setting")
+		return common.ErrInvalidConfig.GenWithStack("invalid `tidb.port` setting")
 	}
+
 	if mustHaveInternalConnections && len(cfg.TiDB.PdAddr) == 0 {
-		return errors.New("invalid `tidb.pd-addr` setting")
+		return common.ErrInvalidConfig.GenWithStack("invalid `tidb.pd-addr` setting")
 	}
 	return nil
 }
@@ -979,7 +1049,7 @@ func (cfg *Config) CheckAndAdjustFilePath() error {
 		var err error
 		u, err = url.Parse(cfg.Mydumper.SourceDir)
 		if err != nil {
-			return errors.Trace(err)
+			return common.ErrInvalidConfig.Wrap(err).GenWithStack("cannot parse `mydumper.data-source-dir` %s", cfg.Mydumper.SourceDir)
 		}
 	} else {
 		u = &url.URL{}
@@ -987,16 +1057,19 @@ func (cfg *Config) CheckAndAdjustFilePath() error {
 
 	// convert path and relative path to a valid file url
 	if u.Scheme == "" {
+		if cfg.Mydumper.SourceDir == "" {
+			return common.ErrInvalidConfig.GenWithStack("`mydumper.data-source-dir` is not set")
+		}
 		if !common.IsDirExists(cfg.Mydumper.SourceDir) {
-			return errors.Errorf("%s: mydumper dir does not exist", cfg.Mydumper.SourceDir)
+			return common.ErrInvalidConfig.GenWithStack("'%s': `mydumper.data-source-dir` does not exist", cfg.Mydumper.SourceDir)
 		}
 		absPath, err := filepath.Abs(cfg.Mydumper.SourceDir)
 		if err != nil {
-			return errors.Annotatef(err, "covert data-source-dir '%s' to absolute path failed", cfg.Mydumper.SourceDir)
+			return common.ErrInvalidConfig.Wrap(err).GenWithStack("covert data-source-dir '%s' to absolute path failed", cfg.Mydumper.SourceDir)
 		}
-		cfg.Mydumper.SourceDir = "file://" + filepath.ToSlash(absPath)
-		u.Path = absPath
+		u.Path = filepath.ToSlash(absPath)
 		u.Scheme = "file"
+		cfg.Mydumper.SourceDir = u.String()
 	}
 
 	found := false
@@ -1007,7 +1080,9 @@ func (cfg *Config) CheckAndAdjustFilePath() error {
 		}
 	}
 	if !found {
-		return errors.Errorf("Unsupported data-source-dir url '%s'", cfg.Mydumper.SourceDir)
+		return common.ErrInvalidConfig.GenWithStack(
+			"unsupported data-source-dir url '%s', supported storage types are %s",
+			cfg.Mydumper.SourceDir, strings.Join(supportedStorageTypes, ","))
 	}
 	return nil
 }
@@ -1069,18 +1144,21 @@ func (cfg *Config) CheckAndAdjustSecurity() error {
 	switch cfg.TiDB.TLS {
 	case "":
 		if len(cfg.TiDB.Security.CAPath) > 0 {
-			cfg.TiDB.TLS = "cluster"
+			if cfg.TiDB.Security.TLSConfigName == "" {
+				cfg.TiDB.Security.TLSConfigName = "cluster" // adjust this the default value
+			}
+			cfg.TiDB.TLS = cfg.TiDB.Security.TLSConfigName
 		} else {
 			cfg.TiDB.TLS = "false"
 		}
 	case "cluster":
 		if len(cfg.Security.CAPath) == 0 {
-			return errors.New("invalid config: cannot set `tidb.tls` to 'cluster' without a [security] section")
+			return common.ErrInvalidConfig.GenWithStack("cannot set `tidb.tls` to 'cluster' without a [security] section")
 		}
 	case "false", "skip-verify", "preferred":
 		break
 	default:
-		return errors.Errorf("invalid config: unsupported `tidb.tls` config %s", cfg.TiDB.TLS)
+		return common.ErrInvalidConfig.GenWithStack("unsupported `tidb.tls` config %s", cfg.TiDB.TLS)
 	}
 	return nil
 }

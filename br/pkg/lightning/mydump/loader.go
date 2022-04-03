@@ -18,22 +18,42 @@ import (
 	"context"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/pingcap/errors"
-	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
-	router "github.com/pingcap/tidb-tools/pkg/table-router"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	regexprrouter "github.com/pingcap/tidb/util/regexpr-router"
+	filter "github.com/pingcap/tidb/util/table-filter"
 	"go.uber.org/zap"
 )
 
 type MDDatabaseMeta struct {
 	Name       string
-	SchemaFile string
+	SchemaFile FileInfo
 	Tables     []*MDTableMeta
 	Views      []*MDTableMeta
 	charSet    string
+}
+
+func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store storage.ExternalStorage) string {
+	schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
+	if err != nil {
+		log.L().Warn("failed to extract table schema",
+			zap.String("Path", m.SchemaFile.FileMeta.Path),
+			log.ShortError(err),
+		)
+		schema = nil
+	}
+	schemaStr := strings.TrimSpace(string(schema))
+	// set default if schema sql is empty
+	if len(schemaStr) == 0 {
+		schemaStr = "CREATE DATABASE IF NOT EXISTS " + common.EscapeIdentifier(m.Name)
+	}
+
+	return schemaStr
 }
 
 type MDTableMeta struct {
@@ -71,10 +91,11 @@ func (m *MDTableMeta) GetSchema(ctx context.Context, store storage.ExternalStora
 	Mydumper File Loader
 */
 type MDLoader struct {
-	store      storage.ExternalStorage
-	dbs        []*MDDatabaseMeta
-	filter     filter.Filter
-	router     *router.Table
+	store  storage.ExternalStorage
+	dbs    []*MDDatabaseMeta
+	filter filter.Filter
+	// router     *router.Table
+	router     *regexprrouter.RouteTable
 	fileRouter FileRouter
 	charSet    string
 }
@@ -92,28 +113,28 @@ type mdLoaderSetup struct {
 func NewMyDumpLoader(ctx context.Context, cfg *config.Config) (*MDLoader, error) {
 	u, err := storage.ParseBackend(cfg.Mydumper.SourceDir, nil)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, common.NormalizeError(err)
 	}
 	s, err := storage.New(ctx, u, &storage.ExternalStorageOptions{})
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, common.NormalizeError(err)
 	}
 
 	return NewMyDumpLoaderWithStore(ctx, cfg, s)
 }
 
 func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store storage.ExternalStorage) (*MDLoader, error) {
-	var r *router.Table
+	var r *regexprrouter.RouteTable
 	var err error
 
 	if len(cfg.Routes) > 0 && len(cfg.Mydumper.FileRouters) > 0 {
-		return nil, errors.New("table route is deprecated, can't config both [routes] and [mydumper.files]")
+		return nil, common.ErrInvalidConfig.GenWithStack("table route is deprecated, can't config both [routes] and [mydumper.files]")
 	}
 
 	if len(cfg.Routes) > 0 {
-		r, err = router.NewTableRouter(cfg.Mydumper.CaseSensitive, cfg.Routes)
+		r, err = regexprrouter.NewRegExprRouter(cfg.Mydumper.CaseSensitive, cfg.Routes)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return nil, common.ErrInvalidConfig.Wrap(err).GenWithStack("invalid table route rule")
 		}
 	}
 
@@ -125,7 +146,7 @@ func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store sto
 		f, err = filter.Parse(cfg.Mydumper.Filter)
 	}
 	if err != nil {
-		return nil, errors.Annotate(err, "parse filter failed")
+		return nil, common.ErrInvalidConfig.Wrap(err).GenWithStack("parse filter failed")
 	}
 	if !cfg.Mydumper.CaseSensitive {
 		f = filter.CaseInsensitive(f)
@@ -138,7 +159,7 @@ func NewMyDumpLoaderWithStore(ctx context.Context, cfg *config.Config, store sto
 
 	fileRouter, err := NewFileRouter(fileRouteRules)
 	if err != nil {
-		return nil, errors.Annotate(err, "parser file routing rule failed")
+		return nil, common.ErrInvalidConfig.Wrap(err).GenWithStack("parse file routing rule failed")
 	}
 
 	mdl := &MDLoader{
@@ -210,17 +231,17 @@ func (s *mdLoaderSetup) setup(ctx context.Context, store storage.ExternalStorage
 			sql   —— {db}.{table}.{part}.sql / {db}.{table}.sql
 	*/
 	if err := s.listFiles(ctx, store); err != nil {
-		return errors.Annotate(err, "list file failed")
+		return common.ErrStorageUnknown.Wrap(err).GenWithStack("list file failed")
 	}
 	if err := s.route(); err != nil {
-		return errors.Trace(err)
+		return common.ErrTableRoute.Wrap(err).GenWithStackByArgs()
 	}
 
 	// setup database schema
 	if len(s.dbSchemas) != 0 {
 		for _, fileInfo := range s.dbSchemas {
-			if _, dbExists := s.insertDB(fileInfo.TableName.Schema, fileInfo.FileMeta.Path); dbExists && s.loader.router == nil {
-				return errors.Errorf("invalid database schema file, duplicated item - %s", fileInfo.FileMeta.Path)
+			if _, dbExists := s.insertDB(fileInfo); dbExists && s.loader.router == nil {
+				return common.ErrInvalidSchemaFile.GenWithStack("invalid database schema file, duplicated item - %s", fileInfo.FileMeta.Path)
 			}
 		}
 	}
@@ -229,7 +250,7 @@ func (s *mdLoaderSetup) setup(ctx context.Context, store storage.ExternalStorage
 		// setup table schema
 		for _, fileInfo := range s.tableSchemas {
 			if _, _, tableExists := s.insertTable(fileInfo); tableExists && s.loader.router == nil {
-				return errors.Errorf("invalid table schema file, duplicated item - %s", fileInfo.FileMeta.Path)
+				return common.ErrInvalidSchemaFile.GenWithStack("invalid table schema file, duplicated item - %s", fileInfo.FileMeta.Path)
 			}
 		}
 	}
@@ -241,7 +262,7 @@ func (s *mdLoaderSetup) setup(ctx context.Context, store storage.ExternalStorage
 			if !tableExists {
 				// we are not expect the user only has view schema without table schema when user use dumpling to get view.
 				// remove the last `-view.sql` from path as the relate table schema file path
-				return errors.Errorf("invalid view schema file, miss host table schema for view '%s'", fileInfo.TableName.Name)
+				return common.ErrInvalidSchemaFile.GenWithStack("invalid view schema file, miss host table schema for view '%s'", fileInfo.TableName.Name)
 			}
 		}
 	}
@@ -406,15 +427,15 @@ func (s *mdLoaderSetup) route() error {
 	return nil
 }
 
-func (s *mdLoaderSetup) insertDB(dbName string, path string) (*MDDatabaseMeta, bool) {
-	dbIndex, ok := s.dbIndexMap[dbName]
+func (s *mdLoaderSetup) insertDB(f FileInfo) (*MDDatabaseMeta, bool) {
+	dbIndex, ok := s.dbIndexMap[f.TableName.Schema]
 	if ok {
 		return s.loader.dbs[dbIndex], true
 	}
-	s.dbIndexMap[dbName] = len(s.loader.dbs)
+	s.dbIndexMap[f.TableName.Schema] = len(s.loader.dbs)
 	ptr := &MDDatabaseMeta{
-		Name:       dbName,
-		SchemaFile: path,
+		Name:       f.TableName.Schema,
+		SchemaFile: f,
 		charSet:    s.loader.charSet,
 	}
 	s.loader.dbs = append(s.loader.dbs, ptr)
@@ -422,7 +443,13 @@ func (s *mdLoaderSetup) insertDB(dbName string, path string) (*MDDatabaseMeta, b
 }
 
 func (s *mdLoaderSetup) insertTable(fileInfo FileInfo) (*MDTableMeta, bool, bool) {
-	dbMeta, dbExists := s.insertDB(fileInfo.TableName.Schema, "")
+	dbFileInfo := FileInfo{
+		TableName: filter.Table{
+			Schema: fileInfo.TableName.Schema,
+		},
+		FileMeta: SourceFileMeta{Type: SourceTypeSchemaSchema},
+	}
+	dbMeta, dbExists := s.insertDB(dbFileInfo)
 	tableIndex, ok := s.tableIndexMap[fileInfo.TableName]
 	if ok {
 		return dbMeta.Tables[tableIndex], dbExists, true
@@ -442,7 +469,13 @@ func (s *mdLoaderSetup) insertTable(fileInfo FileInfo) (*MDTableMeta, bool, bool
 }
 
 func (s *mdLoaderSetup) insertView(fileInfo FileInfo) (bool, bool) {
-	dbMeta, dbExists := s.insertDB(fileInfo.TableName.Schema, "")
+	dbFileInfo := FileInfo{
+		TableName: filter.Table{
+			Schema: fileInfo.TableName.Schema,
+		},
+		FileMeta: SourceFileMeta{Type: SourceTypeSchemaSchema},
+	}
+	dbMeta, dbExists := s.insertDB(dbFileInfo)
 	_, ok := s.tableIndexMap[fileInfo.TableName]
 	if ok {
 		meta := &MDTableMeta{

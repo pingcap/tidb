@@ -63,7 +63,6 @@ func BenchmarkVectorizedBuiltinOtherFunc(b *testing.B) {
 }
 
 func TestInDecimal(t *testing.T) {
-	t.Parallel()
 	ctx := mock.NewContext()
 	ft := eType2FieldType(types.ETDecimal)
 	col0 := &Column{RetType: ft, Index: 0}

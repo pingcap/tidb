@@ -1,10 +1,12 @@
 [lightning]
 task-info-schema-name = 'lightning_task_info'
+index-concurrency = 10
+table-concurrency = 10
 
 [tikv-importer]
 backend = "local"
-duplicate-detection = true
-duplicate-resolution = 'unsafe-noop'
+duplicate-resolution = 'record'
+incremental-import = true
 
 [checkpoint]
 enable = true

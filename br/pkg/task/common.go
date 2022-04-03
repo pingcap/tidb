@@ -20,7 +20,6 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
-	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
@@ -28,10 +27,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	pd "github.com/tikv/pd/client"
-	"go.etcd.io/etcd/pkg/transport"
+	"go.etcd.io/etcd/client/pkg/v3/transport"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/keepalive"
 )
@@ -85,6 +85,8 @@ const (
 	crypterAES128KeyLen = 16
 	crypterAES192KeyLen = 24
 	crypterAES256KeyLen = 32
+
+	tidbNewCollationEnabled = "new_collation_enabled"
 )
 
 // TLSConfig is the common configuration for TLS connection.
@@ -355,7 +357,7 @@ func (cfg *Config) parseCipherInfo(flags *pflag.FlagSet) error {
 	}
 
 	if !checkCipherKeyMatch(&cfg.CipherInfo) {
-		return errors.Annotate(err, "Cipher type and key not match")
+		return errors.Annotate(berrors.ErrInvalidArgument, "crypter method and key length not match")
 	}
 
 	return nil
@@ -485,6 +487,9 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if cfg.SkipCheckPath, err = flags.GetBool(flagSkipCheckPath); err != nil {
 		return errors.Trace(err)
 	}
+	if cfg.SkipCheckPath {
+		log.L().Info("--skip-check-path is deprecated, need explicitly set it anymore")
+	}
 
 	if err = cfg.parseCipherInfo(flags); err != nil {
 		return errors.Trace(err)
@@ -548,7 +553,6 @@ func storageOpts(cfg *Config) *storage.ExternalStorageOptions {
 	return &storage.ExternalStorageOptions{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
-		SkipCheckPath:   cfg.SkipCheckPath,
 	}
 }
 

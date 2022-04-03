@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build windows
 // +build windows
 
 // TODO: Deduplicate this implementation with DM!
@@ -23,6 +24,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 )
 
 var (
@@ -32,6 +34,10 @@ var (
 
 // GetStorageSize gets storage's capacity and available size
 func GetStorageSize(dir string) (size StorageSize, err error) {
+	failpoint.Inject("GetStorageSize", func(val failpoint.Value) {
+		injectedSize := val.(int)
+		failpoint.Return(StorageSize{Capacity: uint64(injectedSize), Available: uint64(injectedSize)}, nil)
+	})
 	r, _, e := getDiskFreeSpaceExW.Call(
 		uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(dir))),
 		uintptr(unsafe.Pointer(&size.Available)),

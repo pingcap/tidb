@@ -43,7 +43,6 @@ import (
 )
 
 func TestSelectNormal(t *testing.T) {
-	t.Parallel()
 	response, colTypes := createSelectNormal(t, 1, 2, nil, nil)
 
 	// Test Next.
@@ -63,7 +62,6 @@ func TestSelectNormal(t *testing.T) {
 }
 
 func TestSelectMemTracker(t *testing.T) {
-	t.Parallel()
 	response, colTypes := createSelectNormal(t, 2, 6, nil, nil)
 
 	// Test Next.
@@ -76,7 +74,6 @@ func TestSelectMemTracker(t *testing.T) {
 }
 
 func TestSelectNormalChunkSize(t *testing.T) {
-	t.Parallel()
 	sctx := newMockSessionContext()
 	sctx.GetSessionVars().EnableChunkRPC = false
 	response, colTypes := createSelectNormal(t, 100, 1000000, nil, sctx)
@@ -86,7 +83,6 @@ func TestSelectNormalChunkSize(t *testing.T) {
 }
 
 func TestSelectWithRuntimeStats(t *testing.T) {
-	t.Parallel()
 	planIDs := []int{1, 2, 3}
 	response, colTypes := createSelectNormal(t, 1, 2, planIDs, nil)
 
@@ -111,7 +107,6 @@ func TestSelectWithRuntimeStats(t *testing.T) {
 }
 
 func TestSelectResultRuntimeStats(t *testing.T) {
-	t.Parallel()
 	basic := &execdetails.BasicRuntimeStats{}
 	basic.Record(time.Second, 20)
 	s1 := &selectResultRuntimeStats{
@@ -157,41 +152,7 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 	require.Equal(t, expect, s1.String())
 }
 
-func TestSelectStreaming(t *testing.T) {
-	t.Parallel()
-	response, colTypes := createSelectStreaming(t, 1, 2)
-	// Test Next.
-	chk := chunk.New(colTypes, 32, 32)
-	numAllRows := 0
-	for {
-		err := response.Next(context.TODO(), chk)
-		require.NoError(t, err)
-		numAllRows += chk.NumRows()
-		if chk.NumRows() == 0 {
-			break
-		}
-	}
-	require.Equal(t, 2, numAllRows)
-	require.NoError(t, response.Close())
-}
-
-func TestSelectStreamingWithNextRaw(t *testing.T) {
-	t.Parallel()
-	response, _ := createSelectStreaming(t, 1, 2)
-	data, err := response.NextRaw(context.TODO())
-	require.NoError(t, err)
-	require.Len(t, data, 16)
-}
-
-func TestSelectStreamingChunkSize(t *testing.T) {
-	t.Parallel()
-	response, colTypes := createSelectStreaming(t, 100, 1000000)
-	testChunkSize(t, response, colTypes)
-	require.NoError(t, response.Close())
-}
-
 func TestAnalyze(t *testing.T) {
-	t.Parallel()
 	sctx := newMockSessionContext()
 	sctx.GetSessionVars().EnableChunkRPC = false
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
@@ -200,7 +161,7 @@ func TestAnalyze(t *testing.T) {
 		Build()
 	require.NoError(t, err)
 
-	response, err := Analyze(context.TODO(), sctx.GetClient(), request, tikvstore.DefaultVars, true, sctx.GetSessionVars().StmtCtx.MemTracker)
+	response, err := Analyze(context.TODO(), sctx.GetClient(), request, tikvstore.DefaultVars, true, sctx.GetSessionVars().StmtCtx)
 	require.NoError(t, err)
 
 	result, ok := response.(*selectResult)
@@ -217,7 +178,6 @@ func TestAnalyze(t *testing.T) {
 }
 
 func TestChecksum(t *testing.T) {
-	t.Parallel()
 	sctx := newMockSessionContext()
 	sctx.GetSessionVars().EnableChunkRPC = false
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
@@ -472,7 +432,7 @@ func createSelectNormal(t *testing.T, batch, totalRows int, planIDs []int, sctx 
 	require.True(t, ok)
 	require.Equal(t, "general", result.sqlType)
 	require.Equal(t, "dag", result.label)
-	require.Equal(t, len(colTypes), result.rowLen)
+	require.Len(t, colTypes, result.rowLen)
 
 	resp, ok := result.resp.(*mockResponse)
 	require.True(t, ok)
@@ -480,46 +440,5 @@ func createSelectNormal(t *testing.T, batch, totalRows int, planIDs []int, sctx 
 	resp.total = totalRows
 	resp.batch = batch
 
-	return result, colTypes
-}
-
-func createSelectStreaming(t *testing.T, batch, totalRows int) (*streamResult, []*types.FieldType) {
-	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
-		SetDAGRequest(&tipb.DAGRequest{}).
-		SetDesc(false).
-		SetKeepOrder(false).
-		SetFromSessionVars(variable.NewSessionVars()).
-		SetStreaming(true).
-		Build()
-	require.NoError(t, err)
-
-	// 4 int64 types.
-	colTypes := []*types.FieldType{
-		{
-			Tp:      mysql.TypeLonglong,
-			Flen:    mysql.MaxIntWidth,
-			Decimal: 0,
-			Flag:    mysql.BinaryFlag,
-			Charset: charset.CharsetBin,
-			Collate: charset.CollationBin,
-		},
-	}
-	colTypes = append(colTypes, colTypes[0])
-	colTypes = append(colTypes, colTypes[0])
-	colTypes = append(colTypes, colTypes[0])
-
-	sctx := newMockSessionContext()
-	sctx.GetSessionVars().EnableStreaming = true
-
-	response, err := Select(context.TODO(), sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
-	require.NoError(t, err)
-	result, ok := response.(*streamResult)
-	require.True(t, ok)
-	require.Equal(t, len(colTypes), result.rowLen)
-
-	resp, ok := result.resp.(*mockResponse)
-	require.True(t, ok)
-	resp.total = totalRows
-	resp.batch = batch
 	return result, colTypes
 }

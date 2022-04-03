@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 // HandleCols is the interface that holds handle columns.
@@ -48,7 +49,7 @@ type HandleCols interface {
 	// NumCols returns the number of columns.
 	NumCols() int
 	// Compare compares two datum rows by handle order.
-	Compare(a, b []types.Datum) (int, error)
+	Compare(a, b []types.Datum, ctors []collate.Collator) (int, error)
 	// GetFieldTypes return field types of columns.
 	GetFieldsTypes() []*types.FieldType
 }
@@ -145,11 +146,11 @@ func (cb *CommonHandleCols) String() string {
 }
 
 // Compare implements the kv.HandleCols interface.
-func (cb *CommonHandleCols) Compare(a, b []types.Datum) (int, error) {
-	for _, col := range cb.columns {
+func (cb *CommonHandleCols) Compare(a, b []types.Datum, ctors []collate.Collator) (int, error) {
+	for i, col := range cb.columns {
 		aDatum := &a[col.Index]
 		bDatum := &b[col.Index]
-		cmp, err := aDatum.CompareDatum(cb.sc, bDatum)
+		cmp, err := aDatum.Compare(cb.sc, bDatum, ctors[i])
 		if err != nil {
 			return 0, err
 		}
@@ -237,16 +238,10 @@ func (ib *IntHandleCols) NumCols() int {
 }
 
 // Compare implements the kv.HandleCols interface.
-func (ib *IntHandleCols) Compare(a, b []types.Datum) (int, error) {
-	aInt := a[ib.col.Index].GetInt64()
-	bInt := b[ib.col.Index].GetInt64()
-	if aInt == bInt {
-		return 0, nil
-	}
-	if aInt < bInt {
-		return -1, nil
-	}
-	return 1, nil
+func (ib *IntHandleCols) Compare(a, b []types.Datum, ctors []collate.Collator) (int, error) {
+	aVal := &a[ib.col.Index]
+	bVal := &b[ib.col.Index]
+	return aVal.Compare(nil, bVal, ctors[ib.col.Index])
 }
 
 // GetFieldsTypes implements the kv.HandleCols interface.

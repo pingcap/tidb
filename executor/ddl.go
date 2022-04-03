@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -226,7 +227,7 @@ func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 	if len(s.TableToTables) == 1 {
 		oldIdent := ast.Ident{Schema: s.TableToTables[0].OldTable.Schema, Name: s.TableToTables[0].OldTable.Name}
 		if _, ok := e.getLocalTemporaryTable(oldIdent.Schema, oldIdent.Name); ok {
-			return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("RENAME TABLE")
+			return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("RENAME TABLE")
 		}
 		newIdent := ast.Ident{Schema: s.TableToTables[0].NewTable.Schema, Name: s.TableToTables[0].NewTable.Name}
 		err = domain.GetDomain(e.ctx).DDL().RenameTable(e.ctx, oldIdent, newIdent, isAlterTable)
@@ -236,7 +237,7 @@ func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 		for _, tables := range s.TableToTables {
 			oldIdent := ast.Ident{Schema: tables.OldTable.Schema, Name: tables.OldTable.Name}
 			if _, ok := e.getLocalTemporaryTable(oldIdent.Schema, oldIdent.Name); ok {
-				return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("RENAME TABLE")
+				return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("RENAME TABLE")
 			}
 			newIdent := ast.Ident{Schema: tables.NewTable.Schema, Name: tables.NewTable.Name}
 			oldIdents = append(oldIdents, oldIdent)
@@ -249,7 +250,6 @@ func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 
 func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 	var opt *ast.CharsetOpt
-	var directPlacementOpts *model.PlacementSettings
 	var placementPolicyRef *model.PolicyRefInfo
 	var err error
 	sessionVars := e.ctx.GetSessionVars()
@@ -278,19 +278,6 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 			case ast.DatabaseOptionCollate:
 				opt.Col = val.Value
 				explicitCollation = true
-			case ast.DatabaseOptionPlacementPrimaryRegion, ast.DatabaseOptionPlacementRegions,
-				ast.DatabaseOptionPlacementFollowerCount, ast.DatabaseOptionPlacementLeaderConstraints,
-				ast.DatabaseOptionPlacementLearnerCount, ast.DatabaseOptionPlacementVoterCount,
-				ast.DatabaseOptionPlacementSchedule, ast.DatabaseOptionPlacementConstraints,
-				ast.DatabaseOptionPlacementFollowerConstraints, ast.DatabaseOptionPlacementVoterConstraints,
-				ast.DatabaseOptionPlacementLearnerConstraints:
-				if directPlacementOpts == nil {
-					directPlacementOpts = &model.PlacementSettings{}
-				}
-				err := ddl.SetDirectPlacementOpt(directPlacementOpts, ast.PlacementOptionType(val.Tp), val.Value, val.UintValue)
-				if err != nil {
-					return err
-				}
 			case ast.DatabaseOptionPlacementPolicy:
 				placementPolicyRef = &model.PolicyRefInfo{
 					Name: model.NewCIStr(val.Value),
@@ -320,7 +307,7 @@ func (e *DDLExec) executeCreateDatabase(s *ast.CreateDatabaseStmt) error {
 
 	}
 
-	err = domain.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, model.NewCIStr(s.Name), opt, directPlacementOpts, placementPolicyRef)
+	err = domain.GetDomain(e.ctx).DDL().CreateSchema(e.ctx, model.NewCIStr(s.Name), opt, placementPolicyRef)
 	if err != nil {
 		if infoschema.ErrDatabaseExists.Equal(err) && s.IfNotExists {
 			err = nil
@@ -356,12 +343,12 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 		return err
 	}
 
-	tbInfo, err := ddl.BuildSessionTemporaryTableInfo(e.ctx, is, s, dbInfo.Charset, dbInfo.Collate, dbInfo.PlacementPolicyRef, dbInfo.DirectPlacementOpts)
+	tbInfo, err := ddl.BuildSessionTemporaryTableInfo(e.ctx, is, s, dbInfo.Charset, dbInfo.Collate, dbInfo.PlacementPolicyRef)
 	if err != nil {
 		return err
 	}
 
-	return e.tempTableDDL.CreateLocalTemporaryTable(dbInfo.Name, tbInfo)
+	return e.tempTableDDL.CreateLocalTemporaryTable(dbInfo, tbInfo)
 }
 
 func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
@@ -380,7 +367,7 @@ func (e *DDLExec) executeCreateView(s *ast.CreateViewStmt) error {
 func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	if _, ok := e.getLocalTemporaryTable(ident.Schema, ident.Name); ok {
-		return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("CREATE INDEX")
+		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("CREATE INDEX")
 	}
 
 	err := domain.GetDomain(e.ctx).DDL().CreateIndex(e.ctx, ident, s.KeyType, model.NewCIStr(s.IndexName),
@@ -495,11 +482,7 @@ func (e *DDLExec) dropTableObject(objects []*ast.TableName, obt objectType, ifEx
 				zap.String("table", fullti.Name.O),
 			)
 			exec := e.ctx.(sqlexec.RestrictedSQLExecutor)
-			stmt, err := exec.ParseWithParams(context.TODO(), "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
-			if err != nil {
-				return err
-			}
-			_, _, err = exec.ExecRestrictedStmt(context.TODO(), stmt)
+			_, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
 			if err != nil {
 				return err
 			}
@@ -555,7 +538,7 @@ func (e *DDLExec) dropLocalTemporaryTables(localTempTables []*ast.TableName) err
 func (e *DDLExec) executeDropIndex(s *ast.DropIndexStmt) error {
 	ti := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	if _, ok := e.getLocalTemporaryTable(ti.Schema, ti.Name); ok {
-		return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("DROP INDEX")
+		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("DROP INDEX")
 	}
 
 	err := domain.GetDomain(e.ctx).DDL().DropIndex(e.ctx, ti, model.NewCIStr(s.IndexName), s.IfExists)
@@ -568,7 +551,7 @@ func (e *DDLExec) executeDropIndex(s *ast.DropIndexStmt) error {
 func (e *DDLExec) executeAlterTable(ctx context.Context, s *ast.AlterTableStmt) error {
 	ti := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	if _, ok := e.getLocalTemporaryTable(ti.Schema, ti.Name); ok {
-		return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ALTER TABLE")
+		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ALTER TABLE")
 	}
 
 	err := domain.GetDomain(e.ctx).DDL().AlterTable(ctx, e.ctx, ti, s.Specs)
@@ -661,42 +644,15 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, 
 // GetDropOrTruncateTableInfoFromJobs gets the dropped/truncated table information from DDL jobs,
 // it will use the `start_ts` of DDL job as snapshot to get the dropped/truncated table information.
 func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, dom *domain.Domain, fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
-	for _, job := range jobs {
-		// Check GC safe point for getting snapshot infoSchema.
-		err := gcutil.ValidateSnapshotWithGCSafePoint(job.StartTS, gcSafePoint)
+	getTable := func(StartTS uint64, SchemaID int64, TableID int64) (*model.TableInfo, error) {
+		snapMeta, err := dom.GetSnapshotMeta(StartTS)
 		if err != nil {
-			return false, err
+			return nil, err
 		}
-		if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
-			continue
-		}
-
-		snapMeta, err := dom.GetSnapshotMeta(job.StartTS)
-		if err != nil {
-			return false, err
-		}
-		tbl, err := snapMeta.GetTable(job.SchemaID, job.TableID)
-		if err != nil {
-			if meta.ErrDBNotExists.Equal(err) {
-				// The dropped/truncated DDL maybe execute failed that caused by the parallel DDL execution,
-				// then can't find the table from the snapshot info-schema. Should just ignore error here,
-				// see more in TestParallelDropSchemaAndDropTable.
-				continue
-			}
-			return false, err
-		}
-		if tbl == nil {
-			// The dropped/truncated DDL maybe execute failed that caused by the parallel DDL execution,
-			// then can't find the table from the snapshot info-schema. Should just ignore error here,
-			// see more in TestParallelDropSchemaAndDropTable.
-			continue
-		}
-		finish, err := fn(job, tbl)
-		if err != nil || finish {
-			return finish, err
-		}
+		tbl, err := snapMeta.GetTable(SchemaID, TableID)
+		return tbl, err
 	}
-	return false, nil
+	return ddl.GetDropOrTruncateTableInfoFromJobsByStore(jobs, gcSafePoint, getTable, fn)
 }
 
 func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.Job, *model.TableInfo, error) {
@@ -776,6 +732,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 	if err != nil {
 		return err
 	}
+
 	recoverInfo := &ddl.RecoverInfo{
 		SchemaID:      job.SchemaID,
 		TableInfo:     tblInfo,
@@ -791,20 +748,23 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 }
 
 func (e *DDLExec) executeLockTables(s *ast.LockTablesStmt) error {
+	if !config.TableLockEnabled() {
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrFuncNotEnabled.GenWithStackByArgs("LOCK TABLES", "enable-table-lock"))
+		return nil
+	}
+
 	for _, tb := range s.TableLocks {
 		if _, ok := e.getLocalTemporaryTable(tb.Table.Schema, tb.Table.Name); ok {
-			return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("LOCK TABLES")
+			return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("LOCK TABLES")
 		}
 	}
 
-	if !config.TableLockEnabled() {
-		return nil
-	}
 	return domain.GetDomain(e.ctx).DDL().LockTables(e.ctx, s)
 }
 
 func (e *DDLExec) executeUnlockTables(_ *ast.UnlockTablesStmt) error {
 	if !config.TableLockEnabled() {
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrFuncNotEnabled.GenWithStackByArgs("UNLOCK TABLES", "enable-table-lock"))
 		return nil
 	}
 	lockedTables := e.ctx.GetAllTableLocks()
@@ -814,7 +774,7 @@ func (e *DDLExec) executeUnlockTables(_ *ast.UnlockTablesStmt) error {
 func (e *DDLExec) executeCleanupTableLock(s *ast.CleanupTableLockStmt) error {
 	for _, tb := range s.Tables {
 		if _, ok := e.getLocalTemporaryTable(tb.Schema, tb.Name); ok {
-			return ddl.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ADMIN CLEANUP TABLE LOCK")
+			return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ADMIN CLEANUP TABLE LOCK")
 		}
 	}
 	return domain.GetDomain(e.ctx).DDL().CleanupTableLock(e.ctx, s.Tables)

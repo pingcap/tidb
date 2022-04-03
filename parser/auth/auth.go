@@ -15,8 +15,12 @@ package auth
 
 import (
 	"fmt"
-
 	"github.com/pingcap/tidb/parser/format"
+)
+
+const (
+	UserNameMaxLength = 32
+	HostNameMaxLength = 255
 )
 
 // UserIdentity represents username and hostname.
@@ -41,18 +45,24 @@ func (user *UserIdentity) Restore(ctx *format.RestoreCtx) error {
 }
 
 // String converts UserIdentity to the format user@host.
+// It defaults to providing the AuthIdentity (the matching entry in priv tables)
+// To use the actual identity use LoginString()
 func (user *UserIdentity) String() string {
 	// TODO: Escape username and hostname.
 	if user == nil {
 		return ""
 	}
+	if user.AuthUsername != "" {
+		return fmt.Sprintf("%s@%s", user.AuthUsername, user.AuthHostname)
+	}
 	return fmt.Sprintf("%s@%s", user.Username, user.Hostname)
 }
 
-// AuthIdentityString returns matched identity in user@host format
-func (user *UserIdentity) AuthIdentityString() string {
+// LoginString returns matched identity in user@host format
+// It matches the login user.
+func (user *UserIdentity) LoginString() string {
 	// TODO: Escape username and hostname.
-	return fmt.Sprintf("%s@%s", user.AuthUsername, user.AuthHostname)
+	return fmt.Sprintf("%s@%s", user.Username, user.Hostname)
 }
 
 type RoleIdentity struct {

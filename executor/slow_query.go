@@ -26,7 +26,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -264,7 +263,7 @@ func getOneLine(reader *bufio.Reader) ([]byte, error) {
 	var tempLine []byte
 	for isPrefix {
 		tempLine, isPrefix, err = reader.ReadLine()
-		resByte = append(resByte, tempLine...)
+		resByte = append(resByte, tempLine...) // nozero
 		// Use the max value of max_allowed_packet to check the single line length.
 		if len(resByte) > int(variable.MaxOfMaxAllowedPacket) {
 			return resByte, errors.Errorf("single line length exceeds limit: %v", variable.MaxOfMaxAllowedPacket)
@@ -413,7 +412,7 @@ func decomposeToSlowLogTasks(logs []slowLogBlock, num int) [][]string {
 
 func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int) {
 	defer close(e.taskList)
-	var wg sync.WaitGroup
+	var wg util.WaitGroupWrapper
 	offset := offset{offset: 0, length: 0}
 	// To limit the num of go routine
 	concurrent := sctx.GetSessionVars().Concurrency.DistSQLScanConcurrency()
@@ -447,20 +446,29 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		if e.stats != nil {
 			e.stats.readFile += time.Since(startTime)
 		}
+		failpoint.Inject("mockReadSlowLogSlow", func(val failpoint.Value) {
+			if val.(bool) {
+				signals := ctx.Value("signals").([]chan int)
+				signals[0] <- 1
+				<-signals[1]
+			}
+		})
 		for i := range logs {
 			log := logs[i]
 			t := slowLogTask{}
 			t.resultCh = make(chan parsedSlowLog, 1)
 			start := offset
-			wg.Add(1)
 			ch <- 1
-			e.taskList <- t
-			go func() {
-				defer wg.Done()
+			select {
+			case <-ctx.Done():
+				return
+			case e.taskList <- t:
+			}
+			wg.Run(func() {
 				result, err := e.parseLog(ctx, sctx, log, start)
 				e.sendParsedSlowLogCh(ctx, t, parsedSlowLog{result, err})
 				<-ch
-			}()
+			})
 			offset.offset = e.fileLine
 			offset.length = 0
 			select {
@@ -738,7 +746,7 @@ func getColumnValueFactoryByName(sctx sessionctx.Context, colName string, column
 			return true, nil
 		}, nil
 	case variable.SlowLogPrepared, variable.SlowLogSucc, variable.SlowLogPlanFromCache, variable.SlowLogPlanFromBinding,
-		variable.SlowLogIsInternalStr:
+		variable.SlowLogIsInternalStr, variable.SlowLogIsExplicitTxn, variable.SlowLogIsWriteCacheTable:
 		return func(row []types.Datum, value string, tz *time.Location, checker *slowLogChecker) (valid bool, err error) {
 			v, err := strconv.ParseBool(value)
 			if err != nil {
@@ -1050,7 +1058,7 @@ func readLastLines(ctx context.Context, file *os.File, endCursor int64) ([]strin
 		if err != nil {
 			return nil, 0, err
 		}
-		lines = append(chars, lines...)
+		lines = append(chars, lines...) // nozero
 
 		// find first '\n' or '\r'
 		for i := 0; i < len(chars); i++ {

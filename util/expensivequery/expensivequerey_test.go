@@ -27,13 +27,16 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
-	goleak.VerifyTestMain(m)
+	testbridge.SetupForCommonTest()
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+	}
+	goleak.VerifyTestMain(m, opts...)
 }
 
 func TestLogFormat(t *testing.T) {
-	t.Parallel()
-
 	mem := new(memory.Tracker)
 	mem.Consume(1<<30 + 1<<29 + 1<<28 + 1<<27)
 	info := &util.ProcessInfo{

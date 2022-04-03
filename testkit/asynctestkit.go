@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !codes
 // +build !codes
 
 package testkit
@@ -52,7 +53,7 @@ func NewAsyncTestKit(t *testing.T, store kv.Storage) *AsyncTestKit {
 
 // OpenSession opens new session ctx if no exists one and use db.
 func (tk *AsyncTestKit) OpenSession(ctx context.Context, db string) context.Context {
-	if tryRetrieveSession(ctx) == nil {
+	if TryRetrieveSession(ctx) == nil {
 		se, err := session.CreateSession4Test(tk.store)
 		tk.require.NoError(err)
 		se.SetConnectionID(asyncTestKitIDGenerator.Inc())
@@ -64,7 +65,7 @@ func (tk *AsyncTestKit) OpenSession(ctx context.Context, db string) context.Cont
 
 // CloseSession closes exists session from ctx.
 func (tk *AsyncTestKit) CloseSession(ctx context.Context) {
-	se := tryRetrieveSession(ctx)
+	se := TryRetrieveSession(ctx)
 	tk.require.NotNil(se)
 	se.Close()
 }
@@ -134,7 +135,7 @@ func (tk *AsyncTestKit) ConcurrentRun(
 
 // Exec executes a sql statement.
 func (tk *AsyncTestKit) Exec(ctx context.Context, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
-	se := tryRetrieveSession(ctx)
+	se := TryRetrieveSession(ctx)
 	tk.require.NotNil(se)
 
 	if len(args) == 0 {
@@ -190,7 +191,7 @@ func (tk *AsyncTestKit) MustQuery(ctx context.Context, sql string, args ...inter
 // resultSetToResult converts ast.RecordSet to testkit.Result.
 // It is used to check results of execute statement in binary mode.
 func (tk *AsyncTestKit) resultSetToResult(ctx context.Context, rs sqlexec.RecordSet, comment string) *Result {
-	rows, err := session.GetRows4Test(context.Background(), tryRetrieveSession(ctx), rs)
+	rows, err := session.GetRows4Test(context.Background(), TryRetrieveSession(ctx), rs)
 	tk.require.NoError(err, comment)
 
 	err = rs.Close()
@@ -218,7 +219,8 @@ type sessionCtxKeyType struct{}
 
 var sessionKey = sessionCtxKeyType{}
 
-func tryRetrieveSession(ctx context.Context) session.Session {
+// TryRetrieveSession tries retrieve session from context.
+func TryRetrieveSession(ctx context.Context) session.Session {
 	s := ctx.Value(sessionKey)
 	if s == nil {
 		return nil

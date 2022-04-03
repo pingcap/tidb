@@ -4,22 +4,28 @@ package backup_test
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
+	"github.com/golang/protobuf/proto"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
@@ -33,79 +39,95 @@ type testBackup struct {
 
 	mockPDClient pd.Client
 	backupClient *backup.Client
+
+	cluster *mock.Cluster
+	storage storage.ExternalStorage
 }
 
-var _ = Suite(&testBackup{})
-
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-func (r *testBackup) SetUpSuite(c *C) {
-	_, _, pdClient, err := testutils.NewMockTiKV("", nil)
-	c.Assert(err, IsNil)
-	r.mockPDClient = pdClient
-	r.ctx, r.cancel = context.WithCancel(context.Background())
+func createBackupSuite(t *testing.T) (s *testBackup, clean func()) {
+	tikvClient, _, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	s = new(testBackup)
+	s.mockPDClient = pdClient
+	s.ctx, s.cancel = context.WithCancel(context.Background())
 	mockMgr := &conn.Mgr{PdController: &pdutil.PdController{}}
-	mockMgr.SetPDClient(r.mockPDClient)
+	mockMgr.SetPDClient(s.mockPDClient)
 	mockMgr.SetHTTP([]string{"test"}, nil)
-	r.backupClient, err = backup.NewBackupClient(r.ctx, mockMgr)
-	c.Assert(err, IsNil)
+	s.backupClient, err = backup.NewBackupClient(s.ctx, mockMgr)
+	require.NoError(t, err)
+
+	s.cluster, err = mock.NewCluster()
+	require.NoError(t, err)
+	base := t.TempDir()
+	s.storage, err = storage.NewLocalStorage(base)
+	require.NoError(t, err)
+	require.NoError(t, s.cluster.Start())
+
+	clean = func() {
+		mockMgr.Close()
+		s.cluster.Stop()
+		tikvClient.Close()
+		pdClient.Close()
+	}
+	return
 }
 
-func (r *testBackup) TestGetTS(c *C) {
-	var (
-		err error
-		// mockPDClient' physical ts and current ts will have deviation
-		// so make this deviation tolerance 100ms
-		deviation = 100
-	)
+func TestGetTS(t *testing.T) {
+	s, clean := createBackupSuite(t)
+	defer clean()
+
+	// mockPDClient' physical ts and current ts will have deviation
+	// so make this deviation tolerance 100ms
+	deviation := 100
 
 	// timeago not work
 	expectedDuration := 0
 	currentTS := time.Now().UnixNano() / int64(time.Millisecond)
-	ts, err := r.backupClient.GetTS(r.ctx, 0, 0)
-	c.Assert(err, IsNil)
+	ts, err := s.backupClient.GetTS(s.ctx, 0, 0)
+	require.NoError(t, err)
 	pdTS := oracle.ExtractPhysical(ts)
 	duration := int(currentTS - pdTS)
-	c.Assert(duration, Greater, expectedDuration-deviation)
-	c.Assert(duration, Less, expectedDuration+deviation)
+	require.Greater(t, duration, expectedDuration-deviation)
+	require.Less(t, duration, expectedDuration+deviation)
 
 	// timeago = "1.5m"
 	expectedDuration = 90000
 	currentTS = time.Now().UnixNano() / int64(time.Millisecond)
-	ts, err = r.backupClient.GetTS(r.ctx, 90*time.Second, 0)
-	c.Assert(err, IsNil)
+	ts, err = s.backupClient.GetTS(s.ctx, 90*time.Second, 0)
+	require.NoError(t, err)
 	pdTS = oracle.ExtractPhysical(ts)
 	duration = int(currentTS - pdTS)
-	c.Assert(duration, Greater, expectedDuration-deviation)
-	c.Assert(duration, Less, expectedDuration+deviation)
+	require.Greater(t, duration, expectedDuration-deviation)
+	require.Less(t, duration, expectedDuration+deviation)
 
 	// timeago = "-1m"
-	_, err = r.backupClient.GetTS(r.ctx, -time.Minute, 0)
-	c.Assert(err, ErrorMatches, "negative timeago is not allowed.*")
+	_, err = s.backupClient.GetTS(s.ctx, -time.Minute, 0)
+	require.Error(t, err)
+	require.Regexp(t, "negative timeago is not allowed.*", err.Error())
 
 	// timeago = "1000000h" overflows
-	_, err = r.backupClient.GetTS(r.ctx, 1000000*time.Hour, 0)
-	c.Assert(err, ErrorMatches, ".*backup ts overflow.*")
+	_, err = s.backupClient.GetTS(s.ctx, 1000000*time.Hour, 0)
+	require.Error(t, err)
+	require.Regexp(t, ".*backup ts overflow.*", err.Error())
 
 	// timeago = "10h" exceed GCSafePoint
-	p, l, err := r.mockPDClient.GetTS(r.ctx)
-	c.Assert(err, IsNil)
+	p, l, err := s.mockPDClient.GetTS(s.ctx)
+	require.NoError(t, err)
 	now := oracle.ComposeTS(p, l)
-	_, err = r.mockPDClient.UpdateGCSafePoint(r.ctx, now)
-	c.Assert(err, IsNil)
-	_, err = r.backupClient.GetTS(r.ctx, 10*time.Hour, 0)
-	c.Assert(err, ErrorMatches, ".*GC safepoint [0-9]+ exceed TS [0-9]+.*")
+	_, err = s.mockPDClient.UpdateGCSafePoint(s.ctx, now)
+	require.NoError(t, err)
+	_, err = s.backupClient.GetTS(s.ctx, 10*time.Hour, 0)
+	require.Error(t, err)
+	require.Regexp(t, ".*GC safepoint [0-9]+ exceed TS [0-9]+.*", err.Error())
 
 	// timeago and backupts both exists, use backupts
 	backupts := oracle.ComposeTS(p+10, l)
-	ts, err = r.backupClient.GetTS(r.ctx, time.Minute, backupts)
-	c.Assert(err, IsNil)
-	c.Assert(ts, Equals, backupts)
+	ts, err = s.backupClient.GetTS(s.ctx, time.Minute, backupts)
+	require.NoError(t, err)
+	require.Equal(t, backupts, ts)
 }
 
-func (r *testBackup) TestBuildTableRangeIntHandle(c *C) {
+func TestBuildTableRangeIntHandle(t *testing.T) {
 	type Case struct {
 		ids []int64
 		trs []kv.KeyRange
@@ -127,34 +149,34 @@ func (r *testBackup) TestBuildTableRangeIntHandle(c *C) {
 		}},
 	}
 	for _, cs := range cases {
-		c.Log(cs)
+		t.Log(cs)
 		tbl := &model.TableInfo{Partition: &model.PartitionInfo{Enable: true}}
 		for _, id := range cs.ids {
 			tbl.Partition.Definitions = append(tbl.Partition.Definitions,
 				model.PartitionDefinition{ID: id})
 		}
 		ranges, err := backup.BuildTableRanges(tbl)
-		c.Assert(err, IsNil)
-		c.Assert(ranges, DeepEquals, cs.trs)
+		require.NoError(t, err)
+		require.Equal(t, cs.trs, ranges)
 	}
 
 	tbl := &model.TableInfo{ID: 7}
 	ranges, err := backup.BuildTableRanges(tbl)
-	c.Assert(err, IsNil)
-	c.Assert(ranges, DeepEquals, []kv.KeyRange{
+	require.NoError(t, err)
+	require.Equal(t, []kv.KeyRange{
 		{StartKey: tablecodec.EncodeRowKey(7, low), EndKey: tablecodec.EncodeRowKey(7, high)},
-	})
+	}, ranges)
 }
 
-func (r *testBackup) TestBuildTableRangeCommonHandle(c *C) {
+func TestBuildTableRangeCommonHandle(t *testing.T) {
 	type Case struct {
 		ids []int64
 		trs []kv.KeyRange
 	}
 	low, err_l := codec.EncodeKey(nil, nil, []types.Datum{types.MinNotNullDatum()}...)
-	c.Assert(err_l, IsNil)
+	require.NoError(t, err_l)
 	high, err_h := codec.EncodeKey(nil, nil, []types.Datum{types.MaxValueDatum()}...)
-	c.Assert(err_h, IsNil)
+	require.NoError(t, err_h)
 	high = kv.Key(high).PrefixNext()
 	cases := []Case{
 		{ids: []int64{1}, trs: []kv.KeyRange{
@@ -171,26 +193,26 @@ func (r *testBackup) TestBuildTableRangeCommonHandle(c *C) {
 		}},
 	}
 	for _, cs := range cases {
-		c.Log(cs)
+		t.Log(cs)
 		tbl := &model.TableInfo{Partition: &model.PartitionInfo{Enable: true}, IsCommonHandle: true}
 		for _, id := range cs.ids {
 			tbl.Partition.Definitions = append(tbl.Partition.Definitions,
 				model.PartitionDefinition{ID: id})
 		}
 		ranges, err := backup.BuildTableRanges(tbl)
-		c.Assert(err, IsNil)
-		c.Assert(ranges, DeepEquals, cs.trs)
+		require.NoError(t, err)
+		require.Equal(t, cs.trs, ranges)
 	}
 
 	tbl := &model.TableInfo{ID: 7, IsCommonHandle: true}
 	ranges, err_r := backup.BuildTableRanges(tbl)
-	c.Assert(err_r, IsNil)
-	c.Assert(ranges, DeepEquals, []kv.KeyRange{
+	require.NoError(t, err_r)
+	require.Equal(t, []kv.KeyRange{
 		{StartKey: tablecodec.EncodeRowKey(7, low), EndKey: tablecodec.EncodeRowKey(7, high)},
-	})
+	}, ranges)
 }
 
-func (r *testBackup) TestOnBackupRegionErrorResponse(c *C) {
+func TestOnBackupRegionErrorResponse(t *testing.T) {
 	type Case struct {
 		storeID           uint64
 		bo                *tikv.Backoffer
@@ -217,18 +239,21 @@ func (r *testBackup) TestOnBackupRegionErrorResponse(c *C) {
 		{storeID: 1, backupTS: 421123291611137, resp: newBackupRegionErrorResp(&errorpb.Error{ProposalInMergingMode: &errorpb.ProposalInMergingMode{}}), exceptedBackoffMs: 1000, exceptedErr: false},
 	}
 	for _, cs := range cases {
-		c.Log(cs)
+		t.Log(cs)
 		_, backoffMs, err := backup.OnBackupResponse(cs.storeID, cs.bo, cs.backupTS, cs.lockResolver, cs.resp)
-		c.Assert(backoffMs, Equals, cs.exceptedBackoffMs)
+		require.Equal(t, cs.exceptedBackoffMs, backoffMs)
 		if cs.exceptedErr {
-			c.Assert(err, NotNil)
+			require.Error(t, err)
 		} else {
-			c.Assert(err, IsNil)
+			require.NoError(t, err)
 		}
 	}
 }
 
-func (r *testBackup) TestSendCreds(c *C) {
+func TestSendCreds(t *testing.T) {
+	s, clean := createBackupSuite(t)
+	defer clean()
+
 	accessKey := "ab"
 	secretAccessKey := "cd"
 	backendOpt := storage.BackendOptions{
@@ -238,17 +263,16 @@ func (r *testBackup) TestSendCreds(c *C) {
 		},
 	}
 	backend, err := storage.ParseBackend("s3://bucket/prefix/", &backendOpt)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	opts := &storage.ExternalStorageOptions{
 		SendCredentials: true,
-		SkipCheckPath:   true,
 	}
-	_, err = storage.New(r.ctx, backend, opts)
-	c.Assert(err, IsNil)
+	_, err = storage.New(s.ctx, backend, opts)
+	require.NoError(t, err)
 	access_key := backend.GetS3().AccessKey
-	c.Assert(access_key, Equals, "ab")
+	require.Equal(t, "ab", access_key)
 	secret_access_key := backend.GetS3().SecretAccessKey
-	c.Assert(secret_access_key, Equals, "cd")
+	require.Equal(t, "cd", secret_access_key)
 
 	backendOpt = storage.BackendOptions{
 		S3: storage.S3BackendOptions{
@@ -257,15 +281,96 @@ func (r *testBackup) TestSendCreds(c *C) {
 		},
 	}
 	backend, err = storage.ParseBackend("s3://bucket/prefix/", &backendOpt)
-	c.Assert(err, IsNil)
+	require.NoError(t, err)
 	opts = &storage.ExternalStorageOptions{
 		SendCredentials: false,
-		SkipCheckPath:   true,
 	}
-	_, err = storage.New(r.ctx, backend, opts)
-	c.Assert(err, IsNil)
+	_, err = storage.New(s.ctx, backend, opts)
+	require.NoError(t, err)
 	access_key = backend.GetS3().AccessKey
-	c.Assert(access_key, Equals, "")
+	require.Equal(t, "", access_key)
 	secret_access_key = backend.GetS3().SecretAccessKey
-	c.Assert(secret_access_key, Equals, "")
+	require.Equal(t, "", secret_access_key)
+}
+
+func TestSkipUnsupportedDDLJob(t *testing.T) {
+	s, clean := createBackupSuite(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, s.cluster.Storage)
+	tk.MustExec("CREATE DATABASE IF NOT EXISTS test_db;")
+	tk.MustExec("CREATE TABLE IF NOT EXISTS test_db.test_table (c1 INT);")
+	lastTS, err := s.cluster.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	require.NoErrorf(t, err, "Error get last ts: %s", err)
+	tk.MustExec("RENAME TABLE test_db.test_table to test_db.test_table1;")
+	tk.MustExec("DROP TABLE test_db.test_table1;")
+	tk.MustExec("DROP DATABASE test_db;")
+	tk.MustExec("CREATE DATABASE test_db;")
+	tk.MustExec("USE test_db;")
+	tk.MustExec("CREATE TABLE test_table1 (c2 CHAR(255));")
+	tk.MustExec("RENAME TABLE test_table1 to test_table;")
+	tk.MustExec("TRUNCATE TABLE test_table;")
+
+	tk.MustExec("CREATE TABLE tb(id INT NOT NULL, stu_id INT NOT NULL) " +
+		"PARTITION BY RANGE (stu_id) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11))")
+	tk.MustExec("ALTER TABLE tb attributes \"merge_option=allow\"")
+	tk.MustExec("ALTER TABLE tb PARTITION p0 attributes \"merge_option=deny\"")
+
+	ts, err := s.cluster.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	require.NoErrorf(t, err, "Error get ts: %s", err)
+
+	cipher := backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT}
+	metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, false, &cipher)
+	ctx := context.Background()
+	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
+	err = backup.WriteBackupDDLJobs(metaWriter, s.cluster.Storage, lastTS, ts)
+	require.NoErrorf(t, err, "Error get ddl jobs: %s", err)
+	err = metaWriter.FinishWriteMetas(ctx, metautil.AppendDDL)
+	require.NoError(t, err, "Flush failed", err)
+	err = metaWriter.FlushBackupMeta(ctx)
+	require.NoError(t, err, "Finally flush backup meta failed", err)
+
+	metaBytes, err := s.storage.ReadFile(ctx, metautil.MetaFile)
+	require.NoError(t, err)
+	mockMeta := &backuppb.BackupMeta{}
+	err = proto.Unmarshal(metaBytes, mockMeta)
+	require.NoError(t, err)
+	// check the schema version
+	metaReader := metautil.NewMetaReader(mockMeta, s.storage, &cipher)
+	allDDLJobsBytes, err := metaReader.ReadDDLs(ctx)
+	require.NoError(t, err)
+	var allDDLJobs []*model.Job
+	err = json.Unmarshal(allDDLJobsBytes, &allDDLJobs)
+	require.NoError(t, err)
+	require.Len(t, allDDLJobs, 8)
+}
+
+func TestCheckBackupIsLocked(t *testing.T) {
+	s, clean := createBackupSuite(t)
+	defer clean()
+
+	ctx := context.Background()
+
+	// check passed with an empty storage
+	err := backup.CheckBackupStorageIsLocked(ctx, s.storage)
+	require.NoError(t, err)
+
+	// check passed with only a lock file
+	err = s.storage.WriteFile(ctx, metautil.LockFile, nil)
+	require.NoError(t, err)
+	err = backup.CheckBackupStorageIsLocked(ctx, s.storage)
+	require.NoError(t, err)
+
+	// check passed with a lock file and other non-sst files.
+	err = s.storage.WriteFile(ctx, "1.txt", nil)
+	require.NoError(t, err)
+	err = backup.CheckBackupStorageIsLocked(ctx, s.storage)
+	require.NoError(t, err)
+
+	// check failed
+	err = s.storage.WriteFile(ctx, "1.sst", nil)
+	require.NoError(t, err)
+	err = backup.CheckBackupStorageIsLocked(ctx, s.storage)
+	require.Error(t, err)
+	require.Regexp(t, "backup lock file and sst file exist in(.+)", err.Error())
 }

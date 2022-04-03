@@ -35,7 +35,7 @@ import (
 
 // TemporaryTableDDL is an interface providing ddl operations for temporary table
 type TemporaryTableDDL interface {
-	CreateLocalTemporaryTable(schema model.CIStr, info *model.TableInfo) error
+	CreateLocalTemporaryTable(db *model.DBInfo, info *model.TableInfo) error
 	DropLocalTemporaryTable(schema model.CIStr, tblName model.CIStr) error
 	TruncateLocalTemporaryTable(schema model.CIStr, tblName model.CIStr) error
 }
@@ -45,7 +45,7 @@ type temporaryTableDDL struct {
 	sctx sessionctx.Context
 }
 
-func (d *temporaryTableDDL) CreateLocalTemporaryTable(schema model.CIStr, info *model.TableInfo) error {
+func (d *temporaryTableDDL) CreateLocalTemporaryTable(db *model.DBInfo, info *model.TableInfo) error {
 	if _, err := ensureSessionData(d.sctx); err != nil {
 		return err
 	}
@@ -55,7 +55,7 @@ func (d *temporaryTableDDL) CreateLocalTemporaryTable(schema model.CIStr, info *
 		return err
 	}
 
-	return ensureLocalTemporaryTables(d.sctx).AddTable(schema, tbl)
+	return ensureLocalTemporaryTables(d.sctx).AddTable(db, tbl)
 }
 
 func (d *temporaryTableDDL) DropLocalTemporaryTable(schema model.CIStr, tblName model.CIStr) error {
@@ -81,8 +81,9 @@ func (d *temporaryTableDDL) TruncateLocalTemporaryTable(schema model.CIStr, tblN
 	}
 
 	localTempTables := getLocalTemporaryTables(d.sctx)
+	db, _ := localTempTables.SchemaByTable(oldTblInfo)
 	localTempTables.RemoveTable(schema, tblName)
-	if err = localTempTables.AddTable(schema, newTbl); err != nil {
+	if err = localTempTables.AddTable(db, newTbl); err != nil {
 		return err
 	}
 
@@ -145,7 +146,7 @@ func ensureSessionData(sctx sessionctx.Context) (variable.TemporaryTableData, er
 	sessVars := sctx.GetSessionVars()
 	if sessVars.TemporaryTableData == nil {
 		// Create this txn just for getting a MemBuffer. It's a little tricky
-		bufferTxn, err := sctx.GetStore().BeginWithOption(tikv.DefaultStartTSOption().SetStartTS(0))
+		bufferTxn, err := sctx.GetStore().Begin(tikv.WithStartTS(0))
 		if err != nil {
 			return nil, err
 		}

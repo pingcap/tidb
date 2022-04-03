@@ -23,8 +23,6 @@ import (
 )
 
 func TestFieldType(t *testing.T) {
-	t.Parallel()
-
 	ft := NewFieldType(mysql.TypeDuration)
 	require.Equal(t, UnspecifiedLength, ft.Flen)
 	require.Equal(t, UnspecifiedLength, ft.Decimal)
@@ -158,8 +156,6 @@ func TestFieldType(t *testing.T) {
 }
 
 func TestDefaultTypeForValue(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		value     interface{}
 		tp        byte
@@ -210,8 +206,6 @@ func TestDefaultTypeForValue(t *testing.T) {
 }
 
 func TestAggFieldType(t *testing.T) {
-	t.Parallel()
-
 	fts := []*FieldType{
 		NewFieldType(mysql.TypeUnspecified),
 		NewFieldType(mysql.TypeTiny),
@@ -306,8 +300,6 @@ func TestAggFieldType(t *testing.T) {
 }
 
 func TestAggFieldTypeForTypeFlag(t *testing.T) {
-	t.Parallel()
-
 	types := []*FieldType{
 		NewFieldType(mysql.TypeLonglong),
 		NewFieldType(mysql.TypeLonglong),
@@ -335,8 +327,6 @@ func TestAggFieldTypeForTypeFlag(t *testing.T) {
 }
 
 func TestAggFieldTypeForIntegralPromotion(t *testing.T) {
-	t.Parallel()
-
 	fts := []*FieldType{
 		NewFieldType(mysql.TypeTiny),
 		NewFieldType(mysql.TypeShort),
@@ -375,8 +365,6 @@ func TestAggFieldTypeForIntegralPromotion(t *testing.T) {
 }
 
 func TestAggregateEvalType(t *testing.T) {
-	t.Parallel()
-
 	fts := []*FieldType{
 		NewFieldType(mysql.TypeUnspecified),
 		NewFieldType(mysql.TypeTiny),

@@ -14,12 +14,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/prometheus/client_golang/prometheus"
+	"go.uber.org/zap"
+
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
-	"github.com/prometheus/client_golang/prometheus"
-	"go.uber.org/zap"
 )
 
 const lengthLimit = 1048576
@@ -225,7 +226,7 @@ func WriteInsert(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR Tabl
 			}
 			counter++
 			wp.AddFileSize(uint64(bf.Len()-lastBfSize) + 2) // 2 is for ",\n" and ";\n"
-			failpoint.Inject("ChaosBrokenMySQLConn", func(_ failpoint.Value) {
+			failpoint.Inject("ChaosBrokenWriterConn", func(_ failpoint.Value) {
 				failpoint.Return(0, errors.New("connection is closed"))
 			})
 
@@ -343,6 +344,7 @@ func WriteInsertInCsv(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR
 				bf.Write(opt.separator)
 			}
 		}
+		bf.WriteByte('\r')
 		bf.WriteByte('\n')
 	}
 	wp.currentFileSize += uint64(bf.Len())
@@ -358,6 +360,7 @@ func WriteInsertInCsv(pCtx *tcontext.Context, cfg *Config, meta TableMeta, tblIR
 		counter++
 		wp.currentFileSize += uint64(bf.Len()-lastBfSize) + 1 // 1 is for "\n"
 
+		bf.WriteByte('\r')
 		bf.WriteByte('\n')
 		if bf.Len() >= lengthLimit {
 			select {
@@ -402,8 +405,8 @@ func write(tctx *tcontext.Context, writer storage.ExternalFileWriter, str string
 		if outputLength >= 200 {
 			outputLength = 200
 		}
-		tctx.L().Error("writing failed",
-			zap.String("string", str[:outputLength]),
+		tctx.L().Warn("fail to write",
+			zap.String("heading 200 characters", str[:outputLength]),
 			zap.Error(err))
 	}
 	return errors.Trace(err)
@@ -417,12 +420,11 @@ func writeBytes(tctx *tcontext.Context, writer storage.ExternalFileWriter, p []b
 		if outputLength >= 200 {
 			outputLength = 200
 		}
-		tctx.L().Error("writing failed",
-			zap.ByteString("string", p[:outputLength]),
-			zap.String("writer", fmt.Sprintf("%#v", writer)),
+		tctx.L().Warn("fail to write",
+			zap.ByteString("heading 200 characters", p[:outputLength]),
 			zap.Error(err))
 		if strings.Contains(err.Error(), "Part number must be an integer between 1 and 10000") {
-			err = errors.Annotate(err, "work around: dump file exceeding 50GB, please specify -F=256MB -r=200000 to avoid this problem")
+			err = errors.Annotate(err, "workaround: dump file exceeding 50GB, please specify -F=256MB -r=200000 to avoid this problem")
 		}
 	}
 	return errors.Trace(err)
@@ -433,7 +435,7 @@ func buildFileWriter(tctx *tcontext.Context, s storage.ExternalStorage, fileName
 	fullPath := path.Join(s.URI(), fileName)
 	writer, err := storage.WithCompression(s, compressType).Create(tctx, fileName)
 	if err != nil {
-		tctx.L().Error("open file failed",
+		tctx.L().Warn("fail to open file",
 			zap.String("path", fullPath),
 			zap.Error(err))
 		return nil, nil, errors.Trace(err)
@@ -445,7 +447,7 @@ func buildFileWriter(tctx *tcontext.Context, s storage.ExternalStorage, fileName
 			return
 		}
 		err = errors.Trace(err)
-		tctx.L().Error("close file failed",
+		tctx.L().Warn("fail to close file",
 			zap.String("path", fullPath),
 			zap.Error(err))
 	}
@@ -462,7 +464,7 @@ func buildInterceptFileWriter(pCtx *tcontext.Context, s storage.ExternalStorage,
 		// which will cause a context canceled error when closing gcs's Writer
 		w, err := storage.WithCompression(s, compressType).Create(pCtx, fileName)
 		if err != nil {
-			pCtx.L().Error("open file failed",
+			pCtx.L().Warn("fail to open file",
 				zap.String("path", fullPath),
 				zap.Error(err))
 			return newWriterError(err)
@@ -481,7 +483,7 @@ func buildInterceptFileWriter(pCtx *tcontext.Context, s storage.ExternalStorage,
 		pCtx.L().Debug("tear down lazy file writer...", zap.String("path", fullPath))
 		err := writer.Close(ctx)
 		if err != nil {
-			pCtx.L().Error("close file failed",
+			pCtx.L().Warn("fail to close file",
 				zap.String("path", fullPath),
 				zap.Error(err))
 		}

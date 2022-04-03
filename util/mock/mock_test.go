@@ -29,8 +29,6 @@ func (k contextKeyType) String() string {
 const contextKey contextKeyType = 0
 
 func TestContext(t *testing.T) {
-	t.Parallel()
-
 	ctx := NewContext()
 
 	ctx.SetValue(contextKey, 1)

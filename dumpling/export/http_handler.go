@@ -10,10 +10,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	tcontext "github.com/pingcap/tidb/dumpling/context"
-	"github.com/pingcap/tidb/dumpling/log"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/soheilhy/cmux"
+
+	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/dumpling/log"
 )
 
 var cmuxReadTimeout = 10 * time.Second
@@ -34,7 +35,7 @@ func startHTTPServer(tctx *tcontext.Context, lis net.Listener) {
 	err := httpServer.Serve(lis)
 	err = errors.Cause(err)
 	if err != nil && !isErrNetClosing(err) && err != http.ErrServerClosed {
-		tctx.L().Warn("dumpling http handler return with error", log.ShortError(err))
+		tctx.L().Info("dumpling http handler return with error", log.ShortError(err))
 	}
 }
 

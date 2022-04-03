@@ -119,7 +119,9 @@ func (*Join) resultSet() {}
 // We get (t1 join t3) left join t2, the semantics is correct.
 func NewCrossJoin(left, right ResultSetNode) (n *Join) {
 	rj, ok := right.(*Join)
-	if !ok || rj.Right == nil {
+	// don't break the explicit parents name scope constraints.
+	// this kind of join re-order can be done in logical-phase after the name resolution.
+	if !ok || rj.Right == nil || rj.ExplicitParens {
 		return &Join{Left: left, Right: right, Tp: CrossJoin}
 	}
 
@@ -690,7 +692,9 @@ type SelectField struct {
 	// Auxiliary stands for if this field is auxiliary.
 	// When we add a Field into SelectField list which is used for having/orderby clause but the field is not in select clause,
 	// we should set its Auxiliary to true. Then the TrimExec will trim the field.
-	Auxiliary bool
+	Auxiliary             bool
+	AuxiliaryColInAgg     bool
+	AuxiliaryColInOrderBy bool
 }
 
 // Restore implements Node interface.
@@ -1100,6 +1104,8 @@ type SelectStmt struct {
 	// Lists is filled only when Kind == SelectStmtKindValues
 	Lists []*RowExpr
 	With  *WithClause
+	// AsViewSchema indicates if this stmt provides the schema for the view. It is only used when creating the view
+	AsViewSchema bool
 }
 
 func (*SelectStmt) resultSet() {}
@@ -2578,6 +2584,7 @@ const (
 	ShowStatsTopN
 	ShowStatsBuckets
 	ShowStatsHealthy
+	ShowHistogramsInFlight
 	ShowColumnStatsUsage
 	ShowPlugins
 	ShowProfile
@@ -2586,6 +2593,7 @@ const (
 	ShowPrivileges
 	ShowErrors
 	ShowBindings
+	ShowBindingCacheStatus
 	ShowPumpStatus
 	ShowDrainerStatus
 	ShowOpenTables
@@ -2766,6 +2774,11 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		if err := restoreShowLikeOrWhereOpt(); err != nil {
 			return err
 		}
+	case ShowHistogramsInFlight:
+		ctx.WriteKeyWord("HISTOGRAMS_IN_FLIGHT")
+		if err := restoreShowLikeOrWhereOpt(); err != nil {
+			return err
+		}
 	case ShowColumnStatsUsage:
 		ctx.WriteKeyWord("COLUMN_STATS_USAGE")
 		if err := restoreShowLikeOrWhereOpt(); err != nil {
@@ -2907,6 +2920,8 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 				ctx.WriteKeyWord("SESSION ")
 			}
 			ctx.WriteKeyWord("BINDINGS")
+		case ShowBindingCacheStatus:
+			ctx.WriteKeyWord("BINDING_CACHE STATUS")
 		case ShowPumpStatus:
 			ctx.WriteKeyWord("PUMP STATUS")
 		case ShowDrainerStatus:

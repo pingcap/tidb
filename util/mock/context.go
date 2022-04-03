@@ -34,12 +34,15 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
-var _ sessionctx.Context = (*Context)(nil)
-var _ sqlexec.SQLExecutor = (*Context)(nil)
+var (
+	_ sessionctx.Context  = (*Context)(nil)
+	_ sqlexec.SQLExecutor = (*Context)(nil)
+)
 
 // Context represents mocked sessionctx.Context.
 type Context struct {
@@ -77,12 +80,12 @@ func (txn *wrapTxn) GetTableInfo(id int64) *model.TableInfo {
 
 // Execute implements sqlexec.SQLExecutor Execute interface.
 func (c *Context) Execute(ctx context.Context, sql string) ([]sqlexec.RecordSet, error) {
-	return nil, errors.Errorf("Not Supported.")
+	return nil, errors.Errorf("Not Supported")
 }
 
 // ExecuteStmt implements sqlexec.SQLExecutor ExecuteStmt interface.
 func (c *Context) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
-	return nil, errors.Errorf("Not Supported.")
+	return nil, errors.Errorf("Not Supported")
 }
 
 // SetDiskFullOpt sets allowed options of current operation in each TiKV disk usage level.
@@ -97,7 +100,12 @@ func (c *Context) ClearDiskFullOpt() {
 
 // ExecuteInternal implements sqlexec.SQLExecutor ExecuteInternal interface.
 func (c *Context) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
-	return nil, errors.Errorf("Not Supported.")
+	return nil, errors.Errorf("Not Supported")
+}
+
+// ShowProcess implements sessionctx.Context ShowProcess interface.
+func (c *Context) ShowProcess() *util.ProcessInfo {
+	return &util.ProcessInfo{}
 }
 
 type mockDDLOwnerChecker struct{}
@@ -175,6 +183,11 @@ func (c *Context) GetBuiltinFunctionUsage() map[string]uint32 {
 	return make(map[string]uint32)
 }
 
+// BuiltinFunctionUsageInc implements sessionctx.Context.
+func (c *Context) BuiltinFunctionUsageInc(scalarFuncSigName string) {
+
+}
+
 // GetGlobalSysVar implements GlobalVarAccessor GetGlobalSysVar interface.
 func (c *Context) GetGlobalSysVar(ctx sessionctx.Context, name string) (string, error) {
 	v := variable.GetSysVar(name)
@@ -245,7 +258,7 @@ func (c *Context) InitTxnWithStartTS(startTS uint64) error {
 		return nil
 	}
 	if c.Store != nil {
-		txn, err := c.Store.BeginWithOption(tikv.DefaultStartTSOption().SetTxnScope(kv.GlobalTxnScope).SetStartTS(startTS))
+		txn, err := c.Store.Begin(tikv.WithTxnScope(kv.GlobalTxnScope), tikv.WithStartTS(startTS))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -281,6 +294,9 @@ func (c *Context) GoCtx() context.Context {
 
 // StoreQueryFeedback stores the query feedback.
 func (c *Context) StoreQueryFeedback(_ interface{}) {}
+
+// UpdateColStatsUsage updates the column stats usage.
+func (c *Context) UpdateColStatsUsage(_ []model.TableColumnID) {}
 
 // StoreIndexUsage strores the index usage information.
 func (c *Context) StoreIndexUsage(_ int64, _ int64, _ int64) {}
@@ -335,6 +351,11 @@ func (c *Context) HasLockedTables() bool {
 
 // PrepareTSFuture implements the sessionctx.Context interface.
 func (c *Context) PrepareTSFuture(ctx context.Context) {
+}
+
+// GetStmtStats implements the sessionctx.Context interface.
+func (c *Context) GetStmtStats() *stmtstats.StatementStats {
+	return nil
 }
 
 // Close implements the sessionctx.Context interface.

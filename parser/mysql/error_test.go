@@ -20,7 +20,6 @@ import (
 )
 
 func TestSQLError(t *testing.T) {
-	t.Parallel()
 	e := NewErrf(ErrNoDB, "no db error", nil)
 	require.Greater(t, len(e.Error()), 0)
 

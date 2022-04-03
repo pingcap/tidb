@@ -23,7 +23,7 @@ import (
 // The typical usage is to call Reset() to recycle objects into a pool,
 // and Alloc() allocates from the pool.
 type Allocator interface {
-	Alloc(fields []*types.FieldType, cap, maxChunkSize int) *Chunk
+	Alloc(fields []*types.FieldType, capacity, maxChunkSize int) *Chunk
 	Reset()
 }
 
@@ -48,7 +48,7 @@ type allocator struct {
 }
 
 // Alloc implements the Allocator interface.
-func (a *allocator) Alloc(fields []*types.FieldType, cap, maxChunkSize int) *Chunk {
+func (a *allocator) Alloc(fields []*types.FieldType, capacity, maxChunkSize int) *Chunk {
 	var chk *Chunk
 	// Try to alloc from the free list.
 	if len(a.free) > 0 {
@@ -59,7 +59,7 @@ func (a *allocator) Alloc(fields []*types.FieldType, cap, maxChunkSize int) *Chu
 	}
 
 	// Init the chunk fields.
-	chk.capacity = mathutil.Min(cap, maxChunkSize)
+	chk.capacity = mathutil.Min(capacity, maxChunkSize)
 	chk.requiredRows = maxChunkSize
 	// Allocate the chunk columns from the pool column allocator.
 	for _, f := range fields {
@@ -97,7 +97,7 @@ func (a *allocator) Reset() {
 var _ ColumnAllocator = &poolColumnAllocator{}
 
 type poolColumnAllocator struct {
-	pool map[int]*freeList
+	pool map[int]freeList
 }
 
 // poolColumnAllocator implements the ColumnAllocator interface.
@@ -112,10 +112,13 @@ func (alloc *poolColumnAllocator) NewColumn(ft *types.FieldType, count int) *Col
 }
 
 func (alloc *poolColumnAllocator) init() {
-	alloc.pool = make(map[int]*freeList)
+	alloc.pool = make(map[int]freeList)
 }
 
 func (alloc *poolColumnAllocator) put(col *Column) {
+	if col.avoidReusing {
+		return
+	}
 	typeSize := col.typeSize()
 	if typeSize <= 0 {
 		return
@@ -123,32 +126,33 @@ func (alloc *poolColumnAllocator) put(col *Column) {
 
 	l := alloc.pool[typeSize]
 	if l == nil {
-		l = &freeList{
-			data: make([]*Column, 0, 8),
-		}
+		l = make(map[*Column]struct{}, 8)
 		alloc.pool[typeSize] = l
 	}
 	l.push(col)
 }
 
-type freeList struct {
-	data []*Column
+// freeList is defined as a map, rather than a list, because when recycling chunk
+// columns, there could be duplicated one: some of the chunk columns are just the
+// reference to the others.
+type freeList map[*Column]struct{}
+
+func (l freeList) empty() bool {
+	return len(l) == 0
 }
 
-func (l *freeList) empty() bool {
-	return len(l.data) == 0
+func (l freeList) pop() *Column {
+	for k := range l {
+		delete(l, k)
+		return k
+	}
+	return nil
 }
 
-func (l *freeList) pop() *Column {
-	ret := l.data[len(l.data)-1]
-	l.data = l.data[:len(l.data)-1]
-	return ret
-}
-
-func (l *freeList) push(c *Column) {
-	if len(l.data) >= maxFreeColumnsPerType {
+func (l freeList) push(c *Column) {
+	if len(l) >= maxFreeColumnsPerType {
 		// Don't cache too much to save memory.
 		return
 	}
-	l.data = append(l.data, c)
+	l[c] = struct{}{}
 }

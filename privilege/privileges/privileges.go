@@ -256,8 +256,21 @@ func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
 	return "", errors.New("Failed to get plugin for user")
 }
 
+// MatchIdentity implements the Manager interface.
+func (p *UserPrivileges) MatchIdentity(user, host string, skipNameResolve bool) (u string, h string, success bool) {
+	if SkipWithGrant {
+		return user, host, true
+	}
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.matchIdentity(user, host, skipNameResolve)
+	if record != nil {
+		return record.User, record.Host, true
+	}
+	return "", "", false
+}
+
 // GetAuthWithoutVerification implements the Manager interface.
-func (p *UserPrivileges) GetAuthWithoutVerification(user, host string) (u string, h string, success bool) {
+func (p *UserPrivileges) GetAuthWithoutVerification(user, host string) (success bool) {
 	if SkipWithGrant {
 		p.user = user
 		p.host = host
@@ -273,16 +286,14 @@ func (p *UserPrivileges) GetAuthWithoutVerification(user, host string) (u string
 		return
 	}
 
-	u = record.User
-	h = record.Host
 	p.user = user
-	p.host = h
+	p.host = record.Host
 	success = true
 	return
 }
 
 // ConnectionVerification implements the Manager interface.
-func (p *UserPrivileges) ConnectionVerification(user, host string, authentication, salt []byte, tlsState *tls.ConnectionState) (u string, h string, success bool) {
+func (p *UserPrivileges) ConnectionVerification(user, host string, authentication, salt []byte, tlsState *tls.ConnectionState) (success bool) {
 	if SkipWithGrant {
 		p.user = user
 		p.host = host
@@ -297,9 +308,6 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 			zap.String("user", user), zap.String("host", host))
 		return
 	}
-
-	u = record.User
-	h = record.Host
 
 	globalPriv := mysqlPriv.matchGlobalPriv(user, host)
 	if globalPriv != nil {
@@ -328,7 +336,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	// empty password
 	if len(pwd) == 0 && len(authentication) == 0 {
 		p.user = user
-		p.host = h
+		p.host = record.Host
 		success = true
 		return
 	}
@@ -371,7 +379,7 @@ func (p *UserPrivileges) ConnectionVerification(user, host string, authenticatio
 	}
 
 	p.user = user
-	p.host = h
+	p.host = record.Host
 	success = true
 	return
 }
@@ -542,7 +550,7 @@ func (p *UserPrivileges) DBIsVisible(activeRoles []*auth.RoleIdentity, db string
 	if mysqlPriv.DBIsVisible(p.user, p.host, db) {
 		return true
 	}
-	allRoles := mysqlPriv.FindAllRole(activeRoles)
+	allRoles := mysqlPriv.FindAllUserEffectiveRoles(p.user, p.host, activeRoles)
 	for _, role := range allRoles {
 		if mysqlPriv.DBIsVisible(role.Username, role.Hostname, db) {
 			return true

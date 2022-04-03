@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tracing "github.com/uber/jaeger-client-go/config"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -64,6 +65,14 @@ const (
 	DefTableColumnCountLimit = 1017
 	// DefMaxOfTableColumnCountLimit is maximum limitation of the number of columns in a table
 	DefMaxOfTableColumnCountLimit = 4096
+	// DefStatsLoadConcurrencyLimit is limit of the concurrency of stats-load
+	DefStatsLoadConcurrencyLimit = 1
+	// DefMaxOfStatsLoadConcurrencyLimit is maximum limitation of the concurrency of stats-load
+	DefMaxOfStatsLoadConcurrencyLimit = 128
+	// DefStatsLoadQueueSizeLimit is limit of the size of stats-load request queue
+	DefStatsLoadQueueSizeLimit = 1
+	// DefMaxOfStatsLoadQueueSizeLimit is maximum limitation of the size of stats-load request queue
+	DefMaxOfStatsLoadQueueSizeLimit = 100000
 )
 
 // Valid config maps
@@ -100,33 +109,31 @@ type Config struct {
 	MemQuotaQuery    int64  `toml:"mem-quota-query" json:"mem-quota-query"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
-	TempStorageQuota int64 `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
-	// Deprecated
-	EnableStreaming bool                    `toml:"-" json:"-"`
-	EnableBatchDML  bool                    `toml:"enable-batch-dml" json:"enable-batch-dml"`
-	TxnLocalLatches tikvcfg.TxnLocalLatches `toml:"-" json:"-"`
-	// Set sys variable lower-case-table-names, ref: https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html.
-	// TODO: We actually only support mode 2, which keeps the original case, but the comparison is case-insensitive.
-	LowerCaseTableNames        int                `toml:"lower-case-table-names" json:"lower-case-table-names"`
-	ServerVersion              string             `toml:"server-version" json:"server-version"`
-	Log                        Log                `toml:"log" json:"log"`
-	Security                   Security           `toml:"security" json:"security"`
-	Status                     Status             `toml:"status" json:"status"`
-	Performance                Performance        `toml:"performance" json:"performance"`
-	PreparedPlanCache          PreparedPlanCache  `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
-	OpenTracing                OpenTracing        `toml:"opentracing" json:"opentracing"`
-	ProxyProtocol              ProxyProtocol      `toml:"proxy-protocol" json:"proxy-protocol"`
-	PDClient                   tikvcfg.PDClient   `toml:"pd-client" json:"pd-client"`
-	TiKVClient                 tikvcfg.TiKVClient `toml:"tikv-client" json:"tikv-client"`
-	Binlog                     Binlog             `toml:"binlog" json:"binlog"`
-	CompatibleKillQuery        bool               `toml:"compatible-kill-query" json:"compatible-kill-query"`
-	Plugin                     Plugin             `toml:"plugin" json:"plugin"`
-	PessimisticTxn             PessimisticTxn     `toml:"pessimistic-txn" json:"pessimistic-txn"`
-	CheckMb4ValueInUTF8        bool               `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
-	MaxIndexLength             int                `toml:"max-index-length" json:"max-index-length"`
-	IndexLimit                 int                `toml:"index-limit" json:"index-limit"`
-	TableColumnCountLimit      uint32             `toml:"table-column-count-limit" json:"table-column-count-limit"`
-	GracefulWaitBeforeShutdown int                `toml:"graceful-wait-before-shutdown" json:"graceful-wait-before-shutdown"`
+	TempStorageQuota           int64                   `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
+	EnableBatchDML             bool                    `toml:"enable-batch-dml" json:"enable-batch-dml"`
+	TxnLocalLatches            tikvcfg.TxnLocalLatches `toml:"-" json:"-"`
+	ServerVersion              string                  `toml:"server-version" json:"server-version"`
+	VersionComment             string                  `toml:"version-comment" json:"version-comment"`
+	TiDBEdition                string                  `toml:"tidb-edition" json:"tidb-edition"`
+	TiDBReleaseVersion         string                  `toml:"tidb-release-version" json:"tidb-release-version"`
+	Log                        Log                     `toml:"log" json:"log"`
+	Security                   Security                `toml:"security" json:"security"`
+	Status                     Status                  `toml:"status" json:"status"`
+	Performance                Performance             `toml:"performance" json:"performance"`
+	PreparedPlanCache          PreparedPlanCache       `toml:"prepared-plan-cache" json:"prepared-plan-cache"`
+	OpenTracing                OpenTracing             `toml:"opentracing" json:"opentracing"`
+	ProxyProtocol              ProxyProtocol           `toml:"proxy-protocol" json:"proxy-protocol"`
+	PDClient                   tikvcfg.PDClient        `toml:"pd-client" json:"pd-client"`
+	TiKVClient                 tikvcfg.TiKVClient      `toml:"tikv-client" json:"tikv-client"`
+	Binlog                     Binlog                  `toml:"binlog" json:"binlog"`
+	CompatibleKillQuery        bool                    `toml:"compatible-kill-query" json:"compatible-kill-query"`
+	Plugin                     Plugin                  `toml:"plugin" json:"plugin"`
+	PessimisticTxn             PessimisticTxn          `toml:"pessimistic-txn" json:"pessimistic-txn"`
+	CheckMb4ValueInUTF8        AtomicBool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	MaxIndexLength             int                     `toml:"max-index-length" json:"max-index-length"`
+	IndexLimit                 int                     `toml:"index-limit" json:"index-limit"`
+	TableColumnCountLimit      uint32                  `toml:"table-column-count-limit" json:"table-column-count-limit"`
+	GracefulWaitBeforeShutdown int                     `toml:"graceful-wait-before-shutdown" json:"graceful-wait-before-shutdown"`
 	// AlterPrimaryKey is used to control alter primary key feature.
 	AlterPrimaryKey bool `toml:"alter-primary-key" json:"alter-primary-key"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
@@ -134,11 +141,10 @@ type Config struct {
 	TreatOldVersionUTF8AsUTF8MB4 bool `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
 	// EnableTableLock indicate whether enable table lock.
 	// TODO: remove this after table lock features stable.
-	EnableTableLock     bool        `toml:"enable-table-lock" json:"enable-table-lock"`
-	DelayCleanTableLock uint64      `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
-	SplitRegionMaxNum   uint64      `toml:"split-region-max-num" json:"split-region-max-num"`
-	StmtSummary         StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
-	TopSQL              TopSQL      `toml:"top-sql" json:"top-sql"`
+	EnableTableLock     bool   `toml:"enable-table-lock" json:"enable-table-lock"`
+	DelayCleanTableLock uint64 `toml:"delay-clean-table-lock" json:"delay-clean-table-lock"`
+	SplitRegionMaxNum   uint64 `toml:"split-region-max-num" json:"split-region-max-num"`
+	TopSQL              TopSQL `toml:"top-sql" json:"top-sql"`
 	// RepairMode indicates that the TiDB is in the repair mode for table meta.
 	RepairMode      bool     `toml:"repair-mode" json:"repair-mode"`
 	RepairTableList []string `toml:"repair-table-list" json:"repair-table-list"`
@@ -221,11 +227,9 @@ func (c *Config) getTiKVConfig() *tikvcfg.Config {
 
 func encodeDefTempStorageDir(tempDir string, host, statusHost string, port, statusPort uint) string {
 	dirName := base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%v:%v/%v:%v", host, port, statusHost, statusPort)))
-	var osUID string
+	osUID := ""
 	currentUser, err := user.Current()
-	if err != nil {
-		osUID = ""
-	} else {
+	if err == nil {
 		osUID = currentUser.Uid
 	}
 	return filepath.Join(tempDir, osUID+"_tidb", dirName, "tmp-storage")
@@ -301,6 +305,41 @@ func (b *nullableBool) UnmarshalJSON(data []byte) error {
 	return err
 }
 
+// AtomicBool is a helper type for atomic operations on a boolean value.
+type AtomicBool struct {
+	atomicutil.Bool
+}
+
+// NewAtomicBool creates an AtomicBool.
+func NewAtomicBool(v bool) *AtomicBool {
+	return &AtomicBool{*atomicutil.NewBool(v)}
+}
+
+// MarshalText implements the encoding.TextMarshaler interface.
+func (b AtomicBool) MarshalText() ([]byte, error) {
+	if b.Load() {
+		return []byte("true"), nil
+	}
+	return []byte("false"), nil
+}
+
+// UnmarshalText implements the encoding.TextUnmarshaler interface.
+func (b *AtomicBool) UnmarshalText(text []byte) error {
+	str := string(text)
+	switch str {
+	case "", "null":
+		*b = AtomicBool{*atomicutil.NewBool(false)}
+	case "true":
+		*b = AtomicBool{*atomicutil.NewBool(true)}
+	case "false":
+		*b = AtomicBool{*atomicutil.NewBool(false)}
+	default:
+		*b = AtomicBool{*atomicutil.NewBool(false)}
+		return errors.New("Invalid value for bool type: " + str)
+	}
+	return nil
+}
+
 // Log is the log section of config.
 type Log struct {
 	// Log level.
@@ -320,12 +359,12 @@ type Log struct {
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
-	EnableSlowLog       bool   `toml:"enable-slow-log" json:"enable-slow-log"`
-	SlowQueryFile       string `toml:"slow-query-file" json:"slow-query-file"`
-	SlowThreshold       uint64 `toml:"slow-threshold" json:"slow-threshold"`
-	ExpensiveThreshold  uint   `toml:"expensive-threshold" json:"expensive-threshold"`
-	QueryLogMaxLen      uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
-	RecordPlanInSlowLog uint32 `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
+	EnableSlowLog       AtomicBool `toml:"enable-slow-log" json:"enable-slow-log"`
+	SlowQueryFile       string     `toml:"slow-query-file" json:"slow-query-file"`
+	SlowThreshold       uint64     `toml:"slow-threshold" json:"slow-threshold"`
+	ExpensiveThreshold  uint       `toml:"expensive-threshold" json:"expensive-threshold"`
+	QueryLogMaxLen      uint64     `toml:"query-log-max-len" json:"query-log-max-len"`
+	RecordPlanInSlowLog uint32     `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 }
 
 func (l *Log) getDisableTimestamp() bool {
@@ -409,6 +448,18 @@ type Status struct {
 	MetricsInterval uint   `toml:"metrics-interval" json:"metrics-interval"`
 	ReportStatus    bool   `toml:"report-status" json:"report-status"`
 	RecordQPSbyDB   bool   `toml:"record-db-qps" json:"record-db-qps"`
+	// After a duration of this time in seconds if the server doesn't see any activity it pings
+	// the client to see if the transport is still alive.
+	GRPCKeepAliveTime uint `toml:"grpc-keepalive-time" json:"grpc-keepalive-time"`
+	// After having pinged for keepalive check, the server waits for a duration of timeout in seconds
+	// and if no activity is seen even after that the connection is closed.
+	GRPCKeepAliveTimeout uint `toml:"grpc-keepalive-timeout" json:"grpc-keepalive-timeout"`
+	// The number of max concurrent streams/requests on a client connection.
+	GRPCConcurrentStreams uint `toml:"grpc-concurrent-streams" json:"grpc-concurrent-streams"`
+	// Sets window size for stream. The default value is 2MB.
+	GRPCInitialWindowSize int `toml:"grpc-initial-window-size" json:"grpc-initial-window-size"`
+	// Set maximum message length in bytes that gRPC can send. `-1` means unlimited. The default value is 10MB.
+	GRPCMaxSendMsgSize int `toml:"grpc-max-send-msg-size" json:"grpc-max-send-msg-size"`
 }
 
 // Performance is the performance section of the config.
@@ -434,11 +485,14 @@ type Performance struct {
 	DistinctAggPushDown   bool    `toml:"distinct-agg-push-down" json:"distinct-agg-push-down"`
 	CommitterConcurrency  int     `toml:"committer-concurrency" json:"committer-concurrency"`
 	MaxTxnTTL             uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
-	MemProfileInterval    string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
-	IndexUsageSyncLease   string  `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
-	PlanReplayerGCLease   string  `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
-	GOGC                  int     `toml:"gogc" json:"gogc"`
-	EnforceMPP            bool    `toml:"enforce-mpp" json:"enforce-mpp"`
+	// Deprecated
+	MemProfileInterval   string `toml:"-" json:"-"`
+	IndexUsageSyncLease  string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
+	PlanReplayerGCLease  string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
+	GOGC                 int    `toml:"gogc" json:"gogc"`
+	EnforceMPP           bool   `toml:"enforce-mpp" json:"enforce-mpp"`
+	StatsLoadConcurrency uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
+	StatsLoadQueueSize   uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -513,6 +567,8 @@ type PessimisticTxn struct {
 	DeadlockHistoryCapacity uint `toml:"deadlock-history-capacity" json:"deadlock-history-capacity"`
 	// Whether retryable deadlocks (in-statement deadlocks) are collected to the information_schema.deadlocks table.
 	DeadlockHistoryCollectRetryable bool `toml:"deadlock-history-collect-retryable" json:"deadlock-history-collect-retryable"`
+	// PessimisticAutoCommit represents if true it means the auto-commit transactions will be in pessimistic mode.
+	PessimisticAutoCommit AtomicBool `toml:"pessimistic-auto-commit" json:"pessimistic-auto-commit"`
 }
 
 // DefaultPessimisticTxn returns the default configuration for PessimisticTxn
@@ -521,6 +577,7 @@ func DefaultPessimisticTxn() PessimisticTxn {
 		MaxRetryCount:                   256,
 		DeadlockHistoryCapacity:         10,
 		DeadlockHistoryCollectRetryable: false,
+		PessimisticAutoCommit:           *NewAtomicBool(false),
 	}
 }
 
@@ -528,22 +585,6 @@ func DefaultPessimisticTxn() PessimisticTxn {
 type Plugin struct {
 	Dir  string `toml:"dir" json:"dir"`
 	Load string `toml:"load" json:"load"`
-}
-
-// StmtSummary is the config for statement summary.
-type StmtSummary struct {
-	// Enable statement summary or not.
-	Enable bool `toml:"enable" json:"enable"`
-	// Enable summary internal query.
-	EnableInternalQuery bool `toml:"enable-internal-query" json:"enable-internal-query"`
-	// The maximum number of statements kept in memory.
-	MaxStmtCount uint `toml:"max-stmt-count" json:"max-stmt-count"`
-	// The maximum length of displayed normalized SQL and sample SQL.
-	MaxSQLLength uint `toml:"max-sql-length" json:"max-sql-length"`
-	// The refresh interval of statement summary.
-	RefreshInterval int `toml:"refresh-interval" json:"refresh-interval"`
-	// The maximum history size of statement summary.
-	HistorySize int `toml:"history-size" json:"history-size"`
 }
 
 // TopSQL is the config for TopSQL.
@@ -574,7 +615,7 @@ var defaultConf = Config{
 	Host:                         DefHost,
 	AdvertiseAddress:             "",
 	Port:                         DefPort,
-	Socket:                       "/tmp/tidb.sock",
+	Socket:                       "/tmp/tidb-{Port}.sock",
 	Cors:                         "",
 	Store:                        "unistore",
 	Path:                         "/tmp/tidb",
@@ -587,9 +628,8 @@ var defaultConf = Config{
 	TempStoragePath:              tempStorageDirName,
 	OOMAction:                    OOMActionCancel,
 	MemQuotaQuery:                1 << 30,
-	EnableStreaming:              false,
 	EnableBatchDML:               false,
-	CheckMb4ValueInUTF8:          true,
+	CheckMb4ValueInUTF8:          *NewAtomicBool(true),
 	MaxIndexLength:               3072,
 	IndexLimit:                   64,
 	TableColumnCountLimit:        1017,
@@ -602,9 +642,11 @@ var defaultConf = Config{
 	RepairTableList:              []string{},
 	MaxServerConnections:         0,
 	TxnLocalLatches:              defTiKVCfg.TxnLocalLatches,
-	LowerCaseTableNames:          2,
 	GracefulWaitBeforeShutdown:   0,
 	ServerVersion:                "",
+	TiDBEdition:                  "",
+	VersionComment:               "",
+	TiDBReleaseVersion:           "",
 	Log: Log{
 		Level:               "info",
 		Format:              "text",
@@ -618,14 +660,19 @@ var defaultConf = Config{
 		DisableTimestamp:    nbUnset, // If both options are nbUnset, getDisableTimestamp() returns false
 		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
 		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
-		EnableSlowLog:       logutil.DefaultTiDBEnableSlowLog,
+		EnableSlowLog:       *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
 	},
 	Status: Status{
-		ReportStatus:    true,
-		StatusHost:      DefStatusHost,
-		StatusPort:      DefStatusPort,
-		MetricsInterval: 15,
-		RecordQPSbyDB:   false,
+		ReportStatus:          true,
+		StatusHost:            DefStatusHost,
+		StatusPort:            DefStatusPort,
+		MetricsInterval:       15,
+		RecordQPSbyDB:         false,
+		GRPCKeepAliveTime:     10,
+		GRPCKeepAliveTimeout:  3,
+		GRPCConcurrentStreams: 1024,
+		GRPCInitialWindowSize: 2 * 1024 * 1024,
+		GRPCMaxSendMsgSize:    10 * 1024 * 1024,
 	},
 	Performance: Performance{
 		MaxMemory:             0,
@@ -647,12 +694,13 @@ var defaultConf = Config{
 		DistinctAggPushDown:   false,
 		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
 		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
-		MemProfileInterval:    "1m",
 		// TODO: set indexUsageSyncLease to 60s.
-		IndexUsageSyncLease: "0s",
-		GOGC:                100,
-		EnforceMPP:          false,
-		PlanReplayerGCLease: "10m",
+		IndexUsageSyncLease:  "0s",
+		GOGC:                 100,
+		EnforceMPP:           false,
+		PlanReplayerGCLease:  "10m",
+		StatsLoadConcurrency: 5,
+		StatsLoadQueueSize:   1000,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -660,7 +708,7 @@ var defaultConf = Config{
 	},
 	PreparedPlanCache: PreparedPlanCache{
 		Enabled:          false,
-		Capacity:         100,
+		Capacity:         1000,
 		MemoryGuardRatio: 0.1,
 	},
 	OpenTracing: OpenTracing{
@@ -682,20 +730,11 @@ var defaultConf = Config{
 		Load: "",
 	},
 	PessimisticTxn: DefaultPessimisticTxn(),
-	StmtSummary: StmtSummary{
-		Enable:              true,
-		EnableInternalQuery: false,
-		MaxStmtCount:        3000,
-		MaxSQLLength:        4096,
-		RefreshInterval:     1800,
-		HistorySize:         24,
-	},
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
 	Experimental: Experimental{
 		EnableGlobalKill: false,
-		EnableNewCharset: false,
 	},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
@@ -704,13 +743,14 @@ var defaultConf = Config{
 	Security: Security{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 		EnableSEM:                   false,
-		AutoTLS:                     true,
+		AutoTLS:                     false,
 		RSAKeySize:                  4096,
 	},
-	DeprecateIntegerDisplayWidth: false,
-	EnableEnumLengthLimit:        true,
-	StoresRefreshInterval:        defTiKVCfg.StoresRefreshInterval,
-	EnableForwarding:             defTiKVCfg.EnableForwarding,
+	DeprecateIntegerDisplayWidth:         false,
+	EnableEnumLengthLimit:                true,
+	StoresRefreshInterval:                defTiKVCfg.StoresRefreshInterval,
+	EnableForwarding:                     defTiKVCfg.EnableForwarding,
+	NewCollationsEnabledOnFirstBootstrap: true,
 }
 
 var (
@@ -738,20 +778,29 @@ func StoreGlobalConfig(config *Config) {
 }
 
 var deprecatedConfig = map[string]struct{}{
-	"pessimistic-txn.ttl":            {},
-	"pessimistic-txn.enable":         {},
-	"log.file.log-rotate":            {},
-	"log.log-slow-query":             {},
-	"txn-local-latches":              {},
-	"txn-local-latches.enabled":      {},
-	"txn-local-latches.capacity":     {},
-	"performance.max-memory":         {},
-	"max-txn-time-use":               {},
-	"experimental.allow-auto-random": {},
-	"enable-redact-log":              {}, // use variable tidb_redact_log instead
-	"tikv-client.copr-cache.enable":  {},
-	"alter-primary-key":              {}, // use NONCLUSTERED keyword instead
-	"enable-streaming":               {},
+	"pessimistic-txn.ttl":                {},
+	"pessimistic-txn.enable":             {},
+	"log.file.log-rotate":                {},
+	"log.log-slow-query":                 {},
+	"txn-local-latches":                  {},
+	"txn-local-latches.enabled":          {},
+	"txn-local-latches.capacity":         {},
+	"performance.max-memory":             {},
+	"max-txn-time-use":                   {},
+	"experimental.allow-auto-random":     {},
+	"enable-redact-log":                  {}, // use variable tidb_redact_log instead
+	"tikv-client.copr-cache.enable":      {},
+	"alter-primary-key":                  {}, // use NONCLUSTERED keyword instead
+	"enable-streaming":                   {},
+	"performance.mem-profile-interval":   {},
+	"lower-case-table-names":             {},
+	"stmt-summary":                       {},
+	"stmt-summary.enable":                {},
+	"stmt-summary.enable-internal-query": {},
+	"stmt-summary.max-stmt-count":        {},
+	"stmt-summary.max-sql-length":        {},
+	"stmt-summary.refresh-interval":      {},
+	"stmt-summary.history-size":          {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
@@ -890,11 +939,6 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("table-column-limit should be [%d, %d]", DefIndexLimit, DefMaxOfTableColumnCountLimit)
 	}
 
-	// lower_case_table_names is allowed to be 0, 1, 2
-	if c.LowerCaseTableNames < 0 || c.LowerCaseTableNames > 2 {
-		return fmt.Errorf("lower-case-table-names should be 0 or 1 or 2")
-	}
-
 	// txn-local-latches
 	if err := c.TxnLocalLatches.Valid(); err != nil {
 		return err
@@ -911,16 +955,6 @@ func (c *Config) Valid() error {
 
 	if c.Performance.MemoryUsageAlarmRatio > 1 || c.Performance.MemoryUsageAlarmRatio < 0 {
 		return fmt.Errorf("memory-usage-alarm-ratio in [Performance] must be greater than or equal to 0 and less than or equal to 1")
-	}
-
-	if c.StmtSummary.MaxStmtCount <= 0 {
-		return fmt.Errorf("max-stmt-count in [stmt-summary] should be greater than 0")
-	}
-	if c.StmtSummary.HistorySize < 0 {
-		return fmt.Errorf("history-size in [stmt-summary] should be greater than or equal to 0")
-	}
-	if c.StmtSummary.RefreshInterval <= 0 {
-		return fmt.Errorf("refresh-interval in [stmt-summary] should be greater than 0")
 	}
 
 	if c.PreparedPlanCache.Capacity < 1 {
@@ -945,6 +979,14 @@ func (c *Config) Valid() error {
 	default:
 		return fmt.Errorf("unsupported [security]spilled-file-encryption-method %v, TiDB only supports [%v, %v]",
 			c.Security.SpilledFileEncryptionMethod, SpilledFileEncryptionMethodPlaintext, SpilledFileEncryptionMethodAES128CTR)
+	}
+
+	// check stats load config
+	if c.Performance.StatsLoadConcurrency < DefStatsLoadConcurrencyLimit || c.Performance.StatsLoadConcurrency > DefMaxOfStatsLoadConcurrencyLimit {
+		return fmt.Errorf("stats-load-concurrency should be [%d, %d]", DefStatsLoadConcurrencyLimit, DefMaxOfStatsLoadConcurrencyLimit)
+	}
+	if c.Performance.StatsLoadQueueSize < DefStatsLoadQueueSizeLimit || c.Performance.StatsLoadQueueSize > DefMaxOfStatsLoadQueueSizeLimit {
+		return fmt.Errorf("stats-load-queue-size should be [%d, %d]", DefStatsLoadQueueSizeLimit, DefMaxOfStatsLoadQueueSizeLimit)
 	}
 
 	// test log level
@@ -1024,7 +1066,7 @@ func initByLDFlags(edition, checkBeforeDropLDFlag string) {
 }
 
 // The following constants represents the valid action configurations for OOMAction.
-// NOTE: Although the values is case insensitive, we should use lower-case
+// NOTE: Although the values is case-insensitive, we should use lower-case
 // strings because the configuration value will be transformed to lower-case
 // string and compared with these constants in the further usage.
 const (

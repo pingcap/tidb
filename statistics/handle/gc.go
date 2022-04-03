@@ -230,6 +230,9 @@ func (h *Handle) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
 		if _, err = exec.ExecuteInternal(ctx, "delete from mysql.column_stats_usage where table_id = %?", statsID); err != nil {
 			return err
 		}
+		if _, err = exec.ExecuteInternal(ctx, "delete from mysql.analyze_options where table_id = %?", statsID); err != nil {
+			return err
+		}
 	}
 	return nil
 }

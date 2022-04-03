@@ -216,7 +216,7 @@ func (e *RevokeExec) revokeGlobalPriv(internalSession sessionctx.Context, priv *
 	if err != nil {
 		return err
 	}
-	sqlexec.MustFormatSQL(sql, " WHERE User=%? AND Host=%?", user, host)
+	sqlexec.MustFormatSQL(sql, " WHERE User=%? AND Host=%?", user, strings.ToLower(host))
 
 	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql.String())
 	return err

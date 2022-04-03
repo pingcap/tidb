@@ -4,20 +4,20 @@ package utils
 
 import (
 	"fmt"
-	"net"
-	"os"
-	"sync"
-
+	"net" //nolint:goimports
 	// #nosec
 	// register HTTP handler for /debug/pprof
 	"net/http"
-	_ "net/http/pprof"
+	// For pprof
+	_ "net/http/pprof" // #nosec G108
+	"os"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	tidbutils "github.com/pingcap/tidb-tools/pkg/utils"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	tidbutils "github.com/pingcap/tidb/util"
 	"go.uber.org/zap"
 )
 

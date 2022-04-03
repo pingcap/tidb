@@ -23,8 +23,6 @@ import (
 )
 
 func TestMergePartialResult4BitFuncs(t *testing.T) {
-	t.Parallel()
-
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncBitAnd, mysql.TypeLonglong, 5, 0, 0, 0),
 		buildAggTester(ast.AggFuncBitOr, mysql.TypeLonglong, 5, 7, 7, 7),
@@ -36,8 +34,6 @@ func TestMergePartialResult4BitFuncs(t *testing.T) {
 }
 
 func TestMemBitFunc(t *testing.T) {
-	t.Parallel()
-
 	tests := []aggMemTest{
 		buildAggMemTester(ast.AggFuncBitAnd, mysql.TypeLonglong, 5,
 			aggfuncs.DefPartialResult4BitFuncSize, defaultUpdateMemDeltaGens, false),

@@ -53,7 +53,6 @@ var (
 		"Log.QueryLogMaxLen":              {},
 		"Log.ExpensiveThreshold":          {},
 		"CheckMb4ValueInUTF8":             {},
-		"EnableStreaming":                 {},
 		"TxnLocalLatches.Capacity":        {},
 		"CompatibleKillQuery":             {},
 		"TreatOldVersionUTF8AsUTF8MB4":    {},
@@ -69,6 +68,16 @@ func MergeConfigItems(dstConf, newConf *Config) (acceptedItems, rejectedItems []
 
 func mergeConfigItems(dstConf, newConf reflect.Value, fieldPath string) (acceptedItems, rejectedItems []string) {
 	t := dstConf.Type()
+	if t.Name() == "AtomicBool" {
+		if reflect.DeepEqual(dstConf.Interface().(AtomicBool), newConf.Interface().(AtomicBool)) {
+			return
+		}
+		if _, ok := dynamicConfigItems[fieldPath]; ok {
+			dstConf.Set(newConf)
+			return []string{fieldPath}, nil
+		}
+		return nil, []string{fieldPath}
+	}
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
 		dstConf = dstConf.Elem()

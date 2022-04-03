@@ -229,8 +229,8 @@ func checkpointErrorDestroy(ctx context.Context, cfg *config.Config, tls *common
 			for engineID := table.MinEngineID; engineID <= table.MaxEngineID; engineID++ {
 				fmt.Fprintln(os.Stderr, "Closing and cleaning up engine:", table.TableName, engineID)
 				_, eID := backend.MakeUUID(table.TableName, engineID)
-				file := local.File{UUID: eID}
-				err := file.Cleanup(cfg.TikvImporter.SortedKVDir)
+				engine := local.Engine{UUID: eID}
+				err := engine.Cleanup(cfg.TikvImporter.SortedKVDir)
 				if err != nil {
 					fmt.Fprintln(os.Stderr, "* Encountered error while cleanup engine:", err)
 					lastErr = err
@@ -254,7 +254,7 @@ func checkpointDump(ctx context.Context, cfg *config.Config, dumpFolder string) 
 	}
 	defer cpdb.Close()
 
-	if err := os.MkdirAll(dumpFolder, 0o755); err != nil {
+	if err := os.MkdirAll(dumpFolder, 0o750); err != nil {
 		return errors.Trace(err)
 	}
 

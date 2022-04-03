@@ -27,9 +27,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
@@ -64,11 +64,24 @@ func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
 func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest, mppStoreLastFailTime map[string]time.Time, ttl time.Duration) ([]kv.MPPTaskMeta, error) {
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTS)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
-	if req.KeyRanges == nil {
-		return c.selectAllTiFlashStore(), nil
+	var tasks []*batchCopTask
+	var err error
+	if req.PartitionIDAndRanges != nil {
+		rangesForEachPartition := make([]*KeyRanges, len(req.PartitionIDAndRanges))
+		partitionIDs := make([]int64, len(req.PartitionIDAndRanges))
+		for i, p := range req.PartitionIDAndRanges {
+			rangesForEachPartition[i] = NewKeyRanges(p.KeyRanges)
+			partitionIDs[i] = p.ID
+		}
+		tasks, err = buildBatchCopTasksForPartitionedTable(bo, c.store, rangesForEachPartition, kv.TiFlash, mppStoreLastFailTime, ttl, true, 20, partitionIDs)
+	} else {
+		if req.KeyRanges == nil {
+			return c.selectAllTiFlashStore(), nil
+		}
+		ranges := NewKeyRanges(req.KeyRanges)
+		tasks, err = buildBatchCopTasksForNonPartitionedTable(bo, c.store, ranges, kv.TiFlash, mppStoreLastFailTime, ttl, true, 20)
 	}
-	ranges := NewKeyRanges(req.KeyRanges)
-	tasks, err := buildBatchCopTasks(bo, c.store, ranges, kv.TiFlash, mppStoreLastFailTime, ttl, req.BalanceWithContinuity, req.BalanceContinuousRegionCount)
+
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -141,7 +154,11 @@ type mppIterator struct {
 
 	vars *tikv.Variables
 
+	needTriggerFallback bool
+
 	mu sync.Mutex
+
+	enableCollectExecutionInfo bool
 }
 
 func (m *mppIterator) run(ctx context.Context) {
@@ -195,14 +212,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	originalTask, ok := req.Meta.(*batchCopTask)
 	if ok {
 		for _, ri := range originalTask.regionInfos {
-			regionInfos = append(regionInfos, &coprocessor.RegionInfo{
-				RegionId: ri.Region.GetID(),
-				RegionEpoch: &metapb.RegionEpoch{
-					ConfVer: ri.Region.GetConfVer(),
-					Version: ri.Region.GetVer(),
-				},
-				Ranges: ri.Ranges.ToPBRanges(),
-			})
+			regionInfos = append(regionInfos, ri.toCoprocessorRegionInfo())
 		}
 	}
 
@@ -217,6 +227,12 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		SchemaVer: req.SchemaVar,
 		Regions:   regionInfos,
 	}
+	if originalTask != nil {
+		mppReq.TableRegions = originalTask.PartitionTableRegions
+		if mppReq.TableRegions != nil {
+			mppReq.Regions = nil
+		}
+	}
 
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPTask, mppReq, kvrpcpb.Context{})
 	wrappedReq.StoreTp = tikvrpc.TiFlash
@@ -229,15 +245,19 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	// Or else it's the task without region, which always happens in high layer task without table.
 	// In that case
 	if originalTask != nil {
-		sender := NewRegionBatchRequestSender(m.store.GetRegionCache(), m.store.GetTiKVClient())
+		sender := NewRegionBatchRequestSender(m.store.GetRegionCache(), m.store.GetTiKVClient(), m.enableCollectExecutionInfo)
 		rpcResp, retry, _, err = sender.SendReqToAddr(bo, originalTask.ctx, originalTask.regionInfos, wrappedReq, tikv.ReadTimeoutMedium)
 		// No matter what the rpc error is, we won't retry the mpp dispatch tasks.
 		// TODO: If we want to retry, we must redo the plan fragment cutting and task scheduling.
 		// That's a hard job but we can try it in the future.
 		if sender.GetRPCError() != nil {
 			logutil.BgLogger().Warn("mpp dispatch meet io error", zap.String("error", sender.GetRPCError().Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
-			// we return timeout to trigger tikv's fallback
-			err = derr.ErrTiFlashServerTimeout
+			// if needTriggerFallback is true, we return timeout to trigger tikv's fallback
+			if m.needTriggerFallback {
+				err = derr.ErrTiFlashServerTimeout
+			} else {
+				err = sender.GetRPCError()
+			}
 		}
 	} else {
 		rpcResp, err = m.store.GetTiKVClient().SendRequest(ctx, req.Meta.GetAddress(), wrappedReq, tikv.ReadTimeoutMedium)
@@ -258,8 +278,11 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 
 	if err != nil {
 		logutil.BgLogger().Error("mpp dispatch meet error", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
-		// we return timeout to trigger tikv's fallback
-		m.sendError(derr.ErrTiFlashServerTimeout)
+		// if needTriggerFallback is true, we return timeout to trigger tikv's fallback
+		if m.needTriggerFallback {
+			err = derr.ErrTiFlashServerTimeout
+		}
+		m.sendError(err)
 		return
 	}
 
@@ -339,14 +362,18 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPConn, connReq, kvrpcpb.Context{})
 	wrappedReq.StoreTp = tikvrpc.TiFlash
 
-	// Drain result from root task.
+	// Drain results from root task.
 	// We don't need to process any special error. When we meet errors, just let it fail.
 	rpcResp, err := m.store.GetTiKVClient().SendRequest(bo.GetCtx(), req.Meta.GetAddress(), wrappedReq, readTimeoutUltraLong)
 
 	if err != nil {
 		logutil.BgLogger().Warn("establish mpp connection meet error and cannot retry", zap.String("error", err.Error()), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
-		// we return timeout to trigger tikv's fallback
-		m.sendError(derr.ErrTiFlashServerTimeout)
+		// if needTriggerFallback is true, we return timeout to trigger tikv's fallback
+		if m.needTriggerFallback {
+			m.sendError(derr.ErrTiFlashServerTimeout)
+		} else {
+			m.sendError(err)
+		}
 		return
 	}
 
@@ -378,7 +405,12 @@ func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchReques
 					logutil.BgLogger().Info("stream unknown error", zap.Error(err), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId))
 				}
 			}
-			m.sendError(derr.ErrTiFlashServerTimeout)
+			// if needTriggerFallback is true, we return timeout to trigger tikv's fallback
+			if m.needTriggerFallback {
+				m.sendError(derr.ErrTiFlashServerTimeout)
+			} else {
+				m.sendError(err)
+			}
 			return
 		}
 	}
@@ -470,17 +502,19 @@ func (m *mppIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 }
 
 // DispatchMPPTasks dispatches all the mpp task and waits for the responses.
-func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{}, dispatchReqs []*kv.MPPDispatchRequest) kv.Response {
+func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{}, dispatchReqs []*kv.MPPDispatchRequest, needTriggerFallback bool, startTs uint64) kv.Response {
 	vars := variables.(*tikv.Variables)
 	ctxChild, cancelFunc := context.WithCancel(ctx)
 	iter := &mppIterator{
-		store:      c.store,
-		tasks:      dispatchReqs,
-		finishCh:   make(chan struct{}),
-		cancelFunc: cancelFunc,
-		respChan:   make(chan *mppResponse, 4096),
-		startTs:    dispatchReqs[0].StartTs,
-		vars:       vars,
+		store:                      c.store,
+		tasks:                      dispatchReqs,
+		finishCh:                   make(chan struct{}),
+		cancelFunc:                 cancelFunc,
+		respChan:                   make(chan *mppResponse, 4096),
+		startTs:                    startTs,
+		vars:                       vars,
+		needTriggerFallback:        needTriggerFallback,
+		enableCollectExecutionInfo: config.GetGlobalConfig().EnableCollectExecutionInfo,
 	}
 	go iter.run(ctxChild)
 	return iter

@@ -4,15 +4,12 @@ package utils
 
 import (
 	"encoding/hex"
+	"testing"
 
-	. "github.com/pingcap/check"
+	"github.com/stretchr/testify/require"
 )
 
-type testKeySuite struct{}
-
-var _ = Suite(&testKeySuite{})
-
-func (r *testKeySuite) TestParseKey(c *C) {
+func TestParseKey(t *testing.T) {
 	// test rawKey
 	testRawKey := []struct {
 		rawKey string
@@ -28,8 +25,8 @@ func (r *testKeySuite) TestParseKey(c *C) {
 
 	for _, tt := range testRawKey {
 		parsedKey, err := ParseKey("raw", tt.rawKey)
-		c.Assert(err, IsNil)
-		c.Assert(parsedKey, BytesEquals, tt.ans)
+		require.NoError(t, err)
+		require.Equal(t, tt.ans, parsedKey)
 	}
 
 	// test EscapedKey
@@ -46,8 +43,8 @@ func (r *testKeySuite) TestParseKey(c *C) {
 
 	for _, tt := range testEscapedKey {
 		parsedKey, err := ParseKey("escaped", tt.EscapedKey)
-		c.Assert(err, IsNil)
-		c.Assert(parsedKey, BytesEquals, tt.ans)
+		require.NoError(t, err)
+		require.Equal(t, tt.ans, parsedKey)
 	}
 
 	// test hexKey
@@ -68,8 +65,8 @@ func (r *testKeySuite) TestParseKey(c *C) {
 	for _, tt := range testHexKey {
 		key := hex.EncodeToString([]byte(tt.hexKey))
 		parsedKey, err := ParseKey("hex", key)
-		c.Assert(err, IsNil)
-		c.Assert(parsedKey, BytesEquals, tt.ans)
+		require.NoError(t, err)
+		require.Equal(t, tt.ans, parsedKey)
 	}
 
 	// test other
@@ -89,11 +86,12 @@ func (r *testKeySuite) TestParseKey(c *C) {
 
 	for _, tt := range testNotSupportKey {
 		_, err := ParseKey("notSupport", tt.any)
-		c.Assert(err, ErrorMatches, "unknown format.*")
+		require.Error(t, err)
+		require.Regexp(t, "^unknown format", err.Error())
 	}
 }
 
-func (r *testKeySuite) TestCompareEndKey(c *C) {
+func TestCompareEndKey(t *testing.T) {
 	// test endKey
 	testCase := []struct {
 		key1 []byte
@@ -110,6 +108,6 @@ func (r *testKeySuite) TestCompareEndKey(c *C) {
 
 	for _, tt := range testCase {
 		res := CompareEndKey(tt.key1, tt.key2)
-		c.Assert(res, Equals, tt.ans)
+		require.Equal(t, tt.ans, res)
 	}
 }

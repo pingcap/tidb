@@ -32,6 +32,7 @@ import (
 )
 
 var supportedHintNameForInsertStmt = map[string]struct{}{}
+var errWarnConflictingHint = dbterror.ClassUtil.NewStd(errno.ErrWarnConflictingHint)
 
 func init() {
 	supportedHintNameForInsertStmt["memory_quota"] = struct{}{}
@@ -118,8 +119,7 @@ func checkInsertStmtHintDuplicated(node ast.Node, sctx sessionctx.Context) {
 				}
 				if duplicatedHint != nil {
 					hint := fmt.Sprintf("%s(`%v`)", duplicatedHint.HintName.O, duplicatedHint.HintData)
-					err := dbterror.ClassUtil.NewStd(errno.ErrWarnConflictingHint).FastGenByArgs(hint)
-					sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+					sctx.GetSessionVars().StmtCtx.AppendWarning(errWarnConflictingHint.FastGenByArgs(hint))
 				}
 			}
 		}
@@ -299,7 +299,8 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 
 func extractHintWarns(warns []error) []error {
 	for _, w := range warns {
-		if parser.ErrWarnOptimizerHintUnsupportedHint.Equal(w) ||
+		if parser.ErrParse.Equal(w) ||
+			parser.ErrWarnOptimizerHintUnsupportedHint.Equal(w) ||
 			parser.ErrWarnOptimizerHintInvalidToken.Equal(w) ||
 			parser.ErrWarnMemoryQuotaOverflow.Equal(w) ||
 			parser.ErrWarnOptimizerHintParseError.Equal(w) ||

@@ -16,7 +16,7 @@ package handle
 
 import (
 	"context"
-	"fmt"
+	"strconv"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
@@ -66,7 +66,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (statsCache, error) {
 	}
 	defer terror.Call(rc.Close)
 	tables := statsCache{tables: make(map[int64]*statistics.Table)}
-	req := rc.NewChunk()
+	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
 		err := rc.Next(context.TODO(), req)
@@ -163,7 +163,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache *statsCache
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	req := rc.NewChunk()
+	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
 		err := rc.Next(context.TODO(), req)
@@ -209,7 +209,7 @@ func (h *Handle) initStatsTopN(cache *statsCache) error {
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	req := rc.NewChunk()
+	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
 		err := rc.Next(context.TODO(), req)
@@ -257,7 +257,7 @@ func (h *Handle) initStatsFMSketch(cache *statsCache) error {
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	req := rc.NewChunk()
+	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
 		err := rc.Next(context.TODO(), req)
@@ -330,7 +330,7 @@ func (h *Handle) initTopNCountSum(tableID, colID int64) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	err = rs.Next(context.TODO(), req)
 	if err != nil {
@@ -349,7 +349,7 @@ func (h *Handle) initStatsBuckets(cache *statsCache) error {
 		return errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	req := rc.NewChunk()
+	req := rc.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
 	for {
 		err := rc.Next(context.TODO(), req)
@@ -428,5 +428,5 @@ func getFullTableName(is infoschema.InfoSchema, tblInfo *model.TableInfo) string
 			}
 		}
 	}
-	return fmt.Sprintf("%d", tblInfo.ID)
+	return strconv.FormatInt(tblInfo.ID, 10)
 }

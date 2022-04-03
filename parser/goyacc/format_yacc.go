@@ -23,10 +23,10 @@ import (
 	"regexp"
 	"strings"
 
-	parser "github.com/cznic/parser/yacc"
 	"github.com/cznic/strutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/format"
+	parser "modernc.org/parser/yacc"
 )
 
 func Format(inputFilename string, goldenFilename string) (err error) {

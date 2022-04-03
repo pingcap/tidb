@@ -16,7 +16,6 @@ package core
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -131,7 +130,7 @@ func (p *PhysicalProjection) ToPB(ctx sessionctx.Context, storeType kv.StoreType
 		}
 		executorID = p.ExplainID().String()
 	} else {
-		return nil, errors.Errorf("The projection can only be pushed down to TiFlash now, not %s.", storeType.Name())
+		return nil, errors.Errorf("The projection can only be pushed down to TiFlash now, not %s", storeType.Name())
 	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeProjection, Projection: projExec, ExecutorId: &executorID}, nil
 }
@@ -177,28 +176,28 @@ func (p *PhysicalLimit) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*t
 
 // ToPB implements PhysicalPlan ToPB interface.
 func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+	if storeType == kv.TiFlash && p.Table.GetPartitionInfo() != nil && p.IsMPPOrBatchCop && p.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+		return p.partitionTableScanToPBForFlash(ctx)
+	}
 	tsExec := tables.BuildTableScanFromInfos(p.Table, p.Columns)
 	tsExec.Desc = p.Desc
 	if p.isPartition {
 		tsExec.TableId = p.physicalTableID
 	}
 	executorID := ""
-	if storeType == kv.TiFlash && p.IsGlobalRead {
-		tsExec.NextReadEngine = tipb.EngineType_TiFlash
-		splitedRanges, _ := distsql.SplitRangesAcrossInt64Boundary(p.Ranges, false, false, p.Table.IsCommonHandle)
-		ranges, err := distsql.TableHandleRangesToKVRanges(ctx.GetSessionVars().StmtCtx, []int64{tsExec.TableId}, p.Table.IsCommonHandle, splitedRanges, nil)
-		if err != nil {
-			return nil, err
-		}
-		for _, keyRange := range ranges {
-			tsExec.Ranges = append(tsExec.Ranges, tipb.KeyRange{Low: keyRange.StartKey, High: keyRange.EndKey})
-		}
-	}
 	if storeType == kv.TiFlash {
 		executorID = p.ExplainID().String()
 	}
 	err := SetPBColumnsDefaultValue(ctx, tsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tsExec, ExecutorId: &executorID}, err
+}
+
+func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx sessionctx.Context) (*tipb.Executor, error) {
+	ptsExec := tables.BuildPartitionTableScanFromInfos(p.Table, p.Columns)
+	ptsExec.Desc = p.Desc
+	executorID := p.ExplainID().String()
+	err := SetPBColumnsDefaultValue(ctx, ptsExec.Columns, p.Columns)
+	return &tipb.Executor{Tp: tipb.ExecType_TypePartitionTableScan, PartitionTableScan: ptsExec, ExecutorId: &executorID}, err
 }
 
 // checkCoverIndex checks whether we can pass unique info to TiKV. We should push it if and only if the length of
@@ -211,6 +210,18 @@ func checkCoverIndex(idx *model.IndexInfo, ranges []*ranger.Range) bool {
 	for _, rg := range ranges {
 		if len(rg.LowVal) != len(idx.Columns) {
 			return false
+		}
+		for _, v := range rg.LowVal {
+			if v.IsNull() {
+				// a unique index may have duplicated rows with NULLs, so we cannot set the unique attribute to true when the range has NULL
+				// please see https://github.com/pingcap/tidb/issues/29650 for more details
+				return false
+			}
+		}
+		for _, v := range rg.HighVal {
+			if v.IsNull() {
+				return false
+			}
 		}
 	}
 	return true
@@ -312,6 +323,8 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.
 	for _, col := range p.schema.Columns {
 		if col.ID == model.ExtraHandleID {
 			columns = append(columns, model.NewExtraHandleColInfo())
+		} else if col.ID == model.ExtraPhysTblID {
+			columns = append(columns, model.NewExtraPhysTblIDColInfo())
 		} else if col.ID == model.ExtraPidColID {
 			columns = append(columns, model.NewExtraPartitionIDColInfo())
 		} else {
@@ -378,7 +391,9 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 
 	var otherConditionsInJoin expression.CNFExprs
 	var otherEqConditionsFromIn expression.CNFExprs
-	if p.JoinType == AntiSemiJoin {
+	/// For anti join, equal conditions from `in` clause requires additional processing,
+	/// for example, treat `null` as true.
+	if p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin || p.JoinType == LeftOuterSemiJoin {
 		for _, condition := range p.OtherConditions {
 			if expression.IsEQCondFromIn(condition) {
 				otherEqConditionsFromIn = append(otherEqConditionsFromIn, condition)
@@ -417,7 +432,7 @@ func (p *PhysicalHashJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreType) 
 	buildFiledTypes := make([]*tipb.FieldType, 0, len(p.EqualConditions))
 	for _, equalCondition := range p.EqualConditions {
 		retType := equalCondition.RetType.Clone()
-		chs, coll := equalCondition.CharsetAndCollation(ctx)
+		chs, coll := equalCondition.CharsetAndCollation()
 		retType.Charset = chs
 		retType.Collate = coll
 		probeFiledTypes = append(probeFiledTypes, expression.ToPBFieldType(retType))

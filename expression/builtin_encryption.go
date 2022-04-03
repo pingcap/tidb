@@ -528,7 +528,7 @@ func (b *builtinPasswordSig) Clone() builtinFunc {
 func (b *builtinPasswordSig) evalString(row chunk.Row) (d string, isNull bool, err error) {
 	pass, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
-		return "", err != nil, err
+		return "", isNull, err
 	}
 
 	if len(pass) == 0 {
@@ -573,17 +573,17 @@ func (b *builtinRandomBytesSig) Clone() builtinFunc {
 // evalString evals RANDOM_BYTES(len).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_random-bytes
 func (b *builtinRandomBytesSig) evalString(row chunk.Row) (string, bool, error) {
-	len, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	if len < 1 || len > 1024 {
+	if val < 1 || val > 1024 {
 		return "", false, types.ErrOverflow.GenWithStackByArgs("length", "random_bytes")
 	}
-	buf := make([]byte, len)
+	buf := make([]byte, val)
 	if n, err := rand.Read(buf); err != nil {
 		return "", true, err
-	} else if int64(n) != len {
+	} else if int64(n) != val {
 		return "", false, errors.New("fail to generate random bytes")
 	}
 	return string(buf), false, nil
@@ -724,6 +724,7 @@ func (b *builtinSHA2Sig) evalString(row chunk.Row) (string, bool, error) {
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+
 	var hasher hash.Hash
 	switch int(hashLength) {
 	case SHA0, SHA256:
@@ -948,8 +949,7 @@ func (b *builtinUncompressedLengthSig) evalInt(row chunk.Row) (int64, bool, erro
 		sc.AppendWarning(errZlibZData)
 		return 0, false, nil
 	}
-	len := binary.LittleEndian.Uint32([]byte(payload)[0:4])
-	return int64(len), false, nil
+	return int64(binary.LittleEndian.Uint32([]byte(payload)[0:4])), false, nil
 }
 
 type validatePasswordStrengthFunctionClass struct {

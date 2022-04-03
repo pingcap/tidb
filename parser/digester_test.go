@@ -24,8 +24,6 @@ import (
 )
 
 func TestNormalize(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		input  string
 		expect string
@@ -56,10 +54,10 @@ func TestNormalize(t *testing.T) {
 		{"select * from `table`", "select * from `table`"},
 		{"select * from `30`", "select * from `30`"},
 		{"select * from `select`", "select * from `select`"},
+		{"select * from 🥳", "select * from `🥳`"},
 		// test syntax error, it will be checked by parser, but it should not make normalize dead loop.
 		{"select * from t ignore index(", "select * from `t` ignore index"},
 		{"select /*+ ", "select "},
-		{"select * from 🥳", "select * from"},
 		{"select 1 / 2", "select ? / ?"},
 		{"select * from t where a = 40 limit ?, ?", "select * from `t` where `a` = ? limit ..."},
 		{"select * from t where a > ?", "select * from `t` where `a` > ?"},
@@ -78,8 +76,6 @@ func TestNormalize(t *testing.T) {
 }
 
 func TestNormalizeDigest(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		sql        string
 		normalized string
@@ -100,8 +96,6 @@ func TestNormalizeDigest(t *testing.T) {
 }
 
 func TestDigestHashEqForSimpleSQL(t *testing.T) {
-	t.Parallel()
-
 	sqlGroups := [][]string{
 		{"select * from b where id = 1", "select * from b where id = '1'", "select * from b where id =2"},
 		{"select 2 from b, c where c.id > 1", "select 4 from b, c where c.id > 23"},
@@ -121,8 +115,6 @@ func TestDigestHashEqForSimpleSQL(t *testing.T) {
 }
 
 func TestDigestHashNotEqForSimpleSQL(t *testing.T) {
-	t.Parallel()
-
 	sqlGroups := [][]string{
 		{"select * from b where id = 1", "select a from b where id = 1", "select * from d where bid =1"},
 	}
@@ -140,8 +132,6 @@ func TestDigestHashNotEqForSimpleSQL(t *testing.T) {
 }
 
 func TestGenDigest(t *testing.T) {
-	t.Parallel()
-
 	hash := genRandDigest("abc")
 	digest := parser.NewDigest(hash)
 	require.Equal(t, fmt.Sprintf("%x", hash), digest.String())

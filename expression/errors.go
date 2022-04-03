@@ -34,6 +34,8 @@ var (
 	ErrInvalidArgumentForLogarithm = dbterror.ClassExpression.NewStd(mysql.ErrInvalidArgumentForLogarithm)
 	ErrIncorrectType               = dbterror.ClassExpression.NewStd(mysql.ErrIncorrectType)
 	ErrInvalidTableSample          = dbterror.ClassExpression.NewStd(mysql.ErrInvalidTableSample)
+	ErrInternal                    = dbterror.ClassOptimizer.NewStd(mysql.ErrInternal)
+	ErrNoDB                        = dbterror.ClassOptimizer.NewStd(mysql.ErrNoDB)
 
 	// All the un-exported errors are defined here:
 	errFunctionNotExists             = dbterror.ClassExpression.NewStd(mysql.ErrSpDoesNotExist)
@@ -85,5 +87,23 @@ func handleDivisionByZeroError(ctx sessionctx.Context) error {
 		}
 	}
 	sc.AppendWarning(ErrDivisionByZero)
+	return nil
+}
+
+// handleAllowedPacketOverflowed reports error or warning depend on the context.
+func handleAllowedPacketOverflowed(ctx sessionctx.Context, exprName string, maxAllowedPacketSize uint64) error {
+	err := errWarnAllowedPacketOverflowed.GenWithStackByArgs(exprName, maxAllowedPacketSize)
+	sc := ctx.GetSessionVars().StmtCtx
+
+	// insert|update|delete ignore ...
+	if sc.TruncateAsWarning {
+		sc.AppendWarning(err)
+		return nil
+	}
+
+	if ctx.GetSessionVars().StrictSQLMode && (sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt) {
+		return err
+	}
+	sc.AppendWarning(err)
 	return nil
 }

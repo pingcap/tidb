@@ -319,7 +319,7 @@ func GetRows4Test(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Recor
 		return nil, nil
 	}
 	var rows []chunk.Row
-	req := rs.NewChunk()
+	req := rs.NewChunk(nil)
 	// Must reuse `req` for imitating server.(*clientConn).writeChunks
 	for {
 		err := rs.Next(ctx, req)

@@ -22,6 +22,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	testbridge.WorkaroundGoCheckFlags()
-	goleak.VerifyTestMain(m)
+	testbridge.SetupForCommonTest()
+	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
+	}
+	goleak.VerifyTestMain(m, opts...)
 }

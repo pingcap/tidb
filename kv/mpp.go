@@ -33,6 +33,8 @@ type MPPTask struct {
 	ID      int64       // mppTaskID
 	StartTs uint64
 	TableID int64 // physical table id
+
+	PartitionTableIDs []int64
 }
 
 // ToPB generates the pb structure.
@@ -81,7 +83,7 @@ type MPPClient interface {
 	ConstructMPPTasks(context.Context, *MPPBuildTasksRequest, map[string]time.Time, time.Duration) ([]MPPTaskMeta, error)
 
 	// DispatchMPPTasks dispatches ALL mpp requests at once, and returns an iterator that transfers the data.
-	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest) Response
+	DispatchMPPTasks(ctx context.Context, vars interface{}, reqs []*MPPDispatchRequest, needTriggerFallback bool, startTs uint64) Response
 }
 
 // MPPBuildTasksRequest request the stores allocation for a mpp plan fragment.
@@ -90,6 +92,5 @@ type MPPBuildTasksRequest struct {
 	KeyRanges []KeyRange
 	StartTS   uint64
 
-	BalanceWithContinuity        bool
-	BalanceContinuousRegionCount int64
+	PartitionIDAndRanges []PartitionIDAndRanges
 }

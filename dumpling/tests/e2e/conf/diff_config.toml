@@ -1,39 +1,28 @@
 # diff Configuration.
 
-log-level = "info"
-
-chunk-size = 1000
-
 check-thread-count = 4
 
-sample-percent = 100
+export-fix-sql = true
 
-use-checksum = true
+check-struct-only = false
 
-fix-sql-file = "fix.sql"
+[task]
+    output-dir = "./output"
 
-# tables need to check.
-[[check-tables]]
-schema = "e2e"
-tables = ["~t.*"]
+    source-instances = ["mysql1"]
 
-[[table-config]]
-schema = "e2e"
-table = "t"
+    target-instance = "tidb0"
 
-[[table-config.source-tables]]
-instance-id = "source-1"
-schema = "e2e"
-table  = "t"
+    target-check-tables = ["e2e.t"]
 
-[[source-db]]
+[data-sources]
+[data-sources.mysql1]
 host = "127.0.0.1"
 port = 3306
 user = "root"
 password = ""
-instance-id = "source-1"
 
-[target-db]
+[data-sources.tidb0]
 host = "127.0.0.1"
 port = 4000
 user = "root"

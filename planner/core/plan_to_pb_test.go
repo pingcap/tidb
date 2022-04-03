@@ -27,8 +27,8 @@ import (
 )
 
 func TestColumnToProto(t *testing.T) {
-	t.Parallel()
 	// Make sure the Flag is set in tipb.ColumnInfo
+	collate.SetNewCollationEnabledForTest(false)
 	tp := types.NewFieldType(mysql.TypeLong)
 	tp.Flag = 10
 	tp.Collate = "utf8_bin"
@@ -60,7 +60,6 @@ func TestColumnToProto(t *testing.T) {
 	require.Equal(t, int32(8), pc.Collation)
 
 	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 
 	pc = util.ColumnToProto(col)
 	expect = &tipb.ColumnInfo{ColumnId: 0, Tp: 3, Collation: -83, ColumnLen: -1, Decimal: -1, Flag: 10, Elems: []string(nil), DefaultVal: []uint8(nil), PkHandle: false, XXX_unrecognized: []uint8(nil)}
