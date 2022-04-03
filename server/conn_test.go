@@ -51,17 +51,15 @@ type Issue33699CheckType struct {
 func (c *Issue33699CheckType) toSetSessionVar() string {
 	if c.isSessionVariable {
 		return fmt.Sprintf("set session %s=%s", c.name, c.setVal)
-	} else {
-		return fmt.Sprintf("set @%s=%s", c.name, c.setVal)
 	}
+	return fmt.Sprintf("set @%s=%s", c.name, c.setVal)
 }
 
 func (c *Issue33699CheckType) toGetSessionVar() string {
 	if c.isSessionVariable {
 		return fmt.Sprintf("select @@session.%s", c.name)
-	} else {
-		return fmt.Sprintf("select @%s", c.name)
 	}
+	return fmt.Sprintf("select @%s", c.name)
 }
 
 func TestIssue33699(t *testing.T) {
@@ -156,6 +154,7 @@ func TestIssue33699(t *testing.T) {
 	require.NotEqual(t, ctx, cc.ctx)
 	require.NotEqual(t, ctx.Session, cc.ctx.Session)
 	// new session,so values is defaults;
+	tk.SetSession(cc.ctx.Session) // set new session.
 	for _, ck := range checks {
 		tk.MustQuery(ck.toGetSessionVar()).Check(testkit.Rows(ck.defVal))
 	}
