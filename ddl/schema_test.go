@@ -49,29 +49,12 @@ func testCreateSchema(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *mode
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{dbInfo},
 	}
-	err := d.doDDLJob(ctx, job)
-	require.NoError(t, err)
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	require.NoError(t, d.DoDDLJob(ctx, job))
 
 	v := getSchemaVer(t, ctx)
 	dbInfo.State = model.StatePublic
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, db: dbInfo})
-	dbInfo.State = model.StateNone
-	return job
-}
-
-func testCreateSchemaT(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) *model.Job {
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		Type:       model.ActionCreateSchema,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{dbInfo},
-	}
-	err := d.doDDLJob(ctx, job)
-	require.NoError(t, err)
-
-	v := getSchemaVerT(t, ctx)
-	dbInfo.State = model.StatePublic
-	checkHistoryJobArgsT(t, ctx, job.ID, &historyJobArgs{ver: v, db: dbInfo})
 	dbInfo.State = model.StateNone
 	return job
 }
@@ -86,17 +69,10 @@ func buildDropSchemaJob(dbInfo *model.DBInfo) *model.Job {
 
 func testDropSchema(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) (*model.Job, int64) {
 	job := buildDropSchemaJob(dbInfo)
-	err := d.doDDLJob(ctx, job)
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 	ver := getSchemaVer(t, ctx)
-	return job, ver
-}
-
-func testDropSchemaT(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo) (*model.Job, int64) {
-	job := buildDropSchemaJob(dbInfo)
-	err := d.doDDLJob(ctx, job)
-	require.NoError(t, err)
-	ver := getSchemaVerT(t, ctx)
 	return job, ver
 }
 
@@ -142,7 +118,7 @@ func testCheckSchemaState(test *testing.T, d *ddl, dbInfo *model.DBInfo, state m
 }
 
 func ExportTestSchema(t *testing.T) {
-	store := testCreateStore(t, "test_schema")
+	store := createMockStore(t)
 	defer func() {
 		err := store.Close()
 		require.NoError(t, err)
@@ -202,7 +178,8 @@ func ExportTestSchema(t *testing.T) {
 		Type:       model.ActionDropSchema,
 		BinlogInfo: &model.HistoryInfo{},
 	}
-	err = d.doDDLJob(ctx, job)
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err = d.DoDDLJob(ctx, job)
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrDatabaseDropExists), "err %v", err)
 
 	// Drop a database without a table.
@@ -217,7 +194,7 @@ func ExportTestSchema(t *testing.T) {
 }
 
 func TestSchemaWaitJob(t *testing.T) {
-	store := testCreateStore(t, "test_schema_wait")
+	store := createMockStore(t)
 	defer func() {
 		err := store.Close()
 		require.NoError(t, err)
@@ -280,4 +257,32 @@ func testGetSchemaInfoWithError(d *ddl, schemaID int64) (*model.DBInfo, error) {
 		return nil, errors.Trace(err)
 	}
 	return dbInfo, nil
+}
+
+func doDDLJobErr(t *testing.T, schemaID, tableID int64, tp model.ActionType, args []interface{}, ctx sessionctx.Context, d *ddl) *model.Job {
+	job := &model.Job{
+		SchemaID:   schemaID,
+		TableID:    tableID,
+		Type:       tp,
+		Args:       args,
+		BinlogInfo: &model.HistoryInfo{},
+	}
+	// TODO: check error detail
+	require.Error(t, d.DoDDLJob(ctx, job))
+	testCheckJobCancelled(t, d.store, job, nil)
+
+	return job
+}
+
+func testCheckJobCancelled(t *testing.T, store kv.Storage, job *model.Job, state *model.SchemaState) {
+	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		historyJob, err := m.GetHistoryDDLJob(job.ID)
+		require.NoError(t, err)
+		require.True(t, historyJob.IsCancelled() || historyJob.IsRollbackDone(), "history job %s", historyJob)
+		if state != nil {
+			require.Equal(t, historyJob.SchemaState, *state)
+		}
+		return nil
+	}))
 }

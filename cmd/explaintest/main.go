@@ -763,7 +763,7 @@ func main() {
 	log.Info("Explain test passed")
 }
 
-var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin", "with"}
+var queryStmtTable = []string{"explain", "select", "show", "execute", "describe", "desc", "admin", "with", "trace"}
 
 func trimSQL(sql string) string {
 	// Trim space.

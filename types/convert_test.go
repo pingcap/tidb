@@ -841,7 +841,7 @@ func TestConvert(t *testing.T) {
 	dec := NewDecFromInt(-123)
 	err := dec.Shift(-5)
 	require.NoError(t, err)
-	err = dec.Round(dec, 5, ModeHalfEven)
+	err = dec.Round(dec, 5, ModeHalfUp)
 	require.NoError(t, err)
 	signedAccept(t, mysql.TypeNewDecimal, dec, "-0.00123")
 }
@@ -1212,6 +1212,8 @@ func TestStrToDuration(t *testing.T) {
 		{"20190101180000", 6, false},
 		{"20190101180000", 1, false},
 		{"20190101181234", 3, false},
+		{"00:00:00.000000", 6, true},
+		{"00:00:00", 0, true},
 	}
 	for _, tt := range tests {
 		_, _, isDuration, err := StrToDuration(sc, tt.str, tt.fsp)

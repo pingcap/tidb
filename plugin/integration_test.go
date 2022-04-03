@@ -50,6 +50,7 @@ func TestAuditLogNormal(t *testing.T) {
 		tables   string
 		cmd      string
 		event    plugin.GeneralEvent
+		resCnt   int
 	}
 
 	tests := []normalTest{
@@ -507,6 +508,7 @@ func TestAuditLogNormal(t *testing.T) {
 		{
 			sql:      "SHOW TABLE STATUS LIKE 't1'",
 			stmtType: "Show",
+			resCnt:   3, // Start + SHOW TABLE + Internal SELECT .. FROM IS.TABLES in current session
 		},
 		{
 			sql:      "SHOW TABLES",
@@ -696,12 +698,18 @@ func TestAuditLogNormal(t *testing.T) {
 		query := append([]byte{mysql.ComQuery}, []byte(test.sql)...)
 		err := conn.Dispatch(context.Background(), query)
 		require.NoError(t, err, errMsg)
-		require.Equal(t, 2, len(testResults), errMsg)
+		resultCount := test.resCnt
+		if resultCount == 0 {
+			resultCount = 2
+		}
+		require.Equal(t, resultCount, len(testResults), errMsg)
+
 		result := testResults[0]
-		// TODO: currently, result.text is wrong.
 		require.Equal(t, "Query", result.cmd, errMsg)
 		require.Equal(t, plugin.Starting, result.event, errMsg)
-		result = testResults[1]
+
+		result = testResults[resultCount-1]
+		require.Equal(t, "Query", result.cmd, errMsg)
 		if test.text == "" {
 			require.Equal(t, test.sql, result.text, errMsg)
 		} else {
@@ -713,6 +721,11 @@ func TestAuditLogNormal(t *testing.T) {
 		require.Equal(t, test.tables, result.tables, errMsg)
 		require.Equal(t, "Query", result.cmd, errMsg)
 		require.Equal(t, plugin.Completed, result.event, errMsg)
+		for i := 1; i < resultCount-1; i++ {
+			result = testResults[i]
+			require.Equal(t, "Query", result.cmd, errMsg)
+			require.Equal(t, plugin.Completed, result.event, errMsg)
+		}
 	}
 }
 

@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -37,9 +38,11 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tidb/util/topsql"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -291,7 +294,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 	logutil.BgLogger().Info("[ddl] backfill worker start", zap.Int("workerID", w.id))
 	defer func() {
-		w.resultCh <- &backfillResult{err: errReorgPanic}
+		w.resultCh <- &backfillResult{err: dbterror.ErrReorgPanic}
 	}()
 	defer util.Recover(metrics.LabelDDL, "backfillWorker.run", nil, false)
 	for {
@@ -308,6 +311,11 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 				w.resultCh <- result
 				failpoint.Continue()
 			}
+		})
+
+		failpoint.Inject("mockHighLoadForAddIndex", func() {
+			sqlPrefixes := []string{"alter"}
+			topsql.MockHighCPULoad(job.Query, sqlPrefixes, 5)
 		})
 
 		// Dynamic change batch size.
@@ -342,7 +350,7 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey 
 	}
 	if len(ranges) == 0 {
 		errMsg := fmt.Sprintf("cannot find region in range [%s, %s]", startKey.String(), endKey.String())
-		return nil, errors.Trace(errInvalidSplitRegionRanges.GenWithStackByArgs(errMsg))
+		return nil, errors.Trace(dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg))
 	}
 	return ranges, nil
 }
@@ -502,7 +510,7 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*backfillWorker
 
 var (
 	// TestCheckWorkerNumCh use for test adjust backfill worker.
-	TestCheckWorkerNumCh = make(chan struct{})
+	TestCheckWorkerNumCh = make(chan *sync.WaitGroup)
 	// TestCheckWorkerNumber use for test adjust backfill worker.
 	TestCheckWorkerNumber = int32(16)
 	// TestCheckReorgTimeout is used to mock timeout when reorg data.
@@ -672,7 +680,10 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 					} else if num != len(backfillWorkers) {
 						failpoint.Return(errors.Errorf("check backfill worker num error, len kv ranges is: %v, check backfill worker num is: %v, actual record num is: %v", len(kvRanges), num, len(backfillWorkers)))
 					}
-					TestCheckWorkerNumCh <- struct{}{}
+					var wg sync.WaitGroup
+					wg.Add(1)
+					TestCheckWorkerNumCh <- &wg
+					wg.Wait()
 				}
 			}
 		})
@@ -698,7 +709,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 // recordIterFunc is used for low-level record iteration.
 type recordIterFunc func(h kv.Handle, rowKey kv.Key, rawRecord []byte) (more bool, err error)
 
-func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version uint64,
+func iterateSnapshotRows(ctx *jobContext, store kv.Storage, priority int, t table.Table, version uint64,
 	startKey kv.Key, endKey kv.Key, fn recordIterFunc) error {
 	var firstKey kv.Key
 	if startKey == nil {
@@ -717,6 +728,9 @@ func iterateSnapshotRows(store kv.Storage, priority int, t table.Table, version 
 	ver := kv.Version{Ver: version}
 	snap := store.GetSnapshot(ver)
 	snap.SetOption(kv.Priority, priority)
+	if tagger := ctx.getResourceGroupTaggerForTopSQL(); tagger != nil {
+		snap.SetOption(kv.ResourceGroupTagger, tagger)
+	}
 
 	it, err := snap.Iter(firstKey, upperBound)
 	if err != nil {

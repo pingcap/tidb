@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/pingcap/errors"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/parser"
@@ -26,6 +26,7 @@ func TestDumpBlock(t *testing.T) {
 	}()
 
 	mock.ExpectQuery(fmt.Sprintf("SHOW CREATE DATABASE `%s`", escapeString(database))).
+		WillDelayFor(time.Second).
 		WillReturnRows(sqlmock.NewRows([]string{"Database", "Create Database"}).
 			AddRow("test", "CREATE DATABASE `test` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
 	mock.ExpectQuery(fmt.Sprintf("SELECT DEFAULT_COLLATION_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = '%s'", escapeString(database))).

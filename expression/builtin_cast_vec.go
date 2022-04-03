@@ -1743,7 +1743,7 @@ func (b *builtinCastDecimalAsIntSig) vecEvalInt(input *chunk.Chunk, result *chun
 
 		// Round is needed for both unsigned and signed.
 		to := d64s[i]
-		err = d64s[i].Round(&to, 0, types.ModeHalfEven)
+		err = d64s[i].Round(&to, 0, types.ModeHalfUp)
 		if err != nil {
 			return err
 		}
