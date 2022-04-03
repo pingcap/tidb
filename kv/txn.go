@@ -32,7 +32,7 @@ import (
 
 const (
 	// TimeToPrintLongTimeInternalTxn is the duration if the internal transaction lasts more than it,
-	// TiDB prints a log message
+	// TiDB prints a log message.
 	TimeToPrintLongTimeInternalTxn = time.Minute * 5
 )
 
@@ -59,7 +59,7 @@ func (ib *innerTxnStartTsBox) deleteInnerTxnTS(startTS uint64) {
 	ib.innerTSLock.Unlock()
 }
 
-// GetMinInnerTxnStartTS get the min StartTS between startTSLowerLimit and curMinStartTS in globalInnerTxnTsBox
+// GetMinInnerTxnStartTS get the min StartTS between startTSLowerLimit and curMinStartTS in globalInnerTxnTsBox.
 func GetMinInnerTxnStartTS(now time.Time, startTSLowerLimit uint64,
 	curMinStartTS uint64) uint64 {
 	return globalInnerTxnTsBox.getMinStartTS(now, startTSLowerLimit, curMinStartTS)
@@ -79,9 +79,9 @@ func (ib *innerTxnStartTsBox) getMinStartTS(now time.Time, startTSLowerLimit uin
 	return minStartTS
 }
 
-// PrintLongTimeInternalTxn print the internal transaction information
+// PrintLongTimeInternalTxn print the internal transaction information.
 // runByFunction	true means the transaction is run by `RunInNewTxn`,
-//					false means the transaction is run by internal session
+//					false means the transaction is run by internal session.
 func PrintLongTimeInternalTxn(now time.Time, startTS uint64, runByFunction bool) {
 	if startTS > 0 {
 		innerTxnStartTime := oracle.GetTimeFromTS(startTS)

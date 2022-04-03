@@ -68,8 +68,6 @@ func TestRetryExceedCountError(t *testing.T) {
 	assert.NotNil(t, err)
 }
 
-// fmt.Println("ts0:", ts0, " ts1:", ts1, " ts2:", ts2, " ts3:", ts3, " lowLimit:", lowLimit, " minStartTS:", minStartTS, " newMinStartTS:", newMinStartTS)
-// fmt.Println("innerTxnStartTsMap:", ib.innerTxnStartTsMap)
 func TestInnerTxnStartTsBox(t *testing.T) {
 	// case1: store and delete
 	globalInnerTxnTsBox.storeInnerTxnTS(5)

@@ -621,7 +621,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		return
 	}
 	now := oracle.GetTimeFromTS(currentVer.Ver)
-	// GCMaxWaitTime is in seconds, GCMaxWaitTime * 1000 converts it to milliseconds
+	// GCMaxWaitTime is in seconds, GCMaxWaitTime * 1000 converts it to milliseconds.
 	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, variable.GCMaxWaitTime.Load()*1000)
 
 	minStartTS := oracle.GoTimeToTS(now)
@@ -1058,7 +1058,7 @@ func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionD
 	return nil
 }
 
-// StoreInternalSession is the entry function for store an internal session to SessionManager
+// StoreInternalSession is the entry function for store an internal session to SessionManager.
 func StoreInternalSession(se interface{}) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
@@ -1071,7 +1071,7 @@ func StoreInternalSession(se interface{}) {
 	sm.StoreInternalSession(se)
 }
 
-// DeleteInternalSession is the entry function for delete an internal session from SessionManager
+// DeleteInternalSession is the entry function for delete an internal session from SessionManager.
 func DeleteInternalSession(se interface{}) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
