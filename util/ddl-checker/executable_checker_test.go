@@ -16,9 +16,9 @@ package checker
 
 import (
 	"container/list"
-	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -69,16 +69,14 @@ func TestParse(t *testing.T) {
 }
 
 func TestExecute(t *testing.T) {
-	ec, err := NewExecutableChecker()
-	require.NoError(t, err)
-	defer ec.Close()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	testData := setUpTestData()
-	tidbContext := context.Background()
-	err = ec.Execute(tidbContext, "use test;")
-	require.NoError(t, err)
+	tk.MustExec("use test;")
 	for e := testData.Front(); e != nil; e = e.Next() {
 		data := e.Value.(parseTestData)
-		err := ec.Execute(tidbContext, data.sql)
+		_, err := tk.Exec(data.sql)
 		require.Equal(t, data.executeSucceeded, err == nil)
 	}
 }
