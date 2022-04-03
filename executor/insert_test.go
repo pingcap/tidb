@@ -1489,6 +1489,9 @@ func TestInsertIntoSelectError(t *testing.T) {
 	tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows("Warning 1210 Incorrect arguments to sleep"))
 	tk.MustExec("INSERT IGNORE into t1(SELECT SLEEP(1));")
 	tk.MustQuery("SELECT * FROM t1;").Check(testkit.Rows("0", "0", "0"))
+	tk.MustExec("TRUNCATE t1;")
+	tk.MustGetErrCode("INSERT INTO t1 (a) VALUES ((SELECT a FROM t1));", errno.ErrUpdateTableUsed)
+	tk.MustExec("INSERT INTO t1 (a) VALUES ((SELECT a FROM t1 as t));")
 	tk.MustExec("DROP TABLE t1;")
 }
 

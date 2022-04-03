@@ -3729,15 +3729,38 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	mockTablePlan.SetSchema(insertPlan.tableSchema)
 	mockTablePlan.names = insertPlan.tableColNames
 
-	checkRefColumn := func(n ast.Node) ast.Node {
+	checkRefColumn := func(n ast.Node) (ast.Node, error) {
 		if insertPlan.NeedFillDefaultValue {
-			return n
+			return n, nil
 		}
 		switch n.(type) {
 		case *ast.ColumnName, *ast.ColumnNameExpr:
 			insertPlan.NeedFillDefaultValue = true
+		case *ast.SubqueryExpr:
+			sel := n.(*ast.SubqueryExpr).Query
+			switch sel.(type) {
+			case *ast.SelectStmt:
+				if sel.(*ast.SelectStmt).From != nil {
+					left := sel.(*ast.SelectStmt).From.TableRefs.Left
+					switch left.(type) {
+					case *ast.TableSource:
+						source := left.(*ast.TableSource).Source
+						switch source.(type) {
+						case *ast.TableName:
+							subTblname := source.(*ast.TableName).Name
+							srcTblname := tn.Name
+							subAsName := left.(*ast.TableSource).AsName
+
+							if srcTblname == subTblname && subAsName.O == "" {
+								err := ErrUpdateTableUsed.GenWithStackByArgs(srcTblname.O)
+								return n, err
+							}
+						}
+					}
+				}
+			}
 		}
-		return n
+		return n, nil
 	}
 
 	if len(insert.Setlist) > 0 {
@@ -3748,7 +3771,11 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		}
 	} else if len(insert.Lists) > 0 {
 		// Branch for `INSERT ... VALUES ...`.
-		err := b.buildValuesListOfInsert(ctx, insert, insertPlan, mockTablePlan, checkRefColumn)
+		err := b.checkSubQueryNameOfInsert(ctx, insert, tn)
+		if err != nil {
+			return nil, err
+		}
+		err = b.buildValuesListOfInsert(ctx, insert, insertPlan, mockTablePlan, checkRefColumn)
 		if err != nil {
 			return nil, err
 		}
@@ -3864,7 +3891,7 @@ func (b *PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Inse
 	return affectedValuesCols, nil
 }
 
-func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, mockTablePlan *LogicalTableDual, col *table.Column, expr ast.ExprNode, checkRefColumn func(n ast.Node) ast.Node) (outExpr expression.Expression, err error) {
+func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, mockTablePlan *LogicalTableDual, col *table.Column, expr ast.ExprNode, checkRefColumn func(n ast.Node) (ast.Node, error)) (outExpr expression.Expression, err error) {
 	if col.Hidden {
 		return nil, ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
 	}
@@ -3926,7 +3953,7 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, m
 	return outExpr, nil
 }
 
-func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *LogicalTableDual, checkRefColumn func(n ast.Node) ast.Node) error {
+func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *LogicalTableDual, checkRefColumn func(n ast.Node) (ast.Node, error)) error {
 	tableInfo := insertPlan.Table.Meta()
 	colNames := make([]string, 0, len(insert.Setlist))
 	exprCols := make([]*expression.Column, 0, len(insert.Setlist))
@@ -3969,7 +3996,7 @@ func (b *PlanBuilder) buildSetValuesOfInsert(ctx context.Context, insert *ast.In
 	return nil
 }
 
-func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *LogicalTableDual, checkRefColumn func(n ast.Node) ast.Node) error {
+func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *LogicalTableDual, checkRefColumn func(n ast.Node) (ast.Node, error)) error {
 	affectedValuesCols, err := b.getAffectCols(insert, insertPlan)
 	if err != nil {
 		return err
@@ -4009,6 +4036,39 @@ func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.I
 	}
 	insertPlan.Schema4OnDuplicate = insertPlan.tableSchema
 	insertPlan.names4OnDuplicate = insertPlan.tableColNames
+	return nil
+}
+
+func (b *PlanBuilder) checkSubQueryNameOfInsert(ctx context.Context, insert *ast.InsertStmt, srcTbl *ast.TableName) error {
+	for _, list := range insert.Lists {
+		for _, query := range list {
+			switch query.(type) {
+			case *ast.SubqueryExpr:
+				sel := query.(*ast.SubqueryExpr).Query
+				switch sel.(type) {
+				case *ast.SelectStmt:
+					if sel.(*ast.SelectStmt).From != nil {
+						left := sel.(*ast.SelectStmt).From.TableRefs.Left
+						switch left.(type) {
+						case *ast.TableSource:
+							source := left.(*ast.TableSource).Source
+							switch source.(type) {
+							case *ast.TableName:
+								subTblname := source.(*ast.TableName).Name
+								srcTblname := srcTbl.Name
+								subAsName := left.(*ast.TableSource).AsName
+
+								if srcTblname == subTblname && subAsName.O == "" {
+									err := ErrUpdateTableUsed.GenWithStackByArgs(srcTblname.O)
+									return err
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 	return nil
 }
 

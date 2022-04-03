@@ -5742,17 +5742,17 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			dependentColumnsModified[col.UniqueID] = true
 		} else {
 			// rewrite with generation expression
-			rewritePreprocess := func(assign *ast.Assignment) func(expr ast.Node) ast.Node {
-				return func(expr ast.Node) ast.Node {
+			rewritePreprocess := func(assign *ast.Assignment) func(expr ast.Node) (ast.Node, error) {
+				return func(expr ast.Node) (ast.Node, error) {
 					switch x := expr.(type) {
 					case *ast.ColumnName:
 						return &ast.ColumnName{
 							Schema: assign.Column.Schema,
 							Table:  assign.Column.Table,
 							Name:   x.Name,
-						}
+						}, nil
 					default:
-						return expr
+						return expr, nil
 					}
 				}
 			}

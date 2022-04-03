@@ -1931,6 +1931,11 @@ error = '''
 Not unique table/alias: '%-.192s'
 '''
 
+["planner:1093"]
+error = '''
+You can't specify target table '%-.192s' for update in FROM clause
+'''
+
 ["planner:1094"]
 error = '''
 Unknown thread id: %d

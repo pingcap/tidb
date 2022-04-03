@@ -124,7 +124,7 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 	p LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int,
 	windowMapper map[*ast.WindowFuncExpr]int,
 	asScalar bool,
-	preprocess func(ast.Node) ast.Node,
+	preprocess func(ast.Node) (ast.Node, error),
 ) (expression.Expression, LogicalPlan, error) {
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
@@ -232,7 +232,7 @@ type expressionRewriter struct {
 	asScalar bool
 
 	// preprocess is called for every ast.Node in Leave.
-	preprocess func(ast.Node) ast.Node
+	preprocess func(ast.Node) (ast.Node, error)
 
 	// insertPlan is only used to rewrite the expressions inside the assignment
 	// of the "INSERT" statement.
@@ -1118,7 +1118,12 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	}
 	var inNode = originInNode
 	if er.preprocess != nil {
-		inNode = er.preprocess(inNode)
+		nd, err := er.preprocess(inNode)
+		inNode = nd
+		if err != nil {
+			er.err = err
+			return retNode, false
+		}
 	}
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,

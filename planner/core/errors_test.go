@@ -83,6 +83,7 @@ func TestError(t *testing.T) {
 		ErrStmtNotFound,
 		ErrAmbiguous,
 		ErrKeyPart0,
+		ErrUpdateTableUsed,
 	}
 	for _, err := range kvErrs {
 		code := terror.ToSQLError(err).Code
