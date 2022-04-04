@@ -460,6 +460,8 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 	d.wg.Run(d.limitDDLJobs)
 
+	d.sessPool = newSessionPool(ctxPool)
+
 	// If RunWorker is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
 	if RunWorker {
@@ -468,7 +470,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			return errors.Trace(err)
 		}
 
-		d.sessPool = newSessionPool(ctxPool)
+		d.workers = make(map[workerType]*worker, 2)
 		d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
 
 		if variable.AllowConcurrencyDDL.Load() {

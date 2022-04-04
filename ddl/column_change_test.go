@@ -41,8 +41,8 @@ func TestColumnAdd(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
-	internal := testkit.NewTestKit(t, store)
 	tk := testkit.NewTestKit(t, store)
+	internal := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (c1 int, c2 int);")
 	tk.MustExec("insert t values (1, 2);")
@@ -88,7 +88,6 @@ func TestColumnAdd(t *testing.T) {
 	checkHistoryJobArgs(t, tk.Session(), jobID, &historyJobArgs{ver: v, tbl: tb.Meta()})
 
 	// Drop column.
-	first = true
 	tc.OnJobRunBeforeExported = func(job *model.Job) {
 		if dropCol == nil {
 			tbl := external.GetTableByName(t, internal, "test", "t")
@@ -97,10 +96,8 @@ func TestColumnAdd(t *testing.T) {
 	}
 	tc.OnJobUpdatedExported = func(job *model.Job) {
 		jobID = job.ID
-		switch job.SchemaState {
-		case model.StateNone:
-		default:
-			tbl := external.GetTableByName(t, internal, "test", "t")
+		tbl := external.GetTableByName(t, internal, "test", "t")
+		if job.SchemaState != model.StateNone {
 			for _, col := range tbl.Cols() {
 				require.NotEqualf(t, col.ID, dropCol.ID, "column is not dropped")
 			}

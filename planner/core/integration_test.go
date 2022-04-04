@@ -17,6 +17,7 @@ package core_test
 import (
 	"bytes"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1753,6 +1754,25 @@ func TestIndexHintWarning(t *testing.T) {
 	tk.MustExec("CREATE VIEW v1 AS SELECT c1, c2 FROM t1")
 	err := tk.ExecToErr("SELECT * FROM v1 USE INDEX (PRIMARY) WHERE c1=2")
 	require.True(t, terror.ErrorEqual(err, core.ErrKeyDoesNotExist))
+}
+
+func TestIssue32672(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	for _, agg := range []string{"stream", "hash"} {
+		rs := tk.MustQuery(fmt.Sprintf("explain format='verbose' select /*+ %v_agg() */ count(*) from t", agg)).Rows()
+		// cols: id, estRows, estCost, ...
+		operator := rs[0][0].(string)
+		cost, err := strconv.ParseFloat(rs[0][2].(string), 64)
+		require.NoError(t, err)
+		require.True(t, strings.Contains(strings.ToLower(operator), agg))
+		require.True(t, cost > 0)
+	}
 }
 
 func TestIssue15546(t *testing.T) {
@@ -6448,4 +6468,28 @@ func TestIssue33042(t *testing.T) {
 			"      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
 		),
 	)
+}
+
+func TestIssue29663(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("create table t2 (c int, d int)")
+	tk.MustExec("insert into t1 values(1, 1), (1,2),(2,1),(2,2)")
+	tk.MustExec("insert into t2 values(1, 3), (1,4),(2,5),(2,6)")
+
+	tk.MustQuery("explain select one.a from t1 one order by (select two.d from t2 two where two.c = one.b)").Check(testkit.Rows(
+		"Projection_16 10000.00 root  test.t1.a",
+		"└─Sort_17 10000.00 root  test.t2.d",
+		"  └─Apply_20 10000.00 root  CARTESIAN left outer join",
+		"    ├─TableReader_22(Build) 10000.00 root  data:TableFullScan_21",
+		"    │ └─TableFullScan_21 10000.00 cop[tikv] table:one keep order:false, stats:pseudo",
+		"    └─MaxOneRow_23(Probe) 1.00 root  ",
+		"      └─TableReader_26 2.00 root  data:Selection_25",
+		"        └─Selection_25 2.00 cop[tikv]  eq(test.t2.c, test.t1.b)",
+		"          └─TableFullScan_24 2000.00 cop[tikv] table:two keep order:false, stats:pseudo"))
 }

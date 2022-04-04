@@ -62,8 +62,6 @@ import (
 	"github.com/pingcap/tidb/store/copr"
 	error2 "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/unistore"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	testkit2 "github.com/pingcap/tidb/testkit"
@@ -72,14 +70,12 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/gcutil"
-	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/timeutil"
-	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -112,8 +108,6 @@ var _ = SerialSuites(&testSplitTable{&baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite1{&baseTestSuite{}})
 var _ = SerialSuites(&globalIndexSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite{&baseTestSuite{}})
-var _ = SerialSuites(&testCoprCache{})
-var _ = SerialSuites(&testResourceTagSuite{&baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
@@ -121,12 +115,6 @@ type testSuiteP2 struct{ *baseTestSuite }
 type testSplitTable struct{ *baseTestSuite }
 type globalIndexSuite struct{ *baseTestSuite }
 type testSerialSuite struct{ *baseTestSuite }
-type testCoprCache struct {
-	store kv.Storage
-	dom   *domain.Domain
-	cls   testutils.Cluster
-}
-type testResourceTagSuite struct{ *baseTestSuite }
 
 // MockGC is used to make GC work in the test environment.
 func MockGC(tk *testkit.TestKit) (string, string, string, func()) {
@@ -3275,16 +3263,6 @@ func (s *testSuiteP2) TestReadPartitionedTable(c *C) {
 	tk.MustQuery("select a from pt where b = 3").Check(testkit.Rows("3"))
 }
 
-func testGetTableByName(c *C, ctx sessionctx.Context, db, table string) table.Table {
-	dom := domain.GetDomain(ctx)
-	// Make sure the table schema is the new schema.
-	err := dom.Reload()
-	c.Assert(err, IsNil)
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
-	c.Assert(err, IsNil)
-	return tbl
-}
-
 func (s *testSuiteP2) TestIssue10435(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -4987,77 +4965,6 @@ func (s *testSuite) TestIssue13758(c *C) {
 	))
 }
 
-func (s *testCoprCache) SetUpSuite(c *C) {
-	originConfig := config.GetGlobalConfig()
-	config.StoreGlobalConfig(config.NewConfig())
-	defer config.StoreGlobalConfig(originConfig)
-	cli := &regionProperityClient{}
-	hijackClient := func(c tikv.Client) tikv.Client {
-		cli.Client = c
-		return cli
-	}
-	var err error
-	s.store, err = mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c testutils.Cluster) {
-			mockstore.BootstrapWithSingleStore(c)
-			s.cls = c
-		}),
-		mockstore.WithClientHijacker(hijackClient),
-	)
-	c.Assert(err, IsNil)
-	s.dom, err = session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-}
-
-func (s *testCoprCache) TearDownSuite(c *C) {
-	s.dom.Close()
-	s.store.Close()
-}
-
-func (s *testCoprCache) TestIntegrationCopCache(c *C) {
-	originConfig := config.GetGlobalConfig()
-	config.StoreGlobalConfig(config.NewConfig())
-	defer config.StoreGlobalConfig(originConfig)
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int primary key)")
-	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	tid := tblInfo.Meta().ID
-	tk.MustExec(`insert into t values(1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12)`)
-	tableStart := tablecodec.GenTableRecordPrefix(tid)
-	s.cls.SplitKeys(tableStart, tableStart.PrefixNext(), 6)
-
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/cophandler/mockCopCacheInUnistore", `return(123)`), IsNil)
-	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/cophandler/mockCopCacheInUnistore"), IsNil)
-	}()
-
-	rows := tk.MustQuery("explain analyze select * from t where t.a < 10").Rows()
-	c.Assert(rows[0][2], Equals, "9")
-	c.Assert(strings.Contains(rows[0][5].(string), "cop_task: {num: 5"), Equals, true)
-	c.Assert(strings.Contains(rows[0][5].(string), "copr_cache_hit_ratio: 0.00"), Equals, true)
-
-	rows = tk.MustQuery("explain analyze select * from t").Rows()
-	c.Assert(rows[0][2], Equals, "12")
-	c.Assert(strings.Contains(rows[0][5].(string), "cop_task: {num: 6"), Equals, true)
-	hitRatioIdx := strings.Index(rows[0][5].(string), "copr_cache_hit_ratio:") + len("copr_cache_hit_ratio: ")
-	c.Assert(hitRatioIdx >= len("copr_cache_hit_ratio: "), Equals, true)
-	hitRatio, err := strconv.ParseFloat(rows[0][5].(string)[hitRatioIdx:hitRatioIdx+4], 64)
-	c.Assert(err, IsNil)
-	c.Assert(hitRatio > 0, Equals, true)
-
-	// Test for cop cache disabled.
-	cfg := config.NewConfig()
-	cfg.TiKVClient.CoprCache.CapacityMB = 0
-	config.StoreGlobalConfig(cfg)
-	rows = tk.MustQuery("explain analyze select * from t where t.a < 10").Rows()
-	c.Assert(rows[0][2], Equals, "9")
-	c.Assert(strings.Contains(rows[0][5].(string), "copr_cache: disabled"), Equals, true)
-}
-
 func (s *testSerialSuite) TestCoprocessorOOMTicase(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -5614,187 +5521,6 @@ func (s testSerialSuite) TestExprBlackListForEnum(c *C) {
 	c.Assert(checkFuncPushDown(rows, "index:idx(b, a)"), IsTrue)
 	rows = tk.MustQuery("desc format='brief' select * from t where b = 1 and a > 'a'").Rows()
 	c.Assert(checkFuncPushDown(rows, "index:idx(b, a)"), IsTrue)
-}
-
-func (s *testResourceTagSuite) TestResourceGroupTag(c *C) {
-	if israce.RaceEnabled {
-		c.Skip("unstable, skip it and fix it before 20210622")
-	}
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int, b int, unique index idx(a));")
-	tbInfo := testGetTableByName(c, tk.Se, "test", "t")
-
-	// Enable Top SQL
-	topsqlstate.EnableTopSQL()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TopSQL.ReceiverAddress = "mock-agent"
-	})
-
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook", `return(true)`), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook")
-
-	var sqlDigest, planDigest *parser.Digest
-	var tagLabel tipb.ResourceGroupTagLabel
-	checkFn := func() {}
-	unistore.UnistoreRPCClientSendHook = func(req *tikvrpc.Request) {
-		var startKey []byte
-		var ctx *kvrpcpb.Context
-		switch req.Type {
-		case tikvrpc.CmdGet:
-			request := req.Get()
-			startKey = request.Key
-			ctx = request.Context
-		case tikvrpc.CmdBatchGet:
-			request := req.BatchGet()
-			startKey = request.Keys[0]
-			ctx = request.Context
-		case tikvrpc.CmdPrewrite:
-			request := req.Prewrite()
-			startKey = request.Mutations[0].Key
-			ctx = request.Context
-		case tikvrpc.CmdCommit:
-			request := req.Commit()
-			startKey = request.Keys[0]
-			ctx = request.Context
-		case tikvrpc.CmdCop:
-			request := req.Cop()
-			startKey = request.Ranges[0].Start
-			ctx = request.Context
-		case tikvrpc.CmdPessimisticLock:
-			request := req.PessimisticLock()
-			startKey = request.PrimaryLock
-			ctx = request.Context
-		}
-		tid := tablecodec.DecodeTableID(startKey)
-		if tid != tbInfo.Meta().ID {
-			return
-		}
-		if ctx == nil {
-			return
-		}
-		tag := &tipb.ResourceGroupTag{}
-		err := tag.Unmarshal(ctx.ResourceGroupTag)
-		c.Assert(err, IsNil)
-		sqlDigest = parser.NewDigest(tag.SqlDigest)
-		planDigest = parser.NewDigest(tag.PlanDigest)
-		tagLabel = *tag.Label
-		checkFn()
-	}
-
-	resetVars := func() {
-		sqlDigest = parser.NewDigest(nil)
-		planDigest = parser.NewDigest(nil)
-	}
-
-	cases := []struct {
-		sql       string
-		tagLabels map[tipb.ResourceGroupTagLabel]struct{}
-		ignore    bool
-	}{
-		{
-			sql: "insert into t values(1,1),(2,2),(3,3)",
-			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
-			},
-		},
-		{
-			sql: "select * from t use index (idx) where a=1",
-			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow:   {},
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
-			},
-		},
-		{
-			sql: "select * from t use index (idx) where a in (1,2,3)",
-			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow:   {},
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
-			},
-		},
-		{
-			sql: "select * from t use index (idx) where a>1",
-			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow:   {},
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
-			},
-		},
-		{
-			sql: "select * from t where b>1",
-			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow: {},
-			},
-		},
-		{
-			sql: "select a from t use index (idx) where a>1",
-			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
-			},
-		},
-		{
-			sql:    "begin pessimistic",
-			ignore: true,
-		},
-		{
-			sql: "insert into t values(4,4)",
-			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelRow:   {},
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
-			},
-		},
-		{
-			sql:    "commit",
-			ignore: true,
-		},
-		{
-			sql: "update t set a=5,b=5 where a=5",
-			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
-			},
-		},
-		{
-			sql: "replace into t values(6,6)",
-			tagLabels: map[tipb.ResourceGroupTagLabel]struct{}{
-				tipb.ResourceGroupTagLabel_ResourceGroupTagLabelIndex: {},
-			},
-		},
-	}
-	for _, ca := range cases {
-		resetVars()
-		commentf := Commentf("%v", ca.sql)
-
-		_, expectSQLDigest := parser.NormalizeDigest(ca.sql)
-		var expectPlanDigest *parser.Digest
-		checkCnt := 0
-		checkFn = func() {
-			if ca.ignore {
-				return
-			}
-			if expectPlanDigest == nil {
-				info := tk.Se.ShowProcess()
-				c.Assert(info, NotNil)
-				p, ok := info.Plan.(plannercore.Plan)
-				c.Assert(ok, IsTrue)
-				_, expectPlanDigest = plannercore.NormalizePlan(p)
-			}
-			c.Assert(sqlDigest.String(), Equals, expectSQLDigest.String(), commentf)
-			c.Assert(planDigest.String(), Equals, expectPlanDigest.String())
-			_, ok := ca.tagLabels[tagLabel]
-			c.Assert(ok, Equals, true)
-			checkCnt++
-		}
-
-		if strings.HasPrefix(ca.sql, "select") {
-			tk.MustQuery(ca.sql)
-		} else {
-			tk.MustExec(ca.sql)
-		}
-		if ca.ignore {
-			continue
-		}
-		c.Assert(checkCnt > 0, IsTrue, commentf)
-	}
 }
 
 func (s *testSuite) TestIssue24933(c *C) {
