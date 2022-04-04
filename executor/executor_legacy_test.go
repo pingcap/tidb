@@ -58,7 +58,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/copr"
 	error2 "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -93,10 +92,8 @@ func TestT(t *testing.T) {
 }
 
 var _ = Suite(&testSuite{&baseTestSuite{}})
-var _ = Suite(&testSuiteP1{&baseTestSuite{}})
 var _ = Suite(&testSuiteP2{&baseTestSuite{}})
 var _ = Suite(&testSuite1{})
-var _ = SerialSuites(&testSerialSuite2{})
 var _ = SerialSuites(&testSuiteWithCliBaseCharset{})
 var _ = Suite(&testSuite2{&baseTestSuite{}})
 var _ = Suite(&testSuite3{&baseTestSuite{}})
@@ -110,7 +107,6 @@ var _ = SerialSuites(&globalIndexSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite{&baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
-type testSuiteP1 struct{ *baseTestSuite }
 type testSuiteP2 struct{ *baseTestSuite }
 type testSplitTable struct{ *baseTestSuite }
 type globalIndexSuite struct{ *baseTestSuite }
@@ -2088,10 +2084,6 @@ type testSuite1 struct {
 	testSuiteWithCliBase
 }
 
-type testSerialSuite2 struct {
-	testSuiteWithCliBase
-}
-
 func (s *testSuiteWithCliBase) SetUpSuite(c *C) {
 	cli := &checkRequestClient{}
 	hijackClient := func(c tikv.Client) tikv.Client {
@@ -3275,22 +3267,6 @@ func (s *testSuiteP2) TestIssue10435(c *C) {
 	tk.MustQuery("SELECT SUM(i) OVER W FROM t1 WINDOW w AS (PARTITION BY j ORDER BY i) ORDER BY 1+SUM(i) OVER w").Check(
 		testkit.Rows("1", "2", "3", "4", "11", "22", "31", "33", "44", "61", "62", "93", "122", "124", "183", "244"),
 	)
-}
-
-func (s *testSerialSuite2) TestUnsignedFeedback(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	oriProbability := statistics.FeedbackProbability.Load()
-	statistics.FeedbackProbability.Store(1.0)
-	defer func() { statistics.FeedbackProbability.Store(oriProbability) }()
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a bigint unsigned, b int, primary key(a))")
-	tk.MustExec("insert into t values (1,1),(2,2)")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("select count(distinct b) from t").Check(testkit.Rows("2"))
-	result := tk.MustQuery("explain analyze select count(distinct b) from t")
-	c.Assert(result.Rows()[2][4], Equals, "table:t")
-	c.Assert(result.Rows()[2][6], Equals, "keep order:false")
 }
 
 func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
