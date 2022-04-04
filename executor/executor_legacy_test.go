@@ -103,13 +103,11 @@ var _ = SerialSuites(&testRecoverTable{})
 var _ = SerialSuites(&testClusterTableSuite{})
 var _ = SerialSuites(&testSplitTable{&baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite1{&baseTestSuite{}})
-var _ = SerialSuites(&globalIndexSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite{&baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP2 struct{ *baseTestSuite }
 type testSplitTable struct{ *baseTestSuite }
-type globalIndexSuite struct{ *baseTestSuite }
 type testSerialSuite struct{ *baseTestSuite }
 
 // MockGC is used to make GC work in the test environment.
@@ -169,13 +167,6 @@ func (s *baseTestSuite) SetUpSuite(c *C) {
 func (s *baseTestSuite) TearDownSuite(c *C) {
 	s.domain.Close()
 	c.Assert(s.store.Close(), IsNil)
-}
-
-func (s *globalIndexSuite) SetUpSuite(c *C) {
-	s.baseTestSuite.SetUpSuite(c)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
 }
 
 func (s *testSuite) TearDownTest(c *C) {
