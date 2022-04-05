@@ -132,7 +132,6 @@ type baseTestSuite struct {
 	store   kv.Storage
 	domain  *domain.Domain
 	*parser.Parser
-	ctx *mock.Context // nolint:structcheck
 }
 
 func (s *baseTestSuite) SetUpSuite(c *C) {
