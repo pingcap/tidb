@@ -281,7 +281,7 @@ func NewStatusController(meta *MetaDataClient, mgr *conn.Mgr, view TaskPrinter) 
 	}
 }
 
-// fillTask queries and fills the extra infromation for a raw task.
+// fillTask queries and fills the extra information for a raw task.
 func (ctl *StatusController) fillTask(ctx context.Context, task Task) (TaskStatus, error) {
 	var err error
 	s := TaskStatus{
