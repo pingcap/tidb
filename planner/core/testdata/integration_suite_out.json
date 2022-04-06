@@ -1896,8 +1896,8 @@
         "SQL": "explain format = 'verbose' select * from t where b > 5",
         "Plan": [
           "TableReader_7 3.00 19.21 root  data:Selection_6",
-          "└─Selection_6 3.00 215.00 cop[tikv]  gt(test.t.b, 5)",
-          "  └─TableFullScan_5 5.00 200.00 cop[tikv] table:t keep order:false"
+          "└─Selection_6 3.00 195.00 cop[tikv]  gt(test.t.b, 5)",
+          "  └─TableFullScan_5 5.00 180.00 cop[tikv] table:t keep order:false"
         ],
         "Warnings": null
       },
@@ -1906,9 +1906,9 @@
         "Plan": [
           "Limit_11 0.00 14.33 root  offset:0, count:1",
           "└─TableReader_24 0.00 14.33 root  data:Limit_23",
-          "  └─Limit_23 0.00 215.00 cop[tikv]  offset:0, count:1",
-          "    └─Selection_22 0.00 215.00 cop[tikv]  eq(test.t.b, 6)",
-          "      └─TableFullScan_21 5.00 200.00 cop[tikv] table:t keep order:true"
+          "  └─Limit_23 0.00 195.00 cop[tikv]  offset:0, count:1",
+          "    └─Selection_22 0.00 195.00 cop[tikv]  eq(test.t.b, 6)",
+          "      └─TableFullScan_21 5.00 180.00 cop[tikv] table:t keep order:true"
         ],
         "Warnings": null
       },
@@ -1917,9 +1917,9 @@
         "Plan": [
           "Limit_8 0.00 14.33 root  offset:0, count:1",
           "└─TableReader_13 0.00 14.33 root  data:Limit_12",
-          "  └─Limit_12 0.00 215.00 cop[tikv]  offset:0, count:1",
-          "    └─Selection_11 0.00 215.00 cop[tikv]  eq(test.t.b, 6)",
-          "      └─TableFullScan_10 5.00 200.00 cop[tikv] table:t keep order:false"
+          "  └─Limit_12 0.00 195.00 cop[tikv]  offset:0, count:1",
+          "    └─Selection_11 0.00 195.00 cop[tikv]  eq(test.t.b, 6)",
+          "      └─TableFullScan_10 5.00 180.00 cop[tikv] table:t keep order:false"
         ],
         "Warnings": null
       },
@@ -1932,8 +1932,8 @@
         "SQL": "explain format = 'verbose' select * from t where b > 5",
         "Plan": [
           "IndexLookUp_7 3.00 64.81 root  ",
-          "├─IndexRangeScan_5(Build) 3.00 191.00 cop[tikv] table:t, index:idx_b(b) range:(5,+inf], keep order:false",
-          "└─TableRowIDScan_6(Probe) 3.00 191.00 cop[tikv] table:t keep order:false"
+          "├─IndexRangeScan_5(Build) 3.00 171.00 cop[tikv] table:t, index:idx_b(b) range:(5,+inf], keep order:false",
+          "└─TableRowIDScan_6(Probe) 3.00 171.00 cop[tikv] table:t keep order:false"
         ],
         "Warnings": [
           "Note 1105 [idx_b] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}"
@@ -1945,8 +1945,8 @@
           "TopN_9 0.00 19.34 root  test.t.a, offset:0, count:1",
           "└─IndexLookUp_16 0.00 19.33 root  ",
           "  ├─TopN_15(Build) 0.00 0.00 cop[tikv]  test.t.a, offset:0, count:1",
-          "  │ └─IndexRangeScan_13 0.00 20.00 cop[tikv] table:t, index:idx_b(b) range:[6,6], keep order:false",
-          "  └─TableRowIDScan_14(Probe) 0.00 20.00 cop[tikv] table:t keep order:false"
+          "  │ └─IndexRangeScan_13 0.00 0.00 cop[tikv] table:t, index:idx_b(b) range:[6,6], keep order:false",
+          "  └─TableRowIDScan_14(Probe) 0.00 0.00 cop[tikv] table:t keep order:false"
         ],
         "Warnings": [
           "Note 1105 [idx_b] remain after pruning paths for t given Prop{SortItems: [], TaskTp: copDoubleReadTask}"
@@ -1956,9 +1956,9 @@
         "SQL": "explain format = 'verbose' select * from t where b = 6 limit 1",
         "Plan": [
           "IndexLookUp_13 0.00 19.33 root  limit embedded(offset:0, count:1)",
-          "├─Limit_12(Build) 0.00 20.00 cop[tikv]  offset:0, count:1",
-          "│ └─IndexRangeScan_10 0.00 20.00 cop[tikv] table:t, index:idx_b(b) range:[6,6], keep order:false",
-          "└─TableRowIDScan_11(Probe) 0.00 20.00 cop[tikv] table:t keep order:false"
+          "├─Limit_12(Build) 0.00 0.00 cop[tikv]  offset:0, count:1",
+          "│ └─IndexRangeScan_10 0.00 0.00 cop[tikv] table:t, index:idx_b(b) range:[6,6], keep order:false",
+          "└─TableRowIDScan_11(Probe) 0.00 0.00 cop[tikv] table:t keep order:false"
         ],
         "Warnings": [
           "Note 1105 [idx_b] remain after pruning paths for t given Prop{SortItems: [], TaskTp: copDoubleReadTask}"
