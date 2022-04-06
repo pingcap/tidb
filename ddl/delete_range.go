@@ -254,7 +254,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 			if batchEnd > i+batchInsertDeleteRangeSize {
 				batchEnd = i + batchInsertDeleteRangeSize
 			}
-			if err := doBatchInsert(ctx, s, job.ID, tableIDs[i:batchEnd], now); err != nil {
+			if err := doBatchInsert(ctx, s, job.ID, tableIDs[i:batchEnd], now, &elementID); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -448,12 +448,11 @@ func doInsert(ctx context.Context, s sqlexec.SQLExecutor, jobID, elementID int64
 	return errors.Trace(err)
 }
 
-func doBatchInsert(ctx context.Context, s sqlexec.SQLExecutor, jobID int64, tableIDs []int64, ts uint64) error {
+func doBatchInsert(ctx context.Context, s sqlexec.SQLExecutor, jobID int64, tableIDs []int64, ts uint64, elementID *int64) error {
 	logutil.BgLogger().Info("[ddl] batch insert into delete-range table", zap.Int64("jobID", jobID), zap.Int64s("tableIDs", tableIDs))
 	var buf strings.Builder
 	buf.WriteString(insertDeleteRangeSQLPrefix)
 	paramsList := make([]interface{}, 0, len(tableIDs)*5)
-	elementID := 0
 	for i, tableID := range tableIDs {
 		startKey := tablecodec.EncodeTablePrefix(tableID)
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
@@ -463,8 +462,8 @@ func doBatchInsert(ctx context.Context, s sqlexec.SQLExecutor, jobID int64, tabl
 		if i != len(tableIDs)-1 {
 			buf.WriteString(",")
 		}
-		paramsList = append(paramsList, jobID, elementID, startKeyEncoded, endKeyEncoded, ts)
-		elementID++
+		paramsList = append(paramsList, jobID, *elementID, startKeyEncoded, endKeyEncoded, ts)
+		*elementID++
 	}
 	// set session disk full opt
 	s.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
