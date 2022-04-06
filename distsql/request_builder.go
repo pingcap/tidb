@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -307,8 +308,11 @@ func (builder *RequestBuilder) SetFromInfoSchema(pis interface{}) *RequestBuilde
 
 // SetResourceGroupTagger sets the request resource group tagger.
 func (builder *RequestBuilder) SetResourceGroupTagger(sc *stmtctx.StatementContext) *RequestBuilder {
-	if topsqlstate.TopSQLEnabled() {
-		builder.Request.ResourceGroupTagger = sc.GetResourceGroupTagger()
+	tagger := sc.GetResourceGroupTagger()
+	builder.Request.ResourceGroupTagger = func(req *tikvrpc.Request) {
+		if topsqlstate.TopSQLEnabled() {
+			tagger(req)
+		}
 	}
 	return builder
 }
