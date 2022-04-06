@@ -158,7 +158,7 @@ type Handle interface {
 	// String implements the fmt.Stringer interface.
 	String() string
 	// MemUsage returns the memory usage of a handle.
-	MemUsage() int
+	MemUsage() int64
 }
 
 // IntHandle implement the Handle interface for int64 type handle.
@@ -231,7 +231,7 @@ func (ih IntHandle) String() string {
 }
 
 // MemUsage implements the Handle interface.
-func (ih IntHandle) MemUsage() int {
+func (ih IntHandle) MemUsage() int64 {
 	return 8
 }
 
@@ -355,8 +355,8 @@ func (ch *CommonHandle) String() string {
 }
 
 // MemUsage implements the Handle interface.
-func (ch *CommonHandle) MemUsage() int {
-	return cap(ch.encoded) + cap(ch.colEndOffsets)*2
+func (ch *CommonHandle) MemUsage() int64 {
+	return int64(cap(ch.encoded)) + int64(cap(ch.colEndOffsets))*2
 }
 
 // HandleMap is the map for Handle.
@@ -470,6 +470,6 @@ func (ph PartitionHandle) Compare(h Handle) int {
 }
 
 // MemUsage implements the Handle interface.
-func (ph PartitionHandle) MemUsage() int {
+func (ph PartitionHandle) MemUsage() int64 {
 	return ph.Handle.MemUsage() + 8
 }

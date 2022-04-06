@@ -3329,7 +3329,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB Components Memory Usage",
+          "description": "TiDB SubSys Memory Usage",
           "fill": 1,
           "gridPos": {
             "h": 7,
@@ -3374,7 +3374,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Components Memory Usage",
+          "title": "SubSys Memory Usage",
           "tooltip": {
             "shared": true,
             "sort": 0,

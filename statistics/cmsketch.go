@@ -695,8 +695,9 @@ func (c *TopN) MemoryUsage() (sum int64) {
 	if c == nil {
 		return
 	}
+	sum = 32
 	for _, meta := range c.TopN {
-		sum += int64(cap(meta.Encoded)) + 8
+		sum += 32 + int64(cap(meta.Encoded))
 	}
 	return
 }

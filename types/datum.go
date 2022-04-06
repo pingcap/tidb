@@ -72,6 +72,10 @@ type Datum struct {
 	x         interface{} // x hold all other types.
 }
 
+// EmptyDatumSize is the size of empty datum, please update it when change the data structure.
+// 1 + 1 (byte) + 2 (uint16) + 4 (uint32) + 8 (int64) + 16 (string) + 24 ([]byte) + 16 (interface{})
+const EmptyDatumSize = 72
+
 // Clone create a deep copy of the Datum.
 func (d *Datum) Clone() *Datum {
 	ret := new(Datum)
@@ -1988,16 +1992,8 @@ func (d *Datum) ToMysqlJSON() (j json.BinaryJSON, err error) {
 }
 
 // MemUsage gets the memory usage of datum.
-func (d *Datum) MemUsage() (sum int) {
-	switch d.Kind() {
-	case KindMysqlDecimal:
-		sum += sizeOfMyDecimal
-	case KindMysqlTime:
-		sum += sizeOfMysqlTime
-	default:
-		sum += len(d.b)
-	}
-	return sum
+func (d *Datum) MemUsage() (sum int64) {
+	return EmptyDatumSize + int64(cap(d.b)) + int64(len(d.collation)) + int64(unsafe.Sizeof(d.x)-16)
 }
 
 func invalidConv(d *Datum, tp byte) (Datum, error) {
@@ -2406,7 +2402,14 @@ func EstimatedMemUsage(array []Datum, numOfRows int) int64 {
 	}
 	var bytesConsumed int
 	for _, d := range array {
-		bytesConsumed += d.MemUsage()
+		switch d.Kind() {
+		case KindMysqlDecimal:
+			bytesConsumed += sizeOfMyDecimal
+		case KindMysqlTime:
+			bytesConsumed += sizeOfMysqlTime
+		default:
+			bytesConsumed += len(d.b)
+		}
 	}
 	bytesConsumed += len(array) * sizeOfEmptyDatum
 	return int64(bytesConsumed * numOfRows)

@@ -47,6 +47,9 @@ type SampleItem struct {
 	Handle kv.Handle
 }
 
+// EmptySampleItemSize is the size of empty SampleItem, please update it when change the data structure.
+const EmptySampleItemSize = 96
+
 // CopySampleItems returns a deep copy of SampleItem slice.
 func CopySampleItems(items []*SampleItem) []*SampleItem {
 	n := make([]*SampleItem, len(items))

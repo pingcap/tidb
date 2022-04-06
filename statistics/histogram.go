@@ -22,7 +22,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -81,6 +80,10 @@ type Histogram struct {
 	Correlation float64
 }
 
+// EmptyHistogramSize is the size of empty histogram, please update it when change the data structure.
+// 8*6 for int64 & float64, 24*2 for arrays, 8*2 for references
+const EmptyHistogramSize = 112
+
 // Bucket store the bucket count and repeat.
 type Bucket struct {
 	Count  int64
@@ -88,11 +91,17 @@ type Bucket struct {
 	NDV    int64
 }
 
+// EmptyBucketSize is the size of empty bucket, please update it when change the data structure.
+const EmptyBucketSize = 24
+
 type scalar struct {
 	lower        float64
 	upper        float64
 	commonPfxLen int // commonPfxLen is the common prefix length of the lower bound and upper bound when the value type is KindString or KindBytes.
 }
+
+// EmptyScalarSize is the size of empty scalar, please update it when change the data structure.
+const EmptyScalarSize = 20
 
 // NewHistogram creates a new histogram.
 func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType, bucketSize int, totColSize int64) *Histogram {
@@ -128,14 +137,11 @@ func (hg *Histogram) GetUpper(idx int) *types.Datum {
 }
 
 // MemoryUsage returns the total memory usage of this Histogram.
-// everytime changed the Histogram of the table, it will cost O(n)
-// complexity so calculate the memoryUsage might cost little time.
-// We ignore the size of other metadata in Histogram.
 func (hg *Histogram) MemoryUsage() (sum int64) {
 	if hg == nil {
 		return
 	}
-	sum = hg.Bounds.MemoryUsage() + int64(cap(hg.Buckets)*int(unsafe.Sizeof(Bucket{}))) + int64(cap(hg.scalars)*int(unsafe.Sizeof(scalar{})))
+	sum = EmptyHistogramSize + hg.Bounds.MemoryUsage() + int64(cap(hg.Buckets))*EmptyBucketSize + int64(cap(hg.scalars))*EmptyScalarSize
 	return
 }
 

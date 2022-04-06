@@ -318,9 +318,6 @@ func (t *Tracker) Consume(bytes int64) {
 	var rootExceed, rootExceedForSoftLimit *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
 		bytesConsumed := atomic.AddInt64(&tracker.bytesConsumed, bytes)
-		if label, ok := MetricsTypes[tracker.label]; ok {
-			metrics.MemoryUsage.WithLabelValues(label).Set(float64(bytesConsumed))
-		}
 		if bytesConsumed >= tracker.bytesHardLimit && tracker.bytesHardLimit > 0 {
 			rootExceed = tracker
 		}
@@ -333,6 +330,10 @@ func (t *Tracker) Consume(bytes int64) {
 			consumed := atomic.LoadInt64(&tracker.bytesConsumed)
 			if consumed > maxNow && !atomic.CompareAndSwapInt64(&tracker.maxConsumed, maxNow, consumed) {
 				continue
+			}
+			if label, ok := MetricsTypes[tracker.label]; ok {
+				metrics.MemoryUsage.WithLabelValues(label[0]).Set(float64(consumed))
+				metrics.MemoryUsage.WithLabelValues(label[1]).Set(float64(maxNow))
 			}
 			break
 		}
@@ -574,6 +575,6 @@ const (
 )
 
 // MetricsTypes is used to get label for metrics
-var MetricsTypes = map[int]string{
-	LabelForAnalyzeSharedMemory: "analyze-memory",
+var MetricsTypes = map[int][]string{
+	LabelForAnalyzeSharedMemory: {"analyze-memory", "max-analyze-memory"},
 }

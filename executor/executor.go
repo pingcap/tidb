@@ -155,7 +155,7 @@ func init() {
 	AnalyzeMemoryTracker = memory.NewTracker(memory.LabelForAnalyzeSharedMemory, -1)
 	AnalyzeMemoryTracker.SetActionOnExceed(action)
 	// TODO, do not attach now to avoid impact to global
-	// Also, memory usage of analyze coprocesseor was tracked under global by now removed.
+	// Also, memory usage of analyze coprocesseor was tracked under global but now removed.
 	// It's not a big impact since all responses are read quickly and sent to analyze's taskCh.
 	//AnalyzeMemoryTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
 }

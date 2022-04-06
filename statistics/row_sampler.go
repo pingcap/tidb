@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -44,6 +45,7 @@ type baseCollector struct {
 	FMSketches []*FMSketch
 	TotalSizes []int64
 	Count      int64
+	MemSize    int64
 }
 
 // ReservoirRowSampleCollector collects the samples from the source and organize the samples by row.
@@ -66,12 +68,15 @@ type ReservoirRowSampleItem struct {
 	Handle  kv.Handle
 }
 
+// EmptyReservoirSampleItemSize (24 + 16 + 8), please update it when change the data struct.
+const EmptyReservoirSampleItemSize = 48
+
 // MemUsage returns the memory usage of sample item.
-func (i ReservoirRowSampleItem) MemUsage() (sum int) {
+func (i ReservoirRowSampleItem) MemUsage() (sum int64) {
+	sum = EmptyReservoirSampleItemSize
 	for _, col := range i.Columns {
 		sum += col.MemUsage()
 	}
-	sum = 8
 	if i.Handle != nil {
 		sum += i.Handle.MemUsage()
 	}
@@ -80,14 +85,6 @@ func (i ReservoirRowSampleItem) MemUsage() (sum int) {
 
 // WeightedRowSampleHeap implements the Heap interface.
 type WeightedRowSampleHeap []*ReservoirRowSampleItem
-
-// MemUsage returns the memory usage of sample heap.
-func (h WeightedRowSampleHeap) MemUsage() (sum int64) {
-	for _, item := range h {
-		sum += int64(unsafe.Sizeof(*item)) + int64(item.MemUsage())
-	}
-	return sum
-}
 
 // Len implements the Heap interface.
 func (h WeightedRowSampleHeap) Len() int {
@@ -150,6 +147,7 @@ func NewReservoirRowSampleCollector(maxSampleSize int, totalLen int) *ReservoirR
 		FMSketches: make([]*FMSketch, 0, totalLen),
 		TotalSizes: make([]int64, totalLen),
 	}
+	base.MemSize = int64(unsafe.Sizeof(base.Samples)) + int64(unsafe.Sizeof(base.NullCount)) + int64(unsafe.Sizeof(base.FMSketches)) + int64(unsafe.Sizeof(base.TotalSizes)) + 4
 	return &ReservoirRowSampleCollector{
 		baseCollector: base,
 		MaxSampleSize: maxSampleSize,
@@ -271,7 +269,7 @@ func (s *baseCollector) ToProto() *tipb.RowSampleCollector {
 	return collector
 }
 
-func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector) {
+func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTracker *memory.Tracker) {
 	s.Count = pbCollector.Count
 	s.NullCount = pbCollector.NullCounts
 	s.FMSketches = make([]*FMSketch, 0, len(pbCollector.FmSketch))
@@ -279,32 +277,33 @@ func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector) {
 		s.FMSketches = append(s.FMSketches, FMSketchFromProto(pbSketch))
 	}
 	s.TotalSizes = pbCollector.TotalSize
-	s.Samples = make(WeightedRowSampleHeap, 0, len(pbCollector.Samples))
+	sampleNum := len(pbCollector.Samples)
+	s.Samples = make(WeightedRowSampleHeap, 0, sampleNum)
+	if len(pbCollector.Samples) > 0 {
+		rowLen := len(pbCollector.Samples[0].Row)
+		// 24 is the size of datum array, 8 is the size of reference
+		emptySize := int64((types.EmptyDatumSize*rowLen + 24 + EmptyReservoirSampleItemSize + 8) * sampleNum)
+		s.MemSize += emptySize
+		memTracker.Consume(emptySize)
+	}
 	for _, pbSample := range pbCollector.Samples {
 		data := make([]types.Datum, 0, len(pbSample.Row))
+		itemSize := int64(0)
 		for _, col := range pbSample.Row {
 			b := make([]byte, len(col))
 			copy(b, col)
-			data = append(data, types.NewBytesDatum(b))
+			newDatum := types.NewBytesDatum(b)
+			data = append(data, newDatum)
+			itemSize += newDatum.MemUsage() - types.EmptyDatumSize
 		}
 		// Directly copy the weight.
-		s.Samples = append(s.Samples, &ReservoirRowSampleItem{
-			Columns: data,
-			Weight:  pbSample.Weight,
-		})
+		sampleItem := &ReservoirRowSampleItem{Columns: data, Weight: pbSample.Weight}
+		s.Samples = append(s.Samples, sampleItem)
+		itemSize += sampleItem.MemUsage() - EmptyReservoirSampleItemSize
+		memTracker.Consume(itemSize)
+		s.MemSize += itemSize
 	}
-}
-
-func (s *baseCollector) MemoryUsage() (sum int64) {
-	if s == nil {
-		return
-	}
-	sum += int64(cap(s.NullCount)*8) + int64(cap(s.TotalSizes)*8) + 8
-	for _, fmSketch := range s.FMSketches {
-		sum += int64(unsafe.Sizeof(*fmSketch)) + fmSketch.MemoryUsage()
-	}
-	sum += s.Samples.MemUsage()
-	return sum
+	return
 }
 
 // Base implements the RowSampleCollector interface.
@@ -359,9 +358,13 @@ func (s *ReservoirRowSampleCollector) MergeCollector(subCollector RowSampleColle
 	for i, totSize := range subCollector.Base().TotalSizes {
 		s.TotalSizes[i] += totSize
 	}
+	oldSampleNum := len(s.Samples)
 	for _, sample := range subCollector.Base().Samples {
 		s.sampleZippedRow(sample)
 	}
+	subSampleNum := len(subCollector.Base().Samples)
+	newSampleNum := len(s.Samples)
+	s.MemSize = (s.MemSize + subCollector.Base().MemSize) * int64(newSampleNum) / int64(oldSampleNum+subSampleNum)
 }
 
 // RowSamplesToProto converts the samp slice to the pb struct.
@@ -409,6 +412,7 @@ func NewBernoulliRowSampleCollector(sampleRate float64, totalLen int) *Bernoulli
 		FMSketches: make([]*FMSketch, 0, totalLen),
 		TotalSizes: make([]int64, totalLen),
 	}
+	base.MemSize = int64(unsafe.Sizeof(base.Samples)) + int64(unsafe.Sizeof(base.NullCount)) + int64(unsafe.Sizeof(base.FMSketches)) + int64(unsafe.Sizeof(base.TotalSizes)) + 8
 	return &BernoulliRowSampleCollector{
 		baseCollector: base,
 		SampleRate:    sampleRate,
@@ -438,6 +442,7 @@ func (s *BernoulliRowSampleCollector) MergeCollector(subCollector RowSampleColle
 		s.TotalSizes[i] += subCollector.Base().TotalSizes[i]
 	}
 	s.baseCollector.Samples = append(s.baseCollector.Samples, subCollector.Base().Samples...)
+	s.MemSize += s.baseCollector.MemSize
 }
 
 // Base implements the interface RowSampleCollector.
