@@ -2072,7 +2072,6 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 			t = cop.convertToRootTask(p.ctx)
 			inputRows = t.count()
 			attachPlan2Task(finalAgg, t)
-			finalAgg.SetCost(cop.cost())
 		}
 	} else if mpp, ok := t.(*mppTask); ok {
 		t = mpp.convertToRootTask(p.ctx)
@@ -2081,7 +2080,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 		attachPlan2Task(p, t)
 	}
 	t.addCost(p.GetCost(inputRows, true))
-	p.SetCost(t.cost())
+	t.plan().SetCost(t.cost())
 	return t
 }
 
@@ -2298,7 +2297,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	// To make it simple, we also treat 2-phase parallel hash aggregation in TiDB layer as
 	// 1-phase when computing cost.
 	t.addCost(p.GetCost(inputRows, true, false))
-	p.cost = t.cost()
+	t.plan().SetCost(t.cost())
 	return t
 }
 
