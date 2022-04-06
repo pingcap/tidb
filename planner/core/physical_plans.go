@@ -437,6 +437,9 @@ type PhysicalIndexScan struct {
 	DoubleRead bool
 
 	NeedCommonHandle bool
+
+	// required by cost model
+	underInnerIndexJoin bool
 }
 
 // Clone implements PhysicalPlan interface.
@@ -533,6 +536,9 @@ type PhysicalTableScan struct {
 	PartitionInfo PartitionInfo
 
 	SampleInfo *TableSampleInfo
+
+	// required by cost calculation
+	underInnerIndexJoin bool
 }
 
 // Clone implements PhysicalPlan interface.
