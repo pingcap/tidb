@@ -757,7 +757,7 @@ LOOP:
 			times++
 		}
 	}
-	checkDelRangeAdded(tk, jobIDExt.jobID)
+	checkDelRangeAdded(tk, jobIDExt.jobID, c3IdxInfo.ID)
 	d.SetHook(originalHook)
 }
 
@@ -1085,7 +1085,7 @@ LOOP:
 		}
 	}
 	for _, idxID := range idxIDs {
-		checkDelRangeAdded(tk, jobIDExt.jobID)
+		checkDelRangeAdded(tk, jobIDExt.jobID, idxID)
 	}
 }
 
@@ -1285,7 +1285,7 @@ LOOP:
 	rows := tk.MustQuery("explain select c1 from test_drop_index where c3 >= 0")
 	require.NotContains(t, fmt.Sprintf("%v", rows), idxName)
 
-	checkDelRangeAdded(tk, jobIDExt.jobID)
+	checkDelRangeAdded(tk, jobIDExt.jobID, indexID)
 	tk.MustExec("drop table test_drop_index")
 }
 
