@@ -1695,6 +1695,10 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 	if execOption.AnalyzeVer != 0 {
 		s.sessionVars.AnalyzeVersion = execOption.AnalyzeVer
 	}
+	prePruneMode := s.sessionVars.PartitionPruneMode.Load()
+	if len(execOption.PartitionPruneMode) > 0 {
+		s.sessionVars.PartitionPruneMode.Store(execOption.PartitionPruneMode)
+	}
 	prevSQL := s.sessionVars.StmtCtx.OriginalSQL
 	prevStmtType := s.sessionVars.StmtCtx.StmtType
 	prevTables := s.sessionVars.StmtCtx.Tables
@@ -1704,6 +1708,7 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 			logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
 		}
 		s.sessionVars.SnapshotInfoschema = nil
+		s.sessionVars.PartitionPruneMode.Store(prePruneMode)
 		s.sessionVars.StmtCtx.OriginalSQL = prevSQL
 		s.sessionVars.StmtCtx.StmtType = prevStmtType
 		s.sessionVars.StmtCtx.Tables = prevTables
