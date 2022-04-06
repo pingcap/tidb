@@ -46,6 +46,12 @@ type StatsInfo struct {
 
 	// GroupNDVs stores the NDV of column groups.
 	GroupNDVs []GroupNDV
+
+	// SQLRestorer helps to restore a plan tree to a SQL.
+	// It's placed here because now we only use it for cardinality estimation tracing, and it only
+	// supports part of logical operators.
+	// Maybe we should put it into baseplan someday.
+	SQLRestorer *QueryBlock
 }
 
 // String implements fmt.Stringer interface.

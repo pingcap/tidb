@@ -1762,6 +1762,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.EnableOptimizeTrace = false
 	sc.OptimizeTracer = nil
 	sc.OptimizerCETrace = nil
+	sc.CETraceTblNameAlloc.Store(0)
+	sc.CETraceColNameAlloc.Store(0)
 
 	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
 

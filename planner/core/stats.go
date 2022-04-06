@@ -17,10 +17,6 @@ package core
 import (
 	"context"
 	"fmt"
-	"math"
-	"sort"
-	"strings"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -33,7 +29,11 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/zap"
+	"math"
+	"sort"
+	"strings"
 )
 
 func (p *basePhysicalPlan) StatsCount() float64 {
@@ -386,6 +386,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		// Just reload the GroupNDVs.
 		selectivity := ds.stats.RowCount / ds.tableStats.RowCount
 		ds.stats = ds.tableStats.Scale(selectivity)
+		ds.TraceStats(nil)
 		return ds.stats, nil
 	}
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
@@ -462,6 +463,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		stmtCtx.AppendWarning(errors.Errorf(msg))
 		logutil.BgLogger().Debug(msg)
 	}
+	ds.TraceStats(nil)
 	return ds.stats, nil
 }
 
@@ -760,6 +762,7 @@ func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, selfSch
 	}
 	p.stats = childStats[0].Scale(SelectionFactor)
 	p.stats.GroupNDVs = nil
+	p.TraceStats(childStats)
 	return p.stats, nil
 }
 
@@ -908,6 +911,7 @@ func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSc
 		p.stats.ColNDVs[selfSchema.Columns[i].UniqueID] = getColsNDV(cols, childSchema[0], childProfile)
 	}
 	p.stats.GroupNDVs = p.getGroupNDVs(colGroups, childProfile, selfSchema)
+	p.TraceStats(childStats)
 	return p.stats, nil
 }
 
@@ -979,6 +983,7 @@ func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, self
 	}
 	la.inputCount = childProfile.RowCount
 	la.stats.GroupNDVs = la.getGroupNDVs(colGroups, childProfile, gbyCols)
+	la.TraceStats(childStats)
 	return la.stats, nil
 }
 
@@ -1078,6 +1083,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		ColNDVs:  colNDVs,
 	}
 	p.stats.GroupNDVs = p.getGroupNDVs(colGroups, childStats)
+	p.TraceStats(childStats)
 	return p.stats, nil
 }
 
@@ -1300,4 +1306,162 @@ func (p *LogicalCTETable) DeriveStats(childStats []*property.StatsInfo, selfSche
 	}
 	p.stats = p.seedStat
 	return p.stats, nil
+}
+
+func (p *baseLogicalPlan) TraceStats(childStats []*property.StatsInfo) {
+	stmtctx := p.SCtx().GetSessionVars().StmtCtx
+	if !stmtctx.EnableOptimizerCETrace {
+		return
+	}
+	needTrace := false
+	lp := p.self
+	switch x := p.self.(type) {
+	case *DataSource:
+		colIDs := make([]int64, 0)
+		outNames := make([]string, 0, len(x.Schema().Columns))
+		for i, col := range x.Schema().Columns {
+			colIDs = append(colIDs, col.UniqueID)
+			outNames = append(outNames, x.Columns[i].Name.O)
+		}
+		query := property.QueryBlock{
+			Stage:        property.StageJoin,
+			TblNameAlloc: &stmtctx.CETraceTblNameAlloc,
+			ColNameAlloc: &stmtctx.CETraceColNameAlloc,
+		}
+		tbl := &property.JoinItem{Table: x.tableInfo.Name.O}
+		tbl.AsName = query.AllocTblName()
+		query.JoinList = property.JoinList{tbl}
+		query.AddTblColsFromSlice(tbl.AsName, colIDs, outNames)
+		for _, cond := range x.pushedDownConds {
+			query.Stage = property.StageWhere
+			s, err := query.ExprToString(cond, false)
+			if err != nil {
+				panic(err)
+			}
+			query.WhereConds = append(query.WhereConds, s)
+		}
+		p.Stats().SQLRestorer = &query
+	case *LogicalJoin:
+		left := childStats[0].SQLRestorer
+		right := childStats[1].SQLRestorer
+		if left == nil || right == nil {
+			return
+		}
+		left = left.GenQBNotAfter(property.StageJoin)
+		right = right.GenQBNotAfter(property.StageJoin)
+		query := &property.QueryBlock{
+			Stage:        property.StageJoin,
+			TblNameAlloc: &stmtctx.CETraceTblNameAlloc,
+			ColNameAlloc: &stmtctx.CETraceColNameAlloc,
+		}
+
+		query.JoinList = append(query.JoinList, left.JoinList...)
+		query.AddTblColsFromQB(left)
+
+		var r *property.JoinItem
+		if len(right.JoinList) == 1 {
+			r = right.JoinList[0]
+		} else {
+			r = &property.JoinItem{
+				SubJoinList: right.JoinList,
+			}
+		}
+		query.JoinList = append(query.JoinList, r)
+		query.AddTblColsFromQB(right)
+
+		joinConds := make([]expression.Expression, 0, 8)
+		joinConds = append(joinConds, x.LeftConditions...)
+		joinConds = append(joinConds, x.RightConditions...)
+		joinConds = append(joinConds, x.OtherConditions...)
+		for _, cond := range x.EqualConditions {
+			joinConds = append(joinConds, cond)
+		}
+		joinItem := query.JoinList[len(query.JoinList)-1]
+		joinItem.JoinType = x.JoinType.String()
+		for _, cond := range joinConds {
+			s, err := query.ExprToString(cond, false)
+			if err != nil {
+				panic(err)
+			}
+			joinItem.JoinCond = append(joinItem.JoinCond, s)
+		}
+		p.Stats().SQLRestorer = query
+		needTrace = true
+	case *LogicalSelection:
+		childQuery := childStats[0].SQLRestorer
+		if childQuery == nil {
+			return
+		}
+		query := childQuery.GenQBNotAfter(property.StageOrderBy)
+		for _, cond := range x.Conditions {
+			// If this Selection is for WHERE, there should be no projected columns yet.
+			// If it's for HAVING, we can use projected columns.
+			s, err := query.ExprToString(cond, true)
+			if err != nil {
+				panic(err)
+			}
+			if query.Stage <= property.StageWhere {
+				query.WhereConds = append(query.WhereConds, s)
+				query.Stage = property.StageWhere
+			} else {
+				query.HavingConds = append(query.HavingConds, s)
+			}
+		}
+		p.Stats().SQLRestorer = query
+		needTrace = true
+	case *LogicalProjection:
+		childQuery := childStats[0].SQLRestorer
+		if childQuery == nil {
+			return
+		}
+		query := childQuery.GenQBNotAfter(property.StageProjection)
+		outputCols := x.Schema().Columns
+		for i := range x.Exprs {
+			s, err := query.ExprToString(x.Exprs[i], false)
+			if err != nil {
+				panic(err)
+			}
+			query.AddProjCol(outputCols[i].UniqueID, s)
+		}
+		query.Stage = property.StageProjection
+		p.Stats().SQLRestorer = query
+	case *LogicalAggregation:
+		childQuery := childStats[0].SQLRestorer
+		if childQuery == nil {
+			return
+		}
+		query := childQuery.GenQBNotAfter(property.StageProjection)
+		query.Stage = property.StageAgg
+		groupBys := x.GroupByItems
+		for _, item := range groupBys {
+			s, err := query.ExprToString(item, true)
+			if err != nil {
+				panic(err)
+			}
+			query.GroupByCols = append(query.GroupByCols, s)
+		}
+		outputCols := x.Schema().Columns
+		for i, agg := range x.AggFuncs {
+			s, err := query.AggFuncToString(agg)
+			if err != nil {
+				panic(err)
+			}
+			query.AddProjCol(outputCols[i].UniqueID, s)
+		}
+		p.Stats().SQLRestorer = query
+		needTrace = true
+	}
+
+	p.Stats().SQLRestorer.ResetOutputCol()
+	for _, col := range lp.Schema().Columns {
+		p.Stats().SQLRestorer.AddOutputCol(col.UniqueID)
+	}
+	if !needTrace {
+		return
+	}
+	stmtctx.OptimizerCETrace = append(stmtctx.OptimizerCETrace, &tracing.CETraceRecord{
+		Type:     p.TP(),
+		Expr:     p.Stats().SQLRestorer.String(),
+		RowCount: uint64(p.Stats().RowCount),
+	})
 }

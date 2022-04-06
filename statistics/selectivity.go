@@ -578,29 +578,17 @@ func ExprToString(e expression.Expression) (string, error) {
 	case *expression.ScalarFunction:
 		var buffer bytes.Buffer
 		buffer.WriteString("`" + expr.FuncName.L + "`(")
-		switch expr.FuncName.L {
-		case ast.Cast:
-			for _, arg := range expr.GetArgs() {
-				argStr, err := ExprToString(arg)
-				if err != nil {
-					return "", err
-				}
-				buffer.WriteString(argStr)
-				buffer.WriteString(", ")
-				buffer.WriteString(expr.RetType.String())
+		for i, arg := range expr.GetArgs() {
+			argStr, err := ExprToString(arg)
+			if err != nil {
+				return "", err
 			}
-		default:
-			for i, arg := range expr.GetArgs() {
-				argStr, err := ExprToString(arg)
-				if err != nil {
-					return "", err
-				}
-				buffer.WriteString(argStr)
-				if i+1 != len(expr.GetArgs()) {
-					buffer.WriteString(", ")
-				}
+			buffer.WriteString(argStr)
+			if i+1 != len(expr.GetArgs()) {
+				buffer.WriteString(", ")
 			}
 		}
+		// TODO: cast
 		buffer.WriteString(")")
 		return buffer.String(), nil
 	case *expression.Column:

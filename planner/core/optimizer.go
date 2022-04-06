@@ -324,6 +324,9 @@ func refineCETrace(sctx sessionctx.Context) {
 	traceRecords := stmtCtx.OptimizerCETrace
 	is := sctx.GetInfoSchema().(infoschema.InfoSchema)
 	for _, rec := range traceRecords {
+		if rec.TableID == 0 {
+			continue
+		}
 		tbl, ok := is.TableByID(rec.TableID)
 		if !ok {
 			logutil.BgLogger().Warn("[OptimizerTrace] Failed to find table in infoschema",

@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/types"
 	"sort"
 
 	"github.com/pingcap/tidb/expression"
@@ -185,6 +186,9 @@ func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild Logical
 		reordered: true,
 	}.Init(s.ctx, offset)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
+	join.names = make([]*types.FieldName, lChild.Schema().Len()+rChild.Schema().Len())
+	copy(join.names, lChild.OutputNames())
+	copy(join.names[lChild.Schema().Len():], rChild.OutputNames())
 	join.SetChildren(lChild, rChild)
 	return join
 }
