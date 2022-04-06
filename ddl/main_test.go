@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
@@ -84,13 +83,6 @@ func setupJobIDExtCallback(ctx sessionctx.Context) (tearDown func()) {
 	return func() {
 		dom.DDL().SetHook(originHook)
 	}
-}
-
-func checkDelRangeAdded(tk *testkit.TestKit, jobID int64) {
-	query := `select sum(cnt) from
-	(select count(1) cnt from mysql.gc_delete_range where job_id = ? union
-	select count(1) cnt from mysql.gc_delete_range_done where job_id = ?) as gdr;`
-	tk.MustQuery(query, jobID, jobID).Check(testkit.Rows("1"))
 }
 
 type testDDLJobIDCallback struct {
