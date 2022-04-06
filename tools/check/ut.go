@@ -795,9 +795,9 @@ func buildTestBinary(pkg string) error {
 	// go test -c
 	var cmd *exec.Cmd
 	if coverprofile != "" {
-		cmd = exec.Command("go", "test", "-asan", "-asan", "-c", "-cover", "-vet", "off", "-o", testFileName(pkg))
+		cmd = exec.Command("go", "test", "-asan", "-c", "-cover", "-vet", "off", "-o", testFileName(pkg))
 	} else {
-		cmd = exec.Command("go", "test", "-asan", "-asan", "-c", "-vet", "off", "-o", testFileName(pkg))
+		cmd = exec.Command("go", "test", "-asan", "-c", "-vet", "off", "-o", testFileName(pkg))
 	}
 	cmd.Dir = path.Join(workDir, pkg)
 	cmd.Stdout = os.Stdout
