@@ -4,6 +4,8 @@ package glue
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"strings"
 
 	"github.com/fatih/color"
@@ -42,9 +44,16 @@ func (ops *ConsoleOperations) CreateTable() *Table {
 	}
 }
 
+func (ops ConsoleOperations) Print(args ...interface{}) {
+	fmt.Fprint(ops, args...)
+}
+
 func (ops ConsoleOperations) Println(args ...interface{}) {
-	ops.Print(args...)
-	ops.Print("\n")
+	fmt.Fprintln(ops, args...)
+}
+
+func (ops ConsoleOperations) Printf(format string, args ...interface{}) {
+	fmt.Fprintf(ops, format, args...)
 }
 
 type Table struct {
@@ -77,7 +86,7 @@ func (t *Table) Print() {
 // ConsoleGlue is the glue between BR and some type of console,
 // which is the port for interact with the user.
 type ConsoleGlue interface {
-	Print(args ...interface{})
+	io.Writer
 
 	// IsInteractive checks whether the shell supports input.
 	IsInteractive() bool
@@ -86,7 +95,9 @@ type ConsoleGlue interface {
 
 type NoOPConsoleGlue struct{}
 
-func (NoOPConsoleGlue) Print(args ...interface{}) {}
+func (NoOPConsoleGlue) Write([]byte) (int, error) {
+	return 0, nil
+}
 
 func (NoOPConsoleGlue) IsInteractive() bool {
 	return false
@@ -101,4 +112,20 @@ func GetConsole(g Glue) ConsoleOperations {
 		return ConsoleOperations{ConsoleGlue: cg}
 	}
 	return ConsoleOperations{ConsoleGlue: NoOPConsoleGlue{}}
+}
+
+type StdIOGlue struct{}
+
+func (s StdIOGlue) Write(p []byte) (n int, err error) {
+	return os.Stdout.Write(p)
+}
+
+// IsInteractive checks whether the shell supports input.
+func (s StdIOGlue) IsInteractive() bool {
+	// should we detach whether we are in a interactive tty here?
+	return true
+}
+
+func (s StdIOGlue) Scanln(args ...interface{}) (int, error) {
+	return fmt.Scanln(args...)
 }
