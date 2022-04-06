@@ -1714,7 +1714,7 @@
         "SQL": "select f, g from t1 where f = 2 and g > 3",
         "Plan": [
           "IndexReader_6 33.33 160.78 root  index:IndexRangeScan_5",
-          "└─IndexRangeScan_5 33.33 1870.00 cop[tikv] table:t1, index:f_g(f, g) range:(2 3,2 +inf], keep order:false, stats:pseudo"
+          "└─IndexRangeScan_5 33.33 1850.00 cop[tikv] table:t1, index:f_g(f, g) range:(2 3,2 +inf], keep order:false, stats:pseudo"
         ],
         "Warnings": [
           "Note 1105 unique index f_g of t1 is selected since the path only fetches limited number of rows with single scan"
