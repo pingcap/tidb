@@ -1867,9 +1867,10 @@ type CTEClass struct {
 type LogicalCTE struct {
 	logicalSchemaProducer
 
-	cte       *CTEClass
-	cteAsName model.CIStr
-	seedStat  *property.StatsInfo
+	cte            *CTEClass
+	cteAsName      model.CIStr
+	seedStat       *property.StatsInfo
+	isOuterMostCTE bool
 }
 
 // LogicalCTETable is for CTE table

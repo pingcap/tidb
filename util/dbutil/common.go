@@ -320,9 +320,7 @@ func GetTimeZoneOffset(ctx context.Context, db QueryExecutor) (time.Duration, er
 
 	hour, minute, second := t.Clock()
 	// nolint:durationcheck
-	return (time.Duration(hour)*time.Hour +
-		time.Duration(minute)*time.Minute +
-		time.Duration(second)*time.Second) * factor * time.Second, nil
+	return time.Duration(hour*3600+minute*60+second) * time.Second * factor, nil
 }
 
 // FormatTimeZoneOffset is to format offset of timezone.
