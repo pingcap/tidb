@@ -819,6 +819,14 @@ func TestLcTimeNamesReadOnly(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestLcMessagesReadOnly(t *testing.T) {
+	sv := GetSysVar("lc_messages")
+	vars := NewSessionVars()
+	vars.GlobalVarsAccessor = NewMockGlobalAccessor4Tests()
+	_, err := sv.Validate(vars, "newvalue", ScopeGlobal)
+	require.Error(t, err)
+}
+
 func TestDDLWorkers(t *testing.T) {
 	svWorkerCount, svBatchSize := GetSysVar(TiDBDDLReorgWorkerCount), GetSysVar(TiDBDDLReorgBatchSize)
 	vars := NewSessionVars()

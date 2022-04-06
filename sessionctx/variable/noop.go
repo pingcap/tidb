@@ -296,7 +296,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: SlowQueryLog, Value: "0"},
 	{Scope: ScopeSession, Name: "debug_sync", Value: ""},
 	{Scope: ScopeGlobal, Name: InnodbStatsAutoRecalc, Value: "1"},
-	{Scope: ScopeGlobal | ScopeSession, Name: "lc_messages", Value: "en_US"},
+	{Scope: ScopeGlobal | ScopeSession, Name: "lc_messages", Value: "en_US", ReadOnly: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: "bulk_insert_buffer_size", Value: "8388608", IsHintUpdatable: true},
 	{Scope: ScopeGlobal | ScopeSession, Name: BinlogDirectNonTransactionalUpdates, Value: Off, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "innodb_change_buffering", Value: "all"},
