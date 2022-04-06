@@ -45,16 +45,19 @@ import (
 	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tidb/util/topsql/collector"
 	mockTopSQLTraceCPU "github.com/pingcap/tidb/util/topsql/collector/mock"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 type tidbTestSuite struct {
@@ -1638,7 +1641,7 @@ func waitCollected(ch chan struct{}) {
 }
 
 func TestTopSQLStatementStats(t *testing.T) {
-	ts, total, collectedNotifyCh, cleanFn := setupForTestTopSQLStatementStats(t)
+	ts, total, tagChecker, collectedNotifyCh, cleanFn := setupForTestTopSQLStatementStats(t)
 	defer cleanFn()
 
 	const ExecCountPerSQL = 2
@@ -1877,13 +1880,48 @@ func TestTopSQLStatementStats(t *testing.T) {
 				kvSum += kvCount
 			}
 			require.Equal(t, uint64(ExecCountPerSQL), kvSum)
+			tagChecker.checkExist(t, digest.SQLDigest, sqlStr)
 		}
 	}
 	require.Equal(t, len(sqlDigests), found)
 	require.Equal(t, 20, found)
 }
 
-func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.StatementStatsMap, chan struct{}, func()) {
+type resourceTagChecker struct {
+	sync.Mutex
+	sqlDigest2Reqs map[stmtstats.BinaryDigest]map[tikvrpc.CmdType]struct{}
+}
+
+func (c *resourceTagChecker) checkExist(t *testing.T, digest stmtstats.BinaryDigest, sqlStr string) {
+	if strings.HasPrefix(sqlStr, "set global") {
+		// `set global` statement will use another internal sql to execute, so `set global` statement won't
+		// send RPC request.
+		return
+	}
+	if strings.HasPrefix(sqlStr, "trace") {
+		// `trace` statement will use another internal sql to execute, so remove the `trace` prefix before check.
+		_, sqlDigest := parser.NormalizeDigest(strings.TrimPrefix(sqlStr, "trace"))
+		digest = stmtstats.BinaryDigest(sqlDigest.Bytes())
+	}
+
+	c.Lock()
+	defer c.Unlock()
+	_, ok := c.sqlDigest2Reqs[digest]
+	require.True(t, ok, sqlStr)
+}
+
+func (c *resourceTagChecker) checkReqExist(t *testing.T, digest stmtstats.BinaryDigest, sqlStr string, reqs ...tikvrpc.CmdType) {
+	c.Lock()
+	defer c.Unlock()
+	reqMap, ok := c.sqlDigest2Reqs[digest]
+	require.True(t, ok, sqlStr)
+	for _, req := range reqs {
+		_, ok := reqMap[req]
+		require.True(t, ok, sqlStr+"--"+req.String())
+	}
+}
+
+func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.StatementStatsMap, *resourceTagChecker, chan struct{}, func()) {
 	// Prepare stmt stats.
 	stmtstats.SetupAggregator()
 
@@ -1912,6 +1950,7 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 	}()
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook", `return(true)`))
 
 	dbt := testkit.NewDBTestKit(t, db)
 	dbt.MustExec("drop database if exists stmtstats")
@@ -1927,19 +1966,42 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 		conf.TopSQL.ReceiverAddress = "mock-agent"
 	})
 
+	tagChecker := &resourceTagChecker{
+		sqlDigest2Reqs: make(map[stmtstats.BinaryDigest]map[tikvrpc.CmdType]struct{}),
+	}
+	unistore.UnistoreRPCClientSendHook = func(req *tikvrpc.Request) {
+		tag := req.GetResourceGroupTag()
+		if len(tag) == 0 {
+			return
+		}
+		sqlDigest, err := resourcegrouptag.DecodeResourceGroupTag(tag)
+		require.NoError(t, err)
+		tagChecker.Lock()
+		defer tagChecker.Unlock()
+
+		reqMap, ok := tagChecker.sqlDigest2Reqs[stmtstats.BinaryDigest(sqlDigest)]
+		if !ok {
+			reqMap = make(map[tikvrpc.CmdType]struct{})
+		}
+		reqMap[req.Type] = struct{}{}
+		tagChecker.sqlDigest2Reqs[stmtstats.BinaryDigest(sqlDigest)] = reqMap
+	}
+
 	cleanFn := func() {
 		stmtstats.UnregisterCollector(mockCollector)
 		cleanup()
 		err = failpoint.Disable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop")
 		require.NoError(t, err)
+		err = failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/unistoreRPCClientSendHook")
+		require.NoError(t, err)
 		stmtstats.CloseAggregator()
 
 	}
-	return ts, total, collectedNotifyCh, cleanFn
+	return ts, total, tagChecker, collectedNotifyCh, cleanFn
 }
 
 func TestTopSQLStatementStats2(t *testing.T) {
-	ts, total, collectedNotifyCh, cleanFn := setupForTestTopSQLStatementStats(t)
+	ts, total, tagChecker, collectedNotifyCh, cleanFn := setupForTestTopSQLStatementStats(t)
 	defer cleanFn()
 
 	const ExecCountPerSQL = 3
@@ -2047,13 +2109,18 @@ func TestTopSQLStatementStats2(t *testing.T) {
 			require.Equal(t, uint64(ExecCountPerSQL), item.ExecCount, sqlStr)
 			require.True(t, item.SumDurationNs > 1, sqlStr)
 			foundMap[digest.SQLDigest] = sqlStr
+			tagChecker.checkExist(t, digest.SQLDigest, sqlStr)
+			// The special check uses to test the issue #33202.
+			if strings.Contains(strings.ToLower(sqlStr), "add index") {
+				tagChecker.checkReqExist(t, digest.SQLDigest, sqlStr, tikvrpc.CmdScan)
+			}
 		}
 	}
 	require.Equal(t, len(sqlDigests), len(foundMap), fmt.Sprintf("%v !=\n %v", sqlDigests, foundMap))
 }
 
 func TestTopSQLStatementStats3(t *testing.T) {
-	ts, total, collectedNotifyCh, cleanFn := setupForTestTopSQLStatementStats(t)
+	ts, total, tagChecker, collectedNotifyCh, cleanFn := setupForTestTopSQLStatementStats(t)
 	defer cleanFn()
 
 	err := failpoint.Enable("github.com/pingcap/tidb/executor/mockSleepInTableReaderNext", "return(2000)")
@@ -2115,12 +2182,13 @@ func TestTopSQLStatementStats3(t *testing.T) {
 			require.Equal(t, uint64(1), item.DurationCount, sqlStr)
 			require.Less(t, uint64(0), item.SumDurationNs, sqlStr)
 			foundMap[digest.SQLDigest] = sqlStr
+			tagChecker.checkExist(t, digest.SQLDigest, sqlStr)
 		}
 	}
 }
 
 func TestTopSQLStatementStats4(t *testing.T) {
-	ts, total, collectedNotifyCh, cleanFn := setupForTestTopSQLStatementStats(t)
+	ts, total, tagChecker, collectedNotifyCh, cleanFn := setupForTestTopSQLStatementStats(t)
 	defer cleanFn()
 
 	err := failpoint.Enable("github.com/pingcap/tidb/executor/mockSleepInTableReaderNext", "return(2000)")
@@ -2192,6 +2260,7 @@ func TestTopSQLStatementStats4(t *testing.T) {
 			require.Equal(t, uint64(1), item.DurationCount, sqlStr)
 			require.Less(t, uint64(0), item.SumDurationNs, sqlStr)
 			foundMap[digest.SQLDigest] = sqlStr
+			tagChecker.checkExist(t, digest.SQLDigest, sqlStr)
 		}
 	}
 }

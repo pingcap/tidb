@@ -308,7 +308,7 @@ func TestTransactionOnAddDropColumn(t *testing.T) {
 	dom.DDL().SetHook(hook)
 	done := make(chan error, 1)
 	// test transaction on add column.
-	go backgroundExecT(store, "alter table t1 add column c int not null after a", done)
+	go backgroundExec(store, "alter table t1 add column c int not null after a", done)
 	err := <-done
 	require.NoError(t, err)
 	require.Nil(t, checkErr)
@@ -316,7 +316,7 @@ func TestTransactionOnAddDropColumn(t *testing.T) {
 	tk.MustExec("delete from t1")
 
 	// test transaction on drop column.
-	go backgroundExecT(store, "alter table t1 drop column c", done)
+	go backgroundExec(store, "alter table t1 drop column c", done)
 	err = <-done
 	require.NoError(t, err)
 	require.Nil(t, checkErr)
@@ -556,6 +556,7 @@ func TestBatchCreateTable(t *testing.T) {
 	})
 
 	// correct name
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err := d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), infos, ddl.OnExistError)
 	require.NoError(t, err)
 
@@ -570,6 +571,7 @@ func TestBatchCreateTable(t *testing.T) {
 
 	// duplicated name
 	infos[1].Name = model.NewCIStr("tables_1")
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), infos, ddl.OnExistError)
 	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableExists))
 
@@ -597,6 +599,7 @@ func TestBatchCreateTable(t *testing.T) {
 		newinfo.View = &model.ViewInfo{Cols: viewCols, Security: model.SecurityDefiner, Algorithm: model.AlgorithmMerge, SelectStmt: stmtBuffer.String(), CheckOption: model.CheckOptionCascaded, Definer: &auth.UserIdentity{CurrentUser: true}}
 	}
 
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), []*model.TableInfo{newinfo}, ddl.OnExistError)
 	require.NoError(t, err)
@@ -1049,7 +1052,7 @@ func TestAddColumn2(t *testing.T) {
 	dom.DDL().SetHook(hook)
 	done := make(chan error, 1)
 	// test transaction on add column.
-	go backgroundExecT(store, "alter table t1 add column c int not null", done)
+	go backgroundExec(store, "alter table t1 add column c int not null", done)
 	err := <-done
 	require.NoError(t, err)
 
@@ -1091,7 +1094,7 @@ func TestAddColumn2(t *testing.T) {
 	}
 	dom.DDL().SetHook(hook)
 
-	go backgroundExecT(store, "alter table t2 add column b int not null default 3", done)
+	go backgroundExec(store, "alter table t2 add column b int not null default 3", done)
 	err = <-done
 	require.NoError(t, err)
 	re.Check(testkit.Rows("1 2"))
