@@ -1100,7 +1100,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 		return value, false, nil
 	}
 
-	// evaluate the non-sequence expr to a certain value.
+	// evaluate the non-function-call expr to a certain value.
 	v, err := expression.EvalAstExpr(ctx, c.Expr)
 	if err != nil {
 		return nil, false, errors.Trace(err)

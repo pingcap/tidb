@@ -3323,14 +3323,14 @@ ReferOpt:
 
 /*
  * The DEFAULT clause specifies a default value for a column.
- * With one exception, the default value must be a constant;
- * it cannot be a function or an expression. This means, for example,
- * that you cannot set the default for a date column to be the value of
- * a function such as NOW() or CURRENT_DATE. The exception is that you
- * can specify CURRENT_TIMESTAMP as the default for a TIMESTAMP or DATETIME column.
+ * It can be a function or an expression. This means, for example,
+ * that you can set the default for a date column to be the value of
+ * a function such as NOW() or CURRENT_DATE. While in MySQL 8.0
+ * expression default values are required to be enclosed in parentheses,
+ * they are NOT required so in TiDB.
  *
- * See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
- *      https://github.com/mysql/mysql-server/blob/5.7/sql/sql_yacc.yy#L6832
+ * See https://dev.mysql.com/doc/refman/8.0/en/create-table.html
+ *     https://dev.mysql.com/doc/refman/8.0/en/data-type-defaults.html
  */
 DefaultValueExpr:
 	NowSymOptionFraction
