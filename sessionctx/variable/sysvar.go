@@ -846,13 +846,13 @@ var defaultSysVars = []*SysVar{
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 			// Truncate the value of max_allowed_packet to be a multiple of 1024,
 			// nonmultiples are rounded down to the nearest multiple.
-			u, err := strconv.ParseUint(originalValue, 10, 64)
+			u, err := strconv.ParseUint(normalizedValue, 10, 64)
 			if err != nil {
-				return originalValue, err
+				return normalizedValue, err
 			}
 			remainder := u % 1024
 			if remainder != 0 {
-				vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(MaxAllowedPacket, originalValue))
+				vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(MaxAllowedPacket, normalizedValue))
 				u -= remainder
 			}
 			return strconv.FormatUint(u, 10), nil
