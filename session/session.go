@@ -604,7 +604,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	if tables := sessVars.TxnCtx.CachedTables; len(tables) > 0 {
 		c := cachedTableRenewLease{tables: tables}
 		now := time.Now()
-		err := c.start(ctx, s.txn.StartTS())
+		err := c.start(ctx)
 		defer c.stop(ctx)
 		sessVars.StmtCtx.WaitLockLeaseTime += time.Since(now)
 		if err != nil {
@@ -626,7 +626,7 @@ type cachedTableRenewLease struct {
 	exit   chan struct{}
 }
 
-func (c *cachedTableRenewLease) start(ctx context.Context, startTS uint64) error {
+func (c *cachedTableRenewLease) start(ctx context.Context) error {
 	c.exit = make(chan struct{})
 	c.lease = make([]uint64, len(c.tables))
 	wg := make(chan error, len(c.tables))
