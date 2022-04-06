@@ -1035,28 +1035,42 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	return col, constraints, nil
 }
 
+// getFuncCallDefaultValue
+func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *ast.FuncCallExpr) (interface{}, bool, error) {
+	switch expr.FnName.L {
+	case ast.Rand:
+		if err := expression.VerifyArgsWrapper(ast.Rand, len(expr.Args)); err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		col.DefaultIsExpr = true
+		var sb strings.Builder
+		restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
+			format.RestoreSpacesAroundBinaryOperation
+		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+		if err := expr.Restore(restoreCtx); err != nil {
+			return "", false, err
+		}
+		return sb.String(), false, nil
+	case ast.NextVal:
+		// handle default next value of sequence. (keep the expr string)
+		str, err := getSequenceDefaultValue(option)
+		if err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		return str, true, nil
+	default:
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), x.FnName.String())
+	}
+}
+
 // getDefaultValue will get the default value for column.
 // 1: get the expr restored string for the column which uses sequence next value as default value.
 // 2: get specific default value for the other column.
-func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOption) (interface{}, bool, error) {
+func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (interface{}, bool, error) {
 	// handle default value with function call
 	tp, fsp := col.FieldType.Tp, col.FieldType.Decimal
-	if x, ok := c.Expr.(*ast.FuncCallExpr); ok {
-		switch x.FnName.L {
-		case ast.Rand:
-			if err := expression.VerifyArgsWrapper(ast.Rand, len(x.Args)); err != nil {
-				return nil, false, errors.Trace(err)
-			}
-			col.DefaultIsExpr = true
-			var sb strings.Builder
-			restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
-				format.RestoreSpacesAroundBinaryOperation
-			restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
-			if err := c.Expr.Restore(restoreCtx); err != nil {
-				return "", false, err
-			}
-			return sb.String(), false, nil
-		case ast.CurrentTimestamp:
+	if x, ok := option.Expr.(*ast.FuncCallExpr); ok {
+		if x.FnName.L == ast.CurrentTimestamp {
 			if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
 				defaultFsp := 0
 				if len(x.Args) == 1 {
@@ -1068,20 +1082,13 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 					return nil, false, dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
 				}
 			}
-		case ast.NextVal:
-			// handle default next value of sequence. (keep the expr string)
-			str, err := getSequenceDefaultValue(c)
-			if err != nil {
-				return nil, false, errors.Trace(err)
-			}
-			return str, true, nil
-		default:
-			return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), x.FnName.String())
+		} else {
+			return getFuncCallDefaultValue(col, option, x)
 		}
 	}
 
 	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
-		vd, err := expression.GetTimeValue(ctx, c.Expr, tp, fsp)
+		vd, err := expression.GetTimeValue(ctx, option.Expr, tp, fsp)
 		value := vd.GetValue()
 		if err != nil {
 			return nil, false, dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
@@ -1101,7 +1108,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 	}
 
 	// evaluate the non-function-call expr to a certain value.
-	v, err := expression.EvalAstExpr(ctx, c.Expr)
+	v, err := expression.EvalAstExpr(ctx, option.Expr)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
