@@ -100,6 +100,7 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 	}
 	ctx = collector.CtxWithDigest(ctx, sqlDigestBytes, planDigestBytes)
 	pprof.SetGoroutineLabels(ctx)
+	//logutil.BgLogger().Info("attach SQL info", zap.String("sql", normalizedSQL),zap.Any("plan",planDigest), zap.Stack("stack"))
 
 	if !noNeedRecordSQLMeta{
 		linkSQLTextWithDigest(sqlDigestBytes, normalizedSQL, isInternal)
