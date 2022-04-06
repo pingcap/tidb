@@ -724,6 +724,7 @@ import (
 	dependency                 "DEPENDENCY"
 	depth                      "DEPTH"
 	drainer                    "DRAINER"
+	dry                        "DRY"
 	jobs                       "JOBS"
 	job                        "JOB"
 	nodeID                     "NODE_ID"
@@ -731,6 +732,7 @@ import (
 	optimistic                 "OPTIMISTIC"
 	pessimistic                "PESSIMISTIC"
 	pump                       "PUMP"
+	run                        "RUN"
 	samples                    "SAMPLES"
 	sampleRate                 "SAMPLERATE"
 	statistics                 "STATISTICS"
@@ -901,6 +903,7 @@ import (
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
 	LockTablesStmt             "Lock tables statement"
+	NonTransactionalDeleteStmt "Non-transactional delete statement"
 	PlanReplayerStmt           "Plan replayer statement"
 	PreparedStmt               "PreparedStmt"
 	PurgeImportStmt            "PURGE IMPORT statement that removes a IMPORT task record"
@@ -941,6 +944,7 @@ import (
 	HelpStmt                   "HELP statement"
 
 %type	<item>
+	DryRunOptions                          "Dry run options"
 	AdminShowSlow                          "Admin Show Slow statement"
 	AllOrPartitionNameList                 "All or partition name list"
 	AlgorithmClause                        "Alter table algorithm"
@@ -6151,6 +6155,8 @@ TiDBKeyword:
 |	"REGIONS"
 |	"REGION"
 |	"RESET"
+|	"DRY"
+|	"RUN"
 
 NotKeywordToken:
 	"ADDDATE"
@@ -11071,6 +11077,7 @@ Statement:
 |	ShutdownStmt
 |	RestartStmt
 |	HelpStmt
+|	NonTransactionalDeleteStmt
 
 TraceableStmt:
 	DeleteFromStmt
@@ -13417,6 +13424,34 @@ TableLockList:
 |	TableLockList ',' TableLock
 	{
 		$$ = append($1.([]ast.TableLock), $3.(ast.TableLock))
+	}
+
+/********************************************************************
+ * Non-transactional Delete Statement
+ * Split a SQL on a column. Used for bulk delete that doesn't need ACID.
+ *******************************************************************/
+NonTransactionalDeleteStmt:
+	"SPLIT" "ON" ColumnName "LIMIT" NUM DryRunOptions DeleteFromStmt
+	{
+		$$ = &ast.NonTransactionalDeleteStmt{
+			DryRun:      $6.(int),
+			ShardColumn: $3.(*ast.ColumnName),
+			Limit:       getUint64FromNUM($5),
+			DeleteStmt:  $7.(*ast.DeleteStmt),
+		}
+	}
+
+DryRunOptions:
+	{
+		$$ = ast.NoDryRun
+	}
+|	"DRY" "RUN"
+	{
+		$$ = ast.DryRunSplitDml
+	}
+|	"DRY" "RUN" "QUERY"
+	{
+		$$ = ast.DryRunQuery
 	}
 
 /********************************************************************

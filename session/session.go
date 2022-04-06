@@ -1994,7 +1994,12 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	if err != nil {
 		return nil, err
 	}
-	rs, err = s.Exec(ctx)
+
+	if _, ok := s.(*executor.ExecStmt).StmtNode.(*ast.NonTransactionalDeleteStmt); ok {
+		rs, err = handleNonTransactionalDelete(s, ctx, se)
+	} else {
+		rs, err = s.Exec(ctx)
+	}
 	se.updateTelemetryMetric(s.(*executor.ExecStmt))
 	sessVars.TxnCtx.StatementCount++
 	if rs != nil {
