@@ -827,6 +827,7 @@ const (
 	DefTiDBBatchPendingTiFlashCount              = 4000
 	DefRCReadCheckTS                             = false
 	DefTiDBRemoveOrderbyInSubquery               = false
+	DefTiDBReadStaleness                         = 0
 	DefMaxAllowedPacket                   uint64 = 67108864
 )
 
