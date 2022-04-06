@@ -26,6 +26,14 @@ var (
 			Help:      "Counter of ignored top-sql metrics (register-sql, register-plan, collect-data and report-data), normally it should be 0.",
 		}, []string{LblType})
 
+	TopSQLAttachInfoCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "topsql",
+			Name:      "attach_info_total",
+			Help:      "Counter of attach info",
+		}, []string{LblType})
+
 	TopSQLReportDurationHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",

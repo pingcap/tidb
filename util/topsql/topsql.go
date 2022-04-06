@@ -16,6 +16,7 @@ package topsql
 
 import (
 	"context"
+	"github.com/pingcap/tidb/metrics"
 	"runtime/pprof"
 	"strings"
 	"time"
@@ -79,6 +80,11 @@ func Close() {
 	stmtstats.CloseAggregator()
 }
 
+var (
+	TopSQLAttachInfoCounterSQLDigest = metrics.TopSQLAttachInfoCounter.WithLabelValues("sql")
+	TopSQLAttachInfoCounterSQLPlanDigest = metrics.TopSQLAttachInfoCounter.WithLabelValues("sql_plan")
+)
+
 // AttachSQLInfo attach the sql information info top sql.
 func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.Digest, normalizedPlan string, planDigest *parser.Digest, isInternal bool) context.Context {
 	if len(normalizedSQL) == 0 || sqlDigest == nil || len(sqlDigest.Bytes()) == 0 {
@@ -88,6 +94,9 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 	sqlDigestBytes = sqlDigest.Bytes()
 	if planDigest != nil {
 		planDigestBytes = planDigest.Bytes()
+		TopSQLAttachInfoCounterSQLPlanDigest.Add(1)
+	}else{
+		TopSQLAttachInfoCounterSQLDigest.Add(1)
 	}
 	ctx = collector.CtxWithDigest(ctx, sqlDigestBytes, planDigestBytes)
 	pprof.SetGoroutineLabels(ctx)
