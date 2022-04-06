@@ -61,6 +61,22 @@ type printByTable struct {
 	pendingTables []*glue.Table
 }
 
+// statusOK make a string like <green>●</green> <bold>{message}</bold>
+func statusOK(message string) string {
+	return color.GreenString("●") + color.New(color.Bold).Sprintf(" %s", message)
+}
+
+// statusErr make a string like <red>○</red> <bold>{message}</bold>
+func statusErr(message string) string {
+	return color.RedString("○") + color.New(color.Bold).Sprintf(" %s", message)
+}
+
+func colorfulStatusString() string {
+	// TODO: after pause implemented, adapt it.
+	// This function always return `Normal` for now.
+	return statusOK("NORMAL")
+}
+
 // GetCheckpoint calculates the checkpoint of the task.
 func (t TaskStatus) GetCheckpoint() uint64 {
 	initialized := false
@@ -77,6 +93,7 @@ func (t TaskStatus) GetCheckpoint() uint64 {
 func (p *printByTable) AddTask(task TaskStatus) {
 	table := p.console.CreateTable()
 	table.Add("name", task.Info.Name)
+	table.Add("status", colorfulStatusString())
 	table.Add("start", fmt.Sprint(oracle.GetTimeFromTS(task.Info.StartTs)))
 	if task.Info.EndTs > 0 {
 		table.Add("end", fmt.Sprint(oracle.GetTimeFromTS(task.Info.EndTs)))
@@ -104,14 +121,13 @@ func (p *printByTable) AddTask(task TaskStatus) {
 }
 
 func (p *printByTable) PrintTasks() {
-	em := color.New(color.Bold).SprintfFunc()
 	if len(p.pendingTables) == 0 {
-		p.console.Println(color.HiRedString("○"), em("No Task Yet."))
+		p.console.Println(statusErr("No Task Yet."))
 		return
 	}
-	p.console.Println(color.HiGreenString("●"), "Total", em("%d", len(p.pendingTables)), "Items.")
+	p.console.Println(statusOK(fmt.Sprintf("Total %d Tasks.", len(p.pendingTables))))
 	for i, t := range p.pendingTables {
-		p.console.Println("> #", em("%d ", i+1), "<")
+		p.console.Printf("> #%d <\n", i+1)
 		t.Print()
 	}
 }
