@@ -2142,17 +2142,6 @@ func (a *havingWindowAndOrderbyExprResolver) resolveFromPlan(v *ast.ColumnNameEx
 	}
 	schemaCols, outputNames := p.Schema().Columns, p.OutputNames()
 	if idx < 0 {
-		// maybe the referred column is in the outer schema stack.
-		for i := len(a.outerSchemas) - 1; i >= 0; i-- {
-			outerSchema, outerName := a.outerSchemas[i], a.outerNames[i]
-			idx, err = expression.FindFieldName(outerName, v.Name)
-			if err == nil && idx >= 0 {
-				schemaCols, outputNames = outerSchema.Columns, outerName
-				break
-			}
-		}
-	}
-	if idx < 0 {
 		// maybe the referred column is in the inside join's full schema.
 		schemaCols, outputNames, idx, err = dfsResolveFromInsideJoin(v, p)
 		if idx < 0 {
