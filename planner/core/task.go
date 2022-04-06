@@ -176,10 +176,13 @@ func (t *copTask) finishIndexPlan() {
 		return
 	}
 
-	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
+	// net seek cost
 	var p PhysicalPlan
 	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
 	}
+	t.cst += float64(len(p.(*PhysicalIndexScan).Ranges)) * sessVars.GetSeekFactor(p.(*PhysicalIndexScan).Table)
+
+	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
 	rowSize := t.tblColHists.GetIndexAvgRowSize(t.indexPlan.SCtx(), t.tblCols, p.(*PhysicalIndexScan).Index.Unique)
 	t.cst += cnt * rowSize * sessVars.GetScanFactor(tableInfo)
 }
