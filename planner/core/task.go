@@ -924,6 +924,7 @@ func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
 	return t
 }
 
+// GetCost computes cost of index lookup operator itself.
 func (p *PhysicalIndexLookUpReader) GetCost() (cost float64) {
 	indexPlan, tablePlan := p.indexPlan, p.tablePlan
 	ctx := p.ctx
@@ -1023,7 +1024,7 @@ func extractRows(p PhysicalPlan) float64 {
 // calcPagingCost calculates the cost for paging processing which may increase the seekCnt and reduce scanned rows.
 func calcPagingCost(ctx sessionctx.Context, indexPlan PhysicalPlan, expectCnt uint64) float64 {
 	sessVars := ctx.GetSessionVars()
-	indexRows := indexPlan.statsInfo().RowCount
+	indexRows := indexPlan.StatsCount()
 	sourceRows := extractRows(indexPlan)
 	// with paging, the scanned rows is always less than or equal to source rows.
 	if uint64(sourceRows) < expectCnt {

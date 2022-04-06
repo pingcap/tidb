@@ -319,7 +319,7 @@ type PhysicalIndexLookUpReader struct {
 	// Used by partition table.
 	PartitionInfo PartitionInfo
 
-	// fields required by cost calculation
+	// required by cost calculation
 	expectedCnt uint64
 	keepOrder   bool
 }
