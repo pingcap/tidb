@@ -775,6 +775,9 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	formatTs := func(ts uint64) string {
 		return oracle.GetTimeFromTS(ts).Format("2006-01-02 15:04:05.0000")
 	}
+	if cfg.Until == 0 {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "please provide the `--until` ts")
+	}
 
 	cfg.adjustRestoreConfig()
 

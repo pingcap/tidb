@@ -61,10 +61,13 @@ type printByTable struct {
 	pendingTables []*glue.Table
 }
 
-func (t TaskStatus) getCheckpoint() uint64 {
+// GetCheckpoint calculates the checkpoint of the task.
+func (t TaskStatus) GetCheckpoint() uint64 {
+	initialized := false
 	checkpoint := t.Info.StartTs
 	for _, ts := range t.Progress {
-		if checkpoint == t.Info.StartTs || ts < checkpoint {
+		if !initialized || ts < checkpoint {
+			initialized = true
 			checkpoint = ts
 		}
 	}
@@ -93,7 +96,7 @@ func (p *printByTable) AddTask(task TaskStatus) {
 		info := fmt.Sprintf("%s; gap=%s", pTime, gapColor.Sprint(gap))
 		return info
 	}
-	table.Add("checkpoint[global]", formatTS(task.getCheckpoint()))
+	table.Add("checkpoint[global]", formatTS(task.GetCheckpoint()))
 	for store, p := range task.Progress {
 		table.Add(fmt.Sprintf("checkpoint[store=%d]", store), formatTS(p))
 	}
@@ -153,7 +156,7 @@ func (p *printByJSON) PrintTasks() {
 			TableFilter: t.Info.GetTableFilter(),
 			Progress:    sp,
 			Storage:     s.String(),
-			Checkpoint:  t.getCheckpoint(),
+			Checkpoint:  t.GetCheckpoint(),
 			EstQPS:      t.QPS,
 		}
 	}
