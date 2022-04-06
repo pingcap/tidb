@@ -103,13 +103,11 @@ func (dm *domainMap) Delete(store kv.Storage) {
 	dm.mu.Unlock()
 }
 
-
 func (dm *domainMap) Set(store kv.Storage, domain *domain.Domain) {
 	dm.mu.Lock()
 	dm.domains[store.UUID()] = domain
 	dm.mu.Unlock()
 }
-
 
 var (
 	domap = &domainMap{
