@@ -657,6 +657,7 @@ const (
 	ErrBinlogUnsafeLimit                                     = 1668
 	ErrBinlogUnsafeInsertDelayed                             = 1669
 	ErrBinlogUnsafeAutoincColumns                            = 1671
+	ErrBinlogUnsafeSystemFunction                            = 1674
 	ErrBinlogUnsafeNontransAfterTrans                        = 1675
 	ErrMessageAndStatement                                   = 1676
 	ErrInsideTransactionPreventsSwitchBinlogFormat           = 1679

@@ -366,4 +366,7 @@ var (
 	ErrAutoConvert = ClassDDL.NewStd(mysql.ErrAutoConvert)
 	// ErrWrongStringLength when UserName or HostName is too long
 	ErrWrongStringLength = ClassDDL.NewStd(mysql.ErrWrongStringLength)
+
+	// ErrBinlogUnsafeSystemFunction when use a system function that may return a different value on the slave.
+	ErrBinlogUnsafeSystemFunction = ClassDDL.NewStd(mysql.ErrBinlogUnsafeSystemFunction)
 )

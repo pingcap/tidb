@@ -3436,11 +3436,16 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 		// known rows with specific sequence next value under current add column logic.
 		// More explanation can refer: TestSequenceDefaultLogic's comment in sequence_test.go
 		if option.Tp == ast.ColumnOptionDefaultValue {
-			if f, ok := option.Expr.(*ast.FuncCallExpr); ok && f.FnName.L == ast.NextVal {
-				if _, err := getSequenceDefaultValue(option); err != nil {
-					return nil, errors.Trace(err)
+			if f, ok := option.Expr.(*ast.FuncCallExpr); ok {
+				switch f.FnName.L {
+				case ast.NextVal:
+					if _, err := getSequenceDefaultValue(option); err != nil {
+						return nil, errors.Trace(err)
+					}
+					return nil, errors.Trace(dbterror.ErrAddColumnWithSequenceAsDefault.GenWithStackByArgs(specNewColumn.Name.Name.O))
+				case ast.Rand:
+					return nil, errors.Trace(dbterror.ErrBinlogUnsafeSystemFunction.GenWithStackByArgs())
 				}
-				return nil, errors.Trace(dbterror.ErrAddColumnWithSequenceAsDefault.GenWithStackByArgs(specNewColumn.Name.Name.O))
 			}
 		}
 	}

@@ -861,6 +861,11 @@ error = '''
 Field '%-.192s' is of a not allowed type for this type of partitioning
 '''
 
+["ddl:1674"]
+error = '''
+Statement is unsafe because it uses a system function that may return a different value on the slave
+'''
+
 ["ddl:1688"]
 error = '''
 Comment for index '%-.64s' is too long (max = %d)

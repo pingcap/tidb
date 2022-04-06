@@ -2037,12 +2037,19 @@ func TestDefaultColumnWithRand(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-
 	tk.MustExec("drop table if exists t, t1, t2")
-	tk.MustExec("create table t (c int(10) default (rand()))")
-	tk.MustExec("create table t1 (c int default (rand()), c1 double default (rand()))")
-	tk.MustExec("create table t2 (c int default (rand(1)), c1 double default (rand(1)))")
-	tk.MustExec("alter table t add column c1 double default (rand(2))")
+
+	// create table
+	tk.MustExec("create table t (c int(10), c1 int default (rand()))")
+	tk.MustExec("create table t1 (c int, c1 double default (rand()))")
+	tk.MustExec("create table t2 (c int, c1 double default (rand(1)))")
+
+	// add column with default rand() for table t is forbidden in MySQL 8.0
+	tk.MustGetErrCode("alter table t add column c2 double default (rand(2))", errno.ErrBinlogUnsafeSystemFunction)
+	tk.MustGetErrCode("alter table t add column c3 int default ((rand()))", errno.ErrBinlogUnsafeSystemFunction)
+	tk.MustGetErrCode("alter table t add column c4 int default (((rand(3))))", errno.ErrBinlogUnsafeSystemFunction)
+
+	// insert records
 	tk.MustExec("insert into t(c) values (1),(2),(3)")
 	tk.MustExec("insert into t1(c) values (1),(2),(3)")
 	tk.MustExec("insert into t2(c) values (1),(2),(3)")

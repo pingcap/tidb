@@ -661,6 +661,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBinlogUnsafeLimit:                                     mysql.Message("The statement is unsafe because it uses a LIMIT clause. This is unsafe because the set of rows included cannot be predicted.", nil),
 	ErrBinlogUnsafeInsertDelayed:                             mysql.Message("The statement is unsafe because it uses INSERT DELAYED. This is unsafe because the times when rows are inserted cannot be predicted.", nil),
 	ErrBinlogUnsafeAutoincColumns:                            mysql.Message("Statement is unsafe because it invokes a trigger or a stored function that inserts into an AUTOINCREMENT column. Inserted values cannot be logged correctly.", nil),
+	ErrBinlogUnsafeSystemFunction:                            mysql.Message("Statement is unsafe because it uses a system function that may return a different value on the slave", nil),
 	ErrBinlogUnsafeNontransAfterTrans:                        mysql.Message("Statement is unsafe because it accesses a non-transactional table after accessing a transactional table within the same transaction.", nil),
 	ErrMessageAndStatement:                                   mysql.Message("%s Statement: %s", nil),
 	ErrInsideTransactionPreventsSwitchBinlogFormat:           mysql.Message("Cannot modify @@session.binlogFormat inside a transaction", nil),
