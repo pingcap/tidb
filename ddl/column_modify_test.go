@@ -535,7 +535,7 @@ func TestCancelDropColumn(t *testing.T) {
 			require.EqualError(t, checkErr, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
 			if c3IdxID != 0 {
 				// Check index is deleted
-				checkDelRangeAdded(tk, jobID, c3IdxID)
+				checkDelRangeAdded(tk, jobID)
 			}
 		}
 	}
@@ -636,7 +636,7 @@ func TestCancelDropColumns(t *testing.T) {
 			require.EqualError(t, checkErr, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
 			if c3IdxID != 0 {
 				// Check index is deleted
-				checkDelRangeAdded(tk, jobID, c3IdxID)
+				checkDelRangeAdded(tk, jobID)
 			}
 		}
 	}
