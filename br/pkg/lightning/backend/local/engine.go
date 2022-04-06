@@ -24,6 +24,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"sync"
 	"time"
@@ -33,6 +34,10 @@ import (
 	"github.com/google/btree"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"go.uber.org/atomic"
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
+
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -43,9 +48,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/hack"
-	"go.uber.org/atomic"
-	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -426,8 +428,15 @@ func getSizeProperties(logger log.Logger, db *pebble.DB, keyAdapter KeyAdapter) 
 }
 
 func (e *Engine) getEngineFileSize() backend.EngineFileSize {
-	metrics := e.db.Metrics()
-	total := metrics.Total()
+	e.mutex.RLock()
+	db := e.db
+	e.mutex.RUnlock()
+
+	var total pebble.LevelMetrics
+	if db != nil {
+		metrics := db.Metrics()
+		total = metrics.Total()
+	}
 	var memSize int64
 	e.localWriters.Range(func(k, v interface{}) bool {
 		w := k.(*Writer)
@@ -521,11 +530,20 @@ func (e *Engine) ingestSSTLoop() {
 		concurrency = 1
 	}
 	metaChan := make(chan metaAndSeq, concurrency)
+	const size = 4096
 	for i := 0; i < concurrency; i++ {
 		e.wg.Add(1)
 		go func() {
-			defer e.wg.Done()
 			defer func() {
+				if r := recover(); r != nil {
+					buf := make([]byte, size)
+					stackSize := runtime.Stack(buf, false)
+					buf = buf[:stackSize]
+					log.L().Error("lightning ingest loop panic",
+						zap.String("err", fmt.Sprintf("%v", r)),
+						zap.String("stack", string(buf)),
+					)
+				}
 				if e.ingestErr.Get() != nil {
 					seqLock.Lock()
 					for _, f := range flushQueue {
@@ -534,6 +552,7 @@ func (e *Engine) ingestSSTLoop() {
 					flushQueue = flushQueue[:0]
 					seqLock.Unlock()
 				}
+				e.wg.Done()
 			}()
 			for {
 				select {
@@ -1470,6 +1489,9 @@ func (i dbSSTIngester) ingest(metas []*sstMeta) error {
 	paths := make([]string, 0, len(metas))
 	for _, m := range metas {
 		paths = append(paths, m.path)
+	}
+	if i.e.db == nil {
+		return errorEngineClosed
 	}
 	return i.e.db.Ingest(paths)
 }

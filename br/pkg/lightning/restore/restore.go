@@ -21,16 +21,23 @@ import (
 	"io"
 	"math"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/alecthomas/units"
 	"github.com/coreos/go-semver/semver"
-	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	sstpb "github.com/pingcap/kvproto/pkg/import_sstpb"
+	pd "github.com/tikv/pd/client"
+	"go.uber.org/atomic"
+	"go.uber.org/multierr"
+	"go.uber.org/zap"
+	"modernc.org/mathutil"
+
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/importer"
@@ -57,11 +64,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/collate"
-	pd "github.com/tikv/pd/client"
-	"go.uber.org/atomic"
-	"go.uber.org/multierr"
-	"go.uber.org/zap"
-	"modernc.org/mathutil"
 )
 
 const (
@@ -1738,6 +1740,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 		// (we execute the lock check in background to avoid blocking the cron thread)
 		return
 	}
+	const size = 4096
 
 	go func() {
 		// locker is assigned when we detect the disk quota is exceeded.
@@ -1745,6 +1748,15 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 		// unlocked to avoid periodically interrupting the writer threads.
 		var locker sync.Locker
 		defer func() {
+			if r := recover(); r != nil {
+				buf := make([]byte, size)
+				stackSize := runtime.Stack(buf, false)
+				buf = buf[:stackSize]
+				log.L().Error("lightning disk quota loop panic",
+					zap.String("err", fmt.Sprintf("%v", r)),
+					zap.String("stack", string(buf)),
+				)
+			}
 			rc.diskQuotaState.Store(diskQuotaStateIdle)
 			if locker != nil {
 				locker.Unlock()
