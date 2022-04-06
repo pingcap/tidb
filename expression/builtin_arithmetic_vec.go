@@ -100,7 +100,7 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(input *chunk.Chunk, r
 		} else if err == nil {
 			_, frac = to.PrecisionAndFrac()
 			if frac < b.baseBuiltinFunc.tp.Decimal {
-				if err = to.Round(&to, b.baseBuiltinFunc.tp.Decimal, types.ModeHalfEven); err != nil {
+				if err = to.Round(&to, b.baseBuiltinFunc.tp.Decimal, types.ModeHalfUp); err != nil {
 					return err
 				}
 			}

@@ -332,8 +332,6 @@ type Request struct {
 	Desc bool
 	// NotFillCache makes this request do not touch the LRU cache of the underlying storage.
 	NotFillCache bool
-	// SyncLog decides whether the WAL(write-ahead log) of this request should be synchronized.
-	SyncLog bool
 	// Streaming indicates using streaming API for this request, result in that one Next()
 	// call would not corresponds to a whole region result.
 	Streaming bool
@@ -513,4 +511,6 @@ const (
 	SI IsoLevel = iota
 	// RC stands for 'read committed'.
 	RC
+	// RCCheckTS stands for 'read consistency read with ts check'.
+	RCCheckTS
 )

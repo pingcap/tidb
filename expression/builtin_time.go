@@ -1734,7 +1734,7 @@ func evalFromUnixTime(ctx sessionctx.Context, fsp int, unixTimeStamp *types.MyDe
 
 	sc := ctx.GetSessionVars().StmtCtx
 	tmp := time.Unix(integralPart, fractionalPart).In(sc.TimeZone)
-	t, err := convertTimeToMysqlTime(tmp, fsp, types.ModeHalfEven)
+	t, err := convertTimeToMysqlTime(tmp, fsp, types.ModeHalfUp)
 	if err != nil {
 		return res, true, err
 	}
@@ -2050,7 +2050,7 @@ func (b *builtinSysDateWithFspSig) evalTime(row chunk.Row) (d types.Time, isNull
 
 	loc := b.ctx.GetSessionVars().Location()
 	now := time.Now().In(loc)
-	result, err := convertTimeToMysqlTime(now, int(fsp), types.ModeHalfEven)
+	result, err := convertTimeToMysqlTime(now, int(fsp), types.ModeHalfUp)
 	if err != nil {
 		return types.ZeroTime, true, err
 	}
@@ -2072,7 +2072,7 @@ func (b *builtinSysDateWithoutFspSig) Clone() builtinFunc {
 func (b *builtinSysDateWithoutFspSig) evalTime(row chunk.Row) (d types.Time, isNull bool, err error) {
 	tz := b.ctx.GetSessionVars().Location()
 	now := time.Now().In(tz)
-	result, err := convertTimeToMysqlTime(now, 0, types.ModeHalfEven)
+	result, err := convertTimeToMysqlTime(now, 0, types.ModeHalfUp)
 	if err != nil {
 		return types.ZeroTime, true, err
 	}
@@ -2393,7 +2393,7 @@ func evalUTCTimestampWithFsp(ctx sessionctx.Context, fsp int) (types.Time, bool,
 	if err != nil {
 		return types.ZeroTime, true, err
 	}
-	result, err := convertTimeToMysqlTime(nowTs.UTC(), fsp, types.ModeHalfEven)
+	result, err := convertTimeToMysqlTime(nowTs.UTC(), fsp, types.ModeHalfUp)
 	if err != nil {
 		return types.ZeroTime, true, err
 	}
@@ -5391,21 +5391,16 @@ func strDatetimeSubDuration(sc *stmtctx.StatementContext, d string, arg1 types.D
 		sc.AppendWarning(err)
 		return "", true, nil
 	}
-	arg1time, err := arg1.ConvertToTime(sc, uint8(types.GetFsp(arg1.String())))
+	resultTime, err := arg0.Add(sc, arg1.Neg())
 	if err != nil {
 		return "", false, err
 	}
-	tmpDuration := arg0.Sub(sc, &arg1time)
 	fsp := types.MaxFsp
-	if tmpDuration.MicroSecond() == 0 {
+	if resultTime.Microsecond() == 0 {
 		fsp = types.MinFsp
 	}
-	resultDuration, err := tmpDuration.ConvertToTime(sc, mysql.TypeDatetime)
-	if err != nil {
-		return "", false, err
-	}
-	resultDuration.SetFsp(fsp)
-	return resultDuration.String(), false, nil
+	resultTime.SetFsp(fsp)
+	return resultTime.String(), false, nil
 }
 
 // strDurationSubDuration subtracts duration from duration string, returns a string value.
@@ -6476,12 +6471,7 @@ func (b *builtinSubDatetimeAndDurationSig) evalTime(row chunk.Row) (types.Time, 
 		return types.ZeroDatetime, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	arg1time, err := arg1.ConvertToTime(sc, mysql.TypeDatetime)
-	if err != nil {
-		return arg1time, true, err
-	}
-	tmpDuration := arg0.Sub(sc, &arg1time)
-	result, err := tmpDuration.ConvertToTime(sc, arg0.Type())
+	result, err := arg0.Add(sc, arg1.Neg())
 	return result, err != nil, err
 }
 
@@ -6521,12 +6511,7 @@ func (b *builtinSubDatetimeAndStringSig) evalTime(row chunk.Row) (types.Time, bo
 		}
 		return types.ZeroDatetime, true, err
 	}
-	arg1time, err := arg1.ConvertToTime(sc, mysql.TypeDatetime)
-	if err != nil {
-		return types.ZeroDatetime, true, err
-	}
-	tmpDuration := arg0.Sub(sc, &arg1time)
-	result, err := tmpDuration.ConvertToTime(sc, mysql.TypeDatetime)
+	result, err := arg0.Add(sc, arg1.Neg())
 	return result, err != nil, err
 }
 

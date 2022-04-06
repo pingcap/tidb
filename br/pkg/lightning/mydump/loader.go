@@ -21,12 +21,12 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	regexprrouter "github.com/pingcap/tidb-tools/pkg/regexpr-router"
-	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	regexprrouter "github.com/pingcap/tidb/util/regexpr-router"
+	filter "github.com/pingcap/tidb/util/table-filter"
 	"go.uber.org/zap"
 )
 

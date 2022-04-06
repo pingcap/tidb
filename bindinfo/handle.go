@@ -24,7 +24,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	tablefilter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -42,6 +41,7 @@ import (
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	tablefilter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
@@ -406,6 +406,92 @@ func (h *BindHandle) DropBindRecord(originalSQL, db string, binding *Binding) (e
 
 	deleteRows = int(h.sctx.Context.GetSessionVars().StmtCtx.AffectedRows())
 	return err
+}
+
+// SetBindRecordStatus set a BindRecord's status to the storage and bind cache.
+func (h *BindHandle) SetBindRecordStatus(originalSQL string, binding *Binding, newStatus string) (ok bool, err error) {
+	h.bindInfo.Lock()
+	h.sctx.Lock()
+	defer func() {
+		h.sctx.Unlock()
+		h.bindInfo.Unlock()
+	}()
+	exec, _ := h.sctx.Context.(sqlexec.SQLExecutor)
+	_, err = exec.ExecuteInternal(context.TODO(), "BEGIN PESSIMISTIC")
+	if err != nil {
+		return
+	}
+	var (
+		updateTs               types.Time
+		oldStatus0, oldStatus1 string
+		affectRows             int
+	)
+	if newStatus == Disabled {
+		// For compatibility reasons, when we need to 'set binding disabled for <stmt>',
+		// we need to consider both the 'enabled' and 'using' status.
+		oldStatus0 = Using
+		oldStatus1 = Enabled
+	} else if newStatus == Enabled {
+		// In order to unify the code, two identical old statuses are set.
+		oldStatus0 = Disabled
+		oldStatus1 = Disabled
+	}
+	defer func() {
+		if err != nil {
+			_, err1 := exec.ExecuteInternal(context.TODO(), "ROLLBACK")
+			terror.Log(err1)
+			return
+		}
+
+		_, err = exec.ExecuteInternal(context.TODO(), "COMMIT")
+		if err != nil {
+			return
+		}
+		if affectRows == 0 {
+			return
+		}
+
+		// The set binding status operation is success.
+		ok = true
+		record := &BindRecord{OriginalSQL: originalSQL}
+		sqlDigest := parser.DigestNormalized(record.OriginalSQL)
+		oldRecord := h.GetBindRecord(sqlDigest.String(), originalSQL, "")
+		setBindingStatusInCacheSucc := false
+		if oldRecord != nil && len(oldRecord.Bindings) > 0 {
+			record.Bindings = make([]Binding, len(oldRecord.Bindings))
+			copy(record.Bindings, oldRecord.Bindings)
+			for ind, oldBinding := range record.Bindings {
+				if oldBinding.Status == oldStatus0 || oldBinding.Status == oldStatus1 {
+					if binding == nil || (binding != nil && oldBinding.isSame(binding)) {
+						setBindingStatusInCacheSucc = true
+						record.Bindings[ind].Status = newStatus
+						record.Bindings[ind].UpdateTime = updateTs
+					}
+				}
+			}
+		}
+		if setBindingStatusInCacheSucc {
+			h.setBindRecord(sqlDigest.String(), record)
+		}
+	}()
+
+	// Lock mysql.bind_info to synchronize with SetBindingStatus on other tidb instances.
+	if err = h.lockBindInfoTable(); err != nil {
+		return
+	}
+
+	updateTs = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
+	updateTsStr := updateTs.String()
+
+	if binding == nil {
+		_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND status IN (%?, %?)`,
+			newStatus, updateTsStr, originalSQL, updateTsStr, oldStatus0, oldStatus1)
+	} else {
+		_, err = exec.ExecuteInternal(context.TODO(), `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %? AND status IN (%?, %?)`,
+			newStatus, updateTsStr, originalSQL, updateTsStr, binding.BindSQL, oldStatus0, oldStatus1)
+	}
+	affectRows = int(h.sctx.Context.GetSessionVars().StmtCtx.AffectedRows())
+	return
 }
 
 // GCBindRecord physically removes the deleted bind records in mysql.bind_info.

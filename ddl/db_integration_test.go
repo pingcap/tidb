@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
@@ -1225,6 +1226,22 @@ func TestBitDefaultValue(t *testing.T) {
     field_34 datetime null default null,
     field_35 timestamp null default null
 	);`)
+}
+
+func backgroundExec(s kv.Storage, sql string, done chan error) {
+	se, err := session.CreateSession4Test(s)
+	if err != nil {
+		done <- errors.Trace(err)
+		return
+	}
+	defer se.Close()
+	_, err = se.Execute(context.Background(), "use test")
+	if err != nil {
+		done <- errors.Trace(err)
+		return
+	}
+	_, err = se.Execute(context.Background(), sql)
+	done <- errors.Trace(err)
 }
 
 func getHistoryDDLJob(store kv.Storage, id int64) (*model.Job, error) {
@@ -2776,6 +2793,23 @@ func TestAutoIncrementForce(t *testing.T) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("101", "112", "500"))
 	tk.MustQuery("select * from t order by a;").Check(testkit.Rows("101", "112", "500"))
 	tk.MustExec("drop table if exists t;")
+
+	// Check for warning in case we can't set the auto_increment to the desired value
+	tk.MustExec("create table t(a int primary key auto_increment)")
+	tk.MustExec("insert into t values (200)")
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5201"))
+	tk.MustExec("alter table t auto_increment=100;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Can't reset AUTO_INCREMENT to 100 without FORCE option, using 5201 instead"))
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5201"))
+	tk.MustExec("drop table t")
 }
 
 func TestIssue20490(t *testing.T) {
