@@ -497,7 +497,6 @@ func TestCancelDropColumn(t *testing.T) {
 	originalHook := dom.DDL().GetHook()
 	dom.DDL().SetHook(hook)
 	for i := range testCases {
-		var c3IdxID int64
 		testCase = &testCases[i]
 		if testCase.needAddColumn {
 			tk.MustExec("alter table test_drop_column add column c3 int")
@@ -597,7 +596,6 @@ func TestCancelDropColumns(t *testing.T) {
 	originalHook := dom.DDL().GetHook()
 	dom.DDL().SetHook(hook)
 	for i := range testCases {
-		var c3IdxID int64
 		testCase = &testCases[i]
 		if testCase.needAddColumn {
 			tk.MustExec("alter table test_drop_column add column c3 int, add column c4 int")

@@ -76,12 +76,12 @@ func wrapJobIDExtCallback(oldCallback ddl.Callback) *testDDLJobIDCallback {
 	}
 }
 
-func setupJobIDExtCallback(ctx sessionctx.Context) (jobExt *testDDLJobIDCallback, tearDown func()) {
+func setupJobIDExtCallback(ctx sessionctx.Context) (tearDown func()) {
 	dom := domain.GetDomain(ctx)
 	originHook := dom.DDL().GetHook()
 	jobIDExt := wrapJobIDExtCallback(originHook)
 	dom.DDL().SetHook(jobIDExt)
-	return jobIDExt, func() {
+	return func() {
 		dom.DDL().SetHook(originHook)
 	}
 }
