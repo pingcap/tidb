@@ -1601,6 +1601,7 @@ func (p *rangeColumnsPruner) partitionRangeForExpr(sctx sessionctx.Context, expr
 func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op string, data *expression.Constant, f *expression.ScalarFunction) (start int, end int) {
 	var err error
 	var isNull bool
+	charSet, collation := p.partCol.RetType.Charset, p.partCol.RetType.Collate
 	compare := func(ith int, op string, v *expression.Constant) bool {
 		if ith == len(p.data)-1 {
 			if p.maxvalue {
@@ -1609,7 +1610,7 @@ func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op st
 		}
 		var expr expression.Expression
 		expr, err = expression.NewFunctionBase(sctx, op, types.NewFieldType(mysql.TypeLonglong), p.data[ith], v)
-		expr.SetCharsetAndCollation(v.CharsetAndCollation())
+		expr.SetCharsetAndCollation(charSet, collation)
 		var val int64
 		val, isNull, err = expr.EvalInt(sctx, chunk.Row{})
 		return val > 0
