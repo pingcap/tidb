@@ -1058,6 +1058,20 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 			return nil, false, errors.Trace(err)
 		}
 		return str, true, nil
+	case ast.CurrentTimestamp:
+		tp, fsp := col.FieldType.Tp, col.FieldType.Decimal
+		if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
+			defaultFsp := 0
+			if len(expr.Args) == 1 {
+				if val := expr.Args[0].(*driver.ValueExpr); val != nil {
+					defaultFsp = int(val.GetInt64())
+				}
+			}
+			if defaultFsp != fsp {
+				return nil, false, dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+			}
+		}
+		return nil, false, nil
 	default:
 		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
 	}
@@ -1070,21 +1084,11 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 	// handle default value with function call
 	tp, fsp := col.FieldType.Tp, col.FieldType.Decimal
 	if x, ok := option.Expr.(*ast.FuncCallExpr); ok {
-		if x.FnName.L == ast.CurrentTimestamp {
-			if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
-				defaultFsp := 0
-				if len(x.Args) == 1 {
-					if val := x.Args[0].(*driver.ValueExpr); val != nil {
-						defaultFsp = int(val.GetInt64())
-					}
-				}
-				if defaultFsp != fsp {
-					return nil, false, dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
-				}
-			}
-		} else {
-			return getFuncCallDefaultValue(col, option, x)
+		val, isSeqExpr, err := getFuncCallDefaultValue(col, option, x)
+		if val != nil || isSeqExpr || err != nil {
+			return val, isSeqExpr, err
 		}
+		// If the function call is ast.CurrentTimestamp, it needs to be continuously processed.
 	}
 
 	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
