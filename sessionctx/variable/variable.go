@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -189,13 +188,6 @@ func (sv *SysVar) GetSessionFromHook(s *SessionVars) (string, error) {
 
 // SetSessionFromHook calls the SetSession func if it exists.
 func (sv *SysVar) SetSessionFromHook(s *SessionVars, val string) error {
-	if sv.Name == MaxAllowedPacket {
-		u, err := TruncateMaxAllowedPacket(s.StmtCtx, val)
-		if err != nil {
-			return err
-		}
-		val = strconv.FormatUint(u, 10)
-	}
 	if sv.SetSession != nil {
 		if err := sv.SetSession(s, val); err != nil {
 			return err
@@ -591,21 +583,6 @@ func init() {
 		v.IsNoop = true
 		RegisterSysVar(v)
 	}
-}
-
-// TruncateMaxAllowedPacket is used to truncate the value of max_allowed_packet to be a multiple of 1024,
-// nonmultiples are rounded down to the nearest multiple.
-func TruncateMaxAllowedPacket(sctx *stmtctx.StatementContext, val string) (uint64, error) {
-	maxAllowedPacket, err := strconv.ParseUint(val, 10, 64)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	remainder := maxAllowedPacket % 1024
-	if remainder != 0 {
-		sctx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(MaxAllowedPacket, val))
-		maxAllowedPacket -= remainder
-	}
-	return maxAllowedPacket, nil
 }
 
 // GlobalVarAccessor is the interface for accessing global scope system and status variables.

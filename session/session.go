@@ -1340,13 +1340,6 @@ func (s *session) SetGlobalSysVar(name, value string) (err error) {
 	if value, err = sv.Validate(s.sessionVars, value, variable.ScopeGlobal); err != nil {
 		return err
 	}
-	if name == variable.MaxAllowedPacket {
-		u, err := variable.TruncateMaxAllowedPacket(s.sessionVars.StmtCtx, value)
-		if err != nil {
-			return err
-		}
-		value = strconv.FormatUint(u, 10)
-	}
 	if err = sv.SetGlobalFromHook(s.sessionVars, value, false); err != nil {
 		return err
 	}

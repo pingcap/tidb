@@ -842,7 +842,32 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: MaxAllowedPacket, Value: strconv.FormatUint(DefMaxAllowedPacket, 10), Type: TypeUnsigned, MinValue: 1024, MaxValue: MaxOfMaxAllowedPacket},
+	{Scope: ScopeGlobal | ScopeSession, Name: MaxAllowedPacket, Value: strconv.FormatUint(DefMaxAllowedPacket, 10), Type: TypeUnsigned, MinValue: 1024, MaxValue: MaxOfMaxAllowedPacket,
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			// Truncate the value of max_allowed_packet to be a multiple of 1024,
+			// nonmultiples are rounded down to the nearest multiple.
+			u, err := strconv.ParseUint(originalValue, 10, 64)
+			if err != nil {
+				return originalValue, err
+			}
+			remainder := u % 1024
+			if remainder != 0 {
+				vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(MaxAllowedPacket, originalValue))
+				u -= remainder
+			}
+			return strconv.FormatUint(u, 10), nil
+		},
+		GetSession: func(s *SessionVars) (string, error) {
+			return strconv.FormatUint(s.MaxAllowedPacket, 10), nil
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			var err error
+			if s.MaxAllowedPacket, err = strconv.ParseUint(val, 10, 64); err != nil {
+				return err
+			}
+			return nil
+		},
+	},
 	{Scope: ScopeGlobal | ScopeSession, Name: WindowingUseHighPrecision, Value: On, Type: TypeBool, IsHintUpdatable: true, SetSession: func(s *SessionVars, val string) error {
 		s.WindowingUseHighPrecision = TiDBOptOn(val)
 		return nil

@@ -396,15 +396,8 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 func (cc *clientConn) readPacket() ([]byte, error) {
 	// Default MaxAllowedPacket is 64MB.
 	maxAllowedPacket := variable.DefMaxAllowedPacket
-	var err error
 	if cc.ctx != nil {
-		if valStr, _ := cc.ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket); len(valStr) > 0 {
-			maxAllowedPacket, err = strconv.ParseUint(valStr, 10, 64)
-			if err != nil {
-				terror.Log(err)
-				return nil, err
-			}
-		}
+		maxAllowedPacket = cc.ctx.GetSessionVars().MaxAllowedPacket
 	}
 	return cc.pkt.readPacket(maxAllowedPacket)
 }

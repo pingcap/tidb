@@ -1026,6 +1026,9 @@ type SessionVars struct {
 	RcReadCheckTS bool
 	// RemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
 	RemoveOrderbyInSubquery bool
+
+	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
+	MaxAllowedPacket uint64
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.

@@ -1140,13 +1140,14 @@ func TestMaxAllowedPacket(t *testing.T) {
 	// The string "SELECT length('') as len;" has 25 chars,
 	// so if the string inside '' has a length of 999, the total query reaches the max allowed packet size.
 
+	const maxAllowedPacket = 1024
 	var inBuffer bytes.Buffer
 	bytes := append([]byte{0x00, 0x04, 0x00, 0x00}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 999)))...)
 	_, err := inBuffer.Write(bytes)
 	require.NoError(t, err)
 	brc := newBufferedReadConn(&bytesConn{inBuffer})
 	pkt := newPacketIO(brc)
-	_, err = pkt.readPacket(1024)
+	_, err = pkt.readPacket(maxAllowedPacket)
 	require.NoError(t, err)
 	require.Equal(t, uint8(1), pkt.sequence)
 
@@ -1156,6 +1157,6 @@ func TestMaxAllowedPacket(t *testing.T) {
 	require.NoError(t, err)
 	brc = newBufferedReadConn(&bytesConn{inBuffer})
 	pkt = newPacketIO(brc)
-	_, err = pkt.readPacket(1024)
+	_, err = pkt.readPacket(maxAllowedPacket)
 	require.Error(t, err)
 }
