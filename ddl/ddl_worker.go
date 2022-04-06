@@ -110,7 +110,7 @@ type JobContext struct {
 }
 
 // NewJobContext returns a new ddl job context.
-func NewJobContext() *JobContext{
+func NewJobContext() *JobContext {
 	return &JobContext{
 		ddlJobCtx:          context.Background(),
 		cacheSQL:           "",
@@ -121,11 +121,11 @@ func NewJobContext() *JobContext{
 
 func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRangeMgr delRangeManager, dCtx *ddlCtx) *worker {
 	worker := &worker{
-		id:       atomic.AddInt32(&ddlWorkerID, 1),
-		tp:       tp,
-		ddlJobCh: make(chan struct{}, 1),
-		ctx:      ctx,
-		JobContext: NewJobContext(),
+		id:              atomic.AddInt32(&ddlWorkerID, 1),
+		tp:              tp,
+		ddlJobCh:        make(chan struct{}, 1),
+		ctx:             ctx,
+		JobContext:      NewJobContext(),
 		ddlCtx:          dCtx,
 		reorgCtx:        &reorgCtx{notifyCancelReorgJob: 0},
 		sessPool:        sessPool,
