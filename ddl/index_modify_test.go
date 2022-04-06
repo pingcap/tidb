@@ -715,7 +715,6 @@ func testCancelAddIndex(t *testing.T, store kv.Storage, dom *domain.Domain, idxN
 		batchInsert(tk, "t1", i, i+defaultBatchSize)
 	}
 
-	var c3IdxInfo *model.IndexInfo
 	hook := &ddl.TestDDLCallback{Do: dom}
 	originBatchSize := tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
 	// Set batch size to lower try to slow down add-index reorganization, This if for hook to cancel this ddl job.
@@ -725,7 +724,7 @@ func testCancelAddIndex(t *testing.T, store kv.Storage, dom *domain.Domain, idxN
 	// the hook.OnJobUpdatedExported is called when the job is updated, runReorgJob will wait ddl.ReorgWaitTimeout, then return the ddl.runDDLJob.
 	// After that ddl call d.hook.OnJobUpdated(job), so that we can canceled the job in this test case.
 	var checkErr error
-	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(t, tk, store, hook, idxName)
+	hook.OnJobUpdatedExported, _, checkErr = backgroundExecOnJobUpdatedExported(t, tk, store, hook, idxName)
 	originalHook := d.GetHook()
 	jobIDExt := wrapJobIDExtCallback(hook)
 	d.SetHook(jobIDExt)
@@ -757,7 +756,6 @@ LOOP:
 			times++
 		}
 	}
-	checkDelRangeAdded(tk, jobIDExt.jobID)
 	d.SetHook(originalHook)
 }
 
@@ -1084,9 +1082,6 @@ LOOP:
 			num += step
 		}
 	}
-	for _, idxID := range idxIDs {
-		checkDelRangeAdded(tk, jobIDExt.jobID)
-	}
 }
 
 func testDropIndexesIfExists(t *testing.T, store kv.Storage) {
@@ -1285,7 +1280,6 @@ LOOP:
 	rows := tk.MustQuery("explain select c1 from test_drop_index where c3 >= 0")
 	require.NotContains(t, fmt.Sprintf("%v", rows), idxName)
 
-	checkDelRangeAdded(tk, jobIDExt.jobID)
 	tk.MustExec("drop table test_drop_index")
 }
 

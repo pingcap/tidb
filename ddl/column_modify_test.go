@@ -533,10 +533,6 @@ func TestCancelDropColumn(t *testing.T) {
 			require.Nil(t, col1)
 			require.NoError(t, err)
 			require.EqualError(t, checkErr, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
-			if c3IdxID != 0 {
-				// Check index is deleted
-				checkDelRangeAdded(tk, jobID)
-			}
 		}
 	}
 	dom.DDL().SetHook(originalHook)
@@ -634,10 +630,6 @@ func TestCancelDropColumns(t *testing.T) {
 			require.Nil(t, idx3)
 			require.NoError(t, err)
 			require.EqualError(t, checkErr, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
-			if c3IdxID != 0 {
-				// Check index is deleted
-				checkDelRangeAdded(tk, jobID)
-			}
 		}
 	}
 	dom.DDL().SetHook(originalHook)
