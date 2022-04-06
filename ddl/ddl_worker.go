@@ -109,6 +109,7 @@ type JobContext struct {
 	cacheDigest        *parser.Digest
 }
 
+// NewJobContext returns a new ddl job context.
 func NewJobContext() *JobContext{
 	return &JobContext{
 		ddlJobCtx:          context.Background(),
