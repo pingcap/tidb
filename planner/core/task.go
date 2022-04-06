@@ -2083,7 +2083,6 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 			t = cop.convertToRootTask(p.ctx)
 			inputRows = t.count()
 			attachPlan2Task(finalAgg, t)
-			finalAgg.SetCost(cop.cost())
 		}
 	} else if mpp, ok := t.(*mppTask); ok {
 		t = mpp.convertToRootTask(p.ctx)
