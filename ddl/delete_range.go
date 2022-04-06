@@ -331,6 +331,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 				if err := doInsert(ctx, s, job.ID, elementID, startKey, endKey, now, fmt.Sprintf("partition table ID is %d", pid)); err != nil {
 					return errors.Trace(err)
 				}
+				elementID++
 			}
 		} else {
 			startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)

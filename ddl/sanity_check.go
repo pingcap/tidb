@@ -51,7 +51,7 @@ func checkRangeCntByTableIDsAndIndexIDs(partitionTableIDs []int64, indexIDs []in
 		expectedCnt *= len(partitionTableIDs)
 	}
 	if expectedCnt != int(cnt) {
-		panic("should not happened")
+		panic("should not happened" + fmt.Sprintf("expect count: %d, rea count: %d", expectedCnt, cnt))
 	}
 }
 
