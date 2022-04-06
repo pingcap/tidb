@@ -551,19 +551,19 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 
 // MakeOuterJoin generates the records the fdSet of the outer join.
 //
-// We always take the left as the row-supplying side, and right side as the null-supplying side. (swap it if not)
-// As we know, the outer join would generate null extended rows compared with inner join.
-// So we cannot directly do the same thing with the inner join. This function deals with the special cases of the outer join.
+// We always take the left side as the row-supplying side and the right side as the null-supplying side. (swap it if not)
+// As we know, the outer join would generate null extended rows compared with the inner join.
+// So we cannot do the same thing directly with the inner join. This function deals with the special cases of the outer join.
 //
 // Knowledge:
-// 1: the filter condition related to lhs column won't filter predicate-allowed rows and refuse null rows (left rows are always exist for all)
-// 2: the filter condition related to rhs column won't filter NULL rows although filter has not null attribute on it. (null-appending happened after that)
+// 1: the filter condition related to the lhs column won't filter predicate-allowed rows and refuse null rows (left rows always remain)
+// 2: the filter condition related to the rhs column won't filter NULL rows, although the filter has the not-null attribute. (null-appending happened after that)
 //
 // Notification:
-// 1: the origin FD from left side (rows-supplying) over the result of outer join filtered are preserved, because
-//		it may be duplicated by multi matching, but actually they are same left rows (don't violate FD definition).
+// 1: the origin FD from the left side (rows-supplying) over the result of outer join filtered are preserved because
+//    it may be duplicated by multi-matching, but actually, they are the same left rows (don't violate FD definition).
 //
-// 2: the origin FD from right side (nulls-supplying) over the result of outer join filtered may not be valid anymore.
+// 2: the origin FD from the right side (nulls-supplying) over the result of outer join filtered may not be valid anymore.
 //
 //		<1> strict FD may be wakened as a lax one. But if at least one non-NULL column is part of the determinant, the
 //			strict FD can be preserved.
@@ -576,22 +576,22 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //			with null values, {d} -> {e} are degraded to a lax one {d} ~~> {e} as you see. the origin and supplied null value
 //			for d column determine different dependency.  NULL -> 1 and NULL -> NULL which breaks strict FD definition.
 //
-//			Unless the determinant contains at least a not null column for example c here, FD like {c,d} -> {e} can survive
+//			If the determinant contains at least a not null column for example c here, FD like {c,d} -> {e} can survive
 //			after the left join. Because you can not find two same key, one from the origin rows and the other one from the
 //			supplied rows.
 //
-//			for lax FD, the supplied rows of null values doesn't take effect of lax FD itself. So it can be kept.
+//			for lax FD, the supplied rows of null values don't affect lax FD itself. So we can keep it.
 //
-//		<2> constant FD should be removed, since null values may be substituted for some unmatched left rows. NULL is not a
+//		<2> The FDSet should remove constant FD since null values may be substituted for some unmatched left rows. NULL is not a
 //			constant anymore.
 //
-//      <3> equivalence FD should be removed, since substituted null value are not equal to the other substituted null value.
+//      <3> equivalence FD should be removed since substituted null values are not equal to the other substituted null value.
 //
-// 3: the newly added FD from filters, should take some considerations as below:
+// 3: the newly added FD from filters should take some consideration as below:
 //
 //	 	<1> strict/lax FD: join key filter conditions can not produce new strict/lax FD yet (knowledge: 1&2).
 //
-//		<2> constant FD from the join conditions is only used for the matching mechanism judgement.
+//		<2> constant FD from the join conditions is only used for checking other FD. We cannot keep itself.
 //			a   b  |  c     d
 //          -------+---------
 //          1   1  |  1     1
@@ -637,8 +637,8 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //
 // 			conclusion: without this kind of limited left conditions to judge the join match, we can say: FD {a} -> {c} exists.
 //
-//		<3.2> equivalence FD: when the determinant and dependencies from a equivalence FD of join condition are each covering a strict
-//			FD of the left / right side. The left side strict FD's dependencies can be extended to all cols after join result.
+//		<3.2> equivalence FD: when the determinant and dependencies from an equivalence FD of join condition are each covering a strict
+//			FD of the left / right side. After joining, we can extend the left side strict FD's dependencies to all cols.
 //			a  b  |  c     d     e
 //			------+----------------
 //		 	1  1  |  1    NULL   1
@@ -667,11 +667,11 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //			because two same determinant key {1} can point to different dependency {1} & {NULL}. But in return, FD like {c} -> {a}
 //			are degraded to the corresponding lax one.
 //
-// 4: the new formed FD {left key, right key} -> {all columns} are preserved in spite of the null-supplied rows.
-// 5: When there's no join key and no filters from the outer side. The join case is a cartesian product. In this case,
-//    the strict equivalence classes is still exists.
-//      - If the right side has no row, we would supply null-extended rows, then the value of any column is NULL, the equivalence class exists.
-//      - If the right side has rows, no row is filtered out after the filters since no row of the outer side is filtered out. Hence, the equivalence class is still remained.
+// 4: the new formed FD {left primary key, right primary key} -> {all columns} are preserved in spite of the null-supplied rows.
+// 5: There's no join key and no filters from the outer side. The join case is a cartesian product. In this case,
+//    the strict equivalence classes still exist.
+//      - If the right side has no row, we will supply null-extended rows, then the value of any column is NULL, and the equivalence class exists.
+//      - If the right side has rows, no row is filtered out after the filters since no row of the outer side is filtered out. Hence, the equivalence class remains.
 //
 func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols FastIntSet, opt *ArgOpts) {
 	//  copy down the left PK and right PK before the s has changed for later usage.
@@ -812,7 +812,7 @@ func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols F
 	} else {
 		for k, v := range innerFDs.HashCodeToUniqueID {
 			if _, ok := s.HashCodeToUniqueID[k]; ok {
-				panic("shouldn't be here, children has same expr while registered not only once")
+				logutil.BgLogger().Warn("Error occurred when building the functional dependency")
 			}
 			s.HashCodeToUniqueID[k] = v
 		}
