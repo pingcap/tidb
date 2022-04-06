@@ -2027,9 +2027,11 @@ func TestParallelRenameTable(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				if concurrentDDLQueryPre != "" {
+					wg.Add(1)
 					go func() {
 						// We assume that no error, we don't want to test it.
 						tk3.MustExec(concurrentDDLQueryPre)
+						wg.Done()
 					}()
 					time.Sleep(10 * time.Millisecond)
 				}
