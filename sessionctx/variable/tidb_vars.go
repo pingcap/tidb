@@ -830,6 +830,7 @@ const (
 	DefTiDBBatchPendingTiFlashCount       = 4000
 	DefRCReadCheckTS                      = false
 	DefTiDBRemoveOrderbyInSubquery        = false
+	DefTiDBReadStaleness                  = 0
 )
 
 // Process global variables.
