@@ -83,6 +83,7 @@ func NewRestoreCommand() *cobra.Command {
 		newDBRestoreCommand(),
 		newTableRestoreCommand(),
 		newRawRestoreCommand(),
+		newStreamRestoreCommand(),
 	)
 	task.DefineRestoreFlags(command.PersistentFlags())
 
@@ -139,5 +140,19 @@ func newRawRestoreCommand() *cobra.Command {
 	}
 
 	task.DefineRawRestoreFlags(command)
+	return command
+}
+
+func newStreamRestoreCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "log",
+		Short: "restore log backups",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			return runRestoreCommand(command, task.LogRestoreCmd)
+		},
+	}
+	task.DefineFilterFlags(command, filterOutSysAndMemTables, false)
+	task.DefineStreamRestoreFlags(command)
 	return command
 }

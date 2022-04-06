@@ -4,6 +4,7 @@ package task
 
 import (
 	"context"
+	"github.com/spf13/cobra"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -44,6 +45,11 @@ const (
 	// current only support STRICT or IGNORE, the default is STRICT according to tidb.
 	FlagWithPlacementPolicy = "with-tidb-placement-mode"
 
+	// FlagStreamRestoreTS is used for log restore.
+	FlagStreamRestoreTS = "restore-ts"
+	// FlagStreamFullBackupStorage is used for log restore, represents the full backup storage.
+	FlagStreamFullBackupStorage = "full-backup-storage"
+
 	defaultRestoreConcurrency = 128
 	maxRestoreBatchSizeLimit  = 10240
 	defaultPDConcurrency      = 1
@@ -55,6 +61,7 @@ const (
 	FullRestoreCmd  = "Full Restore"
 	DBRestoreCmd    = "DataBase Restore"
 	TableRestoreCmd = "Table Restore"
+	LogRestoreCmd   = "Log Restore"
 	RawRestoreCmd   = "Raw Restore"
 )
 
@@ -132,6 +139,12 @@ type RestoreConfig struct {
 	DdlBatchSize uint `json:"ddl-batch-size" toml:"ddl-batch-size"`
 
 	WithPlacementPolicy string `json:"with-tidb-placement-mode" toml:"with-tidb-placement-mode"`
+
+	// FullBackupStorage is used to find the maps between table name and table id during restoration.
+	// if not specified. we cannot apply kv directly.
+	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
+
+	RestoreTS uint64 `json:"restore-ts" toml:"restore-ts"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -142,6 +155,14 @@ func DefineRestoreFlags(flags *pflag.FlagSet) {
 	flags.String(FlagWithPlacementPolicy, "STRICT", "correspond to tidb global/session variable with-tidb-placement-mode")
 
 	DefineRestoreCommonFlags(flags)
+}
+
+// DefineStreamRestoreFlags defines for the restore log command.
+func DefineStreamRestoreFlags(command *cobra.Command)  {
+	command.Flags().String(FlagStreamRestoreTS, "", "the point of restore, used for log restore.\n"+
+		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'")
+	command.Flags().String(FlagStreamFullBackupStorage, "", "specify the backup full storage. "+
+		"fill it if want restore full backup before restore log.")
 }
 
 // ParseFromFlags parses the restore-related flags from the flag set.
@@ -180,6 +201,16 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagWithPlacementPolicy)
 	}
+	tsString, err := flags.GetString(FlagStreamRestoreTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.RestoreTS, err = ParseTSString(tsString); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.FullBackupStorage, err = flags.GetString(FlagStreamFullBackupStorage); err != nil {
+		return errors.Trace(err)
+	}
 	return nil
 }
 
@@ -205,6 +236,12 @@ func (cfg *RestoreConfig) adjustRestoreConfig() {
 	}
 	if cfg.DdlBatchSize == 0 {
 		cfg.DdlBatchSize = defaultFlagDdlBatchSize
+	}
+}
+
+func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
+	if cfg.Config.Concurrency == 0 {
+		cfg.Config.Concurrency = 32
 	}
 }
 
@@ -269,10 +306,18 @@ func isFullRestore(cmdName string) bool {
 	return cmdName == FullRestoreCmd
 }
 
+func isStreamRestore(cmdName string) bool {
+	return cmdName == LogRestoreCmd
+}
+
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
-	cfg.adjustRestoreConfig()
+	if isStreamRestore(cmdName) {
+		cfg.adjustRestoreConfigForStreamRestore()
+		return RunStreamRestore(c, g, cmdName, cfg)
+	}
 
+	cfg.adjustRestoreConfig()
 	defer summary.Summary(cmdName)
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()

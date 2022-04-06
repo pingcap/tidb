@@ -126,9 +126,9 @@ type Client struct {
 	// restoreTs is used for kv file restore.
 	// TiKV will filter the key space larger than this ts.
 	restoreTs uint64
-	// currentTS is used for rewrite meta kv when restore stream.
+	// currentTs is used for rewrite meta kv when restore stream.
 	// Can not use `restoreTS` directly, because schema created in `full backup` maybe is new than `restoreTS`.
-	currentTS uint64
+	currentTs uint64
 
 	storage storage.ExternalStorage
 }
@@ -278,7 +278,7 @@ func (rc *Client) SetRestoreTs(ts uint64) {
 }
 
 func (rc *Client) SetCurrentTS(ts uint64) {
-	rc.currentTS = ts
+	rc.currentTs = ts
 }
 
 func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storage.ExternalStorageOptions) error {
@@ -1728,7 +1728,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 		}()...)
 	}
 
-	return stream.NewSchemasReplace(dbMap, rc.currentTS, tableFilter, rc.GenGlobalID, rc.GenGlobalIDs), nil
+	return stream.NewSchemasReplace(dbMap, rc.currentTs, tableFilter, rc.GenGlobalID, rc.GenGlobalIDs), nil
 }
 
 // RestoreMetaKVFiles tries to restore files about meta kv-event from stream-backup.
