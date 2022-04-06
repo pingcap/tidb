@@ -18,10 +18,8 @@ import (
 	"context"
 	"math"
 	"sort"
-	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -31,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
@@ -333,7 +330,7 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	prepared := preparedObj.PreparedAst
 	delete(vars.PreparedStmtNameToID, e.Name)
 	if plannercore.PreparedPlanCacheEnabled() {
-		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, prepared.SchemaVersion)
+		cacheKey, err := plannercore.NewPlanCacheKey(vars, prepared.Stmt, preparedObj.StmtText, preparedObj.StmtDB, prepared.SchemaVersion)
 		if err != nil {
 			return err
 		}
@@ -343,50 +340,4 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	vars.RemovePreparedStmt(id)
 	return nil
-}
-
-// CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
-func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
-	ID uint32, is infoschema.InfoSchema, snapshotTS uint64, args []types.Datum) (*ExecStmt, bool, bool, error) {
-	startTime := time.Now()
-	defer func() {
-		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
-	}()
-	execStmt := &ast.ExecuteStmt{ExecID: ID}
-	if err := ResetContextOfStmt(sctx, execStmt); err != nil {
-		return nil, false, false, err
-	}
-	execStmt.BinaryArgs = args
-	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
-	if err != nil {
-		return nil, false, false, err
-	}
-
-	failpoint.Inject("assertTxnManagerInCompile", func() {
-		sessiontxn.RecordAssert(sctx, "assertTxnManagerInCompile", true)
-		sessiontxn.AssertTxnManagerInfoSchema(sctx, is)
-	})
-
-	stmt := &ExecStmt{
-		GoCtx:       ctx,
-		InfoSchema:  is,
-		Plan:        execPlan,
-		StmtNode:    execStmt,
-		Ctx:         sctx,
-		OutputNames: names,
-		Ti:          &TelemetryInfo{},
-		SnapshotTS:  snapshotTS,
-	}
-	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {
-		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
-		if !ok {
-			return nil, false, false, errors.Errorf("invalid CachedPrepareStmt type")
-		}
-		stmtCtx := sctx.GetSessionVars().StmtCtx
-		stmt.Text = preparedObj.PreparedAst.Stmt.Text()
-		stmtCtx.OriginalSQL = stmt.Text
-		stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
-	}
-	tiFlashPushDown, tiFlashExchangePushDown := plannercore.IsTiFlashContained(stmt.Plan)
-	return stmt, tiFlashPushDown, tiFlashExchangePushDown, nil
 }

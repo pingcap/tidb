@@ -130,7 +130,7 @@ func SetPstmtIDSchemaVersion(key kvcache.Key, stmtText string, schemaVersion int
 }
 
 // NewPlanCacheKey creates a new planCacheKey object.
-func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string, schemaVersion int64) (kvcache.Key, error) {
+func NewPlanCacheKey(sessionVars *variable.SessionVars, node ast.Node, stmtText, stmtDB string, schemaVersion int64) (kvcache.Key, error) {
 	if stmtText == "" {
 		return nil, errors.New("no statement text")
 	}
@@ -151,7 +151,12 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		isolationReadEngines: make(map[kv.StoreType]struct{}),
 		selectLimit:          sessionVars.SelectLimit,
 	}
+	// Exclude kv.TiFlash when stmt is not read only
+	isReadOnly := IsReadOnly(node, sessionVars)
 	for k, v := range sessionVars.IsolationReadEngines {
+		if k == kv.TiFlash && !isReadOnly {
+			continue
+		}
 		key.isolationReadEngines[k] = v
 	}
 	return key, nil

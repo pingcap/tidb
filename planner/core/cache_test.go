@@ -28,15 +28,15 @@ func TestCacheKey(t *testing.T) {
 	ctx.GetSessionVars().SQLMode = mysql.ModeNone
 	ctx.GetSessionVars().TimeZone = time.UTC
 	ctx.GetSessionVars().ConnectionID = 0
-	key, err := NewPlanCacheKey(ctx.GetSessionVars(), "", "test", 1)
+	key, err := NewPlanCacheKey(ctx.GetSessionVars(), nil, "", "test", 1)
 	if err.Error() != "no statement text" {
 		t.Fail() // no statement text
 	}
-	key, err = NewPlanCacheKey(ctx.GetSessionVars(), "select 1", "", 1)
+	key, err = NewPlanCacheKey(ctx.GetSessionVars(), nil, "select 1", "", 1)
 	if err != nil {
 		t.Fail() // schema can be nil
 	}
-	key, err = NewPlanCacheKey(ctx.GetSessionVars(), "select 1", "test", 1)
+	key, err = NewPlanCacheKey(ctx.GetSessionVars(), nil, "select 1", "test", 1)
 	if err != nil {
 		t.Fail()
 	}
