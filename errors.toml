@@ -751,6 +751,11 @@ error = '''
 Key part '%-.192s' length cannot be 0
 '''
 
+["ddl:1470"]
+error = '''
+String '%-.70s' is too long for %s (should be no longer than %d)
+'''
+
 ["ddl:1481"]
 error = '''
 MAXVALUE can only be used in last partition definition

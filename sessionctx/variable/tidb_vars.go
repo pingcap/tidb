@@ -133,6 +133,9 @@ const (
 	// TiDBOptimizerSelectivityLevel is used to control the selectivity estimation level.
 	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
 
+	// TiDBOptimizerEnableNewOnlyFullGroupByCheck is used to open the newly only_full_group_by check by maintaining functional dependency.
+	TiDBOptimizerEnableNewOnlyFullGroupByCheck = "tidb_enable_new_only_full_group_by_check"
+
 	// TiDBTxnMode is used to control the transaction behavior.
 	TiDBTxnMode = "tidb_txn_mode"
 
@@ -576,13 +579,23 @@ const (
 
 	// TiDBEnableLocalTxn indicates whether to enable Local Txn.
 	TiDBEnableLocalTxn = "tidb_enable_local_txn"
+
 	// TiDBTSOClientBatchMaxWaitTime indicates the max value of the TSO Batch Wait interval time of PD client.
 	TiDBTSOClientBatchMaxWaitTime = "tidb_tso_client_batch_max_wait_time"
+
+	// TiDBTxnCommitBatchSize is used to control the batch size of transaction commit related requests sent by TiDB to TiKV.
+	// If a single transaction has a large amount of writes, you can increase the batch size to improve the batch effect,
+	// setting too large will exceed TiKV's raft-entry-max-size limit and cause commit failure.
+	TiDBTxnCommitBatchSize = "tidb_txn_commit_batch_size"
+
 	// TiDBEnableTSOFollowerProxy indicates whether to enable the TSO Follower Proxy feature of PD client.
 	TiDBEnableTSOFollowerProxy = "tidb_enable_tso_follower_proxy"
 
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
+
+	// TiDBRemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
+	TiDBRemoveOrderbyInSubquery = "tidb_remove_orderby_in_subquery"
 
 	// TiDBEnablePseudoForOutdatedStats indicates whether use pseudo for outdated stats
 	TiDBEnablePseudoForOutdatedStats = "tidb_enable_pseudo_for_outdated_stats"
@@ -716,6 +729,7 @@ const (
 	DefBroadcastJoinThresholdSize         = 100 * 1024 * 1024
 	DefBroadcastJoinThresholdCount        = 10 * 1024
 	DefTiDBOptimizerSelectivityLevel      = 0
+	DefTiDBOptimizerEnableNewOFGB         = false
 	DefTiDBAllowBatchCop                  = 1
 	DefTiDBAllowMPPExecution              = true
 	DefTiDBHashExchangeWithNewCollation   = true
@@ -812,7 +826,8 @@ const (
 	DefTiDBIgnorePreparedCacheCloseStmt   = false
 	DefTiDBBatchPendingTiFlashCount       = 4000
 	DefRCReadCheckTS                      = false
-	DefTiDBReadStaleness                  = 0
+	DefTiDBRemoveOrderbyInSubquery        = false
+  DefTiDBReadStaleness                  = 0
 )
 
 // Process global variables.

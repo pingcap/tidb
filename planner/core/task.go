@@ -967,7 +967,18 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 		newTask.cst += sortCPUCost
 	}
 	p.cost = newTask.cst
-	if t.needExtraProj {
+
+	// Do not inject the extra Projection even if t.needExtraProj is set, or the schema between the phase-1 agg and
+	// the final agg would be broken. Please reference comments for the similar logic in
+	// (*copTask).convertToRootTaskImpl() for the PhysicalTableReader case.
+	// We need to refactor these logics.
+	aggPushedDown := false
+	switch p.tablePlan.(type) {
+	case *PhysicalHashAgg, *PhysicalStreamAgg:
+		aggPushedDown = true
+	}
+
+	if t.needExtraProj && !aggPushedDown {
 		schema := t.originSchema
 		proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.stats, t.tablePlan.SelectBlockOffset(), nil)
 		proj.SetSchema(schema)
@@ -2053,7 +2064,6 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 			t = cop.convertToRootTask(p.ctx)
 			inputRows = t.count()
 			attachPlan2Task(finalAgg, t)
-			finalAgg.SetCost(cop.cost())
 		}
 	} else if mpp, ok := t.(*mppTask); ok {
 		t = mpp.convertToRootTask(p.ctx)
@@ -2062,7 +2072,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 		attachPlan2Task(p, t)
 	}
 	t.addCost(p.GetCost(inputRows, true))
-	p.SetCost(t.cost())
+	t.plan().SetCost(t.cost())
 	return t
 }
 
@@ -2279,7 +2289,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	// To make it simple, we also treat 2-phase parallel hash aggregation in TiDB layer as
 	// 1-phase when computing cost.
 	t.addCost(p.GetCost(inputRows, true, false))
-	p.cost = t.cost()
+	t.plan().SetCost(t.cost())
 	return t
 }
 

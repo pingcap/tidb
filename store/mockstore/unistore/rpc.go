@@ -405,6 +405,11 @@ func (c *RPCClient) Close() error {
 	return nil
 }
 
+// CloseAddr implements tikv.Client interface and it does nothing.
+func (c *RPCClient) CloseAddr(addr string) error {
+	return nil
+}
+
 type mockClientStream struct{}
 
 // Header implements grpc.ClientStream interface
