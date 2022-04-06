@@ -1070,13 +1070,11 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 			}
 		case ast.NextVal:
 			// handle default next value of sequence. (keep the expr string)
-			str, isSeqExpr, err := tryToGetSequenceDefaultValue(c)
+			str, err := getSequenceDefaultValue(c)
 			if err != nil {
 				return nil, false, errors.Trace(err)
 			}
-			if isSeqExpr {
-				return str, true, nil
-			}
+			return str, true, nil
 		default:
 			return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), x.FnName.String())
 		}
@@ -1158,18 +1156,15 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 	return val, false, err
 }
 
-func tryToGetSequenceDefaultValue(c *ast.ColumnOption) (expr string, isExpr bool, err error) {
-	if f, ok := c.Expr.(*ast.FuncCallExpr); ok && f.FnName.L == ast.NextVal {
-		var sb strings.Builder
-		restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
-			format.RestoreSpacesAroundBinaryOperation
-		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
-		if err := c.Expr.Restore(restoreCtx); err != nil {
-			return "", true, err
-		}
-		return sb.String(), true, nil
+func getSequenceDefaultValue(c *ast.ColumnOption) (expr string, err error) {
+	var sb strings.Builder
+	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
+		format.RestoreSpacesAroundBinaryOperation
+	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+	if err := c.Expr.Restore(restoreCtx); err != nil {
+		return "", err
 	}
-	return "", false, nil
+	return sb.String(), nil
 }
 
 // getSetDefaultValue gets the default value for the set type. See https://dev.mysql.com/doc/refman/5.7/en/set.html.
@@ -3430,11 +3425,10 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 		// known rows with specific sequence next value under current add column logic.
 		// More explanation can refer: TestSequenceDefaultLogic's comment in sequence_test.go
 		if option.Tp == ast.ColumnOptionDefaultValue {
-			_, isSeqExpr, err := tryToGetSequenceDefaultValue(option)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if isSeqExpr {
+			if f, ok := option.Expr.(*ast.FuncCallExpr); ok && f.FnName.L == ast.NextVal {
+				if _, err := getSequenceDefaultValue(option); err != nil {
+					return nil, errors.Trace(err)
+				}
 				return nil, errors.Trace(dbterror.ErrAddColumnWithSequenceAsDefault.GenWithStackByArgs(specNewColumn.Name.Name.O))
 			}
 		}
