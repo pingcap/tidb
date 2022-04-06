@@ -299,6 +299,15 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	if trace.IsEnabled() {
 		defer trace.StartRegion(ctx, fmt.Sprintf("%T.Next", e)).End()
 	}
+	if topsqlstate.TopSQLEnabled() {
+		stmtCtx := sessVars.StmtCtx
+		if stmtCtx.IsAttachedSQLAndPlan.CAS(false,true){
+			normalizedSQL, sqlDigest := stmtCtx.SQLDigest()
+			normalizedPlan, planDigest := getPlanDigest(base.ctx)
+			ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, normalizedPlan, planDigest, sessVars.InRestrictedSQL)
+			logutil.BgLogger().Info("attach info for topsql during executing", zap.Any("plan-digest", planDigest))
+		}
+	}
 	err := e.Next(ctx, req)
 
 	if err != nil {
@@ -1798,6 +1807,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			pprof.SetGoroutineLabels(goCtx)
 		}
 		if topsqlstate.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
+			sc.IsAttachedSQL.Store(true)
 			topsql.AttachSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, "", nil, vars.InRestrictedSQL)
 		}
 		if s, ok := prepareStmt.PreparedAst.Stmt.(*ast.SelectStmt); ok {

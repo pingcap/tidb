@@ -243,6 +243,10 @@ type StatementContext struct {
 
 	// RCCheckTS indicates the current read-consistency read select statement will use `RCCheckTS` path.
 	RCCheckTS bool
+
+	FinalPlan interface{}
+	IsAttachedSQL atomic2.Bool
+	IsAttachedSQLAndPlan atomic2.Bool
 }
 
 // StmtHints are SessionVars related sql hints.
