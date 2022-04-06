@@ -61,3 +61,15 @@ func TestIsRetryableError(t *testing.T) {
 	require.True(t, IsRetryableError(multierr.Combine(&net.DNSError{IsTimeout: true}, &net.DNSError{IsTimeout: true})))
 	require.False(t, IsRetryableError(multierr.Combine(context.Canceled, &net.DNSError{IsTimeout: true})))
 }
+
+func TestIsAutoRecoverableError(t *testing.T) {
+	// network timeout error
+	require.True(t, IsAutoRecoverableError(&net.DNSError{IsTimeout: true}))
+	require.False(t, IsAutoRecoverableError(&net.DNSError{})) // not timeout
+	// mysql network error
+	require.True(t, IsAutoRecoverableError(&mysql.MySQLError{Number: tmysql.ErrPDServerTimeout}))
+	require.True(t, IsAutoRecoverableError(&mysql.MySQLError{Number: tmysql.ErrTiKVServerTimeout}))
+	require.True(t, IsAutoRecoverableError(&mysql.MySQLError{Number: tmysql.ErrTiKVServerBusy}))
+	require.True(t, IsAutoRecoverableError(&mysql.MySQLError{Number: tmysql.ErrResolveLockTimeout}))
+	require.False(t, IsAutoRecoverableError(&mysql.MySQLError{Number: tmysql.ErrTxnRetryable}))
+}

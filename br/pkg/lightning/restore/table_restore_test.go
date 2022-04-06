@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -992,6 +993,10 @@ func (s *tableRestoreSuite) TestSaveStatusCheckpoint() {
 	rc.errorSummaries = makeErrorSummaries(log.L())
 
 	err := rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), indexEngineID, errors.New("connection refused"), checkpoints.CheckpointStatusImported)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 0, len(rc.errorSummaries.summary))
+
+	err = rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), indexEngineID, &net.DNSError{IsTimeout: true}, checkpoints.CheckpointStatusImported)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 0, len(rc.errorSummaries.summary))
 
