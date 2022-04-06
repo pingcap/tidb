@@ -1045,7 +1045,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 		switch x.FnName.L {
 		case ast.Rand:
 			if err := expression.VerifyArgsWrapper(ast.Rand, len(x.Args)); err != nil {
-				return nil, false, expression.ErrIncorrectParameterCount.GenWithStackByArgs(ast.Rand)
+				return nil, false, errors.Trace(err)
 			}
 			col.DefaultIsExpr = true
 			var sb strings.Builder
