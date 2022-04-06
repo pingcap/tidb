@@ -16,7 +16,6 @@ package sqlexec
 
 import (
 	"context"
-
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -55,13 +54,14 @@ type RestrictedSQLExecutor interface {
 
 // ExecOption is a struct defined for ExecRestrictedStmt/SQL option.
 type ExecOption struct {
-	IgnoreWarning  bool
-	SnapshotTS     uint64
-	AnalyzeVer     int
-	UseCurSession  bool
-	TrackSysProcID uint64
-	TrackSysProc   func(id uint64, ctx sessionctx.Context) error
-	UnTrackSysProc func(id uint64)
+	IgnoreWarning      bool
+	SnapshotTS         uint64
+	AnalyzeVer         int
+	PartitionPruneMode string
+	UseCurSession      bool
+	TrackSysProcID     uint64
+	TrackSysProc       func(id uint64, ctx sessionctx.Context) error
+	UnTrackSysProc     func(id uint64)
 }
 
 // OptionFuncAlias is defined for the optional parameter of ExecRestrictedStmt/SQL.
@@ -78,9 +78,15 @@ var ExecOptionAnalyzeVer1 OptionFuncAlias = func(option *ExecOption) {
 }
 
 // ExecOptionAnalyzeVer2 tells ExecRestrictedStmt/SQL to collect statistics with version2.
-// ExecOptionAnalyzeVer2 tells ExecRestrictedStmt to collect statistics with version2.
 var ExecOptionAnalyzeVer2 OptionFuncAlias = func(option *ExecOption) {
 	option.AnalyzeVer = 2
+}
+
+// GetPartitionPruneModeOption returns a function which tells ExecRestrictedStmt/SQL to run with pruneMode.
+func GetPartitionPruneModeOption(pruneMode string) OptionFuncAlias {
+	return func(option *ExecOption) {
+		option.PartitionPruneMode = pruneMode
+	}
 }
 
 // ExecOptionUseCurSession tells ExecRestrictedStmt/SQL to use current session.

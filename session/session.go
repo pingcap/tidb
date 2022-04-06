@@ -1725,7 +1725,6 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 	if ok := s.sessionVars.OptimizerUseInvisibleIndexes; ok {
 		se.sessionVars.OptimizerUseInvisibleIndexes = true
 	}
-	prePruneMode := se.sessionVars.PartitionPruneMode.Load()
 
 	if execOption.SnapshotTS != 0 {
 		se.sessionVars.SnapshotInfoschema, err = getSnapshotInfoSchema(s, execOption.SnapshotTS)
@@ -1742,8 +1741,10 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 		se.sessionVars.AnalyzeVersion = execOption.AnalyzeVer
 	}
 
-	// for analyze stmt we need let worker session follow user session that executing stmt.
-	se.sessionVars.PartitionPruneMode.Store(s.sessionVars.PartitionPruneMode.Load())
+	prePruneMode := se.sessionVars.PartitionPruneMode.Load()
+	if len(execOption.PartitionPruneMode) > 0 {
+		se.sessionVars.PartitionPruneMode.Store(execOption.PartitionPruneMode)
+	}
 
 	return se, func() {
 		se.sessionVars.AnalyzeVersion = prevStatsVer
