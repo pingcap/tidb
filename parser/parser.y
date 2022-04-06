@@ -811,36 +811,37 @@ import (
 
 %token not2
 %type	<expr>
-	Expression             "expression"
-	MaxValueOrExpression   "maxvalue or expression"
-	BoolPri                "boolean primary expression"
-	ExprOrDefault          "expression or default"
-	PredicateExpr          "Predicate expression factor"
-	SetExpr                "Set variable statement value's expression"
-	BitExpr                "bit expression"
-	SimpleExpr             "simple expression"
-	SimpleIdent            "Simple Identifier expression"
-	SumExpr                "aggregate functions"
-	FunctionCallGeneric    "Function call with Identifier"
-	FunctionCallKeyword    "Function call with keyword as function name"
-	FunctionCallNonKeyword "Function call with nonkeyword as function name"
-	Literal                "literal value"
-	Variable               "User or system variable"
-	SystemVariable         "System defined variable name"
-	UserVariable           "User defined variable name"
-	SubSelect              "Sub Select"
-	StringLiteral          "text literal"
-	ExpressionOpt          "Optional expression"
-	SignedLiteral          "Literal or NumLiteral with sign"
-	DefaultValueExpr       "DefaultValueExpr(Now or Signed Literal)"
-	NowSymOptionFraction   "NowSym with optional fraction part"
-	CharsetNameOrDefault   "Character set name or default"
-	NextValueForSequence   "Default nextval expression"
-	BuiltinFunction        "Default builtin functions"
-	FunctionNameSequence   "Function with sequence function call"
-	WindowFuncCall         "WINDOW function call"
-	RepeatableOpt          "Repeatable optional in sample clause"
-	ProcedureCall          "Procedure call with Identifier or identifier"
+	Expression                      "expression"
+	MaxValueOrExpression            "maxvalue or expression"
+	BoolPri                         "boolean primary expression"
+	ExprOrDefault                   "expression or default"
+	PredicateExpr                   "Predicate expression factor"
+	SetExpr                         "Set variable statement value's expression"
+	BitExpr                         "bit expression"
+	SimpleExpr                      "simple expression"
+	SimpleIdent                     "Simple Identifier expression"
+	SumExpr                         "aggregate functions"
+	FunctionCallGeneric             "Function call with Identifier"
+	FunctionCallKeyword             "Function call with keyword as function name"
+	FunctionCallNonKeyword          "Function call with nonkeyword as function name"
+	Literal                         "literal value"
+	Variable                        "User or system variable"
+	SystemVariable                  "System defined variable name"
+	UserVariable                    "User defined variable name"
+	SubSelect                       "Sub Select"
+	StringLiteral                   "text literal"
+	ExpressionOpt                   "Optional expression"
+	SignedLiteral                   "Literal or NumLiteral with sign"
+	DefaultValueExpr                "DefaultValueExpr(Now or Signed Literal)"
+	NowSymOptionFraction            "NowSym with optional fraction part"
+	NowSymOptionFractionParentheses "NowSym with optional fraction part within potential parentheses"
+	CharsetNameOrDefault            "Character set name or default"
+	NextValueForSequence            "Default nextval expression"
+	BuiltinFunction                 "Default builtin functions"
+	FunctionNameSequence            "Function with sequence function call"
+	WindowFuncCall                  "WINDOW function call"
+	RepeatableOpt                   "Repeatable optional in sample clause"
+	ProcedureCall                   "Procedure call with Identifier or identifier"
 
 %type	<statement>
 	AdminStmt                  "Check table statement or show ddl statement"
@@ -3333,7 +3334,7 @@ ReferOpt:
  *     https://dev.mysql.com/doc/refman/8.0/en/data-type-defaults.html
  */
 DefaultValueExpr:
-	NowSymOptionFraction
+	NowSymOptionFractionParentheses
 |	SignedLiteral
 |	NextValueForSequence
 |	BuiltinFunction
@@ -3357,12 +3358,15 @@ BuiltinFunction:
 		}
 	}
 
-NowSymOptionFraction:
-	'(' NowSymOptionFraction ')'
+NowSymOptionFractionParentheses:
+	'(' NowSymOptionFractionParentheses ')'
 	{
 		$$ = $2.(*ast.FuncCallExpr)
 	}
-|	NowSym
+|	NowSymOptionFraction
+
+NowSymOptionFraction:
+	NowSym
 	{
 		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}
 	}
