@@ -2152,12 +2152,6 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		}
 		ts.KeepOrder = true
 	}
-	switch ts.StoreType {
-	case kv.TiKV:
-		cost += float64(len(ts.Ranges)) * sessVars.GetSeekFactor(ds.tableInfo)
-	case kv.TiFlash:
-		cost += float64(len(ts.Ranges)) * float64(len(ts.Columns)) * sessVars.GetSeekFactor(ds.tableInfo)
-	}
 	return ts, cost, rowCount
 }
 

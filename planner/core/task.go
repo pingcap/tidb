@@ -1045,6 +1045,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	t.finishIndexPlan()
 	// Network cost of transferring rows of table scan to TiDB.
 	if t.tablePlan != nil {
+		// net I/O cost
 		t.cst += t.count() * sessVars.GetNetworkFactor(nil) * t.tblColHists.GetAvgRowSize(ctx, t.tablePlan.Schema().Columns, false, false)
 
 		tp := t.tablePlan
@@ -1057,6 +1058,15 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 			}
 		}
 		ts := tp.(*PhysicalTableScan)
+
+		// net seek cost
+		switch ts.StoreType {
+		case kv.TiKV:
+			t.cst += float64(len(ts.Ranges)) * sessVars.GetSeekFactor(ts.Table)
+		case kv.TiFlash:
+			t.cst += float64(len(ts.Ranges)) * float64(len(ts.Columns)) * sessVars.GetSeekFactor(ts.Table)
+		}
+
 		prevColumnLen := len(ts.Columns)
 		prevSchema := ts.schema.Clone()
 		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
