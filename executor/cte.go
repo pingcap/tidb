@@ -167,17 +167,17 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		})
 
 		if err = e.computeSeedPart(ctx); err != nil {
-			// Don't put it in defer.
-			// Because it should be called only when the filling process is not completed.
-			if err1 := e.reopenTbls(); err1 != nil {
-				return err1
-			}
+			// // Don't put it in defer.
+			// // Because it should be called only when the filling process is not completed.
+			// if err1 := e.reopenTbls(); err1 != nil {
+			// 	return err1
+			// }
 			return err
 		}
 		if err = e.computeRecursivePart(ctx); err != nil {
-			if err1 := e.reopenTbls(); err1 != nil {
-				return err1
-			}
+			// if err1 := e.reopenTbls(); err1 != nil {
+			// 	return err1
+			// }
 			return err
 		}
 		e.resTbl.SetDone()
