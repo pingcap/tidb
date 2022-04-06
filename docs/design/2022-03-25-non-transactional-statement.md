@@ -41,9 +41,9 @@ In the first step only `delete` is going to be supported, but `update` and `inse
 
 The split column must be indexed. There are no other constraints on the DML.
 
-There can be dry run syntax
-- `split on <column_name> limit <batch_size> dry run query <DML>`
-- `split on <column_name> limit <batch_size> dry run <DML>` that just output how the statement will be split and a representative of their query plans.
+There can be dry run syntax to show the actual SQLs that will be executed. Query plans are not returned since there is no elegant way to contain both a SQL and a plan in a result set. 
+- `split on <column_name> limit <batch_size> dry run query <DML>` outputs the `SELECT` statement that will be executed.
+- `split on <column_name> limit <batch_size> dry run <DML>` outputs how the statement will be split.
 
 ### Session
 
