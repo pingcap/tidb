@@ -31,7 +31,7 @@ import (
 func checkRangeCntByTableIDs(physicalTableIDs []int64, cnt int64) {
 	if len(physicalTableIDs) > 0 {
 		if len(physicalTableIDs) != int(cnt) {
-			panic("should not happened")
+			panic("Physical table IDs != cnt, should not happen! Please report a bug with this stack trace and how it was triggered!")
 		}
 	} else if cnt != 1 {
 		panic("should not happened")
@@ -100,7 +100,7 @@ func (d *ddl) checkDeleteRangeCnt(job *model.Job) {
 		var physicalTableIDs []int64
 		var ruleIDs []string
 		if err := job.DecodeArgs(&startKey, &physicalTableIDs, &ruleIDs); err != nil {
-			panic("should not happened")
+			panic("Error in drop/truncate table, please report a bug with this stack trace and how it happened")
 		}
 		checkRangeCntByTableIDs(physicalTableIDs, cnt)
 	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:

@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/collate"
 	gomath "math"
 	"sort"
 	"strings"
@@ -1575,6 +1576,24 @@ func (p *rangeColumnsPruner) partitionRangeForExpr(sctx sessionctx.Context, expr
 		return 0, len(p.data), false
 	}
 
+	exprCollation, err := expression.CheckAndDeriveCollationFromExprs(sctx, opName, col.RetType.EvalType(), con, p.data[0])
+	if err != nil {
+		return 0, len(p.data), false
+	}
+	if exprCollation.Coer < expression.CoercibilityImplicit {
+		// Explicit collation, if set to Binary collation, we can still use prune partitions,
+		// but we need to change the constants collation
+		conCharSet, conColl := con.CharsetAndCollation()
+		colCharSet, colColl := p.partCol.RetType.Charset, p.partCol.RetType.Collate
+		if !collate.IsBinCollation(conColl) || conCharSet != colCharSet {
+			return 0, len(p.data), true
+		}
+		clonedCon := con.Clone()
+		if newCon, ok := clonedCon.(*expression.Constant); ok {
+			con = newCon
+		}
+		con.SetCharsetAndCollation(conCharSet, colColl)
+	}
 	start, end := p.pruneUseBinarySearch(sctx, opName, con, op)
 	return start, end, true
 }
@@ -1590,7 +1609,7 @@ func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op st
 		}
 		var expr expression.Expression
 		expr, err = expression.NewFunctionBase(sctx, op, types.NewFieldType(mysql.TypeLonglong), p.data[ith], v)
-		expr.SetCharsetAndCollation(f.CharsetAndCollation())
+		expr.SetCharsetAndCollation(v.CharsetAndCollation())
 		var val int64
 		val, isNull, err = expr.EvalInt(sctx, chunk.Row{})
 		return val > 0
