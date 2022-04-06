@@ -1629,7 +1629,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 			// Reset the goroutine label when internal sql execute finish.
 			// Specifically reset in ExecRestrictedStmt function.
 			s.sessionVars.StmtCtx.IsAttachedSQL.Store(true)
-			topsql.AttachSQLInfo(ctx, normalized, digest, "", nil, s.sessionVars.InRestrictedSQL)
+			topsql.AttachSQLInfo(ctx, normalized, digest, "", nil, s.sessionVars.InRestrictedSQL, false)
 		}
 	}
 	return stmts[0], nil
@@ -1849,7 +1849,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	normalizedSQL, digest := s.sessionVars.StmtCtx.SQLDigest()
 	if topsqlstate.TopSQLEnabled() {
 		s.sessionVars.StmtCtx.IsAttachedSQL.Store(true)
-		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil, s.sessionVars.InRestrictedSQL)
+		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil, s.sessionVars.InRestrictedSQL, false)
 	}
 
 	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {

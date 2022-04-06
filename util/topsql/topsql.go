@@ -86,7 +86,7 @@ var (
 )
 
 // AttachSQLInfo attach the sql information info top sql.
-func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.Digest, normalizedPlan string, planDigest *parser.Digest, isInternal bool) context.Context {
+func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.Digest, normalizedPlan string, planDigest *parser.Digest, isInternal bool, noNeedRecordSQLMeta bool) context.Context {
 	if len(normalizedSQL) == 0 || sqlDigest == nil || len(sqlDigest.Bytes()) == 0 {
 		return ctx
 	}
@@ -101,10 +101,11 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 	ctx = collector.CtxWithDigest(ctx, sqlDigestBytes, planDigestBytes)
 	pprof.SetGoroutineLabels(ctx)
 
-	if len(normalizedPlan) == 0 || len(planDigestBytes) == 0 {
-		// If plan digest is '', indicate it is the first time to attach the SQL info, since it only know the sql digest.
+	if !noNeedRecordSQLMeta{
 		linkSQLTextWithDigest(sqlDigestBytes, normalizedSQL, isInternal)
-	} else {
+	}
+	if len(normalizedPlan) > 0 && len(planDigestBytes) > 0 {
+		// If plan digest is '', indicate it is the first time to attach the SQL info, since it only know the sql digest.
 		linkPlanTextWithDigest(planDigestBytes, normalizedPlan)
 	}
 	failpoint.Inject("mockHighLoadForEachSQL", func(val failpoint.Value) {

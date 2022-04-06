@@ -304,7 +304,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 		if stmtCtx.IsAttachedSQLAndPlan.CAS(false,true){
 			normalizedSQL, sqlDigest := stmtCtx.SQLDigest()
 			normalizedPlan, planDigest := getPlanDigest(base.ctx)
-			ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, normalizedPlan, planDigest, sessVars.InRestrictedSQL)
+			ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, normalizedPlan, planDigest, sessVars.InRestrictedSQL, false)
 			logutil.BgLogger().Info("attach info for topsql during executing", zap.Any("plan-digest", planDigest))
 		}
 	}
@@ -1808,7 +1808,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		}
 		if topsqlstate.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
 			sc.IsAttachedSQL.Store(true)
-			topsql.AttachSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, "", nil, vars.InRestrictedSQL)
+			topsql.AttachSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, "", nil, vars.InRestrictedSQL, false)
 		}
 		if s, ok := prepareStmt.PreparedAst.Stmt.(*ast.SelectStmt); ok {
 			if s.LockInfo == nil {

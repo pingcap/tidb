@@ -187,10 +187,10 @@ func TestMaxSQLAndPlanTest(t *testing.T) {
 	// Test for normal sql and plan
 	sql := "select * from t"
 	sqlDigest := mock.GenSQLDigest(sql)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest, "", nil, false)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest, "", nil, false, false)
 	plan := "TableReader table:t"
 	planDigest := genDigest(plan)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest, false)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest, false, false)
 
 	cSQL := collector.GetSQL(sqlDigest.Bytes())
 	require.Equal(t, sql, cSQL)
@@ -200,10 +200,10 @@ func TestMaxSQLAndPlanTest(t *testing.T) {
 	// Test for huge sql and plan
 	sql = genStr(topsql.MaxSQLTextSize + 10)
 	sqlDigest = mock.GenSQLDigest(sql)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest, "", nil, false)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest, "", nil, false, false)
 	plan = genStr(topsql.MaxBinaryPlanSize + 10)
 	planDigest = genDigest(plan)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest, false)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest, false, false)
 
 	cSQL = collector.GetSQL(sqlDigest.Bytes())
 	require.Equal(t, sql[:topsql.MaxSQLTextSize], cSQL)
@@ -379,10 +379,10 @@ func TestPubSubWhenReporterIsStopped(t *testing.T) {
 func mockExecuteSQL(sql, plan string) {
 	ctx := context.Background()
 	sqlDigest := mock.GenSQLDigest(sql)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest, "", nil, false)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest, "", nil, false,false)
 	mockExecute(time.Millisecond * 100)
 	planDigest := genDigest(plan)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest, false)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest, false,false)
 	mockExecute(time.Millisecond * 300)
 }
 

@@ -133,7 +133,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 	if topsqlstate.TopSQLEnabled() {
 		preparedStmt, _ := cc.preparedStmtID2CachePreparedStmt(stmtID)
 		if preparedStmt != nil && preparedStmt.SQLDigest != nil {
-			ctx = topsql.AttachSQLInfo(ctx, preparedStmt.NormalizedSQL, preparedStmt.SQLDigest, "", nil, false)
+			ctx = topsql.AttachSQLInfo(ctx, preparedStmt.NormalizedSQL, preparedStmt.SQLDigest, "", nil, false, false)
 		}
 	}
 
@@ -288,7 +288,7 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 	if topsqlstate.TopSQLEnabled() {
 		prepareObj, _ := cc.preparedStmtID2CachePreparedStmt(stmtID)
 		if prepareObj != nil && prepareObj.SQLDigest != nil {
-			ctx = topsql.AttachSQLInfo(ctx, prepareObj.NormalizedSQL, prepareObj.SQLDigest, "", nil, false)
+			ctx = topsql.AttachSQLInfo(ctx, prepareObj.NormalizedSQL, prepareObj.SQLDigest, "", nil, false, false)
 		}
 	}
 	sql := ""

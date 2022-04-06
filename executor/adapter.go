@@ -338,13 +338,14 @@ func (a *ExecStmt) setPlanLabelForTopSQL(ctx context.Context) context.Context {
 	if !topsqlstate.TopSQLEnabled() {
 		return 	ctx
 	}
-	if a.Plan == nil && vars.StmtCtx.IsAttachedSQL.Load() {
+	isAttachedSQL := vars.StmtCtx.IsAttachedSQL.Load()
+	if a.Plan == nil && isAttachedSQL {
 		return ctx
 	}
 	vars.StmtCtx.IsAttachedSQLAndPlan.Store(true)
 	normalizedSQL, sqlDigest := vars.StmtCtx.SQLDigest()
 	normalizedPlan, planDigest := getPlanDigest(a.Ctx)
-	return topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, normalizedPlan, planDigest, vars.InRestrictedSQL)
+	return topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, normalizedPlan, planDigest, vars.InRestrictedSQL, isAttachedSQL)
 }
 
 // Exec builds an Executor from a plan. If the Executor doesn't return result,
