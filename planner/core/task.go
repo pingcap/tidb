@@ -2400,6 +2400,16 @@ func collectRowSizeFromMPPPlan(mppPlan PhysicalPlan) (rowSize float64) {
 	return 1 // use 1 as lower-bound for safety
 }
 
+func accumulateNetSeekCost4MPP(p PhysicalPlan) (cost float64) {
+	if ts, ok := p.(*PhysicalTableScan); ok {
+		return float64(len(ts.Ranges)) * float64(len(ts.Columns)) * ts.SCtx().GetSessionVars().GetSeekFactor(ts.Table)
+	}
+	for _, c := range p.Children() {
+		accumulateNetSeekCost4MPP(c)
+	}
+	return
+}
+
 func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	sender := PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_PassThrough,
@@ -2415,15 +2425,9 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	collectPartitionInfosFromMPPPlan(p, t.p)
 	rowSize := collectRowSizeFromMPPPlan(sender)
 
-	var c PhysicalPlan
-	for c = t.p; len(c.Children()) > 0; c = c.Children()[0] {
-	}
-	ts := c.(*PhysicalTableScan)
-
-	// net I/O cost
-	cst := t.cst + t.count()*rowSize*ctx.GetSessionVars().GetNetworkFactor(nil)
-	// net seek cost
-	cst += float64(len(ts.Ranges)) * float64(len(ts.Columns)) * ts.SCtx().GetSessionVars().GetSeekFactor(ts.Table)
+	cst := t.cst + t.count()*rowSize*ctx.GetSessionVars().GetNetworkFactor(nil) // net I/O cost
+	// net seek cost, unlike copTask, a mppTask may have multiple underlying TableScan, so use a recursive function to accumulate this
+	cst += accumulateNetSeekCost4MPP(p)
 	cst /= p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
 	p.cost = cst
 	if p.ctx.GetSessionVars().IsMPPEnforced() {
