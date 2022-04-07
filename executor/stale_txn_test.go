@@ -1334,3 +1334,19 @@ func TestIssue30872(t *testing.T) {
 	tk.MustExec("set autocommit=0")
 	tk.MustQuery("select * from t1 as of timestamp @a").Check(testkit.Rows("1 10"))
 }
+
+func TestIssue33728(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int primary key, v int)")
+	err := tk.ExecToErr("select * from t1 as of timestamp NULL")
+	require.Error(t, err)
+	require.Equal(t, "[planner:8135]invalid as of timestamp: as of timestamp cannot be NULL", err.Error())
+
+	err = tk.ExecToErr("start transaction read only as of timestamp NULL")
+	require.Error(t, err)
+	require.Equal(t, "[planner:8135]invalid as of timestamp: as of timestamp cannot be NULL", err.Error())
+}
