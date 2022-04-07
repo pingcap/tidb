@@ -43,7 +43,6 @@ func main() {
 		SilenceUsage:     true,
 	}
 	AddFlags(rootCmd)
-
 	SetDefaultContext(ctx)
 	rootCmd.AddCommand(
 		NewDebugCommand(),
