@@ -35,7 +35,8 @@ func (j job) String() string {
 	return fmt.Sprintf("job id: %d, job size: %d, range: [%s, %s]", j.jobID, j.jobSize, j.start.String(), j.end.String())
 }
 
-func HandleNonTransactionalDelete(stmt *ast.NonTransactionalDeleteStmt, ctx context.Context, se Session) (sqlexec.RecordSet, error) {
+// HandleNonTransactionalDelete is the entry point for a non-transactional delete
+func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, se Session) (sqlexec.RecordSet, error) {
 	core.Preprocess(se, stmt)
 	if !(se.GetSessionVars().IsAutocommit() && !se.GetSessionVars().InTxn()) {
 		return nil, errors.Errorf("non-transactional statement can only run in auto-commit mode. auto=commit:%v, inTxn:%v",
@@ -153,7 +154,6 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, stmt *ast.NonTra
 			deleteSQL, err.Error(), job.jobID, job.jobSize)
 		logutil.Logger(ctx).Error(errStr)
 		job.err = err
-		return ""
 	} else {
 		logutil.Logger(ctx).Info("Non-transactional delete SQL finished successfully", zap.Int("jobID", job.jobID),
 			zap.Int("jobSize", job.jobSize), zap.String("deleteSQL", deleteSQL))

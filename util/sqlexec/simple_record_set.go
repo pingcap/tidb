@@ -16,10 +16,12 @@ type SimpleRecordSet struct {
 	idx          int
 }
 
+// Fields implements the sqlexec.RecordSet interface.
 func (r *SimpleRecordSet) Fields() []*ast.ResultField {
 	return r.ResultFields
 }
 
+// Next implements the sqlexec.RecordSet interface.
 func (r *SimpleRecordSet) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	for r.idx < len(r.Rows) {
@@ -35,6 +37,7 @@ func (r *SimpleRecordSet) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
+// NewChunk implements the sqlexec.RecordSet interface.
 func (r *SimpleRecordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 	fields := make([]*types.FieldType, 0, len(r.ResultFields))
 	for _, field := range r.ResultFields {
@@ -46,6 +49,7 @@ func (r *SimpleRecordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 	return chunk.New(fields, r.MaxChunkSize, r.MaxChunkSize)
 }
 
+// Close implements the sqlexec.RecordSet interface.
 func (r *SimpleRecordSet) Close() error {
 	r.idx = 0
 	return nil

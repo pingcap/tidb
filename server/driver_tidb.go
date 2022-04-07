@@ -224,7 +224,7 @@ func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (Resu
 	var rs sqlexec.RecordSet
 	var err error
 	if s, ok := stmt.(*ast.NonTransactionalDeleteStmt); ok {
-		rs, err = session.HandleNonTransactionalDelete(s, ctx, tc.Session)
+		rs, err = session.HandleNonTransactionalDelete(ctx, s, tc.Session)
 	} else {
 		rs, err = tc.Session.ExecuteStmt(ctx, stmt)
 	}
