@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -68,6 +69,18 @@ func (s *testClientSerialSuite) TestConn(c *C) {
 	conn3, err := client.getConnArray(addr, true)
 	c.Assert(err, NotNil)
 	c.Assert(conn3, IsNil)
+}
+
+func (s *testClientSerialSuite) TestGetConnAfterClose(c *C) {
+	client := NewRPCClient(config.Security{})
+
+	addr := "127.0.0.1:6379"
+	connArray, err := client.getConnArray(addr, true)
+	c.Assert(err, IsNil)
+	connArray.Close()
+	conn := connArray.Get()
+	state := conn.GetState()
+	c.Assert(state, Equals, connectivity.Shutdown)
 }
 
 func (s *testClientSuite) TestCancelTimeoutRetErr(c *C) {
