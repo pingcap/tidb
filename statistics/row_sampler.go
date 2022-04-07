@@ -286,22 +286,25 @@ func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTrack
 		s.MemSize += emptySize
 		memTracker.Consume(emptySize)
 	}
+	bufferedItemSize := int64(0)
 	for _, pbSample := range pbCollector.Samples {
 		data := make([]types.Datum, 0, len(pbSample.Row))
-		itemSize := int64(0)
 		for _, col := range pbSample.Row {
 			b := make([]byte, len(col))
 			copy(b, col)
 			newDatum := types.NewBytesDatum(b)
 			data = append(data, newDatum)
-			itemSize += newDatum.MemUsage() - types.EmptyDatumSize
+			bufferedItemSize += newDatum.MemUsage() - types.EmptyDatumSize
 		}
 		// Directly copy the weight.
 		sampleItem := &ReservoirRowSampleItem{Columns: data, Weight: pbSample.Weight}
 		s.Samples = append(s.Samples, sampleItem)
-		itemSize += sampleItem.MemUsage() - EmptyReservoirSampleItemSize
-		memTracker.Consume(itemSize)
-		s.MemSize += itemSize
+		bufferedItemSize += sampleItem.MemUsage() - EmptyReservoirSampleItemSize
+		if bufferedItemSize > int64(104857600) { // track when exceeds 100 MB
+			memTracker.Consume(bufferedItemSize)
+			s.MemSize += bufferedItemSize
+			bufferedItemSize = int64(0)
+		}
 	}
 	return
 }

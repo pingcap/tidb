@@ -1353,7 +1353,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 		memTracker.Consume(int64(colRespSize) - int64(dataSize))
 		subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 		before := time.Now()
-		subCollector.Base().FromProto(colResp.RowCollector)
+		subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
 		logutil.BgLogger().Info("subMergeWorker FromProto: ", zap.Int("idx", idx), zap.Duration("time", time.Now().Sub(before)))
 		logutil.BgLogger().Info("subMergeWorker consumes memory: ", zap.Int("idx", idx), zap.Int64("subCollector", subCollector.Base().MemSize))
 		colResp = nil
