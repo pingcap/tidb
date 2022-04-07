@@ -2,6 +2,7 @@ package utils
 
 import (
 	"context"
+	"database/sql/driver"
 	"fmt"
 	"io"
 	"net"
@@ -9,11 +10,12 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	tmysql "github.com/pingcap/tidb/errno"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	tmysql "github.com/pingcap/tidb/errno"
 )
 
 func TestIsRetryableError(t *testing.T) {
@@ -41,7 +43,7 @@ func TestIsRetryableError(t *testing.T) {
 
 	// gRPC Errors
 	require.False(t, IsRetryableError(status.Error(codes.Canceled, "")))
-	require.True(t, IsRetryableError(status.Error(codes.Unknown, "")))
+	require.False(t, IsRetryableError(status.Error(codes.Unknown, "")))
 	require.True(t, IsRetryableError(status.Error(codes.DeadlineExceeded, "")))
 	require.True(t, IsRetryableError(status.Error(codes.NotFound, "")))
 	require.True(t, IsRetryableError(status.Error(codes.AlreadyExists, "")))
@@ -54,7 +56,12 @@ func TestIsRetryableError(t *testing.T) {
 
 	// sqlmock errors
 	require.False(t, IsRetryableError(fmt.Errorf("call to database Close was not expected")))
-	require.True(t, IsRetryableError(errors.New("call to database Close was not expected")))
+	require.False(t, IsRetryableError(errors.New("call to database Close was not expected")))
+
+	// stderr
+	require.True(t, IsRetryableError(mysql.ErrInvalidConn))
+	require.True(t, IsRetryableError(driver.ErrBadConn))
+	require.False(t, IsRetryableError(fmt.Errorf("error")))
 
 	// multierr
 	require.False(t, IsRetryableError(multierr.Combine(context.Canceled, context.Canceled)))

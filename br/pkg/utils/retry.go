@@ -5,21 +5,22 @@ package utils
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	stderrors "errors"
 	"io"
 	"net"
 	"reflect"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	tmysql "github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/parser/terror"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	tmysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser/terror"
 )
 
 var retryableServerError = []string{
@@ -83,11 +84,6 @@ func MessageIsRetryableStorageError(msg string) bool {
 	return false
 }
 
-// sqlmock uses fmt.Errorf to produce expectation failures, which will cause
-// unnecessary retry if not specially handled >:(
-var stdFatalErrorsRegexp = regexp.MustCompile(
-	`^call to (?s:.*) was not expected|arguments do not match:|could not match actual sql|mock non-retryable error`,
-)
 var stdErrorType = reflect.TypeOf(stderrors.New(""))
 
 // IsRetryableError returns whether the error is transient (e.g. network
@@ -131,9 +127,9 @@ func isSingleRetryableError(err error) bool {
 			return true
 		case codes.Unknown:
 			if reflect.TypeOf(err) == stdErrorType {
-				return !stdFatalErrorsRegexp.MatchString(err.Error())
+				return err == mysql.ErrInvalidConn || err == driver.ErrBadConn
 			}
-			return true
+			return false
 		default:
 			return false
 		}
