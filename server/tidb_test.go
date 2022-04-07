@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -91,6 +92,9 @@ func createTidbTestSuite(t *testing.T) (*tidbTestSuite, func()) {
 	ts.port = getPortFromTCPAddr(server.listener.Addr())
 	ts.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	ts.server = server
+	ts.server.SetDomain(ts.domain)
+	ts.server.InitGlobalConnID(ts.domain.ServerID)
+	ts.domain.InfoSyncer().SetSessionManager(ts.server)
 	go func() {
 		err := ts.server.Run()
 		require.NoError(t, err)
@@ -885,6 +889,40 @@ func TestSystemTimeZone(t *testing.T) {
 
 	tz1 := tk.MustQuery("select variable_value from mysql.tidb where variable_name = 'system_tz'").Rows()
 	tk.MustQuery("select @@system_time_zone").Check(tz1)
+}
+
+func TestInternalSessionTxnStartTS(t *testing.T) {
+	ts, cleanup := createTidbTestSuite(t)
+	defer cleanup()
+
+	se, err := session.CreateSession4Test(ts.store)
+	require.NoError(t, err)
+
+	count := 10
+	stmts := make([]ast.StmtNode, count)
+	for i := 0; i < count; i++ {
+		stmt, err := session.ParseWithParams4Test(context.Background(), se, "select * from mysql.user limit 1")
+		require.NoError(t, err)
+		stmts[i] = stmt
+	}
+	// Test an issue that sysSessionPool doesn't call session's Close, cause
+	// asyncGetTSWorker goroutine leak.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockDelayInnerSessionExecute", "return"))
+	var wg util.WaitGroupWrapper
+	for i := 0; i < count; i++ {
+		s := stmts[i]
+		wg.Run(func() {
+			_, _, err := session.ExecRestrictedStmt4Test(context.Background(), se, s)
+			require.NoError(t, err)
+		})
+	}
+	time.Sleep(100 * time.Millisecond)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockDelayInnerSessionExecute"))
+
+	lst := ts.domain.InfoSyncer().GetSessionManager().GetInternalSessionStartTSList()
+	require.Equal(t, len(lst), 10)
+
+	wg.Wait()
 }
 
 func TestClientWithCollation(t *testing.T) {
