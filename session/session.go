@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
@@ -1635,6 +1636,12 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	return stmts[0], nil
 }
 
+// ParseWithParams4Test wrapper (s *session) ParseWithParams for test
+func ParseWithParams4Test(ctx context.Context, s Session,
+	sql string, args ...interface{}) (ast.StmtNode, error) {
+	return s.(*session).ParseWithParams(ctx, sql, args)
+}
+
 // ExecRestrictedStmt implements RestrictedSQLExecutor interface.
 func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode, opts ...sqlexec.OptionFuncAlias) (
 	[]chunk.Row, []*ast.ResultField, error) {
@@ -1678,6 +1685,13 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	}
 	metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal).Observe(time.Since(startTime).Seconds())
 	return rows, rs.Fields(), err
+}
+
+// ExecRestrictedStmt4Test wrapper `(s *session) ExecRestrictedStmt` for test.
+func ExecRestrictedStmt4Test(ctx context.Context, s Session,
+	stmtNode ast.StmtNode, opts ...sqlexec.OptionFuncAlias) (
+	[]chunk.Row, []*ast.ResultField, error) {
+	return s.(*session).ExecRestrictedStmt(ctx, stmtNode, opts...)
 }
 
 // only set and clean session with execOption
@@ -1746,6 +1760,9 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 	// for analyze stmt we need let worker session follow user session that executing stmt.
 	se.sessionVars.PartitionPruneMode.Store(s.sessionVars.PartitionPruneMode.Load())
 
+	// Put the internal session to the map of SessionManager
+	infosync.StoreInternalSession(se)
+
 	return se, func() {
 		se.sessionVars.AnalyzeVersion = prevStatsVer
 		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
@@ -1761,6 +1778,8 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 		se.sessionVars.PartitionPruneMode.Store(prePruneMode)
 		se.sessionVars.OptimizerUseInvisibleIndexes = false
 		se.sessionVars.InspectionTableCache = nil
+		// Delete the internal session to the map of SessionManager
+		infosync.DeleteInternalSession(se)
 		s.sysSessionPool().Put(tmp)
 	}, nil
 }
@@ -2805,7 +2824,6 @@ func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 			return nil, err
 		}
 	}
-
 	ver := getStoreBootstrapVersion(store)
 	if ver == notBootstrapped {
 		runInBootstrapSession(store, bootstrap)
@@ -3212,6 +3230,21 @@ func (s *session) ShowProcess() *util.ProcessInfo {
 		pi = tmp.(*util.ProcessInfo)
 	}
 	return pi
+}
+
+// GetStartTSFromSession returns the startTS in the session `se`
+func GetStartTSFromSession(se interface{}) uint64 {
+	var startTS uint64
+	tmp, ok := se.(*session)
+	if !ok {
+		logutil.BgLogger().Error("GetStartTSFromSession failed, can't transform to session struct")
+		return 0
+	}
+	txnInfo := tmp.TxnInfo()
+	if txnInfo != nil {
+		startTS = txnInfo.StartTS
+	}
+	return startTS
 }
 
 // logStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD/DDL etc and normal SQL
