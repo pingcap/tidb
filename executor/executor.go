@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
@@ -300,13 +301,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 		defer trace.StartRegion(ctx, fmt.Sprintf("%T.Next", e)).End()
 	}
 	if topsqlstate.TopSQLEnabled() {
-		stmtCtx := sessVars.StmtCtx
-		if stmtCtx.IsAttachedSQLAndPlan.CAS(false,true){
-			normalizedSQL, sqlDigest := stmtCtx.SQLDigest()
-			normalizedPlan, planDigest := getPlanDigest(base.ctx)
-			ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, normalizedPlan, planDigest, sessVars.InRestrictedSQL, false)
-			logutil.BgLogger().Info("attach info for topsql during executing", zap.Any("plan-digest", planDigest))
-		}
+		ctx = attachSQLAndPlanInExecForTopSQL(ctx, sessVars)
 	}
 	err := e.Next(ctx, req)
 
@@ -1806,9 +1801,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			goCtx = pprof.WithLabels(goCtx, pprof.Labels("sql", util.QueryStrForLog(prepareStmt.NormalizedSQL)))
 			pprof.SetGoroutineLabels(goCtx)
 		}
-		if topsqlstate.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
-			sc.IsAttachedSQL.Store(true)
-			topsql.AttachSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, "", nil, vars.InRestrictedSQL, false)
+		if prepareStmt.SQLDigest != nil {
+			AttachSQLInfoForTopSQL(goCtx, sc, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, vars.InRestrictedSQL)
 		}
 		if s, ok := prepareStmt.PreparedAst.Stmt.(*ast.SelectStmt); ok {
 			if s.LockInfo == nil {
@@ -1958,6 +1952,25 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.PrevFoundInBinding = vars.FoundInBinding
 	vars.FoundInBinding = false
 	return
+}
+
+func AttachSQLInfoForTopSQL(ctx context.Context, sc *stmtctx.StatementContext, normalizedSQL string, sqlDigest *parser.Digest, isInternal bool) context.Context {
+	if !topsqlstate.TopSQLEnabled() {
+		return ctx
+	}
+	sc.IsAttachedSQL.Store(true)
+	return topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, "", nil, isInternal, false)
+}
+
+func attachSQLAndPlanInExecForTopSQL(ctx context.Context, sessVars *variable.SessionVars) context.Context {
+	stmtCtx := sessVars.StmtCtx
+	if stmtCtx.IsAttachedSQLAndPlan.CAS(false, true) {
+		normalizedSQL, sqlDigest := stmtCtx.SQLDigest()
+		normalizedPlan, planDigest := getPlanDigest(stmtCtx)
+		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, normalizedPlan, planDigest, sessVars.InRestrictedSQL, false)
+		logutil.BgLogger().Info("attach info for topsql during executing", zap.Any("plan-digest", planDigest))
+	}
+	return ctx
 }
 
 // ResetUpdateStmtCtx resets statement context for UpdateStmt.

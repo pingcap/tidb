@@ -379,10 +379,10 @@ func TestPubSubWhenReporterIsStopped(t *testing.T) {
 func mockExecuteSQL(sql, plan string) {
 	ctx := context.Background()
 	sqlDigest := mock.GenSQLDigest(sql)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest, "", nil, false,false)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest, "", nil, false, false)
 	mockExecute(time.Millisecond * 100)
 	planDigest := genDigest(plan)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest, false,false)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest, plan, planDigest, false, false)
 	mockExecute(time.Millisecond * 300)
 }
 

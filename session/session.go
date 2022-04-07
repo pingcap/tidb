@@ -52,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/logutil/consistency"
-	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
@@ -1628,8 +1627,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 		if digest != nil {
 			// Reset the goroutine label when internal sql execute finish.
 			// Specifically reset in ExecRestrictedStmt function.
-			s.sessionVars.StmtCtx.IsAttachedSQL.Store(true)
-			topsql.AttachSQLInfo(ctx, normalized, digest, "", nil, s.sessionVars.InRestrictedSQL, false)
+			executor.AttachSQLInfoForTopSQL(ctx, s.sessionVars.StmtCtx, normalized, digest, s.sessionVars.InRestrictedSQL)
 		}
 	}
 	return stmts[0], nil
@@ -1847,10 +1845,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 	normalizedSQL, digest := s.sessionVars.StmtCtx.SQLDigest()
-	if topsqlstate.TopSQLEnabled() {
-		s.sessionVars.StmtCtx.IsAttachedSQL.Store(true)
-		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, digest, "", nil, s.sessionVars.InRestrictedSQL, false)
-	}
+	ctx = executor.AttachSQLInfoForTopSQL(ctx, s.sessionVars.StmtCtx, normalizedSQL, digest, s.sessionVars.InRestrictedSQL)
 
 	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {
 		return nil, err

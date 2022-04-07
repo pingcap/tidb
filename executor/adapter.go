@@ -45,6 +45,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
@@ -336,12 +337,12 @@ func (a *ExecStmt) setPlanLabelForTopSQL(ctx context.Context) context.Context {
 	vars := a.Ctx.GetSessionVars()
 	vars.StmtCtx.FinalPlan = a.Plan
 	if !topsqlstate.TopSQLEnabled() {
-		return 	ctx
+		return ctx
 	}
 	vars.StmtCtx.IsAttachedSQLAndPlan.Store(true)
 	isAttachedSQL := vars.StmtCtx.IsAttachedSQL.Load()
 	normalizedSQL, sqlDigest := vars.StmtCtx.SQLDigest()
-	normalizedPlan, planDigest := getPlanDigest(a.Ctx)
+	normalizedPlan, planDigest := getPlanDigest(vars.StmtCtx)
 	if len(normalizedPlan) == 0 && isAttachedSQL {
 		return ctx
 	}
@@ -1045,7 +1046,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	statsInfos := plannercore.GetStatsInfo(a.Plan)
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
 	diskMax := sessVars.StmtCtx.DiskTracker.MaxConsumed()
-	_, planDigest := getPlanDigest(a.Ctx)
+	_, planDigest := getPlanDigest(sessVars.StmtCtx)
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		SQL:               sql.String(),
@@ -1153,18 +1154,17 @@ func getPlanTree(sctx sessionctx.Context, p plannercore.Plan) string {
 }
 
 // getPlanDigest will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
-func getPlanDigest(sctx sessionctx.Context) (string, *parser.Digest) {
-	sc := sctx.GetSessionVars().StmtCtx
+func getPlanDigest(sc *stmtctx.StatementContext) (string, *parser.Digest) {
 	normalized, planDigest := sc.GetPlanDigest()
 	if len(normalized) > 0 && planDigest != nil {
 		return normalized, planDigest
 	}
 	if sc.FinalPlan == nil {
-		return "",nil
+		return "", nil
 	}
-	p ,ok := sc.FinalPlan.(plannercore.Plan)
+	p, ok := sc.FinalPlan.(plannercore.Plan)
 	if !ok {
-		return "",nil
+		return "", nil
 	}
 	normalized, planDigest = plannercore.NormalizePlan(p)
 	sc.SetPlanDigest(normalized, planDigest)
@@ -1250,11 +1250,11 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	var planDigestGen func() string
 	if a.Plan.TP() == plancodec.TypePointGet {
 		planDigestGen = func() string {
-			_, planDigest := getPlanDigest(a.Ctx)
+			_, planDigest := getPlanDigest(stmtCtx)
 			return planDigest.String()
 		}
 	} else {
-		_, tmp := getPlanDigest(a.Ctx)
+		_, tmp := getPlanDigest(stmtCtx)
 		planDigest = tmp.String()
 	}
 
