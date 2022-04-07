@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil"
@@ -40,14 +41,14 @@ func HandleNonTransactionalDelete(stmt *ast.NonTransactionalDeleteStmt, ctx cont
 		return nil, errors.Errorf("non-transactional statement can only run in auto-commit mode. auto=commit:%v, inTxn:%v",
 			se.GetSessionVars().IsAutocommit(), se.GetSessionVars().InTxn())
 	}
-	tableName, selectSQL, err := buildSelectSQL(stmt)
+	tableName, selectSQL, err := buildSelectSQL(stmt, se)
 	if err != nil {
 		return nil, err
 	}
 	if stmt.DryRun == ast.DryRunQuery {
 		return buildDryRunResults(stmt.DryRun, []string{selectSQL}, se.GetSessionVars().BatchSize.MaxChunkSize)
 	}
-	jobs, err := getShardKeys(stmt, se, tableName, selectSQL)
+	jobs, err := getShardKeys(ctx, stmt, se, tableName, selectSQL)
 	if err != nil {
 		return nil, err
 	}
@@ -86,19 +87,19 @@ func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransaction
 	for i := range jobs {
 		select {
 		case <-ctx.Done():
-			logutil.BgLogger().Info("Non-transactional delete worker exit because context canceled")
+			logutil.Logger(ctx).Info("Non-transactional delete worker exit because context canceled")
 			return nil, ctx.Err()
 		default:
 		}
-		splitStmt := doOneJob(&jobs[i], len(jobs), stmt, tp, refer, originalCondition, sqlExecutor)
+		splitStmt := doOneJob(ctx, &jobs[i], len(jobs), stmt, tp, refer, originalCondition, sqlExecutor)
 		splitStmts = append(splitStmts, splitStmt)
 	}
 	return splitStmts, nil
 }
 
-func doOneJob(job *job, totalJobCount int, stmt *ast.NonTransactionalDeleteStmt, tp types.FieldType, refer *ast.ResultField,
+func doOneJob(ctx context.Context, job *job, totalJobCount int, stmt *ast.NonTransactionalDeleteStmt, tp types.FieldType, refer *ast.ResultField,
 	originalCondition ast.ExprNode, sqlExecutor sqlexec.SQLExecutor) string {
-	logutil.BgLogger().Info("start a Non-transactional delete", zap.Int("jobID", job.jobID),
+	logutil.Logger(ctx).Info("start a Non-transactional delete", zap.Int("jobID", job.jobID),
 		zap.Int("totalJobs", totalJobCount), zap.Int("jobSize", job.jobSize))
 	left := &driver.ValueExpr{}
 	left.Type = tp
@@ -150,19 +151,19 @@ func doOneJob(job *job, totalJobCount int, stmt *ast.NonTransactionalDeleteStmt,
 	if err != nil {
 		errStr := fmt.Sprintf("Non-transactional delete SQL failed, sql: %s, error: %s, jobID: %d, jobSize: %d. ",
 			deleteSQL, err.Error(), job.jobID, job.jobSize)
-		logutil.BgLogger().Error(errStr)
+		logutil.Logger(ctx).Error(errStr)
 		job.err = err
 		return ""
 	} else {
-		logutil.BgLogger().Info("Non-transactional delete SQL finished successfully", zap.Int("jobID", job.jobID),
+		logutil.Logger(ctx).Info("Non-transactional delete SQL finished successfully", zap.Int("jobID", job.jobID),
 			zap.Int("jobSize", job.jobSize), zap.String("deleteSQL", deleteSQL))
 	}
 
 	return ""
 }
 
-func getShardKeys(stmt *ast.NonTransactionalDeleteStmt, sqlExecutor sqlexec.SQLExecutor, tableName *ast.TableName, selectSQL string) ([]job, error) {
-	logutil.BgLogger().Info("Non-transactional delete, select SQL", zap.String("selectSQL", selectSQL))
+func getShardKeys(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, sqlExecutor sqlexec.SQLExecutor, tableName *ast.TableName, selectSQL string) ([]job, error) {
+	logutil.Logger(ctx).Info("Non-transactional delete, select SQL", zap.String("selectSQL", selectSQL))
 	rss, err := sqlExecutor.Execute(context.TODO(), selectSQL)
 	if err != nil {
 		return nil, err
@@ -223,7 +224,7 @@ func getShardKeys(stmt *ast.NonTransactionalDeleteStmt, sqlExecutor sqlexec.SQLE
 	return jobs, nil
 }
 
-func buildSelectSQL(stmt *ast.NonTransactionalDeleteStmt) (*ast.TableName, string, error) {
+func buildSelectSQL(stmt *ast.NonTransactionalDeleteStmt, se Session) (*ast.TableName, string, error) {
 	// only use the first table
 	// TODO: return error if there are multiple tables
 	if stmt.DeleteStmt.TableRefs == nil || stmt.DeleteStmt.TableRefs.TableRefs == nil {
@@ -239,6 +240,25 @@ func buildSelectSQL(stmt *ast.NonTransactionalDeleteStmt) (*ast.TableName, strin
 	tableName, ok := tableSource.Source.(*ast.TableName)
 	if !ok {
 		return nil, "", errors.New("Non-transactional delete, table name not found")
+	}
+
+	// the shard column must be indexed
+	indexed := false
+	table, err := sessiontxn.GetTxnManager(se).GetTxnInfoSchema().TableByName(tableName.Schema, tableName.Name)
+	if err != nil {
+		return nil, "", err
+	}
+	for _, index := range table.Indices() {
+		indexColumns := index.Meta().Columns
+		// check only the first column
+		if len(indexColumns) > 1 && indexColumns[0].Name.L == stmt.ShardColumn.Name.L {
+			indexed = true
+			break
+		}
+	}
+
+	if !indexed {
+		return nil, "", errors.Errorf("Non-transactional delete, shard column %s is not indexed", stmt.ShardColumn.Name.L)
 	}
 
 	var sb strings.Builder
@@ -299,7 +319,7 @@ func buildExecuteResults(jobs []job, maxChunkSize int) (sqlexec.RecordSet, error
 				Column: &model.ColumnInfo{
 					FieldType: *types.NewFieldType(mysql.TypeLong),
 				},
-				ColumnAsName: model.NewCIStr("job numbers"),
+				ColumnAsName: model.NewCIStr("number of jobs"),
 			},
 			{
 				Column: &model.ColumnInfo{
