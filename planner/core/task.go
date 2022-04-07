@@ -1076,7 +1076,12 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 
 		// net seek cost
 		if !ts.underInnerIndexJoin { // no need to accumulate net seek cost for IndexJoin
-			t.cst += float64(len(ts.Ranges)) * sessVars.GetSeekFactor(ts.Table)
+			switch ts.StoreType {
+			case kv.TiKV:
+				t.cst += float64(len(ts.Ranges)) * sessVars.GetSeekFactor(ts.Table)
+			case kv.TiFlash:
+				t.cst += float64(len(ts.Ranges)) * float64(len(ts.Columns)) * sessVars.GetSeekFactor(ts.Table)
+			}
 		}
 
 		prevColumnLen := len(ts.Columns)
