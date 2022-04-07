@@ -11,7 +11,7 @@ import (
 	"syscall"
 
 	"github.com/pingcap/log"
-	tidbutils "github.com/pingcap/tidb-tools/pkg/utils"
+	tidbutils "github.com/pingcap/tidb/util"
 	"go.uber.org/zap"
 )
 

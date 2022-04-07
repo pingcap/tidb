@@ -1036,27 +1036,64 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	return col, constraints, nil
 }
 
+// getFuncCallDefaultValue gets the default column value of function-call expression.
+func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *ast.FuncCallExpr) (interface{}, bool, error) {
+	switch expr.FnName.L {
+	case ast.Rand:
+		if err := expression.VerifyArgsWrapper(ast.Rand, len(expr.Args)); err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		col.DefaultIsExpr = true
+		var sb strings.Builder
+		restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
+			format.RestoreSpacesAroundBinaryOperation
+		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+		if err := expr.Restore(restoreCtx); err != nil {
+			return "", false, err
+		}
+		return sb.String(), false, nil
+	case ast.NextVal:
+		// handle default next value of sequence. (keep the expr string)
+		str, err := getSequenceDefaultValue(option)
+		if err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		return str, true, nil
+	case ast.CurrentTimestamp:
+		tp, fsp := col.FieldType.Tp, col.FieldType.Decimal
+		if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
+			defaultFsp := 0
+			if len(expr.Args) == 1 {
+				if val := expr.Args[0].(*driver.ValueExpr); val != nil {
+					defaultFsp = int(val.GetInt64())
+				}
+			}
+			if defaultFsp != fsp {
+				return nil, false, dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
+			}
+		}
+		return nil, false, nil
+	default:
+		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
+	}
+}
+
 // getDefaultValue will get the default value for column.
 // 1: get the expr restored string for the column which uses sequence next value as default value.
 // 2: get specific default value for the other column.
-func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOption) (interface{}, bool, error) {
+func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.ColumnOption) (interface{}, bool, error) {
+	// handle default value with function call
 	tp, fsp := col.FieldType.Tp, col.FieldType.Decimal
-	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
-		switch x := c.Expr.(type) {
-		case *ast.FuncCallExpr:
-			if x.FnName.L == ast.CurrentTimestamp {
-				defaultFsp := 0
-				if len(x.Args) == 1 {
-					if val := x.Args[0].(*driver.ValueExpr); val != nil {
-						defaultFsp = int(val.GetInt64())
-					}
-				}
-				if defaultFsp != fsp {
-					return nil, false, dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
-				}
-			}
+	if x, ok := option.Expr.(*ast.FuncCallExpr); ok {
+		val, isSeqExpr, err := getFuncCallDefaultValue(col, option, x)
+		if val != nil || isSeqExpr || err != nil {
+			return val, isSeqExpr, err
 		}
-		vd, err := expression.GetTimeValue(ctx, c.Expr, tp, fsp)
+		// If the function call is ast.CurrentTimestamp, it needs to be continuously processed.
+	}
+
+	if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
+		vd, err := expression.GetTimeValue(ctx, option.Expr, tp, fsp)
 		value := vd.GetValue()
 		if err != nil {
 			return nil, false, dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
@@ -1074,17 +1111,9 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 
 		return value, false, nil
 	}
-	// handle default next value of sequence. (keep the expr string)
-	str, isSeqExpr, err := tryToGetSequenceDefaultValue(c)
-	if err != nil {
-		return nil, false, errors.Trace(err)
-	}
-	if isSeqExpr {
-		return str, true, nil
-	}
 
-	// evaluate the non-sequence expr to a certain value.
-	v, err := expression.EvalAstExpr(ctx, c.Expr)
+	// evaluate the non-function-call expr to a certain value.
+	v, err := expression.EvalAstExpr(ctx, option.Expr)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
@@ -1124,7 +1153,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 	case mysql.TypeEnum:
 		val, err := getEnumDefaultValue(v, col)
 		return val, false, err
-	case mysql.TypeDuration:
+	case mysql.TypeDuration, mysql.TypeDate:
 		if v, err = v.ConvertTo(ctx.GetSessionVars().StmtCtx, &col.FieldType); err != nil {
 			return "", false, errors.Trace(err)
 		}
@@ -1139,18 +1168,15 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOpt
 	return val, false, err
 }
 
-func tryToGetSequenceDefaultValue(c *ast.ColumnOption) (expr string, isExpr bool, err error) {
-	if f, ok := c.Expr.(*ast.FuncCallExpr); ok && f.FnName.L == ast.NextVal {
-		var sb strings.Builder
-		restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
-			format.RestoreSpacesAroundBinaryOperation
-		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
-		if err := c.Expr.Restore(restoreCtx); err != nil {
-			return "", true, err
-		}
-		return sb.String(), true, nil
+func getSequenceDefaultValue(c *ast.ColumnOption) (expr string, err error) {
+	var sb strings.Builder
+	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
+		format.RestoreSpacesAroundBinaryOperation
+	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+	if err := c.Expr.Restore(restoreCtx); err != nil {
+		return "", err
 	}
-	return "", false, nil
+	return sb.String(), nil
 }
 
 // getSetDefaultValue gets the default value for the set type. See https://dev.mysql.com/doc/refman/5.7/en/set.html.
@@ -2685,11 +2711,6 @@ func checkTwoRangeColumns(ctx sessionctx.Context, curr, prev *model.PartitionDef
 			return false, nil
 		}
 
-		// Current and previous is the same.
-		if strings.EqualFold(curr.LessThan[i], prev.LessThan[i]) {
-			continue
-		}
-
 		// The tuples of column values used to define the partitions are strictly increasing:
 		// PARTITION p0 VALUES LESS THAN (5,10,'ggg')
 		// PARTITION p1 VALUES LESS THAN (10,20,'mmm')
@@ -3251,10 +3272,17 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	}
 
 	if !force {
-		newBase, err = adjustNewBaseToNextGlobalID(ctx, t, tp, newBase)
+		newBaseTemp, err := adjustNewBaseToNextGlobalID(ctx, t, tp, newBase)
 		if err != nil {
 			return err
 		}
+		if newBase != newBaseTemp {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(
+				fmt.Errorf("Can't reset AUTO_INCREMENT to %d without FORCE option, using %d instead",
+					newBase, newBaseTemp,
+				))
+		}
+		newBase = newBaseTemp
 	}
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -3414,12 +3442,16 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 		// known rows with specific sequence next value under current add column logic.
 		// More explanation can refer: TestSequenceDefaultLogic's comment in sequence_test.go
 		if option.Tp == ast.ColumnOptionDefaultValue {
-			_, isSeqExpr, err := tryToGetSequenceDefaultValue(option)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if isSeqExpr {
-				return nil, errors.Trace(dbterror.ErrAddColumnWithSequenceAsDefault.GenWithStackByArgs(specNewColumn.Name.Name.O))
+			if f, ok := option.Expr.(*ast.FuncCallExpr); ok {
+				switch f.FnName.L {
+				case ast.NextVal:
+					if _, err := getSequenceDefaultValue(option); err != nil {
+						return nil, errors.Trace(err)
+					}
+					return nil, errors.Trace(dbterror.ErrAddColumnWithSequenceAsDefault.GenWithStackByArgs(specNewColumn.Name.Name.O))
+				case ast.Rand:
+					return nil, errors.Trace(dbterror.ErrBinlogUnsafeSystemFunction.GenWithStackByArgs())
+				}
 			}
 		}
 	}
@@ -6997,7 +7029,7 @@ func (d *ddl) AlterTableCache(ctx sessionctx.Context, ti ast.Ident) (err error) 
 	// The operation shouldn't fail in most cases, and if it does, return the error directly.
 	// This DML and the following DDL is not atomic, that's not a problem.
 	_, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(),
-		"insert ignore into mysql.table_cache_meta values (%?, 'NONE', 0, 0)", t.Meta().ID)
+		"replace into mysql.table_cache_meta values (%?, 'NONE', 0, 0)", t.Meta().ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
