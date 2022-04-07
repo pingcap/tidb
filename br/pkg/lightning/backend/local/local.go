@@ -35,6 +35,22 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	tikverror "github.com/tikv/client-go/v2/error"
+	"github.com/tikv/client-go/v2/oracle"
+	tikvclient "github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
+	"go.uber.org/atomic"
+	"go.uber.org/multierr"
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/time/rate"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
+
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -57,21 +73,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
-	tikverror "github.com/tikv/client-go/v2/error"
-	"github.com/tikv/client-go/v2/oracle"
-	tikvclient "github.com/tikv/client-go/v2/tikv"
-	pd "github.com/tikv/pd/client"
-	"go.uber.org/atomic"
-	"go.uber.org/multierr"
-	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
-	"golang.org/x/time/rate"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/backoff"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/keepalive"
-	"google.golang.org/grpc/status"
 )
 
 const (
@@ -1099,7 +1100,7 @@ WriteAndIngest:
 			err = local.writeAndIngestPairs(ctx, engine, region, pairStart, end, regionSplitSize, regionSplitKeys)
 			local.ingestConcurrency.Recycle(w)
 			if err != nil {
-				if common.IsContextCanceledError(err) {
+				if !utils.IsRetryableError(err) {
 					return err
 				}
 				_, regionStart, _ := codec.DecodeBytes(region.Region.StartKey, []byte{})
@@ -1146,7 +1147,7 @@ loopWrite:
 		var rangeStats rangeStats
 		metas, finishedRange, rangeStats, err = local.WriteToTiKV(ctx, engine, region, start, end, regionSplitSize, regionSplitKeys)
 		if err != nil {
-			if common.IsContextCanceledError(err) {
+			if !utils.IsRetryableError(err) {
 				return err
 			}
 
@@ -1286,6 +1287,9 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 				err = local.writeAndIngestByRange(ctx, engine, startKey, endKey, regionSplitSize, regionSplitKeys)
 				if err == nil || common.IsContextCanceledError(err) {
 					return
+				}
+				if !utils.IsRetryableError(err) {
+					break
 				}
 				log.L().Warn("write and ingest by range failed",
 					zap.Int("retry time", i+1), log.ShortError(err))
