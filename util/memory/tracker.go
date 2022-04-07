@@ -176,6 +176,9 @@ func (t *Tracker) FallbackOldAndSetNewActionForSoftLimit(a ActionOnExceed) {
 func (t *Tracker) GetFallbackForTest() ActionOnExceed {
 	t.actionMuForHardLimit.Lock()
 	defer t.actionMuForHardLimit.Unlock()
+	if t.actionMuForHardLimit.actionOnExceed != nil && t.actionMuForHardLimit.actionOnExceed.IsFinished() {
+		t.actionMuForHardLimit.actionOnExceed = t.actionMuForHardLimit.actionOnExceed.GetFallback()
+	}
 	return t.actionMuForHardLimit.actionOnExceed
 }
 
@@ -332,6 +335,9 @@ func (t *Tracker) Consume(bytes int64) {
 	tryAction := func(mu *actionMu, tracker *Tracker) {
 		mu.Lock()
 		defer mu.Unlock()
+		for mu.actionOnExceed != nil && mu.actionOnExceed.IsFinished() {
+			mu.actionOnExceed = mu.actionOnExceed.GetFallback()
+		}
 		if mu.actionOnExceed != nil {
 			mu.actionOnExceed.Action(tracker)
 		}
