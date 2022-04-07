@@ -81,8 +81,8 @@ func Close() {
 }
 
 var (
-	TopSQLAttachInfoCounterSQLDigest     = metrics.TopSQLAttachInfoCounter.WithLabelValues("sql")
-	TopSQLAttachInfoCounterSQLPlanDigest = metrics.TopSQLAttachInfoCounter.WithLabelValues("sql_plan")
+	topSQLAttachInfoCounterSQLDigest     = metrics.TopSQLAttachInfoCounter.WithLabelValues("sql")
+	topSQLAttachInfoCounterSQLPlanDigest = metrics.TopSQLAttachInfoCounter.WithLabelValues("sql_plan")
 )
 
 // AttachSQLInfo attach the sql information info top sql.
@@ -94,13 +94,12 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 	sqlDigestBytes = sqlDigest.Bytes()
 	if planDigest != nil {
 		planDigestBytes = planDigest.Bytes()
-		TopSQLAttachInfoCounterSQLPlanDigest.Add(1)
+		topSQLAttachInfoCounterSQLPlanDigest.Add(1)
 	} else {
-		TopSQLAttachInfoCounterSQLDigest.Add(1)
+		topSQLAttachInfoCounterSQLDigest.Add(1)
 	}
 	ctx = collector.CtxWithDigest(ctx, sqlDigestBytes, planDigestBytes)
 	pprof.SetGoroutineLabels(ctx)
-	//logutil.BgLogger().Info("attach SQL info", zap.String("sql", normalizedSQL),zap.String("plan-str", normalizedPlan), zap.Any("plan",planDigest), zap.Stack("stack"))
 
 	if !noNeedRecordSQLMeta {
 		linkSQLTextWithDigest(sqlDigestBytes, normalizedSQL, isInternal)

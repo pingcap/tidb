@@ -244,8 +244,11 @@ type StatementContext struct {
 	// RCCheckTS indicates the current read-consistency read select statement will use `RCCheckTS` path.
 	RCCheckTS bool
 
-	FinalPlan            interface{}
-	IsAttachedSQL        atomic2.Bool
+	// FinalPlan is the statement final execution plan.
+	FinalPlan interface{}
+	// IsAttachedSQL uses to indicate whether the SQL has been attach sql information for TopSQL.
+	IsAttachedSQL atomic2.Bool
+	// IsAttachedSQLAndPlan uses to indicate whether the SQL has been attach sql and plan information for TopSQL.
 	IsAttachedSQLAndPlan atomic2.Bool
 }
 

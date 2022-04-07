@@ -1954,6 +1954,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	return
 }
 
+// AttachSQLInfoForTopSQL attach the sql information for Top SQL. It should be call as soon as possible after got the
+// SQL digest.
 func AttachSQLInfoForTopSQL(ctx context.Context, sc *stmtctx.StatementContext, normalizedSQL string, sqlDigest *parser.Digest, isInternal bool) context.Context {
 	if !topsqlstate.TopSQLEnabled() {
 		return ctx
@@ -1962,13 +1964,14 @@ func AttachSQLInfoForTopSQL(ctx context.Context, sc *stmtctx.StatementContext, n
 	return topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, "", nil, isInternal, false)
 }
 
+// attachSQLAndPlanInExecForTopSQL attach the sql and plan information if it doesn't attached before execution.
+// This uses to catch the running SQL when Top SQL is enabled in execution.
 func attachSQLAndPlanInExecForTopSQL(ctx context.Context, sessVars *variable.SessionVars) context.Context {
 	stmtCtx := sessVars.StmtCtx
 	if stmtCtx.IsAttachedSQLAndPlan.CAS(false, true) {
 		normalizedSQL, sqlDigest := stmtCtx.SQLDigest()
 		normalizedPlan, planDigest := getPlanDigest(stmtCtx)
 		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, normalizedPlan, planDigest, sessVars.InRestrictedSQL, false)
-		logutil.BgLogger().Info("attach info for topsql during executing", zap.Any("plan-digest", planDigest))
 	}
 	return ctx
 }
