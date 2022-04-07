@@ -2812,10 +2812,6 @@ func TestTimeScalarFunctionPushDownResult(t *testing.T) {
 		function string
 	}{
 		{
-			sql:      "select col1, to_days(col1) from t where to_days(col1)=to_days('2022-03-24 01:02:03.040506');",
-			function: "to_days",
-		},
-		{
 			sql:      "select col1, hour(col1) from t where hour(col1)=hour('2022-03-24 01:02:03.040506');",
 			function: "hour",
 		},
@@ -2858,10 +2854,6 @@ func TestTimeScalarFunctionPushDownResult(t *testing.T) {
 		{
 			function: "Week",
 			sql:      "select col1, Week(col1) from t where Week(col1)=Week('2022-03-24 01:02:03.040506');",
-		},
-		{
-			function: "to_seconds",
-			sql:      "select col1, to_seconds(col1) from t where to_seconds(col1)=to_seconds('2022-03-24 01:02:03.040506');",
 		},
 		{
 			function: "time_to_sec",
@@ -3048,20 +3040,8 @@ func TestScalarFunctionPushDown(t *testing.T) {
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where dayofmonth(d);").
 		CheckAt([]int{0, 3, 6}, rows)
 
-	rows[1][2] = "weekday(test.t.d)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where weekday(d);").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "weekday(test.t.d)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where weekday(d);").
-		CheckAt([]int{0, 3, 6}, rows)
-
 	rows[1][2] = "from_days(test.t.id)"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where from_days(id);").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "to_days(test.t.d)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where to_days(d);").
 		CheckAt([]int{0, 3, 6}, rows)
 
 	//rows[1][2] = "last_day(test.t.d)"
@@ -3086,10 +3066,6 @@ func TestScalarFunctionPushDown(t *testing.T) {
 
 	rows[1][2] = "week(test.t.d)"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where week(d)").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "to_seconds(test.t.d)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where to_seconds(d)").
 		CheckAt([]int{0, 3, 6}, rows)
 
 	rows[1][2] = "datediff(test.t.d, test.t.d)"
