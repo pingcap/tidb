@@ -637,6 +637,50 @@ func (t *TableInfo) IsLocked() bool {
 	return t.Lock != nil && len(t.Lock.Sessions) > 0
 }
 
+// MoveColumnInfo moves a column to another offset.
+func (t *TableInfo) MoveColumnInfo(from, to int) {
+	if from == to {
+		return
+	}
+	updatedOffsets := make(map[int]int)
+	src := t.Columns[from]
+	if from < to {
+		for i := from; i < to; i++ {
+			t.Columns[i] = t.Columns[i+1]
+			t.Columns[i].Offset = i
+			updatedOffsets[i+1] = i
+		}
+	} else if from > to {
+		for i := from; i > to; i-- {
+			t.Columns[i] = t.Columns[i-1]
+			t.Columns[i].Offset = i
+			updatedOffsets[i-1] = i
+		}
+	}
+	t.Columns[to] = src
+	t.Columns[to].Offset = to
+	updatedOffsets[from] = to
+	for _, idx := range t.Indices {
+		for _, idxCol := range idx.Columns {
+			newOffset, ok := updatedOffsets[idxCol.Offset]
+			if ok {
+				idxCol.Offset = newOffset
+			}
+		}
+	}
+}
+
+// ClearPlacement clears all table and partitions' placement settings
+func (t *TableInfo) ClearPlacement() {
+	t.PlacementPolicyRef = nil
+	if t.Partition != nil {
+		for i := range t.Partition.Definitions {
+			def := &t.Partition.Definitions[i]
+			def.PlacementPolicyRef = nil
+		}
+	}
+}
+
 // NewExtraHandleColInfo mocks a column info for extra handle column.
 func NewExtraHandleColInfo() *ColumnInfo {
 	colInfo := &ColumnInfo{
@@ -1200,6 +1244,13 @@ type PolicyInfo struct {
 	State SchemaState `json:"state"`
 }
 
+func (p *PolicyInfo) Clone() *PolicyInfo {
+	var cloned PolicyInfo
+	cloned = *p
+	cloned.PlacementSettings = p.PlacementSettings.Clone()
+	return &cloned
+}
+
 func writeSettingItemToBuilder(sb *strings.Builder, item string) {
 	if sb.Len() != 0 {
 		sb.WriteString(" ")
@@ -1254,6 +1305,12 @@ func (p *PlacementSettings) String() string {
 	}
 
 	return sb.String()
+}
+
+func (p *PlacementSettings) Clone() *PlacementSettings {
+	var cloned PlacementSettings
+	cloned = *p
+	return &cloned
 }
 
 type StatsOptions struct {

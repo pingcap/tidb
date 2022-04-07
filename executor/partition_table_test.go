@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/stretchr/testify/require"
 )
@@ -57,7 +58,7 @@ partition p2 values less than (10))`)
 	tk.MustQuery("select c from pt").Sort().Check(testkit.Rows("0", "2", "4", "6", "7", "9", "<nil>"))
 	tk.MustQuery("select c from pt where c > 10").Check(testkit.Rows())
 	tk.MustQuery("select c from pt where c > 8").Check(testkit.Rows("9"))
-	tk.MustQuery("select c from pt where c < 2 or c >= 9").Check(testkit.Rows("0", "9"))
+	tk.MustQuery("select c from pt where c < 2 or c >= 9").Sort().Check(testkit.Rows("0", "9"))
 
 	// Index lookup
 	tk.MustQuery("select /*+ use_index(pt, i_id) */ * from pt").Sort().Check(testkit.Rows("0 0", "2 2", "4 4", "6 6", "7 7", "9 9", "<nil> <nil>"))
@@ -1803,7 +1804,7 @@ func TestMPPQueryExplainInfo(t *testing.T) {
 		  partition p0 values less than (5),
 		  partition p1 values less than (10),
 		  partition p2 values less than (15))`)
-	tb := tk.GetTableByName("tiflash_partition_test", "t")
+	tb := external.GetTableByName(t, tk, "tiflash_partition_test", "t")
 	for _, partition := range tb.Meta().GetPartitionInfo().Definitions {
 		err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), partition.ID, true)
 		require.NoError(t, err)
@@ -2844,7 +2845,7 @@ partition p1 values less than (7),
 partition p2 values less than (10))`)
 	tk.MustExec("alter table p add unique idx(id)")
 	tk.MustExec("insert into p values (1,3), (3,4), (5,6), (7,9)")
-	tk.MustQuery("select * from p use index (idx)").Check(testkit.Rows("1 3", "3 4", "5 6", "7 9"))
+	tk.MustQuery("select * from p use index (idx)").Sort().Check(testkit.Rows("1 3", "3 4", "5 6", "7 9"))
 }
 
 func TestIssue20028(t *testing.T) {

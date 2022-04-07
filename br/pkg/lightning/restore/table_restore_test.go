@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/noop"
@@ -62,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	tmock "github.com/pingcap/tidb/util/mock"
+	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -306,7 +306,7 @@ func (s *tableRestoreSuite) TestPopulateChunks() {
 	s.cfg.Mydumper.MaxRegionSize = 5
 	err = s.tr.populateChunks(context.Background(), rc, cp)
 	require.Error(s.T(), err)
-	require.Regexp(s.T(), `.*unknown columns in header \[1 2 3\]`, err.Error())
+	require.Regexp(s.T(), `.*unknown columns in header \(1,2,3\)`, err.Error())
 	s.cfg.Mydumper.MaxRegionSize = regionSize
 	s.cfg.Mydumper.CSV.Header = false
 }
@@ -667,13 +667,13 @@ func (s *tableRestoreSuite) TestInitializeColumns() {
 			[]string{"_tidb_rowid", "b", "a", "c", "d"},
 			nil,
 			nil,
-			`unknown columns in header \[d\]`,
+			`\[Lightning:Restore:ErrUnknownColumns\]unknown columns in header \(d\) for table table`,
 		},
 		{
 			[]string{"e", "b", "c", "d"},
 			nil,
 			nil,
-			`unknown columns in header \[e d\]`,
+			`\[Lightning:Restore:ErrUnknownColumns\]unknown columns in header \(e,d\) for table table`,
 		},
 	}
 
@@ -989,8 +989,23 @@ func (s *tableRestoreSuite) TestSaveStatusCheckpoint() {
 	rc.checkpointsWg.Add(1)
 	go rc.listenCheckpointUpdates()
 
+	rc.errorSummaries = makeErrorSummaries(log.L())
+
+	err := rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), indexEngineID, errors.New("connection refused"), checkpoints.CheckpointStatusImported)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 0, len(rc.errorSummaries.summary))
+
+	err = rc.saveStatusCheckpoint(
+		context.Background(),
+		common.UniqueTable("test", "tbl"), indexEngineID,
+		common.ErrChecksumMismatch.GenWithStackByArgs(0, 0, 0, 0, 0, 0),
+		checkpoints.CheckpointStatusImported,
+	)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, len(rc.errorSummaries.summary))
+
 	start := time.Now()
-	err := rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), indexEngineID, nil, checkpoints.CheckpointStatusImported)
+	err = rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), indexEngineID, nil, checkpoints.CheckpointStatusImported)
 	require.NoError(s.T(), err)
 	elapsed := time.Since(start)
 	require.GreaterOrEqual(s.T(), elapsed, time.Millisecond*100)
@@ -1292,8 +1307,7 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 		template := NewSimpleTemplate()
 		cfg := &config.Config{Mydumper: config.MydumperRuntime{StrictFormat: ca.strictFormat}}
 		rc := &Controller{cfg: cfg, checkTemplate: template, store: mockStore}
-		err := rc.HasLargeCSV(ca.dbMetas)
-		require.NoError(s.T(), err)
+		rc.HasLargeCSV(ca.dbMetas)
 		require.Equal(s.T(), ca.expectWarnCount, template.FailedCount(Warn))
 		require.Equal(s.T(), ca.expectResult, template.Success())
 		require.Regexp(s.T(), ca.expectMsg, strings.ReplaceAll(template.Output(), "\n", ""))

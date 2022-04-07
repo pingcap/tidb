@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
@@ -268,8 +269,8 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		w.reorgCtx.setNextKey(nil)
 		w.reorgCtx.setRowCount(0)
 		w.reorgCtx.resetWarnings()
-		// We return errWaitReorgTimeout here too, so that outer loop will break.
-		return errWaitReorgTimeout
+		// We return dbterror.ErrWaitReorgTimeout here too, so that outer loop will break.
+		return dbterror.ErrWaitReorgTimeout
 	case <-time.After(waitTimeout):
 		rowCount, doneKey, currentElement := w.reorgCtx.getRowCountAndKey()
 		// Update a job's RowCount.
@@ -294,7 +295,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 			zap.String("doneKey", tryDecodeToHandleString(doneKey)),
 			zap.Error(err))
 		// If timeout, we will return, check the owner and retry to wait job done again.
-		return errWaitReorgTimeout
+		return dbterror.ErrWaitReorgTimeout
 	}
 	return nil
 }
@@ -357,18 +358,18 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 func (w *worker) isReorgRunnable(d *ddlCtx) error {
 	if isChanClosed(w.ctx.Done()) {
 		// Worker is closed. So it can't do the reorganizational job.
-		return errInvalidWorker.GenWithStack("worker is closed")
+		return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
 	}
 
 	if w.reorgCtx.isReorgCanceled() {
 		// Job is cancelled. So it can't be done.
-		return errCancelledDDLJob
+		return dbterror.ErrCancelledDDLJob
 	}
 
 	if !d.isOwner() {
 		// If it's not the owner, we will try later, so here just returns an error.
 		logutil.BgLogger().Info("[ddl] DDL worker is not the DDL owner", zap.String("ID", d.uuid))
-		return errors.Trace(errNotOwner)
+		return errors.Trace(dbterror.ErrNotOwner)
 	}
 	return nil
 }
@@ -541,9 +542,9 @@ func buildCommonHandleFromChunkRow(sctx *stmtctx.StatementContext, tblInfo *mode
 }
 
 // getTableRange gets the start and end handle of a table (or partition).
-func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, priority int) (startHandleKey, endHandleKey kv.Key, err error) {
+func getTableRange(ctx *jobContext, d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, priority int) (startHandleKey, endHandleKey kv.Key, err error) {
 	// Get the start handle of this partition.
-	err = iterateSnapshotRows(d.store, priority, tbl, snapshotVer, nil, nil,
+	err = iterateSnapshotRows(ctx, d.store, priority, tbl, snapshotVer, nil, nil,
 		func(h kv.Handle, rowKey kv.Key, rawRecord []byte) (bool, error) {
 			startHandleKey = rowKey
 			return false, nil
@@ -573,12 +574,12 @@ func getValidCurrentVersion(store kv.Storage) (ver kv.Version, err error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	} else if ver.Ver <= 0 {
-		return ver, errInvalidStoreVer.GenWithStack("invalid storage current version %d", ver.Ver)
+		return ver, dbterror.ErrInvalidStoreVer.GenWithStack("invalid storage current version %d", ver.Ver)
 	}
 	return ver, nil
 }
 
-func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elements []*meta.Element) (*reorgInfo, error) {
+func getReorgInfo(ctx *jobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elements []*meta.Element) (*reorgInfo, error) {
 	var (
 		element *meta.Element
 		start   kv.Key
@@ -615,7 +616,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elem
 		} else {
 			tb = tbl.(table.PhysicalTable)
 		}
-		start, end, err = getTableRange(d, tb, ver.Ver, job.Priority)
+		start, end, err = getTableRange(ctx, d, tb, ver.Ver, job.Priority)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -670,7 +671,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elem
 	return &info, nil
 }
 
-func getReorgInfoFromPartitions(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {
+func getReorgInfoFromPartitions(ctx *jobContext, d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, partitionIDs []int64, elements []*meta.Element) (*reorgInfo, error) {
 	var (
 		element *meta.Element
 		start   kv.Key
@@ -687,7 +688,7 @@ func getReorgInfoFromPartitions(d *ddlCtx, t *meta.Meta, job *model.Job, tbl tab
 		}
 		pid = partitionIDs[0]
 		tb := tbl.(table.PartitionedTable).GetPartition(pid)
-		start, end, err = getTableRange(d, tb, ver.Ver, job.Priority)
+		start, end, err = getTableRange(ctx, d, tb, ver.Ver, job.Priority)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

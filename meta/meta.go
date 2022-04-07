@@ -121,7 +121,6 @@ type Meta struct {
 // If the current Meta needs to handle a job, jobListKey is the type of the job's list.
 func NewMeta(txn kv.Transaction, jobListKeys ...JobListKeyType) *Meta {
 	txn.SetOption(kv.Priority, kv.PriorityHigh)
-	txn.SetOption(kv.SyncLog, struct{}{})
 	txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	t := structure.NewStructure(txn, txn, mMetaPrefix)
 	listKey := DefaultJobListKey
@@ -163,6 +162,14 @@ func (m *Meta) GenGlobalIDs(n int) ([]int64, error) {
 		ids = append(ids, i)
 	}
 	return ids, nil
+}
+
+// GenPlacementPolicyID generates next placement policy id globally.
+func (m *Meta) GenPlacementPolicyID() (int64, error) {
+	policyIDMutex.Lock()
+	defer policyIDMutex.Unlock()
+
+	return m.txn.Inc(mPolicyGlobalID, 1)
 }
 
 // GetGlobalID gets current global id.
@@ -284,22 +291,15 @@ func (m *Meta) checkTableNotExists(dbKey []byte, tableKey []byte) error {
 
 // CreatePolicy creates a policy.
 func (m *Meta) CreatePolicy(policy *model.PolicyInfo) error {
-	if policy.ID != 0 {
-		policyKey := m.policyKey(policy.ID)
-		if err := m.checkPolicyNotExists(policyKey); err != nil {
-			return errors.Trace(err)
-		}
-	} else {
-		// Autofill the policy ID.
-		policyIDMutex.Lock()
-		genID, err := m.txn.Inc(mPolicyGlobalID, 1)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		policyIDMutex.Unlock()
-		policy.ID = genID
+	if policy.ID == 0 {
+		return errors.New("policy.ID is invalid")
 	}
+
 	policyKey := m.policyKey(policy.ID)
+	if err := m.checkPolicyNotExists(policyKey); err != nil {
+		return errors.Trace(err)
+	}
+
 	data, err := json.Marshal(policy)
 	if err != nil {
 		return errors.Trace(err)

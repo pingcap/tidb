@@ -164,8 +164,8 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 	var err error
 	switch name {
-	case variable.TiDBMemQuotaBindCache:
-		variable.MemQuotaBindCache.Store(variable.TidbOptInt64(sVal, variable.DefTiDBMemQuotaBindCache))
+	case variable.TiDBMemQuotaBindingCache:
+		variable.MemQuotaBindingCache.Store(variable.TidbOptInt64(sVal, variable.DefTiDBMemQuotaBindingCache))
 	case variable.TiDBTSOClientBatchMaxWaitTime:
 		var val float64
 		val, err = strconv.ParseFloat(sVal, 64)
@@ -243,6 +243,8 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 		variable.StatsLoadSyncWait.Store(val)
 	case variable.TiDBStatsLoadPseudoTimeout:
 		variable.StatsLoadPseudoTimeout.Store(variable.TiDBOptOn(sVal))
+	case variable.TiDBTxnCommitBatchSize:
+		storekv.TxnCommitBatchSize.Store(uint64(variable.TidbOptInt64(sVal, int64(storekv.DefTxnCommitBatchSize))))
 	}
 	if err != nil {
 		logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", name), zap.Error(err))
