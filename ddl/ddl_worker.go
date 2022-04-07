@@ -102,16 +102,26 @@ type worker struct {
 	lockSeqNum      bool
 
 	*ddlCtx
-	*jobContext
+	*JobContext
 }
 
-// jobContext is the ddl job execution context.
-type jobContext struct {
+// JobContext is the ddl job execution context.
+type JobContext struct {
 	// below fields are cache for top sql
 	ddlJobCtx          context.Context
 	cacheSQL           string
 	cacheNormalizedSQL string
 	cacheDigest        *parser.Digest
+}
+
+// NewJobContext returns a new ddl job context.
+func NewJobContext() *JobContext {
+	return &JobContext{
+		ddlJobCtx:          context.Background(),
+		cacheSQL:           "",
+		cacheNormalizedSQL: "",
+		cacheDigest:        nil,
+	}
 }
 
 func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRangeMgr delRangeManager, dCtx *ddlCtx) (*worker, error) {
@@ -120,16 +130,11 @@ func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRan
 		return nil, err
 	}
 	worker := &worker{
-		id:       ddlWorkerID.Add(1),
-		tp:       tp,
-		ddlJobCh: make(chan struct{}, 1),
-		ctx:      ctx,
-		jobContext: &jobContext{
-			ddlJobCtx:          context.Background(),
-			cacheSQL:           "",
-			cacheNormalizedSQL: "",
-			cacheDigest:        nil,
-		},
+		id:              ddlWorkerID.Add(1),
+		tp:              tp,
+		ddlJobCh:        make(chan struct{}, 1),
+		ctx:             ctx,
+		JobContext:      NewJobContext(),
 		ddlCtx:          dCtx,
 		reorgCtx:        &reorgCtx{notifyCancelReorgJob: 0},
 		sessPool:        sessPool,
@@ -156,7 +161,7 @@ func (w *worker) typeStr() string {
 
 func (w *worker) getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elements []*meta.Element) (*reorgInfo, error) {
 	//TODO: remove getReorgInfo code, after refactor the old ddl test.
-	return getReorgInfo(w.jobContext, d, t, job, tbl, elements, w)
+	return getReorgInfo(w.JobContext, d, t, job, tbl, elements, w)
 }
 
 func (w *worker) String() string {
@@ -560,7 +565,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		updateRawArgs = false
 	}
 	w.writeDDLSeqNum(job)
-	w.jobContext.resetWhenJobFinish()
+	w.JobContext.resetWhenJobFinish()
 	err = t.AddHistoryDDLJob(job, updateRawArgs)
 	return errors.Trace(err)
 }
@@ -613,7 +618,7 @@ func newMetaWithQueueTp(txn kv.Transaction, tp workerType) *meta.Meta {
 	return meta.NewMeta(txn)
 }
 
-func (w *jobContext) setDDLLabelForTopSQL(job *model.Job) {
+func (w *JobContext) setDDLLabelForTopSQL(job *model.Job) {
 	if !topsqlstate.TopSQLEnabled() || job == nil {
 		return
 	}
@@ -845,7 +850,8 @@ func (w *worker) HandleDDLJob(d *ddlCtx, job *model.Job, ch chan struct{}, level
 	return nil
 }
 
-func (w *jobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
+func (w *JobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
+
 	if !topsqlstate.TopSQLEnabled() || w.cacheDigest == nil {
 		return nil
 	}
@@ -858,7 +864,7 @@ func (w *jobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagg
 	return tagger
 }
 
-func (w *jobContext) resetWhenJobFinish() {
+func (w *JobContext) resetWhenJobFinish() {
 	w.ddlJobCtx = context.Background()
 	w.cacheSQL = ""
 	w.cacheDigest = nil

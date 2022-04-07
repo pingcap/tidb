@@ -644,6 +644,8 @@ const (
 	TiDBGCConcurrency = "tidb_gc_concurrency"
 	// TiDBGCScanLockMode enables the green GC feature (default)
 	TiDBGCScanLockMode = "tidb_gc_scan_lock_mode"
+	// TiDBGCMaxWaitTime sets max time for gc advances the safepoint delayed by active transactions
+	TiDBGCMaxWaitTime = "tidb_gc_max_wait_time"
 	// TiDBEnableEnhancedSecurity restricts SUPER users from certain operations.
 	TiDBEnableEnhancedSecurity = "tidb_enable_enhanced_security"
 	// TiDBEnableHistoricalStats enables the historical statistics feature (default off)
@@ -831,6 +833,7 @@ const (
 	DefRCReadCheckTS                      = false
 	DefTiDBRemoveOrderbyInSubquery        = false
 	DefTiDBReadStaleness                  = 0
+	DefTiDBGCMaxWaitTime                  = 24 * 60 * 60
 	DefTiDBEnableConcurrencyDDL           = true
 )
 
@@ -866,5 +869,6 @@ var (
 	StatsLoadSyncWait                     = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
 	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
 	MemQuotaBindingCache                  = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
+	GCMaxWaitTime                         = atomic.NewInt64(DefTiDBGCMaxWaitTime)
 	AllowConcurrencyDDL                   = atomic.NewBool(DefTiDBEnableConcurrencyDDL)
 )
