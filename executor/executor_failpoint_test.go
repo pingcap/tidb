@@ -262,7 +262,7 @@ func TestKillTableReader(t *testing.T) {
 	wg.Wait()
 }
 
-func (s *testSerialSuite1) TestCollectCopRuntimeStats(t *testing.T) {
+func TestCollectCopRuntimeStats(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
