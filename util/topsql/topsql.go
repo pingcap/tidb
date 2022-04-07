@@ -86,6 +86,35 @@ var (
 )
 
 // AttachSQLInfo attach the sql information info top sql.
+func AttachSQLAndPlanInfo(ctx context.Context, sqlDigest *parser.Digest, planDigest *parser.Digest) context.Context {
+	if sqlDigest == nil || len(sqlDigest.Bytes()) == 0 {
+		return ctx
+	}
+	var sqlDigestBytes, planDigestBytes []byte
+	sqlDigestBytes = sqlDigest.Bytes()
+	if planDigest != nil {
+		planDigestBytes = planDigest.Bytes()
+		topSQLAttachInfoCounterSQLPlanDigest.Add(1)
+	} else {
+		topSQLAttachInfoCounterSQLDigest.Add(1)
+	}
+	ctx = collector.CtxWithDigest(ctx, sqlDigestBytes, planDigestBytes)
+	pprof.SetGoroutineLabels(ctx)
+	return ctx
+}
+
+func RegisterMetaInfo(normalizedSQL string, sqlDigest *parser.Digest, normalizedPlan string, planDigest *parser.Digest, isInternal bool) {
+	if sqlDigest != nil {
+		sqlDigestBytes := sqlDigest.Bytes()
+		linkSQLTextWithDigest(sqlDigestBytes, normalizedSQL, isInternal)
+	}
+	if len(normalizedPlan) > 0 && planDigest != nil {
+		planDigestBytes := planDigest.Bytes()
+		linkPlanTextWithDigest(planDigestBytes, normalizedPlan)
+	}
+}
+
+// AttachSQLInfo attach the sql information info top sql.
 func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.Digest, normalizedPlan string, planDigest *parser.Digest, isInternal bool, noNeedRecordSQLMeta bool) context.Context {
 	if len(normalizedSQL) == 0 || sqlDigest == nil || len(sqlDigest.Bytes()) == 0 {
 		return ctx

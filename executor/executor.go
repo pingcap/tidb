@@ -1971,7 +1971,8 @@ func attachSQLAndPlanInExecForTopSQL(ctx context.Context, sessVars *variable.Ses
 	if stmtCtx.IsAttachedSQLAndPlan.CAS(false, true) {
 		normalizedSQL, sqlDigest := stmtCtx.SQLDigest()
 		normalizedPlan, planDigest := getPlanDigest(stmtCtx)
-		ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, normalizedPlan, planDigest, sessVars.InRestrictedSQL, false)
+		topsql.RegisterMetaInfo(normalizedSQL, sqlDigest, normalizedPlan, planDigest, sessVars.InRestrictedSQL)
+		//ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, normalizedPlan, planDigest, sessVars.InRestrictedSQL, false)
 	}
 	return ctx
 }

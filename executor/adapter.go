@@ -336,13 +336,13 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 func (a *ExecStmt) setPlanLabelForTopSQL(ctx context.Context) context.Context {
 	vars := a.Ctx.GetSessionVars()
 	vars.StmtCtx.FinalPlan = a.Plan
+	normalizedSQL, sqlDigest := vars.StmtCtx.SQLDigest()
+	normalizedPlan, planDigest := getPlanDigest(vars.StmtCtx)
 	if !topsqlstate.TopSQLEnabled() {
-		return ctx
+		return topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
 	}
 	vars.StmtCtx.IsAttachedSQLAndPlan.Store(true)
 	isAttachedSQL := vars.StmtCtx.IsAttachedSQL.Load()
-	normalizedSQL, sqlDigest := vars.StmtCtx.SQLDigest()
-	normalizedPlan, planDigest := getPlanDigest(vars.StmtCtx)
 	if len(normalizedPlan) == 0 && isAttachedSQL {
 		return ctx
 	}
