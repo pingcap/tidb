@@ -504,6 +504,22 @@ func (job *Job) IsRunning() bool {
 	return job.State == JobStateRunning
 }
 
+// MayNeedReorg indicates that this job may need to reorganize the data.
+func (job *Job) MayNeedReorg() bool {
+	switch job.Type {
+	case ActionAddIndex, ActionAddPrimaryKey:
+		return true
+	case ActionModifyColumn:
+		if len(job.CtxVars) > 0 {
+			needReorg, ok := job.CtxVars[0].(bool)
+			return ok && needReorg
+		}
+		return false
+	default:
+		return false
+	}
+}
+
 // JobState is for job state.
 type JobState byte
 

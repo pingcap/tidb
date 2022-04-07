@@ -70,6 +70,12 @@ type LazyTxn struct {
 	}
 }
 
+// SetOption sets an option with a value, when val is nil, uses the default
+// value of this option.
+func (txn *LazyTxn) SetOption(opt int, val interface{}) {
+	txn.Transaction.SetOption(opt, val)
+}
+
 // GetTableInfo returns the cached index name.
 func (txn *LazyTxn) GetTableInfo(id int64) *model.TableInfo {
 	return txn.Transaction.GetTableInfo(id)

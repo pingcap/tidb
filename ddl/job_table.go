@@ -371,7 +371,7 @@ func (d *ddl) addDDLJobs(jobs []*model.Job) error {
 		if i != 0 {
 			sql += ","
 		}
-		sql += fmt.Sprintf("(%d, %t, %d, %d, 0x%x, %d, %t)", job.ID, mayNeedReorg(job), job.SchemaID, job.TableID, b, 0, job.Type == model.ActionDropSchema)
+		sql += fmt.Sprintf("(%d, %t, %d, %d, 0x%x, %d, %t)", job.ID, job.MayNeedReorg(), job.SchemaID, job.TableID, b, 0, job.Type == model.ActionDropSchema)
 	}
 	logutil.BgLogger().Debug("add ddl job to table", zap.String("sql", sql))
 	sess, err := d.sessPool.get()

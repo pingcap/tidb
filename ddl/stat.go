@@ -18,9 +18,11 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/admin"
+	"go.uber.org/zap"
 )
 
 var (
@@ -51,17 +53,29 @@ func (d *ddl) Stats(vars *variable.SessionVars) (map[string]interface{}, error) 
 	m := make(map[string]interface{})
 	m[serverID] = d.uuid
 	var ddlInfo *admin.DDLInfo
-
-	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
-		var err1 error
-		ddlInfo, err1 = admin.GetDDLInfo(txn)
-		if err1 != nil {
-			return errors.Trace(err1)
+	var err error
+	if variable.AllowConcurrencyDDL.Load() {
+		sess, err := d.sessPool.get()
+		if err != nil {
+			log.Fatal("fail to get sessPool", zap.Error(err))
 		}
-		return errors.Trace(err1)
-	})
-	if err != nil {
-		return nil, errors.Trace(err)
+		defer d.sessPool.put(sess)
+		ddlInfo, err = admin.GetConcurrencyDDLInfo(d.ctx, sess)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	} else {
+		err = kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+			var err1 error
+			ddlInfo, err1 = admin.GetDDLInfo(txn)
+			if err1 != nil {
+				return errors.Trace(err1)
+			}
+			return errors.Trace(err1)
+		})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	m[ddlSchemaVersion] = ddlInfo.SchemaVer

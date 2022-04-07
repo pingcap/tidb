@@ -159,7 +159,13 @@ func (s *testSuite3) TestAdmin(c *C) {
 	c.Assert(row.Len(), Equals, 6)
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	ddlInfo, err := admin.GetDDLInfo(txn)
+	var ddlInfo *admin.DDLInfo
+	if variable.AllowConcurrencyDDL.Load() {
+		internal := testkit.NewTestKit(c, s.store)
+		ddlInfo, err = admin.GetConcurrencyDDLInfo(ctx, internal.Se)
+	} else {
+		ddlInfo, err = admin.GetDDLInfo(txn)
+	}
 	c.Assert(err, IsNil)
 	c.Assert(row.GetInt64(0), Equals, ddlInfo.SchemaVer)
 	// TODO: Pass this test.

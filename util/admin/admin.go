@@ -50,6 +50,43 @@ type DDLInfo struct {
 	Jobs        []*model.Job // It's the currently running jobs.
 }
 
+// GetConcurrencyDDLInfo returns ConcurrencyDDL DDL information.
+func GetConcurrencyDDLInfo(ctx context.Context, sess sessionctx.Context) (*DDLInfo, error) {
+	var err error
+	info := &DDLInfo{}
+	if err = sess.NewTxn(ctx); err != nil {
+		return nil, err
+	}
+	txn, err := sess.Txn(true)
+	if err != nil {
+		return nil, err
+	}
+	jobs, err := GetConcurrencyDDLJobs(sess)
+	if err != nil {
+		return nil, err
+	}
+	t := meta.NewMeta(txn)
+	info.SchemaVer, err = t.GetSchemaVersion()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	var addIdxJob *model.Job
+	for _, job := range jobs {
+		info.Jobs = append(info.Jobs, job)
+		if job.MayNeedReorg() {
+			addIdxJob = job
+		}
+	}
+	_, info.ReorgHandle, _, _, err = GetDDLReorgHandle(addIdxJob, sess)
+	if err != nil {
+		if meta.ErrDDLReorgElementNotExist.Equal(err) {
+			return info, nil
+		}
+		return nil, errors.Trace(err)
+	}
+	return info, nil
+}
+
 // GetDDLInfo returns DDL information.
 func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 	var err error
