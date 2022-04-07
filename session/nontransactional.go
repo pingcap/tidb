@@ -7,12 +7,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil"
@@ -34,18 +34,18 @@ func (j job) String() string {
 	return fmt.Sprintf("job id: %d, job size: %d, range: [%s, %s]", j.jobID, j.jobSize, j.start.String(), j.end.String())
 }
 
-func handleNonTransactionalDelete(s sqlexec.Statement, ctx context.Context, se *session) (sqlexec.RecordSet, error) {
+func HandleNonTransactionalDelete(stmt *ast.NonTransactionalDeleteStmt, ctx context.Context, se Session) (sqlexec.RecordSet, error) {
+	core.Preprocess(se, stmt)
 	if !(se.GetSessionVars().IsAutocommit() && !se.GetSessionVars().InTxn()) {
 		return nil, errors.Errorf("non-transactional statement can only run in auto-commit mode. auto=commit:%v, inTxn:%v",
 			se.GetSessionVars().IsAutocommit(), se.GetSessionVars().InTxn())
 	}
-	stmt := s.(*executor.ExecStmt).StmtNode.(*ast.NonTransactionalDeleteStmt)
 	tableName, selectSQL, err := buildSelectSQL(stmt)
 	if err != nil {
 		return nil, err
 	}
 	if stmt.DryRun == ast.DryRunQuery {
-		return buildDryRunResults(stmt.DryRun, []string{selectSQL}, se.sessionVars.BatchSize.MaxChunkSize)
+		return buildDryRunResults(stmt.DryRun, []string{selectSQL}, se.GetSessionVars().BatchSize.MaxChunkSize)
 	}
 	jobs, err := getShardKeys(stmt, se, tableName, selectSQL)
 	if err != nil {
@@ -57,9 +57,9 @@ func handleNonTransactionalDelete(s sqlexec.Statement, ctx context.Context, se *
 		return nil, err
 	}
 	if stmt.DryRun == ast.DryRunSplitDml {
-		return buildDryRunResults(stmt.DryRun, splitStmts, se.sessionVars.BatchSize.MaxChunkSize)
+		return buildDryRunResults(stmt.DryRun, splitStmts, se.GetSessionVars().BatchSize.MaxChunkSize)
 	}
-	return buildExecuteResults(jobs, se.sessionVars.BatchSize.MaxChunkSize)
+	return buildExecuteResults(jobs, se.GetSessionVars().BatchSize.MaxChunkSize)
 }
 
 // single-threaded worker. work on the key range [start, end]

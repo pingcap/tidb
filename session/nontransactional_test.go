@@ -9,6 +9,9 @@ import (
 )
 
 func TestNonTransactionalDelete(t *testing.T) {
+	if !*withTiKV {
+		return
+	}
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
