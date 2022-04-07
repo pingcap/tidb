@@ -22,10 +22,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/kv"
-
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
