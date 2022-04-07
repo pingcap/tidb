@@ -41,6 +41,7 @@ type MergeRangesStat struct {
 	MergedRegionBytesAvg int
 }
 
+// NeedsMerge checks whether two ranges needs to be merged.
 func NeedsMerge(left, right *rtree.Range, splitSizeBytes, splitKeyCount uint64) bool {
 	leftBytes, leftKeys := left.BytesAndKeys()
 	rightBytes, rightKeys := right.BytesAndKeys()
