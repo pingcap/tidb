@@ -811,35 +811,37 @@ import (
 
 %token not2
 %type	<expr>
-	Expression             "expression"
-	MaxValueOrExpression   "maxvalue or expression"
-	BoolPri                "boolean primary expression"
-	ExprOrDefault          "expression or default"
-	PredicateExpr          "Predicate expression factor"
-	SetExpr                "Set variable statement value's expression"
-	BitExpr                "bit expression"
-	SimpleExpr             "simple expression"
-	SimpleIdent            "Simple Identifier expression"
-	SumExpr                "aggregate functions"
-	FunctionCallGeneric    "Function call with Identifier"
-	FunctionCallKeyword    "Function call with keyword as function name"
-	FunctionCallNonKeyword "Function call with nonkeyword as function name"
-	Literal                "literal value"
-	Variable               "User or system variable"
-	SystemVariable         "System defined variable name"
-	UserVariable           "User defined variable name"
-	SubSelect              "Sub Select"
-	StringLiteral          "text literal"
-	ExpressionOpt          "Optional expression"
-	SignedLiteral          "Literal or NumLiteral with sign"
-	DefaultValueExpr       "DefaultValueExpr(Now or Signed Literal)"
-	NowSymOptionFraction   "NowSym with optional fraction part"
-	CharsetNameOrDefault   "Character set name or default"
-	NextValueForSequence   "Default nextval expression"
-	FunctionNameSequence   "Function with sequence function call"
-	WindowFuncCall         "WINDOW function call"
-	RepeatableOpt          "Repeatable optional in sample clause"
-	ProcedureCall          "Procedure call with Identifier or identifier"
+	Expression                      "expression"
+	MaxValueOrExpression            "maxvalue or expression"
+	BoolPri                         "boolean primary expression"
+	ExprOrDefault                   "expression or default"
+	PredicateExpr                   "Predicate expression factor"
+	SetExpr                         "Set variable statement value's expression"
+	BitExpr                         "bit expression"
+	SimpleExpr                      "simple expression"
+	SimpleIdent                     "Simple Identifier expression"
+	SumExpr                         "aggregate functions"
+	FunctionCallGeneric             "Function call with Identifier"
+	FunctionCallKeyword             "Function call with keyword as function name"
+	FunctionCallNonKeyword          "Function call with nonkeyword as function name"
+	Literal                         "literal value"
+	Variable                        "User or system variable"
+	SystemVariable                  "System defined variable name"
+	UserVariable                    "User defined variable name"
+	SubSelect                       "Sub Select"
+	StringLiteral                   "text literal"
+	ExpressionOpt                   "Optional expression"
+	SignedLiteral                   "Literal or NumLiteral with sign"
+	DefaultValueExpr                "DefaultValueExpr(Now or Signed Literal)"
+	NowSymOptionFraction            "NowSym with optional fraction part"
+	NowSymOptionFractionParentheses "NowSym with optional fraction part within potential parentheses"
+	CharsetNameOrDefault            "Character set name or default"
+	NextValueForSequence            "Default nextval expression"
+	BuiltinFunction                 "Default builtin functions"
+	FunctionNameSequence            "Function with sequence function call"
+	WindowFuncCall                  "WINDOW function call"
+	RepeatableOpt                   "Repeatable optional in sample clause"
+	ProcedureCall                   "Procedure call with Identifier or identifier"
 
 %type	<statement>
 	AdminStmt                  "Check table statement or show ddl statement"
@@ -3322,19 +3324,46 @@ ReferOpt:
 
 /*
  * The DEFAULT clause specifies a default value for a column.
- * With one exception, the default value must be a constant;
- * it cannot be a function or an expression. This means, for example,
- * that you cannot set the default for a date column to be the value of
- * a function such as NOW() or CURRENT_DATE. The exception is that you
- * can specify CURRENT_TIMESTAMP as the default for a TIMESTAMP or DATETIME column.
+ * It can be a function or an expression. This means, for example,
+ * that you can set the default for a date column to be the value of
+ * a function such as NOW() or CURRENT_DATE. While in MySQL 8.0
+ * expression default values are required to be enclosed in parentheses,
+ * they are NOT required so in TiDB.
  *
- * See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
- *      https://github.com/mysql/mysql-server/blob/5.7/sql/sql_yacc.yy#L6832
+ * See https://dev.mysql.com/doc/refman/8.0/en/create-table.html
+ *     https://dev.mysql.com/doc/refman/8.0/en/data-type-defaults.html
  */
 DefaultValueExpr:
-	NowSymOptionFraction
+	NowSymOptionFractionParentheses
 |	SignedLiteral
 |	NextValueForSequence
+|	BuiltinFunction
+
+BuiltinFunction:
+	'(' BuiltinFunction ')'
+	{
+		$$ = $2.(*ast.FuncCallExpr)
+	}
+|	identifier '(' ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+		}
+	}
+|	identifier '(' ExpressionList ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args:   $3.([]ast.ExprNode),
+		}
+	}
+
+NowSymOptionFractionParentheses:
+	'(' NowSymOptionFractionParentheses ')'
+	{
+		$$ = $2.(*ast.FuncCallExpr)
+	}
+|	NowSymOptionFraction
 
 NowSymOptionFraction:
 	NowSym
