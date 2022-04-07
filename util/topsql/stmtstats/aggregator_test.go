@@ -15,6 +15,7 @@
 package stmtstats
 
 import (
+	"math/rand"
 	"sync"
 	"testing"
 	"time"
@@ -69,19 +70,23 @@ func Test_aggregator_register_collect(t *testing.T) {
 }
 
 func Test_aggregator_run_close(t *testing.T) {
-	wg := sync.WaitGroup{}
 	a := newAggregator()
 	assert.True(t, a.closed())
-	wg.Add(1)
-	go func() {
-		a.run()
-		wg.Done()
-	}()
+	a.start()
 	time.Sleep(100 * time.Millisecond)
 	assert.False(t, a.closed())
 	a.close()
-	wg.Wait()
 	assert.True(t, a.closed())
+
+	// randomly start and close
+	for i := 0; i < 100; i++ {
+		if rand.Intn(2) == 0 {
+			a.start()
+		} else {
+			a.close()
+		}
+	}
+	a.close()
 }
 
 func TestAggregatorDisableAggregate(t *testing.T) {
@@ -94,12 +99,7 @@ func TestAggregatorDisableAggregate(t *testing.T) {
 		mu.Unlock()
 	}))
 
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	go func() {
-		a.run()
-		wg.Done()
-	}()
+	a.start()
 
 	stats := &StatementStats{
 		data: StatementStatsMap{
@@ -121,7 +121,6 @@ func TestAggregatorDisableAggregate(t *testing.T) {
 	state.DisableTopSQL()
 
 	a.close()
-	wg.Wait()
 }
 
 type mockCollector struct {

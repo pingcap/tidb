@@ -242,7 +242,7 @@ func (rm *MockRegionManager) GetRegion(id uint64) *metapb.Region {
 }
 
 // GetRegionByKey gets a region by the key.
-func (rm *MockRegionManager) GetRegionByKey(key []byte) (region *metapb.Region, peer *metapb.Peer) {
+func (rm *MockRegionManager) GetRegionByKey(key []byte) (region *metapb.Region, peer *metapb.Peer, buckets *metapb.Buckets) {
 	rm.mu.RLock()
 	defer rm.mu.RUnlock()
 	rm.sortedRegions.AscendGreaterOrEqual(newBtreeSearchItem(key), func(item btree.Item) bool {
@@ -254,9 +254,9 @@ func (rm *MockRegionManager) GetRegionByKey(key []byte) (region *metapb.Region, 
 		return false
 	})
 	if region == nil || !rm.regionContainsKey(region, key) {
-		return nil, nil
+		return nil, nil, nil
 	}
-	return proto.Clone(region).(*metapb.Region), proto.Clone(region.Peers[0]).(*metapb.Peer)
+	return proto.Clone(region).(*metapb.Region), proto.Clone(region.Peers[0]).(*metapb.Peer), nil
 }
 
 // GetRegionByEndKey gets a region by the end key.
@@ -720,13 +720,13 @@ func (pd *MockPD) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, 
 }
 
 // GetRegion implements gRPC PDServer.
-func (pd *MockPD) GetRegion(ctx context.Context, key []byte) (*pdclient.Region, error) {
-	r, p := pd.rm.GetRegionByKey(key)
-	return &pdclient.Region{Meta: r, Leader: p}, nil
+func (pd *MockPD) GetRegion(ctx context.Context, key []byte, opts ...pdclient.GetRegionOption) (*pdclient.Region, error) {
+	r, p, b := pd.rm.GetRegionByKey(key)
+	return &pdclient.Region{Meta: r, Leader: p, Buckets: b}, nil
 }
 
 // GetRegionByID implements gRPC PDServer.
-func (pd *MockPD) GetRegionByID(ctx context.Context, regionID uint64) (*pdclient.Region, error) {
+func (pd *MockPD) GetRegionByID(ctx context.Context, regionID uint64, opts ...pdclient.GetRegionOption) (*pdclient.Region, error) {
 	pd.rm.mu.RLock()
 	defer pd.rm.mu.RUnlock()
 
@@ -813,7 +813,7 @@ func GetTS() (int64, int64) {
 }
 
 // GetPrevRegion gets the previous region and its leader Peer of the region where the key is located.
-func (pd *MockPD) GetPrevRegion(ctx context.Context, key []byte) (*pdclient.Region, error) {
+func (pd *MockPD) GetPrevRegion(ctx context.Context, key []byte, opts ...pdclient.GetRegionOption) (*pdclient.Region, error) {
 	r, p := pd.rm.GetRegionByEndKey(key)
 	return &pdclient.Region{Meta: r, Leader: p}, nil
 }

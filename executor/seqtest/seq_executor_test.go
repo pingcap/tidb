@@ -33,8 +33,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
+	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -1402,15 +1402,15 @@ func TestAutoRandRecoverTable(t *testing.T) {
 	tk.MustExec("drop table if exists t_recover_auto_rand")
 	defer func(originGC bool) {
 		if originGC {
-			ddl.EmulatorGCEnable()
+			util.EmulatorGCEnable()
 		} else {
-			ddl.EmulatorGCDisable()
+			util.EmulatorGCDisable()
 		}
-	}(ddl.IsEmulatorGCEnable())
+	}(util.IsEmulatorGCEnable())
 
 	// Disable emulator GC.
 	// Otherwise, emulator GC will delete table record as soon as possible after execute drop table ddl.
-	ddl.EmulatorGCDisable()
+	util.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
 	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
@@ -1477,16 +1477,16 @@ func TestOOMPanicInHashJoinWhenFetchBuildRows(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
-	fpName := "github.com/pingcap/tidb/executor/errorFetchBuildSideRowsMockOOMPanic"
-	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`))
-	defer func() {
-		require.NoError(t, failpoint.Disable(fpName))
-	}()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(c1 int, c2 int)")
 	tk.MustExec("insert into t values(1,1),(2,2)")
+	fpName := "github.com/pingcap/tidb/executor/errorFetchBuildSideRowsMockOOMPanic"
+	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName))
+	}()
 	err := tk.QueryToErr("select * from t as t2  join t as t1 where t1.c1=t2.c1")
 	require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
 }

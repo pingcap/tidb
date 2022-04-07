@@ -67,17 +67,18 @@ CTE_0	2.00	root		Recursive CTE
     └─CTETable_17	1.00	root		Scan on CTE_0
 explain with cte(a) as (with recursive cte1(a) as (select 1 union select a + 1 from cte1 where a < 10) select * from cte1) select * from cte t1, cte t2;
 id	estRows	task	access object	operator info
-HashJoin_24	4.00	root		CARTESIAN inner join
-├─CTEFullScan_27(Build)	2.00	root	CTE:t2	data:CTE_0
-└─CTEFullScan_26(Probe)	2.00	root	CTE:t1	data:CTE_0
-CTE_0	2.00	root		Non-Recursive CTE
-└─CTEFullScan_21(Seed Part)	2.00	root	CTE:cte1	data:CTE_1
+HashJoin_26	2.56	root		CARTESIAN inner join
+├─CTEFullScan_29(Build)	1.60	root	CTE:t2	data:CTE_0
+└─CTEFullScan_28(Probe)	1.60	root	CTE:t1	data:CTE_0
+CTE_0	1.60	root		Non-Recursive CTE
+└─Selection_21(Seed Part)	1.60	root		1
+  └─CTEFullScan_23	2.00	root	CTE:cte1	data:CTE_1
 CTE_1	2.00	root		Recursive CTE
-├─Projection_15(Seed Part)	1.00	root		1->Column#2
-│ └─TableDual_16	1.00	root		rows:1
-└─Projection_17(Recursive Part)	0.80	root		cast(plus(Column#3, 1), bigint(1) BINARY)->Column#5
-  └─Selection_18	0.80	root		lt(Column#3, 10)
-    └─CTETable_19	1.00	root		Scan on CTE_1
+├─Projection_16(Seed Part)	1.00	root		1->Column#2
+│ └─TableDual_17	1.00	root		rows:1
+└─Projection_18(Recursive Part)	0.80	root		cast(plus(Column#3, 1), bigint(1) BINARY)->Column#5
+  └─Selection_19	0.80	root		lt(Column#3, 10)
+    └─CTETable_20	1.00	root		Scan on CTE_1
 explain with recursive cte1(a) as (select 1 union select a+1 from cte1 where a < 10), cte2(a) as (select c2 from t1 union select a+1 from cte2 where a < 10) select * from cte1, cte2;
 id	estRows	task	access object	operator info
 HashJoin_37	16002.00	root		CARTESIAN inner join
@@ -97,14 +98,15 @@ CTE_1	8001.00	root		Recursive CTE
     └─CTETable_33	10000.00	root		Scan on CTE_1
 explain with q(a,b) as (select * from t1) select /*+ merge(q) no_merge(q1) */ * from q, q q1 where q.a=1 and q1.a=2;
 id	estRows	task	access object	operator info
-HashJoin_17	64000000.00	root		CARTESIAN inner join
-├─Selection_21(Build)	8000.00	root		eq(test.t1.c1, 2)
-│ └─CTEFullScan_22	10000.00	root	CTE:q1	data:CTE_0
-└─Selection_19(Probe)	8000.00	root		eq(test.t1.c1, 1)
-  └─CTEFullScan_20	10000.00	root	CTE:q	data:CTE_0
-CTE_0	10000.00	root		Non-Recursive CTE
-└─TableReader_12(Seed Part)	10000.00	root		data:TableFullScan_11
-  └─TableFullScan_11	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+HashJoin_19	40960000.00	root		CARTESIAN inner join
+├─Selection_23(Build)	6400.00	root		eq(test.t1.c1, 2)
+│ └─CTEFullScan_24	8000.00	root	CTE:q1	data:CTE_0
+└─Selection_21(Probe)	6400.00	root		eq(test.t1.c1, 1)
+  └─CTEFullScan_22	8000.00	root	CTE:q	data:CTE_0
+CTE_0	8000.00	root		Non-Recursive CTE
+└─Selection_11(Seed Part)	8000.00	root		or(eq(test.t1.c1, 1), eq(test.t1.c1, 2))
+  └─TableReader_14	10000.00	root		data:TableFullScan_13
+    └─TableFullScan_13	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain with recursive cte(a,b) as (select 1, concat('a', 1) union select a+1, concat(b, 1) from cte where a < 5) select * from cte;
 id	estRows	task	access object	operator info
 CTEFullScan_17	2.00	root	CTE:cte	data:CTE_0
@@ -202,3 +204,278 @@ id	estRows	task	access object	operator info
 CTEFullScan_18	0.00	root	CTE:cte1	data:CTE_0
 CTE_0	0.00	root		Non-Recursive CTE
 └─TableDual_16(Seed Part)	0.00	root		rows:0
+CREATE TABLE `customer` (
+`c_customer_sk` int(11) NOT NULL,
+`c_customer_id` char(16) NOT NULL,
+`c_current_cdemo_sk` int(11) DEFAULT NULL,
+`c_current_hdemo_sk` int(11) DEFAULT NULL,
+`c_current_addr_sk` int(11) DEFAULT NULL,
+`c_first_shipto_date_sk` int(11) DEFAULT NULL,
+`c_first_sales_date_sk` int(11) DEFAULT NULL,
+`c_salutation` char(10) DEFAULT NULL,
+`c_first_name` char(20) DEFAULT NULL,
+`c_last_name` char(30) DEFAULT NULL,
+`c_preferred_cust_flag` char(1) DEFAULT NULL,
+`c_birth_day` int(11) DEFAULT NULL,
+`c_birth_month` int(11) DEFAULT NULL,
+`c_birth_year` int(11) DEFAULT NULL,
+`c_birth_country` varchar(20) DEFAULT NULL,
+`c_login` char(13) DEFAULT NULL,
+`c_email_address` char(50) DEFAULT NULL,
+`c_last_review_date_sk` int(11) DEFAULT NULL,
+PRIMARY KEY (`c_customer_sk`) /*T![clustered_index] NONCLUSTERED */
+);
+CREATE TABLE `store_sales` (
+`ss_sold_date_sk` int(11) DEFAULT NULL,
+`ss_sold_time_sk` int(11) DEFAULT NULL,
+`ss_item_sk` int(11) NOT NULL,
+`ss_customer_sk` int(11) DEFAULT NULL,
+`ss_cdemo_sk` int(11) DEFAULT NULL,
+`ss_hdemo_sk` int(11) DEFAULT NULL,
+`ss_addr_sk` int(11) DEFAULT NULL,
+`ss_store_sk` int(11) DEFAULT NULL,
+`ss_promo_sk` int(11) DEFAULT NULL,
+`ss_ticket_number` int(11) NOT NULL,
+`ss_quantity` int(11) DEFAULT NULL,
+`ss_wholesale_cost` decimal(7,2) DEFAULT NULL,
+`ss_list_price` decimal(7,2) DEFAULT NULL,
+`ss_sales_price` decimal(7,2) DEFAULT NULL,
+`ss_ext_discount_amt` decimal(7,2) DEFAULT NULL,
+`ss_ext_sales_price` decimal(7,2) DEFAULT NULL,
+`ss_ext_wholesale_cost` decimal(7,2) DEFAULT NULL,
+`ss_ext_list_price` decimal(7,2) DEFAULT NULL,
+`ss_ext_tax` decimal(7,2) DEFAULT NULL,
+`ss_coupon_amt` decimal(7,2) DEFAULT NULL,
+`ss_net_paid` decimal(7,2) DEFAULT NULL,
+`ss_net_paid_inc_tax` decimal(7,2) DEFAULT NULL,
+`ss_net_profit` decimal(7,2) DEFAULT NULL,
+PRIMARY KEY (`ss_item_sk`,`ss_ticket_number`) /*T![clustered_index] NONCLUSTERED */
+);
+CREATE TABLE `date_dim` (
+`d_date_sk` int(11) NOT NULL,
+`d_date_id` char(16) NOT NULL,
+`d_date` date DEFAULT NULL,
+`d_month_seq` int(11) DEFAULT NULL,
+`d_week_seq` int(11) DEFAULT NULL,
+`d_quarter_seq` int(11) DEFAULT NULL,
+`d_year` int(11) DEFAULT NULL,
+`d_dow` int(11) DEFAULT NULL,
+`d_moy` int(11) DEFAULT NULL,
+`d_dom` int(11) DEFAULT NULL,
+`d_qoy` int(11) DEFAULT NULL,
+`d_fy_year` int(11) DEFAULT NULL,
+`d_fy_quarter_seq` int(11) DEFAULT NULL,
+`d_fy_week_seq` int(11) DEFAULT NULL,
+`d_day_name` char(9) DEFAULT NULL,
+`d_quarter_name` char(6) DEFAULT NULL,
+`d_holiday` char(1) DEFAULT NULL,
+`d_weekend` char(1) DEFAULT NULL,
+`d_following_holiday` char(1) DEFAULT NULL,
+`d_first_dom` int(11) DEFAULT NULL,
+`d_last_dom` int(11) DEFAULT NULL,
+`d_same_day_ly` int(11) DEFAULT NULL,
+`d_same_day_lq` int(11) DEFAULT NULL,
+`d_current_day` char(1) DEFAULT NULL,
+`d_current_week` char(1) DEFAULT NULL,
+`d_current_month` char(1) DEFAULT NULL,
+`d_current_quarter` char(1) DEFAULT NULL,
+`d_current_year` char(1) DEFAULT NULL,
+PRIMARY KEY (`d_date_sk`) /*T![clustered_index] NONCLUSTERED */
+);
+CREATE TABLE `web_sales` (
+`ws_sold_date_sk` int(11) DEFAULT NULL,
+`ws_sold_time_sk` int(11) DEFAULT NULL,
+`ws_ship_date_sk` int(11) DEFAULT NULL,
+`ws_item_sk` int(11) NOT NULL,
+`ws_bill_customer_sk` int(11) DEFAULT NULL,
+`ws_bill_cdemo_sk` int(11) DEFAULT NULL,
+`ws_bill_hdemo_sk` int(11) DEFAULT NULL,
+`ws_bill_addr_sk` int(11) DEFAULT NULL,
+`ws_ship_customer_sk` int(11) DEFAULT NULL,
+`ws_ship_cdemo_sk` int(11) DEFAULT NULL,
+`ws_ship_hdemo_sk` int(11) DEFAULT NULL,
+`ws_ship_addr_sk` int(11) DEFAULT NULL,
+`ws_web_page_sk` int(11) DEFAULT NULL,
+`ws_web_site_sk` int(11) DEFAULT NULL,
+`ws_ship_mode_sk` int(11) DEFAULT NULL,
+`ws_warehouse_sk` int(11) DEFAULT NULL,
+`ws_promo_sk` int(11) DEFAULT NULL,
+`ws_order_number` int(11) NOT NULL,
+`ws_quantity` int(11) DEFAULT NULL,
+`ws_wholesale_cost` decimal(7,2) DEFAULT NULL,
+`ws_list_price` decimal(7,2) DEFAULT NULL,
+`ws_sales_price` decimal(7,2) DEFAULT NULL,
+`ws_ext_discount_amt` decimal(7,2) DEFAULT NULL,
+`ws_ext_sales_price` decimal(7,2) DEFAULT NULL,
+`ws_ext_wholesale_cost` decimal(7,2) DEFAULT NULL,
+`ws_ext_list_price` decimal(7,2) DEFAULT NULL,
+`ws_ext_tax` decimal(7,2) DEFAULT NULL,
+`ws_coupon_amt` decimal(7,2) DEFAULT NULL,
+`ws_ext_ship_cost` decimal(7,2) DEFAULT NULL,
+`ws_net_paid` decimal(7,2) DEFAULT NULL,
+`ws_net_paid_inc_tax` decimal(7,2) DEFAULT NULL,
+`ws_net_paid_inc_ship` decimal(7,2) DEFAULT NULL,
+`ws_net_paid_inc_ship_tax` decimal(7,2) DEFAULT NULL,
+`ws_net_profit` decimal(7,2) DEFAULT NULL,
+PRIMARY KEY (`ws_item_sk`,`ws_order_number`) /*T![clustered_index] NONCLUSTERED */
+);
+desc format='brief' with year_total as (
+select c_customer_id customer_id
+,c_first_name customer_first_name
+,c_last_name customer_last_name
+,c_preferred_cust_flag customer_preferred_cust_flag
+,c_birth_country customer_birth_country
+,c_login customer_login
+,c_email_address customer_email_address
+,d_year dyear
+,sum(ss_ext_list_price-ss_ext_discount_amt) year_total
+,'s' sale_type
+from customer
+,store_sales
+,date_dim
+where c_customer_sk = ss_customer_sk
+and ss_sold_date_sk = d_date_sk
+group by c_customer_id
+,c_first_name
+,c_last_name
+,c_preferred_cust_flag
+,c_birth_country
+,c_login
+,c_email_address
+,d_year
+union all
+select c_customer_id customer_id
+,c_first_name customer_first_name
+,c_last_name customer_last_name
+,c_preferred_cust_flag customer_preferred_cust_flag
+,c_birth_country customer_birth_country
+,c_login customer_login
+,c_email_address customer_email_address
+,d_year dyear
+,sum(ws_ext_list_price-ws_ext_discount_amt) year_total
+,'w' sale_type
+from customer
+,web_sales
+,date_dim
+where c_customer_sk = ws_bill_customer_sk
+and ws_sold_date_sk = d_date_sk
+group by c_customer_id
+,c_first_name
+,c_last_name
+,c_preferred_cust_flag
+,c_birth_country
+,c_login
+,c_email_address
+,d_year
+)
+select
+t_s_secyear.customer_id
+,t_s_secyear.customer_first_name
+,t_s_secyear.customer_last_name
+,t_s_secyear.customer_email_address
+from year_total t_s_firstyear
+,year_total t_s_secyear
+,year_total t_w_firstyear
+,year_total t_w_secyear
+where t_s_secyear.customer_id = t_s_firstyear.customer_id
+and t_s_firstyear.customer_id = t_w_secyear.customer_id
+and t_s_firstyear.customer_id = t_w_firstyear.customer_id
+and t_s_firstyear.sale_type = 's'
+and t_w_firstyear.sale_type = 'w'
+and t_s_secyear.sale_type = 's'
+and t_w_secyear.sale_type = 'w'
+and t_s_firstyear.dyear = 2001
+and t_s_secyear.dyear = 2001+1
+and t_w_firstyear.dyear = 2001
+and t_w_secyear.dyear = 2001+1
+and t_s_firstyear.year_total > 0
+and t_w_firstyear.year_total > 0
+and case when t_w_firstyear.year_total > 0 then t_w_secyear.year_total / t_w_firstyear.year_total else 0.0 end
+> case when t_s_firstyear.year_total > 0 then t_s_secyear.year_total / t_s_firstyear.year_total else 0.0 end
+order by t_s_secyear.customer_id
+,t_s_secyear.customer_first_name
+,t_s_secyear.customer_last_name
+,t_s_secyear.customer_email_address
+limit 100;
+id	estRows	task	access object	operator info
+TopN	40.00	root		Column#180, Column#181, Column#182, Column#186, offset:0, count:100
+└─HashJoin	40.00	root		inner join, equal:[eq(Column#170, Column#200)], other cond:gt(case(gt(Column#198, 0), div(Column#208, Column#198), 0.0), case(gt(Column#178, 0), div(Column#188, Column#178), 0.0))
+  ├─Selection(Build)	40.00	root		eq(Column#207, 2002), eq(Column#209, "w"), not(isnull(Column#200))
+  │ └─CTEFullScan	50.00	root	CTE:t_w_secyear	data:CTE_0
+  └─HashJoin(Probe)	40.00	root		inner join, equal:[eq(Column#170, Column#190)]
+    ├─Selection(Build)	40.00	root		eq(Column#197, 2001), eq(Column#199, "w"), gt(Column#198, 0), not(isnull(Column#190))
+    │ └─CTEFullScan	50.00	root	CTE:t_w_firstyear	data:CTE_0
+    └─HashJoin(Probe)	40.00	root		inner join, equal:[eq(Column#170, Column#180)]
+      ├─Selection(Build)	40.00	root		eq(Column#187, 2002), eq(Column#189, "s"), not(isnull(Column#180))
+      │ └─CTEFullScan	50.00	root	CTE:t_s_secyear	data:CTE_0
+      └─Selection(Probe)	40.00	root		eq(Column#177, 2001), eq(Column#179, "s"), gt(Column#178, 0), not(isnull(Column#170))
+        └─CTEFullScan	50.00	root	CTE:t_s_firstyear	data:CTE_0
+CTE_0	50.00	root		Non-Recursive CTE
+└─Union(Seed Part)	50.00	root		
+  ├─Projection	25.00	root		test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year, Column#73, s->Column#169
+  │ └─Selection	25.00	root		or(or(and(1, and(eq(test.date_dim.d_year, 2001), gt(Column#73, 0))), and(1, eq(test.date_dim.d_year, 2002))), 0)
+  │   └─HashAgg	31.25	root		group by:Column#233, Column#234, Column#235, Column#236, Column#237, Column#238, Column#239, Column#240, funcs:sum(Column#224)->Column#73, funcs:firstrow(Column#225)->test.customer.c_customer_id, funcs:firstrow(Column#226)->test.customer.c_first_name, funcs:firstrow(Column#227)->test.customer.c_last_name, funcs:firstrow(Column#228)->test.customer.c_preferred_cust_flag, funcs:firstrow(Column#229)->test.customer.c_birth_country, funcs:firstrow(Column#230)->test.customer.c_login, funcs:firstrow(Column#231)->test.customer.c_email_address, funcs:firstrow(Column#232)->test.date_dim.d_year
+  │     └─Projection	31.25	root		minus(test.store_sales.ss_ext_list_price, test.store_sales.ss_ext_discount_amt)->Column#224, test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year, test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year
+  │       └─Projection	31.25	root		test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.store_sales.ss_ext_discount_amt, test.store_sales.ss_ext_list_price, test.date_dim.d_year
+  │         └─IndexJoin	31.25	root		inner join, inner:IndexLookUp, outer key:test.store_sales.ss_customer_sk, inner key:test.customer.c_customer_sk, equal cond:eq(test.store_sales.ss_customer_sk, test.customer.c_customer_sk)
+  │           ├─HashJoin(Build)	25.00	root		inner join, equal:[eq(test.date_dim.d_date_sk, test.store_sales.ss_sold_date_sk)]
+  │           │ ├─TableReader(Build)	20.00	root		data:Selection
+  │           │ │ └─Selection	20.00	cop[tikv]		or(and(1, eq(test.date_dim.d_year, 2001)), or(and(1, eq(test.date_dim.d_year, 2002)), 0))
+  │           │ │   └─TableFullScan	10000.00	cop[tikv]	table:date_dim	keep order:false, stats:pseudo
+  │           │ └─TableReader(Probe)	9980.01	root		data:Selection
+  │           │   └─Selection	9980.01	cop[tikv]		not(isnull(test.store_sales.ss_customer_sk)), not(isnull(test.store_sales.ss_sold_date_sk))
+  │           │     └─TableFullScan	10000.00	cop[tikv]	table:store_sales	keep order:false, stats:pseudo
+  │           └─IndexLookUp(Probe)	1.00	root		
+  │             ├─IndexRangeScan(Build)	1.00	cop[tikv]	table:customer, index:PRIMARY(c_customer_sk)	range: decided by [eq(test.customer.c_customer_sk, test.store_sales.ss_customer_sk)], keep order:false, stats:pseudo
+  │             └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:customer	keep order:false, stats:pseudo
+  └─Projection	25.00	root		test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year, Column#158, w->Column#169
+    └─Selection	25.00	root		or(0, or(and(1, and(eq(test.date_dim.d_year, 2001), gt(Column#158, 0))), and(1, eq(test.date_dim.d_year, 2002))))
+      └─HashAgg	31.25	root		group by:Column#250, Column#251, Column#252, Column#253, Column#254, Column#255, Column#256, Column#257, funcs:sum(Column#241)->Column#158, funcs:firstrow(Column#242)->test.customer.c_customer_id, funcs:firstrow(Column#243)->test.customer.c_first_name, funcs:firstrow(Column#244)->test.customer.c_last_name, funcs:firstrow(Column#245)->test.customer.c_preferred_cust_flag, funcs:firstrow(Column#246)->test.customer.c_birth_country, funcs:firstrow(Column#247)->test.customer.c_login, funcs:firstrow(Column#248)->test.customer.c_email_address, funcs:firstrow(Column#249)->test.date_dim.d_year
+        └─Projection	31.25	root		minus(test.web_sales.ws_ext_list_price, test.web_sales.ws_ext_discount_amt)->Column#241, test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year, test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.date_dim.d_year
+          └─Projection	31.25	root		test.customer.c_customer_id, test.customer.c_first_name, test.customer.c_last_name, test.customer.c_preferred_cust_flag, test.customer.c_birth_country, test.customer.c_login, test.customer.c_email_address, test.web_sales.ws_ext_discount_amt, test.web_sales.ws_ext_list_price, test.date_dim.d_year
+            └─IndexJoin	31.25	root		inner join, inner:IndexLookUp, outer key:test.web_sales.ws_bill_customer_sk, inner key:test.customer.c_customer_sk, equal cond:eq(test.web_sales.ws_bill_customer_sk, test.customer.c_customer_sk)
+              ├─HashJoin(Build)	25.00	root		inner join, equal:[eq(test.date_dim.d_date_sk, test.web_sales.ws_sold_date_sk)]
+              │ ├─TableReader(Build)	20.00	root		data:Selection
+              │ │ └─Selection	20.00	cop[tikv]		or(0, or(and(1, eq(test.date_dim.d_year, 2001)), and(1, eq(test.date_dim.d_year, 2002))))
+              │ │   └─TableFullScan	10000.00	cop[tikv]	table:date_dim	keep order:false, stats:pseudo
+              │ └─TableReader(Probe)	9980.01	root		data:Selection
+              │   └─Selection	9980.01	cop[tikv]		not(isnull(test.web_sales.ws_bill_customer_sk)), not(isnull(test.web_sales.ws_sold_date_sk))
+              │     └─TableFullScan	10000.00	cop[tikv]	table:web_sales	keep order:false, stats:pseudo
+              └─IndexLookUp(Probe)	1.00	root		
+                ├─IndexRangeScan(Build)	1.00	cop[tikv]	table:customer, index:PRIMARY(c_customer_sk)	range: decided by [eq(test.customer.c_customer_sk, test.web_sales.ws_bill_customer_sk)], keep order:false, stats:pseudo
+                └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:customer	keep order:false, stats:pseudo
+drop table if exists t1;
+create table t1 (id int, bench_type varchar(10),version varchar(10),tps int(20));
+insert into t1 (id,bench_type,version,tps) values (1,'sysbench','5.4.0',1111111);
+insert into t1 (id,bench_type,version,tps) values (2,'sysbench','6.0.0',222222);
+with all_data as
+(select * from t1
+),version1 as (select * from all_data where version ='5.4.0'
+),version2 as(select * from all_data where version ='6.0.0')
+select v1.tps v1_tps,v2.tps v2_tps
+from version1 v1, version2 v2
+where v1.bench_type =v2.bench_type;
+v1_tps	v2_tps
+1111111	222222
+desc format='brief' with all_data as
+(select * from t1
+),version1 as (select * from all_data where version ='5.4.0'
+),version2 as(select * from all_data where version ='6.0.0')
+select v1.tps v1_tps,v2.tps v2_tps
+from version1 v1, version2 v2
+where v1.bench_type =v2.bench_type;
+id	estRows	task	access object	operator info
+HashJoin	8000.00	root		inner join, equal:[eq(test.t1.bench_type, test.t1.bench_type)]
+├─Selection(Build)	6400.00	root		not(isnull(test.t1.bench_type))
+│ └─CTEFullScan	8000.00	root	CTE:v2	data:CTE_2
+└─Selection(Probe)	6400.00	root		not(isnull(test.t1.bench_type))
+  └─CTEFullScan	8000.00	root	CTE:v1	data:CTE_1
+CTE_2	8000.00	root		Non-Recursive CTE
+└─Selection(Seed Part)	8000.00	root		eq(test.t1.version, "6.0.0"), not(isnull(test.t1.bench_type))
+  └─CTEFullScan	10000.00	root	CTE:all_data	data:CTE_0
+CTE_1	8000.00	root		Non-Recursive CTE
+└─Selection(Seed Part)	8000.00	root		eq(test.t1.version, "5.4.0"), not(isnull(test.t1.bench_type))
+  └─CTEFullScan	10000.00	root	CTE:all_data	data:CTE_0
+CTE_0	10000.00	root		Non-Recursive CTE
+└─TableReader(Seed Part)	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo

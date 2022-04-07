@@ -1881,6 +1881,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.NotFillCache = !opts.SQLCache
 		}
 		sc.WeakConsistency = isWeakConsistencyRead(ctx, stmt)
+		// Try to mark the `RCCheckTS` flag for the first time execution of in-transaction read requests
+		// using read-consistency isolation level.
+		if NeedSetRCCheckTSFlag(ctx, stmt) {
+			sc.RCCheckTS = true
+		}
 	case *ast.SetOprStmt:
 		sc.InSelectStmt = true
 		sc.OverflowAsWarning = true
@@ -2005,4 +2010,14 @@ func isWeakConsistencyRead(ctx sessionctx.Context, node ast.Node) bool {
 	sessionVars := ctx.GetSessionVars()
 	return sessionVars.ConnectionID > 0 && sessionVars.ReadConsistency.IsWeak() &&
 		plannercore.IsAutoCommitTxn(ctx) && plannercore.IsReadOnly(node, sessionVars)
+}
+
+// NeedSetRCCheckTSFlag checks whether it's needed to set `RCCheckTS` flag in current stmtctx.
+func NeedSetRCCheckTSFlag(ctx sessionctx.Context, node ast.Node) bool {
+	sessionVars := ctx.GetSessionVars()
+	if sessionVars.ConnectionID > 0 && sessionVars.RcReadCheckTS && sessionVars.InTxn() &&
+		sessionVars.IsPessimisticReadConsistency() && !sessionVars.RetryInfo.Retrying && plannercore.IsReadOnly(node, sessionVars) {
+		return true
+	}
+	return false
 }

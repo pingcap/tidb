@@ -1602,6 +1602,13 @@ func TestShowVar(t *testing.T) {
 			require.Equal(t, variable.GetSysVar(variable.VersionComment), line[len("version_comment "):])
 		}
 	}
+
+	// Test case insensitive case for show session variables
+	tk.MustExec("SET @@SQL_MODE='NO_BACKSLASH_ESCAPES'")
+	tk.MustQuery("SHOW SESSION VARIABLES like 'sql_mode'").Check(
+		testkit.RowsWithSep("|", "sql_mode|NO_BACKSLASH_ESCAPES"))
+	tk.MustQuery("SHOW SESSION VARIABLES like 'SQL_MODE'").Check(
+		testkit.RowsWithSep("|", "sql_mode|NO_BACKSLASH_ESCAPES"))
 }
 
 func TestIssue19507(t *testing.T) {
@@ -1747,8 +1754,8 @@ func TestShowBindingCache(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int, b int)")
-	tk.MustExec(`set global tidb_mem_quota_bind_cache = 1`)
-	tk.MustQuery("select @@global.tidb_mem_quota_bind_cache").Check(testkit.Rows("1"))
+	tk.MustExec(`set global tidb_mem_quota_binding_cache = 1`)
+	tk.MustQuery("select @@global.tidb_mem_quota_binding_cache").Check(testkit.Rows("1"))
 	tk.MustExec("admin reload bindings;")
 	res := tk.MustQuery("show global bindings")
 	require.Equal(t, 0, len(res.Rows()))
@@ -1757,8 +1764,8 @@ func TestShowBindingCache(t *testing.T) {
 	res = tk.MustQuery("show global bindings")
 	require.Equal(t, 0, len(res.Rows()))
 
-	tk.MustExec(`set global tidb_mem_quota_bind_cache = default`)
-	tk.MustQuery("select @@global.tidb_mem_quota_bind_cache").Check(testkit.Rows("67108864"))
+	tk.MustExec(`set global tidb_mem_quota_binding_cache = default`)
+	tk.MustQuery("select @@global.tidb_mem_quota_binding_cache").Check(testkit.Rows("67108864"))
 	tk.MustExec("admin reload bindings")
 	res = tk.MustQuery("show global bindings")
 	require.Equal(t, 1, len(res.Rows()))
@@ -1766,4 +1773,61 @@ func TestShowBindingCache(t *testing.T) {
 	tk.MustExec("create global binding for select * from t where a > 1 using select * from t where a > 1")
 	res = tk.MustQuery("show global bindings")
 	require.Equal(t, 2, len(res.Rows()))
+}
+
+func TestShowBindingCacheStatus(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
+		"0 0 0 Bytes 64 MB"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx_a(a), index idx_b(b))")
+	result := tk.MustQuery("show global bindings")
+	rows := result.Rows()
+	require.Equal(t, len(rows), 0)
+	tk.MustExec("create global binding for select * from t using select * from t")
+
+	result = tk.MustQuery("show global bindings")
+	rows = result.Rows()
+	require.Equal(t, len(rows), 1)
+
+	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
+		"1 1 159 Bytes 64 MB"))
+
+	tk.MustExec(`set global tidb_mem_quota_binding_cache = 250`)
+	tk.MustQuery(`select @@global.tidb_mem_quota_binding_cache`).Check(testkit.Rows("250"))
+	tk.MustExec("admin reload bindings;")
+	tk.MustExec("create global binding for select * from t where a > 1 using select * from t where a > 1")
+	result = tk.MustQuery("show global bindings")
+	rows = result.Rows()
+	require.Equal(t, len(rows), 1)
+	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
+		"1 2 187 Bytes 250 Bytes"))
+
+	tk.MustExec("drop global binding for select * from t where a > 1")
+	result = tk.MustQuery("show global bindings")
+	rows = result.Rows()
+	require.Equal(t, len(rows), 0)
+	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
+		"0 1 0 Bytes 250 Bytes"))
+
+	tk.MustExec("admin reload bindings")
+	result = tk.MustQuery("show global bindings")
+	rows = result.Rows()
+	require.Equal(t, len(rows), 1)
+	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
+		"1 1 159 Bytes 250 Bytes"))
+
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx_a)")
+
+	result = tk.MustQuery("show global bindings")
+	rows = result.Rows()
+	require.Equal(t, len(rows), 1)
+
+	tk.MustQuery("show binding_cache status").Check(testkit.Rows(
+		"1 1 198 Bytes 250 Bytes"))
 }

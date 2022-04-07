@@ -534,7 +534,7 @@ func OpenCheckpointsDB(ctx context.Context, cfg *config.Config) (DB, error) {
 		return cpdb, nil
 
 	default:
-		return nil, errors.Errorf("Unknown checkpoint driver %s", cfg.Checkpoint.Driver)
+		return nil, common.ErrUnknownCheckpointDriver.GenWithStackByArgs(cfg.Checkpoint.Driver)
 	}
 }
 
@@ -573,7 +573,7 @@ func IsCheckpointsDBExists(ctx context.Context, cfg *config.Config) (bool, error
 		return result, nil
 
 	default:
-		return false, errors.Errorf("Unknown checkpoint driver %s", cfg.Checkpoint.Driver)
+		return false, common.ErrUnknownCheckpointDriver.GenWithStackByArgs(cfg.Checkpoint.Driver)
 	}
 }
 
@@ -954,23 +954,22 @@ type FileCheckpointsDB struct {
 	exStorage   storage.ExternalStorage
 }
 
-func NewFileCheckpointsDB(ctx context.Context, path string) (*FileCheckpointsDB, error) {
+func newFileCheckpointsDB(
+	ctx context.Context,
+	path string,
+	exStorage storage.ExternalStorage,
+	fileName string,
+) (*FileCheckpointsDB, error) {
 	cpdb := &FileCheckpointsDB{
-		path: path,
 		checkpoints: checkpointspb.CheckpointsModel{
 			TaskCheckpoint: &checkpointspb.TaskCheckpointModel{},
 			Checkpoints:    map[string]*checkpointspb.TableCheckpointModel{},
 		},
+		ctx:       ctx,
+		path:      path,
+		fileName:  fileName,
+		exStorage: exStorage,
 	}
-
-	// init ExternalStorage
-	s, fileName, err := createExstorageByCompletePath(ctx, path)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	cpdb.ctx = ctx
-	cpdb.fileName = fileName
-	cpdb.exStorage = s
 
 	if cpdb.fileName == "" {
 		return nil, errors.Errorf("the checkpoint DSN '%s' must not be a directory", path)
@@ -1011,6 +1010,24 @@ func NewFileCheckpointsDB(ctx context.Context, path string) (*FileCheckpointsDB,
 		}
 	}
 	return cpdb, nil
+}
+
+func NewFileCheckpointsDB(ctx context.Context, path string) (*FileCheckpointsDB, error) {
+	// init ExternalStorage
+	s, fileName, err := createExstorageByCompletePath(ctx, path)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return newFileCheckpointsDB(ctx, path, s, fileName)
+}
+
+func NewFileCheckpointsDBWithExstorageFileName(
+	ctx context.Context,
+	path string,
+	s storage.ExternalStorage,
+	fileName string,
+) (*FileCheckpointsDB, error) {
+	return newFileCheckpointsDB(ctx, path, s, fileName)
 }
 
 // createExstorageByCompletePath create ExternalStorage by completePath and return fileName.
@@ -1423,9 +1440,12 @@ func (cpdb *MySQLCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, table
 		colName = columnTableName
 	}
 
+	// nolint:gosec
 	engineQuery := fmt.Sprintf(`
 		UPDATE %s.%s SET status = %d WHERE %s = ? AND status <= %d;
 	`, cpdb.schema, CheckpointTableNameEngine, CheckpointStatusLoaded, colName, CheckpointStatusMaxInvalid)
+
+	// nolint:gosec
 	tableQuery := fmt.Sprintf(`
 		UPDATE %s.%s SET status = %d WHERE %s = ? AND status <= %d;
 	`, cpdb.schema, CheckpointTableNameTable, CheckpointStatusLoaded, colName, CheckpointStatusMaxInvalid)
@@ -1469,12 +1489,18 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 		WHERE %[2]s = ? AND t.status <= %[3]d
 		GROUP BY t.table_name;
 	`, cpdb.schema, aliasedColName, CheckpointStatusMaxInvalid, CheckpointTableNameTable, CheckpointTableNameEngine)
+
+	// nolint:gosec
 	deleteChunkQuery := fmt.Sprintf(`
 		DELETE FROM %[1]s.%[4]s WHERE table_name IN (SELECT table_name FROM %[1]s.%[5]s WHERE %[2]s = ? AND status <= %[3]d)
 	`, cpdb.schema, colName, CheckpointStatusMaxInvalid, CheckpointTableNameChunk, CheckpointTableNameTable)
+
+	// nolint:gosec
 	deleteEngineQuery := fmt.Sprintf(`
 		DELETE FROM %[1]s.%[4]s WHERE table_name IN (SELECT table_name FROM %[1]s.%[5]s WHERE %[2]s = ? AND status <= %[3]d)
 	`, cpdb.schema, colName, CheckpointStatusMaxInvalid, CheckpointTableNameEngine, CheckpointTableNameTable)
+
+	// nolint:gosec
 	deleteTableQuery := fmt.Sprintf(`
 		DELETE FROM %s.%s WHERE %s = ? AND status <= %d
 	`, cpdb.schema, CheckpointTableNameTable, colName, CheckpointStatusMaxInvalid)

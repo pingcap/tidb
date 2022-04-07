@@ -429,6 +429,19 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		}
 	}
 
+	failpoint.Inject("mockDelayInnerSessionExecute", func() {
+		var curTxnStartTS uint64
+		if cmd != mysql.ComSleep || sctx.GetSessionVars().InTxn() {
+			curTxnStartTS = sctx.GetSessionVars().TxnCtx.StartTS
+		}
+		if sctx.GetSessionVars().SnapshotTS != 0 {
+			curTxnStartTS = sctx.GetSessionVars().SnapshotTS
+		}
+		logutil.BgLogger().Info("Enable mockDelayInnerSessionExecute when execute statement",
+			zap.Uint64("startTS", curTxnStartTS))
+		time.Sleep(200 * time.Millisecond)
+	})
+
 	isPessimistic := sctx.GetSessionVars().TxnCtx.IsPessimistic
 
 	// Special handle for "select for update statement" in pessimistic transaction.
@@ -728,6 +741,7 @@ func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
 	}
 	seCtx.GetSessionVars().TxnCtx.SetForUpdateTS(newForUpdateTS)
 	txn.SetOption(kv.SnapshotTS, seCtx.GetSessionVars().TxnCtx.GetForUpdateTS())
+	seCtx.GetSessionVars().TxnCtx.LastRcReadTs = newForUpdateTS
 	return nil
 }
 
@@ -1171,6 +1185,17 @@ func getEncodedPlan(sctx sessionctx.Context, p plannercore.Plan, genHint bool) (
 	}
 	if genHint {
 		hints := plannercore.GenHintsFromPhysicalPlan(p)
+		for _, tableHint := range sctx.GetSessionVars().StmtCtx.OriginalTableHints {
+			// some hints like 'memory_quota' cannot be extracted from the PhysicalPlan directly,
+			// so we have to iterate all hints from the customer and keep some other necessary hints.
+			switch tableHint.HintName.L {
+			case "memory_quota", "use_toja", "no_index_merge", "max_execution_time",
+				plannercore.HintAggToCop, plannercore.HintIgnoreIndex,
+				plannercore.HintReadFromStorage, plannercore.HintLimitToCop:
+				hints = append(hints, tableHint)
+			}
+		}
+
 		hintStr = hint.RestoreOptimizerHints(hints)
 		sctx.GetSessionVars().StmtCtx.SetPlanHint(hintStr)
 	}

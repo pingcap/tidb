@@ -20,7 +20,6 @@ import (
 	"math"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"go.uber.org/zap"
 )
 
@@ -45,9 +45,6 @@ const (
 )
 
 var (
-	// enableEmulatorGC means whether to enable emulator GC. The default is enable.
-	// In some unit tests, we want to stop emulator GC, then wen can set enableEmulatorGC to 0.
-	emulatorGCEnable = int32(1)
 	// batchInsertDeleteRangeSize is the maximum size for each batch insert statement in the delete-range.
 	batchInsertDeleteRangeSize = 256
 )
@@ -146,26 +143,11 @@ func (dr *delRange) startEmulator() {
 		case <-dr.quitCh:
 			return
 		}
-		if IsEmulatorGCEnable() {
+		if util.IsEmulatorGCEnable() {
 			err := dr.doDelRangeWork()
 			terror.Log(errors.Trace(err))
 		}
 	}
-}
-
-// EmulatorGCEnable enables emulator gc. It exports for testing.
-func EmulatorGCEnable() {
-	atomic.StoreInt32(&emulatorGCEnable, 1)
-}
-
-// EmulatorGCDisable disables emulator gc. It exports for testing.
-func EmulatorGCDisable() {
-	atomic.StoreInt32(&emulatorGCEnable, 0)
-}
-
-// IsEmulatorGCEnable indicates whether emulator GC enabled. It exports for testing.
-func IsEmulatorGCEnable() bool {
-	return atomic.LoadInt32(&emulatorGCEnable) == 1
 }
 
 func (dr *delRange) doDelRangeWork() error {
@@ -198,6 +180,10 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 		finish := true
 		dr.keys = dr.keys[:0]
 		err := kv.RunInNewTxn(context.Background(), dr.store, false, func(ctx context.Context, txn kv.Transaction) error {
+			if topsqlstate.TopSQLEnabled() {
+				// Only when TiDB run without PD(use unistore as storage for test) will run into here, so just set a mock internal resource tagger.
+				txn.SetOption(kv.ResourceGroupTagger, util.GetInternalResourceGroupTaggerForTopSQL())
+			}
 			iter, err := txn.Iter(oldStartKey, r.EndKey)
 			if err != nil {
 				return errors.Trace(err)
