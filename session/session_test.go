@@ -65,6 +65,7 @@ import (
 	newTestkit "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -3986,6 +3987,18 @@ func (s *testSessionSuite2) TestSetEnableRateLimitAction(c *C) {
 	// assert default value
 	result := tk.MustQuery("select @@tidb_enable_rate_limit_action;")
 	result.Check(testkit.Rows("1"))
+	tk.MustExec("use test")
+	tk.MustExec("create table tmp123(id int)")
+	tk.MustQuery("select * from tmp123;")
+	haveRateLimitAction := false
+	action := tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest()
+	for ; action != nil; action = action.GetFallback() {
+		if action.GetPriority() == memory.DefRateLimitPriority {
+			haveRateLimitAction = true
+			break
+		}
+	}
+	c.Assert(haveRateLimitAction, IsTrue)
 
 	// assert set sys variable
 	tk.MustExec("set global tidb_enable_rate_limit_action= '0';")
@@ -3996,6 +4009,16 @@ func (s *testSessionSuite2) TestSetEnableRateLimitAction(c *C) {
 	tk.Se = se
 	result = tk.MustQuery("select @@tidb_enable_rate_limit_action;")
 	result.Check(testkit.Rows("0"))
+
+	haveRateLimitAction = false
+	action = tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest()
+	for ; action != nil; action = action.GetFallback() {
+		if action.GetPriority() == memory.DefRateLimitPriority {
+			haveRateLimitAction = true
+			break
+		}
+	}
+	c.Assert(haveRateLimitAction, IsFalse)
 }
 
 func (s *testSessionSuite3) TestSetVarHint(c *C) {
@@ -5922,6 +5945,7 @@ func (s *testTiDBAsLibrary) TestMemoryLeak(c *C) {
 func (s *testSessionSuite) TestTiDBReadStaleness(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_read_staleness='-5'")
+	tk.MustExec("set @@tidb_read_staleness='-100'")
 	err := tk.ExecToErr("set @@tidb_read_staleness='-5s'")
 	c.Assert(err, NotNil)
 	err = tk.ExecToErr("set @@tidb_read_staleness='foo'")
