@@ -146,6 +146,7 @@ type backfillTaskContext struct {
 type backfillWorker struct {
 	id        int
 	ddlWorker *worker
+	reorgInfo *reorgInfo
 	batchCnt  int
 	sessCtx   sessionctx.Context
 	taskCh    chan *reorgBackfillTask
@@ -155,11 +156,12 @@ type backfillWorker struct {
 	priority  int
 }
 
-func newBackfillWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable) *backfillWorker {
+func newBackfillWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, reorgInfo *reorgInfo) *backfillWorker {
 	return &backfillWorker{
 		id:        id,
 		table:     t,
 		ddlWorker: worker,
+		reorgInfo: reorgInfo,
 		batchCnt:  int(variable.GetDDLReorgBatchSize()),
 		sessCtx:   sessCtx,
 		taskCh:    make(chan *reorgBackfillTask, 1),
@@ -240,7 +242,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 		// if there is panic in bf.BackfillDataInTxn we will never cancel the job.
 		// Because reorgRecordTask may run a long time,
 		// we should check whether this ddl job is still runnable.
-		err := w.ddlWorker.isReorgRunnable(d)
+		err := w.ddlWorker.isReorgRunnable(w.reorgInfo)
 		if err != nil {
 			result.err = err
 			return result
@@ -263,8 +265,8 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 		// small ranges. This will cause the `redo` action in reorganization.
 		// So for added count and warnings collection, it is recommended to collect the statistics in every
 		// successfully committed small ranges rather than fetching it in the total result.
-		w.ddlWorker.reorgCtx.increaseRowCount(int64(taskCtx.addedCount))
-		w.ddlWorker.reorgCtx.mergeWarnings(taskCtx.warnings, taskCtx.warningsCount)
+		d.getReorgCtx(w.reorgInfo.Job).increaseRowCount(int64(taskCtx.addedCount))
+		d.getReorgCtx(w.reorgInfo.Job).mergeWarnings(taskCtx.warnings, taskCtx.warningsCount)
 
 		if num := result.scanCount - lastLogCount; num >= 30000 {
 			lastLogCount = result.scanCount
@@ -399,7 +401,7 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 	nextKey, taskAddedCount, err := w.waitTaskResults(workers, taskCnt, totalAddedCount, startKey)
 	elapsedTime := time.Since(startTime)
 	if err == nil {
-		err = w.isReorgRunnable(reorgInfo.d)
+		err = w.isReorgRunnable(reorgInfo)
 	}
 
 	if err != nil {
@@ -420,7 +422,7 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 	}
 
 	// nextHandle will be updated periodically in runReorgJob, so no need to update it here.
-	w.reorgCtx.setNextKey(nextKey)
+	reorgInfo.d.getReorgCtx(reorgInfo.Job).setNextKey(nextKey)
 	metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblOK).Observe(elapsedTime.Seconds())
 	logutil.BgLogger().Info("[ddl] backfill workers successfully processed batch",
 		zap.ByteString("elementType", reorgInfo.currElement.TypeKey),
@@ -583,7 +585,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 		return errors.Trace(err)
 	}
 
-	if err := w.isReorgRunnable(reorgInfo.d); err != nil {
+	if err := w.isReorgRunnable(reorgInfo); err != nil {
 		return errors.Trace(err)
 	}
 	if startKey == nil && endKey == nil {
@@ -642,19 +644,19 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 
 			switch bfWorkerType {
 			case typeAddIndexWorker:
-				idxWorker := newAddIndexWorker(sessCtx, w, i, t, indexInfo, decodeColMap, reorgInfo.ReorgMeta.SQLMode)
+				idxWorker := newAddIndexWorker(sessCtx, w, i, t, indexInfo, decodeColMap, reorgInfo)
 				idxWorker.priority = job.Priority
 				backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
 				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
 			case typeUpdateColumnWorker:
 				// Setting InCreateOrAlterStmt tells the difference between SELECT casting and ALTER COLUMN casting.
 				sessCtx.GetSessionVars().StmtCtx.InCreateOrAlterStmt = true
-				updateWorker := newUpdateColumnWorker(sessCtx, w, i, t, oldColInfo, colInfo, decodeColMap, reorgInfo.ReorgMeta.SQLMode)
+				updateWorker := newUpdateColumnWorker(sessCtx, w, i, t, oldColInfo, colInfo, decodeColMap, reorgInfo)
 				updateWorker.priority = job.Priority
 				backfillWorkers = append(backfillWorkers, updateWorker.backfillWorker)
 				go updateWorker.backfillWorker.run(reorgInfo.d, updateWorker, job)
 			case typeCleanUpIndexWorker:
-				idxWorker := newCleanUpIndexWorker(sessCtx, w, i, t, decodeColMap, reorgInfo.ReorgMeta.SQLMode)
+				idxWorker := newCleanUpIndexWorker(sessCtx, w, i, t, decodeColMap, reorgInfo)
 				idxWorker.priority = job.Priority
 				backfillWorkers = append(backfillWorkers, idxWorker.backfillWorker)
 				go idxWorker.backfillWorker.run(reorgInfo.d, idxWorker, job)
