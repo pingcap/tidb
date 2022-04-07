@@ -104,12 +104,6 @@ func TestReorg(t *testing.T) {
 
 			rowCount := int64(10)
 			handle := test.handle
-			f := func() error {
-				d.generalWorker().reorgCtx.setRowCount(rowCount)
-				d.generalWorker().reorgCtx.setNextKey(handle.Encoded())
-				time.Sleep(1*ReorgWaitTimeout + 100*time.Millisecond)
-				return nil
-			}
 			job := &model.Job{
 				ID:          1,
 				SnapshotVer: 1, // Make sure it is not zero. So the reorgInfo's first is false.
@@ -123,6 +117,13 @@ func TestReorg(t *testing.T) {
 			rInfo := &reorgInfo{
 				Job:         job,
 				currElement: e,
+				d:           d.ddlCtx,
+			}
+			f := func() error {
+				d.getReorgCtx(job).setRowCount(rowCount)
+				d.getReorgCtx(job).setNextKey(handle.Encoded())
+				time.Sleep(1*ReorgWaitTimeout + 100*time.Millisecond)
+				return nil
 			}
 			mockTbl := tables.MockTableFromMeta(&model.TableInfo{IsCommonHandle: test.isCommonHandle, CommonHandleVersion: 1})
 			err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, f)
@@ -134,7 +135,6 @@ func TestReorg(t *testing.T) {
 				err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, f)
 				if err == nil {
 					require.Equal(t, job.RowCount, rowCount)
-					require.Equal(t, d.generalWorker().reorgCtx.rowCount, int64(0))
 
 					// Test whether reorgInfo's Handle is update.
 					err = txn.Commit(context.Background())
@@ -147,8 +147,6 @@ func TestReorg(t *testing.T) {
 					require.NoError(t, err1)
 					require.Equal(t, info.StartKey, kv.Key(handle.Encoded()))
 					require.Equal(t, info.currElement, e)
-					_, doneHandle, _ := d.generalWorker().reorgCtx.getRowCountAndKey()
-					require.Nil(t, doneHandle)
 					break
 				}
 			}

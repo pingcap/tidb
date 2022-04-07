@@ -108,10 +108,6 @@ func (rc *reorgCtx) notifyReorgCancel() {
 	atomic.StoreInt32(&rc.notifyCancelReorgJob, 1)
 }
 
-func (rc *reorgCtx) cleanNotifyReorgCancel() {
-	atomic.StoreInt32(&rc.notifyCancelReorgJob, 0)
-}
-
 func (rc *reorgCtx) isReorgCanceled() bool {
 	return atomic.LoadInt32(&rc.notifyCancelReorgJob) == 1
 }
@@ -198,6 +194,7 @@ func (rc *reorgCtx) clean() {
 // After that, we can make sure that the worker goroutine is correctly shut down.
 func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.TableInfo, lease time.Duration, f func() error) error {
 	job := reorgInfo.Job
+	d := reorgInfo.d
 	// This is for tests compatible, because most of the early tests try to build the reorg job manually
 	// without reorg meta info, which will cause nil pointer in here.
 	if job.ReorgMeta == nil {
@@ -208,25 +205,17 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 			Location:      &model.TimeZoneLocation{Name: time.UTC.String(), Offset: 0},
 		}
 	}
-	if w.reorgCtx.doneCh == nil {
+	rc := d.getReorgCtx(job)
+	if rc == nil {
 		// Since reorg job will be interrupted for polling the cancel action outside. we don't need to wait for 2.5s
 		// for the later entrances.
 		// lease = 0 means it's in an integration test. In this case we don't delay so the test won't run too slowly.
 		if lease > 0 {
 			delayForAsyncCommit()
 		}
-		// start a reorganization job
-		w.wg.Add(1)
-		w.reorgCtx.doneCh = make(chan error, 1)
-		// initial reorgCtx
-		w.reorgCtx.setRowCount(job.GetRowCount())
-		w.reorgCtx.setNextKey(reorgInfo.StartKey)
-		w.reorgCtx.setCurrentElement(reorgInfo.currElement)
-		w.reorgCtx.mu.warnings = make(map[errors.ErrorID]*terror.Error)
-		w.reorgCtx.mu.warningsCount = make(map[errors.ErrorID]int64)
+		rc = d.newReorgCtx(reorgInfo)
 		go func() {
-			defer w.wg.Done()
-			w.reorgCtx.doneCh <- f()
+			rc.doneCh <- f()
 		}()
 	}
 
@@ -242,16 +231,17 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 
 	// wait reorganization job done or timeout
 	select {
-	case err := <-w.reorgCtx.doneCh:
-		rowCount, _, _ := w.reorgCtx.getRowCountAndKey()
-		logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
+	case err := <-rc.doneCh:
+		rowCount, _, _ := rc.getRowCountAndKey()
+		logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount), zap.Int32("worker id", w.id), zap.String("job", job.String()))
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
 
 		// Update a job's warnings.
-		w.mergeWarningsIntoJob(job)
+		mergeWarningsIntoJob(reorgInfo)
 
-		w.reorgCtx.clean()
+		d.removeReorgCtx(job)
+
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -274,21 +264,21 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		}
 	case <-w.ctx.Done():
 		logutil.BgLogger().Info("[ddl] run reorg job quit")
-		w.reorgCtx.setNextKey(nil)
-		w.reorgCtx.setRowCount(0)
-		w.reorgCtx.resetWarnings()
+		rc.setNextKey(nil)
+		rc.setRowCount(0)
+		rc.resetWarnings()
 		// We return dbterror.ErrWaitReorgTimeout here too, so that outer loop will break.
 		return dbterror.ErrWaitReorgTimeout
 	case <-time.After(waitTimeout):
-		rowCount, doneKey, currentElement := w.reorgCtx.getRowCountAndKey()
+		rowCount, doneKey, currentElement := rc.getRowCountAndKey()
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
 		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
 
 		// Update a job's warnings.
-		w.mergeWarningsIntoJob(job)
+		mergeWarningsIntoJob(reorgInfo)
 
-		w.reorgCtx.resetWarnings()
+		rc.resetWarnings()
 
 		// Update a reorgInfo's handle.
 		// Since daemon-worker is triggered by timer to store the info half-way.
@@ -312,12 +302,13 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 	return nil
 }
 
-func (w *worker) mergeWarningsIntoJob(job *model.Job) {
-	w.reorgCtx.mu.Lock()
-	partWarnings := w.reorgCtx.mu.warnings
-	partWarningsCount := w.reorgCtx.mu.warningsCount
-	job.SetWarnings(mergeWarningsAndWarningsCount(partWarnings, job.ReorgMeta.Warnings, partWarningsCount, job.ReorgMeta.WarningsCount))
-	w.reorgCtx.mu.Unlock()
+func mergeWarningsIntoJob(reorgInfo *reorgInfo) {
+	rc := reorgInfo.d.getReorgCtx(reorgInfo.Job)
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	partWarnings := rc.mu.warnings
+	partWarningsCount := rc.mu.warningsCount
+	reorgInfo.Job.SetWarnings(mergeWarningsAndWarningsCount(partWarnings, reorgInfo.Job.ReorgMeta.Warnings, partWarningsCount, reorgInfo.Job.ReorgMeta.WarningsCount))
 }
 
 func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.TableInfo,
@@ -367,20 +358,20 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	return rows[0].GetInt64(0)
 }
 
-func (w *worker) isReorgRunnable(d *ddlCtx) error {
+func (w *worker) isReorgRunnable(reorgInfo *reorgInfo) error {
 	if isChanClosed(w.ctx.Done()) {
 		// Worker is closed. So it can't do the reorganizational job.
 		return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
 	}
 
-	if w.reorgCtx.isReorgCanceled() {
+	if reorgInfo.d.getReorgCtx(reorgInfo.Job).isReorgCanceled() {
 		// Job is cancelled. So it can't be done.
 		return dbterror.ErrCancelledDDLJob
 	}
 
-	if !d.isOwner() {
+	if !reorgInfo.d.isOwner() {
 		// If it's not the owner, we will try later, so here just returns an error.
-		logutil.BgLogger().Info("[ddl] DDL worker is not the DDL owner", zap.String("ID", d.uuid))
+		logutil.BgLogger().Info("[ddl] DDL worker is not the DDL owner", zap.String("ID", reorgInfo.d.uuid))
 		return errors.Trace(dbterror.ErrNotOwner)
 	}
 	return nil

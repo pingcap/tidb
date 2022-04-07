@@ -421,7 +421,7 @@ func (w *worker) UpdateDDLReorgStartHandleNew(job *model.Job, element *meta.Elem
 	if err != nil {
 		return err
 	}
-	sql = fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, ele_id, start_key) values (%d, %d, 0x%s)", job.ID, element.ID, wrapKey2String(startKey))
+	sql = fmt.Sprintf("replace into mysql.tidb_ddl_reorg(job_id, ele_id, start_key) values (%d, %d, %s)", job.ID, element.ID, wrapKey2String(startKey))
 	_, err = w.sessForJob.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql)
 	if err != nil {
 		return err
