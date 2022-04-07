@@ -230,6 +230,13 @@ func (do *Domain) checkEnableServerGlobalVar(name, sVal string) {
 			break
 		}
 		variable.TableCacheLease.Store(val)
+	case variable.TiDBGCMaxWaitTime:
+		var val int64
+		val, err = strconv.ParseInt(sVal, 10, 64)
+		if err != nil {
+			break
+		}
+		variable.GCMaxWaitTime.Store(val)
 	case variable.TiDBPersistAnalyzeOptions:
 		variable.PersistAnalyzeOptions.Store(variable.TiDBOptOn(sVal))
 	case variable.TiDBEnableColumnTracking:
