@@ -625,7 +625,9 @@ func (local *local) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, e
 		return errors.Trace(err)
 	}
 	engine.wg.Add(1)
-	go engine.ingestSSTLoop()
+	go utils.WithRecover(func() {
+		engine.ingestSSTLoop()
+	}, log.L().Logger, "ingest SST loop")
 	return nil
 }
 

@@ -21,7 +21,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -1740,23 +1739,13 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 		// (we execute the lock check in background to avoid blocking the cron thread)
 		return
 	}
-	const size = 4096
 
-	go func() {
+	go utils.WithRecover(func() {
 		// locker is assigned when we detect the disk quota is exceeded.
 		// before the disk quota is confirmed exceeded, we keep the diskQuotaLock
 		// unlocked to avoid periodically interrupting the writer threads.
 		var locker sync.Locker
 		defer func() {
-			if r := recover(); r != nil {
-				buf := make([]byte, size)
-				stackSize := runtime.Stack(buf, false)
-				buf = buf[:stackSize]
-				log.L().Error("lightning disk quota loop panic",
-					zap.String("err", fmt.Sprintf("%v", r)),
-					zap.String("stack", string(buf)),
-				)
-			}
 			rc.diskQuotaState.Store(diskQuotaStateIdle)
 			if locker != nil {
 				locker.Unlock()
@@ -1827,7 +1816,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 			task.End(zap.ErrorLevel, importErr)
 			return
 		}
-	}()
+	}, log.L().Logger, "enforce disk quota loop")
 }
 
 func (rc *Controller) setGlobalVariables(ctx context.Context) error {

@@ -24,7 +24,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"sync"
 	"time"
@@ -34,10 +33,6 @@ import (
 	"github.com/google/btree"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"go.uber.org/atomic"
-	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -48,6 +43,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/hack"
+	"go.uber.org/atomic"
+	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -530,20 +528,10 @@ func (e *Engine) ingestSSTLoop() {
 		concurrency = 1
 	}
 	metaChan := make(chan metaAndSeq, concurrency)
-	const size = 4096
 	for i := 0; i < concurrency; i++ {
 		e.wg.Add(1)
 		go func() {
 			defer func() {
-				if r := recover(); r != nil {
-					buf := make([]byte, size)
-					stackSize := runtime.Stack(buf, false)
-					buf = buf[:stackSize]
-					log.L().Error("lightning ingest loop panic",
-						zap.String("err", fmt.Sprintf("%v", r)),
-						zap.String("stack", string(buf)),
-					)
-				}
 				if e.ingestErr.Get() != nil {
 					seqLock.Lock()
 					for _, f := range flushQueue {
