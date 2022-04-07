@@ -2405,7 +2405,7 @@ func accumulateNetSeekCost4MPP(p PhysicalPlan) (cost float64) {
 		return float64(len(ts.Ranges)) * float64(len(ts.Columns)) * ts.SCtx().GetSessionVars().GetSeekFactor(ts.Table)
 	}
 	for _, c := range p.Children() {
-		accumulateNetSeekCost4MPP(c)
+		cost += accumulateNetSeekCost4MPP(c)
 	}
 	return
 }
