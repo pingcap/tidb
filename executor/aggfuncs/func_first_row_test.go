@@ -27,8 +27,6 @@ import (
 )
 
 func TestMergePartialResult4FirstRow(t *testing.T) {
-	t.Parallel()
-
 	elems := []string{"e", "d", "c", "b", "a"}
 	enumC, _ := types.ParseEnumName(elems, "c", mysql.DefaultCollationName)
 	enumE, _ := types.ParseEnumName(elems, "e", mysql.DefaultCollationName)
@@ -54,8 +52,6 @@ func TestMergePartialResult4FirstRow(t *testing.T) {
 }
 
 func TestMemFirstRow(t *testing.T) {
-	t.Parallel()
-
 	tests := []aggMemTest{
 		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeLonglong, 5,
 			aggfuncs.DefPartialResult4FirstRowIntSize, defaultUpdateMemDeltaGens, false),

@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
@@ -27,7 +27,6 @@ import (
 )
 
 func TestShowStatsMeta(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -47,7 +46,6 @@ func TestShowStatsMeta(t *testing.T) {
 }
 
 func TestShowStatsHistograms(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -79,7 +77,6 @@ func TestShowStatsHistograms(t *testing.T) {
 }
 
 func TestShowStatsBuckets(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -126,7 +123,6 @@ func TestShowStatsBuckets(t *testing.T) {
 }
 
 func TestShowStatsHasNullValue(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -192,7 +188,6 @@ func TestShowStatsHasNullValue(t *testing.T) {
 }
 
 func TestShowPartitionStats(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -233,7 +228,6 @@ func TestShowPartitionStats(t *testing.T) {
 }
 
 func TestShowStatusSnapshot(t *testing.T) {
-	t.Parallel()
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 
@@ -262,7 +256,6 @@ func TestShowStatusSnapshot(t *testing.T) {
 }
 
 func TestShowStatsExtended(t *testing.T) {
-	t.Parallel()
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
@@ -317,8 +310,7 @@ func TestShowStatsExtended(t *testing.T) {
 }
 
 func TestShowColumnStatsUsage(t *testing.T) {
-	t.Parallel()
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
 
 	tk := testkit.NewTestKit(t, store)
@@ -327,7 +319,6 @@ func TestShowColumnStatsUsage(t *testing.T) {
 	tk.MustExec("create table t1 (a int, b int, index idx_a_b(a, b))")
 	tk.MustExec("create table t2 (a int, b int) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue)")
 
-	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
 	t1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
@@ -349,4 +340,81 @@ func TestShowColumnStatsUsage(t *testing.T) {
 	require.Len(t, rows, 2)
 	require.Equal(t, rows[0], []interface{}{"test", "t2", "global", t1.Meta().Columns[0].Name.O, "2021-10-20 09:00:00", "<nil>"})
 	require.Equal(t, rows[1], []interface{}{"test", "t2", p0.Name.O, t1.Meta().Columns[0].Name.O, "2021-10-20 09:00:00", "<nil>"})
+}
+
+func TestShowHistogramsInFlight(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	result := tk.MustQuery("show histograms_in_flight")
+	rows := result.Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, rows[0][0], "0")
+}
+
+func TestShowAnalyzeStatus(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("delete from mysql.analyze_jobs")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, primary key(a), index idx(b))")
+	tk.MustExec(`insert into t values (1, 1), (2, 2)`)
+
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("analyze table t")
+	rows := tk.MustQuery("show analyze status").Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "test", rows[0][0])
+	require.Equal(t, "t", rows[0][1])
+	require.Equal(t, "", rows[0][2])
+	require.Equal(t, "analyze table all columns with 256 buckets, 500 topn, 1 samplerate", rows[0][3])
+	require.Equal(t, "2", rows[0][4])
+	checkTime := func(val interface{}) {
+		str, ok := val.(string)
+		require.True(t, ok)
+		_, err := time.Parse("2006-01-02 15:04:05", str)
+		require.NoError(t, err)
+	}
+	checkTime(rows[0][5])
+	checkTime(rows[0][6])
+	require.Equal(t, "finished", rows[0][7])
+	require.Equal(t, "<nil>", rows[0][8])
+	serverInfo, err := infosync.GetServerInfo()
+	require.NoError(t, err)
+	addr := fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
+	require.Equal(t, addr, rows[0][9])
+	require.Equal(t, "<nil>", rows[0][10])
+
+	tk.MustExec("delete from mysql.analyze_jobs")
+	tk.MustExec("set @@tidb_analyze_version=1")
+	tk.MustExec("analyze table t")
+	rows = tk.MustQuery("show analyze status").Sort().Rows()
+	require.Len(t, rows, 2)
+	require.Equal(t, "test", rows[0][0])
+	require.Equal(t, "t", rows[0][1])
+	require.Equal(t, "", rows[0][2])
+	require.Equal(t, "analyze columns", rows[0][3])
+	require.Equal(t, "2", rows[0][4])
+	checkTime(rows[0][5])
+	checkTime(rows[0][6])
+	require.Equal(t, "finished", rows[0][7])
+	require.Equal(t, "test", rows[1][0])
+	require.Equal(t, "<nil>", rows[0][8])
+	require.Equal(t, addr, rows[0][9])
+	require.Equal(t, "<nil>", rows[0][10])
+	require.Equal(t, "t", rows[1][1])
+	require.Equal(t, "", rows[1][2])
+	require.Equal(t, "analyze index idx", rows[1][3])
+	require.Equal(t, "2", rows[1][4])
+	checkTime(rows[1][5])
+	checkTime(rows[1][6])
+	require.Equal(t, "finished", rows[1][7])
+	require.Equal(t, "<nil>", rows[1][8])
+	require.Equal(t, addr, rows[1][9])
+	require.Equal(t, "<nil>", rows[1][10])
 }

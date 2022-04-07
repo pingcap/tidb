@@ -21,8 +21,6 @@ import (
 )
 
 func TestVersion(t *testing.T) {
-	t.Parallel()
-
 	le := NewVersion(42).Cmp(NewVersion(43))
 	gt := NewVersion(42).Cmp(NewVersion(41))
 	eq := NewVersion(42).Cmp(NewVersion(42))

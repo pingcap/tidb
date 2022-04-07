@@ -652,14 +652,10 @@ func (b *builtinGreatestCmpStringAsTimeSig) vecEvalString(input *chunk.Chunk, re
 
 			// NOTE: can't use Column.GetString because it returns an unsafe string, copy the row instead.
 			argTimeStr := string(result.GetBytes(i))
-
-			argTime, err := types.ParseDatetime(sc, argTimeStr)
+			var err error
+			argTimeStr, err = doTimeConversionForGL(b.cmpAsDate, b.ctx, sc, argTimeStr)
 			if err != nil {
-				if err = handleInvalidTimeError(b.ctx, err); err != nil {
-					return err
-				}
-			} else {
-				argTimeStr = argTime.String()
+				return err
 			}
 			if j == 0 || strings.Compare(argTimeStr, dstStrings[i]) > 0 {
 				dstStrings[i] = argTimeStr
@@ -737,14 +733,10 @@ func (b *builtinLeastCmpStringAsTimeSig) vecEvalString(input *chunk.Chunk, resul
 
 			// NOTE: can't use Column.GetString because it returns an unsafe string, copy the row instead.
 			argTimeStr := string(result.GetBytes(i))
-
-			argTime, err := types.ParseDatetime(sc, argTimeStr)
+			var err error
+			argTimeStr, err = doTimeConversionForGL(b.cmpAsDate, b.ctx, sc, argTimeStr)
 			if err != nil {
-				if err = handleInvalidTimeError(b.ctx, err); err != nil {
-					return err
-				}
-			} else {
-				argTimeStr = argTime.String()
+				return err
 			}
 			if j == 0 || strings.Compare(argTimeStr, dstStrings[i]) < 0 {
 				dstStrings[i] = argTimeStr
@@ -845,6 +837,15 @@ func (b *builtinGreatestTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.C
 			}
 		}
 	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
+	for rowIdx := 0; rowIdx < n; rowIdx++ {
+		resTimes := result.Times()
+		resTimes[rowIdx], err = resTimes[rowIdx].Convert(sc, resTimeTp)
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -875,6 +876,15 @@ func (b *builtinLeastTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Colu
 			if argIdx == 0 || argTimes[rowIdx].Compare(resTimes[rowIdx]) < 0 {
 				resTimes[rowIdx] = argTimes[rowIdx]
 			}
+		}
+	}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
+	for rowIdx := 0; rowIdx < n; rowIdx++ {
+		resTimes := result.Times()
+		resTimes[rowIdx], err = resTimes[rowIdx].Convert(sc, resTimeTp)
+		if err != nil {
+			return err
 		}
 	}
 	return nil

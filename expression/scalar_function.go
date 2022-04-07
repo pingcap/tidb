@@ -176,7 +176,7 @@ func typeInferForNull(args []Expression) {
 // -1 means try to fold constants if without errors/warnings, otherwise not.
 func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
 	if retType == nil {
-		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction.")
+		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction")
 	}
 	switch funcName {
 	case ast.Cast:
@@ -187,6 +187,10 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 		return BuildFromBinaryFunction(ctx, args[0], retType), nil
 	case InternalFuncToBinary:
 		return BuildToBinaryFunction(ctx, args[0]), nil
+	case ast.Sysdate:
+		if ctx.GetSessionVars().SysdateIsNow {
+			funcName = ast.Now
+		}
 	}
 	fc, ok := funcs[funcName]
 	if !ok {
@@ -286,6 +290,7 @@ func (sf *ScalarFunction) Clone() Expression {
 	}
 	c.SetCharsetAndCollation(sf.CharsetAndCollation())
 	c.SetCoercibility(sf.Coercibility())
+	c.SetRepertoire(sf.Repertoire())
 	return c
 }
 

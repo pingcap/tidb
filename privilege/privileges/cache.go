@@ -54,7 +54,7 @@ const globalDBVisible = mysql.CreatePriv | mysql.SelectPriv | mysql.InsertPriv |
 const (
 	sqlLoadRoleGraph        = "SELECT HIGH_PRIORITY FROM_USER, FROM_HOST, TO_USER, TO_HOST FROM mysql.role_edges"
 	sqlLoadGlobalPrivTable  = "SELECT HIGH_PRIORITY Host,User,Priv FROM mysql.global_priv"
-	sqlLoadDBTable          = "SELECT HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,References_priv,Lock_tables_priv,Create_tmp_table_priv,Event_priv,Create_routine_priv,Alter_routine_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv FROM mysql.db ORDER BY host, db, user"
+	sqlLoadDBTable          = "SELECT HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,References_priv,Lock_tables_priv,Create_tmp_table_priv,Event_priv,Create_routine_priv,Alter_routine_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv,Trigger_priv FROM mysql.db ORDER BY host, db, user"
 	sqlLoadTablePrivTable   = "SELECT HIGH_PRIORITY Host,DB,User,Table_name,Grantor,Timestamp,Table_priv,Column_priv FROM mysql.tables_priv"
 	sqlLoadColumnsPrivTable = "SELECT HIGH_PRIORITY Host,DB,User,Table_name,Column_name,Timestamp,Column_priv FROM mysql.columns_priv"
 	sqlLoadDefaultRoles     = "SELECT HIGH_PRIORITY HOST, USER, DEFAULT_ROLE_HOST, DEFAULT_ROLE_USER FROM mysql.default_roles"
@@ -1168,7 +1168,7 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 }
 
 func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentity) []string {
-	var gs []string
+	var gs []string // nolint: prealloc
 	var sortFromIdx int
 	var hasGlobalGrant = false
 	// Some privileges may granted from role inheritance.
@@ -1231,19 +1231,11 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	dbPrivTable := make(map[string]mysql.PrivilegeType)
 	for _, record := range p.DB {
 		if record.fullyMatch(user, host) {
-			if _, ok := dbPrivTable[record.DB]; ok {
-				dbPrivTable[record.DB] |= record.Privileges
-			} else {
-				dbPrivTable[record.DB] = record.Privileges
-			}
+			dbPrivTable[record.DB] |= record.Privileges
 		} else {
 			for _, r := range allRoles {
 				if record.baseRecord.match(r.Username, r.Hostname) {
-					if _, ok := dbPrivTable[record.DB]; ok {
-						dbPrivTable[record.DB] |= record.Privileges
-					} else {
-						dbPrivTable[record.DB] = record.Privileges
-					}
+					dbPrivTable[record.DB] |= record.Privileges
 				}
 			}
 		}
@@ -1273,19 +1265,11 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	for _, record := range p.TablesPriv {
 		recordKey := record.DB + "." + record.TableName
 		if user == record.User && host == record.Host {
-			if _, ok := dbPrivTable[record.DB]; ok {
-				tablePrivTable[recordKey] |= record.TablePriv
-			} else {
-				tablePrivTable[recordKey] = record.TablePriv
-			}
+			tablePrivTable[recordKey] |= record.TablePriv
 		} else {
 			for _, r := range allRoles {
 				if record.baseRecord.match(r.Username, r.Hostname) {
-					if _, ok := dbPrivTable[record.DB]; ok {
-						tablePrivTable[recordKey] |= record.TablePriv
-					} else {
-						tablePrivTable[recordKey] = record.TablePriv
-					}
+					tablePrivTable[recordKey] |= record.TablePriv
 				}
 			}
 		}

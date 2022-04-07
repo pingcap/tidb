@@ -25,8 +25,6 @@ import (
 )
 
 func TestCodec(t *testing.T) {
-	t.Parallel()
-
 	numCols := 6
 	numRows := 10
 
@@ -77,8 +75,6 @@ func TestCodec(t *testing.T) {
 }
 
 func TestEstimateTypeWidth(t *testing.T) {
-	t.Parallel()
-
 	var colType *types.FieldType
 
 	colType = &types.FieldType{Tp: mysql.TypeLonglong}

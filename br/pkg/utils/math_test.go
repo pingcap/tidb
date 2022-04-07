@@ -9,8 +9,6 @@ import (
 )
 
 func TestMinInt(t *testing.T) {
-	t.Parallel()
-
 	require.Equal(t, 1, MinInt(1, 2))
 	require.Equal(t, 1, MinInt(2, 1))
 	require.Equal(t, 1, MinInt(4, 2, 1, 3))
@@ -18,8 +16,6 @@ func TestMinInt(t *testing.T) {
 }
 
 func TestMaxInt(t *testing.T) {
-	t.Parallel()
-
 	require.Equal(t, 2, MaxInt(1, 2))
 	require.Equal(t, 2, MaxInt(2, 1))
 	require.Equal(t, 4, MaxInt(4, 2, 1, 3))
@@ -27,8 +23,6 @@ func TestMaxInt(t *testing.T) {
 }
 
 func TestClampInt(t *testing.T) {
-	t.Parallel()
-
 	require.Equal(t, 3, ClampInt(100, 1, 3))
 	require.Equal(t, 2, ClampInt(2, 1, 3))
 	require.Equal(t, 1, ClampInt(0, 1, 3))
@@ -37,8 +31,6 @@ func TestClampInt(t *testing.T) {
 }
 
 func TestMinInt64(t *testing.T) {
-	t.Parallel()
-
 	require.Equal(t, 1, MinInt(1, 2))
 	require.Equal(t, 1, MinInt(2, 1))
 	require.Equal(t, 1, MinInt(4, 2, 1, 3))
@@ -46,8 +38,6 @@ func TestMinInt64(t *testing.T) {
 }
 
 func TestNextPowerOfTwo(t *testing.T) {
-	t.Parallel()
-
 	require.Equal(t, int64(1), NextPowerOfTwo(1))
 	require.Equal(t, int64(4), NextPowerOfTwo(3))
 	require.Equal(t, int64(256), NextPowerOfTwo(255))

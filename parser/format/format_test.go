@@ -19,6 +19,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,7 +32,6 @@ func checkFormat(t *testing.T, f Formatter, buf *bytes.Buffer, str, expect strin
 }
 
 func TestFormat(t *testing.T) {
-	t.Parallel()
 	str := "abc%d%%e%i\nx\ny\n%uz\n"
 	buf := &bytes.Buffer{}
 	f := IndentFormatter(buf, "\t")
@@ -50,7 +50,6 @@ z
 }
 
 func TestRestoreCtx(t *testing.T) {
-	t.Parallel()
 	testCases := []struct {
 		flag   RestoreFlags
 		expect string
@@ -85,18 +84,26 @@ func TestRestoreCtx(t *testing.T) {
 }
 
 func TestRestoreSpecialComment(t *testing.T) {
-	t.Parallel()
 	var sb strings.Builder
 	sb.Reset()
 	ctx := NewRestoreCtx(RestoreTiDBSpecialComment, &sb)
-	ctx.WriteWithSpecialComments("fea_id", func() {
+	require.NoError(t, ctx.WriteWithSpecialComments("fea_id", func() error {
 		ctx.WritePlain("content")
-	})
+		return nil
+	}))
 	require.Equal(t, "/*T![fea_id] content */", sb.String())
 
 	sb.Reset()
-	ctx.WriteWithSpecialComments("", func() {
+	require.NoError(t, ctx.WriteWithSpecialComments("", func() error {
 		ctx.WritePlain("shard_row_id_bits")
-	})
+		return nil
+	}))
 	require.Equal(t, "/*T! shard_row_id_bits */", sb.String())
+
+	sb.Reset()
+	err := errors.New("xxxx")
+	got := ctx.WriteWithSpecialComments("", func() error {
+		return err
+	})
+	require.Same(t, err, got)
 }

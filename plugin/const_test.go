@@ -22,7 +22,6 @@ import (
 )
 
 func TestConstToString(t *testing.T) {
-	t.Parallel()
 	kinds := map[fmt.Stringer]string{
 		Audit:                     "Audit",
 		Authentication:            "Authentication",

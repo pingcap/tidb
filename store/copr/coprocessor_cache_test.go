@@ -25,7 +25,6 @@ import (
 )
 
 func TestBuildCacheKey(t *testing.T) {
-	t.Parallel()
 	req := coprocessor.Request{
 		Tp:      0xAB,
 		StartTs: 0xAABBCC,
@@ -70,7 +69,6 @@ func TestBuildCacheKey(t *testing.T) {
 }
 
 func TestDisable(t *testing.T) {
-	t.Parallel()
 	cache, err := newCoprCache(&config.CoprocessorCache{CapacityMB: 0})
 	require.NoError(t, err)
 	require.Nil(t, cache)
@@ -95,7 +93,6 @@ func TestDisable(t *testing.T) {
 }
 
 func TestAdmission(t *testing.T) {
-	t.Parallel()
 	cache, err := newCoprCache(&config.CoprocessorCache{AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: 1})
 	require.NoError(t, err)
 	require.NotNil(t, cache)
@@ -153,7 +150,6 @@ func TestAdmission(t *testing.T) {
 }
 
 func TestCacheValueLen(t *testing.T) {
-	t.Parallel()
 	v := coprCacheValue{
 		TimeStamp:         0x123,
 		RegionID:          0x1,
@@ -173,7 +169,6 @@ func TestCacheValueLen(t *testing.T) {
 }
 
 func TestGetSet(t *testing.T) {
-	t.Parallel()
 	cache, err := newCoprCache(&config.CoprocessorCache{AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: 1})
 	require.NoError(t, err)
 	require.NotNil(t, cache)
@@ -200,7 +195,6 @@ func TestGetSet(t *testing.T) {
 }
 
 func TestIssue24118(t *testing.T) {
-	t.Parallel()
 	_, err := newCoprCache(&config.CoprocessorCache{AdmissionMinProcessMs: 5, AdmissionMaxResultMB: 1, CapacityMB: -1})
 	require.EqualError(t, err, "Capacity must be > 0 to enable the cache")
 }

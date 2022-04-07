@@ -130,6 +130,25 @@ func (m *QueryFeedbackMap) append(k QueryFeedbackKey, qs []*QueryFeedback) bool 
 	return true
 }
 
+// SiftFeedbacks eliminates feedbacks which are overlapped with others. It is a tradeoff between
+// feedback accuracy and its overhead.
+func (m *QueryFeedbackMap) SiftFeedbacks() {
+	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	for k, qs := range m.Feedbacks {
+		fbs := make([]Feedback, 0, len(qs)*2)
+		for _, q := range qs {
+			fbs = append(fbs, q.Feedback...)
+		}
+		if len(fbs) == 0 {
+			delete(m.Feedbacks, k)
+			continue
+		}
+		m.Feedbacks[k] = m.Feedbacks[k][:1]
+		m.Feedbacks[k][0].Feedback, _ = NonOverlappedFeedbacks(sc, fbs)
+	}
+	m.Size = len(m.Feedbacks)
+}
+
 // Merge combines 2 collections of feedbacks.
 func (m *QueryFeedbackMap) Merge(r *QueryFeedbackMap) {
 	for k, qs := range r.Feedbacks {
@@ -217,6 +236,7 @@ func (q *QueryFeedback) DecodeToRanges(isIndex bool) ([]*ranger.Range, error) {
 			LowVal:      lowVal,
 			HighVal:     highVal,
 			HighExclude: true,
+			Collators:   collate.GetBinaryCollatorSlice(len(lowVal)),
 		}))
 	}
 	return ranges, nil

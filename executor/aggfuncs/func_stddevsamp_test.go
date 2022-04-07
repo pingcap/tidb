@@ -22,8 +22,6 @@ import (
 )
 
 func TestMergePartialResult4Stddevsamp(t *testing.T) {
-	t.Parallel()
-
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncStddevSamp, mysql.TypeDouble, 5, 1.5811388300841898, 1, 1.407885953173359),
 	}
@@ -33,8 +31,6 @@ func TestMergePartialResult4Stddevsamp(t *testing.T) {
 }
 
 func TestStddevsamp(t *testing.T) {
-	t.Parallel()
-
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncStddevSamp, mysql.TypeDouble, 5, nil, 1.5811388300841898),
 	}

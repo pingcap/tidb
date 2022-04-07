@@ -41,7 +41,7 @@ func (d RequestTypeSupportedChecker) supportExpr(exprType tipb.ExprType) bool {
 	switch exprType {
 	case tipb.ExprType_Null, tipb.ExprType_Int64, tipb.ExprType_Uint64, tipb.ExprType_String, tipb.ExprType_Bytes,
 		tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlTime, tipb.ExprType_MysqlDecimal,
-		tipb.ExprType_Float32, tipb.ExprType_Float64, tipb.ExprType_ColumnRef, tipb.ExprType_MysqlEnum:
+		tipb.ExprType_Float32, tipb.ExprType_Float64, tipb.ExprType_ColumnRef, tipb.ExprType_MysqlEnum, tipb.ExprType_MysqlBit:
 		return true
 	// aggregate functions.
 	// NOTE: tipb.ExprType_GroupConcat is only supported by TiFlash, So checking it for TiKV case outside.

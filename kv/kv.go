@@ -31,6 +31,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	pd "github.com/tikv/pd/client"
 )
 
 // UnCommitIndexKVFlag uses to indicate the index key/value is no need to commit.
@@ -182,6 +183,7 @@ type LockCtx = tikvstore.LockCtx
 // This is not thread safe.
 type Transaction interface {
 	RetrieverMutator
+	AssertionProto
 	// Size returns sum of keys and values length.
 	Size() int
 	// Len returns the number of entries in the DB.
@@ -235,13 +237,29 @@ type Transaction interface {
 	ClearDiskFullOpt()
 }
 
+// AssertionProto is an interface defined for the assertion protocol.
+type AssertionProto interface {
+	// SetAssertion sets an assertion for an operation on the key.
+	// TODO: Use a special type instead of `FlagsOp`. Otherwise there's risk that the assertion flag is incorrectly used
+	// in other places like `MemBuffer.SetWithFlags`.
+	SetAssertion(key []byte, assertion ...FlagsOp) error
+}
+
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
-	Send(ctx context.Context, req *Request, vars interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool, eventCb trxevents.EventCallback) Response
+	Send(ctx context.Context, req *Request, vars interface{}, option *ClientSendOption) Response
 
 	// IsRequestTypeSupported checks if reqType and subType is supported.
 	IsRequestTypeSupported(reqType, subType int64) bool
+}
+
+// ClientSendOption wraps options during Client Send
+type ClientSendOption struct {
+	SessionMemTracker          *memory.Tracker
+	EnabledRateLimitAction     bool
+	EventCb                    trxevents.EventCallback
+	EnableCollectExecutionInfo bool
 }
 
 // ReqTypes.
@@ -295,6 +313,9 @@ type Request struct {
 	Data      []byte
 	KeyRanges []KeyRange
 
+	// For PartitionTableScan used by tiflash.
+	PartitionIDAndRanges []PartitionIDAndRanges
+
 	// Concurrency is 1, if it only sends the request to a single storage unit when
 	// ResponseIterator.Next is called. If concurrency is greater than 1, the request will be
 	// sent to multiple storage units concurrently.
@@ -311,8 +332,6 @@ type Request struct {
 	Desc bool
 	// NotFillCache makes this request do not touch the LRU cache of the underlying storage.
 	NotFillCache bool
-	// SyncLog decides whether the WAL(write-ahead log) of this request should be synchronized.
-	SyncLog bool
 	// Streaming indicates using streaming API for this request, result in that one Next()
 	// call would not corresponds to a whole region result.
 	Streaming bool
@@ -340,6 +359,12 @@ type Request struct {
 	ResourceGroupTagger tikvrpc.ResourceGroupTagger
 	// Paging indicates whether the request is a paging request.
 	Paging bool
+}
+
+// PartitionIDAndRanges used by PartitionTableScan in tiflash.
+type PartitionIDAndRanges struct {
+	ID        int64
+	KeyRanges []KeyRange
 }
 
 const (
@@ -447,6 +472,11 @@ type EtcdBackend interface {
 	StartGCWorker() error
 }
 
+// StorageWithPD is used to get pd client.
+type StorageWithPD interface {
+	GetPDClient() pd.Client
+}
+
 // FnKeyCmp is the function for iterator the keys
 type FnKeyCmp func(key Key) bool
 
@@ -481,4 +511,6 @@ const (
 	SI IsoLevel = iota
 	// RC stands for 'read committed'.
 	RC
+	// RCCheckTS stands for 'read consistency read with ts check'.
+	RCCheckTS
 )

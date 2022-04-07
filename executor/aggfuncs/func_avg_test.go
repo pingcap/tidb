@@ -25,8 +25,6 @@ import (
 )
 
 func TestMergePartialResult4Avg(t *testing.T) {
-	t.Parallel()
-
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 5, 2.0, 3.0, 2.375),
 		buildAggTester(ast.AggFuncAvg, mysql.TypeDouble, 5, 2.0, 3.0, 2.375),
@@ -37,8 +35,6 @@ func TestMergePartialResult4Avg(t *testing.T) {
 }
 
 func TestAvg(t *testing.T) {
-	t.Parallel()
-
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 5, nil, 2.0),
 		buildAggTester(ast.AggFuncAvg, mysql.TypeDouble, 5, nil, 2.0),
@@ -50,8 +46,6 @@ func TestAvg(t *testing.T) {
 }
 
 func TestMemAvg(t *testing.T) {
-	t.Parallel()
-
 	tests := []aggMemTest{
 		buildAggMemTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 5,
 			aggfuncs.DefPartialResult4AvgDecimalSize, defaultUpdateMemDeltaGens, false),

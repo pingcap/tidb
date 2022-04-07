@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -148,7 +148,7 @@ var mapServerStatus2Str = map[uint16]string{
 // Param state is a bit-field. (e.g. 0x0003 = "in transaction; autocommit").
 func serverStatus2Str(state uint16) string {
 	// l collect server status strings.
-	var l []string
+	var l []string // nolint: prealloc
 	// check each defined server status, if match, append to collector.
 	for _, s := range ascServerStatus {
 		if state&s == 0 {
@@ -169,6 +169,12 @@ type SessionManager interface {
 	KillAllConnections()
 	UpdateTLSConfig(cfg *tls.Config)
 	ServerID() uint64
+	// Put the internal session pointer to the map in the SessionManager
+	StoreInternalSession(se interface{})
+	// Delete the internal session pointer from the map in the SessionManager
+	DeleteInternalSession(se interface{})
+	// Get all startTS of every transactions running in the current internal sessions
+	GetInternalSessionStartTSList() []uint64
 }
 
 // GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.
@@ -189,6 +195,16 @@ type GlobalConnID struct {
 	LocalConnID    uint64
 	Is64bits       bool
 	ServerIDGetter func() uint64
+}
+
+// NewGlobalConnID creates GlobalConnID with serverID
+func NewGlobalConnID(serverID uint64, is64Bits bool) GlobalConnID {
+	return GlobalConnID{ServerID: serverID, Is64bits: is64Bits, LocalConnID: reservedLocalConns}
+}
+
+// NewGlobalConnIDWithGetter creates GlobalConnID with serverIDGetter
+func NewGlobalConnIDWithGetter(serverIDGetter func() uint64, is64Bits bool) GlobalConnID {
+	return GlobalConnID{ServerIDGetter: serverIDGetter, Is64bits: is64Bits, LocalConnID: reservedLocalConns}
 }
 
 const (
@@ -250,4 +266,15 @@ func ParseGlobalConnID(id uint64) (g GlobalConnID, isTruncated bool, err error) 
 		LocalConnID: (id >> 1) & 0x7fff_ffff,
 		ServerID:    0,
 	}, false, nil
+}
+
+const (
+	reservedLocalConns  = 200
+	reservedConnAnalyze = 1
+)
+
+// GetAutoAnalyzeProcID returns processID for auto analyze
+// TODO support IDs for concurrent auto-analyze
+func GetAutoAnalyzeProcID() uint64 {
+	return reservedConnAnalyze
 }

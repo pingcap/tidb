@@ -20,7 +20,6 @@ import (
 )
 
 func TestPrivString(t *testing.T) {
-	t.Parallel()
 	for i := 0; ; i++ {
 		p := PrivilegeType(1 << i)
 		if p > AllPriv {
@@ -31,7 +30,6 @@ func TestPrivString(t *testing.T) {
 }
 
 func TestPrivColumn(t *testing.T) {
-	t.Parallel()
 	for _, p := range AllGlobalPrivs {
 		require.NotEmptyf(t, p.ColumnString(), "%s", p)
 		np, ok := NewPrivFromColumn(p.ColumnString())
@@ -53,7 +51,6 @@ func TestPrivColumn(t *testing.T) {
 }
 
 func TestPrivSetString(t *testing.T) {
-	t.Parallel()
 	for _, p := range AllTablePrivs {
 		require.NotEmptyf(t, p.SetString(), "%s", p)
 		np, ok := NewPrivFromSetEnum(p.SetString())
@@ -69,7 +66,6 @@ func TestPrivSetString(t *testing.T) {
 }
 
 func TestPrivsHas(t *testing.T) {
-	t.Parallel()
 	// it is a simple helper, does not handle all&dynamic privs
 	privs := Privileges{AllPriv}
 	require.True(t, privs.Has(AllPriv))
@@ -83,7 +79,6 @@ func TestPrivsHas(t *testing.T) {
 }
 
 func TestPrivAllConsistency(t *testing.T) {
-	t.Parallel()
 	// AllPriv in mysql.user columns.
 	for priv := CreatePriv; priv != AllPriv; priv = priv << 1 {
 		_, ok := Priv2UserCol[priv]

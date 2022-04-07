@@ -25,14 +25,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func createColumnByTypeAndLen(tp byte, len uint32) *ColumnInfo {
+func createColumnByTypeAndLen(tp byte, cl uint32) *ColumnInfo {
 	return &ColumnInfo{
 		Schema:             "test",
 		Table:              "dual",
 		OrgTable:           "",
 		Name:               "a",
 		OrgName:            "a",
-		ColumnLength:       len,
+		ColumnLength:       cl,
 		Charset:            uint16(mysql.CharsetNameToID(charset.CharsetUTF8)),
 		Flag:               uint16(mysql.UnsignedFlag),
 		Decimal:            uint8(0),
@@ -42,8 +42,6 @@ func createColumnByTypeAndLen(tp byte, len uint32) *ColumnInfo {
 	}
 }
 func TestConvertColumnInfo(t *testing.T) {
-	t.Parallel()
-
 	// Test "mysql.TypeBit", for: https://github.com/pingcap/tidb/issues/5405.
 	resultField := ast.ResultField{
 		Column: &model.ColumnInfo{

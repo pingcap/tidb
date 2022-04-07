@@ -23,10 +23,10 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/stretchr/testify/require"
+	kv2 "github.com/tikv/client-go/v2/kv"
 )
 
 const (
@@ -141,8 +141,6 @@ func TestNew(t *testing.T) {
 }
 
 func TestGetSet(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -198,8 +196,6 @@ func TestSeek(t *testing.T) {
 }
 
 func TestInc(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -240,8 +236,6 @@ func TestInc(t *testing.T) {
 }
 
 func TestDelete(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -287,8 +281,6 @@ func TestDelete(t *testing.T) {
 }
 
 func TestDelete2(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -329,8 +321,6 @@ func TestDelete2(t *testing.T) {
 }
 
 func TestSetNil(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -347,8 +337,6 @@ func TestSetNil(t *testing.T) {
 }
 
 func TestBasicSeek(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -373,8 +361,6 @@ func TestBasicSeek(t *testing.T) {
 }
 
 func TestBasicTable(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -431,8 +417,6 @@ func TestBasicTable(t *testing.T) {
 }
 
 func TestRollback(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -468,8 +452,6 @@ func TestRollback(t *testing.T) {
 }
 
 func TestSeekMin(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -510,8 +492,6 @@ func TestSeekMin(t *testing.T) {
 }
 
 func TestConditionIfNotExist(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -552,8 +532,6 @@ func TestConditionIfNotExist(t *testing.T) {
 }
 
 func TestConditionIfEqual(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -599,8 +577,6 @@ func TestConditionIfEqual(t *testing.T) {
 }
 
 func TestConditionUpdate(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -633,7 +609,7 @@ func TestDBClose(t *testing.T) {
 
 	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
 	require.NoError(t, err)
-	require.Equal(t, 1, kv.MaxVersion.Cmp(ver), Equals)
+	require.Equal(t, 1, kv.MaxVersion.Cmp(ver))
 
 	snap := store.GetSnapshot(kv.MaxVersion)
 
@@ -659,8 +635,6 @@ func TestDBClose(t *testing.T) {
 }
 
 func TestIsolationInc(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -707,8 +681,6 @@ func TestIsolationInc(t *testing.T) {
 }
 
 func TestIsolationMultiInc(t *testing.T) {
-	t.Parallel()
-
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
@@ -763,7 +735,6 @@ func TestIsolationMultiInc(t *testing.T) {
 }
 
 func TestRetryOpenStore(t *testing.T) {
-	t.Parallel()
 	begin := time.Now()
 	require.NoError(t, Register("dummy", &brokenStore{}))
 	store, err := newStoreWithRetry("dummy://dummy-store", 3)
@@ -778,7 +749,6 @@ func TestRetryOpenStore(t *testing.T) {
 }
 
 func TestOpenStore(t *testing.T) {
-	t.Parallel()
 	require.NoError(t, Register("open", &brokenStore{}))
 	store, err := newStoreWithRetry(":", 3)
 	if store != nil {
@@ -790,9 +760,114 @@ func TestOpenStore(t *testing.T) {
 }
 
 func TestRegister(t *testing.T) {
-	t.Parallel()
 	err := Register("retry", &brokenStore{})
 	require.NoError(t, err)
 	err = Register("retry", &brokenStore{})
 	require.Error(t, err)
+}
+
+func TestSetAssertion(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	mustHaveAssertion := func(key []byte, assertion kv.FlagsOp) {
+		f, err1 := txn.GetMemBuffer().GetFlags(key)
+		require.NoError(t, err1)
+		if assertion == kv.SetAssertExist {
+			require.True(t, f.HasAssertExists())
+			require.False(t, f.HasAssertUnknown())
+		} else if assertion == kv.SetAssertNotExist {
+			require.True(t, f.HasAssertNotExists())
+			require.False(t, f.HasAssertUnknown())
+		} else if assertion == kv.SetAssertUnknown {
+			require.True(t, f.HasAssertUnknown())
+		} else if assertion == kv.SetAssertNone {
+			require.False(t, f.HasAssertionFlags())
+		} else {
+			require.FailNow(t, "unreachable")
+		}
+	}
+
+	testUnchangeable := func(key []byte, expectAssertion kv.FlagsOp) {
+		err = txn.SetAssertion(key, kv.SetAssertExist)
+		require.NoError(t, err)
+		mustHaveAssertion(key, expectAssertion)
+		err = txn.SetAssertion(key, kv.SetAssertNotExist)
+		require.NoError(t, err)
+		mustHaveAssertion(key, expectAssertion)
+		err = txn.SetAssertion(key, kv.SetAssertUnknown)
+		require.NoError(t, err)
+		mustHaveAssertion(key, expectAssertion)
+		err = txn.SetAssertion(key, kv.SetAssertNone)
+		require.NoError(t, err)
+		mustHaveAssertion(key, expectAssertion)
+	}
+
+	k1 := []byte("k1")
+	err = txn.SetAssertion(k1, kv.SetAssertExist)
+	require.NoError(t, err)
+	mustHaveAssertion(k1, kv.SetAssertExist)
+	testUnchangeable(k1, kv.SetAssertExist)
+
+	k2 := []byte("k2")
+	err = txn.SetAssertion(k2, kv.SetAssertNotExist)
+	require.NoError(t, err)
+	mustHaveAssertion(k2, kv.SetAssertNotExist)
+	testUnchangeable(k2, kv.SetAssertNotExist)
+
+	k3 := []byte("k3")
+	err = txn.SetAssertion(k3, kv.SetAssertUnknown)
+	require.NoError(t, err)
+	mustHaveAssertion(k3, kv.SetAssertUnknown)
+	testUnchangeable(k3, kv.SetAssertUnknown)
+
+	k4 := []byte("k4")
+	err = txn.SetAssertion(k4, kv.SetAssertNone)
+	require.NoError(t, err)
+	mustHaveAssertion(k4, kv.SetAssertNone)
+	err = txn.SetAssertion(k4, kv.SetAssertExist)
+	require.NoError(t, err)
+	mustHaveAssertion(k4, kv.SetAssertExist)
+	testUnchangeable(k4, kv.SetAssertExist)
+
+	k5 := []byte("k5")
+	err = txn.Set(k5, []byte("v5"))
+	require.NoError(t, err)
+	mustHaveAssertion(k5, kv.SetAssertNone)
+	err = txn.SetAssertion(k5, kv.SetAssertNotExist)
+	require.NoError(t, err)
+	mustHaveAssertion(k5, kv.SetAssertNotExist)
+	testUnchangeable(k5, kv.SetAssertNotExist)
+
+	k6 := []byte("k6")
+	err = txn.SetAssertion(k6, kv.SetAssertNotExist)
+	require.NoError(t, err)
+	err = txn.GetMemBuffer().SetWithFlags(k6, []byte("v6"), kv.SetPresumeKeyNotExists)
+	require.NoError(t, err)
+	mustHaveAssertion(k6, kv.SetAssertNotExist)
+	testUnchangeable(k6, kv.SetAssertNotExist)
+	flags, err := txn.GetMemBuffer().GetFlags(k6)
+	require.NoError(t, err)
+	require.True(t, flags.HasPresumeKeyNotExists())
+	err = txn.GetMemBuffer().DeleteWithFlags(k6, kv.SetNeedLocked)
+	mustHaveAssertion(k6, kv.SetAssertNotExist)
+	testUnchangeable(k6, kv.SetAssertNotExist)
+	flags, err = txn.GetMemBuffer().GetFlags(k6)
+	require.NoError(t, err)
+	require.True(t, flags.HasPresumeKeyNotExists())
+	require.True(t, flags.HasNeedLocked())
+
+	k7 := []byte("k7")
+	lockCtx := kv2.NewLockCtx(txn.StartTS(), 2000, time.Now())
+	err = txn.LockKeys(context.Background(), lockCtx, k7)
+	require.NoError(t, err)
+	mustHaveAssertion(k7, kv.SetAssertNone)
+
+	require.NoError(t, txn.Rollback())
 }

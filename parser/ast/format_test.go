@@ -15,7 +15,6 @@ func getDefaultCharsetAndCollate() (string, string) {
 }
 
 func TestAstFormat(t *testing.T) {
-	t.Parallel()
 	var testcases = []struct {
 		input  string
 		output string

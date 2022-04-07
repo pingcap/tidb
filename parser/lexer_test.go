@@ -23,8 +23,6 @@ import (
 )
 
 func TestTokenID(t *testing.T) {
-	t.Parallel()
-
 	for str, tok := range tokenMap {
 		l := NewScanner(str)
 		var v yySymType
@@ -34,8 +32,6 @@ func TestTokenID(t *testing.T) {
 }
 
 func TestSingleChar(t *testing.T) {
-	t.Parallel()
-
 	table := []byte{'|', '&', '-', '+', '*', '/', '%', '^', '~', '(', ',', ')'}
 	for _, tok := range table {
 		l := NewScanner(string(tok))
@@ -56,8 +52,6 @@ type testLiteralValue struct {
 }
 
 func TestSingleCharOther(t *testing.T) {
-	t.Parallel()
-
 	table := []testCaseItem{
 		{"AT", identifier},
 		{"?", paramMarker},
@@ -69,8 +63,6 @@ func TestSingleCharOther(t *testing.T) {
 }
 
 func TestAtLeadingIdentifier(t *testing.T) {
-	t.Parallel()
-
 	table := []testCaseItem{
 		{"@", singleAtIdentifier},
 		{"@''", singleAtIdentifier},
@@ -96,8 +88,6 @@ func TestAtLeadingIdentifier(t *testing.T) {
 }
 
 func TestUnderscoreCS(t *testing.T) {
-	t.Parallel()
-
 	var v yySymType
 	scanner := NewScanner(`_utf8"string"`)
 	tok := scanner.Lex(&v)
@@ -113,8 +103,6 @@ func TestUnderscoreCS(t *testing.T) {
 }
 
 func TestLiteral(t *testing.T) {
-	t.Parallel()
-
 	table := []testCaseItem{
 		{`'''a'''`, stringLit},
 		{`''a''`, stringLit},
@@ -163,8 +151,6 @@ func TestLiteral(t *testing.T) {
 }
 
 func TestLiteralValue(t *testing.T) {
-	t.Parallel()
-
 	table := []testLiteralValue{
 		{`'''a'''`, `'a'`},
 		{`''a''`, ``},
@@ -227,20 +213,18 @@ func runLiteralTest(t *testing.T, table []testLiteralValue) {
 		val := l.LexLiteral()
 		switch val.(type) {
 		case int64:
-			requires.Equal(t, val, v.val, v.str)
+			requires.Equal(t, v.val, val, v.str)
 		case float64:
-			requires.Equal(t, val, v.val, v.str)
+			requires.Equal(t, v.val, val, v.str)
 		case string:
-			requires.Equal(t, val, v.val, v.str)
+			requires.Equal(t, v.val, val, v.str)
 		default:
-			requires.Equal(t, fmt.Sprint(val), v.val, v.str)
+			requires.Equal(t, v.val, fmt.Sprint(val), v.str)
 		}
 	}
 }
 
 func TestComment(t *testing.T) {
-	t.Parallel()
-
 	table := []testCaseItem{
 		{"-- select --\n1", intLit},
 		{"/*!40101 SET character_set_client = utf8 */;", set},
@@ -266,8 +250,6 @@ SELECT`, selectKwd},
 }
 
 func TestScanQuotedIdent(t *testing.T) {
-	t.Parallel()
-
 	l := NewScanner("`fk`")
 	l.r.peek()
 	tok, pos, lit := scanQuotedIdent(l)
@@ -277,8 +259,6 @@ func TestScanQuotedIdent(t *testing.T) {
 }
 
 func TestScanString(t *testing.T) {
-	t.Parallel()
-
 	table := []struct {
 		raw    string
 		expect string
@@ -313,10 +293,40 @@ func TestScanString(t *testing.T) {
 	}
 }
 
-func TestIdentifier(t *testing.T) {
-	t.Parallel()
+func TestScanStringWithNoBackslashEscapesMode(t *testing.T) {
+	table := []struct {
+		raw    string
+		expect string
+	}{
+		{`' \n\tTest String'`, ` \n\tTest String`},
+		{`'\x\B'`, `\x\B`},
+		{`'\0\\''"\b\n\r\t\'`, `\0\\'"\b\n\r\t\`},
+		{`'\Z'`, `\Z`},
+		{`'\%\_'`, `\%\_`},
+		{`'hello'`, "hello"},
+		{`'"hello"'`, `"hello"`},
+		{`'""hello""'`, `""hello""`},
+		{`'hel''lo'`, "hel'lo"},
+		{`'\'hello'`, `\`},
+		{`"hello"`, "hello"},
+		{`"'hello'"`, "'hello'"},
+		{`"''hello''"`, "''hello''"},
+		{`"hel""lo"`, `hel"lo`},
+		{`"\"hello"`, `\`},
+		{"'한국의中文UTF8およびテキストトラック'", "한국의中文UTF8およびテキストトラック"},
+	}
+	l := NewScanner("")
+	l.SetSQLMode(mysql.ModeNoBackslashEscapes)
+	for _, v := range table {
+		l.reset(v.raw)
+		tok, pos, lit := l.scan()
+		requires.Zero(t, pos.Offset)
+		requires.Equal(t, stringLit, tok)
+		requires.Equal(t, v.expect, lit)
+	}
+}
 
-	replacementString := string(unicode.ReplacementChar) + "xxx"
+func TestIdentifier(t *testing.T) {
 	table := [][2]string{
 		{`哈哈`, "哈哈"},
 		{"`numeric`", "numeric"},
@@ -324,7 +334,7 @@ func TestIdentifier(t *testing.T) {
 		{`5number`, `5number`},
 		{"1_x", "1_x"},
 		{"0_x", "0_x"},
-		{replacementString, replacementString},
+		{string(unicode.ReplacementChar) + "xxx", string(unicode.ReplacementChar) + "xxx"},
 		{"9e", "9e"},
 		{"0b", "0b"},
 		{"0b123", "0b123"},
@@ -341,39 +351,35 @@ func TestIdentifier(t *testing.T) {
 		l.reset(item[0])
 		var v yySymType
 		tok := l.Lex(&v)
-		requires.Equal(t, identifier, tok)
-		requires.Equal(t, item[1], v.ident)
+		requires.Equal(t, identifier, tok, item)
+		requires.Equal(t, item[1], v.ident, item)
 	}
 }
 
 func TestSpecialComment(t *testing.T) {
-	t.Parallel()
-
 	l := NewScanner("/*!40101 select\n5*/")
 	tok, pos, lit := l.scan()
 	requires.Equal(t, identifier, tok)
 	requires.Equal(t, "select", lit)
-	requires.Equal(t, Pos{0, 9, 9}, pos)
+	requires.Equal(t, Pos{1, 9, 9}, pos)
 
 	tok, pos, lit = l.scan()
 	requires.Equal(t, intLit, tok)
 	requires.Equal(t, "5", lit)
-	requires.Equal(t, Pos{1, 1, 16}, pos)
+	requires.Equal(t, Pos{2, 1, 16}, pos)
 }
 
 func TestFeatureIDsComment(t *testing.T) {
-	t.Parallel()
-
 	l := NewScanner("/*T![auto_rand] auto_random(5) */")
 	tok, pos, lit := l.scan()
 	requires.Equal(t, identifier, tok)
 	requires.Equal(t, "auto_random", lit)
-	requires.Equal(t, Pos{0, 16, 16}, pos)
+	requires.Equal(t, Pos{1, 16, 16}, pos)
 	tok, pos, _ = l.scan()
 	requires.Equal(t, int('('), tok)
 	_, pos, lit = l.scan()
 	requires.Equal(t, "5", lit)
-	requires.Equal(t, Pos{0, 28, 28}, pos)
+	requires.Equal(t, Pos{1, 28, 28}, pos)
 	tok, pos, _ = l.scan()
 	requires.Equal(t, int(')'), tok)
 
@@ -383,8 +389,6 @@ func TestFeatureIDsComment(t *testing.T) {
 }
 
 func TestOptimizerHint(t *testing.T) {
-	t.Parallel()
-
 	l := NewScanner("SELECT /*+ BKA(t1) */ 0;")
 	tokens := []struct {
 		tok   int
@@ -409,8 +413,6 @@ func TestOptimizerHint(t *testing.T) {
 }
 
 func TestOptimizerHintAfterCertainKeywordOnly(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		input  string
 		tokens []int
@@ -491,8 +493,6 @@ func TestOptimizerHintAfterCertainKeywordOnly(t *testing.T) {
 }
 
 func TestInt(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		input  string
 		expect uint64
@@ -522,8 +522,6 @@ func TestInt(t *testing.T) {
 }
 
 func TestSQLModeANSIQuotes(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		input string
 		tok   int
@@ -556,8 +554,6 @@ func TestSQLModeANSIQuotes(t *testing.T) {
 }
 
 func TestIllegal(t *testing.T) {
-	t.Parallel()
-
 	table := []testCaseItem{
 		{"'", invalid},
 		{"'fu", invalid},
@@ -576,19 +572,17 @@ func TestIllegal(t *testing.T) {
 }
 
 func TestVersionDigits(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		input    string
 		min      int
 		max      int
-		nextChar rune
+		nextChar byte
 	}{
 		{
 			input:    "12345",
 			min:      5,
 			max:      5,
-			nextChar: unicode.ReplacementChar,
+			nextChar: 0,
 		},
 		{
 			input:    "12345xyz",
@@ -618,7 +612,7 @@ func TestVersionDigits(t *testing.T) {
 			input:    "",
 			min:      5,
 			max:      5,
-			nextChar: unicode.ReplacementChar,
+			nextChar: 0,
 		},
 		{
 			input:    "1234567xyz",
@@ -636,7 +630,7 @@ func TestVersionDigits(t *testing.T) {
 			input:    "12345",
 			min:      5,
 			max:      6,
-			nextChar: unicode.ReplacementChar,
+			nextChar: 0,
 		},
 		{
 			input:    "1234xyz",
@@ -656,17 +650,15 @@ func TestVersionDigits(t *testing.T) {
 }
 
 func TestFeatureIDs(t *testing.T) {
-	t.Parallel()
-
 	tests := []struct {
 		input      string
 		featureIDs []string
-		nextChar   rune
+		nextChar   byte
 	}{
 		{
 			input:      "[feature]",
 			featureIDs: []string{"feature"},
-			nextChar:   unicode.ReplacementChar,
+			nextChar:   0,
 		},
 		{
 			input:      "[feature] xx",
@@ -676,17 +668,17 @@ func TestFeatureIDs(t *testing.T) {
 		{
 			input:      "[feature1,feature2]",
 			featureIDs: []string{"feature1", "feature2"},
-			nextChar:   unicode.ReplacementChar,
+			nextChar:   0,
 		},
 		{
 			input:      "[feature1,feature2,feature3]",
 			featureIDs: []string{"feature1", "feature2", "feature3"},
-			nextChar:   unicode.ReplacementChar,
+			nextChar:   0,
 		},
 		{
 			input:      "[id_en_ti_fier]",
 			featureIDs: []string{"id_en_ti_fier"},
-			nextChar:   unicode.ReplacementChar,
+			nextChar:   0,
 		},
 		{
 			input:      "[invalid,    whitespace]",

@@ -24,20 +24,16 @@ import (
 	"sort"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/testutil"
 )
 
 // TestKit is a utility to run sql test.
@@ -124,46 +120,12 @@ func NewTestKit(c *check.C, store kv.Storage) *TestKit {
 	}
 }
 
-// NewTestKitWithSession returns a new *TestKit with a session.
-func NewTestKitWithSession(c *check.C, store kv.Storage, se session.Session) *TestKit {
-	return &TestKit{
-		c:     c,
-		store: store,
-		Se:    se,
-	}
-}
-
 // NewTestKitWithInit returns a new *TestKit and creates a session.
 func NewTestKitWithInit(c *check.C, store kv.Storage) *TestKit {
 	tk := NewTestKit(c, store)
 	// Use test and prepare a session.
 	tk.MustExec("use test")
 	return tk
-}
-
-// MockGC is used to make GC work in the test environment.
-func MockGC(tk *TestKit) (string, string, string, func()) {
-	originGC := ddl.IsEmulatorGCEnable()
-	resetGC := func() {
-		if originGC {
-			ddl.EmulatorGCEnable()
-		} else {
-			ddl.EmulatorGCDisable()
-		}
-	}
-
-	// disable emulator GC.
-	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
-	ddl.EmulatorGCDisable()
-	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
-	timeAfterDrop := time.Now().Add(48 * 60 * 60 * time.Second).Format(gcTimeFormat)
-	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
-			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[1]s'`
-	// clear GC variables first.
-	tk.MustExec("delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )")
-	return timeBeforeDrop, timeAfterDrop, safePointSQL, resetGC
 }
 
 var connectionID uint64
@@ -260,7 +222,7 @@ func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
 	return false
 }
 
-func containGloabl(rs *Result) bool {
+func containGlobal(rs *Result) bool {
 	partitionNameCol := 2
 	for i := range rs.rows {
 		if strings.Contains(rs.rows[i][partitionNameCol], "global") {
@@ -272,13 +234,13 @@ func containGloabl(rs *Result) bool {
 
 // MustNoGlobalStats checks if there is no global stats.
 func (tk *TestKit) MustNoGlobalStats(table string) bool {
-	if containGloabl(tk.MustQuery("show stats_meta where table_name like '" + table + "'")) {
+	if containGlobal(tk.MustQuery("show stats_meta where table_name like '" + table + "'")) {
 		return false
 	}
-	if containGloabl(tk.MustQuery("show stats_buckets where table_name like '" + table + "'")) {
+	if containGlobal(tk.MustQuery("show stats_buckets where table_name like '" + table + "'")) {
 		return false
 	}
-	if containGloabl(tk.MustQuery("show stats_histograms where table_name like '" + table + "'")) {
+	if containGlobal(tk.MustQuery("show stats_histograms where table_name like '" + table + "'")) {
 		return false
 	}
 	return true
@@ -422,7 +384,7 @@ func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.Reco
 
 // Rows is similar to RowsWithSep, use white space as separator string.
 func Rows(args ...string) [][]interface{} {
-	return testutil.RowsWithSep(" ", args...)
+	return RowsWithSep(" ", args...)
 }
 
 // GetTableID gets table ID by name.
@@ -434,9 +396,17 @@ func (tk *TestKit) GetTableID(tableName string) int64 {
 	return tbl.Meta().ID
 }
 
-// WithPruneMode run test case under prune mode.
-func WithPruneMode(tk *TestKit, mode variable.PartitionPruneMode, f func()) {
-	tk.MustExec("set @@tidb_partition_prune_mode=`" + string(mode) + "`")
-	tk.MustExec("set global tidb_partition_prune_mode=`" + string(mode) + "`")
-	f()
+// RowsWithSep is a convenient function to wrap args to a slice of []interface.
+// The arg represents a row, split by sep.
+func RowsWithSep(sep string, args ...string) [][]interface{} {
+	rows := make([][]interface{}, len(args))
+	for i, v := range args {
+		strs := strings.Split(v, sep)
+		row := make([]interface{}, len(strs))
+		for j, s := range strs {
+			row[j] = s
+		}
+		rows[i] = row
+	}
+	return rows
 }

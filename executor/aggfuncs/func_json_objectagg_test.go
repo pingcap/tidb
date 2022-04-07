@@ -26,7 +26,6 @@ import (
 )
 
 func TestMergePartialResult4JsonObjectagg(t *testing.T) {
-	t.Parallel()
 	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
 	var argCombines [][]byte
 	for i := 0; i < len(typeList); i++ {
@@ -73,7 +72,6 @@ func TestMergePartialResult4JsonObjectagg(t *testing.T) {
 }
 
 func TestJsonObjectagg(t *testing.T) {
-	t.Parallel()
 	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
 	var argCombines [][]byte
 	for i := 0; i < len(typeList); i++ {
@@ -112,7 +110,6 @@ func TestJsonObjectagg(t *testing.T) {
 }
 
 func TestMemJsonObjectagg(t *testing.T) {
-	t.Parallel()
 	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON, mysql.TypeDuration, mysql.TypeNewDecimal, mysql.TypeDate}
 	var argCombines [][]byte
 	for i := 0; i < len(typeList); i++ {

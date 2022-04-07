@@ -223,6 +223,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 		}
 	}
 	setResourceGroupTaggerForTxn(e.ctx.GetSessionVars().StmtCtx, txn)
+	setRPCInterceptorOfExecCounterForTxn(e.ctx.GetSessionVars(), txn)
 	prefetchStart := time.Now()
 	// Use BatchGet to fill cache.
 	// It's an optimization and could be removed without affecting correctness.

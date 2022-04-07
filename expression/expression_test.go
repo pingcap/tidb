@@ -28,7 +28,6 @@ import (
 )
 
 func TestNewValuesFunc(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	res := NewValuesFunc(ctx, 0, types.NewFieldType(mysql.TypeLonglong))
 	require.Equal(t, "values", res.FuncName.O)
@@ -38,7 +37,6 @@ func TestNewValuesFunc(t *testing.T) {
 }
 
 func TestEvaluateExprWithNull(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tblInfo := newTestTableBuilder("").add("col0", mysql.TypeLonglong, 0).add("col1", mysql.TypeLonglong, 0).build()
 	schema := tableInfoToSchemaForTest(tblInfo)
@@ -59,7 +57,6 @@ func TestEvaluateExprWithNull(t *testing.T) {
 }
 
 func TestEvaluateExprWithNullAndParameters(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	tblInfo := newTestTableBuilder("").add("col0", mysql.TypeLonglong, 0).build()
 	schema := tableInfoToSchemaForTest(tblInfo)
@@ -83,7 +80,6 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 }
 
 func TestConstant(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	require.False(t, NewZero().IsCorrelated())
@@ -97,7 +93,6 @@ func TestConstant(t *testing.T) {
 }
 
 func TestIsBinaryLiteral(t *testing.T) {
-	t.Parallel()
 	col := &Column{RetType: types.NewFieldType(mysql.TypeEnum)}
 	require.False(t, IsBinaryLiteral(col))
 	col.RetType.Tp = mysql.TypeSet
@@ -114,7 +109,6 @@ func TestIsBinaryLiteral(t *testing.T) {
 }
 
 func TestConstItem(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	sf := newFunction(ast.Rand)
 	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
@@ -127,7 +121,6 @@ func TestConstItem(t *testing.T) {
 }
 
 func TestVectorizable(t *testing.T) {
-	t.Parallel()
 	exprs := make([]Expression, 0, 4)
 	sf := newFunction(ast.Rand)
 	column := &Column{
@@ -227,7 +220,6 @@ func tableInfoToSchemaForTest(tableInfo *model.TableInfo) *Schema {
 }
 
 func TestEvalExpr(t *testing.T) {
-	t.Parallel()
 	ctx := createContext(t)
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}

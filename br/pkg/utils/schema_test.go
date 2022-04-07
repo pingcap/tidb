@@ -27,8 +27,6 @@ func mockBackupMeta(mockSchemas []*backuppb.Schema, mockFiles []*backuppb.File) 
 }
 
 func TestLoadBackupMeta(t *testing.T) {
-	t.Parallel()
-
 	testDir := t.TempDir()
 	store, err := storage.NewLocalStorage(testDir)
 	require.NoError(t, err)
@@ -105,8 +103,6 @@ func TestLoadBackupMeta(t *testing.T) {
 }
 
 func TestLoadBackupMetaPartionTable(t *testing.T) {
-	t.Parallel()
-
 	testDir := t.TempDir()
 	store, err := storage.NewLocalStorage(testDir)
 	require.NoError(t, err)

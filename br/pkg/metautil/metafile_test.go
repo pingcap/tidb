@@ -24,8 +24,6 @@ func checksum(m *backuppb.MetaFile) []byte {
 }
 
 func TestWalkMetaFileEmpty(t *testing.T) {
-	t.Parallel()
-
 	files := []*backuppb.MetaFile{}
 	collect := func(m *backuppb.MetaFile) { files = append(files, m) }
 	cipher := backuppb.CipherInfo{
@@ -46,8 +44,6 @@ func TestWalkMetaFileEmpty(t *testing.T) {
 }
 
 func TestWalkMetaFileLeaf(t *testing.T) {
-	t.Parallel()
-
 	leaf := &backuppb.MetaFile{Schemas: []*backuppb.Schema{
 		{Db: []byte("db"), Table: []byte("table")},
 	}}
@@ -64,8 +60,6 @@ func TestWalkMetaFileLeaf(t *testing.T) {
 }
 
 func TestWalkMetaFileInvalid(t *testing.T) {
-	t.Parallel()
-
 	controller := gomock.NewController(t)
 	defer controller.Finish()
 	mockStorage := mockstorage.NewMockExternalStorage(controller)
@@ -91,8 +85,6 @@ func TestWalkMetaFileInvalid(t *testing.T) {
 }
 
 func TestWalkMetaFile(t *testing.T) {
-	t.Parallel()
-
 	controller := gomock.NewController(t)
 	defer controller.Finish()
 	mockStorage := mockstorage.NewMockExternalStorage(controller)
@@ -161,8 +153,6 @@ type encryptTest struct {
 }
 
 func TestEncryptAndDecrypt(t *testing.T) {
-	t.Parallel()
-
 	originalData := []byte("pingcap")
 	testCases := []encryptTest{
 		{
@@ -197,18 +187,18 @@ func TestEncryptAndDecrypt(t *testing.T) {
 		if v.method == encryptionpb.EncryptionMethod_UNKNOWN {
 			require.Error(t, err)
 		} else if v.method == encryptionpb.EncryptionMethod_PLAINTEXT {
-			require.Nil(t, err)
+			require.NoError(t, err)
 			require.Equal(t, originalData, encryptData)
 
 			decryptData, err := Decrypt(encryptData, &cipher, iv)
-			require.Nil(t, err)
+			require.NoError(t, err)
 			require.Equal(t, decryptData, originalData)
 		} else {
-			require.Nil(t, err)
+			require.NoError(t, err)
 			require.NotEqual(t, originalData, encryptData)
 
 			decryptData, err := Decrypt(encryptData, &cipher, iv)
-			require.Nil(t, err)
+			require.NoError(t, err)
 			require.Equal(t, decryptData, originalData)
 
 			wrongCipher := backuppb.CipherInfo{
@@ -219,7 +209,7 @@ func TestEncryptAndDecrypt(t *testing.T) {
 			if len(v.rightKey) != len(v.wrongKey) {
 				require.Error(t, err)
 			} else {
-				require.Nil(t, err)
+				require.NoError(t, err)
 				require.NotEqual(t, decryptData, originalData)
 			}
 		}

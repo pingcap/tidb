@@ -22,7 +22,6 @@ import (
 )
 
 func TestStringSet(t *testing.T) {
-	t.Parallel()
 	assert := assert.New(t)
 
 	set := NewStringSet()

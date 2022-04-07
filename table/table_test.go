@@ -23,7 +23,6 @@ import (
 )
 
 func TestErrorCode(t *testing.T) {
-	t.Parallel()
 	require.Equal(t, mysql.ErrBadNull, int(terror.ToSQLError(ErrColumnCantNull).Code))
 	require.Equal(t, mysql.ErrBadField, int(terror.ToSQLError(ErrUnknownColumn).Code))
 	require.Equal(t, mysql.ErrFieldSpecifiedTwice, int(terror.ToSQLError(errDuplicateColumn).Code))

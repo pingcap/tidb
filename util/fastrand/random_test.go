@@ -22,8 +22,6 @@ import (
 )
 
 func TestRand(t *testing.T) {
-	t.Parallel()
-
 	x := Uint32N(1024)
 	require.Less(t, x, uint32(1024))
 	y := Uint64N(1 << 63)
@@ -42,6 +40,22 @@ func TestRand(t *testing.T) {
 		}
 	}
 	require.Less(t, sum, 24)
+}
+
+func BenchmarkFastRandBuf(b *testing.B) {
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			Buf(20)
+		}
+	})
+}
+
+func BenchmarkFastRandUint32N(b *testing.B) {
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			Uint32N(127)
+		}
+	})
 }
 
 func BenchmarkFastRand(b *testing.B) {

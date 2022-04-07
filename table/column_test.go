@@ -33,7 +33,6 @@ import (
 )
 
 func TestString(t *testing.T) {
-	t.Parallel()
 	col := ToColumn(&model.ColumnInfo{
 		FieldType: *types.NewFieldType(mysql.TypeTiny),
 		State:     model.StatePublic,
@@ -84,7 +83,6 @@ func TestString(t *testing.T) {
 }
 
 func TestFind(t *testing.T) {
-	t.Parallel()
 	cols := []*Column{
 		newCol("a"),
 		newCol("b"),
@@ -104,7 +102,6 @@ func TestFind(t *testing.T) {
 }
 
 func TestCheck(t *testing.T) {
-	t.Parallel()
 	col := newCol("a")
 	col.Flag = mysql.AutoIncrementFlag
 	cols := []*Column{col, col}
@@ -121,7 +118,6 @@ func TestCheck(t *testing.T) {
 }
 
 func TestHandleBadNull(t *testing.T) {
-	t.Parallel()
 	col := newCol("a")
 	sc := new(stmtctx.StatementContext)
 	d := types.Datum{}
@@ -141,7 +137,6 @@ func TestHandleBadNull(t *testing.T) {
 }
 
 func TestDesc(t *testing.T) {
-	t.Parallel()
 	col := newCol("a")
 	col.Flag = mysql.AutoIncrementFlag | mysql.NotNullFlag | mysql.PriKeyFlag
 	NewColDesc(col)
@@ -252,7 +247,6 @@ func TestGetZeroValue(t *testing.T) {
 	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%+v", tt.ft), func(t *testing.T) {
-			t.Parallel()
 			colInfo := &model.ColumnInfo{FieldType: *tt.ft}
 			zv := GetZeroValue(colInfo)
 			require.Equal(t, tt.value.Kind(), zv.Kind())
@@ -264,7 +258,6 @@ func TestGetZeroValue(t *testing.T) {
 }
 
 func TestCastValue(t *testing.T) {
-	t.Parallel()
 	ctx := mock.NewContext()
 	colInfo := model.ColumnInfo{
 		FieldType: *types.NewFieldType(mysql.TypeLong),
@@ -310,10 +303,21 @@ func TestCastValue(t *testing.T) {
 	colInfoS.Charset = charset.CharsetASCII
 	_, err = CastValue(ctx, types.NewDatum([]byte{0x32, 0xf0}), &colInfoS, false, true)
 	require.NoError(t, err)
+
+	colInfoS.Charset = charset.CharsetUTF8MB4
+	colInfoS.Collate = "utf8mb4_general_ci"
+	val, err = CastValue(ctx, types.NewBinaryLiteralDatum([]byte{0xE5, 0xA5, 0xBD}), &colInfoS, false, false)
+	require.NoError(t, err)
+	require.Equal(t, "utf8mb4_general_ci", val.Collation())
+	val, err = CastValue(ctx, types.NewBinaryLiteralDatum([]byte{0xE5, 0xA5, 0xBD, 0x81}), &colInfoS, false, false)
+	require.Error(t, err, "[table:1366]Incorrect string value '\\x81' for column ''")
+	require.Equal(t, "utf8mb4_general_ci", val.Collation())
+	val, err = CastValue(ctx, types.NewDatum([]byte{0xE5, 0xA5, 0xBD, 0x81}), &colInfoS, false, false)
+	require.Error(t, err, "[table:1366]Incorrect string value '\\x81' for column ''")
+	require.Equal(t, "utf8mb4_general_ci", val.Collation())
 }
 
 func TestGetDefaultValue(t *testing.T) {
-	t.Parallel()
 	var nilDt types.Datum
 	nilDt.SetNull()
 	ctx := mock.NewContext()

@@ -22,8 +22,6 @@ import (
 )
 
 func TestRandWithTime(t *testing.T) {
-	t.Parallel()
-
 	rng1 := NewWithTime()
 	// NOTE: On windows platform, this Sleep is necessary. Because time.Now() is
 	// imprecise, calling UnixNano() twice returns the same value. We have to make
@@ -42,8 +40,6 @@ func TestRandWithTime(t *testing.T) {
 }
 
 func TestRandWithSeed(t *testing.T) {
-	t.Parallel()
-
 	tests := [4]struct {
 		seed  int64
 		once  float64
@@ -62,8 +58,6 @@ func TestRandWithSeed(t *testing.T) {
 }
 
 func TestRandWithSeed1AndSeed2(t *testing.T) {
-	t.Parallel()
-
 	seed1 := uint32(10000000)
 	seed2 := uint32(1000000)
 

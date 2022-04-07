@@ -22,8 +22,6 @@ import (
 )
 
 func TestBatchRetrieverHelper(t *testing.T) {
-	t.Parallel()
-
 	rangeStarts := make([]int, 0)
 	rangeEnds := make([]int, 0)
 	collect := func(start, end int) error {

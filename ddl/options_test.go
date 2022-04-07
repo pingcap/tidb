@@ -22,14 +22,16 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
-	"go.etcd.io/etcd/clientv3"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 func TestOptions(t *testing.T) {
-	t.Parallel()
-
 	client, err := clientv3.NewFromURL("test")
 	require.NoError(t, err)
+	defer func() {
+		err := client.Close()
+		require.NoError(t, err)
+	}()
 	callback := &ddl.BaseCallback{}
 	lease := time.Second * 3
 	store := &mock.Store{}

@@ -36,10 +36,12 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // MemTablePredicateExtractor is used to extract some predicates from `WHERE` clause
@@ -78,7 +80,7 @@ func (helper extractHelper) extractColInConsExpr(extractCols map[int64]*types.Fi
 	}
 	// All expressions in IN must be a constant
 	// SELECT * FROM t1 WHERE c IN ('1', '2')
-	var results []types.Datum
+	results := make([]types.Datum, 0, len(args[1:]))
 	for _, arg := range args[1:] {
 		constant, ok := arg.(*expression.Constant)
 		if !ok || constant.DeferredExpr != nil || constant.ParamMarker != nil {
@@ -236,6 +238,8 @@ func (helper extractHelper) extractLikePatternCol(
 	names []*types.FieldName,
 	predicates []expression.Expression,
 	extractColName string,
+	toLower bool,
+	needLike2Regexp bool,
 ) (
 	remained []expression.Expression,
 	patterns []string,
@@ -262,10 +266,13 @@ func (helper extractHelper) extractLikePatternCol(
 		// We use '|' to combine DNF regular expression: .*a.*|.*b.*
 		// e.g:
 		// SELECT * FROM t WHERE c LIKE '%a%' OR c LIKE '%b%'
-		if fn.FuncName.L == ast.LogicOr {
-			canBuildPattern, pattern = helper.extractOrLikePattern(fn, extractColName, extractCols)
+		if fn.FuncName.L == ast.LogicOr && !toLower {
+			canBuildPattern, pattern = helper.extractOrLikePattern(fn, extractColName, extractCols, needLike2Regexp)
 		} else {
-			canBuildPattern, pattern = helper.extractLikePattern(fn, extractColName, extractCols)
+			canBuildPattern, pattern = helper.extractLikePattern(fn, extractColName, extractCols, needLike2Regexp)
+		}
+		if canBuildPattern && toLower {
+			pattern = strings.ToLower(pattern)
 		}
 		if canBuildPattern {
 			patterns = append(patterns, pattern)
@@ -280,6 +287,7 @@ func (helper extractHelper) extractOrLikePattern(
 	orFunc *expression.ScalarFunction,
 	extractColName string,
 	extractCols map[int64]*types.FieldName,
+	needLike2Regexp bool,
 ) (
 	ok bool,
 	pattern string,
@@ -296,7 +304,7 @@ func (helper extractHelper) extractOrLikePattern(
 			return false, ""
 		}
 
-		ok, partPattern := helper.extractLikePattern(fn, extractColName, extractCols)
+		ok, partPattern := helper.extractLikePattern(fn, extractColName, extractCols, needLike2Regexp)
 		if !ok {
 			return false, ""
 		}
@@ -309,6 +317,7 @@ func (helper extractHelper) extractLikePattern(
 	fn *expression.ScalarFunction,
 	extractColName string,
 	extractCols map[int64]*types.FieldName,
+	needLike2Regexp bool,
 ) (
 	ok bool,
 	pattern string,
@@ -324,7 +333,10 @@ func (helper extractHelper) extractLikePattern(
 		case ast.EQ:
 			return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$"
 		case ast.Like:
-			return true, stringutil.CompileLike2Regexp(datums[0].GetString())
+			if needLike2Regexp {
+				return true, stringutil.CompileLike2Regexp(datums[0].GetString())
+			}
+			return true, datums[0].GetString()
 		case ast.Regexp:
 			return true, datums[0].GetString()
 		default:
@@ -678,7 +690,7 @@ func (e *ClusterLogTableExtractor) Extract(
 		return nil
 	}
 
-	remained, patterns := e.extractLikePatternCol(schema, names, remained, "message")
+	remained, patterns := e.extractLikePatternCol(schema, names, remained, "message", false, true)
 	e.Patterns = patterns
 	return remained
 }
@@ -1414,4 +1426,184 @@ func (e *StatementsSummaryExtractor) explainInfo(p *PhysicalMemTable) string {
 		return ""
 	}
 	return fmt.Sprintf("digests: [%s]", extractStringFromStringSet(e.Digests))
+}
+
+// TikvRegionPeersExtractor is used to extract some predicates of cluster table.
+type TikvRegionPeersExtractor struct {
+	extractHelper
+
+	// SkipRequest means the where clause always false, we don't need to request any component
+	SkipRequest bool
+
+	// RegionIDs/StoreIDs represents all region/store ids we should filter in PD to reduce network IO.
+	// e.g:
+	// 1. SELECT * FROM tikv_region_peers WHERE region_id=1
+	// 2. SELECT * FROM tikv_region_peers WHERE table_id in (11, 22)
+	RegionIDs []uint64
+	StoreIDs  []uint64
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *TikvRegionPeersExtractor) Extract(_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) []expression.Expression {
+	// Extract the `region_id/store_id` columns.
+	remained, regionIDSkipRequest, regionIDs := e.extractCol(schema, names, predicates, "region_id", false)
+	remained, storeIDSkipRequest, storeIDs := e.extractCol(schema, names, remained, "store_id", false)
+	e.RegionIDs, e.StoreIDs = e.parseUint64(regionIDs), e.parseUint64(storeIDs)
+
+	e.SkipRequest = regionIDSkipRequest || storeIDSkipRequest
+	if e.SkipRequest {
+		return nil
+	}
+
+	return remained
+}
+
+func (e *TikvRegionPeersExtractor) explainInfo(p *PhysicalMemTable) string {
+	if e.SkipRequest {
+		return "skip_request:true"
+	}
+	r := new(bytes.Buffer)
+	if len(e.RegionIDs) > 0 {
+		r.WriteString(fmt.Sprintf("region_ids:[%s], ", extractStringFromUint64Slice(e.RegionIDs)))
+	}
+	if len(e.StoreIDs) > 0 {
+		r.WriteString(fmt.Sprintf("store_ids:[%s], ", extractStringFromUint64Slice(e.StoreIDs)))
+	}
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
+}
+
+// ColumnsTableExtractor is used to extract some predicates of columns table.
+type ColumnsTableExtractor struct {
+	extractHelper
+
+	// SkipRequest means the where clause always false, we don't need to request any component
+	SkipRequest bool
+
+	TableSchema set.StringSet
+
+	TableName set.StringSet
+	// ColumnName represents all column name we should filter in memtable.
+	ColumnName set.StringSet
+
+	TableSchemaPatterns []string
+
+	TableNamePatterns []string
+
+	ColumnNamePatterns []string
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *ColumnsTableExtractor) Extract(_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	remained, tableSchemaSkipRequest, tableSchema := e.extractCol(schema, names, predicates, "table_schema", true)
+	remained, tableNameSkipRequest, tableName := e.extractCol(schema, names, remained, "table_name", true)
+	remained, columnNameSkipRequest, columnName := e.extractCol(schema, names, remained, "column_name", true)
+	e.SkipRequest = columnNameSkipRequest || tableSchemaSkipRequest || tableNameSkipRequest
+	if e.SkipRequest {
+		return
+	}
+	remained, tableSchemaPatterns := e.extractLikePatternCol(schema, names, remained, "table_schema", true, false)
+	remained, tableNamePatterns := e.extractLikePatternCol(schema, names, remained, "table_name", true, false)
+	remained, columnNamePatterns := e.extractLikePatternCol(schema, names, remained, "column_name", true, false)
+
+	e.ColumnName = columnName
+	e.TableName = tableName
+	e.TableSchema = tableSchema
+	e.TableSchemaPatterns = tableSchemaPatterns
+	e.TableNamePatterns = tableNamePatterns
+	e.ColumnNamePatterns = columnNamePatterns
+	return remained
+}
+
+func (e *ColumnsTableExtractor) explainInfo(p *PhysicalMemTable) string {
+	if e.SkipRequest {
+		return "skip_request:true"
+	}
+	r := new(bytes.Buffer)
+	if len(e.TableSchema) > 0 {
+		r.WriteString(fmt.Sprintf("table_schema:[%s], ", extractStringFromStringSet(e.TableSchema)))
+	}
+	if len(e.TableName) > 0 {
+		r.WriteString(fmt.Sprintf("table_name:[%s], ", extractStringFromStringSet(e.TableName)))
+	}
+	if len(e.ColumnName) > 0 {
+		r.WriteString(fmt.Sprintf("column_name:[%s], ", extractStringFromStringSet(e.ColumnName)))
+	}
+	if len(e.TableSchemaPatterns) > 0 {
+		r.WriteString(fmt.Sprintf("table_schema_pattern:[%s], ", extractStringFromStringSlice(e.TableSchemaPatterns)))
+	}
+	if len(e.TableNamePatterns) > 0 {
+		r.WriteString(fmt.Sprintf("table_name_pattern:[%s], ", extractStringFromStringSlice(e.TableNamePatterns)))
+	}
+	if len(e.ColumnNamePatterns) > 0 {
+		r.WriteString(fmt.Sprintf("column_name_pattern:[%s], ", extractStringFromStringSlice(e.ColumnNamePatterns)))
+	}
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
+}
+
+// TiKVRegionStatusExtractor is used to extract single table region scan region from predictions
+type TiKVRegionStatusExtractor struct {
+	extractHelper
+	tablesID []int64
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *TiKVRegionStatusExtractor) Extract(_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	remained, _, tableIDSet := e.extractCol(schema, names, predicates, "table_id", true)
+	if tableIDSet.Count() < 1 {
+		return predicates
+	}
+	var tableID int64
+	var err error
+	for key := range tableIDSet {
+		tableID, err = strconv.ParseInt(key, 10, 64)
+		if err != nil {
+			logutil.BgLogger().Error("extract table_id failed", zap.Error(err), zap.String("tableID", key))
+			e.tablesID = nil
+			return predicates
+		}
+		e.tablesID = append(e.tablesID, tableID)
+	}
+	return remained
+}
+
+func (e *TiKVRegionStatusExtractor) explainInfo(p *PhysicalMemTable) string {
+	r := new(bytes.Buffer)
+	if len(e.tablesID) > 0 {
+		r.WriteString("table_id in {")
+		for i, tableID := range e.tablesID {
+			if i > 0 {
+				r.WriteString(",")
+			}
+			r.WriteString(fmt.Sprintf("%v", tableID))
+		}
+		r.WriteString("}")
+	}
+	return r.String()
+}
+
+// GetTablesID returns TablesID
+func (e *TiKVRegionStatusExtractor) GetTablesID() []int64 {
+	return e.tablesID
 }

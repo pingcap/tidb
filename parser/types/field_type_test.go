@@ -29,7 +29,6 @@ import (
 )
 
 func TestFieldType(t *testing.T) {
-	t.Parallel()
 	ft := NewFieldType(mysql.TypeDuration)
 	require.Equal(t, UnspecifiedLength, ft.Flen)
 	require.Equal(t, UnspecifiedLength, ft.Decimal)
@@ -197,7 +196,6 @@ func TestFieldType(t *testing.T) {
 }
 
 func TestHasCharsetFromStmt(t *testing.T) {
-	t.Parallel()
 	template := "CREATE TABLE t(a %s)"
 
 	types := []struct {
@@ -246,7 +244,6 @@ func TestHasCharsetFromStmt(t *testing.T) {
 }
 
 func TestEnumSetFlen(t *testing.T) {
-	t.Parallel()
 	p := parser.New()
 	cases := []struct {
 		sql string
@@ -279,7 +276,6 @@ func TestEnumSetFlen(t *testing.T) {
 }
 
 func TestFieldTypeEqual(t *testing.T) {
-	t.Parallel()
 	// Tp not equal
 	ft1 := NewFieldType(mysql.TypeDouble)
 	ft2 := NewFieldType(mysql.TypeFloat)

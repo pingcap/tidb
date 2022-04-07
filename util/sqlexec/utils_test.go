@@ -24,7 +24,6 @@ import (
 )
 
 func TestReserveBuffer(t *testing.T) {
-	t.Parallel()
 	res0 := reserveBuffer(nil, 0)
 	require.Len(t, res0, 0)
 
@@ -100,7 +99,6 @@ func TestEscapeBackslash(t *testing.T) {
 		// copy iterator variable into a new variable, see issue #27779
 		v := v
 		t.Run(v.name, func(t *testing.T) {
-			t.Parallel()
 			require.Equal(t, v.output, escapeBytesBackslash(nil, v.input))
 			require.Equal(t, v.output, escapeStringBackslash(nil, string(v.input)))
 		})
@@ -392,7 +390,6 @@ func TestEscapeSQL(t *testing.T) {
 		// copy iterator variable into a new variable, see issue #27779
 		v := v
 		t.Run(v.name, func(t *testing.T) {
-			t.Parallel()
 			r3 := new(strings.Builder)
 			r1, e1 := escapeSQL(v.input, v.params...)
 			r2, e2 := EscapeSQL(v.input, v.params...)
@@ -418,7 +415,6 @@ func TestEscapeSQL(t *testing.T) {
 }
 
 func TestMustUtils(t *testing.T) {
-	t.Parallel()
 	require.PanicsWithError(t, "missing arguments, need 1-th arg, but only got 0 args", func() {
 		MustEscapeSQL("%?")
 	})

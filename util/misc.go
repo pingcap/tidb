@@ -279,8 +279,9 @@ func MockPkixAttribute(name, value string) pkix.AttributeTypeAndValue {
 	if !exists {
 		panic(fmt.Sprintf("unsupport mock type: %s", name))
 	}
-	var vs []int
-	for _, v := range strings.Split(n, ".") {
+	split := strings.Split(n, ".")
+	vs := make([]int, 0, len(split))
+	for _, v := range split {
 		i, err := strconv.Atoi(v)
 		if err != nil {
 			panic(err)

@@ -22,7 +22,6 @@ import (
 )
 
 func TestUnfoldableFuncs(t *testing.T) {
-	t.Parallel()
 	_, ok := unFoldableFunctions[ast.Sysdate]
 	require.True(t, ok)
 }

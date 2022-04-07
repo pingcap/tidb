@@ -73,7 +73,6 @@ func (s *mysqlSuite) TearDownTest(t *testing.T) {
 }
 
 func TestWriteRowsReplaceOnDup(t *testing.T) {
-	t.Parallel()
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
 	s.mockDB.
@@ -132,7 +131,6 @@ func TestWriteRowsReplaceOnDup(t *testing.T) {
 }
 
 func TestWriteRowsIgnoreOnDup(t *testing.T) {
-	t.Parallel()
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
 	s.mockDB.
@@ -179,7 +177,6 @@ func TestWriteRowsIgnoreOnDup(t *testing.T) {
 }
 
 func TestWriteRowsErrorOnDup(t *testing.T) {
-	t.Parallel()
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
 	s.mockDB.
@@ -217,7 +214,7 @@ func TestWriteRowsErrorOnDup(t *testing.T) {
 }
 
 // TODO: temporarily disable this test before we fix strict mode
-//nolint:unused
+//nolint:unused,deadcode
 func testStrictMode(t *testing.T) {
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
@@ -259,7 +256,6 @@ func testStrictMode(t *testing.T) {
 }
 
 func TestFetchRemoteTableModels_3_x(t *testing.T) {
-	t.Parallel()
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
 	s.mockDB.ExpectBegin()
@@ -294,7 +290,6 @@ func TestFetchRemoteTableModels_3_x(t *testing.T) {
 }
 
 func TestFetchRemoteTableModels_4_0(t *testing.T) {
-	t.Parallel()
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
 	s.mockDB.ExpectBegin()
@@ -332,7 +327,6 @@ func TestFetchRemoteTableModels_4_0(t *testing.T) {
 }
 
 func TestFetchRemoteTableModels_4_x_auto_increment(t *testing.T) {
-	t.Parallel()
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
 	s.mockDB.ExpectBegin()
@@ -370,7 +364,6 @@ func TestFetchRemoteTableModels_4_x_auto_increment(t *testing.T) {
 }
 
 func TestFetchRemoteTableModels_4_x_auto_random(t *testing.T) {
-	t.Parallel()
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
 	s.mockDB.ExpectBegin()
@@ -410,7 +403,6 @@ func TestFetchRemoteTableModels_4_x_auto_random(t *testing.T) {
 }
 
 func TestWriteRowsErrorNoRetry(t *testing.T) {
-	t.Parallel()
 	nonRetryableError := sql.ErrNoRows
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
@@ -436,7 +428,6 @@ func TestWriteRowsErrorNoRetry(t *testing.T) {
 }
 
 func TestWriteRowsErrorDowngradingAll(t *testing.T) {
-	t.Parallel()
 	nonRetryableError := sql.ErrNoRows
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
@@ -503,7 +494,6 @@ func TestWriteRowsErrorDowngradingAll(t *testing.T) {
 }
 
 func TestWriteRowsErrorDowngradingExceedThreshold(t *testing.T) {
-	t.Parallel()
 	nonRetryableError := sql.ErrNoRows
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
@@ -608,7 +598,6 @@ func encodeRowsTiDB(t *testing.T, b backend.Backend, tbl table.Table) kv.Rows {
 }
 
 func TestEncodeRowForRecord(t *testing.T) {
-	t.Parallel()
 	s := createMysqlSuite(t)
 
 	// for a correct row, the will encode a correct result

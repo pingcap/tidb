@@ -25,10 +25,11 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
+
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 )
 
 const (
@@ -155,7 +156,7 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 		return errors.Annotate(berrors.ErrStorageInvalidConfig, "secret_access_key not found")
 	}
 
-	s3.Endpoint = options.Endpoint
+	s3.Endpoint = strings.TrimSuffix(options.Endpoint, "/")
 	s3.Region = options.Region
 	// StorageClass, SSE and ACL are acceptable to be empty
 	s3.StorageClass = options.StorageClass
@@ -189,6 +190,7 @@ func (options *S3BackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	options.Endpoint = strings.TrimSuffix(options.Endpoint, "/")
 	options.Region, err = flags.GetString(s3RegionOption)
 	if err != nil {
 		return errors.Trace(err)
@@ -283,14 +285,6 @@ func newS3Storage(backend *backuppb.S3, opts *ExternalStorageOptions) (*S3Storag
 	}
 
 	c := s3.New(ses)
-	// TODO remove it after BR remove cfg skip-check-path
-	if !opts.SkipCheckPath {
-		err = checkS3Bucket(c, &qs)
-		if err != nil {
-			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "Bucket %s is not accessible: %v", qs.Bucket, err)
-		}
-	}
-
 	if len(qs.Prefix) > 0 && !strings.HasSuffix(qs.Prefix, "/") {
 		qs.Prefix += "/"
 	}
@@ -467,14 +461,6 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 			return errors.Trace(err)
 		}
 		for _, r := range res.Contents {
-			// when walk on specify directory, the result include storage.Prefix,
-			// which can not be reuse in other API(Open/Read) directly.
-			// so we use TrimPrefix to filter Prefix for next Open/Read.
-			path := strings.TrimPrefix(*r.Key, rs.options.Prefix)
-			if err = fn(path, *r.Size); err != nil {
-				return errors.Trace(err)
-			}
-
 			// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjects.html#AmazonS3-ListObjects-response-NextMarker -
 			//
 			// `res.NextMarker` is populated only if we specify req.Delimiter.
@@ -485,6 +471,22 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 			// you can use the value of the last Key in the response as the marker
 			// in the subsequent request to get the next set of object keys."
 			req.Marker = r.Key
+
+			// when walk on specify directory, the result include storage.Prefix,
+			// which can not be reuse in other API(Open/Read) directly.
+			// so we use TrimPrefix to filter Prefix for next Open/Read.
+			path := strings.TrimPrefix(*r.Key, rs.options.Prefix)
+			itemSize := *r.Size
+
+			// filter out s3's empty directory items
+			if itemSize <= 0 && strings.HasSuffix(path, "/") {
+				log.Info("this path is an empty directory and cannot be opened in S3.  Skip it", zap.String("path", path))
+				continue
+			}
+			if err = fn(path, itemSize); err != nil {
+				return errors.Trace(err)
+			}
+
 		}
 		if !aws.BoolValue(res.IsTruncated) {
 			break
@@ -539,12 +541,21 @@ func (rs *S3Storage) open(
 		Key:    aws.String(rs.options.Prefix + path),
 	}
 
-	// always set rangeOffset to fetch file size info
-	// s3 endOffset is inclusive
+	// If we just open part of the object, we set `Range` in the request.
+	// If we meant to open the whole object, not just a part of it,
+	// we do not pass the range in the request,
+	// so that even if the object is empty, we can still get the response without errors.
+	// Then this behavior is similar to openning an empty file in local file system.
+	isFullRangeRequest := false
 	var rangeOffset *string
-	if endOffset > startOffset {
+	switch {
+	case endOffset > startOffset:
+		// s3 endOffset is inclusive
 		rangeOffset = aws.String(fmt.Sprintf("bytes=%d-%d", startOffset, endOffset-1))
-	} else {
+	case startOffset == 0:
+		// openning the whole object, no need to fill the `Range` field in the request
+		isFullRangeRequest = true
+	default:
 		rangeOffset = aws.String(fmt.Sprintf("bytes=%d-", startOffset))
 	}
 	input.Range = rangeOffset
@@ -553,9 +564,26 @@ func (rs *S3Storage) open(
 		return nil, RangeInfo{}, errors.Trace(err)
 	}
 
-	r, err := ParseRangeInfo(result.ContentRange)
-	if err != nil {
-		return nil, RangeInfo{}, errors.Trace(err)
+	var r RangeInfo
+	// Those requests without a `Range` will have no `ContentRange` in the response,
+	// In this case, we'll parse the `ContentLength` field instead.
+	if isFullRangeRequest {
+		// We must ensure the `ContentLengh` has data even if for empty objects,
+		// otherwise we have no places to get the object size
+		if result.ContentLength == nil {
+			return nil, RangeInfo{}, errors.Annotatef(berrors.ErrStorageUnknown, "open file '%s' failed. The S3 object has no content length", path)
+		}
+		objectSize := *(result.ContentLength)
+		r = RangeInfo{
+			Start: 0,
+			End:   objectSize - 1,
+			Size:  objectSize,
+		}
+	} else {
+		r, err = ParseRangeInfo(result.ContentRange)
+		if err != nil {
+			return nil, RangeInfo{}, errors.Trace(err)
+		}
 	}
 
 	if startOffset != r.Start || (endOffset != 0 && endOffset != r.End+1) {
@@ -663,6 +691,9 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 	default:
 		return 0, errors.Annotatef(berrors.ErrStorageUnknown, "Seek: invalid whence '%d'", whence)
 	}
+	if realOffset < 0 {
+		return 0, errors.Annotatef(berrors.ErrStorageUnknown, "Seek in '%s': invalid offset to seek '%d'.", r.name, realOffset)
+	}
 
 	if realOffset == r.pos {
 		return realOffset, nil
@@ -744,6 +775,22 @@ func (rs *S3Storage) Create(ctx context.Context, name string) (ExternalFileWrite
 	}
 	uploaderWriter := newBufferedWriter(uploader, hardcodedS3ChunkSize, NoCompression)
 	return uploaderWriter, nil
+}
+
+// Rename implements ExternalStorage interface.
+func (rs *S3Storage) Rename(ctx context.Context, oldFileName, newFileName string) error {
+	content, err := rs.ReadFile(ctx, oldFileName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = rs.WriteFile(ctx, newFileName, content)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err = rs.DeleteFile(ctx, oldFileName); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
 
 // retryerWithLog wrappes the client.DefaultRetryer, and logging when retry triggered.
