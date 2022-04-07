@@ -207,6 +207,10 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 			delayForAsyncCommit()
 		}
 		rc = d.newReorgCtx(reorgInfo)
+		// this job is cancelling, we should notify the reorg worker.
+		if job.IsCancelling() {
+			d.notifyReorgCancel(job)
+		}
 		go func() {
 			rc.doneCh <- f()
 		}()
