@@ -151,13 +151,6 @@ func (rc *reorgCtx) getRowCountAndKey() (int64, kv.Key, *meta.Element) {
 	return row, h.key, element
 }
 
-func (rc *reorgCtx) clean() {
-	rc.setRowCount(0)
-	rc.setNextKey(nil)
-	rc.resetWarnings()
-	rc.doneCh = nil
-}
-
 // runReorgJob is used as a portal to do the reorganization work.
 // eg:
 // 1: add index
