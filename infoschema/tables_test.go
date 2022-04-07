@@ -316,6 +316,16 @@ func (sm *mockSessionManager) UpdateTLSConfig(_ *tls.Config) {}
 
 func (sm *mockSessionManager) ServerID() uint64 { return 1 }
 
+func (sm *mockSessionManager) StoreInternalSession(se interface{}) {
+}
+
+func (sm *mockSessionManager) DeleteInternalSession(se interface{}) {
+}
+
+func (sm *mockSessionManager) GetInternalSessionStartTSList() []uint64 {
+	return nil
+}
+
 func TestSomeTables(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
