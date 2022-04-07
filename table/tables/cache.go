@@ -90,7 +90,7 @@ func newMemBuffer(store kv.Storage) (kv.MemBuffer, error) {
 	return buffTxn.GetMemBuffer(), nil
 }
 
-func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) (kv.MemBuffer /*loading*/, bool) {
+func (c *cachedTable) TryReadFromCache(ts uint64, leaseDuration time.Duration) (kv.MemBuffer, bool /*loading*/) {
 	tmp := c.cacheData.Load()
 	if tmp == nil {
 		return nil, false
@@ -213,7 +213,7 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, handle StateRemote,
 		})
 
 		// Make the load data process async, in case that loading data takes longer the
-		// lease duration, then the loadad data get staled and that process repeats forever.
+		// lease duration, then the loaded data get staled and that process repeats forever.
 		go func() {
 			start := time.Now()
 			mb, startTS, totalSize, err := c.loadDataFromOriginalTable(store)
