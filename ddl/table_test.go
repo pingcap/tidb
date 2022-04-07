@@ -203,13 +203,21 @@ func testCreateView(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, 
 	return job
 }
 
+<<<<<<< HEAD
 func testRenameTable(c *C, ctx sessionctx.Context, d *ddl, newSchemaID, oldSchemaID int64, tblInfo *model.TableInfo) *model.Job {
+=======
+func testRenameTables(t *testing.T, ctx sessionctx.Context, d *ddl, oldSchemaIDs, newSchemaIDs []int64, newTableNames []*model.CIStr, oldTableIDs []int64, oldSchemaNames, oldTableNames []*model.CIStr) *model.Job {
+>>>>>>> be76f885e... ddl, parser: fix concurrent rename table (#33354)
 	job := &model.Job{
 		SchemaID:   newSchemaID,
 		TableID:    tblInfo.ID,
 		Type:       model.ActionRenameTable,
 		BinlogInfo: &model.HistoryInfo{},
+<<<<<<< HEAD
 		Args:       []interface{}{oldSchemaID, tblInfo.Name},
+=======
+		Args:       []interface{}{oldSchemaIDs, newSchemaIDs, newTableNames, oldTableIDs, oldSchemaNames, oldTableNames},
+>>>>>>> be76f885e... ddl, parser: fix concurrent rename table (#33354)
 	}
 	err := d.doDDLJob(ctx, job)
 	c.Assert(err, IsNil)
@@ -401,6 +409,7 @@ func (s *testTableSuite) TestTable(c *C) {
 	testCheckJobDone(c, d, job, true)
 
 	// for rename table
+<<<<<<< HEAD
 	dbInfo1 := testSchemaInfo(c, s.d, "test_rename_table")
 	testCreateSchema(c, testNewContext(s.d), s.d, dbInfo1)
 	job = testRenameTable(c, ctx, d, dbInfo1.ID, s.dbInfo.ID, tblInfo)
@@ -411,4 +420,186 @@ func (s *testTableSuite) TestTable(c *C) {
 	testCheckTableState(c, d, dbInfo1, tblInfo, model.StatePublic)
 	testCheckJobDone(c, d, job, true)
 	checkTableLockedTest(c, d, dbInfo1, tblInfo, d.GetID(), ctx.GetSessionVars().ConnectionID, model.TableLockWrite)
+=======
+	dbInfo1, err := testSchemaInfo(d, "test_rename_table")
+	require.NoError(t, err)
+	testCreateSchema(t, testNewContext(d), d, dbInfo1)
+	job = testRenameTable(t, ctx, d, dbInfo1.ID, dbInfo.ID, dbInfo.Name, tblInfo)
+	testCheckTableState(t, d, dbInfo1, tblInfo, model.StatePublic)
+	testCheckJobDone(t, d, job, true)
+
+	job = testLockTable(t, ctx, d, dbInfo1.ID, tblInfo, model.TableLockWrite)
+	testCheckTableState(t, d, dbInfo1, tblInfo, model.StatePublic)
+	testCheckJobDone(t, d, job, true)
+	checkTableLockedTest(t, d, dbInfo1, tblInfo, d.GetID(), ctx.GetSessionVars().ConnectionID, model.TableLockWrite)
+	// for alter cache table
+	job = testAlterCacheTable(t, ctx, d, dbInfo1.ID, tblInfo)
+	testCheckTableState(t, d, dbInfo1, tblInfo, model.StatePublic)
+	testCheckJobDone(t, d, job, true)
+	checkTableCacheTest(t, d, dbInfo1, tblInfo)
+	// for alter no cache table
+	job = testAlterNoCacheTable(t, ctx, d, dbInfo1.ID, tblInfo)
+	testCheckTableState(t, d, dbInfo1, tblInfo, model.StatePublic)
+	testCheckJobDone(t, d, job, true)
+	checkTableNoCacheTest(t, d, dbInfo1, tblInfo)
+
+	testDropSchema(t, testNewContext(d), d, dbInfo)
+}
+
+func checkTableCacheTest(t *testing.T, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
+	require.NoError(t, kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		tt := meta.NewMeta(txn)
+		info, err := tt.GetTable(dbInfo.ID, tblInfo.ID)
+		require.NoError(t, err)
+		require.NotNil(t, info)
+		require.NotNil(t, info.TableCacheStatusType)
+		require.Equal(t, model.TableCacheStatusEnable, info.TableCacheStatusType)
+		return nil
+	}))
+}
+
+func checkTableNoCacheTest(t *testing.T, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) {
+	require.NoError(t, kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
+		tt := meta.NewMeta(txn)
+		info, err := tt.GetTable(dbInfo.ID, tblInfo.ID)
+		require.NoError(t, err)
+		require.NotNil(t, info)
+		require.Equal(t, model.TableCacheStatusDisable, info.TableCacheStatusType)
+		return nil
+	}))
+}
+
+func testAlterCacheTable(t *testing.T, ctx sessionctx.Context, d *ddl, newSchemaID int64, tblInfo *model.TableInfo) *model.Job {
+	job := &model.Job{
+		SchemaID:   newSchemaID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionAlterCacheTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{},
+	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err := d.DoDDLJob(ctx, job)
+	require.NoError(t, err)
+
+	v := getSchemaVer(t, ctx)
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v})
+	return job
+}
+
+func testAlterNoCacheTable(t *testing.T, ctx sessionctx.Context, d *ddl, newSchemaID int64, tblInfo *model.TableInfo) *model.Job {
+	job := &model.Job{
+		SchemaID:   newSchemaID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionAlterNoCacheTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{},
+	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	require.NoError(t, d.DoDDLJob(ctx, job))
+
+	v := getSchemaVer(t, ctx)
+	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v})
+	return job
+}
+
+func TestRenameTables(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	require.NoError(t, err)
+	d, err := testNewDDLAndStart(
+		context.Background(),
+		WithStore(store),
+		WithLease(testLease),
+	)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, d.Stop())
+	}()
+
+	dbInfo, err := testSchemaInfo(d, "test_table")
+	require.NoError(t, err)
+	testCreateSchema(t, testNewContext(d), d, dbInfo)
+
+	ctx := testNewContext(d)
+	var tblInfos = make([]*model.TableInfo, 0, 2)
+	var newTblInfos = make([]*model.TableInfo, 0, 2)
+	for i := 1; i < 3; i++ {
+		tableName := fmt.Sprintf("t%d", i)
+		tblInfo, err := testTableInfo(d, tableName, 3)
+		require.NoError(t, err)
+		job := testCreateTable(t, ctx, d, dbInfo, tblInfo)
+		testCheckTableState(t, d, dbInfo, tblInfo, model.StatePublic)
+		testCheckJobDone(t, d, job, true)
+		tblInfos = append(tblInfos, tblInfo)
+
+		newTableName := fmt.Sprintf("tt%d", i)
+		tblInfo, err = testTableInfo(d, newTableName, 3)
+		require.NoError(t, err)
+		newTblInfos = append(newTblInfos, tblInfo)
+	}
+
+	job := testRenameTables(t, ctx, d, []int64{dbInfo.ID, dbInfo.ID}, []int64{dbInfo.ID, dbInfo.ID}, []*model.CIStr{&newTblInfos[0].Name, &newTblInfos[1].Name}, []int64{tblInfos[0].ID, tblInfos[1].ID}, []*model.CIStr{&dbInfo.Name, &dbInfo.Name}, []*model.CIStr{&tblInfos[0].Name, &tblInfos[1].Name})
+
+	txn, _ := ctx.Txn(true)
+	historyJob, _ := meta.NewMeta(txn).GetHistoryDDLJob(job.ID)
+	wantTblInfos := historyJob.BinlogInfo.MultipleTableInfos
+	require.Equal(t, wantTblInfos[0].Name.L, "tt1")
+	require.Equal(t, wantTblInfos[1].Name.L, "tt2")
+}
+
+func TestCreateTables(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	d, err := testNewDDLAndStart(
+		context.Background(),
+		WithStore(store),
+		WithLease(testLease),
+	)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, d.Stop())
+	}()
+
+	dbInfo, err := testSchemaInfo(d, "test_table")
+	require.NoError(t, err)
+	testCreateSchema(t, testNewContext(d), d, dbInfo)
+
+	ctx := testNewContext(d)
+
+	var infos []*model.TableInfo
+	genIDs, err := d.genGlobalIDs(3)
+	require.NoError(t, err)
+
+	infos = append(infos, &model.TableInfo{
+		ID:   genIDs[0],
+		Name: model.NewCIStr("s1"),
+	})
+	infos = append(infos, &model.TableInfo{
+		ID:   genIDs[1],
+		Name: model.NewCIStr("s2"),
+	})
+	infos = append(infos, &model.TableInfo{
+		ID:   genIDs[2],
+		Name: model.NewCIStr("s3"),
+	})
+
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		Type:       model.ActionCreateTables,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{infos},
+	}
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err = d.DoDDLJob(ctx, job)
+	require.NoError(t, err)
+
+	testGetTable(t, d, dbInfo.ID, genIDs[0])
+	testGetTable(t, d, dbInfo.ID, genIDs[1])
+	testGetTable(t, d, dbInfo.ID, genIDs[2])
+>>>>>>> be76f885e... ddl, parser: fix concurrent rename table (#33354)
 }
