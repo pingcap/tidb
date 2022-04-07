@@ -406,6 +406,11 @@ func getTableInfoAndCancelFaultJob(t *meta.Meta, job *model.Job, schemaID int64)
 func checkTableExistAndCancelNonExistJob(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInfo, error) {
 	tblInfo, err := getTableInfo(t, job.TableID, schemaID)
 	if err == nil {
+		// Check if table name is renamed.
+		if job.TableName != "" && tblInfo.Name.L != job.TableName && job.Type != model.ActionRepairTable {
+			job.State = model.JobStateCancelled
+			return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(job.SchemaName, job.TableName)
+		}
 		return tblInfo, nil
 	}
 	if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
@@ -656,12 +661,46 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
+<<<<<<< HEAD
 	var autoTableID int64
 	var autoRandID int64
 	shouldDelAutoID := false
 	if newSchemaID != oldSchemaID {
 		shouldDelAutoID = true
 		autoTableID, err = t.GetAutoTableID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
+=======
+	ver, tblInfo, err := checkAndRenameTables(t, job, oldSchemaID, job.SchemaID, &oldSchemaName, &tableName)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	ver, err = updateSchemaVersion(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	oldSchemaIDs := []int64{}
+	newSchemaIDs := []int64{}
+	tableNames := []*model.CIStr{}
+	tableIDs := []int64{}
+	oldSchemaNames := []*model.CIStr{}
+	oldTableNames := []*model.CIStr{}
+	if err := job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs, &oldSchemaNames, &oldTableNames); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	var tblInfos = make([]*model.TableInfo, 0, len(tableNames))
+	var err error
+	for i, oldSchemaID := range oldSchemaIDs {
+		job.TableID = tableIDs[i]
+		job.TableName = oldTableNames[i].L
+		ver, tblInfo, err := checkAndRenameTables(t, job, oldSchemaID, newSchemaIDs[i], oldSchemaNames[i], tableNames[i])
+>>>>>>> be76f885e... ddl, parser: fix concurrent rename table (#33354)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
