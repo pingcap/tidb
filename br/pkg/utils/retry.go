@@ -15,12 +15,11 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+	tmysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/parser/terror"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-
-	tmysql "github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/parser/terror"
 )
 
 var retryableServerError = []string{
