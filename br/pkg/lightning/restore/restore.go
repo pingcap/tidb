@@ -26,8 +26,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alecthomas/units"
 	"github.com/coreos/go-semver/semver"
+	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
