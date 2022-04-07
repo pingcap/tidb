@@ -208,11 +208,10 @@ func (a *connArray) Close() {
 		a.batchConn.Close()
 	}
 
-	for i, c := range a.v {
+	for _, c := range a.v {
 		if c != nil {
 			err := c.Close()
 			terror.Log(errors.Trace(err))
-			a.v[i] = nil
 		}
 	}
 
