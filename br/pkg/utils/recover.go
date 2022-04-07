@@ -4,23 +4,20 @@ package utils
 
 import (
 	"fmt"
-	"runtime"
 
+	"github.com/pingcap/tidb/util"
 	"go.uber.org/zap"
 )
 
 // WithRecover is a wrapper for recover
 func WithRecover(fn func(), logger *zap.Logger, funcName string) {
-	const size = 4096
 	defer func() {
 		if r := recover(); r != nil {
-			buf := make([]byte, size)
-			stackSize := runtime.Stack(buf, false)
-			buf = buf[:stackSize]
+			buf := util.GetStack()
 			logger.Error("recover from panic",
 				zap.String("function", funcName),
 				zap.String("err", fmt.Sprintf("%v", r)),
-				zap.String("stack", string(buf)),
+				zap.ByteString("stack", buf),
 			)
 		}
 	}()
