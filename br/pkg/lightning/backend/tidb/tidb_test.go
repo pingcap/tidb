@@ -19,7 +19,6 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
-	"regexp"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -602,7 +601,7 @@ func encodeRowsTiDB(t *testing.T, b backend.Backend, tbl table.Table) kv.Rows {
 	}
 	row, err = encoder.Encode(logger, rawRow, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "12.csv", 0)
 	require.NotNil(t, err)
-	require.Regexp(t, regexp.MustCompile(".*column count mismatch, at most.*"), err.Error())
+	require.Contains(t, err.Error(), "column count mismatch, at most")
 	return dataRows
 }
 
