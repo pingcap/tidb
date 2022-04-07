@@ -95,8 +95,8 @@ type ConsoleGlue interface {
 
 type NoOPConsoleGlue struct{}
 
-func (NoOPConsoleGlue) Write([]byte) (int, error) {
-	return 0, nil
+func (NoOPConsoleGlue) Write(bs []byte) (int, error) {
+	return len(bs), nil
 }
 
 func (NoOPConsoleGlue) IsInteractive() bool {
