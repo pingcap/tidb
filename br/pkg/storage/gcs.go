@@ -59,6 +59,13 @@ func defineGCSFlags(flags *pflag.FlagSet) {
 	flags.String(gcsCredentialsFile, "", "(experimental) Set the GCS credentials file path")
 }
 
+func hiddenGCSFlags(flags *pflag.FlagSet) {
+	flags.MarkHidden(gcsEndpointOption)
+	flags.MarkHidden(gcsStorageClassOption)
+	flags.MarkHidden(gcsPredefinedACL)
+	flags.MarkHidden(gcsCredentialsFile)
+}
+
 func (options *GCSBackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 	var err error
 	options.Endpoint, err = flags.GetString(gcsEndpointOption)

@@ -264,6 +264,21 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 	storage.DefineFlags(flags)
 }
 
+// HiddenFlagsForStream temporary hidden flags that stream cmd not support.
+func HiddenFlagsForStream(flags *pflag.FlagSet) {
+	flags.MarkHidden(flagChecksum)
+	flags.MarkHidden(flagChecksumConcurrency)
+	flags.MarkHidden(flagRateLimit)
+	flags.MarkHidden(flagRateLimitUnit)
+	flags.MarkHidden(flagRemoveTiFlash)
+	flags.MarkHidden(flagCipherType)
+	flags.MarkHidden(flagCipherKey)
+	flags.MarkHidden(flagCipherKeyFile)
+	flags.MarkHidden(flagSwitchModeInterval)
+
+	storage.HiddenFlagsForStream(flags)
+}
+
 // DefineDatabaseFlags defines the required --db flag for `db` subcommand.
 func DefineDatabaseFlags(command *cobra.Command) {
 	command.Flags().String(flagDatabase, "", "database name")

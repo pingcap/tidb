@@ -4,7 +4,6 @@ package task
 
 import (
 	"context"
-	"github.com/spf13/cobra"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -22,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/config"
+	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"

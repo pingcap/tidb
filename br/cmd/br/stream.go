@@ -40,6 +40,7 @@ func NewStreamCommand() *cobra.Command {
 			return nil
 		},
 	}
+
 	command.AddCommand(
 		newStreamStartCommand(),
 		newStreamStopCommand(),
@@ -48,6 +49,10 @@ func NewStreamCommand() *cobra.Command {
 		newStreamStatusCommand(),
 		newStreamTruncateCommand(),
 	)
+	command.SetHelpFunc(func(command *cobra.Command, strings []string) {
+		task.HiddenFlagsForStream(command.Parent().PersistentFlags())
+		command.Parent().HelpFunc()(command, strings)
+	})
 
 	return command
 }
@@ -64,7 +69,7 @@ func newStreamStartCommand() *cobra.Command {
 
 	task.DefineStreamCommonFlags(command.Flags())
 	task.DefineFilterFlags(command, acceptAllTables, true)
-	task.DefineStreamStartFlags(command.PersistentFlags())
+	task.DefineStreamStartFlags(command.Flags())
 	return command
 }
 
