@@ -1739,7 +1739,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 		return
 	}
 
-	go utils.WithRecover(func() {
+	go func() {
 		// locker is assigned when we detect the disk quota is exceeded.
 		// before the disk quota is confirmed exceeded, we keep the diskQuotaLock
 		// unlocked to avoid periodically interrupting the writer threads.
@@ -1815,7 +1815,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 			task.End(zap.ErrorLevel, importErr)
 			return
 		}
-	}, log.L().Logger, "enforce disk quota loop")
+	}()
 }
 
 func (rc *Controller) setGlobalVariables(ctx context.Context) error {
