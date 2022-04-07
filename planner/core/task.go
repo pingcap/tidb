@@ -1076,12 +1076,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 
 		// net seek cost
 		if !ts.underInnerIndexJoin { // no need to accumulate net seek cost for IndexJoin
-			switch ts.StoreType {
-			case kv.TiKV:
-				t.cst += float64(len(ts.Ranges)) * sessVars.GetSeekFactor(ts.Table)
-			case kv.TiFlash:
-				t.cst += float64(len(ts.Ranges)) * float64(len(ts.Columns)) * sessVars.GetSeekFactor(ts.Table)
-			}
+			t.cst += float64(len(ts.Ranges)) * sessVars.GetSeekFactor(ts.Table)
 		}
 
 		prevColumnLen := len(ts.Columns)
@@ -2420,7 +2415,15 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	collectPartitionInfosFromMPPPlan(p, t.p)
 	rowSize := collectRowSizeFromMPPPlan(sender)
 
+	var c PhysicalPlan
+	for c = t.p; len(c.Children()) > 0; c = c.Children()[0] {
+	}
+	ts := c.(*PhysicalTableScan)
+
+	// net I/O cost
 	cst := t.cst + t.count()*rowSize*ctx.GetSessionVars().GetNetworkFactor(nil)
+	// net seek cost
+	cst += float64(len(ts.Ranges)) * float64(len(ts.Columns)) * ts.SCtx().GetSessionVars().GetSeekFactor(ts.Table)
 	cst /= p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
 	p.cost = cst
 	if p.ctx.GetSessionVars().IsMPPEnforced() {
