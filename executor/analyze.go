@@ -1503,7 +1503,7 @@ workLoop:
 			finalMemSize := hist.MemoryUsage() + topn.MemoryUsage()
 			e.memTracker.Consume(finalMemSize - totalMemInc)
 			logutil.BgLogger().Info("subBuildWorker consumes memory: ", zap.Int("taskIdx", task.slicePos), zap.Int64("sample-temp", -totalMemInc))
-			logutil.BgLogger().Info("subBuildWorker consumes memory: ", zap.Int("taskIdx", task.slicePos), zap.Int64("final", -finalMemSize))
+			logutil.BgLogger().Info("subBuildWorker consumes memory: ", zap.Int("taskIdx", task.slicePos), zap.Int64("final", finalMemSize))
 			hists[task.slicePos] = hist
 			topns[task.slicePos] = topn
 			resultCh <- nil

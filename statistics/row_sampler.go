@@ -282,7 +282,7 @@ func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTrack
 	if len(pbCollector.Samples) > 0 {
 		rowLen := len(pbCollector.Samples[0].Row)
 		// 24 is the size of datum array, 8 is the size of reference
-		emptySize := int64((types.EmptyDatumSize*rowLen + 24 + EmptyReservoirSampleItemSize + 8) * sampleNum)
+		emptySize := (int64(types.EmptyDatumSize)*int64(rowLen) + 24 + EmptyReservoirSampleItemSize + 8) * int64(sampleNum)
 		s.MemSize += emptySize
 		memTracker.Consume(emptySize)
 	}
@@ -442,7 +442,7 @@ func (s *BernoulliRowSampleCollector) MergeCollector(subCollector RowSampleColle
 		s.TotalSizes[i] += subCollector.Base().TotalSizes[i]
 	}
 	s.baseCollector.Samples = append(s.baseCollector.Samples, subCollector.Base().Samples...)
-	s.MemSize += s.baseCollector.MemSize
+	s.MemSize += subCollector.Base().MemSize
 }
 
 // Base implements the interface RowSampleCollector.

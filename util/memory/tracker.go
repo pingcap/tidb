@@ -23,6 +23,8 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // Tracker is used to track the memory usage during query execution.
@@ -332,6 +334,7 @@ func (t *Tracker) Consume(bytes int64) {
 				continue
 			}
 			if label, ok := MetricsTypes[tracker.label]; ok {
+				logutil.BgLogger().Info("current memory usage", zap.Int64("consumed", consumed))
 				metrics.MemoryUsage.WithLabelValues(label[0]).Set(float64(consumed))
 				metrics.MemoryUsage.WithLabelValues(label[1]).Set(float64(maxNow))
 			}
