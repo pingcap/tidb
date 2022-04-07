@@ -83,7 +83,7 @@ func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransaction
 	}
 
 	splitStmts := make([]string, 0, len(jobs))
-	for i, _ := range jobs {
+	for i := range jobs {
 		select {
 		case <-ctx.Done():
 			logutil.BgLogger().Info("Non-transactional delete worker exit because context canceled")

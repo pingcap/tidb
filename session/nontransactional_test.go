@@ -30,7 +30,7 @@ func TestNonTransactionalDelete(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/session/splitDeleteError", `return`)
 	defer failpoint.Disable("github.com/pingcap/tidb/session/splitDeleteError")
 	tk.MustQuery("split on a limit 3 delete from test.t").Check(testkit.Rows(
-		"job id: 1, job size: 35, range: [KindInt64 0, KindInt64 34]  injected split delete error",
-		"job id: 2, job size: 35, range: [KindInt64 35, KindInt64 69]  injected split delete error",
-		"job id: 3, job size: 30, range: [KindInt64 70, KindInt64 99]  injected split delete error"))
+		"job id: 1, job size: 35, range: [KindInt64 0, KindInt64 34] DELETE FROM `test`.`t` WHERE `a` BETWEEN 0 AND 34 injected split delete error",
+		"job id: 2, job size: 35, range: [KindInt64 35, KindInt64 69] DELETE FROM `test`.`t` WHERE `a` BETWEEN 35 AND 69 injected split delete error",
+		"job id: 3, job size: 30, range: [KindInt64 70, KindInt64 99] DELETE FROM `test`.`t` WHERE `a` BETWEEN 70 AND 99 injected split delete error"))
 }

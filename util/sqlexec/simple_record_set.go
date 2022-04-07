@@ -26,7 +26,7 @@ func (r *SimpleRecordSet) Next(ctx context.Context, req *chunk.Chunk) error {
 		if req.IsFull() {
 			return nil
 		}
-		for i, _ := range r.ResultFields {
+		for i := range r.ResultFields {
 			datum := types.NewDatum(r.Rows[r.idx][i])
 			req.AppendDatum(i, &datum)
 		}
