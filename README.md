@@ -62,9 +62,9 @@ For support, please contact [PingCAP](http://bit.ly/contact_us_via_github).
 
 ### To start using TiDB Cloud
 
-We provide TiDB Cloud - a fully-managed Database as a Service for you.
+We provide TiDB Cloud - a fully-managed Database as a Service for you. You can [sign up](https://tidbcloud.com/signup) and get started with TiDB Cloud Developer Tier for free.
 
-See [TiDB Cloud Quick Start](https://docs.pingcap.com/tidbcloud/public-preview/tidb-cloud-quickstart).
+See [TiDB Cloud Quick Start](https://docs.pingcap.com/tidbcloud/tidb-cloud-quickstart).
 
 ### To start using TiDB
 

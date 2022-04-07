@@ -241,11 +241,6 @@ func TestIssue22819(t *testing.T) {
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test;")
-	tk1.MustExec("drop table if exists t1;")
-	defer func() {
-		tk1.MustExec("drop table if exists t1;")
-	}()
-
 	tk1.MustExec("create table t1 (v int) partition by hash (v) partitions 2")
 	tk1.MustExec("insert into t1 values (1)")
 
