@@ -19,36 +19,25 @@ import (
 	"testing"
 	"time"
 
-	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/etcd"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/tests/v3/integration"
 	"golang.org/x/net/context"
 )
 
-// nolint:unused
 var nodePrefix = path.Join(DefaultRootPath, NodePrefix[PumpNode])
 
 type RegisrerTestClient interface {
 	Node(context.Context, string, string) (*Status, int64, error)
 }
 
-var testEtcdCluster *integration.ClusterV3
-
-func TestNode(t *testing.T) {
-	t.Skip("need to update the jenkins job")
+func TestUpdateNodeInfo(t *testing.T) {
 	integration.BeforeTest(t)
-
-	testEtcdCluster = integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer testEtcdCluster.Terminate(t)
 
-	TestingT(t)
-}
-
-func TestUpdateNodeInfo(t *testing.T) {
-	t.Skip("need to update the jenkins job")
 	etcdclient := etcd.NewClient(testEtcdCluster.RandClient(), DefaultRootPath)
-	r := NewEtcdRegistry(etcdclient, time.Duration(5)*time.Second)
+	r := NewEtcdRegistry(etcdclient, time.Duration(30)*time.Second)
 	ns := &Status{
 		NodeID:  "test",
 		Addr:    "test",
@@ -71,7 +60,10 @@ func TestUpdateNodeInfo(t *testing.T) {
 }
 
 func TestRegisterNode(t *testing.T) {
-	t.Skip("need to update the jenkins job")
+	integration.BeforeTest(t)
+	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer testEtcdCluster.Terminate(t)
+
 	etcdclient := etcd.NewClient(testEtcdCluster.RandClient(), DefaultRootPath)
 	r := NewEtcdRegistry(etcdclient, time.Duration(5)*time.Second)
 
@@ -99,7 +91,10 @@ func TestRegisterNode(t *testing.T) {
 }
 
 func TestRefreshNode(t *testing.T) {
-	t.Skip("need to update the jenkins job")
+	integration.BeforeTest(t)
+	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer testEtcdCluster.Terminate(t)
+
 	etcdclient := etcd.NewClient(testEtcdCluster.RandClient(), DefaultRootPath)
 	r := NewEtcdRegistry(etcdclient, time.Duration(5)*time.Second)
 
@@ -121,7 +116,6 @@ func TestRefreshNode(t *testing.T) {
 	//mustEqualStatus(t, r, ns.NodeID, ns)
 }
 
-// nolint:unused,deadcode
 func mustEqualStatus(t *testing.T, r RegisrerTestClient, nodeID string, status *Status) {
 	ns, _, err := r.Node(context.Background(), nodePrefix, nodeID)
 	require.NoError(t, err)

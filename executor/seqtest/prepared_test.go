@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/mysql"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -158,7 +159,7 @@ func TestPrepared(t *testing.T) {
 
 		// Check that ast.Statement created by executor.CompileExecutePreparedStmt has query text.
 		stmt, _, _, err := executor.CompileExecutePreparedStmt(context.TODO(), tk.Session(), stmtID,
-			tk.Session().GetInfoSchema().(infoschema.InfoSchema), 0, []types.Datum{types.NewDatum(1)})
+			tk.Session().GetInfoSchema().(infoschema.InfoSchema), 0, kv.GlobalReplicaScope, []types.Datum{types.NewDatum(1)})
 		require.NoError(t, err)
 		require.Equal(t, query, stmt.OriginText())
 
@@ -886,6 +887,16 @@ func (msm *mockSessionManager1) ServerID() uint64 {
 }
 
 func (msm *mockSessionManager1) UpdateTLSConfig(_ *tls.Config) {}
+
+func (msm *mockSessionManager1) StoreInternalSession(se interface{}) {
+}
+
+func (msm *mockSessionManager1) DeleteInternalSession(se interface{}) {
+}
+
+func (msm *mockSessionManager1) GetInternalSessionStartTSList() []uint64 {
+	return nil
+}
 
 func TestPreparedIssue17419(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)

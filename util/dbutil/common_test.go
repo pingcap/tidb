@@ -245,3 +245,14 @@ func TestFormatTimeZoneOffset(t *testing.T) {
 		require.Equal(t, offset, k)
 	}
 }
+
+func TestGetTimeZoneOffset(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+
+	mock.ExpectQuery("SELECT cast\\(TIMEDIFF\\(NOW\\(6\\), UTC_TIMESTAMP\\(6\\)\\) as time\\);").
+		WillReturnRows(mock.NewRows([]string{""}).AddRow("01:00:00"))
+	d, err := GetTimeZoneOffset(context.Background(), db)
+	require.NoError(t, err)
+	require.Equal(t, "1h0m0s", d.String())
+}
