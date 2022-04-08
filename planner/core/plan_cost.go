@@ -90,8 +90,8 @@ func (p *PhysicalIndexReader) CalPlanCost(taskType property.TaskType) float64 {
 	// accumulate net-cost
 	rowCount := p.indexPlan.StatsCount()
 	netFactor := p.ctx.GetSessionVars().GetNetworkFactor(nil)
-	rowWidth :=  getHistCollSafely(p).GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
-	p.planCost += rowCount * rowWidth * netFactor
+	rowSize := getHistCollSafely(p).GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
+	p.planCost += rowCount * rowSize * netFactor
 
 	// consider concurrency
 	copIterWorkers := float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
@@ -109,13 +109,13 @@ func (p *PhysicalTableReader) CalPlanCost(taskType property.TaskType) float64 {
 	switch p.StoreType {
 	case kv.TiKV:
 		p.planCost += p.tablePlan.CalPlanCost(property.CopSingleReadTaskType) //  child's cost
-		rowWidth := getHistCollSafely(p).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
-		p.planCost += p.tablePlan.StatsCount() * rowWidth * netFactor // net cost
+		rowSize := getHistCollSafely(p).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
+		p.planCost += p.tablePlan.StatsCount() * rowSize * netFactor // net cost
 		p.planCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 	case kv.TiFlash:
 		p.planCost += p.tablePlan.CalPlanCost(property.MppTaskType) //  child's cost
-		rowWidth := collectRowSizeFromMPPPlan(p.tablePlan)
-		p.planCost += p.tablePlan.StatsCount() * rowWidth * netFactor // net cost
+		rowSize := collectRowSizeFromMPPPlan(p.tablePlan)
+		p.planCost += p.tablePlan.StatsCount() * rowSize * netFactor // net cost
 		p.planCost /= p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
 	}
 	p.planCostInit = true
@@ -130,14 +130,14 @@ func (p *PhysicalIndexMergeReader) CalPlanCost(taskType property.TaskType) float
 	netFactor := p.ctx.GetSessionVars().GetNetworkFactor(nil)
 	if tblScan := p.tablePlan; tblScan != nil {
 		rowCount := tblScan.StatsCount()
-		rowWidth := p.tablePlan.CalRowWidth()
-		p.planCost += rowCount * rowWidth * netFactor                     // accumulate net-cost
+		rowSize := 0.0                                                    // TODO
+		p.planCost += rowCount * rowSize * netFactor                      // accumulate net-cost
 		p.planCost += tblScan.CalPlanCost(property.CopSingleReadTaskType) // accumulate child's cost
 	}
 	for _, idxScan := range p.partialPlans {
 		rowCount := idxScan.StatsCount()
-		rowWidth := idxScan.CalRowWidth()
-		p.planCost += rowCount * rowWidth * netFactor                     // accumulate net-cost
+		rowSize := 0.0                                                    // TODO
+		p.planCost += rowCount * rowSize * netFactor                      // accumulate net-cost
 		p.planCost += idxScan.CalPlanCost(property.CopSingleReadTaskType) // accumulate child's cost
 	}
 
@@ -158,20 +158,20 @@ func (p *PhysicalTableScan) CalPlanCost(taskType property.TaskType) float64 {
 
 	// scan cost
 	rowCount := p.StatsCount()
-	rowWidth := p.tableRowSize
-	if rowWidth == 0 {
+	rowSize := p.tableRowSize
+	if rowSize == 0 {
 		switch p.StoreType {
 		case kv.TiKV:
-			rowWidth = getHistCollSafely(p).GetTableAvgRowSize(p.ctx, p.schema.Columns, kv.TiKV, true)
+			rowSize = getHistCollSafely(p).GetTableAvgRowSize(p.ctx, p.schema.Columns, kv.TiKV, true)
 		default:
-			rowWidth = getHistCollSafely(p).GetTableAvgRowSize(p.ctx, p.schema.Columns, p.StoreType, p.HandleCols != nil)
+			rowSize = getHistCollSafely(p).GetTableAvgRowSize(p.ctx, p.schema.Columns, p.StoreType, p.HandleCols != nil)
 		}
 	}
 	scanFactor := p.ctx.GetSessionVars().GetScanFactor(nil)
 	if p.Desc {
 		scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(nil)
 	}
-	p.planCost += rowCount * rowWidth * scanFactor
+	p.planCost += rowCount * rowSize * scanFactor
 
 	// request cost
 	switch p.StoreType {
@@ -324,14 +324,6 @@ func (p *PhysicalTopN) CalPlanCost(taskType property.TaskType) float64 {
 
 func (p *BatchPointGetPlan) CalPlanCost(taskType property.TaskType) float64 {
 	return 0
-}
-
-func (p *BatchPointGetPlan) CalRowWidth() float64 {
-	panic("TODO")
-}
-
-func (p *PointGetPlan) CalRowWidth() float64 {
-	panic("TODO")
 }
 
 func (p *PointGetPlan) CalPlanCost(taskType property.TaskType) float64 {
