@@ -191,7 +191,7 @@ func (t *copTask) finishIndexPlan() {
 	for tblScan = t.tablePlan; len(tblScan.Children()) > 0; tblScan = tblScan.Children()[0] {
 	}
 	rowSize := t.tblColHists.GetIndexAvgRowSize(t.indexPlan.SCtx(), t.tblCols, is.Index.Unique)
-	tblScan.(*PhysicalTableScan).rowWidth = rowSize // required by the new cost model interface
+	tblScan.(*PhysicalTableScan).tableRowSize = rowSize // required by the new cost model interface
 	t.cst += cnt * rowSize * sessVars.GetScanFactor(tableInfo)
 }
 

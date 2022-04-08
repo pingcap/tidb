@@ -441,7 +441,7 @@ type PhysicalIndexScan struct {
 	// required by cost model
 	// IndexScan operators under inner side of IndexJoin no need to consider net seek cost
 	underInnerIndexJoin bool
-	indexRowWidth float64
+	indexRowSize        float64
 }
 
 // Clone implements PhysicalPlan interface.
@@ -542,7 +542,7 @@ type PhysicalTableScan struct {
 	// required by cost model
 	// TableScan operators under inner side of IndexJoin no need to consider net seek cost
 	underInnerIndexJoin bool
-	rowWidth float64
+	tableRowSize        float64
 }
 
 // Clone implements PhysicalPlan interface.

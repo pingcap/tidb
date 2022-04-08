@@ -1390,7 +1390,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 
 func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSource, isForScan bool) (rowWidth float64) {
 	defer func() {
-		is.indexRowWidth = rowWidth
+		is.indexRowSize = rowWidth
 	}()
 
 	scanCols := make([]*expression.Column, 0, len(idx.Columns)+1)
@@ -2177,7 +2177,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		// This logic can be ensured in column pruning.
 		rowSize = ds.TblColHists.GetTableAvgRowSize(ds.ctx, ts.Schema().Columns, ts.StoreType, ds.handleCols != nil)
 	}
-	ts.rowWidth = rowSize
+	ts.tableRowSize = rowSize
 	sessVars := ds.ctx.GetSessionVars()
 	cost := rowCount * rowSize * sessVars.GetScanFactor(ds.tableInfo)
 	if isMatchProp {

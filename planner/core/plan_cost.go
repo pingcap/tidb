@@ -158,7 +158,7 @@ func (p *PhysicalTableScan) CalPlanCost(taskType property.TaskType) float64 {
 
 	// scan cost
 	rowCount := p.StatsCount()
-	rowWidth := p.rowWidth
+	rowWidth := p.tableRowSize
 	if rowWidth == 0 {
 		switch p.StoreType {
 		case kv.TiKV:
@@ -196,7 +196,7 @@ func (p *PhysicalIndexScan) CalPlanCost(taskType property.TaskType) float64 {
 	if p.Desc {
 		scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(nil)
 	}
-	p.planCost += p.StatsCount() * p.indexRowWidth * scanFactor
+	p.planCost += p.StatsCount() * p.indexRowSize * scanFactor
 
 	// request cost
 	p.planCost += float64(len(p.Ranges)) * p.ctx.GetSessionVars().GetSeekFactor(nil)
@@ -359,7 +359,7 @@ func (p *PhysicalExchangeReceiver) CalPlanCost(taskType property.TaskType) float
 	}
 	p.planCost = p.children[0].CalPlanCost(taskType)
 	// accumulate net cost
-	// TODO: this formula is wrong since it doesn't consider rowWidth, fix it later
+	// TODO: this formula is wrong since it doesn't consider tableRowSize, fix it later
 	p.planCost += p.children[0].StatsCount() * p.ctx.GetSessionVars().GetNetworkFactor(nil)
 	p.planCostInit = true
 	return p.planCost
