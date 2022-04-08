@@ -333,12 +333,15 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 }
 
 func (a *ExecStmt) setPlanLabelForTopSQL(ctx context.Context) context.Context {
-	if a.Plan == nil || !topsqlstate.TopSQLEnabled() {
+	if !topsqlstate.TopSQLEnabled() {
 		return ctx
 	}
 	vars := a.Ctx.GetSessionVars()
 	normalizedSQL, sqlDigest := vars.StmtCtx.SQLDigest()
 	normalizedPlan, planDigest := getPlanDigest(a.Ctx, a.Plan)
+	if len(normalizedPlan) == 0 {
+		return ctx
+	}
 	return topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, normalizedPlan, planDigest, vars.InRestrictedSQL)
 }
 
