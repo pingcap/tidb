@@ -219,9 +219,28 @@ func (p *PhysicalIndexJoin) CalPlanCost(taskType property.TaskType) float64 {
 		return p.planCost
 	}
 	outerChild, innerChild := p.children[1-p.InnerChildIdx], p.children[p.InnerChildIdx]
-	p.planCost = p.GetCost(outerChild.StatsCount(), innerChild.StatsCount(), outerChild.CalPlanCost(taskType), innerChild.CalPlanCost(taskType))
+	// NOTICE: seek cost of the probe side is not considered in the old cost model interface,
+	// so we minus it here to keep compatible, we'll fix it later.
+	probeSeekCost := p.probeSeekCost(innerChild)
+	p.planCost = p.GetCost(outerChild.StatsCount(), innerChild.StatsCount(), outerChild.CalPlanCost(taskType), innerChild.CalPlanCost(taskType)-probeSeekCost)
 	p.planCostInit = true
 	return p.planCost
+}
+
+func (p *PhysicalIndexJoin) probeSeekCost(probe PhysicalPlan) float64 {
+	switch x := probe.(type) {
+	case *PhysicalTableReader:
+		ts := getBottomPlan(x.tablePlan).(*PhysicalTableScan)
+		return float64(len(ts.Ranges)) * p.ctx.GetSessionVars().GetSeekFactor(nil) / float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
+	case *PhysicalIndexReader:
+		is := getBottomPlan(x.indexPlan).(*PhysicalIndexScan)
+		return float64(len(is.Ranges)) * p.ctx.GetSessionVars().GetSeekFactor(nil) / float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
+	case *PhysicalIndexLookUpReader:
+		is := getBottomPlan(x.indexPlan).(*PhysicalIndexScan)
+		return float64(len(is.Ranges)) * p.ctx.GetSessionVars().GetSeekFactor(nil) / float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
+	default:
+		return p.probeSeekCost(x.Children()[0])
+	}
 }
 
 func (p *PhysicalMergeJoin) CalPlanCost(taskType property.TaskType) float64 {
