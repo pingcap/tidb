@@ -698,6 +698,35 @@ func TestMultiSchemaChangeMix(t *testing.T) {
 	tk.MustQuery("select * from t use index (i3);").Check(testkit.Rows("3 4 5 6"))
 }
 
+func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
+	originHook := dom.DDL().GetHook()
+	hook := &ddl.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		require.Equal(t, job.Type, model.ActionMultiSchemaChange)
+		if job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateDeleteOnly {
+			newTk := testkit.NewTestKit(t, store)
+			rows := newTk.MustQuery("admin show ddl jobs 1").Rows()
+			// 1 history job and 1 running job with 2 subjobs
+			require.Equal(t, len(rows), 4)
+			require.Equal(t, rows[1], []interface{}{"67", "test", "t", "add index /* subjob */", "delete only", "1", "65", "0", "<nil>", "<nil>", "<nil>", "running"})
+			require.Equal(t, rows[2], []interface{}{"67", "test", "t", "add index /* subjob */", "queueing", "1", "65", "0", "<nil>", "<nil>", "<nil>", "none"})
+		}
+	}
+
+	tk.MustExec("create table t (a int, b int, c int)")
+	tk.MustExec("insert into t values (1, 2, 3)")
+
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t add index t(a), add index t1(b)")
+	dom.DDL().SetHook(originHook)
+}
+
 func composeHooks(dom *domain.Domain, cbs ...ddl.Callback) ddl.Callback {
 	return &ddl.TestDDLCallback{
 		Do: dom,
