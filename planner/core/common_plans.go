@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -282,10 +283,7 @@ func (e *Execute) OptimizePreparedPlan(ctx context.Context, sctx sessionctx.Cont
 	e.IsStaleness = isStaleness
 
 	failpoint.Inject("assertStaleReadForOptimizePreparedPlan", func() {
-		if isStaleness != sctx.GetSessionVars().StmtCtx.IsStaleness {
-			panic(fmt.Sprintf("%v != %v", isStaleness, sctx.GetSessionVars().StmtCtx.IsStaleness))
-		}
-
+		staleread.AssertStmtStaleness(sctx, isStaleness)
 		if isStaleness {
 			is2, err := domain.GetDomain(sctx).GetSnapshotInfoSchema(snapshotTS)
 			if err != nil {

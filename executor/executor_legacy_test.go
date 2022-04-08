@@ -17,7 +17,6 @@ package executor_test
 import (
 	"context"
 	"fmt"
-	"math"
 	"net"
 	"os"
 	"reflect"
@@ -3627,7 +3626,7 @@ func (s *testSerialSuite) TestUnreasonablyClose(c *C) {
 		&plannercore.PhysicalShuffle{},
 		&plannercore.PhysicalUnionAll{},
 	}
-	executorBuilder := executor.NewMockExecutorBuilderForTest(se, is, nil, math.MaxUint64, false, "global")
+	executorBuilder := executor.NewMockExecutorBuilderForTest(se, is, nil, "global")
 
 	var opsNeedsCoveredMask uint64 = 1<<len(opsNeedsCovered) - 1
 	opsAlreadyCoveredMask := uint64(0)

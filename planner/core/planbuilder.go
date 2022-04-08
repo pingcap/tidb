@@ -1196,7 +1196,7 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	}
 
 	available = removeIgnoredPaths(available, ignored, tblInfo)
-	if ctx.GetSessionVars().StmtCtx.IsStaleness {
+	if staleread.IsStmtStaleness(ctx) {
 		// skip tiflash if the statement is for stale read until tiflash support stale read
 		available = removeTiflashDuringStaleRead(available)
 	}

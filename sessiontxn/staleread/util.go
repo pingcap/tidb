@@ -60,3 +60,8 @@ func CalculateTsWithReadStaleness(sctx sessionctx.Context, readStaleness time.Du
 	minTsVal := expression.GetMinSafeTime(sctx)
 	return oracle.GoTimeToTS(expression.CalAppropriateTime(tsVal, nowVal, minTsVal)), nil
 }
+
+// IsStmtStaleness indicates whether the current statement is staleness or not
+func IsStmtStaleness(sctx sessionctx.Context) bool {
+	return sctx.GetSessionVars().StmtCtx.IsStaleness
+}

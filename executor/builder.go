@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
@@ -118,14 +119,12 @@ type CTEStorages struct {
 	IterInTbl cteutil.Storage
 }
 
-func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, isStaleness bool, replicaReadScope string) *executorBuilder {
+func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, replicaReadScope string) *executorBuilder {
 	b := &executorBuilder{
 		ctx:              ctx,
 		is:               is,
 		Ti:               ti,
-		snapshotTSCached: isStaleness,
-		snapshotTS:       snapshotTS,
-		isStaleness:      isStaleness,
+		isStaleness:      staleread.IsStmtStaleness(ctx),
 		readReplicaScope: replicaReadScope,
 	}
 
@@ -157,9 +156,9 @@ type MockExecutorBuilder struct {
 }
 
 // NewMockExecutorBuilderForTest is ONLY used in test.
-func NewMockExecutorBuilderForTest(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, snapshotTS uint64, isStaleness bool, replicaReadScope string) *MockExecutorBuilder {
+func NewMockExecutorBuilderForTest(ctx sessionctx.Context, is infoschema.InfoSchema, ti *TelemetryInfo, replicaReadScope string) *MockExecutorBuilder {
 	return &MockExecutorBuilder{
-		executorBuilder: newExecutorBuilder(ctx, is, ti, snapshotTS, isStaleness, replicaReadScope)}
+		executorBuilder: newExecutorBuilder(ctx, is, ti, replicaReadScope)}
 }
 
 // Build builds an executor tree according to `p`.
@@ -1569,6 +1568,11 @@ func (b *executorBuilder) getReadTS() (uint64, error) {
 	// logics. However for `IndexLookUpMergeJoin` and `IndexLookUpHashJoin`, it requires caching the
 	// snapshotTS and and may even use it after the txn being destroyed. In this case, mark
 	// `snapshotTSCached` to skip `refreshForUpdateTSForRC`.
+	failpoint.Inject("assertNotStaleReadForExecutorGetReadTS", func() {
+		// after refactoring stale read will use its own context provider
+		staleread.AssertStmtStaleness(b.ctx, false)
+	})
+
 	if b.snapshotTSCached {
 		return b.snapshotTS, nil
 	}

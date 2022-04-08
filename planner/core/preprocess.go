@@ -1666,6 +1666,16 @@ func (p *preprocessor) initTxnContextProviderIfNecessary(node ast.Node) {
 		return
 	}
 
+	if p.IsStaleness {
+		if !p.ctx.GetSessionVars().InTxn() {
+			p.err = sessiontxn.GetTxnManager(p.ctx).SetContextProvider(staleread.NewStalenessTxnContextProvider(
+				p.InfoSchema,
+				p.LastSnapshotTS,
+			))
+		}
+		return
+	}
+
 	p.err = sessiontxn.GetTxnManager(p.ctx).SetContextProvider(&sessiontxn.SimpleTxnContextProvider{
 		InfoSchema: p.ensureInfoSchema(),
 	})
