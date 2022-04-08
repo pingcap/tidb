@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/parser"
 	"math"
 	"runtime"
 	"runtime/pprof"
@@ -40,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
@@ -1957,11 +1957,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 // AttachSQLInfoForTopSQL attach the sql information for Top SQL. It should be call as soon as possible after got the
 // SQL digest.
 func AttachSQLInfoForTopSQL(ctx context.Context, sc *stmtctx.StatementContext, normalizedSQL string, sqlDigest *parser.Digest, isInternal bool) context.Context {
-	if !topsqlstate.TopSQLEnabled() {
-		return ctx
-	}
-	sc.IsAttachedSQL.Store(true)
-	return topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, "", nil, isInternal, false)
+       if !topsqlstate.TopSQLEnabled() {
+               return ctx
+       }
+       sc.IsAttachedSQL.Store(true)
+       return topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, isInternal)
 }
 
 // attachSQLAndPlanInExecForTopSQL attach the sql and plan information if it doesn't attached before execution.
@@ -1971,8 +1971,10 @@ func attachSQLAndPlanInExecForTopSQL(ctx context.Context, sessVars *variable.Ses
 	if stmtCtx.IsAttachedSQLAndPlan.CAS(false, true) {
 		normalizedSQL, sqlDigest := stmtCtx.SQLDigest()
 		normalizedPlan, planDigest := getPlanDigest(stmtCtx)
-		topsql.RegisterMetaInfo(normalizedSQL, sqlDigest, normalizedPlan, planDigest, sessVars.InRestrictedSQL)
-		//ctx = topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, normalizedPlan, planDigest, sessVars.InRestrictedSQL, false)
+		topsql.RegisterSQL(normalizedSQL, sqlDigest, sessVars.InRestrictedSQL)
+		if len(normalizedPlan)>0{
+			topsql.RegisterPlan(normalizedPlan, planDigest)
+		}
 	}
 	return ctx
 }

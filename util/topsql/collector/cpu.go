@@ -252,11 +252,13 @@ func (s *sqlStats) tune() {
 	s.plans[""] += optimize
 }
 
-// CtxWithDigest wrap the ctx with sql digest, if plan digest is not null, wrap with plan digest too.
-func CtxWithDigest(ctx context.Context, sqlDigest, planDigest []byte) context.Context {
-	if len(planDigest) == 0 {
-		return pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, string(hack.String(sqlDigest))))
-	}
+// CtxWithSQLDigest wrap the ctx with sql digest.
+func CtxWithSQLDigest(ctx context.Context, sqlDigest []byte) context.Context {
+	return pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, string(hack.String(sqlDigest))))
+}
+
+// CtxWithSQLAndPlanDigest wrap the ctx with sql digest and plan digest.
+func CtxWithSQLAndPlanDigest(ctx context.Context, sqlDigest, planDigest []byte) context.Context {
 	return pprof.WithLabels(ctx, pprof.Labels(labelSQLDigest, string(hack.String(sqlDigest)),
 		labelPlanDigest, string(hack.String(planDigest))))
 }

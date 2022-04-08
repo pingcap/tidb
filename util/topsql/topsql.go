@@ -16,20 +16,20 @@ package topsql
 
 import (
 	"context"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"runtime/pprof"
 	"strings"
 	"time"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/topsql/collector"
 	"github.com/pingcap/tidb/util/topsql/reporter"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
@@ -85,7 +85,50 @@ var (
 	topSQLAttachInfoCounterSQLPlanDigest = metrics.TopSQLAttachInfoCounter.WithLabelValues("sql_plan")
 )
 
-// AttachSQLInfo attach the sql information info top sql.
+
+func RegisterSQL(normalizedSQL string, sqlDigest *parser.Digest, isInternal bool) {
+	if sqlDigest != nil {
+		sqlDigestBytes := sqlDigest.Bytes()
+		linkSQLTextWithDigest(sqlDigestBytes, normalizedSQL, isInternal)
+	}
+}
+
+func RegisterPlan(normalizedPlan string, planDigest *parser.Digest) {
+	if planDigest != nil {
+		planDigestBytes := planDigest.Bytes()
+		linkPlanTextWithDigest(planDigestBytes, normalizedPlan)
+	}
+}
+
+// AttachSQLInfo attach the sql information into Top SQL and register the SQL meta information.
+func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.Digest, isInternal bool) context.Context {
+	if sqlDigest == nil || len(sqlDigest.Bytes()) == 0 {
+		return ctx
+	}
+	var sqlDigestBytes []byte
+	sqlDigestBytes = sqlDigest.Bytes()
+	ctx = collector.CtxWithSQLDigest(ctx, sqlDigestBytes)
+	pprof.SetGoroutineLabels(ctx)
+
+	linkSQLTextWithDigest(sqlDigestBytes, normalizedSQL, isInternal)
+
+	failpoint.Inject("mockHighLoadForEachSQL", func(val failpoint.Value) {
+		// In integration test, some SQL run very fast that Top SQL pprof profile unable to sample data of those SQL,
+		// So need mock some high cpu load to make sure pprof profile successfully samples the data of those SQL.
+		// Attention: Top SQL pprof profile unable to sample data of those SQL which run very fast, this behavior is expected.
+		// The integration test was just want to make sure each type of SQL will be set goroutine labels and and can be collected.
+		if val.(bool) {
+			sqlPrefixes := []string{"insert", "update", "delete", "load", "replace", "select", "begin",
+				"commit", "analyze", "explain", "trace", "create", "set global"}
+			if MockHighCPULoad(normalizedSQL, sqlPrefixes, 2) {
+				logutil.BgLogger().Info("attach SQL info", zap.String("sql", normalizedSQL))
+			}
+		}
+	})
+	return ctx
+}
+
+// AttachSQLAndPlanInfo attach the sql and plan information into Top SQL
 func AttachSQLAndPlanInfo(ctx context.Context, sqlDigest *parser.Digest, planDigest *parser.Digest) context.Context {
 	if sqlDigest == nil || len(sqlDigest.Bytes()) == 0 {
 		return ctx
@@ -98,58 +141,8 @@ func AttachSQLAndPlanInfo(ctx context.Context, sqlDigest *parser.Digest, planDig
 	} else {
 		topSQLAttachInfoCounterSQLDigest.Add(1)
 	}
-	ctx = collector.CtxWithDigest(ctx, sqlDigestBytes, planDigestBytes)
+	ctx = collector.CtxWithSQLAndPlanDigest(ctx, sqlDigestBytes, planDigestBytes)
 	pprof.SetGoroutineLabels(ctx)
-	return ctx
-}
-
-func RegisterMetaInfo(normalizedSQL string, sqlDigest *parser.Digest, normalizedPlan string, planDigest *parser.Digest, isInternal bool) {
-	if sqlDigest != nil {
-		sqlDigestBytes := sqlDigest.Bytes()
-		linkSQLTextWithDigest(sqlDigestBytes, normalizedSQL, isInternal)
-	}
-	if len(normalizedPlan) > 0 && planDigest != nil {
-		planDigestBytes := planDigest.Bytes()
-		linkPlanTextWithDigest(planDigestBytes, normalizedPlan)
-	}
-}
-
-// AttachSQLInfo attach the sql information info top sql.
-func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.Digest, normalizedPlan string, planDigest *parser.Digest, isInternal bool, noNeedRecordSQLMeta bool) context.Context {
-	if len(normalizedSQL) == 0 || sqlDigest == nil || len(sqlDigest.Bytes()) == 0 {
-		return ctx
-	}
-	var sqlDigestBytes, planDigestBytes []byte
-	sqlDigestBytes = sqlDigest.Bytes()
-	if planDigest != nil {
-		planDigestBytes = planDigest.Bytes()
-		topSQLAttachInfoCounterSQLPlanDigest.Add(1)
-	} else {
-		topSQLAttachInfoCounterSQLDigest.Add(1)
-	}
-	ctx = collector.CtxWithDigest(ctx, sqlDigestBytes, planDigestBytes)
-	pprof.SetGoroutineLabels(ctx)
-
-	if !noNeedRecordSQLMeta {
-		linkSQLTextWithDigest(sqlDigestBytes, normalizedSQL, isInternal)
-	}
-	if len(normalizedPlan) > 0 && len(planDigestBytes) > 0 {
-		// If plan digest is '', indicate it is the first time to attach the SQL info, since it only know the sql digest.
-		linkPlanTextWithDigest(planDigestBytes, normalizedPlan)
-	}
-	failpoint.Inject("mockHighLoadForEachSQL", func(val failpoint.Value) {
-		// In integration test, some SQL run very fast that Top SQL pprof profile unable to sample data of those SQL,
-		// So need mock some high cpu load to make sure pprof profile successfully samples the data of those SQL.
-		// Attention: Top SQL pprof profile unable to sample data of those SQL which run very fast, this behavior is expected.
-		// The integration test was just want to make sure each type of SQL will be set goroutine labels and and can be collected.
-		if val.(bool) {
-			sqlPrefixes := []string{"insert", "update", "delete", "load", "replace", "select", "begin",
-				"commit", "analyze", "explain", "trace", "create", "set global"}
-			if MockHighCPULoad(normalizedSQL, sqlPrefixes, 1) {
-				logutil.BgLogger().Info("attach SQL info", zap.String("sql", normalizedSQL), zap.Bool("has-plan", len(normalizedPlan) > 0))
-			}
-		}
-	})
 	return ctx
 }
 
