@@ -60,15 +60,20 @@ func (p *PhysicalIndexLookUpReader) CalPlanCost(taskType property.TaskType) floa
 	if p.planCostInit {
 		return p.planCost
 	}
+	// child's cost
 	p.planCost = p.indexPlan.CalPlanCost(taskType)
 	p.planCost += p.tablePlan.CalPlanCost(taskType)
 
-	// index net-cost
+	// index net I/O cost
 	idxCount := p.indexPlan.StatsCount()
 	indexWidth := getHistCollSafely(p).GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
 	p.planCost += idxCount * indexWidth * p.ctx.GetSessionVars().GetNetworkFactor(nil)
 
-	// table net cost
+	// index net seek cost
+	is := getBottomPlan(p.indexPlan).(*PhysicalIndexScan)
+	p.planCost += float64(len(is.Ranges)) * p.ctx.GetSessionVars().GetSeekFactor(nil)
+
+	// table net I/O cost
 	tblScanWidth := getHistCollSafely(p).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
 	tblCount := p.tablePlan.StatsCount()
 	p.planCost += tblCount * p.ctx.GetSessionVars().GetNetworkFactor(nil) * tblScanWidth
@@ -76,7 +81,9 @@ func (p *PhysicalIndexLookUpReader) CalPlanCost(taskType property.TaskType) floa
 	// consider concurrency
 	p.planCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 
-	p.planCost += p.GetCost() // lookup-cost on TiDB
+	// lookup-cost (table net seek cost)
+	// TODO: consider lookup concurrency for this cost?
+	p.planCost += p.GetCost()
 	p.planCostInit = true
 	return p.planCost
 }
