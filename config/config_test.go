@@ -288,7 +288,6 @@ grpc-max-send-msg-size = 40960
 	require.True(t, conf.EnableTableLock)
 	require.Equal(t, uint64(5), conf.DelayCleanTableLock)
 	require.Equal(t, uint64(10000), conf.SplitRegionMaxNum)
-
 	require.True(t, conf.RepairMode)
 	require.Equal(t, uint64(16), conf.TiKVClient.ResolveLockLiteThreshold)
 	require.Equal(t, uint32(200), conf.MaxServerConnections)
