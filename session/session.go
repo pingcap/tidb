@@ -2269,9 +2269,9 @@ func (s *session) cachedPlanExec(ctx context.Context,
 // IsCachedExecOk check if we can execute using plan cached in prepared structure
 // Be careful for the short path, current precondition is ths cached plan satisfying
 // IsPointGetWithPKOrUniqueKeyByAutoCommit
-func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.CachedPrepareStmt, staleness bool) (bool, error) {
+func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.CachedPrepareStmt, isStaleness bool) (bool, error) {
 	prepared := preparedStmt.PreparedAst
-	if prepared.CachedPlan == nil || staleness {
+	if prepared.CachedPlan == nil || isStaleness {
 		return false, nil
 	}
 	// check auto commit

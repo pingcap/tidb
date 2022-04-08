@@ -1366,15 +1366,17 @@ func TestPlanCacheWithStaleReadByBinaryProto(t *testing.T) {
 	tk.MustExec("set @a=now(6)")
 	time.Sleep(time.Second)
 	tk.MustExec("update t1 set v=100 where id=1")
+
+	// issue #31550
 	stmtID1, _, _, err := se.PrepareStmt("select * from t1 as of timestamp @a where id=1")
 	require.NoError(t, err)
-
 	for i := 0; i < 3; i++ {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
 	}
 
+	// issue #33814
 	stmtID2, _, _, err := se.PrepareStmt("select * from t1 where id=1")
 	require.NoError(t, err)
 	for i := 0; i < 2; i++ {
