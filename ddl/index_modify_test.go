@@ -1121,6 +1121,11 @@ func testDropIndexesFromPartitionedTable(t *testing.T, store kv.Storage) {
 		tk.MustExec("insert into test_drop_indexes_from_partitioned_table values (?, ?, ?)", i, i, i)
 	}
 	tk.MustExec("alter table test_drop_indexes_from_partitioned_table drop index i1, drop index if exists i2;")
+	tk.MustExec("alter table test_drop_indexes_from_partitioned_table add index i1(c1)")
+	tk.MustExec("alter table test_drop_indexes_from_partitioned_table drop index i1, drop index if exists i1;")
+	tk.MustExec("alter table test_drop_indexes_from_partitioned_table drop column c1, drop column c2;")
+	tk.MustExec("alter table test_drop_indexes_from_partitioned_table add column c1 int")
+	tk.MustExec("alter table test_drop_indexes_from_partitioned_table drop column c1, drop column if exists c1;")
 }
 
 func testCancelDropIndexes(t *testing.T, store kv.Storage, d ddl.DDL) {
