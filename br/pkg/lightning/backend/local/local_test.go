@@ -18,9 +18,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"math/rand"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -28,6 +30,7 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/cockroachdb/pebble/sstable"
 	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
 	"github.com/golang/mock/gomock"
@@ -865,4 +868,57 @@ func (s *localSuite) TestMergeSSTsDuplicated(c *C) {
 	kvs = append(kvs, kvs[0])
 
 	s.testMergeSSTs(c, kvs, &sstMeta{totalCount: 40, totalSize: 640})
+}
+
+func (s *localSuite) TestIngestSSTWithClosedEngine(c *C) {
+	dir := c.MkDir()
+	opt := &pebble.Options{
+		MemTableSize:             1024 * 1024,
+		MaxConcurrentCompactions: 16,
+		L0CompactionThreshold:    math.MaxInt32, // set to max try to disable compaction
+		L0StopWritesThreshold:    math.MaxInt32, // set to max try to disable compaction
+		DisableWAL:               true,
+		ReadOnly:                 false,
+	}
+	db, err := pebble.Open(filepath.Join(dir, "test"), opt)
+	c.Assert(err, IsNil)
+	tmpPath := filepath.Join(dir, "test.sst")
+	err = os.Mkdir(tmpPath, 0o755)
+	c.Assert(err, IsNil)
+
+	_, engineUUID := backend.MakeUUID("ww", 0)
+	engineCtx, cancel := context.WithCancel(context.Background())
+	f := &File{
+		db:           db,
+		UUID:         engineUUID,
+		sstDir:       tmpPath,
+		ctx:          engineCtx,
+		cancel:       cancel,
+		sstMetasChan: make(chan metaOrFlush, 64),
+		keyAdapter:   noopKeyAdapter{},
+	}
+	f.sstIngester = dbSSTIngester{e: f}
+	sstPath := path.Join(tmpPath, uuid.New().String()+".sst")
+	file, err := os.Create(sstPath)
+	c.Assert(err, IsNil)
+	w := sstable.NewWriter(file, sstable.WriterOptions{})
+	for i := 0; i < 10; i++ {
+		c.Assert(w.Add(sstable.InternalKey{
+			Trailer: uint64(sstable.InternalKeyKindSet),
+			UserKey: []byte(fmt.Sprintf("key%d", i)),
+		}, nil), IsNil)
+	}
+	c.Assert(w.Close(), IsNil)
+
+	c.Assert(f.ingestSSTs([]*sstMeta{
+		{
+			path: sstPath,
+		},
+	}), IsNil)
+	c.Assert(f.Close(), IsNil)
+	c.Assert(f.ingestSSTs([]*sstMeta{
+		{
+			path: sstPath,
+		},
+	}), ErrorMatches, ".*"+errorEngineClosed.Error()+".*")
 }
