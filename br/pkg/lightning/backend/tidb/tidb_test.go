@@ -595,7 +595,7 @@ func encodeRowsTiDB(t *testing.T, b backend.Backend, tbl table.Table) kv.Rows {
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
 
-	rawRow := make([]types.Datum, 0)
+	rawRow := make([]types.Datum, 14)
 	for i := 0; i < 15; i++ {
 		rawRow = append(rawRow, types.NewIntDatum(0))
 	}
