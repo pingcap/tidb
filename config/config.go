@@ -110,7 +110,6 @@ type Config struct {
 	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
 	TempStorageQuota           int64                   `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
-	EnableBatchDML             bool                    `toml:"enable-batch-dml" json:"enable-batch-dml"`
 	TxnLocalLatches            tikvcfg.TxnLocalLatches `toml:"-" json:"-"`
 	ServerVersion              string                  `toml:"server-version" json:"server-version"`
 	VersionComment             string                  `toml:"version-comment" json:"version-comment"`
@@ -628,7 +627,6 @@ var defaultConf = Config{
 	TempStoragePath:              tempStorageDirName,
 	OOMAction:                    OOMActionCancel,
 	MemQuotaQuery:                1 << 30,
-	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          *NewAtomicBool(true),
 	MaxIndexLength:               3072,
 	IndexLimit:                   64,
@@ -801,6 +799,7 @@ var deprecatedConfig = map[string]struct{}{
 	"stmt-summary.max-sql-length":        {},
 	"stmt-summary.refresh-interval":      {},
 	"stmt-summary.history-size":          {},
+	"enable-batch-dml":                   {}, // use tidb_enable_batch_dml
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {

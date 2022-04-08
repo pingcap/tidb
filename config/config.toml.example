@@ -51,9 +51,6 @@ tmp-storage-quota = -1
 # Valid options: ["log", "cancel"]
 oom-action = "cancel"
 
-# Enable batch commit for the DMLs.
-enable-batch-dml = false
-
 # Make "kill query" behavior compatible with MySQL. It's not recommend to
 # turn on this option when TiDB server is behind a proxy.
 compatible-kill-query = false

@@ -24,7 +24,6 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -231,7 +231,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	}
 	sessVars := e.ctx.GetSessionVars()
 	batchSize := sessVars.DMLBatchSize
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && config.GetGlobalConfig().EnableBatchDML && batchSize > 0
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && variable.EnableBatchDML.Load() && batchSize > 0
 
 	e.lazyFillAutoID = true
 	evalRowFunc := e.fastEvalRow
@@ -434,7 +434,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 
 	sessVars := e.ctx.GetSessionVars()
 	batchSize := sessVars.DMLBatchSize
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && config.GetGlobalConfig().EnableBatchDML && batchSize > 0
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && variable.EnableBatchDML.Load() && batchSize > 0
 	memUsageOfRows := int64(0)
 	memUsageOfExtraCols := int64(0)
 	memTracker := e.memTracker
