@@ -187,7 +187,7 @@ func (t *copTask) finishIndexPlan() {
 	}
 
 	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
-	var p, tblScan PhysicalPlan
+	var tblScan PhysicalPlan
 	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
 	}
 	for tblScan = t.tablePlan; len(tblScan.Children()) > 0; tblScan = tblScan.Children()[0] {
@@ -263,7 +263,6 @@ func (p *PhysicalApply) attach2Task(tasks ...task) task {
 }
 
 // GetCost computes the cost of apply operator.
-// TODO: move this method to plan_cost.go
 func (p *PhysicalApply) GetCost(lCount, rCount, lCost, rCost float64) float64 {
 	var cpuCost float64
 	sessVars := p.ctx.GetSessionVars()
@@ -307,7 +306,6 @@ func (p *PhysicalIndexMergeJoin) attach2Task(tasks ...task) task {
 }
 
 // GetCost computes the cost of index merge join operator and its children.
-// TODO: move this method to plan_cost.go
 func (p *PhysicalIndexMergeJoin) GetCost(outerTask, innerTask task) float64 {
 	var cpuCost float64
 	outerCnt, innerCnt := outerTask.count(), innerTask.count()
@@ -387,7 +385,6 @@ func (p *PhysicalIndexHashJoin) attach2Task(tasks ...task) task {
 }
 
 // GetCost computes the cost of index merge join operator and its children.
-// TODO: move this method to plan_cost.go
 func (p *PhysicalIndexHashJoin) GetCost(outerTask, innerTask task) float64 {
 	var cpuCost float64
 	outerCnt, innerCnt := outerTask.count(), innerTask.count()
@@ -465,7 +462,6 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 }
 
 // GetCost computes the cost of index join operator and its children.
-// TODO: move this method to plan_cost.go
 func (p *PhysicalIndexJoin) GetCost(outerCnt, innerCnt float64, outerCost, innerCost float64) float64 {
 	var cpuCost float64
 	sessVars := p.ctx.GetSessionVars()
@@ -528,7 +524,6 @@ func getAvgRowSize(stats *property.StatsInfo, schema *expression.Schema) (size f
 }
 
 // GetCost computes cost of hash join operator itself.
-// TODO: move this method to plan_cost.go
 func (p *PhysicalHashJoin) GetCost(lCnt, rCnt float64) float64 {
 	buildCnt, probeCnt := lCnt, rCnt
 	build := p.children[0]
@@ -876,7 +871,6 @@ func (p *PhysicalHashJoin) attach2TaskForTiFlash(tasks ...task) task {
 }
 
 // GetCost computes cost of merge join operator itself.
-// TODO: move this method to plan_cost.go
 func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64) float64 {
 	outerCnt := lCnt
 	innerKeys := p.RightJoinKeys
@@ -1324,7 +1318,6 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
 }
 
 // GetCost computes cost of TopN operator itself.
-// TODO: move this method to plan_cost.go
 func (p *PhysicalTopN) GetCost(count float64, isRoot bool) float64 {
 	heapSize := float64(p.Offset + p.Count)
 	if heapSize < 2.0 {
@@ -1357,7 +1350,6 @@ func (p *PhysicalTopN) canPushDown(storeTp kv.StoreType) bool {
 }
 
 // GetCost computes the cost of in memory sort.
-// TODO: move this method to plan_cost.go
 func (p *PhysicalSort) GetCost(count float64, schema *expression.Schema) float64 {
 	if count < 2.0 {
 		count = 2.0
@@ -1463,7 +1455,6 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 }
 
 // GetCost computes the cost of projection operator itself.
-// TODO: move this method to plan_cost.go
 func (p *PhysicalProjection) GetCost(count float64) float64 {
 	sessVars := p.ctx.GetSessionVars()
 	cpuCost := count * sessVars.CPUFactor
@@ -2119,7 +2110,6 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 }
 
 // GetCost computes cost of stream aggregation considering CPU/memory.
-// TODO: move this method to plan_cost.go
 func (p *PhysicalStreamAgg) GetCost(inputRows float64, isRoot bool) float64 {
 	aggFuncFactor := p.getAggFuncCostFactor(false)
 	var cpuCost float64
@@ -2337,7 +2327,6 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 }
 
 // GetCost computes the cost of hash aggregation considering CPU/memory.
-// TODO: move this method to plan_cost.go
 func (p *PhysicalHashAgg) GetCost(inputRows float64, isRoot bool, isMPP bool) float64 {
 	cardinality := p.statsInfo().RowCount
 	numDistinctFunc := p.numDistinctFunc()
