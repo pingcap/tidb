@@ -778,7 +778,13 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 	failpoint.Inject("assertExecutePrepareStatementStalenessOption", func(val failpoint.Value) {
 		vs := strings.Split(val.(string), "_")
 		assertTS, assertTxnScope := vs[0], vs[1]
-		if strconv.FormatUint(b.snapshotTS, 10) != assertTS ||
+		staleread.AssertStmtStaleness(b.ctx, true)
+		ts, err := sessiontxn.GetTxnManager(b.ctx).GetReadTS()
+		if err != nil {
+			panic(e)
+		}
+
+		if strconv.FormatUint(ts, 10) != assertTS ||
 			assertTxnScope != b.readReplicaScope {
 			panic("execute prepare statement have wrong staleness option")
 		}

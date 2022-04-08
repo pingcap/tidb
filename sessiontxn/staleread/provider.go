@@ -26,6 +26,7 @@ type StalenessTxnContextProvider struct {
 	ts uint64
 }
 
+// NewStalenessTxnContextProvider creates a new StalenessTxnContextProvider
 func NewStalenessTxnContextProvider(is infoschema.InfoSchema, ts uint64) *StalenessTxnContextProvider {
 	return &StalenessTxnContextProvider{
 		is: is,
@@ -33,18 +34,22 @@ func NewStalenessTxnContextProvider(is infoschema.InfoSchema, ts uint64) *Stalen
 	}
 }
 
+// Initialize the provider with session context
 func (p *StalenessTxnContextProvider) Initialize(_ sessionctx.Context) error {
 	return nil
 }
 
+// GetTxnInfoSchema returns the information schema used by txn
 func (p *StalenessTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	return p.is
 }
 
+// GetReadTS returns the read timestamp
 func (p *StalenessTxnContextProvider) GetReadTS() (uint64, error) {
 	return p.ts, nil
 }
 
+// GetForUpdateTS will return an error because stale read does not support it
 func (p *StalenessTxnContextProvider) GetForUpdateTS() (uint64, error) {
 	return 0, errors.New("GetForUpdateTS not supported for stalenessTxnProvider")
 }
