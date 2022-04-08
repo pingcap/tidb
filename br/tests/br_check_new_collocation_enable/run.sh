@@ -44,20 +44,23 @@ run_sql "INSERT INTO $DB.usertable2 VALUES (\"c\", \"d\");"
 
 # backup db
 echo "backup start ... with brv4.0.8 without NewCollactionEnable"
-bin/brv4.0.8 backup db --db "$DB" -s "local://$TEST_DIR/$DB" \
+bin/brv4.0.8 backup db --db "$DB" -s "local://$cur/${DB}" \
     --ca "$TEST_DIR/certs/ca.pem" \
     --cert "$TEST_DIR/certs/br.pem" \
     --key "$TEST_DIR/certs/br.key" \
     --pd $PD_ADDR \
     --check-requirements=false
 
-# restore db from v4.0.8 version without `newCollationEnable`
-echo "restore start ... without NewCollactionEnable in backupmeta"
+echo "Restart cluster with new_collation_enable=false"
+start_services --tidb-cfg $cur/config/new_collation_enable_false.toml
+
+# restore db from v4.0.8 version backup
+echo "restore start ... without --check-new-collations-enable=false"
 restore_fail=0
-error_str="NewCollactionEnable not found in backupmeta"
+error_str="NewCollationEnable not found in backupmeta"
 test_log="new_collotion_enable_test.log"
 unset BR_LOG_TO_TERM
-run_br restore db --db $DB -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --log-file $test_log || restore_fail=1
+run_br restore db --db $DB -s "local://$cur/${DB}" --pd $PD_ADDR --log-file $test_log || restore_fail=1
 if [ $restore_fail -ne 1 ]; then
     echo "TEST: [$TEST_NAME] test restore failed!"
     exit 1
@@ -71,32 +74,47 @@ fi
 
 rm -rf "$test_log"
 
+echo "restore start ... with --check-new-collations-enable=false"
+warn_str="skip check NewCollationEnable currently"
+unset BR_LOG_TO_TERM
+run_br restore db --db $DB -s "local://$cur/${DB}" --pd $PD_ADDR --log-file $test_log --check-new-collations-enable=false
+if ! grep -i "$warn_str" $test_log; then
+    echo "${warn_str} not found in log"
+    echo "TEST: [$TEST_NAME] test restore failed!"
+    exit 1
+fi
+
+rm -rf "$cur/${DB}"
+rm -rf "$test_log"
+
 # backup with NewCollationEable = false
 echo "Restart cluster with new_collation_enable=false"
 start_services --tidb-cfg $cur/config/new_collation_enable_false.toml
 
-echo "backup start ... witch NewCollactionEnable=false in TiDB"
-run_br --pd $PD_ADDR backup db --db "$DB" -s "local://$cur/${DB}_2"
+echo "backup start ... with NewCollactionEnable=false in TiDB"
+run_br --pd $PD_ADDR backup full -s "local://$cur/${DB}"
+
+echo "restore start ... with NewCollactionEnable=false in TiDB"
+run_br restore full -s "local://$cur/${DB}" --pd $PD_ADDR
 
 echo "Restart cluster with new_collation_enable=true"
 start_services --tidb-cfg $cur/config/new_collation_enable_true.toml
 
 echo "restore start ... with NewCollactionEnable=True in TiDB"
 restore_fail=0
-test_log2="new_collotion_enable_test2.log"
 error_str="newCollationEnable not match"
 unset BR_LOG_TO_TERM
-run_br restore db --db $DB -s "local://$cur/${DB}_2" --pd $PD_ADDR --log-file $test_log2 || restore_fail=1
+run_br restore full -s "local://$cur/${DB}" --pd $PD_ADDR --log-file $test_log || restore_fail=1
 if [ $restore_fail -ne 1 ]; then
     echo "TEST: [$TEST_NAME] test restore failed!"
     exit 1
 fi
 
-if ! grep -i "$error_str" $test_log2; then
+if ! grep -i "$error_str" $test_log; then
     echo "${error_str} not found in log"
     echo "TEST: [$TEST_NAME] test restore failed!"
     exit 1
 fi
 
-rm -rf "$test_log2"
-rm -rf "$cur/${DB}_2"
+rm -rf "$test_log"
+rm -rf "$cur/${DB}"

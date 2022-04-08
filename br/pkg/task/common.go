@@ -146,6 +146,7 @@ type Config struct {
 	NoCreds bool `json:"no-credentials" toml:"no-credentials"`
 
 	CheckRequirements bool `json:"check-requirements" toml:"check-requirements"`
+
 	// EnableOpenTracing is whether to enable opentracing
 	EnableOpenTracing bool `json:"enable-opentracing" toml:"enable-opentracing"`
 	// SkipCheckPath skips verifying the path
@@ -444,12 +445,11 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if !caseSensitive {
 		cfg.TableFilter = filter.CaseInsensitive(cfg.TableFilter)
 	}
-	checkRequirements, err := flags.GetBool(flagCheckRequirement)
+
+	cfg.CheckRequirements, err = flags.GetBool(flagCheckRequirement)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.CheckRequirements = checkRequirements
-
 	cfg.SwitchModeInterval, err = flags.GetDuration(flagSwitchModeInterval)
 	if err != nil {
 		return errors.Trace(err)

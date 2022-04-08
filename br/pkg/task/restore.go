@@ -46,6 +46,9 @@ const (
 	// current only support STRICT or IGNORE, the default is STRICT according to tidb.
 	FlagWithPlacementPolicy = "with-tidb-placement-mode"
 
+	// flagCheckNewCollationsEnable is used for whether check the config `new_collations_enabled_on_first_bootstrap`.
+	flagCheckNewCollationsEnable = "check-new-collations-enable"
+
 	defaultRestoreConcurrency = 128
 	maxRestoreBatchSizeLimit  = 10240
 	defaultPDConcurrency      = 1
@@ -63,6 +66,8 @@ const (
 // RestoreCommonConfig is the common configuration for all BR restore tasks.
 type RestoreCommonConfig struct {
 	Online bool `json:"online" toml:"online"`
+	// Whether check the config `new_collations_enabled_on_first_bootstrap`.
+	CheckNewCollationsEnable bool `json:"check-new-collations-enable" toml:"check-new-collations-enable"`
 
 	// MergeSmallRegionSizeBytes is the threshold of merging small regions (Default 96MB, region split size).
 	// MergeSmallRegionKeyCount is the threshold of merging smalle regions (Default 960_000, region split key count).
@@ -86,6 +91,8 @@ func (cfg *RestoreCommonConfig) adjust() {
 func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	// TODO remove experimental tag if it's stable
 	flags.Bool(flagOnline, false, "(experimental) Whether online when restore")
+	flags.Bool(flagCheckNewCollationsEnable, true,
+		"Whether check config item 'new_collations_enabled_on_first_bootstrap'")
 
 	flags.Uint64(FlagMergeRegionSizeBytes, restore.DefaultMergeRegionSizeBytes,
 		"the threshold of merging small regions (Default 96MB, region split size)")
@@ -108,6 +115,10 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 func (cfg *RestoreCommonConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	var err error
 	cfg.Online, err = flags.GetBool(flagOnline)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.CheckNewCollationsEnable, err = flags.GetBool(flagCheckNewCollationsEnable)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -271,16 +282,16 @@ func CheckNewCollationEnable(
 	backupNewCollationEnable string,
 	g glue.Glue,
 	storage kv.Storage,
-	CheckRequirements bool,
+	checkCollation bool,
 ) error {
 	if backupNewCollationEnable == "" {
-		if CheckRequirements {
+		if checkCollation {
 			return errors.Annotatef(berrors.ErrUnknown,
-				"NewCollactionEnable not found in backupmeta. "+
-					"if you ensure the NewCollactionEnable config of backup cluster is as same as restore cluster, "+
-					"use --check-requirements=false to skip")
+				"NewCollationEnable not found in backupmeta. "+
+					"if you ensure the config 'new_collations_enabled_on_first_bootstrap' of backup cluster is as same as restore cluster, "+
+					"use --check-collation=false to skip")
 		} else {
-			log.Warn("no NewCollactionEnable in backup")
+			log.Warn("no NewCollactionEnable in backup, skip check NewCollationEnable currently.")
 			return nil
 		}
 	}
@@ -353,7 +364,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			return errors.Trace(versionErr)
 		}
 	}
-	if err = CheckNewCollationEnable(backupMeta.GetNewCollationsEnabled(), g, mgr.GetStorage(), cfg.CheckRequirements); err != nil {
+	if err = CheckNewCollationEnable(backupMeta.GetNewCollationsEnabled(), g, mgr.GetStorage(), cfg.CheckNewCollationsEnable); err != nil {
 		return errors.Trace(err)
 	}
 
