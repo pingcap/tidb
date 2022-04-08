@@ -1388,11 +1388,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 	return task, nil
 }
 
-func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSource, isForScan bool) (rowWidth float64) {
-	defer func() {
-		is.indexRowSize = rowWidth
-	}()
-
+func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSource, isForScan bool) float64 {
 	scanCols := make([]*expression.Column, 0, len(idx.Columns)+1)
 	// If `initSchema` has already appended the handle column in schema, just use schema columns, otherwise, add extra handle column.
 	if len(idx.Columns) == len(is.schema.Columns) {
@@ -1405,9 +1401,10 @@ func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSour
 		scanCols = is.schema.Columns
 	}
 	if isForScan {
-		return ds.TblColHists.GetIndexAvgRowSize(is.ctx, scanCols, is.Index.Unique)
+		is.indexRowSize = ds.TblColHists.GetIndexAvgRowSize(is.ctx, scanCols, is.Index.Unique)
 	}
-	return ds.TblColHists.GetAvgRowSize(is.ctx, scanCols, true, false)
+	is.indexRowSize = ds.TblColHists.GetAvgRowSize(is.ctx, scanCols, true, false)
+	return is.indexRowSize
 }
 
 // initSchema is used to set the schema of PhysicalIndexScan. Before calling this,
