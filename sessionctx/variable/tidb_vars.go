@@ -579,13 +579,23 @@ const (
 
 	// TiDBEnableLocalTxn indicates whether to enable Local Txn.
 	TiDBEnableLocalTxn = "tidb_enable_local_txn"
+
 	// TiDBTSOClientBatchMaxWaitTime indicates the max value of the TSO Batch Wait interval time of PD client.
 	TiDBTSOClientBatchMaxWaitTime = "tidb_tso_client_batch_max_wait_time"
+
+	// TiDBTxnCommitBatchSize is used to control the batch size of transaction commit related requests sent by TiDB to TiKV.
+	// If a single transaction has a large amount of writes, you can increase the batch size to improve the batch effect,
+	// setting too large will exceed TiKV's raft-entry-max-size limit and cause commit failure.
+	TiDBTxnCommitBatchSize = "tidb_txn_commit_batch_size"
+
 	// TiDBEnableTSOFollowerProxy indicates whether to enable the TSO Follower Proxy feature of PD client.
 	TiDBEnableTSOFollowerProxy = "tidb_enable_tso_follower_proxy"
 
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
+
+	// TiDBRemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
+	TiDBRemoveOrderbyInSubquery = "tidb_remove_orderby_in_subquery"
 
 	// TiDBEnablePseudoForOutdatedStats indicates whether use pseudo for outdated stats
 	TiDBEnablePseudoForOutdatedStats = "tidb_enable_pseudo_for_outdated_stats"
@@ -631,6 +641,8 @@ const (
 	TiDBGCConcurrency = "tidb_gc_concurrency"
 	// TiDBGCScanLockMode enables the green GC feature (default)
 	TiDBGCScanLockMode = "tidb_gc_scan_lock_mode"
+	// TiDBGCMaxWaitTime sets max time for gc advances the safepoint delayed by active transactions
+	TiDBGCMaxWaitTime = "tidb_gc_max_wait_time"
 	// TiDBEnableEnhancedSecurity restricts SUPER users from certain operations.
 	TiDBEnableEnhancedSecurity = "tidb_enable_enhanced_security"
 	// TiDBEnableHistoricalStats enables the historical statistics feature (default off)
@@ -816,6 +828,9 @@ const (
 	DefTiDBIgnorePreparedCacheCloseStmt   = false
 	DefTiDBBatchPendingTiFlashCount       = 4000
 	DefRCReadCheckTS                      = false
+	DefTiDBRemoveOrderbyInSubquery        = false
+	DefTiDBReadStaleness                  = 0
+	DefTiDBGCMaxWaitTime                  = 24 * 60 * 60
 )
 
 // Process global variables.
@@ -850,4 +865,5 @@ var (
 	StatsLoadSyncWait                     = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
 	StatsLoadPseudoTimeout                = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
 	MemQuotaBindingCache                  = atomic.NewInt64(DefTiDBMemQuotaBindingCache)
+	GCMaxWaitTime                         = atomic.NewInt64(DefTiDBGCMaxWaitTime)
 )
