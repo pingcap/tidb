@@ -338,7 +338,7 @@ func (ctl *StatusController) getTask(ctx context.Context, name string) ([]TaskSt
 	return []TaskStatus{status}, nil
 }
 
-func (ctl *StatusController) PrintToView(tasks []TaskStatus) {
+func (ctl *StatusController) printToView(tasks []TaskStatus) {
 	for _, task := range tasks {
 		ctl.view.AddTask(task)
 	}
@@ -351,6 +351,6 @@ func (ctl *StatusController) PrintStatusOfTask(ctx context.Context, name string)
 	if err != nil {
 		return err
 	}
-	ctl.PrintToView(tasks)
+	ctl.printToView(tasks)
 	return nil
 }
