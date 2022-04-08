@@ -54,10 +54,10 @@ func defineAzblobFlags(flags *pflag.FlagSet) {
 }
 
 func hiddenAzblobFlags(flags *pflag.FlagSet) {
-	flags.MarkHidden(azblobEndpointOption)
-	flags.MarkHidden(azblobAccessTierOption)
-	flags.MarkHidden(azblobAccountName)
-	flags.MarkHidden(azblobAccountKey)
+	_ = flags.MarkHidden(azblobEndpointOption)
+	_ = flags.MarkHidden(azblobAccessTierOption)
+	_ = flags.MarkHidden(azblobAccountName)
+	_ = flags.MarkHidden(azblobAccountKey)
 }
 
 func (options *AzblobBackendOptions) parseFromFlags(flags *pflag.FlagSet) error {

@@ -60,10 +60,10 @@ func defineGCSFlags(flags *pflag.FlagSet) {
 }
 
 func hiddenGCSFlags(flags *pflag.FlagSet) {
-	flags.MarkHidden(gcsEndpointOption)
-	flags.MarkHidden(gcsStorageClassOption)
-	flags.MarkHidden(gcsPredefinedACL)
-	flags.MarkHidden(gcsCredentialsFile)
+	_ = flags.MarkHidden(gcsEndpointOption)
+	_ = flags.MarkHidden(gcsStorageClassOption)
+	_ = flags.MarkHidden(gcsPredefinedACL)
+	_ = flags.MarkHidden(gcsCredentialsFile)
 }
 
 func (options *GCSBackendOptions) parseFromFlags(flags *pflag.FlagSet) error {

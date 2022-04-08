@@ -266,15 +266,15 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 
 // HiddenFlagsForStream temporary hidden flags that stream cmd not support.
 func HiddenFlagsForStream(flags *pflag.FlagSet) {
-	flags.MarkHidden(flagChecksum)
-	flags.MarkHidden(flagChecksumConcurrency)
-	flags.MarkHidden(flagRateLimit)
-	flags.MarkHidden(flagRateLimitUnit)
-	flags.MarkHidden(flagRemoveTiFlash)
-	flags.MarkHidden(flagCipherType)
-	flags.MarkHidden(flagCipherKey)
-	flags.MarkHidden(flagCipherKeyFile)
-	flags.MarkHidden(flagSwitchModeInterval)
+	_ = flags.MarkHidden(flagChecksum)
+	_ = flags.MarkHidden(flagChecksumConcurrency)
+	_ = flags.MarkHidden(flagRateLimit)
+	_ = flags.MarkHidden(flagRateLimitUnit)
+	_ = flags.MarkHidden(flagRemoveTiFlash)
+	_ = flags.MarkHidden(flagCipherType)
+	_ = flags.MarkHidden(flagCipherKey)
+	_ = flags.MarkHidden(flagCipherKeyFile)
+	_ = flags.MarkHidden(flagSwitchModeInterval)
 
 	storage.HiddenFlagsForStream(flags)
 }
