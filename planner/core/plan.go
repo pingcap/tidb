@@ -314,17 +314,12 @@ type LogicalPlan interface {
 	ExtractFD() *fd.FDSet
 }
 
-// CostCalculator is used to calculate costs for plans.
-type CostCalculator interface {
-	// CalPlanCost returns the cost of current plan
-	CalPlanCost(taskType property.TaskType) float64
-}
-
 // PhysicalPlan is a tree of the physical operators.
 type PhysicalPlan interface {
 	Plan
 
-	CostCalculator
+	// CalPlanCost returns the cost of current plan
+	CalPlanCost(taskType property.TaskType) float64
 
 	// attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
