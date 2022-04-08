@@ -85,17 +85,18 @@ func (p *PhysicalIndexReader) CalPlanCost(taskType property.TaskType) float64 {
 	if p.planCostInit {
 		return p.planCost
 	}
-	p.planCost = p.indexPlan.CalPlanCost(property.CopSingleReadTaskType) // accumulate child's cost
 
-	// accumulate net-cost
-	rowCount := p.indexPlan.StatsCount()
-	netFactor := p.ctx.GetSessionVars().GetNetworkFactor(nil)
+	// child's cost
+	p.planCost = p.indexPlan.CalPlanCost(property.CopSingleReadTaskType)
+	// net I/O cost
 	rowSize := getHistCollSafely(p).GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
-	p.planCost += rowCount * rowSize * netFactor
-
+	p.planCost += p.indexPlan.StatsCount() * rowSize * p.ctx.GetSessionVars().GetNetworkFactor(nil)
+	// net seek cost
+	is := getBottomPlan(p.indexPlan).(*PhysicalIndexScan)
+	p.planCost += float64(len(is.Ranges)) * p.ctx.GetSessionVars().GetSeekFactor(nil)
 	// consider concurrency
-	copIterWorkers := float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
-	p.planCost /= copIterWorkers
+	p.planCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
+
 	p.planCostInit = true
 	return p.planCost
 }
@@ -104,20 +105,31 @@ func (p *PhysicalTableReader) CalPlanCost(taskType property.TaskType) float64 {
 	if p.planCostInit {
 		return p.planCost
 	}
+
 	p.planCost = 0
 	netFactor := p.ctx.GetSessionVars().GetNetworkFactor(nil)
+	ts := getBottomPlan(p.tablePlan).(*PhysicalTableScan)
 	switch p.StoreType {
 	case kv.TiKV:
-		p.planCost += p.tablePlan.CalPlanCost(property.CopSingleReadTaskType) //  child's cost
+		p.planCost += p.tablePlan.CalPlanCost(property.CopSingleReadTaskType)
+		// net I/O cost
 		rowSize := getHistCollSafely(p).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
-		p.planCost += p.tablePlan.StatsCount() * rowSize * netFactor // net cost
+		p.planCost += p.tablePlan.StatsCount() * rowSize * netFactor
+		// net seek cost
+		p.planCost += float64(len(ts.Ranges)) * p.ctx.GetSessionVars().GetSeekFactor(nil)
+		// consider concurrency
 		p.planCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 	case kv.TiFlash:
 		p.planCost += p.tablePlan.CalPlanCost(property.MppTaskType) //  child's cost
+		// net I/O cost
 		rowSize := collectRowSizeFromMPPPlan(p.tablePlan)
-		p.planCost += p.tablePlan.StatsCount() * rowSize * netFactor // net cost
+		p.planCost += p.tablePlan.StatsCount() * rowSize * netFactor
+		// net seek cost
+		p.planCost += float64(len(ts.Ranges)) * float64(len(ts.Columns)) * p.ctx.GetSessionVars().GetSeekFactor(nil)
+		// consider concurrency
 		p.planCost /= p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
 	}
+
 	p.planCostInit = true
 	return p.planCost
 }
@@ -172,15 +184,6 @@ func (p *PhysicalTableScan) CalPlanCost(taskType property.TaskType) float64 {
 		scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(nil)
 	}
 	p.planCost += rowCount * rowSize * scanFactor
-
-	// request cost
-	switch p.StoreType {
-	case kv.TiKV:
-		p.planCost += float64(len(p.Ranges)) * p.ctx.GetSessionVars().GetSeekFactor(nil)
-	case kv.TiFlash:
-		p.planCost += float64(len(p.Ranges)) * float64(len(p.Columns)) * p.ctx.GetSessionVars().GetSeekFactor(nil)
-	}
-
 	p.planCostInit = true
 	return p.planCost
 }
@@ -197,9 +200,6 @@ func (p *PhysicalIndexScan) CalPlanCost(taskType property.TaskType) float64 {
 		scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(nil)
 	}
 	p.planCost += p.StatsCount() * p.indexRowSize * scanFactor
-
-	// request cost
-	p.planCost += float64(len(p.Ranges)) * p.ctx.GetSessionVars().GetSeekFactor(nil)
 
 	p.planCostInit = true
 	return p.planCost
@@ -382,4 +382,11 @@ func getHistCollSafely(p PhysicalPlan) *statistics.HistColl {
 		}
 	}
 	return nil
+}
+
+func getBottomPlan(p PhysicalPlan) PhysicalPlan {
+	for len(p.Children()) > 0 {
+		p = p.Children()[0]
+	}
+	return p
 }
