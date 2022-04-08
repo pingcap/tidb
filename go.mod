@@ -62,7 +62,12 @@ require (
 	github.com/sirupsen/logrus v1.6.0
 	github.com/soheilhy/cmux v0.1.4
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
+<<<<<<< HEAD
 	github.com/tikv/pd v1.1.0-beta.0.20210323123936-c8fa72502f16
+=======
+	github.com/tikv/client-go/v2 v2.0.1-0.20220406091203-f73ec0e675f4
+	github.com/tikv/pd/client v0.0.0-20220307081149-841fa61e9710
+>>>>>>> 07b0e4d4c... *: update client-go to fix data race (#33775)
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber-go/atomic v1.4.0
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
