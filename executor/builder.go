@@ -746,10 +746,6 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 	failpoint.Inject("assertStaleReadValuesSameWithExecuteAndBuilder", func() {
 		// This fail point is used to assert the behavior after refactoring is exactly the same with the previous implement.
 		// Some variables in `plannercore.Execute` is deprecated and only be used for asserting now.
-		if b.snapshotTS != v.SnapshotTS {
-			panic(fmt.Sprintf("%d != %d", b.snapshotTS, v.SnapshotTS))
-		}
-
 		if b.isStaleness != v.IsStaleness {
 			panic(fmt.Sprintf("%v != %v", b.isStaleness, v.IsStaleness))
 		}
@@ -759,13 +755,22 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		}
 
 		if v.SnapshotTS != 0 {
-			is, err := domain.GetDomain(b.ctx).GetSnapshotInfoSchema(b.snapshotTS)
+			is, err := domain.GetDomain(b.ctx).GetSnapshotInfoSchema(v.SnapshotTS)
 			if err != nil {
 				panic(err)
 			}
 
 			if b.is.SchemaMetaVersion() != is.SchemaMetaVersion() {
 				panic(fmt.Sprintf("%d != %d", b.is.SchemaMetaVersion(), is.SchemaMetaVersion()))
+			}
+
+			ts, err := sessiontxn.GetTxnManager(b.ctx).GetReadTS()
+			if err != nil {
+				panic(e)
+			}
+
+			if v.SnapshotTS != ts {
+				panic(fmt.Sprintf("%d != %d", ts, v.SnapshotTS))
 			}
 		}
 	})

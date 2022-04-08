@@ -17,9 +17,8 @@ package staleread
 import (
 	"fmt"
 
-	"github.com/pingcap/tidb/sessiontxn"
-
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 )
 
 // AssertStmtStaleness is used only for test
