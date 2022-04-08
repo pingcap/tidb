@@ -238,12 +238,12 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 }
 
 type elementIDAlloc struct {
-	int64
+	id int64
 }
 
 func (ea elementIDAlloc) alloc() int64 {
-	ea.int64++
-	return ea.int64
+	ea.id++
+	return ea.id
 }
 
 // insertJobIntoDeleteRangeTable parses the job into delete-range arguments,
