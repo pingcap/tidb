@@ -1421,3 +1421,23 @@ func TestIssue33728(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, "[planner:8135]invalid as of timestamp: as of timestamp cannot be NULL", err.Error())
 }
+
+func TestIssue31954(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int primary key, v int)")
+	tk.MustExec("insert into t1 values(1, 10)")
+	time.Sleep(time.Millisecond * 100)
+	tk.MustExec("set @a=now(6)")
+	time.Sleep(time.Millisecond * 100)
+	tk.MustExec("update t1 set v=100 where id=1")
+
+	tk.MustQuery("select * from t1 as of timestamp @a where v=(select v from t1 as of timestamp @a where id=1)").
+		Check(testkit.Rows("1 10"))
+
+	tk.MustQuery("select (select v from t1 as of timestamp @a where id=1) as v").
+		Check(testkit.Rows("10"))
+}
