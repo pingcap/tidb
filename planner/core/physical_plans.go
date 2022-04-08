@@ -318,6 +318,10 @@ type PhysicalIndexLookUpReader struct {
 
 	// Used by partition table.
 	PartitionInfo PartitionInfo
+
+	// required by cost calculation
+	expectedCnt uint64
+	keepOrder   bool
 }
 
 // Clone implements PhysicalPlan interface.
