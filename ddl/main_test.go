@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
@@ -72,16 +71,6 @@ func wrapJobIDExtCallback(oldCallback ddl.Callback) *testDDLJobIDCallback {
 	return &testDDLJobIDCallback{
 		Callback: oldCallback,
 		jobID:    0,
-	}
-}
-
-func setupJobIDExtCallback(ctx sessionctx.Context) (tearDown func()) {
-	dom := domain.GetDomain(ctx)
-	originHook := dom.DDL().GetHook()
-	jobIDExt := wrapJobIDExtCallback(originHook)
-	dom.DDL().SetHook(jobIDExt)
-	return func() {
-		dom.DDL().SetHook(originHook)
 	}
 }
 

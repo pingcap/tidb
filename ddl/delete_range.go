@@ -276,7 +276,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 			for _, pid := range physicalTableIDs {
 				startKey = tablecodec.EncodeTablePrefix(pid)
 				endKey := tablecodec.EncodeTablePrefix(pid + 1)
-				if err := doInsert(ctx, s, job.ID, elementID, startKey, endKey, now, fmt.Sprintf("partition table ID is %d", pid)); err != nil {
+				if err := doInsert(ctx, s, job.ID, elementID, startKey, endKey, now, fmt.Sprintf("partition ID is %d", pid)); err != nil {
 					return errors.Trace(err)
 				}
 				elementID++
