@@ -17,6 +17,7 @@ package stmtstats
 import (
 	"sync"
 
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 )
@@ -49,6 +50,9 @@ type KvExecCounter struct {
 // the TiKV dimension.
 func (c *KvExecCounter) RPCInterceptor() interceptor.RPCInterceptor {
 	return func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
+		if !topsqlstate.TopSQLEnabled() {
+			return next
+		}
 		return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 			c.mark(target)
 			return next(target, req)

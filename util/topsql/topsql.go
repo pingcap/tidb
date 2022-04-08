@@ -85,7 +85,6 @@ var (
 	topSQLAttachInfoCounterSQLPlanDigest = metrics.TopSQLAttachInfoCounter.WithLabelValues("sql_plan")
 )
 
-
 func RegisterSQL(normalizedSQL string, sqlDigest *parser.Digest, isInternal bool) {
 	if sqlDigest != nil {
 		sqlDigestBytes := sqlDigest.Bytes()
@@ -145,10 +144,7 @@ func AttachSQLAndPlanInfo(ctx context.Context, sqlDigest *parser.Digest, planDig
 	pprof.SetGoroutineLabels(ctx)
 
 	failpoint.Inject("mockHighLoadForEachPlan", func(val failpoint.Value) {
-		// In integration test, some SQL run very fast that Top SQL pprof profile unable to sample data of those SQL,
-		// So need mock some high cpu load to make sure pprof profile successfully samples the data of those SQL.
-		// Attention: Top SQL pprof profile unable to sample data of those SQL which run very fast, this behavior is expected.
-		// The integration test was just want to make sure each type of SQL will be set goroutine labels and and can be collected.
+		// work like mockHighLoadForEachSQL failpoint.
 		if val.(bool) {
 			if MockHighCPULoad("", []string{""}, 1) {
 				logutil.BgLogger().Info("attach SQL info")

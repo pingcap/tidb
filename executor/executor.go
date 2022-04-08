@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/parser"
 	"math"
 	"runtime"
 	"runtime/pprof"
@@ -41,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
@@ -68,6 +68,7 @@ import (
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -1957,22 +1958,22 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 // AttachSQLInfoForTopSQL attach the sql information for Top SQL. It should be call as soon as possible after got the
 // SQL digest.
 func AttachSQLInfoForTopSQL(ctx context.Context, sc *stmtctx.StatementContext, normalizedSQL string, sqlDigest *parser.Digest, isInternal bool) context.Context {
-       if !topsqlstate.TopSQLEnabled() {
-               return ctx
-       }
-       sc.IsAttachedSQL.Store(true)
-       return topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, isInternal)
+	if !topsqlstate.TopSQLEnabled() {
+		return ctx
+	}
+	sc.IsSQLRegistered.Store(true)
+	return topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, isInternal)
 }
 
 // attachSQLAndPlanInExecForTopSQL attach the sql and plan information if it doesn't attached before execution.
 // This uses to catch the running SQL when Top SQL is enabled in execution.
 func attachSQLAndPlanInExecForTopSQL(ctx context.Context, sessVars *variable.SessionVars) context.Context {
 	stmtCtx := sessVars.StmtCtx
-	if stmtCtx.IsAttachedSQLAndPlan.CAS(false, true) {
+	if stmtCtx.IsSQLAndPlanRegistered.CAS(false, true) {
 		normalizedSQL, sqlDigest := stmtCtx.SQLDigest()
 		normalizedPlan, planDigest := getPlanDigest(stmtCtx)
 		topsql.RegisterSQL(normalizedSQL, sqlDigest, sessVars.InRestrictedSQL)
-		if len(normalizedPlan)>0{
+		if len(normalizedPlan) > 0 {
 			topsql.RegisterPlan(normalizedPlan, planDigest)
 		}
 	}
@@ -2022,15 +2023,26 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 }
 
 func setResourceGroupTaggerForTxn(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
-	if snapshot != nil && topsqlstate.TopSQLEnabled() {
-		snapshot.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
+	if snapshot != nil {
+		snapshot.SetOption(kv.ResourceGroupTagger, getResourceGroupTagger(sc))
 	}
+}
+
+func getResourceGroupTagger(sc *stmtctx.StatementContext) tikvrpc.ResourceGroupTagger {
+	fn := sc.GetResourceGroupTagger()
+	var tagger tikvrpc.ResourceGroupTagger
+	tagger = func(req *tikvrpc.Request) {
+		if topsqlstate.TopSQLEnabled() {
+			fn(req)
+		}
+	}
+	return tagger
 }
 
 // setRPCInterceptorOfExecCounterForTxn binds an interceptor for client-go to count
 // the number of SQL executions of each TiKV.
 func setRPCInterceptorOfExecCounterForTxn(vars *variable.SessionVars, snapshot kv.Snapshot) {
-	if snapshot != nil && topsqlstate.TopSQLEnabled() && vars.StmtCtx.KvExecCounter != nil {
+	if snapshot != nil && vars.StmtCtx.KvExecCounter != nil {
 		snapshot.SetOption(kv.RPCInterceptor, vars.StmtCtx.KvExecCounter.RPCInterceptor())
 	}
 }

@@ -38,7 +38,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
@@ -53,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/logutil/consistency"
+	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-binlog"
@@ -1628,7 +1628,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 		if digest != nil {
 			// Reset the goroutine label when internal sql execute finish.
 			// Specifically reset in ExecRestrictedStmt function.
-			s.sessionVars.StmtCtx.IsAttachedSQL.Store(true)
+			s.sessionVars.StmtCtx.IsSQLRegistered.Store(true)
 			topsql.AttachSQLInfo(ctx, normalized, digest, s.sessionVars.InRestrictedSQL)
 		}
 	}

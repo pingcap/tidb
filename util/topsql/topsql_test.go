@@ -201,7 +201,7 @@ func TestMaxSQLAndPlanTest(t *testing.T) {
 	// Test for huge sql and plan
 	sql = genStr(topsql.MaxSQLTextSize + 10)
 	sqlDigest = mock.GenSQLDigest(sql)
-	topsql.AttachSQLInfo(ctx, sql, sqlDigest,false)
+	topsql.AttachSQLInfo(ctx, sql, sqlDigest, false)
 	plan = genStr(topsql.MaxBinaryPlanSize + 10)
 	planDigest = genDigest(plan)
 	topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)

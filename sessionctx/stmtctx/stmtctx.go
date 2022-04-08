@@ -246,10 +246,10 @@ type StatementContext struct {
 
 	// FinalPlan is the statement final execution plan.
 	FinalPlan interface{}
-	// IsAttachedSQL uses to indicate whether the SQL has been attach sql information for TopSQL.
-	IsAttachedSQL atomic2.Bool
-	// IsAttachedSQLAndPlan uses to indicate whether the SQL has been attach sql and plan information for TopSQL.
-	IsAttachedSQLAndPlan atomic2.Bool
+	// IsSQLRegistered uses to indicate whether the SQL has been registered for TopSQL.
+	IsSQLRegistered atomic2.Bool
+	// IsSQLAndPlanRegistered uses to indicate whether the SQL and plan has been registered for TopSQL.
+	IsSQLAndPlanRegistered atomic2.Bool
 }
 
 // StmtHints are SessionVars related sql hints.

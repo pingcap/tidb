@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
-	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
@@ -257,7 +256,7 @@ func init() {
 // WithSQLKvExecCounterInterceptor binds an interceptor for client-go to count the
 // number of SQL executions of each TiKV (if any).
 func WithSQLKvExecCounterInterceptor(ctx context.Context, stmtCtx *stmtctx.StatementContext) context.Context {
-	if topsqlstate.TopSQLEnabled() && stmtCtx.KvExecCounter != nil {
+	if stmtCtx.KvExecCounter != nil {
 		// Unlike calling Transaction or Snapshot interface, in distsql package we directly
 		// face tikv Request. So we need to manually bind RPCInterceptor to ctx. Instead of
 		// calling SetRPCInterceptor on Transaction or Snapshot.

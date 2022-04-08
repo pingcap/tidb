@@ -339,19 +339,39 @@ func (a *ExecStmt) setPlanLabelForTopSQL(ctx context.Context) context.Context {
 	normalizedSQL, sqlDigest := vars.StmtCtx.SQLDigest()
 	normalizedPlan, planDigest := getPlanDigest(vars.StmtCtx)
 	if !topsqlstate.TopSQLEnabled() {
-		return topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
+		// For catching the running SQL in TopSQL if TopSQL is enabled during execution,
+		// Should always attach the SQL and plan information if the SQL may run a long time.
+		if !isFastPlan(a.Plan) {
+			return topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
+		}
+		return ctx
 	}
 
-	isAttachedSQL := vars.StmtCtx.IsAttachedSQL.Load()
-	if !isAttachedSQL {
-		topsql.RegisterSQL(normalizedSQL,sqlDigest, vars.InRestrictedSQL)
+	isSQLRegistered := vars.StmtCtx.IsSQLRegistered.Load()
+	if !isSQLRegistered {
+		topsql.RegisterSQL(normalizedSQL, sqlDigest, vars.InRestrictedSQL)
 	}
-	vars.StmtCtx.IsAttachedSQLAndPlan.Store(true)
+	vars.StmtCtx.IsSQLAndPlanRegistered.Store(true)
 	if len(normalizedPlan) == 0 {
 		return ctx
 	}
-	topsql.RegisterPlan(normalizedPlan,planDigest)
+	topsql.RegisterPlan(normalizedPlan, planDigest)
 	return topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
+}
+
+func isFastPlan(p plannercore.Plan) bool {
+	if proj, ok := p.(*plannercore.PhysicalProjection); ok {
+		p = proj.Children()[0]
+	}
+	switch p.(type) {
+	case *plannercore.PointGetPlan:
+		return true
+	case *plannercore.PhysicalTableDual:
+		return true
+	case *plannercore.Set:
+		return true
+	}
+	return false
 }
 
 // Exec builds an Executor from a plan. If the Executor doesn't return result,
@@ -1344,9 +1364,11 @@ func (a *ExecStmt) observeStmtBeginForTopSQL() {
 	if vars == nil {
 		return
 	}
-	if stats := a.Ctx.GetStmtStats(); stats != nil && topsqlstate.TopSQLEnabled() {
-		sqlDigest, planDigest := a.getSQLPlanDigest()
-		stats.OnExecutionBegin(sqlDigest, planDigest)
+	sqlDigest, planDigest := a.getSQLPlanDigest()
+	if stats := a.Ctx.GetStmtStats(); stats != nil {
+		if topsqlstate.TopSQLEnabled() {
+			stats.OnExecutionBegin(sqlDigest, planDigest)
+		}
 		// This is a special logic prepared for TiKV's SQLExecCount.
 		vars.StmtCtx.KvExecCounter = stats.CreateKvExecCounter(sqlDigest, planDigest)
 	}
