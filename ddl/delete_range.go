@@ -241,7 +241,7 @@ type elementIDAlloc struct {
 	id int64
 }
 
-func (ea elementIDAlloc) alloc() int64 {
+func (ea *elementIDAlloc) alloc() int64 {
 	ea.id++
 	return ea.id
 }
