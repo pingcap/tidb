@@ -187,12 +187,11 @@ func (t *copTask) finishIndexPlan() {
 	}
 
 	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
-	var tblScan PhysicalPlan
-	for tblScan = t.tablePlan; len(tblScan.Children()) > 0; tblScan = tblScan.Children()[0] {
+	for p = t.tablePlan; len(p.Children()) > 0; p = p.Children()[0] {
 	}
-	rowSize := t.tblColHists.GetIndexAvgRowSize(t.indexPlan.SCtx(), t.tblCols, is.Index.Unique)
-	tblScan.(*PhysicalTableScan).tableRowSize = rowSize // required by the new cost model interface
-	t.cst += cnt * rowSize * sessVars.GetScanFactor(tableInfo)
+	ts := p.(*PhysicalTableScan)
+	ts.tableRowSize = t.tblColHists.GetIndexAvgRowSize(t.indexPlan.SCtx(), t.tblCols, is.Index.Unique)
+	t.cst += cnt * ts.tableRowSize * sessVars.GetScanFactor(tableInfo)
 }
 
 func (t *copTask) getStoreType() kv.StoreType {
