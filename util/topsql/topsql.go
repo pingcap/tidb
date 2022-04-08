@@ -120,7 +120,7 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 		if val.(bool) {
 			sqlPrefixes := []string{"insert", "update", "delete", "load", "replace", "select", "begin",
 				"commit", "analyze", "explain", "trace", "create", "set global"}
-			if MockHighCPULoad(normalizedSQL, sqlPrefixes, 2) {
+			if MockHighCPULoad(normalizedSQL, sqlPrefixes, 1) {
 				logutil.BgLogger().Info("attach SQL info", zap.String("sql", normalizedSQL))
 			}
 		}
@@ -143,6 +143,18 @@ func AttachSQLAndPlanInfo(ctx context.Context, sqlDigest *parser.Digest, planDig
 	}
 	ctx = collector.CtxWithSQLAndPlanDigest(ctx, sqlDigestBytes, planDigestBytes)
 	pprof.SetGoroutineLabels(ctx)
+
+	failpoint.Inject("mockHighLoadForEachPlan", func(val failpoint.Value) {
+		// In integration test, some SQL run very fast that Top SQL pprof profile unable to sample data of those SQL,
+		// So need mock some high cpu load to make sure pprof profile successfully samples the data of those SQL.
+		// Attention: Top SQL pprof profile unable to sample data of those SQL which run very fast, this behavior is expected.
+		// The integration test was just want to make sure each type of SQL will be set goroutine labels and and can be collected.
+		if val.(bool) {
+			if MockHighCPULoad("", []string{""}, 1) {
+				logutil.BgLogger().Info("attach SQL info")
+			}
+		}
+	})
 	return ctx
 }
 
