@@ -2299,8 +2299,13 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	if err != nil {
 		logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
 	}
+<<<<<<< HEAD
 	err = cc.openSessionAndDoAuth(pass, "")
 	if err != nil {
+=======
+	cc.ctx = nil
+	if err := cc.openSessionAndDoAuth(pass, ""); err != nil {
+>>>>>>> 9fecc8a9b... server: set 'clientConn.ctx = nil' to clean the context when changeUser. (#33703)
 		return err
 	}
 	return cc.handleCommonConnectionReset(ctx)
