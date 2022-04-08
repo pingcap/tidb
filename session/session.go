@@ -2269,7 +2269,7 @@ func (s *session) cachedPlanExec(ctx context.Context,
 // IsPointGetWithPKOrUniqueKeyByAutoCommit
 func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.CachedPrepareStmt, isStaleness bool) (bool, error) {
 	prepared := preparedStmt.PreparedAst
-	if isStaleness {
+	if prepared.CachedPlan == nil || isStaleness {
 		return false, nil
 	}
 	// check auto commit
