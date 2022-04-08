@@ -158,7 +158,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TxnWriteThroughput)
 	prometheus.MustRegister(LoadSysVarCacheCounter)
 	prometheus.MustRegister(TopSQLIgnoredCounter)
-	prometheus.MustRegister(TopSQLAttachInfoCounter)
 	prometheus.MustRegister(TopSQLReportDurationHistogram)
 	prometheus.MustRegister(TopSQLReportDataHistogram)
 	prometheus.MustRegister(PDApiExecutionHistogram)

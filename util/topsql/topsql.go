@@ -16,20 +16,19 @@ package topsql
 
 import (
 	"context"
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 	"runtime/pprof"
 	"strings"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/topsql/collector"
 	"github.com/pingcap/tidb/util/topsql/reporter"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
@@ -80,11 +79,7 @@ func Close() {
 	stmtstats.CloseAggregator()
 }
 
-var (
-	topSQLAttachInfoCounterSQLDigest     = metrics.TopSQLAttachInfoCounter.WithLabelValues("sql")
-	topSQLAttachInfoCounterSQLPlanDigest = metrics.TopSQLAttachInfoCounter.WithLabelValues("sql_plan")
-)
-
+// RegisterSQL uses to register SQL information into Top SQL.
 func RegisterSQL(normalizedSQL string, sqlDigest *parser.Digest, isInternal bool) {
 	if sqlDigest != nil {
 		sqlDigestBytes := sqlDigest.Bytes()
@@ -92,6 +87,7 @@ func RegisterSQL(normalizedSQL string, sqlDigest *parser.Digest, isInternal bool
 	}
 }
 
+// RegisterPlan uses to register plan information into Top SQL.
 func RegisterPlan(normalizedPlan string, planDigest *parser.Digest) {
 	if planDigest != nil {
 		planDigestBytes := planDigest.Bytes()
@@ -132,19 +128,16 @@ func AttachSQLAndPlanInfo(ctx context.Context, sqlDigest *parser.Digest, planDig
 	if sqlDigest == nil || len(sqlDigest.Bytes()) == 0 {
 		return ctx
 	}
-	var sqlDigestBytes, planDigestBytes []byte
-	sqlDigestBytes = sqlDigest.Bytes()
+	var planDigestBytes []byte
+	sqlDigestBytes := sqlDigest.Bytes()
 	if planDigest != nil {
 		planDigestBytes = planDigest.Bytes()
-		topSQLAttachInfoCounterSQLPlanDigest.Add(1)
-	} else {
-		topSQLAttachInfoCounterSQLDigest.Add(1)
 	}
 	ctx = collector.CtxWithSQLAndPlanDigest(ctx, sqlDigestBytes, planDigestBytes)
 	pprof.SetGoroutineLabels(ctx)
 
 	failpoint.Inject("mockHighLoadForEachPlan", func(val failpoint.Value) {
-		// work like mockHighLoadForEachSQL failpoint.
+		// Work like mockHighLoadForEachSQL failpoint.
 		if val.(bool) {
 			if MockHighCPULoad("", []string{""}, 1) {
 				logutil.BgLogger().Info("attach SQL info")
