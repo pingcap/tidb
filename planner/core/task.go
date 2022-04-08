@@ -172,15 +172,22 @@ func (t *copTask) finishIndexPlan() {
 	}
 	// Network cost of transferring rows of index scan to TiDB.
 	t.cst += cnt * sessVars.GetNetworkFactor(tableInfo) * t.tblColHists.GetAvgRowSize(t.indexPlan.SCtx(), t.indexPlan.Schema().Columns, true, false)
+
+	// net seek cost
+	var p PhysicalPlan
+	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
+	}
+	is := p.(*PhysicalIndexScan)
+	if !is.underInnerIndexJoin { // no need to accumulate seek cost for IndexJoin
+		t.cst += float64(len(is.Ranges)) * sessVars.GetSeekFactor(is.Table) // net seek cost
+	}
+
 	if t.tablePlan == nil {
 		return
 	}
 
 	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
-	var p PhysicalPlan
-	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
-	}
-	rowSize := t.tblColHists.GetIndexAvgRowSize(t.indexPlan.SCtx(), t.tblCols, p.(*PhysicalIndexScan).Index.Unique)
+	rowSize := t.tblColHists.GetIndexAvgRowSize(t.indexPlan.SCtx(), t.tblCols, is.Index.Unique)
 	t.cst += cnt * rowSize * sessVars.GetScanFactor(tableInfo)
 }
 
@@ -1053,6 +1060,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	t.finishIndexPlan()
 	// Network cost of transferring rows of table scan to TiDB.
 	if t.tablePlan != nil {
+		// net I/O cost
 		t.cst += t.count() * sessVars.GetNetworkFactor(nil) * t.tblColHists.GetAvgRowSize(ctx, t.tablePlan.Schema().Columns, false, false)
 
 		tp := t.tablePlan
@@ -1065,6 +1073,17 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 			}
 		}
 		ts := tp.(*PhysicalTableScan)
+
+		// net seek cost
+		if !ts.underInnerIndexJoin { // no need to accumulate net seek cost for IndexJoin
+			switch ts.StoreType {
+			case kv.TiKV:
+				t.cst += float64(len(ts.Ranges)) * sessVars.GetSeekFactor(ts.Table)
+			case kv.TiFlash:
+				t.cst += float64(len(ts.Ranges)) * float64(len(ts.Columns)) * sessVars.GetSeekFactor(ts.Table)
+			}
+		}
+
 		prevColumnLen := len(ts.Columns)
 		prevSchema := ts.schema.Clone()
 		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
@@ -2385,6 +2404,16 @@ func collectRowSizeFromMPPPlan(mppPlan PhysicalPlan) (rowSize float64) {
 	return 1 // use 1 as lower-bound for safety
 }
 
+func accumulateNetSeekCost4MPP(p PhysicalPlan) (cost float64) {
+	if ts, ok := p.(*PhysicalTableScan); ok {
+		return float64(len(ts.Ranges)) * float64(len(ts.Columns)) * ts.SCtx().GetSessionVars().GetSeekFactor(ts.Table)
+	}
+	for _, c := range p.Children() {
+		cost += accumulateNetSeekCost4MPP(c)
+	}
+	return
+}
+
 func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	sender := PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_PassThrough,
@@ -2400,7 +2429,9 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	collectPartitionInfosFromMPPPlan(p, t.p)
 	rowSize := collectRowSizeFromMPPPlan(sender)
 
-	cst := t.cst + t.count()*rowSize*ctx.GetSessionVars().GetNetworkFactor(nil)
+	cst := t.cst + t.count()*rowSize*ctx.GetSessionVars().GetNetworkFactor(nil) // net I/O cost
+	// net seek cost, unlike copTask, a mppTask may have multiple underlying TableScan, so use a recursive function to accumulate this
+	cst += accumulateNetSeekCost4MPP(sender)
 	cst /= p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
 	p.cost = cst
 	if p.ctx.GetSessionVars().IsMPPEnforced() {
