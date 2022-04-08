@@ -439,6 +439,7 @@ type PhysicalIndexScan struct {
 	NeedCommonHandle bool
 
 	// required by cost model
+	// IndexScan operators under inner side of IndexJoin no need to consider net seek cost
 	underInnerIndexJoin bool
 }
 
@@ -537,7 +538,8 @@ type PhysicalTableScan struct {
 
 	SampleInfo *TableSampleInfo
 
-	// required by cost calculation
+	// required by cost model
+	// TableScan operators under inner side of IndexJoin no need to consider net seek cost
 	underInnerIndexJoin bool
 }
 
