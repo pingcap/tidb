@@ -82,8 +82,9 @@ func (s *infosSchemaClusterTableSuite) setUpRPCService(addr string) (*grpc.Serve
 	srv := server.NewRPCServer(config.GetGlobalConfig(), s.dom, sm)
 	port := lis.Addr().(*net.TCPAddr).Port
 	addr = fmt.Sprintf("127.0.0.1:%d", port)
+	assert := s.Require()
 	go func() {
-		s.Require().NoError(srv.Serve(lis))
+		assert.NoError(srv.Serve(lis))
 	}()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Status.StatusPort = uint(port)
