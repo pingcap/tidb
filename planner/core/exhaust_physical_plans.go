@@ -984,12 +984,12 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		// NDV would not be used in cost computation of IndexJoin, set leave it as default nil.
 		HistColl: ds.stats.HistColl, // used to calculate tableRowSize
 	}
-	rowSize := ds.TblColHists.GetTableAvgRowSize(p.ctx, ds.TblCols, ts.StoreType, true)
+	ts.rowSizeForScan = ds.TblColHists.GetTableAvgRowSize(p.ctx, ds.TblCols, ts.StoreType, true)
 	sessVars := ds.ctx.GetSessionVars()
 	copTask := &copTask{
 		tablePlan:         ts,
 		indexPlanFinished: true,
-		cst:               sessVars.GetScanFactor(ts.Table) * rowSize * ts.stats.RowCount,
+		cst:               sessVars.GetScanFactor(ts.Table) * ts.rowSizeForScan * ts.stats.RowCount,
 		tblColHists:       ds.TblColHists,
 		keepOrder:         ts.KeepOrder,
 	}

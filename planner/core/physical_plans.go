@@ -542,7 +542,7 @@ type PhysicalTableScan struct {
 	// required by cost model
 	// TableScan operators under inner side of IndexJoin no need to consider net seek cost
 	underInnerIndexJoin bool
-	dataSource          *DataSource // used to calculate row size
+	rowSizeForScan      float64
 }
 
 // Clone implements PhysicalPlan interface.

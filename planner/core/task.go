@@ -174,10 +174,7 @@ func (t *copTask) finishIndexPlan() {
 	t.cst += cnt * sessVars.GetNetworkFactor(tableInfo) * t.tblColHists.GetAvgRowSize(t.indexPlan.SCtx(), t.indexPlan.Schema().Columns, true, false)
 
 	// net seek cost
-	var p PhysicalPlan
-	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
-	}
-	is := p.(*PhysicalIndexScan)
+	is := getBottomPlan(t.indexPlan).(*PhysicalIndexScan)
 	if !is.underInnerIndexJoin { // no need to accumulate seek cost for IndexJoin
 		t.cst += float64(len(is.Ranges)) * sessVars.GetSeekFactor(is.Table) // net seek cost
 	}
@@ -187,8 +184,9 @@ func (t *copTask) finishIndexPlan() {
 	}
 
 	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
-	rowSize := t.tblColHists.GetIndexAvgRowSize(t.indexPlan.SCtx(), t.tblCols, is.Index.Unique)
-	t.cst += cnt * rowSize * sessVars.GetScanFactor(tableInfo)
+	ts := getBottomPlan(t.tablePlan).(*PhysicalTableScan)
+	ts.rowSizeForScan = t.tblColHists.GetIndexAvgRowSize(t.indexPlan.SCtx(), t.tblCols, is.Index.Unique)
+	t.cst += cnt * ts.rowSizeForScan * sessVars.GetScanFactor(tableInfo)
 }
 
 func (t *copTask) getStoreType() kv.StoreType {
