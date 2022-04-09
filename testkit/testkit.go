@@ -274,11 +274,24 @@ func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
 	tk.require.Equalf(errCode, int(sqlErr.Code), "Assertion failed, origin err:\n  %v", sqlErr)
 }
 
-// MustGetErrMsg executes a sql statement and assert it's error message.
+// MustGetErrMsg executes a sql statement and assert its error message.
 func (tk *TestKit) MustGetErrMsg(sql string, errStr string) {
 	err := tk.ExecToErr(sql)
+	tk.require.EqualError(err, errStr)
+}
+
+// MustContainErrMsg executes a sql statement and assert its error message containing errStr.
+func (tk *TestKit) MustContainErrMsg(sql string, errStr interface{}) {
+	err := tk.ExecToErr(sql)
 	tk.require.Error(err)
-	tk.require.Equal(errStr, err.Error())
+	tk.require.Contains(err.Error(), errStr)
+}
+
+// MustMatchErrMsg executes a sql statement and assert its error message matching errRx.
+func (tk *TestKit) MustMatchErrMsg(sql string, errRx interface{}) {
+	err := tk.ExecToErr(sql)
+	tk.require.Error(err)
+	tk.require.Regexp(errRx, err.Error())
 }
 
 // MustUseIndex checks if the result execution plan contains specific index(es).

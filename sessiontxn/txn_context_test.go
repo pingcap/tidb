@@ -47,9 +47,11 @@ func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertTxnManagerAfterBuildExecutor", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertTxnManagerAfterPessimisticLockErrorRetry", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertTxnManagerInShortPointGetPlan", "return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertStaleReadValuesSameWithExecuteAndBuilder", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerInRunStmt", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerInPreparedStmtExec", "return"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/assertTxnManagerInCachedPlanExec", "return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/assertStaleReadForOptimizePreparedPlan", "return"))
 
 	store, do, clean := testkit.CreateMockStoreAndDomain(t)
 
@@ -74,9 +76,11 @@ func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain, func()) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertTxnManagerAfterBuildExecutor"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertTxnManagerAfterPessimisticLockErrorRetry"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertTxnManagerInShortPointGetPlan"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertStaleReadValuesSameWithExecuteAndBuilder"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTxnManagerInRunStmt"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTxnManagerInPreparedStmtExec"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/assertTxnManagerInCachedPlanExec"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/assertStaleReadForOptimizePreparedPlan"))
 
 		tk.Session().SetValue(sessiontxn.AssertRecordsKey, nil)
 		tk.Session().SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
@@ -639,13 +643,6 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 		tk.MustExec("execute s2")
 	})
 
-	// plan cache for stmtID2
-	doWithCheckPath(t, se, []string{"assertTxnManagerInCachedPlanExec", "assertTxnManagerInShortPointGetPlan"}, func() {
-		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID2, nil)
-		require.NoError(t, err)
-		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
-	})
-
 	// tx_read_ts in prepare
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is1)
 	doWithCheckPath(t, se, path, func() {
@@ -655,13 +652,6 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	})
 	doWithCheckPath(t, se, normalPathRecords, func() {
 		tk.MustExec("execute s3")
-	})
-
-	// plan cache for stmtID3
-	doWithCheckPath(t, se, []string{"assertTxnManagerInCachedPlanExec", "assertTxnManagerInShortPointGetPlan"}, func() {
-		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID3, nil)
-		require.NoError(t, err)
-		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
 	})
 }
 

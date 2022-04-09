@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/dbterror"
@@ -97,11 +97,11 @@ type worker struct {
 	lockSeqNum      bool
 
 	*ddlCtx
-	ddlJobCache
+	*JobContext
 }
 
-// ddlJobCache is a cache for each DDL job.
-type ddlJobCache struct {
+// JobContext is the ddl job execution context.
+type JobContext struct {
 	// below fields are cache for top sql
 	ddlJobCtx          context.Context
 	cacheSQL           string
@@ -109,18 +109,23 @@ type ddlJobCache struct {
 	cacheDigest        *parser.Digest
 }
 
+// NewJobContext returns a new ddl job context.
+func NewJobContext() *JobContext {
+	return &JobContext{
+		ddlJobCtx:          context.Background(),
+		cacheSQL:           "",
+		cacheNormalizedSQL: "",
+		cacheDigest:        nil,
+	}
+}
+
 func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRangeMgr delRangeManager, dCtx *ddlCtx) *worker {
 	worker := &worker{
-		id:       atomic.AddInt32(&ddlWorkerID, 1),
-		tp:       tp,
-		ddlJobCh: make(chan struct{}, 1),
-		ctx:      ctx,
-		ddlJobCache: ddlJobCache{
-			ddlJobCtx:          context.Background(),
-			cacheSQL:           "",
-			cacheNormalizedSQL: "",
-			cacheDigest:        nil,
-		},
+		id:              atomic.AddInt32(&ddlWorkerID, 1),
+		tp:              tp,
+		ddlJobCh:        make(chan struct{}, 1),
+		ctx:             ctx,
+		JobContext:      NewJobContext(),
 		ddlCtx:          dCtx,
 		reorgCtx:        &reorgCtx{notifyCancelReorgJob: 0},
 		sessPool:        sessPool,
@@ -303,6 +308,13 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 			if mayNeedReorg(job) {
 				jobListKey = meta.AddIndexJobListKey
 			}
+			failpoint.Inject("MockModifyJobArg", func(val failpoint.Value) {
+				if val.(bool) {
+					if len(job.Args) > 0 {
+						job.Args[0] = 1
+					}
+				}
+			})
 			if err = t.EnQueueDDLJob(job, jobListKey); err != nil {
 				return errors.Trace(err)
 			}
@@ -342,9 +354,22 @@ func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
 	return job, errors.Trace(err)
 }
 
+func injectFailPointForGetJob(job *model.Job) {
+	if job == nil {
+		return
+	}
+	failpoint.Inject("mockModifyJobSchemaId", func(val failpoint.Value) {
+		job.SchemaID = int64(val.(int))
+	})
+	failpoint.Inject("MockModifyJobTableId", func(val failpoint.Value) {
+		job.TableID = int64(val.(int))
+	})
+}
+
 // getFirstDDLJob gets the first DDL job form DDL queue.
 func (w *worker) getFirstDDLJob(t *meta.Meta) (*model.Job, error) {
 	job, err := t.GetDDLJobByIdx(0)
+	injectFailPointForGetJob(job)
 	return job, errors.Trace(err)
 }
 
@@ -395,6 +420,23 @@ func (w *worker) deleteRange(ctx context.Context, job *model.Job) error {
 	return errors.Trace(err)
 }
 
+func jobNeedGC(job *model.Job) bool {
+	if !job.IsCancelled() {
+		switch job.Type {
+		case model.ActionAddIndex, model.ActionAddPrimaryKey:
+			if job.State != model.JobStateRollbackDone {
+				break
+			}
+			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
+			return true
+		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
+			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes:
+			return true
+		}
+	}
+	return false
+}
+
 // finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.
 // If the DDL job need to handle in background, it will prepare a background job.
 func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
@@ -403,18 +445,10 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 
-	if !job.IsCancelled() {
-		switch job.Type {
-		case model.ActionAddIndex, model.ActionAddPrimaryKey:
-			if job.State != model.JobStateRollbackDone {
-				break
-			}
-
-			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
-			err = w.deleteRange(w.ddlJobCtx, job)
-		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
-			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes:
-			err = w.deleteRange(w.ddlJobCtx, job)
+	if jobNeedGC(job) {
+		err = w.deleteRange(w.ddlJobCtx, job)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -446,6 +480,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		updateRawArgs = false
 	}
 	w.writeDDLSeqNum(job)
+	w.JobContext.resetWhenJobFinish()
 	err = t.AddHistoryDDLJob(job, updateRawArgs)
 	return errors.Trace(err)
 }
@@ -498,22 +533,23 @@ func newMetaWithQueueTp(txn kv.Transaction, tp workerType) *meta.Meta {
 	return meta.NewMeta(txn)
 }
 
-func (w *worker) setDDLLabelForTopSQL(job *model.Job) {
+func (w *JobContext) setDDLLabelForTopSQL(job *model.Job) {
 	if !topsqlstate.TopSQLEnabled() || job == nil {
 		return
 	}
 
-	if job.Query != w.cacheSQL {
+	if job.Query != w.cacheSQL || w.cacheDigest == nil {
 		w.cacheNormalizedSQL, w.cacheDigest = parser.NormalizeDigest(job.Query)
 		w.cacheSQL = job.Query
+		w.ddlJobCtx = topsql.AttachSQLInfo(context.Background(), w.cacheNormalizedSQL, w.cacheDigest, "", nil, false)
+	} else {
+		topsql.AttachSQLInfo(w.ddlJobCtx, w.cacheNormalizedSQL, w.cacheDigest, "", nil, false)
 	}
-
-	w.ddlJobCtx = topsql.AttachSQLInfo(context.Background(), w.cacheNormalizedSQL, w.cacheDigest, "", nil, false)
 }
 
-func (w *worker) setResourceGroupTaggerForTopSQL(txn kv.Transaction) {
+func (w *JobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
 	if !topsqlstate.TopSQLEnabled() || w.cacheDigest == nil {
-		return
+		return nil
 	}
 
 	digest := w.cacheDigest
@@ -521,7 +557,14 @@ func (w *worker) setResourceGroupTaggerForTopSQL(txn kv.Transaction) {
 		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, nil,
 			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
 	}
-	txn.SetOption(kv.ResourceGroupTagger, tikvrpc.ResourceGroupTagger(tagger))
+	return tagger
+}
+
+func (w *JobContext) resetWhenJobFinish() {
+	w.ddlJobCtx = context.Background()
+	w.cacheSQL = ""
+	w.cacheDigest = nil
+	w.cacheNormalizedSQL = ""
 }
 
 // handleDDLJobQueue handles DDL jobs in DDL Job queue.
@@ -559,7 +602,9 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			}
 
 			w.setDDLLabelForTopSQL(job)
-			w.setResourceGroupTaggerForTopSQL(txn)
+			if tagger := w.getResourceGroupTaggerForTopSQL(); tagger != nil {
+				txn.SetOption(kv.ResourceGroupTagger, tagger)
+			}
 			if isDone, err1 := isDependencyJobDone(t, job); err1 != nil || !isDone {
 				return errors.Trace(err1)
 			}
