@@ -66,16 +66,16 @@ func (p *PhysicalIndexLookUpReader) CalPlanCost(taskType property.TaskType) floa
 
 	// index net I/O cost
 	idxCount := p.indexPlan.StatsCount()
-	indexWidth := getHistCollSafely(p).GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
-	p.planCost += idxCount * indexWidth * p.ctx.GetSessionVars().GetNetworkFactor(nil)
+	idxRowSize := getHistCollSafely(p).GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
+	p.planCost += idxCount * idxRowSize * p.ctx.GetSessionVars().GetNetworkFactor(nil)
 
 	// index net seek cost
 	p.planCost += getSeekCost(p)
 
 	// table net I/O cost
-	tblScanWidth := getHistCollSafely(p).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
+	tblRowSize := getHistCollSafely(p).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
 	tblCount := p.tablePlan.StatsCount()
-	p.planCost += tblCount * p.ctx.GetSessionVars().GetNetworkFactor(nil) * tblScanWidth
+	p.planCost += tblCount * p.ctx.GetSessionVars().GetNetworkFactor(nil) * tblRowSize
 
 	// consider concurrency
 	p.planCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
@@ -173,14 +173,12 @@ func (p *PhysicalTableScan) CalPlanCost(taskType property.TaskType) float64 {
 
 	// scan cost
 	rowCount := p.StatsCount()
-	rowSize := p.tableRowSize
-	if rowSize == 0 {
-		switch p.StoreType {
-		case kv.TiKV:
-			rowSize = getHistCollSafely(p).GetTableAvgRowSize(p.ctx, p.schema.Columns, kv.TiKV, true)
-		default:
-			rowSize = getHistCollSafely(p).GetTableAvgRowSize(p.ctx, p.schema.Columns, p.StoreType, p.HandleCols != nil)
-		}
+	var rowSize float64
+	switch p.StoreType {
+	case kv.TiKV:
+		rowSize = getHistCollSafely(p).GetTableAvgRowSize(p.ctx, p.schema.Columns, kv.TiKV, true)
+	default:
+		rowSize = getHistCollSafely(p).GetTableAvgRowSize(p.ctx, p.schema.Columns, p.StoreType, p.HandleCols != nil)
 	}
 	scanFactor := p.ctx.GetSessionVars().GetScanFactor(nil)
 	if p.Desc {
