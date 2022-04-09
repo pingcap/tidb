@@ -223,6 +223,22 @@ func (p *PhysicalIndexJoin) CalPlanCost(taskType property.TaskType) float64 {
 	return p.planCost
 }
 
+func (p *PhysicalIndexHashJoin) CalPlanCost(taskType property.TaskType) float64 {
+	if p.planCostInit {
+		return p.planCost
+	}
+	outerChild, innerChild := p.children[1-p.InnerChildIdx], p.children[p.InnerChildIdx]
+	// NOTICE: same as IndexJoin
+	probeSeekCost := getSeekCost(innerChild) / float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
+	p.planCost = p.GetCost(outerChild.StatsCount(), innerChild.StatsCount(), outerChild.CalPlanCost(taskType), innerChild.CalPlanCost(taskType)-probeSeekCost)
+	p.planCostInit = true
+	return p.planCost
+}
+
+func (p *PhysicalIndexMergeJoin) CalPlanCost(taskType property.TaskType) float64 {
+	panic("TODO")
+}
+
 func (p *PhysicalMergeJoin) CalPlanCost(taskType property.TaskType) float64 {
 	if p.planCostInit {
 		return p.planCost
