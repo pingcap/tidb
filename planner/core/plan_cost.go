@@ -401,9 +401,9 @@ func getSeekCost(p PhysicalPlan) float64 {
 		return getSeekCost(x.indexPlan)
 	case *PhysicalTableScan:
 		if x.StoreType == kv.TiFlash {
-			return float64(len(x.Ranges)) * x.ctx.GetSessionVars().GetSeekFactor(x.Table)
-		} else { // TiKV
 			return float64(len(x.Ranges)) * float64(len(x.Columns)) * x.ctx.GetSessionVars().GetSeekFactor(x.Table)
+		} else { // TiKV
+			return float64(len(x.Ranges)) * x.ctx.GetSessionVars().GetSeekFactor(x.Table)
 		}
 	case *PhysicalIndexScan:
 		return float64(len(x.Ranges)) * x.ctx.GetSessionVars().GetSeekFactor(x.Table)
