@@ -83,7 +83,7 @@ require (
 	golang.org/x/net v0.0.0-20220127200216-cd36cc0744dd
 	golang.org/x/oauth2 v0.0.0-20211104180415-d3ed0bb246c8
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
-	golang.org/x/sys v0.0.0-20220330033206-e17cdc41300f
+	golang.org/x/sys v0.0.0-20220408201424-a24fb2fb8a0f
 	golang.org/x/text v0.3.7
 	golang.org/x/time v0.0.0-20220224211638-0e9765cccd65
 	golang.org/x/tools v0.1.8
@@ -201,10 +201,8 @@ require (
 	sigs.k8s.io/yaml v1.2.0 // indirect
 )
 
-replace github.com/pingcap/tidb/parser => ./parser
-
 // fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 
-// it can be removed after merging https://github.com/dgraph-io/ristretto/pull/294
-replace github.com/dgraph-io/ristretto => github.com/hawkingrei/ristretto v0.1.1-0.20220402052934-7556ec01f9db
+// fix date race in the testify. it can be remove after merging https://github.com/stretchr/testify/pull/1165
+replace github.com/stretchr/testify => github.com/hawkingrei/testify v1.7.1-0.20220318075534-088488aa27f2
