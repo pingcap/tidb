@@ -216,9 +216,8 @@ func (p *PhysicalIndexJoin) CalPlanCost(taskType property.TaskType) float64 {
 		return p.planCost
 	}
 	outerChild, innerChild := p.children[1-p.InnerChildIdx], p.children[p.InnerChildIdx]
-	// NOTICE: seek cost of the probe side is not considered in the old cost model interface,
-	// so we minus it here to keep compatible, we'll fix it later.
-	probeSeekCost := getSeekCost(innerChild)
+	// NOTICE: seek cost of the probe side is not considered in the old model so minus it here for compatibility, we'll fix it later
+	probeSeekCost := getSeekCost(innerChild) / float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 	p.planCost = p.GetCost(outerChild.StatsCount(), innerChild.StatsCount(), outerChild.CalPlanCost(taskType), innerChild.CalPlanCost(taskType)-probeSeekCost)
 	p.planCostInit = true
 	return p.planCost
