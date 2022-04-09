@@ -70,8 +70,7 @@ func (p *PhysicalIndexLookUpReader) CalPlanCost(taskType property.TaskType) floa
 	p.planCost += idxCount * indexWidth * p.ctx.GetSessionVars().GetNetworkFactor(nil)
 
 	// index net seek cost
-	is := getBottomPlan(p.indexPlan).(*PhysicalIndexScan)
-	p.planCost += float64(len(is.Ranges)) * p.ctx.GetSessionVars().GetSeekFactor(nil)
+	p.planCost += getSeekCost(p)
 
 	// table net I/O cost
 	tblScanWidth := getHistCollSafely(p).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
@@ -99,8 +98,7 @@ func (p *PhysicalIndexReader) CalPlanCost(taskType property.TaskType) float64 {
 	rowSize := getHistCollSafely(p).GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
 	p.planCost += p.indexPlan.StatsCount() * rowSize * p.ctx.GetSessionVars().GetNetworkFactor(nil)
 	// net seek cost
-	is := getBottomPlan(p.indexPlan).(*PhysicalIndexScan)
-	p.planCost += float64(len(is.Ranges)) * p.ctx.GetSessionVars().GetSeekFactor(nil)
+	p.planCost += getSeekCost(p)
 	// consider concurrency
 	p.planCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 
@@ -115,7 +113,6 @@ func (p *PhysicalTableReader) CalPlanCost(taskType property.TaskType) float64 {
 
 	p.planCost = 0
 	netFactor := p.ctx.GetSessionVars().GetNetworkFactor(nil)
-	ts := getBottomPlan(p.tablePlan).(*PhysicalTableScan)
 	switch p.StoreType {
 	case kv.TiKV:
 		p.planCost += p.tablePlan.CalPlanCost(property.CopSingleReadTaskType)
@@ -123,7 +120,7 @@ func (p *PhysicalTableReader) CalPlanCost(taskType property.TaskType) float64 {
 		rowSize := getHistCollSafely(p).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
 		p.planCost += p.tablePlan.StatsCount() * rowSize * netFactor
 		// net seek cost
-		p.planCost += float64(len(ts.Ranges)) * p.ctx.GetSessionVars().GetSeekFactor(nil)
+		p.planCost += getSeekCost(p)
 		// consider concurrency
 		p.planCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 	case kv.TiFlash:
@@ -132,7 +129,7 @@ func (p *PhysicalTableReader) CalPlanCost(taskType property.TaskType) float64 {
 		rowSize := collectRowSizeFromMPPPlan(p.tablePlan)
 		p.planCost += p.tablePlan.StatsCount() * rowSize * netFactor
 		// net seek cost
-		p.planCost += float64(len(ts.Ranges)) * float64(len(ts.Columns)) * p.ctx.GetSessionVars().GetSeekFactor(nil)
+		p.planCost += getSeekCost(p)
 		// consider concurrency
 		p.planCost /= p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
 	}
@@ -221,26 +218,10 @@ func (p *PhysicalIndexJoin) CalPlanCost(taskType property.TaskType) float64 {
 	outerChild, innerChild := p.children[1-p.InnerChildIdx], p.children[p.InnerChildIdx]
 	// NOTICE: seek cost of the probe side is not considered in the old cost model interface,
 	// so we minus it here to keep compatible, we'll fix it later.
-	probeSeekCost := p.probeSeekCost(innerChild)
+	probeSeekCost := getSeekCost(innerChild)
 	p.planCost = p.GetCost(outerChild.StatsCount(), innerChild.StatsCount(), outerChild.CalPlanCost(taskType), innerChild.CalPlanCost(taskType)-probeSeekCost)
 	p.planCostInit = true
 	return p.planCost
-}
-
-func (p *PhysicalIndexJoin) probeSeekCost(probe PhysicalPlan) float64 {
-	switch x := probe.(type) {
-	case *PhysicalTableReader:
-		ts := getBottomPlan(x.tablePlan).(*PhysicalTableScan)
-		return float64(len(ts.Ranges)) * p.ctx.GetSessionVars().GetSeekFactor(nil) / float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
-	case *PhysicalIndexReader:
-		is := getBottomPlan(x.indexPlan).(*PhysicalIndexScan)
-		return float64(len(is.Ranges)) * p.ctx.GetSessionVars().GetSeekFactor(nil) / float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
-	case *PhysicalIndexLookUpReader:
-		is := getBottomPlan(x.indexPlan).(*PhysicalIndexScan)
-		return float64(len(is.Ranges)) * p.ctx.GetSessionVars().GetSeekFactor(nil) / float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
-	default:
-		return p.probeSeekCost(x.Children()[0])
-	}
 }
 
 func (p *PhysicalMergeJoin) CalPlanCost(taskType property.TaskType) float64 {
@@ -410,9 +391,23 @@ func getHistCollSafely(p PhysicalPlan) *statistics.HistColl {
 	return nil
 }
 
-func getBottomPlan(p PhysicalPlan) PhysicalPlan {
-	for len(p.Children()) > 0 {
-		p = p.Children()[0]
+func getSeekCost(p PhysicalPlan) float64 {
+	switch x := p.(type) {
+	case *PhysicalTableReader:
+		return getSeekCost(x.tablePlan)
+	case *PhysicalIndexReader:
+		return getSeekCost(x.indexPlan)
+	case *PhysicalIndexLookUpReader:
+		return getSeekCost(x.indexPlan)
+	case *PhysicalTableScan:
+		if x.StoreType == kv.TiFlash {
+			return float64(len(x.Ranges)) * x.ctx.GetSessionVars().GetSeekFactor(x.Table)
+		} else { // TiKV
+			return float64(len(x.Ranges)) * float64(len(x.Columns)) * x.ctx.GetSessionVars().GetSeekFactor(x.Table)
+		}
+	case *PhysicalIndexScan:
+		return float64(len(x.Ranges)) * x.ctx.GetSessionVars().GetSeekFactor(x.Table)
+	default:
+		return getSeekCost(p.Children()[0])
 	}
-	return p
 }
