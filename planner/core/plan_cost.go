@@ -173,12 +173,13 @@ func (p *PhysicalTableScan) CalPlanCost(taskType property.TaskType) float64 {
 
 	// scan cost
 	rowCount := p.StatsCount()
+	ds := p.dataSource
 	var rowSize float64
 	switch p.StoreType {
 	case kv.TiKV:
-		rowSize = getHistCollSafely(p).GetTableAvgRowSize(p.ctx, p.tblCols, kv.TiKV, true)
+		rowSize = ds.TblColHists.GetTableAvgRowSize(ds.ctx, ds.TblCols, p.StoreType, true)
 	default:
-		rowSize = getHistCollSafely(p).GetTableAvgRowSize(p.ctx, p.schema.Columns, p.StoreType, p.HandleCols != nil)
+		rowSize = ds.TblColHists.GetTableAvgRowSize(ds.ctx, p.Schema().Columns, p.StoreType, ds.handleCols != nil)
 	}
 	scanFactor := p.ctx.GetSessionVars().GetScanFactor(nil)
 	if p.Desc {

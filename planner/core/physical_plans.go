@@ -542,8 +542,7 @@ type PhysicalTableScan struct {
 	// required by cost model
 	// TableScan operators under inner side of IndexJoin no need to consider net seek cost
 	underInnerIndexJoin bool
-	// tblCols contains the original columns of table before pruning, which is used to calculate row size.
-	tblCols []*expression.Column
+	dataSource          *DataSource // used to calculate row size
 }
 
 // Clone implements PhysicalPlan interface.
