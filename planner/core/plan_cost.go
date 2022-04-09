@@ -145,16 +145,14 @@ func (p *PhysicalIndexMergeReader) CalPlanCost(taskType property.TaskType) float
 	p.planCost = 0
 	netFactor := p.ctx.GetSessionVars().GetNetworkFactor(nil)
 	if tblScan := p.tablePlan; tblScan != nil {
-		rowCount := tblScan.StatsCount()
-		rowSize := 0.0                                                    // TODO
-		p.planCost += rowCount * rowSize * netFactor                      // accumulate net-cost
-		p.planCost += tblScan.CalPlanCost(property.CopSingleReadTaskType) // accumulate child's cost
+		p.planCost += tblScan.CalPlanCost(property.CopSingleReadTaskType) // child's cost
+		tableRowSize := getBottomPlan(tblScan).(*PhysicalTableScan).tableRowSize
+		p.planCost += tblScan.StatsCount() * tableRowSize * netFactor // accumulate net-cost
 	}
 	for _, idxScan := range p.partialPlans {
-		rowCount := idxScan.StatsCount()
-		rowSize := 0.0                                                    // TODO
-		p.planCost += rowCount * rowSize * netFactor                      // accumulate net-cost
-		p.planCost += idxScan.CalPlanCost(property.CopSingleReadTaskType) // accumulate child's cost
+		p.planCost += idxScan.CalPlanCost(property.CopSingleReadTaskType) // child's cost
+		indexRowSize := getBottomPlan(idxScan).(*PhysicalIndexScan).indexRowSize
+		p.planCost += idxScan.StatsCount() * indexRowSize * netFactor // accumulate net-cost
 	}
 
 	// consider concurrency
@@ -431,4 +429,11 @@ func getSeekCost(p PhysicalPlan) float64 {
 	default:
 		return getSeekCost(p.Children()[0])
 	}
+}
+
+func getBottomPlan(p PhysicalPlan) PhysicalPlan {
+	if len(p.Children()) == 0 {
+		return p
+	}
+	return getBottomPlan(p.Children()[0])
 }
