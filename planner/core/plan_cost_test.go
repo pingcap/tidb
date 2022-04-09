@@ -192,7 +192,8 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 		"select /*+ inl_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a and t1.b<1000 and t1.b>1000",
 		"select /*+ inl_hash_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a+2 and t1.b>1000",
 		"select /*+ inl_hash_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a and t1.b<1000 and t1.b>1000",
-		// TODO: index merge join
+		"select /*+ inl_merge_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a+2 and t1.b>1000",
+		"select /*+ inl_merge_join(t1, t2), use_index(t1, primary), use_index(t2, primary) */ * from t t1, t t2 where t1.a=t2.a and t1.b<1000 and t1.b>1000",
 		//"select * from t t1 where t1.b in (select sum(t2.b) from t t2 where t1.a < t2.a)", // apply
 		// point get
 		"select * from t where a = 1",
