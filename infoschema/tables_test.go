@@ -17,6 +17,7 @@ package infoschema_test
 import (
 	"crypto/tls"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"math"
 	"os"
 	"strings"
@@ -602,6 +603,35 @@ func TestColumnStatistics(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery("select * from information_schema.column_statistics").Check(testkit.Rows())
+}
+
+func TestTableIfHasColumn(t *testing.T) {
+	columnName := variable.SlowLogHasMoreResults
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	slowLogFileName := "tidb-slow.log"
+	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
+	require.NoError(t, err)
+	_, err = f.Write([]byte(`# Time: 2019-02-12T19:33:56.571953+08:00
+# Txn_start_ts: 406315658548871171
+# User@Host: root[root] @ localhost [127.0.0.1]
+# Has_more_results: true
+INSERT INTO ...;
+`))
+	require.NoError(t, f.Close())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, os.Remove(slowLogFileName)) }()
+	tk := testkit.NewTestKit(t, store)
+
+	//check schema
+	tk.MustQuery(`select COUNT(*) from information_schema.columns
+WHERE table_name = 'slow_query' and column_name = '` + columnName + `'`).
+		Check(testkit.Rows("1"))
+
+	//check select
+	tk.MustQuery(`select ` + columnName +
+		` from information_schema.slow_query`).Check(testkit.Rows("1"))
+
 }
 
 func TestReloadDropDatabase(t *testing.T) {
