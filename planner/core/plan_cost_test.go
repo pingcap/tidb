@@ -98,7 +98,6 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 		"select * from t use index(cd) where c in (1, 2, 3, 100, 200, 300, 1000)",
 		"select * from t use index(cd) where c = 200 and d < 200",
 		"select * from t use index(cd) where c in (1, 2, 3, 100, 200, 300, 1000) and d = 200",
-		// TODO: index-merge
 		// index merge
 		"explain select /*+ use_index_merge(t, b, cd) */ * from t where b<100 or c<100",
 		"explain select /*+ use_index_merge(t, b, cd) */ * from t where b<100 or c=100 and d<100",
