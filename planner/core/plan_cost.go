@@ -176,7 +176,7 @@ func (p *PhysicalTableScan) CalPlanCost(taskType property.TaskType) float64 {
 	var rowSize float64
 	switch p.StoreType {
 	case kv.TiKV:
-		rowSize = getHistCollSafely(p).GetTableAvgRowSize(p.ctx, p.schema.Columns, kv.TiKV, true)
+		rowSize = getHistCollSafely(p).GetTableAvgRowSize(p.ctx, p.tblCols, kv.TiKV, true)
 	default:
 		rowSize = getHistCollSafely(p).GetTableAvgRowSize(p.ctx, p.schema.Columns, p.StoreType, p.HandleCols != nil)
 	}
