@@ -247,6 +247,16 @@ func (p *PhysicalIndexMergeJoin) CalPlanCost(taskType property.TaskType) float64
 	return p.planCost
 }
 
+func (p *PhysicalApply) CalPlanCost(taskType property.TaskType) float64 {
+	if p.planCostInit {
+		return p.planCost
+	}
+	outerChild, innerChild := p.children[1-p.InnerChildIdx], p.children[p.InnerChildIdx]
+	p.planCost = p.GetCost(outerChild.StatsCount(), innerChild.StatsCount(), outerChild.CalPlanCost(taskType), innerChild.CalPlanCost(taskType))
+	p.planCostInit = true
+	return p.planCost
+}
+
 func (p *PhysicalMergeJoin) CalPlanCost(taskType property.TaskType) float64 {
 	if p.planCostInit {
 		return p.planCost
@@ -269,18 +279,6 @@ func (p *PhysicalHashJoin) CalPlanCost(taskType property.TaskType) float64 {
 		p.planCost += child.CalPlanCost(taskType)
 	}
 	p.planCost += p.GetCost(p.children[0].StatsCount(), p.children[1].StatsCount())
-	p.planCostInit = true
-	return p.planCost
-}
-
-func (p *PhysicalApply) CalPlanCost(taskType property.TaskType) float64 {
-	if p.planCostInit {
-		return p.planCost
-	}
-	lChild, rChild := p.children[0], p.children[1]
-	lCnt, rCnt := lChild.StatsCount(), rChild.StatsCount()
-	lCost, rCost := lChild.CalPlanCost(taskType), rChild.CalPlanCost(taskType)
-	p.planCost = p.GetCost(lCnt, rCnt, lCost, rCost)
 	p.planCostInit = true
 	return p.planCost
 }
