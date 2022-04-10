@@ -1931,7 +1931,7 @@
       {
         "SQL": "explain format = 'verbose' select * from t where b > 5",
         "Plan": [
-          "IndexLookUp_7 3.00 64.81 root  ",
+          "IndexLookUp_7 3.00 57.91 root  ",
           "├─IndexRangeScan_5(Build) 3.00 171.00 cop[tikv] table:t, index:idx_b(b) range:(5,+inf], keep order:false",
           "└─TableRowIDScan_6(Probe) 3.00 171.00 cop[tikv] table:t keep order:false"
         ],
