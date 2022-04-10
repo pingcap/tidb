@@ -93,7 +93,6 @@ func createTidbTestSuite(t *testing.T) (*tidbTestSuite, func()) {
 	ts.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	ts.server = server
 	ts.server.SetDomain(ts.domain)
-	ts.server.InitGlobalConnID(ts.domain.ServerID)
 	ts.domain.InfoSyncer().SetSessionManager(ts.server)
 	go func() {
 		err := ts.server.Run()

@@ -616,9 +616,12 @@ func TestKillStmt(t *testing.T) {
 	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows("Warning 1105 Parse ConnectionID failed: Unexpected connectionID exceeds int64"))
 
+	connectionIDAllocator := util.GlobalConnIDAllocator{}
+	connectionIDAllocator.Init()
+
 	// local kill
-	connID := util.NewGlobalConnID(1, true)
-	tk.MustExec("kill " + strconv.FormatUint(connID.ID(), 10))
+	connID := connectionIDAllocator.NextID()
+	tk.MustExec("kill " + strconv.FormatUint(connID, 10))
 	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows())
 

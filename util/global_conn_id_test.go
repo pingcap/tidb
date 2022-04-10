@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -28,7 +28,6 @@ import (
 )
 
 func TestGlobalConnIDParse(t *testing.T) {
-	t.Parallel()
 	assert := assert.New(t)
 
 	connID := util.GlobalConnID{
@@ -76,7 +75,6 @@ func TestGlobalConnIDParse(t *testing.T) {
 }
 
 func TestGlobalConnIDAutoIncPool(t *testing.T) {
-	t.Parallel()
 	assert := assert.New(t)
 
 	const SizeInBits uint32 = 8
@@ -126,7 +124,6 @@ func TestGlobalConnIDAutoIncPool(t *testing.T) {
 }
 
 func TestGlobalConnIDLockFreePoolBasic(t *testing.T) {
-	t.Parallel()
 	assert := assert.New(t)
 
 	const SizeInBits uint32 = 8
@@ -173,7 +170,6 @@ func TestGlobalConnIDLockFreePoolBasic(t *testing.T) {
 }
 
 func TestGlobalConnIDLockFreePoolInitEmpty(t *testing.T) {
-	t.Parallel()
 	assert := assert.New(t)
 
 	const SizeInBits uint32 = 8
@@ -403,7 +399,6 @@ func testLockBasedPoolConcurrency(poolSizeInBits uint32, producers int, consumer
 }
 
 func TestGlobalConnIDLockFreePoolBasicConcurrencySafety(t *testing.T) {
-	t.Parallel()
 	assert := assert.New(t)
 
 	var (
@@ -429,8 +424,6 @@ func TestGlobalConnIDLockFreePoolBasicConcurrencySafety(t *testing.T) {
 }
 
 func TestGlobalConnIDLockBasedPoolConcurrencySafety(t *testing.T) {
-	t.Parallel()
-
 	var (
 		expected int64
 		actual   int64
@@ -461,8 +454,6 @@ func (ta poolConcurrencyTestCase) String() string {
 }
 
 func TestGlobalConnIDLockFreePoolConcurrencySafety(t *testing.T) {
-	t.Parallel()
-
 	const (
 		poolSizeInBits = 16
 		requests       = 1 << 20
