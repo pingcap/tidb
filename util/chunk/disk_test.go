@@ -384,6 +384,6 @@ func testReaderWithCacheNoFlush(t *testing.T) {
 	// Offset is 8, because we want to ignore col length.
 	readCnt, err := checksumReader.ReadAt(data, 8)
 	require.Equal(t, io.EOF, err)
-	require.Equal(t, len(testData), readCnt)
+	require.Len(t, testData, readCnt)
 	require.Equal(t, []byte(testData), data[:10])
 }

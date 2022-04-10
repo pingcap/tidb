@@ -75,7 +75,7 @@ func TestColumnCopyReconstructFixedLen(t *testing.T) {
 		}
 	}
 	require.Equal(t, col.nullCount(), nullCnt)
-	require.Equal(t, len(sel), col.length)
+	require.Len(t, sel, col.length)
 
 	for i := 0; i < 128; i++ {
 		if i%2 == 0 {
@@ -85,7 +85,7 @@ func TestColumnCopyReconstructFixedLen(t *testing.T) {
 		}
 	}
 
-	require.Equal(t, len(sel)+128, col.length)
+	require.Len(t, sel, col.length-128)
 	require.Equal(t, nullCnt+128/2, col.nullCount())
 	for i := 0; i < 128; i++ {
 		if i%2 == 0 {
@@ -131,7 +131,7 @@ func TestColumnCopyReconstructVarLen(t *testing.T) {
 		}
 	}
 	require.Equal(t, col.nullCount(), nullCnt)
-	require.Equal(t, len(sel), col.length)
+	require.Len(t, sel, col.length)
 
 	for i := 0; i < 128; i++ {
 		if i%2 == 0 {
@@ -141,7 +141,7 @@ func TestColumnCopyReconstructVarLen(t *testing.T) {
 		}
 	}
 
-	require.Equal(t, len(sel)+128, col.length)
+	require.Len(t, sel, col.length-128)
 	require.Equal(t, nullCnt+128/2, col.nullCount())
 	for i := 0; i < 128; i++ {
 		if i%2 == 0 {
@@ -465,7 +465,7 @@ func TestReconstructFixedLen(t *testing.T) {
 		}
 	}
 	require.Equal(t, col.nullCount(), nullCnt)
-	require.Equal(t, len(sel), col.length)
+	require.Len(t, sel, col.length)
 
 	for i := 0; i < 128; i++ {
 		if i%2 == 0 {
@@ -475,7 +475,7 @@ func TestReconstructFixedLen(t *testing.T) {
 		}
 	}
 
-	require.Equal(t, len(sel)+128, col.length)
+	require.Len(t, sel, col.length-128)
 	require.Equal(t, nullCnt+128/2, col.nullCount())
 	for i := 0; i < 128; i++ {
 		if i%2 == 0 {
@@ -521,7 +521,7 @@ func TestReconstructVarLen(t *testing.T) {
 		}
 	}
 	require.Equal(t, col.nullCount(), nullCnt)
-	require.Equal(t, len(sel), col.length)
+	require.Len(t, sel, col.length)
 
 	for i := 0; i < 128; i++ {
 		if i%2 == 0 {
@@ -531,7 +531,7 @@ func TestReconstructVarLen(t *testing.T) {
 		}
 	}
 
-	require.Equal(t, len(sel)+128, col.length)
+	require.Len(t, sel, col.length-128)
 	require.Equal(t, nullCnt+128/2, col.nullCount())
 	for i := 0; i < 128; i++ {
 		if i%2 == 0 {
@@ -680,7 +680,7 @@ func TestSetNulls(t *testing.T) {
 		}
 		col.SetNulls(begin, end, true)
 
-		require.Equal(t, len(nullMap), col.nullCount())
+		require.Len(t, nullMap, col.nullCount())
 		for k := range nullMap {
 			require.True(t, col.IsNull(k))
 		}

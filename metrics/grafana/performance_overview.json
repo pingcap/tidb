@@ -64,10 +64,6 @@
     {
       "collapsed": false,
       "datasource": "${DS_TEST-CLUSTER}",
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -85,21 +81,167 @@
       "dashLength": 10,
       "dashes": false,
       "datasource": "${DS_TEST-CLUSTER}",
+      "description": "Service Time Per Second, show service time distribution among different components and execution phase.\n1. Total Database Time, the time which tidb cluster is processing application requests.\n2. Per SQL Type dimension\n3. Per parse/compile/execute dimension\n4. Per KV/PD request dimension",
+      "fill": 1,
+      "fillGradient": 0,
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
+      "hiddenSeries": false,
+      "id": 187,
+      "legend": {
+        "alignAsTable": true,
+        "avg": true,
+        "current": false,
+        "hideEmpty": true,
+        "hideZero": true,
+        "max": false,
+        "min": false,
+        "rightSide": true,
+        "show": true,
+        "sideWidth": null,
+        "sort": "avg",
+        "sortDesc": true,
+        "total": false,
+        "values": true
+      },
+      "lines": true,
+      "linewidth": 1,
+      "links": [],
+      "nullPointMode": "null as zero",
+      "options": {
+        "alertThreshold": true
+      },
+      "percentage": false,
+      "pluginVersion": "8.0.7",
+      "pointradius": 5,
+      "points": false,
+      "renderer": "flot",
+      "seriesOverrides": [],
+      "spaceLength": 10,
+      "stack": false,
+      "steppedLine": false,
+      "targets": [
+        {
+          "exemplar": true,
+          "expr": "sum(rate(tidb_server_handle_query_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m]))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "database time",
+          "refId": "A"
+        },
+        {
+          "exemplar": true,
+          "expr": "sum(rate(tidb_tikvclient_request_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", store!=\"0\"}[1m])) by (type)",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "kv_request - {{type}}",
+          "refId": "B"
+        },
+        {
+          "exemplar": true,
+          "expr": "sum(rate(pd_client_cmd_handle_cmds_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"wait\"}[1m]))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "tso_wait",
+          "refId": "C"
+        },
+        {
+          "exemplar": true,
+          "expr": "sum(rate(tidb_session_parse_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m]))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "sql - parse",
+          "refId": "D"
+        },
+        {
+          "exemplar": true,
+          "expr": "sum(rate(tidb_session_compile_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m]))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "sql - compile",
+          "refId": "E"
+        },
+        {
+          "exemplar": true,
+          "expr": "sum(rate(tidb_session_execute_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m]))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "sql - execute",
+          "refId": "F"
+        },
+        {
+          "exemplar": true,
+          "expr": "sum(rate(tidb_server_handle_query_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m])) by (sql_type)",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "sql_type - {{sql_type}}",
+          "refId": "G"
+        }
+      ],
+      "thresholds": [],
+      "timeFrom": null,
+      "timeRegions": [],
+      "timeShift": null,
+      "title": "Database Time Overview",
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "type": "graph",
+      "xaxis": {
+        "buckets": null,
+        "mode": "time",
+        "name": null,
+        "show": true,
+        "values": []
+      },
+      "yaxes": [
+        {
+          "$$hashKey": "object:3528",
+          "format": "s",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": "0",
+          "show": true
+        },
+        {
+          "$$hashKey": "object:3529",
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": null,
+          "show": true
+        }
+      ],
+      "yaxis": {
+        "align": false,
+        "alignLevel": null
+      }
+    },
+    {
+      "aliasColors": {},
+      "bars": false,
+      "dashLength": 10,
+      "dashes": false,
+      "datasource": "${DS_TEST-CLUSTER}",
       "decimals": null,
-      "description": "TiDB statement statistics",
+      "description": "TiDB statement statistics. Bold red line on right Y axis for Failed Queries per second",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
       "gridPos": {
         "h": 7,
         "w": 12,
-        "x": 0,
+        "x": 12,
         "y": 1
       },
       "hiddenSeries": false,
@@ -127,18 +269,26 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
-      "seriesOverrides": [],
+      "seriesOverrides": [
+        {
+          "$$hashKey": "object:1069",
+          "alias": "Failed",
+          "color": "#C4162A",
+          "linewidth": 2,
+          "yaxis": 2
+        }
+      ],
       "spaceLength": 10,
       "stack": false,
       "steppedLine": false,
       "targets": [
         {
           "exemplar": true,
-          "expr": "sum(rate(tidb_executor_statement_total{tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
+          "expr": "sum(rate(tidb_executor_statement_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
           "format": "time_series",
           "interval": "",
           "intervalFactor": 2,
@@ -148,11 +298,21 @@
         },
         {
           "exemplar": true,
-          "expr": "sum(rate(tidb_executor_statement_total{tidb_cluster=\"$tidb_cluster\"}[1m]))",
+          "expr": "sum(rate(tidb_executor_statement_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m]))",
           "hide": false,
           "interval": "",
-          "legendFormat": "total",
+          "legendFormat": "Total",
           "refId": "B"
+        },
+        {
+          "exemplar": true,
+          "expr": "sum(rate(tidb_server_execute_error_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) ",
+          "hide": false,
+          "instant": false,
+          "interval": "",
+          "intervalFactor": 1,
+          "legendFormat": "Failed",
+          "refId": "C"
         }
       ],
       "thresholds": [],
@@ -176,6 +336,7 @@
       },
       "yaxes": [
         {
+          "$$hashKey": "object:822",
           "decimals": 0,
           "format": "short",
           "label": null,
@@ -185,11 +346,12 @@
           "show": true
         },
         {
+          "$$hashKey": "object:823",
           "format": "short",
-          "label": null,
+          "label": "",
           "logBase": 1,
           "max": null,
-          "min": null,
+          "min": "0",
           "show": true
         }
       ],
@@ -208,18 +370,14 @@
       "description": "TiDB command total statistics including both successful and failed ones",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
       "gridPos": {
         "h": 7,
         "w": 12,
-        "x": 12,
-        "y": 1
+        "x": 0,
+        "y": 8
       },
       "hiddenSeries": false,
       "id": 178,
@@ -246,7 +404,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -257,7 +415,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "sum(rate(tidb_server_query_total{tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
+          "expr": "sum(rate(tidb_server_query_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
           "format": "time_series",
           "interval": "",
           "intervalFactor": 2,
@@ -316,24 +474,20 @@
       "dashes": false,
       "datasource": "${DS_TEST-CLUSTER}",
       "decimals": null,
-      "description": "kv request total by instance and command type",
+      "description": "TiDB plan cache hit total.",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
       "gridPos": {
         "h": 7,
         "w": 12,
-        "x": 0,
+        "x": 12,
         "y": 8
       },
       "hiddenSeries": false,
-      "id": 180,
+      "id": 91,
       "legend": {
         "alignAsTable": true,
         "avg": true,
@@ -357,7 +511,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -368,126 +522,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "sum(rate(tidb_tikvclient_request_seconds_count{tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
-          "format": "time_series",
-          "interval": "",
-          "intervalFactor": 2,
-          "legendFormat": "{{type}}",
-          "refId": "A",
-          "step": 30
-        },
-        {
-          "exemplar": true,
-          "expr": "sum(rate(tidb_tikvclient_request_seconds_count{tidb_cluster=\"$tidb_cluster\"}[1m]))",
-          "hide": false,
-          "interval": "",
-          "legendFormat": "total",
-          "refId": "B"
-        }
-      ],
-      "thresholds": [],
-      "timeFrom": null,
-      "timeRegions": [],
-      "timeShift": null,
-      "title": "KV Request OPS",
-      "tooltip": {
-        "msResolution": false,
-        "shared": true,
-        "sort": 0,
-        "value_type": "cumulative"
-      },
-      "type": "graph",
-      "xaxis": {
-        "buckets": null,
-        "mode": "time",
-        "name": null,
-        "show": true,
-        "values": []
-      },
-      "yaxes": [
-        {
-          "decimals": 0,
-          "format": "short",
-          "label": null,
-          "logBase": 1,
-          "max": null,
-          "min": "0",
-          "show": true
-        },
-        {
-          "format": "short",
-          "label": null,
-          "logBase": 1,
-          "max": null,
-          "min": null,
-          "show": true
-        }
-      ],
-      "yaxis": {
-        "align": false,
-        "alignLevel": null
-      }
-    },
-    {
-      "aliasColors": {},
-      "bars": false,
-      "dashLength": 10,
-      "dashes": false,
-      "datasource": "${DS_TEST-CLUSTER}",
-      "decimals": null,
-      "description": "TiDB plan cache hit total.",
-      "editable": true,
-      "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
-      "fill": 1,
-      "fillGradient": 0,
-      "grid": {},
-      "gridPos": {
-        "h": 7,
-        "w": 12,
-        "x": 12,
-        "y": 8
-      },
-      "hiddenSeries": false,
-      "id": 91,
-      "legend": {
-        "alignAsTable": true,
-        "avg": true,
-        "current": false,
-        "hideEmpty": true,
-        "hideZero": true,
-        "max": true,
-        "min": false,
-        "rightSide": true,
-        "show": true,
-        "sort": null,
-        "sortDesc": null,
-        "total": false,
-        "values": true
-      },
-      "lines": true,
-      "linewidth": 1,
-      "links": [],
-      "nullPointMode": "null as zero",
-      "options": {
-        "alertThreshold": true
-      },
-      "percentage": false,
-      "pluginVersion": "7.5.11",
-      "pointradius": 5,
-      "points": false,
-      "renderer": "flot",
-      "seriesOverrides": [],
-      "spaceLength": 10,
-      "stack": false,
-      "steppedLine": false,
-      "targets": [
-        {
-          "exemplar": true,
-          "expr": "sum(rate(tidb_server_plan_cache_total{tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
+          "expr": "sum(rate(tidb_server_plan_cache_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
           "format": "time_series",
           "interval": "",
           "intervalFactor": 2,
@@ -517,6 +552,139 @@
       },
       "yaxes": [
         {
+          "$$hashKey": "object:3416",
+          "decimals": 0,
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": "0",
+          "show": true
+        },
+        {
+          "$$hashKey": "object:3417",
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": null,
+          "show": true
+        }
+      ],
+      "yaxis": {
+        "align": false,
+        "alignLevel": null
+      }
+    },
+    {
+      "aliasColors": {},
+      "bars": false,
+      "dashLength": 10,
+      "dashes": false,
+      "datasource": "${DS_TEST-CLUSTER}",
+      "decimals": null,
+      "description": "kv/tso request total by command type",
+      "editable": true,
+      "error": false,
+      "fill": 1,
+      "fillGradient": 0,
+      "grid": {},
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 15
+      },
+      "hiddenSeries": false,
+      "id": 180,
+      "legend": {
+        "alignAsTable": true,
+        "avg": true,
+        "current": false,
+        "hideEmpty": true,
+        "hideZero": true,
+        "max": false,
+        "min": false,
+        "rightSide": true,
+        "show": true,
+        "sort": "avg",
+        "sortDesc": true,
+        "total": false,
+        "values": true
+      },
+      "lines": true,
+      "linewidth": 1,
+      "links": [],
+      "nullPointMode": "null as zero",
+      "options": {
+        "alertThreshold": true
+      },
+      "percentage": false,
+      "pluginVersion": "8.0.7",
+      "pointradius": 5,
+      "points": false,
+      "renderer": "flot",
+      "seriesOverrides": [],
+      "spaceLength": 10,
+      "stack": false,
+      "steppedLine": false,
+      "targets": [
+        {
+          "exemplar": true,
+          "expr": "sum(rate(tidb_tikvclient_request_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (type)",
+          "format": "time_series",
+          "interval": "",
+          "intervalFactor": 2,
+          "legendFormat": "{{type}}",
+          "refId": "A",
+          "step": 30
+        },
+        {
+          "exemplar": true,
+          "expr": "sum(rate(tidb_tikvclient_request_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m]))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "kv request total",
+          "refId": "B"
+        },
+        {
+          "exemplar": true,
+          "expr": "sum(rate(pd_client_cmd_handle_cmds_duration_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"tso\"}[1m]))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "tso - cmd",
+          "refId": "C"
+        },
+        {
+          "exemplar": true,
+          "expr": "sum(rate(pd_client_request_handle_requests_duration_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"tso\"}[1m]))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "tso - request",
+          "refId": "D"
+        }
+      ],
+      "thresholds": [],
+      "timeFrom": null,
+      "timeRegions": [],
+      "timeShift": null,
+      "title": "KV/TSO Request OPS",
+      "tooltip": {
+        "msResolution": false,
+        "shared": true,
+        "sort": 0,
+        "value_type": "cumulative"
+      },
+      "type": "graph",
+      "xaxis": {
+        "buckets": null,
+        "mode": "time",
+        "name": null,
+        "show": true,
+        "values": []
+      },
+      "yaxes": [
+        {
           "decimals": 0,
           "format": "short",
           "label": null,
@@ -546,24 +714,20 @@
       "dashes": false,
       "datasource": "${DS_TEST-CLUSTER}",
       "decimals": null,
-      "description": "avg: average cpu usage for all instance.\ndelta: max(cpu utilization) - min(cpu utilization)\nmax: max(cpu utilization)",
+      "description": "TiDB current connection counts",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
       "gridPos": {
         "h": 7,
         "w": 12,
-        "x": 0,
+        "x": 12,
         "y": 15
       },
       "hiddenSeries": false,
-      "id": 181,
+      "id": 188,
       "legend": {
         "alignAsTable": true,
         "avg": true,
@@ -587,7 +751,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -598,7 +762,131 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "avg(rate(process_cpu_seconds_total{tidb_cluster=\"$tidb_cluster\",job=\"tidb\"}[1m]))",
+          "expr": "tidb_server_connections{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}",
+          "format": "time_series",
+          "interval": "",
+          "intervalFactor": 2,
+          "legendFormat": "{{instance}}",
+          "refId": "A",
+          "step": 30
+        },
+        {
+          "exemplar": true,
+          "expr": "sum(tidb_server_connections{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"})",
+          "hide": false,
+          "interval": "",
+          "intervalFactor": 2,
+          "legendFormat": "total",
+          "refId": "B"
+        },
+        {
+          "exemplar": true,
+          "expr": "sum(rate(tidb_server_handle_query_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m]))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "active connections",
+          "refId": "C"
+        }
+      ],
+      "thresholds": [],
+      "timeFrom": null,
+      "timeRegions": [],
+      "timeShift": null,
+      "title": "Connection Count",
+      "tooltip": {
+        "msResolution": false,
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "type": "graph",
+      "xaxis": {
+        "buckets": null,
+        "mode": "time",
+        "name": null,
+        "show": true,
+        "values": []
+      },
+      "yaxes": [
+        {
+          "$$hashKey": "object:3472",
+          "decimals": 0,
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": "0",
+          "show": true
+        },
+        {
+          "$$hashKey": "object:3473",
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": null,
+          "show": true
+        }
+      ],
+      "yaxis": {
+        "align": false,
+        "alignLevel": null
+      }
+    },
+    {
+      "aliasColors": {},
+      "bars": false,
+      "dashLength": 10,
+      "dashes": false,
+      "datasource": "${DS_TEST-CLUSTER}",
+      "decimals": null,
+      "description": "- avg: average cpu usage for all instance.\n- delta: max(cpu utilization) - min(cpu utilization)\n- max: max(cpu utilization)",
+      "editable": true,
+      "error": false,
+      "fill": 1,
+      "fillGradient": 0,
+      "grid": {},
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 22
+      },
+      "hiddenSeries": false,
+      "id": 181,
+      "legend": {
+        "alignAsTable": true,
+        "avg": true,
+        "current": false,
+        "hideEmpty": true,
+        "hideZero": true,
+        "max": false,
+        "min": false,
+        "rightSide": true,
+        "show": true,
+        "total": false,
+        "values": true
+      },
+      "lines": true,
+      "linewidth": 1,
+      "links": [],
+      "nullPointMode": "null as zero",
+      "options": {
+        "alertThreshold": true
+      },
+      "percentage": false,
+      "pluginVersion": "8.0.7",
+      "pointradius": 5,
+      "points": false,
+      "renderer": "flot",
+      "seriesOverrides": [],
+      "spaceLength": 10,
+      "stack": false,
+      "steppedLine": false,
+      "targets": [
+        {
+          "exemplar": true,
+          "expr": "avg(rate(process_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\",job=\"tidb\"}[1m]))",
           "format": "time_series",
           "interval": "",
           "intervalFactor": 1,
@@ -608,19 +896,19 @@
         },
         {
           "exemplar": true,
-          "expr": "(max(rate(process_cpu_seconds_total{tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}[1m])) - min(rate(process_cpu_seconds_total{tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}[1m])))",
-          "hide": false,
-          "interval": "",
-          "legendFormat": "delta",
-          "refId": "B"
-        },
-        {
-          "exemplar": true,
-          "expr": "max(rate(process_cpu_seconds_total{tidb_cluster=\"$tidb_cluster\",job=\"tidb\"}[1m]))",
+          "expr": "max(rate(process_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\",job=\"tidb\"}[1m]))",
           "hide": false,
           "interval": "",
           "legendFormat": "max",
           "refId": "C"
+        },
+        {
+          "exemplar": true,
+          "expr": "(max(rate(process_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}[1m])) - min(rate(process_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}[1m])))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "delta",
+          "refId": "B"
         }
       ],
       "thresholds": [],
@@ -644,6 +932,7 @@
       },
       "yaxes": [
         {
+          "$$hashKey": "object:188",
           "decimals": null,
           "format": "percentunit",
           "label": null,
@@ -653,6 +942,7 @@
           "show": true
         },
         {
+          "$$hashKey": "object:189",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -673,13 +963,9 @@
       "dashes": false,
       "datasource": "${DS_TEST-CLUSTER}",
       "decimals": null,
-      "description": "avg: average cpu usage for all instance.\ndelta: max(cpu utilization) - min(cpu utilization)\nmax: max(cpu utilization)",
+      "description": "#### CPU: CPU usage for all instance.\n- CPU-Avg: average cpu usage for all instance.\n- CPU-Delta: max(cpu utilization) - min(cpu utilization)\n- CPU-Max: max(cpu utilization)\n\n####  IO MBps: The total bytes of read and write in all TiKV instances.",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
@@ -687,7 +973,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 15
+        "y": 22
       },
       "hiddenSeries": false,
       "id": 182,
@@ -701,8 +987,6 @@
         "min": false,
         "rightSide": true,
         "show": true,
-        "sort": "avg",
-        "sortDesc": true,
         "total": false,
         "values": true
       },
@@ -714,47 +998,90 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
-      "seriesOverrides": [],
+      "seriesOverrides": [
+        {
+          "$$hashKey": "object:371",
+          "alias": "IO-Avg",
+          "yaxis": 2
+        },
+        {
+          "$$hashKey": "object:563",
+          "alias": "IO-Max",
+          "yaxis": 2
+        },
+        {
+          "$$hashKey": "object:576",
+          "alias": "IO-Delta",
+          "yaxis": 2
+        }
+      ],
       "spaceLength": 10,
       "stack": false,
       "steppedLine": false,
       "targets": [
         {
           "exemplar": true,
-          "expr": "avg(rate(process_cpu_seconds_total{tidb_cluster=\"$tidb_cluster\", job=~\".*tikv\"}[1m]))",
+          "expr": "avg(rate(process_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", job=~\".*tikv\"}[1m]))",
           "format": "time_series",
+          "hide": false,
           "interval": "",
           "intervalFactor": 2,
-          "legendFormat": "avg",
+          "legendFormat": "CPU-Avg",
           "refId": "A",
           "step": 30
         },
         {
           "exemplar": true,
-          "expr": "(max(rate(process_cpu_seconds_total{tidb_cluster=\"$tidb_cluster\", job=~\".*tikv\"}[1m])) - min(rate(process_cpu_seconds_total{tidb_cluster=\"$tidb_cluster\", job=~\".*tikv\"}[1m])))",
+          "expr": "max(rate(process_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", job=~\".*tikv\"}[1m]))",
           "hide": false,
           "interval": "",
-          "legendFormat": "delta",
+          "intervalFactor": 1,
+          "legendFormat": "CPU-Max",
+          "refId": "C"
+        },
+        {
+          "exemplar": true,
+          "expr": "(max(rate(process_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", job=~\".*tikv\"}[1m])) - min(rate(process_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", job=~\".*tikv\"}[1m])))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "CPU-Delta",
           "refId": "B"
         },
         {
           "exemplar": true,
-          "expr": "max(rate(process_cpu_seconds_total{tidb_cluster=\"$tidb_cluster\", job=~\".*tikv\"}[1m]))",
+          "expr": "avg(sum(rate(tikv_engine_flow_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", db=\"kv\", type=~\"wal_file_bytes|bytes_read|iter_bytes_read\"}[1m])) by (instance))",
+          "hide": false,
+          "instant": false,
+          "interval": "",
+          "legendFormat": "IO-Avg",
+          "refId": "D"
+        },
+        {
+          "exemplar": true,
+          "expr": "max(sum(rate(tikv_engine_flow_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", db=\"kv\", type=~\"wal_file_bytes|bytes_read|iter_bytes_read\"}[1m])) by (instance))",
           "hide": false,
           "interval": "",
-          "legendFormat": "max",
-          "refId": "C"
+          "legendFormat": "IO-Max",
+          "refId": "E"
+        },
+        {
+          "exemplar": true,
+          "expr": "max(sum(rate(tikv_engine_flow_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", db=\"kv\", type=~\"wal_file_bytes|bytes_read|iter_bytes_read\"}[1m])) by (instance)) - min(sum(rate(tikv_engine_flow_bytes{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", db=\"kv\", type=~\"wal_file_bytes|bytes_read|iter_bytes_read\"}[1m])) by (instance))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "IO-Delta",
+          "refId": "F"
         }
       ],
       "thresholds": [],
       "timeFrom": null,
       "timeRegions": [],
       "timeShift": null,
-      "title": "TiKV CPU",
+      "title": "TiKV CPU/IO MBps",
       "tooltip": {
         "msResolution": false,
         "shared": true,
@@ -771,20 +1098,23 @@
       },
       "yaxes": [
         {
-          "decimals": 0,
+          "$$hashKey": "object:208",
+          "decimals": null,
           "format": "percentunit",
-          "label": null,
+          "label": "CPU (%)",
           "logBase": 1,
           "max": null,
           "min": "0",
           "show": true
         },
         {
-          "format": "short",
-          "label": null,
+          "$$hashKey": "object:209",
+          "decimals": null,
+          "format": "Bps",
+          "label": "MBps ",
           "logBase": 1,
           "max": null,
-          "min": null,
+          "min": "0",
           "show": true
         }
       ],
@@ -800,17 +1130,13 @@
       "dashes": false,
       "datasource": "${DS_TEST-CLUSTER}",
       "description": "TiDB query durations",
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "gridPos": {
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 22
+        "y": 29
       },
       "hiddenSeries": false,
       "id": 80,
@@ -820,7 +1146,7 @@
         "current": false,
         "hideEmpty": true,
         "hideZero": true,
-        "max": true,
+        "max": false,
         "min": false,
         "rightSide": true,
         "show": true,
@@ -835,7 +1161,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -846,16 +1172,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "histogram_quantile(0.99, sum(rate(tidb_server_handle_query_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m])) by (le))",
-          "format": "time_series",
-          "interval": "",
-          "intervalFactor": 2,
-          "legendFormat": "99",
-          "refId": "B"
-        },
-        {
-          "exemplar": true,
-          "expr": "sum(rate(tidb_server_handle_query_duration_seconds_sum{tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m])) / sum(rate(tidb_server_handle_query_duration_seconds_count{tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m]))",
+          "expr": "sum(rate(tidb_server_handle_query_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m])) / sum(rate(tidb_server_handle_query_duration_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m]))",
           "format": "time_series",
           "interval": "",
           "intervalFactor": 2,
@@ -864,7 +1181,16 @@
         },
         {
           "exemplar": true,
-          "expr": "sum(rate(tidb_server_handle_query_duration_seconds_sum{tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m])) by (sql_type) / sum(rate(tidb_server_handle_query_duration_seconds_count{tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m])) by (sql_type)",
+          "expr": "histogram_quantile(0.99, sum(rate(tidb_server_handle_query_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m])) by (le))",
+          "format": "time_series",
+          "interval": "",
+          "intervalFactor": 2,
+          "legendFormat": "99",
+          "refId": "B"
+        },
+        {
+          "exemplar": true,
+          "expr": "sum(rate(tidb_server_handle_query_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m])) by (sql_type) / sum(rate(tidb_server_handle_query_duration_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[1m])) by (sql_type)",
           "hide": false,
           "interval": "",
           "legendFormat": "avg-{{sql_type}}",
@@ -891,6 +1217,7 @@
       },
       "yaxes": [
         {
+          "$$hashKey": "object:3308",
           "format": "s",
           "label": null,
           "logBase": 1,
@@ -899,6 +1226,7 @@
           "show": true
         },
         {
+          "$$hashKey": "object:3309",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -922,10 +1250,6 @@
       "description": "TiDB connection idle durations",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
@@ -933,7 +1257,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 22
+        "y": 29
       },
       "hiddenSeries": false,
       "id": 171,
@@ -944,12 +1268,10 @@
         "current": false,
         "hideEmpty": true,
         "hideZero": true,
-        "max": true,
+        "max": false,
         "min": false,
         "rightSide": true,
         "show": true,
-        "sort": "avg",
-        "sortDesc": true,
         "total": false,
         "values": true
       },
@@ -961,7 +1283,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -972,7 +1294,15 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "(sum(rate(tidb_server_conn_idle_duration_seconds_sum{tidb_cluster=\"$tidb_cluster\", in_txn='0'}[1m])) / sum(rate(tidb_server_conn_idle_duration_seconds_count{tidb_cluster=\"$tidb_cluster\", in_txn='0'}[1m])))",
+          "expr": "(sum(rate(tidb_server_conn_idle_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", in_txn='1'}[1m])) / sum(rate(tidb_server_conn_idle_duration_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", in_txn='1'}[1m])))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "avg-in-txn",
+          "refId": "C"
+        },
+        {
+          "exemplar": true,
+          "expr": "(sum(rate(tidb_server_conn_idle_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", in_txn='0'}[1m])) / sum(rate(tidb_server_conn_idle_duration_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", in_txn='0'}[1m])))",
           "format": "time_series",
           "instant": false,
           "interval": "",
@@ -983,15 +1313,7 @@
         },
         {
           "exemplar": true,
-          "expr": "(sum(rate(tidb_server_conn_idle_duration_seconds_sum{tidb_cluster=\"$tidb_cluster\", in_txn='1'}[1m])) / sum(rate(tidb_server_conn_idle_duration_seconds_count{tidb_cluster=\"$tidb_cluster\", in_txn='1'}[1m])))",
-          "hide": false,
-          "interval": "",
-          "legendFormat": "avg-in-txn",
-          "refId": "C"
-        },
-        {
-          "exemplar": true,
-          "expr": "histogram_quantile(0.99, sum(rate(tidb_server_conn_idle_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", in_txn='1'}[1m])) by (le,in_txn))",
+          "expr": "histogram_quantile(0.99, sum(rate(tidb_server_conn_idle_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", in_txn='1'}[1m])) by (le,in_txn))",
           "hide": false,
           "interval": "",
           "legendFormat": "99-in-txn",
@@ -999,7 +1321,7 @@
         },
         {
           "exemplar": true,
-          "expr": "histogram_quantile(0.99, sum(rate(tidb_server_conn_idle_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", in_txn='0'}[1m])) by (le,in_txn))",
+          "expr": "histogram_quantile(0.99, sum(rate(tidb_server_conn_idle_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", in_txn='0'}[1m])) by (le,in_txn))",
           "hide": false,
           "interval": "",
           "legendFormat": "99-not-in-txn",
@@ -1027,6 +1349,7 @@
       },
       "yaxes": [
         {
+          "$$hashKey": "object:3364",
           "decimals": null,
           "format": "s",
           "label": null,
@@ -1036,6 +1359,7 @@
           "show": true
         },
         {
+          "$$hashKey": "object:3365",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -1059,18 +1383,14 @@
       "description": "The time cost of parsing SQL to AST",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
       "gridPos": {
-        "h": 7,
-        "w": 12,
+        "h": 8,
+        "w": 8,
         "x": 0,
-        "y": 29
+        "y": 36
       },
       "hiddenSeries": false,
       "id": 156,
@@ -1081,9 +1401,9 @@
         "current": false,
         "hideEmpty": true,
         "hideZero": true,
-        "max": true,
+        "max": false,
         "min": false,
-        "rightSide": true,
+        "rightSide": false,
         "show": true,
         "sort": null,
         "sortDesc": null,
@@ -1098,7 +1418,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1108,16 +1428,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum(rate(tidb_session_parse_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m])) by (le))",
-          "format": "time_series",
-          "instant": false,
-          "intervalFactor": 2,
-          "legendFormat": "99",
-          "refId": "A",
-          "step": 30
-        },
-        {
-          "expr": "histogram_quantile(0.95, sum(rate(tidb_session_parse_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(tidb_session_parse_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m])) by (le))",
           "format": "time_series",
           "hide": true,
           "intervalFactor": 1,
@@ -1126,11 +1437,20 @@
         },
         {
           "exemplar": true,
-          "expr": "(sum(rate(tidb_session_parse_duration_seconds_sum{tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m])) / sum(rate(tidb_session_parse_duration_seconds_count{tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m])))",
+          "expr": "(sum(rate(tidb_session_parse_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m])) / sum(rate(tidb_session_parse_duration_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m])))",
           "hide": false,
           "interval": "",
           "legendFormat": "avg",
           "refId": "C"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(tidb_session_parse_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m])) by (le))",
+          "format": "time_series",
+          "instant": false,
+          "intervalFactor": 2,
+          "legendFormat": "99",
+          "refId": "D",
+          "step": 30
         }
       ],
       "thresholds": [],
@@ -1154,6 +1474,7 @@
       },
       "yaxes": [
         {
+          "$$hashKey": "object:1955",
           "decimals": null,
           "format": "s",
           "label": null,
@@ -1163,6 +1484,7 @@
           "show": true
         },
         {
+          "$$hashKey": "object:1956",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -1185,18 +1507,14 @@
       "description": "the time to build plan",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
       "gridPos": {
-        "h": 7,
-        "w": 12,
-        "x": 12,
-        "y": 29
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 36
       },
       "hiddenSeries": false,
       "id": 170,
@@ -1204,9 +1522,9 @@
         "alignAsTable": true,
         "avg": true,
         "current": false,
-        "max": true,
+        "max": false,
         "min": false,
-        "rightSide": true,
+        "rightSide": false,
         "show": true,
         "total": false,
         "values": true
@@ -1219,7 +1537,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1230,27 +1548,27 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "histogram_quantile(0.99, sum(rate(tidb_session_compile_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m])) by (le))",
+          "expr": "(sum(rate(tidb_session_compile_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m])) / sum(rate(tidb_session_compile_duration_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m])))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "avg",
+          "refId": "D"
+        },
+        {
+          "exemplar": true,
+          "expr": "histogram_quantile(0.99, sum(rate(tidb_session_compile_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m])) by (le))",
           "format": "time_series",
           "interval": "",
           "intervalFactor": 2,
           "legendFormat": "99",
           "refId": "B"
-        },
-        {
-          "exemplar": true,
-          "expr": "(sum(rate(tidb_session_compile_duration_seconds_sum{tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m])) / sum(rate(tidb_session_compile_duration_seconds_count{tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m])))",
-          "hide": false,
-          "interval": "",
-          "legendFormat": "avg",
-          "refId": "D"
         }
       ],
       "thresholds": [],
       "timeFrom": null,
       "timeRegions": [],
       "timeShift": null,
-      "title": "Compile",
+      "title": "Compile Duration",
       "tooltip": {
         "msResolution": false,
         "shared": true,
@@ -1267,6 +1585,7 @@
       },
       "yaxes": [
         {
+          "$$hashKey": "object:283",
           "format": "s",
           "label": null,
           "logBase": 1,
@@ -1275,6 +1594,7 @@
           "show": true
         },
         {
+          "$$hashKey": "object:284",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -1298,17 +1618,13 @@
       "description": "The time cost of executing the SQL which does not include the time to get the results of the query .",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
       "gridPos": {
-        "h": 7,
-        "w": 12,
-        "x": 0,
+        "h": 8,
+        "w": 8,
+        "x": 16,
         "y": 36
       },
       "hiddenSeries": false,
@@ -1320,9 +1636,9 @@
         "current": false,
         "hideEmpty": true,
         "hideZero": true,
-        "max": true,
+        "max": false,
         "min": false,
-        "rightSide": true,
+        "rightSide": false,
         "show": true,
         "sort": null,
         "sortDesc": null,
@@ -1337,7 +1653,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1347,16 +1663,7 @@
       "steppedLine": false,
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum(rate(tidb_session_execute_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m])) by (le))",
-          "format": "time_series",
-          "instant": false,
-          "intervalFactor": 2,
-          "legendFormat": "99",
-          "refId": "A",
-          "step": 30
-        },
-        {
-          "expr": "histogram_quantile(0.95, sum(rate(tidb_session_execute_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(tidb_session_execute_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m])) by (le))",
           "format": "time_series",
           "hide": true,
           "intervalFactor": 1,
@@ -1365,11 +1672,20 @@
         },
         {
           "exemplar": true,
-          "expr": "(sum(rate(tidb_session_execute_duration_seconds_sum{tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m])) / sum(rate(tidb_session_execute_duration_seconds_count{tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m])))",
+          "expr": "(sum(rate(tidb_session_execute_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m])) / sum(rate(tidb_session_execute_duration_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m])))",
           "hide": false,
           "interval": "",
           "legendFormat": "avg",
           "refId": "C"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(tidb_session_execute_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", sql_type=\"general\"}[1m])) by (le))",
+          "format": "time_series",
+          "instant": false,
+          "intervalFactor": 2,
+          "legendFormat": "99",
+          "refId": "A",
+          "step": 30
         }
       ],
       "thresholds": [],
@@ -1393,6 +1709,7 @@
       },
       "yaxes": [
         {
+          "$$hashKey": "object:2109",
           "decimals": null,
           "format": "s",
           "label": null,
@@ -1402,6 +1719,7 @@
           "show": true
         },
         {
+          "$$hashKey": "object:2110",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -1421,149 +1739,18 @@
       "dashLength": 10,
       "dashes": false,
       "datasource": "${DS_TEST-CLUSTER}",
-      "description": "The duration of TiDB starts to wait for the TSO until received the TS result.",
-      "editable": true,
-      "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
-      "fill": 1,
-      "fillGradient": 0,
-      "grid": {},
-      "gridPos": {
-        "h": 7,
-        "w": 12,
-        "x": 12,
-        "y": 36
-      },
-      "hiddenSeries": false,
-      "id": 77,
-      "legend": {
-        "alignAsTable": true,
-        "avg": true,
-        "current": false,
-        "max": true,
-        "min": false,
-        "rightSide": true,
-        "show": true,
-        "total": false,
-        "values": true
-      },
-      "lines": true,
-      "linewidth": 1,
-      "links": [],
-      "nullPointMode": "null as zero",
-      "options": {
-        "alertThreshold": true
-      },
-      "percentage": false,
-      "pluginVersion": "7.5.11",
-      "pointradius": 5,
-      "points": false,
-      "renderer": "flot",
-      "seriesOverrides": [],
-      "spaceLength": 10,
-      "stack": false,
-      "steppedLine": false,
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.999, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", type=\"wait\"}[1m])) by (le))",
-          "format": "time_series",
-          "hide": true,
-          "intervalFactor": 2,
-          "legendFormat": "999",
-          "refId": "A",
-          "step": 10
-        },
-        {
-          "expr": "histogram_quantile(0.99, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", type=\"wait\"}[1m])) by (le))",
-          "format": "time_series",
-          "intervalFactor": 2,
-          "legendFormat": "99",
-          "refId": "B"
-        },
-        {
-          "expr": "histogram_quantile(0.90, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", type=\"wait\"}[1m])) by (le))",
-          "format": "time_series",
-          "hide": true,
-          "intervalFactor": 2,
-          "legendFormat": "90",
-          "refId": "C"
-        },
-        {
-          "exemplar": true,
-          "expr": "(sum(rate(pd_client_cmd_handle_cmds_duration_seconds_sum{tidb_cluster=\"$tidb_cluster\", type=\"wait\"}[1m])) / sum(rate(pd_client_cmd_handle_cmds_duration_seconds_count{tidb_cluster=\"$tidb_cluster\", type=\"wait\"}[1m])))",
-          "hide": false,
-          "interval": "",
-          "legendFormat": "avg",
-          "refId": "D"
-        }
-      ],
-      "thresholds": [],
-      "timeFrom": null,
-      "timeRegions": [],
-      "timeShift": null,
-      "title": "PD TSO Wait Duration",
-      "tooltip": {
-        "msResolution": false,
-        "shared": true,
-        "sort": 0,
-        "value_type": "cumulative"
-      },
-      "type": "graph",
-      "xaxis": {
-        "buckets": null,
-        "mode": "time",
-        "name": null,
-        "show": true,
-        "values": []
-      },
-      "yaxes": [
-        {
-          "format": "s",
-          "label": null,
-          "logBase": 1,
-          "max": null,
-          "min": "0",
-          "show": true
-        },
-        {
-          "format": "short",
-          "label": null,
-          "logBase": 1,
-          "max": null,
-          "min": null,
-          "show": true
-        }
-      ],
-      "yaxis": {
-        "align": false,
-        "alignLevel": null
-      }
-    },
-    {
-      "aliasColors": {},
-      "bars": false,
-      "dashLength": 10,
-      "dashes": false,
-      "datasource": "${DS_TEST-CLUSTER}",
       "decimals": null,
       "description": "tidb avg kv request duration",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
       "gridPos": {
-        "h": 11,
-        "w": 12,
+        "h": 8,
+        "w": 8,
         "x": 0,
-        "y": 43
+        "y": 44
       },
       "hiddenSeries": false,
       "id": 172,
@@ -1574,12 +1761,12 @@
         "current": false,
         "hideEmpty": true,
         "hideZero": true,
-        "max": true,
+        "max": false,
         "min": false,
         "rightSide": true,
         "show": true,
         "sort": "avg",
-        "sortDesc": false,
+        "sortDesc": true,
         "total": false,
         "values": true
       },
@@ -1591,7 +1778,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1602,7 +1789,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "sum(rate(tidb_tikvclient_request_seconds_sum{tidb_cluster=\"$tidb_cluster\", store!=\"0\"}[1m])) by (type)/ sum(rate(tidb_tikvclient_request_seconds_count{tidb_cluster=\"$tidb_cluster\", store!=\"0\"}[1m])) by (type)",
+          "expr": "sum(rate(tidb_tikvclient_request_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", store!=\"0\"}[1m])) by (type)/ sum(rate(tidb_tikvclient_request_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", store!=\"0\"}[1m])) by (type)",
           "hide": false,
           "interval": "",
           "legendFormat": "{{type}}",
@@ -1630,6 +1817,7 @@
       },
       "yaxes": [
         {
+          "$$hashKey": "object:2161",
           "decimals": null,
           "format": "s",
           "label": null,
@@ -1639,6 +1827,7 @@
           "show": true
         },
         {
+          "$$hashKey": "object:2162",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -1662,18 +1851,14 @@
       "description": "tikv grpc avg duration",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
       "gridPos": {
-        "h": 11,
-        "w": 12,
-        "x": 12,
-        "y": 43
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 44
       },
       "hiddenSeries": false,
       "id": 173,
@@ -1684,12 +1869,12 @@
         "current": false,
         "hideEmpty": true,
         "hideZero": true,
-        "max": true,
+        "max": false,
         "min": false,
         "rightSide": true,
         "show": true,
-        "sort": null,
-        "sortDesc": null,
+        "sort": "avg",
+        "sortDesc": true,
         "total": false,
         "values": true
       },
@@ -1701,7 +1886,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1712,7 +1897,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "sum(rate(tikv_grpc_msg_duration_seconds_sum{tidb_cluster=\"$tidb_cluster\", store!=\"0\"}[1m])) by (type)/ sum(rate(tikv_grpc_msg_duration_seconds_count{tidb_cluster=\"$tidb_cluster\", store!=\"0\"}[1m])) by (type)",
+          "expr": "sum(rate(tikv_grpc_msg_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", store!=\"0\"}[1m])) by (type)/ sum(rate(tikv_grpc_msg_duration_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", store!=\"0\"}[1m])) by (type)",
           "hide": false,
           "interval": "",
           "legendFormat": "{{type}}",
@@ -1740,6 +1925,7 @@
       },
       "yaxes": [
         {
+          "$$hashKey": "object:2263",
           "decimals": null,
           "format": "s",
           "label": null,
@@ -1749,6 +1935,7 @@
           "show": true
         },
         {
+          "$$hashKey": "object:2264",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -1768,38 +1955,28 @@
       "dashLength": 10,
       "dashes": false,
       "datasource": "${DS_TEST-CLUSTER}",
-      "decimals": null,
-      "description": "The time consumed by processing asynchronous write requests.\nStorage async write duration = store duration + apply duration",
+      "description": "The duration of a client starting to wait for the TS until received the TS result.",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
       "gridPos": {
-        "h": 7,
-        "w": 12,
-        "x": 0,
-        "y": 54
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 44
       },
       "hiddenSeries": false,
-      "id": 185,
-      "interval": "",
+      "id": 77,
       "legend": {
         "alignAsTable": true,
         "avg": true,
         "current": false,
-        "hideEmpty": true,
-        "hideZero": true,
-        "max": true,
+        "max": false,
         "min": false,
         "rightSide": true,
         "show": true,
-        "sort": null,
-        "sortDesc": null,
         "total": false,
         "values": true
       },
@@ -1811,7 +1988,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1822,7 +1999,142 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "sum(rate(tikv_storage_engine_async_request_duration_seconds_sum{tidb_cluster=\"$tidb_cluster\", type=\"write\"}[1m])) / sum(rate(tikv_storage_engine_async_request_duration_seconds_count{tidb_cluster=\"$tidb_cluster\", type=\"write\"}[1m]))",
+          "expr": "(sum(rate(pd_client_cmd_handle_cmds_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"wait\"}[1m])) / sum(rate(pd_client_cmd_handle_cmds_duration_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"wait\"}[1m])))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "avg",
+          "refId": "D"
+        },
+        {
+          "exemplar": true,
+          "expr": "histogram_quantile(0.999, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"wait\"}[1m])) by (le))",
+          "format": "time_series",
+          "hide": true,
+          "interval": "",
+          "intervalFactor": 2,
+          "legendFormat": "999",
+          "refId": "A",
+          "step": 10
+        },
+        {
+          "exemplar": true,
+          "expr": "histogram_quantile(0.99, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"wait\"}[1m])) by (le))",
+          "format": "time_series",
+          "interval": "",
+          "intervalFactor": 2,
+          "legendFormat": "99",
+          "refId": "B"
+        },
+        {
+          "exemplar": true,
+          "expr": "histogram_quantile(0.90, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"wait\"}[1m])) by (le))",
+          "format": "time_series",
+          "hide": true,
+          "interval": "",
+          "intervalFactor": 2,
+          "legendFormat": "90",
+          "refId": "C"
+        }
+      ],
+      "thresholds": [],
+      "timeFrom": null,
+      "timeRegions": [],
+      "timeShift": null,
+      "title": "PD TSO Wait Duration",
+      "tooltip": {
+        "msResolution": false,
+        "shared": true,
+        "sort": 0,
+        "value_type": "cumulative"
+      },
+      "type": "graph",
+      "xaxis": {
+        "buckets": null,
+        "mode": "time",
+        "name": null,
+        "show": true,
+        "values": []
+      },
+      "yaxes": [
+        {
+          "$$hashKey": "object:2315",
+          "format": "s",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": "0",
+          "show": true
+        },
+        {
+          "$$hashKey": "object:2316",
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": null,
+          "show": true
+        }
+      ],
+      "yaxis": {
+        "align": false,
+        "alignLevel": null
+      }
+    },
+    {
+      "aliasColors": {},
+      "bars": false,
+      "dashLength": 10,
+      "dashes": false,
+      "datasource": "${DS_TEST-CLUSTER}",
+      "decimals": null,
+      "description": "The time consumed by processing asynchronous write requests.\nStorage async write duration = store duration + apply duration",
+      "editable": true,
+      "error": false,
+      "fill": 1,
+      "fillGradient": 0,
+      "grid": {},
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 52
+      },
+      "hiddenSeries": false,
+      "id": 185,
+      "interval": "",
+      "legend": {
+        "alignAsTable": true,
+        "avg": true,
+        "current": false,
+        "hideEmpty": true,
+        "hideZero": true,
+        "max": false,
+        "min": false,
+        "rightSide": false,
+        "show": true,
+        "total": false,
+        "values": true
+      },
+      "lines": true,
+      "linewidth": 1,
+      "links": [],
+      "nullPointMode": "null as zero",
+      "options": {
+        "alertThreshold": true
+      },
+      "percentage": false,
+      "pluginVersion": "8.0.7",
+      "pointradius": 5,
+      "points": false,
+      "renderer": "flot",
+      "seriesOverrides": [],
+      "spaceLength": 10,
+      "stack": false,
+      "steppedLine": false,
+      "targets": [
+        {
+          "exemplar": true,
+          "expr": "sum(rate(tikv_storage_engine_async_request_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"write\"}[1m])) / sum(rate(tikv_storage_engine_async_request_duration_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"write\"}[1m]))",
           "hide": false,
           "interval": "",
           "legendFormat": "avg",
@@ -1830,7 +2142,7 @@
         },
         {
           "exemplar": true,
-          "expr": "histogram_quantile(0.99, sum(rate(tikv_storage_engine_async_request_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\", type=\"write\"}[30s])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(tikv_storage_engine_async_request_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"write\"}[30s])) by (le))",
           "hide": false,
           "interval": "",
           "legendFormat": "99",
@@ -1858,6 +2170,7 @@
       },
       "yaxes": [
         {
+          "$$hashKey": "object:2371",
           "decimals": null,
           "format": "s",
           "label": null,
@@ -1867,6 +2180,7 @@
           "show": true
         },
         {
+          "$$hashKey": "object:2372",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -1890,18 +2204,14 @@
       "description": "The store time duration of each request",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
       "gridPos": {
-        "h": 7,
-        "w": 12,
-        "x": 12,
-        "y": 54
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 52
       },
       "hiddenSeries": false,
       "id": 183,
@@ -1912,9 +2222,9 @@
         "current": false,
         "hideEmpty": true,
         "hideZero": true,
-        "max": true,
+        "max": false,
         "min": false,
-        "rightSide": true,
+        "rightSide": false,
         "show": true,
         "sort": null,
         "sortDesc": null,
@@ -1929,7 +2239,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -1940,7 +2250,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "sum(rate(tikv_raftstore_store_duration_secs_sum{tidb_cluster=\"$tidb_cluster\"}[1m])) / sum(rate(tikv_raftstore_store_duration_secs_count{tidb_cluster=\"$tidb_cluster\"}[1m]))",
+          "expr": "sum(rate(tikv_raftstore_store_duration_secs_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) / sum(rate(tikv_raftstore_store_duration_secs_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m]))",
           "hide": false,
           "interval": "",
           "legendFormat": "avg",
@@ -1948,7 +2258,7 @@
         },
         {
           "exemplar": true,
-          "expr": "histogram_quantile(0.99, sum(rate(tikv_raftstore_store_duration_secs_bucket{tidb_cluster=\"$tidb_cluster\"}[1m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(tikv_raftstore_store_duration_secs_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (le))",
           "hide": false,
           "interval": "",
           "legendFormat": "99",
@@ -1976,6 +2286,7 @@
       },
       "yaxes": [
         {
+          "$$hashKey": "object:2520",
           "decimals": null,
           "format": "s",
           "label": null,
@@ -1985,6 +2296,7 @@
           "show": true
         },
         {
+          "$$hashKey": "object:2521",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -2008,18 +2320,14 @@
       "description": "The store time duration of each request",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 61
+        "w": 8,
+        "x": 16,
+        "y": 52
       },
       "hiddenSeries": false,
       "id": 174,
@@ -2030,9 +2338,9 @@
         "current": false,
         "hideEmpty": true,
         "hideZero": true,
-        "max": true,
+        "max": false,
         "min": false,
-        "rightSide": true,
+        "rightSide": false,
         "show": true,
         "sort": null,
         "sortDesc": null,
@@ -2047,7 +2355,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -2058,7 +2366,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "(sum(rate(tikv_raftstore_apply_duration_secs_sum{tidb_cluster=\"$tidb_cluster\"}[1m])) / sum(rate(tikv_raftstore_apply_duration_secs_count{tidb_cluster=\"$tidb_cluster\"}[1m])))",
+          "expr": "(sum(rate(tikv_raftstore_apply_duration_secs_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) / sum(rate(tikv_raftstore_apply_duration_secs_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])))",
           "hide": false,
           "interval": "",
           "legendFormat": "avg",
@@ -2066,7 +2374,7 @@
         },
         {
           "exemplar": true,
-          "expr": "histogram_quantile(0.99, sum(rate(tikv_raftstore_apply_duration_secs_bucket{tidb_cluster=\"$tidb_cluster\"}[1m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(tikv_raftstore_apply_duration_secs_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (le))",
           "hide": false,
           "interval": "",
           "legendFormat": "99",
@@ -2094,6 +2402,7 @@
       },
       "yaxes": [
         {
+          "$$hashKey": "object:2572",
           "decimals": null,
           "format": "s",
           "label": null,
@@ -2103,124 +2412,7 @@
           "show": true
         },
         {
-          "format": "short",
-          "label": null,
-          "logBase": 1,
-          "max": null,
-          "min": null,
-          "show": false
-        }
-      ],
-      "yaxis": {
-        "align": false,
-        "alignLevel": null
-      }
-    },
-    {
-      "aliasColors": {},
-      "bars": false,
-      "dashLength": 10,
-      "dashes": false,
-      "datasource": "${DS_TEST-CLUSTER}",
-      "decimals": null,
-      "description": "The time consumed when Raft commits log",
-      "editable": true,
-      "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
-      "fill": 1,
-      "fillGradient": 0,
-      "grid": {},
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 61
-      },
-      "hiddenSeries": false,
-      "id": 177,
-      "interval": "",
-      "legend": {
-        "alignAsTable": true,
-        "avg": true,
-        "current": false,
-        "hideEmpty": true,
-        "hideZero": true,
-        "max": true,
-        "min": false,
-        "rightSide": true,
-        "show": true,
-        "sort": null,
-        "sortDesc": null,
-        "total": false,
-        "values": true
-      },
-      "lines": true,
-      "linewidth": 1,
-      "links": [],
-      "nullPointMode": "null as zero",
-      "options": {
-        "alertThreshold": true
-      },
-      "percentage": false,
-      "pluginVersion": "7.5.11",
-      "pointradius": 5,
-      "points": false,
-      "renderer": "flot",
-      "seriesOverrides": [],
-      "spaceLength": 10,
-      "stack": false,
-      "steppedLine": false,
-      "targets": [
-        {
-          "exemplar": true,
-          "expr": "(sum(rate(tikv_raftstore_commit_log_duration_seconds_sum{tidb_cluster=\"$tidb_cluster\"}[1m])) / sum(rate(tikv_raftstore_commit_log_duration_seconds_count{tidb_cluster=\"$tidb_cluster\"}[1m])))",
-          "hide": false,
-          "interval": "",
-          "legendFormat": "avg",
-          "refId": "C"
-        },
-        {
-          "exemplar": true,
-          "expr": "histogram_quantile(0.99, sum(rate(tikv_raftstore_commit_log_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\"}[1m])) by (le))",
-          "hide": false,
-          "interval": "",
-          "legendFormat": "99",
-          "refId": "A"
-        }
-      ],
-      "thresholds": [],
-      "timeFrom": null,
-      "timeRegions": [],
-      "timeShift": null,
-      "title": "Commit Log Duration",
-      "tooltip": {
-        "msResolution": false,
-        "shared": true,
-        "sort": 0,
-        "value_type": "cumulative"
-      },
-      "type": "graph",
-      "xaxis": {
-        "buckets": null,
-        "mode": "time",
-        "name": null,
-        "show": true,
-        "values": []
-      },
-      "yaxes": [
-        {
-          "decimals": null,
-          "format": "s",
-          "label": null,
-          "logBase": 1,
-          "max": null,
-          "min": "0",
-          "show": true
-        },
-        {
+          "$$hashKey": "object:2573",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -2244,18 +2436,14 @@
       "description": "The time consumed when Raft appends log",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
       "gridPos": {
-        "h": 8,
-        "w": 12,
+        "h": 9,
+        "w": 8,
         "x": 0,
-        "y": 69
+        "y": 60
       },
       "hiddenSeries": false,
       "id": 176,
@@ -2266,9 +2454,9 @@
         "current": false,
         "hideEmpty": true,
         "hideZero": true,
-        "max": true,
+        "max": false,
         "min": false,
-        "rightSide": true,
+        "rightSide": false,
         "show": true,
         "sort": null,
         "sortDesc": null,
@@ -2283,7 +2471,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -2294,7 +2482,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "(sum(rate(tikv_raftstore_append_log_duration_seconds_sum{tidb_cluster=\"$tidb_cluster\"}[1m])) / sum(rate(tikv_raftstore_append_log_duration_seconds_count{tidb_cluster=\"$tidb_cluster\"}[1m])))",
+          "expr": "(sum(rate(tikv_raftstore_append_log_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) / sum(rate(tikv_raftstore_append_log_duration_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])))",
           "hide": false,
           "interval": "",
           "legendFormat": "avg",
@@ -2302,7 +2490,7 @@
         },
         {
           "exemplar": true,
-          "expr": "histogram_quantile(0.99, sum(rate(tikv_raftstore_append_log_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\"}[1m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(tikv_raftstore_append_log_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (le))",
           "hide": false,
           "interval": "",
           "legendFormat": "99",
@@ -2330,6 +2518,7 @@
       },
       "yaxes": [
         {
+          "$$hashKey": "object:2672",
           "decimals": null,
           "format": "s",
           "label": null,
@@ -2339,6 +2528,123 @@
           "show": true
         },
         {
+          "$$hashKey": "object:2673",
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": null,
+          "show": false
+        }
+      ],
+      "yaxis": {
+        "align": false,
+        "alignLevel": null
+      }
+    },
+    {
+      "aliasColors": {},
+      "bars": false,
+      "dashLength": 10,
+      "dashes": false,
+      "datasource": "${DS_TEST-CLUSTER}",
+      "decimals": null,
+      "description": "The time consumed when Raft commits log",
+      "editable": true,
+      "error": false,
+      "fill": 1,
+      "fillGradient": 0,
+      "grid": {},
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 8,
+        "y": 60
+      },
+      "hiddenSeries": false,
+      "id": 177,
+      "interval": "",
+      "legend": {
+        "alignAsTable": true,
+        "avg": true,
+        "current": false,
+        "hideEmpty": true,
+        "hideZero": true,
+        "max": false,
+        "min": false,
+        "rightSide": false,
+        "show": true,
+        "sort": null,
+        "sortDesc": null,
+        "total": false,
+        "values": true
+      },
+      "lines": true,
+      "linewidth": 1,
+      "links": [],
+      "nullPointMode": "null as zero",
+      "options": {
+        "alertThreshold": true
+      },
+      "percentage": false,
+      "pluginVersion": "8.0.7",
+      "pointradius": 5,
+      "points": false,
+      "renderer": "flot",
+      "seriesOverrides": [],
+      "spaceLength": 10,
+      "stack": false,
+      "steppedLine": false,
+      "targets": [
+        {
+          "exemplar": true,
+          "expr": "(sum(rate(tikv_raftstore_commit_log_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) / sum(rate(tikv_raftstore_commit_log_duration_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "avg",
+          "refId": "C"
+        },
+        {
+          "exemplar": true,
+          "expr": "histogram_quantile(0.99, sum(rate(tikv_raftstore_commit_log_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (le))",
+          "hide": false,
+          "interval": "",
+          "legendFormat": "99",
+          "refId": "A"
+        }
+      ],
+      "thresholds": [],
+      "timeFrom": null,
+      "timeRegions": [],
+      "timeShift": null,
+      "title": "Commit Log Duration",
+      "tooltip": {
+        "msResolution": false,
+        "shared": true,
+        "sort": 0,
+        "value_type": "cumulative"
+      },
+      "type": "graph",
+      "xaxis": {
+        "buckets": null,
+        "mode": "time",
+        "name": null,
+        "show": true,
+        "values": []
+      },
+      "yaxes": [
+        {
+          "$$hashKey": "object:2724",
+          "decimals": null,
+          "format": "s",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": "0",
+          "show": true
+        },
+        {
+          "$$hashKey": "object:2725",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -2362,18 +2668,14 @@
       "description": "The time consumed for Raft to apply logs",
       "editable": true,
       "error": false,
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": []
-      },
       "fill": 1,
       "fillGradient": 0,
       "grid": {},
       "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 69
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 60
       },
       "hiddenSeries": false,
       "id": 186,
@@ -2384,9 +2686,9 @@
         "current": false,
         "hideEmpty": true,
         "hideZero": true,
-        "max": true,
+        "max": false,
         "min": false,
-        "rightSide": true,
+        "rightSide": false,
         "show": true,
         "sort": null,
         "sortDesc": null,
@@ -2401,7 +2703,7 @@
         "alertThreshold": true
       },
       "percentage": false,
-      "pluginVersion": "7.5.11",
+      "pluginVersion": "8.0.7",
       "pointradius": 5,
       "points": false,
       "renderer": "flot",
@@ -2412,7 +2714,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "(sum(rate(tikv_raftstore_apply_log_duration_seconds_sum{tidb_cluster=\"$tidb_cluster\"}[1m])) / sum(rate(tikv_raftstore_apply_log_duration_seconds_count{tidb_cluster=\"$tidb_cluster\"}[1m])))",
+          "expr": "(sum(rate(tikv_raftstore_apply_log_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) / sum(rate(tikv_raftstore_apply_log_duration_seconds_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])))",
           "hide": false,
           "interval": "",
           "legendFormat": "avg",
@@ -2420,7 +2722,7 @@
         },
         {
           "exemplar": true,
-          "expr": "histogram_quantile(0.99, sum(rate(tikv_raftstore_apply_log_duration_seconds_bucket{tidb_cluster=\"$tidb_cluster\"}[1m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(tikv_raftstore_apply_log_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}[1m])) by (le))",
           "hide": false,
           "interval": "",
           "legendFormat": "99",
@@ -2448,6 +2750,7 @@
       },
       "yaxes": [
         {
+          "$$hashKey": "object:2776",
           "decimals": null,
           "format": "s",
           "label": null,
@@ -2457,6 +2760,7 @@
           "show": true
         },
         {
+          "$$hashKey": "object:2777",
           "format": "short",
           "label": null,
           "logBase": 1,
@@ -2483,11 +2787,11 @@
         "datasource": "${DS_TEST-CLUSTER}",
         "hide": 2,
         "includeAll": false,
-        "label": "tidb_cluster",
+        "label": "K8s-cluster",
         "multi": false,
-        "name": "tidb_cluster",
+        "name": "k8s_cluster",
         "options": [],
-        "query": "label_values(pd_cluster_status, tidb_cluster)",
+        "query": "label_values(pd_cluster_status, k8s_cluster)",
         "refresh": 2,
         "regex": "",
         "sort": 1,
@@ -2501,18 +2805,16 @@
         "allValue": null,
         "current": {},
         "datasource": "${DS_TEST-CLUSTER}",
-        "definition": "",
-        "hide": 0,
+        "hide": 2,
         "includeAll": false,
-        "label": null,
+        "label": "tidb_cluster",
         "multi": false,
-        "name": "instance",
+        "name": "tidb_cluster",
         "options": [],
-        "query": "label_values(pd_cluster_status{tidb_cluster=\"$tidb_cluster\"}, instance)",
-        "refresh": 1,
+        "query": "label_values(pd_cluster_status{k8s_cluster=\"$k8s_cluster\"}, tidb_cluster)",
+        "refresh": 2,
         "regex": "",
-        "skipUrlSync": false,
-        "sort": 0,
+        "sort": 1,
         "tagValuesQuery": "",
         "tags": [],
         "tagsQuery": "",

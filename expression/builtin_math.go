@@ -393,7 +393,7 @@ func (b *builtinRoundDecSig) evalDecimal(row chunk.Row) (*types.MyDecimal, bool,
 		return nil, isNull, err
 	}
 	to := new(types.MyDecimal)
-	if err = val.Round(to, 0, types.ModeHalfEven); err != nil {
+	if err = val.Round(to, 0, types.ModeHalfUp); err != nil {
 		return nil, true, err
 	}
 	return to, false, nil
@@ -469,7 +469,7 @@ func (b *builtinRoundWithFracDecSig) evalDecimal(row chunk.Row) (*types.MyDecima
 		return nil, isNull, err
 	}
 	to := new(types.MyDecimal)
-	if err = val.Round(to, mathutil.Min(int(frac), b.tp.Decimal), types.ModeHalfEven); err != nil {
+	if err = val.Round(to, mathutil.Min(int(frac), b.tp.Decimal), types.ModeHalfUp); err != nil {
 		return nil, true, err
 	}
 	return to, false, nil

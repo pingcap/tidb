@@ -793,6 +793,7 @@ func TestEval(t *testing.T) {
 }
 
 func TestPBToExprWithNewCollation(t *testing.T) {
+	collate.SetNewCollationEnabledForTest(false)
 	sc := new(stmtctx.StatementContext)
 	fieldTps := make([]*types.FieldType, 1)
 
@@ -829,7 +830,6 @@ func TestPBToExprWithNewCollation(t *testing.T) {
 	}
 
 	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 
 	for _, cs := range cases {
 		ft := types.NewFieldType(mysql.TypeString)
@@ -844,6 +844,28 @@ func TestPBToExprWithNewCollation(t *testing.T) {
 		cons, ok := e.(*Constant)
 		require.True(t, ok)
 		require.Equal(t, cs.expName, cons.Value.Collation())
+	}
+}
+
+// Test convert various scalar functions.
+func TestPBToScalarFuncExpr(t *testing.T) {
+	sc := new(stmtctx.StatementContext)
+	fieldTps := make([]*types.FieldType, 1)
+	exprs := []*tipb.Expr{
+		{
+			Tp:        tipb.ExprType_ScalarFunc,
+			Sig:       tipb.ScalarFuncSig_RegexpSig,
+			FieldType: ToPBFieldType(newStringFieldType()),
+		},
+		{
+			Tp:        tipb.ExprType_ScalarFunc,
+			Sig:       tipb.ScalarFuncSig_RegexpUTF8Sig,
+			FieldType: ToPBFieldType(newStringFieldType()),
+		},
+	}
+	for _, expr := range exprs {
+		_, err := PBToExpr(expr, fieldTps, sc)
+		require.NoError(t, err)
 	}
 }
 

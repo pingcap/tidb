@@ -15,7 +15,6 @@
 package common_test
 
 import (
-	"os"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -24,9 +23,7 @@ import (
 
 func TestGetStorageSize(t *testing.T) {
 	// only ensure we can get storage size.
-	d, err := os.MkdirTemp("", "store_size")
-	require.NoError(t, err)
-	defer os.RemoveAll(d)
+	d := t.TempDir()
 	size, err := common.GetStorageSize(d)
 	require.NoError(t, err)
 	require.Greater(t, size.Capacity, uint64(0))

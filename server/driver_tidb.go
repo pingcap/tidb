@@ -80,8 +80,7 @@ func (ts *TiDBStatement) Execute(ctx context.Context, args []types.Datum) (rs Re
 		return
 	}
 	rs = &tidbResultSet{
-		recordSet:    tidbRecordset,
-		preparedStmt: ts.ctx.GetSessionVars().PreparedStmts[ts.id].(*core.CachedPrepareStmt),
+		recordSet: tidbRecordset,
 	}
 	return
 }
@@ -165,8 +164,13 @@ func (ts *TiDBStatement) Close() error {
 			if !ok {
 				return errors.Errorf("invalid CachedPrepareStmt type")
 			}
-			ts.ctx.PreparedPlanCache().Delete(core.NewPlanCacheKey(
-				ts.ctx.GetSessionVars(), ts.id, preparedObj.PreparedAst.SchemaVersion))
+			cacheKey, err := core.NewPlanCacheKey(ts.ctx.GetSessionVars(), preparedObj.StmtText, preparedObj.StmtDB, preparedObj.PreparedAst.SchemaVersion)
+			if err != nil {
+				return err
+			}
+			if !ts.ctx.GetSessionVars().IgnorePreparedCacheCloseStmt { // keep the plan in cache
+				ts.ctx.PreparedPlanCache().Delete(cacheKey)
+			}
 		}
 		ts.ctx.GetSessionVars().RemovePreparedStmt(ts.id)
 	}
@@ -297,11 +301,10 @@ func (tc *TiDBContext) GetStmtStats() *stmtstats.StatementStats {
 }
 
 type tidbResultSet struct {
-	recordSet    sqlexec.RecordSet
-	columns      []*ColumnInfo
-	rows         []chunk.Row
-	closed       int32
-	preparedStmt *core.CachedPrepareStmt
+	recordSet sqlexec.RecordSet
+	columns   []*ColumnInfo
+	rows      []chunk.Row
+	closed    int32
 }
 
 func (trs *tidbResultSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
@@ -343,22 +346,11 @@ func (trs *tidbResultSet) Columns() []*ColumnInfo {
 	if trs.columns != nil {
 		return trs.columns
 	}
-	// for prepare statement, try to get cached columnInfo array
-	if trs.preparedStmt != nil {
-		ps := trs.preparedStmt
-		if colInfos, ok := ps.ColumnInfos.([]*ColumnInfo); ok {
-			trs.columns = colInfos
-		}
-	}
+
 	if trs.columns == nil {
 		fields := trs.recordSet.Fields()
 		for _, v := range fields {
 			trs.columns = append(trs.columns, convertColumnInfo(v))
-		}
-		if trs.preparedStmt != nil {
-			// if ColumnInfo struct has allocated object,
-			// here maybe we need deep copy ColumnInfo to do caching
-			trs.preparedStmt.ColumnInfos = trs.columns
 		}
 	}
 	return trs.columns

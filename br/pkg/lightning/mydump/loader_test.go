@@ -20,11 +20,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
-	router "github.com/pingcap/tidb-tools/pkg/table-router"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	md "github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	filter "github.com/pingcap/tidb/util/table-filter"
+	router "github.com/pingcap/tidb/util/table-router"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -45,16 +45,13 @@ func newConfigWithSourceDir(sourceDir string) *config.Config {
 	}
 }
 
-func newTestMydumpLoaderSuite(t *testing.T) (*testMydumpLoaderSuite, func()) {
+func newTestMydumpLoaderSuite(t *testing.T) *testMydumpLoaderSuite {
 	var s testMydumpLoaderSuite
 	var err error
-	s.sourceDir, err = os.MkdirTemp("", "mydump-loader-test")
+	s.sourceDir = t.TempDir()
 	require.Nil(t, err)
 	s.cfg = newConfigWithSourceDir(s.sourceDir)
-	return &s, func() {
-		err := os.RemoveAll(s.sourceDir)
-		require.NoError(t, err)
-	}
+	return &s
 }
 
 func (s *testMydumpLoaderSuite) touch(t *testing.T, filename ...string) {
@@ -106,8 +103,7 @@ func TestLoader(t *testing.T) {
 }
 
 func TestEmptyDB(t *testing.T) {
-	s, clean := newTestMydumpLoaderSuite(t)
-	defer clean()
+	s := newTestMydumpLoaderSuite(t)
 	_, err := md.NewMyDumpLoader(context.Background(), s.cfg)
 	// will check schema in tidb and data file later in DataCheck.
 	require.NoError(t, err)
@@ -121,8 +117,7 @@ func TestDuplicatedDB(t *testing.T) {
 			b/
 				db-schema-create.sql
 	*/
-	s, clean := newTestMydumpLoaderSuite(t)
-	defer clean()
+	s := newTestMydumpLoaderSuite(t)
 	s.mkdir(t, "a")
 	s.touch(t, "a", "db-schema-create.sql")
 	s.mkdir(t, "b")
@@ -138,8 +133,7 @@ func TestTableNoHostDB(t *testing.T) {
 			notdb-schema-create.sql
 			db.tbl-schema.sql
 	*/
-	s, clean := newTestMydumpLoaderSuite(t)
-	defer clean()
+	s := newTestMydumpLoaderSuite(t)
 
 	dir := s.sourceDir
 	err := os.WriteFile(filepath.Join(dir, "notdb-schema-create.sql"), nil, 0o644)
@@ -160,8 +154,7 @@ func TestDuplicatedTable(t *testing.T) {
 			b/
 				db.tbl-schema.sql
 	*/
-	s, clean := newTestMydumpLoaderSuite(t)
-	defer clean()
+	s := newTestMydumpLoaderSuite(t)
 
 	s.touch(t, "db-schema-create.sql")
 	s.mkdir(t, "a")
@@ -174,8 +167,7 @@ func TestDuplicatedTable(t *testing.T) {
 }
 
 func TestTableInfoNotFound(t *testing.T) {
-	s, clean := newTestMydumpLoaderSuite(t)
-	defer clean()
+	s := newTestMydumpLoaderSuite(t)
 
 	s.cfg.Mydumper.CharacterSet = "auto"
 
@@ -189,8 +181,7 @@ func TestTableInfoNotFound(t *testing.T) {
 	loader, err := md.NewMyDumpLoader(ctx, s.cfg)
 	require.NoError(t, err)
 	for _, dbMeta := range loader.GetDatabases() {
-		dbSQL, err := dbMeta.GetSchema(ctx, store)
-		require.NoError(t, err)
+		dbSQL := dbMeta.GetSchema(ctx, store)
 		require.Equal(t, "CREATE DATABASE IF NOT EXISTS `db`", dbSQL)
 		for _, tblMeta := range dbMeta.Tables {
 			sql, err := tblMeta.GetSchema(ctx, store)
@@ -201,8 +192,7 @@ func TestTableInfoNotFound(t *testing.T) {
 }
 
 func TestTableUnexpectedError(t *testing.T) {
-	s, clean := newTestMydumpLoaderSuite(t)
-	defer clean()
+	s := newTestMydumpLoaderSuite(t)
 	s.touch(t, "db-schema-create.sql")
 	s.touch(t, "db.tbl-schema.sql")
 
@@ -227,8 +217,7 @@ func TestDataNoHostDB(t *testing.T) {
 			notdb-schema-create.sql
 			db.tbl.sql
 	*/
-	s, clean := newTestMydumpLoaderSuite(t)
-	defer clean()
+	s := newTestMydumpLoaderSuite(t)
 
 	s.touch(t, "notdb-schema-create.sql")
 	s.touch(t, "db.tbl.sql")
@@ -244,8 +233,7 @@ func TestDataNoHostTable(t *testing.T) {
 			db-schema-create.sql
 			db.tbl.sql
 	*/
-	s, clean := newTestMydumpLoaderSuite(t)
-	defer clean()
+	s := newTestMydumpLoaderSuite(t)
 
 	s.touch(t, "db-schema-create.sql")
 	s.touch(t, "db.tbl.sql")
@@ -261,8 +249,7 @@ func TestViewNoHostDB(t *testing.T) {
 			notdb-schema-create.sql
 			db.tbl-schema-view.sql
 	*/
-	s, clean := newTestMydumpLoaderSuite(t)
-	defer clean()
+	s := newTestMydumpLoaderSuite(t)
 
 	s.touch(t, "notdb-schema-create.sql")
 	s.touch(t, "db.tbl-schema-view.sql")
@@ -277,8 +264,7 @@ func TestViewNoHostTable(t *testing.T) {
 			db-schema-create.sql
 			db.tbl-schema-view.sql
 	*/
-	s, clean := newTestMydumpLoaderSuite(t)
-	defer clean()
+	s := newTestMydumpLoaderSuite(t)
 
 	s.touch(t, "db-schema-create.sql")
 	s.touch(t, "db.tbl-schema-view.sql")
@@ -288,8 +274,7 @@ func TestViewNoHostTable(t *testing.T) {
 }
 
 func TestDataWithoutSchema(t *testing.T) {
-	s, clean := newTestMydumpLoaderSuite(t)
-	defer clean()
+	s := newTestMydumpLoaderSuite(t)
 
 	dir := s.sourceDir
 	p := filepath.Join(dir, "db.tbl.sql")
@@ -319,8 +304,7 @@ func TestDataWithoutSchema(t *testing.T) {
 }
 
 func TestTablesWithDots(t *testing.T) {
-	s, clean := newTestMydumpLoaderSuite(t)
-	defer clean()
+	s := newTestMydumpLoaderSuite(t)
 
 	s.touch(t, "db-schema-create.sql")
 	s.touch(t, "db.tbl.with.dots-schema.sql")
@@ -361,8 +345,7 @@ func TestTablesWithDots(t *testing.T) {
 }
 
 func TestRouter(t *testing.T) {
-	s, clean := newTestMydumpLoaderSuite(t)
-	defer clean()
+	s := newTestMydumpLoaderSuite(t)
 	s.cfg.Routes = []*router.TableRule{
 		{
 			SchemaPattern: "a*",
@@ -379,6 +362,16 @@ func TestRouter(t *testing.T) {
 			TablePattern:  "f*",
 			TargetSchema:  "v",
 			TargetTable:   "vv",
+		},
+		{
+			SchemaPattern: "~.*regexpr[1-9]+",
+			TablePattern:  "~.*regexprtable",
+			TargetSchema:  "downstream_db",
+			TargetTable:   "downstream_table",
+		},
+		{
+			SchemaPattern: "~.bdb.*",
+			TargetSchema:  "db",
 		},
 	}
 
@@ -403,6 +396,12 @@ func TestRouter(t *testing.T) {
 			e0-schema-create.sql
 			e0.f0-schema.sql
 			e0.f0-schema-view.sql
+			test_regexpr1-schema-create.sql
+			test_regexpr1.test_regexprtable-schema.sql
+			test_regexpr1.test_regexprtable.1.sql
+			zbdb-schema-create.sql
+			zbdb.table-schema.sql
+			zbdb.table.1.sql
 	*/
 
 	s.touch(t, "a0-schema-create.sql")
@@ -428,6 +427,14 @@ func TestRouter(t *testing.T) {
 	s.touch(t, "e0-schema-create.sql")
 	s.touch(t, "e0.f0-schema.sql")
 	s.touch(t, "e0.f0-schema-view.sql")
+
+	s.touch(t, "test_regexpr1-schema-create.sql")
+	s.touch(t, "test_regexpr1.test_regexprtable-schema.sql")
+	s.touch(t, "test_regexpr1.test_regexprtable.1.sql")
+
+	s.touch(t, "zbdb-schema-create.sql")
+	s.touch(t, "zbdb.table-schema.sql")
+	s.touch(t, "zbdb.table.1.sql")
 
 	mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
 	require.NoError(t, err)
@@ -522,12 +529,40 @@ func TestRouter(t *testing.T) {
 				},
 			},
 		},
+
+		{
+			Name:       "downstream_db",
+			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "downstream_db", Name: ""}, FileMeta: md.SourceFileMeta{Path: "test_regexpr1-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+			Tables: []*md.MDTableMeta{
+				{
+					DB:           "downstream_db",
+					Name:         "downstream_table",
+					SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "downstream_db", Name: "downstream_table"}, FileMeta: md.SourceFileMeta{Path: "test_regexpr1.test_regexprtable-schema.sql", Type: md.SourceTypeTableSchema}},
+					DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "downstream_db", Name: "downstream_table"}, FileMeta: md.SourceFileMeta{Path: "test_regexpr1.test_regexprtable.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}}},
+					IndexRatio:   0.0,
+					IsRowOrdered: true,
+				},
+			},
+		},
+		{
+			Name:       "db",
+			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "db", Name: ""}, FileMeta: md.SourceFileMeta{Path: "zbdb-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+			Tables: []*md.MDTableMeta{
+				{
+					DB:           "db",
+					Name:         "table",
+					SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "db", Name: "table"}, FileMeta: md.SourceFileMeta{Path: "zbdb.table-schema.sql", Type: md.SourceTypeTableSchema}},
+					DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "db", Name: "table"}, FileMeta: md.SourceFileMeta{Path: "zbdb.table.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}}},
+					IndexRatio:   0.0,
+					IsRowOrdered: true,
+				},
+			},
+		},
 	}, mdl.GetDatabases())
 }
 
 func TestBadRouterRule(t *testing.T) {
-	s, clean := newTestMydumpLoaderSuite(t)
-	defer clean()
+	s := newTestMydumpLoaderSuite(t)
 
 	s.cfg.Routes = []*router.TableRule{{
 		SchemaPattern: "a*b",
@@ -541,8 +576,7 @@ func TestBadRouterRule(t *testing.T) {
 }
 
 func TestFileRouting(t *testing.T) {
-	s, clean := newTestMydumpLoaderSuite(t)
-	defer clean()
+	s := newTestMydumpLoaderSuite(t)
 
 	s.cfg.Mydumper.DefaultFileRules = false
 	s.cfg.Mydumper.FileRouters = []*config.FileRouteRule{
@@ -683,8 +717,7 @@ func TestInputWithSpecialChars(t *testing.T) {
 			db%22.t%2522-schema.sql
 			db%22.t%2522.0.csv
 	*/
-	s, clean := newTestMydumpLoaderSuite(t)
-	defer clean()
+	s := newTestMydumpLoaderSuite(t)
 
 	s.touch(t, "test-schema-create.sql")
 	s.touch(t, "test.t%22-schema.sql")

@@ -176,6 +176,7 @@ var tokenMap = map[string]int{
 	"BIGINT":                   bigIntType,
 	"BINARY":                   binaryType,
 	"BINDING":                  binding,
+	"BINDING_CACHE":            bindingCache,
 	"BINDINGS":                 bindings,
 	"BINLOG":                   binlog,
 	"BIT_AND":                  bitAnd,
@@ -287,6 +288,7 @@ var tokenMap = map[string]int{
 	"DESCRIBE":                 describe,
 	"DIRECTORY":                directory,
 	"DISABLE":                  disable,
+	"DISABLED":                 disabled,
 	"DISCARD":                  discard,
 	"DISK":                     disk,
 	"DISTINCT":                 distinct,
@@ -303,6 +305,7 @@ var tokenMap = map[string]int{
 	"DYNAMIC":                  dynamic,
 	"ELSE":                     elseKwd,
 	"ENABLE":                   enable,
+	"ENABLED":                  enabled,
 	"ENCLOSED":                 enclosed,
 	"ENCRYPTION":               encryption,
 	"END":                      end,
@@ -797,9 +800,10 @@ var tokenMap = map[string]int{
 	"WAIT":                     wait,
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/function-resolution.html for details
+// See https://dev.mysql.com/doc/refman/5.7/en/function-resolution.html for details.
+// ADDDATE, SESSION_USER, SUBDATE, and SYSTEM_USER are exceptions because they are actually recognized as
+// identifiers even in `create table adddate (a int)`.
 var btFuncTokenMap = map[string]int{
-	"ADDDATE":               builtinAddDate,
 	"BIT_AND":               builtinBitAnd,
 	"BIT_OR":                builtinBitOr,
 	"BIT_XOR":               builtinBitXor,
@@ -818,17 +822,14 @@ var btFuncTokenMap = map[string]int{
 	"MIN":                   builtinMin,
 	"NOW":                   builtinNow,
 	"POSITION":              builtinPosition,
-	"SESSION_USER":          builtinUser,
 	"STD":                   builtinStddevPop,
 	"STDDEV":                builtinStddevPop,
 	"STDDEV_POP":            builtinStddevPop,
 	"STDDEV_SAMP":           builtinStddevSamp,
-	"SUBDATE":               builtinSubDate,
 	"SUBSTR":                builtinSubstring,
 	"SUBSTRING":             builtinSubstring,
 	"SUM":                   builtinSum,
 	"SYSDATE":               builtinSysDate,
-	"SYSTEM_USER":           builtinUser,
 	"TRANSLATE":             builtinTranslate,
 	"TRIM":                  builtinTrim,
 	"VARIANCE":              builtinVarPop,
@@ -919,7 +920,6 @@ var hintTokenMap = map[string]int{
 	"READ_CONSISTENT_REPLICA": hintReadConsistentReplica,
 	"READ_FROM_STORAGE":       hintReadFromStorage,
 	"BROADCAST_JOIN":          hintBCJoin,
-	"BROADCAST_JOIN_LOCAL":    hintBCJoinPreferLocal,
 	"MERGE_JOIN":              hintSMJoin,
 	"STREAM_AGG":              hintStreamAgg,
 	"SWAP_JOIN_INPUTS":        hintSwapJoinInputs,

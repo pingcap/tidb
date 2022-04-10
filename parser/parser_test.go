@@ -1134,6 +1134,8 @@ func TestDBAStmt(t *testing.T) {
 		// for show pump/drainer status.
 		{"show pump status", true, "SHOW PUMP STATUS"},
 		{"show drainer status", true, "SHOW DRAINER STATUS"},
+		// for show binding_cache status
+		{"show binding_cache status", true, "SHOW BINDING_CACHE STATUS"},
 		{"show analyze status", true, "SHOW ANALYZE STATUS"},
 		{"show analyze status where table_name = 't'", true, "SHOW ANALYZE STATUS WHERE `table_name`=_UTF8MB4't'"},
 		{"show analyze status where table_name like '%'", true, "SHOW ANALYZE STATUS WHERE `table_name` LIKE _UTF8MB4'%'"},
@@ -2195,6 +2197,111 @@ func TestIdentifier(t *testing.T) {
 	RunTest(t, table, false)
 }
 
+func TestBuiltinFuncAsIdentifier(t *testing.T) {
+	whitespaceFuncs := []struct {
+		funcName string
+		args     string
+	}{
+		{"BIT_AND", "`c1`"},
+		{"BIT_OR", "`c1`"},
+		{"BIT_XOR", "`c1`"},
+		{"CAST", "1 AS FLOAT"},
+		{"COUNT", "1"},
+		{"CURDATE", ""},
+		{"CURTIME", ""},
+		{"DATE_ADD", "_UTF8MB4'2011-11-11 10:10:10', INTERVAL 10 SECOND"},
+		{"DATE_SUB", "_UTF8MB4'2011-11-11 10:10:10', INTERVAL 10 SECOND"},
+		{"EXTRACT", "SECOND FROM _UTF8MB4'2011-11-11 10:10:10'"},
+		{"GROUP_CONCAT", "`c2`, `c1` SEPARATOR ','"},
+		{"MAX", "`c1`"},
+		{"MID", "_UTF8MB4'Sakila', -5, 3"},
+		{"MIN", "`c1`"},
+		{"NOW", ""},
+		{"POSITION", "_UTF8MB4'bar' IN _UTF8MB4'foobarbar'"},
+		{"STDDEV_POP", "`c1`"},
+		{"STDDEV_SAMP", "`c1`"},
+		{"SUBSTR", "_UTF8MB4'Quadratically', 5"},
+		{"SUBSTRING", "_UTF8MB4'Quadratically', 5"},
+		{"SUM", "`c1`"},
+		{"SYSDATE", ""},
+		{"TRIM", "_UTF8MB4' foo '"},
+		{"VAR_POP", "`c1`"},
+		{"VAR_SAMP", "`c1`"},
+	}
+
+	testcases := make([]testCase, 0, 3*len(whitespaceFuncs))
+	runTests := func(ignoreSpace bool) {
+		p := parser.New()
+		if ignoreSpace {
+			p.SetSQLMode(mysql.ModeIgnoreSpace)
+		}
+		for _, c := range testcases {
+			_, _, err := p.Parse(c.src, "", "")
+			if !c.ok {
+				require.Errorf(t, err, "source %v", c.src)
+				continue
+			}
+			require.NoErrorf(t, err, "source %v", c.src)
+			if c.ok && !ignoreSpace {
+				RunRestoreTest(t, c.src, c.restore, false)
+			}
+		}
+	}
+
+	for _, function := range whitespaceFuncs {
+		// `x` is recognized as a function name for `x()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("select %s(%s)", function.funcName, function.args), true, fmt.Sprintf("SELECT %s(%s)", function.funcName, function.args)})
+
+		// In MySQL, `select x ()` is recognized as a stored function.
+		// In TiDB, most of these functions are recognized as identifiers while some are builtin functions (such as COUNT, CURDATE)
+		// because the later ones are not added to the token map. We'd better not to modify it since it breaks compatibility.
+		// For example, `select CURDATE ()` reports an error in MySQL but it works well for TiDB.
+
+		// `x` is recognized as an identifier for `x ()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("create table %s (a int)", function.funcName), true, fmt.Sprintf("CREATE TABLE `%s` (`a` INT)", function.funcName)})
+
+		// `x` is recognized as a function name for `x()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("create table %s(a int)", function.funcName), false, ""})
+	}
+	runTests(false)
+
+	testcases = make([]testCase, 0, 4*len(whitespaceFuncs))
+	for _, function := range whitespaceFuncs {
+		testcases = append(testcases, testCase{fmt.Sprintf("select %s(%s)", function.funcName, function.args), true, fmt.Sprintf("SELECT %s(%s)", function.funcName, function.args)})
+		testcases = append(testcases, testCase{fmt.Sprintf("select %s (%s)", function.funcName, function.args), true, fmt.Sprintf("SELECT %s(%s)", function.funcName, function.args)})
+		testcases = append(testcases, testCase{fmt.Sprintf("create table %s (a int)", function.funcName), false, ""})
+		testcases = append(testcases, testCase{fmt.Sprintf("create table %s(a int)", function.funcName), false, ""})
+	}
+	runTests(true)
+
+	normalFuncs := []struct {
+		funcName string
+		args     string
+	}{
+		{"ADDDATE", "_UTF8MB4'2011-11-11 10:10:10', INTERVAL 10 SECOND"},
+		{"SESSION_USER", ""},
+		{"SUBDATE", "_UTF8MB4'2011-11-11 10:10:10', INTERVAL 10 SECOND"},
+		{"SYSTEM_USER", ""},
+	}
+
+	testcases = make([]testCase, 0, 4*len(normalFuncs))
+	for _, function := range normalFuncs {
+		// `x` is recognized as a function name for `select x()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("select %s(%s)", function.funcName, function.args), true, fmt.Sprintf("SELECT %s(%s)", function.funcName, function.args)})
+
+		// `x` is recognized as a function name for `select x ()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("select %s (%s)", function.funcName, function.args), true, fmt.Sprintf("SELECT %s(%s)", function.funcName, function.args)})
+
+		// `x` is recognized as an identifier for `create table x ()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("create table %s (a int)", function.funcName), true, fmt.Sprintf("CREATE TABLE `%s` (`a` INT)", function.funcName)})
+
+		// `x` is recognized as an identifier for `create table x()`.
+		testcases = append(testcases, testCase{fmt.Sprintf("create table %s(a int)", function.funcName), true, fmt.Sprintf("CREATE TABLE `%s` (`a` INT)", function.funcName)})
+	}
+	runTests(false)
+	runTests(true)
+}
+
 func TestDDL(t *testing.T) {
 	table := []testCase{
 		{"CREATE", false, ""},
@@ -2295,6 +2402,7 @@ func TestDDL(t *testing.T) {
 		{`create table testTableCompression (c VARCHAR(15000)) compression="ZLIB";`, true, "CREATE TABLE `testTableCompression` (`c` VARCHAR(15000)) COMPRESSION = 'ZLIB'"},
 		{`create table t1 (c1 int) compression="zlib";`, true, "CREATE TABLE `t1` (`c1` INT) COMPRESSION = 'zlib'"},
 		{`create table t1 (c1 int) collate=binary;`, true, "CREATE TABLE `t1` (`c1` INT) DEFAULT COLLATE = BINARY"},
+		{`create table t1 (c1 int) collate=utf8mb4_0900_as_cs;`, true, "CREATE TABLE `t1` (`c1` INT) DEFAULT COLLATE = UTF8MB4_0900_AS_CS"},
 		{`create table t1 (c1 int) default charset=binary collate=binary;`, true, "CREATE TABLE `t1` (`c1` INT) DEFAULT CHARACTER SET = BINARY DEFAULT COLLATE = BINARY"},
 
 		// for table option `UNION`
@@ -2641,8 +2749,10 @@ func TestDDL(t *testing.T) {
 
 		{"create table t (a timestamp default now)", false, ""},
 		{"create table t (a timestamp default now())", true, "CREATE TABLE `t` (`a` TIMESTAMP DEFAULT CURRENT_TIMESTAMP())"},
+		{"create table t (a timestamp default (((now()))))", true, "CREATE TABLE `t` (`a` TIMESTAMP DEFAULT CURRENT_TIMESTAMP())"},
 		{"create table t (a timestamp default now() on update now)", false, ""},
 		{"create table t (a timestamp default now() on update now())", true, "CREATE TABLE `t` (`a` TIMESTAMP DEFAULT CURRENT_TIMESTAMP() ON UPDATE CURRENT_TIMESTAMP())"},
+		{"create table t (a timestamp default now() on update (now()))", false, ""},
 		{"CREATE TABLE t (c TEXT) default CHARACTER SET utf8, default COLLATE utf8_general_ci;", true, "CREATE TABLE `t` (`c` TEXT) DEFAULT CHARACTER SET = UTF8 DEFAULT COLLATE = UTF8_GENERAL_CI"},
 		{"CREATE TABLE t (c TEXT) shard_row_id_bits = 1;", true, "CREATE TABLE `t` (`c` TEXT) SHARD_ROW_ID_BITS = 1"},
 		{"CREATE TABLE t (c TEXT) shard_row_id_bits = 1, PRE_SPLIT_REGIONS = 1;", true, "CREATE TABLE `t` (`c` TEXT) SHARD_ROW_ID_BITS = 1 PRE_SPLIT_REGIONS = 1"},
@@ -2650,6 +2760,14 @@ func TestDDL(t *testing.T) {
 		{"CREATE TABLE IF NOT EXISTS `general_log` (`event_time` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),`user_host` mediumtext NOT NULL,`thread_id` bigint(20) unsigned NOT NULL,`server_id` int(10) unsigned NOT NULL,`command_type` varchar(64) NOT NULL,`argument` mediumblob NOT NULL) ENGINE=CSV DEFAULT CHARSET=utf8 COMMENT='General log'", true, "CREATE TABLE IF NOT EXISTS `general_log` (`event_time` TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),`user_host` MEDIUMTEXT NOT NULL,`thread_id` BIGINT(20) UNSIGNED NOT NULL,`server_id` INT(10) UNSIGNED NOT NULL,`command_type` VARCHAR(64) NOT NULL,`argument` MEDIUMBLOB NOT NULL) ENGINE = CSV DEFAULT CHARACTER SET = UTF8 COMMENT = 'General log'"}, //TODO: The number yacc in parentheses has not been implemented yet.
 		// For reference_definition in column_definition.
 		{"CREATE TABLE followers ( f1 int NOT NULL REFERENCES user_profiles (uid) );", true, "CREATE TABLE `followers` (`f1` INT NOT NULL REFERENCES `user_profiles`(`uid`))"},
+
+		// For column default expression
+		{"create table t (a int default rand())", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND())"},
+		{"create table t (a int default rand(1))", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND(1))"},
+		{"create table t (a int default (rand()))", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND())"},
+		{"create table t (a int default (rand(1)))", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND(1))"},
+		{"create table t (a int default (((rand()))))", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND())"},
+		{"create table t (a int default (((rand(1)))))", true, "CREATE TABLE `t` (`a` INT DEFAULT RAND(1))"},
 
 		// For table option `ENCRYPTION`
 		{"create table t (a int) encryption = 'n';", true, "CREATE TABLE `t` (`a` INT) ENCRYPTION = 'n'"},
@@ -3235,6 +3353,12 @@ func TestDDL(t *testing.T) {
 
 		{"ALTER TABLE t SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b'", true, "ALTER TABLE `t` SET TIFLASH REPLICA 2 LOCATION LABELS 'a', 'b'"},
 		{"ALTER TABLE t SET TIFLASH REPLICA 0", true, "ALTER TABLE `t` SET TIFLASH REPLICA 0"},
+		{"ALTER DATABASE t SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b'", true, "ALTER DATABASE `t` SET TIFLASH REPLICA 2 LOCATION LABELS 'a', 'b'"},
+		{"ALTER DATABASE t SET TIFLASH REPLICA 0", true, "ALTER DATABASE `t` SET TIFLASH REPLICA 0"},
+		{"ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b'", true, "ALTER DATABASE `t` SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2 LOCATION LABELS 'a', 'b'"},
+		{"ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2", true, "ALTER DATABASE `t` SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2"},
+		{"ALTER DATABASE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a','b' SET TIFLASH REPLICA 2", true, "ALTER DATABASE `t` SET TIFLASH REPLICA 1 LOCATION LABELS 'a', 'b' SET TIFLASH REPLICA 2"},
+		{"ALTER DATABASE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a','b' SET TIFLASH REPLICA 2 LOCATION LABELS 'a', 'b'", true, "ALTER DATABASE `t` SET TIFLASH REPLICA 1 LOCATION LABELS 'a', 'b' SET TIFLASH REPLICA 2 LOCATION LABELS 'a', 'b'"},
 
 		// for issue 537
 		{"CREATE TABLE IF NOT EXISTS table_ident (a SQL_TSI_YEAR(4), b SQL_TSI_YEAR);", true, "CREATE TABLE IF NOT EXISTS `table_ident` (`a` YEAR(4),`b` YEAR)"},
@@ -3699,12 +3823,12 @@ func TestOptimizerHints(t *testing.T) {
 	require.Equal(t, "t4", hints[1].Tables[1].TableName.L)
 
 	// TEST BROADCAST_JOIN
-	stmt, _, err = p.Parse("select /*+ BROADCAST_JOIN(t1, T2), broadcast_join(t3, t4), BROADCAST_JOIN_LOCAL(t2) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	stmt, _, err = p.Parse("select /*+ BROADCAST_JOIN(t1, T2), broadcast_join(t3, t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err)
 	selectStmt = stmt[0].(*ast.SelectStmt)
 
 	hints = selectStmt.TableHints
-	require.Len(t, hints, 3)
+	require.Len(t, hints, 2)
 	require.Equal(t, "broadcast_join", hints[0].HintName.L)
 	require.Len(t, hints[0].Tables, 2)
 	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
@@ -3714,10 +3838,6 @@ func TestOptimizerHints(t *testing.T) {
 	require.Len(t, hints[1].Tables, 2)
 	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
 	require.Equal(t, "t4", hints[1].Tables[1].TableName.L)
-
-	require.Equal(t, "broadcast_join_local", hints[2].HintName.L)
-	require.Len(t, hints[2].Tables, 1)
-	require.Equal(t, "t2", hints[2].Tables[0].TableName.L)
 
 	// Test TIDB_INLJ
 	stmt, _, err = p.Parse("select /*+ TIDB_INLJ(t1, T2), tidb_inlj(t3, t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
@@ -4762,6 +4882,10 @@ func TestBinding(t *testing.T) {
 		{"drop session binding for select * from t using select * from t use index(a)", true, "DROP SESSION BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t` USE INDEX (`a`)"},
 		{"show global bindings", true, "SHOW GLOBAL BINDINGS"},
 		{"show session bindings", true, "SHOW SESSION BINDINGS"},
+		{"set binding enabled for select * from t", true, "SET BINDING ENABLED FOR SELECT * FROM `t`"},
+		{"set binding enabled for select * from t using select * from t use index(a)", true, "SET BINDING ENABLED FOR SELECT * FROM `t` USING SELECT * FROM `t` USE INDEX (`a`)"},
+		{"set binding disabled for select * from t", true, "SET BINDING DISABLED FOR SELECT * FROM `t`"},
+		{"set binding disabled for select * from t using select * from t use index(a)", true, "SET BINDING DISABLED FOR SELECT * FROM `t` USING SELECT * FROM `t` USE INDEX (`a`)"},
 		{"create global binding for select * from t union all select * from t using select * from t use index(a) union all select * from t use index(a)", true, "CREATE GLOBAL BINDING FOR SELECT * FROM `t` UNION ALL SELECT * FROM `t` USING SELECT * FROM `t` USE INDEX (`a`) UNION ALL SELECT * FROM `t` USE INDEX (`a`)"},
 		{"create session binding for select * from t union all select * from t using select * from t use index(a) union all select * from t use index(a)", true, "CREATE SESSION BINDING FOR SELECT * FROM `t` UNION ALL SELECT * FROM `t` USING SELECT * FROM `t` USE INDEX (`a`) UNION ALL SELECT * FROM `t` USE INDEX (`a`)"},
 		{"drop global binding for select * from t union all select * from t using select * from t use index(a) union all select * from t use index(a)", true, "DROP GLOBAL BINDING FOR SELECT * FROM `t` UNION ALL SELECT * FROM `t` USING SELECT * FROM `t` USE INDEX (`a`) UNION ALL SELECT * FROM `t` USE INDEX (`a`)"},

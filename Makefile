@@ -28,7 +28,7 @@ all: dev server benchkv
 parser:
 	@echo "remove this command later, when our CI script doesn't call it"
 
-dev: checklist check explaintest devgotest gogenerate br_unit_test test_part_parser_dev
+dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut
 	@>&2 echo "Great, all tests passed."
 
 # Install the check tools.
@@ -47,7 +47,7 @@ check-static: tools/bin/golangci-lint
 	GO111MODULE=on CGO_ENABLED=0 tools/bin/golangci-lint run -v $$($(PACKAGE_DIRECTORIES)) --config .golangci.yml
 
 unconvert:tools/bin/unconvert
-	@echo "unconvert check(skip check the genenrated or copied code in lightning)"
+	@echo "unconvert check(skip check the generated or copied code in lightning)"
 	@GO111MODULE=on tools/bin/unconvert $(UNCONVERT_PACKAGES)
 
 gogenerate:
@@ -115,20 +115,12 @@ explaintest: server_check
 ddltest:
 	@cd cmd/ddltest && $(GO) test -o ../../bin/ddltest -c
 
-devgotest: failpoint-enable
-# grep regex: Filter out all tidb logs starting with:
-# - '[20' (like [2021/09/15 ...] [INFO]..)
-# - 'PASS:' to ignore passed tests
-# - 'ok ' to ignore passed directories
-	@echo "Running in native mode."
-	@export log_level=info; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES_TIDB_TESTS) -check.p true > gotest.log || { $(FAILPOINT_DISABLE); grep -v '^\([[]20\|PASS:\|ok \)' 'gotest.log'; exit 1; }
-	@$(FAILPOINT_DISABLE)
-
+CLEAN_UT_BINARY := find . -name '*.test.bin'| xargs rm
 
 ut: tools/bin/ut tools/bin/xprog failpoint-enable
 	tools/bin/ut $(X) || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
+	@$(CLEAN_UT_BINARY)
 
 gotest: failpoint-enable
 	@echo "Running in native mode."
@@ -140,13 +132,24 @@ gotest_in_verify_ci: tools/bin/xprog tools/bin/ut failpoint-enable
 	@echo "Running gotest_in_verify_ci"
 	@mkdir -p $(TEST_COVERAGE_DIR)
 	@export TZ='Asia/Shanghai'; \
-	tools/bin/ut --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" --coverprofile "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" || { $(FAILPOINT_DISABLE); exit 1; }
+	tools/bin/ut --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" --coverprofile "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" --except unstable.txt || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
+	@$(CLEAN_UT_BINARY)
+
+gotest_unstable_in_verify_ci: tools/bin/xprog tools/bin/ut failpoint-enable
+	@echo "Running gotest_in_verify_ci"
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	@export TZ='Asia/Shanghai'; \
+	tools/bin/ut --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" --coverprofile "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" --only unstable.txt || { $(FAILPOINT_DISABLE); exit 1; }
+	@$(FAILPOINT_DISABLE)
+	@$(CLEAN_UT_BINARY)
 
 race: failpoint-enable
-	@export log_level=debug; \
-	$(GOTEST) -timeout 25m -race $(PACKAGES) || { $(FAILPOINT_DISABLE); exit 1; }
+	@mkdir -p $(TEST_COVERAGE_DIR)
+	@export TZ='Asia/Shanghai'; \
+	tools/bin/ut --race --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" --coverprofile "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test" --except unstable.txt || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
+	@$(CLEAN_UT_BINARY)
 
 leak: failpoint-enable
 	@export log_level=debug; \
@@ -244,7 +247,11 @@ tools/bin/errdoc-gen: tools/check/go.mod
 	$(GO) build -o ../bin/errdoc-gen github.com/pingcap/errors/errdoc-gen
 
 tools/bin/golangci-lint:
-	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.41.1
+	cd tools/check; \
+	$(GO) build -o ../bin/golangci-lint github.com/golangci/golangci-lint/cmd/golangci-lint
+	# Build from source is not recommand. See https://golangci-lint.run/usage/install/
+	# But the following script from their website doesn't work with Go1.18:
+	# curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.44.2
 
 tools/bin/vfsgendev: tools/check/go.mod
 	cd tools/check; \
@@ -424,3 +431,6 @@ dumpling_bins:
 
 tools/bin/gotestsum: tools/check/go.mod
 	cd tools/check && $(GO) build -o ../bin/gotestsum gotest.tools/gotestsum
+
+generate_grafana_scripts:
+	@cd metrics/grafana && mv tidb_summary.json tidb_summary.json.committed && ./generate_json.sh && diff -u tidb_summary.json.committed tidb_summary.json && rm tidb_summary.json.committed

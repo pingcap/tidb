@@ -222,13 +222,28 @@ type DDLReorgMeta struct {
 	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
 	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
 	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
-	Location      *TimeZone                        `json:"time_zone"`
+	Location      *TimeZoneLocation                `json:"location"`
 }
 
-// TimeZone represents a single time zone.
-type TimeZone struct {
-	Name   string
-	Offset int // seconds east of UTC
+// TimeZoneLocation represents a single time zone.
+type TimeZoneLocation struct {
+	Name     string `json:"name"`
+	Offset   int    `json:"offset"` // seconds east of UTC
+	location *time.Location
+}
+
+func (tz *TimeZoneLocation) GetLocation() (*time.Location, error) {
+	if tz.location != nil {
+		return tz.location, nil
+	}
+
+	var err error
+	if tz.Offset == 0 {
+		tz.location, err = time.LoadLocation(tz.Name)
+	} else {
+		tz.location = time.FixedZone(tz.Name, tz.Offset)
+	}
+	return tz.location, err
 }
 
 // NewDDLReorgMeta new a DDLReorgMeta.
@@ -250,6 +265,7 @@ type Job struct {
 	SchemaID   int64         `json:"schema_id"`
 	TableID    int64         `json:"table_id"`
 	SchemaName string        `json:"schema_name"`
+	TableName  string        `json:"table_name"`
 	State      JobState      `json:"state"`
 	Error      *terror.Error `json:"err"`
 	// ErrorCount will be increased, every time we meet an error when running job.
@@ -290,6 +306,9 @@ type Job struct {
 
 	// Priority is only used to set the operation priority of adding indices.
 	Priority int `json:"priority"`
+
+	// SeqNum is the total order in all DDLs, it's used to identify the order of DDL.
+	SeqNum uint64 `json:"seq_num"`
 }
 
 // FinishTableJob is called when a job is finished.

@@ -74,8 +74,9 @@ func cleanStats(tk *testkit.TestKit, do *domain.Domain) {
 }
 
 func TestConversion(t *testing.T) {
-	tk, dom, clean := createTestKitAndDom(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	tk.MustExec("create table t (a int, b int)")
@@ -123,8 +124,9 @@ func getStatsJSON(t *testing.T, dom *domain.Domain, db, tableName string) *handl
 }
 
 func TestDumpGlobalStats(t *testing.T) {
-	tk, dom, clean := createTestKitAndDom(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
@@ -149,8 +151,9 @@ func TestDumpGlobalStats(t *testing.T) {
 }
 
 func TestLoadGlobalStats(t *testing.T) {
-	tk, dom, clean := createTestKitAndDom(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
@@ -175,8 +178,9 @@ func TestLoadGlobalStats(t *testing.T) {
 }
 
 func TestDumpPartitions(t *testing.T) {
-	tk, dom, clean := createTestKitAndDom(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	createTable := `CREATE TABLE t (a int, b int, primary key(a), index idx(b))
@@ -220,8 +224,9 @@ PARTITION BY RANGE ( a ) (
 }
 
 func TestDumpAlteredTable(t *testing.T) {
-	tk, dom, clean := createTestKitAndDom(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	h := dom.StatsHandle()
@@ -239,8 +244,9 @@ func TestDumpAlteredTable(t *testing.T) {
 
 func TestDumpCMSketchWithTopN(t *testing.T) {
 	// Just test if we can store and recover the Top N elements stored in database.
-	testKit, dom, clean := createTestKitAndDom(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int)")
 	testKit.MustExec("insert into t values (1),(3),(4),(2),(5)")
@@ -280,8 +286,9 @@ func TestDumpCMSketchWithTopN(t *testing.T) {
 }
 
 func TestDumpPseudoColumns(t *testing.T) {
-	testKit, dom, clean := createTestKitAndDom(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, index idx(a))")
 	// Force adding an pseudo tables in stats cache.
@@ -297,8 +304,9 @@ func TestDumpPseudoColumns(t *testing.T) {
 }
 
 func TestDumpExtendedStats(t *testing.T) {
-	tk, dom, clean := createTestKitAndDom(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set session tidb_enable_extended_stats = on")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -332,8 +340,9 @@ func TestDumpExtendedStats(t *testing.T) {
 }
 
 func TestDumpVer2Stats(t *testing.T) {
-	tk, dom, clean := createTestKitAndDom(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -382,9 +391,63 @@ func TestDumpVer2Stats(t *testing.T) {
 	requireTableEqual(t, statsCacheTbl, loadTbl)
 }
 
-func TestJSONTableToBlocks(t *testing.T) {
-	tk, dom, clean := createTestKitAndDom(t)
+func TestLoadStatsForNewCollation(t *testing.T) {
+	// This test is almost the same as TestDumpVer2Stats, except that: b varchar(10) => b varchar(3) collate utf8mb4_unicode_ci
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(3) collate utf8mb4_unicode_ci)")
+	tk.MustExec("insert into t value(1, 'aaa'), (3, 'aab'), (5, 'bba'), (2, 'bbb'), (4, 'cca'), (6, 'ccc')")
+	// mark column stats as needed
+	tk.MustExec("select * from t where a = 3")
+	tk.MustExec("select * from t where b = 'bbb'")
+	tk.MustExec("alter table t add index single(a)")
+	tk.MustExec("alter table t add index multi(a, b)")
+	tk.MustExec("analyze table t with 2 topn")
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+
+	storageTbl, err := h.TableStatsFromStorage(tableInfo.Meta(), tableInfo.Meta().ID, false, 0)
+	require.NoError(t, err)
+
+	dumpJSONTable, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil)
+	require.NoError(t, err)
+
+	jsonBytes, err := json.MarshalIndent(dumpJSONTable, "", " ")
+	require.NoError(t, err)
+
+	loadJSONTable := &handle.JSONTable{}
+	err = json.Unmarshal(jsonBytes, loadJSONTable)
+	require.NoError(t, err)
+
+	loadTbl, err := handle.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, loadJSONTable)
+	require.NoError(t, err)
+
+	// assert that a statistics.Table from storage dumped into JSON text and then unmarshalled into a statistics.Table keeps unchanged
+	requireTableEqual(t, loadTbl, storageTbl)
+
+	// assert that this statistics.Table is the same as the one in stats cache
+	statsCacheTbl := h.GetTableStats(tableInfo.Meta())
+	requireTableEqual(t, loadTbl, statsCacheTbl)
+
+	err = h.LoadStatsFromJSON(is, loadJSONTable)
+	require.NoError(t, err)
+	require.Nil(t, h.Update(is))
+	statsCacheTbl = h.GetTableStats(tableInfo.Meta())
+	// assert that after the JSONTable above loaded into storage then updated into the stats cache,
+	// the statistics.Table in the stats cache is the same as the unmarshalled statistics.Table
+	requireTableEqual(t, statsCacheTbl, loadTbl)
+}
+
+func TestJSONTableToBlocks(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")

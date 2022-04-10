@@ -26,19 +26,18 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
+	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
@@ -405,7 +404,7 @@ func TestBinlogForSequence(t *testing.T) {
 	tk.MustExec("create sequence seq cache 3")
 	// trigger the sequence cache allocation.
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("1"))
-	sequenceTable := testGetTableByName(t, tk.Session(), "test", "seq")
+	sequenceTable := external.GetTableByName(t, tk, "test", "seq")
 	tc, ok := sequenceTable.(*tables.TableCommon)
 	require.Equal(t, true, ok)
 	_, end, round := tc.GetSequenceCommon().GetSequenceBaseEndRound()
@@ -433,7 +432,7 @@ func TestBinlogForSequence(t *testing.T) {
 	tk.MustExec("create sequence seq2 start 1 increment -2 cache 3 minvalue -10 maxvalue 10 cycle")
 	// trigger the sequence cache allocation.
 	tk.MustQuery("select nextval(seq2)").Check(testkit.Rows("1"))
-	sequenceTable = testGetTableByName(t, tk.Session(), "test2", "seq2")
+	sequenceTable = external.GetTableByName(t, tk, "test2", "seq2")
 	tc, ok = sequenceTable.(*tables.TableCommon)
 	require.Equal(t, true, ok)
 	_, end, round = tc.GetSequenceCommon().GetSequenceBaseEndRound()
@@ -724,16 +723,6 @@ func mustGetDDLBinlog(s *binlogSuite, ddlQuery string, t *testing.T) (matched bo
 		time.Sleep(time.Millisecond * 30)
 	}
 	return
-}
-
-func testGetTableByName(t *testing.T, ctx sessionctx.Context, db, table string) table.Table {
-	dom := domain.GetDomain(ctx)
-	// Make sure the table schema is the new schema.
-	err := dom.Reload()
-	require.NoError(t, err)
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(db), model.NewCIStr(table))
-	require.NoError(t, err)
-	return tbl
 }
 
 func TestTempTableBinlog(t *testing.T) {

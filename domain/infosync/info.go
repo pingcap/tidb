@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/types"
 	util2 "github.com/pingcap/tidb/util"
@@ -50,9 +51,8 @@ import (
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/tikv"
-	"go.etcd.io/etcd/clientv3"
-	"go.etcd.io/etcd/clientv3/concurrency"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
 
@@ -237,6 +237,7 @@ func initTiFlashPlacementManager(addrs []string) TiFlashPlacementManager {
 		m := mockTiFlashPlacementManager{}
 		return &m
 	}
+	logutil.BgLogger().Warn("init TiFlashPlacementManager", zap.Strings("pd addrs", addrs))
 	return &TiFlashPDPlacementManager{addrs: addrs}
 }
 
@@ -611,6 +612,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		return
 	}
 	pl := is.manager.ShowProcessList()
+	innerSessionStartTSList := is.manager.GetInternalSessionStartTSList()
 
 	// Calculate the lower limit of the start timestamp to avoid extremely old transaction delaying GC.
 	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
@@ -619,7 +621,8 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		return
 	}
 	now := oracle.GetTimeFromTS(currentVer.Ver)
-	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, tikv.MaxTxnTimeUse)
+	// GCMaxWaitTime is in seconds, GCMaxWaitTime * 1000 converts it to milliseconds.
+	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, variable.GCMaxWaitTime.Load()*1000)
 
 	minStartTS := oracle.GoTimeToTS(now)
 	for _, info := range pl {
@@ -628,7 +631,15 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		}
 	}
 
-	is.minStartTS = minStartTS
+	for _, innerTS := range innerSessionStartTSList {
+		kv.PrintLongTimeInternalTxn(now, innerTS, false)
+		if innerTS > startTSLowerLimit && innerTS < minStartTS {
+			minStartTS = innerTS
+		}
+	}
+
+	is.minStartTS = kv.GetMinInnerTxnStartTS(now, startTSLowerLimit, minStartTS)
+
 	err = is.storeMinStartTS(context.Background())
 	if err != nil {
 		logutil.BgLogger().Error("update minStartTS failed", zap.Error(err))
@@ -942,11 +953,14 @@ func GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rul
 }
 
 // SetTiFlashPlacementRule is a helper function to set placement rule.
+// It is discouraged to use SetTiFlashPlacementRule directly,
+// use `ConfigureTiFlashPDForTable`/`ConfigureTiFlashPDForPartitions` instead.
 func SetTiFlashPlacementRule(ctx context.Context, rule placement.TiFlashRule) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return errors.Trace(err)
 	}
+	logutil.BgLogger().Info("SetTiFlashPlacementRule", zap.String("ruleID", rule.ID))
 	return is.tiflashPlacementManager.SetPlacementRule(ctx, rule)
 }
 
@@ -956,6 +970,7 @@ func DeleteTiFlashPlacementRule(ctx context.Context, group string, ruleID string
 	if err != nil {
 		return errors.Trace(err)
 	}
+	logutil.BgLogger().Info("DeleteTiFlashPlacementRule", zap.String("ruleID", ruleID))
 	return is.tiflashPlacementManager.DeletePlacementRule(ctx, group, ruleID)
 }
 
@@ -974,6 +989,7 @@ func PostTiFlashAccelerateSchedule(ctx context.Context, tableID int64) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	logutil.BgLogger().Info("PostTiFlashAccelerateSchedule", zap.Int64("tableID", tableID))
 	return is.tiflashPlacementManager.PostAccelerateSchedule(ctx, tableID)
 }
 
@@ -1011,26 +1027,26 @@ func ConfigureTiFlashPDForTable(id int64, count uint64, locationLabels *[]string
 		return errors.Trace(err)
 	}
 	ctx := context.Background()
-	logutil.BgLogger().Info("ConfigureTiFlashPDForTable", zap.Int64("tableID", id))
+	logutil.BgLogger().Info("ConfigureTiFlashPDForTable", zap.Int64("tableID", id), zap.Uint64("count", count))
 	ruleNew := MakeNewRule(id, count, *locationLabels)
 	if e := is.tiflashPlacementManager.SetPlacementRule(ctx, *ruleNew); e != nil {
-		return errors.Trace(err)
+		return errors.Trace(e)
 	}
 	return nil
 }
 
 // ConfigureTiFlashPDForPartitions configures pd rule for all partition in partitioned tables.
-func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionDefinition, count uint64, locationLabels *[]string) error {
+func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionDefinition, count uint64, locationLabels *[]string, tableID int64) error {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	ctx := context.Background()
 	for _, p := range *definitions {
-		logutil.BgLogger().Info("ConfigureTiFlashPDForPartitions", zap.Int64("partID", p.ID), zap.Bool("accel", accel))
+		logutil.BgLogger().Info("ConfigureTiFlashPDForPartitions", zap.Int64("tableID", tableID), zap.Int64("partID", p.ID), zap.Bool("accel", accel), zap.Uint64("count", count))
 		ruleNew := MakeNewRule(p.ID, count, *locationLabels)
 		if e := is.tiflashPlacementManager.SetPlacementRule(ctx, *ruleNew); e != nil {
-			return errors.Trace(err)
+			return errors.Trace(e)
 		}
 		if accel {
 			e := is.tiflashPlacementManager.PostAccelerateSchedule(ctx, p.ID)
@@ -1040,4 +1056,30 @@ func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionD
 		}
 	}
 	return nil
+}
+
+// StoreInternalSession is the entry function for store an internal session to SessionManager.
+func StoreInternalSession(se interface{}) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return
+	}
+	sm := is.GetSessionManager()
+	if sm == nil {
+		return
+	}
+	sm.StoreInternalSession(se)
+}
+
+// DeleteInternalSession is the entry function for delete an internal session from SessionManager.
+func DeleteInternalSession(se interface{}) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return
+	}
+	sm := is.GetSessionManager()
+	if sm == nil {
+		return
+	}
+	sm.DeleteInternalSession(se)
 }

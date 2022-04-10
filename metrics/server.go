@@ -27,13 +27,12 @@ var (
 
 // Metrics
 var (
-	PacketIOHistogram = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
+	PacketIOCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
 			Name:      "packet_io_bytes",
-			Help:      "Bucketed histogram of packet IO bytes.",
-			Buckets:   prometheus.ExponentialBuckets(4, 4, 21), // 4Bytes ~ 4TB
+			Help:      "Counters of packet IO bytes.",
 		}, []string{LblType})
 
 	QueryDurationHistogram = prometheus.NewHistogramVec(
@@ -128,6 +127,15 @@ var (
 			Name:      "plan_cache_total",
 			Help:      "Counter of query using plan cache.",
 		}, []string{LblType})
+
+	ReadFromTableCacheCounter = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "read_from_tablecache_total",
+			Help:      "Counter of query read from table cache.",
+		},
+	)
 
 	HandShakeErrorCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
@@ -245,6 +253,15 @@ var (
 			Subsystem: "server",
 			Name:      "cpu_profile_total",
 			Help:      "Counter of cpu profiling",
+		})
+
+	LoadTableCacheDurationHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "load_table_cache_seconds",
+			Help:      "Duration (us) for loading table cache.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 30), // 1us ~ 528s
 		})
 )
 

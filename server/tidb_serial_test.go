@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -131,9 +130,7 @@ func TestTLSBasic(t *testing.T) {
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
-	dir, err := os.MkdirTemp(os.TempDir(), "TestTLSBasic")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	fileName := func(file string) string {
 		return filepath.Join(dir, file)
@@ -198,9 +195,7 @@ func TestTLSVerify(t *testing.T) {
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
-	dir, err := os.MkdirTemp(os.TempDir(), "TestTLSVerify")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	fileName := func(file string) string {
 		return filepath.Join(dir, file)
@@ -353,13 +348,52 @@ func TestPrepareCount(t *testing.T) {
 	require.NoError(t, qctx.Close())
 }
 
+func TestPrepareExecute(t *testing.T) {
+	ts, cleanup := createTidbTestSuite(t)
+	defer cleanup()
+
+	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	_, err = qctx.Execute(ctx, "use test")
+	require.NoError(t, err)
+	_, err = qctx.Execute(ctx, "create table t1(id int primary key, v int)")
+	require.NoError(t, err)
+	_, err = qctx.Execute(ctx, "insert into t1 values(1, 100)")
+	require.NoError(t, err)
+
+	stmt, _, _, err := qctx.Prepare("select * from t1 where id=1")
+	require.NoError(t, err)
+	rs, err := stmt.Execute(ctx, nil)
+	require.NoError(t, err)
+	req := rs.NewChunk(nil)
+	require.NoError(t, rs.Next(ctx, req))
+	require.Equal(t, 2, req.NumCols())
+	require.Equal(t, req.NumCols(), len(rs.Columns()))
+	require.Equal(t, 1, req.NumRows())
+	require.Equal(t, int64(1), req.GetRow(0).GetInt64(0))
+	require.Equal(t, int64(100), req.GetRow(0).GetInt64(1))
+
+	// issue #33509
+	_, err = qctx.Execute(ctx, "alter table t1 drop column v")
+	require.NoError(t, err)
+
+	rs, err = stmt.Execute(ctx, nil)
+	require.NoError(t, err)
+	req = rs.NewChunk(nil)
+	require.NoError(t, rs.Next(ctx, req))
+	require.Equal(t, 1, req.NumCols())
+	require.Equal(t, req.NumCols(), len(rs.Columns()))
+	require.Equal(t, 1, req.NumRows())
+	require.Equal(t, int64(1), req.GetRow(0).GetInt64(0))
+}
+
 func TestDefaultCharacterAndCollation(t *testing.T) {
 	ts, cleanup := createTidbTestSuite(t)
 	defer cleanup()
 
 	// issue #21194
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	// 255 is the collation id of mysql client 8 default collation_connection
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(255), "test", nil)
 	require.NoError(t, err)

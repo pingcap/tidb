@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1599,23 +1598,23 @@ func TestColumns(t *testing.T) {
 		},
 		{
 			sql:              `select * from information_schema.COLUMNS where table_name like 'T%';`,
-			tableNamePattern: []string{"(?i)T.*"},
+			tableNamePattern: []string{"t%"},
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'T%';`,
-			columnNamePattern: []string{"(?i)T.*"},
+			columnNamePattern: []string{"t%"},
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'i%';`,
-			columnNamePattern: []string{"(?i)i.*"},
+			columnNamePattern: []string{"i%"},
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'abc%' or column_name like "def%";`,
-			columnNamePattern: []string{"(?i)abc.*|def.*"},
+			columnNamePattern: []string{},
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'abc%' and column_name like "%def";`,
-			columnNamePattern: []string{"(?i)abc.*", "(?i).*def"},
+			columnNamePattern: []string{"abc%", "%def"},
 		},
 	}
 	parser := parser.New()
@@ -1660,37 +1659,39 @@ func TestPredicateQuery(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(id int, abclmn int);")
+	tk.MustExec("create table t(id int, abctime int,DATETIME_PRECISION int);")
 	tk.MustExec("create table abclmn(a int);")
 	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'test' and column_name like 'i%'").Check(testkit.Rows("t"))
 	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'TEST' and column_name like 'I%'").Check(testkit.Rows("t"))
 	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'TEST' and column_name like 'ID'").Check(testkit.Rows("t"))
 	tk.MustQuery("select TABLE_NAME from information_schema.columns where table_schema = 'TEST' and column_name like 'id'").Check(testkit.Rows("t"))
-	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'TEST' and (column_name like 'I%' or column_name like '%D')").Check(testkit.Rows("id"))
-	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'TEST' and (column_name like 'abc%' and column_name like '%lmn')").Check(testkit.Rows("abclmn"))
-	tk.MustQuery("describe t").Check(testkit.Rows("id int(11) YES  <nil> ", "abclmn int(11) YES  <nil> "))
+	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'TEST' and (column_name like 'i%' or column_name like '%d')").Check(testkit.Rows("id"))
+	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'TEST' and (column_name like 'abc%' and column_name like '%time')").Check(testkit.Rows("abctime"))
+	result := tk.MustQuery("select TABLE_NAME, column_name from information_schema.columns where table_schema = 'TEST' and column_name like '%time';")
+	require.Len(t, result.Rows(), 1)
+	tk.MustQuery("describe t").Check(testkit.Rows("id int(11) YES  <nil> ", "abctime int(11) YES  <nil> ", "DATETIME_PRECISION int(11) YES  <nil> "))
 	tk.MustQuery("describe t id").Check(testkit.Rows("id int(11) YES  <nil> "))
 	tk.MustQuery("describe t ID").Check(testkit.Rows("id int(11) YES  <nil> "))
 	tk.MustGetErrCode("describe t 'I%'", errno.ErrParse)
 	tk.MustGetErrCode("describe t I%", errno.ErrParse)
 
-	tk.MustQuery("show columns from t like 'abclmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns from t like 'ABCLMN'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns from t like 'abc%'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns from t like 'ABC%'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns from t like '%lmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns from t like '%LMN'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns in t like '%lmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns in t like '%LMN'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("show fields in t like '%lmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("show fields in t like '%LMN'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t like 'abctime'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t like 'ABCTIME'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t like 'abc%'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t like 'ABC%'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t like '%ime'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t like '%IME'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns in t like '%ime'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns in t like '%IME'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("show fields in t like '%ime'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("show fields in t like '%IME'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
 
-	tk.MustQuery("show columns from t where field like '%lmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns from t where field = 'abclmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("show columns in t where field = 'abclmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("show fields from t where field = 'abclmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("show fields in t where field = 'abclmn'").Check(testutil.RowsWithSep(",", "abclmn,int(11),YES,,<nil>,"))
-	tk.MustQuery("explain t").Check(testkit.Rows("id int(11) YES  <nil> ", "abclmn int(11) YES  <nil> "))
+	tk.MustQuery("show columns from t where field like '%time'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns from t where field = 'abctime'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("show columns in t where field = 'abctime'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("show fields from t where field = 'abctime'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("show fields in t where field = 'abctime'").Check(testkit.RowsWithSep(",", "abctime,int(11),YES,,<nil>,"))
+	tk.MustQuery("explain t").Check(testkit.Rows("id int(11) YES  <nil> ", "abctime int(11) YES  <nil> ", "DATETIME_PRECISION int(11) YES  <nil> "))
 
 	tk.MustGetErrCode("show columns from t like id", errno.ErrBadField)
 	tk.MustGetErrCode("show columns from t like `id`", errno.ErrBadField)
@@ -1703,4 +1704,41 @@ func TestPredicateQuery(t *testing.T) {
 	tk.MustQuery("show full tables like '%lmn'").Check(testkit.Rows("abclmn BASE TABLE"))
 	tk.MustGetErrCode("show tables like T", errno.ErrBadField)
 	tk.MustGetErrCode("show tables like `T`", errno.ErrBadField)
+}
+
+func TestTikvRegionStatusExtractor(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+
+	var cases = []struct {
+		sql      string
+		tableIDs []int64
+	}{
+		{
+			sql:      "select * from information_schema.TIKV_REGION_STATUS where table_id = 1",
+			tableIDs: []int64{1},
+		},
+		{
+			sql:      "select * from information_schema.TIKV_REGION_STATUS where table_id = 1 or table_id = 2",
+			tableIDs: []int64{1, 2},
+		},
+		{
+			sql:      "select * from information_schema.TIKV_REGION_STATUS where table_id in (1,2,3)",
+			tableIDs: []int64{1, 2, 3},
+		},
+	}
+	parser := parser.New()
+	for _, ca := range cases {
+		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		require.NotNil(t, logicalMemTable.Extractor)
+		rse := logicalMemTable.Extractor.(*plannercore.TiKVRegionStatusExtractor)
+		tableids := rse.GetTablesID()
+		sort.Slice(tableids, func(i, j int) bool {
+			return tableids[i] < tableids[j]
+		})
+		require.Equal(t, ca.tableIDs, tableids)
+	}
 }

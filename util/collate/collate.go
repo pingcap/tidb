@@ -78,11 +78,6 @@ type WildcardPattern interface {
 	DoMatch(str string) bool
 }
 
-// EnableNewCollations enables the new collation.
-func EnableNewCollations() {
-	SetNewCollationEnabledForTest(true)
-}
-
 // SetNewCollationEnabledForTest sets if the new collation are enabled in test.
 // Note: Be careful to use this function, if this functions is used in tests, make sure the tests are serial.
 func SetNewCollationEnabledForTest(flag bool) {
@@ -371,6 +366,9 @@ func ProtoToCollation(c int32) string {
 }
 
 func init() {
+	// Set it to 1 in init() to make sure the tests enable the new collation, it would be covered in bootstrap().
+	newCollationEnabled = 1
+
 	newCollatorMap = make(map[string]Collator)
 	newCollatorIDMap = make(map[int]Collator)
 

@@ -245,15 +245,13 @@ func TestSplitLargeFileNoNewLineAtEOF(t *testing.T) {
 		},
 	}
 
-	dir, err := os.MkdirTemp("", "region_test")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	fileName := "test.csv"
 	filePath := filepath.Join(dir, fileName)
 
 	content := []byte("a,b\r\n123,456\r\n789,101")
-	err = os.WriteFile(filePath, content, 0o644)
+	err := os.WriteFile(filePath, content, 0o644)
 	require.NoError(t, err)
 
 	dataFileInfo, err := os.Stat(filePath)
@@ -298,15 +296,13 @@ func TestSplitLargeFileWithCustomTerminator(t *testing.T) {
 		},
 	}
 
-	dir, err := os.MkdirTemp("", "region_test")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	fileName := "test2.csv"
 	filePath := filepath.Join(dir, fileName)
 
 	content := []byte("5|+|abc\ndef\nghi|+|6|+|\n7|+|xyz|+|8|+|\n9|+||+|10")
-	err = os.WriteFile(filePath, content, 0o644)
+	err := os.WriteFile(filePath, content, 0o644)
 	require.NoError(t, err)
 
 	dataFileInfo, err := os.Stat(filePath)
@@ -354,15 +350,13 @@ func TestSplitLargeFileOnlyOneChunk(t *testing.T) {
 		},
 	}
 
-	dir, err := os.MkdirTemp("", "region_test")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	fileName := "test.csv"
 	filePath := filepath.Join(dir, fileName)
 
 	content := []byte("field1,field2\r\n123,456\r\n")
-	err = os.WriteFile(filePath, content, 0o644)
+	err := os.WriteFile(filePath, content, 0o644)
 	require.NoError(t, err)
 
 	dataFileInfo, err := os.Stat(filePath)
