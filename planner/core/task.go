@@ -171,13 +171,10 @@ func (t *copTask) finishIndexPlan() {
 		tableInfo = ts.Table
 	}
 	// Network cost of transferring rows of index scan to TiDB.
-	var p PhysicalPlan
-	for p = t.tablePlan; len(p.Children()) > 0; p = p.Children()[0] {
-	}
-	ts := p.(*PhysicalTableScan)
-	t.cst += cnt * sessVars.GetNetworkFactor(tableInfo) * ts.getScanRowSize()
+	t.cst += cnt * sessVars.GetNetworkFactor(tableInfo) * t.tblColHists.GetAvgRowSize(t.indexPlan.SCtx(), t.indexPlan.Schema().Columns, true, false)
 
 	// net seek cost
+	var p PhysicalPlan
 	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
 	}
 	is := p.(*PhysicalIndexScan)
@@ -190,8 +187,10 @@ func (t *copTask) finishIndexPlan() {
 	}
 
 	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
-	rowSize := t.tblColHists.GetIndexAvgRowSize(t.indexPlan.SCtx(), t.tblCols, is.Index.Unique)
-	t.cst += cnt * rowSize * sessVars.GetScanFactor(tableInfo)
+	for p = t.tablePlan; len(p.Children()) > 0; p = p.Children()[0] {
+	}
+	ts := p.(*PhysicalTableScan)
+	t.cst += cnt * ts.getScanRowSize() * sessVars.GetScanFactor(tableInfo)
 }
 
 func (t *copTask) getStoreType() kv.StoreType {
