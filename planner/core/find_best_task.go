@@ -1308,6 +1308,8 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 			TableAsName:     ds.TableAsName,
 			isPartition:     ds.isPartition,
 			physicalTableID: ds.physicalTableID,
+			tblCols:         ds.TblCols,
+			tblColHists:     ds.TblColHists,
 		}.Init(ds.ctx, is.blockOffset)
 		ts.SetSchema(ds.schema.Clone())
 		ts.SetCost(cost)
