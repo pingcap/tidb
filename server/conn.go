@@ -2341,6 +2341,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	if err := cc.ctx.Close(); err != nil {
 		logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
 	}
+	cc.ctx = nil
 	if err := cc.openSessionAndDoAuth(pass, ""); err != nil {
 		return err
 	}
