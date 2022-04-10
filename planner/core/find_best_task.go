@@ -1034,9 +1034,8 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty, path *util.AccessPath) (
 	indexPlan PhysicalPlan,
 	partialCost float64) {
-	idx := path.Index
 	is, partialCost, rowCount := ds.getOriginalPhysicalIndexScan(prop, path, false, false)
-	rowSize := is.indexScanRowSize(idx, ds, false)
+	rowSize := is.stats.HistColl.GetAvgRowSize(is.ctx, is.schema.Columns, true, false)
 	// TODO: Consider using isCoveringIndex() to avoid another TableRead
 	indexConds := path.IndexFilters
 	sessVars := ds.ctx.GetSessionVars()
