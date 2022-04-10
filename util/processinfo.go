@@ -174,3 +174,14 @@ type SessionManager interface {
 	// Get all startTS of every transactions running in the current internal sessions
 	GetInternalSessionStartTSList() []uint64
 }
+
+const (
+	reservedLocalConns  = 200
+	reservedConnAnalyze = 1
+)
+
+// GetAutoAnalyzeProcID returns processID for auto analyze
+// TODO support IDs for concurrent auto-analyze
+func GetAutoAnalyzeProcID() uint64 {
+	return reservedConnAnalyze
+}
