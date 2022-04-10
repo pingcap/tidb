@@ -959,6 +959,8 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		isPartition:     ds.isPartition,
 
 		underInnerIndexJoin: true,
+		tblCols:             ds.TblCols,
+		tblColHists:         ds.TblColHists,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema.Clone())
 	if rowCount <= 0 {
@@ -983,7 +985,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		StatsVersion: ds.stats.StatsVersion,
 		// NDV would not be used in cost computation of IndexJoin, set leave it as default nil.
 	}
-	rowSize := ds.TblColHists.GetTableAvgRowSize(p.ctx, ds.TblCols, ts.StoreType, true)
+	rowSize := ts.getScanRowSize()
 	sessVars := ds.ctx.GetSessionVars()
 	copTask := &copTask{
 		tablePlan:         ts,

@@ -171,10 +171,13 @@ func (t *copTask) finishIndexPlan() {
 		tableInfo = ts.Table
 	}
 	// Network cost of transferring rows of index scan to TiDB.
-	t.cst += cnt * sessVars.GetNetworkFactor(tableInfo) * t.tblColHists.GetAvgRowSize(t.indexPlan.SCtx(), t.indexPlan.Schema().Columns, true, false)
+	var p PhysicalPlan
+	for p = t.tablePlan; len(p.Children()) > 0; p = p.Children()[0] {
+	}
+	ts := p.(*PhysicalTableScan)
+	t.cst += cnt * sessVars.GetNetworkFactor(tableInfo) * ts.getScanRowSize()
 
 	// net seek cost
-	var p PhysicalPlan
 	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
 	}
 	is := p.(*PhysicalIndexScan)
