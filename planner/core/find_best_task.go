@@ -2089,13 +2089,12 @@ func (ts *PhysicalTableScan) addPushedDownSelection(copTask *copTask, stats *pro
 }
 
 func (ts *PhysicalTableScan) getScanRowSize() float64 {
-	if ts.StoreType == kv.TiKV {
-		return ts.tblColHists.GetTableAvgRowSize(ts.ctx, ts.tblCols, ts.StoreType, true)
-	} else {
+	if ts.StoreType == kv.TiFlash {
 		// If `ts.handleCol` is nil, then the schema of tableScan doesn't have handle column.
 		// This logic can be ensured in column pruning.
 		return ts.tblColHists.GetTableAvgRowSize(ts.ctx, ts.Schema().Columns, ts.StoreType, ts.HandleCols != nil)
 	}
+	return ts.tblColHists.GetTableAvgRowSize(ts.ctx, ts.tblCols, ts.StoreType, true)
 }
 
 func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool) (*PhysicalTableScan, float64, float64) {
