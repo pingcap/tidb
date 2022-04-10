@@ -447,13 +447,17 @@ func (e *ShowExec) fetchShowHistogramsInFlight() {
 	e.appendRow([]interface{}{statistics.HistogramNeededColumns.Length()})
 }
 
-func (e *ShowExec) fetchShowAnalyzeStatus() {
-	rows := dataForAnalyzeStatusHelper(e.baseExecutor.ctx)
+func (e *ShowExec) fetchShowAnalyzeStatus() error {
+	rows, err := dataForAnalyzeStatusHelper(e.baseExecutor.ctx)
+	if err != nil {
+		return err
+	}
 	for _, row := range rows {
 		for i := range row {
 			e.result.AppendDatum(i, &row[i])
 		}
 	}
+	return nil
 }
 
 func (e *ShowExec) fetchShowColumnStatsUsage() error {
