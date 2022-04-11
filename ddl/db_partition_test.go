@@ -2739,11 +2739,14 @@ func testPartitionDropIndex(t *testing.T, store kv.Storage, lease time.Duration,
 	}
 	tk.MustExec(addIdxSQL)
 
+<<<<<<< HEAD
 	ctx := tk.Session()
 	indexID := testGetIndexID(t, ctx, "test", "partition_drop_idx", idxName)
 
 	jobIDExt, reset := setupJobIDExtCallback(ctx)
 	defer reset()
+=======
+>>>>>>> 48efcf68e... ddl: fix duplicate elementID allocation to make sure gc work for partition table (#33726)
 	testutil.ExecMultiSQLInGoroutine(store, "test", []string{dropIdxSQL}, done)
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
@@ -2766,7 +2769,6 @@ LOOP:
 			num += step
 		}
 	}
-	checkDelRangeAdded(tk, jobIDExt.jobID, indexID)
 	tk.MustExec("drop table partition_drop_idx;")
 }
 
@@ -2819,13 +2821,12 @@ func testPartitionCancelAddIndex(t *testing.T, store kv.Storage, d ddl.DDL, leas
 	}
 
 	var checkErr error
-	var c3IdxInfo *model.IndexInfo
 	hook := &ddl.TestDDLCallback{}
 	originBatchSize := tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
 	// Set batch size to lower try to slow down add-index reorganization, This if for hook to cancel this ddl job.
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 32")
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", originBatchSize.Rows()[0][0]))
-	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExportedT(t, tk, store, hook, idxName)
+	hook.OnJobUpdatedExported, _, checkErr = backgroundExecOnJobUpdatedExportedT(t, tk, store, hook, idxName)
 	originHook := d.GetHook()
 	defer d.SetHook(originHook)
 	jobIDExt := wrapJobIDExtCallback(hook)
@@ -2859,7 +2860,6 @@ LOOP:
 			times++
 		}
 	}
-	checkDelRangeAdded(tk, jobIDExt.jobID, c3IdxInfo.ID)
 	tk.MustExec("drop table t1")
 }
 
