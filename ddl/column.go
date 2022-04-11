@@ -175,13 +175,11 @@ func onAddColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error)
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		// Adjust table column offset.
-		offset, err := locateOffsetForColumn(pos, tblInfo)
+		offset, err := locateOffsetToMove(columnInfo.Offset, pos, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		if offset != -1 {
-			tblInfo.MoveColumnInfo(columnInfo.Offset, offset)
-		}
+		tblInfo.MoveColumnInfo(columnInfo.Offset, offset)
 		columnInfo.State = model.StatePublic
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
@@ -206,27 +204,6 @@ func checkPosition(tblInfo *model.TableInfo, pos *ast.ColumnPosition) error {
 		}
 	}
 	return nil
-}
-
-func locateOffsetForColumn(pos *ast.ColumnPosition, tblInfo *model.TableInfo) (offset int, err error) {
-	if pos == nil {
-		return -1, nil
-	}
-	// Get column offset.
-	switch pos.Tp {
-	case ast.ColumnPositionFirst:
-		return 0, nil
-	case ast.ColumnPositionAfter:
-		c := model.FindColumnInfo(tblInfo.Columns, pos.RelativeColumn.Name.L)
-		if c == nil {
-			return 0, infoschema.ErrColumnNotExists.GenWithStackByArgs(pos.RelativeColumn, tblInfo.Name)
-		}
-		return c.Offset + 1, nil
-	case ast.ColumnPositionNone:
-		return -1, nil
-	default:
-		return 0, errors.Errorf("unknown column position type")
-	}
 }
 
 func setIndicesState(indexInfos []*model.IndexInfo, state model.SchemaState) {
