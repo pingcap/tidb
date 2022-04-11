@@ -1362,13 +1362,17 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 		oldRetCollectorSize := retCollector.Base().MemSize
 		retCollector.MergeCollector(subCollector)
 		subCollectorSize := subCollector.Base().MemSize
+		memStats := &runtime.MemStats{}
+		runtime.ReadMemStats(memStats)
+		logutil.BgLogger().Info("subMergeWorker before GC:", zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
 		subCollector = nil
 		runtime.GC()
+		logutil.BgLogger().Info("subMergeWorker consumes memory: ", zap.Int("idx", idx), zap.Int64("data", -int64(dataSize)))
+		logutil.BgLogger().Info("subMergeWorker consumes memory: ", zap.Int("idx", idx), zap.Int64("colResp", -int64(colRespSize)))
 		logutil.BgLogger().Info("subMergeWorker consumes memory: ", zap.Int("idx", idx), zap.Int64("subCollector", -subCollectorSize))
 		logutil.BgLogger().Info("subMergeWorker consumes memory: ", zap.Int("idx", idx), zap.Int64("oldRetCollector", -oldRetCollectorSize))
 		logutil.BgLogger().Info("subMergeWorker consumes memory: ", zap.Int("idx", idx), zap.Int64("newRetCollector", retCollector.Base().MemSize))
 		memTracker.Consume(retCollector.Base().MemSize - oldRetCollectorSize - subCollectorSize - int64(colRespSize) - int64(dataSize))
-		memStats := &runtime.MemStats{}
 		runtime.ReadMemStats(memStats)
 		logutil.BgLogger().Info("subMergeWorker GC:", zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", memTracker.BytesConsumed()))
 	}
@@ -1507,6 +1511,9 @@ workLoop:
 				resultCh <- err
 				continue
 			}
+			memStats := &runtime.MemStats{}
+			runtime.ReadMemStats(memStats)
+			logutil.BgLogger().Info("subBuildWorker before GC:", zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
 			collector = nil
 			runtime.GC()
 			finalMemSize := hist.MemoryUsage() + topn.MemoryUsage()
@@ -1516,7 +1523,6 @@ workLoop:
 			hists[task.slicePos] = hist
 			topns[task.slicePos] = topn
 			resultCh <- nil
-			memStats := &runtime.MemStats{}
 			runtime.ReadMemStats(memStats)
 			logutil.BgLogger().Info("subBuildWorker GC:", zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
 		case <-exitCh:
