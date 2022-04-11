@@ -1371,6 +1371,19 @@ func TestPlanCacheWithStaleReadByBinaryProto(t *testing.T) {
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
 	}
+
+	stmtID2, _, _, err := se.PrepareStmt("select * from t1 where id=1")
+	require.NoError(t, err)
+	for i := 0; i < 2; i++ {
+		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID2, nil)
+		require.NoError(t, err)
+		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 100"))
+	}
+	tk.MustExec("set @@tx_read_ts=@a")
+	rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID2, nil)
+	require.NoError(t, err)
+	// will fail
+	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
 }
 
 func TestIssue30872(t *testing.T) {
