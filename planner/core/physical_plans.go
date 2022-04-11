@@ -437,10 +437,6 @@ type PhysicalIndexScan struct {
 	DoubleRead bool
 
 	NeedCommonHandle bool
-
-	// required by cost model
-	// IndexScan operators under inner side of IndexJoin no need to consider net seek cost
-	underInnerIndexJoin bool
 }
 
 // Clone implements PhysicalPlan interface.
@@ -537,10 +533,6 @@ type PhysicalTableScan struct {
 	PartitionInfo PartitionInfo
 
 	SampleInfo *TableSampleInfo
-
-	// required by cost model
-	// TableScan operators under inner side of IndexJoin no need to consider net seek cost
-	underInnerIndexJoin bool
 }
 
 // Clone implements PhysicalPlan interface.
