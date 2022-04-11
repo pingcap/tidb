@@ -18,11 +18,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 )
 
-var (
-	kb = int64(1024)
-	mb = kb * 1024
-)
-
 type kvCache interface {
 	Get(int64) (*statistics.Table, bool)
 	Put(int64, *statistics.Table)
@@ -36,9 +31,16 @@ type kvCache interface {
 	Copy() kvCache
 }
 
-func newStatsCache() statsCache {
+func newStatsCache(cap int64) statsCache {
+	if cap > 0 {
+		return statsCache{
+			kvCache: newInternalLRUCache(cap),
+		}
+	}
 	return statsCache{
-		kvCache: newInternalLRUCache(1024 * mb),
+		kvCache: mapCache{
+			tables: make(map[int64]cacheItem),
+		},
 	}
 }
 
@@ -85,4 +87,105 @@ func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newV
 		newCache.Del(id)
 	}
 	return newCache
+}
+
+type mapCache struct {
+	tables   map[int64]cacheItem
+	memQuota int64
+}
+
+// Get implements kvCache
+func (m mapCache) Get(k int64) (*statistics.Table, bool) {
+	v, ok := m.tables[k]
+	return v.value, ok
+}
+
+// Put implements kvCache
+func (m mapCache) Put(k int64, v *statistics.Table) {
+	item, ok := m.tables[k]
+	if ok {
+		oldCost := item.cost
+		newCost := v.MemoryUsage()
+		item.value = v
+		item.cost = newCost
+		m.tables[k] = item
+		m.memQuota += newCost - oldCost
+		return
+	}
+	cost := v.MemoryUsage()
+	item = cacheItem{
+		key:   k,
+		value: v,
+		cost:  cost,
+	}
+	m.tables[k] = item
+	m.memQuota += cost
+}
+
+// Del implements kvCache
+func (m mapCache) Del(k int64) {
+	item, ok := m.tables[k]
+	if !ok {
+		return
+	}
+	delete(m.tables, k)
+	m.memQuota -= item.cost
+}
+
+// Cost implements kvCache
+func (m mapCache) Cost() int64 {
+	return m.memQuota
+}
+
+// Keys implements kvCache
+func (m mapCache) Keys() []int64 {
+	ks := make([]int64, 0)
+	for k := range m.tables {
+		ks = append(ks, k)
+	}
+	return ks
+}
+
+// Values implements kvCache
+func (m mapCache) Values() []*statistics.Table {
+	vs := make([]*statistics.Table, 0)
+	for _, v := range m.tables {
+		vs = append(vs, v.value)
+	}
+	return vs
+}
+
+// Len implements kvCache
+func (m mapCache) Len() int {
+	return len(m.tables)
+}
+
+// CalculateCost implements kvCache
+func (m mapCache) CalculateCost() {
+	for _, v := range m.tables {
+		oldCost := v.cost
+		newCost := v.value.MemoryUsage()
+		m.memQuota += newCost - oldCost
+	}
+}
+
+// CalculateTableCost implements kvCache
+func (m mapCache) CalculateTableCost(k int64) {
+	item, ok := m.tables[k]
+	if !ok {
+		return
+	}
+	m.Put(k, item.value)
+}
+
+// Copy implements kvCache
+func (m mapCache) Copy() kvCache {
+	newM := mapCache{
+		tables: make(map[int64]cacheItem),
+	}
+	newM.memQuota = m.memQuota
+	for k, v := range m.tables {
+		newM.tables[k] = v
+	}
+	return newM
 }

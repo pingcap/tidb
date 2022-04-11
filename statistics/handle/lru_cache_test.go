@@ -67,9 +67,10 @@ func TestLRUOp(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, v, t5)
 
-	v, ok = lru.Get(int64(3))
+	// assert 2,3 still exists
+	_, ok = lru.Get(int64(3))
 	require.True(t, ok)
-	v, ok = lru.Get(int64(2))
+	_, ok = lru.Get(int64(2))
 	require.True(t, ok)
 }
 

@@ -486,13 +486,14 @@ type Performance struct {
 	CommitterConcurrency  int     `toml:"committer-concurrency" json:"committer-concurrency"`
 	MaxTxnTTL             uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	// Deprecated
-	MemProfileInterval   string `toml:"-" json:"-"`
-	IndexUsageSyncLease  string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
-	PlanReplayerGCLease  string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
-	GOGC                 int    `toml:"gogc" json:"gogc"`
-	EnforceMPP           bool   `toml:"enforce-mpp" json:"enforce-mpp"`
-	StatsLoadConcurrency uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
-	StatsLoadQueueSize   uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
+	MemProfileInterval    string `toml:"-" json:"-"`
+	IndexUsageSyncLease   string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
+	PlanReplayerGCLease   string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
+	GOGC                  int    `toml:"gogc" json:"gogc"`
+	EnforceMPP            bool   `toml:"enforce-mpp" json:"enforce-mpp"`
+	StatsLoadConcurrency  uint   `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
+	StatsLoadQueueSize    uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
+	StatsCacheMemoryQuota int64  `toml:"stats-cache-memory-quota" json:"stats-cache-memory-quota"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -695,12 +696,13 @@ var defaultConf = Config{
 		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
 		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
 		// TODO: set indexUsageSyncLease to 60s.
-		IndexUsageSyncLease:  "0s",
-		GOGC:                 100,
-		EnforceMPP:           false,
-		PlanReplayerGCLease:  "10m",
-		StatsLoadConcurrency: 5,
-		StatsLoadQueueSize:   1000,
+		IndexUsageSyncLease:   "0s",
+		GOGC:                  100,
+		EnforceMPP:            false,
+		PlanReplayerGCLease:   "10m",
+		StatsLoadConcurrency:  5,
+		StatsLoadQueueSize:    1000,
+		StatsCacheMemoryQuota: 0,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",

@@ -128,4 +128,12 @@ var (
 			Help:      "Bucketed histogram of latency time (ms) of stats read during sync-load.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 22), // 1ms ~ 1h
 		})
+
+	StatsCacheLRUCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "stats_cache_lru",
+			Help:      "Counter of lru for statsCache",
+		}, []string{LblType})
 )

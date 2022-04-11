@@ -18,7 +18,18 @@ import (
 	"container/list"
 	"sync"
 
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/statistics"
+)
+
+const (
+	typHit    = "hit"
+	typMiss   = "miss"
+	typInsert = "insert"
+	typUpdate = "update"
+	typDel    = "del"
+	typEvict  = "evict"
+	typCopy   = "copy"
 )
 
 // cacheEntry wraps Key and Value. It's the value of list.Element.
@@ -56,8 +67,10 @@ func (l *internalLRUCache) Get(key int64) (*statistics.Table, bool) {
 	defer l.Unlock()
 	element, exists := l.elements[key]
 	if !exists {
+		metrics.StatsCacheLRUCounter.WithLabelValues(typMiss).Inc()
 		return nil, false
 	}
+	metrics.StatsCacheLRUCounter.WithLabelValues(typHit).Inc()
 	l.cache.MoveToFront(element)
 	return element.Value.(*cacheItem).value, true
 }
@@ -70,6 +83,11 @@ func (l *internalLRUCache) Put(key int64, value *statistics.Table) {
 }
 
 func (l *internalLRUCache) put(key int64, value *statistics.Table, cost int64, tryEvict bool) {
+	defer func() {
+		if tryEvict {
+			l.evictIfNeeded()
+		}
+	}()
 	element, exists := l.elements[key]
 	if exists {
 		oldCost := element.Value.(*cacheItem).cost
@@ -77,6 +95,7 @@ func (l *internalLRUCache) put(key int64, value *statistics.Table, cost int64, t
 		element.Value.(*cacheItem).cost = cost
 		l.cache.MoveToFront(element)
 		l.cost += cost - oldCost
+		metrics.StatsCacheLRUCounter.WithLabelValues(typUpdate).Inc()
 		return
 	}
 	newCacheEntry := &cacheItem{
@@ -87,10 +106,7 @@ func (l *internalLRUCache) put(key int64, value *statistics.Table, cost int64, t
 	element = l.cache.PushFront(newCacheEntry)
 	l.elements[key] = element
 	l.cost += cost
-
-	if tryEvict {
-		l.evictIfNeeded()
-	}
+	metrics.StatsCacheLRUCounter.WithLabelValues(typInsert).Inc()
 }
 
 // Del deletes the key-value pair from the LRU Cache.
@@ -104,6 +120,7 @@ func (l *internalLRUCache) Del(key int64) {
 	l.cache.Remove(element)
 	delete(l.elements, key)
 	l.cost -= element.Value.(*cacheItem).cost
+	metrics.StatsCacheLRUCounter.WithLabelValues(typDel).Inc()
 }
 
 // Cost returns the current cost
@@ -163,7 +180,7 @@ func (l *internalLRUCache) CalculateTableCost(key int64) {
 		return
 	}
 	item := element.Value.(*cacheItem)
-	l.put(item.key, item.value, item.value.MemoryUsage(), false)
+	l.put(item.key, item.value, item.value.MemoryUsage(), true)
 	l.evictIfNeeded()
 }
 
@@ -180,6 +197,7 @@ func (l *internalLRUCache) Copy() kvCache {
 		newCache.put(key, value, cost, false)
 		node = node.Prev()
 	}
+	metrics.StatsCacheLRUCounter.WithLabelValues(typCopy).Inc()
 	return newCache
 }
 
@@ -190,5 +208,6 @@ func (l *internalLRUCache) evictIfNeeded() {
 		delete(l.elements, droppedItem.key)
 		l.cache.Remove(lru)
 		l.cost -= droppedItem.cost
+		metrics.StatsCacheLRUCounter.WithLabelValues(typEvict).Inc()
 	}
 }
