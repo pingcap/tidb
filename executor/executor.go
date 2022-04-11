@@ -2027,8 +2027,7 @@ func setResourceGroupTaggerForTxn(sc *stmtctx.StatementContext, snapshot kv.Snap
 
 func getResourceGroupTagger(sc *stmtctx.StatementContext) tikvrpc.ResourceGroupTagger {
 	fn := sc.GetResourceGroupTagger()
-	var tagger tikvrpc.ResourceGroupTagger
-	tagger = func(req *tikvrpc.Request) {
+	tagger := func(req *tikvrpc.Request) {
 		if topsqlstate.TopSQLEnabled() {
 			fn(req)
 		}

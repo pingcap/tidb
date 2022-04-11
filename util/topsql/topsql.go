@@ -100,8 +100,7 @@ func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.
 	if sqlDigest == nil || len(sqlDigest.Bytes()) == 0 {
 		return ctx
 	}
-	var sqlDigestBytes []byte
-	sqlDigestBytes = sqlDigest.Bytes()
+	sqlDigestBytes := sqlDigest.Bytes()
 	ctx = collector.CtxWithSQLDigest(ctx, sqlDigestBytes)
 	pprof.SetGoroutineLabels(ctx)
 
