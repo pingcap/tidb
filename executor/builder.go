@@ -719,12 +719,6 @@ func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) Executor {
 }
 
 func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
-	b.snapshotTS = v.SnapshotTS
-	b.isStaleness = v.IsStaleness
-	b.readReplicaScope = v.ReadReplicaScope
-	if b.snapshotTS != 0 {
-		b.is, b.err = domain.GetDomain(b.ctx).GetSnapshotInfoSchema(b.snapshotTS)
-	}
 	e := &ExecuteExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		is:           b.is,
@@ -735,6 +729,34 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		plan:         v.Plan,
 		outputNames:  v.OutputNames(),
 	}
+
+	failpoint.Inject("assertStaleReadValuesSameWithExecuteAndBuilder", func() {
+		// This fail point is used to assert the behavior after refactoring is exactly the same with the previous implement.
+		// Some variables in `plannercore.Execute` is deprecated and only be used for asserting now.
+		if b.snapshotTS != v.SnapshotTS {
+			panic(fmt.Sprintf("%d != %d", b.snapshotTS, v.SnapshotTS))
+		}
+
+		if b.isStaleness != v.IsStaleness {
+			panic(fmt.Sprintf("%v != %v", b.isStaleness, v.IsStaleness))
+		}
+
+		if b.readReplicaScope != v.ReadReplicaScope {
+			panic(fmt.Sprintf("%s != %s", b.readReplicaScope, v.ReadReplicaScope))
+		}
+
+		if v.SnapshotTS != 0 {
+			is, err := domain.GetDomain(b.ctx).GetSnapshotInfoSchema(b.snapshotTS)
+			if err != nil {
+				panic(err)
+			}
+
+			if b.is.SchemaMetaVersion() != is.SchemaMetaVersion() {
+				panic(fmt.Sprintf("%d != %d", b.is.SchemaMetaVersion(), is.SchemaMetaVersion()))
+			}
+		}
+	})
+
 	failpoint.Inject("assertExecutePrepareStatementStalenessOption", func(val failpoint.Value) {
 		vs := strings.Split(val.(string), "_")
 		assertTS, assertTxnScope := vs[0], vs[1]
@@ -1151,11 +1173,13 @@ func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourc
 		cachedTable := tbl.(table.CachedTable)
 		// Determine whether the cache can be used.
 		leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
-		cacheData := cachedTable.TryReadFromCache(startTS, leaseDuration)
+		cacheData, loading := cachedTable.TryReadFromCache(startTS, leaseDuration)
 		if cacheData != nil {
 			vars.StmtCtx.ReadFromTableCache = true
 			x.setDummy()
 			us.cacheTable = cacheData
+		} else if loading {
+			// continue
 		} else {
 			if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !vars.StmtCtx.InExplainStmt {
 				store := b.ctx.GetStore()
@@ -4947,13 +4971,16 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 	}
 	sessVars := b.ctx.GetSessionVars()
 	leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
-	cacheData := tbl.(table.CachedTable).TryReadFromCache(startTS, leaseDuration)
+	cacheData, loading := tbl.(table.CachedTable).TryReadFromCache(startTS, leaseDuration)
 	if cacheData != nil {
 		sessVars.StmtCtx.ReadFromTableCache = true
 		return cacheData
-	}
-	if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
-		tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS, leaseDuration)
+	} else if loading {
+		// continue
+	} else {
+		if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
+			tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS, leaseDuration)
+		}
 	}
 	return nil
 }
