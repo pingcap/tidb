@@ -1364,7 +1364,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 		subCollectorSize := subCollector.Base().MemSize
 		memStats := &runtime.MemStats{}
 		runtime.ReadMemStats(memStats)
-		logutil.BgLogger().Info("subMergeWorker before GC:", zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
+		logutil.BgLogger().Info("subMergeWorker before GC:", zap.Int("idx", idx), zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
 		subCollector = nil
 		runtime.GC()
 		logutil.BgLogger().Info("subMergeWorker consumes memory: ", zap.Int("idx", idx), zap.Int64("data", -int64(dataSize)))
@@ -1374,7 +1374,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 		logutil.BgLogger().Info("subMergeWorker consumes memory: ", zap.Int("idx", idx), zap.Int64("newRetCollector", retCollector.Base().MemSize))
 		memTracker.Consume(retCollector.Base().MemSize - oldRetCollectorSize - subCollectorSize - int64(colRespSize) - int64(dataSize))
 		runtime.ReadMemStats(memStats)
-		logutil.BgLogger().Info("subMergeWorker GC:", zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", memTracker.BytesConsumed()))
+		logutil.BgLogger().Info("subMergeWorker GC:", zap.Int("idx", idx), zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", memTracker.BytesConsumed()))
 	}
 	resultCh <- &samplingMergeResult{collector: retCollector}
 }
@@ -1513,7 +1513,7 @@ workLoop:
 			}
 			memStats := &runtime.MemStats{}
 			runtime.ReadMemStats(memStats)
-			logutil.BgLogger().Info("subBuildWorker before GC:", zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
+			logutil.BgLogger().Info("subBuildWorker before GC:", zap.Int("taskIdx", task.slicePos), zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
 			collector = nil
 			runtime.GC()
 			finalMemSize := hist.MemoryUsage() + topn.MemoryUsage()
@@ -1524,7 +1524,7 @@ workLoop:
 			topns[task.slicePos] = topn
 			resultCh <- nil
 			runtime.ReadMemStats(memStats)
-			logutil.BgLogger().Info("subBuildWorker GC:", zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
+			logutil.BgLogger().Info("subBuildWorker GC:", zap.Int("taskIdx", task.slicePos), zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
 		case <-exitCh:
 			return
 		}
