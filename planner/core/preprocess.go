@@ -1681,11 +1681,21 @@ func (p *preprocessor) initTxnContextProviderIfNecessary(node ast.Node) {
 		return
 	}
 
-	if p.LastSnapshotTS == 0 {
-		p.err = sessiontxn.GetTxnManager(p.ctx).SetContextProvider(&sessiontxn.SimpleTxnContextProvider{
-			InfoSchema: p.ensureInfoSchema(),
-		})
+	txnManager := sessiontxn.GetTxnManager(p.ctx)
+	currentProvider := txnManager.GetContextProvider()
+
+	// If currentProvider is nil or not a `SimpleTxnContextProvider`, it means
+	if currentProvider == nil {
+		return
 	}
+
+	if _, ok := currentProvider.(*sessiontxn.SimpleTxnContextProvider); !ok {
+		return
+	}
+
+	p.err = sessiontxn.GetTxnManager(p.ctx).SetContextProvider(&sessiontxn.SimpleTxnContextProvider{
+		InfoSchema: p.ensureInfoSchema(),
+	})
 }
 
 func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
