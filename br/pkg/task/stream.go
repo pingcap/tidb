@@ -53,14 +53,14 @@ import (
 )
 
 const (
-	flagYes                     = "yes"
-	flagDryRun                  = "dry-run"
-	flagUntil                   = "until"
-	flagStreamJSONOutput        = "json"
-	flagStreamTaskName          = "task-name"
-	flagStreamStartTS           = "start-ts"
-	flagStreamEndTS             = "end-ts"
-	flagGCSafePointTTS          = "gc-ttl"
+	flagYes              = "yes"
+	flagDryRun           = "dry-run"
+	flagUntil            = "until"
+	flagStreamJSONOutput = "json"
+	flagStreamTaskName   = "task-name"
+	flagStreamStartTS    = "start-ts"
+	flagStreamEndTS      = "end-ts"
+	flagGCSafePointTTS   = "gc-ttl"
 )
 
 var (
