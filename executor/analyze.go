@@ -1363,6 +1363,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 		retCollector.MergeCollector(subCollector)
 		subCollectorSize := subCollector.Base().MemSize
 		subCollector = nil
+		runtime.GC()
 		logutil.BgLogger().Info("subMergeWorker consumes memory: ", zap.Int("idx", idx), zap.Int64("subCollector", -subCollectorSize))
 		logutil.BgLogger().Info("subMergeWorker consumes memory: ", zap.Int("idx", idx), zap.Int64("oldRetCollector", -oldRetCollectorSize))
 		logutil.BgLogger().Info("subMergeWorker consumes memory: ", zap.Int("idx", idx), zap.Int64("newRetCollector", retCollector.Base().MemSize))
@@ -1503,10 +1504,12 @@ workLoop:
 				resultCh <- err
 				continue
 			}
+			collector = nil
+			runtime.GC()
 			finalMemSize := hist.MemoryUsage() + topn.MemoryUsage()
-			e.memTracker.Consume(finalMemSize - totalMemInc)
 			logutil.BgLogger().Info("subBuildWorker consumes memory: ", zap.Int("taskIdx", task.slicePos), zap.Int64("sample-temp", -totalMemInc))
 			logutil.BgLogger().Info("subBuildWorker consumes memory: ", zap.Int("taskIdx", task.slicePos), zap.Int64("final", finalMemSize))
+			e.memTracker.Consume(finalMemSize - totalMemInc)
 			hists[task.slicePos] = hist
 			topns[task.slicePos] = topn
 			resultCh <- nil
