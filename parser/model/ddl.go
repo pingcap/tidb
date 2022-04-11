@@ -265,6 +265,7 @@ type Job struct {
 	SchemaID   int64         `json:"schema_id"`
 	TableID    int64         `json:"table_id"`
 	SchemaName string        `json:"schema_name"`
+	TableName  string        `json:"table_name"`
 	State      JobState      `json:"state"`
 	Error      *terror.Error `json:"err"`
 	// ErrorCount will be increased, every time we meet an error when running job.
