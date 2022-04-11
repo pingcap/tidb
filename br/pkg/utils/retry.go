@@ -9,8 +9,10 @@ import (
 	stderrors "errors"
 	"io"
 	"net"
+	"os"
 	"reflect"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -105,11 +107,23 @@ func isSingleRetryableError(err error) bool {
 	switch err {
 	case nil, context.Canceled, context.DeadlineExceeded, io.EOF, sql.ErrNoRows:
 		return false
+	case mysql.ErrInvalidConn, driver.ErrBadConn:
+		return true
 	}
 
 	switch nerr := err.(type) {
 	case net.Error:
-		return nerr.Timeout()
+		if nerr.Timeout() {
+			return true
+		}
+		switch cause := nerr.(type) {
+		case *net.OpError:
+			syscallErr, ok := cause.Unwrap().(*os.SyscallError)
+			if ok {
+				return syscallErr.Err == syscall.ECONNREFUSED || syscallErr.Err == syscall.ECONNRESET
+			}
+		}
+		return false
 	case *mysql.MySQLError:
 		switch nerr.Number {
 		// ErrLockDeadlock can retry to commit while meet deadlock
@@ -125,9 +139,6 @@ func isSingleRetryableError(err error) bool {
 		case codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss:
 			return true
 		case codes.Unknown:
-			if reflect.TypeOf(err) == stdErrorType {
-				return err == mysql.ErrInvalidConn || err == driver.ErrBadConn
-			}
 			return false
 		default:
 			return false

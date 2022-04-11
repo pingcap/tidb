@@ -25,6 +25,11 @@ func TestIsRetryableError(t *testing.T) {
 	require.False(t, IsRetryableError(&net.DNSError{}))
 	require.True(t, IsRetryableError(&net.DNSError{IsTimeout: true}))
 
+	// net: connection refused
+	_, err := net.Dial("tcp", "localhost:65533")
+	require.Error(t, err)
+	require.True(t, IsRetryableError(err))
+
 	// MySQL Errors
 	require.False(t, IsRetryableError(&mysql.MySQLError{}))
 	require.True(t, IsRetryableError(&mysql.MySQLError{Number: tmysql.ErrUnknown}))
