@@ -497,12 +497,10 @@ func TestCancelDropColumn(t *testing.T) {
 	originalHook := dom.DDL().GetHook()
 	dom.DDL().SetHook(hook)
 	for i := range testCases {
-		var c3IdxID int64
 		testCase = &testCases[i]
 		if testCase.needAddColumn {
 			tk.MustExec("alter table test_drop_column add column c3 int")
 			tk.MustExec("alter table test_drop_column add index idx_c3(c3)")
-			c3IdxID = external.GetIndexID(t, tk, "test", "test_drop_column", "idx_c3")
 		}
 
 		err := tk.ExecToErr("alter table test_drop_column drop column c3")
@@ -533,10 +531,6 @@ func TestCancelDropColumn(t *testing.T) {
 			require.Nil(t, col1)
 			require.NoError(t, err)
 			require.EqualError(t, checkErr, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
-			if c3IdxID != 0 {
-				// Check index is deleted
-				checkDelRangeAdded(tk, jobID, c3IdxID)
-			}
 		}
 	}
 	dom.DDL().SetHook(originalHook)
@@ -601,12 +595,10 @@ func TestCancelDropColumns(t *testing.T) {
 	originalHook := dom.DDL().GetHook()
 	dom.DDL().SetHook(hook)
 	for i := range testCases {
-		var c3IdxID int64
 		testCase = &testCases[i]
 		if testCase.needAddColumn {
 			tk.MustExec("alter table test_drop_column add column c3 int, add column c4 int")
 			tk.MustExec("alter table test_drop_column add index idx_c3(c3)")
-			c3IdxID = external.GetIndexID(t, tk, "test", "test_drop_column", "idx_c3")
 		}
 		err := tk.ExecToErr("alter table test_drop_column drop column c3, drop column c4")
 		tbl := external.GetTableByName(t, tk, "test", "test_drop_column")
@@ -634,10 +626,6 @@ func TestCancelDropColumns(t *testing.T) {
 			require.Nil(t, idx3)
 			require.NoError(t, err)
 			require.EqualError(t, checkErr, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
-			if c3IdxID != 0 {
-				// Check index is deleted
-				checkDelRangeAdded(tk, jobID, c3IdxID)
-			}
 		}
 	}
 	dom.DDL().SetHook(originalHook)
