@@ -27,6 +27,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+const WildCard = "*"
+
 type TaskStatus struct {
 	Info backuppb.StreamBackupTaskInfo
 	// Progress maps the StoreID to NextBackupTs.
@@ -42,8 +44,8 @@ type TaskPrinter interface {
 
 // PrintTaskByTable make a TaskPrinter,
 // which prints the task by the `Table` implement of the console.
-func PrintTaskByTable(t *glue.Table) TaskPrinter {
-	return printByTable{inner: t}
+func PrintTaskByTable(c glue.ConsoleOperations) TaskPrinter {
+	return &printByTable{console: c}
 }
 
 // PrintTaskWithJSON make a TaskPrinter,
@@ -55,22 +57,43 @@ func PrintTaskWithJSON(c glue.ConsoleOperations) TaskPrinter {
 }
 
 type printByTable struct {
-	inner *glue.Table
+	console       glue.ConsoleOperations
+	pendingTables []*glue.Table
 }
 
-func (t TaskStatus) getCheckpoint() uint64 {
+// statusOK make a string like <green>●</green> <bold>{message}</bold>
+func statusOK(message string) string {
+	return color.GreenString("●") + color.New(color.Bold).Sprintf(" %s", message)
+}
+
+// statusErr make a string like <red>○</red> <bold>{message}</bold>
+func statusErr(message string) string {
+	return color.RedString("○") + color.New(color.Bold).Sprintf(" %s", message)
+}
+
+func colorfulStatusString() string {
+	// TODO: after pause implemented, adapt it.
+	// This function always return `Normal` for now.
+	return statusOK("NORMAL")
+}
+
+// GetCheckpoint calculates the checkpoint of the task.
+func (t TaskStatus) GetCheckpoint() uint64 {
+	initialized := false
 	checkpoint := t.Info.StartTs
 	for _, ts := range t.Progress {
-		if checkpoint == 0 || ts < checkpoint {
+		if !initialized || ts < checkpoint {
+			initialized = true
 			checkpoint = ts
 		}
 	}
 	return checkpoint
 }
 
-func (p printByTable) AddTask(task TaskStatus) {
-	table := p.inner
+func (p *printByTable) AddTask(task TaskStatus) {
+	table := p.console.CreateTable()
 	table.Add("name", task.Info.Name)
+	table.Add("status", colorfulStatusString())
 	table.Add("start", fmt.Sprint(oracle.GetTimeFromTS(task.Info.StartTs)))
 	if task.Info.EndTs > 0 {
 		table.Add("end", fmt.Sprint(oracle.GetTimeFromTS(task.Info.EndTs)))
@@ -90,14 +113,23 @@ func (p printByTable) AddTask(task TaskStatus) {
 		info := fmt.Sprintf("%s; gap=%s", pTime, gapColor.Sprint(gap))
 		return info
 	}
-	table.Add("checkpoint[global]", formatTS(task.getCheckpoint()))
+	table.Add("checkpoint[global]", formatTS(task.GetCheckpoint()))
 	for store, p := range task.Progress {
 		table.Add(fmt.Sprintf("checkpoint[store=%d]", store), formatTS(p))
 	}
+	p.pendingTables = append(p.pendingTables, table)
 }
 
-func (p printByTable) PrintTasks() {
-	p.inner.Print()
+func (p *printByTable) PrintTasks() {
+	if len(p.pendingTables) == 0 {
+		p.console.Println(statusErr("No Task Yet."))
+		return
+	}
+	p.console.Println(statusOK(fmt.Sprintf("Total %d Tasks.", len(p.pendingTables))))
+	for i, t := range p.pendingTables {
+		p.console.Printf("> #%d <\n", i+1)
+		t.Print()
+	}
 }
 
 type printByJSON struct {
@@ -140,7 +172,7 @@ func (p *printByJSON) PrintTasks() {
 			TableFilter: t.Info.GetTableFilter(),
 			Progress:    sp,
 			Storage:     s.String(),
-			Checkpoint:  t.getCheckpoint(),
+			Checkpoint:  t.GetCheckpoint(),
 			EstQPS:      t.QPS,
 		}
 	}
@@ -231,4 +263,94 @@ func MaybeQPS(ctx context.Context, mgr *conn.Mgr) (float64, error) {
 		return true
 	})
 	return qps, nil
+}
+
+// StatusController is the controller type (or context type) for the command `stream status`.
+type StatusController struct {
+	meta *MetaDataClient
+	mgr  *conn.Mgr
+	view TaskPrinter
+}
+
+// NewStatusContorller make a status controller via some resource accessors.
+func NewStatusController(meta *MetaDataClient, mgr *conn.Mgr, view TaskPrinter) *StatusController {
+	return &StatusController{
+		meta: meta,
+		mgr:  mgr,
+		view: view,
+	}
+}
+
+// fillTask queries and fills the extra information for a raw task.
+func (ctl *StatusController) fillTask(ctx context.Context, task Task) (TaskStatus, error) {
+	var err error
+	s := TaskStatus{
+		Info: task.Info,
+	}
+	s.Progress, err = task.NextBackupTSList(ctx)
+	if err != nil {
+		return s, errors.Annotatef(err, "failed to get progress of task %s", s.Info.Name)
+	}
+	stores, err := ctl.mgr.GetPDClient().GetAllStores(ctx)
+	if err != nil {
+		return s, errors.Annotate(err, "failed to get stores from PD")
+	}
+	for _, store := range stores {
+		if _, ok := s.Progress[store.GetId()]; !ok {
+			s.Progress[store.GetId()] = s.Info.StartTs
+		}
+	}
+	s.QPS, err = MaybeQPS(ctx, ctl.mgr)
+	if err != nil {
+		return s, errors.Annotatef(err, "failed to get QPS of task %s", s.Info.Name)
+	}
+	return s, nil
+}
+
+// getTask fetches the task by the name, if the name is the wildcard ("*"), fetch all tasks.
+func (ctl *StatusController) getTask(ctx context.Context, name string) ([]TaskStatus, error) {
+	if name == WildCard {
+		// get status about all of tasks
+		tasks, err := ctl.meta.GetAllTasks(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		result := make([]TaskStatus, 0, len(tasks))
+		for _, task := range tasks {
+			status, err := ctl.fillTask(ctx, task)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, status)
+		}
+		return result, nil
+	}
+	// get status about TaskName
+	task, err := ctl.meta.GetTask(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	status, err := ctl.fillTask(ctx, *task)
+	if err != nil {
+		return nil, err
+	}
+	return []TaskStatus{status}, nil
+}
+
+func (ctl *StatusController) printToView(tasks []TaskStatus) {
+	for _, task := range tasks {
+		ctl.view.AddTask(task)
+	}
+	ctl.view.PrintTasks()
+}
+
+// PrintStatusOfTask prints the status of tasks with the name. When the name is *, print all tasks.
+func (ctl *StatusController) PrintStatusOfTask(ctx context.Context, name string) error {
+	tasks, err := ctl.getTask(ctx, name)
+	if err != nil {
+		return err
+	}
+	ctl.printToView(tasks)
+	return nil
 }
