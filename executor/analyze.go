@@ -722,6 +722,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) *statistics.AnalyzeResu
 		if err != nil {
 			return &statistics.AnalyzeResults{Err: err, Job: colExec.job}
 		}
+		runtime.GC()
 		cLen := len(colExec.analyzePB.ColReq.ColumnsInfo)
 		colGroupResult := &statistics.AnalyzeResult{
 			Hist:    hists[cLen:],
@@ -1350,14 +1351,13 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 		dataSize := cap(data)
 		data = nil
 		colRespSize := colResp.Size()
-		memTracker.Consume(int64(colRespSize) - int64(dataSize))
+		memTracker.Consume(int64(colRespSize))
 		subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 		before := time.Now()
 		subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
+		colResp = nil
 		logutil.BgLogger().Info("subMergeWorker FromProto: ", zap.Int("idx", idx), zap.Duration("time", time.Now().Sub(before)))
 		logutil.BgLogger().Info("subMergeWorker consumes memory: ", zap.Int("idx", idx), zap.Int64("subCollector", subCollector.Base().MemSize))
-		colResp = nil
-		memTracker.Consume(-int64(colRespSize))
 		UpdateAnalyzeJob(e.ctx, e.job, subCollector.Base().Count)
 		oldRetCollectorSize := retCollector.Base().MemSize
 		retCollector.MergeCollector(subCollector)
@@ -1367,7 +1367,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 		logutil.BgLogger().Info("subMergeWorker consumes memory: ", zap.Int("idx", idx), zap.Int64("subCollector", -subCollectorSize))
 		logutil.BgLogger().Info("subMergeWorker consumes memory: ", zap.Int("idx", idx), zap.Int64("oldRetCollector", -oldRetCollectorSize))
 		logutil.BgLogger().Info("subMergeWorker consumes memory: ", zap.Int("idx", idx), zap.Int64("newRetCollector", retCollector.Base().MemSize))
-		memTracker.Consume(retCollector.Base().MemSize - oldRetCollectorSize - subCollectorSize)
+		memTracker.Consume(retCollector.Base().MemSize - oldRetCollectorSize - subCollectorSize - int64(colRespSize) - int64(dataSize))
 	}
 	resultCh <- &samplingMergeResult{collector: retCollector}
 }
