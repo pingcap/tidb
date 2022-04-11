@@ -1681,7 +1681,7 @@ func (p *preprocessor) initTxnContextProviderIfNecessary(node ast.Node) {
 		return
 	}
 
-	if !p.initedLastSnapshotTS {
+	if p.LastSnapshotTS == 0 {
 		p.err = sessiontxn.GetTxnManager(p.ctx).SetContextProvider(&sessiontxn.SimpleTxnContextProvider{
 			InfoSchema: p.ensureInfoSchema(),
 		})
