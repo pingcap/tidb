@@ -119,6 +119,8 @@ var (
 	ErrTooLongIndexComment = ClassDDL.NewStd(mysql.ErrTooLongIndexComment)
 	// ErrInvalidDefaultValue returns for invalid default value for columns.
 	ErrInvalidDefaultValue = ClassDDL.NewStd(mysql.ErrInvalidDefault)
+	// ErrDefValGeneratedNamedFunctionIsNotAllowed returns for disallowed function as default value expression of column.
+	ErrDefValGeneratedNamedFunctionIsNotAllowed = ClassDDL.NewStd(mysql.ErrDefValGeneratedNamedFunctionIsNotAllowed)
 	// ErrGeneratedColumnRefAutoInc forbids to refer generated columns to auto-increment columns .
 	ErrGeneratedColumnRefAutoInc = ClassDDL.NewStd(mysql.ErrGeneratedColumnRefAutoInc)
 	// ErrExpressionIndexCanNotRefer forbids to refer expression index to auto-increment column.
@@ -364,4 +366,7 @@ var (
 	ErrAutoConvert = ClassDDL.NewStd(mysql.ErrAutoConvert)
 	// ErrWrongStringLength when UserName or HostName is too long
 	ErrWrongStringLength = ClassDDL.NewStd(mysql.ErrWrongStringLength)
+
+	// ErrBinlogUnsafeSystemFunction when use a system function that may return a different value on the slave.
+	ErrBinlogUnsafeSystemFunction = ClassDDL.NewStd(mysql.ErrBinlogUnsafeSystemFunction)
 )
