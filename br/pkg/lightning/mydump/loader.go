@@ -16,6 +16,7 @@ package mydump
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -415,6 +416,13 @@ func (s *mdLoaderSetup) route() error {
 	}
 	if err := runRoute(s.tableDatas); err != nil {
 		return errors.Trace(err)
+	}
+
+	// check count in knownDBNames should always greater than 0, this will not happen if there are no bugs in the code
+	for dbName, info := range knownDBNames {
+		if info.count < 0 {
+			return common.ErrTableRoute.GenWithStack(fmt.Sprintf("dbName: %s route count less than 0", dbName))
+		}
 	}
 
 	// remove all schemas which has been entirely routed away(file count > 0)
