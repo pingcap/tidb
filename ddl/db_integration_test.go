@@ -2073,6 +2073,30 @@ func TestDefaultColumnWithRand(t *testing.T) {
 	tk.MustGetErrCode("CREATE TABLE t3 (c int, c1 int default a_function_not_supported_yet());", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
 }
 
+func TestDefaultColumnWithUUID(t *testing.T) {
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, testLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	// create table
+	tk.MustExec("create table t (c int(10), c1 varchar(256) default (uuid()))")
+	// add column with default uuid() for table t is forbidden in MySQL 8.0
+	tk.MustGetErrCode("alter table t add column c2 varchar(256) default (uuid())", errno.ErrBinlogUnsafeSystemFunction)
+	// insert records
+	tk.MustExec("insert into t(c) values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10)")
+	// each value of UUID should differ
+	r := tk.MustQuery("select c1 from t").Rows()
+	set := make(map[string]bool, 10)
+	for _, row := range r {
+		str, _ := row[0].(string)
+		_, ok := set[str]
+		require.True(t, !ok, "Existing two same UUID values.")
+		set[str] = true
+	}
+}
+
 func TestChangingDBCharset(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
