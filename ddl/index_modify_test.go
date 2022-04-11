@@ -715,7 +715,6 @@ func testCancelAddIndex(t *testing.T, store kv.Storage, dom *domain.Domain, idxN
 		batchInsert(tk, "t1", i, i+defaultBatchSize)
 	}
 
-	var c3IdxInfo *model.IndexInfo
 	hook := &ddl.TestDDLCallback{Do: dom}
 	originBatchSize := tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
 	// Set batch size to lower try to slow down add-index reorganization, This if for hook to cancel this ddl job.
@@ -725,7 +724,7 @@ func testCancelAddIndex(t *testing.T, store kv.Storage, dom *domain.Domain, idxN
 	// the hook.OnJobUpdatedExported is called when the job is updated, runReorgJob will wait ddl.ReorgWaitTimeout, then return the ddl.runDDLJob.
 	// After that ddl call d.hook.OnJobUpdated(job), so that we can canceled the job in this test case.
 	var checkErr error
-	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(t, tk, store, hook, idxName)
+	hook.OnJobUpdatedExported, _, checkErr = backgroundExecOnJobUpdatedExported(t, tk, store, hook, idxName)
 	originalHook := d.GetHook()
 	jobIDExt := wrapJobIDExtCallback(hook)
 	d.SetHook(jobIDExt)
@@ -757,7 +756,6 @@ LOOP:
 			times++
 		}
 	}
-	checkDelRangeAdded(tk, jobIDExt.jobID, c3IdxInfo.ID)
 	d.SetHook(originalHook)
 }
 
@@ -1059,8 +1057,6 @@ func testDropIndexes(t *testing.T, store kv.Storage, createSQL, dropIdxSQL strin
 	for _, idxName := range idxNames {
 		idxIDs = append(idxIDs, external.GetIndexID(t, tk, "test", "test_drop_indexes", idxName))
 	}
-	jobIDExt, reset := setupJobIDExtCallback(tk.Session())
-	defer reset()
 	testddlutil.SessionExecInGoroutine(store, "test", dropIdxSQL, done)
 
 	ticker := time.NewTicker(indexModifyLease / 2)
@@ -1083,9 +1079,6 @@ LOOP:
 			}
 			num += step
 		}
-	}
-	for _, idxID := range idxIDs {
-		checkDelRangeAdded(tk, jobIDExt.jobID, idxID)
 	}
 }
 
@@ -1128,6 +1121,11 @@ func testDropIndexesFromPartitionedTable(t *testing.T, store kv.Storage) {
 		tk.MustExec("insert into test_drop_indexes_from_partitioned_table values (?, ?, ?)", i, i, i)
 	}
 	tk.MustExec("alter table test_drop_indexes_from_partitioned_table drop index i1, drop index if exists i2;")
+	tk.MustExec("alter table test_drop_indexes_from_partitioned_table add index i1(c1)")
+	tk.MustExec("alter table test_drop_indexes_from_partitioned_table drop index i1, drop index if exists i1;")
+	tk.MustExec("alter table test_drop_indexes_from_partitioned_table drop column c1, drop column c2;")
+	tk.MustExec("alter table test_drop_indexes_from_partitioned_table add column c1 int")
+	tk.MustExec("alter table test_drop_indexes_from_partitioned_table drop column c1, drop column if exists c1;")
 }
 
 func testCancelDropIndexes(t *testing.T, store kv.Storage, d ddl.DDL) {
@@ -1151,7 +1149,7 @@ func testCancelDropIndexes(t *testing.T, store kv.Storage, d ddl.DDL) {
 	}{
 		// model.JobStateNone means the jobs is canceled before the first run.
 		// if we cancel successfully, we need to set needAddIndex to false in the next test case. Otherwise, set needAddIndex to true.
-		{true, model.JobStateNone, model.StateNone, true},
+		{true, model.JobStateQueueing, model.StateNone, true},
 		{false, model.JobStateRunning, model.StateWriteOnly, false},
 		{true, model.JobStateRunning, model.StateDeleteOnly, false},
 		{true, model.JobStateRunning, model.StateDeleteReorganization, false},
@@ -1255,9 +1253,6 @@ func testDropIndex(t *testing.T, store kv.Storage, createSQL, dropIdxSQL, idxNam
 	for i := 0; i < num; i++ {
 		tk.MustExec("insert into test_drop_index values (?, ?, ?)", i, i, i)
 	}
-	indexID := external.GetIndexID(t, tk, "test", "test_drop_index", idxName)
-	jobIDExt, reset := setupJobIDExtCallback(tk.Session())
-	defer reset()
 	testddlutil.SessionExecInGoroutine(store, "test", dropIdxSQL, done)
 
 	ticker := time.NewTicker(indexModifyLease / 2)
@@ -1285,7 +1280,6 @@ LOOP:
 	rows := tk.MustQuery("explain select c1 from test_drop_index where c3 >= 0")
 	require.NotContains(t, fmt.Sprintf("%v", rows), idxName)
 
-	checkDelRangeAdded(tk, jobIDExt.jobID, indexID)
 	tk.MustExec("drop table test_drop_index")
 }
 
