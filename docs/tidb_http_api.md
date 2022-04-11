@@ -456,7 +456,7 @@ timezone.*
     curl -X POST http://{TiDBIP}:10080/ddl/owner/resign
     ```
 
-   **Note**: If you request a tidb that is not ddl owner, the response will be `This node is not a ddl owner, can't be resigned.`
+   **Note**: If you request a TiDB that is not ddl owner, the response will be `This node is not a ddl owner, can't be resigned.`
 
 1. Get all TiDB DDL job history information.
 
