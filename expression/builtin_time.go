@@ -2067,11 +2067,7 @@ func (b *builtinSysDateWithFspSig) evalTime(row chunk.Row) (d types.Time, isNull
 
 	loc := b.ctx.GetSessionVars().Location()
 	now := time.Now().In(loc)
-<<<<<<< HEAD
-	result, err := convertTimeToMysqlTime(now, int8(fsp), types.ModeHalfEven)
-=======
-	result, err := convertTimeToMysqlTime(now, int(fsp), types.ModeHalfUp)
->>>>>>> 0beac1800... expression: fix the wrong rounding behavior of Decimal (#33278)
+	result, err := convertTimeToMysqlTime(now, int8(fsp), types.ModeHalfUp)
 	if err != nil {
 		return types.ZeroTime, true, err
 	}
