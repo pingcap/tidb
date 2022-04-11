@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil"
@@ -191,7 +192,7 @@ func getShardKeys(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, sql
 		if chk.NumRows() == 0 {
 			if !newBatchIsComing {
 				// there's remaining work
-				jobs = append(jobs, job{jobID: jobCount, start: currentStart, end: currentEnd, jobSize: currentSize})
+				jobs = append(jobs, job{jobID: jobCount, start: *currentStart.Clone(), end: *currentEnd.Clone(), jobSize: currentSize})
 			}
 			break
 		}
@@ -243,20 +244,10 @@ func buildSelectSQL(stmt *ast.NonTransactionalDeleteStmt, se Session) (*ast.Tabl
 	}
 
 	// the shard column must be indexed
-	indexed := false
-	table, err := sessiontxn.GetTxnManager(se).GetTxnInfoSchema().TableByName(tableName.Schema, tableName.Name)
+	indexed, err := checkShardColumnIndexed(stmt, se, tableName)
 	if err != nil {
 		return nil, "", err
 	}
-	for _, index := range table.Indices() {
-		indexColumns := index.Meta().Columns
-		// check only the first column
-		if len(indexColumns) > 1 && indexColumns[0].Name.L == stmt.ShardColumn.Name.L {
-			indexed = true
-			break
-		}
-	}
-
 	if !indexed {
 		return nil, "", errors.Errorf("Non-transactional delete, shard column %s is not indexed", stmt.ShardColumn.Name.L)
 	}
@@ -277,6 +268,43 @@ func buildSelectSQL(stmt *ast.NonTransactionalDeleteStmt, se Session) (*ast.Tabl
 	selectSQL := fmt.Sprintf("select `%s` from `%s`.`%s` where %s order by `%s`",
 		stmt.ShardColumn.Name.O, tableName.DBInfo.Name.O, tableName.Name.O, sb.String(), stmt.ShardColumn.Name.O)
 	return tableName, selectSQL, nil
+}
+
+func checkShardColumnIndexed(stmt *ast.NonTransactionalDeleteStmt, se Session, tableName *ast.TableName) (bool, error) {
+	shardColumnName := stmt.ShardColumn.Name.L
+	indexed := false
+	tbl, err := sessiontxn.GetTxnManager(se).GetTxnInfoSchema().TableByName(tableName.Schema, tableName.Name)
+	if err != nil {
+		return false, err
+	}
+
+	if shardColumnName == "_tidb_rowid" && !tbl.Meta().PKIsHandle && !tbl.Meta().IsCommonHandle {
+		return true, nil
+	}
+
+	var shardColumn *table.Column
+	for _, col := range tbl.Cols() {
+		if col.Name.L == shardColumnName {
+			shardColumn = col
+			break
+		}
+	}
+	if shardColumn == nil {
+		return false, errors.Errorf("shard column %s not found", shardColumnName)
+	}
+	if shardColumn.IsPKHandleColumn(tbl.Meta()) {
+		return true, nil
+	}
+
+	for _, index := range tbl.Indices() {
+		indexColumns := index.Meta().Columns
+		// check only the first column
+		if len(indexColumns) > 0 && indexColumns[0].Name.L == shardColumnName {
+			indexed = true
+			break
+		}
+	}
+	return indexed, nil
 }
 
 func buildDryRunResults(dryRunOption int, results []string, maxChunkSize int) (sqlexec.RecordSet, error) {

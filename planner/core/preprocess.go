@@ -45,9 +45,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/domainutil"
-	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
-	"go.uber.org/zap"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.
@@ -1485,7 +1483,6 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 			return
 		}
 	}
-	logutil.BgLogger().Warn("[preprocessor] table name:", zap.String("tableName", tableInfo.Name.O))
 	tn.TableInfo = tableInfo
 	tn.DBInfo = dbInfo
 }
