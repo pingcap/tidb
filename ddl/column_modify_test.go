@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -457,7 +456,7 @@ func TestCancelDropColumn(t *testing.T) {
 		JobSchemaState model.SchemaState
 		cancelSucc     bool
 	}{
-		{true, model.JobStateNone, model.StateNone, true},
+		{true, model.JobStateQueueing, model.StateNone, true},
 		{false, model.JobStateRunning, model.StateWriteOnly, false},
 		{true, model.JobStateRunning, model.StateDeleteOnly, false},
 		{true, model.JobStateRunning, model.StateDeleteReorganization, false},
@@ -498,12 +497,10 @@ func TestCancelDropColumn(t *testing.T) {
 	originalHook := dom.DDL().GetHook()
 	dom.DDL().SetHook(hook)
 	for i := range testCases {
-		var c3IdxID int64
 		testCase = &testCases[i]
 		if testCase.needAddColumn {
 			tk.MustExec("alter table test_drop_column add column c3 int")
 			tk.MustExec("alter table test_drop_column add index idx_c3(c3)")
-			c3IdxID = external.GetIndexID(t, tk, "test", "test_drop_column", "idx_c3")
 		}
 
 		err := tk.ExecToErr("alter table test_drop_column drop column c3")
@@ -534,10 +531,6 @@ func TestCancelDropColumn(t *testing.T) {
 			require.Nil(t, col1)
 			require.NoError(t, err)
 			require.EqualError(t, checkErr, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
-			if c3IdxID != 0 {
-				// Check index is deleted
-				checkDelRangeAdded(tk, jobID, c3IdxID)
-			}
 		}
 	}
 	dom.DDL().SetHook(originalHook)
@@ -561,7 +554,7 @@ func TestCancelDropColumns(t *testing.T) {
 		JobSchemaState model.SchemaState
 		cancelSucc     bool
 	}{
-		{true, model.JobStateNone, model.StateNone, true},
+		{true, model.JobStateQueueing, model.StateNone, true},
 		{false, model.JobStateRunning, model.StateWriteOnly, false},
 		{true, model.JobStateRunning, model.StateDeleteOnly, false},
 		{true, model.JobStateRunning, model.StateDeleteReorganization, false},
@@ -602,12 +595,10 @@ func TestCancelDropColumns(t *testing.T) {
 	originalHook := dom.DDL().GetHook()
 	dom.DDL().SetHook(hook)
 	for i := range testCases {
-		var c3IdxID int64
 		testCase = &testCases[i]
 		if testCase.needAddColumn {
 			tk.MustExec("alter table test_drop_column add column c3 int, add column c4 int")
 			tk.MustExec("alter table test_drop_column add index idx_c3(c3)")
-			c3IdxID = external.GetIndexID(t, tk, "test", "test_drop_column", "idx_c3")
 		}
 		err := tk.ExecToErr("alter table test_drop_column drop column c3, drop column c4")
 		tbl := external.GetTableByName(t, tk, "test", "test_drop_column")
@@ -635,10 +626,6 @@ func TestCancelDropColumns(t *testing.T) {
 			require.Nil(t, idx3)
 			require.NoError(t, err)
 			require.EqualError(t, checkErr, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
-			if c3IdxID != 0 {
-				// Check index is deleted
-				checkDelRangeAdded(tk, jobID, c3IdxID)
-			}
 		}
 	}
 	dom.DDL().SetHook(originalHook)
@@ -992,7 +979,7 @@ func TestCheckColumnDefaultValue(t *testing.T) {
 
 	tk.MustExec("set sql_mode='';")
 	tk.MustExec("create table text_default_text(c1 text not null default '');")
-	tk.MustQuery(`show create table text_default_text`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table text_default_text`).Check(testkit.RowsWithSep("|",
 		"text_default_text CREATE TABLE `text_default_text` (\n"+
 			"  `c1` text NOT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
@@ -1003,7 +990,7 @@ func TestCheckColumnDefaultValue(t *testing.T) {
 	require.Empty(t, tblInfo.Meta().Columns[0].DefaultValue)
 
 	tk.MustExec("create table text_default_blob(c1 blob not null default '');")
-	tk.MustQuery(`show create table text_default_blob`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table text_default_blob`).Check(testkit.RowsWithSep("|",
 		"text_default_blob CREATE TABLE `text_default_blob` (\n"+
 			"  `c1` blob NOT NULL\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
@@ -1014,7 +1001,7 @@ func TestCheckColumnDefaultValue(t *testing.T) {
 	require.Empty(t, tblInfo.Meta().Columns[0].DefaultValue)
 
 	tk.MustExec("create table text_default_json(c1 json not null default '');")
-	tk.MustQuery(`show create table text_default_json`).Check(testutil.RowsWithSep("|",
+	tk.MustQuery(`show create table text_default_json`).Check(testkit.RowsWithSep("|",
 		"text_default_json CREATE TABLE `text_default_json` (\n"+
 			"  `c1` json NOT NULL DEFAULT 'null'\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -292,4 +293,78 @@ func TestFilterDDLJobsV2(t *testing.T) {
 		t.Logf("get ddl job: %s", job.Query)
 	}
 	require.Equal(t, 7, len(ddlJobs))
+}
+
+func TestDB_ExecDDL(t *testing.T) {
+	s, clean := createRestoreSchemaSuite(t)
+	defer clean()
+
+	ctx := context.Background()
+	ddlJobs := []*model.Job{
+		{
+			Type:       model.ActionAddIndex,
+			Query:      "CREATE DATABASE IF NOT EXISTS test_db;",
+			BinlogInfo: &model.HistoryInfo{},
+		},
+		{
+			Type:       model.ActionAddIndex,
+			Query:      "",
+			BinlogInfo: &model.HistoryInfo{},
+		},
+	}
+
+	db, _, err := restore.NewDB(gluetidb.New(), s.mock.Storage, "STRICT")
+	require.NoError(t, err)
+
+	for _, ddlJob := range ddlJobs {
+		err = db.ExecDDL(ctx, ddlJob)
+		assert.NoError(t, err)
+	}
+}
+
+func TestFilterDDLJobByRules(t *testing.T) {
+	ddlJobs := []*model.Job{
+		{
+			Type: model.ActionSetTiFlashReplica,
+		},
+		{
+			Type: model.ActionAddPrimaryKey,
+		},
+		{
+			Type: model.ActionUpdateTiFlashReplicaStatus,
+		},
+		{
+			Type: model.ActionCreateTable,
+		},
+		{
+			Type: model.ActionLockTable,
+		},
+		{
+			Type: model.ActionAddIndex,
+		},
+		{
+			Type: model.ActionUnlockTable,
+		},
+		{
+			Type: model.ActionCreateSchema,
+		},
+		{
+			Type: model.ActionModifyColumn,
+		},
+	}
+
+	expectedDDLTypes := []model.ActionType{
+		model.ActionAddPrimaryKey,
+		model.ActionCreateTable,
+		model.ActionAddIndex,
+		model.ActionCreateSchema,
+		model.ActionModifyColumn,
+	}
+
+	ddlJobs = restore.FilterDDLJobByRules(ddlJobs, restore.DDLJobBlockListRule)
+
+	require.Equal(t, len(expectedDDLTypes), len(ddlJobs))
+	for i, ddlJob := range ddlJobs {
+		assert.Equal(t, expectedDDLTypes[i], ddlJob.Type)
+	}
 }

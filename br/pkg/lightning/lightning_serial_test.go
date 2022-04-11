@@ -54,13 +54,14 @@ func TestRun(t *testing.T) {
 	cfg := config.NewConfig()
 	err := cfg.LoadFromGlobal(globalConfig)
 	require.NoError(t, err)
-	err = lightning.RunOnce(context.Background(), cfg, nil)
+	err = lightning.RunOnceWithOptions(context.Background(), cfg)
 	require.Error(t, err)
 	require.Regexp(t, "`mydumper.data-source-dir` does not exist$", err.Error())
 
 	path, _ := filepath.Abs(".")
 	ctx := context.Background()
 	invalidGlue := glue.NewExternalTiDBGlue(nil, 0)
+	o := &options{glue: invalidGlue}
 	err = lightning.run(ctx, &config.Config{
 		Mydumper: config.MydumperRuntime{
 			SourceDir:        "file://" + filepath.ToSlash(path),
@@ -71,7 +72,7 @@ func TestRun(t *testing.T) {
 			Enable: true,
 			Driver: "invalid",
 		},
-	}, invalidGlue)
+	}, o)
 	require.EqualError(t, err, "[Lightning:Checkpoint:ErrUnknownCheckpointDriver]unknown checkpoint driver 'invalid'")
 
 	err = lightning.run(ctx, &config.Config{
@@ -84,7 +85,7 @@ func TestRun(t *testing.T) {
 			Driver: "file",
 			DSN:    "any-file",
 		},
-	}, invalidGlue)
+	}, o)
 	require.Error(t, err)
 }
 
