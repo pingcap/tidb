@@ -2637,6 +2637,7 @@ func testPartitionDropIndex(c *C, store kv.Storage, lease time.Duration, idxName
 	}
 	tk.MustExec(addIdxSQL)
 
+<<<<<<< HEAD
 	ctx := tk.Se.(sessionctx.Context)
 	is := domain.GetDomain(ctx).InfoSchema()
 	t, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("partition_drop_idx"))
@@ -2652,6 +2653,9 @@ func testPartitionDropIndex(c *C, store kv.Storage, lease time.Duration, idxName
 	c.Assert(idx1, NotNil)
 
 	testutil.SessionExecInGoroutine(store, dropIdxSQL, done)
+=======
+	testutil.ExecMultiSQLInGoroutine(store, "test", []string{dropIdxSQL}, done)
+>>>>>>> 48efcf68e... ddl: fix duplicate elementID allocation to make sure gc work for partition table (#33726)
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
 LOOP:
@@ -2673,6 +2677,7 @@ LOOP:
 			num += step
 		}
 	}
+<<<<<<< HEAD
 
 	is = domain.GetDomain(ctx).InfoSchema()
 	t, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("partition_drop_idx"))
@@ -2690,6 +2695,8 @@ LOOP:
 	c.Assert(idxn, IsNil)
 	idx := tables.NewIndex(pid, t.Meta(), idx1.Meta())
 	checkDelRangeDone(c, ctx, idx)
+=======
+>>>>>>> 48efcf68e... ddl: fix duplicate elementID allocation to make sure gc work for partition table (#33726)
 	tk.MustExec("drop table partition_drop_idx;")
 }
 
@@ -2727,14 +2734,17 @@ func testPartitionCancelAddIndex(c *C, store kv.Storage, d ddl.DDL, lease time.D
 	}
 
 	var checkErr error
-	var c3IdxInfo *model.IndexInfo
 	hook := &ddl.TestDDLCallback{}
 	originBatchSize := tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
 	// Set batch size to lower try to slow down add-index reorganization, This if for hook to cancel this ddl job.
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 32")
 	ctx := tk.Se.(sessionctx.Context)
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", originBatchSize.Rows()[0][0]))
+<<<<<<< HEAD
 	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExported(c, store, ctx, hook, idxName)
+=======
+	hook.OnJobUpdatedExported, _, checkErr = backgroundExecOnJobUpdatedExportedT(t, tk, store, hook, idxName)
+>>>>>>> 48efcf68e... ddl: fix duplicate elementID allocation to make sure gc work for partition table (#33726)
 	originHook := d.GetHook()
 	defer d.(ddl.DDLForTest).SetHook(originHook)
 	d.(ddl.DDLForTest).SetHook(hook)
@@ -2768,6 +2778,7 @@ LOOP:
 			times++
 		}
 	}
+<<<<<<< HEAD
 
 	t := testGetTableByName(c, ctx, "test_db", "t1")
 	// Only one partition id test is taken here.
@@ -2779,6 +2790,8 @@ LOOP:
 	idx := tables.NewIndex(pid, t.Meta(), c3IdxInfo)
 	checkDelRangeDone(c, ctx, idx)
 
+=======
+>>>>>>> 48efcf68e... ddl: fix duplicate elementID allocation to make sure gc work for partition table (#33726)
 	tk.MustExec("drop table t1")
 }
 
