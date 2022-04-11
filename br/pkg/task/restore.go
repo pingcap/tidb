@@ -141,7 +141,7 @@ type RestoreConfig struct {
 	WithPlacementPolicy string `json:"with-tidb-placement-mode" toml:"with-tidb-placement-mode"`
 
 	// FullBackupStorage is used to find the maps between table name and table id during restoration.
-	// if not specified. we cannot apply kv directly.
+	// if it is empty, directly take restoring log justly.
 	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
 
 	RestoreTS uint64 `json:"restore-ts" toml:"restore-ts"`
