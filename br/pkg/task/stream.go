@@ -654,9 +654,11 @@ func RunStreamPause(
 
 	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// to add backoff
-	ti, err := cli.GetTask(ctx, cfg.TaskName)
+	ti, isPaused, err := cli.GetTaskWithPauseStatus(ctx, cfg.TaskName)
 	if err != nil {
 		return errors.Trace(err)
+	} else if isPaused {
+		return errors.Annotatef(berrors.ErrKVUnknown, "The task %s is paused already.", cfg.TaskName)
 	}
 
 	err = cli.PauseTask(ctx, cfg.TaskName)
@@ -694,9 +696,11 @@ func RunStreamResume(
 
 	cli := stream.NewMetaDataClient(streamMgr.mgr.GetDomain().GetEtcdClient())
 	// to add backoff
-	ti, err := cli.GetTask(ctx, cfg.TaskName)
+	ti, isPaused, err := cli.GetTaskWithPauseStatus(ctx, cfg.TaskName)
 	if err != nil {
 		return errors.Trace(err)
+	} else if !isPaused {
+		return errors.Annotatef(berrors.ErrKVUnknown, "The task %s is active already.", cfg.TaskName)
 	}
 
 	err = cli.ResumeTask(ctx, cfg.TaskName)

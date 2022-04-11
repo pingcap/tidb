@@ -43,8 +43,8 @@ func NewStreamCommand() *cobra.Command {
 	command.AddCommand(
 		newStreamStartCommand(),
 		newStreamStopCommand(),
-		//newStreamPauseCommand(),
-		//newStreamResumeCommand(),
+		newStreamPauseCommand(),
+		newStreamResumeCommand(),
 		newStreamStatusCommand(),
 		newStreamRestoreCommand(),
 		newStreamTruncateCommand(),
