@@ -1012,6 +1012,8 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		rootRowCollector.MergeCollector(mergeResult.collector)
 		rootCollectorSize = rootRowCollector.Base().MemSize
 		mergeMemConsume := rootCollectorSize - oldRootCollectorSize - mergeResult.collector.Base().MemSize
+		mergeResult = nil
+		runtime.GC()
 		logutil.BgLogger().Info("buildSamplingStats finalMerge: ", zap.Int64("collectorMerge", mergeMemConsume))
 		e.memTracker.Consume(mergeMemConsume)
 	}
