@@ -63,26 +63,42 @@ func newInternalLRUCache(capacity int64) *internalLRUCache {
 
 // Get tries to find the corresponding value according to the given key.
 func (l *internalLRUCache) Get(key int64) (*statistics.Table, bool) {
+	var hit bool
+	var r *statistics.Table
 	l.Lock()
-	defer l.Unlock()
+	r, hit = l.get(key)
+	l.Unlock()
+	if hit {
+		metrics.StatsCacheLRUCounter.WithLabelValues(typHit).Inc()
+	} else {
+		metrics.StatsCacheLRUCounter.WithLabelValues(typMiss).Inc()
+	}
+	return r, hit
+}
+
+func (l *internalLRUCache) get(key int64) (*statistics.Table, bool) {
 	element, exists := l.elements[key]
 	if !exists {
-		metrics.StatsCacheLRUCounter.WithLabelValues(typMiss).Inc()
 		return nil, false
 	}
-	metrics.StatsCacheLRUCounter.WithLabelValues(typHit).Inc()
 	l.cache.MoveToFront(element)
 	return element.Value.(*cacheItem).value, true
 }
 
 // Put puts the (key, value) pair into the LRU Cache.
 func (l *internalLRUCache) Put(key int64, value *statistics.Table) {
+	var updated bool
 	l.Lock()
-	defer l.Unlock()
-	l.put(key, value, value.MemoryUsage(), true)
+	updated = l.put(key, value, value.MemoryUsage(), true)
+	l.Unlock()
+	if updated {
+		metrics.StatsCacheLRUCounter.WithLabelValues(typUpdate).Inc()
+		return
+	}
+	metrics.StatsCacheLRUCounter.WithLabelValues(typInsert).Inc()
 }
 
-func (l *internalLRUCache) put(key int64, value *statistics.Table, cost int64, tryEvict bool) {
+func (l *internalLRUCache) put(key int64, value *statistics.Table, cost int64, tryEvict bool) bool {
 	defer func() {
 		if tryEvict {
 			l.evictIfNeeded()
@@ -95,8 +111,7 @@ func (l *internalLRUCache) put(key int64, value *statistics.Table, cost int64, t
 		element.Value.(*cacheItem).cost = cost
 		l.cache.MoveToFront(element)
 		l.cost += cost - oldCost
-		metrics.StatsCacheLRUCounter.WithLabelValues(typUpdate).Inc()
-		return
+		return true
 	}
 	newCacheEntry := &cacheItem{
 		key:   key,
@@ -106,21 +121,29 @@ func (l *internalLRUCache) put(key int64, value *statistics.Table, cost int64, t
 	element = l.cache.PushFront(newCacheEntry)
 	l.elements[key] = element
 	l.cost += cost
-	metrics.StatsCacheLRUCounter.WithLabelValues(typInsert).Inc()
+	return false
 }
 
 // Del deletes the key-value pair from the LRU Cache.
 func (l *internalLRUCache) Del(key int64) {
+	var del bool
 	l.Lock()
-	defer l.Unlock()
+	del = l.del(key)
+	l.Unlock()
+	if del {
+		metrics.StatsCacheLRUCounter.WithLabelValues(typDel).Inc()
+	}
+}
+
+func (l *internalLRUCache) del(key int64) bool {
 	element := l.elements[key]
 	if element == nil {
-		return
+		return false
 	}
 	l.cache.Remove(element)
 	delete(l.elements, key)
 	l.cost -= element.Value.(*cacheItem).cost
-	metrics.StatsCacheLRUCounter.WithLabelValues(typDel).Inc()
+	return true
 }
 
 // Cost returns the current cost
@@ -159,9 +182,10 @@ func (l *internalLRUCache) Len() int {
 	return len(l.elements)
 }
 
+// CalculateCost re-calculate the memory message
 func (l *internalLRUCache) CalculateCost() {
+	var cost int64
 	l.Lock()
-	defer l.Unlock()
 	for _, v := range l.elements {
 		item := v.Value.(*cacheItem)
 		oldCost := item.cost
@@ -170,25 +194,40 @@ func (l *internalLRUCache) CalculateCost() {
 		l.cost += newCost - oldCost
 	}
 	l.evictIfNeeded()
+	cost = l.cost
+	l.Unlock()
+	metrics.StatsCacheMemUsage.WithLabelValues("cache").Set(float64(cost))
 }
 
+// CalculateTableCost re-calculate the memory message for the certain key
 func (l *internalLRUCache) CalculateTableCost(key int64) {
+	var cost int64
+	var calculated bool
 	l.Lock()
-	defer l.Unlock()
+	calculated = l.calculateTableCost(key)
+	cost = l.cost
+	l.Unlock()
+	if calculated {
+		metrics.StatsCacheMemUsage.WithLabelValues("cache").Set(float64(cost))
+	}
+}
+
+func (l *internalLRUCache) calculateTableCost(key int64) bool {
 	element, exists := l.elements[key]
 	if !exists {
-		return
+		return false
 	}
 	item := element.Value.(*cacheItem)
 	l.put(item.key, item.value, item.value.MemoryUsage(), true)
 	l.evictIfNeeded()
+	return true
 }
 
 // Copy returns a replication of LRU
 func (l *internalLRUCache) Copy() kvCache {
+	var newCache *internalLRUCache
 	l.RLock()
-	defer l.RUnlock()
-	newCache := newInternalLRUCache(l.capacity)
+	newCache = newInternalLRUCache(l.capacity)
 	node := l.cache.Back()
 	for node != nil {
 		key := node.Value.(*cacheItem).key
@@ -197,6 +236,7 @@ func (l *internalLRUCache) Copy() kvCache {
 		newCache.put(key, value, cost, false)
 		node = node.Prev()
 	}
+	l.RUnlock()
 	metrics.StatsCacheLRUCounter.WithLabelValues(typCopy).Inc()
 	return newCache
 }

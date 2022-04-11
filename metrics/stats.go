@@ -136,4 +136,11 @@ var (
 			Name:      "stats_cache_lru",
 			Help:      "Counter of lru for statsCache",
 		}, []string{LblType})
+
+	StatsCacheMemUsage = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "tidb",
+		Subsystem: "statistics",
+		Name:      "stats_cache_mem_usage",
+		Help:      "Memory usage of stats cache",
+	}, []string{LblType})
 )

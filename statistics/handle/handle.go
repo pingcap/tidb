@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -517,14 +518,20 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 // if the global statsCache has been modified by others already.
 // Callers should add retry loop if necessary.
 func (h *Handle) updateStatsCache(newCache statsCache) (updated bool) {
+	var newCost int64
 	h.statsCache.Lock()
 	oldCache := h.statsCache.Load().(statsCache)
 	if oldCache.version < newCache.version || (oldCache.version == newCache.version && oldCache.minorVersion < newCache.minorVersion) {
-		h.statsCache.memTracker.Consume(newCache.Cost() - oldCache.Cost())
+		newCost = newCache.Cost()
+		h.statsCache.memTracker.Consume(newCost - oldCache.Cost())
 		h.statsCache.Store(newCache)
 		updated = true
 	}
 	h.statsCache.Unlock()
+	if newCost > 0 {
+		metrics.StatsCacheMemUsage.WithLabelValues("cache").Set(float64(newCost))
+	}
+	metrics.StatsCacheMemUsage.WithLabelValues("tracker").Set(float64(h.statsCache.memTracker.BytesConsumed()))
 	return
 }
 
