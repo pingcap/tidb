@@ -17,6 +17,7 @@ package memory
 import (
 	"bytes"
 	"fmt"
+	"runtime"
 	"sort"
 	"strconv"
 	"sync"
@@ -334,7 +335,9 @@ func (t *Tracker) Consume(bytes int64) {
 				continue
 			}
 			if label, ok := MetricsTypes[tracker.label]; ok {
-				logutil.BgLogger().Info("current memory usage", zap.Int64("consumed", consumed))
+				memStats := &runtime.MemStats{}
+				runtime.ReadMemStats(memStats)
+				logutil.BgLogger().Info("current memory usage", zap.Int64("consumed", consumed), zap.Uint64("HeapInUse", memStats.HeapInuse))
 				metrics.MemoryUsage.WithLabelValues(label[0]).Set(float64(consumed))
 				metrics.MemoryUsage.WithLabelValues(label[1]).Set(float64(maxNow))
 			}
