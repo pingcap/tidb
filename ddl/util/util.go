@@ -15,6 +15,7 @@
 package util
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"strings"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	atomicutil "go.uber.org/atomic"
 )
 
@@ -104,14 +106,23 @@ func loadDeleteRangesFromTable(ctx sessionctx.Context, table string, safePoint u
 }
 
 // CompleteDeleteRange moves a record from gc_delete_range table to gc_delete_range_done table.
-// NOTE: This function WILL NOT start and run in a new transaction internally.
 func CompleteDeleteRange(ctx sessionctx.Context, dr DelRangeTask) error {
-	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
+	_, err := ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), "BEGIN")
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	return RemoveFromGCDeleteRange(ctx, dr.JobID, dr.ElementID)
+	_, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), recordDoneDeletedRangeSQL, dr.JobID, dr.ElementID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = RemoveFromGCDeleteRange(ctx, dr.JobID, dr.ElementID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), "COMMIT")
+	return errors.Trace(err)
 }
 
 // RemoveFromGCDeleteRange is exported for ddl pkg to use.
@@ -224,4 +235,19 @@ func EmulatorGCDisable() {
 // IsEmulatorGCEnable indicates whether emulator GC enabled. It exports for testing.
 func IsEmulatorGCEnable() bool {
 	return emulatorGCEnable.Load() == 1
+}
+
+var internalResourceGroupTag = []byte{0}
+
+// GetInternalResourceGroupTaggerForTopSQL only use for testing.
+func GetInternalResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
+	tagger := func(req *tikvrpc.Request) {
+		req.ResourceGroupTag = internalResourceGroupTag
+	}
+	return tagger
+}
+
+// IsInternalResourceGroupTaggerForTopSQL use for testing.
+func IsInternalResourceGroupTaggerForTopSQL(tag []byte) bool {
+	return bytes.Equal(tag, internalResourceGroupTag)
 }

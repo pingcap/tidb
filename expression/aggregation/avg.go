@@ -86,7 +86,7 @@ func (af *avgFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
 		if frac == -1 {
 			frac = mysql.MaxDecimalScale
 		}
-		err = to.Round(to, mathutil.Min(frac, mysql.MaxDecimalScale), types.ModeHalfEven)
+		err = to.Round(to, mathutil.Min(frac, mysql.MaxDecimalScale), types.ModeHalfUp)
 		terror.Log(err)
 		d.SetMysqlDecimal(to)
 	}

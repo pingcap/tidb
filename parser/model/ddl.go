@@ -265,6 +265,7 @@ type Job struct {
 	SchemaID   int64         `json:"schema_id"`
 	TableID    int64         `json:"table_id"`
 	SchemaName string        `json:"schema_name"`
+	TableName  string        `json:"table_name"`
 	State      JobState      `json:"state"`
 	Error      *terror.Error `json:"err"`
 	// ErrorCount will be increased, every time we meet an error when running job.
@@ -297,7 +298,6 @@ type Job struct {
 	Version int64 `json:"version"`
 
 	// ReorgMeta is meta info of ddl reorganization.
-	// This field is depreciated.
 	ReorgMeta *DDLReorgMeta `json:"reorg_meta"`
 
 	// MultiSchemaInfo keeps some warning now for multi schema change.

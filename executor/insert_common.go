@@ -1064,6 +1064,9 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	if err != nil {
 		return err
 	}
+	sessVars := e.ctx.GetSessionVars()
+	setResourceGroupTaggerForTxn(sessVars.StmtCtx, txn)
+	setRPCInterceptorOfExecCounterForTxn(sessVars, txn)
 	if e.collectRuntimeStatsEnabled() {
 		if snapshot := txn.GetSnapshot(); snapshot != nil {
 			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)

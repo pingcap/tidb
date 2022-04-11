@@ -721,7 +721,7 @@ func (s *builtinArithmeticDivideDecimalSig) evalDecimal(row chunk.Row) (*types.M
 	} else if err == nil {
 		_, frac := c.PrecisionAndFrac()
 		if frac < s.baseBuiltinFunc.tp.Decimal {
-			err = c.Round(c, s.baseBuiltinFunc.tp.Decimal, types.ModeHalfEven)
+			err = c.Round(c, s.baseBuiltinFunc.tp.Decimal, types.ModeHalfUp)
 		}
 	} else if err == types.ErrOverflow {
 		err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s / %s)", s.args[0].String(), s.args[1].String()))
