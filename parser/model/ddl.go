@@ -298,7 +298,6 @@ type Job struct {
 	Version int64 `json:"version"`
 
 	// ReorgMeta is meta info of ddl reorganization.
-	// This field is depreciated.
 	ReorgMeta *DDLReorgMeta `json:"reorg_meta"`
 
 	// MultiSchemaInfo keeps some warning now for multi schema change.
@@ -504,6 +503,14 @@ func (job *Job) IsRunning() bool {
 	return job.State == JobStateRunning
 }
 
+func (job *Job) IsQueueing() bool {
+	return job.State == JobStateQueueing
+}
+
+func (job *Job) NotStarted() bool {
+	return job.State == JobStateNone || job.State == JobStateQueueing
+}
+
 // JobState is for job state.
 type JobState byte
 
@@ -523,6 +530,8 @@ const (
 	JobStateSynced JobState = 6
 	// JobStateCancelling is used to mark the DDL job is cancelled by the client, but the DDL work hasn't handle it.
 	JobStateCancelling JobState = 7
+	// JobStateQueueing means the job has not yet been started.
+	JobStateQueueing JobState = 8
 )
 
 // String implements fmt.Stringer interface.
@@ -542,6 +551,8 @@ func (s JobState) String() string {
 		return "cancelling"
 	case JobStateSynced:
 		return "synced"
+	case JobStateQueueing:
+		return "queueing"
 	default:
 		return "none"
 	}
