@@ -624,10 +624,6 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				return errors.Trace(err)
 			}
 
-			if job.IsQueueing() {
-				job.State = model.JobStateNone
-			}
-
 			d.mu.RLock()
 			d.mu.hook.OnJobRunBefore(job)
 			d.mu.RUnlock()
