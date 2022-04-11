@@ -2812,10 +2812,6 @@ func TestTimeScalarFunctionPushDownResult(t *testing.T) {
 		function string
 	}{
 		{
-			sql:      "select col1, to_days(col1) from t where to_days(col1)=to_days('2022-03-24 01:02:03.040506');",
-			function: "to_days",
-		},
-		{
 			sql:      "select col1, hour(col1) from t where hour(col1)=hour('2022-03-24 01:02:03.040506');",
 			function: "hour",
 		},
@@ -2858,10 +2854,6 @@ func TestTimeScalarFunctionPushDownResult(t *testing.T) {
 		{
 			function: "Week",
 			sql:      "select col1, Week(col1) from t where Week(col1)=Week('2022-03-24 01:02:03.040506');",
-		},
-		{
-			function: "to_seconds",
-			sql:      "select col1, to_seconds(col1) from t where to_seconds(col1)=to_seconds('2022-03-24 01:02:03.040506');",
 		},
 		{
 			function: "time_to_sec",
@@ -3048,20 +3040,8 @@ func TestScalarFunctionPushDown(t *testing.T) {
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where dayofmonth(d);").
 		CheckAt([]int{0, 3, 6}, rows)
 
-	rows[1][2] = "weekday(test.t.d)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where weekday(d);").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "weekday(test.t.d)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where weekday(d);").
-		CheckAt([]int{0, 3, 6}, rows)
-
 	rows[1][2] = "from_days(test.t.id)"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where from_days(id);").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "to_days(test.t.d)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where to_days(d);").
 		CheckAt([]int{0, 3, 6}, rows)
 
 	//rows[1][2] = "last_day(test.t.d)"
@@ -3086,10 +3066,6 @@ func TestScalarFunctionPushDown(t *testing.T) {
 
 	rows[1][2] = "week(test.t.d)"
 	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where week(d)").
-		CheckAt([]int{0, 3, 6}, rows)
-
-	rows[1][2] = "to_seconds(test.t.d)"
-	tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where to_seconds(d)").
 		CheckAt([]int{0, 3, 6}, rows)
 
 	rows[1][2] = "datediff(test.t.d, test.t.d)"
@@ -5292,6 +5268,42 @@ func TestIssue29503(t *testing.T) {
 	require.NoError(t, tk.ExecToErr("create binding for select a from t using select a from t;"))
 	res := tk.MustQuery("show session bindings;")
 	require.Len(t, res.Rows(), 2)
+}
+
+func TestIndexJoinCost(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t_outer, t_inner_pk, t_inner_idx`)
+	tk.MustExec(`create table t_outer (a int)`)
+	tk.MustExec(`create table t_inner_pk (a int primary key)`)
+	tk.MustExec(`create table t_inner_idx (a int, b int, key(a))`)
+
+	tk.MustQuery(`explain format=verbose select /*+ TIDB_INLJ(t_outer, t_inner_pk) */ * from t_outer, t_inner_pk where t_outer.a=t_inner_pk.a`).Check(testkit.Rows( // IndexJoin with inner TableScan
+		`IndexJoin_11 12487.50 193048.09 root  inner join, inner:TableReader_8, outer key:test.t_outer.a, inner key:test.t_inner_pk.a, equal cond:eq(test.t_outer.a, test.t_inner_pk.a)`,
+		`├─TableReader_18(Build) 9990.00 36412.58 root  data:Selection_17`,
+		`│ └─Selection_17 9990.00 465000.00 cop[tikv]  not(isnull(test.t_outer.a))`,
+		`│   └─TableFullScan_16 10000.00 435000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo`,
+		`└─TableReader_8(Probe) 1.00 2.54 root  data:TableRangeScan_7`,
+		`  └─TableRangeScan_7 1.00 0.00 cop[tikv] table:t_inner_pk range: decided by [test.t_outer.a], keep order:false, stats:pseudo`))
+	tk.MustQuery(`explain format=verbose select /*+ TIDB_INLJ(t_outer, t_inner_idx) */ t_inner_idx.a from t_outer, t_inner_idx where t_outer.a=t_inner_idx.a`).Check(testkit.Rows( // IndexJoin with inner IndexScan
+		`IndexJoin_10 12487.50 221872.19 root  inner join, inner:IndexReader_9, outer key:test.t_outer.a, inner key:test.t_inner_idx.a, equal cond:eq(test.t_outer.a, test.t_inner_idx.a)`,
+		`├─TableReader_20(Build) 9990.00 36412.58 root  data:Selection_19`,
+		`│ └─Selection_19 9990.00 465000.00 cop[tikv]  not(isnull(test.t_outer.a))`,
+		`│   └─TableFullScan_18 10000.00 435000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo`,
+		`└─IndexReader_9(Probe) 1.25 4.56 root  index:Selection_8`,
+		`  └─Selection_8 1.25 0.00 cop[tikv]  not(isnull(test.t_inner_idx.a))`,
+		`    └─IndexRangeScan_7 1.25 0.00 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:false, stats:pseudo`))
+	tk.MustQuery(`explain format=verbose select /*+ TIDB_INLJ(t_outer, t_inner_idx) */ * from t_outer, t_inner_idx where t_outer.a=t_inner_idx.a`).Check(testkit.Rows( // IndexJoin with inner IndexLookup
+		`IndexJoin_11 12487.50 529388.13 root  inner join, inner:IndexLookUp_10, outer key:test.t_outer.a, inner key:test.t_inner_idx.a, equal cond:eq(test.t_outer.a, test.t_inner_idx.a)`,
+		`├─TableReader_23(Build) 9990.00 36412.58 root  data:Selection_22`,
+		`│ └─Selection_22 9990.00 465000.00 cop[tikv]  not(isnull(test.t_outer.a))`,
+		`│   └─TableFullScan_21 10000.00 435000.00 cop[tikv] table:t_outer keep order:false, stats:pseudo`,
+		`└─IndexLookUp_10(Probe) 1.25 35.34 root  `,
+		`  ├─Selection_9(Build) 1.25 0.00 cop[tikv]  not(isnull(test.t_inner_idx.a))`,
+		`  │ └─IndexRangeScan_7 1.25 0.00 cop[tikv] table:t_inner_idx, index:a(a) range: decided by [eq(test.t_inner_idx.a, test.t_outer.a)], keep order:false, stats:pseudo`,
+		`  └─TableRowIDScan_8(Probe) 1.25 0.00 cop[tikv] table:t_inner_idx keep order:false, stats:pseudo`))
 }
 
 func TestHeuristicIndexSelection(t *testing.T) {
