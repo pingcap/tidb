@@ -16,7 +16,6 @@ package mydump
 
 import (
 	"context"
-	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -417,20 +416,15 @@ func (s *mdLoaderSetup) route() error {
 	if err := runRoute(s.tableDatas); err != nil {
 		return errors.Trace(err)
 	}
-
-	// check count in knownDBNames should always greater than 0, this will not happen if there are no bugs in the code
-	for dbName, info := range knownDBNames {
-		if info.count < 0 {
-			return common.ErrTableRoute.GenWithStack(fmt.Sprintf("dbName: %s route count less than 0", dbName))
-		}
-	}
-
 	// remove all schemas which has been entirely routed away(file count > 0)
 	// https://github.com/golang/go/wiki/SliceTricks#filtering-without-allocating
 	remainingSchemas := s.dbSchemas[:0]
 	for _, info := range s.dbSchemas {
-		if knownDBNames[info.TableName.Schema].count > 0 {
+		if dbInfo := knownDBNames[info.TableName.Schema]; dbInfo.count > 0 {
 			remainingSchemas = append(remainingSchemas, info)
+		} else if dbInfo.count < 0 {
+			// this should not happen if there are no bugs in the code
+			return common.ErrTableRoute.GenWithStack("something wrong happened when route %s", info.TableName.String())
 		}
 	}
 	s.dbSchemas = remainingSchemas
