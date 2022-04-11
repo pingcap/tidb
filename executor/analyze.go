@@ -1368,6 +1368,9 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 		logutil.BgLogger().Info("subMergeWorker consumes memory: ", zap.Int("idx", idx), zap.Int64("oldRetCollector", -oldRetCollectorSize))
 		logutil.BgLogger().Info("subMergeWorker consumes memory: ", zap.Int("idx", idx), zap.Int64("newRetCollector", retCollector.Base().MemSize))
 		memTracker.Consume(retCollector.Base().MemSize - oldRetCollectorSize - subCollectorSize - int64(colRespSize) - int64(dataSize))
+		memStats := &runtime.MemStats{}
+		runtime.ReadMemStats(memStats)
+		logutil.BgLogger().Info("subMergeWorker GC:", zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", memTracker.BytesConsumed()))
 	}
 	resultCh <- &samplingMergeResult{collector: retCollector}
 }
@@ -1513,6 +1516,9 @@ workLoop:
 			hists[task.slicePos] = hist
 			topns[task.slicePos] = topn
 			resultCh <- nil
+			memStats := &runtime.MemStats{}
+			runtime.ReadMemStats(memStats)
+			logutil.BgLogger().Info("subBuildWorker GC:", zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
 		case <-exitCh:
 			return
 		}
