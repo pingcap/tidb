@@ -71,7 +71,10 @@ ut build
 ut build xxx
 
 // write the junitfile
-ut run --junitfile xxx`
+ut run --junitfile xxx
+
+// test with race flag
+ut run --race`
 
 	fmt.Println(msg)
 	return true
@@ -397,9 +400,23 @@ func handleFlags(flag string) string {
 	return res
 }
 
+func handleRaceFlag() (found bool) {
+	tmp := os.Args[:0]
+	for i := 0; i < len(os.Args); i++ {
+		if os.Args[i] == "--race" {
+			found = true
+			continue
+		}
+		tmp = append(tmp, os.Args[i])
+	}
+	os.Args = tmp
+	return
+}
+
 var junitfile string
 var coverprofile string
 var coverFileTempDir string
+var race bool
 
 var except string
 var only string
@@ -409,6 +426,8 @@ func main() {
 	coverprofile = handleFlags("--coverprofile")
 	except = handleFlags("--except")
 	only = handleFlags("--only")
+	race = handleRaceFlag()
+
 	if coverprofile != "" {
 		var err error
 		coverFileTempDir, err = os.MkdirTemp(os.TempDir(), "cov")
@@ -788,7 +807,10 @@ func (n *numa) testCommand(pkg string, fn string, old bool) *exec.Cmd {
 		args = append(args, "-test.coverprofile", tmpFile)
 	}
 	args = append(args, "-test.cpu", "1")
-	args = append(args, []string{"-test.timeout", "2m"}...)
+	if !race {
+		// Don't set timeout for race because it takes a longer when race is enabled.
+		args = append(args, []string{"-test.timeout", "2m"}...)
+	}
 	if old {
 		// session.test -test.run '^TestT$' -check.f testTxnStateSerialSuite.TestTxnInfoWithPSProtoco
 		args = append(args, "-test.run", "^TestT$", "-check.f", fn)
@@ -812,11 +834,12 @@ func skipDIR(pkg string) bool {
 
 func buildTestBinary(pkg string) error {
 	// go test -c
-	var cmd *exec.Cmd
+	cmd := exec.Command("go", "test", "-c", "-vet", "off", "-o", testFileName(pkg))
 	if coverprofile != "" {
-		cmd = exec.Command("go", "test", "-c", "-cover", "-vet", "off", "-o", testFileName(pkg))
-	} else {
-		cmd = exec.Command("go", "test", "-c", "-vet", "off", "-o", testFileName(pkg))
+		cmd.Args = append(cmd.Args, "-cover")
+	}
+	if race {
+		cmd.Args = append(cmd.Args, "-race")
 	}
 	cmd.Dir = path.Join(workDir, pkg)
 	cmd.Stdout = os.Stdout
@@ -837,10 +860,12 @@ func buildTestBinaryMulti(pkgs []string) error {
 	}
 
 	var cmd *exec.Cmd
+	cmd = exec.Command("go", "test", "--exec", xprogPath, "-vet", "off", "-count", "0")
 	if coverprofile != "" {
-		cmd = exec.Command("go", "test", "--exec", xprogPath, "-cover", "-vet", "off", "-count", "0")
-	} else {
-		cmd = exec.Command("go", "test", "--exec", xprogPath, "-vet", "off", "-count", "0")
+		cmd.Args = append(cmd.Args, "-cover")
+	}
+	if race {
+		cmd.Args = append(cmd.Args, "-race")
 	}
 	cmd.Args = append(cmd.Args, packages...)
 	cmd.Dir = workDir
