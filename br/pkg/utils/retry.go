@@ -6,11 +6,9 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	stderrors "errors"
 	"io"
 	"net"
 	"os"
-	"reflect"
 	"strings"
 	"syscall"
 	"time"
@@ -84,8 +82,6 @@ func MessageIsRetryableStorageError(msg string) bool {
 	}
 	return false
 }
-
-var stdErrorType = reflect.TypeOf(stderrors.New(""))
 
 // IsRetryableError returns whether the error is transient (e.g. network
 // connection dropped) or irrecoverable (e.g. user pressing Ctrl+C). This

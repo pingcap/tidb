@@ -2,6 +2,7 @@ package backend_test
 
 import (
 	"context"
+	"database/sql/driver"
 	"testing"
 	"time"
 
@@ -267,7 +268,7 @@ func TestImportFailedWithRetry(t *testing.T) {
 	s.mockBackend.EXPECT().CloseEngine(ctx, nil, gomock.Any()).Return(nil)
 	s.mockBackend.EXPECT().
 		ImportEngine(ctx, gomock.Any(), gomock.Any()).
-		Return(errors.New("fake recoverable import error")).
+		Return(errors.Annotate(driver.ErrBadConn, "fake recoverable import error")).
 		MinTimes(2)
 	s.mockBackend.EXPECT().RetryImportDelay().Return(time.Duration(0)).AnyTimes()
 
@@ -275,7 +276,7 @@ func TestImportFailedWithRetry(t *testing.T) {
 	require.NoError(t, err)
 	err = closedEngine.Import(ctx, 1)
 	require.Error(t, err)
-	require.Regexp(t, "fake recoverable import error$", err.Error())
+	require.Contains(t, err.Error(), "fake recoverable import error")
 }
 
 func TestImportFailedRecovered(t *testing.T) {
