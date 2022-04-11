@@ -571,11 +571,7 @@ func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx
 	hCtx.initHash(probeSideChk.NumRows())
 	for keyIdx, i := range hCtx.keyColIdx {
 		ignoreNull := len(e.isNullEQ) > keyIdx && e.isNullEQ[keyIdx]
-<<<<<<< HEAD
-		err = codec.HashChunkSelected(e.rowContainer.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[i], i, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
-=======
-		err = codec.HashChunkSelected(rowContainer.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[keyIdx], i, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
->>>>>>> fa8cbd588... executor: fix wrong result for join with enum type (#29375)
+		err = codec.HashChunkSelected(e.rowContainer.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[keyIdx], i, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
@@ -616,13 +612,8 @@ func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx
 // join2ChunkForOuterHashJoin joins chunks when using the outer to build a hash table (refer to outer hash join)
 func (e *HashJoinExec) join2ChunkForOuterHashJoin(workerID uint, probeSideChk *chunk.Chunk, hCtx *hashContext, joinResult *hashjoinWorkerResult) (ok bool, _ *hashjoinWorkerResult) {
 	hCtx.initHash(probeSideChk.NumRows())
-<<<<<<< HEAD
-	for _, i := range hCtx.keyColIdx {
-		err := codec.HashChunkColumns(e.rowContainer.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[i], i, hCtx.buf, hCtx.hasNull)
-=======
 	for keyIdx, i := range hCtx.keyColIdx {
-		err := codec.HashChunkColumns(rowContainer.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[keyIdx], i, hCtx.buf, hCtx.hasNull)
->>>>>>> fa8cbd588... executor: fix wrong result for join with enum type (#29375)
+		err := codec.HashChunkColumns(e.rowContainer.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[keyIdx], i, hCtx.buf, hCtx.hasNull)
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
@@ -662,27 +653,6 @@ func (e *HashJoinExec) join2ChunkForOuterHashJoin(workerID uint, probeSideChk *c
 func (e *HashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if !e.prepared {
 		e.buildFinished = make(chan error, 1)
-<<<<<<< HEAD
-=======
-		buildKeyColIdx := make([]int, len(e.buildKeys))
-		for i := range e.buildKeys {
-			buildKeyColIdx[i] = e.buildKeys[i].Index
-		}
-		hCtx := &hashContext{
-			allTypes:  e.buildTypes,
-			keyColIdx: buildKeyColIdx,
-		}
-		e.rowContainer = newHashRowContainer(e.ctx, int(e.buildSideEstCount), hCtx, retTypes(e.buildSideExec))
-		// we shallow copies rowContainer for each probe worker to avoid lock contention
-		e.rowContainerForProbe = make([]*hashRowContainer, e.concurrency)
-		for i := uint(0); i < e.concurrency; i++ {
-			if i == 0 {
-				e.rowContainerForProbe[i] = e.rowContainer
-			} else {
-				e.rowContainerForProbe[i] = e.rowContainer.ShallowCopy()
-			}
-		}
->>>>>>> fa8cbd588... executor: fix wrong result for join with enum type (#29375)
 		go util.WithRecovery(func() {
 			defer trace.StartRegion(ctx, "HashJoinHashTableBuilder").End()
 			e.fetchAndBuildHashTable(ctx)
@@ -770,7 +740,7 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 	}
 	var err error
 	var selected []bool
-	e.rowContainer = newHashRowContainer(e.ctx, int(e.buildSideEstCount), hCtx)
+	e.rowContainer = newHashRowContainer(e.ctx, int(e.buildSideEstCount), hCtx, retTypes(e.buildSideExec))
 	e.rowContainer.GetMemTracker().AttachTo(e.memTracker)
 	e.rowContainer.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
 	e.rowContainer.GetDiskTracker().AttachTo(e.diskTracker)
