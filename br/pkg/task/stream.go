@@ -58,7 +58,6 @@ const (
 	flagUntil                   = "until"
 	flagStreamJSONOutput        = "json"
 	flagStreamTaskName          = "task-name"
-	flagStreamTaskNameDefault   = "all" // used for get status for all of tasks.
 	flagStreamStartTS           = "start-ts"
 	flagStreamEndTS             = "end-ts"
 	flagGCSafePointTTS          = "gc-ttl"
@@ -165,7 +164,7 @@ func DefineStreamCommonFlags(flags *pflag.FlagSet) {
 }
 
 func DefineStreamStatusCommonFlags(flags *pflag.FlagSet) {
-	flags.String(flagStreamTaskName, flagStreamTaskNameDefault,
+	flags.String(flagStreamTaskName, stream.WildCard,
 		"The task name for backup stream log. If default, get status of all of tasks",
 	)
 	flags.Bool(flagStreamJSONOutput, false,
@@ -707,6 +706,38 @@ func RunStreamResume(
 	return nil
 }
 
+func checkConfigForStatus(cfg *StreamConfig) error {
+	if len(cfg.PD) == 0 {
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"the command needs access to PD, please specify `-u` or `--pd`")
+	}
+
+	return nil
+}
+
+// makeStatusController makes the status controller via some config.
+// this should better be in the `stream` package but it is impossible because of cyclic requirements.
+func makeStatusController(ctx context.Context, cfg *StreamConfig, g glue.Glue) (*stream.StatusController, error) {
+	console := glue.GetConsole(g)
+	etcdCLI, err := dialEtcdWithCfg(ctx, cfg.Config)
+	if err != nil {
+		return nil, err
+	}
+	cli := stream.NewMetaDataClient(etcdCLI)
+	var printer stream.TaskPrinter
+	if !cfg.JSONOutput {
+		printer = stream.PrintTaskByTable(console)
+	} else {
+		printer = stream.PrintTaskWithJSON(console)
+	}
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+		cfg.CheckRequirements, false)
+	if err != nil {
+		return nil, err
+	}
+	return stream.NewStatusController(cli, mgr, printer), nil
+}
+
 // RunStreamStatus get status for a specific stream task
 func RunStreamStatus(
 	c context.Context,
@@ -714,7 +745,6 @@ func RunStreamStatus(
 	cmdName string,
 	cfg *StreamConfig,
 ) error {
-	console := glue.GetConsole(g)
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
 
@@ -727,78 +757,26 @@ func RunStreamStatus(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	etcdCLI, err := dialEtcdWithCfg(ctx, cfg.Config)
+	if err := checkConfigForStatus(cfg); err != nil {
+		return err
+	}
+	ctl, err := makeStatusController(ctx, cfg, g)
 	if err != nil {
 		return err
 	}
-	cli := stream.NewMetaDataClient(etcdCLI)
-
-	var printer stream.TaskPrinter
-	if !cfg.JSONOutput {
-		printer = stream.PrintTaskByTable(console.CreateTable())
-	} else {
-		printer = stream.PrintTaskWithJSON(console)
-	}
-
-	fillTaskExtraInfo := func(task stream.Task) (stream.TaskStatus, error) {
-		var err error
-		s := stream.TaskStatus{
-			Info: task.Info,
-		}
-		s.Progress, err = task.NextBackupTSList(ctx)
-		if err != nil {
-			return s, err
-		}
-		mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
-			cfg.CheckRequirements, false)
-		if err != nil {
-			return s, err
-		}
-		s.QPS, err = stream.MaybeQPS(ctx, mgr)
-		if err != nil {
-			return s, err
-		}
-		return s, nil
-	}
-
-	// to add backoff
-	if flagStreamTaskNameDefault == cfg.TaskName {
-		// get status about all of tasks
-		tasks, err := cli.GetAllTasks(ctx)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		for _, task := range tasks {
-			status, err := fillTaskExtraInfo(task)
-			if err != nil {
-				return err
-			}
-			printer.AddTask(status)
-		}
-	} else {
-		// get status about TaskName
-		task, err := cli.GetTask(ctx, cfg.TaskName)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		status, err := fillTaskExtraInfo(*task)
-		if err != nil {
-			return err
-		}
-		printer.AddTask(status)
-	}
-	printer.PrintTasks()
-	return nil
+	return ctl.PrintStatusOfTask(ctx, cfg.TaskName)
 }
 
 func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error {
 	console := glue.GetConsole(g)
-	em := color.New(color.Bold, color.FgHiWhite).SprintFunc()
+	em := color.New(color.Bold).SprintFunc()
 	done := color.New(color.FgGreen).SprintFunc()
 	warn := color.New(color.Bold, color.FgHiRed).SprintFunc()
 	formatTs := func(ts uint64) string {
 		return oracle.GetTimeFromTS(ts).Format("2006-01-02 15:04:05.0000")
+	}
+	if cfg.Until == 0 {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "please provide the `--until` ts")
 	}
 
 	cfg.adjustRestoreConfig()
@@ -849,10 +827,9 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		fileCount++
 		return
 	})
-	console.Println("We are going to remove ",
+	console.Printf("We are going to remove %s files, until %s.\n",
 		em(fileCount),
-		" files, until ",
-		em(formatTs(minTs))+".",
+		em(formatTs(minTs)),
 	)
 	if !cfg.SkipPrompt && !console.PromptBool(warn("Sure? ")) {
 		return nil

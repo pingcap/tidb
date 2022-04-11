@@ -4,7 +4,6 @@ package gluetikv
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/summary"
@@ -24,7 +23,9 @@ var (
 )
 
 // Glue is an implementation of glue.Glue that accesses only TiKV without TiDB.
-type Glue struct{}
+type Glue struct {
+	glue.StdIOGlue
+}
 
 // GetDomain implements glue.Glue.
 func (Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
@@ -66,17 +67,4 @@ func (Glue) Record(name string, val uint64) {
 // GetVersion implements glue.Glue.
 func (Glue) GetVersion() string {
 	return "BR\n" + build.Info()
-}
-
-func (Glue) Print(args ...interface{}) {
-	fmt.Print(args...)
-}
-
-// IsInteractive checks whether the shell supports input.
-func (Glue) IsInteractive() bool {
-	return true
-}
-
-func (Glue) Scanln(args ...interface{}) (int, error) {
-	return fmt.Scanln(args...)
 }

@@ -5,7 +5,6 @@ package gluetidb
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -51,6 +50,8 @@ func New() Glue {
 
 // Glue is an implementation of glue.Glue using a new TiDB session.
 type Glue struct {
+	glue.StdIOGlue
+
 	tikvGlue gluetikv.Glue
 }
 
@@ -111,19 +112,6 @@ func (g Glue) Record(name string, value uint64) {
 // GetVersion implements glue.Glue.
 func (g Glue) GetVersion() string {
 	return g.tikvGlue.GetVersion()
-}
-
-func (g Glue) Print(args ...interface{}) {
-	fmt.Print(args...)
-}
-
-// IsInteractive checks whether the shell supports input.
-func (g Glue) IsInteractive() bool {
-	return true
-}
-
-func (g Glue) Scanln(args ...interface{}) (int, error) {
-	return fmt.Scanln(args...)
 }
 
 // Execute implements glue.Session.
