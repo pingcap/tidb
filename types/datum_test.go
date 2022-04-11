@@ -26,11 +26,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
-<<<<<<< HEAD
-=======
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
->>>>>>> 0beac1800... expression: fix the wrong rounding behavior of Decimal (#33278)
 )
 
 var _ = Suite(&testDatumSuite{})

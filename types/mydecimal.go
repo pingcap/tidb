@@ -55,13 +55,7 @@ const (
 	// Truncate just truncates the decimal.
 	ModeTruncate RoundMode = 10
 	// Ceiling is not supported now.
-<<<<<<< HEAD
-	modeCeiling RoundMode = 0
-=======
 	ModeCeiling RoundMode = 0
-
-	pow10off int = 81
->>>>>>> 0beac1800... expression: fix the wrong rounding behavior of Decimal (#33278)
 )
 
 var (
