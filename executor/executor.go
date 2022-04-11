@@ -1971,8 +1971,8 @@ func attachSQLAndPlanInExecForTopSQL(ctx context.Context, sessVars *variable.Ses
 	stmtCtx := sessVars.StmtCtx
 	if stmtCtx.IsSQLAndPlanRegistered.CAS(false, true) {
 		normalizedSQL, sqlDigest := stmtCtx.SQLDigest()
-		normalizedPlan, planDigest := getPlanDigest(stmtCtx)
 		topsql.RegisterSQL(normalizedSQL, sqlDigest, sessVars.InRestrictedSQL)
+		normalizedPlan, planDigest := stmtCtx.GetPlanDigest()
 		if len(normalizedPlan) > 0 {
 			topsql.RegisterPlan(normalizedPlan, planDigest)
 		}

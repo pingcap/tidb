@@ -244,8 +244,6 @@ type StatementContext struct {
 	// RCCheckTS indicates the current read-consistency read select statement will use `RCCheckTS` path.
 	RCCheckTS bool
 
-	// FinalPlan is the statement final execution plan.
-	FinalPlan interface{}
 	// IsSQLRegistered uses to indicate whether the SQL has been registered for TopSQL.
 	IsSQLRegistered atomic2.Bool
 	// IsSQLAndPlanRegistered uses to indicate whether the SQL and plan has been registered for TopSQL.

@@ -235,8 +235,7 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	ctx = a.setPlanLabelForTopSQL(ctx)
-	a.observeStmtBeginForTopSQL()
+	ctx = a.observeStmtBeginForTopSQL(ctx)
 	startTs := uint64(math.MaxUint64)
 	err := a.Ctx.InitTxnWithStartTS(startTs)
 	if err != nil {
@@ -333,32 +332,6 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	return a.InfoSchema.SchemaMetaVersion(), nil
 }
 
-func (a *ExecStmt) setPlanLabelForTopSQL(ctx context.Context) context.Context {
-	vars := a.Ctx.GetSessionVars()
-	vars.StmtCtx.FinalPlan = a.Plan
-	normalizedSQL, sqlDigest := vars.StmtCtx.SQLDigest()
-	normalizedPlan, planDigest := getPlanDigest(vars.StmtCtx)
-	if !topsqlstate.TopSQLEnabled() {
-		// For catching the running SQL in TopSQL if TopSQL is enabled during execution,
-		// Should always attach the SQL and plan information if the SQL may run a long time.
-		if !isFastPlan(a.Plan) {
-			return topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
-		}
-		return ctx
-	}
-
-	isSQLRegistered := vars.StmtCtx.IsSQLRegistered.Load()
-	if !isSQLRegistered {
-		topsql.RegisterSQL(normalizedSQL, sqlDigest, vars.InRestrictedSQL)
-	}
-	vars.StmtCtx.IsSQLAndPlanRegistered.Store(true)
-	if len(normalizedPlan) == 0 {
-		return ctx
-	}
-	topsql.RegisterPlan(normalizedPlan, planDigest)
-	return topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
-}
-
 func isFastPlan(p plannercore.Plan) bool {
 	if proj, ok := p.(*plannercore.PhysicalProjection); ok {
 		p = proj.Children()[0]
@@ -433,8 +406,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		return nil, err
 	}
 	// ExecuteExec will rewrite `a.Plan`, so set plan label should be executed after `a.buildExecutor`.
-	ctx = a.setPlanLabelForTopSQL(ctx)
-	a.observeStmtBeginForTopSQL()
+	ctx = a.observeStmtBeginForTopSQL(ctx)
 
 	if err = e.Open(ctx); err != nil {
 		terror.Call(e.Close)
@@ -1084,7 +1056,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	statsInfos := plannercore.GetStatsInfo(a.Plan)
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
 	diskMax := sessVars.StmtCtx.DiskTracker.MaxConsumed()
-	_, planDigest := getPlanDigest(sessVars.StmtCtx)
+	_, planDigest := getPlanDigest(sessVars.StmtCtx, a.Plan)
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		SQL:               sql.String(),
@@ -1192,17 +1164,10 @@ func getPlanTree(sctx sessionctx.Context, p plannercore.Plan) string {
 }
 
 // getPlanDigest will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
-func getPlanDigest(sc *stmtctx.StatementContext) (string, *parser.Digest) {
+func getPlanDigest(sc *stmtctx.StatementContext, p plannercore.Plan) (string, *parser.Digest) {
 	normalized, planDigest := sc.GetPlanDigest()
 	if len(normalized) > 0 && planDigest != nil {
 		return normalized, planDigest
-	}
-	if sc.FinalPlan == nil {
-		return "", nil
-	}
-	p, ok := sc.FinalPlan.(plannercore.Plan)
-	if !ok {
-		return "", nil
 	}
 	normalized, planDigest = plannercore.NormalizePlan(p)
 	sc.SetPlanDigest(normalized, planDigest)
@@ -1288,11 +1253,11 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	var planDigestGen func() string
 	if a.Plan.TP() == plancodec.TypePointGet {
 		planDigestGen = func() string {
-			_, planDigest := getPlanDigest(stmtCtx)
+			_, planDigest := getPlanDigest(stmtCtx, a.Plan)
 			return planDigest.String()
 		}
 	} else {
-		_, tmp := getPlanDigest(stmtCtx)
+		_, tmp := getPlanDigest(stmtCtx, a.Plan)
 		planDigest = tmp.String()
 	}
 
@@ -1372,19 +1337,45 @@ func (a *ExecStmt) GetTextToLog() string {
 	return sql
 }
 
-func (a *ExecStmt) observeStmtBeginForTopSQL() {
+func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Context {
 	vars := a.Ctx.GetSessionVars()
-	if vars == nil {
-		return
+	sc := vars.StmtCtx
+	normalizedSQL, sqlDigest := sc.SQLDigest()
+	normalizedPlan, planDigest := getPlanDigest(sc, a.Plan)
+	var sqlDigestByte, planDigestByte []byte
+	if sqlDigest != nil {
+		sqlDigestByte = sqlDigest.Bytes()
 	}
-	sqlDigest, planDigest := a.getSQLPlanDigest()
-	if stats := a.Ctx.GetStmtStats(); stats != nil {
-		if topsqlstate.TopSQLEnabled() {
-			stats.OnExecutionBegin(sqlDigest, planDigest)
+	if planDigest != nil {
+		planDigestByte = planDigest.Bytes()
+	}
+	stats := a.Ctx.GetStmtStats()
+	if !topsqlstate.TopSQLEnabled() {
+		if isFastPlan(a.Plan) {
+			return ctx
 		}
-		// This is a special logic prepared for TiKV's SQLExecCount.
-		vars.StmtCtx.KvExecCounter = stats.CreateKvExecCounter(sqlDigest, planDigest)
+		if stats != nil {
+			sc.KvExecCounter = stats.CreateKvExecCounter(sqlDigestByte, planDigestByte)
+		}
+		return topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
 	}
+
+	if stats != nil {
+		stats.OnExecutionBegin(sqlDigestByte, planDigestByte)
+		// This is a special logic prepared for TiKV's SQLExecCount.
+		sc.KvExecCounter = stats.CreateKvExecCounter(sqlDigestByte, planDigestByte)
+	}
+
+	isSQLRegistered := sc.IsSQLRegistered.Load()
+	if !isSQLRegistered {
+		topsql.RegisterSQL(normalizedSQL, sqlDigest, vars.InRestrictedSQL)
+	}
+	sc.IsSQLAndPlanRegistered.Store(true)
+	if len(normalizedPlan) == 0 {
+		return ctx
+	}
+	topsql.RegisterPlan(normalizedPlan, planDigest)
+	return topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
 }
 
 func (a *ExecStmt) observeStmtFinishedForTopSQL() {
