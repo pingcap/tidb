@@ -1775,10 +1775,8 @@ func (s *testSuite13) TestIssue26762(c *C) {
 }
 
 // https://github.com/pingcap/tidb/issues/32213.
-func TestIssue32213(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
+func (s *testSuite13) TestIssue32213(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 
 	tk.MustExec("create table test.t1(c1 float)")
