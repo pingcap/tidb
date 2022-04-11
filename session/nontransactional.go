@@ -192,17 +192,19 @@ func getShardKeys(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, sql
 		if chk.NumRows() == 0 {
 			if !newBatchIsComing {
 				// there's remaining work
-				jobs = append(jobs, job{jobID: jobCount, start: *currentStart.Clone(), end: *currentEnd.Clone(), jobSize: currentSize})
+				jobs = append(jobs, job{jobID: jobCount, start: currentStart, end: currentEnd, jobSize: currentSize})
 			}
 			break
 		}
 
 		currentSize += chk.NumRows()
-		currentEnd = chk.GetRow(chk.NumRows()-1).GetDatum(0, &rs.Fields()[0].Column.FieldType)
+		currentEndPointer := chk.GetRow(chk.NumRows()-1).GetDatum(0, &rs.Fields()[0].Column.FieldType)
+		currentEnd = *currentEndPointer.Clone()
 
 		// a new batch
 		if newBatchIsComing {
-			currentStart = chk.GetRow(0).GetDatum(0, &rs.Fields()[0].Column.FieldType)
+			currentStartPointer := chk.GetRow(0).GetDatum(0, &rs.Fields()[0].Column.FieldType)
+			currentStart = *currentStartPointer.Clone()
 			newBatchIsComing = false
 		}
 
@@ -210,8 +212,8 @@ func getShardKeys(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, sql
 		if currentSize > batchSize {
 			jobCount++
 			jobs = append(jobs, job{
-				start:   *currentStart.Clone(),
-				end:     *currentEnd.Clone(),
+				start:   currentStart,
+				end:     currentEnd,
 				jobID:   jobCount,
 				jobSize: currentSize,
 			})
