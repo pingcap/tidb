@@ -1393,16 +1393,13 @@ func (tr *TableRestore) restoreTable(
 			zap.Int("filesCnt", cp.CountChunks()),
 		)
 	} else if cp.Status < checkpoints.CheckpointStatusAllWritten {
-		versionStr, err := rc.tidbGlue.GetSQLExecutor().ObtainStringWithLog(
-			ctx, "SELECT version()", "fetch tidb version", log.L())
+		db, _ := rc.tidbGlue.GetDB()
+		versionStr, err := version.FetchVersion(ctx, db)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
 
-		tidbVersion, err := version.ExtractTiDBVersion(versionStr)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
+		versionInfo := version.ParseServerInfo(versionStr)
 
 		if err := tr.populateChunks(ctx, rc, cp); err != nil {
 			return false, errors.Trace(err)
@@ -1417,7 +1414,7 @@ func (tr *TableRestore) restoreTable(
 		}
 
 		// "show table next_row_id" is only available after v4.0.0
-		if tidbVersion.Major >= 4 && (rc.cfg.TikvImporter.Backend == config.BackendLocal || rc.cfg.TikvImporter.Backend == config.BackendImporter) {
+		if versionInfo.ServerVersion.Major >= 4 && (rc.cfg.TikvImporter.Backend == config.BackendLocal || rc.cfg.TikvImporter.Backend == config.BackendImporter) {
 			// first, insert a new-line into meta table
 			if err = metaMgr.InitTableMeta(ctx); err != nil {
 				return false, err
