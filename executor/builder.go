@@ -17,6 +17,7 @@ package executor
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"sort"
 	"strconv"
@@ -121,6 +122,7 @@ func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema, ti *Te
 		ctx:              ctx,
 		is:               is,
 		Ti:               ti,
+		snapshotTSCached: isStaleness,
 		snapshotTS:       snapshotTS,
 		isStaleness:      isStaleness,
 		readReplicaScope: replicaReadScope,
@@ -495,7 +497,7 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) Executo
 	idxName := strings.ToLower(v.IndexName)
 	index := tables.GetWritableIndexByName(idxName, t)
 	if index == nil {
-		b.err = errors.Errorf("index `%v` is not found in table `%v`.", v.IndexName, v.Table.Name.O)
+		b.err = errors.Errorf("index `%v` is not found in table `%v`", v.IndexName, v.Table.Name.O)
 		return nil
 	}
 	e := &RecoverIndexExec{
@@ -555,7 +557,7 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) Executo
 	}
 
 	if index == nil {
-		b.err = errors.Errorf("index `%v` is not found in table `%v`.", v.IndexName, v.Table.Name.O)
+		b.err = errors.Errorf("index `%v` is not found in table `%v`", v.IndexName, v.Table.Name.O)
 		return nil
 	}
 	e := &CleanupIndexExec{
@@ -717,12 +719,6 @@ func (b *executorBuilder) buildPrepare(v *plannercore.Prepare) Executor {
 }
 
 func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
-	b.snapshotTS = v.SnapshotTS
-	b.isStaleness = v.IsStaleness
-	b.readReplicaScope = v.ReadReplicaScope
-	if b.snapshotTS != 0 {
-		b.is, b.err = domain.GetDomain(b.ctx).GetSnapshotInfoSchema(b.snapshotTS)
-	}
 	e := &ExecuteExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		is:           b.is,
@@ -733,6 +729,34 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) Executor {
 		plan:         v.Plan,
 		outputNames:  v.OutputNames(),
 	}
+
+	failpoint.Inject("assertStaleReadValuesSameWithExecuteAndBuilder", func() {
+		// This fail point is used to assert the behavior after refactoring is exactly the same with the previous implement.
+		// Some variables in `plannercore.Execute` is deprecated and only be used for asserting now.
+		if b.snapshotTS != v.SnapshotTS {
+			panic(fmt.Sprintf("%d != %d", b.snapshotTS, v.SnapshotTS))
+		}
+
+		if b.isStaleness != v.IsStaleness {
+			panic(fmt.Sprintf("%v != %v", b.isStaleness, v.IsStaleness))
+		}
+
+		if b.readReplicaScope != v.ReadReplicaScope {
+			panic(fmt.Sprintf("%s != %s", b.readReplicaScope, v.ReadReplicaScope))
+		}
+
+		if v.SnapshotTS != 0 {
+			is, err := domain.GetDomain(b.ctx).GetSnapshotInfoSchema(b.snapshotTS)
+			if err != nil {
+				panic(err)
+			}
+
+			if b.is.SchemaMetaVersion() != is.SchemaMetaVersion() {
+				panic(fmt.Sprintf("%d != %d", b.is.SchemaMetaVersion(), is.SchemaMetaVersion()))
+			}
+		}
+	})
+
 	failpoint.Inject("assertExecutePrepareStatementStalenessOption", func(val failpoint.Value) {
 		vs := strings.Split(val.(string), "_")
 		assertTS, assertTxnScope := vs[0], vs[1]
@@ -1149,11 +1173,13 @@ func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourc
 		cachedTable := tbl.(table.CachedTable)
 		// Determine whether the cache can be used.
 		leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
-		cacheData := cachedTable.TryReadFromCache(startTS, leaseDuration)
+		cacheData, loading := cachedTable.TryReadFromCache(startTS, leaseDuration)
 		if cacheData != nil {
 			vars.StmtCtx.ReadFromTableCache = true
 			x.setDummy()
 			us.cacheTable = cacheData
+		} else if loading {
+			// continue
 		} else {
 			if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !vars.StmtCtx.InExplainStmt {
 				store := b.ctx.GetStore()
@@ -1720,8 +1746,9 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &memtableRetriever{
-					table:   v.Table,
-					columns: v.Columns,
+					table:     v.Table,
+					columns:   v.Columns,
+					extractor: v.Extractor,
 				},
 			}
 		case strings.ToLower(infoschema.TableTiDBTrx),
@@ -2095,7 +2122,7 @@ func getAssignFlag(ctx sessionctx.Context, v *plannercore.Update, schemaLen int)
 	}
 	for _, assign := range v.OrderedList {
 		if !ctx.GetSessionVars().AllowWriteRowID && assign.Col.ID == model.ExtraHandleID {
-			return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
+			return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported")
 		}
 		tblIdx, found := v.TblColPosInfos.FindTblIdx(assign.Col.Index)
 		if found {
@@ -2168,6 +2195,15 @@ func (b *executorBuilder) refreshForUpdateTSForRC() error {
 	defer func() {
 		b.snapshotTS = b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
 	}()
+	// The first time read-consistency read is executed and `RcReadCheckTS` is enabled, try to use
+	// the last valid ts as the for update read ts.
+	if b.ctx.GetSessionVars().StmtCtx.RCCheckTS {
+		rcReadTS := b.ctx.GetSessionVars().TxnCtx.LastRcReadTs
+		if rcReadTS == 0 {
+			rcReadTS = b.ctx.GetSessionVars().TxnCtx.StartTS
+		}
+		return UpdateForUpdateTS(b.ctx, rcReadTS)
+	}
 	future := b.ctx.GetSessionVars().TxnCtx.GetStmtFutureForRC()
 	if future == nil {
 		return nil
@@ -2276,11 +2312,56 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 	return analyzeTask
 }
 
+func describeV2AnalyzeJobInfo(task plannercore.AnalyzeColumnsTask, autoAnalyze string, opts map[ast.AnalyzeOptionType]uint64, sampleRate float64) string {
+	var b strings.Builder
+	b.WriteString(autoAnalyze)
+	b.WriteString("analyze table")
+	cols := task.ColsInfo
+	if cols[len(cols)-1].ID == model.ExtraHandleID {
+		cols = cols[:len(cols)-1]
+	}
+	if len(cols) < len(task.TblInfo.Columns) {
+		b.WriteString(" columns ")
+		for i, col := range cols {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(col.Name.O)
+		}
+	} else {
+		b.WriteString(" all columns")
+	}
+	var needComma bool
+	b.WriteString(" with ")
+	printOption := func(optType ast.AnalyzeOptionType) {
+		if val, ok := opts[optType]; ok {
+			if needComma {
+				b.WriteString(", ")
+			} else {
+				needComma = true
+			}
+			b.WriteString(fmt.Sprintf("%v %s", val, strings.ToLower(ast.AnalyzeOptionString[optType])))
+		}
+	}
+	printOption(ast.AnalyzeOptNumBuckets)
+	printOption(ast.AnalyzeOptNumTopN)
+	if opts[ast.AnalyzeOptNumSamples] != 0 {
+		printOption(ast.AnalyzeOptNumSamples)
+	} else {
+		if needComma {
+			b.WriteString(", ")
+		} else {
+			needComma = true
+		}
+		b.WriteString(fmt.Sprintf("%v samplerate", sampleRate))
+	}
+	return b.String()
+}
+
 func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
 	if task.V2Options != nil {
 		opts = task.V2Options.FilledOpts
 	}
-	job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: autoAnalyze + "analyze table"}
 	availableIdx := make([]*model.IndexInfo, 0, len(task.Indexes))
 	colGroups := make([]*tipb.AnalyzeColumnGroup, 0, len(task.Indexes))
 	if len(task.Indexes) > 0 {
@@ -2318,6 +2399,35 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 	failpoint.Inject("injectBaseModifyCount", func(val failpoint.Value) {
 		modifyCount = int64(val.(int))
 	})
+	sampleRate := new(float64)
+	if opts[ast.AnalyzeOptNumSamples] == 0 {
+		*sampleRate = math.Float64frombits(opts[ast.AnalyzeOptSampleRate])
+		if *sampleRate < 0 {
+			*sampleRate = b.getAdjustedSampleRate(b.ctx, task)
+			if task.PartitionName != "" {
+				sc.AppendNote(errors.Errorf(
+					"Analyze use auto adjusted sample rate %f for table %s.%s's partition %s",
+					*sampleRate,
+					task.DBName,
+					task.TableName,
+					task.PartitionName,
+				))
+			} else {
+				sc.AppendNote(errors.Errorf(
+					"Analyze use auto adjusted sample rate %f for table %s.%s",
+					*sampleRate,
+					task.DBName,
+					task.TableName,
+				))
+			}
+		}
+	}
+	job := &statistics.AnalyzeJob{
+		DBName:        task.DBName,
+		TableName:     task.TableName,
+		PartitionName: task.PartitionName,
+		JobInfo:       describeV2AnalyzeJobInfo(task, autoAnalyze, opts, *sampleRate),
+	}
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
@@ -2341,29 +2451,6 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 		schemaForVirtualColEval: schemaForVirtualColEval,
 		baseCount:               count,
 		baseModifyCnt:           modifyCount,
-	}
-	sampleRate := new(float64)
-	if opts[ast.AnalyzeOptNumSamples] == 0 {
-		*sampleRate = math.Float64frombits(opts[ast.AnalyzeOptSampleRate])
-		if *sampleRate < 0 {
-			*sampleRate = b.getAdjustedSampleRate(b.ctx, task)
-			if task.PartitionName != "" {
-				sc.AppendNote(errors.Errorf(
-					"Analyze use auto adjusted sample rate %f for table %s.%s's partition %s.",
-					*sampleRate,
-					task.DBName,
-					task.TableName,
-					task.PartitionName,
-				))
-			} else {
-				sc.AppendNote(errors.Errorf(
-					"Analyze use auto adjusted sample rate %f for table %s.%s.",
-					*sampleRate,
-					task.DBName,
-					task.TableName,
-				))
-			}
-		}
 	}
 	e.analyzePB.ColReq = &tipb.AnalyzeColumnsReq{
 		BucketSize:   int64(opts[ast.AnalyzeOptNumBuckets]),
@@ -3134,7 +3221,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		plans:            v.TablePlans,
 		tablePlan:        v.GetTablePlan(),
 		storeType:        v.StoreType,
-		batchCop:         v.BatchCop,
+		batchCop:         v.ReadReqType == plannercore.BatchCop,
 	}
 	e.buildVirtualColumnInfo()
 	if containsLimit(dagReq.Executors) {
@@ -3199,16 +3286,12 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		}
 	})
 	if useMPPExecution(b.ctx, v) {
-		plannercore.SetMppOrBatchCopForTableScan(v.GetTablePlan())
 		return b.buildMPPGather(v)
 	}
 	ts, err := v.GetTableScan()
 	if err != nil {
 		b.err = err
 		return nil
-	}
-	if v.BatchCop {
-		ts.IsMPPOrBatchCop = true
 	}
 	ret, err := buildNoRangeTableReader(b, v)
 	if err != nil {
@@ -3912,6 +3995,8 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		if len(lookUpContents) > 0 && keyColumnsIncludeAllPartitionColumns(lookUpContents[0].keyCols, pe) {
 			locateKey := make([]types.Datum, e.Schema().Len())
 			kvRanges = make([]kv.KeyRange, 0, len(lookUpContents))
+			// lookUpContentsByPID groups lookUpContents by pid(partition) so that kv ranges for same partition can be merged.
+			lookUpContentsByPID := make(map[int64][]*indexJoinLookUpContent)
 			for _, content := range lookUpContents {
 				for i, date := range content.keys {
 					locateKey[content.keyCols[i]] = date
@@ -3924,7 +4009,11 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 				if _, ok := usedPartitions[pid]; !ok {
 					continue
 				}
-				tmp, err := buildKvRangesForIndexJoin(e.ctx, pid, -1, []*indexJoinLookUpContent{content}, indexRanges, keyOff2IdxOff, cwc, nil, interruptSignal)
+				lookUpContentsByPID[pid] = append(lookUpContentsByPID[pid], content)
+			}
+			for pid, contents := range lookUpContentsByPID {
+				// buildKvRanges for each partition.
+				tmp, err := buildKvRangesForIndexJoin(e.ctx, pid, -1, contents, indexRanges, keyOff2IdxOff, cwc, nil, interruptSignal)
 				if err != nil {
 					return nil, err
 				}
@@ -4014,7 +4103,7 @@ func (h kvRangeBuilderFromRangeAndPartition) buildKeyRangeSeparately(ranges []*r
 	return pids, ret, nil
 }
 
-func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(_ int64, ranges []*ranger.Range) ([]kv.KeyRange, error) {
+func (h kvRangeBuilderFromRangeAndPartition) buildKeyRange(ranges []*ranger.Range) ([]kv.KeyRange, error) {
 	var ret []kv.KeyRange
 	for _, p := range h.partitions {
 		pid := p.GetPhysicalID()
@@ -4501,6 +4590,7 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor 
 		db:           v.Db,
 		isGlobal:     v.IsGlobal,
 		bindAst:      v.BindStmt,
+		newStatus:    v.NewStatus,
 	}
 	return e
 }
@@ -4881,13 +4971,16 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 	}
 	sessVars := b.ctx.GetSessionVars()
 	leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
-	cacheData := tbl.(table.CachedTable).TryReadFromCache(startTS, leaseDuration)
+	cacheData, loading := tbl.(table.CachedTable).TryReadFromCache(startTS, leaseDuration)
 	if cacheData != nil {
 		sessVars.StmtCtx.ReadFromTableCache = true
 		return cacheData
-	}
-	if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
-		tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS, leaseDuration)
+	} else if loading {
+		// continue
+	} else {
+		if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
+			tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS, leaseDuration)
+		}
 	}
 	return nil
 }

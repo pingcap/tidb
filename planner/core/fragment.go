@@ -250,6 +250,11 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 	}
 	if f.TableScan != nil {
 		tasks, err = e.constructMPPTasksImpl(context.Background(), f.TableScan)
+		if err == nil && len(tasks) == 0 {
+			err = errors.New(
+				"In mpp mode, the number of tasks for table scan should not be zero. " +
+					"Please set tidb_allow_mpp = 0, and then rerun sql.")
+		}
 	} else {
 		childrenTasks := make([]*kv.MPPTask, 0)
 		for _, r := range f.ExchangeReceivers {

@@ -197,7 +197,7 @@ func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan,
 			return errors.Errorf("PlanCounterTp planCounter is not handled")
 		}
 		if childTask != nil && childTask.invalid() {
-			return errors.Errorf("The current plan is invalid, please skip this plan.")
+			return errors.Errorf("The current plan is invalid, please skip this plan")
 		}
 		*childTasks = append(*childTasks, childTask)
 	}
@@ -517,12 +517,12 @@ func compareIndexBack(lhs, rhs *candidatePath) (int, bool) {
 // If `x` is not worse than `y` at all factors,
 // and there exists one factor that `x` is better than `y`, then `x` is better than `y`.
 func compareCandidates(lhs, rhs *candidatePath) int {
-	accessResult, comparable := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
-	if !comparable {
+	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
+	if !comparable1 {
 		return 0
 	}
-	scanResult, comparable := compareIndexBack(lhs, rhs)
-	if !comparable {
+	scanResult, comparable2 := compareIndexBack(lhs, rhs)
+	if !comparable2 {
 		return 0
 	}
 	matchResult := compareBool(lhs.isMatchProp, rhs.isMatchProp)
@@ -2173,12 +2173,6 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		}
 		ts.KeepOrder = true
 	}
-	switch ts.StoreType {
-	case kv.TiKV:
-		cost += float64(len(ts.Ranges)) * sessVars.GetSeekFactor(ds.tableInfo)
-	case kv.TiFlash:
-		cost += float64(len(ts.Ranges)) * float64(len(ts.Columns)) * sessVars.GetSeekFactor(ds.tableInfo)
-	}
 	return ts, cost, rowCount
 }
 
@@ -2225,7 +2219,6 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		}
 		is.KeepOrder = true
 	}
-	cost += float64(len(is.Ranges)) * sessVars.GetSeekFactor(ds.tableInfo)
 	is.cost = cost
 	return is, cost, rowCount
 }

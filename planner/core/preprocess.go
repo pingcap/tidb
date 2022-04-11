@@ -22,12 +22,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
@@ -872,6 +872,14 @@ func (p *preprocessor) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
 			return
 		}
 	}
+	if len(stmt.Definer.Username) > auth.UserNameMaxLength {
+		p.err = dbterror.ErrWrongStringLength.GenWithStackByArgs(stmt.Definer.Username, "user name", auth.UserNameMaxLength)
+		return
+	}
+	if len(stmt.Definer.Hostname) > auth.HostNameMaxLength {
+		p.err = dbterror.ErrWrongStringLength.GenWithStackByArgs(stmt.Definer.Hostname, "host name", auth.HostNameMaxLength)
+		return
+	}
 }
 
 func (p *preprocessor) checkCreateViewWithSelect(stmt ast.Node) {
@@ -1453,9 +1461,11 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 
-	p.handleAsOfAndReadTS(tn)
-	if p.err != nil {
-		return
+	if p.stmtTp == TypeSelect {
+		if p.err = p.staleReadProcessor.OnSelectTable(tn); p.err != nil {
+			return
+		}
+		p.updateStateFromStaleReadProcessor()
 	}
 
 	table, err := p.tableByName(tn)
@@ -1536,22 +1546,8 @@ func (p *preprocessor) resolveExecuteStmt(node *ast.ExecuteStmt) {
 		return
 	}
 
-	if prepared.SnapshotTSEvaluator != nil {
-		snapshotTS, err := prepared.SnapshotTSEvaluator(p.ctx)
-		if err != nil {
-			p.err = err
-			return
-		}
-
-		is, err := domain.GetDomain(p.ctx).GetSnapshotInfoSchema(snapshotTS)
-		if err != nil {
-			p.err = err
-			return
-		}
-
-		p.LastSnapshotTS = snapshotTS
-		p.initedLastSnapshotTS = true
-		p.InfoSchema = temptable.AttachLocalTemporaryTableInfoSchema(p.ctx, is)
+	if p.err = p.staleReadProcessor.OnExecutePreparedStmt(prepared.SnapshotTSEvaluator); p.err == nil {
+		p.updateStateFromStaleReadProcessor()
 	}
 }
 
@@ -1614,24 +1610,7 @@ func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
 	}
 }
 
-// handleAsOfAndReadTS tries to handle as of closure, or possibly read_ts.
-func (p *preprocessor) handleAsOfAndReadTS(tn *ast.TableName) {
-	if p.stmtTp != TypeSelect {
-		return
-	}
-	defer func() {
-		// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
-		// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
-		// in stmtCtx
-		if p.flag&inPrepare == 0 && p.IsStaleness {
-			p.ctx.GetSessionVars().StmtCtx.IsStaleness = true
-		}
-	}()
-
-	if p.err = p.staleReadProcessor.OnSelectTable(tn); p.err != nil {
-		return
-	}
-
+func (p *preprocessor) updateStateFromStaleReadProcessor() {
 	if p.initedLastSnapshotTS {
 		return
 	}
@@ -1640,6 +1619,12 @@ func (p *preprocessor) handleAsOfAndReadTS(tn *ast.TableName) {
 		p.LastSnapshotTS = p.staleReadProcessor.GetStalenessReadTS()
 		p.SnapshotTSEvaluator = p.staleReadProcessor.GetStalenessTSEvaluatorForPrepare()
 		p.InfoSchema = p.staleReadProcessor.GetStalenessInfoSchema()
+		// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
+		// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
+		// in stmtCtx
+		if p.flag&inPrepare == 0 {
+			p.ctx.GetSessionVars().StmtCtx.IsStaleness = true
+		}
 	}
 
 	// It is a little hacking for the below codes. `ReadReplicaScope` is used both by stale read's closest read and local txn.

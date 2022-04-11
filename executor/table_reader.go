@@ -56,7 +56,7 @@ func (sr selectResultHook) SelectResult(ctx context.Context, sctx sessionctx.Con
 }
 
 type kvRangeBuilder interface {
-	buildKeyRange(pid int64, ranges []*ranger.Range) ([]kv.KeyRange, error)
+	buildKeyRange(ranges []*ranger.Range) ([]kv.KeyRange, error)
 	buildKeyRangeSeparately(ranges []*ranger.Range) ([]int64, [][]kv.KeyRange, error)
 }
 
@@ -181,6 +181,17 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	// Calculate the kv ranges here, UnionScan rely on this kv ranges.
 	// cached table and temporary table are similar
 	if e.dummy {
+		if e.desc && len(secondPartRanges) != 0 {
+			// TiKV support reverse scan and the `resultHandler` process the range order.
+			// While in UnionScan, it doesn't use reverse scan and reverse the final result rows manually.
+			// So things are differ, we need to reverse the kv range here.
+			// TODO: If we refactor UnionScan to use reverse scan, update the code here.
+			// [9734095886065816708 9734095886065816709] | [1 3] [65535 9734095886065816707] => before the following change
+			// [1 3] [65535 9734095886065816707] | [9734095886065816708 9734095886065816709] => ranges part reverse here
+			// [1 3  65535 9734095886065816707 9734095886065816708 9734095886065816709] => scan (normal order) in UnionScan
+			// [9734095886065816709 9734095886065816708 9734095886065816707 65535 3  1] => rows reverse in UnionScan
+			firstPartRanges, secondPartRanges = secondPartRanges, firstPartRanges
+		}
 		kvReq, err := e.buildKVReq(ctx, firstPartRanges)
 		if err != nil {
 			return err
@@ -246,15 +257,14 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 
 // Close implements the Executor Close interface.
 func (e *TableReaderExecutor) Close() error {
-	if e.dummy {
-		return nil
-	}
-
 	var err error
 	if e.resultHandler != nil {
 		err = e.resultHandler.Close()
 	}
 	e.kvRanges = e.kvRanges[:0]
+	if e.dummy {
+		return nil
+	}
 	e.ctx.StoreQueryFeedback(e.feedback)
 	return err
 }
@@ -344,6 +354,7 @@ func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Contex
 	}
 	partitionIDAndRanges := make([]kv.PartitionIDAndRanges, 0, len(pids))
 	for i, kvRange := range kvRanges {
+		e.kvRanges = append(e.kvRanges, kvRange...)
 		partitionIDAndRanges = append(partitionIDAndRanges, kv.PartitionIDAndRanges{
 			ID:        pids[i],
 			KeyRanges: kvRange,
@@ -376,7 +387,7 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 	var builder distsql.RequestBuilder
 	var reqBuilder *distsql.RequestBuilder
 	if e.kvRangeBuilder != nil {
-		kvRange, err := e.kvRangeBuilder.buildKeyRange(getPhysicalTableID(e.table), ranges)
+		kvRange, err := e.kvRangeBuilder.buildKeyRange(ranges)
 		if err != nil {
 			return nil, err
 		}

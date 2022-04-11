@@ -161,3 +161,18 @@ func TestGCColumnStatsUsage(t *testing.T) {
 	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select count(*) from mysql.column_stats_usage").Check(testkit.Rows("0"))
 }
+
+func TestDeleteAnalyzeJobs(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t(a int, b int)")
+	testKit.MustExec("insert into t values (1,2),(3,4)")
+	testKit.MustExec("analyze table t")
+	rows := testKit.MustQuery("show analyze status").Rows()
+	require.Equal(t, 1, len(rows))
+	require.NoError(t, dom.StatsHandle().DeleteAnalyzeJobs(time.Now().Add(time.Second)))
+	rows = testKit.MustQuery("show analyze status").Rows()
+	require.Equal(t, 0, len(rows))
+}

@@ -751,6 +751,11 @@ error = '''
 Key part '%-.192s' length cannot be 0
 '''
 
+["ddl:1470"]
+error = '''
+String '%-.70s' is too long for %s (should be no longer than %d)
+'''
+
 ["ddl:1481"]
 error = '''
 MAXVALUE can only be used in last partition definition
@@ -854,6 +859,11 @@ Partition column values of incorrect type
 ["ddl:1659"]
 error = '''
 Field '%-.192s' is of a not allowed type for this type of partitioning
+'''
+
+["ddl:1674"]
+error = '''
+Statement is unsafe because it uses a system function that may return a different value on the slave
 '''
 
 ["ddl:1688"]
@@ -994,6 +1004,11 @@ Expression index on a column is not supported. Consider using a regular index in
 ["ddl:3764"]
 error = '''
 Expression of generated column '%s' cannot refer to a row value
+'''
+
+["ddl:3770"]
+error = '''
+Default value expression of column '%s' contains a disallowed function: `%s`.
 '''
 
 ["ddl:3780"]
@@ -1369,6 +1384,11 @@ data inconsistency in table: %s, index: %s, index-count:%d != record-count:%d
 ["executor:8134"]
 error = '''
 data inconsistency in table: %s, index: %s, col: %s, handle: %#v, index-values:%#v != record-values:%#v, compare err:%#v
+'''
+
+["executor:8142"]
+error = '''
+modifying %s will require SET GLOBAL in a future version of TiDB
 '''
 
 ["executor:8212"]

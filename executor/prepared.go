@@ -224,6 +224,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	var p plannercore.Plan
 	e.ctx.GetSessionVars().PlanID = 0
 	e.ctx.GetSessionVars().PlanColumnID = 0
+	e.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
 	destBuilder, _ := plannercore.NewPlanBuilder().Init(e.ctx, ret.InfoSchema, &hint.BlockHintProcessor{})
 	p, err = destBuilder.Build(ctx, stmt)
 	if err != nil {
@@ -346,7 +347,7 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
-	ID uint32, is infoschema.InfoSchema, snapshotTS uint64, args []types.Datum) (*ExecStmt, bool, bool, error) {
+	ID uint32, is infoschema.InfoSchema, snapshotTS uint64, replicaReadScope string, args []types.Datum) (*ExecStmt, bool, bool, error) {
 	startTime := time.Now()
 	defer func() {
 		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
@@ -355,6 +356,8 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	if err := ResetContextOfStmt(sctx, execStmt); err != nil {
 		return nil, false, false, err
 	}
+	isStaleness := snapshotTS != 0
+	sctx.GetSessionVars().StmtCtx.IsStaleness = isStaleness
 	execStmt.BinaryArgs = args
 	execPlan, names, err := planner.Optimize(ctx, sctx, execStmt, is)
 	if err != nil {
@@ -367,14 +370,16 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 	})
 
 	stmt := &ExecStmt{
-		GoCtx:       ctx,
-		InfoSchema:  is,
-		Plan:        execPlan,
-		StmtNode:    execStmt,
-		Ctx:         sctx,
-		OutputNames: names,
-		Ti:          &TelemetryInfo{},
-		SnapshotTS:  snapshotTS,
+		GoCtx:            ctx,
+		InfoSchema:       is,
+		Plan:             execPlan,
+		StmtNode:         execStmt,
+		Ctx:              sctx,
+		OutputNames:      names,
+		Ti:               &TelemetryInfo{},
+		IsStaleness:      isStaleness,
+		SnapshotTS:       snapshotTS,
+		ReplicaReadScope: replicaReadScope,
 	}
 	if preparedPointer, ok := sctx.GetSessionVars().PreparedStmts[ID]; ok {
 		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)

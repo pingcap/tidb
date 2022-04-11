@@ -822,12 +822,12 @@ Projection	1.00	root		Column#7
       └─TableDual(Probe)	1.00	root		rows:1
 explain format = 'brief' select count(a) from t group by b order by (select count(a));
 id	estRows	task	access object	operator info
-Sort	8000.00	root		Column#4
+Sort	8000.00	root		Column#5
 └─HashJoin	8000.00	root		CARTESIAN left outer join
   ├─TableDual(Build)	1.00	root		rows:1
-  └─HashAgg(Probe)	8000.00	root		group by:test.t.b, funcs:count(Column#8)->Column#4
+  └─HashAgg(Probe)	8000.00	root		group by:test.t.b, funcs:count(Column#9)->Column#5
     └─TableReader	8000.00	root		data:HashAgg
-      └─HashAgg	8000.00	cop[tikv]		group by:test.t.b, funcs:count(test.t.a)->Column#8
+      └─HashAgg	8000.00	cop[tikv]		group by:test.t.b, funcs:count(test.t.a)->Column#9
         └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select (select sum(count(a))) from t;
 id	estRows	task	access object	operator info
@@ -841,15 +841,15 @@ Projection	1.00	root		Column#5
       └─TableDual	1.00	root		rows:1
 explain format = 'brief' select sum(a), (select sum(a)), count(a) from t group by b order by (select count(a));
 id	estRows	task	access object	operator info
-Projection	8000.00	root		Column#4, Column#4, Column#5
-└─Sort	8000.00	root		Column#5
+Projection	8000.00	root		Column#5, Column#5, Column#6
+└─Sort	8000.00	root		Column#6
   └─HashJoin	8000.00	root		CARTESIAN left outer join
     ├─TableDual(Build)	1.00	root		rows:1
     └─HashJoin(Probe)	8000.00	root		CARTESIAN left outer join
       ├─TableDual(Build)	1.00	root		rows:1
-      └─HashAgg(Probe)	8000.00	root		group by:test.t.b, funcs:sum(Column#13)->Column#4, funcs:count(Column#14)->Column#5
+      └─HashAgg(Probe)	8000.00	root		group by:test.t.b, funcs:sum(Column#14)->Column#5, funcs:count(Column#15)->Column#6
         └─TableReader	8000.00	root		data:HashAgg
-          └─HashAgg	8000.00	cop[tikv]		group by:test.t.b, funcs:sum(test.t.a)->Column#13, funcs:count(test.t.a)->Column#14
+          └─HashAgg	8000.00	cop[tikv]		group by:test.t.b, funcs:sum(test.t.a)->Column#14, funcs:count(test.t.a)->Column#15
             └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a tinyint, b smallint, c mediumint, d int, e bigint);

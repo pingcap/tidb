@@ -661,6 +661,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrBinlogUnsafeLimit:                                     mysql.Message("The statement is unsafe because it uses a LIMIT clause. This is unsafe because the set of rows included cannot be predicted.", nil),
 	ErrBinlogUnsafeInsertDelayed:                             mysql.Message("The statement is unsafe because it uses INSERT DELAYED. This is unsafe because the times when rows are inserted cannot be predicted.", nil),
 	ErrBinlogUnsafeAutoincColumns:                            mysql.Message("Statement is unsafe because it invokes a trigger or a stored function that inserts into an AUTOINCREMENT column. Inserted values cannot be logged correctly.", nil),
+	ErrBinlogUnsafeSystemFunction:                            mysql.Message("Statement is unsafe because it uses a system function that may return a different value on the slave", nil),
 	ErrBinlogUnsafeNontransAfterTrans:                        mysql.Message("Statement is unsafe because it accesses a non-transactional table after accessing a transactional table within the same transaction.", nil),
 	ErrMessageAndStatement:                                   mysql.Message("%s Statement: %s", nil),
 	ErrInsideTransactionPreventsSwitchBinlogFormat:           mysql.Message("Cannot modify @@session.binlogFormat inside a transaction", nil),
@@ -826,6 +827,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrRowInWrongPartition:                                   mysql.Message("Found a row in wrong partition %s", []int{0}),
 	ErrGeneratedColumnFunctionIsNotAllowed:                   mysql.Message("Expression of generated column '%s' contains a disallowed function.", nil),
 	ErrGeneratedColumnRowValueIsNotAllowed:                   mysql.Message("Expression of generated column '%s' cannot refer to a row value", nil),
+	ErrDefValGeneratedNamedFunctionIsNotAllowed:              mysql.Message("Default value expression of column '%s' contains a disallowed function: `%s`.", nil),
 	ErrUnsupportedAlterInplaceOnVirtualColumn:                mysql.Message("INPLACE ADD or DROP of virtual columns cannot be combined with other ALTER TABLE actions.", nil),
 	ErrWrongFKOptionForGeneratedColumn:                       mysql.Message("Cannot define foreign key with %s clause on a generated column.", nil),
 	ErrBadGeneratedColumn:                                    mysql.Message("The value specified for generated column '%s' in table '%s' is not allowed.", nil),
@@ -1014,6 +1016,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInconsistentHandle:            mysql.Message("writing inconsistent data in table: %s, index: %s, index-handle:%#v != record-handle:%#v, index: %#v, record: %#v", []int{2, 3, 4, 5}),
 	ErrInconsistentIndexedValue:      mysql.Message("writing inconsistent data in table: %s, index: %s, col: %s, indexed-value:{%s} != record-value:{%s}", []int{3, 4}),
 	ErrAssertionFailed:               mysql.Message("assertion failed: key: %s, assertion: %s, start_ts: %v, existing start ts: %v, existing commit ts: %v", []int{0}),
+	ErrInstanceScope:                 mysql.Message("modifying %s will require SET GLOBAL in a future version of TiDB", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),
