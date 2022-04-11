@@ -106,6 +106,17 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx sessionctx.Context,
 			remained = append(remained, path.TableFilters[i])
 		}
 	}
+	curPos := eqOrInCount + len(access)
+	if curPos < len(path.IdxCols) {
+		for i := len(remained) - 1; i >= 0; i-- {
+			if isColBinOpCorColOrConstant(ctx, remained[i], path.IdxCols[curPos]) {
+				access = append(access, remained[i])
+				if path.IdxColLens[curPos] == types.UnspecifiedLength {
+					remained = append(remained[:i], remained[i+1:]...)
+				}
+			}
+		}
+	}
 	return access, remained
 }
 
@@ -114,6 +125,47 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx sessionctx.Context,
 func isColEqCorColOrConstant(ctx sessionctx.Context, filter expression.Expression, col *expression.Column) bool {
 	f, ok := filter.(*expression.ScalarFunction)
 	if !ok || f.FuncName.L != ast.EQ {
+		return false
+	}
+	_, collation := f.CharsetAndCollation(ctx)
+	if c, ok := f.GetArgs()[0].(*expression.Column); ok {
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(collation, c.RetType.Collate) {
+			return false
+		}
+		if _, ok := f.GetArgs()[1].(*expression.Constant); ok {
+			if col.Equal(nil, c) {
+				return true
+			}
+		}
+		if _, ok := f.GetArgs()[1].(*expression.CorrelatedColumn); ok {
+			if col.Equal(nil, c) {
+				return true
+			}
+		}
+	}
+	if c, ok := f.GetArgs()[1].(*expression.Column); ok {
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(collation, c.RetType.Collate) {
+			return false
+		}
+		if _, ok := f.GetArgs()[0].(*expression.Constant); ok {
+			if col.Equal(nil, c) {
+				return true
+			}
+		}
+		if _, ok := f.GetArgs()[0].(*expression.CorrelatedColumn); ok {
+			if col.Equal(nil, c) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isColEqCorColOrConstant checks if the expression is a eq function that one side is constant or correlated column
+// and another is column.
+func isColBinOpCorColOrConstant(ctx sessionctx.Context, filter expression.Expression, col *expression.Column) bool {
+	f, ok := filter.(*expression.ScalarFunction)
+	if !ok || !(f.FuncName.L == ast.LE || f.FuncName.L == ast.LT || f.FuncName.L == ast.GE || f.FuncName.L == ast.GT) {
 		return false
 	}
 	_, collation := f.CharsetAndCollation(ctx)
