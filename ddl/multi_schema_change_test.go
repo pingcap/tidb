@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -708,14 +709,21 @@ func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
 	originHook := dom.DDL().GetHook()
 	hook := &ddl.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		require.Equal(t, job.Type, model.ActionMultiSchemaChange)
+		assert.Equal(t, model.ActionMultiSchemaChange, job.Type)
 		if job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateDeleteOnly {
 			newTk := testkit.NewTestKit(t, store)
 			rows := newTk.MustQuery("admin show ddl jobs 1").Rows()
 			// 1 history job and 1 running job with 2 subjobs
-			require.Equal(t, len(rows), 4)
-			require.Equal(t, rows[1], []interface{}{"67", "test", "t", "add index /* subjob */", "delete only", "1", "65", "0", "<nil>", "<nil>", "<nil>", "running"})
-			require.Equal(t, rows[2], []interface{}{"67", "test", "t", "add index /* subjob */", "queueing", "1", "65", "0", "<nil>", "<nil>", "<nil>", "none"})
+			assert.Equal(t, len(rows), 4)
+			assert.Equal(t, rows[1][1], "test")
+			assert.Equal(t, rows[1][2], "t")
+			assert.Equal(t, rows[1][3], "add index /* subjob */")
+			assert.Equal(t, rows[1][4], "delete only")
+			assert.Equal(t, rows[1][len(rows[1])-1], "running")
+
+			assert.Equal(t, rows[2][3], "add index /* subjob */")
+			assert.Equal(t, rows[2][4], "queueing")
+			assert.Equal(t, rows[2][len(rows[2])-1], "none")
 		}
 	}
 
