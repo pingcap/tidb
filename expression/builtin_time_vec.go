@@ -775,11 +775,7 @@ func (b *builtinSysDateWithFspSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		if result.IsNull(i) {
 			continue
 		}
-<<<<<<< HEAD
-		t, err := convertTimeToMysqlTime(now, int8(ds[i]), types.ModeHalfEven)
-=======
-		t, err := convertTimeToMysqlTime(now, int(ds[i]), types.ModeHalfUp)
->>>>>>> 0beac1800... expression: fix the wrong rounding behavior of Decimal (#33278)
+		t, err := convertTimeToMysqlTime(now, int8(ds[i]), types.ModeHalfUp)
 		if err != nil {
 			return err
 		}
