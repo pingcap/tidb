@@ -172,15 +172,22 @@ func (t *copTask) finishIndexPlan() {
 	}
 	// Network cost of transferring rows of index scan to TiDB.
 	t.cst += cnt * sessVars.GetNetworkFactor(tableInfo) * t.tblColHists.GetAvgRowSize(t.indexPlan.SCtx(), t.indexPlan.Schema().Columns, true, false)
+
+	// net seek cost
+	var p PhysicalPlan
+	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
+	}
+	is := p.(*PhysicalIndexScan)
+	if !is.underInnerIndexJoin { // no need to accumulate seek cost for IndexJoin
+		t.cst += float64(len(is.Ranges)) * sessVars.GetSeekFactor(is.Table) // net seek cost
+	}
+
 	if t.tablePlan == nil {
 		return
 	}
 
 	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
-	var p PhysicalPlan
-	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
-	}
-	rowSize := t.tblColHists.GetIndexAvgRowSize(t.indexPlan.SCtx(), t.tblCols, p.(*PhysicalIndexScan).Index.Unique)
+	rowSize := t.tblColHists.GetIndexAvgRowSize(t.indexPlan.SCtx(), t.tblCols, is.Index.Unique)
 	t.cst += cnt * rowSize * sessVars.GetScanFactor(tableInfo)
 }
 
@@ -442,16 +449,15 @@ func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
 	}
 	t := &rootTask{
 		p:   p,
-		cst: p.GetCost(outerTask, innerTask),
+		cst: p.GetCost(outerTask.count(), innerTask.count(), outerTask.cost(), innerTask.cost()),
 	}
 	p.cost = t.cost()
 	return t
 }
 
 // GetCost computes the cost of index join operator and its children.
-func (p *PhysicalIndexJoin) GetCost(outerTask, innerTask task) float64 {
+func (p *PhysicalIndexJoin) GetCost(outerCnt, innerCnt float64, outerCost, innerCost float64) float64 {
 	var cpuCost float64
-	outerCnt, innerCnt := outerTask.count(), innerTask.count()
 	sessVars := p.ctx.GetSessionVars()
 	// Add the cost of evaluating outer filter, since inner filter of index join
 	// is always empty, we can simply tell whether outer filter is empty using the
@@ -494,8 +500,8 @@ func (p *PhysicalIndexJoin) GetCost(outerTask, innerTask task) float64 {
 	// since the executor is pipelined and not all workers are always in full load.
 	memoryCost := innerConcurrency * (batchSize * distinctFactor) * innerCnt * sessVars.MemoryFactor
 	// Cost of inner child plan, i.e, mainly I/O and network cost.
-	innerPlanCost := outerCnt * innerTask.cost()
-	return outerTask.cost() + innerPlanCost + cpuCost + memoryCost
+	innerPlanCost := outerCnt * innerCost
+	return outerCost + innerPlanCost + cpuCost + memoryCost
 }
 
 func getAvgRowSize(stats *property.StatsInfo, schema *expression.Schema) (size float64) {
@@ -916,37 +922,30 @@ func (p *PhysicalMergeJoin) attach2Task(tasks ...task) task {
 	return t
 }
 
-func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
-	newTask := &rootTask{cst: t.cst}
+// GetCost computes cost of index lookup operator itself.
+func (p *PhysicalIndexLookUpReader) GetCost() (cost float64) {
+	indexPlan, tablePlan := p.indexPlan, p.tablePlan
+	ctx := p.ctx
 	sessVars := ctx.GetSessionVars()
-	p := PhysicalIndexLookUpReader{
-		tablePlan:        t.tablePlan,
-		indexPlan:        t.indexPlan,
-		ExtraHandleCol:   t.extraHandleCol,
-		CommonHandleCols: t.commonHandleCols,
-	}.Init(ctx, t.tablePlan.SelectBlockOffset())
-	p.PartitionInfo = t.partitionInfo
-	setTableScanToTableRowIDScan(p.tablePlan)
-	p.stats = t.tablePlan.statsInfo()
 	// Add cost of building table reader executors. Handles are extracted in batch style,
 	// each handle is a range, the CPU cost of building copTasks should be:
 	// (indexRows / batchSize) * batchSize * CPUFactor
 	// Since we don't know the number of copTasks built, ignore these network cost now.
-	indexRows := t.indexPlan.statsInfo().RowCount
+	indexRows := indexPlan.statsInfo().RowCount
 	idxCst := indexRows * sessVars.CPUFactor
 	// if the expectCnt is below the paging threshold, using paging API, recalculate idxCst.
 	// paging API reduces the count of index and table rows, however introduces more seek cost.
-	if ctx.GetSessionVars().EnablePaging && t.expectCnt > 0 && t.expectCnt <= paging.Threshold {
+	if ctx.GetSessionVars().EnablePaging && p.expectedCnt > 0 && p.expectedCnt <= paging.Threshold {
 		p.Paging = true
-		pagingCst := calcPagingCost(ctx, t)
+		pagingCst := calcPagingCost(ctx, p.indexPlan, p.expectedCnt)
 		// prevent enlarging the cost because we take paging as a better plan,
 		// if the cost is enlarged, it'll be easier to go another plan.
 		idxCst = math.Min(idxCst, pagingCst)
 	}
-	newTask.cst += idxCst
+	cost += idxCst
 	// Add cost of worker goroutines in index lookup.
 	numTblWorkers := float64(sessVars.IndexLookupConcurrency())
-	newTask.cst += (numTblWorkers + 1) * sessVars.ConcurrencyFactor
+	cost += (numTblWorkers + 1) * sessVars.ConcurrencyFactor
 	// When building table reader executor for each batch, we would sort the handles. CPU
 	// cost of sort is:
 	// CPUFactor * batchSize * Log2(batchSize) * (indexRows / batchSize)
@@ -954,18 +953,35 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 	batchSize := math.Min(indexLookupSize, indexRows)
 	if batchSize > 2 {
 		sortCPUCost := (indexRows * math.Log2(batchSize) * sessVars.CPUFactor) / numTblWorkers
-		newTask.cst += sortCPUCost
+		cost += sortCPUCost
 	}
 	// Also, we need to sort the retrieved rows if index lookup reader is expected to return
 	// ordered results. Note that row count of these two sorts can be different, if there are
 	// operators above table scan.
-	tableRows := t.tablePlan.statsInfo().RowCount
+	tableRows := tablePlan.statsInfo().RowCount
 	selectivity := tableRows / indexRows
 	batchSize = math.Min(indexLookupSize*selectivity, tableRows)
-	if t.keepOrder && batchSize > 2 {
+	if p.keepOrder && batchSize > 2 {
 		sortCPUCost := (tableRows * math.Log2(batchSize) * sessVars.CPUFactor) / numTblWorkers
-		newTask.cst += sortCPUCost
+		cost += sortCPUCost
 	}
+	return
+}
+
+func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
+	newTask := &rootTask{cst: t.cst}
+	p := PhysicalIndexLookUpReader{
+		tablePlan:        t.tablePlan,
+		indexPlan:        t.indexPlan,
+		ExtraHandleCol:   t.extraHandleCol,
+		CommonHandleCols: t.commonHandleCols,
+		expectedCnt:      t.expectCnt,
+		keepOrder:        t.keepOrder,
+	}.Init(ctx, t.tablePlan.SelectBlockOffset())
+	p.PartitionInfo = t.partitionInfo
+	setTableScanToTableRowIDScan(p.tablePlan)
+	p.stats = t.tablePlan.statsInfo()
+	newTask.cst += p.GetCost()
 	p.cost = newTask.cst
 
 	// Do not inject the extra Projection even if t.needExtraProj is set, or the schema between the phase-1 agg and
@@ -1004,11 +1020,10 @@ func extractRows(p PhysicalPlan) float64 {
 }
 
 // calcPagingCost calculates the cost for paging processing which may increase the seekCnt and reduce scanned rows.
-func calcPagingCost(ctx sessionctx.Context, t *copTask) float64 {
+func calcPagingCost(ctx sessionctx.Context, indexPlan PhysicalPlan, expectCnt uint64) float64 {
 	sessVars := ctx.GetSessionVars()
-	indexRows := t.indexPlan.statsInfo().RowCount
-	expectCnt := t.expectCnt
-	sourceRows := extractRows(t.indexPlan)
+	indexRows := indexPlan.StatsCount()
+	sourceRows := extractRows(indexPlan)
 	// with paging, the scanned rows is always less than or equal to source rows.
 	if uint64(sourceRows) < expectCnt {
 		expectCnt = uint64(sourceRows)
@@ -1045,6 +1060,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	t.finishIndexPlan()
 	// Network cost of transferring rows of table scan to TiDB.
 	if t.tablePlan != nil {
+		// net I/O cost
 		t.cst += t.count() * sessVars.GetNetworkFactor(nil) * t.tblColHists.GetAvgRowSize(ctx, t.tablePlan.Schema().Columns, false, false)
 
 		tp := t.tablePlan
@@ -1057,6 +1073,17 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 			}
 		}
 		ts := tp.(*PhysicalTableScan)
+
+		// net seek cost
+		if !ts.underInnerIndexJoin { // no need to accumulate net seek cost for IndexJoin
+			switch ts.StoreType {
+			case kv.TiKV:
+				t.cst += float64(len(ts.Ranges)) * sessVars.GetSeekFactor(ts.Table)
+			case kv.TiFlash:
+				t.cst += float64(len(ts.Ranges)) * float64(len(ts.Columns)) * sessVars.GetSeekFactor(ts.Table)
+			}
+		}
+
 		prevColumnLen := len(ts.Columns)
 		prevSchema := ts.schema.Clone()
 		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
@@ -2064,7 +2091,6 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 			t = cop.convertToRootTask(p.ctx)
 			inputRows = t.count()
 			attachPlan2Task(finalAgg, t)
-			finalAgg.SetCost(cop.cost())
 		}
 	} else if mpp, ok := t.(*mppTask); ok {
 		t = mpp.convertToRootTask(p.ctx)
@@ -2073,7 +2099,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 		attachPlan2Task(p, t)
 	}
 	t.addCost(p.GetCost(inputRows, true))
-	p.SetCost(t.cost())
+	t.plan().SetCost(t.cost())
 	return t
 }
 
@@ -2290,7 +2316,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	// To make it simple, we also treat 2-phase parallel hash aggregation in TiDB layer as
 	// 1-phase when computing cost.
 	t.addCost(p.GetCost(inputRows, true, false))
-	p.cost = t.cost()
+	t.plan().SetCost(t.cost())
 	return t
 }
 
@@ -2379,6 +2405,16 @@ func collectRowSizeFromMPPPlan(mppPlan PhysicalPlan) (rowSize float64) {
 	return 1 // use 1 as lower-bound for safety
 }
 
+func accumulateNetSeekCost4MPP(p PhysicalPlan) (cost float64) {
+	if ts, ok := p.(*PhysicalTableScan); ok {
+		return float64(len(ts.Ranges)) * float64(len(ts.Columns)) * ts.SCtx().GetSessionVars().GetSeekFactor(ts.Table)
+	}
+	for _, c := range p.Children() {
+		cost += accumulateNetSeekCost4MPP(c)
+	}
+	return
+}
+
 func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	sender := PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_PassThrough,
@@ -2394,7 +2430,9 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	collectPartitionInfosFromMPPPlan(p, t.p)
 	rowSize := collectRowSizeFromMPPPlan(sender)
 
-	cst := t.cst + t.count()*rowSize*ctx.GetSessionVars().GetNetworkFactor(nil)
+	cst := t.cst + t.count()*rowSize*ctx.GetSessionVars().GetNetworkFactor(nil) // net I/O cost
+	// net seek cost, unlike copTask, a mppTask may have multiple underlying TableScan, so use a recursive function to accumulate this
+	cst += accumulateNetSeekCost4MPP(sender)
 	cst /= p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
 	p.cost = cst
 	if p.ctx.GetSessionVars().IsMPPEnforced() {

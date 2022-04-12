@@ -546,6 +546,13 @@ create table log_message_1 (
 			dbterror.ErrRangeNotIncreasing,
 		},
 		{
+			"create table t(a char(10) collate utf8mb4_bin) " +
+				"partition by range columns (a) (" +
+				"partition p0 values less than ('g'), " +
+				"partition p1 values less than ('A'));",
+			dbterror.ErrRangeNotIncreasing,
+		},
+		{
 			"CREATE TABLE t1(c0 INT) PARTITION BY HASH((NOT c0)) PARTITIONS 2;",
 			dbterror.ErrPartitionFunctionIsNotAllowed,
 		},
@@ -616,6 +623,14 @@ create table log_message_1 (
 	tk.MustExec(`create table t(a char(10) collate utf8mb4_unicode_ci) partition by range columns (a) (
     	partition p0 values less than ('a'),
     	partition p1 values less than ('G'));`)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec(`create table t (a varchar(255) charset utf8mb4 collate utf8mb4_bin) ` +
+		`partition by range columns (a) ` +
+		`(partition pnull values less than (""),` +
+		`partition puppera values less than ("AAA"),` +
+		`partition plowera values less than ("aaa"),` +
+		`partition pmax values less than (MAXVALUE))`)
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec(`create table t(a int) partition by range columns (a) (
@@ -2739,10 +2754,6 @@ func testPartitionDropIndex(t *testing.T, store kv.Storage, lease time.Duration,
 	}
 	tk.MustExec(addIdxSQL)
 
-	indexID := external.GetIndexID(t, tk, "test", "partition_drop_idx", idxName)
-
-	jobIDExt, reset := setupJobIDExtCallback(tk.Session())
-	defer reset()
 	testutil.ExecMultiSQLInGoroutine(store, "test", []string{dropIdxSQL}, done)
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
@@ -2765,7 +2776,6 @@ LOOP:
 			num += step
 		}
 	}
-	checkDelRangeAdded(tk, jobIDExt.jobID, indexID)
 	tk.MustExec("drop table partition_drop_idx;")
 }
 
@@ -2818,13 +2828,12 @@ func testPartitionCancelAddIndex(t *testing.T, store kv.Storage, d ddl.DDL, leas
 	}
 
 	var checkErr error
-	var c3IdxInfo *model.IndexInfo
 	hook := &ddl.TestDDLCallback{}
 	originBatchSize := tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
 	// Set batch size to lower try to slow down add-index reorganization, This if for hook to cancel this ddl job.
 	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 32")
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", originBatchSize.Rows()[0][0]))
-	hook.OnJobUpdatedExported, c3IdxInfo, checkErr = backgroundExecOnJobUpdatedExportedT(t, tk, store, hook, idxName)
+	hook.OnJobUpdatedExported, _, checkErr = backgroundExecOnJobUpdatedExportedT(t, tk, store, hook, idxName)
 	originHook := d.GetHook()
 	defer d.SetHook(originHook)
 	jobIDExt := wrapJobIDExtCallback(hook)
@@ -2858,7 +2867,6 @@ LOOP:
 			times++
 		}
 	}
-	checkDelRangeAdded(tk, jobIDExt.jobID, c3IdxInfo.ID)
 	tk.MustExec("drop table t1")
 }
 

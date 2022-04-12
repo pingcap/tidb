@@ -254,3 +254,17 @@ func TestCacheTableSizeLimit(t *testing.T) {
 	// Forbit the insert once the table size limit is detected.
 	tk.MustGetErrCode("insert into cache_t2 select * from tmp;", errno.ErrOptOnCacheTable)
 }
+
+func TestIssue32692(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table cache_t2 (c1 int);")
+	tk.MustExec("alter table cache_t2 cache;")
+	tk.MustExec("alter table cache_t2 nocache;")
+	// Check no warning message here.
+	tk.MustExec("alter table cache_t2 cache;")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
