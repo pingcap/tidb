@@ -691,6 +691,19 @@ func CheckTiDBWithTiKV(db *sql.DB) (bool, error) {
 	return count > 0, nil
 }
 
+// CheckIfSeqExists use sql to check whether sequence exists
+func CheckIfSeqExists(db *sql.Conn) (bool, error) {
+	var count int
+	const query = "SELECT COUNT(1) as c FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='SEQUENCE'"
+	row := db.QueryRowContext(context.Background(), query)
+	err := row.Scan(&count)
+	if err != nil {
+		return false, errors.Annotatef(err, "sql: %s", query)
+	}
+
+	return count > 0, nil
+}
+
 // CheckTiDBEnableTableLock use sql variable to check whether current TiDB has TiKV
 func CheckTiDBEnableTableLock(db *sql.Conn) (bool, error) {
 	tidbConfig, err := getTiDBConfig(db)

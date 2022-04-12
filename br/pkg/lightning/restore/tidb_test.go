@@ -16,6 +16,7 @@ package restore
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -64,103 +65,109 @@ func (s *tidbSuite) TearDownTest(c *C) {
 
 func (s *tidbSuite) TestCreateTableIfNotExistsStmt(c *C) {
 	dbName := "testdb"
-	createTableIfNotExistsStmt := func(createTable, tableName string) []string {
-		res, err := createTableIfNotExistsStmt(s.tiGlue.GetParser(), createTable, dbName, tableName)
+	createSQLIfNotExistsStmt := func(createTable, tableName string) []string {
+		res, err := createIfNotExistsStmt(s.tiGlue.GetParser(), createTable, dbName, tableName)
 		c.Assert(err, IsNil)
 		return res
 	}
 
 	c.Assert(
-		createTableIfNotExistsStmt("CREATE TABLE `foo`(`bar` TINYINT(1));", "foo"),
+		createSQLIfNotExistsStmt("CREATE DATABASE `foo` CHARACTER SET = utf8 COLLATE = utf8_general_ci;", ""),
+		DeepEquals,
+		[]string{"CREATE DATABASE IF NOT EXISTS `testdb` CHARACTER SET = utf8 COLLATE = utf8_general_ci;"},
+	)
+
+	c.Assert(
+		createSQLIfNotExistsStmt("CREATE TABLE `foo`(`bar` TINYINT(1));", "foo"),
 		DeepEquals,
 		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` TINYINT(1));"},
 	)
 
 	c.Assert(
-		createTableIfNotExistsStmt("CREATE TABLE IF NOT EXISTS `foo`(`bar` TINYINT(1));", "foo"),
+		createSQLIfNotExistsStmt("CREATE TABLE IF NOT EXISTS `foo`(`bar` TINYINT(1));", "foo"),
 		DeepEquals,
 		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` TINYINT(1));"},
 	)
 
 	// case insensitive
 	c.Assert(
-		createTableIfNotExistsStmt("/* cOmmEnt */ creAte tablE `fOo`(`bar` TinyinT(1));", "fOo"),
+		createSQLIfNotExistsStmt("/* cOmmEnt */ creAte tablE `fOo`(`bar` TinyinT(1));", "fOo"),
 		DeepEquals,
 		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`fOo` (`bar` TINYINT(1));"},
 	)
 
 	c.Assert(
-		createTableIfNotExistsStmt("/* coMMenT */ crEatE tAble If not EXISts `FoO`(`bAR` tiNyInT(1));", "FoO"),
+		createSQLIfNotExistsStmt("/* coMMenT */ crEatE tAble If not EXISts `FoO`(`bAR` tiNyInT(1));", "FoO"),
 		DeepEquals,
 		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`FoO` (`bAR` TINYINT(1));"},
 	)
 
 	// only one "CREATE TABLE" is replaced
 	c.Assert(
-		createTableIfNotExistsStmt("CREATE TABLE `foo`(`bar` INT(1) COMMENT 'CREATE TABLE');", "foo"),
+		createSQLIfNotExistsStmt("CREATE TABLE `foo`(`bar` INT(1) COMMENT 'CREATE TABLE');", "foo"),
 		DeepEquals,
 		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` INT(1) COMMENT 'CREATE TABLE');"},
 	)
 
 	// test clustered index consistency
 	c.Assert(
-		createTableIfNotExistsStmt("CREATE TABLE `foo`(`bar` INT(1) PRIMARY KEY CLUSTERED COMMENT 'CREATE TABLE');", "foo"),
+		createSQLIfNotExistsStmt("CREATE TABLE `foo`(`bar` INT(1) PRIMARY KEY CLUSTERED COMMENT 'CREATE TABLE');", "foo"),
 		DeepEquals,
 		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` INT(1) PRIMARY KEY /*T![clustered_index] CLUSTERED */ COMMENT 'CREATE TABLE');"},
 	)
 	c.Assert(
-		createTableIfNotExistsStmt("CREATE TABLE `foo`(`bar` INT(1) COMMENT 'CREATE TABLE', PRIMARY KEY (`bar`) NONCLUSTERED);", "foo"),
+		createSQLIfNotExistsStmt("CREATE TABLE `foo`(`bar` INT(1) COMMENT 'CREATE TABLE', PRIMARY KEY (`bar`) NONCLUSTERED);", "foo"),
 		DeepEquals,
 		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` INT(1) COMMENT 'CREATE TABLE',PRIMARY KEY(`bar`) /*T![clustered_index] NONCLUSTERED */);"},
 	)
 	c.Assert(
-		createTableIfNotExistsStmt("CREATE TABLE `foo`(`bar` INT(1) PRIMARY KEY /*T![clustered_index] NONCLUSTERED */ COMMENT 'CREATE TABLE');", "foo"),
+		createSQLIfNotExistsStmt("CREATE TABLE `foo`(`bar` INT(1) PRIMARY KEY /*T![clustered_index] NONCLUSTERED */ COMMENT 'CREATE TABLE');", "foo"),
 		DeepEquals,
 		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` INT(1) PRIMARY KEY /*T![clustered_index] NONCLUSTERED */ COMMENT 'CREATE TABLE');"},
 	)
 	c.Assert(
-		createTableIfNotExistsStmt("CREATE TABLE `foo`(`bar` INT(1) COMMENT 'CREATE TABLE', PRIMARY KEY (`bar`) /*T![clustered_index] CLUSTERED */);", "foo"),
+		createSQLIfNotExistsStmt("CREATE TABLE `foo`(`bar` INT(1) COMMENT 'CREATE TABLE', PRIMARY KEY (`bar`) /*T![clustered_index] CLUSTERED */);", "foo"),
 		DeepEquals,
 		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` INT(1) COMMENT 'CREATE TABLE',PRIMARY KEY(`bar`) /*T![clustered_index] CLUSTERED */);"},
 	)
 
 	c.Assert(
-		createTableIfNotExistsStmt("CREATE TABLE `foo`(`bar` INT(1) PRIMARY KEY AUTO_RANDOM(2) COMMENT 'CREATE TABLE');", "foo"),
+		createSQLIfNotExistsStmt("CREATE TABLE `foo`(`bar` INT(1) PRIMARY KEY AUTO_RANDOM(2) COMMENT 'CREATE TABLE');", "foo"),
 		DeepEquals,
 		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`foo` (`bar` INT(1) PRIMARY KEY /*T![auto_rand] AUTO_RANDOM(2) */ COMMENT 'CREATE TABLE');"},
 	)
 
 	// upper case becomes shorter
 	c.Assert(
-		createTableIfNotExistsStmt("CREATE TABLE `ſ`(`ı` TINYINT(1));", "ſ"),
+		createSQLIfNotExistsStmt("CREATE TABLE `ſ`(`ı` TINYINT(1));", "ſ"),
 		DeepEquals,
 		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`ſ` (`ı` TINYINT(1));"},
 	)
 
 	// upper case becomes longer
 	c.Assert(
-		createTableIfNotExistsStmt("CREATE TABLE `ɑ`(`ȿ` TINYINT(1));", "ɑ"),
+		createSQLIfNotExistsStmt("CREATE TABLE `ɑ`(`ȿ` TINYINT(1));", "ɑ"),
 		DeepEquals,
 		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`ɑ` (`ȿ` TINYINT(1));"},
 	)
 
 	// non-utf-8
 	c.Assert(
-		createTableIfNotExistsStmt("CREATE TABLE `\xcc\xcc\xcc`(`\xdd\xdd\xdd` TINYINT(1));", "\xcc\xcc\xcc"),
+		createSQLIfNotExistsStmt("CREATE TABLE `\xcc\xcc\xcc`(`\xdd\xdd\xdd` TINYINT(1));", "\xcc\xcc\xcc"),
 		DeepEquals,
 		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`\xcc\xcc\xcc` (`ÝÝÝ` TINYINT(1));"},
 	)
 
 	// renaming a table
 	c.Assert(
-		createTableIfNotExistsStmt("create table foo(x int);", "ba`r"),
+		createSQLIfNotExistsStmt("create table foo(x int);", "ba`r"),
 		DeepEquals,
 		[]string{"CREATE TABLE IF NOT EXISTS `testdb`.`ba``r` (`x` INT);"},
 	)
 
 	// conditional comments
 	c.Assert(
-		createTableIfNotExistsStmt(`
+		createSQLIfNotExistsStmt(`
 			/*!40101 SET NAMES binary*/;
 			/*!40014 SET FOREIGN_KEY_CHECKS=0*/;
 			CREATE TABLE x.y (z double) ENGINE=InnoDB AUTO_INCREMENT=8343230 DEFAULT CHARSET=utf8;
@@ -175,7 +182,7 @@ func (s *tidbSuite) TestCreateTableIfNotExistsStmt(c *C) {
 
 	// create view
 	c.Assert(
-		createTableIfNotExistsStmt(`
+		createSQLIfNotExistsStmt(`
 			/*!40101 SET NAMES binary*/;
 			DROP TABLE IF EXISTS v2;
 			DROP VIEW IF EXISTS v2;
@@ -319,7 +326,8 @@ func (s *tidbSuite) TestLoadSchemaInfo(c *C) {
 		"CREATE TABLE `t1` (`a` INT PRIMARY KEY);"+
 			"CREATE TABLE `t2` (`b` VARCHAR(20), `c` BOOL, KEY (`b`, `c`));"+
 			// an extra table that not exists in dbMetas
-			"CREATE TABLE `t3` (`d` VARCHAR(20), `e` BOOL);",
+			"CREATE TABLE `t3` (`d` VARCHAR(20), `e` BOOL);"+
+			"CREATE TABLE `T4` (`f` BIGINT PRIMARY KEY);",
 		"", "")
 	c.Assert(err, IsNil)
 	tableInfos := make([]*model.TableInfo, 0, len(nodes))
@@ -343,6 +351,10 @@ func (s *tidbSuite) TestLoadSchemaInfo(c *C) {
 				{
 					DB:   "db",
 					Name: "t2",
+				},
+				{
+					DB:   "db",
+					Name: "t4",
 				},
 			},
 		},
@@ -369,13 +381,19 @@ func (s *tidbSuite) TestLoadSchemaInfo(c *C) {
 					Name: "t2",
 					Core: tableInfos[1],
 				},
+				"t4": {
+					ID:   103,
+					DB:   "db",
+					Name: "t4",
+					Core: tableInfos[3],
+				},
 			},
 		},
 	})
 
 	tableCntAfter := metric.ReadCounter(metric.TableCounter.WithLabelValues(metric.TableStatePending, metric.TableResultSuccess))
 
-	c.Assert(tableCntAfter-tableCntBefore, Equals, 2.0)
+	c.Assert(tableCntAfter-tableCntBefore, Equals, 3.0)
 }
 
 func (s *tidbSuite) TestLoadSchemaInfoMissing(c *C) {
@@ -505,8 +523,22 @@ func (s *tidbSuite) TestObtainNewCollationEnabled(c *C) {
 	ctx := context.Background()
 
 	s.mockDB.
-		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E")
-	version := ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
+		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
+		WillReturnError(errors.New("mock permission deny"))
+	s.mockDB.
+		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
+		WillReturnError(errors.New("mock permission deny"))
+	s.mockDB.
+		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
+		WillReturnError(errors.New("mock permission deny"))
+	_, err := ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
+	c.Assert(err, ErrorMatches, "obtain new collation enabled failed: mock permission deny")
+
+	s.mockDB.
+		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"variable_value"}).RowError(0, sql.ErrNoRows))
+	version, err := ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
+	c.Assert(err, IsNil)
 	c.Assert(version, Equals, false)
 
 	kvMap := map[string]bool{
@@ -518,7 +550,8 @@ func (s *tidbSuite) TestObtainNewCollationEnabled(c *C) {
 			ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
 			WillReturnRows(sqlmock.NewRows([]string{"variable_value"}).AddRow(k))
 
-		version := ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
+		version, err = ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
+		c.Assert(err, IsNil)
 		c.Assert(version, Equals, v)
 	}
 	s.mockDB.
