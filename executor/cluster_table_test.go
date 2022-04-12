@@ -36,7 +36,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-func createRpcServer(t *testing.T, dom *domain.Domain) *grpc.Server {
+func createRPCServer(t *testing.T, dom *domain.Domain) *grpc.Server {
 	sm := &mockSessionManager1{}
 	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      1,
@@ -65,7 +65,7 @@ func createRpcServer(t *testing.T, dom *domain.Domain) *grpc.Server {
 func TestClusterTableSlowQuery(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	srv := createRpcServer(t, dom)
+	srv := createRPCServer(t, dom)
 	defer srv.Stop()
 
 	logData0 := ""
@@ -174,7 +174,7 @@ select 7;`
 func TestIssue20236(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	srv := createRpcServer(t, dom)
+	srv := createRPCServer(t, dom)
 	defer srv.Stop()
 
 	logData0 := ""
@@ -274,7 +274,7 @@ select 10;`
 func TestSQLDigestTextRetriever(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	srv := createRpcServer(t, dom)
+	srv := createRPCServer(t, dom)
 	defer srv.Stop()
 
 	tkInit := testkit.NewTestKit(t, store)
@@ -306,7 +306,7 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 func TestFunctionDecodeSQLDigests(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	srv := createRpcServer(t, dom)
+	srv := createRPCServer(t, dom)
 	defer srv.Stop()
 
 	tk := testkit.NewTestKit(t, store)
@@ -367,7 +367,7 @@ func TestFunctionDecodeSQLDigests(t *testing.T) {
 func TestFunctionDecodeSQLDigestsPrivilege(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
-	srv := createRpcServer(t, dom)
+	srv := createRPCServer(t, dom)
 	defer srv.Stop()
 
 	dropUserTk := testkit.NewTestKit(t, store)
