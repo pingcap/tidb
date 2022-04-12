@@ -103,7 +103,7 @@ func TestGetDDLJobs(t *testing.T) {
 		currJobs2 = currJobs2[:0]
 		err = IterAllDDLJobs(txn, func(jobs []*model.Job) (b bool, e error) {
 			for _, job := range jobs {
-				if job.State == model.JobStateNone {
+				if job.NotStarted() {
 					currJobs2 = append(currJobs2, job)
 				} else {
 					return true, nil
