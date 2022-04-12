@@ -21,22 +21,19 @@ import (
 	"io"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-<<<<<<< HEAD
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-=======
+	pdconfig "github.com/tikv/pd/server/config"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
-	"modernc.org/mathutil"
 
-	"github.com/pingcap/kvproto/pkg/metapb"
->>>>>>> 393415782... lightning: add back table empty check and add a switch config (#30887)
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
@@ -46,21 +43,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/table"
->>>>>>> 393415782... lightning: add back table empty check and add a switch config (#30887)
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/tikv/pd/pkg/typeutil"
 	"github.com/tikv/pd/server/api"
-	pdconfig "github.com/tikv/pd/server/config"
-<<<<<<< HEAD
-	"go.uber.org/zap"
-=======
->>>>>>> 393415782... lightning: add back table empty check and add a switch config (#30887)
 )
 
 const (
@@ -114,9 +100,12 @@ func (rc *Controller) ClusterResource(ctx context.Context, localSource int64) er
 	}
 	clusterSource := localSource
 	if rc.taskMgr != nil {
-		clusterSource, err = rc.taskMgr.CheckClusterSource(ctx)
+		remoteSource, err := rc.taskMgr.CheckClusterSource(ctx)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if remoteSource > 0 {
+			clusterSource = remoteSource
 		}
 	}
 
@@ -716,9 +705,15 @@ func (rc *Controller) checkTableEmpty(ctx context.Context) error {
 			return nil
 		})
 	}
+loop:
 	for _, db := range rc.dbMetas {
 		for _, tbl := range db.Tables {
-			ch <- common.UniqueTable(tbl.DB, tbl.Name)
+			select {
+			case ch <- common.UniqueTable(tbl.DB, tbl.Name):
+			case <- gCtx.Done():
+				break loop
+			}
+
 		}
 	}
 	close(ch)
@@ -726,7 +721,7 @@ func (rc *Controller) checkTableEmpty(ctx context.Context) error {
 		if common.IsContextCanceledError(err) {
 			return nil
 		}
-		return errors.Trace(err)
+		return errors.Annotate(err, "check table contains data failed")
 	}
 
 	if len(tableNames) > 0 {
@@ -738,13 +733,17 @@ func (rc *Controller) checkTableEmpty(ctx context.Context) error {
 	return nil
 }
 
-func tableContainsData(ctx context.Context, db utils.QueryExecutor, tableName string) (bool, error) {
+func tableContainsData(ctx context.Context, db common.DBExecutor, tableName string) (bool, error) {
 	query := "select 1 from " + tableName + " limit 1"
+	exec := common.SQLWithRetry{
+		DB:     db,
+		Logger: log.L(),
+	}
 	var dump int
-	err := db.QueryRowContext(ctx, query).Scan(&dump)
+	err := exec.QueryRow(ctx, "check table empty", query, &dump)
 
 	switch {
-	case err == sql.ErrNoRows:
+	case errors.ErrorEqual(err, sql.ErrNoRows):
 		return false, nil
 	case err != nil:
 		return false, errors.Trace(err)

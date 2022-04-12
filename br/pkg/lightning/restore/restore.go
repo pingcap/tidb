@@ -336,19 +336,14 @@ func NewRestoreControllerWithPauser(
 	}
 
 	var metaBuilder metaMgrBuilder
-<<<<<<< HEAD
-	switch cfg.TikvImporter.Backend {
-	case config.BackendLocal, config.BackendImporter:
+	isSSTImport := cfg.TikvImporter.Backend == config.BackendLocal || cfg.TikvImporter.Backend == config.BackendImporter
+	switch {
+	case isSSTImport && cfg.TikvImporter.IncrementalImport:
 		// TODO: support Lightning via SQL
 		db, err := g.GetDB()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-=======
-	isSSTImport := cfg.TikvImporter.Backend == config.BackendLocal || cfg.TikvImporter.Backend == config.BackendImporter
-	switch {
-	case isSSTImport && cfg.TikvImporter.IncrementalImport:
->>>>>>> 393415782... lightning: add back table empty check and add a switch config (#30887)
 		metaBuilder = &dbMetaMgrBuilder{
 			db:           db,
 			taskID:       cfg.TaskID,
@@ -1786,11 +1781,8 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 		rc.checkTemplate.Collect(Critical, true, "table schemas are valid")
 	}
 
-	if err := rc.checkTableEmpty(ctx); err != nil {
+	if err = rc.checkTableEmpty(ctx); err != nil {
 		return errors.Trace(err)
-	}
-	if err = rc.checkCSVHeader(ctx, rc.dbMetas); err != nil {
-		return err
 	}
 
 	return nil
