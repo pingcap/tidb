@@ -553,19 +553,14 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		job.SnapshotVer = 0
 		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
-		var done bool
-		done, ver, err = multiSchemaChangeOnCreateIndexFinish(t, job, tblInfo, indexInfo)
-		if done {
-			return ver, err
-		}
-
 		// reorganization -> public
 		tbl, err := getTable(d.store, schemaID, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 
-		done, ver, err = doReorgWorkForCreateIndex(w, d, t, job, tbl, indexInfo)
+		var done bool
+		done, ver, err = doReorgWorkForCreateIndexMultiSchema(w, d, t, job, tbl, indexInfo)
 		if !done {
 			return ver, err
 		}
@@ -576,11 +571,6 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			if err = updateColsNull2NotNull(tblInfo, indexInfo); err != nil {
 				return ver, errors.Trace(err)
 			}
-		}
-
-		done, ver, err = multiSchemaChangeOnCreateIndexPending(t, job, tblInfo)
-		if done {
-			return ver, err
 		}
 
 		indexInfo.State = model.StatePublic
@@ -597,17 +587,34 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	return ver, errors.Trace(err)
 }
 
+func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
+	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
+	if job.MultiSchemaInfo != nil {
+		if job.IsCancelling() {
+			logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback",
+				zap.String("job", job.String()), zap.Error(err))
+			w.reorgCtx.cleanNotifyReorgCancel()
+			ver, err = convertAddIdxJob2RollbackJob(t, job, tbl.Meta(), indexInfo, dbterror.ErrCancelledDDLJob)
+			return false, ver, err
+		}
+		if job.MultiSchemaInfo.Revertible {
+			done, ver, err = doReorgWorkForCreateIndex(w, d, t, job, tbl, indexInfo)
+			if done {
+				job.MarkNonRevertible()
+				done = false
+			}
+			return done, ver, err
+		}
+		return true, ver, err
+	}
+	return doReorgWorkForCreateIndex(w, d, t, job, tbl, indexInfo)
+}
+
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
 	elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
 	reorgInfo, err := getReorgInfo(w.jobContext, d, t, job, tbl, elements)
 	if err != nil || reorgInfo.first {
-		done, ver, err1 := multiSchemaChangeOnCreateIndexCancelling(err, t, job, tbl.Meta(), indexInfo)
-		if done {
-			// Remove the cancelling signal before converting to rollback job.
-			w.reorgCtx.cleanNotifyReorgCancel()
-			return false, ver, err1
-		}
 		// If we run reorg firstly, we should update the job snapshot version
 		// and then run the reorg next time.
 		return false, ver, errors.Trace(err)
@@ -1509,17 +1516,43 @@ func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *r
 	return false, errors.Trace(err)
 }
 
-func findIndexesByColName(indexes []*model.IndexInfo, colName string) ([]*model.IndexInfo, []int) {
-	idxInfos := make([]*model.IndexInfo, 0, len(indexes))
-	offsets := make([]int, 0, len(indexes))
-	for _, idxInfo := range indexes {
-		for i, c := range idxInfo.Columns {
-			if strings.EqualFold(colName, c.Name.L) {
-				idxInfos = append(idxInfos, idxInfo)
-				offsets = append(offsets, i)
+type indexesToChange struct {
+	indexInfo   *model.IndexInfo
+	isModifying bool // whether the index is being modifying by another 'modify column' job
+	idxOffset   int  // index offset in tblInfo.Indices
+	colOffset   int  // column offset in idxInfo.Columns
+}
+
+// findIndexesByColName finds the indexes that covering the given column, and deduplicate
+// the indexes by original name.
+func findIndexesByColName(tblInfo *model.TableInfo, colName model.CIStr) []indexesToChange {
+	var result []indexesToChange
+	for i, idxInfo := range tblInfo.Indices {
+		name, origName := idxInfo.Name.O, getChangingIndexOriginName(idxInfo)
+		isModifying := len(name) != len(origName)
+		for j, idxCol := range idxInfo.Columns {
+			if idxCol.Name.L != colName.L {
+				continue
+			}
+			r := indexesToChange{indexInfo: idxInfo, isModifying: isModifying, idxOffset: i, colOffset: j}
+			if !isModifying {
+				result = append(result, r)
 				break
 			}
+			// Deduplicate the index info by original name.
+			var dedup bool
+			for k, rs := range result {
+				if !rs.isModifying && origName == rs.indexInfo.Name.O {
+					result[k] = r
+					dedup = true
+					break
+				}
+			}
+			if !dedup {
+				result = append(result, r)
+			}
+			break
 		}
 	}
-	return idxInfos, offsets
+	return result
 }

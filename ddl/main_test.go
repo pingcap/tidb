@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -84,6 +85,13 @@ func setupJobIDExtCallback(ctx sessionctx.Context) (jobExt *testDDLJobIDCallback
 	return jobIDExt, func() {
 		dom.DDL().SetHook(originHook)
 	}
+}
+
+func checkDelRangeCnt(tk *testkit.TestKit, jobID int64, cnt int) {
+	query := `select sum(cnt) from
+	(select count(1) cnt from mysql.gc_delete_range where job_id = ? union
+	select count(1) cnt from mysql.gc_delete_range_done where job_id = ?) as gdr;`
+	tk.MustQuery(query, jobID, jobID).Check(testkit.Rows(strconv.Itoa(cnt)))
 }
 
 func checkDelRangeAdded(tk *testkit.TestKit, jobID int64, elemID int64) {

@@ -142,7 +142,7 @@ func rollingbackModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job)
 	}
 	// reorg-type rolling back
 	if modifyInfo.changingCol == nil {
-		// The job hasn't been handled and we cancel it directly.
+		// The job hasn't been handled, so cancel it directly.
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrCancelledDDLJob
 	}

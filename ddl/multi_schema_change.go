@@ -25,8 +25,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
@@ -342,45 +340,4 @@ func rollingBackMultiSchemaChange(job *model.Job) error {
 	}
 	job.State = model.JobStateRollingback
 	return dbterror.ErrCancelledDDLJob
-}
-
-func multiSchemaChangeOnCreateIndexPending(t *meta.Meta, job *model.Job,
-	tblInfo *model.TableInfo) (done bool, ver int64, err error) {
-	if job.MultiSchemaInfo != nil && job.MultiSchemaInfo.Revertible {
-		// For multi-schema change, we don't public the index immediately.
-		// Mark the job non-revertible and wait for other sub-jobs to finish.
-		job.MarkNonRevertible()
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, false)
-		return true, ver, err
-	}
-	return false, 0, nil
-}
-
-func multiSchemaChangeOnCreateIndexFinish(t *meta.Meta, job *model.Job,
-	tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (done bool, ver int64, err error) {
-	if job.State != model.JobStateCancelling && job.MultiSchemaInfo != nil && !job.MultiSchemaInfo.Revertible {
-		// The multi-schema change steps to a non-revertible state.
-		// Public the index and finish the sub-job.
-		indexInfo.State = model.StatePublic
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
-		if err != nil {
-			return true, ver, errors.Trace(err)
-		}
-		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		return true, ver, nil
-	}
-	return false, 0, nil
-}
-
-func multiSchemaChangeOnCreateIndexCancelling(err error, t *meta.Meta, job *model.Job,
-	tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (done bool, ver int64, err1 error) {
-	if job.State == model.JobStateCancelling && meta.ErrDDLReorgElementNotExist.Equal(err) && job.MultiSchemaInfo != nil {
-		// For multi-schema change, the absence of the reorg element means the sub-job has finished the reorg.
-		logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback",
-			zap.String("job", job.String()), zap.Error(err))
-
-		ver, err1 = convertAddIdxJob2RollbackJob(t, job, tblInfo, indexInfo, dbterror.ErrCancelledDDLJob)
-		return true, ver, err1
-	}
-	return false, 0, err
 }
