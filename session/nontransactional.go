@@ -39,7 +39,10 @@ func (j job) String() string {
 
 // HandleNonTransactionalDelete is the entry point for a non-transactional delete
 func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, se Session) (sqlexec.RecordSet, error) {
-	core.Preprocess(se, stmt)
+	err := core.Preprocess(se, stmt)
+	if err != nil {
+		return nil, err
+	}
 	if !(se.GetSessionVars().IsAutocommit() && !se.GetSessionVars().InTxn()) {
 		return nil, errors.Errorf("non-transactional statement can only run in auto-commit mode. auto=commit:%v, inTxn:%v",
 			se.GetSessionVars().IsAutocommit(), se.GetSessionVars().InTxn())
@@ -104,28 +107,64 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, stmt *ast.NonTra
 	originalCondition ast.ExprNode, se Session) string {
 	logutil.Logger(ctx).Info("start a Non-transactional delete", zap.Int("jobID", job.jobID),
 		zap.Int("totalJobs", totalJobCount), zap.Int("jobSize", job.jobSize))
-	left := &driver.ValueExpr{}
-	left.Type = tp
-	left.Datum = job.start
-	right := &driver.ValueExpr{}
-	right.Type = tp
-	right.Datum = job.end
-	betweenCondition := &ast.BetweenExpr{
-		Expr: &ast.ColumnNameExpr{
-			Name:  stmt.ShardColumn,
-			Refer: refer,
-		},
-		Left:  left,
-		Right: right,
-		Not:   false,
+
+	var whereCondition ast.ExprNode
+
+	if job.start.IsNull() {
+		isNullCondition := &ast.IsNullExpr{
+			Expr: &ast.ColumnNameExpr{
+				Name:  stmt.ShardColumn,
+				Refer: refer,
+			},
+			Not: false,
+		}
+		if job.end.IsNull() {
+			// `where x is null`
+			whereCondition = isNullCondition
+		} else {
+			// `where (x <= job.end) || (x is null)`
+			right := &driver.ValueExpr{}
+			right.Type = tp
+			right.Datum = job.end
+			leCondition := &ast.BinaryOperationExpr{
+				Op: opcode.LE,
+				L: &ast.ColumnNameExpr{
+					Name:  stmt.ShardColumn,
+					Refer: refer,
+				},
+				R: right,
+			}
+			whereCondition = &ast.BinaryOperationExpr{
+				Op: opcode.LogicOr,
+				L:  leCondition,
+				R:  isNullCondition,
+			}
+		}
+	} else {
+		// a normal between condition: `where x between start and end`
+		left := &driver.ValueExpr{}
+		left.Type = tp
+		left.Datum = job.start
+		right := &driver.ValueExpr{}
+		right.Type = tp
+		right.Datum = job.end
+		whereCondition = &ast.BetweenExpr{
+			Expr: &ast.ColumnNameExpr{
+				Name:  stmt.ShardColumn,
+				Refer: refer,
+			},
+			Left:  left,
+			Right: right,
+			Not:   false,
+		}
 	}
 
 	if originalCondition == nil {
-		stmt.DeleteStmt.Where = betweenCondition
+		stmt.DeleteStmt.Where = whereCondition
 	} else {
 		stmt.DeleteStmt.Where = &ast.BinaryOperationExpr{
 			Op: opcode.LogicAnd,
-			L:  betweenCondition,
+			L:  whereCondition,
 			R:  originalCondition,
 		}
 	}
@@ -146,7 +185,8 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, stmt *ast.NonTra
 	}
 
 	job.sql = deleteSQL
-	_, err = se.ExecuteStmt(context.TODO(), stmt.DeleteStmt)
+	rs, err := se.ExecuteStmt(context.TODO(), stmt.DeleteStmt)
+
 	// collect errors
 	failpoint.Inject("splitDeleteError", func(_ failpoint.Value) {
 		err = errors.New("injected split delete error")
@@ -160,7 +200,9 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, stmt *ast.NonTra
 		logutil.Logger(ctx).Info("Non-transactional delete SQL finished successfully", zap.Int("jobID", job.jobID),
 			zap.Int("jobSize", job.jobSize), zap.String("deleteSQL", deleteSQL))
 	}
-
+	if rs != nil {
+		rs.Close()
+	}
 	return ""
 }
 
@@ -175,6 +217,7 @@ func getShardKeys(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, se 
 		return nil, errors.New("Non-transactional delete, more than 1 record sets")
 	}
 	rs := rss[0]
+	defer rs.Close()
 
 	batchSize := int(stmt.Limit)
 	if batchSize <= 0 {
@@ -269,8 +312,9 @@ func buildSelectSQL(stmt *ast.NonTransactionalDeleteStmt, se Session) (*ast.Tabl
 	} else {
 		sb.WriteString("true")
 	}
-	selectSQL := fmt.Sprintf("select `%s` from `%s`.`%s` where %s order by `%s`",
-		stmt.ShardColumn.Name.O, tableName.DBInfo.Name.O, tableName.Name.O, sb.String(), stmt.ShardColumn.Name.O)
+	// assure NULL values are placed first
+	selectSQL := fmt.Sprintf("select `%s` from `%s`.`%s` where %s order by IF(ISNULL(`%s`),0,1),`%s`",
+		stmt.ShardColumn.Name.O, tableName.DBInfo.Name.O, tableName.Name.O, sb.String(), stmt.ShardColumn.Name.O, stmt.ShardColumn.Name.O)
 	return tableName, selectSQL, shardColumn, nil
 }
 
