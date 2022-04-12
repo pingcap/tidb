@@ -536,7 +536,7 @@ func TestIsNoop(t *testing.T) {
 	require.True(t, sv.IsNoop)
 }
 
-func TestTiDBReadOnly(t *testing.T) {
+func testTiDBReadOnly(t *testing.T) {
 	rro := GetSysVar(TiDBRestrictedReadOnly)
 	sro := GetSysVar(TiDBSuperReadOnly)
 
