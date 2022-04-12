@@ -36,7 +36,7 @@ for _, t := range tables {
 ```
 
 the new design will introduce a new batch create table api `BatchCreateTableWithInfo`
-```
+```go
 for _, info := range tableInfo {
  job, err := d.createTableWithInfoJob(ctx, dbName, info, onExist, true)
  if err != nil {
