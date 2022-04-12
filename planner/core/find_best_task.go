@@ -1375,7 +1375,7 @@ func (is *PhysicalIndexScan) getScanRowSize() float64 {
 	}
 	tblColHists := is.tblColHists
 	if tblColHists == nil {
-		tblColHists = is.stats.HistColl
+		tblColHists = is.stats.HistColl // fallback to use is.stats
 	}
 	return tblColHists.GetIndexAvgRowSize(is.ctx, scanCols, is.Index.Unique)
 }
