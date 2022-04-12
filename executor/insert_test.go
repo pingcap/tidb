@@ -1778,6 +1778,7 @@ func (s *testSuite13) TestIssue26762(c *C) {
 func (s *testSuite13) TestIssue32213(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists t1")
 
 	tk.MustExec("create table test.t1(c1 float)")
 	tk.MustExec("insert into test.t1 values(999.99)")
