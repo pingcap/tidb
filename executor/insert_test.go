@@ -1788,6 +1788,7 @@ func (s *testSuite13) TestIssue26762(c *C) {
 func (s *testAutoRandomSuite) TestInsertIssue29892(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists t1")
 
 	tk.MustExec("set global tidb_txn_mode='optimistic';")
 	tk.MustExec("set global tidb_disable_txn_auto_retry=false;")
