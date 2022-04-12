@@ -213,7 +213,6 @@ enable-table-lock = true
 alter-primary-key = true
 delay-clean-table-lock = 5
 split-region-max-num=10000
-enable-batch-dml = true
 server-version = "test_version"
 repair-mode = true
 max-server-connections = 200
