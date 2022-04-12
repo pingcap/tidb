@@ -58,87 +58,31 @@ TiDB manages client sessions by SessionManager interface. This design expands th
 ```go
 type SessionManager interface {
 	// Put the internal session pointer to the map in the SessionManager
-	StoreInternalSession(addr unsafe.Pointer)
+	StoreInternalSession(se interface{})
 	// Delete the internal session pointer from the map in the SessionManager
-	DeleteInternalSession(addr unsafe.Pointer)
+	DeleteInternalSession(se interface{})
 	// Get all startTS of every transactions running in the current internal sessions
 	GetInternalSessionStartTSList() []uint64
 }
 ```
-
-
 
 #### innerTxnStartTsBox 
 
 This design defines a global variable `globalInnerTxnTsBox` to manage internal transactions run by function `RunInNewTxn`. The map `innerTxnStartTsBox.innerTxnStartTsMap` stores all the internal transaction startTS. 
 
 ```go
-var globalInnerTxnTsBox atomic.Value
+var globalInnerTxnTsBox = innerTxnStartTsBox{
+	innerTSLock:        sync.Mutex{},
+	innerTxnStartTsMap: make(map[uint64]struct{}, 256),
+}
 
 type innerTxnStartTsBox struct {
-	wg                  sync.WaitGroup
-	chanToStoreStartTS  chan uint64
-	chanToDeleteStartTS chan uint64
-
-	innerTxnTsBoxRun atomic.Value
-	
 	innerTSLock        sync.Mutex
-	innerTxnStartTsMap map[uint64]uint64
-	
-	// `storeInnerTxnStartTsLoop` and `deleteInnerTxnStartTsLoop` run asynchronously,It can't ensure
-	//`storeInnerTxnStartTsLoop` receives startTS before `deleteInnerTxnStartTsLoop`,though 
-	// `RunInNewTxn`send startTS to `storeInnerTxnStartTsLoop` firstly. If `deleteInnerTxnStartTsLoop`
-	// recevied startTS before `storeInnerTxnStartTsLoop`, the `startTS` couldn't be deleted from 
-	// `innerTxnStartTsMap`,and GC safepoint can't be advanced properly.
-	undeletedTsLock        sync.Mutex
-	chanToProcUndelStartTS chan uint64
-	undeletedStartTsMap    map[uint64]uint64
+	innerTxnStartTsMap map[uint64]struct{}
 }
 ```
-
-
 
 ### Functional design
-
-#### Initialize Internal Transaction Global Management Box
-
-This design initializes the global variable `globalInnerTxnTsBox` and starts 3 goroutines in the `main()` function to manage internal transactions run by function `RunInNewTxn()`. The initialization is wrapped in the function `InitInnerTxnStartTsBox()`. It closes the relevant goroutines in the function `cleanup()`
-
-```go
-func main() {
-	kv.InitInnerTxnStartTsBox()
-	signal.SetupSignalHandler(func(graceful bool) {
-        svr.Close()
-        cleanup(svr, storage, dom, graceful)
-        cpuprofile.StopCPUProfiler()
-        close(exited)
-    })
-}
-```
-
-
-
-the main code for `InitInnerTxnStartTsBox()` is as follower. It starts `storeInnerTxnStartTsLoop` goroutine to store an internal transaction startTS in `globalInnerTxnTsBox.innerTxnStartTsMap`, starts `deleteInnerTxnStartTsLoop` goroutine to delete an internal transaction startTS from `globalInnerTxnTsBox.innerTxnStartTsMap`. In particular, It starts `processUndeletedStartTsLoop` to delete the startTS for some rarely scenes.
-
-```go
-func InitInnerTxnStartTsBox() {
-	iTxnTsBox := &innerTxnStartTsBox{
-		chanToStoreStartTS:     make(chan uint64, chanBufferSize),
-		chanToDeleteStartTS:    make(chan uint64, chanBufferSize),
-		innerTxnStartTsMap:     make(map[uint64]uint64, chanBufferSize),
-		chanToProcUndelStartTS: make(chan uint64, undeletedStartTsBufferSize),
-		undeletedStartTsMap:    make(map[uint64]uint64, undeletedStartTsBufferSize),
-	}
-	globalInnerTxnTsBox.Store(iTxnTsBox)
-	iTxnTsBox.wg.Add(3)
-	iTxnTsBox.innerTxnTsBoxRun.Store(true)
-	go iTxnTsBox.storeInnerTxnStartTsLoop()
-	go iTxnTsBox.deleteInnerTxnStartTsLoop()
-	go iTxnTsBox.processUndeletedStartTsLoop()
-}
-```
-
-
 
 #### Store And Delete Internal Sessions
 
@@ -149,16 +93,14 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 	tmp, err := s.sysSessionPool().Get()
 	se := tmp.(*session)
 	// Put the internal session to the map of SessionManager
-	infosync.StoreInternalSession(unsafe.Pointer(se))
+	infosync.StoreInternalSession(se)
 	return se, func() {
 		// Delete the internal session to the map of SessionManager
-		infosync.DeleteInternalSession(unsafe.Pointer(se))
+		infosync.DeleteInternalSession(se)
 		s.sysSessionPool().Put(tmp)
 	}
 }
 ```
-
-
 
 #### Store And Delete Internal Transactions
 
@@ -190,13 +132,9 @@ Currently, TiDB calculates gc safe point in the function `(is *InfoSyncer) Repor
 func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {}
 ```
 
-
-
 ## Compatibility
 
 This feature does not affect compatibility.
-
-
 
 ## Unresolved Questions
 
