@@ -71,7 +71,7 @@ for _, info := range tableInfo {
 ```
 
 For ddl work, introduce a new job type `ActionCreateTables`
-```
+```go
  case model.ActionCreateTables:
  tableInfos := []*model.TableInfo{}
  err = job.DecodeArgs(&tableInfos)
