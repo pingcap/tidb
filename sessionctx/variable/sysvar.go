@@ -549,10 +549,10 @@ var defaultSysVars = []*SysVar{
 		RestrictedReadOnly.Store(on)
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBSuperReadOnly, Value: BoolToOnOff(DefTiDBSuperReadOnly), Type: TypeBool, Validation: func(vars *SessionVars, normalizedValue string, _ string, _ ScopeFlag) (string, error) {
+	{Scope: ScopeGlobal, Name: TiDBSuperReadOnly, Value: BoolToOnOff(DefTiDBSuperReadOnly), Type: TypeBool, Validation: func(s *SessionVars, normalizedValue string, _ string, _ ScopeFlag) (string, error) {
 		on := TiDBOptOn(normalizedValue)
-		if !on {
-			result, err := vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBRestrictedReadOnly)
+		if !on && s.StmtCtx.StmtType == "Set" {
+			result, err := s.GlobalVarsAccessor.GetGlobalSysVar(TiDBRestrictedReadOnly)
 			if err != nil {
 				return normalizedValue, err
 			}

@@ -1435,6 +1435,30 @@ func TestDefaultBehavior(t *testing.T) {
 	tk.MustExec("SET GLOBAL sql_mode = DEFAULT")
 }
 
+func TestTiDBReadOnly(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	// turn on tidb_restricted_read_only should turn on tidb_super_read_only
+	tk.MustExec("SET GLOBAL tidb_restricted_read_only = ON")
+	tk.MustQuery("SELECT @@GLOBAL.tidb_super_read_only").Check(testkit.Rows("1"))
+
+	// can't turn off tidb_super_read_only if tidb_restricted_read_only is on
+	err := tk.ExecToErr("SET GLOBAL tidb_super_read_only = OFF")
+	require.Error(t, err)
+	require.Equal(t, "can't turn off tidb_super_read_only when tidb_restricted_read_only is on", err.Error())
+
+	// turn off tidb_restricted_read_only won't affect tidb_super_read_only
+	tk.MustExec("SET GLOBAL tidb_restricted_read_only = OFF")
+	tk.MustQuery("SELECT @@GLOBAL.tidb_restricted_read_only").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT @@GLOBAL.tidb_super_read_only").Check(testkit.Rows("1"))
+
+	// it is ok to turn off tidb_super_read_only now
+	tk.MustExec("SET GLOBAL tidb_super_read_only = OFF")
+	tk.MustQuery("SELECT @@GLOBAL.tidb_super_read_only").Check(testkit.Rows("0"))
+}
+
 func TestRemovedSysVars(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
