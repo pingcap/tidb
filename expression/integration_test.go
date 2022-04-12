@@ -10199,6 +10199,15 @@ func (s *testIntegrationSuite) TestIssue27610(c *C) {
 		Check(testkit.Rows())
 }
 
+func (s *testIntegrationSuite) TestIssue29417(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (f1 decimal(5,5));")
+	tk.MustExec("insert into t1 values (-0.12345);")
+	tk.MustQuery("select concat(f1) from t1;").Check(testkit.Rows("-0.12345"))
+}
+
 func (s *testIntegrationSuite) TestIssue28643(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
