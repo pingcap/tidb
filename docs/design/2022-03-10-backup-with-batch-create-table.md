@@ -26,7 +26,7 @@ The cluster has 6 TiB data, 30k tables, and 11 TiKVs. When I use BR to backup an
 Backup and Restore for massive tables is extremely slow, the bottleneck of creating the table is to waiting for the schema version change. Each table creates ddl cause a schema version change. 60000 tables have almost 60000 times schema change, it is very cost of restoring massive table
 
 Currently, BR uses an internal interface named CreateTableWithInfo to create table, which creating the table and wait the schema changing one-by-one, omitting the sync of the ddl job between BR and leader, the procedure of creating one table would be like this:
-```
+```go
 for _, t := range tables {
  RunInTxn(func(txn) {
  m := meta.New(txn)
