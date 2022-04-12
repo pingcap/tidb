@@ -10,8 +10,8 @@
 * [Motivation or Background](#motivation-or-background)
 * [Detailed Design](#detailed-design)
 * [Test Design](#test-design)
- * [Compatibility Tests](#compatibility-tests)
- * [Benchmark Tests](#benchmark-tests)
+  * [Compatibility Tests](#compatibility-tests)
+  * [Benchmark Tests](#benchmark-tests)
 
 ## Introduction
 
