@@ -277,7 +277,7 @@ func CheckNewCollationEnable(
 		if CheckRequirements {
 			return errors.Annotatef(berrors.ErrUnknown,
 				"the config 'new_collations_enabled_on_first_bootstrap' not found in backupmeta. "+
-					"you can query \"show config WHERE name='new_collations_enabled_on_first_bootstrap';\"."+
+					"you can use \"show config WHERE name='new_collations_enabled_on_first_bootstrap';\". to manually check the config"+
 					"if you ensure the config 'new_collations_enabled_on_first_bootstrap' in backup cluster is as same as restore cluster, "+
 					"use --check-requirements=false to skip this check")
 		} else {
