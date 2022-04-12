@@ -2069,6 +2069,23 @@ func TestDefaultColumnWithRand(t *testing.T) {
 		}
 	}
 
+	// show create table
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `c` int(10) DEFAULT NULL,\n" +
+			"  `c1` int(11) DEFAULT rand()\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table t1").Check(testkit.Rows(
+		"t1 CREATE TABLE `t1` (\n" +
+			"  `c` int(11) DEFAULT NULL,\n" +
+			"  `c1` double DEFAULT rand()\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table t2").Check(testkit.Rows(
+		"t2 CREATE TABLE `t2` (\n" +
+			"  `c` int(11) DEFAULT NULL,\n" +
+			"  `c1` double DEFAULT rand(1)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
 	// use a non-existent function name
 	tk.MustGetErrCode("CREATE TABLE t3 (c int, c1 int default a_function_not_supported_yet());", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
 }
@@ -2095,6 +2112,12 @@ func TestDefaultColumnWithUUID(t *testing.T) {
 		require.True(t, !ok, "Existing two same UUID values.")
 		set[str] = true
 	}
+	// show create table
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `c` int(10) DEFAULT NULL,\n" +
+			"  `c1` varchar(256) DEFAULT uuid()\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
 func TestChangingDBCharset(t *testing.T) {
