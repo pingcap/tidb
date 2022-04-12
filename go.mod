@@ -68,13 +68,13 @@ require (
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20200824191128-ae9734ed278b
 	go.uber.org/atomic v1.8.0
 	go.uber.org/automaxprocs v1.2.0
-	go.uber.org/goleak v0.10.0
+	go.uber.org/goleak v1.1.12
 	go.uber.org/zap v1.17.0
-	golang.org/x/net v0.0.0-20210316092652-d523dce5a7f4
-	golang.org/x/sync v0.0.0-20201020160332-67f06af15bc9
-	golang.org/x/sys v0.0.0-20210324051608-47abb6519492
+	golang.org/x/net v0.0.0-20210405180319-a5a99cb37ef4
+	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
+	golang.org/x/sys v0.0.0-20210510120138-977fb7262007
 	golang.org/x/text v0.3.6
-	golang.org/x/tools v0.1.0
+	golang.org/x/tools v0.1.5
 	google.golang.org/grpc v1.27.1
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	modernc.org/mathutil v1.2.2 // indirect
