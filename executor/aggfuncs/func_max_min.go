@@ -822,7 +822,7 @@ func (e *maxMin4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 	if frac == -1 {
 		frac = mysql.MaxDecimalScale
 	}
-	err := p.val.Round(&p.val, frac, types.ModeHalfEven)
+	err := p.val.Round(&p.val, frac, types.ModeHalfUp)
 	if err != nil {
 		return err
 	}

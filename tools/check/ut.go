@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -48,6 +49,9 @@ ut list
 // list test cases of a single package
 ut list $package
 
+// list test cases that match a pattern
+ut list $package 'r:$regex'
+
 // run all tests
 ut run
 
@@ -57,6 +61,9 @@ ut run $package
 // run test cases of a single package
 ut run $package $test
 
+// run test cases that match a pattern
+ut run $package 'r:$regex'
+
 // build all test package
 ut build
 
@@ -64,7 +71,10 @@ ut build
 ut build xxx
 
 // write the junitfile
-ut run --junitfile xxx`
+ut run --junitfile xxx
+
+// test with race flag
+ut run --race`
 
 	fmt.Println(msg)
 	return true
@@ -101,7 +111,7 @@ func cmdList(args ...string) bool {
 	}
 
 	// list test case of a single package
-	if len(args) == 1 {
+	if len(args) == 1 || len(args) == 2 {
 		pkg := args[0]
 		pkgs = filter(pkgs, func(s string) bool { return s == pkg })
 		if len(pkgs) != 1 {
@@ -129,6 +139,15 @@ func cmdList(args ...string) bool {
 			fmt.Println("list test cases for package error", err)
 			return false
 		}
+
+		if len(args) == 2 {
+			res, err = filterTestCases(res, args[1])
+			if err != nil {
+				fmt.Println("filter test cases error", err)
+				return false
+			}
+		}
+
 		for _, x := range res {
 			fmt.Println(x.test)
 		}
@@ -249,14 +268,11 @@ func cmdRun(args ...string) bool {
 			fmt.Println("list test cases error", err)
 			return false
 		}
-		// filter the test case to run
-		tmp := tasks[:0]
-		for _, task := range tasks {
-			if strings.Contains(task.test, args[1]) {
-				tmp = append(tmp, task)
-			}
+		tasks, err = filterTestCases(tasks, args[1])
+		if err != nil {
+			fmt.Println("filter test cases error", err)
+			return false
 		}
-		tasks = tmp
 	}
 
 	if except != "" {
@@ -384,9 +400,23 @@ func handleFlags(flag string) string {
 	return res
 }
 
+func handleRaceFlag() (found bool) {
+	tmp := os.Args[:0]
+	for i := 0; i < len(os.Args); i++ {
+		if os.Args[i] == "--race" {
+			found = true
+			continue
+		}
+		tmp = append(tmp, os.Args[i])
+	}
+	os.Args = tmp
+	return
+}
+
 var junitfile string
 var coverprofile string
 var coverFileTempDir string
+var race bool
 
 var except string
 var only string
@@ -396,6 +426,8 @@ func main() {
 	coverprofile = handleFlags("--coverprofile")
 	except = handleFlags("--except")
 	only = handleFlags("--only")
+	race = handleRaceFlag()
+
 	if coverprofile != "" {
 		var err error
 		coverFileTempDir, err = os.MkdirTemp(os.TempDir(), "cov")
@@ -608,6 +640,29 @@ func listTestCases(pkg string, tasks []task) ([]task, error) {
 	return tasks, nil
 }
 
+func filterTestCases(tasks []task, arg1 string) ([]task, error) {
+	if strings.HasPrefix(arg1, "r:") {
+		r, err := regexp.Compile(arg1[2:])
+		if err != nil {
+			return nil, err
+		}
+		tmp := tasks[:0]
+		for _, task := range tasks {
+			if r.MatchString(task.test) {
+				tmp = append(tmp, task)
+			}
+		}
+		return tmp, nil
+	}
+	tmp := tasks[:0]
+	for _, task := range tasks {
+		if strings.Contains(task.test, arg1) {
+			tmp = append(tmp, task)
+		}
+	}
+	return tmp, nil
+}
+
 func listPackages() ([]string, error) {
 	cmd := exec.Command("go", "list", "./...")
 	ss, err := cmdToLines(cmd)
@@ -660,20 +715,39 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
 			Name:      fn,
 		},
 	}
-	cmd := n.testCommand(pkg, fn, old)
-	cmd.Dir = path.Join(workDir, pkg)
-	// Combine the test case output, so the run result for failed cases can be displayed.
+
 	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
-	start := time.Now()
-	if err := cmd.Run(); err != nil {
+	var err error
+	var start time.Time
+	for i := 0; i < 3; i++ {
+		cmd := n.testCommand(pkg, fn, old)
+		cmd.Dir = path.Join(workDir, pkg)
+		// Combine the test case output, so the run result for failed cases can be displayed.
+		cmd.Stdout = &buf
+		cmd.Stderr = &buf
+
+		start = time.Now()
+		err = cmd.Run()
+		if err != nil {
+			if _, ok := err.(*exec.ExitError); ok {
+				// Retry 3 times to get rid of the weird error:
+				// err=signal: segmentation fault (core dumped)
+				if err.Error() == "signal: segmentation fault (core dumped)" {
+					buf.Reset()
+					continue
+				}
+			}
+		}
+		break
+	}
+	if err != nil {
 		res.Failure = &JUnitFailure{
 			Message:  "Failed",
 			Contents: buf.String(),
 		}
 		res.err = err
 	}
+
 	res.d = time.Since(start)
 	res.Time = formatDurationAsSeconds(res.d)
 	return res
@@ -733,7 +807,10 @@ func (n *numa) testCommand(pkg string, fn string, old bool) *exec.Cmd {
 		args = append(args, "-test.coverprofile", tmpFile)
 	}
 	args = append(args, "-test.cpu", "1")
-	args = append(args, []string{"-test.timeout", "2m"}...)
+	if !race {
+		// Don't set timeout for race because it takes a longer when race is enabled.
+		args = append(args, []string{"-test.timeout", "2m"}...)
+	}
 	if old {
 		// session.test -test.run '^TestT$' -check.f testTxnStateSerialSuite.TestTxnInfoWithPSProtoco
 		args = append(args, "-test.run", "^TestT$", "-check.f", fn)
@@ -757,11 +834,12 @@ func skipDIR(pkg string) bool {
 
 func buildTestBinary(pkg string) error {
 	// go test -c
-	var cmd *exec.Cmd
+	cmd := exec.Command("go", "test", "-c", "-vet", "off", "-o", testFileName(pkg))
 	if coverprofile != "" {
-		cmd = exec.Command("go", "test", "-c", "-cover", "-vet", "off", "-o", testFileName(pkg))
-	} else {
-		cmd = exec.Command("go", "test", "-c", "-vet", "off", "-o", testFileName(pkg))
+		cmd.Args = append(cmd.Args, "-cover")
+	}
+	if race {
+		cmd.Args = append(cmd.Args, "-race")
 	}
 	cmd.Dir = path.Join(workDir, pkg)
 	cmd.Stdout = os.Stdout
@@ -782,10 +860,12 @@ func buildTestBinaryMulti(pkgs []string) error {
 	}
 
 	var cmd *exec.Cmd
+	cmd = exec.Command("go", "test", "--exec", xprogPath, "-vet", "off", "-count", "0")
 	if coverprofile != "" {
-		cmd = exec.Command("go", "test", "--exec", xprogPath, "-cover", "-vet", "off", "-count", "0")
-	} else {
-		cmd = exec.Command("go", "test", "--exec", xprogPath, "-vet", "off", "-count", "0")
+		cmd.Args = append(cmd.Args, "-cover")
+	}
+	if race {
+		cmd.Args = append(cmd.Args, "-race")
 	}
 	cmd.Args = append(cmd.Args, packages...)
 	cmd.Dir = workDir

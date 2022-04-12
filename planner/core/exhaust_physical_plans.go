@@ -287,14 +287,16 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty, sche
 		return nil
 	}
 	for _, item := range prop.SortItems {
-		isExist := false
+		isExist, hasLeftColInProp, hasRightColInProp := false, false, false
 		for joinKeyPos := 0; joinKeyPos < len(leftJoinKeys); joinKeyPos++ {
 			var key *expression.Column
 			if item.Col.Equal(p.ctx, leftJoinKeys[joinKeyPos]) {
 				key = leftJoinKeys[joinKeyPos]
+				hasLeftColInProp = true
 			}
 			if item.Col.Equal(p.ctx, rightJoinKeys[joinKeyPos]) {
 				key = rightJoinKeys[joinKeyPos]
+				hasRightColInProp = true
 			}
 			if key == nil {
 				continue
@@ -312,6 +314,13 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty, sche
 			break
 		}
 		if !isExist {
+			return nil
+		}
+		// If the output wants the order of the inner side. We should reject it since we might add null-extend rows of that side.
+		if p.JoinType == LeftOuterJoin && hasRightColInProp {
+			return nil
+		}
+		if p.JoinType == RightOuterJoin && hasLeftColInProp {
 			return nil
 		}
 	}
@@ -948,6 +957,8 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		Desc:            desc,
 		physicalTableID: ds.physicalTableID,
 		isPartition:     ds.isPartition,
+
+		underInnerIndexJoin: true,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema.Clone())
 	if rowCount <= 0 {
@@ -1044,6 +1055,8 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		Desc:             desc,
 		isPartition:      ds.isPartition,
 		physicalTableID:  ds.physicalTableID,
+
+		underInnerIndexJoin: true,
 	}.Init(ds.ctx, ds.blockOffset)
 	cop := &copTask{
 		indexPlan:   is,

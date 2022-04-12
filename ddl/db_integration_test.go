@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
@@ -1227,6 +1228,22 @@ func TestBitDefaultValue(t *testing.T) {
 	);`)
 }
 
+func backgroundExec(s kv.Storage, sql string, done chan error) {
+	se, err := session.CreateSession4Test(s)
+	if err != nil {
+		done <- errors.Trace(err)
+		return
+	}
+	defer se.Close()
+	_, err = se.Execute(context.Background(), "use test")
+	if err != nil {
+		done <- errors.Trace(err)
+		return
+	}
+	_, err = se.Execute(context.Background(), sql)
+	done <- errors.Trace(err)
+}
+
 func getHistoryDDLJob(store kv.Storage, id int64) (*model.Job, error) {
 	var job *model.Job
 
@@ -2014,6 +2031,48 @@ func TestDefaultValueIsString(t *testing.T) {
 	require.Equal(t, "1", tbl.Meta().Columns[0].DefaultValue)
 }
 
+func TestDefaultColumnWithRand(t *testing.T) {
+	// Related issue: https://github.com/pingcap/tidb/issues/10377
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, testLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2")
+
+	// create table
+	tk.MustExec("create table t (c int(10), c1 int default (rand()))")
+	tk.MustExec("create table t1 (c int, c1 double default (rand()))")
+	tk.MustExec("create table t2 (c int, c1 double default (rand(1)))")
+
+	// add column with default rand() for table t is forbidden in MySQL 8.0
+	tk.MustGetErrCode("alter table t add column c2 double default (rand(2))", errno.ErrBinlogUnsafeSystemFunction)
+	tk.MustGetErrCode("alter table t add column c3 int default ((rand()))", errno.ErrBinlogUnsafeSystemFunction)
+	tk.MustGetErrCode("alter table t add column c4 int default (((rand(3))))", errno.ErrBinlogUnsafeSystemFunction)
+
+	// insert records
+	tk.MustExec("insert into t(c) values (1),(2),(3)")
+	tk.MustExec("insert into t1(c) values (1),(2),(3)")
+	tk.MustExec("insert into t2(c) values (1),(2),(3)")
+
+	queryStmts := []string{
+		"SELECT c1 from t",
+		"SELECT c1 from t1",
+		"SELECT c1 from t2",
+	}
+	for _, queryStmt := range queryStmts {
+		r := tk.MustQuery(queryStmt).Rows()
+		for _, row := range r {
+			d, ok := row[0].(float64)
+			if ok {
+				require.True(t, 0.0 <= d && d < 1.0, "rand() return a random floating-point value in the range 0 <= v < 1.0.")
+			}
+		}
+	}
+
+	// use a non-existent function name
+	tk.MustGetErrCode("CREATE TABLE t3 (c int, c1 int default a_function_not_supported_yet());", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
+}
+
 func TestChangingDBCharset(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -2776,6 +2835,23 @@ func TestAutoIncrementForce(t *testing.T) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("101", "112", "500"))
 	tk.MustQuery("select * from t order by a;").Check(testkit.Rows("101", "112", "500"))
 	tk.MustExec("drop table if exists t;")
+
+	// Check for warning in case we can't set the auto_increment to the desired value
+	tk.MustExec("create table t(a int primary key auto_increment)")
+	tk.MustExec("insert into t values (200)")
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5201"))
+	tk.MustExec("alter table t auto_increment=100;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Can't reset AUTO_INCREMENT to 100 without FORCE option, using 5201 instead"))
+	tk.MustQuery("show create table t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n" +
+			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5201"))
+	tk.MustExec("drop table t")
 }
 
 func TestIssue20490(t *testing.T) {
@@ -3680,6 +3756,13 @@ func TestIssue29282(t *testing.T) {
 	case <-ch:
 		// Unexpected, test fail.
 		t.Fail()
+	}
+
+	// Wait the background query rollback
+	select {
+	case <-time.After(100 * time.Millisecond):
+		t.Fail()
+	case <-ch:
 	}
 }
 
