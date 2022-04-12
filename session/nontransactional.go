@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -43,14 +44,14 @@ func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactiona
 		return nil, errors.Errorf("non-transactional statement can only run in auto-commit mode. auto=commit:%v, inTxn:%v",
 			se.GetSessionVars().IsAutocommit(), se.GetSessionVars().InTxn())
 	}
-	tableName, selectSQL, err := buildSelectSQL(stmt, se)
+	tableName, selectSQL, shardColumn, err := buildSelectSQL(stmt, se)
 	if err != nil {
 		return nil, err
 	}
 	if stmt.DryRun == ast.DryRunQuery {
 		return buildDryRunResults(stmt.DryRun, []string{selectSQL}, se.GetSessionVars().BatchSize.MaxChunkSize)
 	}
-	jobs, err := getShardKeys(ctx, stmt, se, tableName, selectSQL)
+	jobs, err := getShardKeys(ctx, stmt, se, selectSQL, shardColumn)
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +68,7 @@ func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactiona
 
 // single-threaded worker. work on the key range [start, end]
 func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransactionalDeleteStmt,
-	tableName *ast.TableName, sqlExecutor sqlexec.SQLExecutor, originalCondition ast.ExprNode) ([]string, error) {
+	tableName *ast.TableName, se Session, originalCondition ast.ExprNode) ([]string, error) {
 
 	// prepare for the construction of statement
 	var refer *ast.ResultField
@@ -93,14 +94,14 @@ func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransaction
 			return nil, ctx.Err()
 		default:
 		}
-		splitStmt := doOneJob(ctx, &jobs[i], len(jobs), stmt, tp, refer, originalCondition, sqlExecutor)
+		splitStmt := doOneJob(ctx, &jobs[i], len(jobs), stmt, tp, refer, originalCondition, se)
 		splitStmts = append(splitStmts, splitStmt)
 	}
 	return splitStmts, nil
 }
 
 func doOneJob(ctx context.Context, job *job, totalJobCount int, stmt *ast.NonTransactionalDeleteStmt, tp types.FieldType, refer *ast.ResultField,
-	originalCondition ast.ExprNode, sqlExecutor sqlexec.SQLExecutor) string {
+	originalCondition ast.ExprNode, se Session) string {
 	logutil.Logger(ctx).Info("start a Non-transactional delete", zap.Int("jobID", job.jobID),
 		zap.Int("totalJobs", totalJobCount), zap.Int("jobSize", job.jobSize))
 	left := &driver.ValueExpr{}
@@ -145,7 +146,7 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, stmt *ast.NonTra
 	}
 
 	job.sql = deleteSQL
-	_, err = sqlExecutor.ExecuteStmt(context.TODO(), stmt.DeleteStmt)
+	_, err = se.ExecuteStmt(context.TODO(), stmt.DeleteStmt)
 	// collect errors
 	failpoint.Inject("splitDeleteError", func(_ failpoint.Value) {
 		err = errors.New("injected split delete error")
@@ -163,9 +164,10 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, stmt *ast.NonTra
 	return ""
 }
 
-func getShardKeys(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, sqlExecutor sqlexec.SQLExecutor, tableName *ast.TableName, selectSQL string) ([]job, error) {
+func getShardKeys(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, se Session,
+	selectSQL string, shardColumn *table.Column) ([]job, error) {
 	logutil.Logger(ctx).Info("Non-transactional delete, select SQL", zap.String("selectSQL", selectSQL))
-	rss, err := sqlExecutor.Execute(context.TODO(), selectSQL)
+	rss, err := se.Execute(context.TODO(), selectSQL)
 	if err != nil {
 		return nil, err
 	}
@@ -175,11 +177,13 @@ func getShardKeys(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, sql
 	rs := rss[0]
 
 	batchSize := int(stmt.Limit)
+	if batchSize <= 0 {
+		return nil, errors.New("Non-transactional delete, batch size should be positive")
+	}
 	jobCount := 0
 	jobs := make([]job, 0)
 	currentSize := 0
 	var currentStart, currentEnd types.Datum
-	newBatchIsComing := true
 
 	chk := rs.NewChunk(nil)
 	for {
@@ -190,68 +194,66 @@ func getShardKeys(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, sql
 
 		// last chunk
 		if chk.NumRows() == 0 {
-			if !newBatchIsComing {
+			if currentSize > 0 {
 				// there's remaining work
 				jobs = append(jobs, job{jobID: jobCount, start: currentStart, end: currentEnd, jobSize: currentSize})
 			}
 			break
 		}
 
+		newStart := chk.GetRow(0).GetDatum(0, &rs.Fields()[0].Column.FieldType)
+
+		// end last batch if: (1) current start != last end (2) current size >= batch size
+		if currentSize >= batchSize {
+			cmp, err := newStart.Compare(se.GetSessionVars().StmtCtx, &currentEnd, collate.GetCollator(shardColumn.Collate))
+			if err != nil {
+				return nil, err
+			}
+			if cmp != 0 {
+				jobs = append(jobs, job{jobID: jobCount, start: currentStart, end: currentEnd, jobSize: currentSize})
+				jobCount++
+				currentSize = 0
+			}
+		}
+
+		// a new batch
+		if currentSize == 0 {
+			currentStart = *newStart.Clone()
+		}
+
 		currentSize += chk.NumRows()
 		currentEndPointer := chk.GetRow(chk.NumRows()-1).GetDatum(0, &rs.Fields()[0].Column.FieldType)
 		currentEnd = *currentEndPointer.Clone()
-
-		// a new batch
-		if newBatchIsComing {
-			currentStartPointer := chk.GetRow(0).GetDatum(0, &rs.Fields()[0].Column.FieldType)
-			currentStart = *currentStartPointer.Clone()
-			newBatchIsComing = false
-		}
-
-		// end this batch?
-		if currentSize > batchSize {
-			jobCount++
-			jobs = append(jobs, job{
-				start:   currentStart,
-				end:     currentEnd,
-				jobID:   jobCount,
-				jobSize: currentSize,
-			})
-
-			// get ready for next batch
-			newBatchIsComing = true
-			currentSize = 0
-		}
 	}
 
 	return jobs, nil
 }
 
-func buildSelectSQL(stmt *ast.NonTransactionalDeleteStmt, se Session) (*ast.TableName, string, error) {
+func buildSelectSQL(stmt *ast.NonTransactionalDeleteStmt, se Session) (*ast.TableName, string, *table.Column, error) {
 	// only use the first table
 	// TODO: return error if there are multiple tables
 	if stmt.DeleteStmt.TableRefs == nil || stmt.DeleteStmt.TableRefs.TableRefs == nil {
-		return nil, "", errors.New("table reference is nil")
+		return nil, "", nil, errors.New("table reference is nil")
 	}
 	if stmt.DeleteStmt.TableRefs.TableRefs.Right != nil {
-		return nil, "", errors.New("Non-transactional delete doesn't support multiple tables")
+		return nil, "", nil, errors.New("Non-transactional delete doesn't support multiple tables")
 	}
 	tableSource, ok := stmt.DeleteStmt.TableRefs.TableRefs.Left.(*ast.TableSource)
 	if !ok {
-		return nil, "", errors.New("Non-transactional delete, table source not found")
+		return nil, "", nil, errors.New("Non-transactional delete, table source not found")
 	}
 	tableName, ok := tableSource.Source.(*ast.TableName)
 	if !ok {
-		return nil, "", errors.New("Non-transactional delete, table name not found")
+		return nil, "", nil, errors.New("Non-transactional delete, table name not found")
 	}
 
 	// the shard column must be indexed
-	indexed, err := checkShardColumnIndexed(stmt, se, tableName)
+	indexed, shardColumn, err := checkShardColumnIndexed(stmt, se, tableName)
 	if err != nil {
-		return nil, "", err
+		return nil, "", nil, err
 	}
 	if !indexed {
-		return nil, "", errors.Errorf("Non-transactional delete, shard column %s is not indexed", stmt.ShardColumn.Name.L)
+		return nil, "", nil, errors.Errorf("Non-transactional delete, shard column %s is not indexed", stmt.ShardColumn.Name.L)
 	}
 
 	var sb strings.Builder
@@ -262,26 +264,26 @@ func buildSelectSQL(stmt *ast.NonTransactionalDeleteStmt, se Session) (*ast.Tabl
 			format.RestoreBracketAroundBinaryOperation|
 			format.RestoreStringWithoutCharset, &sb))
 		if err != nil {
-			return nil, "", errors.Trace(err)
+			return nil, "", nil, errors.Trace(err)
 		}
 	} else {
 		sb.WriteString("true")
 	}
 	selectSQL := fmt.Sprintf("select `%s` from `%s`.`%s` where %s order by `%s`",
 		stmt.ShardColumn.Name.O, tableName.DBInfo.Name.O, tableName.Name.O, sb.String(), stmt.ShardColumn.Name.O)
-	return tableName, selectSQL, nil
+	return tableName, selectSQL, shardColumn, nil
 }
 
-func checkShardColumnIndexed(stmt *ast.NonTransactionalDeleteStmt, se Session, tableName *ast.TableName) (bool, error) {
+func checkShardColumnIndexed(stmt *ast.NonTransactionalDeleteStmt, se Session, tableName *ast.TableName) (bool, *table.Column, error) {
 	shardColumnName := stmt.ShardColumn.Name.L
 	indexed := false
 	tbl, err := sessiontxn.GetTxnManager(se).GetTxnInfoSchema().TableByName(tableName.Schema, tableName.Name)
 	if err != nil {
-		return false, err
+		return false, nil, err
 	}
 
 	if shardColumnName == "_tidb_rowid" && !tbl.Meta().PKIsHandle && !tbl.Meta().IsCommonHandle {
-		return true, nil
+		return true, nil, nil
 	}
 
 	var shardColumn *table.Column
@@ -292,10 +294,10 @@ func checkShardColumnIndexed(stmt *ast.NonTransactionalDeleteStmt, se Session, t
 		}
 	}
 	if shardColumn == nil {
-		return false, errors.Errorf("shard column %s not found", shardColumnName)
+		return false, nil, errors.Errorf("shard column %s not found", shardColumnName)
 	}
 	if shardColumn.IsPKHandleColumn(tbl.Meta()) {
-		return true, nil
+		return true, shardColumn, nil
 	}
 
 	for _, index := range tbl.Indices() {
@@ -306,7 +308,7 @@ func checkShardColumnIndexed(stmt *ast.NonTransactionalDeleteStmt, se Session, t
 			break
 		}
 	}
-	return indexed, nil
+	return indexed, shardColumn, nil
 }
 
 func buildDryRunResults(dryRunOption int, results []string, maxChunkSize int) (sqlexec.RecordSet, error) {
