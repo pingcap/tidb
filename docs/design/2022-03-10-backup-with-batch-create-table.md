@@ -19,7 +19,7 @@ The proposal of this design is to speed up the BR restore.
 
 ## Motivation or Background
 
-The cluster has 6 TiB data, 30k tables, and 11 TiKVs. When I use BR to backup and restore the cluster, The speed is particularly slow. After investigation, BR can only create 2 tables per second, the entire store speed takes nearly 4h, and the execution time spent creating tables is close to 4h. It can be seen that the execution speed of ddl is the bottleneck in this scenario.
+The cluster has 6 TiB data, 30k tables, and 11 TiKVs. When I use BR to backup and restore the cluster, the speed is particularly slow. After investigation, BR can only create 2 tables per second, the entire restore speed takes nearly 4h, and the execution time spent creating tables is close to 4h. It can be seen that the execution speed of ddl is the bottleneck in this scenario.
 
 ## Detailed Design
 
