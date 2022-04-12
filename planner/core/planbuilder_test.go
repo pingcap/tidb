@@ -287,6 +287,11 @@ func TestPhysicalPlanClone(t *testing.T) {
 	sel = sel.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(sel))
 
+	// maxOneRow
+	maxOneRow := &PhysicalMaxOneRow{}
+	sel = sel.Init(ctx, stats, 0)
+	require.NoError(t, checkPhysicalPlanClone(maxOneRow))
+
 	// projection
 	proj := &PhysicalProjection{Exprs: []expression.Expression{col, cst}}
 	proj = proj.Init(ctx, stats, 0)
