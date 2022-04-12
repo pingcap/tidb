@@ -2061,24 +2061,17 @@ func resetCTEStorageMap(se *session) error {
 		return errors.New("type assertion for CTEStorageMap failed")
 	}
 	for _, v := range storageMap {
-		// Wrap the loop body in an anonymous function to make sure
-		// the deferred unlock is triggered on every loop iteration.
-		err := func() error {
-			// No need to lock IterInTbl.
-			v.ResTbl.Lock()
-			defer v.ResTbl.Unlock()
-			err1 := v.ResTbl.DerefAndClose()
-			err2 := v.IterInTbl.DerefAndClose()
-			if err1 != nil {
-				return err1
-			}
-			if err2 != nil {
-				return err2
-			}
-			return nil
-		}()
-		if err != nil {
-			return err
+		v.ResTbl.Lock()
+		err1 := v.ResTbl.DerefAndClose()
+		// Make sure we do not hold the lock for longer than necessary.
+		v.ResTbl.Unlock()
+		// No need to lock IterInTbl.
+		err2 := v.IterInTbl.DerefAndClose()
+		if err1 != nil {
+			return err1
+		}
+		if err2 != nil {
+			return err2
 		}
 	}
 	se.GetSessionVars().StmtCtx.CTEStorageMap = nil
