@@ -2108,6 +2108,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		Ranges:          path.Ranges,
 		AccessCondition: path.AccessConds,
 		StoreType:       path.StoreType,
+		HandleCols:      ds.handleCols,
 		tblCols:         ds.TblCols,
 		tblColHists:     ds.TblColHists,
 	}.Init(ds.ctx, ds.blockOffset)
