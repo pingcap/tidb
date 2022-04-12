@@ -28,45 +28,45 @@ Backup and Restore for massive tables is extremely slow, the bottleneck of creat
 Currently, BR uses an internal interface named CreateTableWithInfo to create table, which creating the table and wait the schema changing one-by-one, omitting the sync of the ddl job between BR and leader, the procedure of creating one table would be like this:
 ```go
 for _, t := range tables {
- RunInTxn(func(txn) {
- m := meta.New(txn)
- schemaVesrion := m.CreateTable(t)
- m.UpdateSchema(schemaVersion)
+  RunInTxn(func(txn) {
+  m := meta.New(txn)
+  schemaVesrion := m.CreateTable(t)
+  m.UpdateSchema(schemaVersion)
  })
 ```
 
 the new design will introduce a new batch create table api `BatchCreateTableWithInfo`
 ```go
 for _, info := range tableInfo {
- job, err := d.createTableWithInfoJob(ctx, dbName, info, onExist, true)
- if err != nil {
- return errors.Trace(err)
- }
+  job, err := d.createTableWithInfoJob(ctx, dbName, info, onExist, true)
+  if err != nil {
+  return errors.Trace(err)
+  }
 
- // if jobs.Type == model.ActionCreateTables, it is initialized
- // if not, initialize jobs by job.XXXX
- if jobs.Type != model.ActionCreateTables {
- jobs.Type = model.ActionCreateTables
- jobs.SchemaID = job.SchemaID
- jobs.SchemaName = job.SchemaName
- }
+  // if jobs.Type == model.ActionCreateTables, it is initialized
+  // if not, initialize jobs by job.XXXX
+  if jobs.Type != model.ActionCreateTables {
+    jobs.Type = model.ActionCreateTables
+    jobs.SchemaID = job.SchemaID
+    jobs.SchemaName = job.SchemaName
+  }
 
- // append table job args
- info, ok := job.Args[0].(*model.TableInfo)
- if !ok {
- return errors.Trace(fmt.Errorf("except table info"))
- }
- args = append(args, info)
- }
+  // append table job args
+  info, ok := job.Args[0].(*model.TableInfo)
+  if !ok {
+    return errors.Trace(fmt.Errorf("except table info"))
+  }
+    args = append(args, info)
+  }
 
- jobs.Args = append(jobs.Args, args)
+  jobs.Args = append(jobs.Args, args)
 
- err = d.doDDLJob(ctx, jobs)
+  err = d.doDDLJob(ctx, jobs)
 
- for j := range args {
- if err = d.createTableWithInfoPost(ctx, args[j], jobs.SchemaID); err != nil {
- return errors.Trace(d.callHookOnChanged(err))
- }
+  for j := range args {
+  if err = d.createTableWithInfoPost(ctx, args[j], jobs.SchemaID); err != nil {
+    return errors.Trace(d.callHookOnChanged(err))
+  }
  }
 ```
 
@@ -78,12 +78,12 @@ For ddl work, introduce a new job type `ActionCreateTables`
 
  diff.AffectedOpts = make([]*model.AffectedOption, len(tableInfos))
  for i := range tableInfos {
- diff.AffectedOpts[i] = &model.AffectedOption{
- SchemaID: job.SchemaID,
- OldSchemaID: job.SchemaID,
- TableID: tableInfos[i].ID,
- OldTableID: tableInfos[i].ID,
- }
+  diff.AffectedOpts[i] = &model.AffectedOption{
+  SchemaID: job.SchemaID,
+  OldSchemaID: job.SchemaID,
+  TableID: tableInfos[i].ID,
+  OldTableID: tableInfos[i].ID,
+  }
  }
 ```
 
