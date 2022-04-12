@@ -1367,8 +1367,9 @@ func (is *PhysicalIndexScan) getScanRowSize() float64 {
 	// If `initSchema` has already appended the handle column in schema, just use schema columns, otherwise, add extra handle column.
 	if len(idx.Columns) == len(is.schema.Columns) {
 		scanCols = append(scanCols, is.schema.Columns...)
-		if is.pkIsHandleCol != nil {
-			scanCols = append(scanCols, is.pkIsHandleCol)
+		handleCol := is.pkIsHandleCol
+		if handleCol != nil {
+			scanCols = append(scanCols, handleCol)
 		}
 	} else {
 		scanCols = is.schema.Columns
