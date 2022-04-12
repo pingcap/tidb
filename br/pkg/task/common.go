@@ -73,7 +73,8 @@ const (
 	defaultGRPCKeepaliveTime    = 10 * time.Second
 	defaultGRPCKeepaliveTimeout = 3 * time.Second
 
-	unlimited = 0
+	unlimited               = 0
+	tidbNewCollationEnabled = "new_collation_enabled"
 )
 
 // TLSConfig is the common configuration for TLS connection.
