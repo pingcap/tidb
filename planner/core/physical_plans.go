@@ -441,6 +441,9 @@ type PhysicalIndexScan struct {
 	// required by cost model
 	// IndexScan operators under inner side of IndexJoin no need to consider net seek cost
 	underInnerIndexJoin bool
+	// tblColHists contains all columns before pruning, which are used to calculate row-size
+	tblColHists   *statistics.HistColl
+	pkIsHandleCol *expression.Column
 }
 
 // Clone implements PhysicalPlan interface.

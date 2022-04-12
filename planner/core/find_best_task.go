@@ -1361,22 +1361,23 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 	return task, nil
 }
 
-func (is *PhysicalIndexScan) indexScanRowSize(idx *model.IndexInfo, ds *DataSource, isForScan bool) float64 {
+func (is *PhysicalIndexScan) indexScanRowSize() float64 {
+	idx := is.Index
 	scanCols := make([]*expression.Column, 0, len(idx.Columns)+1)
 	// If `initSchema` has already appended the handle column in schema, just use schema columns, otherwise, add extra handle column.
 	if len(idx.Columns) == len(is.schema.Columns) {
 		scanCols = append(scanCols, is.schema.Columns...)
-		handleCol := ds.getPKIsHandleCol()
-		if handleCol != nil {
-			scanCols = append(scanCols, handleCol)
+		if is.pkIsHandleCol != nil {
+			scanCols = append(scanCols, is.pkIsHandleCol)
 		}
 	} else {
 		scanCols = is.schema.Columns
 	}
-	if isForScan {
-		return ds.TblColHists.GetIndexAvgRowSize(is.ctx, scanCols, is.Index.Unique)
+	tblColHists := is.tblColHists
+	if tblColHists == nil {
+		tblColHists = is.stats.HistColl
 	}
-	return ds.TblColHists.GetAvgRowSize(is.ctx, scanCols, true, false)
+	return tblColHists.GetIndexAvgRowSize(is.ctx, scanCols, is.Index.Unique)
 }
 
 // initSchema is used to set the schema of PhysicalIndexScan. Before calling this,
@@ -2178,6 +2179,8 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		dataSourceSchema: ds.schema,
 		isPartition:      ds.isPartition,
 		physicalTableID:  ds.physicalTableID,
+		tblColHists:      ds.TblColHists,
+		pkIsHandleCol:    ds.getPKIsHandleCol(),
 	}.Init(ds.ctx, ds.blockOffset)
 	statsTbl := ds.statisticTable
 	if statsTbl.Indices[idx.ID] != nil {
@@ -2196,7 +2199,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		}
 	}
 	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
-	rowSize := is.indexScanRowSize(idx, ds, true)
+	rowSize := is.indexScanRowSize()
 	sessVars := ds.ctx.GetSessionVars()
 	cost := rowCount * rowSize * sessVars.GetScanFactor(ds.tableInfo)
 	if isMatchProp {
