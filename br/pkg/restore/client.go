@@ -73,8 +73,7 @@ type Client struct {
 
 	databases map[string]*utils.Database
 	ddlJobs   []*model.Job
-	// ddlJobsMap record the tables' auto id need to restore after create table
-	ddlJobsMap             map[UniqueTableName]bool
+
 	toBeCorrectedTablesMap map[UniqueTableName]bool
 
 	backupMeta *backuppb.BackupMeta
@@ -1345,30 +1344,6 @@ func (rc *Client) EnableSkipCreateSQL() {
 // IsSkipCreateSQL returns whether we need skip create schema and tables in restore.
 func (rc *Client) IsSkipCreateSQL() bool {
 	return rc.noSchema
-}
-
-// GenerateDDLJobsMap returns a map[UniqueTableName]bool about < db table, hasCreate/hasTruncate DDL >.
-// if we execute some DDLs before create table.
-// we may get two situation that need to rebase auto increment/random id.
-// 1. truncate table: truncate will generate new id cache.
-// 2. create table/create and rename table: the first create table will lock down the id cache.
-// because we cannot create onExistReplace table.
-// so the final create DDL with the correct auto increment/random id won't be executed.
-// Deprecated
-func (rc *Client) GenerateDDLJobsMap() {
-	rc.ddlJobsMap = make(map[UniqueTableName]bool)
-	for _, job := range rc.ddlJobs {
-		switch job.Type {
-		case model.ActionTruncateTable, model.ActionCreateTable, model.ActionRenameTable:
-			rc.ddlJobsMap[UniqueTableName{job.SchemaName, job.BinlogInfo.TableInfo.Name.String()}] = true
-		}
-	}
-}
-
-// GetDDLJobsMap
-// Deprecated
-func (rc *Client) GetDDLJobsMap() map[UniqueTableName]bool {
-	return rc.ddlJobsMap
 }
 
 // GenerateToBeCorrectedTables generate a map[UniqueTableName]bool to represent tables that haven't updated table info.
