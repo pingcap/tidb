@@ -80,7 +80,6 @@ var _ = SerialSuites(&testSuiteWithCliBaseCharset{})
 var _ = Suite(&testSuite2{&baseTestSuite{}})
 var _ = Suite(&testSuite3{&baseTestSuite{}})
 var _ = SerialSuites(&testClusterTableSuite{})
-var _ = SerialSuites(&testSerialSuite1{&baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite{&baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
@@ -1610,26 +1609,6 @@ func (s *testSuite3) TearDownTest(c *C) {
 	}
 }
 
-type testSerialSuite1 struct {
-	*baseTestSuite
-}
-
-func (s *testSerialSuite1) TearDownTest(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	r := tk.MustQuery("show full tables")
-	for _, tb := range r.Rows() {
-		tableName := tb[0]
-		if tb[1] == "VIEW" {
-			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
-		} else if tb[1] == "SEQUENCE" {
-			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
-		} else {
-			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
-		}
-	}
-}
-
 func (s *testSuiteP2) TestStrToDateBuiltin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(`select str_to_date('20190101','%Y%m%d%!') from dual`).Check(testkit.Rows("2019-01-01"))
@@ -2743,61 +2722,6 @@ func (s *testSuite) TestIssue19372(c *C) {
 	tk.MustExec("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c');")
 	tk.MustExec("insert into t2 select * from t1;")
 	tk.MustQuery("select (select t2.c_str from t2 where t2.c_str <= t1.c_str and t2.c_int in (1, 2) order by t2.c_str limit 1) x from t1 order by c_int;").Check(testkit.Rows("a", "a", "a"))
-}
-
-func (s *testSerialSuite1) TestIndexLookupRuntimeStats(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (a int, b int, index(a))")
-	tk.MustExec("insert into t1 values (1,2),(2,3),(3,4)")
-	sql := "explain analyze select * from t1 use index(a) where a > 1;"
-	rows := tk.MustQuery(sql).Rows()
-	c.Assert(len(rows), Equals, 3)
-	explain := fmt.Sprintf("%v", rows[0])
-	c.Assert(explain, Matches, ".*time:.*loops:.*index_task:.*table_task: {total_time.*num.*concurrency.*}.*")
-	indexExplain := fmt.Sprintf("%v", rows[1])
-	tableExplain := fmt.Sprintf("%v", rows[2])
-	c.Assert(indexExplain, Matches, ".*time:.*loops:.*cop_task:.*")
-	c.Assert(tableExplain, Matches, ".*time:.*loops:.*cop_task:.*")
-}
-
-func (s *testSerialSuite1) TestHashAggRuntimeStats(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (a int, b int)")
-	tk.MustExec("insert into t1 values (1,2),(2,3),(3,4)")
-	sql := "explain analyze SELECT /*+ HASH_AGG() */ count(*) FROM t1 WHERE a < 10;"
-	rows := tk.MustQuery(sql).Rows()
-	c.Assert(len(rows), Equals, 5)
-	explain := fmt.Sprintf("%v", rows[0])
-	c.Assert(explain, Matches, ".*time:.*loops:.*partial_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*final_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*")
-}
-
-func (s *testSerialSuite1) TestIndexMergeRuntimeStats(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("set @@tidb_enable_index_merge = 1")
-	tk.MustExec("create table t1(id int primary key, a int, b int, c int, d int)")
-	tk.MustExec("create index t1a on t1(a)")
-	tk.MustExec("create index t1b on t1(b)")
-	tk.MustExec("insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5)")
-	sql := "explain analyze select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4;"
-	rows := tk.MustQuery(sql).Rows()
-	c.Assert(len(rows), Equals, 4)
-	explain := fmt.Sprintf("%v", rows[0])
-	c.Assert(explain, Matches, ".*time:.*loops:.*index_task:{fetch_handle:.*, merge:.*}.*table_task:{num.*concurrency.*fetch_row.*wait_time.*}.*")
-	tableRangeExplain := fmt.Sprintf("%v", rows[1])
-	indexExplain := fmt.Sprintf("%v", rows[2])
-	tableExplain := fmt.Sprintf("%v", rows[3])
-	c.Assert(tableRangeExplain, Matches, ".*time:.*loops:.*cop_task:.*")
-	c.Assert(indexExplain, Matches, ".*time:.*loops:.*cop_task:.*")
-	c.Assert(tableExplain, Matches, ".*time:.*loops:.*cop_task:.*")
-	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
-	sql = "select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by a"
-	tk.MustQuery(sql).Check(testkit.Rows("1 1 1 1 1", "5 5 5 5 5"))
 }
 
 func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
