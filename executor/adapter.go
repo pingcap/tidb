@@ -921,7 +921,7 @@ func FormatSQL(sql string) stringutil.StringerFunc {
 	return func() string {
 		cfg := config.GetGlobalConfig()
 		length := len(sql)
-		if maxQueryLen := atomic.LoadUint64(&cfg.Log.QueryLogMaxLen); uint64(length) > maxQueryLen {
+		if maxQueryLen := atomic.LoadUint64(&cfg.Instance.QueryLogMaxLen); uint64(length) > maxQueryLen {
 			sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, length)
 		}
 		return QueryReplacer.Replace(sql)
@@ -1010,8 +1010,8 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	level := log.GetLevel()
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
-	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
-	enable := cfg.Log.EnableSlowLog.Load()
+	threshold := time.Duration(atomic.LoadUint64(&cfg.Instance.SlowThreshold)) * time.Millisecond
+	enable := cfg.Instance.EnableSlowLog.Load()
 	// if the level is Debug, or trace is enabled, print slow logs anyway
 	force := level <= zapcore.DebugLevel || trace.IsEnabled()
 	if (!enable || costTime < threshold) && !force {
@@ -1152,7 +1152,7 @@ func GetResultRowsCount(sctx sessionctx.Context, p plannercore.Plan) int64 {
 // getPlanTree will try to get the select plan tree if the plan is select or the select plan of delete/update/insert statement.
 func getPlanTree(sctx sessionctx.Context, p plannercore.Plan) string {
 	cfg := config.GetGlobalConfig()
-	if atomic.LoadUint32(&cfg.Log.RecordPlanInSlowLog) == 0 {
+	if atomic.LoadUint32(&cfg.Instance.RecordPlanInSlowLog) == 0 {
 		return ""
 	}
 	planTree, _ := getEncodedPlan(sctx, p, false)

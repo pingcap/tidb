@@ -707,9 +707,9 @@ func (h settingsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if checkMb4ValueInUtf8 := req.Form.Get("check_mb4_value_in_utf8"); checkMb4ValueInUtf8 != "" {
 			switch checkMb4ValueInUtf8 {
 			case "0":
-				config.GetGlobalConfig().CheckMb4ValueInUTF8.Store(false)
+				config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Store(false)
 			case "1":
-				config.GetGlobalConfig().CheckMb4ValueInUTF8.Store(true)
+				config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Store(true)
 			default:
 				writeError(w, errors.New("illegal argument"))
 				return

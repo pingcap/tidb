@@ -113,7 +113,7 @@ func Init(cmd *cobra.Command) (err error) {
 			tidbLogCfg.File.Filename = timestampLogFileName()
 		} else {
 			// Don't print slow log in br
-			config.GetGlobalConfig().Log.EnableSlowLog.Store(false)
+			config.GetGlobalConfig().Instance.EnableSlowLog.Store(false)
 		}
 		e = logutil.InitLogger(&tidbLogCfg)
 		if e != nil {

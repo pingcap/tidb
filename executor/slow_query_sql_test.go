@@ -34,7 +34,7 @@ func TestSlowQueryWithoutSlowLog(t *testing.T) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 	newCfg.Log.SlowQueryFile = "tidb-slow-not-exist.log"
-	newCfg.Log.SlowThreshold = math.MaxUint64
+	newCfg.Instance.SlowThreshold = math.MaxUint64
 	config.StoreGlobalConfig(&newCfg)
 	defer func() {
 		config.StoreGlobalConfig(originCfg)

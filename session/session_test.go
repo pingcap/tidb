@@ -4273,22 +4273,22 @@ func (s *testSessionSuite2) TestIssue19127(c *C) {
 func (s *testSessionSuite2) TestMemoryUsageAlarmVariable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
-	tk.MustExec("set @@session.tidb_memory_usage_alarm_ratio=1")
-	tk.MustQuery("select @@session.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("1"))
-	tk.MustExec("set @@session.tidb_memory_usage_alarm_ratio=0")
-	tk.MustQuery("select @@session.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("0"))
-	tk.MustExec("set @@session.tidb_memory_usage_alarm_ratio=0.7")
-	tk.MustQuery("select @@session.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("0.7"))
-	tk.MustExec("set @@session.tidb_memory_usage_alarm_ratio=1.1")
+	tk.MustExec("set @@global.tidb_memory_usage_alarm_ratio=1")
+	tk.MustQuery("select @@global.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("1"))
+	tk.MustExec("set @@global.tidb_memory_usage_alarm_ratio=0")
+	tk.MustQuery("select @@global.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("0"))
+	tk.MustExec("set @@global.tidb_memory_usage_alarm_ratio=0.7")
+	tk.MustQuery("select @@global.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("0.7"))
+	tk.MustExec("set @@global.tidb_memory_usage_alarm_ratio=1.1")
 	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_memory_usage_alarm_ratio value: '1.1'"))
-	tk.MustQuery("select @@session.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("1"))
 
-	tk.MustExec("set @@session.tidb_memory_usage_alarm_ratio=-1")
+	tk.MustExec("set @@global.tidb_memory_usage_alarm_ratio=-1")
 	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_memory_usage_alarm_ratio value: '-1'"))
-	tk.MustQuery("select @@session.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("0"))
+	tk.MustQuery("select @@global.tidb_memory_usage_alarm_ratio").Check(testkit.Rows("0"))
 
-	err := tk.ExecToErr("set @@global.tidb_memory_usage_alarm_ratio=0.8")
-	c.Assert(err.Error(), Equals, "[variable:1228]Variable 'tidb_memory_usage_alarm_ratio' is a SESSION variable and can't be used with SET GLOBAL")
+	tk.MustExec("set @@session.tidb_memory_usage_alarm_ratio=0.8")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(fmt.Sprintf("Warning %d modifying tidb_memory_usage_alarm_ratio will require SET GLOBAL in a future version of TiDB", errno.ErrInstanceScope)))
 }
 
 func (s *testSessionSuite2) TestSelectLockInShare(c *C) {

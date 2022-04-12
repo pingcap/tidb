@@ -583,7 +583,7 @@ func TestStmtSummaryResultRows(t *testing.T) {
 	tk.MustExec("set global tidb_stmt_summary_max_sql_length=4096")
 	tk.MustExec("set global tidb_enable_stmt_summary=0")
 	tk.MustExec("set global tidb_enable_stmt_summary=1")
-	if !config.GetGlobalConfig().EnableCollectExecutionInfo {
+	if !config.GetGlobalConfig().Instance.EnableCollectExecutionInfo {
 		tk.MustExec("set @@tidb_enable_collect_execution_info=1")
 		defer tk.MustExec("set @@tidb_enable_collect_execution_info=0")
 	}

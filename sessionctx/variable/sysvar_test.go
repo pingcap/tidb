@@ -624,32 +624,32 @@ func TestInstanceScopedVars(t *testing.T) {
 
 	val, err = GetSessionOrGlobalSystemVar(vars, PluginDir)
 	require.NoError(t, err)
-	require.Equal(t, config.GetGlobalConfig().Plugin.Dir, val)
+	require.Equal(t, config.GetGlobalConfig().Instance.Plugin.Dir, val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, PluginLoad)
 	require.NoError(t, err)
-	require.Equal(t, config.GetGlobalConfig().Plugin.Load, val)
+	require.Equal(t, config.GetGlobalConfig().Instance.Plugin.Load, val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBSlowLogThreshold)
 	require.NoError(t, err)
-	require.Equal(t, strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.SlowThreshold), 10), val)
+	require.Equal(t, strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Instance.SlowThreshold), 10), val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBRecordPlanInSlowLog)
 	require.NoError(t, err)
-	enabled := atomic.LoadUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog) == 1
+	enabled := atomic.LoadUint32(&config.GetGlobalConfig().Instance.RecordPlanInSlowLog) == 1
 	require.Equal(t, BoolToOnOff(enabled), val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBEnableSlowLog)
 	require.NoError(t, err)
-	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Log.EnableSlowLog.Load()), val)
+	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.EnableSlowLog.Load()), val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBQueryLogMaxLen)
 	require.NoError(t, err)
-	require.Equal(t, strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10), val)
+	require.Equal(t, strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Instance.QueryLogMaxLen), 10), val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBCheckMb4ValueInUTF8)
 	require.NoError(t, err)
-	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().CheckMb4ValueInUTF8.Load()), val)
+	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Load()), val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBFoundInPlanCache)
 	require.NoError(t, err)
@@ -661,7 +661,7 @@ func TestInstanceScopedVars(t *testing.T) {
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBEnableCollectExecutionInfo)
 	require.NoError(t, err)
-	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().EnableCollectExecutionInfo), val)
+	require.Equal(t, BoolToOnOff(config.GetGlobalConfig().Instance.EnableCollectExecutionInfo), val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBTxnScope)
 	require.NoError(t, err)
@@ -864,8 +864,8 @@ func TestInstanceScope(t *testing.T) {
 	for _, sv := range GetSysVars() {
 		require.False(t, sv.HasGlobalScope() && sv.HasInstanceScope(), "sysvar %s has both instance and global scope", sv.Name)
 		if sv.HasInstanceScope() {
-			require.NotNil(t, sv.GetGlobal)
-			require.NotNil(t, sv.SetGlobal)
+			require.Nil(t, sv.GetSession)
+			require.Nil(t, sv.SetSession)
 		}
 	}
 

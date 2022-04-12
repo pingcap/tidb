@@ -453,10 +453,10 @@ func overrideConfig(cfg *config.Config) {
 		cfg.TokenLimit = uint(*tokenLimit)
 	}
 	if actualFlags[nmPluginLoad] {
-		cfg.Plugin.Load = *pluginLoad
+		cfg.Instance.Plugin.Load = *pluginLoad
 	}
 	if actualFlags[nmPluginDir] {
-		cfg.Plugin.Dir = *pluginDir
+		cfg.Instance.Plugin.Dir = *pluginDir
 	}
 	if actualFlags[nmRequireSecureTransport] {
 		cfg.Security.RequireSecureTransport = *requireTLS
@@ -547,6 +547,7 @@ func setVersions() {
 
 func setGlobalVars() {
 	cfg := config.GetGlobalConfig()
+	defaultConfig := config.NewConfig()
 
 	// Disable automaxprocs log
 	nopLog := func(string, ...interface{}) {}
@@ -584,8 +585,18 @@ func setGlobalVars() {
 	}
 	kv.TxnEntrySizeLimit = cfg.Performance.TxnEntrySizeLimit
 
-	priority := mysql.Str2Priority(cfg.Performance.ForcePriority)
+	if _, ok := config.ConflictOptions["force-priority"]; !ok {
+		if cfg.Performance.ForcePriority != defaultConfig.Performance.ForcePriority {
+			cfg.Instance.ForcePriority = cfg.Performance.ForcePriority
+		}
+	}
+	priority := mysql.Str2Priority(cfg.Instance.ForcePriority)
 	variable.ForcePriority = int32(priority)
+
+	variable.ProcessGeneralLog.Store(cfg.Instance.GeneralLog)
+	variable.EnablePProfSQLCPU.Store(cfg.Instance.EnablePProfSQLCPU)
+	atomic.StoreUint32(&variable.DDLSlowOprThreshold, cfg.Instance.DDLSlowOprThreshold)
+	atomic.StoreUint64(&variable.ExpensiveQueryTimeThreshold, cfg.Instance.ExpensiveQueryTimeThreshold)
 
 	if len(cfg.ServerVersion) > 0 {
 		mysql.ServerVersion = cfg.ServerVersion
@@ -614,7 +625,12 @@ func setGlobalVars() {
 	variable.SetSysVar(variable.TiDBSlowQueryFile, cfg.Log.SlowQueryFile)
 	variable.SetSysVar(variable.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ","))
 	variable.SetSysVar(variable.TiDBEnforceMPPExecution, variable.BoolToOnOff(config.GetGlobalConfig().Performance.EnforceMPP))
-	variable.MemoryUsageAlarmRatio.Store(cfg.Performance.MemoryUsageAlarmRatio)
+	if _, ok := config.ConflictOptions["memory-usage-alarm-ratio"]; !ok {
+		if cfg.Performance.MemoryUsageAlarmRatio != defaultConfig.Performance.MemoryUsageAlarmRatio {
+			cfg.Instance.MemoryUsageAlarmRatio = cfg.Performance.MemoryUsageAlarmRatio
+		}
+	}
+	variable.MemoryUsageAlarmRatio.Store(cfg.Instance.MemoryUsageAlarmRatio)
 	if hostname, err := os.Hostname(); err == nil {
 		variable.SetSysVar(variable.Hostname, hostname)
 	}
@@ -661,6 +677,49 @@ func setGlobalVars() {
 	tikv.SetStoreLivenessTimeout(t)
 	parsertypes.TiDBStrictIntegerDisplayWidth = cfg.DeprecateIntegerDisplayWidth
 	deadlockhistory.GlobalDeadlockHistory.Resize(cfg.PessimisticTxn.DeadlockHistoryCapacity)
+
+	// Check [instance] section configuration options.
+	if _, ok := config.ConflictOptions["enable-slow-log"]; !ok {
+		if cfg.Log.EnableSlowLog.Load() != defaultConfig.Log.EnableSlowLog.Load() {
+			// TiDB users forget to set "enable-slow-log" in [instance] instead of [log]
+			cfg.Instance.EnableSlowLog.Store(cfg.Log.EnableSlowLog.Load())
+		}
+	}
+	if _, ok := config.ConflictOptions["slow-threshold"]; !ok {
+		if cfg.Log.SlowThreshold != defaultConfig.Log.SlowThreshold {
+			cfg.Instance.SlowThreshold = cfg.Log.SlowThreshold
+		}
+	}
+	if _, ok := config.ConflictOptions["query-log-max-len"]; !ok {
+		if cfg.Log.QueryLogMaxLen != defaultConfig.Log.QueryLogMaxLen {
+			cfg.Instance.QueryLogMaxLen = cfg.Log.QueryLogMaxLen
+		}
+	}
+	if _, ok := config.ConflictOptions["record-plan-in-slow-log"]; !ok {
+		if cfg.Log.RecordPlanInSlowLog != defaultConfig.Log.RecordPlanInSlowLog {
+			cfg.Instance.RecordPlanInSlowLog = cfg.Log.RecordPlanInSlowLog
+		}
+	}
+	if _, ok := config.ConflictOptions["check-mb4-value-in-utf8"]; !ok {
+		if cfg.CheckMb4ValueInUTF8.Load() != defaultConfig.CheckMb4ValueInUTF8.Load() {
+			cfg.Instance.CheckMb4ValueInUTF8.Store(cfg.CheckMb4ValueInUTF8.Load())
+		}
+	}
+	if _, ok := config.ConflictOptions["enable-collect-execution-info"]; !ok {
+		if cfg.EnableCollectExecutionInfo != defaultConfig.EnableCollectExecutionInfo {
+			cfg.Instance.EnableCollectExecutionInfo = cfg.EnableCollectExecutionInfo
+		}
+	}
+	if _, ok := config.ConflictOptions["plugin.load"]; !ok {
+		if cfg.Plugin.Load != defaultConfig.Plugin.Load {
+			cfg.Instance.Plugin.Load = cfg.Plugin.Load
+		}
+	}
+	if _, ok := config.ConflictOptions["plugin.dir"]; !ok {
+		if cfg.Plugin.Dir != defaultConfig.Plugin.Dir {
+			cfg.Instance.Plugin.Dir = cfg.Plugin.Dir
+		}
+	}
 }
 
 func setupLog() {

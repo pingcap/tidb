@@ -470,3 +470,14 @@ allow-expression-index = false
 [isolation-read]
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
 engines = ["tikv", "tiflash", "tidb"]
+
+# instance scope variables
+[instance]
+# tidb-general-log is used to log every query in the server in info level.
+tidb-general-log = false
+# tidb-pprof-sql-cpu is used to add label sql label to pprof result.
+tidb-pprof-sql-cpu = false
+# ddl-slow-threshold sets log DDL operations whose execution time exceeds the threshold value.
+ddl-slow-threshold = 300
+# expensive-query-time-threshold indicates the time threshold of expensive query.
+expensive-query-time-threshold = 60

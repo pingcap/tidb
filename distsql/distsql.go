@@ -96,7 +96,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		SessionMemTracker:          sctx.GetSessionVars().StmtCtx.MemTracker,
 		EnabledRateLimitAction:     enabledRateLimitAction,
 		EventCb:                    eventCb,
-		EnableCollectExecutionInfo: config.GetGlobalConfig().EnableCollectExecutionInfo,
+		EnableCollectExecutionInfo: config.GetGlobalConfig().Instance.EnableCollectExecutionInfo,
 	}
 	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, option)
 	if resp == nil {

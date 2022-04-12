@@ -119,7 +119,7 @@ func TestPostSettings(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
-	require.Equal(t, true, config.GetGlobalConfig().CheckMb4ValueInUTF8.Load())
+	require.Equal(t, true, config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Load())
 	txn1, err := dbt.GetDB().Begin()
 	require.NoError(t, err)
 	_, err = txn1.Exec("insert t2 values (unhex('F0A48BAE'));")
@@ -134,7 +134,7 @@ func TestPostSettings(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
-	require.Equal(t, false, config.GetGlobalConfig().CheckMb4ValueInUTF8.Load())
+	require.Equal(t, false, config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Load())
 	dbt.MustExec("insert t2 values (unhex('f09f8c80'));")
 
 	// test deadlock_history_capacity
@@ -185,7 +185,7 @@ func TestPostSettings(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 
 	// restore original value.
-	config.GetGlobalConfig().CheckMb4ValueInUTF8.Store(true)
+	config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Store(true)
 }
 
 func TestAllServerInfo(t *testing.T) {

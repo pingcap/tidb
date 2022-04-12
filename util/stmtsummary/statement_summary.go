@@ -607,7 +607,7 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		sampleSQL: formatSQL(sei.OriginalSQL),
 		charset:   sei.Charset,
 		collation: sei.Collation,
-		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
+		// PrevSQL is already truncated to cfg.Instance.QueryLogMaxLen.
 		prevSQL: sei.PrevSQL,
 		// samplePlan needs to be decoded so it can't be truncated.
 		samplePlan:    samplePlan,

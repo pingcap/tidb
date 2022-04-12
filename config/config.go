@@ -73,6 +73,12 @@ const (
 	DefStatsLoadQueueSizeLimit = 1
 	// DefMaxOfStatsLoadQueueSizeLimit is maximum limitation of the size of stats-load request queue
 	DefMaxOfStatsLoadQueueSizeLimit = 100000
+	// DefDDLSlowOprThreshold sets log DDL operations whose execution time exceeds the threshold value.
+	DefDDLSlowOprThreshold = 300
+	// DefExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
+	DefExpensiveQueryTimeThreshold = 60
+	// DefMemoryUsageAlarmRatio is the threshold triggering an alarm which the memory usage of tidb-server instance exceeds.
+	DefMemoryUsageAlarmRatio = 0.8
 )
 
 // Valid config maps
@@ -89,6 +95,37 @@ var (
 	// tempStorageDirName is the default temporary storage dir name by base64 encoding a string `port/statusPort`
 	tempStorageDirName = encodeDefTempStorageDir(os.TempDir(), DefHost, DefStatusHost, DefPort, DefStatusPort)
 )
+
+// Potential conflicts between 'instance' config options and other ones.
+var (
+	potentialConflictOptions = map[string][]string{
+		"": {
+			"check-mb4-value-in-utf8",
+			"enable-collect-execution-info",
+			"plugin.load",
+			"plugin.dir",
+		},
+		"log": {
+			"enable-slow-log",
+			"slow-threshold",
+			"query-log-max-len",
+			"record-plan-in-slow-log",
+		},
+		"performance": {
+			"force-priority",
+			"memory-usage-alarm-ratio",
+		},
+	}
+	ConflictOptions = map[string]bool{}
+)
+
+func mapToSlice(m map[string]bool) []string {
+	s := make([]string, 0, len(m))
+	for k := range m {
+		s = append(s, k)
+	}
+	return s
+}
 
 // Config contains configuration options.
 type Config struct {
@@ -117,6 +154,7 @@ type Config struct {
 	TiDBEdition                string                  `toml:"tidb-edition" json:"tidb-edition"`
 	TiDBReleaseVersion         string                  `toml:"tidb-release-version" json:"tidb-release-version"`
 	Log                        Log                     `toml:"log" json:"log"`
+	Instance                   Instance                `toml:"instance" json:"instance"`
 	Security                   Security                `toml:"security" json:"security"`
 	Status                     Status                  `toml:"status" json:"status"`
 	Performance                Performance             `toml:"performance" json:"performance"`
@@ -367,6 +405,34 @@ type Log struct {
 	RecordPlanInSlowLog uint32     `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 }
 
+// Instance is the section of instance scope system variables.
+type Instance struct {
+	// These variables only exist in [instance] section.
+
+	// GeneralLog is used to log every query in the server in info level.
+	GeneralLog bool `toml:"tidb-general-log" json:"tidb-general-log"`
+	// EnablePProfSQLCPU is used to add label sql label to pprof result.
+	EnablePProfSQLCPU bool `toml:"tidb-pprof-sql-cpu" json:"tidb-pprof-sql-cpu"`
+	// DDLSlowOprThreshold sets log DDL operations whose execution time exceeds the threshold value.
+	DDLSlowOprThreshold uint32 `toml:"ddl-slow-threshold" json:"ddl-slow-threshold"`
+	// ExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
+	ExpensiveQueryTimeThreshold uint64 `toml:"expensive-query-time-threshold" json:"expensive-query-time-threshold"`
+
+	// These variables exist in both 'instance' section and another place.
+	// The configuration in 'instance' section takes precedence.
+
+	EnableSlowLog         AtomicBool `toml:"enable-slow-log" json:"enable-slow-log"`
+	SlowThreshold         uint64     `toml:"slow-threshold" json:"slow-threshold"`
+	QueryLogMaxLen        uint64     `toml:"query-log-max-len" json:"query-log-max-len"`
+	RecordPlanInSlowLog   uint32     `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
+	CheckMb4ValueInUTF8   AtomicBool `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
+	ForcePriority         string     `toml:"force-priority" json:"force-priority"`
+	MemoryUsageAlarmRatio float64    `toml:"memory-usage-alarm-ratio" json:"memory-usage-alarm-ratio"`
+	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
+	EnableCollectExecutionInfo bool   `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
+	Plugin                     Plugin `toml:"plugin" json:"plugin"`
+}
+
 func (l *Log) getDisableTimestamp() bool {
 	if l.EnableTimestamp == nbUnset && l.DisableTimestamp == nbUnset {
 		return false
@@ -433,6 +499,18 @@ func (e *ErrConfigValidationFailed) Error() string {
 		"TiDB manual to make sure this option has not been deprecated and removed from your TiDB "+
 		"version if the option does not appear to be a typo", e.confFile, strings.Join(
 		e.UndecodedItems, ", "))
+}
+
+// ErrConfigInstanceSection error is used to warning the user that the config options in 'instance'
+// are also set in another place.
+type ErrConfigInstanceSection struct {
+	confFile        string
+	conflictOptions []string
+}
+
+func (e *ErrConfigInstanceSection) Error() string {
+	return fmt.Sprintf("config file %s contained conflict configuration options that exist "+
+		"on both [instance] section and another place: %s", e.confFile, strings.Join(e.conflictOptions, ", "))
 }
 
 // ClusterSecurity returns Security info for cluster
@@ -662,6 +740,24 @@ var defaultConf = Config{
 		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
 		EnableSlowLog:       *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
 	},
+	Instance: Instance{
+		GeneralLog:                  false,
+		EnablePProfSQLCPU:           false,
+		DDLSlowOprThreshold:         DefDDLSlowOprThreshold,
+		ExpensiveQueryTimeThreshold: DefExpensiveQueryTimeThreshold,
+		EnableSlowLog:               *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
+		SlowThreshold:               logutil.DefaultSlowThreshold,
+		QueryLogMaxLen:              logutil.DefaultQueryLogMaxLen,
+		RecordPlanInSlowLog:         logutil.DefaultRecordPlanInSlowLog,
+		CheckMb4ValueInUTF8:         *NewAtomicBool(true),
+		ForcePriority:               "NO_PRIORITY",
+		MemoryUsageAlarmRatio:       DefMemoryUsageAlarmRatio,
+		EnableCollectExecutionInfo:  true,
+		Plugin: Plugin{
+			Dir:  "/data/deploy/plugin",
+			Load: "",
+		},
+	},
 	Status: Status{
 		ReportStatus:          true,
 		StatusHost:            DefStatusHost,
@@ -677,7 +773,7 @@ var defaultConf = Config{
 	Performance: Performance{
 		MaxMemory:             0,
 		ServerMemoryQuota:     0,
-		MemoryUsageAlarmRatio: 0.8,
+		MemoryUsageAlarmRatio: DefMemoryUsageAlarmRatio,
 		TCPKeepAlive:          true,
 		TCPNoDelay:            true,
 		CrossJoin:             true,
@@ -839,6 +935,9 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, enforceCm
 					fmt.Fprintln(os.Stderr, err.Error())
 					err = nil
 				}
+			} else if tmp, ok := err.(*ErrConfigInstanceSection); ok {
+				logutil.BgLogger().Warn(fmt.Sprintf(tmp.Error()))
+				err = nil
 			}
 		}
 
@@ -890,6 +989,25 @@ func (c *Config) Load(confFile string) error {
 			undecodedItems = append(undecodedItems, item.String())
 		}
 		err = &ErrConfigValidationFailed{confFile, undecodedItems}
+	}
+
+	if metaData.IsDefined("instance") {
+		for k, v := range potentialConflictOptions {
+			for _, configOption := range v {
+				if k == "" {
+					if metaData.IsDefined("instance", configOption) && metaData.IsDefined(configOption) {
+						ConflictOptions[configOption] = true
+					}
+				} else {
+					if metaData.IsDefined("instance", configOption) && metaData.IsDefined(k, configOption) {
+						ConflictOptions[configOption] = true
+					}
+				}
+			}
+		}
+		if len(ConflictOptions) > 0 {
+			err = &ErrConfigInstanceSection{confFile, mapToSlice(ConflictOptions)}
+		}
 	}
 
 	return err
@@ -953,7 +1071,7 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("txn-total-size-limit should be less than %d", 1<<40)
 	}
 
-	if c.Performance.MemoryUsageAlarmRatio > 1 || c.Performance.MemoryUsageAlarmRatio < 0 {
+	if c.Instance.MemoryUsageAlarmRatio > 1 || c.Instance.MemoryUsageAlarmRatio < 0 {
 		return fmt.Errorf("memory-usage-alarm-ratio in [Performance] must be greater than or equal to 0 and less than or equal to 1")
 	}
 

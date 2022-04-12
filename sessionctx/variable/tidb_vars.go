@@ -847,13 +847,13 @@ var (
 	MaxDDLReorgBatchSize int32 = 10240
 	MinDDLReorgBatchSize int32 = 32
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
-	DDLSlowOprThreshold            uint32 = DefTiDBDDLSlowOprThreshold
+	DDLSlowOprThreshold                   = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
 	ForcePriority                         = int32(DefTiDBForcePriority)
 	MaxOfMaxAllowedPacket          uint64 = 1073741824
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 // 10s
 	DefExecutorConcurrency                = 5
-	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio)
+	MemoryUsageAlarmRatio                 = atomic.NewFloat64(config.GetGlobalConfig().Instance.MemoryUsageAlarmRatio)
 	EnableLocalTxn                        = atomic.NewBool(DefTiDBEnableLocalTxn)
 	MaxTSOBatchWaitInterval               = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy                = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)

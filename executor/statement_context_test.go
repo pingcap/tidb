@@ -129,11 +129,11 @@ func TestStatementContext(t *testing.T) {
 	require.Error(t, err)
 	require.Truef(t, terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), "err %v", err)
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.CheckMb4ValueInUTF8.Store(false)
+		conf.Instance.CheckMb4ValueInUTF8.Store(false)
 	})
 	tk.MustExec("insert t1 values (unhex('f09f8c80'))")
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.CheckMb4ValueInUTF8.Store(true)
+		conf.Instance.CheckMb4ValueInUTF8.Store(true)
 	})
 	_, err = tk.Exec("insert t1 values (unhex('F0A48BAE'))")
 	require.Error(t, err)
