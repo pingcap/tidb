@@ -105,8 +105,7 @@ func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransaction
 
 func doOneJob(ctx context.Context, job *job, totalJobCount int, stmt *ast.NonTransactionalDeleteStmt, tp types.FieldType, refer *ast.ResultField,
 	originalCondition ast.ExprNode, se Session) string {
-	logutil.Logger(ctx).Info("start a Non-transactional delete", zap.Int("jobID", job.jobID),
-		zap.Int("totalJobs", totalJobCount), zap.Int("jobSize", job.jobSize))
+	logutil.Logger(ctx).Info("start a Non-transactional delete", zap.String("job", job.String()))
 
 	var whereCondition ast.ExprNode
 
