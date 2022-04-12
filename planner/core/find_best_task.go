@@ -1361,7 +1361,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 	return task, nil
 }
 
-func (is *PhysicalIndexScan) indexScanRowSize() float64 {
+func (is *PhysicalIndexScan) getScanRowSize() float64 {
 	idx := is.Index
 	scanCols := make([]*expression.Column, 0, len(idx.Columns)+1)
 	// If `initSchema` has already appended the handle column in schema, just use schema columns, otherwise, add extra handle column.
@@ -2199,7 +2199,7 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 		}
 	}
 	is.stats = ds.tableStats.ScaleByExpectCnt(rowCount)
-	rowSize := is.indexScanRowSize()
+	rowSize := is.getScanRowSize()
 	sessVars := ds.ctx.GetSessionVars()
 	cost := rowCount * rowSize * sessVars.GetScanFactor(ds.tableInfo)
 	if isMatchProp {

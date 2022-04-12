@@ -1157,7 +1157,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		tmpPath.CountAfterAccess = cnt
 	}
 	is.stats = ds.tableStats.ScaleByExpectCnt(tmpPath.CountAfterAccess)
-	rowSize := is.indexScanRowSize()
+	rowSize := is.getScanRowSize()
 	sessVars := ds.ctx.GetSessionVars()
 	cop.cst = tmpPath.CountAfterAccess * rowSize * sessVars.GetScanFactor(ds.tableInfo)
 	finalStats := ds.tableStats.ScaleByExpectCnt(rowCount)
