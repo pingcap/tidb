@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	gmysql "github.com/go-sql-driver/mysql"
 	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -288,7 +289,7 @@ func TestImportFailedRecovered(t *testing.T) {
 	s.mockBackend.EXPECT().CloseEngine(ctx, nil, gomock.Any()).Return(nil)
 	s.mockBackend.EXPECT().
 		ImportEngine(ctx, gomock.Any(), gomock.Any()).
-		Return(errors.New("fake recoverable import error"))
+		Return(gmysql.ErrInvalidConn)
 	s.mockBackend.EXPECT().
 		ImportEngine(ctx, gomock.Any(), gomock.Any()).
 		Return(nil)
