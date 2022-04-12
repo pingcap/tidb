@@ -351,8 +351,6 @@ func (s *testSuite2) TestExplainAnalyzeCTEMemoryAndDiskInfo(c *C) {
 	c.Assert(rows[4][7].(string), Not(Equals), "N/A")
 	c.Assert(rows[4][8].(string), Not(Equals), "N/A")
 }
-<<<<<<< HEAD
-=======
 
 func (s *testSuite) TestExplainStatementsSummary(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
