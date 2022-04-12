@@ -1374,11 +1374,7 @@ func (is *PhysicalIndexScan) getScanRowSize() float64 {
 	} else {
 		scanCols = is.schema.Columns
 	}
-	tblColHists := is.tblColHists
-	if tblColHists == nil {
-		tblColHists = is.stats.HistColl // fallback to use is.stats
-	}
-	return tblColHists.GetIndexAvgRowSize(is.ctx, scanCols, is.Index.Unique)
+	return is.tblColHists.GetIndexAvgRowSize(is.ctx, scanCols, is.Index.Unique)
 }
 
 // initSchema is used to set the schema of PhysicalIndexScan. Before calling this,
