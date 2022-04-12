@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -704,7 +705,11 @@ func isSameValue(sc *stmtctx.StatementContext, lhs, rhs *valueInfo) (bool, error
 	if lhs == nil || rhs == nil || lhs.mutable || rhs.mutable || lhs.value.Kind() != rhs.value.Kind() {
 		return false, nil
 	}
+	collation := lhs.value.Collation()
+	// binary collator may not the best choice, but it can make sure the result is correct.
+	lhs.value.SetCollation(charset.CollationBin)
 	cmp, err := lhs.value.CompareDatum(sc, rhs.value)
+	lhs.value.SetCollation(collation)
 	if err != nil {
 		return false, err
 	}
