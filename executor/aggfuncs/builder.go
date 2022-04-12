@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -390,7 +391,8 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 			args:    aggFuncDesc.Args,
 			ordinal: ordinal,
 		},
-		isMax: isMax,
+		isMax:    isMax,
+		collator: collate.GetCollator(aggFuncDesc.RetTp.Collate),
 	}
 	frac := base.args[0].GetType().Decimal
 	if frac == -1 {
