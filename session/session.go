@@ -2061,10 +2061,11 @@ func resetCTEStorageMap(se *session) error {
 		return errors.New("type assertion for CTEStorageMap failed")
 	}
 	for _, v := range storageMap {
-		// No need to lock IterInTbl.
 		v.ResTbl.Lock()
-		defer v.ResTbl.Unlock()
 		err1 := v.ResTbl.DerefAndClose()
+		// Make sure we do not hold the lock for longer than necessary.
+		v.ResTbl.Unlock()
+		// No need to lock IterInTbl.
 		err2 := v.IterInTbl.DerefAndClose()
 		if err1 != nil {
 			return err1
