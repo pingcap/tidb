@@ -400,7 +400,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		int64(rangeSize+len(files)+len(tables)),
 		!cfg.LogProgress)
 	defer updateCh.Close()
-	sender, err := restore.NewTiKVSender(ctx, client, updateCh)
+	sender, err := restore.NewTiKVSender(ctx, client, updateCh, false)
 	if err != nil {
 		return errors.Trace(err)
 	}

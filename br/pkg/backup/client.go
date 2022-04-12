@@ -482,7 +482,7 @@ func (bc *Client) BackupRange(
 	// TODO: test fine grained backup.
 	err = bc.fineGrainedBackup(
 		ctx, startKey, endKey, req.StartVersion, req.EndVersion, req.CompressionType, req.CompressionLevel,
-		req.RateLimit, req.Concurrency, req.IsRawKv, req.CipherInfo, results, progressCallBack)
+		req.RateLimit, req.Concurrency, req.IsRawKv, results, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -563,7 +563,6 @@ func (bc *Client) fineGrainedBackup(
 	rateLimit uint64,
 	concurrency uint32,
 	isRawKv bool,
-	cipherInfo *backuppb.CipherInfo,
 	rangeTree rtree.RangeTree,
 	progressCallBack func(ProgressUnit),
 ) error {
@@ -614,7 +613,7 @@ func (bc *Client) fineGrainedBackup(
 				for rg := range retry {
 					backoffMs, err :=
 						bc.handleFineGrained(ctx, boFork, rg, lastBackupTS, backupTS,
-							compressType, compressLevel, rateLimit, concurrency, isRawKv, cipherInfo, respCh)
+							compressType, compressLevel, rateLimit, concurrency, isRawKv, respCh)
 					if err != nil {
 						errCh <- err
 						return
@@ -760,7 +759,6 @@ func (bc *Client) handleFineGrained(
 	rateLimit uint64,
 	concurrency uint32,
 	isRawKv bool,
-	cipherInfo *backuppb.CipherInfo,
 	respCh chan<- *backuppb.BackupResponse,
 ) (int, error) {
 	leader, pderr := bc.findRegionLeader(ctx, rg.StartKey, isRawKv)
@@ -781,7 +779,6 @@ func (bc *Client) handleFineGrained(
 		IsRawKv:          isRawKv,
 		CompressionType:  compressType,
 		CompressionLevel: compressionLevel,
-		CipherInfo:       cipherInfo,
 	}
 	lockResolver := bc.mgr.GetLockResolver()
 	client, err := bc.mgr.GetBackupClient(ctx, storeID)

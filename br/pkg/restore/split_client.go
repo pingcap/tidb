@@ -80,26 +80,12 @@ type pdClient struct {
 	client     pd.Client
 	tlsConf    *tls.Config
 	storeCache map[uint64]*metapb.Store
-<<<<<<< HEAD
-}
-
-// NewSplitClient returns a client used by RegionSplitter.
-func NewSplitClient(client pd.Client, tlsConf *tls.Config) SplitClient {
-	return &pdClient{
-=======
-
-	// FIXME when config changed during the lifetime of pdClient,
-	// 	this may mislead the scatter.
-	needScatterVal  bool
-	needScatterInit sync.Once
-
-	isRawKv bool
+	isRawKv    bool
 }
 
 // NewSplitClient returns a client used by RegionSplitter.
 func NewSplitClient(client pd.Client, tlsConf *tls.Config, isRawKv bool) SplitClient {
-	cli := &pdClient{
->>>>>>> 4e69c0705... br: Fix backup rawkv failure (#32612)
+	return &pdClient{
 		client:     client,
 		tlsConf:    tlsConf,
 		storeCache: make(map[uint64]*metapb.Store),

@@ -425,15 +425,7 @@ FindRegion:
 	return true
 }
 
-<<<<<<< HEAD
 func (s *testRangeSuite) TestNeedSplit(c *C) {
-	regions := []*restore.RegionInfo{
-		{
-			Region: &metapb.Region{
-				StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
-				EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
-=======
-func TestNeedSplit(t *testing.T) {
 	for _, isRawKv := range []bool{false, true} {
 		encode := func(in []byte) []byte {
 			if isRawKv {
@@ -448,101 +440,19 @@ func TestNeedSplit(t *testing.T) {
 					StartKey: encode([]byte("b")),
 					EndKey:   encode([]byte("d")),
 				},
->>>>>>> 4e69c0705... br: Fix backup rawkv failure (#32612)
 			},
 		}
 		// Out of region
-		require.Nil(t, restore.NeedSplit([]byte("a"), regions, isRawKv))
+		c.Assert(restore.NeedSplit([]byte("a"), regions, isRawKv), IsNil)
 		// Region start key
-		require.Nil(t, restore.NeedSplit([]byte("b"), regions, isRawKv))
+		c.Assert(restore.NeedSplit([]byte("b"), regions, isRawKv), IsNil)
 		// In region
 		region := restore.NeedSplit([]byte("c"), regions, isRawKv)
-		require.Equal(t, 0, bytes.Compare(region.Region.GetStartKey(), encode([]byte("b"))))
-		require.Equal(t, 0, bytes.Compare(region.Region.GetEndKey(), encode([]byte("d"))))
+		c.Assert(bytes.Compare(region.Region.GetStartKey(), encode([]byte("b"))), Equals, 0)
+		c.Assert(bytes.Compare(region.Region.GetEndKey(), encode([]byte("d"))), Equals, 0)
 		// Region end key
-		require.Nil(t, restore.NeedSplit([]byte("d"), regions, isRawKv))
+		c.Assert(restore.NeedSplit([]byte("d"), regions, isRawKv), IsNil)
 		// Out of region
-		require.Nil(t, restore.NeedSplit([]byte("e"), regions, isRawKv))
+		c.Assert(restore.NeedSplit([]byte("e"), regions, isRawKv), IsNil)
 	}
-<<<<<<< HEAD
-	// Out of region
-	c.Assert(restore.NeedSplit([]byte("a"), regions), IsNil)
-	// Region start key
-	c.Assert(restore.NeedSplit([]byte("b"), regions), IsNil)
-	// In region
-	region := restore.NeedSplit([]byte("c"), regions)
-	c.Assert(bytes.Compare(region.Region.GetStartKey(), codec.EncodeBytes([]byte{}, []byte("b"))), Equals, 0)
-	c.Assert(bytes.Compare(region.Region.GetEndKey(), codec.EncodeBytes([]byte{}, []byte("d"))), Equals, 0)
-	// Region end key
-	c.Assert(restore.NeedSplit([]byte("d"), regions), IsNil)
-	// Out of region
-	c.Assert(restore.NeedSplit([]byte("e"), regions), IsNil)
-=======
-}
-
-func TestRegionConsistency(t *testing.T) {
-	cases := []struct {
-		startKey []byte
-		endKey   []byte
-		err      string
-		regions  []*restore.RegionInfo
-	}{
-		{
-			codec.EncodeBytes([]byte{}, []byte("a")),
-			codec.EncodeBytes([]byte{}, []byte("a")),
-			"scan region return empty result, startKey: (.*?), endKey: (.*?)",
-			[]*restore.RegionInfo{},
-		},
-		{
-			codec.EncodeBytes([]byte{}, []byte("a")),
-			codec.EncodeBytes([]byte{}, []byte("a")),
-			"first region's startKey > startKey, startKey: (.*?), regionStartKey: (.*?)",
-			[]*restore.RegionInfo{
-				{
-					Region: &metapb.Region{
-						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
-						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
-					},
-				},
-			},
-		},
-		{
-			codec.EncodeBytes([]byte{}, []byte("b")),
-			codec.EncodeBytes([]byte{}, []byte("e")),
-			"last region's endKey < endKey, endKey: (.*?), regionEndKey: (.*?)",
-			[]*restore.RegionInfo{
-				{
-					Region: &metapb.Region{
-						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
-						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
-					},
-				},
-			},
-		},
-		{
-			codec.EncodeBytes([]byte{}, []byte("c")),
-			codec.EncodeBytes([]byte{}, []byte("e")),
-			"region endKey not equal to next region startKey(.*?)",
-			[]*restore.RegionInfo{
-				{
-					Region: &metapb.Region{
-						StartKey: codec.EncodeBytes([]byte{}, []byte("b")),
-						EndKey:   codec.EncodeBytes([]byte{}, []byte("d")),
-					},
-				},
-				{
-					Region: &metapb.Region{
-						StartKey: codec.EncodeBytes([]byte{}, []byte("e")),
-						EndKey:   codec.EncodeBytes([]byte{}, []byte("f")),
-					},
-				},
-			},
-		},
-	}
-	for _, ca := range cases {
-		err := restore.CheckRegionConsistency(ca.startKey, ca.endKey, ca.regions)
-		require.Error(t, err)
-		require.Regexp(t, ca.err, err.Error())
-	}
->>>>>>> 4e69c0705... br: Fix backup rawkv failure (#32612)
 }
