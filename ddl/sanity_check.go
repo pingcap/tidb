@@ -31,31 +31,23 @@ import (
 func checkRangeCntByTableIDs(physicalTableIDs []int64, cnt int64) {
 	if len(physicalTableIDs) > 0 {
 		if len(physicalTableIDs) != int(cnt) {
-			panic("should not happened")
+			panic("should not happened" + fmt.Sprintf("expect count: %d, real count: %d", len(physicalTableIDs), cnt))
 		}
 	} else if cnt != 1 {
-		panic("should not happened")
+		panic("should not happened" + fmt.Sprintf("expect count: %d, real count: %d", 1, cnt))
 	}
 }
 
 func checkRangeCntByTableIDsAndIndexIDs(partitionTableIDs []int64, indexIDs []int64, cnt int64) {
-	if len(indexIDs) > 0 && len(partitionTableIDs) > 0 {
-		// Add this check after fixing the bug.
-		return
-	}
 	if len(indexIDs) == 0 {
 		return
 	}
-	uniqueIndexIDs := make(map[int64]struct{})
-	for _, id := range indexIDs {
-		uniqueIndexIDs[id] = struct{}{}
-	}
-	expectedCnt := len(uniqueIndexIDs)
+	expectedCnt := len(indexIDs)
 	if len(partitionTableIDs) > 0 {
 		expectedCnt *= len(partitionTableIDs)
 	}
 	if expectedCnt != int(cnt) {
-		panic("should not happened")
+		panic("should not happened" + fmt.Sprintf("expect count: %d, real count: %d", expectedCnt, cnt))
 	}
 }
 
@@ -67,7 +59,7 @@ func (d *ddl) checkDeleteRangeCnt(job *model.Job) {
 	}()
 
 	query := `select sum(cnt) from
-	(select count(1) cnt from mysql.gc_delete_range where job_id = %? union
+	(select count(1) cnt from mysql.gc_delete_range where job_id = %? union all
 	select count(1) cnt from mysql.gc_delete_range_done where job_id = %?) as gdr;`
 	rs, err := s.ExecuteInternal(context.TODO(), query, job.ID, job.ID)
 	if err != nil {
@@ -93,7 +85,7 @@ func (d *ddl) checkDeleteRangeCnt(job *model.Job) {
 			panic("should not happened")
 		}
 		if len(tableIDs) != int(cnt) {
-			panic("should not happened")
+			panic("should not happened" + fmt.Sprintf("expect count: %d, real count: %d", len(tableIDs), cnt))
 		}
 	case model.ActionDropTable, model.ActionTruncateTable:
 		var startKey kv.Key
@@ -109,7 +101,7 @@ func (d *ddl) checkDeleteRangeCnt(job *model.Job) {
 			panic("should not happened")
 		}
 		if len(physicalTableIDs) != int(cnt) {
-			panic("should not happened")
+			panic("should not happened" + fmt.Sprintf("expect count: %d, real count: %d", len(physicalTableIDs), cnt))
 		}
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		var indexID int64

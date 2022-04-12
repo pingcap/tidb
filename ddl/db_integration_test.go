@@ -2030,6 +2030,48 @@ func TestDefaultValueIsString(t *testing.T) {
 	require.Equal(t, "1", tbl.Meta().Columns[0].DefaultValue)
 }
 
+func TestDefaultColumnWithRand(t *testing.T) {
+	// Related issue: https://github.com/pingcap/tidb/issues/10377
+	store, clean := testkit.CreateMockStoreWithSchemaLease(t, testLease)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2")
+
+	// create table
+	tk.MustExec("create table t (c int(10), c1 int default (rand()))")
+	tk.MustExec("create table t1 (c int, c1 double default (rand()))")
+	tk.MustExec("create table t2 (c int, c1 double default (rand(1)))")
+
+	// add column with default rand() for table t is forbidden in MySQL 8.0
+	tk.MustGetErrCode("alter table t add column c2 double default (rand(2))", errno.ErrBinlogUnsafeSystemFunction)
+	tk.MustGetErrCode("alter table t add column c3 int default ((rand()))", errno.ErrBinlogUnsafeSystemFunction)
+	tk.MustGetErrCode("alter table t add column c4 int default (((rand(3))))", errno.ErrBinlogUnsafeSystemFunction)
+
+	// insert records
+	tk.MustExec("insert into t(c) values (1),(2),(3)")
+	tk.MustExec("insert into t1(c) values (1),(2),(3)")
+	tk.MustExec("insert into t2(c) values (1),(2),(3)")
+
+	queryStmts := []string{
+		"SELECT c1 from t",
+		"SELECT c1 from t1",
+		"SELECT c1 from t2",
+	}
+	for _, queryStmt := range queryStmts {
+		r := tk.MustQuery(queryStmt).Rows()
+		for _, row := range r {
+			d, ok := row[0].(float64)
+			if ok {
+				require.True(t, 0.0 <= d && d < 1.0, "rand() return a random floating-point value in the range 0 <= v < 1.0.")
+			}
+		}
+	}
+
+	// use a non-existent function name
+	tk.MustGetErrCode("CREATE TABLE t3 (c int, c1 int default a_function_not_supported_yet());", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
+}
+
 func TestChangingDBCharset(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -3713,6 +3755,13 @@ func TestIssue29282(t *testing.T) {
 	case <-ch:
 		// Unexpected, test fail.
 		t.Fail()
+	}
+
+	// Wait the background query rollback
+	select {
+	case <-time.After(100 * time.Millisecond):
+		t.Fail()
+	case <-ch:
 	}
 }
 
