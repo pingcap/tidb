@@ -209,6 +209,13 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, stmt *ast.NonTra
 func getShardKeys(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, se Session,
 	selectSQL string, shardColumn *table.Column) ([]job, error) {
 	logutil.Logger(ctx).Info("Non-transactional delete, select SQL", zap.String("selectSQL", selectSQL))
+	var shardColumnCollate string
+	if shardColumn != nil {
+		shardColumnCollate = shardColumn.Collate
+	} else {
+		shardColumnCollate = ""
+	}
+
 	rss, err := se.Execute(context.TODO(), selectSQL)
 	if err != nil {
 		return nil, err
@@ -248,7 +255,7 @@ func getShardKeys(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, se 
 
 		// end last batch if: (1) current start != last end (2) current size >= batch size
 		if currentSize >= batchSize {
-			cmp, err := newStart.Compare(se.GetSessionVars().StmtCtx, &currentEnd, collate.GetCollator(shardColumn.Collate))
+			cmp, err := newStart.Compare(se.GetSessionVars().StmtCtx, &currentEnd, collate.GetCollator(shardColumnCollate))
 			if err != nil {
 				return nil, err
 			}
