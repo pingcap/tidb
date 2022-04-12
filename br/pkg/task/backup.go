@@ -269,7 +269,8 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Info("get newCollationEnable for check during restore", zap.String("newCollationEnable", newCollationEnable))
+	log.Info("get new_collations_enabled_on_first_bootstrap for check during restore",
+		zap.String(tidbNewCollationEnabled, newCollationEnable))
 
 	client, err := backup.NewBackupClient(ctx, mgr)
 	if err != nil {

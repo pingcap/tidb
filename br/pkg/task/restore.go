@@ -276,11 +276,12 @@ func CheckNewCollationEnable(
 	if backupNewCollationEnable == "" {
 		if CheckRequirements {
 			return errors.Annotatef(berrors.ErrUnknown,
-				"NewCollactionEnable not found in backupmeta. "+
-					"if you ensure the NewCollactionEnable config of backup cluster is as same as restore cluster, "+
-					"use --check-requirements=false to skip")
+				"the config 'new_collations_enabled_on_first_bootstrap' not found in backupmeta. "+
+					"you can query \"show config WHERE name='new_collations_enabled_on_first_bootstrap';\"."+
+					"if you ensure the config 'new_collations_enabled_on_first_bootstrap' in backup cluster is as same as restore cluster, "+
+					"use --check-requirements=false to skip this check")
 		} else {
-			log.Warn("no NewCollactionEnable in backup")
+			log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not in backupmeta")
 			return nil
 		}
 	}
@@ -297,7 +298,7 @@ func CheckNewCollationEnable(
 
 	if !strings.EqualFold(backupNewCollationEnable, newCollationEnable) {
 		return errors.Annotatef(berrors.ErrUnknown,
-			"newCollationEnable not match, upstream:%v, downstream: %v",
+			"the config 'new_collations_enabled_on_first_bootstrap' not match, upstream:%v, downstream: %v",
 			backupNewCollationEnable, newCollationEnable)
 	}
 	return nil
