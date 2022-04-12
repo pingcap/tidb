@@ -412,11 +412,10 @@ func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPla
 		noOrder := len(apply.GetChildReqProps(outerIdx).SortItems) == 0 // limitation 1
 		_, err := SafeClone(apply.Children()[apply.InnerChildIdx])
 		supportClone := err == nil // limitation 2
-		if err != nil {
-			logutil.BgLogger().Debug("Can not use the parallel apply", zap.Error(err))
-		}
 		if noOrder && supportClone {
 			apply.Concurrency = sctx.GetSessionVars().ExecutorConcurrency
+		} else {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Some apply executors can not be executed parallel"))
 		}
 
 		// because of the limitation 3, we cannot parallelize Apply operators in this Apply's inner size,
