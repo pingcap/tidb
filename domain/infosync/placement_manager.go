@@ -23,7 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/util/pdapi"
-	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/clientv3"
 )
 
 // PlacementManager manages placement settings
