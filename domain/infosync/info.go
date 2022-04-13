@@ -412,16 +412,15 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			}
 			terror.Log(res.Body.Close())
 			return bodyBytes, err
-		} else {
-			logutil.BgLogger().Warn("fail to doRequest, retry next address",
-				zap.Error(err),
-				zap.String("method", method),
-				zap.String("hosts", addr),
-				zap.String("url", url),
-				zap.Int("http status", res.StatusCode),
-				zap.Int("address order", idx),
-			)
 		}
+		logutil.BgLogger().Warn("fail to doRequest, retry next address",
+			zap.Error(err),
+			zap.String("method", method),
+			zap.String("hosts", addr),
+			zap.String("url", url),
+			zap.Int("http status", res.StatusCode),
+			zap.Int("address order", idx),
+		)
 	}
 	return nil, err
 }
