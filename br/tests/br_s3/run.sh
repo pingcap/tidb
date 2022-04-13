@@ -37,7 +37,7 @@ start_s3() {
     s3_pid=$!
     i=0
     status="$(curl -o /dev/null -v -s "http://$S3_ENDPOINT/" -w '%{http_code}' || true)"
-    while ! [ "$status" -gt 0 ] && [ "$status" -lt 500 ]; do
+    while ! { [ "$status" -gt 0 ] && [ "$status" -lt 500 ] }; do
         i=$(($i+1))
         if [ $i -gt 30 ]; then
             echo 'Failed to start minio'
