@@ -1448,12 +1448,15 @@ workLoop:
 					// the collate key can ensure the correct ordering.
 					// This is also corresponding to similar operation in (*statistics.Column).GetColumnRowCount().
 					if ft.EvalType() == types.ETString && ft.Tp != mysql.TypeEnum && ft.Tp != mysql.TypeSet {
-						val.SetBytes(collate.GetCollator(ft.Collate).Key(val.GetString()))
+						collator := collate.GetCollator(ft.Collate)
+						val.SetBytes(collator.Key(val.GetString()))
 						bufferedMemInc += int64(cap(val.GetBytes()))
 						if bufferedMemInc > int64(104857600) { // track when exceeds 100 MB
 							e.memTracker.Consume(bufferedMemInc)
 							totalMemInc += bufferedMemInc
 							bufferedMemInc = int64(0)
+							runtime.ReadMemStats(memStats)
+							logutil.BgLogger().Info("subBuildWorker collate:", zap.Int("idx", task.slicePos), zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()), zap.String("collate", ft.Collate))
 						}
 					}
 					sampleItems = append(sampleItems, &statistics.SampleItem{
