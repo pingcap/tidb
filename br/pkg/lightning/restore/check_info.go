@@ -710,7 +710,7 @@ loop:
 		for _, tbl := range db.Tables {
 			select {
 			case ch <- common.UniqueTable(tbl.DB, tbl.Name):
-			case <- gCtx.Done():
+			case <-gCtx.Done():
 				break loop
 			}
 
