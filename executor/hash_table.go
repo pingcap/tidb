@@ -352,6 +352,7 @@ func newConcurrentMapHashTable() *concurrentMapHashTable {
 	ht.hashMap = newConcurrentMap()
 	ht.entryStore = newEntryStore()
 	ht.length = 0
+	ht.memDelta = hack.DefBucketMemoryUsageForMapIntToPtr + int64(unsafe.Sizeof(entry{}))*initialEntrySliceLen
 	return ht
 }
 

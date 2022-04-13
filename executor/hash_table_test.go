@@ -18,12 +18,14 @@ import (
 	"fmt"
 	"hash"
 	"hash/fnv"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -161,4 +163,20 @@ func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool)
 	require.Equal(t, chk0.GetRow(1).GetDatumRow(colTypes), matched[0].GetDatumRow(colTypes))
 	require.Equal(t, chk1.GetRow(1).GetDatumRow(colTypes), matched[1].GetDatumRow(colTypes))
 	return rowContainer, copiedRC
+}
+
+func TestConcurrentMapHashTableMemoryUsage(t *testing.T) {
+	m := newConcurrentMapHashTable()
+	const iterations = 1024 * hack.LoadFactorNum / hack.LoadFactorDen // 6656
+	wg := &sync.WaitGroup{}
+	wg.Add(2)
+	// Note: Now concurrentMapHashTable doesn't support inserting in parallel.
+	for i := 0; i < iterations; i++ {
+		// Add entry to map.
+		m.Put(uint64(i*ShardCount), chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(i)})
+	}
+	mapMemoryExpected := int64(1024) * hack.DefBucketMemoryUsageForMapIntToPtr
+	entryMemoryExpected := 16 * int64(64+128+256+512+1024+2048+4096)
+	require.Equal(t, mapMemoryExpected+entryMemoryExpected, m.GetMemoryDelta())
+	require.Equal(t, int64(0), m.GetMemoryDelta())
 }
