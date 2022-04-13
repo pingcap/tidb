@@ -269,6 +269,7 @@ func TestCollectCopRuntimeStats(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("create table t1 (a int, b int)")
+	time.Sleep(1 * time.Second)
 	tk.MustExec("set tidb_enable_collect_execution_info=1;")
 	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreRespResult", `return(true)`))
 	rows := tk.MustQuery("explain analyze select * from t1").Rows()
