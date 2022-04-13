@@ -60,6 +60,10 @@ type packetIO struct {
 	bufWriter   *bufio.Writer
 	sequence    uint8
 	readTimeout time.Duration
+	// maxAllowedPacket is the maximum size of one packet in readPacket.
+	maxAllowedPacket uint64
+	// accumulatedLength count the length of received data totally in readPacket.
+	accumulatedLength uint64
 }
 
 func newPacketIO(bufReadConn *bufferedReadConn) *packetIO {
@@ -77,8 +81,7 @@ func (p *packetIO) setReadTimeout(timeout time.Duration) {
 	p.readTimeout = timeout
 }
 
-// maxAllowedPacket is the maximum size of one packet. accumulatedLength count the length of received data totally.
-func (p *packetIO) readOnePacket(maxAllowedPacket uint64, accumulatedLength uint64) ([]byte, error) {
+func (p *packetIO) readOnePacket() ([]byte, error) {
 	var header [4]byte
 	if p.readTimeout > 0 {
 		if err := p.bufReadConn.SetReadDeadline(time.Now().Add(p.readTimeout)); err != nil {
@@ -99,7 +102,7 @@ func (p *packetIO) readOnePacket(maxAllowedPacket uint64, accumulatedLength uint
 	length := int(uint32(header[0]) | uint32(header[1])<<8 | uint32(header[2])<<16)
 
 	// Accumulated data length exceeds the limit.
-	if accumulatedLength+uint64(length) > maxAllowedPacket {
+	if p.accumulatedLength += uint64(length); p.accumulatedLength > p.maxAllowedPacket {
 		terror.Log(errNetPacketTooLarge)
 		return nil, errNetPacketTooLarge
 	}
@@ -117,12 +120,14 @@ func (p *packetIO) readOnePacket(maxAllowedPacket uint64, accumulatedLength uint
 }
 
 func (p *packetIO) readPacket(maxAllowedPacket uint64) ([]byte, error) {
+	p.maxAllowedPacket = maxAllowedPacket
+	p.accumulatedLength = 0
 	if p.readTimeout == 0 {
 		if err := p.bufReadConn.SetReadDeadline(time.Time{}); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	data, err := p.readOnePacket(maxAllowedPacket, 0)
+	data, err := p.readOnePacket()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -132,16 +137,14 @@ func (p *packetIO) readPacket(maxAllowedPacket uint64) ([]byte, error) {
 		return data, nil
 	}
 
-	accumulatedLength := len(data)
 	// handle multi-packet
 	for {
-		buf, err := p.readOnePacket(maxAllowedPacket, uint64(accumulatedLength))
+		buf, err := p.readOnePacket()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 
 		data = append(data, buf...)
-		accumulatedLength += len(data)
 
 		if len(buf) < mysql.MaxPayloadLen {
 			break
