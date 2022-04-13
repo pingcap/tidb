@@ -148,7 +148,7 @@ func (gs *tidbSession) Close() {
 
 // GetGlobalVariables implements glue.Session.
 func (gs *tidbSession) GetGlobalVariable(name string) (string, error) {
-	return gs.se.GetSessionVars().GlobalVarsAccessor.GetTiDBTableValue(name)
+	return gs.se.GetSessionVars().GlobalVarsAccessor.GetTableValueInSystemDB(mysql.TiDBTable, name)
 }
 
 // showCreateTable shows the result of SHOW CREATE TABLE from a TableInfo.

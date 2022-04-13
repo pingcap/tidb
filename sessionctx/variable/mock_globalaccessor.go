@@ -40,3 +40,7 @@ func (m *MockGlobalAccessor) SetGlobalSysVar(name string, value string) error {
 func (m *MockGlobalAccessor) SetGlobalSysVarOnly(name string, value string) error {
 	panic("not supported")
 }
+
+func (m *MockGlobalAccessor) GetTableValueInSystemDB(tblName string, varName string) (string, error) {
+	panic("not supported")
+}

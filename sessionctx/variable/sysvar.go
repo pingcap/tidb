@@ -2092,4 +2092,6 @@ type GlobalVarAccessor interface {
 	SetGlobalSysVar(name string, value string) error
 	// SetGlobalSysVarOnly sets the global system variable without calling the validation function or updating aliases.
 	SetGlobalSysVarOnly(name string, value string) error
+	// GetTableValueInSystemDB gets the system table value for name.
+	GetTableValueInSystemDB(tblName string, varName string) (string, error)
 }

@@ -1114,6 +1114,12 @@ func (s *session) varFromTiDBTable(name string) bool {
 	return false
 }
 
+// GetTableValueInSystemDB gets value corresponding to `varName` in the table `tblName` of systemDB.
+// It returns a string value.
+func (s *session) GetTableValueInSystemDB(tblName string, varName string) (string, error) {
+	return s.getTableValue(context.TODO(), tblName, varName)
+}
+
 // GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
 func (s *session) GetGlobalSysVar(name string) (string, error) {
 	if name == variable.TiDBSlowLogMasking {
