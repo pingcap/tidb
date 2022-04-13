@@ -87,6 +87,8 @@ func (tk *TestKit) Session() session.Session {
 
 // MustExec executes a sql statement and asserts nil error.
 func (tk *TestKit) MustExec(sql string, args ...interface{}) {
+	// Enable TopSQL for all test, and check the resource tag for each RPC request.
+	// This is used to detect which codes are not tracked by TopSQL.
 	topsqlstate.EnableTopSQL()
 	unistore.CheckResourceTagForTopSQLInGoTest = true
 	defer func() {
@@ -106,6 +108,8 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 // MustQuery query the statements and returns result rows.
 // If expected result is set it asserts the query result equals expected result.
 func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
+	// Enable TopSQL for all test, and check the resource tag for each RPC request.
+	// This is used to detect which codes are not tracked by TopSQL.
 	topsqlstate.EnableTopSQL()
 	unistore.CheckResourceTagForTopSQLInGoTest = true
 	defer func() {
