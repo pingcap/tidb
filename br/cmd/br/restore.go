@@ -145,11 +145,11 @@ func newRawRestoreCommand() *cobra.Command {
 
 func newStreamRestoreCommand() *cobra.Command {
 	command := &cobra.Command{
-		Use:   "log",
-		Short: "restore log backups",
+		Use:   "point",
+		Short: "restore backups to specify commit timestamp",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			return runRestoreCommand(command, task.LogRestoreCmd)
+			return runRestoreCommand(command, task.PointRestoreCmd)
 		},
 	}
 	task.DefineFilterFlags(command, filterOutSysAndMemTables, false)

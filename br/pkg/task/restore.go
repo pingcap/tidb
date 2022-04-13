@@ -61,7 +61,7 @@ const (
 	FullRestoreCmd  = "Full Restore"
 	DBRestoreCmd    = "DataBase Restore"
 	TableRestoreCmd = "Table Restore"
-	LogRestoreCmd   = "Log Restore"
+	PointRestoreCmd = "Point Restore"
 	RawRestoreCmd   = "Raw Restore"
 )
 
@@ -307,7 +307,7 @@ func isFullRestore(cmdName string) bool {
 }
 
 func isStreamRestore(cmdName string) bool {
-	return cmdName == LogRestoreCmd
+	return cmdName == PointRestoreCmd
 }
 
 // RunRestore starts a restore task inside the current goroutine.
