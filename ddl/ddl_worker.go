@@ -457,9 +457,11 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 
-	err = deleteRangeForDropSchemaObjectJob(w, job)
-	if err != nil {
-		return errors.Trace(err)
+	if jobNeedGC(job) {
+		err = w.deleteRange(w.ddlJobCtx, job)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	switch job.Type {
@@ -493,23 +495,6 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	w.JobContext.resetWhenJobFinish()
 	err = t.AddHistoryDDLJob(job, updateRawArgs)
 	return errors.Trace(err)
-}
-
-func deleteRangeForDropSchemaObjectJob(w *worker, job *model.Job) error {
-	if jobNeedGC(job) {
-		if job.Type == model.ActionMultiSchemaChange {
-			for _, sub := range job.MultiSchemaInfo.SubJobs {
-				proxyJob := cloneFromSubJob(job, sub)
-				err := deleteRangeForDropSchemaObjectJob(w, proxyJob)
-				if err != nil {
-					return errors.Trace(err)
-				}
-			}
-			return nil
-		}
-		return w.deleteRange(w.ddlJobCtx, job)
-	}
-	return nil
 }
 
 func (w *worker) writeDDLSeqNum(job *model.Job) {

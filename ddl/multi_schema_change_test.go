@@ -224,16 +224,6 @@ func TestMultiSchemaChangeDropIndexedColumnsCancelled(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
 	originHook := dom.DDL().GetHook()
-	getIndexID := func(name string) int64 {
-		tt, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-		require.NoError(t, err)
-		for _, idx := range tt.Indices() {
-			if idx.Meta().Name.L == name {
-				return idx.Meta().ID
-			}
-		}
-		return -1
-	}
 
 	// Test for cancelling the job in a middle state.
 	tk.MustExec("create table t (a int default 1, b int default 2, c int default 3, d int default 4, " +
@@ -245,14 +235,11 @@ func TestMultiSchemaChangeDropIndexedColumnsCancelled(t *testing.T) {
 	})
 	jobIDExt := wrapJobIDExtCallback(originHook)
 	dom.DDL().SetHook(composeHooks(dom, jobIDExt, hook))
-	ib, ia, id := getIndexID("b"), getIndexID("a"), getIndexID("d")
 	tk.MustExec("alter table t drop column b, drop column a, drop column d;")
 	dom.DDL().SetHook(originHook)
 	hook.MustCancelFailed(t)
 	tk.MustQuery("select * from t;").Check(testkit.Rows("3"))
-	checkDelRangeAdded(tk, jobIDExt.jobID, ib)
-	checkDelRangeAdded(tk, jobIDExt.jobID, ia)
-	checkDelRangeAdded(tk, jobIDExt.jobID, id)
+	checkDelRangeCnt(tk, jobIDExt.jobID, 3)
 }
 
 func TestMultiSchemaChangeDropColumnsParallel(t *testing.T) {
@@ -423,12 +410,11 @@ func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, c int);")
 	tk.MustExec("insert into t values (1, 2, 3);")
 	jobIDExt := wrapJobIDExtCallback(originHook)
-	idxIDExt := newIdxIDExtHook(store, dom)
 	cancelHook := newCancelJobHook(store, dom, func(job *model.Job) bool {
 		// Cancel the job when index 't2' is in write-reorg.
 		return job.MultiSchemaInfo.SubJobs[2].SchemaState == model.StateWriteReorganization
 	})
-	dom.DDL().SetHook(composeHooks(dom, jobIDExt, idxIDExt, cancelHook))
+	dom.DDL().SetHook(composeHooks(dom, jobIDExt, cancelHook))
 	tk.MustGetErrCode("alter table t "+
 		"add index t(a, b), add index t1(a), "+
 		"add index t2(a), add index t3(a, b);", errno.ErrCancelledDDLJob)
@@ -437,13 +423,8 @@ func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
 	tk.MustQuery("show index from t;").Check(testkit.Rows( /* no index */ ))
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3"))
 	tk.MustExec("admin check table t;")
-	// Check the adding indexes are added to del-ranges.
-	require.NotEqual(t, -1, idxIDExt.IndexID("t"))
-	require.NotEqual(t, -1, idxIDExt.IndexID("t1"))
-	require.NotEqual(t, -1, idxIDExt.IndexID("t2"))
-	checkDelRangeAdded(tk, jobIDExt.jobID, idxIDExt.IndexID("t"))
-	checkDelRangeAdded(tk, jobIDExt.jobID, idxIDExt.IndexID("t1"))
-	checkDelRangeAdded(tk, jobIDExt.jobID, idxIDExt.IndexID("t2"))
+	// Check the adding indexes are put to del-ranges.
+	checkDelRangeCnt(tk, jobIDExt.jobID, 3)
 
 	// Test cancel failed when some sub-jobs have been finished.
 	tk.MustExec("drop table if exists t;")
@@ -469,16 +450,6 @@ func TestMultiSchemaChangeDropIndexes(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1;")
 	originHook := dom.DDL().GetHook()
-	getIndexID := func(name string) int64 {
-		tt, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-		require.NoError(t, err)
-		for _, idx := range tt.Indices() {
-			if idx.Meta().Name.L == name {
-				return idx.Meta().ID
-			}
-		}
-		return -1
-	}
 
 	jobIDExt := wrapJobIDExtCallback(originHook)
 	dom.DDL().SetHook(jobIDExt)
@@ -492,29 +463,24 @@ func TestMultiSchemaChangeDropIndexes(t *testing.T) {
 	tk.MustExec("create table t (id int, c1 int, c2 int, primary key(id) nonclustered, key i1(c1), key i2(c2), key i3(c1, c2));")
 	tk.MustExec("insert into t values (1, 2, 3);")
 	jobIDExt.Clear()
-	i1, i2 := getIndexID("i1"), getIndexID("i2")
 	tk.MustExec("alter table t drop index i1, drop index i2;")
 	tk.MustGetErrCode("select * from t use index(i1);", errno.ErrKeyDoesNotExist)
 	tk.MustGetErrCode("select * from t use index(i2);", errno.ErrKeyDoesNotExist)
-	checkDelRangeAdded(tk, jobIDExt.jobID, i1)
-	checkDelRangeAdded(tk, jobIDExt.jobID, i2)
+	checkDelRangeCnt(tk, jobIDExt.jobID, 2)
 	jobIDExt.Clear()
-	pk, i3 := getIndexID("primary"), getIndexID("i3")
 	tk.MustExec("alter table t drop index i3, drop primary key;")
 	tk.MustGetErrCode("select * from t use index(primary);", errno.ErrKeyDoesNotExist)
 	tk.MustGetErrCode("select * from t use index(i3);", errno.ErrKeyDoesNotExist)
-	checkDelRangeAdded(tk, jobIDExt.jobID, pk)
-	checkDelRangeAdded(tk, jobIDExt.jobID, i3)
+	checkDelRangeCnt(tk, jobIDExt.jobID, 2)
 
 	// Test drop index with drop column.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int default 1, b int default 2, c int default 3, index t(a))")
 	tk.MustExec("insert into t values ();")
 	jobIDExt.Clear()
-	idx := getIndexID("t")
 	tk.MustExec("alter table t drop index t, drop column a")
 	tk.MustGetErrCode("select * from t force index(t)", errno.ErrKeyDoesNotExist)
-	checkDelRangeAdded(tk, jobIDExt.jobID, idx)
+	checkDelRangeCnt(tk, jobIDExt.jobID, 1)
 
 	dom.DDL().SetHook(originHook)
 }
@@ -610,16 +576,6 @@ func TestMultiSchemaRenameIndexes(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
 	originHook := dom.DDL().GetHook()
-	getIndexID := func(name string) int64 {
-		tt, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-		require.NoError(t, err)
-		for _, idx := range tt.Indices() {
-			if idx.Meta().Name.L == name {
-				return idx.Meta().ID
-			}
-		}
-		return -1
-	}
 
 	// Test rename index.
 	tk.MustExec("drop table if exists t")
@@ -644,13 +600,12 @@ func TestMultiSchemaRenameIndexes(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int default 1, b int default 2, c int default 3, index t(a))")
 	tk.MustExec("insert into t values ();")
-	i1 := getIndexID("t")
 	jobIDExt := wrapJobIDExtCallback(originHook)
 	dom.DDL().SetHook(jobIDExt)
 	tk.MustExec("alter table t drop column a, rename index t to x")
 	tk.MustGetErrCode("select * from t use index (x);", errno.ErrKeyDoesNotExist)
 	tk.MustQuery("select * from t;").Check(testkit.Rows("2 3"))
-	checkDelRangeAdded(tk, jobIDExt.jobID, i1)
+	checkDelRangeCnt(tk, jobIDExt.jobID, 1)
 
 	// Test cancel job with renameIndex
 	tk.MustExec("drop table if exists t")
@@ -693,7 +648,7 @@ func TestMultiSchemaChangeModifyColumns(t *testing.T) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3"))
 	tk.MustQuery("select * from t use index(i1, i2, i3, i4, i5);").Check(testkit.Rows("1 2 3"))
 	tk.MustExec("admin check table t;")
-	checkDelRangeCnt(tk, jobIDExt.jobID, 5+2+1) // 5 old indexes, 2 tmp for col 'a', 1 tmp for col 'b'.
+	checkDelRangeCnt(tk, jobIDExt.jobID, 8)
 
 	// Modify index-covered columns with position change.
 	tk.MustExec("drop table if exists t;")
@@ -706,7 +661,7 @@ func TestMultiSchemaChangeModifyColumns(t *testing.T) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("3 2 1"))
 	tk.MustQuery("select * from t use index(i1, i2, i3, i4, i5);").Check(testkit.Rows("3 2 1"))
 	tk.MustExec("admin check table t;")
-	checkDelRangeCnt(tk, jobIDExt.jobID, 5+2+1) // 5 old indexes, 2 tmp for col 'a', 1 tmp for col 'b'.
+	checkDelRangeCnt(tk, jobIDExt.jobID, 8)
 
 	// Modify columns that require and don't require reorganization of data.
 	tk.MustExec("drop table if exists t;")
@@ -788,7 +743,7 @@ func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
 			assert.Equal(t, rows[1][len(rows[1])-1], "running")
 
 			assert.Equal(t, rows[2][3], "add index /* subjob */")
-			assert.Equal(t, rows[2][4], "queueing")
+			assert.Equal(t, rows[2][4], "none")
 			assert.Equal(t, rows[2][len(rows[2])-1], "none")
 		}
 	}
