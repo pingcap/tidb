@@ -241,6 +241,14 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 	// wait reorganization job done or timeout
 	select {
 	case err := <-w.reorgCtx.doneCh:
+		if err != nil {
+			w.reorgCtx.clean()
+			return errors.Trace(err)
+		}
+		if w.reorgCtx.isReorgCanceled() {
+			w.reorgCtx.clean()
+			return dbterror.ErrCancelledDDLJob
+		}
 		rowCount, _, _ := w.reorgCtx.getRowCountAndKey()
 		logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
 		// Update a job's RowCount.
@@ -250,9 +258,6 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		w.mergeWarningsIntoJob(job)
 
 		w.reorgCtx.clean()
-		if err != nil {
-			return errors.Trace(err)
-		}
 
 		switch reorgInfo.Type {
 		case model.ActionAddIndex, model.ActionAddPrimaryKey:
