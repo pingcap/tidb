@@ -1581,11 +1581,11 @@ func (p *rangeColumnsPruner) partitionRangeForExpr(sctx sessionctx.Context, expr
 		return 0, len(p.data), false
 	}
 	if exprCollation.Coer < expression.CoercibilityImplicit {
-		// Explicit collation, if set to Binary collation, we can still use prune partitions,
+		// Explicit collation, if set to Binary collation, we can still use prune partitions on EQ,
 		// but we need to change the constants collation
 		conCharSet, conColl := con.CharsetAndCollation()
 		colCharSet, colColl := p.partCol.RetType.Charset, p.partCol.RetType.Collate
-		if !collate.IsBinCollation(conColl) || conCharSet != colCharSet {
+		if !collate.IsBinCollation(conColl) || conCharSet != colCharSet || opName != ast.EQ {
 			return 0, len(p.data), true
 		}
 		clonedCon := con.Clone()
