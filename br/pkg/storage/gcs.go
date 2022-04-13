@@ -180,11 +180,6 @@ func (s *gcsStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 		opt = &WalkOption{}
 	}
 
-	maxKeys := int64(1000)
-	if opt.ListCount > 0 {
-		maxKeys = opt.ListCount
-	}
-
 	prefix := path.Join(s.gcs.Prefix, opt.SubDir)
 	if len(prefix) > 0 && !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
@@ -194,7 +189,7 @@ func (s *gcsStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	// only need each object's name and size
 	query.SetAttrSelection([]string{"Name", "Size"})
 	iter := s.bucket.Objects(ctx, query)
-	for i := int64(0); i != maxKeys; i++ {
+	for {
 		attrs, err := iter.Next()
 		if err == iterator.Done {
 			break
