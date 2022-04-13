@@ -301,8 +301,6 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 		defer trace.StartRegion(ctx, fmt.Sprintf("%T.Next", e)).End()
 	}
 	if topsqlstate.TopSQLEnabled() && sessVars.StmtCtx.IsSQLAndPlanRegistered.CAS(false, true) {
-		// If TopSQL is enabled, but the SQL has not register SQL and plan, should register SQL and Plan here.
-		// This is uses to catch the running SQL when Top SQL is enabled in execution.
 		registerSQLAndPlanInExecForTopSQL(sessVars)
 	}
 	err := e.Next(ctx, req)
