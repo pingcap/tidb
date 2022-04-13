@@ -1351,9 +1351,12 @@ func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Contex
 	}
 	stats := a.Ctx.GetStmtStats()
 	if !topsqlstate.TopSQLEnabled() {
+		// Fast plan means the SQL will run very fast, and won't consume too much CPU.
+		// So no need to attach SQL and plan info to catch those running SQL.
 		if isFastPlan(a.Plan) {
 			return ctx
 		}
+		// Always attach the SQL and plan info uses to catch the running SQL when Top SQL is enabled in execution.
 		if stats != nil {
 			sc.KvExecCounter = stats.CreateKvExecCounter(sqlDigestByte, planDigestByte)
 		}
