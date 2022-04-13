@@ -397,6 +397,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 				return nil, err
 			}
 			if res.StatusCode != http.StatusOK {
+				logutil.BgLogger().Error("response not 200", zap.Int("status code", res.StatusCode), zap.String("server addr", addr))
 				err = ErrHTTPServiceError.FastGen("%s", bodyBytes)
 				if res.StatusCode == http.StatusNotFound || res.StatusCode == http.StatusPreconditionFailed {
 					err = nil
@@ -405,6 +406,8 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			}
 			terror.Log(res.Body.Close())
 			return bodyBytes, err
+		} else {
+			logutil.BgLogger().Error("fail to doRequest", zap.Error(err), zap.String("server addr", addr))
 		}
 	}
 	return nil, err
