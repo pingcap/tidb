@@ -115,8 +115,8 @@ func TestCancelPartitionTable(t *testing.T) {
 	for j, tc := range allTestCase {
 		i = j
 		if tc.onJobBefore {
-			for _, prepareSql := range tc.prepareSQL {
-				tk.MustExec(prepareSql)
+			for _, prepareSQL := range tc.prepareSQL {
+				tk.MustExec(prepareSQL)
 			}
 
 			cancel = false
@@ -130,8 +130,8 @@ func TestCancelPartitionTable(t *testing.T) {
 			}
 		}
 		if tc.onJobUpdate {
-			for _, prepareSql := range tc.prepareSQL {
-				tk.MustExec(prepareSql)
+			for _, prepareSQL := range tc.prepareSQL {
+				tk.MustExec(prepareSQL)
 			}
 
 			cancel = false
