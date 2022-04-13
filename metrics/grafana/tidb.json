@@ -8719,6 +8719,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
+          "description": "It indicates if a request of PD client is forwarded by the PD follower",
           "decimals": null,
           "fill": 1,
           "gridPos": {
