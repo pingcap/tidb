@@ -81,15 +81,29 @@ func TestInvalidTLS(t *testing.T) {
 	_, err = common.NewTLS(caPath, "", "", "localhost")
 	require.Regexp(t, "failed to append ca certs", err.Error())
 
+	err = os.WriteFile(caPath, []byte(`-----BEGIN CERTIFICATE-----
+MIIBITCBxwIUf04/Hucshr7AynmgF8JeuFUEf9EwCgYIKoZIzj0EAwIwEzERMA8G
+A1UEAwwIYnJfdGVzdHMwHhcNMjIwNDEzMDcyNDQxWhcNMjIwNDE1MDcyNDQxWjAT
+MREwDwYDVQQDDAhicl90ZXN0czBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABL+X
+wczUg0AbaFFaCI+FAk3K9vbB9JeIORgGKS+F1TKip5tvm96g7S5lq8SgY38SXVc3
+0yS3YqWZqnRjWi+sLwIwCgYIKoZIzj0EAwIDSQAwRgIhAJcpSwsUhqkM08LK1gYC
+ze4ZnCkwJdP2VdpI3WZsoI7zAiEAjP8X1c0iFwYxdAbQAveX+9msVrzyUpZOohi4
+RtgQTNI=
+-----END CERTIFICATE-----
+`), 0o644)
+	require.NoError(t, err)
+
 	certPath := filepath.Join(tempDir, "test.pem")
 	keyPath := filepath.Join(tempDir, "test.key")
-	_, err = common.NewTLS(caPath, certPath, keyPath, "localhost")
+	tls, err := common.NewTLS(caPath, certPath, keyPath, "localhost")
+	_, err = tls.TLSConfig().GetCertificate(nil)
 	require.Regexp(t, "could not load client key pair: open.*", err.Error())
 
 	err = os.WriteFile(certPath, []byte("invalid cert content"), 0o644)
 	require.NoError(t, err)
 	err = os.WriteFile(keyPath, []byte("invalid key content"), 0o600)
 	require.NoError(t, err)
-	_, err = common.NewTLS(caPath, certPath, keyPath, "localhost")
+	tls, err = common.NewTLS(caPath, certPath, keyPath, "localhost")
+	_, err = tls.TLSConfig().GetCertificate(nil)
 	require.Regexp(t, "could not load client key pair: tls.*", err.Error())
 }
