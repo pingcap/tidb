@@ -105,7 +105,7 @@ func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransaction
 
 func doOneJob(ctx context.Context, job *job, totalJobCount int, stmt *ast.NonTransactionalDeleteStmt, tp types.FieldType, refer *ast.ResultField,
 	originalCondition ast.ExprNode, se Session) string {
-	logutil.Logger(ctx).Info("start a Non-transactional delete", zap.String("job", job.String()))
+	logutil.Logger(ctx).Info("start a Non-transactional delete", zap.String("job", job.String()), zap.Int("totalJobCount", totalJobCount))
 
 	var whereCondition ast.ExprNode
 
@@ -184,6 +184,7 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, stmt *ast.NonTra
 	}
 
 	job.sql = deleteSQL
+	stmt.DeleteStmt.SetText(nil, fmt.Sprintf("job %v/%v: %s", job.jobID, totalJobCount, deleteSQL))
 	rs, err := se.ExecuteStmt(context.TODO(), stmt.DeleteStmt)
 
 	// collect errors
