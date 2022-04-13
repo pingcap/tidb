@@ -66,7 +66,7 @@ func (p *PhysicalIndexLookUpReader) CalPlanCost(taskType property.TaskType) floa
 
 	// index net I/O cost
 	idxCount := p.indexPlan.StatsCount()
-	rowSize := p.stats.HistColl.GetAvgRowSize(p.ctx, p.schema.Columns, false, false)
+	rowSize := p.stats.HistColl.GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
 	p.planCost += idxCount * rowSize * p.ctx.GetSessionVars().GetNetworkFactor(nil)
 
 	// index net seek cost
