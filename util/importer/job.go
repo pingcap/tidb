@@ -67,7 +67,6 @@ func doJob(table *table, db *sql.DB, batch int, jobChan chan struct{}, doneChan 
 
 	if count > 0 {
 		doInsert(table, db, count)
-		count = 0
 	}
 
 	doneChan <- struct{}{}

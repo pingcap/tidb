@@ -27,11 +27,10 @@ import (
 
 func TestWatcher(t *testing.T) {
 	var (
-		oldFileName = "mysql-bin.000001"
-		newFileName = "mysql-bin.000002"
-		oldFilePath = ""
-		newFilePath = ""
-		wg          sync.WaitGroup
+		oldFilePath, newFilePath string
+		oldFileName              = "mysql-bin.000001"
+		newFileName              = "mysql-bin.000002"
+		wg                       sync.WaitGroup
 	)
 
 	// create dir

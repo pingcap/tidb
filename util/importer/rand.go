@@ -39,13 +39,14 @@ func init() {
 }
 
 func randInt(min int, max int) int {
-	return min + rand.Intn(max-min+1)
+	return min + rand.Intn(max-min+1) // nolint:gosec
 }
 
 func randInt64(min int64, max int64) int64 {
-	return min + rand.Int63n(max-min+1)
+	return min + rand.Int63n(max-min+1) // nolint:gosec
 }
 
+// nolint: unused, deadcode
 func randFloat64(min int64, max int64, prec int) float64 {
 	value := float64(randInt64(min, max))
 	fvalue := strconv.FormatFloat(value, 'f', prec, 64)
@@ -53,6 +54,7 @@ func randFloat64(min int64, max int64, prec int) float64 {
 	return value
 }
 
+// nolint: unused, deadcode
 func randBool() bool {
 	value := randInt(0, 1)
 	return value == 1
@@ -62,7 +64,7 @@ func randBool() bool {
 func randString(n int) string {
 	b := make([]byte, n)
 	// A src.Int63() generates 63 random bits, enough for letterIdxMax characters!
-	for i, cache, remain := n-1, rand.Int63(), letterIdxMax; i >= 0; {
+	for i, cache, remain := n-1, rand.Int63(), letterIdxMax; i >= 0; { // nolint:gosec
 		if remain == 0 {
 			cache, remain = rand.Int63(), letterIdxMax
 		}
@@ -77,6 +79,7 @@ func randString(n int) string {
 	return string(b)
 }
 
+// nolint: unused, deadcode
 func randDuration(n time.Duration) time.Duration {
 	duration := randInt(0, int(n))
 	return time.Duration(duration)
