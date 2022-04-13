@@ -1359,6 +1359,8 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 		runtime.ReadMemStats(memStats)
 		logutil.BgLogger().Info("subMergeWorker before FromProto:", zap.Int("idx", idx), zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
 		subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
+		runtime.ReadMemStats(memStats)
+		logutil.BgLogger().Info("subMergeWorker after FromProto:", zap.Int("idx", idx), zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
 		colResp = nil
 		logutil.BgLogger().Info("subMergeWorker FromProto: ", zap.Int("idx", idx), zap.Duration("time", time.Now().Sub(before)))
 		logutil.BgLogger().Info("subMergeWorker consumes memory: ", zap.Int("idx", idx), zap.Int64("subCollector", subCollector.Base().MemSize))
@@ -1420,7 +1422,7 @@ workLoop:
 			}
 			memStats := &runtime.MemStats{}
 			runtime.ReadMemStats(memStats)
-			logutil.BgLogger().Info("subBuildWorker befor build:", zap.Int("taskIdx", task.slicePos), zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
+			logutil.BgLogger().Info("subBuildWorker before build:", zap.Int("idx", task.slicePos), zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
 			var collector *statistics.SampleCollector
 			totalMemInc := int64(0)
 			if task.isColumn {
@@ -1430,11 +1432,17 @@ workLoop:
 					continue
 				}
 				sampleNum := task.rootRowCollector.Base().Samples.Len()
+				runtime.ReadMemStats(memStats)
+				logutil.BgLogger().Info("subBuildWorker before make:", zap.Int("idx", task.slicePos), zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
 				sampleItems := make([]*statistics.SampleItem, 0, sampleNum)
-				// datum is deep copy
-				initMemSize := int64(unsafe.Sizeof(sampleItems)) + (8+statistics.EmptySampleItemSize)*int64(sampleNum)
+				initMemSize := int64(unsafe.Sizeof(sampleItems)) + 8*int64(sampleNum)
 				e.memTracker.Consume(initMemSize)
-				logutil.BgLogger().Info("subBuildWorker consumes memory: ", zap.Int("taskIdx", task.slicePos), zap.Int64("init", initMemSize))
+				runtime.ReadMemStats(memStats)
+				logutil.BgLogger().Info("subBuildWorker after make:", zap.Int("idx", task.slicePos), zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
+				// datum is deep copy
+				initMemSize2 := statistics.EmptySampleItemSize * int64(sampleNum)
+				e.memTracker.Consume(initMemSize2)
+				logutil.BgLogger().Info("subBuildWorker consumes memory: ", zap.Int("idx", task.slicePos), zap.Int64("init", initMemSize), zap.Int("sampleNum", sampleNum))
 				totalMemInc += initMemSize
 				memInc := int64(0)
 				for j, row := range task.rootRowCollector.Base().Samples {
@@ -1450,10 +1458,11 @@ workLoop:
 						val.SetBytes(collate.GetCollator(ft.Collate).Key(val.GetString()))
 						memInc += int64(cap(val.GetBytes()))
 					}
-					sampleItems = append(sampleItems, &statistics.SampleItem{
+					newItem := &statistics.SampleItem{
 						Value:   val,
 						Ordinal: j,
-					})
+					}
+					sampleItems = append(sampleItems, newItem)
 				}
 				e.memTracker.Consume(memInc)
 				totalMemInc += memInc
@@ -1473,7 +1482,7 @@ workLoop:
 				// 8 is size of reference, 32 is the size of "b := make([]byte, 0, 8)"
 				initMemSize := int64(unsafe.Sizeof(sampleItems)) + (8+statistics.EmptySampleItemSize+32)*int64(sampleNum)
 				e.memTracker.Consume(initMemSize)
-				logutil.BgLogger().Info("subBuildWorker consumes memory: ", zap.Int("taskIdx", task.slicePos), zap.Int64("init", initMemSize))
+				logutil.BgLogger().Info("subBuildWorker consumes memory: ", zap.Int("idx", task.slicePos), zap.Int64("init", initMemSize))
 				totalMemInc += initMemSize
 				for _, row := range task.rootRowCollector.Base().Samples {
 					if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
@@ -1518,18 +1527,18 @@ workLoop:
 				continue
 			}
 			runtime.ReadMemStats(memStats)
-			logutil.BgLogger().Info("subBuildWorker before GC:", zap.Int("taskIdx", task.slicePos), zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
+			logutil.BgLogger().Info("subBuildWorker before GC:", zap.Int("idx", task.slicePos), zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
 			collector = nil
 			runtime.GC()
 			finalMemSize := hist.MemoryUsage() + topn.MemoryUsage()
-			logutil.BgLogger().Info("subBuildWorker consumes memory: ", zap.Int("taskIdx", task.slicePos), zap.Int64("sample-temp", -totalMemInc))
-			logutil.BgLogger().Info("subBuildWorker consumes memory: ", zap.Int("taskIdx", task.slicePos), zap.Int64("final", finalMemSize))
+			logutil.BgLogger().Info("subBuildWorker consumes memory: ", zap.Int("idx", task.slicePos), zap.Int64("sample-temp", -totalMemInc))
+			logutil.BgLogger().Info("subBuildWorker consumes memory: ", zap.Int("idx", task.slicePos), zap.Int64("final", finalMemSize))
 			e.memTracker.Consume(finalMemSize - totalMemInc)
 			hists[task.slicePos] = hist
 			topns[task.slicePos] = topn
 			resultCh <- nil
 			runtime.ReadMemStats(memStats)
-			logutil.BgLogger().Info("subBuildWorker after GC:", zap.Int("taskIdx", task.slicePos), zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
+			logutil.BgLogger().Info("subBuildWorker after GC:", zap.Int("idx", task.slicePos), zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
 		case <-exitCh:
 			return
 		}
