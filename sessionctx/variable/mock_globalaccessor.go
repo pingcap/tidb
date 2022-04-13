@@ -41,6 +41,7 @@ func (m *MockGlobalAccessor) SetGlobalSysVarOnly(name string, value string) erro
 	panic("not supported")
 }
 
+// GetTableValueInSystemDB implements GlobalVarAccessor.GetTableValueInSystemDB interface.
 func (m *MockGlobalAccessor) GetTableValueInSystemDB(tblName string, varName string) (string, error) {
 	panic("not supported")
 }
