@@ -171,11 +171,13 @@ func (t *copTask) finishIndexPlan() {
 		tableInfo = ts.Table
 	}
 	// Network cost of transferring rows of index scan to TiDB.
-	is := getBottomPlan(t.indexPlan).(*PhysicalIndexScan)
-	is.rowSizeForNet = t.tblColHists.GetAvgRowSize(t.indexPlan.SCtx(), t.indexPlan.Schema().Columns, true, false)
-	t.cst += cnt * sessVars.GetNetworkFactor(tableInfo) * is.rowSizeForNet
+	t.cst += cnt * sessVars.GetNetworkFactor(tableInfo) * t.tblColHists.GetAvgRowSize(t.indexPlan.SCtx(), t.indexPlan.Schema().Columns, true, false)
 
 	// net seek cost
+	var p PhysicalPlan
+	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
+	}
+	is := p.(*PhysicalIndexScan)
 	if !is.underInnerIndexJoin { // no need to accumulate seek cost for IndexJoin
 		t.cst += float64(len(is.Ranges)) * sessVars.GetSeekFactor(is.Table) // net seek cost
 	}
