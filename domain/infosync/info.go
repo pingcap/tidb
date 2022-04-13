@@ -181,19 +181,8 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() 
 	if err != nil {
 		return nil, err
 	}
-<<<<<<< HEAD
-	if etcdCli != nil {
-		is.labelRuleManager = initLabelRuleManager(etcdCli.Endpoints())
-		is.placementManager = initPlacementManager(etcdCli.Endpoints())
-	} else {
-		is.labelRuleManager = initLabelRuleManager([]string{})
-		is.placementManager = initPlacementManager([]string{})
-	}
-=======
 	is.labelRuleManager = initLabelRuleManager(etcdCli)
 	is.placementManager = initPlacementManager(etcdCli)
-	is.tiflashPlacementManager = initTiFlashPlacementManager(etcdCli)
->>>>>>> 14f4888fb... *: Auto refresh PD addrs for `PDPlacementManager`, `PDLabelManager`, `TiFlashPDPlacementManager` (#33909)
 	setGlobalInfoSyncer(is)
 	return is, nil
 }
@@ -234,45 +223,6 @@ func initPlacementManager(etcdCli *clientv3.Client) PlacementManager {
 	return &PDPlacementManager{etcdCli: etcdCli}
 }
 
-<<<<<<< HEAD
-=======
-func initTiFlashPlacementManager(etcdCli *clientv3.Client) TiFlashPlacementManager {
-	if etcdCli == nil {
-		m := mockTiFlashPlacementManager{}
-		return &m
-	}
-	logutil.BgLogger().Warn("init TiFlashPlacementManager", zap.Strings("pd addrs", etcdCli.Endpoints()))
-	return &TiFlashPDPlacementManager{etcdCli: etcdCli}
-}
-
-// GetMockTiFlash can only be used in tests to get MockTiFlash
-func GetMockTiFlash() *MockTiFlash {
-	is, err := getGlobalInfoSyncer()
-	if err != nil {
-		return nil
-	}
-
-	m, ok := is.tiflashPlacementManager.(*mockTiFlashPlacementManager)
-	if ok {
-		return m.tiflash
-	}
-	return nil
-}
-
-// SetMockTiFlash can only be used in tests to set MockTiFlash
-func SetMockTiFlash(tiflash *MockTiFlash) {
-	is, err := getGlobalInfoSyncer()
-	if err != nil {
-		return
-	}
-
-	m, ok := is.tiflashPlacementManager.(*mockTiFlashPlacementManager)
-	if ok {
-		m.tiflash = tiflash
-	}
-}
-
->>>>>>> 14f4888fb... *: Auto refresh PD addrs for `PDPlacementManager`, `PDLabelManager`, `TiFlashPDPlacementManager` (#33909)
 // GetServerInfo gets self server static information.
 func GetServerInfo() (*ServerInfo, error) {
 	is, err := getGlobalInfoSyncer()
