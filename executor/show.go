@@ -1895,9 +1895,15 @@ func (e *ShowExec) fetchShowBuiltins() error {
 // Because view's underlying table's column could change or recreate, so view's column type may change over time.
 // To avoid this situation we need to generate a logical plan and extract current column types from Schema.
 func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, dbName model.CIStr, tbl *model.TableInfo) error {
-	if tbl.IsView() {
+	if !tbl.IsView() {
+		return nil
+	}
+	// We need to run the build plan process in another session because there may be
+	// multiple goroutines running at the same time while session is not goroutine-safe.
+	// Take joining system table as an example, `fetchBuildSideRows` and `fetchProbeSideChunks` can be run concurrently.
+	return runWithSystemSession(sctx, func(s sessionctx.Context) error {
 		// Retrieve view columns info.
-		planBuilder, _ := plannercore.NewPlanBuilder().Init(sctx, is, &hint.BlockHintProcessor{})
+		planBuilder, _ := plannercore.NewPlanBuilder().Init(s, is, &hint.BlockHintProcessor{})
 		if viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl); err == nil {
 			viewSchema := viewLogicalPlan.Schema()
 			viewOutputNames := viewLogicalPlan.OutputNames()
@@ -1913,6 +1919,16 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 		} else {
 			return err
 		}
+		return nil
+	})
+}
+
+func runWithSystemSession(sctx sessionctx.Context, fn func(sessionctx.Context) error) error {
+	b := &baseExecutor{ctx: sctx}
+	sysCtx, err := b.getSysSession()
+	if err != nil {
+		return err
 	}
-	return nil
+	defer b.releaseSysSession(sysCtx)
+	return fn(sysCtx)
 }
