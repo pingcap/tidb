@@ -1264,7 +1264,7 @@
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ t1.b, t2.a from t2 t1, t2 t2 where t1.b=t2.b and t2.c=-1;",
-        "Best": "IndexJoin{IndexReader(Index(t2.b)[[NULL,+inf]])->TableReader(Table(t2)->Sel([eq(test.t2.c, -1)]))}(test.t2.b,test.t2.b)",
+        "Best": "IndexJoin{IndexReader(Index(t2.b)[[NULL,NULL]])->TableReader(Table(t2)->Sel([eq(test.t2.c, -1)]))}(test.t2.b,test.t2.b)",
         "Warning": "[planner:1815]Optimizer Hint /*+ INL_JOIN(t2) */ or /*+ TIDB_INLJ(t2) */ is inapplicable",
         "Hints": "use_index(@`sel_1` `test`.`t1` `b`), use_index(@`sel_1` `test`.`t2` ), inl_join(@`sel_1` `test`.`t1`)"
       }
