@@ -183,15 +183,9 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() 
 	if err != nil {
 		return nil, err
 	}
-	if etcdCli != nil {
-		is.labelRuleManager = initLabelRuleManager(etcdCli.Endpoints())
-		is.placementManager = initPlacementManager(etcdCli.Endpoints())
-		is.tiflashPlacementManager = initTiFlashPlacementManager(etcdCli.Endpoints())
-	} else {
-		is.labelRuleManager = initLabelRuleManager([]string{})
-		is.placementManager = initPlacementManager([]string{})
-		is.tiflashPlacementManager = initTiFlashPlacementManager([]string{})
-	}
+	is.labelRuleManager = initLabelRuleManager(etcdCli)
+	is.placementManager = initPlacementManager(etcdCli)
+	is.tiflashPlacementManager = initTiFlashPlacementManager(etcdCli)
 	setGlobalInfoSyncer(is)
 	return is, nil
 }
@@ -218,27 +212,27 @@ func (is *InfoSyncer) GetSessionManager() util2.SessionManager {
 	return is.manager
 }
 
-func initLabelRuleManager(addrs []string) LabelRuleManager {
-	if len(addrs) == 0 {
+func initLabelRuleManager(etcdCli *clientv3.Client) LabelRuleManager {
+	if etcdCli == nil {
 		return &mockLabelManager{labelRules: map[string][]byte{}}
 	}
-	return &PDLabelManager{addrs: addrs}
+	return &PDLabelManager{etcdCli: etcdCli}
 }
 
-func initPlacementManager(addrs []string) PlacementManager {
-	if len(addrs) == 0 {
+func initPlacementManager(etcdCli *clientv3.Client) PlacementManager {
+	if etcdCli == nil {
 		return &mockPlacementManager{}
 	}
-	return &PDPlacementManager{addrs: addrs}
+	return &PDPlacementManager{etcdCli: etcdCli}
 }
 
-func initTiFlashPlacementManager(addrs []string) TiFlashPlacementManager {
-	if len(addrs) == 0 {
+func initTiFlashPlacementManager(etcdCli *clientv3.Client) TiFlashPlacementManager {
+	if etcdCli == nil {
 		m := mockTiFlashPlacementManager{}
 		return &m
 	}
-	logutil.BgLogger().Warn("init TiFlashPlacementManager", zap.Strings("pd addrs", addrs))
-	return &TiFlashPDPlacementManager{addrs: addrs}
+	logutil.BgLogger().Warn("init TiFlashPlacementManager", zap.Strings("pd addrs", etcdCli.Endpoints()))
+	return &TiFlashPDPlacementManager{etcdCli: etcdCli}
 }
 
 // GetMockTiFlash can only be used in tests to get MockTiFlash
@@ -378,7 +372,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 	var err error
 	var req *http.Request
 	var res *http.Response
-	for _, addr := range addrs {
+	for idx, addr := range addrs {
 		url := util2.ComposeURL(addr, route)
 		req, err = http.NewRequestWithContext(ctx, method, url, body)
 		if err != nil {
@@ -397,6 +391,13 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 				return nil, err
 			}
 			if res.StatusCode != http.StatusOK {
+				logutil.BgLogger().Warn("response not 200",
+					zap.String("method", method),
+					zap.String("hosts", addr),
+					zap.String("url", url),
+					zap.Int("http status", res.StatusCode),
+					zap.Int("address order", idx),
+				)
 				err = ErrHTTPServiceError.FastGen("%s", bodyBytes)
 				if res.StatusCode == http.StatusNotFound || res.StatusCode == http.StatusPreconditionFailed {
 					err = nil
@@ -406,6 +407,13 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			terror.Log(res.Body.Close())
 			return bodyBytes, err
 		}
+		logutil.BgLogger().Warn("fail to doRequest, retry next address",
+			zap.Error(err),
+			zap.String("method", method),
+			zap.String("hosts", addr),
+			zap.String("url", url),
+			zap.Int("address order", idx),
+		)
 	}
 	return nil, err
 }
