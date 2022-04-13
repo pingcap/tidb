@@ -22,6 +22,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -80,6 +81,7 @@ var ErrPrometheusAddrIsNotSet = dbterror.ClassDomain.NewStd(errno.ErrPrometheusA
 
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
+<<<<<<< HEAD
 	etcdCli         *clientv3.Client
 	info            *ServerInfo
 	serverInfoPath  string
@@ -90,6 +92,24 @@ type InfoSyncer struct {
 	topologySession *concurrency.Session
 	prometheusAddr  string
 	modifyTime      time.Time
+=======
+	etcdCli        *clientv3.Client
+	info           *ServerInfo
+	serverInfoPath string
+	minStartTS     uint64
+	minStartTSPath string
+	managerMu      struct {
+		mu sync.RWMutex
+		util2.SessionManager
+	}
+	session                 *concurrency.Session
+	topologySession         *concurrency.Session
+	prometheusAddr          string
+	modifyTime              time.Time
+	labelRuleManager        LabelRuleManager
+	placementManager        PlacementManager
+	tiflashPlacementManager TiFlashPlacementManager
+>>>>>>> 8af7a4d4c... domain: sync the access of InfoSyncer.SessionManager (#33924)
 }
 
 // ServerInfo is server static information.
@@ -158,9 +178,71 @@ func (is *InfoSyncer) init(ctx context.Context, skipRegisterToDashboard bool) er
 
 // SetSessionManager set the session manager for InfoSyncer.
 func (is *InfoSyncer) SetSessionManager(manager util2.SessionManager) {
-	is.manager = manager
+	is.managerMu.mu.Lock()
+	defer is.managerMu.mu.Unlock()
+	is.managerMu.SessionManager = manager
 }
 
+<<<<<<< HEAD
+=======
+// GetSessionManager get the session manager.
+func (is *InfoSyncer) GetSessionManager() util2.SessionManager {
+	is.managerMu.mu.RLock()
+	defer is.managerMu.mu.RUnlock()
+	return is.managerMu.SessionManager
+}
+
+func initLabelRuleManager(etcdCli *clientv3.Client) LabelRuleManager {
+	if etcdCli == nil {
+		return &mockLabelManager{labelRules: map[string][]byte{}}
+	}
+	return &PDLabelManager{etcdCli: etcdCli}
+}
+
+func initPlacementManager(etcdCli *clientv3.Client) PlacementManager {
+	if etcdCli == nil {
+		return &mockPlacementManager{}
+	}
+	return &PDPlacementManager{etcdCli: etcdCli}
+}
+
+func initTiFlashPlacementManager(etcdCli *clientv3.Client) TiFlashPlacementManager {
+	if etcdCli == nil {
+		m := mockTiFlashPlacementManager{}
+		return &m
+	}
+	logutil.BgLogger().Warn("init TiFlashPlacementManager", zap.Strings("pd addrs", etcdCli.Endpoints()))
+	return &TiFlashPDPlacementManager{etcdCli: etcdCli}
+}
+
+// GetMockTiFlash can only be used in tests to get MockTiFlash
+func GetMockTiFlash() *MockTiFlash {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil
+	}
+
+	m, ok := is.tiflashPlacementManager.(*mockTiFlashPlacementManager)
+	if ok {
+		return m.tiflash
+	}
+	return nil
+}
+
+// SetMockTiFlash can only be used in tests to set MockTiFlash
+func SetMockTiFlash(tiflash *MockTiFlash) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return
+	}
+
+	m, ok := is.tiflashPlacementManager.(*mockTiFlashPlacementManager)
+	if ok {
+		m.tiflash = tiflash
+	}
+}
+
+>>>>>>> 8af7a4d4c... domain: sync the access of InfoSyncer.SessionManager (#33924)
 // GetServerInfo gets self server static information.
 func GetServerInfo() (*ServerInfo, error) {
 	is, err := getGlobalInfoSyncer()
@@ -377,11 +459,16 @@ func (is *InfoSyncer) RemoveMinStartTS() {
 
 // ReportMinStartTS reports self server min start timestamp to ETCD.
 func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
-	if is.manager == nil {
-		// Server may not start in time.
+	sm := is.GetSessionManager()
+	if sm == nil {
 		return
 	}
+<<<<<<< HEAD
 	pl := is.manager.ShowProcessList()
+=======
+	pl := sm.ShowProcessList()
+	innerSessionStartTSList := sm.GetInternalSessionStartTSList()
+>>>>>>> 8af7a4d4c... domain: sync the access of InfoSyncer.SessionManager (#33924)
 
 	// Calculate the lower limit of the start timestamp to avoid extremely old transaction delaying GC.
 	currentVer, err := store.CurrentVersion()
