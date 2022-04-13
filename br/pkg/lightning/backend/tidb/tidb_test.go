@@ -594,6 +594,14 @@ func encodeRowsTiDB(t *testing.T, b backend.Backend, tbl table.Table) kv.Rows {
 	require.NoError(t, err)
 
 	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
+
+	rawRow := make([]types.Datum, 0)
+	for i := 0; i < 15; i++ {
+		rawRow = append(rawRow, types.NewIntDatum(0))
+	}
+	row, err = encoder.Encode(logger, rawRow, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, "12.csv", 0)
+	require.NotNil(t, err)
+	require.Contains(t, err.Error(), "column count mismatch, at most")
 	return dataRows
 }
 
