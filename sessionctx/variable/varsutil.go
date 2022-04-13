@@ -229,6 +229,10 @@ func SetStmtVar(vars *SessionVars, name string, value string) error {
 	return vars.SetStmtVar(name, sVal)
 }
 
+// Deprecated: Read the value from the mysql.tidb table.
+// This supports the use case that a TiDB server *older* than 5.0 is a member of the cluster.
+// i.e. system variables such as tidb_gc_concurrency, tidb_gc_enable, tidb_gc_life_time
+// do not exist.
 func getTiDBTableValue(vars *SessionVars, name, defaultVal string) (string, error) {
 	val, err := vars.GlobalVarsAccessor.GetTiDBTableValue(name)
 	if err != nil { // handle empty result or other errors
@@ -237,6 +241,10 @@ func getTiDBTableValue(vars *SessionVars, name, defaultVal string) (string, erro
 	return trueFalseToOnOff(val), nil
 }
 
+// Deprecated: Set the value from the mysql.tidb table.
+// This supports the use case that a TiDB server *older* than 5.0 is a member of the cluster.
+// i.e. system variables such as tidb_gc_concurrency, tidb_gc_enable, tidb_gc_life_time
+// do not exist.
 func setTiDBTableValue(vars *SessionVars, name, value, comment string) error {
 	value = OnOffToTrueFalse(value)
 	return vars.GlobalVarsAccessor.SetTiDBTableValue(name, value, comment)
@@ -482,9 +490,6 @@ func setReadStaleness(s *SessionVars, sVal string) error {
 	if err != nil {
 		return err
 	}
-	if sValue > 0 {
-		return fmt.Errorf("%s's value should be less than 0", TiDBReadStaleness)
-	}
 	s.ReadStaleness = time.Duration(sValue) * time.Second
 	return nil
 }
@@ -506,4 +511,37 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.Reverse:    {},
 	ast.VitessHash: {},
 	ast.TiDBShard:  {},
+}
+
+func checkGCTxnMaxWaitTime(vars *SessionVars,
+	normalizedValue string,
+	originalValue string,
+	scope ScopeFlag) (string, error) {
+	ival, err := strconv.Atoi(normalizedValue)
+	if err != nil {
+		return originalValue, errors.Trace(err)
+	}
+	GcLifeTimeStr, _ := getTiDBTableValue(vars, "tikv_gc_life_time", "10m0s")
+	GcLifeTimeDuration, err := time.ParseDuration(GcLifeTimeStr)
+	if err != nil {
+		return originalValue, errors.Trace(err)
+	}
+	if GcLifeTimeDuration.Seconds() > (float64)(ival) {
+		return originalValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(TiDBGCMaxWaitTime, normalizedValue))
+	}
+	return normalizedValue, nil
+}
+
+func checkTiKVGCLifeTime(vars *SessionVars,
+	normalizedValue string,
+	originalValue string,
+	scope ScopeFlag) (string, error) {
+	gcLifetimeDuration, err := time.ParseDuration(normalizedValue)
+	if err != nil {
+		return originalValue, errors.Trace(err)
+	}
+	if gcLifetimeDuration.Seconds() > float64(GCMaxWaitTime.Load()) {
+		return originalValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(TiDBGCLifetime, normalizedValue))
+	}
+	return normalizedValue, nil
 }
