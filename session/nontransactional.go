@@ -93,7 +93,19 @@ func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransaction
 	for i := range jobs {
 		select {
 		case <-ctx.Done():
-			logutil.Logger(ctx).Info("Non-transactional delete worker exit because context canceled")
+			failedJobs := make([]string, 0)
+			for _, job := range jobs {
+				if job.err != nil {
+					failedJobs = append(failedJobs, fmt.Sprintf("job:%s, error: %s", job.String(), job.err.Error()))
+				}
+			}
+			if len(failedJobs) == 0 {
+				logutil.Logger(ctx).Warn("Non-transactional delete worker exit because context canceled. No errors",
+					zap.Int("finished", i), zap.Int("total", len(jobs)))
+			} else {
+				logutil.Logger(ctx).Warn("Non-transactional delete worker exit because context canceled. Errors found",
+					zap.Int("finished", i), zap.Int("total", len(jobs)), zap.Strings("errors found", failedJobs))
+			}
 			return nil, ctx.Err()
 		default:
 		}
