@@ -9129,7 +9129,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(pd_client_cmd_handle_failed_cmds_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", http_status=~\"200.*\"}[1m]))",
+              "expr": "sum(rate(pd_client_cmd_handle_failed_cmds_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", result=~\"200.*\"}[1m]))",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
@@ -9139,12 +9139,12 @@
             },
             {
               "exemplar": true,
-              "expr": "sum(rate(pd_client_cmd_handle_failed_cmds_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", http_status=~\"200.*\"}[1m])) by (type, http_status)",
+              "expr": "sum(rate(pd_client_cmd_handle_failed_cmds_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", result=~\"200.*\"}[1m])) by (type, result)",
               "format": "time_series",
               "hide": false,
               "interval": "",
               "intervalFactor": 2,
-              "legendFormat": "{{type}} {{http_status}}",
+              "legendFormat": "{{type}} - {{result}}",
               "refId": "B",
               "step": 10
             }

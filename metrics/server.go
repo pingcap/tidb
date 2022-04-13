@@ -253,7 +253,7 @@ var (
 			Subsystem: "server",
 			Name:      "pd_api_request_total",
 			Help:      "Counter of the pd http api requests",
-		}, []string{LblType, LblHTTPStatus})
+		}, []string{LblType, LblResult})
 
 	CPUProfileCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
