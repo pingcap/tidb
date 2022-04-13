@@ -1304,9 +1304,6 @@ func TestTopSQLCatchRunningSQL(t *testing.T) {
 		require.NoError(t, db.Close())
 	}()
 
-	topsqlstate.DisableTopSQL()
-	unistore.CheckResourceTagForTopSQLInGoTest = false
-
 	dbt := testkit.NewDBTestKit(t, db)
 	dbt.MustExec("drop database if exists topsql")
 	dbt.MustExec("create database topsql")
