@@ -28,10 +28,8 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
-	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
@@ -87,15 +85,6 @@ func (tk *TestKit) Session() session.Session {
 
 // MustExec executes a sql statement and asserts nil error.
 func (tk *TestKit) MustExec(sql string, args ...interface{}) {
-	// Enable TopSQL for all test, and check the resource tag for each RPC request.
-	// This is used to detect which codes are not tracked by TopSQL.
-	topsqlstate.EnableTopSQL()
-	unistore.CheckResourceTagForTopSQLInGoTest = true
-	defer func() {
-		topsqlstate.DisableTopSQL()
-		unistore.CheckResourceTagForTopSQLInGoTest = false
-	}()
-
 	res, err := tk.Exec(sql, args...)
 	comment := fmt.Sprintf("sql:%s, %v, error stack %v", sql, args, errors.ErrorStack(err))
 	tk.require.NoError(err, comment)
@@ -108,15 +97,6 @@ func (tk *TestKit) MustExec(sql string, args ...interface{}) {
 // MustQuery query the statements and returns result rows.
 // If expected result is set it asserts the query result equals expected result.
 func (tk *TestKit) MustQuery(sql string, args ...interface{}) *Result {
-	// Enable TopSQL for all test, and check the resource tag for each RPC request.
-	// This is used to detect which codes are not tracked by TopSQL.
-	topsqlstate.EnableTopSQL()
-	unistore.CheckResourceTagForTopSQLInGoTest = true
-	defer func() {
-		topsqlstate.DisableTopSQL()
-		unistore.CheckResourceTagForTopSQLInGoTest = false
-	}()
-
 	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
 	rs, err := tk.Exec(sql, args...)
 	tk.require.NoError(err, comment)
