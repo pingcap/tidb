@@ -18,7 +18,6 @@ import (
 	"container/heap"
 	"context"
 	"math/rand"
-	"runtime"
 	"unsafe"
 
 	"github.com/pingcap/tidb/kv"
@@ -28,11 +27,9 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
 )
 
 // RowSampleCollector implements the needed interface for a row-based sample collector.
@@ -273,9 +270,6 @@ func (s *baseCollector) ToProto() *tipb.RowSampleCollector {
 }
 
 func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTracker *memory.Tracker) {
-	memStats := &runtime.MemStats{}
-	runtime.ReadMemStats(memStats)
-	logutil.BgLogger().Info("FromProto start:", zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", memTracker.BytesConsumed()))
 	s.Count = pbCollector.Count
 	s.NullCount = pbCollector.NullCounts
 	s.FMSketches = make([]*FMSketch, 0, len(pbCollector.FmSketch))
@@ -312,8 +306,6 @@ func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTrack
 			bufferedItemSize = int64(0)
 		}
 	}
-	runtime.ReadMemStats(memStats)
-	logutil.BgLogger().Info("FromProto end:", zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", memTracker.BytesConsumed()))
 	return
 }
 

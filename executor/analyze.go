@@ -1432,19 +1432,12 @@ workLoop:
 					continue
 				}
 				sampleNum := task.rootRowCollector.Base().Samples.Len()
-				runtime.ReadMemStats(memStats)
-				logutil.BgLogger().Info("subBuildWorker before make:", zap.Int("idx", task.slicePos), zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
 				sampleItems := make([]*statistics.SampleItem, 0, sampleNum)
-				initMemSize := int64(unsafe.Sizeof(sampleItems)) + 8*int64(sampleNum)
-				e.memTracker.Consume(initMemSize)
-				runtime.ReadMemStats(memStats)
-				logutil.BgLogger().Info("subBuildWorker after make:", zap.Int("idx", task.slicePos), zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
-				// datum is deep copy
-				initMemSize2 := statistics.EmptySampleItemSize * int64(sampleNum)
-				e.memTracker.Consume(initMemSize2)
-				logutil.BgLogger().Info("subBuildWorker consumes memory: ", zap.Int("idx", task.slicePos), zap.Int64("init", initMemSize), zap.Int("sampleNum", sampleNum))
+				initMemSize := int64(unsafe.Sizeof(sampleItems)) + 8*int64(sampleNum) + statistics.EmptySampleItemSize*int64(sampleNum)
 				totalMemInc += initMemSize
-				memInc := int64(0)
+				e.memTracker.Consume(initMemSize)
+				logutil.BgLogger().Info("subBuildWorker consumes memory: ", zap.Int("idx", task.slicePos), zap.Int64("init", initMemSize), zap.Int("sampleNum", sampleNum))
+				bufferedMemInc := int64(0)
 				for j, row := range task.rootRowCollector.Base().Samples {
 					if row.Columns[task.slicePos].IsNull() {
 						continue
@@ -1456,16 +1449,18 @@ workLoop:
 					// This is also corresponding to similar operation in (*statistics.Column).GetColumnRowCount().
 					if ft.EvalType() == types.ETString && ft.Tp != mysql.TypeEnum && ft.Tp != mysql.TypeSet {
 						val.SetBytes(collate.GetCollator(ft.Collate).Key(val.GetString()))
-						memInc += int64(cap(val.GetBytes()))
+						bufferedMemInc += int64(cap(val.GetBytes()))
+						if bufferedMemInc > int64(104857600) { // track when exceeds 100 MB
+							e.memTracker.Consume(bufferedMemInc)
+							totalMemInc += bufferedMemInc
+							bufferedMemInc = int64(0)
+						}
 					}
-					newItem := &statistics.SampleItem{
+					sampleItems = append(sampleItems, &statistics.SampleItem{
 						Value:   val,
 						Ordinal: j,
-					}
-					sampleItems = append(sampleItems, newItem)
+					})
 				}
-				e.memTracker.Consume(memInc)
-				totalMemInc += memInc
 				collector = &statistics.SampleCollector{
 					Samples:   sampleItems,
 					NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
@@ -1531,7 +1526,7 @@ workLoop:
 			collector = nil
 			runtime.GC()
 			finalMemSize := hist.MemoryUsage() + topn.MemoryUsage()
-			logutil.BgLogger().Info("subBuildWorker consumes memory: ", zap.Int("idx", task.slicePos), zap.Int64("sample-temp", -totalMemInc))
+			logutil.BgLogger().Info("subBuildWorker consumes memory: ", zap.Int("idx", task.slicePos), zap.Int64("totalMemInc", -totalMemInc))
 			logutil.BgLogger().Info("subBuildWorker consumes memory: ", zap.Int("idx", task.slicePos), zap.Int64("final", finalMemSize))
 			e.memTracker.Consume(finalMemSize - totalMemInc)
 			hists[task.slicePos] = hist
