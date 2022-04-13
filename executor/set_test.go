@@ -1308,27 +1308,15 @@ func TestEnableNoopFunctionsVar(t *testing.T) {
 	tk.MustQuery(`select @@global.tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
 	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
 
-	err := tk.ExecToErr(`select get_lock('lock1', 2);`)
-	require.True(t, terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), fmt.Sprintf("err %v", err))
-	err = tk.ExecToErr(`select release_lock('lock1');`)
-	require.True(t, terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), fmt.Sprintf("err %v", err))
-
 	// change session var to 1
 	tk.MustExec(`set tidb_enable_noop_functions=1;`)
 	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("ON"))
 	tk.MustQuery(`select @@global.tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
-	tk.MustQuery(`select get_lock("lock", 10)`).Check(testkit.Rows("1"))
-	tk.MustQuery(`select release_lock("lock")`).Check(testkit.Rows("1"))
 
 	// restore to 0
 	tk.MustExec(`set tidb_enable_noop_functions=0;`)
 	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
 	tk.MustQuery(`select @@global.tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
-
-	err = tk.ExecToErr(`select get_lock('lock2', 10);`)
-	require.True(t, terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), fmt.Sprintf("err %v", err))
-	err = tk.ExecToErr(`select release_lock('lock2');`)
-	require.True(t, terror.ErrorEqual(err, expression.ErrFunctionsNoopImpl), fmt.Sprintf("err %v", err))
 
 	// set test
 	require.Error(t, tk.ExecToErr(`set tidb_enable_noop_functions='abc'`))
@@ -1340,7 +1328,7 @@ func TestEnableNoopFunctionsVar(t *testing.T) {
 	tk.MustExec(`set tidb_enable_noop_functions=0;`)
 	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("OFF"))
 
-	err = tk.ExecToErr("SET SESSION tx_read_only = 1")
+	err := tk.ExecToErr("SET SESSION tx_read_only = 1")
 	require.True(t, terror.ErrorEqual(err, variable.ErrFunctionsNoopImpl), fmt.Sprintf("err %v", err))
 
 	tk.MustExec("SET SESSION tx_read_only = 0")

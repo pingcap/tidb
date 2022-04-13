@@ -25,7 +25,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -65,6 +67,7 @@ var (
 	_ builtinFunc = &builtinSleepSig{}
 	_ builtinFunc = &builtinLockSig{}
 	_ builtinFunc = &builtinReleaseLockSig{}
+	_ builtinFunc = &builtinReleaseAllLocksSig{}
 	_ builtinFunc = &builtinDecimalAnyValueSig{}
 	_ builtinFunc = &builtinDurationAnyValueSig{}
 	_ builtinFunc = &builtinIntAnyValueSig{}
@@ -186,9 +189,55 @@ func (b *builtinLockSig) Clone() builtinFunc {
 
 // evalInt evals a builtinLockSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_get-lock
-// The lock function will do nothing.
-// Warning: get_lock() function is parsed but ignored.
-func (b *builtinLockSig) evalInt(_ chunk.Row) (int64, bool, error) {
+func (b *builtinLockSig) evalInt(row chunk.Row) (int64, bool, error) {
+	lockName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if err != nil {
+		return 0, isNull, err
+	}
+	// Validate that lockName is NOT NULL or empty string
+	if isNull {
+		return 0, false, errUserLockWrongName.GenWithStackByArgs("NULL")
+	}
+	if lockName == "" || len(lockName) > 64 {
+		return 0, false, errUserLockWrongName.GenWithStackByArgs(lockName)
+	}
+	maxTimeout := int64(variable.GetSysVar(variable.InnodbLockWaitTimeout).MaxValue)
+	timeout, isNullTimeout, err := b.args[1].EvalInt(b.ctx, row)
+	if err != nil {
+		return 0, false, err
+	}
+	if isNullTimeout {
+		timeout = maxTimeout // Observed behavior in MySQL
+	}
+	// A timeout less than zero is expected to be treated as unlimited.
+	// Because of our implementation being based on pessimistic locks,
+	// We can't have a timeout greater than innodb_lock_wait_timeout.
+	// So users are aware, we also attach a warning.
+	if timeout < 0 || timeout > maxTimeout {
+		err := errTruncatedWrongValue.GenWithStackByArgs("get_lock", timeout)
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		timeout = maxTimeout
+	}
+	// Lock names are case insensitive. Because we can't rely on collations
+	// being enabled on the internal table, we have to lower it.
+	lockName = strings.ToLower(lockName)
+	if len(lockName) > 64 {
+		return 0, false, errIncorrectArgs.GenWithStackByArgs("get_lock")
+	}
+	err = b.ctx.GetAdvisoryLock(lockName, timeout)
+	if err != nil {
+		switch err.(*terror.Error).Code() {
+		case mysql.ErrLockWaitTimeout:
+			return 0, false, nil // Another user has the lock
+		case mysql.ErrLockDeadlock:
+			// Currently this code is not reachable because each Advisory Lock
+			// Uses a separate session. Deadlock detection does not work across
+			// independent sessions.
+			return 0, false, errUserLockDeadlock
+		default:
+			return 0, false, err
+		}
+	}
 	return 1, false, nil
 }
 
@@ -221,10 +270,19 @@ func (b *builtinReleaseLockSig) Clone() builtinFunc {
 
 // evalInt evals a builtinReleaseLockSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_release-lock
-// The release lock function will do nothing.
-// Warning: release_lock() function is parsed but ignored.
-func (b *builtinReleaseLockSig) evalInt(_ chunk.Row) (int64, bool, error) {
-	return 1, false, nil
+func (b *builtinReleaseLockSig) evalInt(row chunk.Row) (int64, bool, error) {
+	lockName, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if err != nil {
+		return 0, isNull, err
+	}
+	// Lock names are case insensitive. Because we can't rely on collations
+	// being enabled on the internal table, we have to lower it.
+	lockName = strings.ToLower(lockName)
+	released := int64(0)
+	if b.ctx.ReleaseAdvisoryLock(lockName) {
+		released = 1
+	}
+	return released, false, nil
 }
 
 type anyValueFunctionClass struct {
@@ -1062,7 +1120,33 @@ type releaseAllLocksFunctionClass struct {
 }
 
 func (c *releaseAllLocksFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
-	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "RELEASE_ALL_LOCKS")
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinReleaseAllLocksSig{bf}
+	bf.tp.Flen = 1
+	return sig, nil
+}
+
+type builtinReleaseAllLocksSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinReleaseAllLocksSig) Clone() builtinFunc {
+	newSig := &builtinReleaseAllLocksSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalInt evals a builtinReleaseAllLocksSig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_release-all-locks
+func (b *builtinReleaseAllLocksSig) evalInt(_ chunk.Row) (int64, bool, error) {
+	count := b.ctx.ReleaseAllAdvisoryLocks()
+	return int64(count), false, nil
 }
 
 type uuidFunctionClass struct {

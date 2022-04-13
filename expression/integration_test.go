@@ -249,6 +249,96 @@ func TestBuiltinFuncJsonPretty(t *testing.T) {
 	require.Equal(t, errors.ErrCode(mysql.ErrInvalidJSONText), terr.Code())
 }
 
+func TestGetLock(t *testing.T) {
+	ctx := context.Background()
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+
+	// No timeout specified
+	err := tk.ExecToErr("SELECT get_lock('testlock')")
+	require.Error(t, err)
+	terr := errors.Cause(err).(*terror.Error)
+	require.Equal(t, errors.ErrCode(mysql.ErrWrongParamcountToNativeFct), terr.Code())
+
+	// 0 timeout = immediate
+	// Negative timeout = convert to max value
+	tk.MustQuery("SELECT get_lock('testlock1', 0)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT get_lock('testlock2', -10)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock('testlock1'), release_lock('testlock2')").Check(testkit.Rows("1 1"))
+
+	// GetLock with NULL name or '' name
+	rs, _ := tk.Exec("SELECT get_lock('', 10)")
+	_, err = session.GetRows4Test(ctx, tk.Session(), rs)
+	require.Error(t, err)
+	terr = errors.Cause(err).(*terror.Error)
+	require.Equal(t, errors.ErrCode(errno.ErrUserLockWrongName), terr.Code())
+
+	rs, _ = tk.Exec("SELECT get_lock(NULL, 10)")
+	_, err = session.GetRows4Test(ctx, tk.Session(), rs)
+	require.Error(t, err)
+	terr = errors.Cause(err).(*terror.Error)
+	require.Equal(t, errors.ErrCode(errno.ErrUserLockWrongName), terr.Code())
+
+	// NULL timeout is fine (= unlimited)
+	tk.MustQuery("SELECT get_lock('aaa', NULL)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock('aaa')").Check(testkit.Rows("1"))
+
+	// GetLock in CAPS, release lock in lower.
+	tk.MustQuery("SELECT get_lock('ABC', -10)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock('abc')").Check(testkit.Rows("1"))
+
+	// Release unacquired LOCK and previously released lock
+	tk.MustQuery("SELECT release_lock('randombytes')").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT release_lock('abc')").Check(testkit.Rows("0"))
+
+	// GetLock with integer name, 64, character name.
+	_ = tk.MustQuery("SELECT get_lock(1234, 10)")
+	_ = tk.MustQuery("SELECT get_lock(REPEAT('a', 64), 10)")
+	_ = tk.MustQuery("SELECT release_lock(1234), release_lock(REPEAT('aa', 32))")
+
+	// 65 character name
+	rs, _ = tk.Exec("SELECT get_lock(REPEAT('a', 65), 10)")
+	_, err = session.GetRows4Test(ctx, tk.Session(), rs)
+	require.Error(t, err)
+	terr = errors.Cause(err).(*terror.Error)
+	require.Equal(t, errors.ErrCode(errno.ErrUserLockWrongName), terr.Code())
+
+	// Floating point timeout.
+	tk.MustQuery("SELECT get_lock('nnn', 1.2)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock('nnn')").Check(testkit.Rows("1"))
+
+	// Multiple locks acquired in one statement.
+	// Release all locks and one not held lock
+	tk.MustQuery("SELECT get_lock('a1', 1.2), get_lock('a2', 1.2), get_lock('a3', 1.2), get_lock('a4', 1.2)").Check(testkit.Rows("1 1 1 1"))
+	tk.MustQuery("SELECT release_lock('a1'),release_lock('a2'),release_lock('a3'), release_lock('random'), release_lock('a4')").Check(testkit.Rows("1 1 1 0 1"))
+
+	// Test common cases:
+	// Get a lock, release it immediately.
+	// Try to release it again (its released)
+	tk.MustQuery("SELECT get_lock('mygloballock', 1)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("0"))
+
+	// Get a lock, acquire it again, release it twice.
+	tk.MustQuery("SELECT get_lock('mygloballock', 1)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT get_lock('mygloballock', 1)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("0"))
+
+	// Test someone else has the lock with short timeout.
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustQuery("SELECT get_lock('mygloballock', 1)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT get_lock('mygloballock', 1)").Check(testkit.Rows("0"))  // someone else has the lock
+	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("0")) // never had the lock
+	// try again
+	tk.MustQuery("SELECT get_lock('mygloballock', 0)").Check(testkit.Rows("0"))  // someone else has the lock
+	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("0")) // never had the lock
+	// release it
+	tk2.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("1")) // works
+}
+
 func TestMiscellaneousBuiltin(t *testing.T) {
 	ctx := context.Background()
 	store, clean := testkit.CreateMockStore(t)
@@ -320,7 +410,6 @@ func TestMiscellaneousBuiltin(t *testing.T) {
 	tk.MustQuery("select a,any_value(b),sum(c) from t1 group by a order by a;").Check(testkit.Rows("1 10 0", "2 30 0"))
 
 	// for locks
-	tk.MustExec(`set tidb_enable_noop_functions=1;`)
 	result := tk.MustQuery(`SELECT GET_LOCK('test_lock1', 10);`)
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery(`SELECT GET_LOCK('test_lock2', 10);`)
@@ -330,6 +419,8 @@ func TestMiscellaneousBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery(`SELECT RELEASE_LOCK('test_lock1');`)
 	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`SELECT RELEASE_LOCK('test_lock3');`) // not acquired
+	result.Check(testkit.Rows("0"))
 }
 
 func TestConvertToBit(t *testing.T) {

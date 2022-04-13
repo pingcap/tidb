@@ -139,14 +139,14 @@ func TestIsNullFunc(t *testing.T) {
 func TestLock(t *testing.T) {
 	ctx := createContext(t)
 	lock := funcs[ast.GetLock]
-	f, err := lock.getFunction(ctx, datumsToConstants(types.MakeDatums(nil, 1)))
+	f, err := lock.getFunction(ctx, datumsToConstants(types.MakeDatums("mylock", 1)))
 	require.NoError(t, err)
 	v, err := evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), v.GetInt64())
 
 	releaseLock := funcs[ast.ReleaseLock]
-	f, err = releaseLock.getFunction(ctx, datumsToConstants(types.MakeDatums(1)))
+	f, err = releaseLock.getFunction(ctx, datumsToConstants(types.MakeDatums("mylock")))
 	require.NoError(t, err)
 	v, err = evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
