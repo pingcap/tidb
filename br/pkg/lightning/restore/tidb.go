@@ -337,7 +337,7 @@ func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor) map[strin
 	return result
 }
 
-func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) bool {
+func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) (bool, error) {
 	newCollationEnabled := false
 	newCollationVal, err := g.ObtainStringWithLog(
 		ctx,
@@ -347,9 +347,13 @@ func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) bool {
 	)
 	if err == nil && newCollationVal == "True" {
 		newCollationEnabled = true
+	} else if errors.ErrorEqual(err, sql.ErrNoRows) {
+		// ignore if target variable is not found, this may happen if tidb < v4.0
+		newCollationEnabled = false
+		err = nil
 	}
 
-	return newCollationEnabled
+	return newCollationEnabled, errors.Trace(err)
 }
 
 // AlterAutoIncrement rebase the table auto increment id
