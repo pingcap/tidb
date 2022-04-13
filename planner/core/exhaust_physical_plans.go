@@ -951,10 +951,8 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		Desc:            desc,
 		physicalTableID: ds.physicalTableID,
 		isPartition:     ds.isPartition,
-
-		underInnerIndexJoin: true,
-		tblCols:             ds.TblCols,
-		tblColHists:         ds.TblColHists,
+		tblCols:         ds.TblCols,
+		tblColHists:     ds.TblColHists,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema.Clone())
 	if rowCount <= 0 {
@@ -1054,8 +1052,6 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		physicalTableID:  ds.physicalTableID,
 		tblColHists:      ds.TblColHists,
 		pkIsHandleCol:    ds.getPKIsHandleCol(),
-
-		underInnerIndexJoin: true,
 	}.Init(ds.ctx, ds.blockOffset)
 	cop := &copTask{
 		indexPlan:   is,
