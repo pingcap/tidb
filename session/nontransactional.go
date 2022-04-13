@@ -111,6 +111,12 @@ func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransaction
 		}
 		splitStmt := doOneJob(ctx, &jobs[i], len(jobs), stmt, tp, refer, originalCondition, se)
 		splitStmts = append(splitStmts, splitStmt)
+		// if the first job failed, there is a large chance that all jobs will fail. So return early.
+		if i == 0 && jobs[i].err != nil {
+			jobs[i].err = errors.Wrap(jobs[i].err, "Early return: error occurred in the first job")
+			logutil.Logger(ctx).Error("Non-transactional delete, early return", zap.Error(jobs[i].err))
+			break
+		}
 	}
 	return splitStmts, nil
 }
