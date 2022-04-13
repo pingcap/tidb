@@ -66,10 +66,7 @@ func (p *PhysicalIndexLookUpReader) CalPlanCost(taskType property.TaskType) floa
 
 	// index net I/O cost
 	idxCount := p.indexPlan.StatsCount()
-	rowSize := getBottomPlan(p.indexPlan).(*PhysicalIndexScan).rowSizeForNet
-	if rowSize == 0 {
-		panic("???")
-	}
+	rowSize := p.stats.HistColl.GetAvgRowSize(p.ctx, p.schema.Columns, false, false)
 	p.planCost += idxCount * rowSize * p.ctx.GetSessionVars().GetNetworkFactor(nil)
 
 	// index net seek cost
@@ -98,6 +95,7 @@ func (p *PhysicalIndexReader) CalPlanCost(taskType property.TaskType) float64 {
 	// child's cost
 	p.planCost = p.indexPlan.CalPlanCost(property.CopSingleReadTaskType)
 	// net I/O cost
+	rowSize := p.stats.HistColl.GetAvgRowSize(p.ctx, p.schema.Columns, false, false)
 	p.planCost += p.indexPlan.StatsCount() * rowSize * p.ctx.GetSessionVars().GetNetworkFactor(nil)
 	// net seek cost
 	p.planCost += getSeekCost(p)
@@ -174,14 +172,11 @@ func (p *PhysicalTableScan) CalPlanCost(taskType property.TaskType) float64 {
 	p.planCost = 0
 
 	// scan cost
-	if p.rowSizeForScan == 0 {
-		panic("???")
-	}
 	scanFactor := p.ctx.GetSessionVars().GetScanFactor(nil)
 	if p.Desc {
 		scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(nil)
 	}
-	p.planCost += p.StatsCount() * p.rowSizeForScan * scanFactor
+	p.planCost += p.StatsCount() * p.getScanRowSize() * scanFactor
 	p.planCostInit = true
 	return p.planCost
 }
@@ -193,14 +188,11 @@ func (p *PhysicalIndexScan) CalPlanCost(taskType property.TaskType) float64 {
 	p.planCost = 0
 
 	// scan cost
-	if p.rowSizeForScan == 0 {
-		panic("???")
-	}
 	scanFactor := p.ctx.GetSessionVars().GetScanFactor(nil)
 	if p.Desc {
 		scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(nil)
 	}
-	p.planCost += p.StatsCount() * p.rowSizeForScan * scanFactor
+	p.planCost += p.StatsCount() * p.getScanRowSize() * scanFactor
 
 	p.planCostInit = true
 	return p.planCost
