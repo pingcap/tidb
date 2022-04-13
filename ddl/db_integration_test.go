@@ -2099,7 +2099,6 @@ func TestDefaultColumnWithUUID(t *testing.T) {
 	tk.MustExec("create table t (c int(10), c1 varchar(256) default (uuid()))")
 	// add column with default uuid() for table t is forbidden in MySQL 8.0
 	tk.MustGetErrCode("alter table t add column c2 varchar(256) default (uuid())", errno.ErrBinlogUnsafeSystemFunction)
-	// insert records
 	tk.MustExec("insert into t(c) values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10)")
 	// each value of UUID should differ
 	r := tk.MustQuery("select c1 from t").Rows()
