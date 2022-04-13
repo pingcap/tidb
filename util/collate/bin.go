@@ -46,14 +46,14 @@ func (bpc *binPaddingCollator) Compare(a, b string) int {
 }
 
 func (bpc *binPaddingCollator) Key(str string) []byte {
-	byteLen := len(str)
-	i := byteLen - 1
-	for ; i >= 0; i-- {
-		if str[i] != ' ' {
-			break
-		}
-	}
-	str = str[:i+1]
+	//byteLen := len(str)
+	//i := byteLen - 1
+	//for ; i >= 0; i-- {
+	//	if str[i] != ' ' {
+	//		break
+	//	}
+	//}
+	//str = str[:i+1]
 	return []byte(str)
 }
 
