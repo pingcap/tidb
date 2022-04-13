@@ -1313,6 +1313,9 @@ func (rc *Controller) restoreTables(ctx context.Context) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
+			if cp.Status < checkpoints.CheckpointStatusAllWritten && len(tableMeta.DataFiles) == 0 {
+				continue
+			}
 			igCols, err := rc.cfg.Mydumper.IgnoreColumns.GetIgnoreColumns(dbInfo.Name, tableInfo.Name, rc.cfg.Mydumper.CaseSensitive)
 			if err != nil {
 				return errors.Trace(err)
@@ -1378,7 +1381,6 @@ func (tr *TableRestore) restoreTable(
 	cp *checkpoints.TableCheckpoint,
 ) (bool, error) {
 	// 1. Load the table info.
-
 	select {
 	case <-ctx.Done():
 		return false, ctx.Err()
