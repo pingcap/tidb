@@ -51,7 +51,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/helper"
-	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/logutil/consistency"
 	"github.com/pingcap/tidb/util/topsql"
@@ -632,10 +632,11 @@ type cachedTableRenewLease struct {
 func (c *cachedTableRenewLease) start(ctx context.Context) error {
 	c.exit = make(chan struct{})
 	c.lease = make([]uint64, len(c.tables))
-	wg := make(chan error)
+	wg := make(chan error, len(c.tables))
 	ith := 0
-	for tid, raw := range c.tables {
-		go c.keepAlive(ctx, wg, raw.(tables.StateRemote), tid, &c.lease[ith])
+	for _, raw := range c.tables {
+		tbl := raw.(table.CachedTable)
+		go tbl.WriteLockAndKeepAlive(ctx, c.exit, &c.lease[ith], wg)
 		ith++
 	}
 
@@ -648,47 +649,6 @@ func (c *cachedTableRenewLease) start(ctx context.Context) error {
 		}
 	}
 	return err
-}
-
-const cacheTableWriteLease = 5 * time.Second
-
-func (c *cachedTableRenewLease) keepAlive(ctx context.Context, wg chan error, handle tables.StateRemote, tid int64, leasePtr *uint64) {
-	writeLockLease, err := handle.LockForWrite(ctx, tid, cacheTableWriteLease)
-	atomic.StoreUint64(leasePtr, writeLockLease)
-	wg <- err
-	if err != nil {
-		logutil.Logger(ctx).Warn("[cached table] lock for write lock fail", zap.Error(err))
-		return
-	}
-
-	t := time.NewTicker(cacheTableWriteLease)
-	defer t.Stop()
-	for {
-		select {
-		case <-t.C:
-			if err := c.renew(ctx, handle, tid, leasePtr); err != nil {
-				logutil.Logger(ctx).Warn("[cached table] renew write lock lease fail", zap.Error(err))
-				return
-			}
-		case <-c.exit:
-			return
-		}
-	}
-}
-
-func (c *cachedTableRenewLease) renew(ctx context.Context, handle tables.StateRemote, tid int64, leasePtr *uint64) error {
-	oldLease := atomic.LoadUint64(leasePtr)
-	physicalTime := oracle.GetTimeFromTS(oldLease)
-	newLease := oracle.GoTimeToTS(physicalTime.Add(cacheTableWriteLease))
-
-	succ, err := handle.RenewWriteLease(ctx, tid, newLease)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if succ {
-		atomic.StoreUint64(leasePtr, newLease)
-	}
-	return nil
 }
 
 func (c *cachedTableRenewLease) stop(ctx context.Context) {
@@ -2101,10 +2061,11 @@ func resetCTEStorageMap(se *session) error {
 		return errors.New("type assertion for CTEStorageMap failed")
 	}
 	for _, v := range storageMap {
-		// No need to lock IterInTbl.
 		v.ResTbl.Lock()
-		defer v.ResTbl.Unlock()
 		err1 := v.ResTbl.DerefAndClose()
+		// Make sure we do not hold the lock for longer than necessary.
+		v.ResTbl.Unlock()
+		// No need to lock IterInTbl.
 		err2 := v.IterInTbl.DerefAndClose()
 		if err1 != nil {
 			return err1
@@ -2268,9 +2229,9 @@ func (s *session) cachedPlanExec(ctx context.Context,
 // IsCachedExecOk check if we can execute using plan cached in prepared structure
 // Be careful for the short path, current precondition is ths cached plan satisfying
 // IsPointGetWithPKOrUniqueKeyByAutoCommit
-func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.CachedPrepareStmt) (bool, error) {
+func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.CachedPrepareStmt, isStaleness bool) (bool, error) {
 	prepared := preparedStmt.PreparedAst
-	if prepared.CachedPlan == nil || preparedStmt.SnapshotTSEvaluator != nil {
+	if prepared.CachedPlan == nil || isStaleness {
 		return false, nil
 	}
 	// check auto commit
@@ -2351,7 +2312,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	}
 
 	executor.CountStmtNode(preparedStmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)
-	ok, err = s.IsCachedExecOk(ctx, preparedStmt)
+	ok, err = s.IsCachedExecOk(ctx, preparedStmt, snapshotTS != 0)
 	if err != nil {
 		return nil, err
 	}
