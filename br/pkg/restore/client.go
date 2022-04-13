@@ -74,7 +74,8 @@ type Client struct {
 	databases map[string]*utils.Database
 	ddlJobs   []*model.Job
 
-	toBeCorrectedTablesMap map[UniqueTableName]bool
+	// store tables need to rebase info like auto id and random id and so on after create table
+	rebasedTablesMap map[UniqueTableName]bool
 
 	backupMeta *backuppb.BackupMeta
 	// TODO Remove this field or replace it with a []*DB,
@@ -527,7 +528,7 @@ func (rc *Client) createTables(
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID")
 	} else {
-		err := db.CreateTables(ctx, tables, rc.GetToBeCorrectedTables(), rc.GetSupportPolicy(), rc.GetPolicyMap())
+		err := db.CreateTables(ctx, tables, rc.GetRebasedTables(), rc.GetSupportPolicy(), rc.GetPolicyMap())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -567,7 +568,7 @@ func (rc *Client) createTable(
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID", zap.Stringer("table", table.Info.Name))
 	} else {
-		err := db.CreateTable(ctx, table, rc.GetToBeCorrectedTables(), rc.GetSupportPolicy(), rc.GetPolicyMap())
+		err := db.CreateTable(ctx, table, rc.GetRebasedTables(), rc.GetSupportPolicy(), rc.GetPolicyMap())
 		if err != nil {
 			return CreatedTable{}, errors.Trace(err)
 		}
@@ -605,7 +606,7 @@ func (rc *Client) GoCreateTables(
 	// Could we have a smaller size of tables?
 	log.Info("start create tables")
 
-	rc.GenerateToBeCorrectedTables(tables)
+	rc.GenerateRebasedTables(tables)
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.GoCreateTables", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -1346,27 +1347,27 @@ func (rc *Client) IsSkipCreateSQL() bool {
 	return rc.noSchema
 }
 
-// GenerateToBeCorrectedTables generate a map[UniqueTableName]bool to represent tables that haven't updated table info.
+// GenerateRebasedTables generate a map[UniqueTableName]bool to represent tables that haven't updated table info.
 // there are two situations:
 // 1. tables that already exists in the restored cluster.
 // 2. tables that are created by executing ddl jobs.
 // so, only tables in incremental restoration will be added to the map
-func (rc *Client) GenerateToBeCorrectedTables(tables []*metautil.Table) {
+func (rc *Client) GenerateRebasedTables(tables []*metautil.Table) {
 	if !rc.IsIncremental() {
 		// in full restoration, all tables are created by Session.CreateTable, and all tables' info is updated.
-		rc.toBeCorrectedTablesMap = make(map[UniqueTableName]bool)
+		rc.rebasedTablesMap = make(map[UniqueTableName]bool)
 		return
 	}
 
-	rc.toBeCorrectedTablesMap = make(map[UniqueTableName]bool, len(tables))
+	rc.rebasedTablesMap = make(map[UniqueTableName]bool, len(tables))
 	for _, table := range tables {
-		rc.toBeCorrectedTablesMap[UniqueTableName{DB: table.DB.Name.String(), Table: table.Info.Name.String()}] = true
+		rc.rebasedTablesMap[UniqueTableName{DB: table.DB.Name.String(), Table: table.Info.Name.String()}] = true
 	}
 }
 
-// GetToBeCorrectedTables returns tables that may need to be corrected auto increment id or auto random id
-func (rc *Client) GetToBeCorrectedTables() map[UniqueTableName]bool {
-	return rc.toBeCorrectedTablesMap
+// GetRebasedTables returns tables that may need to be rebase auto increment id or auto random id
+func (rc *Client) GetRebasedTables() map[UniqueTableName]bool {
+	return rc.rebasedTablesMap
 }
 
 // PreCheckTableTiFlashReplica checks whether TiFlash replica is less than TiFlash node.
