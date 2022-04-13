@@ -47,6 +47,14 @@ type job struct {
 	sql     string
 }
 
+// statementBuildInfo contains information that is needed to build the split statement in a job
+type statementBuildInfo struct {
+	stmt              *ast.NonTransactionalDeleteStmt
+	shardColumnType   types.FieldType
+	shardColumnRefer  *ast.ResultField
+	originalCondition ast.ExprNode
+}
+
 func (j job) String() string {
 	return fmt.Sprintf("job id: %d, job size: %d, range: [%s, %s]", j.jobID, j.jobSize, j.start.String(), j.end.String())
 }
@@ -68,7 +76,7 @@ func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactiona
 	if stmt.DryRun == ast.DryRunQuery {
 		return buildDryRunResults(stmt.DryRun, []string{selectSQL}, se.GetSessionVars().BatchSize.MaxChunkSize)
 	}
-	jobs, err := getShardKeys(ctx, stmt, se, selectSQL, shardColumn)
+	jobs, err := buildShardJobs(ctx, stmt, se, selectSQL, shardColumn)
 	if err != nil {
 		return nil, err
 	}
@@ -88,18 +96,18 @@ func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransaction
 	tableName *ast.TableName, se Session, originalCondition ast.ExprNode) ([]string, error) {
 
 	// prepare for the construction of statement
-	var refer *ast.ResultField
-	var tp types.FieldType
+	var shardColumnRefer *ast.ResultField
+	var shardColumnType types.FieldType
 	for _, col := range tableName.TableInfo.Columns {
 		if col.Name.L == stmt.ShardColumn.Name.L {
-			refer = &ast.ResultField{
+			shardColumnRefer = &ast.ResultField{
 				Column: col,
 				Table:  tableName.TableInfo,
 			}
-			tp = col.FieldType
+			shardColumnType = col.FieldType
 		}
 	}
-	if refer == nil && stmt.ShardColumn.Name.O != "_tidb_rowid" {
+	if shardColumnRefer == nil && stmt.ShardColumn.Name.O != "_tidb_rowid" {
 		return nil, errors.New("Non-transactional delete, column not found")
 	}
 
@@ -123,7 +131,14 @@ func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransaction
 			return nil, ctx.Err()
 		default:
 		}
-		splitStmt := doOneJob(ctx, &jobs[i], len(jobs), stmt, tp, refer, originalCondition, se)
+
+		stmtBuildInfo := statementBuildInfo{
+			stmt:              stmt,
+			shardColumnType:   shardColumnType,
+			shardColumnRefer:  shardColumnRefer,
+			originalCondition: originalCondition,
+		}
+		splitStmt := doOneJob(ctx, &jobs[i], len(jobs), stmtBuildInfo, se, stmt.DryRun == ast.DryRunSplitDml)
 		splitStmts = append(splitStmts, splitStmt)
 		// if the first job failed, there is a large chance that all jobs will fail. So return early.
 		if i == 0 && jobs[i].err != nil {
@@ -135,8 +150,7 @@ func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransaction
 	return splitStmts, nil
 }
 
-func doOneJob(ctx context.Context, job *job, totalJobCount int, stmt *ast.NonTransactionalDeleteStmt, tp types.FieldType, refer *ast.ResultField,
-	originalCondition ast.ExprNode, se Session) string {
+func doOneJob(ctx context.Context, job *job, totalJobCount int, options statementBuildInfo, se Session, dryRun bool) string {
 	logutil.Logger(ctx).Info("start a Non-transactional delete", zap.String("job", job.String()), zap.Int("totalJobCount", totalJobCount))
 
 	var whereCondition ast.ExprNode
@@ -144,8 +158,8 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, stmt *ast.NonTra
 	if job.start.IsNull() {
 		isNullCondition := &ast.IsNullExpr{
 			Expr: &ast.ColumnNameExpr{
-				Name:  stmt.ShardColumn,
-				Refer: refer,
+				Name:  options.stmt.ShardColumn,
+				Refer: options.shardColumnRefer,
 			},
 			Not: false,
 		}
@@ -155,13 +169,13 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, stmt *ast.NonTra
 		} else {
 			// `where (x <= job.end) || (x is null)`
 			right := &driver.ValueExpr{}
-			right.Type = tp
+			right.Type = options.shardColumnType
 			right.Datum = job.end
 			leCondition := &ast.BinaryOperationExpr{
 				Op: opcode.LE,
 				L: &ast.ColumnNameExpr{
-					Name:  stmt.ShardColumn,
-					Refer: refer,
+					Name:  options.stmt.ShardColumn,
+					Refer: options.shardColumnRefer,
 				},
 				R: right,
 			}
@@ -174,15 +188,15 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, stmt *ast.NonTra
 	} else {
 		// a normal between condition: `where x between start and end`
 		left := &driver.ValueExpr{}
-		left.Type = tp
+		left.Type = options.shardColumnType
 		left.Datum = job.start
 		right := &driver.ValueExpr{}
-		right.Type = tp
+		right.Type = options.shardColumnType
 		right.Datum = job.end
 		whereCondition = &ast.BetweenExpr{
 			Expr: &ast.ColumnNameExpr{
-				Name:  stmt.ShardColumn,
-				Refer: refer,
+				Name:  options.stmt.ShardColumn,
+				Refer: options.shardColumnRefer,
 			},
 			Left:  left,
 			Right: right,
@@ -190,17 +204,17 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, stmt *ast.NonTra
 		}
 	}
 
-	if originalCondition == nil {
-		stmt.DeleteStmt.Where = whereCondition
+	if options.originalCondition == nil {
+		options.stmt.DeleteStmt.Where = whereCondition
 	} else {
-		stmt.DeleteStmt.Where = &ast.BinaryOperationExpr{
+		options.stmt.DeleteStmt.Where = &ast.BinaryOperationExpr{
 			Op: opcode.LogicAnd,
 			L:  whereCondition,
-			R:  originalCondition,
+			R:  options.originalCondition,
 		}
 	}
 	var sb strings.Builder
-	err := stmt.DeleteStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags|
+	err := options.stmt.DeleteStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags|
 		format.RestoreNameBackQuotes|
 		format.RestoreSpacesAroundBinaryOperation|
 		format.RestoreBracketAroundBinaryOperation|
@@ -211,13 +225,13 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, stmt *ast.NonTra
 	}
 	deleteSQL := sb.String()
 
-	if stmt.DryRun == ast.DryRunSplitDml {
+	if dryRun {
 		return deleteSQL
 	}
 
 	job.sql = deleteSQL
-	stmt.DeleteStmt.SetText(nil, fmt.Sprintf("/* job %v/%v */ %s", job.jobID, totalJobCount, deleteSQL))
-	rs, err := se.ExecuteStmt(context.TODO(), stmt.DeleteStmt)
+	options.stmt.DeleteStmt.SetText(nil, fmt.Sprintf("/* job %v/%v */ %s", job.jobID, totalJobCount, deleteSQL))
+	rs, err := se.ExecuteStmt(context.TODO(), options.stmt.DeleteStmt)
 
 	// collect errors
 	failpoint.Inject("splitDeleteError", func(_ failpoint.Value) {
@@ -238,7 +252,7 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, stmt *ast.NonTra
 	return ""
 }
 
-func getShardKeys(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, se Session,
+func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, se Session,
 	selectSQL string, shardColumn *table.Column) ([]job, error) {
 	logutil.Logger(ctx).Info("Non-transactional delete, select SQL", zap.String("selectSQL", selectSQL))
 	var shardColumnCollate string
@@ -384,6 +398,9 @@ func checkShardColumnIndexed(stmt *ast.NonTransactionalDeleteStmt, se Session, t
 	}
 
 	for _, index := range tbl.Indices() {
+		if index.Meta().State != model.StatePublic {
+			continue
+		}
 		indexColumns := index.Meta().Columns
 		// check only the first column
 		if len(indexColumns) > 0 && indexColumns[0].Name.L == shardColumnName {

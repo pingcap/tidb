@@ -133,3 +133,17 @@ func TestNonTransactionalDeleteSmallBatch(t *testing.T) {
 	tk.MustExec("split on a limit 1000 delete from t")
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
 }
+
+func TestNonTransactionalDeleteShardOnGeneratedColumn(t *testing.T) {
+	store, clean := createStorage(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_max_chunk_size=35")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c double as (sqrt(a * a + b * b)), key(c))")
+	for i := 0; i < 1000; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d, default)", i, i*2))
+	}
+	tk.MustExec("split on c limit 10 delete from t")
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
+}
