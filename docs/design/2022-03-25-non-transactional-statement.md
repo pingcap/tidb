@@ -33,8 +33,9 @@ Different from the deprecated batch-DML, a non-transactional DML splits SQLs so 
 
 ## Detailed Design
 
-### Syntax
+### User Interface
 
+#### Syntax
 The syntax: `split on <column_name> limit <batch_size> <DML>`
 
 In the first step only `delete` is going to be supported, but `update` and `insert into select` are also worth considering.
@@ -44,6 +45,21 @@ The split column must be indexed. There are no other constraints on the DML.
 There can be dry run syntax to show the actual SQLs that will be executed. Query plans are not returned since there is no elegant way to contain both a SQL and a plan in a result set. 
 - `split on <column_name> limit <batch_size> dry run query <DML>` outputs the `SELECT` statement that will be executed.
 - `split on <column_name> limit <batch_size> dry run <DML>` outputs how the statement will be split.
+
+#### Output
+
+Users get feedback from SQL return values, logs and process infos.
+
+If all split statement succeed, the non-transactional DML returns a summary: the number of split statements and a success message. 
+If any of the split statement fails, the non-transactional DML returns the details and error messages of all failed jobs. 
+If the non-transactional DML is aborted, e.g. by `kill tidb`, it returns the error of context cancellation, and output details of failed jobs in logs.
+
+The `info` field in process info describes not only the current SQL that is executing, but also the progress of all jobs.
+Logs, slow logs and statement summaries will also contain the progress in the SQL text. 
+For example, a split delete statement in slow queries can be like `/* job 11/41 */: DELETE FROM `test`.`t` WHERE `id` BETWEEN xxx AND yyy;`,
+where 11 and 41 are the current job ID and the number of total jobs respectively.
+
+Each split statement logs its detail in the INFO level as well.
 
 ### Session
 
