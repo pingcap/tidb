@@ -141,28 +141,29 @@ func (p *PhysicalTableReader) CalPlanCost(taskType property.TaskType) float64 {
 }
 
 func (p *PhysicalIndexMergeReader) CalPlanCost(taskType property.TaskType) float64 {
-	panic("TODO")
-	//if p.planCostInit {
-	//	return p.planCost
-	//}
-	//p.planCost = 0
-	//netFactor := p.ctx.GetSessionVars().GetNetworkFactor(nil)
-	//if tblScan := p.tablePlan; tblScan != nil {
-	//	p.planCost += tblScan.CalPlanCost(property.CopSingleReadTaskType) // child's cost
-	//	tableRowSize := getBottomPlan(tblScan).(*PhysicalTableScan).tableRowSize
-	//	p.planCost += tblScan.StatsCount() * tableRowSize * netFactor // accumulate net-cost
-	//}
-	//for _, idxScan := range p.partialPlans {
-	//	p.planCost += idxScan.CalPlanCost(property.CopSingleReadTaskType) // child's cost
-	//	indexRowSize := getBottomPlan(idxScan).(*PhysicalIndexScan).indexRowSize
-	//	p.planCost += idxScan.StatsCount() * indexRowSize * netFactor // accumulate net-cost
-	//}
-	//
-	//// consider concurrency
-	//copIterWorkers := float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
-	//p.planCost /= copIterWorkers
-	//p.planCostInit = true
-	//return p.planCost
+	if p.planCostInit {
+		return p.planCost
+	}
+	p.planCost = 0
+	netFactor := p.ctx.GetSessionVars().GetNetworkFactor(nil)
+	if tblScan := p.tablePlan; tblScan != nil {
+		p.planCost += tblScan.CalPlanCost(property.CopSingleReadTaskType) // child's cost
+		tblStats := getBottomPlan(tblScan).(*PhysicalTableScan).tblColHists
+		rowSize := tblStats.GetAvgRowSize(p.ctx, tblScan.Schema().Columns, false, false)
+		p.planCost += tblScan.StatsCount() * rowSize * netFactor // net I/O cost
+	}
+	for _, idxScan := range p.partialPlans {
+		p.planCost += idxScan.CalPlanCost(property.CopSingleReadTaskType) // child's cost
+		tblStats := getBottomPlan(idxScan).(*PhysicalIndexScan).tblColHists
+		rowSize := tblStats.GetAvgRowSize(p.ctx, idxScan.Schema().Columns, true, false)
+		p.planCost += idxScan.StatsCount() * rowSize * netFactor // net I/O cost
+	}
+
+	// consider concurrency
+	copIterWorkers := float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
+	p.planCost /= copIterWorkers
+	p.planCostInit = true
+	return p.planCost
 }
 
 // ============================== Scan ==============================
