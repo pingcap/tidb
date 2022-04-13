@@ -66,7 +66,7 @@ func randString(n int) string {
 	// A src.Int63() generates 63 random bits, enough for letterIdxMax characters!
 	for i, cache, remain := n-1, rand.Int63(), letterIdxMax; i >= 0; { // nolint:gosec
 		if remain == 0 {
-			cache, remain = rand.Int63(), letterIdxMax
+			cache, remain = rand.Int63(), letterIdxMax // nolint:gosec
 		}
 		if idx := int(cache & letterIdxMask); idx < len(alphabet) {
 			b[i] = alphabet[idx]

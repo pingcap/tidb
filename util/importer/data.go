@@ -77,6 +77,7 @@ func (d *datum) uniqInt64() int64 {
 	return data
 }
 
+// nolint: unused, deadcode
 func (d *datum) uniqFloat64() float64 {
 	data := d.uniqInt64()
 	return float64(data)
