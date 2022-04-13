@@ -66,8 +66,9 @@ type slowQueryRetriever struct {
 	checker               *slowLogChecker
 	columnValueFactoryMap map[string]slowQueryColumnValueFactory
 
-	taskList chan slowLogTask
-	stats    *slowQueryRuntimeStats
+	taskList   chan slowLogTask
+	stats      *slowQueryRuntimeStats
+	memTracker *memory.Tracker
 }
 
 func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -1086,4 +1087,10 @@ func readLastLines(ctx context.Context, file *os.File, endCursor int64) ([]strin
 func (e *slowQueryRetriever) initializeAsyncParsing(ctx context.Context, sctx sessionctx.Context) {
 	e.taskList = make(chan slowLogTask, 1)
 	go e.parseDataForSlowLog(ctx, sctx)
+}
+
+func (e *slowQueryRetriever) memConsume(bytes int64) {
+	if e.memTracker != nil {
+		e.memTracker.Consume(bytes)
+	}
 }
