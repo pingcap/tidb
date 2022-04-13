@@ -1438,17 +1438,20 @@ workLoop:
 				e.memTracker.Consume(initMemSize)
 				logutil.BgLogger().Info("subBuildWorker consumes memory: ", zap.Int("idx", task.slicePos), zap.Int64("init", initMemSize), zap.Int("sampleNum", sampleNum))
 				bufferedMemInc := int64(0)
+				var collator collate.Collator
+				ft := e.colsInfo[task.slicePos].FieldType
+				// When it's new collation data, we need to use its collate key instead of original value because only
+				// the collate key can ensure the correct ordering.
+				// This is also corresponding to similar operation in (*statistics.Column).GetColumnRowCount().
+				if ft.EvalType() == types.ETString && ft.Tp != mysql.TypeEnum && ft.Tp != mysql.TypeSet {
+					collator = collate.GetCollator(ft.Collate)
+				}
 				for j, row := range task.rootRowCollector.Base().Samples {
 					if row.Columns[task.slicePos].IsNull() {
 						continue
 					}
 					val := row.Columns[task.slicePos]
-					ft := e.colsInfo[task.slicePos].FieldType
-					// When it's new collation data, we need to use its collate key instead of original value because only
-					// the collate key can ensure the correct ordering.
-					// This is also corresponding to similar operation in (*statistics.Column).GetColumnRowCount().
-					if ft.EvalType() == types.ETString && ft.Tp != mysql.TypeEnum && ft.Tp != mysql.TypeSet {
-						collator := collate.GetCollator(ft.Collate)
+					if collator != nil {
 						val.SetBytes(collator.Key(val.GetString()))
 						bufferedMemInc += int64(cap(val.GetBytes()))
 						if bufferedMemInc > int64(104857600) { // track when exceeds 100 MB
