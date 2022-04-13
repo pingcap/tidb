@@ -444,3 +444,38 @@ CTE_0	50.00	root		Non-Recursive CTE
               └─IndexLookUp(Probe)	1.00	root		
                 ├─IndexRangeScan(Build)	1.00	cop[tikv]	table:customer, index:PRIMARY(c_customer_sk)	range: decided by [eq(test.customer.c_customer_sk, test.web_sales.ws_bill_customer_sk)], keep order:false, stats:pseudo
                 └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:customer	keep order:false, stats:pseudo
+drop table if exists t1;
+create table t1 (id int, bench_type varchar(10),version varchar(10),tps int(20));
+insert into t1 (id,bench_type,version,tps) values (1,'sysbench','5.4.0',1111111);
+insert into t1 (id,bench_type,version,tps) values (2,'sysbench','6.0.0',222222);
+with all_data as
+(select * from t1
+),version1 as (select * from all_data where version ='5.4.0'
+),version2 as(select * from all_data where version ='6.0.0')
+select v1.tps v1_tps,v2.tps v2_tps
+from version1 v1, version2 v2
+where v1.bench_type =v2.bench_type;
+v1_tps	v2_tps
+1111111	222222
+desc format='brief' with all_data as
+(select * from t1
+),version1 as (select * from all_data where version ='5.4.0'
+),version2 as(select * from all_data where version ='6.0.0')
+select v1.tps v1_tps,v2.tps v2_tps
+from version1 v1, version2 v2
+where v1.bench_type =v2.bench_type;
+id	estRows	task	access object	operator info
+HashJoin	8000.00	root		inner join, equal:[eq(test.t1.bench_type, test.t1.bench_type)]
+├─Selection(Build)	6400.00	root		not(isnull(test.t1.bench_type))
+│ └─CTEFullScan	8000.00	root	CTE:v2	data:CTE_2
+└─Selection(Probe)	6400.00	root		not(isnull(test.t1.bench_type))
+  └─CTEFullScan	8000.00	root	CTE:v1	data:CTE_1
+CTE_2	8000.00	root		Non-Recursive CTE
+└─Selection(Seed Part)	8000.00	root		eq(test.t1.version, "6.0.0"), not(isnull(test.t1.bench_type))
+  └─CTEFullScan	10000.00	root	CTE:all_data	data:CTE_0
+CTE_1	8000.00	root		Non-Recursive CTE
+└─Selection(Seed Part)	8000.00	root		eq(test.t1.version, "5.4.0"), not(isnull(test.t1.bench_type))
+  └─CTEFullScan	10000.00	root	CTE:all_data	data:CTE_0
+CTE_0	10000.00	root		Non-Recursive CTE
+└─TableReader(Seed Part)	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
