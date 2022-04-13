@@ -21,5 +21,3 @@ check_contains 'sum(x): 1296'
 run_sql 'SHOW TABLES IN routes_a1;'
 check_not_contains 'Tables_in_routes_a1: t2'
 
-run_sql 'SHOW DATABASES;'
-check_not_contains 'Database: routes_a0'
