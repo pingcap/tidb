@@ -133,7 +133,7 @@ PARTITION BY RANGE (c) (
 	// truncate the new partition p5
 	tk.MustExec(`alter table alter_p truncate partition p5;`)
 	rows4 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
-	require.Len(t, rows2, 1)
+	require.Len(t, rows4, 1)
 	require.NotEqual(t, rows3[0][3], rows4[0][3])
 	require.NotEqual(t, rows[0][3], rows4[0][3])
 }
