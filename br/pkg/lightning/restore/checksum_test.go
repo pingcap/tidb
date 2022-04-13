@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/atomic"
 )
 
 var _ = Suite(&checksumSuite{})
@@ -168,6 +168,9 @@ func (s *checksumSuite) TestDoChecksumWithTikv(c *C) {
 	tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), 999)
 	c.Assert(err, IsNil)
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	for i := 0; i <= maxErrorRetryCount; i++ {
 		kvClient.maxErrCount = i
 		kvClient.curErrCount = 0
@@ -176,16 +179,10 @@ func (s *checksumSuite) TestDoChecksumWithTikv(c *C) {
 			checksumTS = req.StartTs
 		}
 		checksumExec := &tikvChecksumManager{manager: newGCTTLManager(pdClient), client: kvClient}
-<<<<<<< HEAD
-		startTS := oracle.ComposeTS(time.Now().Unix()*1000, 0)
-		ctx := context.WithValue(context.Background(), &checksumManagerKey, checksumExec)
-		_, err = DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
-=======
 		physicalTS, logicalTS, err := pdClient.GetTS(ctx)
-		require.NoError(t, err)
+		c.Check(err, IsNil)
 		subCtx := context.WithValue(ctx, &checksumManagerKey, checksumExec)
 		_, err = DoChecksum(subCtx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
->>>>>>> 5288efa20... lightning: use pd timestamp to update gc safepoint (#32734)
 		// with max error retry < maxErrorRetryCount, the checksum can success
 		if i >= maxErrorRetryCount {
 			c.Assert(err, ErrorMatches, "tikv timeout")
@@ -197,17 +194,10 @@ func (s *checksumSuite) TestDoChecksumWithTikv(c *C) {
 		// after checksum, safepint should be small than start ts
 		ts := pdClient.currentSafePoint()
 		// 1ms for the schedule deviation
-<<<<<<< HEAD
-		c.Assert(ts <= startTS+1, IsTrue)
-		c.Assert(atomic.LoadUint32(&checksumExec.manager.started) > 0, IsTrue)
-=======
 		startTS := oracle.ComposeTS(physicalTS+1, logicalTS)
-		require.True(t, ts <= startTS+1)
-		require.GreaterOrEqual(t, checksumTS, ts)
-		require.True(t, checksumExec.manager.started.Load())
-		require.Zero(t, checksumExec.manager.currentTS)
-		require.Equal(t, 0, len(checksumExec.manager.tableGCSafeTS))
->>>>>>> 5288efa20... lightning: use pd timestamp to update gc safepoint (#32734)
+		c.Check(ts, LessEqual, startTS+1)
+		c.Check(checksumTS, GreaterEqual, ts)
+		c.Check(checksumExec.manager.started, Not(Equals), 0)
 	}
 }
 
@@ -243,14 +233,9 @@ type safePointTTL struct {
 type testPDClient struct {
 	sync.Mutex
 	pd.Client
-<<<<<<< HEAD
-	count       int32
-	gcSafePoint []safePointTTL
-=======
 	count            atomic.Int32
 	gcSafePoint      []safePointTTL
 	logicalTSCounter atomic.Uint64
->>>>>>> 5288efa20... lightning: use pd timestamp to update gc safepoint (#32734)
 }
 
 func (c *testPDClient) currentSafePoint() uint64 {
@@ -275,7 +260,7 @@ func (c *testPDClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID s
 	if !strings.HasPrefix(serviceID, "lightning") {
 		panic("service ID must start with 'lightning'")
 	}
-	atomic.AddInt32(&c.count, 1)
+	c.count.Inc()
 	c.Lock()
 	idx := sort.Search(len(c.gcSafePoint), func(i int) bool {
 		return c.gcSafePoint[i].safePoint >= safePoint
@@ -316,15 +301,15 @@ func (s *checksumSuite) TestGcTTLManagerSingle(c *C) {
 	time.Sleep(2*time.Second + 10*time.Millisecond)
 
 	// after 2 seconds, must at least update 5 times
-	val := atomic.LoadInt32(&pdClient.count)
+	val := pdClient.count.Load()
 	c.Assert(val, GreaterEqual, int32(5))
 
 	// after remove the job, there are no job remain, gc ttl needn't to be updated
 	manager.removeOneJob("test")
 	time.Sleep(10 * time.Millisecond)
-	val = atomic.LoadInt32(&pdClient.count)
+	val = pdClient.count.Load()
 	time.Sleep(1*time.Second + 10*time.Millisecond)
-	c.Assert(atomic.LoadInt32(&pdClient.count), Equals, val)
+	c.Assert(pdClient.count.Load(), Equals, val)
 }
 
 func (s *checksumSuite) TestGcTTLManagerMulti(c *C) {
@@ -423,14 +408,10 @@ type mockChecksumKVClient struct {
 }
 
 // a mock client for checksum request
-<<<<<<< HEAD
 func (c *mockChecksumKVClient) Send(ctx context.Context, req *kv.Request, vars interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool, eventCb trxevents.EventCallback) kv.Response {
-=======
-func (c *mockChecksumKVClient) Send(ctx context.Context, req *kv.Request, vars interface{}, option *kv.ClientSendOption) kv.Response {
 	if c.onSendReq != nil {
 		c.onSendReq(req)
 	}
->>>>>>> 5288efa20... lightning: use pd timestamp to update gc safepoint (#32734)
 	if c.curErrCount < c.maxErrCount {
 		c.curErrCount++
 		return &mockErrorResponse{err: "tikv timeout"}
