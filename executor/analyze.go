@@ -1452,8 +1452,10 @@ workLoop:
 					}
 					val := row.Columns[task.slicePos]
 					if collator != nil {
-						val.SetBytes(collator.Key(val.GetString()))
-						bufferedMemInc += int64(cap(val.GetBytes()))
+						bytes := []byte(val.GetString())
+						val.SetBytes(bytes)
+						//val.SetBytes(collator.Key(val.GetString()))
+						bufferedMemInc += int64(cap(bytes))
 						if bufferedMemInc > int64(104857600) { // track when exceeds 100 MB
 							e.memTracker.Consume(bufferedMemInc)
 							totalMemInc += bufferedMemInc
