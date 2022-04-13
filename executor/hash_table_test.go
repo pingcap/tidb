@@ -111,14 +111,19 @@ func (s *pkgTestSerialSuite) testHashRowContainer(c *C, hashFunc func() hash.Has
 	chk1, _ := initBuildChunk(numRows)
 
 	hCtx := &hashContext{
-		allTypes:  colTypes,
+		allTypes:  colTypes[1:3],
 		keyColIdx: []int{1, 2},
 	}
 	hCtx.hasNull = make([]bool, numRows)
 	for i := 0; i < numRows; i++ {
 		hCtx.hashVals = append(hCtx.hashVals, hashFunc())
 	}
+<<<<<<< HEAD
 	rowContainer := newHashRowContainer(sctx, 0, hCtx)
+=======
+	rowContainer := newHashRowContainer(sctx, 0, hCtx, colTypes)
+	copiedRC = rowContainer.ShallowCopy()
+>>>>>>> ce8cefaa2... executor: fix test fail in TestHashRowContainer (#33895)
 	tracker := rowContainer.GetMemTracker()
 	tracker.SetLabel(memory.LabelForBuildSideResult)
 	if spill {
@@ -141,7 +146,7 @@ func (s *pkgTestSerialSuite) testHashRowContainer(c *C, hashFunc func() hash.Has
 	probeChk, probeColType := initProbeChunk(2)
 	probeRow := probeChk.GetRow(1)
 	probeCtx := &hashContext{
-		allTypes:  probeColType,
+		allTypes:  probeColType[1:3],
 		keyColIdx: []int{1, 2},
 	}
 	probeCtx.hasNull = make([]bool, 1)
