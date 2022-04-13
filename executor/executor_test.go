@@ -2503,11 +2503,11 @@ func TestTimestampDefaultValueTimeZone(t *testing.T) {
 	// change timezone
 	tk.MustExec(`set time_zone = 'Asia/Shanghai'`)
 	tk.MustExec(`create table t(a timestamp default current_timestamp)`)
-	tk.MustExec(`insert into t set a=now()`)
+	tk.MustExec(`insert into t set a="20220413154712"`)
 	tk.MustExec(`alter table t add column b timestamp as (a+1) virtual;`)
 	// change timezone
 	tk.MustExec(`set time_zone = '+05:00'`)
-	tk.MustExec(`insert into t set a=now()`)
+	tk.MustExec(`insert into t set a="20220413154840"`)
 	tk.MustExec(`alter table t add index(b);`)
 	tk.MustExec("admin check table t")
 	tk.MustExec(`set time_zone = '-03:00'`)
