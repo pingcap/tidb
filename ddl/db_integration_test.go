@@ -2109,7 +2109,6 @@ func TestDefaultColumnWithUUID(t *testing.T) {
 		require.True(t, !ok, "Existing two same UUID values.")
 		set[str] = true
 	}
-	// show create table
 	tk.MustQuery("show create table t").Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
 			"  `c` int(10) DEFAULT NULL,\n" +
