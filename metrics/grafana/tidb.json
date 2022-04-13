@@ -8809,7 +8809,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "pd http request durations",
+          "description": "The duration of a client sending HTTP request to PD util received the response.",
           "editable": true,
           "error": false,
           "fieldConfig": {
