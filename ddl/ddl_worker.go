@@ -97,11 +97,11 @@ type worker struct {
 	lockSeqNum      bool
 
 	*ddlCtx
-	*jobContext
+	*JobContext
 }
 
-// jobContext is the ddl job execution context.
-type jobContext struct {
+// JobContext is the ddl job execution context.
+type JobContext struct {
 	// below fields are cache for top sql
 	ddlJobCtx          context.Context
 	cacheSQL           string
@@ -109,18 +109,23 @@ type jobContext struct {
 	cacheDigest        *parser.Digest
 }
 
+// NewJobContext returns a new ddl job context.
+func NewJobContext() *JobContext {
+	return &JobContext{
+		ddlJobCtx:          context.Background(),
+		cacheSQL:           "",
+		cacheNormalizedSQL: "",
+		cacheDigest:        nil,
+	}
+}
+
 func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRangeMgr delRangeManager, dCtx *ddlCtx) *worker {
 	worker := &worker{
-		id:       atomic.AddInt32(&ddlWorkerID, 1),
-		tp:       tp,
-		ddlJobCh: make(chan struct{}, 1),
-		ctx:      ctx,
-		jobContext: &jobContext{
-			ddlJobCtx:          context.Background(),
-			cacheSQL:           "",
-			cacheNormalizedSQL: "",
-			cacheDigest:        nil,
-		},
+		id:              atomic.AddInt32(&ddlWorkerID, 1),
+		tp:              tp,
+		ddlJobCh:        make(chan struct{}, 1),
+		ctx:             ctx,
+		JobContext:      NewJobContext(),
 		ddlCtx:          dCtx,
 		reorgCtx:        &reorgCtx{notifyCancelReorgJob: 0},
 		sessPool:        sessPool,
@@ -296,6 +301,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 			job.Version = currentVersion
 			job.StartTS = txn.StartTS()
 			job.ID = ids[i]
+			job.State = model.JobStateQueueing
 			if err = buildJobDependence(t, job); err != nil {
 				return errors.Trace(err)
 			}
@@ -415,6 +421,23 @@ func (w *worker) deleteRange(ctx context.Context, job *model.Job) error {
 	return errors.Trace(err)
 }
 
+func jobNeedGC(job *model.Job) bool {
+	if !job.IsCancelled() {
+		switch job.Type {
+		case model.ActionAddIndex, model.ActionAddPrimaryKey:
+			if job.State != model.JobStateRollbackDone {
+				break
+			}
+			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
+			return true
+		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
+			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes:
+			return true
+		}
+	}
+	return false
+}
+
 // finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.
 // If the DDL job need to handle in background, it will prepare a background job.
 func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
@@ -423,18 +446,10 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 
-	if !job.IsCancelled() {
-		switch job.Type {
-		case model.ActionAddIndex, model.ActionAddPrimaryKey:
-			if job.State != model.JobStateRollbackDone {
-				break
-			}
-
-			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
-			err = w.deleteRange(w.ddlJobCtx, job)
-		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
-			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes:
-			err = w.deleteRange(w.ddlJobCtx, job)
+	if jobNeedGC(job) {
+		err = w.deleteRange(w.ddlJobCtx, job)
+		if err != nil {
+			return err
 		}
 	}
 
@@ -466,6 +481,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		updateRawArgs = false
 	}
 	w.writeDDLSeqNum(job)
+	w.JobContext.resetWhenJobFinish()
 	err = t.AddHistoryDDLJob(job, updateRawArgs)
 	return errors.Trace(err)
 }
@@ -518,22 +534,21 @@ func newMetaWithQueueTp(txn kv.Transaction, tp workerType) *meta.Meta {
 	return meta.NewMeta(txn)
 }
 
-func (w *jobContext) setDDLLabelForTopSQL(job *model.Job) {
+func (w *JobContext) setDDLLabelForTopSQL(job *model.Job) {
 	if !topsqlstate.TopSQLEnabled() || job == nil {
-		w.cacheDigest = nil
-		w.ddlJobCtx = context.Background()
 		return
 	}
 
 	if job.Query != w.cacheSQL || w.cacheDigest == nil {
 		w.cacheNormalizedSQL, w.cacheDigest = parser.NormalizeDigest(job.Query)
 		w.cacheSQL = job.Query
+		w.ddlJobCtx = topsql.AttachSQLInfo(context.Background(), w.cacheNormalizedSQL, w.cacheDigest, "", nil, false)
+	} else {
+		topsql.AttachSQLInfo(w.ddlJobCtx, w.cacheNormalizedSQL, w.cacheDigest, "", nil, false)
 	}
-
-	w.ddlJobCtx = topsql.AttachSQLInfo(context.Background(), w.cacheNormalizedSQL, w.cacheDigest, "", nil, false)
 }
 
-func (w *jobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
+func (w *JobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
 	if !topsqlstate.TopSQLEnabled() || w.cacheDigest == nil {
 		return nil
 	}
@@ -544,6 +559,13 @@ func (w *jobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagg
 			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
 	}
 	return tagger
+}
+
+func (w *JobContext) resetWhenJobFinish() {
+	w.ddlJobCtx = context.Background()
+	w.cacheSQL = ""
+	w.cacheDigest = nil
+	w.cacheNormalizedSQL = ""
 }
 
 // handleDDLJobQueue handles DDL jobs in DDL Job queue.

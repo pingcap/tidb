@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/types"
 	util2 "github.com/pingcap/tidb/util"
@@ -50,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/tikv"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
@@ -183,15 +183,9 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() 
 	if err != nil {
 		return nil, err
 	}
-	if etcdCli != nil {
-		is.labelRuleManager = initLabelRuleManager(etcdCli.Endpoints())
-		is.placementManager = initPlacementManager(etcdCli.Endpoints())
-		is.tiflashPlacementManager = initTiFlashPlacementManager(etcdCli.Endpoints())
-	} else {
-		is.labelRuleManager = initLabelRuleManager([]string{})
-		is.placementManager = initPlacementManager([]string{})
-		is.tiflashPlacementManager = initTiFlashPlacementManager([]string{})
-	}
+	is.labelRuleManager = initLabelRuleManager(etcdCli)
+	is.placementManager = initPlacementManager(etcdCli)
+	is.tiflashPlacementManager = initTiFlashPlacementManager(etcdCli)
 	setGlobalInfoSyncer(is)
 	return is, nil
 }
@@ -218,27 +212,27 @@ func (is *InfoSyncer) GetSessionManager() util2.SessionManager {
 	return is.manager
 }
 
-func initLabelRuleManager(addrs []string) LabelRuleManager {
-	if len(addrs) == 0 {
+func initLabelRuleManager(etcdCli *clientv3.Client) LabelRuleManager {
+	if etcdCli == nil {
 		return &mockLabelManager{labelRules: map[string][]byte{}}
 	}
-	return &PDLabelManager{addrs: addrs}
+	return &PDLabelManager{etcdCli: etcdCli}
 }
 
-func initPlacementManager(addrs []string) PlacementManager {
-	if len(addrs) == 0 {
+func initPlacementManager(etcdCli *clientv3.Client) PlacementManager {
+	if etcdCli == nil {
 		return &mockPlacementManager{}
 	}
-	return &PDPlacementManager{addrs: addrs}
+	return &PDPlacementManager{etcdCli: etcdCli}
 }
 
-func initTiFlashPlacementManager(addrs []string) TiFlashPlacementManager {
-	if len(addrs) == 0 {
+func initTiFlashPlacementManager(etcdCli *clientv3.Client) TiFlashPlacementManager {
+	if etcdCli == nil {
 		m := mockTiFlashPlacementManager{}
 		return &m
 	}
-	logutil.BgLogger().Warn("init TiFlashPlacementManager", zap.Strings("pd addrs", addrs))
-	return &TiFlashPDPlacementManager{addrs: addrs}
+	logutil.BgLogger().Warn("init TiFlashPlacementManager", zap.Strings("pd addrs", etcdCli.Endpoints()))
+	return &TiFlashPDPlacementManager{etcdCli: etcdCli}
 }
 
 // GetMockTiFlash can only be used in tests to get MockTiFlash
@@ -378,7 +372,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 	var err error
 	var req *http.Request
 	var res *http.Response
-	for _, addr := range addrs {
+	for idx, addr := range addrs {
 		url := util2.ComposeURL(addr, route)
 		req, err = http.NewRequestWithContext(ctx, method, url, body)
 		if err != nil {
@@ -397,6 +391,13 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 				return nil, err
 			}
 			if res.StatusCode != http.StatusOK {
+				logutil.BgLogger().Warn("response not 200",
+					zap.String("method", method),
+					zap.String("hosts", addr),
+					zap.String("url", url),
+					zap.Int("http status", res.StatusCode),
+					zap.Int("address order", idx),
+				)
 				err = ErrHTTPServiceError.FastGen("%s", bodyBytes)
 				if res.StatusCode == http.StatusNotFound || res.StatusCode == http.StatusPreconditionFailed {
 					err = nil
@@ -406,6 +407,13 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			terror.Log(res.Body.Close())
 			return bodyBytes, err
 		}
+		logutil.BgLogger().Warn("fail to doRequest, retry next address",
+			zap.Error(err),
+			zap.String("method", method),
+			zap.String("hosts", addr),
+			zap.String("url", url),
+			zap.Int("address order", idx),
+		)
 	}
 	return nil, err
 }
@@ -612,6 +620,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		return
 	}
 	pl := is.manager.ShowProcessList()
+	innerSessionStartTSList := is.manager.GetInternalSessionStartTSList()
 
 	// Calculate the lower limit of the start timestamp to avoid extremely old transaction delaying GC.
 	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
@@ -620,7 +629,8 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		return
 	}
 	now := oracle.GetTimeFromTS(currentVer.Ver)
-	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, tikv.MaxTxnTimeUse)
+	// GCMaxWaitTime is in seconds, GCMaxWaitTime * 1000 converts it to milliseconds.
+	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, variable.GCMaxWaitTime.Load()*1000)
 
 	minStartTS := oracle.GoTimeToTS(now)
 	for _, info := range pl {
@@ -629,7 +639,15 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		}
 	}
 
-	is.minStartTS = minStartTS
+	for _, innerTS := range innerSessionStartTSList {
+		kv.PrintLongTimeInternalTxn(now, innerTS, false)
+		if innerTS > startTSLowerLimit && innerTS < minStartTS {
+			minStartTS = innerTS
+		}
+	}
+
+	is.minStartTS = kv.GetMinInnerTxnStartTS(now, startTSLowerLimit, minStartTS)
+
 	err = is.storeMinStartTS(context.Background())
 	if err != nil {
 		logutil.BgLogger().Error("update minStartTS failed", zap.Error(err))
@@ -1046,4 +1064,30 @@ func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionD
 		}
 	}
 	return nil
+}
+
+// StoreInternalSession is the entry function for store an internal session to SessionManager.
+func StoreInternalSession(se interface{}) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return
+	}
+	sm := is.GetSessionManager()
+	if sm == nil {
+		return
+	}
+	sm.StoreInternalSession(se)
+}
+
+// DeleteInternalSession is the entry function for delete an internal session from SessionManager.
+func DeleteInternalSession(se interface{}) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return
+	}
+	sm := is.GetSessionManager()
+	if sm == nil {
+		return
+	}
+	sm.DeleteInternalSession(se)
 }
