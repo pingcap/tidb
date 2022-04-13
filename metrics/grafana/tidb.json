@@ -8966,7 +8966,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "PD HTTP API requests count per second.",
+          "description": "PD HTTP API request count per second.",
           "editable": true,
           "error": false,
           "fieldConfig": {
@@ -9082,7 +9082,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "pd http requests failed count per second",
+          "description": "PD failed HTTP request count per second.",
           "editable": true,
           "error": false,
           "fieldConfig": {
