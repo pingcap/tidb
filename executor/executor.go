@@ -68,7 +68,6 @@ import (
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
-	"github.com/tikv/client-go/v2/tikvrpc"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -2021,18 +2020,8 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 
 func setResourceGroupTaggerForTxn(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
 	if snapshot != nil {
-		snapshot.SetOption(kv.ResourceGroupTagger, getResourceGroupTagger(sc))
+		snapshot.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
 	}
-}
-
-func getResourceGroupTagger(sc *stmtctx.StatementContext) tikvrpc.ResourceGroupTagger {
-	fn := sc.GetResourceGroupTagger()
-	tagger := func(req *tikvrpc.Request) {
-		if topsqlstate.TopSQLEnabled() {
-			fn(req)
-		}
-	}
-	return tagger
 }
 
 // setRPCInterceptorOfExecCounterForTxn binds an interceptor for client-go to count

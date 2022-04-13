@@ -273,7 +273,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 		txn, err := e.ctx.Txn(true)
 		if err == nil {
 			sc := e.ctx.GetSessionVars().StmtCtx
-			txn.SetOption(kv.ResourceGroupTagger, getResourceGroupTagger(sc))
+			txn.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
 			if sc.KvExecCounter != nil {
 				// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
 				txn.SetOption(kv.RPCInterceptor, sc.KvExecCounter.RPCInterceptor())

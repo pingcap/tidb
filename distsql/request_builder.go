@@ -36,9 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
-	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 // RequestBuilder is used to build a "kv.Request".
@@ -308,12 +306,7 @@ func (builder *RequestBuilder) SetFromInfoSchema(pis interface{}) *RequestBuilde
 
 // SetResourceGroupTagger sets the request resource group tagger.
 func (builder *RequestBuilder) SetResourceGroupTagger(sc *stmtctx.StatementContext) *RequestBuilder {
-	tagger := sc.GetResourceGroupTagger()
-	builder.Request.ResourceGroupTagger = func(req *tikvrpc.Request) {
-		if topsqlstate.TopSQLEnabled() {
-			tagger(req)
-		}
-	}
+	builder.Request.ResourceGroupTagger = sc.GetResourceGroupTagger()
 	return builder
 }
 
