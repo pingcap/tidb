@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
 const defaultWriterSize = 16 * 1024
@@ -69,6 +70,7 @@ type packetIO struct {
 func newPacketIO(bufReadConn *bufferedReadConn) *packetIO {
 	p := &packetIO{sequence: 0}
 	p.setBufferedReadConn(bufReadConn)
+	p.setMaxAllowedPacket(variable.DefMaxAllowedPacket)
 	return p
 }
 
@@ -119,9 +121,12 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 	return data, nil
 }
 
-func (p *packetIO) readPacket(maxAllowedPacket uint64) ([]byte, error) {
+func (p *packetIO) setMaxAllowedPacket(maxAllowedPacket uint64) {
 	p.maxAllowedPacket = maxAllowedPacket
 	p.accumulatedLength = 0
+}
+
+func (p *packetIO) readPacket() ([]byte, error) {
 	if p.readTimeout == 0 {
 		if err := p.bufReadConn.SetReadDeadline(time.Time{}); err != nil {
 			return nil, errors.Trace(err)

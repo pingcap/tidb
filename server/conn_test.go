@@ -1266,7 +1266,8 @@ func TestMaxAllowedPacket(t *testing.T) {
 	require.NoError(t, err)
 	brc := newBufferedReadConn(&bytesConn{inBuffer})
 	pkt := newPacketIO(brc)
-	_, err = pkt.readPacket(maxAllowedPacket)
+	pkt.setMaxAllowedPacket(maxAllowedPacket)
+	_, err = pkt.readPacket()
 	require.NoError(t, err)
 	require.Equal(t, uint8(1), pkt.sequence)
 
@@ -1276,6 +1277,7 @@ func TestMaxAllowedPacket(t *testing.T) {
 	require.NoError(t, err)
 	brc = newBufferedReadConn(&bytesConn{inBuffer})
 	pkt = newPacketIO(brc)
-	_, err = pkt.readPacket(maxAllowedPacket)
+	pkt.setMaxAllowedPacket(maxAllowedPacket)
+	_, err = pkt.readPacket()
 	require.Error(t, err)
 }

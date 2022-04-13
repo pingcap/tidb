@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 )
 
@@ -58,7 +57,7 @@ func TestPacketIORead(t *testing.T) {
 	// Test read one packet
 	brc := newBufferedReadConn(&bytesConn{inBuffer})
 	pkt := newPacketIO(brc)
-	readBytes, err := pkt.readPacket(variable.DefMaxAllowedPacket)
+	readBytes, err := pkt.readPacket()
 	require.NoError(t, err)
 	require.Equal(t, uint8(1), pkt.sequence)
 	require.Equal(t, []byte{0x01}, readBytes)
@@ -80,7 +79,7 @@ func TestPacketIORead(t *testing.T) {
 	// Test read multiple packets
 	brc = newBufferedReadConn(&bytesConn{inBuffer})
 	pkt = newPacketIO(brc)
-	readBytes, err = pkt.readPacket(variable.DefMaxAllowedPacket)
+	readBytes, err = pkt.readPacket()
 	require.NoError(t, err)
 	require.Equal(t, uint8(2), pkt.sequence)
 	require.Equal(t, mysql.MaxPayloadLen+1, len(readBytes))
