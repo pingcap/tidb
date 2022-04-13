@@ -50,11 +50,10 @@ type KvExecCounter struct {
 // the TiKV dimension.
 func (c *KvExecCounter) RPCInterceptor() interceptor.RPCInterceptor {
 	return func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
-		if !topsqlstate.TopSQLEnabled() {
-			return next
-		}
 		return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
-			c.mark(target)
+			if topsqlstate.TopSQLEnabled() {
+				c.mark(target)
+			}
 			return next(target, req)
 		}
 	}
