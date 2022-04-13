@@ -229,6 +229,10 @@ func SetStmtVar(vars *SessionVars, name string, value string) error {
 	return vars.SetStmtVar(name, sVal)
 }
 
+// Deprecated: Read the value from the mysql.tidb table.
+// This supports the use case that a TiDB server *older* than 5.0 is a member of the cluster.
+// i.e. system variables such as tidb_gc_concurrency, tidb_gc_enable, tidb_gc_life_time
+// do not exist.
 func getTiDBTableValue(vars *SessionVars, name, defaultVal string) (string, error) {
 	val, err := vars.GlobalVarsAccessor.GetTiDBTableValue(name)
 	if err != nil { // handle empty result or other errors
@@ -237,6 +241,10 @@ func getTiDBTableValue(vars *SessionVars, name, defaultVal string) (string, erro
 	return trueFalseToOnOff(val), nil
 }
 
+// Deprecated: Set the value from the mysql.tidb table.
+// This supports the use case that a TiDB server *older* than 5.0 is a member of the cluster.
+// i.e. system variables such as tidb_gc_concurrency, tidb_gc_enable, tidb_gc_life_time
+// do not exist.
 func setTiDBTableValue(vars *SessionVars, name, value, comment string) error {
 	value = OnOffToTrueFalse(value)
 	return vars.GlobalVarsAccessor.SetTiDBTableValue(name, value, comment)
