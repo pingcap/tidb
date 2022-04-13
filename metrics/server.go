@@ -254,6 +254,15 @@ var (
 			Name:      "cpu_profile_total",
 			Help:      "Counter of cpu profiling",
 		})
+
+	LoadTableCacheDurationHistogram = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "load_table_cache_seconds",
+			Help:      "Duration (us) for loading table cache.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 30), // 1us ~ 528s
+		})
 )
 
 // ExecuteErrorToLabel converts an execute error to label.

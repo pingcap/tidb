@@ -3757,6 +3757,13 @@ func TestIssue29282(t *testing.T) {
 		// Unexpected, test fail.
 		t.Fail()
 	}
+
+	// Wait the background query rollback
+	select {
+	case <-time.After(100 * time.Millisecond):
+		t.Fail()
+	case <-ch:
+	}
 }
 
 // See https://github.com/pingcap/tidb/issues/29327

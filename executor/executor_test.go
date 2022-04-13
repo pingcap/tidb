@@ -2999,3 +2999,62 @@ func TestUpdateGivenPartitionSet(t *testing.T) {
 	tk.MustExec("insert into t4(a, b) values(1, 1),(2, 2),(3, 3);")
 	tk.MustGetErrMsg("update t4 partition(p0) set a = 5 where a = 2", "[table:1748]Found a row not matching the given partition set")
 }
+
+func TestIndexLookupRuntimeStats(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int, index(a))")
+	tk.MustExec("insert into t1 values (1,2),(2,3),(3,4)")
+	rows := tk.MustQuery("explain analyze select * from t1 use index(a) where a > 1").Rows()
+	require.Len(t, rows, 3)
+	explain := fmt.Sprintf("%v", rows[0])
+	require.Regexp(t, ".*time:.*loops:.*index_task:.*table_task: {total_time.*num.*concurrency.*}.*", explain)
+	indexExplain := fmt.Sprintf("%v", rows[1])
+	tableExplain := fmt.Sprintf("%v", rows[2])
+	require.Regexp(t, ".*time:.*loops:.*cop_task:.*", indexExplain)
+	require.Regexp(t, ".*time:.*loops:.*cop_task:.*", tableExplain)
+}
+
+func TestHashAggRuntimeStats(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("insert into t1 values (1,2),(2,3),(3,4)")
+	rows := tk.MustQuery("explain analyze SELECT /*+ HASH_AGG() */ count(*) FROM t1 WHERE a < 10;").Rows()
+	require.Len(t, rows, 5)
+	explain := fmt.Sprintf("%v", rows[0])
+	pattern := ".*time:.*loops:.*partial_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*final_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*"
+	require.Regexp(t, pattern, explain)
+}
+
+func TestIndexMergeRuntimeStats(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_index_merge = 1")
+	tk.MustExec("create table t1(id int primary key, a int, b int, c int, d int)")
+	tk.MustExec("create index t1a on t1(a)")
+	tk.MustExec("create index t1b on t1(b)")
+	tk.MustExec("insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5)")
+	rows := tk.MustQuery("explain analyze select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4;").Rows()
+	require.Len(t, rows, 4)
+	explain := fmt.Sprintf("%v", rows[0])
+	pattern := ".*time:.*loops:.*index_task:{fetch_handle:.*, merge:.*}.*table_task:{num.*concurrency.*fetch_row.*wait_time.*}.*"
+	require.Regexp(t, pattern, explain)
+	tableRangeExplain := fmt.Sprintf("%v", rows[1])
+	indexExplain := fmt.Sprintf("%v", rows[2])
+	tableExplain := fmt.Sprintf("%v", rows[3])
+	require.Regexp(t, ".*time:.*loops:.*cop_task:.*", tableRangeExplain)
+	require.Regexp(t, ".*time:.*loops:.*cop_task:.*", indexExplain)
+	require.Regexp(t, ".*time:.*loops:.*cop_task:.*", tableExplain)
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustQuery("select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by a").Check(testkit.Rows("1 1 1 1 1", "5 5 5 5 5"))
+}
