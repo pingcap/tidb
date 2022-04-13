@@ -385,7 +385,12 @@ func (ht *concurrentMapHashTable) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
 
 // GetMemoryDelta gets the memDelta of the concurrentMapHashTable. Memory delta will be cleared after each fetch.
 func (ht *concurrentMapHashTable) GetMemoryDelta() int64 {
-	memDelta := atomic.LoadInt64(&ht.memDelta)
-	atomic.AddInt64(&ht.memDelta, -memDelta)
+	var memDelta int64
+	for {
+		memDelta = atomic.LoadInt64(&ht.memDelta)
+		if atomic.CompareAndSwapInt64(&ht.memDelta, memDelta, 0) {
+			break
+		}
+	}
 	return memDelta
 }
