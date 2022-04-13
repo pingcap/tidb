@@ -372,7 +372,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 	var err error
 	var req *http.Request
 	var res *http.Response
-	for _, addr := range addrs {
+	for idx, addr := range addrs {
 		url := util2.ComposeURL(addr, route)
 		req, err = http.NewRequestWithContext(ctx, method, url, body)
 		if err != nil {
@@ -391,6 +391,13 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 				return nil, err
 			}
 			if res.StatusCode != http.StatusOK {
+				logutil.BgLogger().Warn("response not 200",
+					zap.String("method", method),
+					zap.String("hosts", addr),
+					zap.String("url", url),
+					zap.Int("http status", res.StatusCode),
+					zap.Int("address order", idx),
+				)
 				err = ErrHTTPServiceError.FastGen("%s", bodyBytes)
 				if res.StatusCode == http.StatusNotFound || res.StatusCode == http.StatusPreconditionFailed {
 					err = nil
@@ -400,6 +407,13 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			terror.Log(res.Body.Close())
 			return bodyBytes, err
 		}
+		logutil.BgLogger().Warn("fail to doRequest, retry next address",
+			zap.Error(err),
+			zap.String("method", method),
+			zap.String("hosts", addr),
+			zap.String("url", url),
+			zap.Int("address order", idx),
+		)
 	}
 	return nil, err
 }
