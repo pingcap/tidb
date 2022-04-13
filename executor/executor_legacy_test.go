@@ -18,8 +18,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"net"
-	"os"
 	"reflect"
 	"runtime"
 	"strconv"
@@ -37,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -48,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -64,7 +60,6 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
-	"google.golang.org/grpc"
 )
 
 func TestT(t *testing.T) {
@@ -79,8 +74,6 @@ var _ = Suite(&testSuiteP2{&baseTestSuite{}})
 var _ = SerialSuites(&testSuiteWithCliBaseCharset{})
 var _ = Suite(&testSuite2{&baseTestSuite{}})
 var _ = Suite(&testSuite3{&baseTestSuite{}})
-var _ = SerialSuites(&testClusterTableSuite{})
-var _ = SerialSuites(&testSerialSuite1{&baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite{&baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
@@ -1610,26 +1603,6 @@ func (s *testSuite3) TearDownTest(c *C) {
 	}
 }
 
-type testSerialSuite1 struct {
-	*baseTestSuite
-}
-
-func (s *testSerialSuite1) TearDownTest(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	r := tk.MustQuery("show full tables")
-	for _, tb := range r.Rows() {
-		tableName := tb[0]
-		if tb[1] == "VIEW" {
-			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
-		} else if tb[1] == "SEQUENCE" {
-			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
-		} else {
-			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
-		}
-	}
-}
-
 func (s *testSuiteP2) TestStrToDateBuiltin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(`select str_to_date('20190101','%Y%m%d%!') from dual`).Check(testkit.Rows("2019-01-01"))
@@ -2298,374 +2271,6 @@ func (s *testSuiteP2) TestPointUpdatePreparedPlanWithCommitMode(c *C) {
 	tk2.MustQuery("select * from t where a = 3").Check(testkit.Rows("3 3 11"))
 }
 
-type testClusterTableSuite struct {
-	testSuiteWithCliBase
-	rpcserver  *grpc.Server
-	listenAddr string
-}
-
-func (s *testClusterTableSuite) SetUpSuite(c *C) {
-	s.testSuiteWithCliBase.SetUpSuite(c)
-	s.rpcserver, s.listenAddr = s.setUpRPCService(c, "127.0.0.1:0")
-}
-
-func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) (*grpc.Server, string) {
-	sm := &mockSessionManager1{}
-	sm.PS = append(sm.PS, &util.ProcessInfo{
-		ID:      1,
-		User:    "root",
-		Host:    "127.0.0.1",
-		Command: mysql.ComQuery,
-	})
-	lis, err := net.Listen("tcp", addr)
-	c.Assert(err, IsNil)
-	srv := server.NewRPCServer(config.GetGlobalConfig(), s.dom, sm)
-	port := lis.Addr().(*net.TCPAddr).Port
-	addr = fmt.Sprintf("127.0.0.1:%d", port)
-	go func() {
-		err = srv.Serve(lis)
-		c.Assert(err, IsNil)
-	}()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Status.StatusPort = uint(port)
-	})
-	return srv, addr
-}
-func (s *testClusterTableSuite) TearDownSuite(c *C) {
-	if s.rpcserver != nil {
-		s.rpcserver.Stop()
-		s.rpcserver = nil
-	}
-	s.testSuiteWithCliBase.TearDownSuite(c)
-}
-
-func (s *testClusterTableSuite) TestSlowQuery(c *C) {
-	logData0 := ""
-	logData1 := `
-# Time: 2020-02-15T18:00:01.000000+08:00
-select 1;
-# Time: 2020-02-15T19:00:05.000000+08:00
-select 2;`
-	logData2 := `
-# Time: 2020-02-16T18:00:01.000000+08:00
-select 3;
-# Time: 2020-02-16T18:00:05.000000+08:00
-select 4;`
-	logData3 := `
-# Time: 2020-02-16T19:00:00.000000+08:00
-select 5;
-# Time: 2020-02-17T18:00:05.000000+08:00
-select 6;`
-	logData4 := `
-# Time: 2020-05-14T19:03:54.314615176+08:00
-select 7;`
-	logData := []string{logData0, logData1, logData2, logData3, logData4}
-
-	fileName0 := "tidb-slow-2020-02-14T19-04-05.01.log"
-	fileName1 := "tidb-slow-2020-02-15T19-04-05.01.log"
-	fileName2 := "tidb-slow-2020-02-16T19-04-05.01.log"
-	fileName3 := "tidb-slow-2020-02-17T18-00-05.01.log"
-	fileName4 := "tidb-slow.log"
-	fileNames := []string{fileName0, fileName1, fileName2, fileName3, fileName4}
-
-	prepareLogs(c, logData, fileNames)
-	defer func() {
-		removeFiles(fileNames)
-	}()
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	loc, err := time.LoadLocation("Asia/Shanghai")
-	c.Assert(err, IsNil)
-	tk.Se.GetSessionVars().TimeZone = loc
-	tk.MustExec("use information_schema")
-	cases := []struct {
-		prepareSQL string
-		sql        string
-		result     []string
-	}{
-		{
-			sql:    "select count(*),min(time),max(time) from %s where time > '2019-01-26 21:51:00' and time < now()",
-			result: []string{"7|2020-02-15 18:00:01.000000|2020-05-14 19:03:54.314615"},
-		},
-		{
-			sql:    "select count(*),min(time),max(time) from %s where time > '2020-02-15 19:00:00' and time < '2020-02-16 18:00:02'",
-			result: []string{"2|2020-02-15 19:00:05.000000|2020-02-16 18:00:01.000000"},
-		},
-		{
-			sql:    "select count(*),min(time),max(time) from %s where time > '2020-02-16 18:00:02' and time < '2020-02-17 17:00:00'",
-			result: []string{"2|2020-02-16 18:00:05.000000|2020-02-16 19:00:00.000000"},
-		},
-		{
-			sql:    "select count(*),min(time),max(time) from %s where time > '2020-02-16 18:00:02' and time < '2020-02-17 20:00:00'",
-			result: []string{"3|2020-02-16 18:00:05.000000|2020-02-17 18:00:05.000000"},
-		},
-		{
-			sql:    "select count(*),min(time),max(time) from %s",
-			result: []string{"1|2020-05-14 19:03:54.314615|2020-05-14 19:03:54.314615"},
-		},
-		{
-			sql:    "select count(*),min(time) from %s where time > '2020-02-16 20:00:00'",
-			result: []string{"1|2020-02-17 18:00:05.000000"},
-		},
-		{
-			sql:    "select count(*) from %s where time > '2020-02-17 20:00:00'",
-			result: []string{"0"},
-		},
-		{
-			sql:    "select query from %s where time > '2019-01-26 21:51:00' and time < now()",
-			result: []string{"select 1;", "select 2;", "select 3;", "select 4;", "select 5;", "select 6;", "select 7;"},
-		},
-		// Test for different timezone.
-		{
-			prepareSQL: "set @@time_zone = '+00:00'",
-			sql:        "select time from %s where time = '2020-02-17 10:00:05.000000'",
-			result:     []string{"2020-02-17 10:00:05.000000"},
-		},
-		{
-			prepareSQL: "set @@time_zone = '+02:00'",
-			sql:        "select time from %s where time = '2020-02-17 12:00:05.000000'",
-			result:     []string{"2020-02-17 12:00:05.000000"},
-		},
-		// Test for issue 17224
-		{
-			prepareSQL: "set @@time_zone = '+08:00'",
-			sql:        "select time from %s where time = '2020-05-14 19:03:54.314615'",
-			result:     []string{"2020-05-14 19:03:54.314615"},
-		},
-	}
-	for _, cas := range cases {
-		if len(cas.prepareSQL) > 0 {
-			tk.MustExec(cas.prepareSQL)
-		}
-		sql := fmt.Sprintf(cas.sql, "slow_query")
-		tk.MustQuery(sql).Check(testkit.RowsWithSep("|", cas.result...))
-		sql = fmt.Sprintf(cas.sql, "cluster_slow_query")
-		tk.MustQuery(sql).Check(testkit.RowsWithSep("|", cas.result...))
-	}
-}
-
-func (s *testClusterTableSuite) TestIssue20236(c *C) {
-	logData0 := ""
-	logData1 := `
-# Time: 2020-02-15T18:00:01.000000+08:00
-select 1;
-# Time: 2020-02-15T19:00:05.000000+08:00
-select 2;
-# Time: 2020-02-15T20:00:05.000000+08:00`
-	logData2 := `select 3;
-# Time: 2020-02-16T18:00:01.000000+08:00
-select 4;
-# Time: 2020-02-16T18:00:05.000000+08:00
-select 5;`
-	logData3 := `
-# Time: 2020-02-16T19:00:00.000000+08:00
-select 6;
-# Time: 2020-02-17T18:00:05.000000+08:00
-select 7;
-# Time: 2020-02-17T19:00:00.000000+08:00`
-	logData4 := `select 8;
-# Time: 2020-02-17T20:00:00.000000+08:00
-select 9
-# Time: 2020-05-14T19:03:54.314615176+08:00
-select 10;`
-	logData := []string{logData0, logData1, logData2, logData3, logData4}
-
-	fileName0 := "tidb-slow-2020-02-14T19-04-05.01.log"
-	fileName1 := "tidb-slow-2020-02-15T19-04-05.01.log"
-	fileName2 := "tidb-slow-2020-02-16T19-04-05.01.log"
-	fileName3 := "tidb-slow-2020-02-17T18-00-05.01.log"
-	fileName4 := "tidb-slow.log"
-	fileNames := []string{fileName0, fileName1, fileName2, fileName3, fileName4}
-	prepareLogs(c, logData, fileNames)
-	defer func() {
-		removeFiles(fileNames)
-	}()
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	loc, err := time.LoadLocation("Asia/Shanghai")
-	c.Assert(err, IsNil)
-	tk.Se.GetSessionVars().TimeZone = loc
-	tk.MustExec("use information_schema")
-	cases := []struct {
-		prepareSQL string
-		sql        string
-		result     []string
-	}{
-		{
-			prepareSQL: "set @@time_zone = '+08:00'",
-			sql:        "select time from cluster_slow_query where time > '2020-02-17 12:00:05.000000' and time < '2020-05-14 20:00:00.000000'",
-			result:     []string{"2020-02-17 18:00:05.000000", "2020-02-17 19:00:00.000000", "2020-05-14 19:03:54.314615"},
-		},
-		{
-			prepareSQL: "set @@time_zone = '+08:00'",
-			sql:        "select time from cluster_slow_query where time > '2020-02-17 12:00:05.000000' and time < '2020-05-14 20:00:00.000000' order by time desc",
-			result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 19:00:00.000000", "2020-02-17 18:00:05.000000"},
-		},
-		{
-			prepareSQL: "set @@time_zone = '+08:00'",
-			sql:        "select time from cluster_slow_query where (time > '2020-02-15 18:00:00' and time < '2020-02-15 20:01:00') or (time > '2020-02-17 18:00:00' and time < '2020-05-14 20:00:00') order by time",
-			result:     []string{"2020-02-15 18:00:01.000000", "2020-02-15 19:00:05.000000", "2020-02-17 18:00:05.000000", "2020-02-17 19:00:00.000000", "2020-05-14 19:03:54.314615"},
-		},
-		{
-			prepareSQL: "set @@time_zone = '+08:00'",
-			sql:        "select time from cluster_slow_query where (time > '2020-02-15 18:00:00' and time < '2020-02-15 20:01:00') or (time > '2020-02-17 18:00:00' and time < '2020-05-14 20:00:00') order by time desc",
-			result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 19:00:00.000000", "2020-02-17 18:00:05.000000", "2020-02-15 19:00:05.000000", "2020-02-15 18:00:01.000000"},
-		},
-		{
-			prepareSQL: "set @@time_zone = '+08:00'",
-			sql:        "select count(*) from cluster_slow_query where time > '2020-02-15 18:00:00.000000' and time < '2020-05-14 20:00:00.000000' order by time desc",
-			result:     []string{"9"},
-		},
-		{
-			prepareSQL: "set @@time_zone = '+08:00'",
-			sql:        "select count(*) from cluster_slow_query where (time > '2020-02-16 18:00:00' and time < '2020-05-14 20:00:00') or (time > '2020-02-17 18:00:00' and time < '2020-05-17 20:00:00')",
-			result:     []string{"6"},
-		},
-		{
-			prepareSQL: "set @@time_zone = '+08:00'",
-			sql:        "select count(*) from cluster_slow_query where time > '2020-02-16 18:00:00.000000' and time < '2020-02-17 20:00:00.000000' order by time desc",
-			result:     []string{"5"},
-		},
-		{
-			prepareSQL: "set @@time_zone = '+08:00'",
-			sql:        "select time from cluster_slow_query where time > '2020-02-16 18:00:00.000000' and time < '2020-05-14 20:00:00.000000' order by time desc limit 3",
-			result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 19:00:00.000000", "2020-02-17 18:00:05.000000"},
-		},
-	}
-	for _, cas := range cases {
-		if len(cas.prepareSQL) > 0 {
-			tk.MustExec(cas.prepareSQL)
-		}
-		tk.MustQuery(cas.sql).Check(testkit.RowsWithSep("|", cas.result...))
-	}
-}
-
-func (s *testClusterTableSuite) TestSQLDigestTextRetriever(c *C) {
-	tkInit := testkit.NewTestKitWithInit(c, s.store)
-	tkInit.MustExec("set global tidb_enable_stmt_summary = 1")
-	tkInit.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
-	tkInit.MustExec("drop table if exists test_sql_digest_text_retriever")
-	tkInit.MustExec("create table test_sql_digest_text_retriever (id int primary key, v int)")
-
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
-	tk.MustExec("insert into test_sql_digest_text_retriever values (1, 1)")
-
-	insertNormalized, insertDigest := parser.NormalizeDigest("insert into test_sql_digest_text_retriever values (1, 1)")
-	_, updateDigest := parser.NormalizeDigest("update test_sql_digest_text_retriever set v = v + 1 where id = 1")
-	r := &expression.SQLDigestTextRetriever{
-		SQLDigestsMap: map[string]string{
-			insertDigest.String(): "",
-			updateDigest.String(): "",
-		},
-	}
-	err := r.RetrieveLocal(context.Background(), tk.Se)
-	c.Assert(err, IsNil)
-	c.Assert(r.SQLDigestsMap[insertDigest.String()], Equals, insertNormalized)
-	c.Assert(r.SQLDigestsMap[updateDigest.String()], Equals, "")
-}
-
-func (s *testClusterTableSuite) TestFunctionDecodeSQLDigests(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
-	tk.MustExec("set global tidb_enable_stmt_summary = 1")
-	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
-	tk.MustExec("drop table if exists test_func_decode_sql_digests")
-	tk.MustExec("create table test_func_decode_sql_digests(id int primary key, v int)")
-
-	q1 := "begin"
-	norm1, digest1 := parser.NormalizeDigest(q1)
-	q2 := "select @@tidb_current_ts"
-	norm2, digest2 := parser.NormalizeDigest(q2)
-	q3 := "select id, v from test_func_decode_sql_digests where id = 1 for update"
-	norm3, digest3 := parser.NormalizeDigest(q3)
-
-	// TIDB_DECODE_SQL_DIGESTS function doesn't actually do "decoding", instead it queries `statements_summary` and it's
-	// variations for the corresponding statements.
-	// Execute the statements so that the queries will be saved into statements_summary table.
-	tk.MustExec(q1)
-	// Save the ts to query the transaction from tidb_trx.
-	ts, err := strconv.ParseUint(tk.MustQuery(q2).Rows()[0][0].(string), 10, 64)
-	c.Assert(err, IsNil)
-	c.Assert(ts, Greater, uint64(0))
-	tk.MustExec(q3)
-	tk.MustExec("rollback")
-
-	// Test statements truncating.
-	decoded := fmt.Sprintf(`["%s","%s","%s"]`, norm1, norm2, norm3)
-	digests := fmt.Sprintf(`["%s","%s","%s"]`, digest1, digest2, digest3)
-	tk.MustQuery("select tidb_decode_sql_digests(?, 0)", digests).Check(testkit.Rows(decoded))
-	// The three queries are shorter than truncate length, equal to truncate length and longer than truncate length respectively.
-	tk.MustQuery("select tidb_decode_sql_digests(?, ?)", digests, len(norm2)).Check(testkit.Rows(
-		"[\"begin\",\"select @@tidb_current_ts\",\"select `id` , `v` from `...\"]"))
-
-	// Empty array.
-	tk.MustQuery("select tidb_decode_sql_digests('[]')").Check(testkit.Rows("[]"))
-
-	// NULL
-	tk.MustQuery("select tidb_decode_sql_digests(null)").Check(testkit.Rows("<nil>"))
-
-	// Array containing wrong types and not-existing digests (maps to null).
-	tk.MustQuery("select tidb_decode_sql_digests(?)", fmt.Sprintf(`["%s",1,null,"%s",{"a":1},[2],"%s","","abcde"]`, digest1, digest2, digest3)).
-		Check(testkit.Rows(fmt.Sprintf(`["%s",null,null,"%s",null,null,"%s",null,null]`, norm1, norm2, norm3)))
-
-	// Not JSON array (throws warnings)
-	tk.MustQuery(`select tidb_decode_sql_digests('{"a":1}')`).Check(testkit.Rows("<nil>"))
-	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1210 The argument can't be unmarshalled as JSON array: '{"a":1}'`))
-	tk.MustQuery(`select tidb_decode_sql_digests('aabbccdd')`).Check(testkit.Rows("<nil>"))
-	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1210 The argument can't be unmarshalled as JSON array: 'aabbccdd'`))
-
-	// Invalid argument count.
-	tk.MustGetErrCode("select tidb_decode_sql_digests('a', 1, 2)", 1582)
-	tk.MustGetErrCode("select tidb_decode_sql_digests()", 1582)
-}
-
-func (s *testClusterTableSuite) TestFunctionDecodeSQLDigestsPrivilege(c *C) {
-	dropUserTk := testkit.NewTestKitWithInit(c, s.store)
-	c.Assert(dropUserTk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
-
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
-	tk.MustExec("create user 'testuser'@'localhost'")
-	defer dropUserTk.MustExec("drop user 'testuser'@'localhost'")
-	c.Assert(tk.Se.Auth(&auth.UserIdentity{
-		Username: "testuser",
-		Hostname: "localhost",
-	}, nil, nil), IsTrue)
-	err := tk.ExecToErr("select tidb_decode_sql_digests('[\"aa\"]')")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[expression:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
-
-	tk = testkit.NewTestKitWithInit(c, s.store)
-	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
-	tk.MustExec("create user 'testuser2'@'localhost'")
-	defer dropUserTk.MustExec("drop user 'testuser2'@'localhost'")
-	tk.MustExec("grant process on *.* to 'testuser2'@'localhost'")
-	c.Assert(tk.Se.Auth(&auth.UserIdentity{
-		Username: "testuser2",
-		Hostname: "localhost",
-	}, nil, nil), IsTrue)
-	_ = tk.MustQuery("select tidb_decode_sql_digests('[\"aa\"]')")
-}
-
-func prepareLogs(c *C, logData []string, fileNames []string) {
-	writeFile := func(file string, data string) {
-		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-		c.Assert(err, IsNil)
-		_, err = f.Write([]byte(data))
-		c.Assert(f.Close(), IsNil)
-		c.Assert(err, IsNil)
-	}
-
-	for i, log := range logData {
-		writeFile(fileNames[i], log)
-	}
-}
-
-func removeFiles(fileNames []string) {
-	for _, fileName := range fileNames {
-		os.Remove(fileName)
-	}
-}
-
 func (s *testSuiteP2) TestApplyCache(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -2743,61 +2348,6 @@ func (s *testSuite) TestIssue19372(c *C) {
 	tk.MustExec("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c');")
 	tk.MustExec("insert into t2 select * from t1;")
 	tk.MustQuery("select (select t2.c_str from t2 where t2.c_str <= t1.c_str and t2.c_int in (1, 2) order by t2.c_str limit 1) x from t1 order by c_int;").Check(testkit.Rows("a", "a", "a"))
-}
-
-func (s *testSerialSuite1) TestIndexLookupRuntimeStats(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (a int, b int, index(a))")
-	tk.MustExec("insert into t1 values (1,2),(2,3),(3,4)")
-	sql := "explain analyze select * from t1 use index(a) where a > 1;"
-	rows := tk.MustQuery(sql).Rows()
-	c.Assert(len(rows), Equals, 3)
-	explain := fmt.Sprintf("%v", rows[0])
-	c.Assert(explain, Matches, ".*time:.*loops:.*index_task:.*table_task: {total_time.*num.*concurrency.*}.*")
-	indexExplain := fmt.Sprintf("%v", rows[1])
-	tableExplain := fmt.Sprintf("%v", rows[2])
-	c.Assert(indexExplain, Matches, ".*time:.*loops:.*cop_task:.*")
-	c.Assert(tableExplain, Matches, ".*time:.*loops:.*cop_task:.*")
-}
-
-func (s *testSerialSuite1) TestHashAggRuntimeStats(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (a int, b int)")
-	tk.MustExec("insert into t1 values (1,2),(2,3),(3,4)")
-	sql := "explain analyze SELECT /*+ HASH_AGG() */ count(*) FROM t1 WHERE a < 10;"
-	rows := tk.MustQuery(sql).Rows()
-	c.Assert(len(rows), Equals, 5)
-	explain := fmt.Sprintf("%v", rows[0])
-	c.Assert(explain, Matches, ".*time:.*loops:.*partial_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*final_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*")
-}
-
-func (s *testSerialSuite1) TestIndexMergeRuntimeStats(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("set @@tidb_enable_index_merge = 1")
-	tk.MustExec("create table t1(id int primary key, a int, b int, c int, d int)")
-	tk.MustExec("create index t1a on t1(a)")
-	tk.MustExec("create index t1b on t1(b)")
-	tk.MustExec("insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5)")
-	sql := "explain analyze select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4;"
-	rows := tk.MustQuery(sql).Rows()
-	c.Assert(len(rows), Equals, 4)
-	explain := fmt.Sprintf("%v", rows[0])
-	c.Assert(explain, Matches, ".*time:.*loops:.*index_task:{fetch_handle:.*, merge:.*}.*table_task:{num.*concurrency.*fetch_row.*wait_time.*}.*")
-	tableRangeExplain := fmt.Sprintf("%v", rows[1])
-	indexExplain := fmt.Sprintf("%v", rows[2])
-	tableExplain := fmt.Sprintf("%v", rows[3])
-	c.Assert(tableRangeExplain, Matches, ".*time:.*loops:.*cop_task:.*")
-	c.Assert(indexExplain, Matches, ".*time:.*loops:.*cop_task:.*")
-	c.Assert(tableExplain, Matches, ".*time:.*loops:.*cop_task:.*")
-	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
-	sql = "select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by a"
-	tk.MustQuery(sql).Check(testkit.Rows("1 1 1 1 1", "5 5 5 5 5"))
 }
 
 func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
