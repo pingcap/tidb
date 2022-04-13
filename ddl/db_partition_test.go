@@ -709,7 +709,7 @@ func TestPartitionRangeColumnsCollate(t *testing.T) {
  partition p4 values less than ("B"),
  partition p5 values less than ("bb"),
  partition pMax values less than (MAXVALUE))`)
-	tk.MustExec(`insert into t values ("A"),("a"),("b"),("B"),("aa"),("AA"),("aA"),("Aa"),("BB"),("Bb"),("bB"),("bb"),("AB"),("BA"),("Ab"),("Ba"),("aB"),("bA"),("ab"),("ba")`)
+	tk.MustExec(`insert into t values ("A"),("a"),("b"),("B"),("aa"),("AA"),("aA"),("Aa"),("BB"),("Bb"),("bB"),("bb"),("AB"),("BA"),("Ab"),("Ba"),("aB"),("bA"),("ab"),("ba"),("ä"),("ÄÄÄ")`)
 	tk.MustQuery(`explain select * from t where a = "aa" collate utf8mb4_general_ci`).Check(testkit.Rows(
 		`TableReader_7 10.00 root partition:all data:Selection_6`,
 		`└─Selection_6 10.00 cop[tikv]  eq(partitionrangecolumnscollate.t.a, "aa")`,
@@ -721,6 +721,38 @@ func TestPartitionRangeColumnsCollate(t *testing.T) {
 		`└─Selection_6 8000.00 cop[tikv]  eq(partitionrangecolumnscollate.t.a, "aa")`,
 		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
 	tk.MustQuery(`select * from t where a = "aa" collate utf8mb4_bin`).Sort().Check(testkit.Rows("aa"))
+	// 'a' < 'b' < 'ä' in _bin
+	tk.MustQuery(`explain select * from t where a = "ä" collate utf8mb4_bin`).Check(testkit.Rows(
+		`TableReader_7 8000.00 root partition:p1 data:Selection_6`,
+		`└─Selection_6 8000.00 cop[tikv]  eq(partitionrangecolumnscollate.t.a, "ä")`,
+		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+	tk.MustQuery(`select * from t where a = "ä" collate utf8mb4_bin`).Sort().Check(testkit.Rows("ä"))
+	tk.MustQuery(`explain select * from t where a = "b" collate utf8mb4_bin`).Check(testkit.Rows(
+		`TableReader_7 8000.00 root partition:p5 data:Selection_6`,
+		`└─Selection_6 8000.00 cop[tikv]  eq(partitionrangecolumnscollate.t.a, "b")`,
+		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+	tk.MustQuery(`select * from t where a = "b" collate utf8mb4_bin`).Sort().Check(testkit.Rows("b"))
+	tk.MustQuery(`explain select * from t where a <= "b" collate utf8mb4_bin`).Check(testkit.Rows(
+		`TableReader_7 8000.00 root partition:p0,p1,p2,p3,p4,p5 data:Selection_6`,
+		`└─Selection_6 8000.00 cop[tikv]  le(partitionrangecolumnscollate.t.a, "b")`,
+		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+	tk.MustQuery(`select * from t where a <= "b" collate utf8mb4_bin`).Sort().Check(testkit.Rows("A", "AA", "AB", "Aa", "Ab", "B", "BA", "Ba", "a", "aA", "aB", "aa", "ab", "b"))
+	tk.MustQuery(`explain select * from t where a < "b" collate utf8mb4_bin`).Check(testkit.Rows(
+		`TableReader_7 8000.00 root partition:p0,p1,p2,p3,p4 data:Selection_6`,
+		`└─Selection_6 8000.00 cop[tikv]  lt(partitionrangecolumnscollate.t.a, "b")`,
+		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+	// Missing upper case B if not p5 is included!
+	tk.MustQuery(`select * from t where a < "b" collate utf8mb4_bin`).Sort().Check(testkit.Rows("A", "AA", "AB", "Aa", "Ab", "a", "aA", "aB", "aa", "ab"))
+	tk.MustQuery(`explain select * from t where a >= "b" collate utf8mb4_bin`).Check(testkit.Rows(
+		`TableReader_7 8000.00 root partition:p5,pMax data:Selection_6`,
+		`└─Selection_6 8000.00 cop[tikv]  ge(partitionrangecolumnscollate.t.a, "b")`,
+		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+	tk.MustQuery(`select * from t where a >= "b" collate utf8mb4_bin`).Sort().Check(testkit.Rows("b", "bA", "bB", "ba", "bb"))
+	tk.MustQuery(`explain select * from t where a > "b" collate utf8mb4_bin`).Check(testkit.Rows(
+		`TableReader_7 8000.00 root partition:p5,pMax data:Selection_6`,
+		`└─Selection_6 8000.00 cop[tikv]  gt(partitionrangecolumnscollate.t.a, "b")`,
+		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
+	tk.MustQuery(`select * from t where a > "b" collate utf8mb4_bin`).Sort().Check(testkit.Rows("bA", "bB", "ba", "bb"))
 }
 
 func TestDisableTablePartition(t *testing.T) {
