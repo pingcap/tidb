@@ -418,7 +418,6 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			zap.String("method", method),
 			zap.String("hosts", addr),
 			zap.String("url", url),
-			zap.Int("http status", res.StatusCode),
 			zap.Int("address order", idx),
 		)
 	}
