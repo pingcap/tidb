@@ -22,14 +22,11 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -58,8 +55,6 @@ import (
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
-	"github.com/tikv/client-go/v2/tikv"
-	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 func TestT(t *testing.T) {
@@ -1187,43 +1182,6 @@ func (s *testSuite2) TestStaleReadFutureTime(c *C) {
 	c.Assert(err, ErrorMatches, "cannot set read timestamp to a future time")
 	// TxnReadTS Is not updated if check failed.
 	c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, uint64(0))
-}
-
-const (
-	checkDDLAddIndexPriority = 1
-)
-
-type checkRequestClient struct {
-	tikv.Client
-	priority       kvrpcpb.CommandPri
-	lowPriorityCnt uint32
-	mu             struct {
-		sync.RWMutex
-		checkFlags uint32
-	}
-}
-
-func (c *checkRequestClient) getCheckPriority() kvrpcpb.CommandPri {
-	return (kvrpcpb.CommandPri)(atomic.LoadInt32((*int32)(&c.priority)))
-}
-
-func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
-	resp, err := c.Client.SendRequest(ctx, addr, req, timeout)
-	c.mu.RLock()
-	checkFlags := c.mu.checkFlags
-	c.mu.RUnlock()
-	if checkFlags == checkDDLAddIndexPriority {
-		if req.Type == tikvrpc.CmdScan {
-			if c.getCheckPriority() != req.Priority {
-				return nil, errors.New("fail to set priority")
-			}
-		} else if req.Type == tikvrpc.CmdPrewrite {
-			if c.getCheckPriority() == kvrpcpb.CommandPri_Low {
-				atomic.AddUint32(&c.lowPriorityCnt, 1)
-			}
-		}
-	}
-	return resp, err
 }
 
 func (s *testSuite3) TestYearTypeDeleteIndex(c *C) {
