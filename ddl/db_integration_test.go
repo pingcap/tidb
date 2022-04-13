@@ -2069,7 +2069,6 @@ func TestDefaultColumnWithRand(t *testing.T) {
 		}
 	}
 
-	// show create table
 	tk.MustQuery("show create table t").Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
 			"  `c` int(10) DEFAULT NULL,\n" +
