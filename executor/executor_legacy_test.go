@@ -71,7 +71,6 @@ func TestT(t *testing.T) {
 
 var _ = Suite(&testSuite{&baseTestSuite{}})
 var _ = Suite(&testSuiteP2{&baseTestSuite{}})
-var _ = SerialSuites(&testSuiteWithCliBaseCharset{})
 var _ = Suite(&testSuite2{&baseTestSuite{}})
 var _ = Suite(&testSuite3{&baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite{&baseTestSuite{}})
@@ -1227,50 +1226,6 @@ func (c *checkRequestClient) SendRequest(ctx context.Context, addr string, req *
 	return resp, err
 }
 
-type testSuiteWithCliBaseCharset struct {
-	testSuiteWithCliBase
-}
-
-type testSuiteWithCliBase struct {
-	store kv.Storage
-	dom   *domain.Domain
-	cli   *checkRequestClient
-}
-
-func (s *testSuiteWithCliBase) SetUpSuite(c *C) {
-	cli := &checkRequestClient{}
-	hijackClient := func(c tikv.Client) tikv.Client {
-		cli.Client = c
-		return cli
-	}
-	s.cli = cli
-
-	var err error
-	s.store, err = mockstore.NewMockStore(
-		mockstore.WithClientHijacker(hijackClient),
-	)
-	c.Assert(err, IsNil)
-	session.SetStatsLease(0)
-	s.dom, err = session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-	s.dom.SetStatsUpdating(true)
-}
-
-func (s *testSuiteWithCliBase) TearDownSuite(c *C) {
-	s.dom.Close()
-	s.store.Close()
-}
-
-func (s *testSuiteWithCliBase) TearDownTest(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	r := tk.MustQuery("show tables")
-	for _, tb := range r.Rows() {
-		tableName := tb[0]
-		tk.MustExec(fmt.Sprintf("drop table %v", tableName))
-	}
-}
-
 func (s *testSuite3) TestYearTypeDeleteIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1695,88 +1650,6 @@ func (s *testSuiteP2) TestIssue10435(c *C) {
 	tk.MustQuery("SELECT SUM(i) OVER W FROM t1 WINDOW w AS (PARTITION BY j ORDER BY i) ORDER BY 1+SUM(i) OVER w").Check(
 		testkit.Rows("1", "2", "3", "4", "11", "22", "31", "33", "44", "61", "62", "93", "122", "124", "183", "244"),
 	)
-}
-
-func (s *testSuiteWithCliBaseCharset) TestCharsetFeature(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-
-	tk.MustExec("set names gbk;")
-	tk.MustQuery("select @@character_set_connection;").Check(testkit.Rows("gbk"))
-	tk.MustQuery("select @@collation_connection;").Check(testkit.Rows("gbk_chinese_ci"))
-	tk.MustExec("set @@character_set_client=gbk;")
-	tk.MustQuery("select @@character_set_client;").Check(testkit.Rows("gbk"))
-	tk.MustExec("set names utf8mb4;")
-	tk.MustExec("set @@character_set_connection=gbk;")
-	tk.MustQuery("select @@character_set_connection;").Check(testkit.Rows("gbk"))
-	tk.MustQuery("select @@collation_connection;").Check(testkit.Rows("gbk_chinese_ci"))
-
-	tk.MustGetErrCode("select _gbk 'a';", errno.ErrUnknownCharacterSet)
-
-	tk.MustExec("use test")
-	tk.MustExec("create table t1(a char(10) charset gbk);")
-	tk.MustExec("create table t2(a char(10) charset gbk collate gbk_bin);")
-	tk.MustExec("create table t3(a char(10)) charset gbk;")
-	tk.MustExec("alter table t3 add column b char(10) charset gbk;")
-	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 CREATE TABLE `t3` (\n" +
-		"  `a` char(10) DEFAULT NULL,\n" +
-		"  `b` char(10) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci",
-	))
-	tk.MustExec("create table t4(a char(10));")
-	tk.MustExec("alter table t4 add column b char(10) charset gbk;")
-	tk.MustQuery("show create table t4").Check(testkit.Rows("t4 CREATE TABLE `t4` (\n" +
-		"  `a` char(10) DEFAULT NULL,\n" +
-		"  `b` char(10) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
-	tk.MustExec("create table t5(a char(20), b char(20) charset utf8, c binary) charset gbk collate gbk_bin;")
-
-	tk.MustExec("create database test_gbk charset gbk;")
-	tk.MustExec("use test_gbk")
-	tk.MustExec("create table t1(a char(10));")
-	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
-		"  `a` char(10) DEFAULT NULL\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci",
-	))
-}
-
-func (s *testSuiteWithCliBaseCharset) TestCharsetFeatureCollation(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t" +
-		"(ascii_char char(10) character set ascii," +
-		"gbk_char char(10) character set gbk collate gbk_bin," +
-		"latin_char char(10) character set latin1," +
-		"utf8mb4_char char(10) character set utf8mb4)",
-	)
-	tk.MustExec("insert into t values ('a', 'a', 'a', 'a'), ('a', '啊', '€', 'ㅂ');")
-	tk.MustQuery("select collation(concat(ascii_char, gbk_char)) from t;").Check(testkit.Rows("gbk_bin", "gbk_bin"))
-	tk.MustQuery("select collation(concat(gbk_char, ascii_char)) from t;").Check(testkit.Rows("gbk_bin", "gbk_bin"))
-	tk.MustQuery("select collation(concat(utf8mb4_char, gbk_char)) from t;").Check(testkit.Rows("utf8mb4_bin", "utf8mb4_bin"))
-	tk.MustQuery("select collation(concat(gbk_char, utf8mb4_char)) from t;").Check(testkit.Rows("utf8mb4_bin", "utf8mb4_bin"))
-	tk.MustQuery("select collation(concat('啊', convert('啊' using gbk) collate gbk_bin));").Check(testkit.Rows("gbk_bin"))
-	tk.MustQuery("select collation(concat(_latin1 'a', convert('啊' using gbk) collate gbk_bin));").Check(testkit.Rows("gbk_bin"))
-
-	tk.MustGetErrCode("select collation(concat(latin_char, gbk_char)) from t;", mysql.ErrCantAggregate2collations)
-	tk.MustGetErrCode("select collation(concat(convert('€' using latin1), convert('啊' using gbk) collate gbk_bin));", mysql.ErrCantAggregate2collations)
-	tk.MustGetErrCode("select collation(concat(utf8mb4_char, gbk_char collate gbk_bin)) from t;", mysql.ErrCantAggregate2collations)
-	tk.MustGetErrCode("select collation(concat('ㅂ', convert('啊' using gbk) collate gbk_bin));", mysql.ErrCantAggregate2collations)
-	tk.MustGetErrCode("select collation(concat(ascii_char collate ascii_bin, gbk_char)) from t;", mysql.ErrCantAggregate2collations)
-}
-
-func (s *testSuiteWithCliBaseCharset) TestCharsetWithPrefixIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a char(20) charset gbk, b char(20) charset gbk, primary key (a(2)));")
-	tk.MustExec("insert into t values ('a', '中文'), ('中文', '中文'), ('一二三', '一二三'), ('b', '一二三');")
-	tk.MustQuery("select * from t").Check(testkit.Rows("a 中文", "中文 中文", "一二三 一二三", "b 一二三"))
-	tk.MustExec("drop table t")
-	tk.MustExec("create table t(a char(20) charset gbk, b char(20) charset gbk, unique index idx_a(a(2)));")
-	tk.MustExec("insert into t values ('a', '中文'), ('中文', '中文'), ('一二三', '一二三'), ('b', '一二三');")
-	tk.MustQuery("select * from t").Check(testkit.Rows("a 中文", "中文 中文", "一二三 一二三", "b 一二三"))
 }
 
 func (s *testSuite) TestSummaryFailedUpdate(c *C) {
