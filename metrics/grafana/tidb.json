@@ -8809,7 +8809,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "pd http request durations by type within 99.9 percent buckets",
+          "description": "pd http request durations",
           "editable": true,
           "error": false,
           "fieldConfig": {
