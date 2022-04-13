@@ -157,4 +157,5 @@ const (
 	LblVersion     = "version"
 	LblHash        = "hash"
 	LblCTEType     = "cte_type"
+	LblHTTPStatus  = "http_status"
 )

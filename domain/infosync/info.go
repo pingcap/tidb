@@ -368,7 +368,7 @@ func GetTiFlashTableSyncProgress(ctx context.Context) (map[int64]float64, error)
 	return progressMap, nil
 }
 
-func doRequest(ctx context.Context, addrs []string, route, method string, body io.Reader) ([]byte, error) {
+func doRequest(ctx context.Context, apiName string, addrs []string, route, method string, body io.Reader) ([]byte, error) {
 	var err error
 	var req *http.Request
 	var res *http.Response
@@ -383,8 +383,9 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 		}
 		start := time.Now()
 		res, err = doRequestWithFailpoint(req)
-		metrics.PDApiExecutionHistogram.WithLabelValues("placement").Observe(time.Since(start).Seconds())
 		if err == nil {
+			metrics.PDApiExecutionHistogram.WithLabelValues(apiName).Observe(time.Since(start).Seconds())
+			metrics.PDApiRequestCounter.WithLabelValues(apiName, res.Status).Inc()
 			bodyBytes, err := io.ReadAll(res.Body)
 			if err != nil {
 				terror.Log(res.Body.Close())
@@ -407,8 +408,10 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			terror.Log(res.Body.Close())
 			return bodyBytes, err
 		}
-		logutil.BgLogger().Warn("fail to doRequest, retry next address",
+		metrics.PDApiRequestCounter.WithLabelValues(apiName, "network error").Inc()
+		logutil.BgLogger().Warn("fail to doRequest",
 			zap.Error(err),
+			zap.Bool("retry next address", idx == len(addrs)-1),
 			zap.String("method", method),
 			zap.String("hosts", addr),
 			zap.String("url", url),

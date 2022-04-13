@@ -247,6 +247,14 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		}, []string{LblType})
 
+	PDApiRequestCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "pd_api_request_total",
+			Help:      "Counter of the pd http api requests",
+		}, []string{LblType, LblHTTPStatus})
+
 	CPUProfileCounter = prometheus.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
