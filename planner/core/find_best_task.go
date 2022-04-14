@@ -280,7 +280,15 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		opt.appendCandidate(p, curTask.plan(), prop)
 		// Get the most efficient one.
 		if p.ctx.GetSessionVars().EnableNewCostInterface {
-			if getTaskPlanCost(curTask) < getTaskPlanCost(bestTask) || (bestTask.invalid() && !curTask.invalid()) {
+			curCost, err := getTaskPlanCost(curTask)
+			if err != nil {
+				return nil, 0, err
+			}
+			bestCost, err := getTaskPlanCost(bestTask)
+			if err != nil {
+				return nil, 0, err
+			}
+			if curCost < bestCost || (bestTask.invalid() && !curTask.invalid()) {
 				bestTask = curTask
 			}
 		} else {
@@ -292,9 +300,9 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 	return bestTask, cntPlan, nil
 }
 
-func getTaskPlanCost(t task) float64 {
+func getTaskPlanCost(t task) (float64, error) {
 	if t.invalid() {
-		return math.MaxFloat64
+		return math.MaxFloat64, nil
 	}
 	var taskType property.TaskType
 	switch t.(type) {
@@ -441,7 +449,15 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 	}
 	opt.appendCandidate(p, curTask.plan(), prop)
 	if p.ctx.GetSessionVars().EnableNewCostInterface {
-		if getTaskPlanCost(curTask) < getTaskPlanCost(bestTask) || (bestTask.invalid() && !curTask.invalid()) {
+		curCost, err := getTaskPlanCost(curTask)
+		if err != nil {
+			return nil, 0, err
+		}
+		bestCost, err := getTaskPlanCost(bestTask)
+		if err != nil {
+			return nil, 0, err
+		}
+		if curCost < bestCost || (bestTask.invalid() && !curTask.invalid()) {
 			bestTask = curTask
 		}
 	} else {
