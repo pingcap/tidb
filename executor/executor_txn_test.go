@@ -250,3 +250,37 @@ func TestInvalidReadCacheTable(t *testing.T) {
 
 	}
 }
+
+func TestTxnSavepoint(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int, a int, unique index idx(id))")
+
+	cases := []struct {
+		sql    string
+		result []string
+	}{
+		{"begin", nil},
+		{"insert into t values (1, 1), (2, 2)", nil},
+		{"savepoint s1", nil},
+		{"insert into t values (3, 3)", nil},
+		{"savepoint s2", nil},
+		{"select * from t order by id", []string{"1 1", "2 2", "3 3"}},
+		{"rollback to s1", nil},
+		{"select * from t order by id", []string{"1 1", "2 2"}},
+		//{"insert into t values (3, 4), (4, 4)",nil},
+		//{"select * from t order by id",[]string{"1 1","2 2", "3 4", "4 4"}},
+		//{"rollback to s1",nil},
+		//{"insert into t values (3, 5)",nil},
+		//{"select * from t order by id",[]string{"1 1","2 2", "3 5"}},
+	}
+	for _, ca := range cases {
+		if ca.result == nil {
+			tk.MustExec(ca.sql)
+		} else {
+			tk.MustQuery(ca.sql).Check(testkit.Rows(ca.result...))
+		}
+	}
+}
