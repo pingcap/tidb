@@ -76,7 +76,7 @@ func (m *TiFlashPDPlacementManager) SetPlacementRule(ctx context.Context, rule p
 	}
 	j, _ := json.Marshal(rule)
 	buf := bytes.NewBuffer(j)
-	res, err := doRequest(ctx, m.etcdCli.Endpoints(), path.Join(pdapi.Config, "rule"), "POST", buf)
+	res, err := doRequest(ctx, "SetPlacementRule", m.etcdCli.Endpoints(), path.Join(pdapi.Config, "rule"), "POST", buf)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -88,7 +88,7 @@ func (m *TiFlashPDPlacementManager) SetPlacementRule(ctx context.Context, rule p
 
 // DeletePlacementRule is to delete placement rule for certain group.
 func (m *TiFlashPDPlacementManager) DeletePlacementRule(ctx context.Context, group string, ruleID string) error {
-	res, err := doRequest(ctx, m.etcdCli.Endpoints(), path.Join(pdapi.Config, "rule", group, ruleID), "DELETE", nil)
+	res, err := doRequest(ctx, "DeletePlacementRule", m.etcdCli.Endpoints(), path.Join(pdapi.Config, "rule", group, ruleID), "DELETE", nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -100,7 +100,7 @@ func (m *TiFlashPDPlacementManager) DeletePlacementRule(ctx context.Context, gro
 
 // GetGroupRules to get all placement rule in a certain group.
 func (m *TiFlashPDPlacementManager) GetGroupRules(ctx context.Context, group string) ([]placement.TiFlashRule, error) {
-	res, err := doRequest(ctx, m.etcdCli.Endpoints(), path.Join(pdapi.Config, "rules", "group", group), "GET", nil)
+	res, err := doRequest(ctx, "GetGroupRules", m.etcdCli.Endpoints(), path.Join(pdapi.Config, "rules", "group", group), "GET", nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -133,7 +133,7 @@ func (m *TiFlashPDPlacementManager) PostAccelerateSchedule(ctx context.Context, 
 		return errors.Trace(err)
 	}
 	buf := bytes.NewBuffer(j)
-	res, err := doRequest(ctx, m.etcdCli.Endpoints(), "/pd/api/v1/regions/accelerate-schedule", "POST", buf)
+	res, err := doRequest(ctx, "PostAccelerateSchedule", m.etcdCli.Endpoints(), "/pd/api/v1/regions/accelerate-schedule", "POST", buf)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -153,7 +153,7 @@ func (m *TiFlashPDPlacementManager) GetPDRegionRecordStats(ctx context.Context, 
 	p := fmt.Sprintf("/pd/api/v1/stats/region?start_key=%s&end_key=%s",
 		url.QueryEscape(string(startKey)),
 		url.QueryEscape(string(endKey)))
-	res, err := doRequest(ctx, m.etcdCli.Endpoints(), p, "GET", nil)
+	res, err := doRequest(ctx, "GetPDRegionStats", m.etcdCli.Endpoints(), p, "GET", nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -171,7 +171,7 @@ func (m *TiFlashPDPlacementManager) GetPDRegionRecordStats(ctx context.Context, 
 // GetStoresStat gets the TiKV store information by accessing PD's api.
 func (m *TiFlashPDPlacementManager) GetStoresStat(ctx context.Context) (*helper.StoresStat, error) {
 	var storesStat helper.StoresStat
-	res, err := doRequest(ctx, m.etcdCli.Endpoints(), pdapi.Stores, "GET", nil)
+	res, err := doRequest(ctx, "GetStoresStat", m.etcdCli.Endpoints(), pdapi.Stores, "GET", nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
