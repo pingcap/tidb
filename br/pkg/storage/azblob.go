@@ -53,6 +53,13 @@ func defineAzblobFlags(flags *pflag.FlagSet) {
 	flags.String(azblobAccountKey, "", "Specify the account key for azblob")
 }
 
+func hiddenAzblobFlags(flags *pflag.FlagSet) {
+	_ = flags.MarkHidden(azblobEndpointOption)
+	_ = flags.MarkHidden(azblobAccessTierOption)
+	_ = flags.MarkHidden(azblobAccountName)
+	_ = flags.MarkHidden(azblobAccountKey)
+}
+
 func (options *AzblobBackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 	var err error
 	options.Endpoint, err = flags.GetString(azblobEndpointOption)

@@ -53,16 +53,14 @@ import (
 )
 
 const (
-	flagYes                     = "yes"
-	flagDryRun                  = "dry-run"
-	flagUntil                   = "until"
-	flagStreamJSONOutput        = "json"
-	flagStreamTaskName          = "task-name"
-	flagStreamStartTS           = "start-ts"
-	flagStreamEndTS             = "end-ts"
-	flagGCSafePointTTS          = "gc-ttl"
-	flagStreamRestoreTS         = "restore-ts"
-	flagStreamFullBackupStorage = "full-backup-storage"
+	flagYes              = "yes"
+	flagDryRun           = "dry-run"
+	flagUntil            = "until"
+	flagStreamJSONOutput = "json"
+	flagStreamTaskName   = "task-name"
+	flagStreamStartTS    = "start-ts"
+	flagStreamEndTS      = "end-ts"
+	flagGCSafePointTTS   = "gc-ttl"
 )
 
 var (
@@ -71,7 +69,6 @@ var (
 	StreamPause    = "stream pause"
 	StreamResume   = "stream resume"
 	StreamStatus   = "stream status"
-	StreamRestore  = "stream restore"
 	StreamTruncate = "stream truncate"
 
 	skipSummaryCommandList = map[string]struct{}{
@@ -86,26 +83,20 @@ var StreamCommandMap = map[string]func(c context.Context, g glue.Glue, cmdName s
 	StreamPause:    RunStreamPause,
 	StreamResume:   RunStreamResume,
 	StreamStatus:   RunStreamStatus,
-	StreamRestore:  RunStreamRestore,
 	StreamTruncate: RunStreamTruncate,
 }
 
 // StreamConfig specifies the configure about backup stream
 type StreamConfig struct {
-	// config about restore full.
-	RestoreConfig
+	Config
 
-	// FullBackupStorage is used to find the maps between table name and table id during restoration.
-	// if not specified. we cannot apply kv directly.
-	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
-	TaskName          string `json:"task-name" toml:"task-name"`
+	TaskName string `json:"task-name" toml:"task-name"`
 
 	// StartTs usually equals the tso of full-backup, but user can reset it
 	StartTS uint64 `json:"start-ts" toml:"start-ts"`
 	EndTS   uint64 `json:"end-ts" toml:"end-ts"`
 	// SafePointTTL ensures TiKV can scan entries not being GC at [startTS, currentTS]
-	SafePointTTL int64  `json:"safe-point-ttl" toml:"safe-point-ttl"`
-	RestoreTS    uint64 `json:"restore-ts" toml:"restore-ts"`
+	SafePointTTL int64 `json:"safe-point-ttl" toml:"safe-point-ttl"`
 
 	// Spec for the command `truncate`, we should truncate the until when?
 	Until      uint64 `json:"until" toml:"until"`
@@ -116,27 +107,20 @@ type StreamConfig struct {
 	JSONOutput bool `json:"json-output" toml:"json-output"`
 }
 
-func (sc *StreamConfig) makeStorage(ctx context.Context) (storage.ExternalStorage, error) {
-	u, err := storage.ParseBackend(sc.Storage, &sc.BackendOptions)
+func (cfg *StreamConfig) makeStorage(ctx context.Context) (storage.ExternalStorage, error) {
+	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	opts := storage.ExternalStorageOptions{
-		NoCredentials:   sc.NoCreds,
-		SendCredentials: sc.SendCreds,
+		NoCredentials:   cfg.NoCreds,
+		SendCredentials: cfg.SendCreds,
 	}
 	storage, err := storage.New(ctx, u, &opts)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	return storage, nil
-}
-
-func (cfg *StreamConfig) adjustRestoreConfig() {
-	cfg.Config.adjust()
-	if cfg.Concurrency == 0 {
-		cfg.Concurrency = 32
-	}
 }
 
 // DefineStreamStartFlags defines flags used for `stream start`
@@ -148,14 +132,6 @@ func DefineStreamStartFlags(flags *pflag.FlagSet) {
 		"support TSO or datetime")
 	flags.Int64(flagGCSafePointTTS, utils.DefaultStreamGCSafePointTTL,
 		"the TTL (in seconds) that PD holds for BR's GC safepoint")
-}
-
-// DefineStreamRestoreFlags defines flags used for `stream restore`
-func DefineStreamRestoreFlags(flags *pflag.FlagSet) {
-	flags.String(flagStreamRestoreTS, "", "restore ts, used for restore kv.\n"+
-		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'")
-	flags.String(flagStreamFullBackupStorage, "", "specify the url where backup full storage. "+
-		"fill it if want restore-full before restore log, or ignore it.")
 }
 
 // DefineStreamCommonFlags define common flags for `stream task`
@@ -200,20 +176,6 @@ func (cfg *StreamConfig) ParseStreamTruncateFromFlags(flags *pflag.FlagSet) erro
 		return errors.Trace(err)
 	}
 	if cfg.DryRun, err = flags.GetBool(flagDryRun); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-func (cfg *StreamConfig) ParseStreamRestoreFromFlags(flags *pflag.FlagSet) error {
-	tsString, err := flags.GetString(flagStreamRestoreTS)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if cfg.RestoreTS, err = ParseTSString(tsString); err != nil {
-		return errors.Trace(err)
-	}
-	if cfg.FullBackupStorage, err = flags.GetString(flagStreamFullBackupStorage); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -326,7 +288,7 @@ func (s *streamMgr) setLock(ctx context.Context) error {
 // adjustAndCheckStartTS checks that startTS should be smaller than currentTS,
 // and endTS is larger than currentTS.
 func (s *streamMgr) adjustAndCheckStartTS(ctx context.Context) error {
-	currentTS, err := s.getTS(ctx)
+	currentTS, err := s.mgr.GetTS(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -373,15 +335,6 @@ func (s *streamMgr) setGCSafePoint(ctx context.Context) error {
 
 	log.Info("set stream safePoint", zap.Object("safePoint", sp))
 	return nil
-}
-
-func (s *streamMgr) getTS(ctx context.Context) (uint64, error) {
-	p, l, err := s.mgr.GetPDClient().GetTS(ctx)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-
-	return oracle.ComposeTS(p, l), nil
 }
 
 func (s *streamMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, error) {
@@ -779,8 +732,6 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		return errors.Annotatef(berrors.ErrInvalidArgument, "please provide the `--until` ts")
 	}
 
-	cfg.adjustRestoreConfig()
-
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
 
@@ -863,7 +814,7 @@ func RunStreamRestore(
 	c context.Context,
 	g glue.Glue,
 	cmdName string,
-	cfg *StreamConfig,
+	cfg *RestoreConfig,
 ) error {
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
@@ -874,16 +825,16 @@ func RunStreamRestore(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	StreamStorage := cfg.RestoreConfig.Config.Storage
+	StreamStorage := cfg.Config.Storage
 
 	if len(cfg.FullBackupStorage) > 0 {
-		cfg.RestoreConfig.Config.Storage = cfg.FullBackupStorage
-		if err := RunRestore(ctx, g, FullRestoreCmd, &cfg.RestoreConfig); err != nil {
+		cfg.Config.Storage = cfg.FullBackupStorage
+		if err := RunRestore(ctx, g, FullRestoreCmd, cfg); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	cfg.RestoreConfig.Config.Storage = StreamStorage
+	cfg.Config.Storage = StreamStorage
 	if err := restoreStream(ctx, g, cmdName, cfg); err != nil {
 		return errors.Trace(err)
 	}
@@ -895,7 +846,7 @@ func restoreStream(
 	c context.Context,
 	g glue.Glue,
 	cmdName string,
-	cfg *StreamConfig,
+	cfg *RestoreConfig,
 ) error {
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
@@ -908,16 +859,21 @@ func restoreStream(
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	streamMgr, err := NewStreamMgr(ctx, cfg, g, false)
+
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
+		cfg.CheckRequirements, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer streamMgr.close()
-
+	defer func() {
+		if err != nil {
+			mgr.Close()
+		}
+	}()
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	keepaliveCfg.PermitWithoutStream = true
-	client := restore.NewRestoreClient(streamMgr.mgr.GetPDClient(), streamMgr.mgr.GetTLSConfig(), keepaliveCfg, false)
-	err = client.Init(g, streamMgr.mgr.GetStorage())
+	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, false)
+	err = client.Init(g, mgr.GetStorage())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -939,13 +895,13 @@ func restoreStream(
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetConcurrency(uint(cfg.Concurrency))
 	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
-	safepoint := client.GetTruncateSafepoint(ctx)
-	if cfg.RestoreTS < safepoint {
-		// TODO: maybe also filter records less than safepoint.
+	safePoint := client.GetTruncateSafepoint(ctx)
+	if cfg.RestoreTS < safePoint {
+		// TODO: maybe also filter records less than safePoint.
 		return errors.Annotatef(berrors.ErrInvalidArgument,
 			"the restore ts %d(%s) is truncated, please restore to longer than %d(%s)",
 			cfg.RestoreTS, oracle.GetTimeFromTS(cfg.RestoreTS),
-			safepoint, oracle.GetTimeFromTS(safepoint),
+			safePoint, oracle.GetTimeFromTS(safePoint),
 		)
 	}
 	err = client.LoadRestoreStores(ctx)
@@ -954,7 +910,7 @@ func restoreStream(
 	}
 
 	client.InitClients(u, false)
-	currentTS, err := streamMgr.getTS(ctx)
+	currentTS, err := mgr.GetTS(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -982,7 +938,7 @@ func restoreStream(
 		return nil
 	}
 	// read data file by given ts.
-	dmlFiles, ddlFiles, err := client.ReadStreamDataFiles(ctx, metas, safepoint, cfg.RestoreTS)
+	dmlFiles, ddlFiles, err := client.ReadStreamDataFiles(ctx, metas, safePoint, cfg.RestoreTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1051,7 +1007,7 @@ func countIndices(ts map[int64]*metautil.Table) int64 {
 
 func initFullBackupTables(
 	ctx context.Context,
-	cfg *StreamConfig,
+	cfg *RestoreConfig,
 ) (map[int64]*metautil.Table, error) {
 	_, s, err := GetStorage(ctx, cfg.Config.Storage, &cfg.Config)
 	if err != nil {
