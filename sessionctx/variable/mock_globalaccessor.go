@@ -96,6 +96,14 @@ func (m *MockGlobalAccessor) SetGlobalSysVarOnly(name string, value string) erro
 
 // GetTiDBTableValue implements GlobalVarAccessor.GetTiDBTableValue interface.
 func (m *MockGlobalAccessor) GetTiDBTableValue(name string) (string, error) {
+	// add for test tidb_gc_max_wait_time validation
+	if name == "tikv_gc_life_time" {
+		sv := GetSysVar(TiDBGCLifetime)
+		if sv == nil {
+			panic("Get SysVar Failed")
+		}
+		return sv.Value, nil
+	}
 	panic("not supported")
 }
 
