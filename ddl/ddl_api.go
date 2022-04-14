@@ -1039,26 +1039,6 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 // getFuncCallDefaultValue gets the default column value of function-call expression.
 func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *ast.FuncCallExpr) (interface{}, bool, error) {
 	switch expr.FnName.L {
-	case ast.Rand:
-		if err := expression.VerifyArgsWrapper(ast.Rand, len(expr.Args)); err != nil {
-			return nil, false, errors.Trace(err)
-		}
-		col.DefaultIsExpr = true
-		var sb strings.Builder
-		restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
-			format.RestoreSpacesAroundBinaryOperation
-		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
-		if err := expr.Restore(restoreCtx); err != nil {
-			return "", false, err
-		}
-		return sb.String(), false, nil
-	case ast.NextVal:
-		// handle default next value of sequence. (keep the expr string)
-		str, err := getSequenceDefaultValue(option)
-		if err != nil {
-			return nil, false, errors.Trace(err)
-		}
-		return str, true, nil
 	case ast.CurrentTimestamp:
 		tp, fsp := col.FieldType.Tp, col.FieldType.Decimal
 		if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
@@ -1073,6 +1053,26 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 			}
 		}
 		return nil, false, nil
+	case ast.NextVal:
+		// handle default next value of sequence. (keep the expr string)
+		str, err := getSequenceDefaultValue(option)
+		if err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		return str, true, nil
+	case ast.Rand, ast.UUID:
+		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		col.DefaultIsExpr = true
+		var sb strings.Builder
+		restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
+			format.RestoreSpacesAroundBinaryOperation
+		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+		if err := expr.Restore(restoreCtx); err != nil {
+			return "", false, err
+		}
+		return sb.String(), false, nil
 	default:
 		return nil, false, dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed.GenWithStackByArgs(col.Name.String(), expr.FnName.String())
 	}
@@ -3449,7 +3449,7 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 						return nil, errors.Trace(err)
 					}
 					return nil, errors.Trace(dbterror.ErrAddColumnWithSequenceAsDefault.GenWithStackByArgs(specNewColumn.Name.Name.O))
-				case ast.Rand:
+				case ast.Rand, ast.UUID:
 					return nil, errors.Trace(dbterror.ErrBinlogUnsafeSystemFunction.GenWithStackByArgs())
 				}
 			}
