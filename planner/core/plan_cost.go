@@ -126,20 +126,24 @@ func (p *PhysicalTableReader) CalPlanCost(taskType property.TaskType) float64 {
 		// consider concurrency
 		p.planCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 	case kv.TiFlash:
-		// cop protocol
-		concurrency := float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
-		rowSize := getHistCollSafely(p).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
+		var concurrency, rowSize, seekCost float64
 		if _, ok := p.tablePlan.(*PhysicalExchangeSender); ok {
 			// mpp protocol
 			concurrency = p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
 			rowSize = collectRowSizeFromMPPPlan(p.tablePlan)
+			seekCost = collectRowSizeFromMPPPlan(p.tablePlan)
+		} else {
+			// cop protocol
+			concurrency = float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
+			rowSize = getHistCollSafely(p).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
+			seekCost = getSeekCost(p)
 		}
 
 		p.planCost += p.tablePlan.CalPlanCost(property.MppTaskType) //  child's cost
 		// net I/O cost
 		p.planCost += p.tablePlan.StatsCount() * rowSize * netFactor
 		// net seek cost
-		p.planCost += getSeekCost(p)
+		p.planCost += seekCost
 		// consider concurrency
 		p.planCost /= concurrency
 	}
