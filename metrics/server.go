@@ -238,7 +238,7 @@ var (
 			Help:      "Counter of TiFlash queries.",
 		}, []string{LblType, LblResult})
 
-	PDApiExecutionHistogram = prometheus.NewHistogramVec(
+	PDAPIExecutionHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "server",
@@ -247,7 +247,7 @@ var (
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		}, []string{LblType})
 
-	PDApiRequestCounter = prometheus.NewCounterVec(
+	PDAPIRequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "server",

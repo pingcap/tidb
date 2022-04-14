@@ -858,11 +858,11 @@ func (h *Helper) requestPD(apiName, method, uri string, body io.Reader, res inte
 	start := time.Now()
 	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
-		metrics.PDApiRequestCounter.WithLabelValues(apiName, "network error").Inc()
+		metrics.PDAPIRequestCounter.WithLabelValues(apiName, "network error").Inc()
 		return errors.Trace(err)
 	}
-	metrics.PDApiExecutionHistogram.WithLabelValues(apiName).Observe(time.Since(start).Seconds())
-	metrics.PDApiRequestCounter.WithLabelValues(apiName, resp.Status).Inc()
+	metrics.PDAPIExecutionHistogram.WithLabelValues(apiName).Observe(time.Since(start).Seconds())
+	metrics.PDAPIRequestCounter.WithLabelValues(apiName, resp.Status).Inc()
 
 	defer func() {
 		err = resp.Body.Close()
