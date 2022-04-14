@@ -149,7 +149,7 @@ func (c *pdClient) ScatterRegions(ctx context.Context, regionsID []uint64, opts 
 }
 
 func (c *pdClient) SplitRegions(ctx context.Context, splitKeys [][]byte, opts ...pd.RegionsOption) (*pdpb.SplitRegionsResponse, error) {
-	return nil, nil
+	return &pdpb.SplitRegionsResponse{FinishedPercentage: 100}, nil
 }
 
 func (c *pdClient) GetRegionFromMember(ctx context.Context, key []byte, memberURLs []string) (*pd.Region, error) {
