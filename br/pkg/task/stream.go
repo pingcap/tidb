@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -141,13 +142,17 @@ func (cfg *StreamConfig) adjustRestoreConfig() {
 
 // DefineStreamStartFlags defines flags used for `stream start`
 func DefineStreamStartFlags(flags *pflag.FlagSet) {
+	DefineStreamCommonFlags(flags)
+
 	flags.String(flagStreamStartTS, "",
 		"usually equals last full backupTS, used for backup log. Default value is current ts.\n"+
 			"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'.")
 	flags.String(flagStreamEndTS, "2035-1-1 00:00:00", "end ts, indicate stopping observe after endTS"+
 		"support TSO or datetime")
-	flags.Int64(flagGCSafePointTTS, utils.DefaultStreamGCSafePointTTL,
+	_ = flags.MarkHidden(flagStreamEndTS)
+	flags.Int64(flagGCSafePointTTS, utils.DefaultBRGCSafePointTTL,
 		"the TTL (in seconds) that PD holds for BR's GC safepoint")
+	_ = flags.MarkHidden(flagGCSafePointTTS)
 }
 
 // DefineStreamRestoreFlags defines flags used for `stream restore`
@@ -156,6 +161,12 @@ func DefineStreamRestoreFlags(flags *pflag.FlagSet) {
 		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23'")
 	flags.String(flagStreamFullBackupStorage, "", "specify the url where backup full storage. "+
 		"fill it if want restore-full before restore log, or ignore it.")
+}
+
+func DefineStreamPauseFlags(flags *pflag.FlagSet) {
+	DefineStreamCommonFlags(flags)
+	flags.Int64(flagGCSafePointTTS, utils.DefaultStreamGCSafePointTTL,
+		"the TTL (in seconds) that PD holds for BR's GC safepoint")
 }
 
 // DefineStreamCommonFlags define common flags for `stream task`
@@ -185,6 +196,11 @@ func (cfg *StreamConfig) ParseStreamStatusFromFlags(flags *pflag.FlagSet) error 
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	if err = cfg.ParseStreamCommonFromFlags(flags); err != nil {
+		return errors.Trace(err)
+	}
+
 	return nil
 }
 
@@ -221,6 +237,11 @@ func (cfg *StreamConfig) ParseStreamRestoreFromFlags(flags *pflag.FlagSet) error
 
 // ParseStreamStartFromFlags parse parameters for `stream start`
 func (cfg *StreamConfig) ParseStreamStartFromFlags(flags *pflag.FlagSet) error {
+	err := cfg.ParseStreamCommonFromFlags(flags)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	tsString, err := flags.GetString(flagStreamStartTS)
 	if err != nil {
 		return errors.Trace(err)
@@ -244,9 +265,25 @@ func (cfg *StreamConfig) ParseStreamStartFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	if cfg.SafePointTTL <= 0 {
-		cfg.SafePointTTL = utils.DefaultStreamGCSafePointTTL
+		cfg.SafePointTTL = utils.DefaultBRGCSafePointTTL
 	}
 
+	return nil
+}
+
+// ParseStreamPauseFromFlags parse parameters for `stream pause`
+func (cfg *StreamConfig) ParseStreamPauseFromFlags(flags *pflag.FlagSet) error {
+	err := cfg.ParseStreamCommonFromFlags(flags)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if cfg.SafePointTTL, err = flags.GetInt64(flagGCSafePointTTS); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.SafePointTTL <= 0 {
+		cfg.SafePointTTL = utils.DefaultStreamGCSafePointTTL
+	}
 	return nil
 }
 
@@ -351,20 +388,17 @@ func (s *streamMgr) adjustAndCheckStartTS(ctx context.Context) error {
 
 // setGCSafePoint specifies currentTS should belong to (gcSafePoint, currentTS),
 // and set startTS as a serverSafePoint to PD
-func (s *streamMgr) setGCSafePoint(ctx context.Context) error {
-	if err := s.adjustAndCheckStartTS(ctx); err != nil {
-		return errors.Trace(err)
-	}
-
-	err := utils.CheckGCSafePoint(ctx, s.mgr.GetPDClient(), s.cfg.StartTS)
+func (s *streamMgr) setGCSafePoint(ctx context.Context, safePoint uint64) error {
+	err := utils.CheckGCSafePoint(ctx, s.mgr.GetPDClient(), safePoint)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.Annotatef(err,
+			"failed to check gc safePoint, checkpoint ts %v", safePoint)
 	}
 
 	sp := utils.BRServiceSafePoint{
 		ID:       utils.MakeSafePointID(),
 		TTL:      s.cfg.SafePointTTL,
-		BackupTS: s.cfg.StartTS,
+		BackupTS: safePoint,
 	}
 	err = utils.UpdateServiceSafePoint(ctx, s.mgr.GetPDClient(), sp)
 	if err != nil {
@@ -373,6 +407,22 @@ func (s *streamMgr) setGCSafePoint(ctx context.Context) error {
 
 	log.Info("set stream safePoint", zap.Object("safePoint", sp))
 	return nil
+}
+
+func (s *streamMgr) getGlobalCheckPointTs(ctx context.Context, ti *stream.Task) (uint64, error) {
+	checkPointMap, err := ti.NextBackupTSList(ctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	var checkPointTs uint64 = math.MaxUint64
+	for _, nextTs := range checkPointMap {
+		if nextTs < checkPointTs {
+			checkPointTs = nextTs
+		}
+	}
+
+	return checkPointTs, nil
 }
 
 func (s *streamMgr) getTS(ctx context.Context) (uint64, error) {
@@ -535,7 +585,10 @@ func RunStreamStart(
 			"and restart tikv")
 	}
 
-	if err = streamMgr.setGCSafePoint(ctx); err != nil {
+	if err = streamMgr.adjustAndCheckStartTS(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	if err = streamMgr.setGCSafePoint(ctx, streamMgr.cfg.StartTS); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -658,6 +711,14 @@ func RunStreamPause(
 		return errors.Trace(err)
 	} else if isPaused {
 		return errors.Annotatef(berrors.ErrKVUnknown, "The task %s is paused already.", cfg.TaskName)
+	}
+
+	globalCheckPointTs, err := streamMgr.getGlobalCheckPointTs(ctx, ti)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err = streamMgr.setGCSafePoint(ctx, globalCheckPointTs); err != nil {
+		return errors.Trace(err)
 	}
 
 	err = cli.PauseTask(ctx, cfg.TaskName)

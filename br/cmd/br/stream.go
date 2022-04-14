@@ -63,7 +63,6 @@ func newStreamStartCommand() *cobra.Command {
 		},
 	}
 
-	task.DefineStreamCommonFlags(command.Flags())
 	task.DefineFilterFlags(command, acceptAllTables, true)
 	task.DefineStreamStartFlags(command.PersistentFlags())
 	return command
@@ -94,7 +93,7 @@ func newStreamPauseCommand() *cobra.Command {
 		},
 	}
 
-	task.DefineStreamCommonFlags(command.Flags())
+	task.DefineStreamPauseFlags(command.Flags())
 	return command
 }
 
@@ -187,15 +186,14 @@ func streamCommand(command *cobra.Command, cmdName string) error {
 		if err = cfg.ParseStreamStatusFromFlags(command.Flags()); err != nil {
 			return errors.Trace(err)
 		}
-		if err = cfg.ParseStreamCommonFromFlags(command.Flags()); err != nil {
-			return errors.Trace(err)
-		}
 	case task.StreamStart:
 		if err = cfg.ParseStreamStartFromFlags(command.Flags()); err != nil {
 			return errors.Trace(err)
 		}
-		// TODO use `br restore stream` rather than `br stream restore`
-		fallthrough
+	case task.StreamPause:
+		if err = cfg.ParseStreamPauseFromFlags(command.Flags()); err != nil {
+			return errors.Trace(err)
+		}
 	default:
 		if err = cfg.ParseStreamCommonFromFlags(command.Flags()); err != nil {
 			return errors.Trace(err)

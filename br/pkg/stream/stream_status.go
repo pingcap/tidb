@@ -30,7 +30,10 @@ import (
 const WildCard = "*"
 
 type TaskStatus struct {
+	// Info is the stream task infomation.
 	Info backuppb.StreamBackupTaskInfo
+	// paused checks whether the task is paused.
+	paused bool
 	// Progress maps the StoreID to NextBackupTs.
 	Progress map[uint64]uint64
 	// Total QPS of the task in recent seconds.
@@ -71,9 +74,12 @@ func statusErr(message string) string {
 	return color.RedString("○") + color.New(color.Bold).Sprintf(" %s", message)
 }
 
-func colorfulStatusString() string {
-	// TODO: after pause implemented, adapt it.
-	// This function always return `Normal` for now.
+func colorfulStatusString(paused bool) string {
+	// Maybe we need 3 kinds of status: ERROR/NORMAL/PAUSE.
+	// And should return "ERROR" when find error infomation in PD.
+	if paused {
+		statusOK("PAUSE")
+	}
 	return statusOK("NORMAL")
 }
 
@@ -93,7 +99,7 @@ func (t TaskStatus) GetCheckpoint() uint64 {
 func (p *printByTable) AddTask(task TaskStatus) {
 	table := p.console.CreateTable()
 	table.Add("name", task.Info.Name)
-	table.Add("status", colorfulStatusString())
+	table.Add("status", colorfulStatusString(task.paused))
 	table.Add("start", fmt.Sprint(oracle.GetTimeFromTS(task.Info.StartTs)))
 	if task.Info.EndTs > 0 {
 		table.Add("end", fmt.Sprint(oracle.GetTimeFromTS(task.Info.EndTs)))
@@ -287,10 +293,15 @@ func (ctl *StatusController) fillTask(ctx context.Context, task Task) (TaskStatu
 	s := TaskStatus{
 		Info: task.Info,
 	}
-	s.Progress, err = task.NextBackupTSList(ctx)
-	if err != nil {
+
+	if s.paused, err = task.IsPaused(ctx); err != nil {
+		return s, errors.Annotatef(err, "failed to get pause status of task %s", &s.Info.Name)
+	}
+
+	if s.Progress, err = task.NextBackupTSList(ctx); err != nil {
 		return s, errors.Annotatef(err, "failed to get progress of task %s", s.Info.Name)
 	}
+
 	stores, err := ctl.mgr.GetPDClient().GetAllStores(ctx)
 	if err != nil {
 		return s, errors.Annotate(err, "failed to get stores from PD")
@@ -300,6 +311,7 @@ func (ctl *StatusController) fillTask(ctx context.Context, task Task) (TaskStatu
 			s.Progress[store.GetId()] = s.Info.StartTs
 		}
 	}
+
 	s.QPS, err = MaybeQPS(ctx, ctl.mgr)
 	if err != nil {
 		return s, errors.Annotatef(err, "failed to get QPS of task %s", s.Info.Name)
