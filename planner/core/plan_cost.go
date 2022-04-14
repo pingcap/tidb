@@ -147,6 +147,10 @@ func (p *PhysicalTableReader) CalPlanCost(taskType property.TaskType) float64 {
 		p.planCost += seekCost
 		// consider concurrency
 		p.planCost /= concurrency
+		// consider tidb_enforce_mpp
+		if isMPP && p.ctx.GetSessionVars().IsMPPEnforced() {
+			p.planCost /= 1000000000
+		}
 	}
 
 	p.planCostInit = true
