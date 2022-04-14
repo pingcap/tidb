@@ -458,11 +458,7 @@ type schemaJob struct {
 	dbName   string
 	tblName  string // empty for create db jobs
 	stmtType schemaStmtType
-	stmts    []*schemaStmt
-}
-
-type schemaStmt struct {
-	sql string
+	stmts    []string
 }
 
 type restoreSchemaWorker struct {
@@ -473,6 +469,15 @@ type restoreSchemaWorker struct {
 	wg    sync.WaitGroup
 	glue  glue.Glue
 	store storage.ExternalStorage
+}
+
+func (worker *restoreSchemaWorker) addJob(sqlStr string, job *schemaJob) error {
+	stmts, err := createIfNotExistsStmt(worker.glue.GetParser(), sqlStr, job.dbName, job.tblName)
+	if err != nil {
+		return err
+	}
+	job.stmts = stmts
+	return worker.appendJob(job)
 }
 
 func (worker *restoreSchemaWorker) makeJobs(
@@ -486,15 +491,15 @@ func (worker *restoreSchemaWorker) makeJobs(
 	var err error
 	// 1. restore databases, execute statements concurrency
 	for _, dbMeta := range dbMetas {
-		restoreSchemaJob := &schemaJob{
-			dbName:   dbMeta.Name,
-			stmtType: schemaCreateDatabase,
-			stmts:    make([]*schemaStmt, 0, 1),
+		sql, err := dbMeta.GetSchema(worker.ctx, worker.store)
+		if err != nil {
+			return err
 		}
-		restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
-			sql: createDatabaseIfNotExistStmt(dbMeta.Name),
+		err = worker.addJob(sql, &schemaJob{
+			dbName:   dbMeta.Name,
+			tblName:  "",
+			stmtType: schemaCreateDatabase,
 		})
-		err = worker.appendJob(restoreSchemaJob)
 		if err != nil {
 			return err
 		}
@@ -520,29 +525,18 @@ func (worker *restoreSchemaWorker) makeJobs(
 				return errors.Errorf("table `%s`.`%s` schema not found", dbMeta.Name, tblMeta.Name)
 			}
 			sql, err := tblMeta.GetSchema(worker.ctx, worker.store)
+			if err != nil {
+				return err
+			}
 			if sql != "" {
-				stmts, err := createTableIfNotExistsStmt(worker.glue.GetParser(), sql, dbMeta.Name, tblMeta.Name)
-				if err != nil {
-					return err
-				}
-				restoreSchemaJob := &schemaJob{
+				err = worker.addJob(sql, &schemaJob{
 					dbName:   dbMeta.Name,
 					tblName:  tblMeta.Name,
 					stmtType: schemaCreateTable,
-					stmts:    make([]*schemaStmt, 0, len(stmts)),
-				}
-				for _, sql := range stmts {
-					restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
-						sql: sql,
-					})
-				}
-				err = worker.appendJob(restoreSchemaJob)
+				})
 				if err != nil {
 					return err
 				}
-			}
-			if err != nil {
-				return err
 			}
 		}
 	}
@@ -555,22 +549,11 @@ func (worker *restoreSchemaWorker) makeJobs(
 		for _, viewMeta := range dbMeta.Views {
 			sql, err := viewMeta.GetSchema(worker.ctx, worker.store)
 			if sql != "" {
-				stmts, err := createTableIfNotExistsStmt(worker.glue.GetParser(), sql, dbMeta.Name, viewMeta.Name)
-				if err != nil {
-					return err
-				}
-				restoreSchemaJob := &schemaJob{
+				err = worker.addJob(sql, &schemaJob{
 					dbName:   dbMeta.Name,
 					tblName:  viewMeta.Name,
 					stmtType: schemaCreateView,
-					stmts:    make([]*schemaStmt, 0, len(stmts)),
-				}
-				for _, sql := range stmts {
-					restoreSchemaJob.stmts = append(restoreSchemaJob.stmts, &schemaStmt{
-						sql: sql,
-					})
-				}
-				err = worker.appendJob(restoreSchemaJob)
+				})
 				if err != nil {
 					return err
 				}
@@ -631,8 +614,8 @@ loop:
 				DB:     session,
 			}
 			for _, stmt := range job.stmts {
-				task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", stmt.sql))
-				err = sqlWithRetry.Exec(worker.ctx, "run create schema job", stmt.sql)
+				task := logger.Begin(zap.DebugLevel, fmt.Sprintf("execute SQL: %s", stmt))
+				err = sqlWithRetry.Exec(worker.ctx, "run create schema job", stmt)
 				task.End(zap.ErrorLevel, err)
 				if err != nil {
 					err = errors.Annotatef(err, "%s %s failed", job.stmtType.String(), common.UniqueTable(job.dbName, job.tblName))
@@ -692,7 +675,7 @@ func (worker *restoreSchemaWorker) appendJob(job *schemaJob) error {
 	case <-worker.ctx.Done():
 		// cancel the job
 		worker.wg.Done()
-		return worker.ctx.Err()
+		return errors.Trace(worker.ctx.Err())
 	case worker.jobCh <- job:
 		return nil
 	}
