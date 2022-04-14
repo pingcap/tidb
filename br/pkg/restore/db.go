@@ -180,6 +180,7 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table) error {
 	if table.Info.PKIsHandle && table.Info.ContainsAutoRandomBits() {
 		// this table has auto random id, we need rebase it
 
+<<<<<<< HEAD
 		// we can't merge two alter query, because
 		// it will cause Error: [ddl:8200]Unsupported multi schema change
 		alterAutoRandIDSQL := fmt.Sprintf(
@@ -187,11 +188,43 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table) error {
 			utils.EncloseName(table.DB.Name.O),
 			utils.EncloseName(table.Info.Name.O),
 			table.Info.AutoRandID)
+=======
+func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table, toBeCorrectedTables map[UniqueTableName]bool) error {
+>>>>>>> 654e3d834... br: modify tables that should be altered auto id or random id (#33719)
 
 		err = db.se.Execute(ctx, alterAutoRandIDSQL)
 		if err != nil {
+<<<<<<< HEAD
 			log.Error("alter AutoRandID failed",
 				zap.String("query", alterAutoRandIDSQL),
+=======
+			return errors.Trace(err)
+		}
+	// only table exists in restored cluster during incremental restoration should do alter after creation.
+	case toBeCorrectedTables[UniqueTableName{table.DB.Name.String(), table.Info.Name.String()}]:
+		if utils.NeedAutoID(table.Info) {
+			restoreMetaSQL = fmt.Sprintf(
+				"alter table %s.%s auto_increment = %d;",
+				utils.EncloseName(table.DB.Name.O),
+				utils.EncloseName(table.Info.Name.O),
+				table.Info.AutoIncID)
+		} else if table.Info.PKIsHandle && table.Info.ContainsAutoRandomBits() {
+			restoreMetaSQL = fmt.Sprintf(
+				"alter table %s.%s auto_random_base = %d",
+				utils.EncloseName(table.DB.Name.O),
+				utils.EncloseName(table.Info.Name.O),
+				table.Info.AutoRandID)
+		} else {
+			log.Info("table exists in incremental ddl jobs, but don't need to be altered",
+				zap.Stringer("db", table.DB.Name),
+				zap.Stringer("table", table.Info.Name))
+			return nil
+		}
+		err = db.se.Execute(ctx, restoreMetaSQL)
+		if err != nil {
+			log.Error("restore meta sql failed",
+				zap.String("query", restoreMetaSQL),
+>>>>>>> 654e3d834... br: modify tables that should be altered auto id or random id (#33719)
 				zap.Stringer("db", table.DB.Name),
 				zap.Stringer("table", table.Info.Name),
 				zap.Error(err))
