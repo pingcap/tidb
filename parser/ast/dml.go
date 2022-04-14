@@ -2361,19 +2361,23 @@ const (
 type NonTransactionalDeleteStmt struct {
 	dmlNode
 
-	DryRun      int // 0: no dry run, 1: dry run the query, 2: dry run split DMLs
-	ShardColumn *ColumnName
+	DryRun      int         // 0: no dry run, 1: dry run the query, 2: dry run split DMLs
+	ShardColumn *ColumnName // if it's nil, the handle column is automatically chosen for it
 	Limit       uint64
 	DeleteStmt  *DeleteStmt
 }
 
 // Restore implements Node interface.
 func (n *NonTransactionalDeleteStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("SPLIT ON ")
-	if err := n.ShardColumn.Restore(ctx); err != nil {
-		return errors.Trace(err)
+	ctx.WriteKeyWord("SPLIT ")
+	if n.ShardColumn != nil {
+		ctx.WriteKeyWord("ON ")
+		if err := n.ShardColumn.Restore(ctx); err != nil {
+			return errors.Trace(err)
+		}
+		ctx.WritePlain(" ")
 	}
-	ctx.WriteKeyWord(" LIMIT ")
+	ctx.WriteKeyWord("LIMIT ")
 	ctx.WritePlainf("%d ", n.Limit)
 	if n.DryRun == DryRunSplitDml {
 		ctx.WriteKeyWord("DRY RUN ")

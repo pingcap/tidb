@@ -944,7 +944,6 @@ import (
 	HelpStmt                   "HELP statement"
 
 %type	<item>
-	DryRunOptions                          "Dry run options"
 	AdminShowSlow                          "Admin Show Slow statement"
 	AllOrPartitionNameList                 "All or partition name list"
 	AlgorithmClause                        "Alter table algorithm"
@@ -1325,6 +1324,8 @@ import (
 	AttributesOpt                          "Attributes options"
 	AllColumnsOrPredicateColumnsOpt        "all columns or predicate columns option"
 	StatsOptionsOpt                        "Stats options"
+	DryRunOptions                          "Dry run options"
+	OptionalShardColumn                    "Optional shard column"
 
 %type	<ident>
 	AsOpt             "AS or EmptyString"
@@ -13431,13 +13432,13 @@ TableLockList:
  * Split a SQL on a column. Used for bulk delete that doesn't need ACID.
  *******************************************************************/
 NonTransactionalDeleteStmt:
-	"SPLIT" "ON" ColumnName "LIMIT" NUM DryRunOptions DeleteFromStmt
+	"SPLIT" OptionalShardColumn "LIMIT" NUM DryRunOptions DeleteFromStmt
 	{
 		$$ = &ast.NonTransactionalDeleteStmt{
-			DryRun:      $6.(int),
-			ShardColumn: $3.(*ast.ColumnName),
-			Limit:       getUint64FromNUM($5),
-			DeleteStmt:  $7.(*ast.DeleteStmt),
+			DryRun:      $5.(int),
+			ShardColumn: $2.(*ast.ColumnName),
+			Limit:       getUint64FromNUM($4),
+			DeleteStmt:  $6.(*ast.DeleteStmt),
 		}
 	}
 
@@ -13452,6 +13453,15 @@ DryRunOptions:
 |	"DRY" "RUN" "QUERY"
 	{
 		$$ = ast.DryRunQuery
+	}
+
+OptionalShardColumn:
+	{
+		$$ = (*ast.ColumnName)(nil)
+	}
+|	"ON" ColumnName
+	{
+		$$ = $2.(*ast.ColumnName)
 	}
 
 /********************************************************************

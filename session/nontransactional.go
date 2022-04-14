@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/collate"
@@ -69,14 +68,14 @@ func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactiona
 		return nil, errors.Errorf("non-transactional statement can only run in auto-commit mode. auto=commit:%v, inTxn:%v",
 			se.GetSessionVars().IsAutocommit(), se.GetSessionVars().InTxn())
 	}
-	tableName, selectSQL, shardColumn, err := buildSelectSQL(stmt, se)
+	tableName, selectSQL, shardColumnInfo, err := buildSelectSQL(stmt, se)
 	if err != nil {
 		return nil, err
 	}
 	if stmt.DryRun == ast.DryRunQuery {
 		return buildDryRunResults(stmt.DryRun, []string{selectSQL}, se.GetSessionVars().BatchSize.MaxChunkSize)
 	}
-	jobs, err := buildShardJobs(ctx, stmt, se, selectSQL, shardColumn)
+	jobs, err := buildShardJobs(ctx, stmt, se, selectSQL, shardColumnInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -261,11 +260,11 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 }
 
 func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, se Session,
-	selectSQL string, shardColumn *table.Column) ([]job, error) {
+	selectSQL string, shardColumnInfo *model.ColumnInfo) ([]job, error) {
 	logutil.Logger(ctx).Info("Non-transactional delete, select SQL", zap.String("selectSQL", selectSQL))
 	var shardColumnCollate string
-	if shardColumn != nil {
-		shardColumnCollate = shardColumn.Collate
+	if shardColumnInfo != nil {
+		shardColumnCollate = shardColumnInfo.Collate
 	} else {
 		shardColumnCollate = ""
 	}
@@ -333,7 +332,7 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, s
 	return jobs, nil
 }
 
-func buildSelectSQL(stmt *ast.NonTransactionalDeleteStmt, se Session) (*ast.TableName, string, *table.Column, error) {
+func buildSelectSQL(stmt *ast.NonTransactionalDeleteStmt, se Session) (*ast.TableName, string, *model.ColumnInfo, error) {
 	// only use the first table
 	// TODO: return error if there are multiple tables
 	if stmt.DeleteStmt.TableRefs == nil || stmt.DeleteStmt.TableRefs.TableRefs == nil {
@@ -352,7 +351,7 @@ func buildSelectSQL(stmt *ast.NonTransactionalDeleteStmt, se Session) (*ast.Tabl
 	}
 
 	// the shard column must be indexed
-	indexed, shardColumn, err := checkShardColumnIndexed(stmt, se, tableName)
+	indexed, shardColumnInfo, err := selectShardColumn(stmt, se, tableName)
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -376,33 +375,70 @@ func buildSelectSQL(stmt *ast.NonTransactionalDeleteStmt, se Session) (*ast.Tabl
 	// assure NULL values are placed first
 	selectSQL := fmt.Sprintf("select `%s` from `%s`.`%s` where %s order by IF(ISNULL(`%s`),0,1),`%s`",
 		stmt.ShardColumn.Name.O, tableName.DBInfo.Name.O, tableName.Name.O, sb.String(), stmt.ShardColumn.Name.O, stmt.ShardColumn.Name.O)
-	return tableName, selectSQL, shardColumn, nil
+	return tableName, selectSQL, shardColumnInfo, nil
 }
 
-func checkShardColumnIndexed(stmt *ast.NonTransactionalDeleteStmt, se Session, tableName *ast.TableName) (bool, *table.Column, error) {
-	shardColumnName := stmt.ShardColumn.Name.L
-	indexed := false
+// it attempts to auto-select a shard column from handle if not specified, and fills back the corresponding info in the stmt,
+// making it transparent to following steps
+func selectShardColumn(stmt *ast.NonTransactionalDeleteStmt, se Session, tableName *ast.TableName) (indexed bool, shardColumnInfo *model.ColumnInfo, err error) {
 	tbl, err := domain.GetDomain(se).InfoSchema().TableByName(tableName.Schema, tableName.Name)
 	if err != nil {
 		return false, nil, err
 	}
+	tableInfo := tbl.Meta()
 
-	if shardColumnName == "_tidb_rowid" && !tbl.Meta().PKIsHandle && !tbl.Meta().IsCommonHandle {
+	var shardColumnName string
+	if stmt.ShardColumn == nil {
+		// auto-detect shard column
+		if tbl.Meta().PKIsHandle {
+			shardColumnInfo = tableInfo.GetPkColInfo()
+		} else if tableInfo.IsCommonHandle {
+			for _, index := range tableInfo.Indices {
+				if index.Primary {
+					if len(index.Columns) == 1 {
+						shardColumnInfo = tableInfo.Columns[index.Columns[0].Offset]
+					} else {
+						// if the clustered index contains multiple columns, we cannot automatically choose a column as the shard column
+						return false, nil, errors.New("Non-transactional delete, the clustered index contains multiple columns. Please specify a shard column")
+					}
+				}
+			}
+			if shardColumnInfo == nil {
+				return false, nil, errors.New("Non-transactional delete, the clustered index is not found.")
+			}
+		}
+
+		shardColumnName := "_tidb_rowid"
+		if shardColumnInfo != nil {
+			shardColumnName = shardColumnInfo.Name.L
+		}
+		stmt.ShardColumn = &ast.ColumnName{
+			Schema: tableName.Schema,
+			Table:  tableName.Name,
+			Name:   model.NewCIStr(shardColumnName),
+		}
+		return true, shardColumnInfo, nil
+
+	} else {
+		shardColumnName = stmt.ShardColumn.Name.L
+	}
+
+	if shardColumnName == "_tidb_rowid" && !tableInfo.PKIsHandle && !tableInfo.IsCommonHandle {
 		return true, nil, nil
 	}
 
-	var shardColumn *table.Column
 	for _, col := range tbl.Cols() {
 		if col.Name.L == shardColumnName {
-			shardColumn = col
+			shardColumnInfo = col.ColumnInfo
 			break
 		}
 	}
-	if shardColumn == nil {
+	if shardColumnInfo == nil {
 		return false, nil, errors.Errorf("shard column %s not found", shardColumnName)
 	}
-	if shardColumn.IsPKHandleColumn(tbl.Meta()) {
-		return true, shardColumn, nil
+	// is int handle
+	if mysql.HasPriKeyFlag(shardColumnInfo.Flag) && tableInfo.PKIsHandle {
+		return true, shardColumnInfo, nil
 	}
 
 	for _, index := range tbl.Indices() {
@@ -416,7 +452,7 @@ func checkShardColumnIndexed(stmt *ast.NonTransactionalDeleteStmt, se Session, t
 			break
 		}
 	}
-	return indexed, shardColumn, nil
+	return indexed, shardColumnInfo, nil
 }
 
 func buildDryRunResults(dryRunOption int, results []string, maxChunkSize int) (sqlexec.RecordSet, error) {

@@ -147,3 +147,41 @@ func TestNonTransactionalDeleteShardOnGeneratedColumn(t *testing.T) {
 	tk.MustExec("split on c limit 10 delete from t")
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
 }
+
+func TestNonTransactionalDeleteAutoDetectShardColumn(t *testing.T) {
+	store, clean := createStorage(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_max_chunk_size=35")
+	tk.MustExec("use test")
+
+	goodTables := []string{
+		"create table t(a int, b int)",
+		"create table t(a int, b int, primary key(a) clustered)",
+		"create table t(a int, b int, primary key(a) nonclustered)",
+		"create table t(a int, b int, primary key(a, b) nonclustered)",
+		"create table t(a varchar(30), b int, primary key(a) clustered)",
+		"create table t(a varchar(30), b int, primary key(a, b) nonclustered)",
+	}
+	badTables := []string{
+		"create table t(a int, b int, primary key(a, b) clustered)",
+		"create table t(a varchar(30), b int, primary key(a, b) clustered)",
+	}
+
+	testFunc := func(table string, expectSuccess bool) {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(table)
+		for i := 0; i < 100; i++ {
+			tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
+		}
+		_, err := tk.Exec("split limit 3 delete from t")
+		require.Equal(t, expectSuccess, err == nil)
+	}
+
+	for _, table := range goodTables {
+		testFunc(table, true)
+	}
+	for _, table := range badTables {
+		testFunc(table, false)
+	}
+}

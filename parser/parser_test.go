@@ -6647,6 +6647,12 @@ func TestNonTransactionalDelete(t *testing.T) {
 			"SPLIT ON `c` LIMIT 10 DRY RUN DELETE FROM `t` WHERE `c`=10"},
 		{"split on c limit 10 dry run query delete from t where c = 10", true,
 			"SPLIT ON `c` LIMIT 10 DRY RUN QUERY DELETE FROM `t` WHERE `c`=10"},
+		{"split limit 10 delete from t where c = 10", true,
+			"SPLIT LIMIT 10 DELETE FROM `t` WHERE `c`=10"},
+		{"split limit 10 dry run delete from t where c = 10", true,
+			"SPLIT LIMIT 10 DRY RUN DELETE FROM `t` WHERE `c`=10"},
+		{"split limit 10 dry run query delete from t where c = 10", true,
+			"SPLIT LIMIT 10 DRY RUN QUERY DELETE FROM `t` WHERE `c`=10"},
 	}
 
 	RunTest(t, cases, false)
