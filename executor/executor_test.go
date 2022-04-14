@@ -2217,30 +2217,6 @@ func TestIndexScan(t *testing.T) {
 	tk.MustQuery(`SELECT * FROM (SELECT * FROM (SELECT a as d FROM t WHERE a IN ('100')) AS x WHERE x.d < "123" ) tmp_count`).Check(testkit.Rows())
 }
 
-func (s *testSuite) TestOOMActionPriority(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t0")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("drop table if exists t2")
-	tk.MustExec("drop table if exists t3")
-	tk.MustExec("drop table if exists t4")
-	tk.MustExec("create table t0(a int)")
-	tk.MustExec("insert into t0 values(1)")
-	tk.MustExec("create table t1(a int)")
-	tk.MustExec("insert into t1 values(1)")
-	tk.MustExec("create table t2(a int)")
-	tk.MustExec("insert into t2 values(1)")
-	tk.MustExec("create table t3(a int)")
-	tk.MustExec("insert into t3 values(1)")
-	tk.MustExec("create table t4(a int)")
-	tk.MustExec("insert into t4 values(1)")
-	tk.MustQuery("select * from t0 join t1 join t2 join t3 join t4 order by t0.a").Check(testkit.Rows("1 1 1 1 1"))
-	action := tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest()
-	// All actions are finished and removed.
-	c.Assert(action.GetPriority(), Equals, int64(memory.DefLogPriority))
-}
-
 func TestUpdateJoin(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -3319,16 +3295,8 @@ func TestOOMActionPriority(t *testing.T) {
 	tk.MustExec("insert into t4 values(1)")
 	tk.MustQuery("select * from t0 join t1 join t2 join t3 join t4 order by t0.a").Check(testkit.Rows("1 1 1 1 1"))
 	action := tk.Session().GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest()
-	// check the first 5 actions is rate limit.
-	for i := 0; i < 5; i++ {
-		require.Equal(t, int64(memory.DefRateLimitPriority), action.GetPriority())
-		action = action.GetFallback()
-	}
-	for action.GetFallback() != nil {
-		require.Equal(t, int64(memory.DefSpillPriority), action.GetPriority())
-		action = action.GetFallback()
-	}
-	require.Equal(t, int64(memory.DefLogPriority), action.GetPriority())
+	// All actions are finished and removed.
+	require.Equal(t, action.GetPriority(), int64(memory.DefLogPriority))
 }
 
 func TestTrackAggMemoryUsage(t *testing.T) {
