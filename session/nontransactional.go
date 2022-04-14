@@ -138,8 +138,16 @@ func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransaction
 			shardColumnRefer:  shardColumnRefer,
 			originalCondition: originalCondition,
 		}
-		splitStmt := doOneJob(ctx, &jobs[i], len(jobs), stmtBuildInfo, se, stmt.DryRun == ast.DryRunSplitDml)
-		splitStmts = append(splitStmts, splitStmt)
+		if stmt.DryRun == ast.DryRunSplitDml {
+			if i > 0 && i < len(jobs)-1 {
+				continue
+			}
+			splitStmt := doOneJob(ctx, &jobs[i], len(jobs), stmtBuildInfo, se, true)
+			splitStmts = append(splitStmts, splitStmt)
+		} else {
+			doOneJob(ctx, &jobs[i], len(jobs), stmtBuildInfo, se, false)
+		}
+
 		// if the first job failed, there is a large chance that all jobs will fail. So return early.
 		if i == 0 && jobs[i].err != nil {
 			jobs[i].err = errors.Wrap(jobs[i].err, "Early return: error occurred in the first job")
@@ -414,7 +422,7 @@ func checkShardColumnIndexed(stmt *ast.NonTransactionalDeleteStmt, se Session, t
 func buildDryRunResults(dryRunOption int, results []string, maxChunkSize int) (sqlexec.RecordSet, error) {
 	var fieldName string
 	if dryRunOption == ast.DryRunSplitDml {
-		fieldName = "split statements"
+		fieldName = "split statement examples"
 	} else {
 		fieldName = "query statement"
 	}
