@@ -542,7 +542,6 @@ func splitByColon(line string) (fields []string, values []string) {
 func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Context, log []string, offset offset) (data [][]types.Datum, err error) {
 	start := time.Now()
 	logSize := calculateLogSize(log)
-	e.memConsume(logSize)
 	defer e.memConsume(-logSize)
 	defer func() {
 		if r := recover(); r != nil {
@@ -556,6 +555,7 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 			atomic.AddInt64(&e.stats.parseLog, int64(time.Since(start)))
 		}
 	}()
+	e.memConsume(logSize)
 	failpoint.Inject("errorMockParseSlowLogPanic", func(val failpoint.Value) {
 		if val.(bool) {
 			panic("panic test")
@@ -632,8 +632,7 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 				// Get the sql string, and mark the start flag to false.
 				_ = e.setColumnValue(sctx, row, tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)), e.checker, fileLine)
 				e.setDefaultValue(row)
-				e.memConsume(calculateRowSize(row))
-				//fmt.Printf("slow query mem consume %v------\n", e.memTracker.BytesConsumed())
+				e.memConsume(types.EstimatedMemUsage(row, 1))
 				data = append(data, row)
 				startFlag = false
 			} else {
@@ -788,9 +787,7 @@ func parsePlan(planString string) string {
 		return planString
 	}
 	planString = planString[len(variable.SlowLogPlanPrefix) : len(planString)-len(variable.SlowLogPlanSuffix)]
-	//fmt.Printf("start to decode plan, size: %v --\n", len(planString))
 	decodePlanString, err := plancodec.DecodePlan(planString)
-	//fmt.Printf("finish decode plan, size: %v, last size: %v--\n", len(planString), len(decodePlanString))
 	if err == nil {
 		planString = decodePlanString
 	} else {
@@ -1116,18 +1113,9 @@ func calculateLogSize(log []string) int64 {
 func calculateDatumsSize(rows [][]types.Datum) int64 {
 	size := int64(0)
 	for _, row := range rows {
-		size += calculateRowSize(row)
+		size += types.EstimatedMemUsage(row, 1)
 	}
 	return size
-}
-
-func calculateRowSize(row []types.Datum) int64 {
-	size := 0
-	for _, col := range row {
-		raw := col.GetRaw()
-		size += len(raw)
-	}
-	return int64(size)
 }
 
 func (e *slowQueryRetriever) memConsume(bytes int64) {
