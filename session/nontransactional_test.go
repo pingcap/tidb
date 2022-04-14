@@ -36,10 +36,18 @@ func TestNonTransactionalDelete(t *testing.T) {
 		"create table t(a int, b int, primary key(a, b) nonclustered)",
 		"create table t(a int, b int, primary key(a) clustered)",
 		"create table t(a int, b int, primary key(a) nonclustered)",
+		"create table t(a int, b int, key(a, b))",
+		"create table t(a int, b int, key(a))",
+		"create table t(a int, b int, unique key(a, b))",
+		"create table t(a int, b int, unique key(a))",
 		"create table t(a varchar(30), b int, primary key(a, b) clustered)",
 		"create table t(a varchar(30), b int, primary key(a, b) nonclustered)",
 		"create table t(a varchar(30), b int, primary key(a) clustered)",
 		"create table t(a varchar(30), b int, primary key(a) nonclustered)",
+		"create table t(a varchar(30), b int, key(a, b))",
+		"create table t(a varchar(30), b int, key(a))",
+		"create table t(a varchar(30), b int, unique key(a, b))",
+		"create table t(a varchar(30), b int, unique key(a))",
 	}
 	for _, table := range tables {
 		tk.MustExec("drop table if exists t")
@@ -60,7 +68,8 @@ func TestNonTransactionalDelete(t *testing.T) {
 			}
 		}
 		tk.MustQuery("split on a limit 3 dry run query delete from t").Check(testkit.Rows(
-			"select `a` from `test`.`t` where true order by IF(ISNULL(`a`),0,1),`a`"))
+			"SELECT `a` FROM `test`.`t` WHERE TRUE ORDER BY IF(ISNULL(`a`),0,1),`a`"))
+		tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
 	}
 }
 

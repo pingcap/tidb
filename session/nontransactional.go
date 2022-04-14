@@ -65,7 +65,7 @@ func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactiona
 		return nil, err
 	}
 	if !(se.GetSessionVars().IsAutocommit() && !se.GetSessionVars().InTxn()) {
-		return nil, errors.Errorf("non-transactional statement can only run in auto-commit mode. auto=commit:%v, inTxn:%v",
+		return nil, errors.Errorf("non-transactional statement can only run in auto-commit mode. auto-commit:%v, inTxn:%v",
 			se.GetSessionVars().IsAutocommit(), se.GetSessionVars().InTxn())
 	}
 	tableName, selectSQL, shardColumnInfo, err := buildSelectSQL(stmt, se)
@@ -149,7 +149,7 @@ func splitDeleteWorker(ctx context.Context, jobs []job, stmt *ast.NonTransaction
 
 		// if the first job failed, there is a large chance that all jobs will fail. So return early.
 		if i == 0 && jobs[i].err != nil {
-			jobs[i].err = errors.Wrap(jobs[i].err, "Early return: error occurred in the first job")
+			jobs[i].err = errors.Wrap(jobs[i].err, "Early return: error occurred in the first job. All jobs are canceled")
 			logutil.Logger(ctx).Error("Non-transactional delete, early return", zap.Error(jobs[i].err))
 			break
 		}
@@ -269,12 +269,12 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, s
 		shardColumnCollate = ""
 	}
 
-	rss, err := se.Execute(context.TODO(), selectSQL)
+	rss, err := se.Execute(ctx, selectSQL)
 	if err != nil {
 		return nil, err
 	}
-	if len(rss) > 1 {
-		return nil, errors.New("Non-transactional delete, more than 1 record sets")
+	if len(rss) != 1 {
+		return nil, errors.Errorf("Non-transactional delete, expecting 1 record set, but got %d", len(rss))
 	}
 	rs := rss[0]
 	defer rs.Close()
@@ -290,7 +290,7 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, s
 
 	chk := rs.NewChunk(nil)
 	for {
-		err = rs.Next(context.TODO(), chk)
+		err = rs.Next(ctx, chk)
 		if err != nil {
 			return nil, err
 		}
@@ -370,10 +370,10 @@ func buildSelectSQL(stmt *ast.NonTransactionalDeleteStmt, se Session) (*ast.Tabl
 			return nil, "", nil, errors.Trace(err)
 		}
 	} else {
-		sb.WriteString("true")
+		sb.WriteString("TRUE")
 	}
 	// assure NULL values are placed first
-	selectSQL := fmt.Sprintf("select `%s` from `%s`.`%s` where %s order by IF(ISNULL(`%s`),0,1),`%s`",
+	selectSQL := fmt.Sprintf("SELECT `%s` FROM `%s`.`%s` WHERE %s ORDER BY IF(ISNULL(`%s`),0,1),`%s`",
 		stmt.ShardColumn.Name.O, tableName.DBInfo.Name.O, tableName.Name.O, sb.String(), stmt.ShardColumn.Name.O, stmt.ShardColumn.Name.O)
 	return tableName, selectSQL, shardColumnInfo, nil
 }
@@ -404,7 +404,7 @@ func selectShardColumn(stmt *ast.NonTransactionalDeleteStmt, se Session, tableNa
 				}
 			}
 			if shardColumnInfo == nil {
-				return false, nil, errors.New("Non-transactional delete, the clustered index is not found.")
+				return false, nil, errors.New("Non-transactional delete, the clustered index is not found")
 			}
 		}
 
@@ -418,12 +418,10 @@ func selectShardColumn(stmt *ast.NonTransactionalDeleteStmt, se Session, tableNa
 			Name:   model.NewCIStr(shardColumnName),
 		}
 		return true, shardColumnInfo, nil
-
-	} else {
-		shardColumnName = stmt.ShardColumn.Name.L
 	}
+	shardColumnName = stmt.ShardColumn.Name.L
 
-	if shardColumnName == "_tidb_rowid" && !tableInfo.PKIsHandle && !tableInfo.IsCommonHandle {
+	if shardColumnName == "_tidb_rowid" && !tableInfo.HasClusteredIndex() {
 		return true, nil, nil
 	}
 
