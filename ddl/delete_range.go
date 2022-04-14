@@ -293,7 +293,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 			for _, pid := range physicalTableIDs {
 				startKey = tablecodec.EncodeTablePrefix(pid)
 				endKey := tablecodec.EncodeTablePrefix(pid + 1)
-				elemID := ea.allocForPartitionID(pid)
+				elemID := ea.allocForPhysicalID(pid)
 				if err := doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("partition ID is %d", pid)); err != nil {
 					return errors.Trace(err)
 				}
@@ -302,7 +302,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 		}
 		startKey = tablecodec.EncodeTablePrefix(tableID)
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
-		elemID := ea.allocForTableID(tableID)
+		elemID := ea.allocForPhysicalID(tableID)
 		return doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("table ID is %d", tableID))
 	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 		var physicalTableIDs []int64
@@ -312,7 +312,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 		for _, physicalTableID := range physicalTableIDs {
 			startKey := tablecodec.EncodeTablePrefix(physicalTableID)
 			endKey := tablecodec.EncodeTablePrefix(physicalTableID + 1)
-			elemID := ea.allocForPartitionID(physicalTableID)
+			elemID := ea.allocForPhysicalID(physicalTableID)
 			if err := doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("partition table ID is %d", physicalTableID)); err != nil {
 				return errors.Trace(err)
 			}
@@ -330,7 +330,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 			for _, pid := range partitionIDs {
 				startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
 				endKey := tablecodec.EncodeTableIndexPrefix(pid, indexID+1)
-				elemID := ea.allocForIndexID(indexID)
+				elemID := ea.allocForIndexID(pid, indexID)
 				if err := doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("partition table ID is %d", pid)); err != nil {
 					return errors.Trace(err)
 				}
@@ -338,7 +338,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 		} else {
 			startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
 			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
-			elemID := ea.allocForIndexID(indexID)
+			elemID := ea.allocForIndexID(tableID, indexID)
 			return doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("table ID is %d", tableID))
 		}
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
@@ -354,7 +354,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 			for _, pid := range partitionIDs {
 				startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
 				endKey := tablecodec.EncodeTableIndexPrefix(pid, indexID+1)
-				elemID := ea.allocForIndexID(indexID)
+				elemID := ea.allocForIndexID(pid, indexID)
 				if err := doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("partition table ID is %d", pid)); err != nil {
 					return errors.Trace(err)
 				}
@@ -362,7 +362,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 		} else {
 			startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
 			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
-			elemID := ea.allocForIndexID(indexID)
+			elemID := ea.allocForIndexID(tableID, indexID)
 			return doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("index ID is %d", indexID))
 		}
 	case model.ActionDropColumn:
@@ -419,7 +419,7 @@ func doBatchDeleteIndiceRange(ctx context.Context, s sqlexec.SQLExecutor, jobID,
 		if i != len(indexIDs)-1 {
 			buf.WriteString(",")
 		}
-		elemID := ea.allocForIndexID(indexID)
+		elemID := ea.allocForIndexID(tableID, indexID)
 		paramsList = append(paramsList, jobID, elemID, startKeyEncoded, endKeyEncoded, ts)
 	}
 	_, err := s.ExecuteInternal(ctx, buf.String(), paramsList...)
@@ -453,7 +453,7 @@ func doBatchInsert(ctx context.Context, s sqlexec.SQLExecutor, jobID int64, tabl
 		if i != len(tableIDs)-1 {
 			buf.WriteString(",")
 		}
-		elemID := ea.allocForTableID(tableID)
+		elemID := ea.allocForPhysicalID(tableID)
 		paramsList = append(paramsList, jobID, elemID, startKeyEncoded, endKeyEncoded, ts)
 	}
 	// set session disk full opt

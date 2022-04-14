@@ -334,7 +334,7 @@ func rollingBackMultiSchemaChange(job *model.Job) error {
 		switch sub.State {
 		case model.JobStateRunning:
 			sub.State = model.JobStateCancelling
-		case model.JobStateNone:
+		case model.JobStateNone, model.JobStateQueueing:
 			sub.State = model.JobStateCancelled
 		}
 	}

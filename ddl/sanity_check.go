@@ -105,16 +105,18 @@ func (d *ddl) checkDeleteRangeCnt(job *model.Job) {
 		}
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		var indexID int64
+		var ifExists bool
 		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexID, &partitionIDs); err != nil {
+		if err := job.DecodeArgs(&indexID, &ifExists, &partitionIDs); err != nil {
 			panic("should not happened")
 		}
 		checkRangeCntByTableIDs(partitionIDs, cnt)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		var indexName interface{}
+		var ifNotExists bool
 		var indexID int64
 		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexName, &indexID, &partitionIDs); err != nil {
+		if err := job.DecodeArgs(&indexName, &ifNotExists, &indexID, &partitionIDs); err != nil {
 			panic("should not happened")
 		}
 		checkRangeCntByTableIDsAndIndexIDs(partitionIDs, []int64{indexID}, cnt)

@@ -14,42 +14,37 @@
 
 package ddl
 
-const (
-	elemTable     byte = 't'
-	elemPartition byte = 'p'
-	elemIndex     byte = 'i'
-)
-
-type elementObjID struct {
-	tp byte
-	id int64
+type tblIdxID struct {
+	physicalID int64
+	indexID    int64
 }
 
 type elementIDAlloc struct {
-	objIDs map[elementObjID]int64
+	physicalIDs map[int64]int64
+	indexIDs    map[tblIdxID]int64
 }
 
-func (e *elementIDAlloc) allocForIndexID(indexID int64) int64 {
-	return e.alloc(elemIndex, indexID)
-}
-
-func (e *elementIDAlloc) allocForTableID(tableID int64) int64 {
-	return e.alloc(elemTable, tableID)
-}
-
-func (e *elementIDAlloc) allocForPartitionID(partitionID int64) int64 {
-	return e.alloc(elemPartition, partitionID)
-}
-
-func (e *elementIDAlloc) alloc(tp byte, schemaObjID int64) int64 {
-	if e.objIDs == nil {
-		e.objIDs = make(map[elementObjID]int64)
+func (e *elementIDAlloc) allocForIndexID(physicalID, indexID int64) int64 {
+	if e.indexIDs == nil {
+		e.indexIDs = make(map[tblIdxID]int64)
 	}
-	objID := elementObjID{tp: tp, id: schemaObjID}
-	if elemID, found := e.objIDs[objID]; found {
-		return elemID
+	k := tblIdxID{physicalID: physicalID, indexID: indexID}
+	if id, found := e.indexIDs[k]; found {
+		return id
 	}
-	newElemID := int64(len(e.objIDs) + 1)
-	e.objIDs[objID] = newElemID
-	return newElemID
+	next := int64(len(e.physicalIDs) + len(e.indexIDs) + 1)
+	e.indexIDs[k] = next
+	return next
+}
+
+func (e *elementIDAlloc) allocForPhysicalID(tableID int64) int64 {
+	if e.physicalIDs == nil {
+		e.physicalIDs = make(map[int64]int64)
+	}
+	if id, found := e.physicalIDs[tableID]; found {
+		return id
+	}
+	next := int64(len(e.physicalIDs) + len(e.indexIDs) + 1)
+	e.physicalIDs[tableID] = next
+	return next
 }

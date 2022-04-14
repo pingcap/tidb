@@ -301,7 +301,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 			job.Version = currentVersion
 			job.StartTS = txn.StartTS()
 			job.ID = ids[i]
-			job.State = model.JobStateQueueing
+			setJobStateToQueueing(job)
 			if err = buildJobDependence(t, job); err != nil {
 				return errors.Trace(err)
 			}
@@ -343,6 +343,15 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	} else {
 		logutil.BgLogger().Info("[ddl] add DDL jobs", zap.Int("batch count", len(tasks)), zap.String("jobs", jobs))
 	}
+}
+
+func setJobStateToQueueing(job *model.Job) {
+	if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
+		for _, sub := range job.MultiSchemaInfo.SubJobs {
+			sub.State = model.JobStateQueueing
+		}
+	}
+	job.State = model.JobStateQueueing
 }
 
 // getHistoryDDLJob gets a DDL job with job's ID from history queue.

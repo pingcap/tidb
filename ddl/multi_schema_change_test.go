@@ -830,7 +830,7 @@ func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
 
 			assert.Equal(t, rows[2][3], "add index /* subjob */")
 			assert.Equal(t, rows[2][4], "none")
-			assert.Equal(t, rows[2][len(rows[2])-1], "none")
+			assert.Equal(t, rows[2][len(rows[2])-1], "queueing")
 		}
 	}
 
