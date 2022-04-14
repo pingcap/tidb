@@ -282,8 +282,6 @@ func TestNewCostInterfaceTiFlash(t *testing.T) {
 		"select count(*) from t where a < 200",
 		"select max(a) from t where a < 200",
 		"select avg(a) from t",
-		//"select avg(a) from t group by b",
-		//"select avg(a), b from t where a < 200 group by b",
 		"select sum(a) from t where a < 200",
 		"select * from t where a < 200 limit 10",
 		"select * from t where a = 200  limit 10",
