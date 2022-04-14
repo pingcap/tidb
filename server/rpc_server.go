@@ -195,12 +195,27 @@ func (s *rpcServer) createSession() (session.Session, error) {
 		Handle: do.PrivilegeHandle(),
 	}
 	privilege.BindPrivilegeManager(se, pm)
-	se.GetSessionVars().TxnCtx.InfoSchema = is
+	vars := se.GetSessionVars()
+	vars.TxnCtx.InfoSchema = is
 	// This is for disable parallel hash agg.
 	// TODO: remove this.
+<<<<<<< HEAD
 	se.GetSessionVars().HashAggPartialConcurrency = 1
 	se.GetSessionVars().HashAggFinalConcurrency = 1
 	se.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForCoprocessor, -1)
+=======
+	vars.SetHashAggPartialConcurrency(1)
+	vars.SetHashAggFinalConcurrency(1)
+	vars.StmtCtx.InitMemTracker(memory.LabelForSQLText, vars.MemQuotaQuery)
+	vars.StmtCtx.MemTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
+	globalConfig := config.GetGlobalConfig()
+	switch globalConfig.OOMAction {
+	case config.OOMActionCancel:
+		action := &memory.PanicOnExceed{}
+		action.SetLogHook(domain.GetDomain(se).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
+		vars.StmtCtx.MemTracker.SetActionOnExceed(action)
+	}
+>>>>>>> f988f5455... executor: add memory tracker for quering slow_query to avoid TiDB server oom (#33953)
 	se.SetSessionManager(s.sm)
 	return se, nil
 }
