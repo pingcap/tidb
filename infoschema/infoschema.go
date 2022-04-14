@@ -53,6 +53,8 @@ type InfoSchema interface {
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
 	// PlacementBundleByPhysicalTableID is used to get a rule bundle.
 	PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool)
+	// AllPlacementBundles is used to get all placement bundles
+	AllPlacementBundles() []*placement.Bundle
 	// AllPlacementPolicies returns all placement policies
 	AllPlacementPolicies() []*model.PolicyInfo
 }
@@ -385,6 +387,14 @@ func (is *infoSchema) AllPlacementPolicies() []*model.PolicyInfo {
 func (is *infoSchema) PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool) {
 	t, r := is.ruleBundleMap[id]
 	return t, r
+}
+
+func (is *infoSchema) AllPlacementBundles() []*placement.Bundle {
+	bundles := make([]*placement.Bundle, 0, len(is.ruleBundleMap))
+	for _, bundle := range is.ruleBundleMap {
+		bundles = append(bundles, bundle)
+	}
+	return bundles
 }
 
 func (is *infoSchema) setPolicy(policy *model.PolicyInfo) {

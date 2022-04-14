@@ -120,6 +120,7 @@ func checkTableBundlesInPD(t *testing.T, do *domain.Domain, tt *meta.Meta, tblIn
 			require.Equal(t, string(expectedJSON), string(pdGotJSON))
 
 			isGotJSON, err := json.Marshal(isGot)
+			require.NoError(t, err)
 			require.NotNil(t, isGot)
 			require.Equal(t, string(expectedJSON), string(isGotJSON))
 		}
@@ -1296,6 +1297,11 @@ func TestDropTableGCPlacement(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, len(bundles))
 	require.Equal(t, placement.GroupID(t1.Meta().ID), bundles[0].ID)
+
+	bundles = dom.InfoSchema().AllPlacementBundles()
+	require.NoError(t, err)
+	require.Equal(t, 1, len(bundles))
+	require.Equal(t, placement.GroupID(t1.Meta().ID), bundles[0].ID)
 }
 
 func TestAlterTablePlacement(t *testing.T) {
@@ -1434,6 +1440,22 @@ func TestDropTablePartitionGCPlacement(t *testing.T) {
 		bundlesMap[bundle.ID] = bundle
 	}
 	_, ok := bundlesMap[placement.GroupID(t1.Meta().ID)]
+	require.True(t, ok)
+
+	_, ok = bundlesMap[placement.GroupID(t2.Meta().ID)]
+	require.True(t, ok)
+
+	_, ok = bundlesMap[placement.GroupID(t2.Meta().Partition.Definitions[1].ID)]
+	require.True(t, ok)
+
+	bundles = dom.InfoSchema().AllPlacementBundles()
+	require.NoError(t, err)
+	require.Equal(t, 3, len(bundles))
+	bundlesMap = make(map[string]*placement.Bundle)
+	for _, bundle := range bundles {
+		bundlesMap[bundle.ID] = bundle
+	}
+	_, ok = bundlesMap[placement.GroupID(t1.Meta().ID)]
 	require.True(t, ok)
 
 	_, ok = bundlesMap[placement.GroupID(t2.Meta().ID)]
