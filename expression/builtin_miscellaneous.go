@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -214,7 +215,7 @@ func (b *builtinLockSig) evalInt(row chunk.Row) (int64, bool, error) {
 	// We can't have a timeout greater than innodb_lock_wait_timeout.
 	// So users are aware, we also attach a warning.
 	if timeout < 0 || timeout > maxTimeout {
-		err := errTruncatedWrongValue.GenWithStackByArgs("get_lock", timeout)
+		err := errTruncatedWrongValue.GenWithStackByArgs("get_lock", strconv.FormatInt(timeout, 10))
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		timeout = maxTimeout
 	}

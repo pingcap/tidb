@@ -265,6 +265,8 @@ func TestGetLock(t *testing.T) {
 	// Negative timeout = convert to max value
 	tk.MustQuery("SELECT get_lock('testlock1', 0)").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT get_lock('testlock2', -10)").Check(testkit.Rows("1"))
+	// show warnings:
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect get_lock value: '-10'"))
 	tk.MustQuery("SELECT release_lock('testlock1'), release_lock('testlock2')").Check(testkit.Rows("1 1"))
 
 	// GetLock/ReleaseLock with NULL name or '' name
