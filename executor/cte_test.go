@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
@@ -439,4 +440,29 @@ func TestCTEExecError(t *testing.T) {
 			"select * from cte")
 		require.True(t, terror.ErrorEqual(err, types.ErrOverflow))
 	}
+}
+
+// https://github.com/pingcap/tidb/issues/33965.
+func TestCTEsInView(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+
+	tk.MustExec("create database if not exists test;")
+	tk.MustExec("create database if not exists test1;")
+	tk.MustExec("drop table if exists test.t, test1.t;")
+	tk.MustExec("drop view if exists test.v;")
+	tk.MustExec("create table test.t (a int);")
+	tk.MustExec("create table test1.t (a int);")
+	tk.MustExec("insert into test.t values (1);")
+	tk.MustExec("insert into test1.t values (2);")
+
+	tk.MustExec("use test;")
+	tk.MustExec("create view test.v as with tt as (select * from t) select * from tt;")
+	tk.MustExec("use test;")
+	tk.MustQuery("select * from test.v;").Check(testkit.Rows("1"))
+	tk.MustExec("use test1;")
+	tk.MustQuery("select * from test.v;").Check(testkit.Rows("1"))
 }
