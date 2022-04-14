@@ -1091,15 +1091,31 @@ func (c *Column) GetIncreaseFactor(realtimeRowCount int64) float64 {
 	return float64(realtimeRowCount) / columnCount
 }
 
-// MemoryUsage returns the total memory usage of Histogram and CMSketch in Column.
+// MemoryUsage returns the total memory usage of Histogram, CMSketch, FMSketch in Column.
 // We ignore the size of other metadata in Column
-func (c *Column) MemoryUsage() (sum int64) {
-	sum = c.Histogram.MemoryUsage()
+func (c *Column) MemoryUsage(tableMemUsage *TableMemoryUsage) (sum int64) {
+	var columnMemUsage *ColumnMemUsage
+	var ok bool
+	columnMemUsage, ok = tableMemUsage.ColumnsMemUsage[c.PhysicalID]
+	if !ok {
+		columnMemUsage = &ColumnMemUsage{
+			TableID:  tableMemUsage.TableID,
+			ColumnID: c.PhysicalID,
+		}
+		tableMemUsage.ColumnsMemUsage[c.PhysicalID] = columnMemUsage
+	}
+	histogramMemUsage := c.Histogram.MemoryUsage()
+	columnMemUsage.HistogramMemUsage = histogramMemUsage
+	sum = histogramMemUsage
 	if c.CMSketch != nil {
-		sum += c.CMSketch.MemoryUsage()
+		cmSketchMemUsage := c.CMSketch.MemoryUsage()
+		columnMemUsage.CMSketchMemUsage = cmSketchMemUsage
+		sum += cmSketchMemUsage
 	}
 	if c.FMSketch != nil {
-		sum += c.FMSketch.MemoryUsage()
+		fmSketchMemUsage := c.FMSketch.MemoryUsage()
+		columnMemUsage.FMSketchMemUsage = fmSketchMemUsage
+		sum += fmSketchMemUsage
 	}
 	return
 }
@@ -1327,10 +1343,24 @@ func (idx *Index) IsInvalid(collPseudo bool) bool {
 
 // MemoryUsage returns the total memory usage of a Histogram and CMSketch in Index.
 // We ignore the size of other metadata in Index.
-func (idx *Index) MemoryUsage() (sum int64) {
-	sum = idx.Histogram.MemoryUsage()
+func (idx *Index) MemoryUsage(tableMemUsage *TableMemoryUsage) (sum int64) {
+	var indexMemUsage *IndexMemUsage
+	var ok bool
+	indexMemUsage, ok = tableMemUsage.IndicesMemUsage[idx.ID]
+	if !ok {
+		indexMemUsage = &IndexMemUsage{
+			TableID: tableMemUsage.TableID,
+			IndexID: idx.ID,
+		}
+		tableMemUsage.IndicesMemUsage[idx.ID] = indexMemUsage
+	}
+	histMemUsage := idx.Histogram.MemoryUsage()
+	indexMemUsage.HistogramMemUsage = histMemUsage
+	sum = histMemUsage
 	if idx.CMSketch != nil {
-		sum += idx.CMSketch.MemoryUsage()
+		cmSketchMemUsage := idx.CMSketch.MemoryUsage()
+		indexMemUsage.CMSketchMemUsage = cmSketchMemUsage
+		sum += cmSketchMemUsage
 	}
 	return
 }

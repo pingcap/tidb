@@ -108,14 +108,14 @@ func (m *mapCache) Put(k int64, v *statistics.Table) {
 	item, ok := m.tables[k]
 	if ok {
 		oldCost := item.cost
-		newCost := v.MemoryUsage()
+		newCost := v.MemoryUsage().TotalMemUsage
 		item.value = v
 		item.cost = newCost
 		m.tables[k] = item
 		m.memUsage += newCost - oldCost
 		return
 	}
-	cost := v.MemoryUsage()
+	cost := v.MemoryUsage().TotalMemUsage
 	item = cacheItem{
 		key:   k,
 		value: v,
@@ -176,7 +176,7 @@ func (m *mapCache) Len() int {
 func (m *mapCache) FreshMemUsage() {
 	for _, v := range m.tables {
 		oldCost := v.cost
-		newCost := v.value.MemoryUsage()
+		newCost := v.value.MemoryUsage().TotalMemUsage
 		m.memUsage += newCost - oldCost
 	}
 }
