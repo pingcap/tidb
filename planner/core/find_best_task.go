@@ -279,11 +279,44 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 		opt.appendCandidate(p, curTask.plan(), prop)
 		// Get the most efficient one.
-		if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
-			bestTask = curTask
+		if p.ctx.GetSessionVars().EnableNewCostInterface { // use the new cost interface
+			curCost, err := getTaskPlanCost(curTask)
+			if err != nil {
+				return nil, 0, err
+			}
+			bestCost, err := getTaskPlanCost(bestTask)
+			if err != nil {
+				return nil, 0, err
+			}
+			if curCost < bestCost || (bestTask.invalid() && !curTask.invalid()) {
+				bestTask = curTask
+			}
+			continue
+		} else {
+			if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
+				bestTask = curTask
+			}
 		}
 	}
 	return bestTask, cntPlan, nil
+}
+
+func getTaskPlanCost(t task) (float64, error) {
+	if t.invalid() {
+		return math.MaxFloat64, nil
+	}
+	var taskType property.TaskType
+	switch t.(type) {
+	case *rootTask:
+		taskType = property.RootTaskType
+	case *copTask:
+		taskType = property.CopSingleReadTaskType
+	case *mppTask:
+		taskType = property.MppTaskType
+	default:
+		panic("TODO")
+	}
+	return t.plan().CalPlanCost(taskType)
 }
 
 type physicalOptimizeOp struct {
@@ -416,8 +449,22 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		goto END
 	}
 	opt.appendCandidate(p, curTask.plan(), prop)
-	if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
-		bestTask = curTask
+	if p.ctx.GetSessionVars().EnableNewCostInterface { // use the new cost interface
+		curCost, err := getTaskPlanCost(curTask)
+		if err != nil {
+			return nil, 0, err
+		}
+		bestCost, err := getTaskPlanCost(bestTask)
+		if err != nil {
+			return nil, 0, err
+		}
+		if curCost < bestCost || (bestTask.invalid() && !curTask.invalid()) {
+			bestTask = curTask
+		}
+	} else {
+		if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
+			bestTask = curTask
+		}
 	}
 
 END:

@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/planner/property"
 	"strconv"
 	"strings"
 
@@ -1537,7 +1538,12 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 	}
 	estCost := "N/A"
 	if pp, ok := p.(PhysicalPlan); ok {
-		estCost = strconv.FormatFloat(pp.Cost(), 'f', 2, 64)
+		if p.SCtx().GetSessionVars().EnableNewCostInterface {
+			planCost, _ := pp.CalPlanCost(property.RootTaskType)
+			estCost = strconv.FormatFloat(planCost, 'f', 2, 64)
+		} else {
+			estCost = strconv.FormatFloat(pp.Cost(), 'f', 2, 64)
+		}
 	}
 	var accessObject, operatorInfo string
 	if plan, ok := p.(dataAccesser); ok {
