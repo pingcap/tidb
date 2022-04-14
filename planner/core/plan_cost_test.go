@@ -248,6 +248,7 @@ func TestNewCostInterfaceTiFlash(t *testing.T) {
 		"select max(a) from t where a < 200",
 		"select avg(a), b from t where a < 200 group by b",
 	}
+	tk.Session().GetSessionVars().DEBUG = true
 	for _, mpp := range []bool{false, true} {
 		if mpp {
 			tk.MustExec(`set @@session.tidb_allow_mpp=1`)

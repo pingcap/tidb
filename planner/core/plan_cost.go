@@ -133,7 +133,11 @@ func (p *PhysicalTableReader) CalPlanCost(taskType property.TaskType) float64 {
 		// net seek cost
 		p.planCost += getSeekCost(p)
 		// consider concurrency
-		p.planCost /= p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
+		concurrency := float64(p.ctx.GetSessionVars().DistSQLScanConcurrency()) // cop protocol
+		if _, ok := p.tablePlan.(*PhysicalExchangeSender); ok {                 // mpp protocol
+			concurrency = p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
+		}
+		p.planCost /= concurrency
 	}
 
 	p.planCostInit = true
