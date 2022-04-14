@@ -63,7 +63,7 @@ type packetIO struct {
 	readTimeout time.Duration
 	// maxAllowedPacket is the maximum size of one packet in readPacket.
 	maxAllowedPacket uint64
-	// accumulatedLength count the length of received data totally in readPacket.
+	// accumulatedLength count the length of totally received 'payload' in readPacket.
 	accumulatedLength uint64
 }
 
@@ -103,7 +103,7 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 
 	length := int(uint32(header[0]) | uint32(header[1])<<8 | uint32(header[2])<<16)
 
-	// Accumulated data length exceeds the limit.
+	// Accumulated payload length exceeds the limit.
 	if p.accumulatedLength += uint64(length); p.accumulatedLength > p.maxAllowedPacket {
 		terror.Log(errNetPacketTooLarge)
 		return nil, errNetPacketTooLarge
@@ -123,7 +123,6 @@ func (p *packetIO) readOnePacket() ([]byte, error) {
 
 func (p *packetIO) setMaxAllowedPacket(maxAllowedPacket uint64) {
 	p.maxAllowedPacket = maxAllowedPacket
-	p.accumulatedLength = 0
 }
 
 func (p *packetIO) readPacket() ([]byte, error) {
