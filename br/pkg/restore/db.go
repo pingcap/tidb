@@ -125,7 +125,7 @@ func (db *DB) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
 }
 
 // CreateTable executes a CREATE TABLE SQL.
-func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, ddlTables map[UniqueTableName]bool) error {
+func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, toBeCorrectedTables map[UniqueTableName]bool) error {
 	err := db.se.CreateTable(ctx, table.DB.Name, table.Info)
 	if err != nil {
 		log.Error("create table failed",
@@ -182,30 +182,6 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table, ddlTables 
 		}
 		restoreMetaSQL = fmt.Sprintf(setValFormat, table.Info.AutoIncID)
 		err = db.se.Execute(ctx, restoreMetaSQL)
-<<<<<<< HEAD
-=======
-	}
-	if err != nil {
-		log.Error("restore meta sql failed",
-			zap.String("query", restoreMetaSQL),
-			zap.Stringer("db", table.DB.Name),
-			zap.Stringer("table", table.Info.Name),
-			zap.Error(err))
-		return errors.Trace(err)
-	}
-	return errors.Trace(err)
-}
-
-func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table, toBeCorrectedTables map[UniqueTableName]bool) error {
-
-	var restoreMetaSQL string
-	var err error
-	switch {
-	case table.Info.IsView():
-		return nil
-	case table.Info.IsSequence():
-		err = db.restoreSequence(ctx, table)
->>>>>>> 654e3d834... br: modify tables that should be altered auto id or random id (#33719)
 		if err != nil {
 			log.Error("restore meta sql failed",
 				zap.String("query", restoreMetaSQL),
