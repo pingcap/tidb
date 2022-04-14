@@ -84,7 +84,7 @@ func (p *PhysicalIndexLookUpReader) CalPlanCost(taskType property.TaskType) (flo
 
 	// index net I/O cost
 	idxCount := p.indexPlan.StatsCount()
-	tblStats := getBottomPlan(p.indexPlan).(*PhysicalIndexScan).tblColHists
+	tblStats := getTblStats(p.indexPlan)
 	rowSize := tblStats.GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
 	p.planCost += idxCount * rowSize * p.ctx.GetSessionVars().GetNetworkFactor(nil)
 
@@ -114,11 +114,11 @@ func (p *PhysicalIndexReader) CalPlanCost(taskType property.TaskType) (float64, 
 	// child's cost
 	childCost, err := p.indexPlan.CalPlanCost(property.CopSingleReadTaskType)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	p.planCost = childCost
 	// net I/O cost
-	tblStats := getBottomPlan(p.indexPlan).(*PhysicalIndexScan).tblColHists
+	tblStats := getTblStats(p.indexPlan)
 	rowSize := tblStats.GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
 	p.planCost += p.indexPlan.StatsCount() * rowSize * p.ctx.GetSessionVars().GetNetworkFactor(nil)
 	// net seek cost
@@ -201,7 +201,7 @@ func (p *PhysicalIndexMergeReader) CalPlanCost(taskType property.TaskType) (floa
 			return 0, err
 		}
 		p.planCost += childCost // child's cost
-		tblStats := getBottomPlan(tblScan).(*PhysicalTableScan).tblColHists
+		tblStats := getTblStats(tblScan)
 		rowSize := tblStats.GetAvgRowSize(p.ctx, tblScan.Schema().Columns, false, false)
 		p.planCost += tblScan.StatsCount() * rowSize * netFactor // net I/O cost
 	}
@@ -211,7 +211,7 @@ func (p *PhysicalIndexMergeReader) CalPlanCost(taskType property.TaskType) (floa
 			return 0, err
 		}
 		p.planCost += childCost // child's cost
-		tblStats := getBottomPlan(idxScan).(*PhysicalIndexScan).tblColHists
+		tblStats := getTblStats(idxScan)
 		rowSize := tblStats.GetAvgRowSize(p.ctx, idxScan.Schema().Columns, true, false)
 		p.planCost += idxScan.StatsCount() * rowSize * netFactor // net I/O cost
 	}
@@ -534,9 +534,18 @@ func getSeekCost(p PhysicalPlan) float64 {
 	}
 }
 
-func getBottomPlan(p PhysicalPlan) PhysicalPlan {
-	if len(p.Children()) == 0 {
-		return p
+func getTblStats(p PhysicalPlan) *statistics.HistColl {
+	switch x := p.(type) {
+	case *PhysicalTableScan:
+		return x.tblColHists
+	case *PhysicalIndexScan:
+		return x.tblColHists
+	default:
+		for _, c := range p.Children() {
+			if tblStats := getTblStats(c); tblStats != nil {
+				return tblStats
+			}
+		}
 	}
-	return getBottomPlan(p.Children()[0])
+	return nil
 }
