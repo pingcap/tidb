@@ -3224,7 +3224,7 @@ func microSeconds(t *CoreTime, input string, ctx map[string]int) (string, bool) 
 		t.setMicrosecond(0)
 		return input, true
 	}
-	
+
 	v, ok := parseDigits(input, length)
 	if !ok {
 		return input, false
