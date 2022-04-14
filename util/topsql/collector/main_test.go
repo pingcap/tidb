@@ -63,22 +63,26 @@ func TestPProfCPUProfile(t *testing.T) {
 	require.True(t, len(data) > 0)
 	require.Equal(t, []byte("sql_digest value"), data[0].SQLDigest)
 
-	// Test after disabled, shouldn't receive any data.
+	// Test disable then re-enable.
 	topsqlstate.DisableTopSQL()
 	time.Sleep(interval * 2)
-	require.Equal(t, 0, len(mc.dataCh))
-
-	// Test after re-enable.
+	dataChLen := len(mc.dataCh)
+	deltaLen := 0
 	topsqlstate.EnableTopSQL()
 	for i := 0; i < 10; i++ {
 		t1 := time.Now()
 		data = <-mc.dataCh
 		require.True(t, time.Since(t1) < interval*4)
 		if len(data) > 0 {
-			break
+			deltaLen++
+			if deltaLen > dataChLen {
+				// Here we can ensure that we receive new data after "re-enable".
+				break
+			}
 		}
 	}
 	require.True(t, len(data) > 0)
+	require.True(t, deltaLen > dataChLen)
 	require.Equal(t, []byte("sql_digest value"), data[0].SQLDigest)
 }
 

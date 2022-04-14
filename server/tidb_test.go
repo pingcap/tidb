@@ -2033,7 +2033,7 @@ func (c *resourceTagChecker) checkReqExist(t *testing.T, digest stmtstats.Binary
 	require.True(t, ok, sqlStr)
 	for _, req := range reqs {
 		_, ok := reqMap[req]
-		require.True(t, ok, sqlStr+"--"+req.String())
+		require.True(t, ok, fmt.Sprintf("sql: %v, expect: %v, got: %v", sqlStr, reqs, reqMap))
 	}
 }
 
@@ -2443,6 +2443,10 @@ func TestTopSQLResourceTag(t *testing.T) {
 		// Test for other statements.
 		{"set @@global.tidb_enable_1pc = 1", false, nil},
 		{fmt.Sprintf("load data local infile %q into table t2", loadDataFile.Name()), false, []tikvrpc.CmdType{tikvrpc.CmdPrewrite, tikvrpc.CmdCommit, tikvrpc.CmdBatchGet}},
+		{"admin check table t", false, []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"admin check index t idx", false, []tikvrpc.CmdType{tikvrpc.CmdCop}},
+		{"admin recover index t idx", false, []tikvrpc.CmdType{tikvrpc.CmdBatchGet}},
+		{"admin cleanup index t idx", false, []tikvrpc.CmdType{tikvrpc.CmdBatchGet}},
 	}
 
 	internalCases := []struct {
