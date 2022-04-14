@@ -9009,6 +9009,56 @@ func (s *testSuite) TestCTEWithIndexLookupJoinDeadLock(c *C) {
 	}
 }
 
+func (s *testSerialSuite) TestIndexJoin31494(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(a int(11) default null, b int(11) default null, key(b));")
+	insertStr := "insert into t1 values(1, 1)"
+	for i := 1; i < 3000; i++ {
+		insertStr += fmt.Sprintf(", (%d, %d)", i, i)
+	}
+	tk.MustExec(insertStr)
+	tk.MustExec("create table t2(a int(11) default null, b int(11) default null, c int(11) default null)")
+	insertStr = "insert into t2 values(1, 1, 1)"
+	for i := 1; i < 3000; i++ {
+		insertStr += fmt.Sprintf(", (%d, %d, %d)", i, i, i)
+	}
+	tk.MustExec(insertStr)
+	sm := &mockSessionManager1{
+		PS: make([]*util.ProcessInfo, 0),
+	}
+	tk.Se.SetSessionManager(sm)
+	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMAction = config.OOMActionCancel
+	})
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+	oriMemQuota := tk.MustQuery("select @@tidb_mem_quota_query;").Rows()[0][0]
+	oriMaxChkSize := tk.MustQuery("select @@tidb_max_chunk_size;").Rows()[0][0]
+	oriBatchSize := tk.MustQuery("select @@tidb_index_join_batch_size;").Rows()[0][0]
+	tk.MustExec("set @@tidb_mem_quota_query=200000;")
+	tk.MustExec("set @@tidb_max_chunk_size=32;")
+	tk.MustExec("set @@tidb_index_join_batch_size=1;")
+	defer func() {
+		// Restore everything.
+		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%s;", oriMemQuota.(string)))
+		tk.MustExec(fmt.Sprintf("set @@tidb_max_chunk_size=%s;", oriMaxChkSize.(string)))
+		tk.MustExec(fmt.Sprintf("set @@tidb_index_join_batch_size=%s;", oriBatchSize.(string)))
+	}()
+	// This bug will likely be reproduced in 30 times.
+	for i := 0; i < 30; i++ {
+		err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 right join t2 on t1.b=t2.b;")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+		err = tk.QueryToErr("select /*+ inl_hash_join(t1) */ * from t1 right join t2 on t1.b=t2.b;")
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+	}
+}
+
 func (s *testSerialSuite) TestIssue28650(c *C) {
 	defer testleak.AfterTest(c)()
 	tk := testkit.NewTestKit(c, s.store)
