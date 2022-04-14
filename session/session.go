@@ -1599,10 +1599,6 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	return stmts[0], nil
 }
 
-func (s *session) hasAdvisoryLocks() bool {
-	return len(s.advisoryLocks) != 0
-}
-
 // GetAdvisoryLock acquires an advisory lock of lockName.
 // Note that a lock can be acquired multiple times by the same session,
 // in which case we increment a reference count.
@@ -2607,9 +2603,7 @@ func (s *session) Close() {
 			logutil.BgLogger().Error("release table lock failed", zap.Uint64("conn", s.sessionVars.ConnectionID))
 		}
 	}
-	if s.hasAdvisoryLocks() {
-		s.ReleaseAllAdvisoryLocks()
-	}
+	s.ReleaseAllAdvisoryLocks()
 	if s.statsCollector != nil {
 		s.statsCollector.Delete()
 	}

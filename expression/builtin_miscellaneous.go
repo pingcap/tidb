@@ -283,10 +283,12 @@ func (b *builtinReleaseLockSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if lockName == "" || len(lockName) > 64 {
 		return 0, false, errUserLockWrongName.GenWithStackByArgs(lockName)
 	}
-
 	// Lock names are case insensitive. Because we can't rely on collations
 	// being enabled on the internal table, we have to lower it.
 	lockName = strings.ToLower(lockName)
+	if len(lockName) > 64 {
+		return 0, false, errIncorrectArgs.GenWithStackByArgs("release_lock")
+	}
 	released := int64(0)
 	if b.ctx.ReleaseAdvisoryLock(lockName) {
 		released = 1

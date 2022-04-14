@@ -227,10 +227,6 @@ func (b *builtinNameConstDurationSig) vecEvalDuration(input *chunk.Chunk, result
 	return b.args[1].VecEvalDuration(b.ctx, input, result)
 }
 
-func (b *builtinLockSig) vectorized() bool {
-	return false
-}
-
 func (b *builtinDurationAnyValueSig) vectorized() bool {
 	return true
 }
@@ -618,10 +614,6 @@ func (b *builtinNameConstRealSig) vectorized() bool {
 
 func (b *builtinNameConstRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	return b.args[1].VecEvalReal(b.ctx, input, result)
-}
-
-func (b *builtinReleaseLockSig) vectorized() bool {
-	return false
 }
 
 func (b *builtinVitessHashSig) vectorized() bool {

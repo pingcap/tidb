@@ -268,6 +268,7 @@ func TestGetLock(t *testing.T) {
 	// show warnings:
 	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect get_lock value: '-10'"))
 	tk.MustQuery("SELECT release_lock('testlock1'), release_lock('testlock2')").Check(testkit.Rows("1 1"))
+	tk.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("0"))
 
 	// GetLock/ReleaseLock with NULL name or '' name
 	rs, _ := tk.Exec("SELECT get_lock('', 10)")
@@ -307,12 +308,19 @@ func TestGetLock(t *testing.T) {
 	tk.MustQuery("SELECT release_lock('abc')").Check(testkit.Rows("0"))
 
 	// GetLock with integer name, 64, character name.
-	_ = tk.MustQuery("SELECT get_lock(1234, 10)")
-	_ = tk.MustQuery("SELECT get_lock(REPEAT('a', 64), 10)")
-	_ = tk.MustQuery("SELECT release_lock(1234), release_lock(REPEAT('aa', 32))")
+	tk.MustQuery("SELECT get_lock(1234, 10)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT get_lock(REPEAT('a', 64), 10)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock(1234), release_lock(REPEAT('aa', 32))").Check(testkit.Rows("1 1"))
+	tk.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("0"))
 
 	// 65 character name
 	rs, _ = tk.Exec("SELECT get_lock(REPEAT('a', 65), 10)")
+	_, err = session.GetRows4Test(ctx, tk.Session(), rs)
+	require.Error(t, err)
+	terr = errors.Cause(err).(*terror.Error)
+	require.Equal(t, errors.ErrCode(errno.ErrUserLockWrongName), terr.Code())
+
+	rs, _ = tk.Exec("SELECT release_lock(REPEAT('a', 65))")
 	_, err = session.GetRows4Test(ctx, tk.Session(), rs)
 	require.Error(t, err)
 	terr = errors.Cause(err).(*terror.Error)
@@ -326,6 +334,7 @@ func TestGetLock(t *testing.T) {
 	// Release all locks and one not held lock
 	tk.MustQuery("SELECT get_lock('a1', 1.2), get_lock('a2', 1.2), get_lock('a3', 1.2), get_lock('a4', 1.2)").Check(testkit.Rows("1 1 1 1"))
 	tk.MustQuery("SELECT release_lock('a1'),release_lock('a2'),release_lock('a3'), release_lock('random'), release_lock('a4')").Check(testkit.Rows("1 1 1 0 1"))
+	tk.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("0"))
 
 	// Multiple locks acquired, released all at once.
 	tk.MustQuery("SELECT get_lock('a1', 1.2), get_lock('a2', 1.2), get_lock('a3', 1.2), get_lock('a4', 1.2)").Check(testkit.Rows("1 1 1 1"))
@@ -338,6 +347,7 @@ func TestGetLock(t *testing.T) {
 	tk.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("7")) // 7 not 5, because the it includes ref count
 	tk.MustQuery("SELECT release_lock('a1')").Check(testkit.Rows("0"))  // lock is free
 	tk.MustQuery("SELECT release_lock('a5')").Check(testkit.Rows("0"))  // lock is free
+	tk.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("0"))
 
 	// Test common cases:
 	// Get a lock, release it immediately.
@@ -363,6 +373,10 @@ func TestGetLock(t *testing.T) {
 	tk.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("0")) // never had the lock
 	// release it
 	tk2.MustQuery("SELECT release_lock('mygloballock')").Check(testkit.Rows("1")) // works
+
+	// Confirm all locks are released
+	tk2.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("0"))
 }
 
 func TestMiscellaneousBuiltin(t *testing.T) {
@@ -447,6 +461,8 @@ func TestMiscellaneousBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery(`SELECT RELEASE_LOCK('test_lock3');`) // not acquired
 	result.Check(testkit.Rows("0"))
+	tk.MustQuery(`SELECT RELEASE_ALL_LOCKS()`).Check(testkit.Rows("0")) // none acquired
+
 }
 
 func TestConvertToBit(t *testing.T) {
