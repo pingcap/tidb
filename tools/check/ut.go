@@ -289,7 +289,7 @@ func cmdRun(args ...string) bool {
 		tasks = tmp
 	}
 
-	fmt.Printf("building task finish, count=%d, takes=%v\n", len(tasks), time.Since(start))
+	fmt.Printf("building task finish, maxproc=%d, count=%d, takes=%v\n", P, len(tasks), time.Since(start))
 
 	taskCh := make(chan task, 100)
 	works := make([]numa, P)
@@ -640,7 +640,7 @@ func (n *numa) worker(wg *sync.WaitGroup, ch chan task) {
 		res := n.runTestCase(t.pkg, t.test, t.old)
 		if res.Failure != nil {
 			fmt.Println("[FAIL] ", t.pkg, t.test)
-			fmt.Fprintf(os.Stderr, "err=%s\n%s", res.err, res.Failure.Contents)
+			fmt.Fprintf(os.Stderr, "err=%s\n%s", res.err.Error(), res.Failure.Contents)
 			n.Fail = true
 		}
 		n.results = append(n.results, res)
@@ -664,10 +664,44 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
 	cmd.Dir = path.Join(workDir, pkg)
 	// Combine the test case output, so the run result for failed cases can be displayed.
 	var buf bytes.Buffer
+<<<<<<< HEAD
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
 	start := time.Now()
 	if err := cmd.Run(); err != nil {
+=======
+	var err error
+	var start time.Time
+	for i := 0; i < 3; i++ {
+		cmd := n.testCommand(pkg, fn, old)
+		cmd.Dir = path.Join(workDir, pkg)
+		// Combine the test case output, so the run result for failed cases can be displayed.
+		cmd.Stdout = &buf
+		cmd.Stderr = &buf
+
+		start = time.Now()
+		err = cmd.Run()
+		if err != nil {
+			if _, ok := err.(*exec.ExitError); ok {
+				// Retry 3 times to get rid of the weird error:
+				switch err.Error() {
+				case "signal: segmentation fault (core dumped)":
+					buf.Reset()
+					continue
+				case "signal: trace/breakpoint trap (core dumped)":
+					buf.Reset()
+					continue
+				}
+				if strings.Contains(buf.String(), "panic during panic") {
+					buf.Reset()
+					continue
+				}
+			}
+		}
+		break
+	}
+	if err != nil {
+>>>>>>> 7443ec8f6... tools/check: let ut binary retry on more errors to make CI stable (#33964)
 		res.Failure = &JUnitFailure{
 			Message:  "Failed",
 			Contents: buf.String(),
