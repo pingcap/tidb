@@ -36,7 +36,9 @@ Different from the deprecated batch-DML, a non-transactional DML splits SQLs so 
 ### User Interface
 
 #### Syntax
-The syntax: `split on <column_name> limit <batch_size> <DML>`
+The syntax: 
+- `split on <column_name> limit <batch_size> <DML>` is the complete form
+- `split limit <batch_size> <DML>` is the shorter form. The shard column will be automatically selected from a PK column if possible. But it may return an error and require the user to specify the shard column.
 
 In the first step only `delete` is going to be supported, but `update` and `insert into select` are also worth considering.
 
@@ -44,7 +46,7 @@ The split column must be indexed. There are no other constraints on the DML.
 
 There can be dry run syntax to show the actual SQLs that will be executed. Query plans are not returned since there is no elegant way to contain both a SQL and a plan in a result set. 
 - `split on <column_name> limit <batch_size> dry run query <DML>` outputs the `SELECT` statement that will be executed.
-- `split on <column_name> limit <batch_size> dry run <DML>` outputs how the statement will be split.
+- `split on <column_name> limit <batch_size> dry run <DML>` outputs how the statement will be split. It only outputs the first and the last split statement.
 
 #### Output
 
