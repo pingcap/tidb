@@ -744,8 +744,6 @@ github.com/stretchr/objx v0.1.1/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+
 github.com/subosito/gotenv v1.2.0/go.mod h1:N0PQaV/YGNqwC0u51sEeR/aUtSLEXKX9iv69rRypqCw=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJfDRtkanvQPiooDH8HvJ2FBh+iKT/OmiQQ=
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
-github.com/tikv/client-go/v2 v2.0.1-0.20220406091203-f73ec0e675f4 h1:bi/tuV42dQCu7TTTOwHQW6cHVrV1fhet+Hzo5CUODBQ=
-github.com/tikv/client-go/v2 v2.0.1-0.20220406091203-f73ec0e675f4/go.mod h1:0scaG+seu7L56apm+Gjz9vckyO7ABIzM6T7n00mrIXs=
 github.com/tikv/client-go/v2 v2.0.1-0.20220414104545-45f7e566b813 h1:ZJNzgdzGoMLXBWkFYM4qvO+Sut5RhIAGeiBE0T7H+WI=
 github.com/tikv/client-go/v2 v2.0.1-0.20220414104545-45f7e566b813/go.mod h1:0scaG+seu7L56apm+Gjz9vckyO7ABIzM6T7n00mrIXs=
 github.com/tikv/pd/client v0.0.0-20220307081149-841fa61e9710 h1:jxgmKOscXSjaFEKQGRyY5qOpK8hLqxs2irb/uDJMtwk=
