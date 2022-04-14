@@ -21,13 +21,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
@@ -374,7 +374,7 @@ func buildSelectSQL(stmt *ast.NonTransactionalDeleteStmt, se Session) (*ast.Tabl
 func checkShardColumnIndexed(stmt *ast.NonTransactionalDeleteStmt, se Session, tableName *ast.TableName) (bool, *table.Column, error) {
 	shardColumnName := stmt.ShardColumn.Name.L
 	indexed := false
-	tbl, err := sessiontxn.GetTxnManager(se).GetTxnInfoSchema().TableByName(tableName.Schema, tableName.Name)
+	tbl, err := domain.GetDomain(se).InfoSchema().TableByName(tableName.Schema, tableName.Name)
 	if err != nil {
 		return false, nil, err
 	}
