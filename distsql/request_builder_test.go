@@ -274,6 +274,7 @@ func TestRequestBuilder1(t *testing.T) {
 		ReplicaRead:      kv.ReplicaReadLeader,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
+	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
 
@@ -355,6 +356,7 @@ func TestRequestBuilder2(t *testing.T) {
 		ReplicaRead:      kv.ReplicaReadLeader,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
+	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
 
@@ -402,6 +404,7 @@ func TestRequestBuilder3(t *testing.T) {
 		ReplicaRead:      kv.ReplicaReadLeader,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
+	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
 
@@ -449,6 +452,7 @@ func TestRequestBuilder4(t *testing.T) {
 		ReplicaRead:      kv.ReplicaReadLeader,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
+	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
 
@@ -559,6 +563,7 @@ func TestRequestBuilder7(t *testing.T) {
 				ReplicaRead:      replicaRead.replicaReadType,
 				ReadReplicaScope: kv.GlobalReplicaScope,
 			}
+			actual.ResourceGroupTagger = nil
 			require.Equal(t, expect, actual)
 		})
 	}
@@ -581,6 +586,7 @@ func TestRequestBuilder8(t *testing.T) {
 		SchemaVar:        0,
 		ReadReplicaScope: kv.GlobalReplicaScope,
 	}
+	actual.ResourceGroupTagger = nil
 	require.Equal(t, expect, actual)
 }
 
