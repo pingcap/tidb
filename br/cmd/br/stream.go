@@ -40,15 +40,19 @@ func NewStreamCommand() *cobra.Command {
 			return nil
 		},
 	}
+
 	command.AddCommand(
 		newStreamStartCommand(),
 		newStreamStopCommand(),
 		newStreamPauseCommand(),
 		newStreamResumeCommand(),
 		newStreamStatusCommand(),
-		newStreamRestoreCommand(),
 		newStreamTruncateCommand(),
 	)
+	command.SetHelpFunc(func(command *cobra.Command, strings []string) {
+		task.HiddenFlagsForStream(command.Parent().PersistentFlags())
+		command.Parent().HelpFunc()(command, strings)
+	})
 
 	return command
 }
@@ -64,7 +68,7 @@ func newStreamStartCommand() *cobra.Command {
 	}
 
 	task.DefineFilterFlags(command, acceptAllTables, true)
-	task.DefineStreamStartFlags(command.PersistentFlags())
+	task.DefineStreamStartFlags(command.Flags())
 	return command
 }
 
@@ -126,23 +130,6 @@ func newStreamStatusCommand() *cobra.Command {
 	return command
 }
 
-// TODO maybe we should use `br restore stream` rather than `br stream restore`
-// because the restore and stream task has no common flags.
-func newStreamRestoreCommand() *cobra.Command {
-	command := &cobra.Command{
-		Use:   "restore",
-		Short: "restore a stream backups",
-		Args:  cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
-			return streamCommand(command, task.StreamRestore)
-		},
-	}
-	task.DefineRestoreFlags(command.PersistentFlags())
-	task.DefineFilterFlags(command, filterOutSysAndMemTables, false)
-	task.DefineStreamRestoreFlags(command.Flags())
-	return command
-}
-
 func newStreamTruncateCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "truncate",
@@ -171,13 +158,6 @@ func streamCommand(command *cobra.Command, cmdName string) error {
 	}
 
 	switch cmdName {
-	case task.StreamRestore:
-		if err = cfg.RestoreConfig.ParseFromFlags(command.Flags()); err != nil {
-			return errors.Trace(err)
-		}
-		if err = cfg.ParseStreamRestoreFromFlags(command.Flags()); err != nil {
-			return errors.Trace(err)
-		}
 	case task.StreamTruncate:
 		if err = cfg.ParseStreamTruncateFromFlags(command.Flags()); err != nil {
 			return errors.Trace(err)
