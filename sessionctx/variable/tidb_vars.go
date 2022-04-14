@@ -597,6 +597,9 @@ const (
 	// TiDBRemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
 	TiDBRemoveOrderbyInSubquery = "tidb_remove_orderby_in_subquery"
 
+	// TiDBRemoveOrderbyInSubquery indicates whether to enable rule groupby_str2int.
+	TiDBEnableGroupbyString2Int = "tidb_enable_groupby_str2int"
+
 	// TiDBEnablePseudoForOutdatedStats indicates whether use pseudo for outdated stats
 	TiDBEnablePseudoForOutdatedStats = "tidb_enable_pseudo_for_outdated_stats"
 
@@ -829,6 +832,7 @@ const (
 	DefTiDBBatchPendingTiFlashCount       = 4000
 	DefRCReadCheckTS                      = false
 	DefTiDBRemoveOrderbyInSubquery        = false
+	DefTiDBEnableGroupbyString2Int        = false
 	DefTiDBReadStaleness                  = 0
 	DefTiDBGCMaxWaitTime                  = 24 * 60 * 60
 )

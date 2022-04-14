@@ -1397,6 +1397,10 @@ var defaultSysVars = []*SysVar{
 		s.RcReadCheckTS = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableGroupbyString2Int, Value: BoolToOnOff(DefTiDBEnableGroupbyString2Int), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableGroupByString2Int = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRemoveOrderbyInSubquery, Value: BoolToOnOff(DefTiDBRemoveOrderbyInSubquery), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.RemoveOrderbyInSubquery = TiDBOptOn(val)
 		return nil

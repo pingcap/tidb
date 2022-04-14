@@ -1026,6 +1026,8 @@ type SessionVars struct {
 	RcReadCheckTS bool
 	// RemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
 	RemoveOrderbyInSubquery bool
+	// EnableGroupByString2Int indicates whether to enable rule groupby_str2int.
+	EnableGroupByString2Int bool
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1262,6 +1264,7 @@ func NewSessionVars() *SessionVars {
 		StatsLoadSyncWait:           StatsLoadSyncWait.Load(),
 		EnableLegacyInstanceScope:   DefEnableLegacyInstanceScope,
 		RemoveOrderbyInSubquery:     DefTiDBRemoveOrderbyInSubquery,
+		EnableGroupByString2Int:     DefTiDBEnableGroupbyString2Int,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{

@@ -179,6 +179,10 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	b.optFlag |= flagEliminateAgg
 	b.optFlag |= flagEliminateProjection
 
+	if b.ctx.GetSessionVars().EnableGroupByString2Int {
+		b.optFlag |= flagGroupbyStr2Int
+	}
+
 	plan4Agg := LogicalAggregation{AggFuncs: make([]*aggregation.AggFuncDesc, 0, len(aggFuncList))}.Init(b.ctx, b.getSelectOffset())
 	if hint := b.TableHints(); hint != nil {
 		plan4Agg.aggHints = hint.aggHints

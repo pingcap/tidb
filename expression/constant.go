@@ -63,6 +63,18 @@ func NewNull() *Constant {
 	}
 }
 
+// NewInt creates an INT constant with value v.
+func NewInt(v int) *Constant {
+	retT := types.NewFieldType(mysql.TypeLong)
+	retT.Flag |= mysql.NotNullFlag
+	retT.Flen = mysql.MaxIntWidth
+	retT.Decimal = 0
+	return &Constant{
+		Value:   types.NewDatum(v),
+		RetType: retT,
+	}
+}
+
 // Constant stands for a constant value.
 type Constant struct {
 	Value   types.Datum

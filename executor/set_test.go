@@ -601,6 +601,14 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_remove_orderby_in_subquery").Check(testkit.Rows("0")) // default value is 0
 	tk.MustExec("set global tidb_remove_orderby_in_subquery=1")
 	tk.MustQuery("select @@global.tidb_remove_orderby_in_subquery").Check(testkit.Rows("1"))
+
+	// test for tidb_enable_groupby_str2int
+	tk.MustQuery("select @@session.tidb_enable_groupby_str2int").Check(testkit.Rows("0")) // default value is 0
+	tk.MustExec("set session tidb_enable_groupby_str2int=1")
+	tk.MustQuery("select @@session.tidb_enable_groupby_str2int").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.tidb_enable_groupby_str2int").Check(testkit.Rows("0")) // default value is 0
+	tk.MustExec("set global tidb_enable_groupby_str2int=1")
+	tk.MustQuery("select @@global.tidb_enable_groupby_str2int").Check(testkit.Rows("1"))
 }
 
 func TestTruncateIncorrectIntSessionVar(t *testing.T) {

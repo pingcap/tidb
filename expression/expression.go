@@ -732,6 +732,9 @@ func extractBinaryOpItems(conditions *ScalarFunction, funcName string) []Express
 // FlattenDNFConditions extracts DNF expression's leaf item.
 // e.g. or(or(a=1, a=2), or(a=3, a=4)), we'll get [a=1, a=2, a=3, a=4].
 func FlattenDNFConditions(DNFCondition *ScalarFunction) []Expression {
+	if DNFCondition.FuncName.L != ast.LogicOr {
+		return []Expression{DNFCondition}
+	}
 	return extractBinaryOpItems(DNFCondition, ast.LogicOr)
 }
 

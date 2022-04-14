@@ -2042,6 +2042,42 @@ func TestResolvingCorrelatedAggregate(t *testing.T) {
 	}
 }
 
+func TestRuleGByStr2Int(t *testing.T) {
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "SELECT c_str, sum(d) FROM t WHERE c_str in ('x', 'y', 'z') GROUP BY c_str",
+			best: "DataScan(t)->Projection->Aggr(sum(test.t.d),firstrow(Column#14))->Projection->Projection",
+		},
+		{
+			sql:  "SELECT c_str, b, max(d) FROM t WHERE c_str in ('x', 'y', 'z') or c_str='dd' GROUP BY c_str,b",
+			best: "DataScan(t)->Projection->Aggr(max(test.t.d),firstrow(test.t.b),firstrow(Column#14))->Projection->Projection",
+		},
+		{
+			// rule groupby_str2int doesn't apply here
+			sql:  "SELECT c_str, b, max(c_str) FROM t WHERE c_str in ('x', 'y', 'z') GROUP BY c_str,b",
+			best: "DataScan(t)->Aggr(max(test.t.c_str),firstrow(test.t.b),firstrow(test.t.c_str))->Projection",
+		},
+	}
+
+	s := createPlannerSuite()
+	s.ctx.GetSessionVars().EnableGroupByString2Int = true
+	ctx := context.Background()
+	for _, ca := range tests {
+		comment := fmt.Sprintf("for %s", ca.sql)
+		stmt, err := s.p.ParseOneStmt(ca.sql, "", "")
+		require.NoError(t, err, comment)
+		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
+		require.NoError(t, err, comment)
+		p, err = logicalOptimize(context.TODO(),
+			flagGroupbyStr2Int|flagPredicatePushDown|flagPrunColumns|flagPrunColumnsAgain, p.(LogicalPlan))
+		require.NoError(t, err, comment)
+		require.Equal(t, ca.best, ToString(p), comment)
+	}
+}
+
 func TestFastPathInvalidBatchPointGet(t *testing.T) {
 	// #22040
 	tt := []struct {

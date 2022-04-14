@@ -58,6 +58,7 @@ const (
 	flagBuildKeyInfo
 	flagDecorrelate
 	flagEliminateAgg
+	flagGroupbyStr2Int
 	flagEliminateProjection
 	flagMaxMinEliminate
 	flagPredicatePushDown
@@ -78,6 +79,7 @@ var optRuleList = []logicalOptRule{
 	&buildKeySolver{},
 	&decorrelateSolver{},
 	&aggregationEliminator{},
+	&groupbyStr2IntConverter{},
 	&projectionEliminator{},
 	&maxMinEliminator{},
 	&ppdSolver{},
