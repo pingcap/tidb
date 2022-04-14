@@ -51,20 +51,19 @@ func (p *policyGetter) GetPolicy(policyID int64) (*model.PolicyInfo, error) {
 type bundleInfoBuilder struct {
 	deltaUpdate bool
 	// tables or partitions that need to update placement bundle
-	updateTables map[int64]struct {
-		isPartition bool
-		delete      bool
-	}
+	updateTables map[int64]interface{}
 	// all tables or partitions referring these policies should update placement bundle
 	updatePolicies map[int64]interface{}
+	// partitions that need to update placement bundle
+	updatePartitions map[int64]interface{}
 }
 
 func (b *bundleInfoBuilder) ensureMap() {
 	if b.updateTables == nil {
-		b.updateTables = make(map[int64]struct {
-			isPartition bool
-			delete      bool
-		})
+		b.updateTables = make(map[int64]interface{})
+	}
+	if b.updatePartitions == nil {
+		b.updatePartitions = make(map[int64]interface{})
 	}
 	if b.updatePolicies == nil {
 		b.updatePolicies = make(map[int64]interface{})
@@ -75,43 +74,30 @@ func (b *bundleInfoBuilder) SetDeltaUpdateBundles() {
 	b.deltaUpdate = true
 }
 
-func (b *bundleInfoBuilder) markShouldDeleteBundle(tblID int64) {
-	b.ensureMap()
-	b.updateTables[tblID] = struct {
-		isPartition bool
-		delete      bool
-	}{delete: true}
+func (b *bundleInfoBuilder) deleteBundle(is *infoSchema, tblID int64) {
+	delete(is.ruleBundleMap, tblID)
 }
 
 func (b *bundleInfoBuilder) markTableBundleShouldUpdate(tblID int64) {
 	b.ensureMap()
-	b.updateTables[tblID] = struct {
-		isPartition bool
-		delete      bool
-	}{isPartition: false}
+	b.updateTables[tblID] = struct{}{}
 }
 
 func (b *bundleInfoBuilder) markPartitionBundleShouldUpdate(partID int64) {
 	b.ensureMap()
-	b.updateTables[partID] = struct {
-		isPartition bool
-		delete      bool
-	}{isPartition: true}
+	b.updatePartitions[partID] = struct{}{}
 }
 
 func (b *bundleInfoBuilder) markBundlesReferPolicyShouldUpdate(policyID int64) {
 	b.ensureMap()
-	b.updatePolicies[policyID] = struct {
-	}{}
+	b.updatePolicies[policyID] = struct{}{}
 }
 
 func (b *bundleInfoBuilder) updateInfoSchemaBundles(is *infoSchema) {
 	if b.deltaUpdate {
-		b.completeUpdateTablesFromPolicies(is)
-		for tblID, extra := range b.updateTables {
-			if bundle := b.buildBundleWithID(is, tblID, extra.isPartition); bundle != nil {
-				is.ruleBundleMap[tblID] = bundle
-			}
+		b.completeUpdateTables(is)
+		for tblID := range b.updateTables {
+			b.updateTableBundles(is, tblID)
 		}
 		return
 	}
@@ -120,24 +106,13 @@ func (b *bundleInfoBuilder) updateInfoSchemaBundles(is *infoSchema) {
 	is.ruleBundleMap = make(map[int64]*placement.Bundle)
 	for _, tbls := range is.schemaMap {
 		for _, tbl := range tbls.tables {
-			tblInfo := tbl.Meta()
-			if bundle := b.buildBundle(is, tblInfo, nil); bundle != nil {
-				is.ruleBundleMap[tblInfo.ID] = bundle
-			}
-
-			if tblInfo.Partition != nil {
-				for _, par := range tblInfo.Partition.Definitions {
-					if bundle := b.buildBundle(is, tblInfo, &par); bundle != nil {
-						is.ruleBundleMap[par.ID] = bundle
-					}
-				}
-			}
+			b.updateTableBundles(is, tbl.Meta().ID)
 		}
 	}
 }
 
-func (b *bundleInfoBuilder) completeUpdateTablesFromPolicies(is *infoSchema) {
-	if len(b.updatePolicies) == 0 {
+func (b *bundleInfoBuilder) completeUpdateTables(is *infoSchema) {
+	if len(b.updatePolicies) == 0 && len(b.updatePartitions) == 0 {
 		return
 	}
 
@@ -152,12 +127,8 @@ func (b *bundleInfoBuilder) completeUpdateTablesFromPolicies(is *infoSchema) {
 
 			if tblInfo.Partition != nil {
 				for _, par := range tblInfo.Partition.Definitions {
-					if par.PlacementPolicyRef == nil {
-						continue
-					}
-
-					if _, ok := b.updatePolicies[par.PlacementPolicyRef.ID]; ok {
-						b.markPartitionBundleShouldUpdate(par.ID)
+					if _, ok := b.updatePartitions[par.ID]; ok {
+						b.markTableBundleShouldUpdate(tblInfo.ID)
 					}
 				}
 			}
@@ -165,49 +136,40 @@ func (b *bundleInfoBuilder) completeUpdateTablesFromPolicies(is *infoSchema) {
 	}
 }
 
-func (b *bundleInfoBuilder) buildBundleWithID(is *infoSchema, tableID int64, isPartition bool) *placement.Bundle {
-	if isPartition {
-		tbl, _, par := is.FindTableByPartitionID(tableID)
-		if par == nil {
-			logutil.BgLogger().Error("cannot find partition",
-				zap.Int64("partitionID", tableID),
-			)
-			return nil
-		}
-		return b.buildBundle(is, tbl.Meta(), par)
-	}
-
+func (b *bundleInfoBuilder) updateTableBundles(is *infoSchema, tableID int64) {
 	tbl, ok := is.TableByID(tableID)
 	if !ok {
-		logutil.BgLogger().Error("cannot find table",
-			zap.Int64("partitionID", tableID),
-		)
-		return nil
+		b.deleteBundle(is, tableID)
+		return
 	}
-	return b.buildBundle(is, tbl.Meta(), nil)
-}
 
-func (b *bundleInfoBuilder) buildBundle(is *infoSchema, tblInfo *model.TableInfo, par *model.PartitionDefinition) *placement.Bundle {
 	getter := &policyGetter{is: is}
-	if par != nil {
-		bundle, err := placement.NewPartitionBundle(getter, *par)
+	bundle, err := placement.NewTableBundle(getter, tbl.Meta())
+	if err != nil {
+		logutil.BgLogger().Error("create table bundle failed", zap.Error(err))
+	} else if bundle != nil {
+		is.ruleBundleMap[tableID] = bundle
+	} else {
+		b.deleteBundle(is, tableID)
+	}
+
+	if tbl.Meta().Partition == nil {
+		return
+	}
+
+	for _, par := range tbl.Meta().Partition.Definitions {
+		bundle, err = placement.NewPartitionBundle(getter, par)
 		if err != nil {
 			logutil.BgLogger().Error("create partition bundle failed",
-				zap.Int64("partitionID", par.ID),
+				zap.Error(err),
+				zap.Int64("partition id", par.ID),
 			)
-			return nil
+		} else if bundle != nil {
+			is.ruleBundleMap[par.ID] = bundle
+		} else {
+			b.deleteBundle(is, par.ID)
 		}
-		return bundle
 	}
-
-	bundle, err := placement.NewTableBundle(getter, tblInfo)
-	if err != nil {
-		logutil.BgLogger().Error("create table bundle failed",
-			zap.Int64("tableID", par.ID),
-		)
-		return nil
-	}
-	return bundle
 }
 
 // Builder builds a new InfoSchema.
@@ -296,7 +258,7 @@ func (b *Builder) applyTruncateTableOrPartition(m *meta.Meta, diff *model.Schema
 		} else {
 			b.markTableBundleShouldUpdate(opt.TableID)
 		}
-		b.markShouldDeleteBundle(opt.OldTableID)
+		b.deleteBundle(b.is, opt.OldTableID)
 	}
 	return tblIDs, nil
 }
@@ -308,7 +270,7 @@ func (b *Builder) applyDropTableOrParition(m *meta.Meta, diff *model.SchemaDiff)
 	}
 
 	for _, opt := range diff.AffectedOpts {
-		b.markShouldDeleteBundle(opt.OldTableID)
+		b.deleteBundle(b.is, opt.OldTableID)
 	}
 	return tblIDs, nil
 }
@@ -377,14 +339,16 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	case model.ActionCreateTable:
 		b.markTableBundleShouldUpdate(newTableID)
 	case model.ActionDropTable:
-		b.markShouldDeleteBundle(oldTableID)
+		b.deleteBundle(b.is, oldTableID)
 	case model.ActionTruncateTable:
-		b.markShouldDeleteBundle(oldTableID)
+		b.deleteBundle(b.is, oldTableID)
 		b.markTableBundleShouldUpdate(newTableID)
 	case model.ActionRecoverTable:
 		b.markTableBundleShouldUpdate(newTableID)
 	case model.ActionExchangeTablePartition:
 		b.markPartitionBundleShouldUpdate(newTableID)
+	case model.ActionAlterTablePlacement:
+		b.markTableBundleShouldUpdate(newTableID)
 	}
 	b.copySortedTables(oldTableID, newTableID)
 
@@ -596,7 +560,7 @@ func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 
 	di = di.Clone()
 	for _, id := range tableIDs {
-		b.markShouldDeleteBundle(id)
+		b.deleteBundle(b.is, id)
 		b.applyDropTable(di, id, nil)
 	}
 	return tableIDs

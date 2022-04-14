@@ -108,17 +108,19 @@ func checkTableBundlesInPD(t *testing.T, do *domain.Domain, tt *meta.Meta, tblIn
 		require.NoError(t, err)
 		isGot, ok := is.PlacementBundleByPhysicalTableID(check.tableID)
 		if check.bundle == nil {
-			require.True(t, pdGot.IsEmpty())
-			require.False(t, ok)
+			require.True(t, pdGot.IsEmpty(), "bundle should be nil for table: %d", check.tableID)
+			require.False(t, ok, "bundle should be nil for table: %d", check.tableID)
 		} else {
 			expectedJSON, err := json.Marshal(check.bundle)
 			require.NoError(t, err)
 
 			pdGotJSON, err := json.Marshal(pdGot)
 			require.NoError(t, err)
+			require.NotNil(t, pdGot)
 			require.Equal(t, string(expectedJSON), string(pdGotJSON))
 
 			isGotJSON, err := json.Marshal(isGot)
+			require.NotNil(t, isGot)
 			require.Equal(t, string(expectedJSON), string(isGotJSON))
 		}
 	}
