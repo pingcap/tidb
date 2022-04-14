@@ -1351,8 +1351,8 @@ func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Contex
 	}
 	stats := a.Ctx.GetStmtStats()
 	if !topsqlstate.TopSQLEnabled() {
-		// Fast plan means the SQL will run very fast, and won't consume too much CPU.
-		// So no need to attach SQL and plan info to catch those running SQL.
+		// To reduce the performance impact on fast plan.
+		// Drop them does not cause notable accuracy issue in TopSQL.
 		if isFastPlan(a.Plan) {
 			return ctx
 		}
