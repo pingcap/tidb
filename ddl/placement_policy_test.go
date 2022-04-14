@@ -46,7 +46,7 @@ func checkExistTableBundlesInPD(t *testing.T, do *domain.Domain, dbName string, 
 
 	require.NoError(t, kv.RunInNewTxn(context.TODO(), do.Store(), false, func(ctx context.Context, txn kv.Transaction) error {
 		tt := meta.NewMeta(txn)
-		checkTableBundlesInPD(t, tt, tblInfo.Meta())
+		checkTableBundlesInPD(t, do, tt, tblInfo.Meta())
 		return nil
 	}))
 }
@@ -75,42 +75,51 @@ func checkAllBundlesNotChange(t *testing.T, bundles []*placement.Bundle) {
 	}
 }
 
-func checkTableBundlesInPD(t *testing.T, tt *meta.Meta, tblInfo *model.TableInfo) {
+func checkTableBundlesInPD(t *testing.T, do *domain.Domain, tt *meta.Meta, tblInfo *model.TableInfo) {
 	checks := make([]*struct {
-		ID     string
-		bundle *placement.Bundle
+		ID      string
+		tableID int64
+		bundle  *placement.Bundle
 	}, 0)
 
 	bundle, err := placement.NewTableBundle(tt, tblInfo)
 	require.NoError(t, err)
 	checks = append(checks, &struct {
-		ID     string
-		bundle *placement.Bundle
-	}{ID: placement.GroupID(tblInfo.ID), bundle: bundle})
+		ID      string
+		tableID int64
+		bundle  *placement.Bundle
+	}{ID: placement.GroupID(tblInfo.ID), tableID: tblInfo.ID, bundle: bundle})
 
 	if tblInfo.Partition != nil {
 		for _, def := range tblInfo.Partition.Definitions {
 			bundle, err := placement.NewPartitionBundle(tt, def)
 			require.NoError(t, err)
 			checks = append(checks, &struct {
-				ID     string
-				bundle *placement.Bundle
-			}{ID: placement.GroupID(def.ID), bundle: bundle})
+				ID      string
+				tableID int64
+				bundle  *placement.Bundle
+			}{ID: placement.GroupID(def.ID), tableID: def.ID, bundle: bundle})
 		}
 	}
 
+	is := do.InfoSchema()
 	for _, check := range checks {
-		got, err := infosync.GetRuleBundle(context.TODO(), check.ID)
+		pdGot, err := infosync.GetRuleBundle(context.TODO(), check.ID)
 		require.NoError(t, err)
+		isGot, ok := is.PlacementBundleByPhysicalTableID(check.tableID)
 		if check.bundle == nil {
-			require.True(t, got.IsEmpty())
+			require.True(t, pdGot.IsEmpty())
+			require.False(t, ok)
 		} else {
 			expectedJSON, err := json.Marshal(check.bundle)
 			require.NoError(t, err)
 
-			gotJSON, err := json.Marshal(got)
+			pdGotJson, err := json.Marshal(pdGot)
 			require.NoError(t, err)
-			require.Equal(t, string(expectedJSON), string(gotJSON))
+			require.Equal(t, string(expectedJSON), string(pdGotJson))
+
+			isGotJson, err := json.Marshal(isGot)
+			require.Equal(t, string(expectedJSON), string(isGotJson))
 		}
 	}
 }
