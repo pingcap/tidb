@@ -279,26 +279,30 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 		opt.appendCandidate(p, curTask.plan(), prop)
 		// Get the most efficient one.
-		if p.ctx.GetSessionVars().EnableNewCostInterface { // use the new cost interface
-			curCost, err := getTaskPlanCost(curTask)
-			if err != nil {
-				return nil, 0, err
-			}
-			bestCost, err := getTaskPlanCost(bestTask)
-			if err != nil {
-				return nil, 0, err
-			}
-			if curCost < bestCost || (bestTask.invalid() && !curTask.invalid()) {
-				bestTask = curTask
-			}
-			continue
-		} else {
-			if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
-				bestTask = curTask
-			}
+		if curIsBetter, err := compareTask(p.ctx, curTask, bestTask); err != nil {
+			return nil, 0, err
+		} else if curIsBetter {
+			bestTask = curTask
 		}
 	}
 	return bestTask, cntPlan, nil
+}
+
+func compareTask(ctx sessionctx.Context, curTask, bestTask task) (curIsBetter bool, err error) {
+	if ctx.GetSessionVars().EnableNewCostInterface { // use the new cost interface
+		curCost, err := getTaskPlanCost(curTask)
+		if err != nil {
+			return false, err
+		}
+		bestCost, err := getTaskPlanCost(bestTask)
+		if err != nil {
+			return false, err
+		}
+		if curCost < bestCost || (bestTask.invalid() && !curTask.invalid()) {
+			return true, nil
+		}
+	}
+	return curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()), nil
 }
 
 func getTaskPlanCost(t task) (float64, error) {
@@ -449,22 +453,10 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		goto END
 	}
 	opt.appendCandidate(p, curTask.plan(), prop)
-	if p.ctx.GetSessionVars().EnableNewCostInterface { // use the new cost interface
-		curCost, err := getTaskPlanCost(curTask)
-		if err != nil {
-			return nil, 0, err
-		}
-		bestCost, err := getTaskPlanCost(bestTask)
-		if err != nil {
-			return nil, 0, err
-		}
-		if curCost < bestCost || (bestTask.invalid() && !curTask.invalid()) {
-			bestTask = curTask
-		}
-	} else {
-		if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
-			bestTask = curTask
-		}
+	if curIsBetter, err := compareTask(p.ctx, curTask, bestTask); err != nil {
+		return nil, 0, err
+	} else if curIsBetter {
+		bestTask = curTask
 	}
 
 END:
