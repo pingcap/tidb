@@ -2201,13 +2201,11 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 			return newMpp
 		}
 		attachPlan2Task(finalAgg, newMpp)
-		if proj != nil {
-			attachPlan2Task(proj, newMpp)
-		}
-		// TODO: how to set 2-phase cost?
 		newMpp.addCost(p.GetCost(inputRows, false, true))
 		finalAgg.SetCost(newMpp.cost())
 		if proj != nil {
+			attachPlan2Task(proj, newMpp)
+			newMpp.addCost(proj.GetCost(newMpp.count()))
 			proj.SetCost(newMpp.cost())
 		}
 		return newMpp
