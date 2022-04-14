@@ -231,7 +231,7 @@ func doOneJob(ctx context.Context, job *job, totalJobCount int, options statemen
 
 	job.sql = deleteSQL
 	options.stmt.DeleteStmt.SetText(nil, fmt.Sprintf("/* job %v/%v */ %s", job.jobID, totalJobCount, deleteSQL))
-	rs, err := se.ExecuteStmt(context.TODO(), options.stmt.DeleteStmt)
+	rs, err := se.ExecuteStmt(ctx, options.stmt.DeleteStmt)
 
 	// collect errors
 	failpoint.Inject("splitDeleteError", func(_ failpoint.Value) {
