@@ -362,11 +362,11 @@ func TestIgnoreAllErrorCheckpoints_SQL(t *testing.T) {
 
 	s.mock.ExpectBegin()
 	s.mock.
-		ExpectExec("UPDATE `mock-schema`\\.engine_v\\d+ SET status = 30 WHERE 'all' = \\? AND status <= 25").
+		ExpectExec("UPDATE `mock-schema`\\.`engine_v\\d+` SET status = 30 WHERE 'all' = \\? AND status <= 25").
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(5, 3))
 	s.mock.
-		ExpectExec("UPDATE `mock-schema`\\.table_v\\d+ SET status = 30 WHERE 'all' = \\? AND status <= 25").
+		ExpectExec("UPDATE `mock-schema`\\.`table_v\\d+` SET status = 30 WHERE 'all' = \\? AND status <= 25").
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(6, 2))
 	s.mock.ExpectCommit()
@@ -381,11 +381,11 @@ func TestIgnoreOneErrorCheckpoint(t *testing.T) {
 
 	s.mock.ExpectBegin()
 	s.mock.
-		ExpectExec("UPDATE `mock-schema`\\.engine_v\\d+ SET status = 30 WHERE table_name = \\? AND status <= 25").
+		ExpectExec("UPDATE `mock-schema`\\.`engine_v\\d+` SET status = 30 WHERE table_name = \\? AND status <= 25").
 		WithArgs("`db1`.`t2`").
 		WillReturnResult(sqlmock.NewResult(5, 2))
 	s.mock.
-		ExpectExec("UPDATE `mock-schema`\\.table_v\\d+ SET status = 30 WHERE table_name = \\? AND status <= 25").
+		ExpectExec("UPDATE `mock-schema`\\.`table_v\\d+` SET status = 30 WHERE table_name = \\? AND status <= 25").
 		WithArgs("`db1`.`t2`").
 		WillReturnResult(sqlmock.NewResult(6, 1))
 	s.mock.ExpectCommit()
@@ -407,15 +407,15 @@ func TestDestroyAllErrorCheckpoints_SQL(t *testing.T) {
 				AddRow("`db1`.`t2`", -1, 0),
 		)
 	s.mock.
-		ExpectExec("DELETE FROM `mock-schema`\\.chunk_v\\d+ WHERE table_name IN .+ 'all' = \\?").
+		ExpectExec("DELETE FROM `mock-schema`\\.`chunk_v\\d+` WHERE table_name IN .+ 'all' = \\?").
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 5))
 	s.mock.
-		ExpectExec("DELETE FROM `mock-schema`\\.engine_v\\d+ WHERE table_name IN .+ 'all' = \\?").
+		ExpectExec("DELETE FROM `mock-schema`\\.`engine_v\\d+` WHERE table_name IN .+ 'all' = \\?").
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 3))
 	s.mock.
-		ExpectExec("DELETE FROM `mock-schema`\\.table_v\\d+ WHERE 'all' = \\?").
+		ExpectExec("DELETE FROM `mock-schema`\\.`table_v\\d+` WHERE 'all' = \\?").
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 2))
 	s.mock.ExpectCommit()
@@ -442,15 +442,15 @@ func TestDestroyOneErrorCheckpoints(t *testing.T) {
 				AddRow("`db1`.`t2`", -1, 0),
 		)
 	s.mock.
-		ExpectExec("DELETE FROM `mock-schema`\\.chunk_v\\d+ WHERE .+table_name = \\?").
+		ExpectExec("DELETE FROM `mock-schema`\\.`chunk_v\\d+` WHERE .+table_name = \\?").
 		WithArgs("`db1`.`t2`").
 		WillReturnResult(sqlmock.NewResult(0, 4))
 	s.mock.
-		ExpectExec("DELETE FROM `mock-schema`\\.engine_v\\d+ WHERE .+table_name = \\?").
+		ExpectExec("DELETE FROM `mock-schema`\\.`engine_v\\d+` WHERE .+table_name = \\?").
 		WithArgs("`db1`.`t2`").
 		WillReturnResult(sqlmock.NewResult(0, 2))
 	s.mock.
-		ExpectExec("DELETE FROM `mock-schema`\\.table_v\\d+ WHERE table_name = \\?").
+		ExpectExec("DELETE FROM `mock-schema`\\.`table_v\\d+` WHERE table_name = \\?").
 		WithArgs("`db1`.`t2`").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	s.mock.ExpectCommit()

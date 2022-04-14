@@ -10,6 +10,7 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
 )
@@ -62,7 +63,12 @@ func main() {
 			return errors.Trace(err)
 		}
 
-		query := fmt.Sprintf("insert into %s values('aaaaaaaaaa')", table) // nolint:gosec
+		query, escapeErr := sqlexec.EscapeSQL("insert into %n values('aaaaaaaaaa')", table)
+		if escapeErr != nil {
+			fmt.Printf("fail to import data, err: %v", escapeErr)
+			os.Exit(2)
+		}
+
 		for i := 1; i < 10000; i++ {
 			query += ",('aaaaaaaaaa')"
 		}

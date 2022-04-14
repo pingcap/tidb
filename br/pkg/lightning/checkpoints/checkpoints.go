@@ -36,6 +36,7 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 	"modernc.org/mathutil"
 )
@@ -1440,15 +1441,19 @@ func (cpdb *MySQLCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, table
 		colName = columnTableName
 	}
 
-	// nolint:gosec
-	engineQuery := fmt.Sprintf(`
-		UPDATE %s.%s SET status = %d WHERE %s = ? AND status <= %d;
-	`, cpdb.schema, CheckpointTableNameEngine, CheckpointStatusLoaded, colName, CheckpointStatusMaxInvalid)
+	engineQuery, escapeErr := sqlexec.EscapeSQL(fmt.Sprintf(`
+		UPDATE %s.%%n SET status = %d WHERE %s = ? AND status <= %d;
+	`, cpdb.schema, CheckpointStatusLoaded, colName, CheckpointStatusMaxInvalid), CheckpointTableNameEngine)
+	if escapeErr != nil {
+		return errors.Trace(escapeErr)
+	}
 
-	// nolint:gosec
-	tableQuery := fmt.Sprintf(`
-		UPDATE %s.%s SET status = %d WHERE %s = ? AND status <= %d;
-	`, cpdb.schema, CheckpointTableNameTable, CheckpointStatusLoaded, colName, CheckpointStatusMaxInvalid)
+	tableQuery, escapeErr := sqlexec.EscapeSQL(fmt.Sprintf(`
+		UPDATE %s.%%n SET status = %d WHERE %s = ? AND status <= %d;
+	`, cpdb.schema, CheckpointStatusLoaded, colName, CheckpointStatusMaxInvalid), CheckpointTableNameTable)
+	if escapeErr != nil {
+		return errors.Trace(escapeErr)
+	}
 
 	s := common.SQLWithRetry{
 		DB:     cpdb.db,
@@ -1479,31 +1484,40 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 		aliasedColName = "t.table_name"
 	}
 
-	selectQuery := fmt.Sprintf(`
+	selectQuery, escapeErr := sqlexec.EscapeSQL(fmt.Sprintf(`
 		SELECT
 			t.table_name,
 			COALESCE(MIN(e.engine_id), 0),
 			COALESCE(MAX(e.engine_id), -1)
-		FROM %[1]s.%[4]s t
-		LEFT JOIN %[1]s.%[5]s e ON t.table_name = e.table_name
-		WHERE %[2]s = ? AND t.status <= %[3]d
+		FROM %[1]s.%%n t
+		LEFT JOIN %[1]s.%%n e ON t.table_name = e.table_name
+		WHERE %s = ? AND t.status <= %d
 		GROUP BY t.table_name;
-	`, cpdb.schema, aliasedColName, CheckpointStatusMaxInvalid, CheckpointTableNameTable, CheckpointTableNameEngine)
+	`, cpdb.schema, aliasedColName, CheckpointStatusMaxInvalid), CheckpointTableNameTable, CheckpointTableNameEngine)
+	if escapeErr != nil {
+		return nil, errors.Trace(escapeErr)
+	}
 
-	// nolint:gosec
-	deleteChunkQuery := fmt.Sprintf(`
-		DELETE FROM %[1]s.%[4]s WHERE table_name IN (SELECT table_name FROM %[1]s.%[5]s WHERE %[2]s = ? AND status <= %[3]d)
-	`, cpdb.schema, colName, CheckpointStatusMaxInvalid, CheckpointTableNameChunk, CheckpointTableNameTable)
+	deleteChunkQuery, escapeErr := sqlexec.EscapeSQL(fmt.Sprintf(`
+		DELETE FROM %[1]s.%%n WHERE table_name IN (SELECT table_name FROM %[1]s.%%n WHERE %s = ? AND status <= %d)
+	`, cpdb.schema, colName, CheckpointStatusMaxInvalid), CheckpointTableNameChunk, CheckpointTableNameTable)
+	if escapeErr != nil {
+		return nil, errors.Trace(escapeErr)
+	}
 
-	// nolint:gosec
-	deleteEngineQuery := fmt.Sprintf(`
-		DELETE FROM %[1]s.%[4]s WHERE table_name IN (SELECT table_name FROM %[1]s.%[5]s WHERE %[2]s = ? AND status <= %[3]d)
-	`, cpdb.schema, colName, CheckpointStatusMaxInvalid, CheckpointTableNameEngine, CheckpointTableNameTable)
+	deleteEngineQuery, escapeErr := sqlexec.EscapeSQL(fmt.Sprintf(`
+		DELETE FROM %[1]s.%%n WHERE table_name IN (SELECT table_name FROM %[1]s.%%n WHERE %s = ? AND status <= %d)
+	`, cpdb.schema, colName, CheckpointStatusMaxInvalid), CheckpointTableNameEngine, CheckpointTableNameTable)
+	if escapeErr != nil {
+		return nil, errors.Trace(escapeErr)
+	}
 
-	// nolint:gosec
-	deleteTableQuery := fmt.Sprintf(`
-		DELETE FROM %s.%s WHERE %s = ? AND status <= %d
-	`, cpdb.schema, CheckpointTableNameTable, colName, CheckpointStatusMaxInvalid)
+	deleteTableQuery, escapeErr := sqlexec.EscapeSQL(fmt.Sprintf(`
+		DELETE FROM %s.%%n WHERE %s = ? AND status <= %d
+	`, cpdb.schema, colName, CheckpointStatusMaxInvalid), CheckpointTableNameTable)
+	if escapeErr != nil {
+		return nil, errors.Trace(escapeErr)
+	}
 
 	var targetTables []DestroyedTableCheckpoint
 
@@ -1514,7 +1528,7 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 	err := s.Transact(ctx, "destroy error checkpoints", func(c context.Context, tx *sql.Tx) error {
 		// Obtain the list of tables
 		targetTables = nil
-		rows, e := tx.QueryContext(c, selectQuery, tableName) // #nosec G201
+		rows, e := tx.QueryContext(c, selectQuery, tableName)
 		if e != nil {
 			return errors.Trace(e)
 		}
