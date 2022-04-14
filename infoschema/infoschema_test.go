@@ -374,11 +374,11 @@ func TestBuildBundle(t *testing.T) {
 			return
 		}
 
-		expectedJson, err := json.Marshal(expected)
+		expectedJSON, err := json.Marshal(expected)
 		require.NoError(t, err)
-		actualJson, err := json.Marshal(actual)
+		actualJSON, err := json.Marshal(actual)
 		require.NoError(t, err)
-		require.Equal(t, string(expectedJson), string(actualJson))
+		require.Equal(t, string(expectedJSON), string(actualJSON))
 	}
 
 	assertBundle(is, tbl1.Meta().ID, tb1Bundle)

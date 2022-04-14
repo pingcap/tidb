@@ -114,12 +114,12 @@ func checkTableBundlesInPD(t *testing.T, do *domain.Domain, tt *meta.Meta, tblIn
 			expectedJSON, err := json.Marshal(check.bundle)
 			require.NoError(t, err)
 
-			pdGotJson, err := json.Marshal(pdGot)
+			pdGotJSON, err := json.Marshal(pdGot)
 			require.NoError(t, err)
-			require.Equal(t, string(expectedJSON), string(pdGotJson))
+			require.Equal(t, string(expectedJSON), string(pdGotJSON))
 
-			isGotJson, err := json.Marshal(isGot)
-			require.Equal(t, string(expectedJSON), string(isGotJson))
+			isGotJSON, err := json.Marshal(isGot)
+			require.Equal(t, string(expectedJSON), string(isGotJSON))
 		}
 	}
 }
