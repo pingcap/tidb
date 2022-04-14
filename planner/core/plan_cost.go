@@ -131,7 +131,7 @@ func (p *PhysicalTableReader) CalPlanCost(taskType property.TaskType) float64 {
 			// mpp protocol
 			concurrency = p.ctx.GetSessionVars().CopTiFlashConcurrencyFactor
 			rowSize = collectRowSizeFromMPPPlan(p.tablePlan)
-			seekCost = collectRowSizeFromMPPPlan(p.tablePlan)
+			seekCost = accumulateNetSeekCost4MPP(p.tablePlan)
 		} else {
 			// cop protocol
 			concurrency = float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
