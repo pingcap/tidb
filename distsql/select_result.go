@@ -346,7 +346,8 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	if copStats.ScanDetail != nil {
 		readKeys := copStats.ScanDetail.ProcessedKeys
 		readTime := copStats.TimeDetail.KvReadWallTimeMs.Seconds()
-		tikvmetrics.ObserveReadSLI(uint64(readKeys), readTime)
+		readSize := float64(copStats.ScanDetail.ProcessedKeysSize)
+		tikvmetrics.ObserveReadSLI(uint64(readKeys), readTime, readSize)
 	}
 
 	if r.stats == nil {

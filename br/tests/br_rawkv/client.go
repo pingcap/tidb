@@ -133,7 +133,7 @@ func randGen(client *rawkv.Client, startKey, endKey []byte, maxLen int, concurre
 					values = append(values, value)
 				}
 
-				err := client.BatchPut(context.TODO(), keys, values)
+				err := client.BatchPut(context.TODO(), keys, values, nil)
 				if err != nil {
 					errCh <- errors.Trace(err)
 				}
@@ -307,7 +307,7 @@ func put(client *rawkv.Client, dataStr string) error {
 
 	log.Info("Put rawkv data", zap.ByteStrings("keys", keys), zap.ByteStrings("values", values))
 
-	err := client.BatchPut(context.TODO(), keys, values)
+	err := client.BatchPut(context.TODO(), keys, values, nil)
 	return errors.Trace(err)
 }
 
