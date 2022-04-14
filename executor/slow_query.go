@@ -67,8 +67,11 @@ type slowQueryRetriever struct {
 	checker               *slowLogChecker
 	columnValueFactoryMap map[string]slowQueryColumnValueFactory
 
-	taskList chan slowLogTask
-	stats    *slowQueryRuntimeStats
+	taskList      chan slowLogTask
+	stats         *slowQueryRuntimeStats
+	memTracker    *memory.Tracker
+	lastFetchSize int64
+	cancel        context.CancelFunc
 }
 
 func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -77,6 +80,7 @@ func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Conte
 		if err != nil {
 			return nil, err
 		}
+		ctx, e.cancel = context.WithCancel(ctx)
 		e.initializeAsyncParsing(ctx, sctx)
 	}
 	return e.dataForSlowLog(ctx, sctx)
@@ -142,6 +146,9 @@ func (e *slowQueryRetriever) close() error {
 			logutil.BgLogger().Error("close slow log file failed.", zap.Error(err))
 		}
 	}
+	if e.cancel != nil {
+		e.cancel()
+	}
 	return nil
 }
 
@@ -198,6 +205,8 @@ func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context, sctx sessionctx
 		task slowLogTask
 		ok   bool
 	)
+	e.memConsume(-e.lastFetchSize)
+	e.lastFetchSize = 0
 	for {
 		select {
 		case task, ok = <-e.taskList:
@@ -215,6 +224,7 @@ func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context, sctx sessionctx
 		if len(rows) == 0 {
 			continue
 		}
+		e.lastFetchSize = calculateDatumsSize(rows)
 		return rows, nil
 	}
 }
@@ -439,7 +449,7 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 				return
 			case e.taskList <- t:
 			}
-			e.sendParsedSlowLogCh(ctx, t, parsedSlowLog{nil, err})
+			e.sendParsedSlowLogCh(t, parsedSlowLog{nil, err})
 		}
 		if len(logs) == 0 || len(logs[0]) == 0 {
 			break
@@ -458,7 +468,7 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 			go func() {
 				defer wg.Done()
 				result, err := e.parseLog(ctx, sctx, log, start)
-				e.sendParsedSlowLogCh(ctx, t, parsedSlowLog{result, err})
+				e.sendParsedSlowLogCh(t, parsedSlowLog{result, err})
 				<-ch
 			}()
 			offset.offset = e.fileLine
@@ -473,10 +483,10 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 	wg.Wait()
 }
 
-func (e *slowQueryRetriever) sendParsedSlowLogCh(ctx context.Context, t slowLogTask, re parsedSlowLog) {
+func (e *slowQueryRetriever) sendParsedSlowLogCh(t slowLogTask, re parsedSlowLog) {
 	select {
 	case t.resultCh <- re:
-	case <-ctx.Done():
+	default:
 		return
 	}
 }
@@ -523,6 +533,8 @@ func splitByColon(line string) (fields []string, values []string) {
 
 func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Context, log []string, offset offset) (data [][]types.Datum, err error) {
 	start := time.Now()
+	logSize := calculateLogSize(log)
+	defer e.memConsume(-logSize)
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("%s", r)
@@ -535,6 +547,7 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 			atomic.AddInt64(&e.stats.parseLog, int64(time.Since(start)))
 		}
 	}()
+	e.memConsume(logSize)
 	failpoint.Inject("errorMockParseSlowLogPanic", func(val failpoint.Value) {
 		if val.(bool) {
 			panic("panic test")
@@ -611,6 +624,7 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 				// Get the sql string, and mark the start flag to false.
 				_ = e.setColumnValue(sctx, row, tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)), e.checker, fileLine)
 				e.setDefaultValue(row)
+				e.memConsume(types.EstimatedMemUsage(row, 1))
 				data = append(data, row)
 				startFlag = false
 			} else {
@@ -1078,4 +1092,26 @@ func readLastLines(ctx context.Context, file *os.File, endCursor int64) ([]strin
 func (e *slowQueryRetriever) initializeAsyncParsing(ctx context.Context, sctx sessionctx.Context) {
 	e.taskList = make(chan slowLogTask, 1)
 	go e.parseDataForSlowLog(ctx, sctx)
+}
+
+func calculateLogSize(log []string) int64 {
+	size := 0
+	for _, line := range log {
+		size += len(line)
+	}
+	return int64(size)
+}
+
+func calculateDatumsSize(rows [][]types.Datum) int64 {
+	size := int64(0)
+	for _, row := range rows {
+		size += types.EstimatedMemUsage(row, 1)
+	}
+	return size
+}
+
+func (e *slowQueryRetriever) memConsume(bytes int64) {
+	if e.memTracker != nil {
+		e.memTracker.Consume(bytes)
+	}
 }
