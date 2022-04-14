@@ -1653,8 +1653,8 @@ func (s *session) ReleaseAllAdvisoryLocks() int {
 	var count int
 	for lockName, lock := range s.advisoryLocks {
 		lock.Close()
+		count += lock.ReferenceCount()
 		delete(s.advisoryLocks, lockName)
-		count++
 	}
 	return count
 }

@@ -275,6 +275,14 @@ func (b *builtinReleaseLockSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if err != nil {
 		return 0, isNull, err
 	}
+	// Validate that lockName is NOT NULL or empty string
+	if isNull {
+		return 0, false, errUserLockWrongName.GenWithStackByArgs("NULL")
+	}
+	if lockName == "" || len(lockName) > 64 {
+		return 0, false, errUserLockWrongName.GenWithStackByArgs(lockName)
+	}
+
 	// Lock names are case insensitive. Because we can't rely on collations
 	// being enabled on the internal table, we have to lower it.
 	lockName = strings.ToLower(lockName)

@@ -267,7 +267,7 @@ func TestGetLock(t *testing.T) {
 	tk.MustQuery("SELECT get_lock('testlock2', -10)").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT release_lock('testlock1'), release_lock('testlock2')").Check(testkit.Rows("1 1"))
 
-	// GetLock with NULL name or '' name
+	// GetLock/ReleaseLock with NULL name or '' name
 	rs, _ := tk.Exec("SELECT get_lock('', 10)")
 	_, err = session.GetRows4Test(ctx, tk.Session(), rs)
 	require.Error(t, err)
@@ -280,13 +280,25 @@ func TestGetLock(t *testing.T) {
 	terr = errors.Cause(err).(*terror.Error)
 	require.Equal(t, errors.ErrCode(errno.ErrUserLockWrongName), terr.Code())
 
+	rs, _ = tk.Exec("SELECT release_lock('')")
+	_, err = session.GetRows4Test(ctx, tk.Session(), rs)
+	require.Error(t, err)
+	terr = errors.Cause(err).(*terror.Error)
+	require.Equal(t, errors.ErrCode(errno.ErrUserLockWrongName), terr.Code())
+
+	rs, _ = tk.Exec("SELECT release_lock(NULL)")
+	_, err = session.GetRows4Test(ctx, tk.Session(), rs)
+	require.Error(t, err)
+	terr = errors.Cause(err).(*terror.Error)
+	require.Equal(t, errors.ErrCode(errno.ErrUserLockWrongName), terr.Code())
+
 	// NULL timeout is fine (= unlimited)
 	tk.MustQuery("SELECT get_lock('aaa', NULL)").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT release_lock('aaa')").Check(testkit.Rows("1"))
 
-	// GetLock in CAPS, release lock in lower.
-	tk.MustQuery("SELECT get_lock('ABC', -10)").Check(testkit.Rows("1"))
-	tk.MustQuery("SELECT release_lock('abc')").Check(testkit.Rows("1"))
+	// GetLock in CAPS, release lock in different case.
+	tk.MustQuery("SELECT get_lock('aBC', -10)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT release_lock('AbC')").Check(testkit.Rows("1"))
 
 	// Release unacquired LOCK and previously released lock
 	tk.MustQuery("SELECT release_lock('randombytes')").Check(testkit.Rows("0"))
@@ -312,6 +324,18 @@ func TestGetLock(t *testing.T) {
 	// Release all locks and one not held lock
 	tk.MustQuery("SELECT get_lock('a1', 1.2), get_lock('a2', 1.2), get_lock('a3', 1.2), get_lock('a4', 1.2)").Check(testkit.Rows("1 1 1 1"))
 	tk.MustQuery("SELECT release_lock('a1'),release_lock('a2'),release_lock('a3'), release_lock('random'), release_lock('a4')").Check(testkit.Rows("1 1 1 0 1"))
+
+	// Multiple locks acquired, released all at once.
+	tk.MustQuery("SELECT get_lock('a1', 1.2), get_lock('a2', 1.2), get_lock('a3', 1.2), get_lock('a4', 1.2)").Check(testkit.Rows("1 1 1 1"))
+	tk.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("4"))
+	tk.MustQuery("SELECT release_lock('a1')").Check(testkit.Rows("0")) // lock is free
+
+	// Multiple locks acquired, reference count increased, released all at once.
+	tk.MustQuery("SELECT get_lock('a1', 1.2), get_lock('a2', 1.2), get_lock('a3', 1.2), get_lock('a4', 1.2)").Check(testkit.Rows("1 1 1 1"))
+	tk.MustQuery("SELECT get_lock('a1', 1.2), get_lock('a2', 1.2), get_lock('a5', 1.2)").Check(testkit.Rows("1 1 1"))
+	tk.MustQuery("SELECT release_all_locks()").Check(testkit.Rows("7")) // 7 not 5, because the it includes ref count
+	tk.MustQuery("SELECT release_lock('a1')").Check(testkit.Rows("0"))  // lock is free
+	tk.MustQuery("SELECT release_lock('a5')").Check(testkit.Rows("0"))  // lock is free
 
 	// Test common cases:
 	// Get a lock, release it immediately.
