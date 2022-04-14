@@ -116,17 +116,12 @@ func (c *MetaDataClient) GetTaskWithPauseStatus(ctx context.Context, taskName st
 		return nil, false, errors.Annotatef(err, "failed to fetch task %s", taskName)
 	}
 
-	if len(resps.Responses) == 0 {
-		return nil, false, errors.Annotatef(berrors.ErrPiTRTaskNotFound, "no such task %s", taskName)
-	}
-
-	r := resps.Responses[0].GetResponseRange()
-	if len(r.Kvs) == 0 {
+	if len(resps.Responses) == 0 || len(resps.Responses[0].GetResponseRange().Kvs) == 0 {
 		return nil, false, errors.Annotatef(berrors.ErrPiTRTaskNotFound, "no such task %s", taskName)
 	}
 
 	var taskInfo backuppb.StreamBackupTaskInfo
-	err = proto.Unmarshal(r.Kvs[0].Value, &taskInfo)
+	err = proto.Unmarshal(resps.Responses[0].GetResponseRange().Kvs[0].Value, &taskInfo)
 	if err != nil {
 		return nil, false, errors.Annotatef(err, "invalid binary presentation of task info (name = %s)", taskName)
 	}
