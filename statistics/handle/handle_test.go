@@ -2406,7 +2406,7 @@ func BenchmarkIndexUsageInformationInsert(b *testing.B) {
 		tk.MustQuery("select j from t_idx where j=1")
 		tk.MustQuery("select k from t_idx where k=1")
 		do := dom
-		err := do.StatsHandle().DumpIndexUsageToKVV1()
+		err := do.StatsHandle().DumpIndexUsageToKV()
 		require.NoError(b, err)
 	}
 }

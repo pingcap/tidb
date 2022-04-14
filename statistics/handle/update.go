@@ -374,24 +374,6 @@ func (h *Handle) DumpIndexUsageToKV() error {
 	return nil
 }
 
-// DumpIndexUsageToKVV1 will dump in-memory index usage information to KV.
-func (h *Handle) DumpIndexUsageToKVV1() error {
-	ctx := context.Background()
-	mapper := h.sweepIdxUsageList()
-	for id, value := range mapper {
-		const sql = `insert into mysql.SCHEMA_INDEX_USAGE
-(table_id,index_id,query_count,rows_selected,last_used_at) values (%?, %?, %?, %?, %?)
-	on duplicate key
-update query_count=query_count+values(query_count),rows_selected=rows_selected+values(rows_selected),
-last_used_at=greatest(last_used_at, values(last_used_at))`
-		_, _, err := h.execRestrictedSQL(ctx, sql, id.TableID, id.IndexID, value.QueryCount, value.RowsSelected, value.LastUsedAt)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // GCIndexUsage will delete the usage information of those indexes that do not exist.
 func (h *Handle) GCIndexUsage() error {
 	// For performance and implementation reasons, mysql.schema_index_usage doesn't handle DDL.
