@@ -318,6 +318,9 @@ type LogicalPlan interface {
 type PhysicalPlan interface {
 	Plan
 
+	// CalPlanCost calculates and returns the cost of current plan.
+	CalPlanCost(taskType property.TaskType) (float64, error)
+
 	// attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
 	attach2Task(...task) task
@@ -408,6 +411,10 @@ type basePhysicalPlan struct {
 	self             PhysicalPlan
 	children         []PhysicalPlan
 	cost             float64
+
+	// used by the new cost interface
+	planCostInit bool
+	planCost     float64
 }
 
 // Cost implements PhysicalPlan interface.
