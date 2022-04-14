@@ -1,6 +1,7 @@
 package core
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/statistics"
 	"math"
 
@@ -40,7 +41,7 @@ func (p *PhysicalSelection) CalPlanCost(taskType property.TaskType) (float64, er
 	case property.MppTaskType:
 		cpuFactor = p.ctx.GetSessionVars().CPUFactor // TODO: introduce a new factor for TiFlash?
 	default:
-		panic("TODO")
+		return 0, errors.Errorf("unknown task type %v", taskType)
 	}
 	childCost, err := p.children[0].CalPlanCost(taskType)
 	if err != nil {
@@ -405,7 +406,7 @@ func (p *PhysicalHashAgg) CalPlanCost(taskType property.TaskType) (float64, erro
 	case property.MppTaskType:
 		p.planCost += p.GetCost(p.children[0].StatsCount(), false, true)
 	default:
-		panic("TODO")
+		return 0, errors.Errorf("unknown task type %v", taskType)
 	}
 	p.planCostInit = true
 	return p.planCost, nil
