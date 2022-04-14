@@ -249,13 +249,11 @@ func TestNewCostInterfaceTiFlash(t *testing.T) {
 		"select avg(a), b from t where a < 200 group by b",
 	}
 	tk.Session().GetSessionVars().DEBUG = true
-	for _, mpp := range []bool{false, true} {
+	for _, mpp := range []bool{false} {
 		if mpp {
 			tk.MustExec(`set @@session.tidb_allow_mpp=1`)
-			tk.MustExec(`set @@session.tidb_enforce_mpp=1`)
 		} else {
 			tk.MustExec(`set @@session.tidb_allow_mpp=0`)
-			tk.MustExec(`set @@session.tidb_enforce_mpp=0`)
 		}
 
 		for _, q := range queries {
