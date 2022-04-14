@@ -711,7 +711,7 @@ func TestPartitionRangeColumnsCollate(t *testing.T) {
  partition pMax values less than (MAXVALUE))`)
 	tk.MustExec(`insert into t values ("A"),("a"),("b"),("B"),("aa"),("AA"),("aA"),("Aa"),("BB"),("Bb"),("bB"),("bb"),("AB"),("BA"),("Ab"),("Ba"),("aB"),("bA"),("ab"),("ba"),("ä"),("ÄÄÄ")`)
 	tk.MustQuery(`explain select * from t where a = "aa" collate utf8mb4_general_ci`).Check(testkit.Rows(
-		`TableReader_7 10.00 root partition:all data:Selection_6`,
+		`TableReader_7 10.00 root partition:p2 data:Selection_6`,
 		`└─Selection_6 10.00 cop[tikv]  eq(partitionrangecolumnscollate.t.a, "aa")`,
 		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
 	tk.MustQuery(`select * from t where a = "aa" collate utf8mb4_general_ci`).Sort().Check(testkit.Rows(

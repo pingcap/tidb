@@ -1576,15 +1576,14 @@ func (p *rangeColumnsPruner) partitionRangeForExpr(sctx sessionctx.Context, expr
 		return 0, len(p.data), false
 	}
 
-	exprCollation, err := expression.CheckAndDeriveCollationFromExprs(sctx, opName, col.RetType.EvalType(), con, p.data[0])
-	if err != nil {
-		return 0, len(p.data), false
-	}
-	if exprCollation.Coer < expression.CoercibilityImplicit {
-		// Explicit collation, if set to Binary collation, we can still use prune partitions on EQ,
-		// but we need to change the constants collation
-		conCharSet, conColl := con.CharsetAndCollation()
-		colCharSet, colColl := p.partCol.RetType.Charset, p.partCol.RetType.Collate
+	// If different character set or collation, we can only prune if:
+	// - constant is binary collation (can only be found in one partition)
+	// - same char set
+	// - EQ operator, consider values 'a','b','ä' where 'ä' would be in the same partition as 'a' if general_ci, but is binary after 'b'
+	// otherwise return all partitions / no pruning
+	conCharSet, conColl := con.CharsetAndCollation()
+	colCharSet, colColl := p.partCol.RetType.Charset, p.partCol.RetType.Collate
+	if (conCharSet != "" && conCharSet != colCharSet) || (conColl != "" && conColl != colColl) {
 		if !collate.IsBinCollation(conColl) || conCharSet != colCharSet || opName != ast.EQ {
 			return 0, len(p.data), true
 		}
@@ -1594,11 +1593,11 @@ func (p *rangeColumnsPruner) partitionRangeForExpr(sctx sessionctx.Context, expr
 		}
 		con.SetCharsetAndCollation(conCharSet, colColl)
 	}
-	start, end := p.pruneUseBinarySearch(sctx, opName, con, op)
+	start, end := p.pruneUseBinarySearch(sctx, opName, con)
 	return start, end, true
 }
 
-func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op string, data *expression.Constant, f *expression.ScalarFunction) (start int, end int) {
+func (p *rangeColumnsPruner) pruneUseBinarySearch(sctx sessionctx.Context, op string, data *expression.Constant) (start int, end int) {
 	var err error
 	var isNull bool
 	charSet, collation := p.partCol.RetType.Charset, p.partCol.RetType.Collate
