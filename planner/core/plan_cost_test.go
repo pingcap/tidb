@@ -359,21 +359,15 @@ func TestNewCostInterfaceTiFlash(t *testing.T) {
 	}
 	tk.Session().GetSessionVars().DEBUG = true
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
-	for mode := 0; mode < 3; mode++ {
-		switch mode {
-		case 0: // no mpp
+	for _, allowMPP := range []bool{false, true} {
+		if allowMPP {
+			tk.MustExec(`set @@session.tidb_allow_mpp=1`)
+		} else {
 			tk.MustExec(`set @@session.tidb_allow_mpp=0`)
-			tk.MustExec(`set @@session.tidb_enforce_mpp=0`)
-		case 1: // enable mpp but not enforce
-			tk.MustExec(`set @@session.tidb_allow_mpp=1`)
-			tk.MustExec(`set @@session.tidb_enforce_mpp=0`)
-		case 2: // enforce mpp
-			tk.MustExec(`set @@session.tidb_allow_mpp=1`)
-			tk.MustExec(`set @@session.tidb_enforce_mpp=1`)
 		}
 
 		for _, q := range queries {
-			checkCost(t, tk, q, fmt.Sprintf("mode=%v", mode))
+			checkCost(t, tk, q, fmt.Sprintf("allowMPP=%v", allowMPP))
 		}
 	}
 }

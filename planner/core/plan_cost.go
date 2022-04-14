@@ -145,10 +145,6 @@ func (p *PhysicalTableReader) CalPlanCost(taskType property.TaskType) float64 {
 		p.planCost += p.tablePlan.StatsCount() * rowSize * netFactor
 		// net seek cost
 		p.planCost += seekCost
-		// consider tidb_enforce_mpp
-		if isMPP && p.ctx.GetSessionVars().IsMPPEnforced() {
-			p.planCost /= 1000000000
-		}
 		// consider concurrency
 		p.planCost /= concurrency
 	}
