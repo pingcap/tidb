@@ -1440,6 +1440,8 @@ func (p *PhysicalTopN) attach2Task(tasks ...task) task {
 		copTask.addCost(pushedDownTopN.GetCost(inputCount, false))
 	} else if mppTask, ok := t.(*mppTask); ok && needPushDown && p.canPushDown(kv.TiFlash) {
 		pushedDownTopN := p.getPushedDownTopN(mppTask.p)
+		mppTask.addCost(pushedDownTopN.GetCost(mppTask.p.StatsCount(), false))
+		pushedDownTopN.SetCost(mppTask.cst)
 		mppTask.p = pushedDownTopN
 	}
 	rootTask := t.convertToRootTask(p.ctx)
