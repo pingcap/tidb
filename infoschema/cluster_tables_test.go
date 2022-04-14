@@ -705,6 +705,8 @@ select * from t1;
 	config.StoreGlobalConfig(&newCfg)
 	tk.MustExec("set @@tidb_mem_quota_query=" + strconv.Itoa(int(newCfg.MemQuotaQuery)))
 	tk.MustQuery("select * from `information_schema`.`slow_query` where time > '2022-04-14 00:00:00' and time < '2022-04-15 00:00:00'")
+	mem := tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed()
+	require.Equal(t, mem, int64(0))
 	tk.MustQuery("select * from `information_schema`.`cluster_slow_query` where time > '2022-04-14 00:00:00' and time < '2022-04-15 00:00:00'")
 }
 
