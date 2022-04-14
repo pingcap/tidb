@@ -519,7 +519,7 @@ func (s *Server) onConn(conn *clientConn) {
 		} else {
 			metrics.HandShakeErrorCounter.Inc()
 			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
-				Warn("Server.onConn handshake", zap.Error(err),
+				Debug("Server.onConn handshake", zap.Error(err),
 					zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
 		}
 		terror.Log(conn.Close())
