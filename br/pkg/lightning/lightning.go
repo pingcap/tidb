@@ -17,7 +17,11 @@ package lightning
 import (
 	"compress/gzip"
 	"context"
+	"crypto/ecdsa"
+	"crypto/rand"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net"
@@ -315,6 +319,29 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 			}
 		}
 		failpoint.Return(nil)
+	})
+
+	failpoint.Inject("SetCertExpiredSoon", func(val failpoint.Value) {
+		rootKeyPath := val.(string)
+		rootCaPath := taskCfg.Security.CAPath
+		keyPath := taskCfg.Security.KeyPath
+		certPath := taskCfg.Security.CertPath
+		certBytes, err := os.ReadFile(certPath)
+		if err != nil {
+			panic(err)
+		}
+		if err := os.WriteFile(certPath+".old", certBytes, 0o644); err != nil {
+			panic(err)
+		}
+		if err := updateCertExpiry(rootKeyPath, rootCaPath, keyPath, certPath, time.Second*10); err != nil {
+			panic(err)
+		}
+		// Must restore the original cert before the new cert is expired.
+		time.AfterFunc(time.Second*5, func() {
+			if err := os.Rename(certPath+".old", certPath); err != nil {
+				panic(err)
+			}
+		})
 	})
 
 	if err := taskCfg.TiDB.Security.RegisterMySQL(); err != nil {
@@ -904,4 +931,58 @@ func SwitchMode(ctx context.Context, cfg *config.Config, tls *common.TLS, mode s
 			return tikv.SwitchMode(c, tls, store.Address, m)
 		},
 	)
+}
+
+func updateCertExpiry(rootKeyPath, rootCaPath, keyPath, certPath string, expiry time.Duration) error {
+	rootKey, err := parsePrivateKey(rootKeyPath)
+	if err != nil {
+		return err
+	}
+	rootCaPem, err := os.ReadFile(rootCaPath)
+	if err != nil {
+		return err
+	}
+	rootCaDer, _ := pem.Decode(rootCaPem)
+	rootCa, err := x509.ParseCertificate(rootCaDer.Bytes)
+	if err != nil {
+		return err
+	}
+	key, err := parsePrivateKey(keyPath)
+	if err != nil {
+		return err
+	}
+	certPem, err := os.ReadFile(certPath)
+	if err != nil {
+		panic(err)
+	}
+	certDer, _ := pem.Decode(certPem)
+	cert, err := x509.ParseCertificate(certDer.Bytes)
+	if err != nil {
+		return err
+	}
+	cert.NotBefore = time.Now()
+	cert.NotAfter = time.Now().Add(expiry)
+	derBytes, err := x509.CreateCertificate(rand.Reader, cert, rootCa, &key.PublicKey, rootKey)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes}), 0o644)
+}
+
+func parsePrivateKey(keyPath string) (*ecdsa.PrivateKey, error) {
+	keyPemBlock, err := os.ReadFile(keyPath)
+	if err != nil {
+		return nil, err
+	}
+	var keyDERBlock *pem.Block
+	for {
+		keyDERBlock, keyPemBlock = pem.Decode(keyPemBlock)
+		if keyDERBlock == nil {
+			return nil, errors.New("failed to find PEM block with type ending in \"PRIVATE KEY\"")
+		}
+		if keyDERBlock.Type == "PRIVATE KEY" || strings.HasSuffix(keyDERBlock.Type, " PRIVATE KEY") {
+			break
+		}
+	}
+	return x509.ParseECPrivateKey(keyDERBlock.Bytes)
 }
