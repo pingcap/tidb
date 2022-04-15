@@ -340,8 +340,14 @@ func isFastPlan(p plannercore.Plan) bool {
 	case *plannercore.PointGetPlan:
 		return true
 	case *plannercore.PhysicalTableDual:
+		// Plan of following SQL is PhysicalTableDual:
+		// select 1;
+		// select @@autocommit;
 		return true
 	case *plannercore.Set:
+		// Plan of following SQL is Set:
+		// set @a=1;
+		// set @@autocommit=1;
 		return true
 	}
 	return false
