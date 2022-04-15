@@ -287,6 +287,8 @@ func TestPatternLikeExprRestore(t *testing.T) {
 		{"a not like 't1%'", "`a` NOT LIKE _UTF8MB4't1%'"},
 		{"a not like '%D%v%'", "`a` NOT LIKE _UTF8MB4'%D%v%'"},
 		{"a not like '%t1_|'", "`a` NOT LIKE _UTF8MB4'%t1_|'"},
+		{"a like 't1' escape '#'", "`a` LIKE _UTF8MB4't1' ESCAPE '#'"},
+		{"a not like 't1' escape '#'", "`a` NOT LIKE _UTF8MB4't1' ESCAPE '#'"},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*SelectStmt).Fields.Fields[0].Expr

@@ -58,8 +58,9 @@ func (e *ShowBaseExtractor) Extract(show *ast.ShowStmt) bool {
 		switch pattern.Pattern.(type) {
 		case *driver.ValueExpr:
 			// It is used in `SHOW XXXX in t LIKE `abc``.
+			escape := pattern.Escape.(*driver.ValueExpr).GetString()
 			ptn := pattern.Pattern.(*driver.ValueExpr).GetString()
-			patValue, patTypes := stringutil.CompilePattern(ptn, pattern.Escape)
+			patValue, patTypes := stringutil.CompilePattern(ptn, escape[0])
 			if stringutil.IsExactMatch(patTypes) {
 				e.Field = strings.ToLower(string(patValue))
 				return true
@@ -83,8 +84,9 @@ func (e *ShowColumnsTableExtractor) Extract(show *ast.ShowStmt) bool {
 		switch pattern.Pattern.(type) {
 		case *driver.ValueExpr:
 			// It is used in `SHOW COLUMNS FROM t LIKE `abc``.
+			escape := pattern.Escape.(*driver.ValueExpr).GetString()
 			ptn := pattern.Pattern.(*driver.ValueExpr).GetString()
-			patValue, patTypes := stringutil.CompilePattern(ptn, pattern.Escape)
+			patValue, patTypes := stringutil.CompilePattern(ptn, escape[0])
 			if stringutil.IsExactMatch(patTypes) {
 				e.Field = strings.ToLower(string(patValue))
 				return true
