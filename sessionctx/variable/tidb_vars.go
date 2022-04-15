@@ -742,7 +742,7 @@ const (
 	DefTMPTableSize                       = 16777216
 	DefTiDBEnableLocalTxn                 = false
 	DefTiDBEnableOrderedResultMode        = false
-	DefTiDBKeepPruningConds               = false
+	DefTiDBKeepPrunedConds               = false
 )
 
 // Process global variables.
