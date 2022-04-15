@@ -478,7 +478,8 @@ PARTITION BY RANGE (c) (
 	require.Len(t, rows1, 2)
 	require.Equal(t, "schema/test/part", rows1[0][0])
 	require.Equal(t, `"key=value"`, rows1[0][2])
-	require.Equal(t, rows[0][3], rows1[0][3])
+	// table attribute only contains three ranges now
+	require.NotEqual(t, rows[0][3], rows1[0][3])
 	require.Equal(t, "schema/test/part/p1", rows1[1][0])
 	require.Equal(t, `"key2=value2"`, rows1[1][2])
 	require.Equal(t, rows[2][3], rows1[1][3])
