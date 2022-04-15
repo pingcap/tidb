@@ -287,14 +287,16 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty, sche
 		return nil
 	}
 	for _, item := range prop.SortItems {
-		isExist := false
+		isExist, hasLeftColInProp, hasRightColInProp := false, false, false
 		for joinKeyPos := 0; joinKeyPos < len(leftJoinKeys); joinKeyPos++ {
 			var key *expression.Column
 			if item.Col.Equal(p.ctx, leftJoinKeys[joinKeyPos]) {
 				key = leftJoinKeys[joinKeyPos]
+				hasLeftColInProp = true
 			}
 			if item.Col.Equal(p.ctx, rightJoinKeys[joinKeyPos]) {
 				key = rightJoinKeys[joinKeyPos]
+				hasRightColInProp = true
 			}
 			if key == nil {
 				continue
@@ -312,6 +314,13 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty, sche
 			break
 		}
 		if !isExist {
+			return nil
+		}
+		// If the output wants the order of the inner side. We should reject it since we might add null-extend rows of that side.
+		if p.JoinType == LeftOuterJoin && hasRightColInProp {
+			return nil
+		}
+		if p.JoinType == RightOuterJoin && hasLeftColInProp {
 			return nil
 		}
 	}
@@ -948,6 +957,10 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		Desc:            desc,
 		physicalTableID: ds.physicalTableID,
 		isPartition:     ds.isPartition,
+
+		underInnerIndexJoin: true,
+		tblCols:             ds.TblCols,
+		tblColHists:         ds.TblColHists,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema.Clone())
 	if rowCount <= 0 {
@@ -972,7 +985,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		StatsVersion: ds.stats.StatsVersion,
 		// NDV would not be used in cost computation of IndexJoin, set leave it as default nil.
 	}
-	rowSize := ds.TblColHists.GetTableAvgRowSize(p.ctx, ds.TblCols, ts.StoreType, true)
+	rowSize := ts.getScanRowSize()
 	sessVars := ds.ctx.GetSessionVars()
 	copTask := &copTask{
 		tablePlan:         ts,
@@ -1044,6 +1057,10 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		Desc:             desc,
 		isPartition:      ds.isPartition,
 		physicalTableID:  ds.physicalTableID,
+		tblColHists:      ds.TblColHists,
+		pkIsHandleCol:    ds.getPKIsHandleCol(),
+
+		underInnerIndexJoin: true,
 	}.Init(ds.ctx, ds.blockOffset)
 	cop := &copTask{
 		indexPlan:   is,
@@ -1065,6 +1082,8 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 			TableAsName:     ds.TableAsName,
 			isPartition:     ds.isPartition,
 			physicalTableID: ds.physicalTableID,
+			tblCols:         ds.TblCols,
+			tblColHists:     ds.TblColHists,
 		}.Init(ds.ctx, ds.blockOffset)
 		ts.schema = is.dataSourceSchema.Clone()
 		if ds.tableInfo.IsCommonHandle {
@@ -1138,7 +1157,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		tmpPath.CountAfterAccess = cnt
 	}
 	is.stats = ds.tableStats.ScaleByExpectCnt(tmpPath.CountAfterAccess)
-	rowSize := is.indexScanRowSize(path.Index, ds, true)
+	rowSize := is.getScanRowSize()
 	sessVars := ds.ctx.GetSessionVars()
 	cop.cst = tmpPath.CountAfterAccess * rowSize * sessVars.GetScanFactor(ds.tableInfo)
 	finalStats := ds.tableStats.ScaleByExpectCnt(rowCount)
