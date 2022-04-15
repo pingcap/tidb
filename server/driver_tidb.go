@@ -200,12 +200,6 @@ func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8,
 	tc.Session = se
 	tc.currentDB = dbname
 	tc.stmts = make(map[int]*TiDBStatement)
-	/*
-		tc := &TiDBContext{
-			Session:   se,
-			currentDB: dbname,
-			stmts:     make(map[int]*TiDBStatement),
-		}*/
 	return tc, nil
 }
 
