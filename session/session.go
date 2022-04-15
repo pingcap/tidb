@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/sessiontxn/readcommitted"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/helper"
@@ -2321,7 +2320,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		snapshotTS = staleReadProcessor.GetStalenessReadTS()
 		is = staleReadProcessor.GetStalenessInfoSchema()
 		replicaReadScope = config.GetTxnScopeFromConfig()
-		if err = txnManager.SetContextProvider(staleread.NewStalenessTxnContextProvider(is, snapshotTS)); err != nil {
+		if err = txnManager.SetContextProvider(staleread.NewStalenessTxnContextProvider(s, snapshotTS, is)); err != nil {
 			return nil, err
 		}
 	}
@@ -2477,9 +2476,6 @@ func (s *session) NewTxn(ctx context.Context) error {
 		TxnScope:    s.sessionVars.CheckAndGetTxnScope(),
 	}
 	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
-	if s.sessionVars.IsPessimisticReadConsistency() {
-
-	}
 	return nil
 }
 
@@ -2527,7 +2523,7 @@ func (s *session) NewStaleTxnWithStartTS(ctx context.Context, startTS uint64) er
 		TxnScope:    txnScope,
 	}
 	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
-	return sessiontxn.GetTxnManager(s).SetContextProvider(staleread.NewStalenessTxnContextProvider(is, txn.StartTS()))
+	return nil
 }
 
 func (s *session) SetValue(key fmt.Stringer, value interface{}) {
@@ -3125,17 +3121,13 @@ func (s *session) PrepareTxnCtx(ctx context.Context) error {
 		}
 	}
 
-	var txnCtxProvider sessiontxn.TxnContextProvider
-	if !s.sessionVars.IsPessimisticReadConsistency() {
-		txnCtxProvider = readcommitted.NewRCTxnContextProvider(s)
+	txnRequest := sessiontxn.CreateEnterNewTxnRequest(s)
+	if s.sessionVars.TxnCtx.IsPessimistic {
+		txnRequest.TxnMode(ast.Pessimistic)
 	} else {
-		txnCtxProvider = &sessiontxn.SimpleTxnContextProvider{
-			Sctx:       s,
-			InfoSchema: is.(infoschema.InfoSchema),
-		}
+		txnRequest.TxnMode(ast.Optimistic)
 	}
-
-	return sessiontxn.GetTxnManager(s).SetContextProvider(txnCtxProvider)
+	return txnRequest.EnterNewSessionTxn(ctx)
 }
 
 // PrepareTSFuture uses to try to get ts future.

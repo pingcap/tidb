@@ -789,6 +789,10 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		//         the async rollback operation rollbacked the lock just acquired
 		if err != nil {
 			tsErr := UpdateForUpdateTS(a.Ctx, 0)
+			if tsErr == nil {
+				tsErr = sessiontxn.AdviseNoConflictUpdateTS(a.Ctx, a.Ctx.GetSessionVars().TxnCtx.GetForUpdateTS())
+			}
+
 			if tsErr != nil {
 				logutil.Logger(ctx).Warn("UpdateForUpdateTS failed", zap.Error(tsErr))
 			}
@@ -802,6 +806,10 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	a.retryStartTime = time.Now()
 	err = UpdateForUpdateTS(a.Ctx, newForUpdateTS)
 	if err != nil {
+		return nil, err
+	}
+
+	if err = sessiontxn.AdviseNoConflictUpdateTS(a.Ctx, a.Ctx.GetSessionVars().TxnCtx.GetForUpdateTS()); err != nil {
 		return nil, err
 	}
 

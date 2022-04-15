@@ -18,21 +18,27 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/table/temptable"
 )
 
 // StalenessTxnContextProvider implements sessiontxn.TxnContextProvider
 type StalenessTxnContextProvider struct {
-	is infoschema.InfoSchema
-	ts uint64
+	sctx sessionctx.Context
+	is   infoschema.InfoSchema
+	ts   uint64
 }
 
 // NewStalenessTxnContextProvider creates a new StalenessTxnContextProvider
-func NewStalenessTxnContextProvider(is infoschema.InfoSchema, ts uint64) *StalenessTxnContextProvider {
+func NewStalenessTxnContextProvider(sctx sessionctx.Context, ts uint64, is infoschema.InfoSchema) *StalenessTxnContextProvider {
 	return &StalenessTxnContextProvider{
-		is: is,
-		ts: ts,
+		sctx: sctx,
+		is:   is,
+		ts:   ts,
 	}
 }
 
@@ -51,8 +57,25 @@ func (p *StalenessTxnContextProvider) GetForUpdateTS() (uint64, error) {
 	return 0, errors.New("GetForUpdateTS not supported for stalenessTxnProvider")
 }
 
+// ActiveTxn actives stale read txn
+func (p *StalenessTxnContextProvider) ActiveTxn(ctx context.Context) (kv.Transaction, error) {
+	if err := p.sctx.NewStaleTxnWithStartTS(ctx, p.ts); err != nil {
+		return nil, err
+	}
+	p.is = p.sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
+	return p.sctx.Txn(true)
+}
+
 // OnStmtStart is the hook that should be called when a new statement started
 func (p *StalenessTxnContextProvider) OnStmtStart(_ context.Context) error {
+	if p.is == nil {
+		is, err := domain.GetDomain(p.sctx).GetSnapshotInfoSchema(p.ts)
+		if err != nil {
+			return err
+		}
+
+		p.is = temptable.AttachLocalTemporaryTableInfoSchema(p.sctx, is)
+	}
 	return nil
 }
 

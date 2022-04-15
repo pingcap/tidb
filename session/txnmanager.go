@@ -19,6 +19,7 @@ import (
 	"errors"
 
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 )
@@ -76,6 +77,13 @@ func (m *txnManager) GetContextProvider() sessiontxn.TxnContextProvider {
 func (m *txnManager) SetContextProvider(provider sessiontxn.TxnContextProvider) error {
 	m.ctxProvider = provider
 	return nil
+}
+
+func (m *txnManager) ActiveTxn(ctx context.Context) (kv.Transaction, error) {
+	if m.ctxProvider == nil {
+		return nil, errors.New("context provider not set")
+	}
+	return m.ctxProvider.ActiveTxn(ctx)
 }
 
 func (m *txnManager) OnStmtStart(ctx context.Context) error {

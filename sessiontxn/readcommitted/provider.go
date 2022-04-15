@@ -17,6 +17,7 @@ package readcommitted
 import (
 	"context"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -26,12 +27,37 @@ import (
 )
 
 type rcStmtContext struct {
-	sctx          sessionctx.Context
-	ctx           context.Context
-	prevStmt      *rcStmtContext
+	sctx     sessionctx.Context
+	ctx      context.Context
+	prevStmt *rcStmtContext
+	// useTxnStartTS means whether to use the transaction's start ts as the read ts
 	useTxnStartTS bool
+	// When RCCheckTS optimization is enabled, `usePrevStmtTS` can be true and try reuse the previous statement's ts first.
+	// This may cause an error from the storage layer. At that, the statement will retry and get the ts from oracle again.
+	usePrevStmtTS bool
 	ts            uint64
 	tsFuture      oracle.Future
+	// advisedRetryTS is the advised ts when retry
+	advisedRetryTS uint64
+}
+
+func newRcStmtContext(ctx context.Context, sctx sessionctx.Context, prevStmt *rcStmtContext) (*rcStmtContext, error) {
+	useTxnStartTS := false
+	if prevStmt == nil {
+		txn, err := sctx.Txn(false)
+		if err != nil {
+			return nil, err
+		}
+		useTxnStartTS = !txn.Valid()
+	}
+
+	return &rcStmtContext{
+		ctx:           ctx,
+		sctx:          sctx,
+		prevStmt:      prevStmt,
+		useTxnStartTS: useTxnStartTS,
+		usePrevStmtTS: prevStmt != nil && prevStmt.ts > 0 && sctx.GetSessionVars().StmtCtx.RCCheckTS,
+	}, nil
 }
 
 func (s *rcStmtContext) getTS() (ts uint64, err error) {
@@ -45,13 +71,7 @@ func (s *rcStmtContext) getTS() (ts uint64, err error) {
 		return 0, err
 	}
 
-	if s.useTxnStartTS {
-		ts = txn.StartTS()
-	} else {
-		ts, err = s.tsFuture.Wait()
-	}
-
-	if err != nil {
+	if ts, err = s.tsFuture.Wait(); err != nil {
 		return 0, err
 	}
 
@@ -62,15 +82,15 @@ func (s *rcStmtContext) getTS() (ts uint64, err error) {
 }
 
 func (s *rcStmtContext) retry() error {
-	forUpdateTS := s.sctx.GetSessionVars().TxnCtx.GetForUpdateTS()
-	if s.ts > 0 && forUpdateTS > s.ts {
-		s.tsFuture = sessiontxn.ConstantTSFuture(forUpdateTS)
+	if s.ts > 0 && s.advisedRetryTS > s.ts {
+		s.tsFuture = sessiontxn.ConstantTSFuture(s.advisedRetryTS)
 	} else {
-		s.tsFuture = s.getOracleFuture()
+		s.tsFuture = s.getTxnOracleFuture()
 	}
 
 	s.ts = 0
 	s.useTxnStartTS = false
+	s.advisedRetryTS = 0
 
 	// trigger tso fetch immediately
 	_, err := s.getTS()
@@ -78,33 +98,57 @@ func (s *rcStmtContext) retry() error {
 }
 
 func (s *rcStmtContext) prepareTS() {
-	s.sctx.PrepareTSFuture(s.ctx)
-	if s.useTxnStartTS || s.tsFuture != nil {
+	if s.tsFuture != nil {
 		return
 	}
 
-	sessVars := s.sctx.GetSessionVars()
-	if !sessVars.StmtCtx.RCCheckTS && s.prevStmt != nil && s.prevStmt.ts > 0 {
+	s.sctx.PrepareTSFuture(s.ctx)
+	if s.useTxnStartTS {
+		s.tsFuture = s.getTxnStartTSFuture()
+	} else if s.usePrevStmtTS {
 		s.tsFuture = sessiontxn.ConstantTSFuture(s.prevStmt.ts)
 	} else {
-		s.tsFuture = s.getOracleFuture()
+		s.tsFuture = s.getTxnOracleFuture()
 	}
 }
 
-func (s *rcStmtContext) getOracleFuture() oracle.Future {
+func (s *rcStmtContext) getTxnStartTSFuture() sessiontxn.FuncTSFuture {
+	return func() (uint64, error) {
+		txn, err := s.sctx.Txn(false)
+		if err != nil {
+			return 0, err
+		}
+
+		if !txn.Valid() {
+			return 0, errors.New("txn is invalid")
+		}
+
+		return txn.StartTS(), nil
+	}
+}
+
+func (s *rcStmtContext) getTxnOracleFuture() oracle.Future {
 	return sessiontxn.GetTxnOracleFuture(s.ctx, s.sctx, s.sctx.GetSessionVars().CheckAndGetTxnScope())
+
 }
 
 type txnContextProvider struct {
-	sctx sessionctx.Context
-	is   infoschema.InfoSchema
-	stmt *rcStmtContext
+	sctx                  sessionctx.Context
+	is                    infoschema.InfoSchema
+	stmt                  *rcStmtContext
+	causalConsistencyOnly bool
+
+	// tidbSnapshotVarTS is the set by @@tidb_snapshot
+	tidbSnapshotVarTS uint64
+	// tidbSnapshotVarInfoSchema is the timestamp according to tidbSnapshotVarTS
+	tidbSnapshotVarInfoSchema infoschema.InfoSchema
 }
 
 // NewRCTxnContextProvider creates a new txnContextProvider
-func NewRCTxnContextProvider(sctx sessionctx.Context) sessiontxn.TxnContextProvider {
+func NewRCTxnContextProvider(sctx sessionctx.Context, causalConsistencyOnly bool) sessiontxn.TxnContextProvider {
 	return &txnContextProvider{
-		sctx: sctx,
+		sctx:                  sctx,
+		causalConsistencyOnly: causalConsistencyOnly,
 		is: temptable.AttachLocalTemporaryTableInfoSchema(
 			sctx,
 			sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema),
@@ -113,15 +157,35 @@ func NewRCTxnContextProvider(sctx sessionctx.Context) sessiontxn.TxnContextProvi
 }
 
 func (p *txnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
-	if snapshotIS := p.sctx.GetSessionVars().SnapshotInfoschema; snapshotIS != nil {
-		return snapshotIS.(infoschema.InfoSchema)
+	if p.tidbSnapshotVarTS != 0 {
+		return p.tidbSnapshotVarInfoSchema
 	}
 	return p.is
 }
 
+func (p *txnContextProvider) ActiveTxn(ctx context.Context) (kv.Transaction, error) {
+	if p.stmt == nil {
+		if err := p.sctx.NewTxn(ctx); err != nil {
+			return nil, err
+		}
+	} else {
+		p.sctx.PrepareTSFuture(ctx)
+	}
+
+	txn, err := p.sctx.Txn(true)
+	if err != nil {
+		return nil, err
+	}
+
+	if p.causalConsistencyOnly {
+		txn.SetOption(kv.GuaranteeLinearizability, false)
+	}
+	return txn, nil
+}
+
 func (p *txnContextProvider) GetReadTS() (uint64, error) {
-	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
-		return snapshotTS, nil
+	if p.tidbSnapshotVarTS != 0 {
+		return p.tidbSnapshotVarTS, nil
 	}
 	return p.stmt.getTS()
 }
@@ -131,12 +195,15 @@ func (p *txnContextProvider) GetForUpdateTS() (uint64, error) {
 }
 
 func (p *txnContextProvider) OnStmtStart(ctx context.Context) error {
-	p.stmt = &rcStmtContext{
-		ctx:           ctx,
-		sctx:          p.sctx,
-		prevStmt:      p.stmt,
-		useTxnStartTS: p.stmt == nil,
+	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
+		p.tidbSnapshotVarTS = snapshotTS
+		p.tidbSnapshotVarInfoSchema = p.sctx.GetSessionVars().SnapshotInfoschema.(infoschema.InfoSchema)
 	}
+	stmt, err := newRcStmtContext(ctx, p.sctx, p.stmt)
+	if err != nil {
+		return err
+	}
+	p.stmt = stmt
 	return nil
 }
 
@@ -144,10 +211,26 @@ func (p *txnContextProvider) OnStmtRetry() error {
 	return p.stmt.retry()
 }
 
-func (p *txnContextProvider) Advise(opt sessiontxn.AdviceOption, _ ...interface{}) error {
+func (p *txnContextProvider) warmUp() error {
+	if p.tidbSnapshotVarTS != 0 {
+		p.stmt.prepareTS()
+	}
+	return nil
+}
+
+func (p *txnContextProvider) adviseRetryTS(ts uint64) error {
+	if p.stmt == nil {
+		p.stmt.advisedRetryTS = ts
+	}
+	return nil
+}
+
+func (p *txnContextProvider) Advise(opt sessiontxn.AdviceOption, val ...interface{}) error {
 	switch opt {
 	case sessiontxn.AdviceWarmUpNow:
-		p.stmt.prepareTS()
+		return p.warmUp()
+	case sessiontxn.AdviceNoConflictForUpdateTS:
+		return sessiontxn.WithValUint64(val, p.adviseRetryTS)
 	}
 	return nil
 }

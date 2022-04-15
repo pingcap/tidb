@@ -19,6 +19,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 )
 
@@ -26,6 +28,7 @@ type AdviceOption int64
 
 const (
 	AdviceWarmUpNow AdviceOption = iota
+	AdviceNoConflictForUpdateTS
 )
 
 // TxnContextProvider provides txn context
@@ -37,6 +40,8 @@ type TxnContextProvider interface {
 	// GetForUpdateTS returns the read timestamp used by update/insert/delete or select ... for update
 	GetForUpdateTS() (uint64, error)
 
+	// ActiveTxn actives the txn
+	ActiveTxn(ctx context.Context) (kv.Transaction, error)
 	// OnStmtStart is the hook that should be called when a new statement started
 	OnStmtStart(ctx context.Context) error
 	// OnStmtRetry is the hook that should be called when a statement is retrying
@@ -51,11 +56,13 @@ type TxnContextProvider interface {
 // It is only used in refactor stage
 // TODO: remove it after refactor finished
 type SimpleTxnContextProvider struct {
-	ctx                context.Context
-	Sctx               sessionctx.Context
-	InfoSchema         infoschema.InfoSchema
-	GetReadTSFunc      func() (uint64, error)
-	GetForUpdateTSFunc func() (uint64, error)
+	ctx                   context.Context
+	Sctx                  sessionctx.Context
+	CausalConsistencyOnly bool
+	stmtStarted           bool
+	InfoSchema            infoschema.InfoSchema
+	GetReadTSFunc         func() (uint64, error)
+	GetForUpdateTSFunc    func() (uint64, error)
 }
 
 // GetTxnInfoSchema returns the information schema used by txn
@@ -79,10 +86,41 @@ func (p *SimpleTxnContextProvider) GetForUpdateTS() (uint64, error) {
 	return p.GetForUpdateTSFunc()
 }
 
+// ActiveTxn actives the txn
+func (p *SimpleTxnContextProvider) ActiveTxn(ctx context.Context) (kv.Transaction, error) {
+	if !p.stmtStarted {
+		if err := p.Sctx.NewTxn(ctx); err != nil {
+			return nil, err
+		}
+	} else {
+		p.Sctx.PrepareTSFuture(ctx)
+	}
+
+	txnMode, _ := ctx.Value("txnMode").(string)
+	if txnMode == "" {
+		txnMode = p.Sctx.GetSessionVars().TxnMode
+	}
+	if txnMode == ast.Pessimistic {
+		p.Sctx.GetSessionVars().TxnCtx.IsPessimistic = true
+	}
+	txn, err := p.Sctx.Txn(true)
+	if err != nil {
+		return nil, err
+	}
+	if p.Sctx.GetSessionVars().TxnCtx.IsPessimistic {
+		txn.SetOption(kv.Pessimistic, true)
+	}
+	if p.CausalConsistencyOnly {
+		txn.SetOption(kv.GuaranteeLinearizability, false)
+	}
+	return txn, nil
+}
+
 // OnStmtStart is the hook that should be called when a new statement started
 func (p *SimpleTxnContextProvider) OnStmtStart(ctx context.Context) error {
 	p.ctx = ctx
 	p.InfoSchema = p.Sctx.GetInfoSchema().(infoschema.InfoSchema)
+	p.stmtStarted = true
 	return nil
 }
 
@@ -114,6 +152,8 @@ type TxnManager interface {
 	// GetForUpdateTS returns the read timestamp used by update/insert/delete or select ... for update
 	GetForUpdateTS() (uint64, error)
 
+	// ActiveTxn actives the txn
+	ActiveTxn(ctx context.Context) (kv.Transaction, error)
 	// GetContextProvider returns the current TxnContextProvider
 	GetContextProvider() TxnContextProvider
 	// SetContextProvider sets the context provider
@@ -131,6 +171,23 @@ type TxnManager interface {
 
 func AdviseTxnWarmUp(sctx sessionctx.Context) error {
 	return GetTxnManager(sctx).Advise(AdviceWarmUpNow)
+}
+
+func AdviseNoConflictUpdateTS(sctx sessionctx.Context, ts uint64) error {
+	return GetTxnManager(sctx).Advise(AdviceNoConflictForUpdateTS, ts)
+}
+
+func WithValUint64(val []interface{}, fn func(uint64) error) error {
+	if len(val) == 0 {
+		return errors.New("%v need a uint64 arg")
+	}
+
+	if ts, ok := val[0].(uint64); ok {
+		return fn(ts)
+	}
+
+	return errors.New("%v need a uint64 arg")
+
 }
 
 // GetTxnManager returns the TxnManager object from session context

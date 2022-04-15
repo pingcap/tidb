@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/sessiontxn/readcommitted"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -592,9 +591,6 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 		}
 	}
 	if e.staleTxnStartTS > 0 {
-		if err := e.ctx.NewStaleTxnWithStartTS(ctx, e.staleTxnStartTS); err != nil {
-			return err
-		}
 		// With START TRANSACTION, autocommit remains disabled until you end
 		// the transaction with COMMIT or ROLLBACK. The autocommit mode then
 		// reverts to its previous state.
@@ -602,51 +598,14 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 		if err := vars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
 			return errors.Trace(err)
 		}
-		vars.SetInTxn(true)
-		return nil
-	}
-	// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
-	// need to call NewTxn, which commits the existing transaction and begins a new one.
-	// If the last un-committed/un-rollback transaction is a time-bounded read-only transaction, we should
-	// always create a new transaction.
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	if txnCtx.History != nil || txnCtx.IsStaleness {
-		err := e.ctx.NewTxn(ctx)
-		if err != nil {
-			return err
-		}
-	}
-	// With START TRANSACTION, autocommit remains disabled until you end
-	// the transaction with COMMIT or ROLLBACK. The autocommit mode then
-	// reverts to its previous state.
-	e.ctx.GetSessionVars().SetInTxn(true)
-	// Call ctx.Txn(true) to active pending txn.
-	txnMode := s.Mode
-	if txnMode == "" {
-		txnMode = e.ctx.GetSessionVars().TxnMode
-	}
-	if txnMode == ast.Pessimistic {
-		e.ctx.GetSessionVars().TxnCtx.IsPessimistic = true
-	}
-	txn, err := e.ctx.Txn(true)
-	if err != nil {
-		return err
-	}
-	if e.ctx.GetSessionVars().TxnCtx.IsPessimistic {
-		txn.SetOption(kv.Pessimistic, true)
-	}
-	if s.CausalConsistencyOnly {
-		txn.SetOption(kv.GuaranteeLinearizability, false)
 	}
 
-	var txnCtxProvider sessiontxn.TxnContextProvider
-	if e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
-		txnCtxProvider = readcommitted.NewRCTxnContextProvider(e.ctx)
-	} else {
-		txnCtxProvider = &sessiontxn.SimpleTxnContextProvider{Sctx: e.ctx}
-	}
-
-	return sessiontxn.GetTxnManager(e.ctx).SetContextProvider(txnCtxProvider)
+	return sessiontxn.CreateEnterNewTxnRequest(e.ctx).
+		ExplictBegin().
+		StaleRead(e.staleTxnStartTS).
+		TxnMode(s.Mode).
+		CausalConsistencyOnly(s.CausalConsistencyOnly).
+		EnterNewSessionTxn(ctx)
 }
 
 func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStmt) error {
