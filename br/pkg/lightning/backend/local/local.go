@@ -911,7 +911,7 @@ func NewLocalBackend(
 	if err != nil {
 		return backend.MakeBackend(nil), errors.Annotate(err, "construct pd client failed")
 	}
-	splitCli := split.NewSplitClient(pdCtl.GetPDClient(), tls.TLSConfig())
+	splitCli := split.NewSplitClient(pdCtl.GetPDClient(), tls.TLSConfig(), false)
 
 	shouldCreate := true
 	if enableCheckpoint {
@@ -1502,9 +1502,9 @@ func (local *local) WriteToTiKV(
 	firstLoop := true
 	// if region-split-size <= 96MiB, we bump the threshold a bit to avoid too many retry split
 	// because the range-properties is not 100% accurate
-	regionMaxSize := regionSplitSize
-	if regionSplitSize <= defaultRegionSplitSize {
-		regionMaxSize = regionSplitSize * 4 / 3
+	regionMaxSize := local.regionSplitSize
+	if regionMaxSize <= defaultRegionSplitSize {
+		regionMaxSize = regionMaxSize * 4 / 3
 	}
 
 	for iter.First(); iter.Valid(); iter.Next() {
