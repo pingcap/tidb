@@ -655,7 +655,6 @@ func (e *SimpleExec) executeSavepoint(ctx context.Context, s *ast.SavepointStmt)
 	memBuffer := txn.GetMemBuffer()
 	cp := memBuffer.Checkpoint()
 	txnCtx.Savepoints = append(txnCtx.Savepoints, variable.SavepointRecord{Name: s.Name, Cp: cp})
-
 	return nil
 }
 
@@ -753,11 +752,23 @@ func (e *SimpleExec) executeCommit(s *ast.CommitStmt) {
 func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars := e.ctx.GetSessionVars()
 	logutil.BgLogger().Debug("execute rollback statement", zap.Uint64("conn", sessVars.ConnectionID))
-	sessVars.SetInTxn(false)
+
 	txn, err := e.ctx.Txn(false)
 	if err != nil {
 		return err
 	}
+	if s.SavepointName != "" && txn.Valid(){
+		for _, sp := range e.ctx.GetSessionVars().TxnCtx.Savepoints {
+			if s.SavepointName == sp.Name {
+				txn.GetMemBuffer().RevertToCheckpoint(sp.Cp)
+				logutil.BgLogger().Info(fmt.Sprintf("Rollbacked to savepoint %s", sp.Name))
+				return nil
+			}
+		}
+		return errors.New("Cannot find the savepoint")
+	}
+
+	sessVars.SetInTxn(false)
 	if txn.Valid() {
 		duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
 		if sessVars.TxnCtx.IsPessimistic {
