@@ -146,11 +146,7 @@ ALTER TABLE t DROP COLUMN b, RENAME COLUMN a TO b, ADD INDEX i(b), DROP INDEX i;
 ERROR 1060 (42S21): Duplicate column name 'b'
 ```
 
-TiDB validates the schema changes against a snapshot schema structure retrived before the execution, regardless of the previous changes in the same DDL SQL statement. The only exception is `ADD INDEX` following `ADD COLUMN`:
-
-```sql
-ALTER TABLE t ADD COLUMN b INT, ADD INDEX idx(b);
-```
+TiDB validates the schema changes against a snapshot schema structure retrived before the execution, regardless of the previous changes in the same DDL SQL statement.
 
 ## Alternative Proposals
 
