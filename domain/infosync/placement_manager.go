@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/util/pdapi"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 // PlacementManager manages placement settings
@@ -37,13 +38,13 @@ type PlacementManager interface {
 
 // PDPlacementManager manages placement with pd
 type PDPlacementManager struct {
-	addrs []string
+	etcdCli *clientv3.Client
 }
 
 // GetRuleBundle is used to get one specific rule bundle from PD.
 func (m *PDPlacementManager) GetRuleBundle(ctx context.Context, name string) (*placement.Bundle, error) {
 	bundle := &placement.Bundle{ID: name}
-	res, err := doRequest(ctx, m.addrs, path.Join(pdapi.Config, "placement-rule", name), "GET", nil)
+	res, err := doRequest(ctx, "GetPlacementRule", m.etcdCli.Endpoints(), path.Join(pdapi.Config, "placement-rule", name), "GET", nil)
 	if err == nil && res != nil {
 		err = json.Unmarshal(res, bundle)
 	}
@@ -53,7 +54,7 @@ func (m *PDPlacementManager) GetRuleBundle(ctx context.Context, name string) (*p
 // GetAllRuleBundles is used to get all rule bundles from PD. It is used to load full rules from PD while fullload infoschema.
 func (m *PDPlacementManager) GetAllRuleBundles(ctx context.Context) ([]*placement.Bundle, error) {
 	var bundles []*placement.Bundle
-	res, err := doRequest(ctx, m.addrs, path.Join(pdapi.Config, "placement-rule"), "GET", nil)
+	res, err := doRequest(ctx, "GetAllPlacementRules", m.etcdCli.Endpoints(), path.Join(pdapi.Config, "placement-rule"), "GET", nil)
 	if err == nil && res != nil {
 		err = json.Unmarshal(res, &bundles)
 	}
@@ -71,7 +72,7 @@ func (m *PDPlacementManager) PutRuleBundles(ctx context.Context, bundles []*plac
 		return err
 	}
 
-	_, err = doRequest(ctx, m.addrs, path.Join(pdapi.Config, "placement-rule")+"?partial=true", "POST", bytes.NewReader(b))
+	_, err = doRequest(ctx, "PutPlacementRules", m.etcdCli.Endpoints(), path.Join(pdapi.Config, "placement-rule")+"?partial=true", "POST", bytes.NewReader(b))
 	return err
 }
 
