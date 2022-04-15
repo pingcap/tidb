@@ -103,8 +103,8 @@ func (s *testChunkSuite) TestIssue29947(c *check.C) {
 		for _, off := range col.offsets {
 			c.Assert(off, check.Equals, int64(0))
 		}
-		c.Assert(col.data, check.Equals, dataBefore[i])
-		c.Assert(col.elemBuf, check.Equals, elemBufBefore[i])
+		c.Assert(string(col.data), check.Equals, string(dataBefore[i]))
+		c.Assert(string(col.elemBuf), check.Equals, string(elemBufBefore[i]))
 	}
 }
 
