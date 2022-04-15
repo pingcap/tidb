@@ -298,9 +298,7 @@ func compareTask(ctx sessionctx.Context, curTask, bestTask task) (curIsBetter bo
 		if err != nil {
 			return false, err
 		}
-		if curCost < bestCost || (bestTask.invalid() && !curTask.invalid()) {
-			return true, nil
-		}
+		return curCost < bestCost || (bestTask.invalid() && !curTask.invalid()), nil
 	}
 	return curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()), nil
 }
