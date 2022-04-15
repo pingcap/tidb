@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
@@ -269,6 +270,11 @@ func TestSelectClusterTable(t *testing.T) {
 	tk.MustQuery("select * from `CLUSTER_statements_summary_history`")
 	require.NotNil(t, re)
 	require.Equal(t, 0, len(re.Rows()))
+
+	// Test for https://github.com/pingcap/tidb/issues/33974
+	instanceAddr, err := infoschema.GetInstanceAddr(tk.Session())
+	require.NoError(t, err)
+	tk.MustQuery("select instance from `CLUSTER_SLOW_QUERY` where time='2019-02-12 19:33:56.571953'").Check(testkit.Rows(instanceAddr))
 }
 
 func SubTestSelectClusterTablePrivilege(t *testing.T) {
