@@ -367,6 +367,10 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if cfg.SkipCheckPath, err = flags.GetBool(flagSkipCheckPath); err != nil {
 		return errors.Trace(err)
 	}
+	if cfg.SkipCheckPath {
+		log.L().Info("--skip-check-path is deprecated, need explicitly set it anymore")
+	}
+
 	return cfg.normalizePDURLs()
 }
 
@@ -431,7 +435,6 @@ func storageOpts(cfg *Config) *storage.ExternalStorageOptions {
 	return &storage.ExternalStorageOptions{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
-		SkipCheckPath:   cfg.SkipCheckPath,
 	}
 }
 
