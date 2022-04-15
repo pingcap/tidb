@@ -26,6 +26,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -72,6 +73,7 @@ type slowQueryRetriever struct {
 	memTracker    *memory.Tracker
 	lastFetchSize int64
 	cancel        context.CancelFunc
+	wg            sync.WaitGroup
 }
 
 func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -156,6 +158,7 @@ func (e *slowQueryRetriever) close() error {
 	if e.cancel != nil {
 		e.cancel()
 	}
+	e.wg.Wait()
 	return nil
 }
 
@@ -198,6 +201,7 @@ func (e *slowQueryRetriever) getPreviousFile() *os.File {
 }
 
 func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessionctx.Context) {
+	defer e.wg.Done()
 	file := e.getNextFile()
 	if file == nil {
 		close(e.taskList)
@@ -1113,6 +1117,7 @@ func readLastLines(ctx context.Context, file *os.File, endCursor int64) ([]strin
 
 func (e *slowQueryRetriever) initializeAsyncParsing(ctx context.Context, sctx sessionctx.Context) {
 	e.taskList = make(chan slowLogTask, 1)
+	e.wg.Add(1)
 	go e.parseDataForSlowLog(ctx, sctx)
 }
 
