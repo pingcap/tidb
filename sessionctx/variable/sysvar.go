@@ -1781,7 +1781,7 @@ var defaultSysVars = []*SysVar{
 		s.EnableStableResultMode = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBKeepPruningConds, Value: BoolToOnOff(DefTiDBKeepPruningConds), Hidden: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBKeepPrunedConds, Value: BoolToOnOff(DefTiDBKeepPrunedConds), Hidden: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.KeepPrunedConds = TiDBOptOn(val)
 		return nil
 	}},
