@@ -7811,6 +7811,7 @@ func (s *testSuite) TestOOMActionPriority(c *C) {
 	tk.MustExec("create table t4(a int)")
 	tk.MustExec("insert into t4 values(1)")
 	tk.MustQuery("select * from t0 join t1 join t2 join t3 join t4 order by t0.a").Check(testkit.Rows("1 1 1 1 1"))
+<<<<<<< HEAD
 	action := tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest()
 	// check the first 5 actions is rate limit.
 	for i := 0; i < 5; i++ {
@@ -7877,6 +7878,11 @@ func (s *testSuite) TestIssue9918(c *C) {
 	tk.MustExec("create table t (a year)")
 	tk.MustExec("insert into t values(0)")
 	tk.MustQuery("select cast(a as char) from t").Check(testkit.Rows("0000"))
+=======
+	action := tk.Session().GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest(true)
+	// All actions are finished and removed.
+	require.Equal(t, action.GetPriority(), int64(memory.DefLogPriority))
+>>>>>>> b5de819d0... util: fix memory.reArrangeFallback cpu usage (#30414)
 }
 
 func (s *testSuite) Test13004(c *C) {

@@ -126,10 +126,20 @@ func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
 }
 
 // GetFallbackForTest get the oom action used by test.
+<<<<<<< HEAD
 func (t *Tracker) GetFallbackForTest() ActionOnExceed {
 	t.actionMu.Lock()
 	defer t.actionMu.Unlock()
 	return t.actionMu.actionOnExceed
+=======
+func (t *Tracker) GetFallbackForTest(ignoreFinishedAction bool) ActionOnExceed {
+	t.actionMuForHardLimit.Lock()
+	defer t.actionMuForHardLimit.Unlock()
+	if t.actionMuForHardLimit.actionOnExceed != nil && t.actionMuForHardLimit.actionOnExceed.IsFinished() && ignoreFinishedAction {
+		t.actionMuForHardLimit.actionOnExceed = t.actionMuForHardLimit.actionOnExceed.GetFallback()
+	}
+	return t.actionMuForHardLimit.actionOnExceed
+>>>>>>> b5de819d0... util: fix memory.reArrangeFallback cpu usage (#30414)
 }
 
 // reArrangeFallback merge two action chains and rearrange them by priority in descending order.
@@ -277,6 +287,24 @@ func (t *Tracker) Consume(bytes int64) {
 			break
 		}
 	}
+<<<<<<< HEAD
+=======
+
+	tryAction := func(mu *actionMu, tracker *Tracker) {
+		mu.Lock()
+		defer mu.Unlock()
+		for mu.actionOnExceed != nil && mu.actionOnExceed.IsFinished() {
+			mu.actionOnExceed = mu.actionOnExceed.GetFallback()
+		}
+		if mu.actionOnExceed != nil {
+			mu.actionOnExceed.Action(tracker)
+		}
+	}
+
+	if bytes > 0 && rootExceedForSoftLimit != nil {
+		tryAction(&rootExceedForSoftLimit.actionMuForSoftLimit, rootExceedForSoftLimit)
+	}
+>>>>>>> b5de819d0... util: fix memory.reArrangeFallback cpu usage (#30414)
 	if bytes > 0 && rootExceed != nil {
 		rootExceed.actionMu.Lock()
 		defer rootExceed.actionMu.Unlock()
