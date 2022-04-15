@@ -642,9 +642,9 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 }
 
 func (e *SimpleExec) executeSavepoint(ctx context.Context, s *ast.SavepointStmt) error {
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	if !e.ctx.GetSessionVars().InTxn() {
-		logutil.BgLogger().Info("SAVEPOINT in auto-commit transaction, ignored.", zap.String("name", s.Name))
+	sessVars := e.ctx.GetSessionVars()
+	txnCtx := sessVars.TxnCtx
+	if !sessVars.InTxn() {
 		return nil
 	}
 	txn, err := e.ctx.Txn(true)
@@ -757,7 +757,10 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	if err != nil {
 		return err
 	}
-	if s.SavepointName != "" && txn.Valid() {
+	if s.SavepointName != "" {
+		if !txn.Valid() {
+			return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.SavepointName)
+		}
 		for idx, sp := range sessVars.TxnCtx.Savepoints {
 			if s.SavepointName == sp.Name {
 				txn.GetMemBuffer().RevertToCheckpoint(sp.Cp)

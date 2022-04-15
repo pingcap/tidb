@@ -264,6 +264,13 @@ func TestTxnSavepoint(t *testing.T) {
 		result []string
 		err    string
 	}{
+		// execute savepoint not in transaction
+		{sql: "commit"},
+		{sql: "savepoint s1"},
+		{sql: "insert into t values (3, 3)"},
+		{sql: "rollback to s1", err: "[executor:1305]SAVEPOINT s1 does not exist"},
+		{sql: "delete from t"},
+
 		{sql: "begin"},
 		{sql: "insert into t values (1, 1), (2, 2)"},
 		{sql: "savepoint s1"},
@@ -282,15 +289,27 @@ func TestTxnSavepoint(t *testing.T) {
 		{sql: "select * from t order by id", result: []string{"1 1", "2 2"}},
 		{sql: "commit"},
 		{sql: "select * from t order by id", result: []string{"1 1", "2 2"}},
+
+		{sql: "begin"},
+		{sql: "insert into t values (1, 1), (3, 3) on duplicate key update a=a+1"},
+		{sql: "select * from t order by id", result: []string{"1 2", "2 2", "3 3"}},
+		{sql: "savepoint s1"},
+		{sql: "update t set a=a+1 where id in (1, 2)"},
+		{sql: "rollback to s1"},
+		{sql: "insert into t values (4, 4)"},
+		{sql: "commit"},
+		{sql: "select * from t order by id", result: []string{"1 2", "2 2", "3 3", "4 4"}},
+
 	}
-	for _, ca := range cases {
+	for idx, ca := range cases {
+		comment := fmt.Sprintf("idx: %v, %#v", idx, ca)
 		if ca.result == nil {
 			if ca.err == "" {
 				tk.MustExec(ca.sql)
 			} else {
 				err := tk.ExecToErr(ca.sql)
-				require.Error(t, err)
-				require.Equal(t, ca.err, err.Error())
+				require.Error(t, err, comment)
+				require.Equal(t, ca.err, err.Error(), comment)
 			}
 		} else {
 			tk.MustQuery(ca.sql).Check(testkit.Rows(ca.result...))
