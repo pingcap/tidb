@@ -387,15 +387,6 @@ func (s *streamMgr) getGlobalCheckPointTs(ctx context.Context, ti *stream.Task) 
 	return checkPointTs, nil
 }
 
-func (s *streamMgr) getTS(ctx context.Context) (uint64, error) {
-	p, l, err := s.mgr.GetPDClient().GetTS(ctx)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-
-	return oracle.ComposeTS(p, l), nil
-}
-
 func (s *streamMgr) buildObserveRanges(ctx context.Context) ([]kv.KeyRange, error) {
 	dRanges, err := stream.BuildObserveDataRanges(
 		s.mgr.GetStorage(),

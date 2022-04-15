@@ -30,7 +30,7 @@ import (
 const WildCard = "*"
 
 type TaskStatus struct {
-	// Info is the stream task infomation.
+	// Info is the stream task information.
 	Info backuppb.StreamBackupTaskInfo
 	// paused checks whether the task is paused.
 	paused bool
@@ -76,9 +76,9 @@ func statusErr(message string) string {
 
 func colorfulStatusString(paused bool) string {
 	// Maybe we need 3 kinds of status: ERROR/NORMAL/PAUSE.
-	// And should return "ERROR" when find error infomation in PD.
+	// And should return "ERROR" when find error information in PD.
 	if paused {
-		statusOK("PAUSE")
+		return statusOK("PAUSE")
 	}
 	return statusOK("NORMAL")
 }
@@ -295,7 +295,7 @@ func (ctl *StatusController) fillTask(ctx context.Context, task Task) (TaskStatu
 	}
 
 	if s.paused, err = task.IsPaused(ctx); err != nil {
-		return s, errors.Annotatef(err, "failed to get pause status of task %s", &s.Info.Name)
+		return s, errors.Annotatef(err, "failed to get pause status of task %s", s.Info.Name)
 	}
 
 	if s.Progress, err = task.NextBackupTSList(ctx); err != nil {
