@@ -76,7 +76,7 @@ func TestCancelRenameIndex(t *testing.T) {
 	var checkErr error
 	hook := &ddl.TestDDLCallback{Do: dom}
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if job.Type == model.ActionRenameIndex && job.State == model.JobStateNone {
+		if job.Type == model.ActionRenameIndex && job.State == model.JobStateQueueing {
 			jobIDs := []int64{job.ID}
 			hookCtx := mock.NewContext()
 			hookCtx.Store = store

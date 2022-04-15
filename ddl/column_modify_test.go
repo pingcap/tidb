@@ -457,7 +457,7 @@ func TestCancelDropColumn(t *testing.T) {
 		JobSchemaState model.SchemaState
 		cancelSucc     bool
 	}{
-		{true, model.JobStateNone, model.StateNone, true},
+		{true, model.JobStateQueueing, model.StateNone, true},
 		{false, model.JobStateRunning, model.StateWriteOnly, false},
 		{true, model.JobStateRunning, model.StateDeleteOnly, false},
 		{true, model.JobStateRunning, model.StateDeleteReorganization, false},
@@ -561,7 +561,7 @@ func TestCancelDropColumns(t *testing.T) {
 		JobSchemaState model.SchemaState
 		cancelSucc     bool
 	}{
-		{true, model.JobStateNone, model.StateNone, true},
+		{true, model.JobStateQueueing, model.StateNone, true},
 		{false, model.JobStateRunning, model.StateWriteOnly, false},
 		{true, model.JobStateRunning, model.StateDeleteOnly, false},
 		{true, model.JobStateRunning, model.StateDeleteReorganization, false},

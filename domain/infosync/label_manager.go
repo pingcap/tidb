@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/util/pdapi"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 // LabelRuleManager manages label rules
@@ -35,7 +36,7 @@ type LabelRuleManager interface {
 
 // PDLabelManager manages rules with pd
 type PDLabelManager struct {
-	addrs []string
+	etcdCli *clientv3.Client
 }
 
 // PutLabelRule implements PutLabelRule
@@ -44,7 +45,7 @@ func (lm *PDLabelManager) PutLabelRule(ctx context.Context, rule *label.Rule) er
 	if err != nil {
 		return err
 	}
-	_, err = doRequest(ctx, lm.addrs, path.Join(pdapi.Config, "region-label", "rule"), "POST", bytes.NewReader(r))
+	_, err = doRequest(ctx, "PutLabelRule", lm.etcdCli.Endpoints(), path.Join(pdapi.Config, "region-label", "rule"), "POST", bytes.NewReader(r))
 	return err
 }
 
@@ -55,14 +56,14 @@ func (lm *PDLabelManager) UpdateLabelRules(ctx context.Context, patch *label.Rul
 		return err
 	}
 
-	_, err = doRequest(ctx, lm.addrs, path.Join(pdapi.Config, "region-label", "rules"), "PATCH", bytes.NewReader(r))
+	_, err = doRequest(ctx, "UpdateLabelRules", lm.etcdCli.Endpoints(), path.Join(pdapi.Config, "region-label", "rules"), "PATCH", bytes.NewReader(r))
 	return err
 }
 
 // GetAllLabelRules implements GetAllLabelRules
 func (lm *PDLabelManager) GetAllLabelRules(ctx context.Context) ([]*label.Rule, error) {
 	var rules []*label.Rule
-	res, err := doRequest(ctx, lm.addrs, path.Join(pdapi.Config, "region-label", "rules"), "GET", nil)
+	res, err := doRequest(ctx, "GetAllLabelRules", lm.etcdCli.Endpoints(), path.Join(pdapi.Config, "region-label", "rules"), "GET", nil)
 
 	if err == nil && res != nil {
 		err = json.Unmarshal(res, &rules)
@@ -78,7 +79,7 @@ func (lm *PDLabelManager) GetLabelRules(ctx context.Context, ruleIDs []string) (
 	}
 
 	rules := []*label.Rule{}
-	res, err := doRequest(ctx, lm.addrs, path.Join(pdapi.Config, "region-label", "rules", "ids"), "GET", bytes.NewReader(ids))
+	res, err := doRequest(ctx, "GetLabelRules", lm.etcdCli.Endpoints(), path.Join(pdapi.Config, "region-label", "rules", "ids"), "GET", bytes.NewReader(ids))
 
 	if err == nil && res != nil {
 		err = json.Unmarshal(res, &rules)

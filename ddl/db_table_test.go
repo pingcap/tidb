@@ -60,12 +60,12 @@ func TestCancelDropTableAndSchema(t *testing.T) {
 	}{
 		// Check drop table.
 		// model.JobStateNone means the jobs is canceled before the first run.
-		{true, model.ActionDropTable, model.JobStateNone, model.StateNone, true},
+		{true, model.ActionDropTable, model.JobStateQueueing, model.StateNone, true},
 		{false, model.ActionDropTable, model.JobStateRunning, model.StateWriteOnly, false},
 		{true, model.ActionDropTable, model.JobStateRunning, model.StateDeleteOnly, false},
 
 		// Check drop database.
-		{true, model.ActionDropSchema, model.JobStateNone, model.StateNone, true},
+		{true, model.ActionDropSchema, model.JobStateQueueing, model.StateNone, true},
 		{false, model.ActionDropSchema, model.JobStateRunning, model.StateWriteOnly, false},
 		{true, model.ActionDropSchema, model.JobStateRunning, model.StateDeleteOnly, false},
 	}
@@ -444,8 +444,8 @@ func TestCancelAddTableAndDropTablePartition(t *testing.T) {
 		JobSchemaState model.SchemaState
 		cancelSucc     bool
 	}{
-		{model.ActionAddTablePartition, model.JobStateNone, model.StateNone, true},
-		{model.ActionDropTablePartition, model.JobStateNone, model.StateNone, true},
+		{model.ActionAddTablePartition, model.JobStateQueueing, model.StateNone, true},
+		{model.ActionDropTablePartition, model.JobStateQueueing, model.StateNone, true},
 		// Add table partition now can be cancelled in ReplicaOnly state.
 		{model.ActionAddTablePartition, model.JobStateRunning, model.StateReplicaOnly, true},
 	}
