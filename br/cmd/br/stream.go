@@ -50,8 +50,8 @@ func NewStreamCommand() *cobra.Command {
 		newStreamTruncateCommand(),
 	)
 	command.SetHelpFunc(func(command *cobra.Command, strings []string) {
-		task.HiddenFlagsForStream(command.Parent().PersistentFlags())
-		command.Parent().HelpFunc()(command, strings)
+		task.HiddenFlagsForStream(command.Root().PersistentFlags())
+		command.Root().HelpFunc()(command, strings)
 	})
 
 	return command
