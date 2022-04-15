@@ -1670,6 +1670,10 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 	if execOption.AnalyzeVer != 0 {
 		s.sessionVars.AnalyzeVersion = execOption.AnalyzeVer
 	}
+	prePruneMode := s.sessionVars.PartitionPruneMode.Load()
+	if len(execOption.PartitionPruneMode) > 0 {
+		s.sessionVars.PartitionPruneMode.Store(execOption.PartitionPruneMode)
+	}
 	prevSQL := s.sessionVars.StmtCtx.OriginalSQL
 	prevStmtType := s.sessionVars.StmtCtx.StmtType
 	prevTables := s.sessionVars.StmtCtx.Tables
@@ -1679,6 +1683,7 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 			logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
 		}
 		s.sessionVars.SnapshotInfoschema = nil
+		s.sessionVars.PartitionPruneMode.Store(prePruneMode)
 		s.sessionVars.StmtCtx.OriginalSQL = prevSQL
 		s.sessionVars.StmtCtx.StmtType = prevStmtType
 		s.sessionVars.StmtCtx.Tables = prevTables
@@ -1700,7 +1705,6 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 	if ok := s.sessionVars.OptimizerUseInvisibleIndexes; ok {
 		se.sessionVars.OptimizerUseInvisibleIndexes = true
 	}
-	prePruneMode := se.sessionVars.PartitionPruneMode.Load()
 
 	if execOption.SnapshotTS != 0 {
 		se.sessionVars.SnapshotInfoschema, err = getSnapshotInfoSchema(s, execOption.SnapshotTS)
@@ -1717,8 +1721,10 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 		se.sessionVars.AnalyzeVersion = execOption.AnalyzeVer
 	}
 
-	// for analyze stmt we need let worker session follow user session that executing stmt.
-	se.sessionVars.PartitionPruneMode.Store(s.sessionVars.PartitionPruneMode.Load())
+	prePruneMode := se.sessionVars.PartitionPruneMode.Load()
+	if len(execOption.PartitionPruneMode) > 0 {
+		se.sessionVars.PartitionPruneMode.Store(execOption.PartitionPruneMode)
+	}
 
 	// Put the internal session to the map of SessionManager
 	infosync.StoreInternalSession(se)
@@ -2061,10 +2067,11 @@ func resetCTEStorageMap(se *session) error {
 		return errors.New("type assertion for CTEStorageMap failed")
 	}
 	for _, v := range storageMap {
-		// No need to lock IterInTbl.
 		v.ResTbl.Lock()
-		defer v.ResTbl.Unlock()
 		err1 := v.ResTbl.DerefAndClose()
+		// Make sure we do not hold the lock for longer than necessary.
+		v.ResTbl.Unlock()
+		// No need to lock IterInTbl.
 		err2 := v.IterInTbl.DerefAndClose()
 		if err1 != nil {
 			return err1
@@ -3305,7 +3312,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 				tblInfo, _ := is.TableByID(physicalTableID)
 				tableName = tblInfo.Meta().Name.String()
 			}
-			bundle, ok := is.BundleByName(placement.GroupID(physicalTableID))
+			bundle, ok := is.PlacementBundleByPhysicalTableID(physicalTableID)
 			if !ok {
 				errMsg := fmt.Sprintf("table %v doesn't have placement policies with txn_scope %v",
 					tableName, txnScope)
