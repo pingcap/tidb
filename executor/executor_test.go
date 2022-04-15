@@ -3294,17 +3294,9 @@ func TestOOMActionPriority(t *testing.T) {
 	tk.MustExec("create table t4(a int)")
 	tk.MustExec("insert into t4 values(1)")
 	tk.MustQuery("select * from t0 join t1 join t2 join t3 join t4 order by t0.a").Check(testkit.Rows("1 1 1 1 1"))
-	action := tk.Session().GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest()
-	// check the first 5 actions is rate limit.
-	for i := 0; i < 5; i++ {
-		require.Equal(t, int64(memory.DefRateLimitPriority), action.GetPriority())
-		action = action.GetFallback()
-	}
-	for action.GetFallback() != nil {
-		require.Equal(t, int64(memory.DefSpillPriority), action.GetPriority())
-		action = action.GetFallback()
-	}
-	require.Equal(t, int64(memory.DefLogPriority), action.GetPriority())
+	action := tk.Session().GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest(true)
+	// All actions are finished and removed.
+	require.Equal(t, action.GetPriority(), int64(memory.DefLogPriority))
 }
 
 func TestTrackAggMemoryUsage(t *testing.T) {
