@@ -134,9 +134,34 @@ func (s *testSuite) TestOOMAction(c *C) {
 	c.Assert(action2.called, IsFalse)
 	c.Assert(action3.called, IsFalse)
 	tracker.Consume(20)
+<<<<<<< HEAD
 	c.Assert(action1.called, IsTrue)
 	c.Assert(action2.called, IsTrue) // SoftLimit fallback
 	c.Assert(action3.called, IsTrue) // HardLimit
+=======
+	require.True(t, action1.called)
+	require.True(t, action2.called) // SoftLimit fallback
+	require.True(t, action3.called) // HardLimit
+
+	// test fallback
+	action1 = &mockAction{}
+	action2 = &mockAction{}
+	action3 = &mockAction{}
+	action4 := &mockAction{}
+	action5 := &mockAction{}
+	tracker.SetActionOnExceed(action1)
+	tracker.FallbackOldAndSetNewAction(action2)
+	tracker.FallbackOldAndSetNewAction(action3)
+	tracker.FallbackOldAndSetNewAction(action4)
+	tracker.FallbackOldAndSetNewAction(action5)
+	require.Equal(t, action1, tracker.actionMuForHardLimit.actionOnExceed)
+	require.Equal(t, action2, tracker.actionMuForHardLimit.actionOnExceed.GetFallback())
+	action2.SetFinished()
+	require.Equal(t, action3, tracker.actionMuForHardLimit.actionOnExceed.GetFallback())
+	action3.SetFinished()
+	action4.SetFinished()
+	require.Equal(t, action5, tracker.actionMuForHardLimit.actionOnExceed.GetFallback())
+>>>>>>> b5de819d0... util: fix memory.reArrangeFallback cpu usage (#30414)
 }
 
 type mockAction struct {
