@@ -23,8 +23,9 @@ const (
 	preUpdateServiceSafePointFactor = 3
 	checkGCSafePointGapTime         = 5 * time.Second
 	// DefaultBRGCSafePointTTL means PD keep safePoint limit at least 5min.
-	DefaultBRGCSafePointTTL     = 5 * 60
-	DefaultStreamGCSafePointTTL = 10 * 60
+	DefaultBRGCSafePointTTL = 5 * 60
+	// DefaultStreamGCSafePointTTL specifies Keeping the GC safePoint at list 24h.
+	DefaultStreamGCSafePointTTL = 24 * 3600
 )
 
 // BRServiceSafePoint is metadata of service safe point from a BR 'instance'.

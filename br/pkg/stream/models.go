@@ -69,7 +69,7 @@ func encodeUint64(num uint64) []byte {
 }
 
 // CheckpointOf returns the checkpoint prefix of some store.
-// Normally it would be <prefix>/checkpoint/
+// Normally it would be <prefix>/checkpoint/<task-name>/.
 func CheckPointsOf(task string) string {
 	buf := bytes.NewBuffer(nil)
 	buf.WriteString(strings.TrimSuffix(path.Join(streamKeyPrefix, taskCheckpointPath, task), "/"))
@@ -78,7 +78,7 @@ func CheckPointsOf(task string) string {
 }
 
 // CheckpointOf returns the checkpoint prefix of some store.
-// Normally it would be <prefix>/checkpoint/<store-id(binary-u64)>.
+// Normally it would be <prefix>/checkpoint/<task-name>/<store-id(binary-u64)>.
 func CheckPointOf(task string, store uint64) string {
 	buf := bytes.NewBuffer(nil)
 	buf.WriteString(strings.TrimSuffix(path.Join(streamKeyPrefix, taskCheckpointPath, task), "/"))
@@ -88,8 +88,9 @@ func CheckPointOf(task string, store uint64) string {
 }
 
 // Pause returns the path for pausing the task.
+// Normally it would be <prefix>/pause/<task-name>.
 func Pause(task string) string {
-	return path.Join(streamKeyPrefix, task, taskPausePath)
+	return path.Join(streamKeyPrefix, taskPausePath, task)
 }
 
 // Ranges is a vector of [start_key, end_key) pairs.

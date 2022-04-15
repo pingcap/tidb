@@ -106,6 +106,33 @@ func (c *MetaDataClient) GetTask(ctx context.Context, taskName string) (*Task, e
 	return task, nil
 }
 
+func (c *MetaDataClient) GetTaskWithPauseStatus(ctx context.Context, taskName string) (*Task, bool, error) {
+	resps, err := c.KV.Txn(ctx).
+		Then(
+			clientv3.OpGet(TaskOf(taskName)),
+			clientv3.OpGet(Pause(taskName)),
+		).Commit()
+	if err != nil {
+		return nil, false, errors.Annotatef(err, "failed to fetch task %s", taskName)
+	}
+
+	if len(resps.Responses) == 0 || len(resps.Responses[0].GetResponseRange().Kvs) == 0 {
+		return nil, false, errors.Annotatef(berrors.ErrPiTRTaskNotFound, "no such task %s", taskName)
+	}
+
+	var taskInfo backuppb.StreamBackupTaskInfo
+	err = proto.Unmarshal(resps.Responses[0].GetResponseRange().Kvs[0].Value, &taskInfo)
+	if err != nil {
+		return nil, false, errors.Annotatef(err, "invalid binary presentation of task info (name = %s)", taskName)
+	}
+
+	paused := false
+	if len(resps.Responses) > 1 && len(resps.Responses[1].GetResponseRange().Kvs) > 0 {
+		paused = true
+	}
+	return &Task{cli: c, Info: taskInfo}, paused, nil
+}
+
 // GetAllTasks get all of tasks from metadata storage.
 func (c *MetaDataClient) GetAllTasks(ctx context.Context) ([]Task, error) {
 	scanner := scanEtcdPrefix(c.Client, PrefixOfTask())
@@ -152,7 +179,7 @@ func (t *Task) Resume(ctx context.Context) error {
 	return t.cli.ResumeTask(ctx, t.Info.Name)
 }
 
-func (t *Task) Paused(ctx context.Context) (bool, error) {
+func (t *Task) IsPaused(ctx context.Context) (bool, error) {
 	resp, err := t.cli.KV.Get(ctx, Pause(t.Info.Name), clientv3.WithCountOnly())
 	if err != nil {
 		return false, errors.Annotatef(err, "failed to fetch the status of task %s", t.Info.Name)

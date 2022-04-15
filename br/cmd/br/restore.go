@@ -24,6 +24,12 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 		return errors.Trace(err)
 	}
 
+	if task.IsStreamRestore(cmdName) {
+		if err := cfg.ParseStreamRestoreFlags(command.Flags()); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	ctx := GetDefaultContext()
 	if cfg.EnableOpenTracing {
 		var store *appdash.MemoryStore

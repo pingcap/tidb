@@ -165,6 +165,21 @@ func DefineStreamRestoreFlags(command *cobra.Command) {
 		"fill it if want restore full backup before restore log.")
 }
 
+// ParseStreamRestoreFlags parses the `restore stream` flags from the flag set.
+func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
+	tsString, err := flags.GetString(FlagStreamRestoreTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.RestoreTS, err = ParseTSString(tsString); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.FullBackupStorage, err = flags.GetString(FlagStreamFullBackupStorage); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // ParseFromFlags parses the restore-related flags from the flag set.
 func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	var err error
@@ -200,16 +215,6 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	cfg.WithPlacementPolicy, err = flags.GetString(FlagWithPlacementPolicy)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagWithPlacementPolicy)
-	}
-	tsString, err := flags.GetString(FlagStreamRestoreTS)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if cfg.RestoreTS, err = ParseTSString(tsString); err != nil {
-		return errors.Trace(err)
-	}
-	if cfg.FullBackupStorage, err = flags.GetString(FlagStreamFullBackupStorage); err != nil {
-		return errors.Trace(err)
 	}
 	return nil
 }
@@ -306,13 +311,14 @@ func isFullRestore(cmdName string) bool {
 	return cmdName == FullRestoreCmd
 }
 
-func isStreamRestore(cmdName string) bool {
+// IsStreamRestore checks the command is `restore point`
+func IsStreamRestore(cmdName string) bool {
 	return cmdName == PointRestoreCmd
 }
 
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
-	if isStreamRestore(cmdName) {
+	if IsStreamRestore(cmdName) {
 		cfg.adjustRestoreConfigForStreamRestore()
 		return RunStreamRestore(c, g, cmdName, cfg)
 	}
