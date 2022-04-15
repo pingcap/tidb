@@ -240,7 +240,10 @@ func (r *RPCResult) Error() string {
 	if r.StoreError != nil {
 		return r.StoreError.GetMessage()
 	}
-	return "<no error>"
+	if r.ImportError != "" {
+		return r.ImportError
+	}
+	return "BUG(There is no error but reported as error)"
 }
 
 func (r *RPCResult) OK() bool {
