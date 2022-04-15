@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -232,7 +233,8 @@ type partialResult4MaxMinSet struct {
 
 type baseMaxMinAggFunc struct {
 	baseAggFunc
-	isMax bool
+	isMax    bool
+	collator collate.Collator
 }
 
 type maxMin4Int struct {
@@ -1485,7 +1487,7 @@ func (e *maxMin4Enum) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 			continue
 		}
 		en := d.GetMysqlEnum()
-		if e.isMax && en.Name > p.val.Name || !e.isMax && en.Name < p.val.Name {
+		if e.isMax && e.collator.Compare(en.Name, p.val.Name) > 0 || !e.isMax && e.collator.Compare(en.Name, p.val.Name) < 0 {
 			oldMem := len(p.val.Name)
 			newMem := len(en.Name)
 			memDelta += int64(newMem - oldMem)
@@ -1504,7 +1506,7 @@ func (e *maxMin4Enum) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 		*p2 = *p1
 		return 0, nil
 	}
-	if e.isMax && p1.val.Name > p2.val.Name || !e.isMax && p1.val.Name < p2.val.Name {
+	if e.isMax && e.collator.Compare(p1.val.Name, p2.val.Name) > 0 || !e.isMax && e.collator.Compare(p1.val.Name, p2.val.Name) < 0 {
 		p2.val, p2.isNull = p1.val, false
 	}
 	return 0, nil
@@ -1552,7 +1554,7 @@ func (e *maxMin4Set) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []
 			continue
 		}
 		s := d.GetMysqlSet()
-		if e.isMax && s.Name > p.val.Name || !e.isMax && s.Name < p.val.Name {
+		if e.isMax && e.collator.Compare(s.Name, p.val.Name) > 0 || !e.isMax && e.collator.Compare(s.Name, p.val.Name) < 0 {
 			oldMem := len(p.val.Name)
 			newMem := len(s.Name)
 			memDelta += int64(newMem - oldMem)
@@ -1571,7 +1573,7 @@ func (e *maxMin4Set) MergePartialResult(sctx sessionctx.Context, src, dst Partia
 		*p2 = *p1
 		return 0, nil
 	}
-	if e.isMax && p1.val.Name > p2.val.Name || !e.isMax && p1.val.Name < p2.val.Name {
+	if e.isMax && e.collator.Compare(p1.val.Name, p2.val.Name) > 0 || !e.isMax && e.collator.Compare(p1.val.Name, p2.val.Name) < 0 {
 		p2.val, p2.isNull = p1.val, false
 	}
 	return 0, nil
