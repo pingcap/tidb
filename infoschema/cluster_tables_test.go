@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mockstorage"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/set"
@@ -681,7 +680,6 @@ select * from t1;
 		config.StoreGlobalConfig(originCfg)
 		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
 	}()
-	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
 
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
 	checkFn := func(quota int) {
