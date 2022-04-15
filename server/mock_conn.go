@@ -54,7 +54,7 @@ func (mc *mockConn) HandleQuery(ctx context.Context, sql string) error {
 
 // Context implements MockConn.Context
 func (mc *mockConn) Context() *TiDBContext {
-	return mc.ctx
+	return mc.getCtx()
 }
 
 // Dispatch implements MockConn.Dispatch
@@ -95,7 +95,6 @@ func CreateMockConn(t *testing.T, store kv.Storage, server *Server) MockConn {
 
 	cc := &clientConn{
 		server:     server,
-		ctx:        tc,
 		salt:       []byte{},
 		collation:  mysql.DefaultCollationID,
 		alloc:      arena.NewAllocator(1024),
@@ -104,6 +103,7 @@ func CreateMockConn(t *testing.T, store kv.Storage, server *Server) MockConn {
 			bufWriter: bufio.NewWriter(bytes.NewBuffer(nil)),
 		},
 	}
+	cc.setCtx(tc)
 	return &mockConn{
 		clientConn: cc,
 		t:          t,

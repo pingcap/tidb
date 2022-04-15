@@ -170,19 +170,24 @@ func newClientConn(s *Server) *clientConn {
 // clientConn represents a connection between server and client, it maintains connection specific state,
 // handles client query.
 type clientConn struct {
-	pkt           *packetIO         // a helper to read and write data in packet format.
-	bufReadConn   *bufferedReadConn // a buffered-read net.Conn or buffered-read tls.Conn.
-	tlsConn       *tls.Conn         // TLS connection, nil if not TLS.
-	server        *Server           // a reference of server instance.
-	capability    uint32            // client capability affects the way server handles client request.
-	connectionID  uint64            // atomically allocated by a global variable, unique in process scope.
-	user          string            // user of the client.
-	dbname        string            // default database name.
-	salt          []byte            // random bytes used for authentication.
-	alloc         arena.Allocator   // an memory allocator for reducing memory allocation.
-	chunkAlloc    chunk.Allocator
-	lastPacket    []byte            // latest sql query string, currently used for logging error.
-	ctx           *TiDBContext      // an interface to execute sql statements.
+	pkt          *packetIO         // a helper to read and write data in packet format.
+	bufReadConn  *bufferedReadConn // a buffered-read net.Conn or buffered-read tls.Conn.
+	tlsConn      *tls.Conn         // TLS connection, nil if not TLS.
+	server       *Server           // a reference of server instance.
+	capability   uint32            // client capability affects the way server handles client request.
+	connectionID uint64            // atomically allocated by a global variable, unique in process scope.
+	user         string            // user of the client.
+	dbname       string            // default database name.
+	salt         []byte            // random bytes used for authentication.
+	alloc        arena.Allocator   // an memory allocator for reducing memory allocation.
+	chunkAlloc   chunk.Allocator
+	lastPacket   []byte // latest sql query string, currently used for logging error.
+	// ShowProcess() and mysql.ComChangeUser both visit this field, ShowProcess() read information through
+	// the TiDBContext and mysql.ComChangeUser re-create it, so a lock is required here.
+	ctx struct {
+		sync.RWMutex
+		*TiDBContext // an interface to execute sql statements.
+	}
 	attrs         map[string]string // attributes parsed from client handshake response, not used for now.
 	peerHost      string            // peer host
 	peerPort      string            // peer port
@@ -200,6 +205,18 @@ type clientConn struct {
 		sync.RWMutex
 		cancelFunc context.CancelFunc
 	}
+}
+
+func (cc *clientConn) getCtx() *TiDBContext {
+	cc.ctx.RLock()
+	defer cc.ctx.RUnlock()
+	return cc.ctx.TiDBContext
+}
+
+func (cc *clientConn) setCtx(ctx *TiDBContext) {
+	cc.ctx.Lock()
+	defer cc.ctx.Unlock()
+	cc.ctx.TiDBContext = ctx
 }
 
 func (cc *clientConn) String() string {
@@ -320,8 +337,8 @@ func closeConn(cc *clientConn, connections int) error {
 		err := cc.bufReadConn.Close()
 		terror.Log(err)
 	}
-	if cc.ctx != nil {
-		return cc.ctx.Close()
+	if ctx := cc.getCtx(); ctx != nil {
+		return ctx.Close()
 	}
 	return nil
 }
@@ -367,7 +384,7 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 	data = append(data, cc.salt[8:]...)
 	data = append(data, 0)
 	// auth-plugin name
-	if cc.ctx == nil {
+	if ctx := cc.getCtx(); ctx == nil {
 		if err := cc.openSession(); err != nil {
 			return err
 		}
@@ -384,7 +401,7 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 	if err = cc.ctx.Close(); err != nil {
 		return err
 	}
-	cc.ctx = nil
+	cc.setCtx(nil)
 
 	data = append(data, 0)
 	if err = cc.writePacket(data); err != nil {
@@ -794,11 +811,11 @@ func (cc *clientConn) openSession() error {
 		tlsState := cc.tlsConn.ConnectionState()
 		tlsStatePtr = &tlsState
 	}
-	var err error
-	cc.ctx, err = cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr)
+	ctx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr)
 	if err != nil {
 		return err
 	}
+	cc.setCtx(ctx)
 
 	err = cc.server.checkConnectionCount()
 	if err != nil {
@@ -809,7 +826,7 @@ func (cc *clientConn) openSession() error {
 
 func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) error {
 	// Open a context unless this was done before.
-	if cc.ctx == nil {
+	if ctx := cc.getCtx(); ctx == nil {
 		err := cc.openSession()
 		if err != nil {
 			return err
@@ -846,7 +863,7 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string) e
 // Check if the Authentication Plugin of the server, client and user configuration matches
 func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeResponse41) ([]byte, error) {
 	// Open a context unless this was done before.
-	if cc.ctx == nil {
+	if ctx := cc.getCtx(); ctx == nil {
 		err := cc.openSession()
 		if err != nil {
 			return nil, err
@@ -1109,16 +1126,16 @@ func (cc *clientConn) Run(ctx context.Context) {
 				logutil.Logger(ctx).Fatal("critical error, stop the server", zap.Error(err))
 			}
 			var txnMode string
-			if cc.ctx != nil {
-				txnMode = cc.ctx.GetSessionVars().GetReadableTxnMode()
+			if ctx := cc.getCtx(); ctx != nil {
+				txnMode = ctx.GetSessionVars().GetReadableTxnMode()
 			}
 			metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err)).Inc()
 			if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
 				logutil.Logger(ctx).Debug("Expected error for FOR UPDATE NOWAIT", zap.Error(err))
 			} else {
 				var startTS uint64
-				if cc.ctx != nil && cc.ctx.GetSessionVars() != nil && cc.ctx.GetSessionVars().TxnCtx != nil {
-					startTS = cc.ctx.GetSessionVars().TxnCtx.StartTS
+				if ctx := cc.getCtx(); ctx != nil && ctx.GetSessionVars() != nil && ctx.GetSessionVars().TxnCtx != nil {
+					startTS = ctx.GetSessionVars().TxnCtx.StartTS
 				}
 				logutil.Logger(ctx).Info("command dispatched failed",
 					zap.String("connInfo", cc.String()),
@@ -1295,8 +1312,8 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	token := cc.server.getToken()
 	defer func() {
 		// if handleChangeUser failed, cc.ctx may be nil
-		if cc.ctx != nil {
-			cc.ctx.SetProcessInfo("", t, mysql.ComSleep, 0)
+		if ctx := cc.getCtx(); ctx != nil {
+			ctx.SetProcessInfo("", t, mysql.ComSleep, 0)
 		}
 
 		cc.server.releaseToken(token)
@@ -1425,8 +1442,8 @@ func (cc *clientConn) useDB(ctx context.Context, db string) (err error) {
 func (cc *clientConn) flush(ctx context.Context) error {
 	defer func() {
 		trace.StartRegion(ctx, "FlushClientConn").End()
-		if cc.ctx != nil && cc.ctx.WarningCount() > 0 {
-			for _, err := range cc.ctx.GetWarnings() {
+		if ctx := cc.getCtx(); ctx != nil && ctx.WarningCount() > 0 {
+			for _, err := range ctx.GetWarnings() {
 				var warn *errors.Error
 				if ok := goerr.As(err.Err, &warn); ok {
 					code := uint16(warn.Code())
@@ -2364,10 +2381,11 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 		tlsState := cc.tlsConn.ConnectionState()
 		tlsStatePtr = &tlsState
 	}
-	cc.ctx, err = cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr)
+	tidbCtx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr)
 	if err != nil {
 		return err
 	}
+	cc.setCtx(tidbCtx)
 	if !cc.ctx.AuthWithoutVerification(user) {
 		return errors.New("Could not reset connection")
 	}
