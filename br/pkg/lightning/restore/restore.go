@@ -184,57 +184,7 @@ const (
 	diskQuotaStateIdle int32 = iota
 	diskQuotaStateChecking
 	diskQuotaStateImporting
-
-	diskQuotaMaxReaders = 1 << 30
 )
-
-// diskQuotaLock is essentially a read/write lock. The implement here is inspired by sync.RWMutex.
-// diskQuotaLock removed the unnecessary blocking `RLock` method and add a non-blocking `TryRLock` method.
-type diskQuotaLock struct {
-	w           sync.Mutex    // held if there are pending writers
-	writerSem   chan struct{} // semaphore for writers to wait for completing readers
-	readerCount atomic.Int32  // number of pending readers
-	readerWait  atomic.Int32  // number of departing readers
-}
-
-func newDiskQuotaLock() *diskQuotaLock {
-	return &diskQuotaLock{writerSem: make(chan struct{})}
-}
-
-func (d *diskQuotaLock) Lock() {
-	d.w.Lock()
-	// Announce to readers there is a pending writer.
-	r := d.readerCount.Sub(diskQuotaMaxReaders) + diskQuotaMaxReaders
-	if r != 0 && d.readerWait.Add(r) != 0 {
-		// Wait for active readers.
-		<-d.writerSem
-	}
-}
-
-func (d *diskQuotaLock) Unlock() {
-	d.readerCount.Add(diskQuotaMaxReaders)
-	d.w.Unlock()
-}
-
-func (d *diskQuotaLock) TryRLock() (locked bool) {
-	r := d.readerCount.Load()
-	for r >= 0 {
-		if d.readerCount.CAS(r, r+1) {
-			return true
-		}
-		r = d.readerCount.Load()
-	}
-	return false
-}
-
-func (d *diskQuotaLock) RUnlock() {
-	if d.readerCount.Dec() < 0 {
-		if d.readerWait.Dec() == 0 {
-			// The last reader unblocks the writer.
-			d.writerSem <- struct{}{}
-		}
-	}
-}
 
 type Controller struct {
 	cfg           *config.Config
@@ -267,7 +217,7 @@ type Controller struct {
 	errorMgr          *errormanager.ErrorManager
 	taskMgr           taskMetaMgr
 
-	diskQuotaLock  *diskQuotaLock
+	diskQuotaLock  *sync.RWMutex
 	diskQuotaState atomic.Int32
 	compactState   atomic.Int32
 	status         *LightningStatus
@@ -441,7 +391,7 @@ func NewRestoreControllerWithPauser(
 		ownStore:       p.OwnExtStorage,
 		metaMgrBuilder: metaBuilder,
 		errorMgr:       errorMgr,
-		diskQuotaLock:  newDiskQuotaLock(),
+		diskQuotaLock:  &sync.RWMutex{},
 		status:         p.Status,
 		taskMgr:        nil,
 	}
