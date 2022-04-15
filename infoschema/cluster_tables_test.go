@@ -30,6 +30,11 @@ import (
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
+>>>>>>> d7aea072d... executor: fix issue of query instance from CLUSTER_SLOW_QUERY return '' result (#33975)
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
@@ -210,6 +215,7 @@ func SubTestDataLockWaitsPrivilege(s *clusterTablesSuite) func(*testing.T) {
 	}
 }
 
+<<<<<<< HEAD
 func SubTestSelectClusterTable(s *clusterTablesSuite) func(*testing.T) {
 	return func(t *testing.T) {
 		tk := s.newTestKitWithRoot(t)
@@ -249,6 +255,65 @@ func SubTestSelectClusterTable(s *clusterTablesSuite) func(*testing.T) {
 			require.Equal(t, 0, len(re.Rows()))
 		}
 	}
+=======
+func TestSelectClusterTable(t *testing.T) {
+	// setup suite
+	var clean func()
+	s := new(clusterTablesSuite)
+	s.store, s.dom, clean = testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0")
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	slowLogFileName := "tidb-slow.log"
+	prepareSlowLogfile(t, slowLogFileName)
+	defer func() { require.NoError(t, os.Remove(slowLogFileName)) }()
+
+	tk.MustExec("use information_schema")
+	tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
+	tk.MustExec("set time_zone = '+08:00';")
+	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY`").Check(testkit.Rows("2"))
+	tk.MustQuery("select time from `CLUSTER_SLOW_QUERY` where time='2019-02-12 19:33:56.571953'").Check(testkit.RowsWithSep("|", "2019-02-12 19:33:56.571953"))
+	tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
+	// skip instance and host column because it now includes the TCP socket details (unstable)
+	tk.MustQuery("select id, user, db, command, time, state, info, digest, mem, disk, txnstart from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(fmt.Sprintf("1 root <nil> Query 9223372036 %s <nil>  0 0 ", "")))
+	tk.MustQuery("select query_time, conn_id from `CLUSTER_SLOW_QUERY` order by time limit 1").Check(testkit.Rows("4.895492 6"))
+	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1", "1"))
+	tk.MustQuery("select digest, count(*) from `CLUSTER_SLOW_QUERY` group by digest order by digest").Check(testkit.Rows("124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc 1", "42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
+	tk.MustQuery(`select length(query) as l,time from information_schema.cluster_slow_query where time > "2019-02-12 19:33:56" order by abs(l) desc limit 10;`).Check(testkit.Rows("21 2019-02-12 19:33:56.571953"))
+	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` where time > now() group by digest").Check(testkit.Rows())
+	re := tk.MustQuery("select * from `CLUSTER_statements_summary`")
+	require.NotNil(t, re)
+	require.Greater(t, len(re.Rows()), 0)
+	re = tk.MustQuery("select * from `CLUSTER_statements_summary` where table_names REGEXP '\\binformation_schema\\.'")
+	require.NotNil(t, re)
+	require.Equal(t, len(re.Rows()), 0)
+	re = tk.MustQuery("select * from `CLUSTER_statements_summary` where table_names REGEXP 'information_schema\\.'")
+	require.NotNil(t, re)
+	require.Greater(t, len(re.Rows()), 0)
+	// Test for TiDB issue 14915.
+	re = tk.MustQuery("select sum(exec_count*avg_mem) from cluster_statements_summary_history group by schema_name,digest,digest_text;")
+	require.NotNil(t, re)
+	require.Greater(t, len(re.Rows()), 0)
+	tk.MustQuery("select * from `CLUSTER_statements_summary_history`")
+	require.NotNil(t, re)
+	require.Greater(t, len(re.Rows()), 0)
+	tk.MustExec("set @@global.tidb_enable_stmt_summary=0")
+	re = tk.MustQuery("select * from `CLUSTER_statements_summary`")
+	require.NotNil(t, re)
+	require.Equal(t, 0, len(re.Rows()))
+	tk.MustQuery("select * from `CLUSTER_statements_summary_history`")
+	require.NotNil(t, re)
+	require.Equal(t, 0, len(re.Rows()))
+
+	// Test for https://github.com/pingcap/tidb/issues/33974
+	instanceAddr, err := infoschema.GetInstanceAddr(tk.Session())
+	require.NoError(t, err)
+	tk.MustQuery("select instance from `CLUSTER_SLOW_QUERY` where time='2019-02-12 19:33:56.571953'").Check(testkit.Rows(instanceAddr))
+>>>>>>> d7aea072d... executor: fix issue of query instance from CLUSTER_SLOW_QUERY return '' result (#33975)
 }
 
 func SubTestSelectClusterTablePrivilege(s *clusterTablesSuite) func(*testing.T) {
