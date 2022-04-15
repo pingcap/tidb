@@ -353,12 +353,11 @@ func TestMultiSchemaChangeRenameColumns(t *testing.T) {
 	hook1.OnJobRunBeforeExported = func(job *model.Job) {
 		assert.Equal(t, model.ActionMultiSchemaChange, job.Type)
 		if job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization {
-			newTk := testkit.NewTestKit(t, store)
-			rs, _ := newTk.Exec("select b from t")
-			assert.Equal(t, newTk.ResultSetToResult(rs, "").Rows()[0][0], "2")
+			rs, _ := tk.Exec("select b from t")
+			assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][0], "2")
 		}
 	}
-	dom.DDL().SetHook(hook)
+	dom.DDL().SetHook(hook1)
 	tk.MustExec("alter table t add column c int default 3, rename column b to d;")
 	dom.DDL().SetHook(originHook)
 	tk.MustQuery("select d from t").Check(testkit.Rows("2"))
@@ -366,17 +365,70 @@ func TestMultiSchemaChangeRenameColumns(t *testing.T) {
 }
 
 func TestMultiSchemaChangeAlterColumns(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	originHook := dom.DDL().GetHook()
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@global.tidb_enable_change_multi_schema = 1")
 
-	// Test alter and drop with same column
+	// unsupported ddl operations
+	{
+		// Test alter and drop with same column
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a int default 1, b int default 2);")
+		tk.MustExec("insert into t values ();")
+		tk.MustGetErrCode("alter table t alter column b set default 3, drop column b", errno.ErrUnsupportedDDLOperation)
+
+		// Test alter and rename with same column
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a int default 1, b int default 2);")
+		tk.MustExec("insert into t values ();")
+		tk.MustGetErrCode("alter table t alter column b set default 3, rename column b to c", errno.ErrUnsupportedDDLOperation)
+
+		// Test alter and drop modify same column
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a int default 1, b int default 2);")
+		tk.MustExec("insert into t values ();")
+		tk.MustGetErrCode("alter table t alter column b set default 3, modify column b double", errno.ErrUnsupportedDDLOperation)
+	}
+
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a int default 1, b int default 2);")
+	tk.MustExec("create table t (a int default 1, b int default 2, index t(a, b));")
 	tk.MustExec("insert into t values ();")
-	tk.MustGetErrCode("alter table t alter column b set default 3, drop column b", errno.ErrUnsupportedDDLOperation)
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
+	tk.MustExec("alter table t rename column a to c, alter column b set default 3;")
+	tk.MustExec("truncate table t;")
+	tk.MustExec("insert into t values ();")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 3"))
+
+	// Test cancel job with alter columns
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int default 1, b int default 2)")
+	hook := newCancelJobHook(store, dom, func(job *model.Job) bool {
+		// Cancel job when the column 'a' is in write-reorg.
+		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization
+	})
+	dom.DDL().SetHook(hook)
+	tk.MustGetErrCode("alter table t add column c int default 3, alter column b set default 3;", errno.ErrCancelledDDLJob)
+	dom.DDL().SetHook(originHook)
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
+
+	// Test dml stmts when do alter
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int default 1, b int default 2)")
+	hook1 := &ddl.TestDDLCallback{Do: dom}
+	hook1.OnJobRunBeforeExported = func(job *model.Job) {
+		assert.Equal(t, model.ActionMultiSchemaChange, job.Type)
+		if job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteOnly {
+			tk.Exec("insert into t values ()")
+		}
+	}
+	dom.DDL().SetHook(hook1)
+	tk.MustExec("alter table t add column c int default 3, alter column b set default 3;")
+	dom.DDL().SetHook(originHook)
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2 3"))
 }
 
 func TestMultiSchemaChangeChangeColumns(t *testing.T) {

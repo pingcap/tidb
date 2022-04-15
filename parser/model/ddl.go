@@ -260,10 +260,11 @@ type MultiSchemaInfo struct {
 	SubJobs    []*SubJob `json:"sub_jobs"`
 	Revertible bool      `json:"revertible"`
 
-	AddColumns  []CIStr `json:"-"`
-	DropColumns []CIStr `json:"-"`
-	AddIndexes  []CIStr `json:"-"`
-	DropIndexes []CIStr `json:"-"`
+	AddColumns    []CIStr `json:"-"`
+	DropColumns   []CIStr `json:"-"`
+	ModifyColumns []CIStr `json:"-"`
+	AddIndexes    []CIStr `json:"-"`
+	DropIndexes   []CIStr `json:"-"`
 
 	RelativeColumns []CIStr `json:"-"`
 }
