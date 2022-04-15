@@ -87,9 +87,7 @@ func (s *testChunkSuite) TestMutRow(c *check.C) {
 	c.Assert(chk.columns[0].data, check.BytesEquals, mutRow.c.columns[0].data)
 }
 
-func TestIssue29947(t *testing.T) {
-	t.Parallel()
-
+func (s *testChunkSuite) TestIssue29947(c *check.C) {
 	mutRow := MutRowFromTypes(allTypes)
 	nilDatum := types.NewDatum(nil)
 
@@ -101,12 +99,12 @@ func TestIssue29947(t *testing.T) {
 	}
 	for i, col := range mutRow.c.columns {
 		mutRow.SetDatum(i, nilDatum)
-		require.Equal(t, col.IsNull(0), true)
+		c.Assert(col.IsNull(0), check.IsTrue)
 		for _, off := range col.offsets {
-			require.Equal(t, off, int64(0))
+			c.Assert(off, check.Equals, int64(0))
 		}
-		require.Equal(t, col.data, dataBefore[i])
-		require.Equal(t, col.elemBuf, elemBufBefore[i])
+		c.Assert(col.data, check.Equals, dataBefore[i])
+		c.Assert(col.elemBuf, check.Equals, elemBufBefore[i])
 	}
 }
 
