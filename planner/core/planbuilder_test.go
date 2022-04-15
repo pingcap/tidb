@@ -289,7 +289,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 
 	// maxOneRow
 	maxOneRow := &PhysicalMaxOneRow{}
-	sel = sel.Init(ctx, stats, 0)
+	maxOneRow = maxOneRow.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(maxOneRow))
 
 	// projection
