@@ -272,6 +272,19 @@ func TestTxnSavepoint(t *testing.T) {
 		{sql: "delete from t"},
 
 		{sql: "begin"},
+		{sql: "release savepoint x", err: "[executor:1305]SAVEPOINT x does not exist"},
+		{sql: "savepoint s1"},
+		{sql: "savepoint s2"},
+		{sql: "savepoint s3"},
+		{sql: "savepoint s4"},
+		{sql: "release savepoint s1"},
+		{sql: "rollback to s1", err: "[executor:1305]SAVEPOINT s1 does not exist"},
+		{sql: "rollback to s2"},
+		{sql: "rollback to s3", err: "[executor:1305]SAVEPOINT s3 does not exist"},
+		{sql: "rollback to savepoint s4", err: "[executor:1305]SAVEPOINT s4 does not exist"},
+		{sql: "rollback"},
+
+		{sql: "begin"},
 		{sql: "insert into t values (1, 1), (2, 2)"},
 		{sql: "savepoint s1"},
 		{sql: "insert into t values (3, 3)"},
@@ -299,7 +312,6 @@ func TestTxnSavepoint(t *testing.T) {
 		{sql: "insert into t values (4, 4)"},
 		{sql: "commit"},
 		{sql: "select * from t order by id", result: []string{"1 2", "2 2", "3 3", "4 4"}},
-
 	}
 	for idx, ca := range cases {
 		comment := fmt.Sprintf("idx: %v, %#v", idx, ca)

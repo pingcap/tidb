@@ -910,6 +910,27 @@ func (n *SavepointStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// ReleaseSavepointStmt is the statement of RELEASE SAVEPOINT.
+type ReleaseSavepointStmt struct {
+	stmtNode
+
+	Name string
+}
+
+// Restore implements Node interface.
+func (n *ReleaseSavepointStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("RELEASE SAVEPOINT ")
+	ctx.WritePlain(n.Name)
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *ReleaseSavepointStmt) Accept(v Visitor) (Node, bool) {
+	newNode, _ := v.Enter(n)
+	n = newNode.(*ReleaseSavepointStmt)
+	return v.Leave(n)
+}
+
 // SetStmt is the statement to set variables.
 type SetStmt struct {
 	stmtNode

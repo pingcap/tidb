@@ -915,6 +915,7 @@ import (
 	RevokeStmt                 "Revoke statement"
 	RevokeRoleStmt             "Revoke role statement"
 	RollbackStmt               "ROLLBACK statement"
+	ReleaseSavepointStmt       "RELEASE SAVEPOINT statement"
 	SavepointStmt              "SAVEPOINT statement"
 	SplitRegionStmt            "Split index region statement"
 	SetStmt                    "Set variable statement"
@@ -4706,6 +4707,12 @@ SavepointStmt:
 		$$ = &ast.SavepointStmt{Name: $2}
 	}
 
+ReleaseSavepointStmt:
+	"RELEASE" "SAVEPOINT" Identifier
+	{
+		$$ = &ast.ReleaseSavepointStmt{Name: $3}
+	}
+
 /*******************************************************************
  * Backup / restore / import statements
  *
@@ -8068,6 +8075,10 @@ RollbackStmt:
 	{
 		$$ = &ast.RollbackStmt{SavepointName: $3}
 	}
+|	"ROLLBACK" "TO" "SAVEPOINT" Identifier
+	{
+		$$ = &ast.RollbackStmt{SavepointName: $4}
+	}
 
 CompletionTypeWithinTransaction:
 	"AND" "CHAIN" "NO" "RELEASE"
@@ -11048,6 +11059,7 @@ Statement:
 |	RenameUserStmt
 |	ReplaceIntoStmt
 |	RecoverTableStmt
+|	ReleaseSavepointStmt
 |	ResumeImportStmt
 |	RevokeStmt
 |	RevokeRoleStmt
@@ -11111,6 +11123,7 @@ TraceableStmt:
 |	BeginTransactionStmt
 |	CommitStmt
 |	SavepointStmt
+|	ReleaseSavepointStmt
 |	RollbackStmt
 |	SetStmt
 

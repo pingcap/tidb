@@ -134,7 +134,9 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	case *ast.CommitStmt:
 		e.executeCommit(x)
 	case *ast.SavepointStmt:
-		err = e.executeSavepoint(ctx, x)
+		err = e.executeSavepoint(x)
+	case *ast.ReleaseSavepointStmt:
+		err = e.executeReleaseSavepoint(x)
 	case *ast.RollbackStmt:
 		err = e.executeRollback(x)
 	case *ast.CreateUserStmt:
@@ -641,7 +643,7 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) executeSavepoint(ctx context.Context, s *ast.SavepointStmt) error {
+func (e *SimpleExec) executeSavepoint(s *ast.SavepointStmt) error {
 	sessVars := e.ctx.GetSessionVars()
 	txnCtx := sessVars.TxnCtx
 	if !sessVars.InTxn() {
@@ -655,6 +657,27 @@ func (e *SimpleExec) executeSavepoint(ctx context.Context, s *ast.SavepointStmt)
 	memBuffer := txn.GetMemBuffer()
 	cp := memBuffer.Checkpoint()
 	txnCtx.Savepoints = append(txnCtx.Savepoints, variable.SavepointRecord{Name: s.Name, Cp: cp})
+	return nil
+}
+
+func (e *SimpleExec) executeReleaseSavepoint(s *ast.ReleaseSavepointStmt) error {
+	sessVars := e.ctx.GetSessionVars()
+	txnCtx := sessVars.TxnCtx
+	idx := -1
+	for i, sp := range txnCtx.Savepoints {
+		if sp.Name == s.Name {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.Name)
+	}
+	length := len(txnCtx.Savepoints)
+	for i := idx; i < length-1; i++ {
+		txnCtx.Savepoints[i] = txnCtx.Savepoints[i+1]
+	}
+	txnCtx.Savepoints = txnCtx.Savepoints[:length-1]
 	return nil
 }
 

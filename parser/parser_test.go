@@ -545,7 +545,10 @@ func TestDMLStmt(t *testing.T) {
 			SELECT * from tmp;
 		ROLLBACK;`, true, "START TRANSACTION; INSERT INTO `tmp` SELECT * FROM `bar`; SELECT * FROM `tmp`; ROLLBACK"},
 		{"SAVEPOINT x", true, "SAVEPOINT x"},
+		{"RELEASE SAVEPOINT x", true, "RELEASE SAVEPOINT x"},
 		{"ROLLBACK TO x", true, "ROLLBACK TO x"},
+		{"ROLLBACK TO x", true, "ROLLBACK TO x"},
+		{"ROLLBACK TO SAVEPOINT x", true, "ROLLBACK TO x"},
 
 		// table statement
 		{"TABLE t", true, "TABLE `t`"},
