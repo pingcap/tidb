@@ -872,7 +872,7 @@ type SessionVars struct {
 	EnableStableResultMode bool
 
 	// KeepPrunedConds indicates whether to keep the pruning conditions after partition pruning.
-	KeepPruningConds bool
+	KeepPrunedConds bool
 
 	// LocalTemporaryTables is *infoschema.LocalTemporaryTables, use interface to avoid circle dependency.
 	// It's nil if there is no local temporary table.
