@@ -11,6 +11,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -116,6 +117,7 @@ func (push *pushDown) pushBackup(
 		close(push.respCh)
 	}()
 
+	regionErrorIngestedOnce := false
 	for {
 		select {
 		case respAndStore, ok := <-push.respCh:
@@ -138,6 +140,21 @@ func (push *pushDown) pushBackup(
 				resp.Error = &backuppb.Error{
 					Msg: msg,
 				}
+			})
+			failpoint.Inject("tikv-region-error", func(val failpoint.Value) {
+				if !regionErrorIngestedOnce {
+					msg := val.(string)
+					logutil.CL(ctx).Debug("failpoint tikv-regionh-error injected.", zap.String("msg", msg))
+					resp.Error = &backuppb.Error{
+						// Msg: msg,
+						Detail: &backuppb.Error_RegionError{
+							RegionError: &errorpb.Error{
+								Message: msg,
+							},
+						},
+					}
+				}
+				regionErrorIngestedOnce = true
 			})
 			if resp.GetError() == nil {
 				// None error means range has been backuped successfully.

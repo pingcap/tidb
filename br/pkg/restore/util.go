@@ -361,15 +361,16 @@ func SplitRanges(
 	ranges []rtree.Range,
 	rewriteRules *RewriteRules,
 	updateCh glue.Progress,
+	isRawKv bool,
 ) error {
 	start := time.Now()
 	defer func() {
 		elapsed := time.Since(start)
 		summary.CollectDuration("split region", elapsed)
 	}()
-	splitter := NewRegionSplitter(NewSplitClient(client.GetPDClient(), client.GetTLSConfig()))
+	splitter := NewRegionSplitter(NewSplitClient(client.GetPDClient(), client.GetTLSConfig(), isRawKv))
 
-	return splitter.Split(ctx, ranges, rewriteRules, func(keys [][]byte) {
+	return splitter.Split(ctx, ranges, rewriteRules, isRawKv, func(keys [][]byte) {
 		for range keys {
 			updateCh.Inc()
 		}
