@@ -52,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
-	"github.com/tikv/client-go/v2/oracle"
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
 )
@@ -133,7 +132,6 @@ func (r *retryInfoAutoIDs) getCurrent() (int64, bool) {
 // TransactionContext is used to store variables that has transaction scope.
 type TransactionContext struct {
 	forUpdateTS uint64
-	stmtFuture  oracle.Future
 	Binlog      interface{}
 	InfoSchema  interface{}
 	History     interface{}
@@ -183,9 +181,6 @@ type TransactionContext struct {
 
 	// CachedTables is not nil if the transaction write on cached table.
 	CachedTables map[int64]interface{}
-
-	// Last ts used by read-consistency read.
-	LastRcReadTs uint64
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.
@@ -304,16 +299,6 @@ func (tc *TransactionContext) SetForUpdateTS(forUpdateTS uint64) {
 	if forUpdateTS > tc.forUpdateTS {
 		tc.forUpdateTS = forUpdateTS
 	}
-}
-
-// SetStmtFutureForRC sets the stmtFuture .
-func (tc *TransactionContext) SetStmtFutureForRC(future oracle.Future) {
-	tc.stmtFuture = future
-}
-
-// GetStmtFutureForRC gets the stmtFuture.
-func (tc *TransactionContext) GetStmtFutureForRC() oracle.Future {
-	return tc.stmtFuture
 }
 
 // WriteStmtBufs can be used by insert/replace/delete/update statement.

@@ -42,6 +42,8 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/readcommitted"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -636,7 +638,15 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	if s.CausalConsistencyOnly {
 		txn.SetOption(kv.GuaranteeLinearizability, false)
 	}
-	return nil
+
+	var txnCtxProvider sessiontxn.TxnContextProvider
+	if e.ctx.GetSessionVars().IsPessimisticReadConsistency() {
+		txnCtxProvider = readcommitted.NewRCTxnContextProvider(e.ctx)
+	} else {
+		txnCtxProvider = &sessiontxn.SimpleTxnContextProvider{Sctx: e.ctx}
+	}
+
+	return sessiontxn.GetTxnManager(e.ctx).SetContextProvider(txnCtxProvider)
 }
 
 func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStmt) error {

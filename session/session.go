@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/readcommitted"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/helper"
@@ -1093,7 +1094,11 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			}
 			_, digest := s.sessionVars.StmtCtx.SQLDigest()
 			s.txn.onStmtStart(digest.String())
-			_, err = st.Exec(ctx)
+			err = sessiontxn.GetTxnManager(s).OnStmtStart(ctx)
+			if err == nil {
+				_, err = st.Exec(ctx)
+			}
+
 			s.txn.onStmtEnd()
 			if err != nil {
 				s.StmtRollback()
@@ -1840,6 +1845,10 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	s.txn.onStmtStart(digest.String())
 	defer s.txn.onStmtEnd()
 
+	if err := sessiontxn.GetTxnManager(s).OnStmtStart(ctx); err != nil {
+		return nil, err
+	}
+
 	failpoint.Inject("mockStmtSlow", func(val failpoint.Value) {
 		if strings.Contains(stmtNode.Text(), "/* sleep */") {
 			v, _ := val.(int)
@@ -2102,7 +2111,16 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	if err = s.PrepareTxnCtx(ctx); err != nil {
 		return
 	}
-	s.PrepareTSFuture(ctx)
+
+	txnManager := sessiontxn.GetTxnManager(s)
+	if err = txnManager.OnStmtStart(ctx); err != nil {
+		return
+	}
+
+	if err = sessiontxn.AdviseTxnWarmUp(s); err != nil {
+		return
+	}
+
 	prepareExec := executor.NewPrepareExec(s, sql)
 	err = prepareExec.Next(ctx, nil)
 	if err != nil {
@@ -2209,13 +2227,17 @@ func (s *session) cachedPlanExec(ctx context.Context,
 		resultSet, err = stmt.PointGet(ctx, is)
 		s.txn.changeToInvalid()
 	case *plannercore.Update:
-		s.PrepareTSFuture(ctx)
+		if err = sessiontxn.AdviseTxnWarmUp(s); err != nil {
+			return nil, err
+		}
 		stmtCtx.Priority = kv.PriorityHigh
 		resultSet, err = runStmt(ctx, s, stmt)
 	case nil:
 		// cache is invalid
 		if prepareStmt.ForUpdateRead {
-			s.PrepareTSFuture(ctx)
+			if err = sessiontxn.AdviseTxnWarmUp(s); err != nil {
+				return nil, err
+			}
 		}
 		resultSet, err = runStmt(ctx, s, stmt)
 	default:
@@ -2283,6 +2305,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		return nil, errors.Errorf("invalid CachedPrepareStmt type")
 	}
 
+	txnManager := sessiontxn.GetTxnManager(s)
 	var is infoschema.InfoSchema
 	var snapshotTS uint64
 	replicaReadScope := oracle.GlobalTxnScope
@@ -2292,29 +2315,15 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		return nil, err
 	}
 
+	staleness := false
 	if staleReadProcessor.IsStaleness() {
+		staleness = true
 		snapshotTS = staleReadProcessor.GetStalenessReadTS()
 		is = staleReadProcessor.GetStalenessInfoSchema()
 		replicaReadScope = config.GetTxnScopeFromConfig()
-	} else if preparedStmt.ForUpdateRead {
-		is = domain.GetDomain(s).InfoSchema()
-	} else {
-		is = s.GetInfoSchema().(infoschema.InfoSchema)
-	}
-
-	var txnCtxProvider sessiontxn.TxnContextProvider
-	staleness := snapshotTS > 0
-	if staleness {
-		txnCtxProvider = staleread.NewStalenessTxnContextProvider(is, snapshotTS)
-	} else {
-		txnCtxProvider = &sessiontxn.SimpleTxnContextProvider{
-			InfoSchema: is,
+		if err = txnManager.SetContextProvider(staleread.NewStalenessTxnContextProvider(is, snapshotTS)); err != nil {
+			return nil, err
 		}
-	}
-
-	txnManager := sessiontxn.GetTxnManager(s)
-	if err = txnManager.SetContextProvider(txnCtxProvider); err != nil {
-		return nil, err
 	}
 
 	executor.CountStmtNode(preparedStmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)
@@ -2324,6 +2333,16 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	}
 	s.txn.onStmtStart(preparedStmt.SQLDigest.String())
 	defer s.txn.onStmtEnd()
+
+	if err := txnManager.OnStmtStart(ctx); err != nil {
+		return nil, err
+	}
+
+	if preparedStmt.ForUpdateRead {
+		if p, isOK := txnManager.GetContextProvider().(*sessiontxn.SimpleTxnContextProvider); isOK {
+			p.InfoSchema = is
+		}
+	}
 
 	if ok {
 		return s.cachedPlanExec(ctx, txnManager.GetTxnInfoSchema(), stmtID, preparedStmt, replicaReadScope, args)
@@ -2458,6 +2477,9 @@ func (s *session) NewTxn(ctx context.Context) error {
 		TxnScope:    s.sessionVars.CheckAndGetTxnScope(),
 	}
 	s.txn.SetOption(kv.SnapInterceptor, s.getSnapshotInterceptor())
+	if s.sessionVars.IsPessimisticReadConsistency() {
+
+	}
 	return nil
 }
 
@@ -3103,9 +3125,16 @@ func (s *session) PrepareTxnCtx(ctx context.Context) error {
 		}
 	}
 
-	txnCtxProvider := &sessiontxn.SimpleTxnContextProvider{
-		InfoSchema: is.(infoschema.InfoSchema),
+	var txnCtxProvider sessiontxn.TxnContextProvider
+	if !s.sessionVars.IsPessimisticReadConsistency() {
+		txnCtxProvider = readcommitted.NewRCTxnContextProvider(s)
+	} else {
+		txnCtxProvider = &sessiontxn.SimpleTxnContextProvider{
+			Sctx:       s,
+			InfoSchema: is.(infoschema.InfoSchema),
+		}
 	}
+
 	return sessiontxn.GetTxnManager(s).SetContextProvider(txnCtxProvider)
 }
 
@@ -3128,14 +3157,6 @@ func (s *session) PrepareTSFuture(ctx context.Context) {
 		// Prepare the transaction future if the transaction is invalid (at the beginning of the transaction).
 		txnFuture := s.getTxnFuture(ctx)
 		s.txn.changeInvalidToPending(txnFuture)
-	} else if s.txn.Valid() && s.GetSessionVars().IsPessimisticReadConsistency() {
-		// Prepare the statement future if the transaction is valid in RC transactions.
-		// If the `RCCheckTS` is used, try to use the last valid ts to read.
-		if s.GetSessionVars().StmtCtx.RCCheckTS {
-			s.GetSessionVars().TxnCtx.SetStmtFutureForRC(nil)
-		} else {
-			s.GetSessionVars().TxnCtx.SetStmtFutureForRC(s.getTxnFuture(ctx).future)
-		}
 	}
 }
 

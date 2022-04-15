@@ -77,7 +77,12 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		}
 	})
 
-	is := sessiontxn.GetTxnManager(c.Ctx).GetTxnInfoSchema()
+	txnManager := sessiontxn.GetTxnManager(c.Ctx)
+	if err = txnManager.OnStmtStart(ctx); err != nil {
+		return nil, err
+	}
+
+	is := txnManager.GetTxnInfoSchema()
 	finalPlan, names, err := planner.Optimize(ctx, c.Ctx, stmtNode, is)
 	if err != nil {
 		return nil, err

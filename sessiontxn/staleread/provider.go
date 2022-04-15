@@ -15,9 +15,11 @@
 package staleread
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessiontxn"
 )
 
 // StalenessTxnContextProvider implements sessiontxn.TxnContextProvider
@@ -34,11 +36,6 @@ func NewStalenessTxnContextProvider(is infoschema.InfoSchema, ts uint64) *Stalen
 	}
 }
 
-// Initialize the provider with session context
-func (p *StalenessTxnContextProvider) Initialize(_ sessionctx.Context) error {
-	return nil
-}
-
 // GetTxnInfoSchema returns the information schema used by txn
 func (p *StalenessTxnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 	return p.is
@@ -52,4 +49,19 @@ func (p *StalenessTxnContextProvider) GetReadTS() (uint64, error) {
 // GetForUpdateTS will return an error because stale read does not support it
 func (p *StalenessTxnContextProvider) GetForUpdateTS() (uint64, error) {
 	return 0, errors.New("GetForUpdateTS not supported for stalenessTxnProvider")
+}
+
+// OnStmtStart is the hook that should be called when a new statement started
+func (p *StalenessTxnContextProvider) OnStmtStart(_ context.Context) error {
+	return nil
+}
+
+// OnStmtRetry is the hook that should be called when a statement is retrying
+func (p *StalenessTxnContextProvider) OnStmtRetry() error {
+	return nil
+}
+
+// Advise implements `TxnContextProvider.Advise`
+func (p *StalenessTxnContextProvider) Advise(_ sessiontxn.AdviceOption, _ ...interface{}) error {
+	return nil
 }

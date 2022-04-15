@@ -747,7 +747,6 @@ func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
 	}
 	seCtx.GetSessionVars().TxnCtx.SetForUpdateTS(newForUpdateTS)
 	txn.SetOption(kv.SnapshotTS, seCtx.GetSessionVars().TxnCtx.GetForUpdateTS())
-	seCtx.GetSessionVars().TxnCtx.LastRcReadTs = newForUpdateTS
 	return nil
 }
 
@@ -805,6 +804,11 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	if err != nil {
 		return nil, err
 	}
+
+	if err = sessiontxn.GetTxnManager(a.Ctx).OnStmtRetry(); err != nil {
+		return nil, err
+	}
+
 	e, err := a.buildExecutor()
 	if err != nil {
 		return nil, err

@@ -15,6 +15,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 
 	"github.com/pingcap/tidb/infoschema"
@@ -75,4 +76,26 @@ func (m *txnManager) GetContextProvider() sessiontxn.TxnContextProvider {
 func (m *txnManager) SetContextProvider(provider sessiontxn.TxnContextProvider) error {
 	m.ctxProvider = provider
 	return nil
+}
+
+func (m *txnManager) OnStmtStart(ctx context.Context) error {
+	if m.ctxProvider == nil {
+		return errors.New("context provider not set")
+	}
+	return m.ctxProvider.OnStmtStart(ctx)
+}
+
+func (m *txnManager) OnStmtRetry() error {
+	if m.ctxProvider == nil {
+		return errors.New("context provider not set")
+	}
+	return m.ctxProvider.OnStmtRetry()
+}
+
+func (m *txnManager) Advise(opt sessiontxn.AdviceOption, val ...interface{}) error {
+	if m.ctxProvider == nil {
+		return errors.New("context provider not set")
+	}
+
+	return m.ctxProvider.Advise(opt, val)
 }

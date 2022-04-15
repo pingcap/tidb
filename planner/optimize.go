@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
@@ -143,12 +144,17 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 		if fp != nil {
 			if !useMaxTS(sctx, fp) {
-				sctx.PrepareTSFuture(ctx)
+				if err := sessiontxn.AdviseTxnWarmUp(sctx); err != nil {
+					return nil, nil, err
+				}
 			}
 			return fp, fp.OutputNames(), nil
 		}
 	}
-	sctx.PrepareTSFuture(ctx)
+
+	if err := sessiontxn.AdviseTxnWarmUp(sctx); err != nil {
+		return nil, nil, err
+	}
 
 	useBinding := sessVars.UsePlanBaselines
 	stmtNode, ok := node.(ast.StmtNode)
