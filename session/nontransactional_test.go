@@ -87,7 +87,7 @@ func TestNonTransactionalDeleteErrorMessage(t *testing.T) {
 	defer failpoint.Disable("github.com/pingcap/tidb/session/splitDeleteError")
 	rows := tk.MustQuery("split on a limit 3 delete from t").Rows()
 	require.Equal(t, 1, len(rows))
-	require.Equal(t, rows[0][2].(string), "Early return: error occurred in the first job: injected split delete error")
+	require.Equal(t, rows[0][2].(string), "Early return: error occurred in the first job. All jobs are canceled: injected split delete error")
 }
 
 func TestNonTransactionalDeleteSplitOnTiDBRowID(t *testing.T) {
