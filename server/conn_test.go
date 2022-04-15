@@ -23,6 +23,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -151,7 +152,17 @@ func TestIssue33699(t *testing.T) {
 	for _, ck := range checks {
 		tk.MustQuery(ck.toGetSessionVar()).Check(testkit.Rows(ck.setVal))
 	}
+	// check for issue-33892: maybe trigger panic when ChangeUser before fix.
+	running := true
+	go func() {
+		for running {
+			cc.ctx.ShowProcess()
+		}
+	}()
+	time.Sleep(time.Millisecond)
 	doChangeUser()
+	running = false
+	time.Sleep(time.Millisecond)
 	require.NotEqual(t, ctx, cc.ctx)
 	require.NotEqual(t, ctx.Session, cc.ctx.Session)
 	// new session,so values is defaults;
