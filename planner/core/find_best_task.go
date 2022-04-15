@@ -318,7 +318,7 @@ func getTaskPlanCost(t task) (float64, error) {
 	case *mppTask:
 		taskType = property.MppTaskType
 	default:
-		panic("TODO")
+		return 0, errors.New("unknown task type")
 	}
 	return t.plan().CalPlanCost(taskType)
 }
