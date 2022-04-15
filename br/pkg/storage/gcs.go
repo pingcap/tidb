@@ -180,11 +180,6 @@ func (s *gcsStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 		opt = &WalkOption{}
 	}
 
-	maxKeys := int64(1000)
-	if opt.ListCount > 0 {
-		maxKeys = opt.ListCount
-	}
-
 	prefix := path.Join(s.gcs.Prefix, opt.SubDir)
 	if len(prefix) > 0 && !strings.HasSuffix(prefix, "/") {
 		prefix += "/"
@@ -194,7 +189,7 @@ func (s *gcsStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(strin
 	// only need each object's name and size
 	query.SetAttrSelection([]string{"Name", "Size"})
 	iter := s.bucket.Objects(ctx, query)
-	for i := int64(0); i != maxKeys; i++ {
+	for {
 		attrs, err := iter.Next()
 		if err == iterator.Done {
 			break
@@ -280,14 +275,6 @@ func newGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 		// This is a old bug, but we must make it compatible.
 		// so we need find sst in slash directory
 		gcs.Prefix += "//"
-	}
-	// TODO remove it after BR remove cfg skip-check-path
-	if !opts.SkipCheckPath {
-		// check bucket exists
-		_, err = bucket.Attrs(ctx)
-		if err != nil {
-			return nil, errors.Annotatef(err, "gcs://%s/%s", gcs.Bucket, gcs.Prefix)
-		}
 	}
 	return &gcsStorage{gcs: gcs, bucket: bucket}, nil
 }
