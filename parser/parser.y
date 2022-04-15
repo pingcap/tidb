@@ -839,7 +839,7 @@ import (
 	NowSymOptionFractionParentheses "NowSym with optional fraction part within potential parentheses"
 	CharsetNameOrDefault            "Character set name or default"
 	NextValueForSequence            "Default nextval expression"
-	BuiltinFunction                 "Default builtin functions"
+	BuiltinFunction                 "Default builtin functions for columns"
 	FunctionNameSequence            "Function with sequence function call"
 	WindowFuncCall                  "WINDOW function call"
 	RepeatableOpt                   "Repeatable optional in sample clause"
