@@ -71,6 +71,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"go.uber.org/zap"
 )
 
@@ -2333,10 +2334,11 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 type dataLockWaitsTableRetriever struct {
 	dummyCloser
 	batchRetrieverHelper
-	table       *model.TableInfo
-	columns     []*model.ColumnInfo
-	lockWaits   []*deadlock.WaitForEntry
-	initialized bool
+	table          *model.TableInfo
+	columns        []*model.ColumnInfo
+	lockWaits      []*deadlock.WaitForEntry
+	resolvingLocks []txnlock.ResolvingLock
+	initialized    bool
 }
 
 func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -2352,12 +2354,14 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 		r.initialized = true
 		var err error
 		r.lockWaits, err = sctx.GetStore().GetLockWaits()
+		tikvStore, _ := sctx.GetStore().(helper.Storage)
+		r.resolvingLocks = tikvStore.GetLockResolver().Resolving()
 		if err != nil {
 			r.retrieved = true
 			return nil, err
 		}
 
-		r.batchRetrieverHelper.totalRows = len(r.lockWaits)
+		r.batchRetrieverHelper.totalRows = len(r.lockWaits) + len(r.resolvingLocks)
 		r.batchRetrieverHelper.batchSize = 1024
 	}
 
@@ -2388,6 +2392,7 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 					digests[i] = hex.EncodeToString(digest)
 				}
 			}
+			// todo: support resourcegrouptag for resolvingLocks
 		}
 
 		// Fetch the SQL Texts of the digests above if necessary.
@@ -2407,7 +2412,25 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 
 		// Calculate rows.
 		res = make([][]types.Datum, 0, end-start)
-		for rowIdx, lockWait := range r.lockWaits[start:end] {
+		var lockWaitsStart int
+		var lockWaitsEnd int
+		var resolvingStart int
+		var resolvingEnd int
+		if start < len(r.lockWaits) {
+			lockWaitsStart = start
+			resolvingStart = 0
+		} else {
+			lockWaitsStart = len(r.lockWaits)
+			resolvingStart = start - len(r.lockWaits)
+		}
+		if end < len(r.lockWaits) {
+			lockWaitsEnd = end
+			resolvingEnd = 0
+		} else {
+			lockWaitsEnd = len(r.lockWaits)
+			resolvingEnd = end - len(r.lockWaits)
+		}
+		for rowIdx, lockWait := range r.lockWaits[lockWaitsStart:lockWaitsEnd] {
 			row := make([]types.Datum, 0, len(r.columns))
 
 			for _, col := range r.columns {
@@ -2454,7 +2477,45 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 
 			res = append(res, row)
 		}
+		for _, resolving := range r.resolvingLocks[resolvingStart:resolvingEnd] {
+			row := make([]types.Datum, 0, len(r.columns))
 
+			for _, col := range r.columns {
+				switch col.Name.O {
+				case infoschema.DataLockWaitsColumnKey:
+					row = append(row, types.NewDatum(strings.ToUpper(hex.EncodeToString(resolving.Key))))
+				case infoschema.DataLockWaitsColumnKeyInfo:
+					infoSchema := sctx.GetInfoSchema().(infoschema.InfoSchema)
+					var decodedKeyStr interface{} = nil
+					decodedKey, err := keydecoder.DecodeKey(resolving.Key, infoSchema)
+					if err == nil {
+						decodedKeyBytes, err := json.Marshal(decodedKey)
+						if err != nil {
+							logutil.BgLogger().Warn("marshal decoded key info to JSON failed", zap.Error(err))
+						} else {
+							decodedKeyStr = string(decodedKeyBytes)
+						}
+					} else {
+						logutil.BgLogger().Warn("decode key failed", zap.Error(err))
+					}
+					row = append(row, types.NewDatum(decodedKeyStr))
+				case infoschema.DataLockWaitsColumnTrxID:
+					row = append(row, types.NewDatum(resolving.TxnID))
+				case infoschema.DataLockWaitsColumnCurrentHoldingTrxID:
+					row = append(row, types.NewDatum(resolving.LockTxnID))
+				case infoschema.DataLockWaitsColumnSQLDigest:
+					// todo: support resourcegrouptag for resolvingLocks
+					row = append(row, types.NewDatum(nil))
+				case infoschema.DataLockWaitsColumnSQLDigestText:
+					// todo: support resourcegrouptag for resolvingLocks
+					row = append(row, types.NewDatum(nil))
+				default:
+					row = append(row, types.NewDatum(nil))
+				}
+			}
+
+			res = append(res, row)
+		}
 		return nil
 	})
 
