@@ -205,7 +205,7 @@ func (r *RPCResult) StrategyForRetry() retryStrategy {
 }
 
 func (r *RPCResult) StrategyForRetryStoreError() retryStrategy {
-	if r.StoreError == nil {
+	if r.StoreError == nil && r.ImportError == "" {
 		return giveUp
 	}
 

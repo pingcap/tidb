@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"strconv"
+	"strings"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
@@ -81,6 +83,14 @@ func (c *MetaDataClient) ResumeTask(ctx context.Context, taskName string) error 
 	_, err := c.KV.Delete(ctx, Pause(taskName))
 	if err != nil {
 		return errors.Annotatef(err, "failed to resume task %s", taskName)
+	}
+	return nil
+}
+
+func (c *MetaDataClient) CleanLastErrorOfTask(ctx context.Context, taskName string) error {
+	_, err := c.KV.Delete(ctx, LastErrorPrefixOf(taskName))
+	if err != nil {
+		return errors.Annotatef(err, "failed to clean last error of task %s", taskName)
 	}
 	return nil
 }
@@ -264,4 +274,26 @@ func (t *Task) Step(ctx context.Context, store uint64, ts uint64) error {
 		return errors.Annotatef(err, "failed forward the progress of %s to %d", t.Info.Name, ts)
 	}
 	return nil
+}
+
+func (t *Task) LastError(ctx context.Context) (map[uint64]backuppb.StreamBackupError, error) {
+	storeToError := map[uint64]backuppb.StreamBackupError{}
+	prefix := LastErrorPrefixOf(t.Info.Name)
+	result, err := t.cli.Get(ctx, prefix, clientv3.WithPrefix())
+	if err != nil {
+		return nil, errors.Annotatef(err, "failed to get the last error for task %s", t.Info.GetName())
+	}
+	for _, r := range result.Kvs {
+		storeIDStr := strings.TrimPrefix(string(r.Key), prefix)
+		storeID, err := strconv.ParseUint(storeIDStr, 10, 64)
+		if err != nil {
+			return nil, errors.Annotatef(err, "failed to parse the store ID string %s", storeIDStr)
+		}
+		var lastErr backuppb.StreamBackupError
+		if err := proto.Unmarshal(r.Value, &lastErr); err != nil {
+			return nil, errors.Annotatef(err, "failed to parse wire encoding for store %d", storeID)
+		}
+		storeToError[storeID] = lastErr
+	}
+	return storeToError, nil
 }

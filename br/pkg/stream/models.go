@@ -24,6 +24,7 @@ const (
 	taskCheckpointPath = "/checkpoint"
 	taskRangesPath     = "/ranges"
 	taskPausePath      = "/pause"
+	taskLastErrorPath  = "/last-error"
 )
 
 var (
@@ -91,6 +92,11 @@ func CheckPointOf(task string, store uint64) string {
 // Normally it would be <prefix>/pause/<task-name>.
 func Pause(task string) string {
 	return path.Join(streamKeyPrefix, taskPausePath, task)
+}
+
+// LastErrorPrefixOf make the prefix for searching last error by some task.
+func LastErrorPrefixOf(task string) string {
+	return strings.TrimSuffix(path.Join(streamKeyPrefix, taskLastErrorPath, task), "/") + "/"
 }
 
 // Ranges is a vector of [start_key, end_key) pairs.
