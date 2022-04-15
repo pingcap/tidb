@@ -3782,6 +3782,21 @@ func (s *testSessionSuite2) TestSetEnableRateLimitAction(c *C) {
 	// assert default value
 	result := tk.MustQuery("select @@tidb_enable_rate_limit_action;")
 	result.Check(testkit.Rows("1"))
+<<<<<<< HEAD
+=======
+	tk.MustExec("use test")
+	tk.MustExec("create table tmp123(id int)")
+	tk.MustQuery("select * from tmp123;")
+	haveRateLimitAction := false
+	action := tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest(false)
+	for ; action != nil; action = action.GetFallback() {
+		if action.GetPriority() == memory.DefRateLimitPriority {
+			haveRateLimitAction = true
+			break
+		}
+	}
+	c.Assert(haveRateLimitAction, IsTrue)
+>>>>>>> b5de819d0... util: fix memory.reArrangeFallback cpu usage (#30414)
 
 	// assert set sys variable
 	tk.MustExec("set global tidb_enable_rate_limit_action= '0';")
@@ -3792,6 +3807,19 @@ func (s *testSessionSuite2) TestSetEnableRateLimitAction(c *C) {
 	tk.Se = se
 	result = tk.MustQuery("select @@tidb_enable_rate_limit_action;")
 	result.Check(testkit.Rows("0"))
+<<<<<<< HEAD
+=======
+
+	haveRateLimitAction = false
+	action = tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest(false)
+	for ; action != nil; action = action.GetFallback() {
+		if action.GetPriority() == memory.DefRateLimitPriority {
+			haveRateLimitAction = true
+			break
+		}
+	}
+	c.Assert(haveRateLimitAction, IsFalse)
+>>>>>>> b5de819d0... util: fix memory.reArrangeFallback cpu usage (#30414)
 }
 
 func (s *testSessionSuite3) TestSetVarHint(c *C) {
