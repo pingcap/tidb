@@ -100,6 +100,7 @@ func NewRestoreClient(
 	store kv.Storage,
 	tlsConf *tls.Config,
 	keepaliveConf keepalive.ClientParameters,
+	isRawKv bool,
 ) (*Client, error) {
 	db, err := NewDB(g, store)
 	if err != nil {
@@ -118,7 +119,7 @@ func NewRestoreClient(
 
 	return &Client{
 		pdClient:      pdClient,
-		toolClient:    NewSplitClient(pdClient, tlsConf),
+		toolClient:    NewSplitClient(pdClient, tlsConf, isRawKv),
 		db:            db,
 		tlsConf:       tlsConf,
 		keepaliveConf: keepaliveConf,
@@ -194,7 +195,7 @@ func (rc *Client) InitBackupMeta(c context.Context, backupMeta *backuppb.BackupM
 	rc.backupMeta = backupMeta
 	log.Info("load backupmeta", zap.Int("databases", len(rc.databases)), zap.Int("jobs", len(rc.ddlJobs)))
 
-	metaClient := NewSplitClient(rc.pdClient, rc.tlsConf)
+	metaClient := NewSplitClient(rc.pdClient, rc.tlsConf, rc.backupMeta.IsRawKv)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, rc.backupMeta.IsRawKv, rc.rateLimit)
 	return rc.fileImporter.CheckMultiIngestSupport(c, rc.pdClient)
