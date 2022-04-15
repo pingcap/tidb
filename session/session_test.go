@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
@@ -3790,46 +3789,21 @@ func (s *testSessionSerialSuite) TestGlobalAndLocalTxn(c *C) {
 	}
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set global tidb_enable_local_txn = on;")
-	tk.MustExec("drop table if exists t1;")
-	defer tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("drop placement policy if exists p2")
+	tk.MustExec("create placement policy p1 leader_constraints='[+zone=dc-1]'")
+	tk.MustExec("create placement policy p2 leader_constraints='[+zone=dc-2]'")
 	tk.MustExec(`create table t1 (c int)
 PARTITION BY RANGE (c) (
-	PARTITION p0 VALUES LESS THAN (100),
-	PARTITION p1 VALUES LESS THAN (200)
+	PARTITION p0 VALUES LESS THAN (100) placement policy p1,
+	PARTITION p1 VALUES LESS THAN (200) placement policy p2
 );`)
-	// Config the Placement Rules
-	is := s.dom.InfoSchema()
-	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
-	setBundle := func(parName, dc string) {
-		pid, err := tables.FindPartitionByName(tb.Meta(), parName)
-		c.Assert(err, IsNil)
-		groupID := placement.GroupID(pid)
-		is.SetBundle(&placement.Bundle{
-			ID: groupID,
-			Rules: []*placement.Rule{
-				{
-					GroupID: groupID,
-					Role:    placement.Leader,
-					Count:   1,
-					Constraints: []placement.Constraint{
-						{
-							Key:    placement.DCLabelKey,
-							Op:     placement.In,
-							Values: []string{dc},
-						},
-						{
-							Key:    placement.EngineLabelKey,
-							Op:     placement.NotIn,
-							Values: []string{placement.EngineLabelTiFlash},
-						},
-					},
-				},
-			},
-		})
-	}
-	setBundle("p0", "dc-1")
-	setBundle("p1", "dc-2")
+	defer func() {
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("drop placement policy if exists p1")
+		tk.MustExec("drop placement policy if exists p2")
+	}()
 
 	// set txn_scope to global
 	tk.MustExec(fmt.Sprintf("set @@session.txn_scope = '%s';", kv.GlobalTxnScope))
