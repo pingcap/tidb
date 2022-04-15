@@ -581,6 +581,7 @@ const (
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
 
+    // TiDBKeepPrunedConds indicates whether to keep the pruning conditions after partition pruning.
 	TiDBKeepPrunedConds = "tidb_keep_pruned_conds"
 )
 
