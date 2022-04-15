@@ -3965,7 +3965,7 @@ func (s *testSessionSuite2) TestSetEnableRateLimitAction(c *C) {
 	tk.MustExec("create table tmp123(id int)")
 	tk.MustQuery("select * from tmp123;")
 	haveRateLimitAction := false
-	action := tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest()
+	action := tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest(false)
 	for ; action != nil; action = action.GetFallback() {
 		if action.GetPriority() == memory.DefRateLimitPriority {
 			haveRateLimitAction = true
@@ -3985,7 +3985,7 @@ func (s *testSessionSuite2) TestSetEnableRateLimitAction(c *C) {
 	result.Check(testkit.Rows("0"))
 
 	haveRateLimitAction = false
-	action = tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest()
+	action = tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest(false)
 	for ; action != nil; action = action.GetFallback() {
 		if action.GetPriority() == memory.DefRateLimitPriority {
 			haveRateLimitAction = true
