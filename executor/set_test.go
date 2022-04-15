@@ -526,7 +526,7 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery(`select @@global.tidb_keep_pruned_conds`).Check(testkit.Rows("1"))
 	tk.MustExec(`set global tidb_keep_pruned_conds = 0`)
 	tk.MustQuery(`select @@global.tidb_keep_pruned_conds`).Check(testkit.Rows("0"))
-	tk.MustExec(`set tidb_keep_pruning_conds=1`)
+	tk.MustExec(`set tidb_keep_pruned_conds=1`)
 	tk.MustQuery(`select @@global.tidb_keep_pruned_conds`).Check(testkit.Rows("0"))
 	tk.MustQuery(`select @@tidb_keep_pruned_conds`).Check(testkit.Rows("1"))
 
