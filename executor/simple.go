@@ -757,15 +757,15 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	if err != nil {
 		return err
 	}
-	if s.SavepointName != "" && txn.Valid(){
-		for _, sp := range e.ctx.GetSessionVars().TxnCtx.Savepoints {
+	if s.SavepointName != "" && txn.Valid() {
+		for idx, sp := range sessVars.TxnCtx.Savepoints {
 			if s.SavepointName == sp.Name {
 				txn.GetMemBuffer().RevertToCheckpoint(sp.Cp)
-				logutil.BgLogger().Info(fmt.Sprintf("Rollbacked to savepoint %s", sp.Name))
+				sessVars.TxnCtx.Savepoints = sessVars.TxnCtx.Savepoints[:idx+1]
 				return nil
 			}
 		}
-		return errors.New("Cannot find the savepoint")
+		return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.SavepointName)
 	}
 
 	sessVars.SetInTxn(false)

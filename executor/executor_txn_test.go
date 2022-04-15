@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestInvalidReadTemporaryTable(t *testing.T) {
@@ -261,24 +262,36 @@ func TestTxnSavepoint(t *testing.T) {
 	cases := []struct {
 		sql    string
 		result []string
+		err    string
 	}{
-		{"begin", nil},
-		{"insert into t values (1, 1), (2, 2)", nil},
-		{"savepoint s1", nil},
-		{"insert into t values (3, 3)", nil},
-		{"savepoint s2", nil},
-		{"select * from t order by id", []string{"1 1", "2 2", "3 3"}},
-		{"rollback to s1", nil},
-		{"select * from t order by id", []string{"1 1", "2 2"}},
-		//{"insert into t values (3, 4), (4, 4)",nil},
-		//{"select * from t order by id",[]string{"1 1","2 2", "3 4", "4 4"}},
-		//{"rollback to s1",nil},
-		//{"insert into t values (3, 5)",nil},
-		//{"select * from t order by id",[]string{"1 1","2 2", "3 5"}},
+		{sql: "begin"},
+		{sql: "insert into t values (1, 1), (2, 2)"},
+		{sql: "savepoint s1"},
+		{sql: "insert into t values (3, 3)"},
+		{sql: "savepoint s2"},
+		{sql: "select * from t order by id", result: []string{"1 1", "2 2", "3 3"}},
+		{sql: "rollback to s1"},
+		{sql: "select * from t order by id", result: []string{"1 1", "2 2"}},
+		{sql: "insert into t values (3, 4), (4, 4)"},
+		{sql: "select * from t order by id", result: []string{"1 1", "2 2", "3 4", "4 4"}},
+		{sql: "rollback to s1"},
+		{sql: "insert into t values (3, 5)"},
+		{sql: "select * from t order by id", result: []string{"1 1", "2 2", "3 5"}},
+		{sql: "rollback to s2", err: "[executor:1305]SAVEPOINT s2 does not exist"},
+		{sql: "rollback to s1"},
+		{sql: "select * from t order by id", result: []string{"1 1", "2 2"}},
+		{sql: "commit"},
+		{sql: "select * from t order by id", result: []string{"1 1", "2 2"}},
 	}
 	for _, ca := range cases {
 		if ca.result == nil {
-			tk.MustExec(ca.sql)
+			if ca.err == "" {
+				tk.MustExec(ca.sql)
+			} else {
+				err := tk.ExecToErr(ca.sql)
+				require.Error(t, err)
+				require.Equal(t, ca.err, err.Error())
+			}
 		} else {
 			tk.MustQuery(ca.sql).Check(testkit.Rows(ca.result...))
 		}
