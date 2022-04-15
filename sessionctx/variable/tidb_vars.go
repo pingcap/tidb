@@ -580,6 +580,8 @@ const (
 
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
+
+	TiDBKeepPruningConds = "tidb_keep_pruning_conds"
 )
 
 // TiDB vars that have only global scope
@@ -740,6 +742,7 @@ const (
 	DefTMPTableSize                       = 16777216
 	DefTiDBEnableLocalTxn                 = false
 	DefTiDBEnableOrderedResultMode        = false
+	DefTiDBKeepPruningConds               = false
 )
 
 // Process global variables.

@@ -4406,3 +4406,22 @@ func (s *testIntegrationSerialSuite) TestIssue30271(c *C) {
 	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
 	tk.MustQuery("select * from t where (a>'a' and b='a') or (b = 'A' and a < 'd') order by a,c;").Check(testkit.Rows("b a 1", "b A 2", "c a 3"))
 }
+
+func (s *testIntegrationSerialSuite) TestKeepPruningConds(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int, c int, unique index idx(a, b, c)) PARTITION BY RANGE ( `a` ) (PARTITION `PART_202101` VALUES LESS THAN (202102), PARTITION `PART_202102` VALUES LESS THAN (202103), PARTITION `PART_202103` VALUES LESS THAN (202104));")
+	tk.MustExec("set @@tidb_keep_pruning_conds = 1")
+	tk.MustQuery("explain format = 'brief' select count(*) from t where a = 202103 and b = 1 and c = 1;").Check(testkit.Rows(""+
+		"StreamAgg 1.00 root  funcs:count(1)->Column#5",
+		"└─Point_Get 1.00 root table:t, partition:part_202103, index:idx(a, b, c) "))
+
+	tk.MustExec("set @@tidb_keep_pruning_conds = 0")
+	tk.MustQuery("explain format = 'brief' select count(*) from t where a = 202103 and b = 1 and c = 1;").Check(testkit.Rows(""+
+		"StreamAgg 1.00 root  funcs:count(1)->Column#5",
+		"└─IndexReader 0.01 root  index:Selection",
+		"  └─Selection 0.01 cop[tikv]  eq(test.t.b, 1), eq(test.t.c, 1)",
+		"    └─IndexFullScan 10000.00 cop[tikv] table:t, partition:part_202103, index:idx(a, b, c) keep order:false, stats:pseudo"))
+}
