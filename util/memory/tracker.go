@@ -173,10 +173,10 @@ func (t *Tracker) FallbackOldAndSetNewActionForSoftLimit(a ActionOnExceed) {
 }
 
 // GetFallbackForTest get the oom action used by test.
-func (t *Tracker) GetFallbackForTest() ActionOnExceed {
+func (t *Tracker) GetFallbackForTest(ignoreFinishedAction bool) ActionOnExceed {
 	t.actionMuForHardLimit.Lock()
 	defer t.actionMuForHardLimit.Unlock()
-	if t.actionMuForHardLimit.actionOnExceed != nil && t.actionMuForHardLimit.actionOnExceed.IsFinished() {
+	if t.actionMuForHardLimit.actionOnExceed != nil && t.actionMuForHardLimit.actionOnExceed.IsFinished() && ignoreFinishedAction {
 		t.actionMuForHardLimit.actionOnExceed = t.actionMuForHardLimit.actionOnExceed.GetFallback()
 	}
 	return t.actionMuForHardLimit.actionOnExceed
