@@ -141,6 +141,9 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	e.resTbl.Lock()
 	defer e.resTbl.Unlock()
 	if !e.resTbl.Done() {
+		if e.resTbl.Error() != nil {
+			return e.resTbl.Error()
+		}
 		resAction := setupCTEStorageTracker(e.resTbl, e.ctx, e.memTracker, e.diskTracker)
 		iterInAction := setupCTEStorageTracker(e.iterInTbl, e.ctx, e.memTracker, e.diskTracker)
 		var iterOutAction *chunk.SpillDiskAction
@@ -159,17 +162,11 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		})
 
 		if err = e.computeSeedPart(ctx); err != nil {
-			// Don't put it in defer.
-			// Because it should be called only when the filling process is not completed.
-			if err1 := e.reopenTbls(); err1 != nil {
-				return err1
-			}
+			e.resTbl.SetError(err)
 			return err
 		}
 		if err = e.computeRecursivePart(ctx); err != nil {
-			if err1 := e.reopenTbls(); err1 != nil {
-				return err1
-			}
+			e.resTbl.SetError(err)
 			return err
 		}
 		e.resTbl.SetDone()
