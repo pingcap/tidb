@@ -4418,7 +4418,7 @@ func (s *testIntegrationSerialSuite) TestKeepPrunedConds(c *C) {
 		"StreamAgg 1.00 root  funcs:count(1)->Column#5",
 		"└─Point_Get 1.00 root table:t, partition:part_202103, index:idx(a, b, c) "))
 
-	tk.MustExec("set @@tidb_keep_pruning_conds = 0")
+	tk.MustExec("set @@tidb_keep_pruned_conds = 0")
 	tk.MustQuery("explain format = 'brief' select count(*) from t where a = 202103 and b = 1 and c = 1;").Check(testkit.Rows(""+
 		"StreamAgg 1.00 root  funcs:count(1)->Column#5",
 		"└─IndexReader 0.01 root  index:Selection",
