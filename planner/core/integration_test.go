@@ -4407,7 +4407,7 @@ func (s *testIntegrationSerialSuite) TestIssue30271(c *C) {
 	tk.MustQuery("select * from t where (a>'a' and b='a') or (b = 'A' and a < 'd') order by a,c;").Check(testkit.Rows("b a 1", "b A 2", "c a 3"))
 }
 
-func (s *testIntegrationSerialSuite) TestKeepPruningConds(c *C) {
+func (s *testIntegrationSerialSuite) TestKeepPrunedConds(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
