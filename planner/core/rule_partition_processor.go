@@ -870,7 +870,7 @@ func (s *partitionProcessor) processRangePartition(ds *DataSource, pi *model.Par
 	if err != nil {
 		return nil, err
 	}
-	if prunedConds != nil {
+	if !ds.ctx.GetSessionVars().KeepPrunedConds && prunedConds != nil {
 		ds.pushedDownConds = prunedConds
 	}
 	return s.makeUnionAllChildren(ds, pi, used)

@@ -1781,6 +1781,10 @@ var defaultSysVars = []*SysVar{
 		s.EnableStableResultMode = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBKeepPrunedConds, Value: BoolToOnOff(DefTiDBKeepPrunedConds), Hidden: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.KeepPrunedConds = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeNone, Name: TiDBAllowFunctionForExpressionIndex, ReadOnly: true, Value: collectAllowFuncName4ExpressionIndex()},
 }
 
