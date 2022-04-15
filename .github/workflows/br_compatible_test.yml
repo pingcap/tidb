@@ -7,7 +7,6 @@ on:
       - master
       - 'release-[0-9].[0-9]*'
     paths:
-      - '.github/workflows/br_compatible_test.yml'
       - 'br/**'
       - '!**.html'
       - '!**.md'
@@ -17,20 +16,20 @@ on:
       - '!br/tests/**'
       - '!br/docker/**'
   # disable pull request only keep the merge action since it is very costly to run those tests
-  pull_request:
-    branches:
-      - master
-      - 'release-[0-9].[0-9]*'
-    paths:
-      - '.github/workflows/br_compatible_test.yml'
-      - 'br/**'
-      - '!**.html'
-      - '!**.md'
-      - '!CNAME'
-      - '!LICENSE'
-      - '!br/docs/**'
-      - '!br/tests/**'
-      - '!br/docker/**'
+  # pull_request:
+  #   branches:
+  #     - master
+  #     - 'release-[0-9].[0-9]*'
+  #   paths:
+  #     - '.github/workflows/br_compatible_test.yml'
+  #     - 'br/**'
+  #     - '!**.html'
+  #     - '!**.md'
+  #     - '!CNAME'
+  #     - '!LICENSE'
+  #     - '!br/docs/**'
+  #     - '!br/tests/**'
+  #     - '!br/docker/**'
 
 # See: https://docs.github.com/en/actions/reference/workflow-syntax-for-github-actions#concurrency.
 concurrency:
