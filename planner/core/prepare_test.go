@@ -1233,7 +1233,7 @@ func (s *testPlanSerialSuite) TestIssue23671(c *C) {
 	tk.MustQuery("execute s1 using @a, @b, @c").Check(testkit.Rows("1 1"))
 	tk.MustExec("set @a=1, @b=1, @c=10")
 	tk.MustQuery("execute s1 using @a, @b, @c").Check(testkit.Rows("1 1", "2 2"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
 func (s *testPlanSerialSuite) TestPartitionTable(c *C) {
