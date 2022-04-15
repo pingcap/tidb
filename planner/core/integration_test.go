@@ -4413,7 +4413,7 @@ func (s *testIntegrationSerialSuite) TestKeepPrunedConds(c *C) {
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'static'")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int, b int, c int, unique index idx(a, b, c)) PARTITION BY RANGE ( `a` ) (PARTITION `PART_202101` VALUES LESS THAN (202102), PARTITION `PART_202102` VALUES LESS THAN (202103), PARTITION `PART_202103` VALUES LESS THAN (202104));")
-	tk.MustExec("set @@tidb_keep_pruning_conds = 1")
+	tk.MustExec("set @@tidb_keep_pruned_conds = 1")
 	tk.MustQuery("explain format = 'brief' select count(*) from t where a = 202103 and b = 1 and c = 1;").Check(testkit.Rows(""+
 		"StreamAgg 1.00 root  funcs:count(1)->Column#5",
 		"└─Point_Get 1.00 root table:t, partition:part_202103, index:idx(a, b, c) "))
