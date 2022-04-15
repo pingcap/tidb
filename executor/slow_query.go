@@ -311,7 +311,8 @@ type slowLogBlock []string
 
 func (e *slowQueryRetriever) getBatchLog(ctx context.Context, reader *bufio.Reader, offset *offset, num int) ([][]string, error) {
 	var line string
-	log := make([]string, 0, num)
+	log := make([]string, 0, len(e.outputCols))
+	logs := make([][]string, 0, num)
 	var err error
 	for i := 0; i < num; i++ {
 		for {
@@ -325,13 +326,13 @@ func (e *slowQueryRetriever) getBatchLog(ctx context.Context, reader *bufio.Read
 					e.fileLine = 0
 					file := e.getNextFile()
 					if file == nil {
-						return [][]string{log}, nil
+						return logs, nil
 					}
 					offset.length = len(log)
 					reader.Reset(file)
 					continue
 				}
-				return [][]string{log}, err
+				return logs, err
 			}
 			line = string(hack.String(lineByte))
 			log = append(log, line)
@@ -339,11 +340,13 @@ func (e *slowQueryRetriever) getBatchLog(ctx context.Context, reader *bufio.Read
 				if strings.HasPrefix(line, "use") || strings.HasPrefix(line, variable.SlowLogRowPrefixStr) {
 					continue
 				}
+				logs = append(logs, log)
+				log = make([]string, 0, len(e.outputCols))
 				break
 			}
 		}
 	}
-	return [][]string{log}, err
+	return logs, err
 }
 
 func (e *slowQueryRetriever) getBatchLogForReversedScan(ctx context.Context, reader *bufio.Reader, offset *offset, num int) ([][]string, error) {
