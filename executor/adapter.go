@@ -813,7 +813,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		return nil, err
 	}
 
-	if err = sessiontxn.GetTxnManager(a.Ctx).OnStmtRetry(); err != nil {
+	if err = sessiontxn.GetTxnManager(a.Ctx).OnStmtRetry(ctx); err != nil {
 		return nil, err
 	}
 

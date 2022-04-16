@@ -20,8 +20,11 @@ import (
 
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/sessiontxn/readcommitted"
+	"github.com/pingcap/tidb/sessiontxn/staleread"
 )
 
 func init() {
@@ -60,6 +63,7 @@ func (m *txnManager) GetReadTS() (uint64, error) {
 	if m.ctxProvider == nil {
 		return 0, errors.New("context provider not set")
 	}
+	defer m.handleAutoCommit()
 	return m.ctxProvider.GetReadTS()
 }
 
@@ -67,6 +71,7 @@ func (m *txnManager) GetForUpdateTS() (uint64, error) {
 	if m.ctxProvider == nil {
 		return 0, errors.New("context provider not set")
 	}
+	defer m.handleAutoCommit()
 	return m.ctxProvider.GetForUpdateTS()
 }
 
@@ -74,8 +79,51 @@ func (m *txnManager) GetContextProvider() sessiontxn.TxnContextProvider {
 	return m.ctxProvider
 }
 
-func (m *txnManager) SetContextProvider(provider sessiontxn.TxnContextProvider) error {
+func (m *txnManager) ReplaceContextProvider(provider sessiontxn.TxnContextProvider) error {
 	m.ctxProvider = provider
+	return nil
+}
+
+func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.NewTxnRequest) error {
+	sessVars := m.sctx.GetSessionVars()
+	txnCtx := sessVars.TxnCtx
+	if r.ExplictStart && txnCtx.History == nil && !txnCtx.IsStaleness && r.StaleReadTS == 0 {
+		// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
+		// need to call NewTxn, which commits the existing transaction and begins a new one.
+		// If the last un-committed/un-rollback transaction is a time-bounded read-only transaction, we should
+		// always create a new transaction.
+		return nil
+	}
+
+	txnMode := r.TxnMode
+	if txnMode == "" {
+		txnMode = sessVars.TxnMode
+	}
+
+	switch {
+	case r.StaleReadTS > 0:
+		// stale read should be the first place to check, `is` is nil because it will be fetched when `ActiveTxn`
+		m.ctxProvider = staleread.NewStalenessTxnContextProvider(m.sctx, r.StaleReadTS, nil)
+	case txnMode == ast.Pessimistic && sessVars.IsIsolation(ast.ReadCommitted):
+		// when txn mode is pessimistic and isolation level is 'READ-COMMITTED', use RC
+		m.ctxProvider = readcommitted.NewRCTxnContextProvider(m.sctx, r.CausalConsistencyOnly)
+	default:
+		// otherwise, use `SimpleTxnContextProvider` for compatibility
+		m.ctxProvider = &sessiontxn.SimpleTxnContextProvider{Sctx: m.sctx, CausalConsistencyOnly: r.CausalConsistencyOnly}
+	}
+
+	if r.ExplictStart {
+		if _, err := m.ctxProvider.ActiveTxn(ctx); err != nil {
+			return err
+		}
+		// With START TRANSACTION, autocommit remains disabled until you end
+		// the transaction with COMMIT or ROLLBACK. The autocommit mode then
+		// reverts to its previous state.
+		sessVars.SetInTxn(true)
+	} else {
+		sessVars.SetInTxn(false)
+	}
+
 	return nil
 }
 
@@ -83,6 +131,8 @@ func (m *txnManager) ActiveTxn(ctx context.Context) (kv.Transaction, error) {
 	if m.ctxProvider == nil {
 		return nil, errors.New("context provider not set")
 	}
+
+	defer m.handleAutoCommit()
 	return m.ctxProvider.ActiveTxn(ctx)
 }
 
@@ -93,11 +143,11 @@ func (m *txnManager) OnStmtStart(ctx context.Context) error {
 	return m.ctxProvider.OnStmtStart(ctx)
 }
 
-func (m *txnManager) OnStmtRetry() error {
+func (m *txnManager) OnStmtRetry(ctx context.Context) error {
 	if m.ctxProvider == nil {
 		return errors.New("context provider not set")
 	}
-	return m.ctxProvider.OnStmtRetry()
+	return m.ctxProvider.OnStmtRetry(ctx)
 }
 
 func (m *txnManager) Advise(opt sessiontxn.AdviceOption, val ...interface{}) error {
@@ -106,4 +156,16 @@ func (m *txnManager) Advise(opt sessiontxn.AdviceOption, val ...interface{}) err
 	}
 
 	return m.ctxProvider.Advise(opt, val)
+}
+
+func (m *txnManager) handleAutoCommit() {
+	sessVars := m.sctx.GetSessionVars()
+	if sessVars.IsAutocommit() {
+		return
+	}
+
+	tx, _ := m.sctx.Txn(false)
+	if tx.Valid() {
+		sessVars.SetInTxn(true)
+	}
 }

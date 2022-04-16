@@ -600,12 +600,12 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 		}
 	}
 
-	return sessiontxn.CreateEnterNewTxnRequest(e.ctx).
-		ExplictBegin().
-		StaleRead(e.staleTxnStartTS).
-		TxnMode(s.Mode).
-		CausalConsistencyOnly(s.CausalConsistencyOnly).
-		EnterNewSessionTxn(ctx)
+	return sessiontxn.GetTxnManager(e.ctx).EnterNewTxn(ctx, &sessiontxn.NewTxnRequest{
+		ExplictStart:          true,
+		StaleReadTS:           e.staleTxnStartTS,
+		TxnMode:               s.Mode,
+		CausalConsistencyOnly: s.CausalConsistencyOnly,
+	})
 }
 
 func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStmt) error {

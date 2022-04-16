@@ -1629,7 +1629,7 @@ func (p *preprocessor) updateStateFromStaleReadProcessor() error {
 		if p.flag&initTxnContextProvider != 0 {
 			p.ctx.GetSessionVars().StmtCtx.IsStaleness = true
 			if !p.ctx.GetSessionVars().InTxn() {
-				err := sessiontxn.GetTxnManager(p.ctx).SetContextProvider(staleread.NewStalenessTxnContextProvider(
+				err := sessiontxn.GetTxnManager(p.ctx).ReplaceContextProvider(staleread.NewStalenessTxnContextProvider(
 					p.ctx,
 					p.LastSnapshotTS,
 					p.InfoSchema,

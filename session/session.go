@@ -1844,7 +1844,14 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	s.txn.onStmtStart(digest.String())
 	defer s.txn.onStmtEnd()
 
-	if err := sessiontxn.GetTxnManager(s).OnStmtStart(ctx); err != nil {
+	var err error
+	if s.sessionVars.RetryInfo.Retrying {
+		err = sessiontxn.GetTxnManager(s).OnStmtStart(ctx)
+	} else {
+		err = sessiontxn.GetTxnManager(s).OnStmtRetry(ctx)
+	}
+
+	if err != nil {
 		return nil, err
 	}
 
@@ -2320,7 +2327,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 		snapshotTS = staleReadProcessor.GetStalenessReadTS()
 		is = staleReadProcessor.GetStalenessInfoSchema()
 		replicaReadScope = config.GetTxnScopeFromConfig()
-		if err = txnManager.SetContextProvider(staleread.NewStalenessTxnContextProvider(s, snapshotTS, is)); err != nil {
+		if err = txnManager.ReplaceContextProvider(staleread.NewStalenessTxnContextProvider(s, snapshotTS, is)); err != nil {
 			return nil, err
 		}
 	}
@@ -3114,20 +3121,18 @@ func (s *session) PrepareTxnCtx(ctx context.Context) error {
 		ShardStep:  int(s.sessionVars.ShardAllocateStep),
 		TxnScope:   s.GetSessionVars().CheckAndGetTxnScope(),
 	}
+	txnMode := ast.Optimistic
 	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying ||
 		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load() {
 		if s.sessionVars.TxnMode == ast.Pessimistic {
 			s.sessionVars.TxnCtx.IsPessimistic = true
+			txnMode = ast.Pessimistic
 		}
 	}
 
-	txnRequest := sessiontxn.CreateEnterNewTxnRequest(s)
-	if s.sessionVars.TxnCtx.IsPessimistic {
-		txnRequest.TxnMode(ast.Pessimistic)
-	} else {
-		txnRequest.TxnMode(ast.Optimistic)
-	}
-	return txnRequest.EnterNewSessionTxn(ctx)
+	return sessiontxn.GetTxnManager(s).EnterNewTxn(ctx, &sessiontxn.NewTxnRequest{
+		TxnMode: txnMode,
+	})
 }
 
 // PrepareTSFuture uses to try to get ts future.

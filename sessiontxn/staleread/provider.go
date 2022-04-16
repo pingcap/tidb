@@ -80,7 +80,7 @@ func (p *StalenessTxnContextProvider) OnStmtStart(_ context.Context) error {
 }
 
 // OnStmtRetry is the hook that should be called when a statement is retrying
-func (p *StalenessTxnContextProvider) OnStmtRetry() error {
+func (p *StalenessTxnContextProvider) OnStmtRetry(_ context.Context) error {
 	return nil
 }
 

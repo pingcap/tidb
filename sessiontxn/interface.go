@@ -45,7 +45,7 @@ type TxnContextProvider interface {
 	// OnStmtStart is the hook that should be called when a new statement started
 	OnStmtStart(ctx context.Context) error
 	// OnStmtRetry is the hook that should be called when a statement is retrying
-	OnStmtRetry() error
+	OnStmtRetry(ctx context.Context) error
 	// Advise is used to provide some extra information to make a better performance.
 	// For example, we can give `AdviceWarmUpNow` to advice provider prefetch tso.
 	// Give or not give an advice should not affect the correctness.
@@ -125,7 +125,7 @@ func (p *SimpleTxnContextProvider) OnStmtStart(ctx context.Context) error {
 }
 
 // OnStmtRetry is the hook that should be called when a statement is retrying
-func (p *SimpleTxnContextProvider) OnStmtRetry() error {
+func (p *SimpleTxnContextProvider) OnStmtRetry(_ context.Context) error {
 	return nil
 }
 
@@ -143,6 +143,14 @@ func UsingNonSimpleProvider(sctx sessionctx.Context) bool {
 	return ok
 }
 
+type NewTxnRequest struct {
+	ExplictStart          bool
+	TxnMode               string
+	CausalConsistencyOnly bool
+	StaleReadTS           uint64
+	StaleReadInfoSchema   infoschema.InfoSchema
+}
+
 // TxnManager is an interface providing txn context management in session
 type TxnManager interface {
 	// GetTxnInfoSchema returns the information schema used by txn
@@ -156,13 +164,15 @@ type TxnManager interface {
 	ActiveTxn(ctx context.Context) (kv.Transaction, error)
 	// GetContextProvider returns the current TxnContextProvider
 	GetContextProvider() TxnContextProvider
-	// SetContextProvider sets the context provider
-	SetContextProvider(provider TxnContextProvider) error
+	// ReplaceContextProvider replaces the context provider
+	ReplaceContextProvider(provider TxnContextProvider) error
+	// EnterNewTxn enters a new txn
+	EnterNewTxn(ctx context.Context, request *NewTxnRequest) error
 
 	// OnStmtStart is the hook that should be called when a new statement started
 	OnStmtStart(ctx context.Context) error
 	// OnStmtRetry is the hook that should be called when a statement is retrying
-	OnStmtRetry() error
+	OnStmtRetry(ctx context.Context) error
 	// Advise is used to provide some extra information to make a better performance.
 	// For example, we can give `AdviceWarmUpNow` to advice provider prefetch tso.
 	// Give or not give an advice should not affect the correctness.
