@@ -280,7 +280,10 @@ load stats 's/imdbload_stats/cast_info.json';
 -- The statistics and actual row count are from the latest imdb dataset that is distributed as old text files.
 
 -- Actual row count: 1
+-- Index lookup on itest2 index is the best plan, runs <50ms for the first time. Table scan + Selection runs >800ms. (using 8 core tikv * 5, copr cache disabled)
 explain select * from char_name where ((imdb_index = 'I') and (surname_pcode < 'E436')) or ((imdb_index = 'L') and (surname_pcode < 'E436'));
+explain select * from char_name use index (itest2) where ((imdb_index = 'I') and (surname_pcode < 'E436')) or ((imdb_index = 'L') and (surname_pcode < 'E436'));
+trace plan target = 'estimation' select * from char_name where ((imdb_index = 'I') and (surname_pcode < 'E436')) or ((imdb_index = 'L') and (surname_pcode < 'E436'));
 
 -- Actual row count: 0
 explain select * from char_name where ((imdb_index = 'V') and (surname_pcode < 'L3416'));
@@ -310,3 +313,11 @@ explain select * from aka_title where kind_id = 5;
 -- Actual row count: 2
 explain select * from aka_title where kind_id > 7;
 trace plan target = 'estimation' select * from aka_title where kind_id > 7;
+
+-- Actual row count: 0
+explain select * from keyword where ((phonetic_code = 'R1652') and (keyword > 'ecg-monitor' and keyword < 'killers'));
+trace plan target = 'estimation' select * from keyword where ((phonetic_code = 'R1652') and (keyword > 'ecg-monitor' and keyword < 'killers'));
+
+-- Actual row count: 37928
+explain select * from cast_info where (nr_order is null) and (person_role_id = 2) and (note >= '(key set pa: Florida');
+trace plan target = 'estimation' select * from cast_info where (nr_order is null) and (person_role_id = 2) and (note >= '(key set pa: Florida');

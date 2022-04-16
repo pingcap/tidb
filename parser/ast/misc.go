@@ -1687,8 +1687,8 @@ type BindingStatusType int8
 
 // Binding status types.
 const (
-	BindingStatusTypeEnable BindingStatusType = iota
-	BindingStatusTypeDisable
+	BindingStatusTypeEnabled BindingStatusType = iota
+	BindingStatusTypeDisabled
 )
 
 // SetBindingStmt sets sql binding status.
@@ -1704,10 +1704,10 @@ func (n *SetBindingStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("SET ")
 	ctx.WriteKeyWord("BINDING ")
 	switch n.BindingStatusType {
-	case BindingStatusTypeEnable:
-		ctx.WriteKeyWord("ENABLE ")
-	case BindingStatusTypeDisable:
-		ctx.WriteKeyWord("DISABLE ")
+	case BindingStatusTypeEnabled:
+		ctx.WriteKeyWord("ENABLED ")
+	case BindingStatusTypeDisabled:
+		ctx.WriteKeyWord("DISABLED ")
 	}
 	ctx.WriteKeyWord("FOR ")
 	if err := n.OriginNode.Restore(ctx); err != nil {
@@ -3430,7 +3430,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlainf("%d", n.HintData.(uint64))
 	case "nth_plan":
 		ctx.WritePlainf("%d", n.HintData.(int64))
-	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "merge_join", "inl_join", "broadcast_join", "broadcast_join_local", "inl_hash_join", "inl_merge_join":
+	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "merge_join", "inl_join", "broadcast_join", "inl_hash_join", "inl_merge_join":
 		for i, table := range n.Tables {
 			if i != 0 {
 				ctx.WritePlain(", ")

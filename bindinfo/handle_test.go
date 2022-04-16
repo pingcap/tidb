@@ -109,7 +109,7 @@ func TestBindingLastUpdateTimeWithInvalidBind(t *testing.T) {
 	updateTime0 := rows0[0][1]
 	require.Equal(t, updateTime0, "0000-00-00 00:00:00")
 
-	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t`', 'select * from `test` . `t` use index(`idx`)', 'test', 'using', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
+	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t`', 'select * from `test` . `t` use index(`idx`)', 'test', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
 		bindinfo.Manual + "')")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -137,7 +137,7 @@ func TestBindParse(t *testing.T) {
 	originSQL := "select * from `test` . `t`"
 	bindSQL := "select * from `test` . `t` use index(index_t)"
 	defaultDb := "test"
-	status := "using"
+	status := bindinfo.Enabled
 	charset := "utf8mb4"
 	collation := "utf8mb4_bin"
 	source := bindinfo.Manual
@@ -156,7 +156,7 @@ func TestBindParse(t *testing.T) {
 	bind := bindData.Bindings[0]
 	require.Equal(t, "select * from `test` . `t` use index(index_t)", bind.BindSQL)
 	require.Equal(t, "test", bindData.Db)
-	require.Equal(t, "using", bind.Status)
+	require.Equal(t, bindinfo.Enabled, bind.Status)
 	require.Equal(t, "utf8mb4", bind.Charset)
 	require.Equal(t, "utf8mb4_bin", bind.Collation)
 	require.NotNil(t, bind.CreateTime)
@@ -228,7 +228,7 @@ func TestEvolveInvalidBindings(t *testing.T) {
 	tk.MustExec("insert into mysql.bind_info values('select * from test . t where a > ?', 'SELECT /*+ USE_INDEX(t,idx_a) */ * FROM test.t WHERE a > 10', 'test', 'rejected', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
 		bindinfo.Manual + "')")
 	tk.MustQuery("select bind_sql, status from mysql.bind_info where source != 'builtin'").Sort().Check(testkit.Rows(
-		"SELECT /*+ USE_INDEX(`t` )*/ * FROM `test`.`t` WHERE `a` > 10 using",
+		"SELECT /*+ USE_INDEX(`t` )*/ * FROM `test`.`t` WHERE `a` > 10 enabled",
 		"SELECT /*+ USE_INDEX(t,idx_a) */ * FROM test.t WHERE a > 10 rejected",
 	))
 	// Reload cache from mysql.bind_info.
@@ -240,13 +240,13 @@ func TestEvolveInvalidBindings(t *testing.T) {
 	require.Nil(t, dom.BindHandle().Update(false))
 	rows := tk.MustQuery("show global bindings").Sort().Rows()
 	require.Equal(t, 2, len(rows))
-	// Make sure this "using" binding is not overrided.
+	// Make sure this "enabled" binding is not overrided.
 	require.Equal(t, "SELECT /*+ USE_INDEX(`t` )*/ * FROM `test`.`t` WHERE `a` > 10", rows[0][1])
 	status := rows[0][3].(string)
-	require.True(t, status == "using")
+	require.True(t, status == bindinfo.Enabled)
 	require.Equal(t, "SELECT /*+ USE_INDEX(t,idx_a) */ * FROM test.t WHERE a > 10", rows[1][1])
 	status = rows[1][3].(string)
-	require.True(t, status == "using" || status == "rejected")
+	require.True(t, status == bindinfo.Enabled || status == bindinfo.Rejected)
 }
 
 var testSQLs = []struct {
@@ -265,7 +265,7 @@ var testSQLs = []struct {
 		originSQL:   "select * from `test` . `t` where `i` > ?",
 		bindSQL:     "SELECT * FROM `test`.`t` USE INDEX (`index_t`) WHERE `i` > 99",
 		dropSQL:     "binding for select * from t where i>100",
-		memoryUsage: float64(165),
+		memoryUsage: float64(167),
 	},
 	{
 		createSQL:   "binding for select * from t union all select * from t using select * from t use index(index_t) union all select * from t use index()",
@@ -274,7 +274,7 @@ var testSQLs = []struct {
 		originSQL:   "select * from `test` . `t` union all select * from `test` . `t`",
 		bindSQL:     "SELECT * FROM `test`.`t` USE INDEX (`index_t`) UNION ALL SELECT * FROM `test`.`t` USE INDEX ()",
 		dropSQL:     "binding for select * from t union all select * from t",
-		memoryUsage: float64(235),
+		memoryUsage: float64(237),
 	},
 	{
 		createSQL:   "binding for (select * from t) union all (select * from t) using (select * from t use index(index_t)) union all (select * from t use index())",
@@ -283,7 +283,7 @@ var testSQLs = []struct {
 		originSQL:   "( select * from `test` . `t` ) union all ( select * from `test` . `t` )",
 		bindSQL:     "(SELECT * FROM `test`.`t` USE INDEX (`index_t`)) UNION ALL (SELECT * FROM `test`.`t` USE INDEX ())",
 		dropSQL:     "binding for (select * from t) union all (select * from t)",
-		memoryUsage: float64(247),
+		memoryUsage: float64(249),
 	},
 	{
 		createSQL:   "binding for select * from t intersect select * from t using select * from t use index(index_t) intersect select * from t use index()",
@@ -292,7 +292,7 @@ var testSQLs = []struct {
 		originSQL:   "select * from `test` . `t` intersect select * from `test` . `t`",
 		bindSQL:     "SELECT * FROM `test`.`t` USE INDEX (`index_t`) INTERSECT SELECT * FROM `test`.`t` USE INDEX ()",
 		dropSQL:     "binding for select * from t intersect select * from t",
-		memoryUsage: float64(235),
+		memoryUsage: float64(237),
 	},
 	{
 		createSQL:   "binding for select * from t except select * from t using select * from t use index(index_t) except select * from t use index()",
@@ -301,7 +301,7 @@ var testSQLs = []struct {
 		originSQL:   "select * from `test` . `t` except select * from `test` . `t`",
 		bindSQL:     "SELECT * FROM `test`.`t` USE INDEX (`index_t`) EXCEPT SELECT * FROM `test`.`t` USE INDEX ()",
 		dropSQL:     "binding for select * from t except select * from t",
-		memoryUsage: float64(229),
+		memoryUsage: float64(231),
 	},
 	{
 		createSQL:   "binding for select * from t using select /*+ use_index(t,index_t)*/ * from t",
@@ -310,7 +310,7 @@ var testSQLs = []struct {
 		originSQL:   "select * from `test` . `t`",
 		bindSQL:     "SELECT /*+ use_index(`t` `index_t`)*/ * FROM `test`.`t`",
 		dropSQL:     "binding for select * from t",
-		memoryUsage: float64(164),
+		memoryUsage: float64(166),
 	},
 	{
 		createSQL:   "binding for delete from t where i = 1 using delete /*+ use_index(t,index_t) */ from t where i = 1",
@@ -319,7 +319,7 @@ var testSQLs = []struct {
 		originSQL:   "delete from `test` . `t` where `i` = ?",
 		bindSQL:     "DELETE /*+ use_index(`t` `index_t`)*/ FROM `test`.`t` WHERE `i` = 1",
 		dropSQL:     "binding for delete from t where i = 1",
-		memoryUsage: float64(188),
+		memoryUsage: float64(190),
 	},
 	{
 		createSQL:   "binding for delete t, t1 from t inner join t1 on t.s = t1.s where t.i = 1 using delete /*+ use_index(t,index_t), hash_join(t,t1) */ t, t1 from t inner join t1 on t.s = t1.s where t.i = 1",
@@ -328,7 +328,7 @@ var testSQLs = []struct {
 		originSQL:   "delete `test` . `t` , `test` . `t1` from `test` . `t` join `test` . `t1` on `t` . `s` = `t1` . `s` where `t` . `i` = ?",
 		bindSQL:     "DELETE /*+ use_index(`t` `index_t`) hash_join(`t`, `t1`)*/ `test`.`t`,`test`.`t1` FROM `test`.`t` JOIN `test`.`t1` ON `t`.`s` = `t1`.`s` WHERE `t`.`i` = 1",
 		dropSQL:     "binding for delete t, t1 from t inner join t1 on t.s = t1.s where t.i = 1",
-		memoryUsage: float64(400),
+		memoryUsage: float64(402),
 	},
 	{
 		createSQL:   "binding for update t set s = 'a' where i = 1 using update /*+ use_index(t,index_t) */ t set s = 'a' where i = 1",
@@ -337,7 +337,7 @@ var testSQLs = []struct {
 		originSQL:   "update `test` . `t` set `s` = ? where `i` = ?",
 		bindSQL:     "UPDATE /*+ use_index(`t` `index_t`)*/ `test`.`t` SET `s`='a' WHERE `i` = 1",
 		dropSQL:     "binding for update t set s = 'a' where i = 1",
-		memoryUsage: float64(202),
+		memoryUsage: float64(204),
 	},
 	{
 		createSQL:   "binding for update t, t1 set t.s = 'a' where t.i = t1.i using update /*+ inl_join(t1) */ t, t1 set t.s = 'a' where t.i = t1.i",
@@ -346,7 +346,7 @@ var testSQLs = []struct {
 		originSQL:   "update ( `test` . `t` ) join `test` . `t1` set `t` . `s` = ? where `t` . `i` = `t1` . `i`",
 		bindSQL:     "UPDATE /*+ inl_join(`t1`)*/ (`test`.`t`) JOIN `test`.`t1` SET `t`.`s`='a' WHERE `t`.`i` = `t1`.`i`",
 		dropSQL:     "binding for update t, t1 set t.s = 'a' where t.i = t1.i",
-		memoryUsage: float64(260),
+		memoryUsage: float64(262),
 	},
 	{
 		createSQL:   "binding for insert into t1 select * from t where t.i = 1 using insert into t1 select /*+ use_index(t,index_t) */ * from t where t.i = 1",
@@ -355,7 +355,7 @@ var testSQLs = []struct {
 		originSQL:   "insert into `test` . `t1` select * from `test` . `t` where `t` . `i` = ?",
 		bindSQL:     "INSERT INTO `test`.`t1` SELECT /*+ use_index(`t` `index_t`)*/ * FROM `test`.`t` WHERE `t`.`i` = 1",
 		dropSQL:     "binding for insert into t1 select * from t where t.i = 1",
-		memoryUsage: float64(252),
+		memoryUsage: float64(254),
 	},
 	{
 		createSQL:   "binding for replace into t1 select * from t where t.i = 1 using replace into t1 select /*+ use_index(t,index_t) */ * from t where t.i = 1",
@@ -364,7 +364,7 @@ var testSQLs = []struct {
 		originSQL:   "replace into `test` . `t1` select * from `test` . `t` where `t` . `i` = ?",
 		bindSQL:     "REPLACE INTO `test`.`t1` SELECT /*+ use_index(`t` `index_t`)*/ * FROM `test`.`t` WHERE `t`.`i` = 1",
 		dropSQL:     "binding for replace into t1 select * from t where t.i = 1",
-		memoryUsage: float64(254),
+		memoryUsage: float64(256),
 	},
 }
 
@@ -395,10 +395,10 @@ func TestGlobalBinding(t *testing.T) {
 		}
 
 		pb := &dto.Metric{}
-		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
+		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Enabled).Write(pb)
 		require.NoError(t, err)
 		require.Equal(t, float64(1), pb.GetGauge().GetValue())
-		err = metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
+		err = metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Enabled).Write(pb)
 		require.NoError(t, err)
 		require.Equal(t, testSQL.memoryUsage, pb.GetGauge().GetValue())
 
@@ -410,7 +410,7 @@ func TestGlobalBinding(t *testing.T) {
 		bind := bindData.Bindings[0]
 		require.Equal(t, testSQL.bindSQL, bind.BindSQL)
 		require.Equal(t, "test", bindData.Db)
-		require.Equal(t, "using", bind.Status)
+		require.Equal(t, bindinfo.Enabled, bind.Status)
 		require.NotNil(t, bind.Charset)
 		require.NotNil(t, bind.Collation)
 		require.NotNil(t, bind.CreateTime)
@@ -426,7 +426,7 @@ func TestGlobalBinding(t *testing.T) {
 		require.Equal(t, testSQL.originSQL, row.GetString(0))
 		require.Equal(t, testSQL.bindSQL, row.GetString(1))
 		require.Equal(t, "test", row.GetString(2))
-		require.Equal(t, "using", row.GetString(3))
+		require.Equal(t, bindinfo.Enabled, row.GetString(3))
 		require.NotNil(t, row.GetTime(4))
 		require.NotNil(t, row.GetTime(5))
 		require.NotNil(t, row.GetString(6))
@@ -443,7 +443,7 @@ func TestGlobalBinding(t *testing.T) {
 		bind = bindData.Bindings[0]
 		require.Equal(t, testSQL.bindSQL, bind.BindSQL)
 		require.Equal(t, "test", bindData.Db)
-		require.Equal(t, "using", bind.Status)
+		require.Equal(t, bindinfo.Enabled, bind.Status)
 		require.NotNil(t, bind.Charset)
 		require.NotNil(t, bind.Collation)
 		require.NotNil(t, bind.CreateTime)
@@ -454,10 +454,10 @@ func TestGlobalBinding(t *testing.T) {
 		bindData = dom.BindHandle().GetBindRecord(hash, sql, "test")
 		require.Nil(t, bindData)
 
-		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
+		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Enabled).Write(pb)
 		require.NoError(t, err)
 		require.Equal(t, float64(0), pb.GetGauge().GetValue())
-		err = metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
+		err = metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Enabled).Write(pb)
 		require.NoError(t, err)
 		// From newly created global bind handle.
 		require.Equal(t, testSQL.memoryUsage, pb.GetGauge().GetValue())
