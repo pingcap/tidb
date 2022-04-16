@@ -18,6 +18,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"io/ioutil"
 	"time"
 
@@ -264,6 +266,9 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 		ModifyCount:    jsonTbl.ModifyCount,
 		Columns:        make(map[int64]*statistics.Column, len(jsonTbl.Columns)),
 		Indices:        make(map[int64]*statistics.Index, len(jsonTbl.Indices)),
+	}
+	if jsonTbl.Count == 0 {
+		logutil.BgLogger().Warn("load tableStats from json with count=0", zap.Int64("phyID", physicalID))
 	}
 	tbl := &statistics.Table{
 		HistColl: newHistColl,

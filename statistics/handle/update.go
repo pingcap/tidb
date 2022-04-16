@@ -516,6 +516,7 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 		} else {
 			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
 		}
+		logutil.BgLogger().Info("update delta count", zap.Int64("tblID", id), zap.Int64("deltaCount", delta.Delta))
 		statsVer = startTS
 		return errors.Trace(err)
 	}

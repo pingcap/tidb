@@ -312,6 +312,9 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		tbl.Name = getFullTableName(is, tableInfo)
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
 		tables = append(tables, tbl)
+		if count == 0 {
+			logutil.BgLogger().Warn("update tableStats with count=0", zap.Int64("phyID", physicalID))
+		}
 	}
 	h.updateStatsCache(oldCache.update(tables, deletedTableIDs, lastVersion))
 	return nil
@@ -914,6 +917,9 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 	}
 	table.ModifyCount = rows[0].GetInt64(0)
 	table.Count = rows[0].GetInt64(1)
+	if table.Count == 0 {
+		logutil.BgLogger().Warn("read tableStats with count=0", zap.Int64("tblID", physicalID))
+	}
 
 	rows, _, err = reader.read("select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %?", physicalID)
 	// Check deleted table.
@@ -1057,6 +1063,9 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 		if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, snapshot) values (%?, %?, %?, %?)", version, tableID, results.Count, results.Snapshot); err != nil {
 			return err
 		}
+		if results.Count == 0 {
+			logutil.BgLogger().Warn("save tableStats with count=0", zap.Int64("tblID", tableID))
+		}
 		statsVer = version
 	} else {
 		modifyCnt := curModifyCnt - results.BaseModifyCnt
@@ -1069,6 +1078,9 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 		}
 		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version=%?, modify_count=%?, count=%?, snapshot=%? where table_id=%?", version, modifyCnt, cnt, results.Snapshot, tableID); err != nil {
 			return err
+		}
+		if cnt == 0 {
+			logutil.BgLogger().Warn("save tableStats with calculated count=0", zap.Int64("tblID", tableID))
 		}
 		statsVer = version
 	}

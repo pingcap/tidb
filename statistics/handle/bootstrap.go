@@ -49,6 +49,9 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache *statsCache
 			Columns:        make(map[int64]*statistics.Column, len(tableInfo.Columns)),
 			Indices:        make(map[int64]*statistics.Index, len(tableInfo.Indices)),
 		}
+		if newHistColl.Count == 0 {
+			logutil.BgLogger().Warn("init tableStats with count=0", zap.Int64("phyID", physicalID))
+		}
 		tbl := &statistics.Table{
 			HistColl: newHistColl,
 			Version:  row.GetUint64(0),
