@@ -2820,7 +2820,7 @@ func TestInsertValuesWithSubQuery(t *testing.T) {
 	require.Error(t, tk.ExecToErr("insert into t2 set a = 11, b = 8, c = (select b))"))
 
 	// subquery reference target table is allowed
-	tk.MustExec("insert into t2 values(1, 1, (select b from t2))")
+	tk.MustExec("insert into t2 values(1, 1, (select b from t2 as t))")
 	tk.MustQuery("select * from t2").Check(testkit.Rows("1 1 <nil>"))
 	tk.MustExec("insert into t2 set a = 1, b = 1, c = (select b+1 from t2)")
 	tk.MustQuery("select * from t2").Check(testkit.Rows("1 1 <nil>", "1 1 2"))
