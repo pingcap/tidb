@@ -189,13 +189,13 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 	return curJoinTree, nil
 }
 
-func (s *joinReorderGreedySolver) comparePriority(joinNodeId1, joinNodeId2 int) int {
+func (s *joinReorderGreedySolver) comparePriority(joinNodeID1, joinNodeID2 int) int {
 	if len(s.priorityMap) == 0 {
 		return 0
 	}
-	if bitmap := s.priorityMap[joinNodeId1]; len(bitmap) > 0 && bitmap[joinNodeId2>>3]&(1<<(7&joinNodeId2)) > 0 {
+	if bitmap := s.priorityMap[joinNodeID1]; len(bitmap) > 0 && bitmap[joinNodeID2>>3]&(1<<(7&joinNodeID2)) > 0 {
 		return 1
-	} else if bitmap = s.priorityMap[joinNodeId2]; len(bitmap) > 0 && bitmap[joinNodeId1>>3]&(1<<(7&joinNodeId1)) > 0 {
+	} else if bitmap = s.priorityMap[joinNodeID2]; len(bitmap) > 0 && bitmap[joinNodeID1>>3]&(1<<(7&joinNodeID1)) > 0 {
 		return -1
 	}
 	return 0
