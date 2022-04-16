@@ -159,16 +159,13 @@ type TxnManager interface {
 	GetReadTS() (uint64, error)
 	// GetForUpdateTS returns the read timestamp used by update/insert/delete or select ... for update
 	GetForUpdateTS() (uint64, error)
-
+	// IsTxnActive returns whether the current txn is active
+	IsTxnActive() bool
 	// ActiveTxn actives the txn
 	ActiveTxn(ctx context.Context) (kv.Transaction, error)
-	// GetContextProvider returns the current TxnContextProvider
-	GetContextProvider() TxnContextProvider
-	// ReplaceContextProvider replaces the context provider
-	ReplaceContextProvider(provider TxnContextProvider) error
+
 	// EnterNewTxn enters a new txn
 	EnterNewTxn(ctx context.Context, request *NewTxnRequest) error
-
 	// OnStmtStart is the hook that should be called when a new statement started
 	OnStmtStart(ctx context.Context) error
 	// OnStmtRetry is the hook that should be called when a statement is retrying
@@ -177,6 +174,11 @@ type TxnManager interface {
 	// For example, we can give `AdviceWarmUpNow` to advice provider prefetch tso.
 	// Give or not give an advice should not affect the correctness.
 	Advise(opt AdviceOption, val ...interface{}) error
+
+	// GetContextProvider returns the current TxnContextProvider
+	GetContextProvider() TxnContextProvider
+	// ReplaceContextProvider replaces the context provider
+	ReplaceContextProvider(provider TxnContextProvider) error
 }
 
 func AdviseTxnWarmUp(sctx sessionctx.Context) error {

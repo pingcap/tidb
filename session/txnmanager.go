@@ -59,20 +59,26 @@ func (m *txnManager) GetTxnInfoSchema() infoschema.InfoSchema {
 	return m.ctxProvider.GetTxnInfoSchema()
 }
 
-func (m *txnManager) GetReadTS() (uint64, error) {
+func (m *txnManager) GetReadTS() (ts uint64, err error) {
 	if m.ctxProvider == nil {
 		return 0, errors.New("context provider not set")
 	}
-	defer m.handleAutoCommit()
-	return m.ctxProvider.GetReadTS()
+	if ts, err = m.ctxProvider.GetReadTS(); err != nil {
+		return 0, err
+	}
+	m.handleAutoCommit()
+	return
 }
 
-func (m *txnManager) GetForUpdateTS() (uint64, error) {
+func (m *txnManager) GetForUpdateTS() (ts uint64, err error) {
 	if m.ctxProvider == nil {
 		return 0, errors.New("context provider not set")
 	}
-	defer m.handleAutoCommit()
-	return m.ctxProvider.GetForUpdateTS()
+	if ts, err = m.ctxProvider.GetForUpdateTS(); err != nil {
+		return 0, err
+	}
+	m.handleAutoCommit()
+	return
 }
 
 func (m *txnManager) GetContextProvider() sessiontxn.TxnContextProvider {
@@ -123,17 +129,23 @@ func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.NewTxnReques
 	} else {
 		sessVars.SetInTxn(false)
 	}
-
 	return nil
 }
 
-func (m *txnManager) ActiveTxn(ctx context.Context) (kv.Transaction, error) {
+func (m *txnManager) ActiveTxn(ctx context.Context) (txn kv.Transaction, err error) {
 	if m.ctxProvider == nil {
 		return nil, errors.New("context provider not set")
 	}
+	if txn, err = m.ctxProvider.ActiveTxn(ctx); err != nil {
+		return nil, err
+	}
+	m.handleAutoCommit()
+	return txn, err
+}
 
-	defer m.handleAutoCommit()
-	return m.ctxProvider.ActiveTxn(ctx)
+func (m *txnManager) IsTxnActive() bool {
+	txn, _ := m.sctx.Txn(false)
+	return txn.Valid()
 }
 
 func (m *txnManager) OnStmtStart(ctx context.Context) error {
@@ -160,12 +172,7 @@ func (m *txnManager) Advise(opt sessiontxn.AdviceOption, val ...interface{}) err
 
 func (m *txnManager) handleAutoCommit() {
 	sessVars := m.sctx.GetSessionVars()
-	if sessVars.IsAutocommit() {
-		return
-	}
-
-	tx, _ := m.sctx.Txn(false)
-	if tx.Valid() {
+	if sessVars.IsAutocommit() && m.IsTxnActive() {
 		sessVars.SetInTxn(true)
 	}
 }
