@@ -61,51 +61,11 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []*joinNode, tracer *joinR
 		tracer.appendLogicalJoinCost(node.p, cost)
 	}
 
-	s.directGraph = make([][]byte, joinNodeCount)
-	for _, edge := range s.directedEdges {
-		if !edge.isImplicit && edge.joinType == InnerJoin {
-			continue
-		}
-		nodeBitSet := s.directGraph[edge.left.id]
-		if nodeBitSet == nil {
-			nodeBitSet = make([]byte, (joinNodeCount+7)>>3)
-			s.directGraph[edge.left.id] = nodeBitSet
-		}
-		rightOffset := byte(1 << (7 & edge.right.id))
-		nodeBitSet[edge.right.id>>3] |= rightOffset
-	}
-
-	for isPropagated := true; isPropagated; {
-		isPropagated = false
-		for idx, nodeBitSet := range s.directGraph {
-			for k1 := range nodeBitSet {
-				for i := 0; i < 8; i++ {
-					mask := nodeBitSet[k1] & (1 << i)
-					if mask > 0 {
-						isChange := s.merge(nodeBitSet, s.directGraph[k1<<3+i])
-						s.directGraph[idx] = nodeBitSet
-						if isChange {
-							isPropagated = true
-						}
-					}
-				}
-			}
-		}
-	}
+	s.priorityMap = s.buildPriorityMap(joinNodeCount)
 
 	// Sort plans by cost and join order
 	sort.SliceStable(s.curJoinGroup, func(i, j int) bool {
-		joinGroup1 := s.curJoinGroup[i]
-		joinGroup2 := s.curJoinGroup[j]
-		if s.directGraph[joinGroup1.id] != nil && ((s.directGraph[joinGroup1.id][joinGroup2.id>>3] & (1 << byte(7&joinGroup2.id))) > 0) {
-			return true
-		}
-
-		if s.directGraph[joinGroup2.id] != nil && ((s.directGraph[joinGroup2.id][joinGroup1.id>>3] & (1 << byte(7&joinGroup1.id))) > 0) {
-			return false
-		}
-
-		return joinGroup1.cumCost < joinGroup2.cumCost
+		return s.curJoinGroup[i].cumCost < s.curJoinGroup[j].cumCost
 	})
 
 	var cartesianGroup []LogicalPlan
@@ -120,11 +80,50 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []*joinNode, tracer *joinR
 	return s.makeBushyJoin(cartesianGroup), nil
 }
 
+// Build directed graph by driectedEdges
+func (s *joinReorderGreedySolver) buildPriorityMap(joinNodeCount int) [][]byte {
+	// 1.init graph
+	priorityMap := make([][]byte, joinNodeCount)
+	for _, edge := range s.directedEdges {
+		if !edge.isImplicit {
+			continue
+		}
+		nodeBitSet := priorityMap[edge.from.id]
+		if len(nodeBitSet) == 0 {
+			nodeBitSet = make([]byte, (joinNodeCount+7)>>3)
+			priorityMap[edge.from.id] = nodeBitSet
+		}
+		rightOffset := byte(1 << (7 & edge.to.id))
+		nodeBitSet[edge.to.id>>3] |= rightOffset
+	}
+
+	// todo 2.
+	for isPropagated := true; isPropagated; {
+		isPropagated = false
+		for idx, nodeBitSet := range priorityMap {
+			for k1 := range nodeBitSet {
+				for i := 0; i < 8; i++ {
+					mask := nodeBitSet[k1] & (1 << i)
+					if mask > 0 {
+						isChange := s.merge(nodeBitSet, priorityMap[k1<<3+i])
+						priorityMap[idx] = nodeBitSet
+						if isChange {
+							isPropagated = true
+						}
+					}
+				}
+			}
+		}
+	}
+	return priorityMap
+}
+
 func (s *joinReorderGreedySolver) merge(dest []byte, src []byte) (isChange bool) {
 	isChange = false
 	for i := range src {
 		if src[i] > 0 {
-			if dest[i]&src[i] == src[i] {
+			tmp := dest[i] | src[i]
+			if tmp != src[i] {
 				isChange = true
 			}
 			dest[i] = dest[i] | src[i]
@@ -134,8 +133,24 @@ func (s *joinReorderGreedySolver) merge(dest []byte, src []byte) (isChange bool)
 }
 
 func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorderTrace) (*jrNode, error) {
-	curJoinTree := s.curJoinGroup[0]
-	s.curJoinGroup = s.curJoinGroup[1:]
+	// We need the node with the least cost and is the starting node
+	// of the directGraph built using the nodes in curJoinGroup
+	startIdx := 0
+	for i := range s.curJoinGroup {
+		found := true
+		for j := range s.curJoinGroup {
+			if s.comparePriority(s.curJoinGroup[j].id, s.curJoinGroup[i].id) > 0 {
+				found = false
+			}
+		}
+		if found {
+			startIdx = i
+			break
+		}
+	}
+
+	curJoinTree := s.curJoinGroup[startIdx]
+	s.curJoinGroup = append(s.curJoinGroup[0:startIdx], s.curJoinGroup[startIdx+1:len(s.curJoinGroup)]...)
 	for {
 		bestCost := math.MaxFloat64
 		bestIdx := -1
@@ -143,7 +158,7 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 		var bestJoin LogicalPlan
 		for i := range s.curJoinGroup {
 			node := s.curJoinGroup[i]
-			newJoin, remainOthers := s.checkConnectionAndMakeJoin(curJoinTree.p, node.p)
+			newJoin, remainOthers := s.checkConnectionAndMakeJoin(curJoinTree, node)
 			if newJoin == nil {
 				continue
 			}
@@ -168,31 +183,46 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 			p:       bestJoin,
 			cumCost: bestCost,
 		}
-		s.curJoinGroup[bestIdx] = curJoinTree
-		// s.curJoinGroup = append(s.curJoinGroup[:bestIdx], s.curJoinGroup[bestIdx+1:]...)
-		curJoinTree = s.curJoinGroup[0]
-		s.curJoinGroup = s.curJoinGroup[1:]
+		s.curJoinGroup = append(s.curJoinGroup[:bestIdx], s.curJoinGroup[bestIdx+1:]...)
 		s.otherConds = finalRemainOthers
 	}
 	return curJoinTree, nil
 }
 
-func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftNode, rightNode LogicalPlan) (LogicalPlan, []expression.Expression) {
-	var usedEdges []*expression.ScalarFunction
+func (s *joinReorderGreedySolver) comparePriority(joinNodeId1, joinNodeId2 int) int {
+	if len(s.priorityMap) == 0 {
+		return 0
+	}
+	if bitmap := s.priorityMap[joinNodeId1]; len(bitmap) > 0 && bitmap[joinNodeId2>>3]&(1<<(7&joinNodeId2)) > 0 {
+		return 1
+	} else if bitmap = s.priorityMap[joinNodeId2]; len(bitmap) > 0 && bitmap[joinNodeId1>>3]&(1<<(7&joinNodeId1)) > 0 {
+		return -1
+	}
+	return 0
+}
 
+func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftNode, rightNode *jrNode) (LogicalPlan, []expression.Expression) {
+	for i := range s.curJoinGroup {
+		if s.comparePriority(s.curJoinGroup[i].id, rightNode.id) > 0 {
+			return nil, nil
+		}
+	}
+	var usedEdges []*expression.ScalarFunction
+	leftPlan := leftNode.p
+	rightPlan := rightNode.p
 	remainOtherConds := make([]expression.Expression, len(s.otherConds))
 	copy(remainOtherConds, s.otherConds)
 	joinType := InnerJoin
 	for idx, edge := range s.eqEdges {
 		lCol := edge.GetArgs()[0].(*expression.Column)
 		rCol := edge.GetArgs()[1].(*expression.Column)
-		if leftNode.Schema().Contains(lCol) && rightNode.Schema().Contains(rCol) {
+		if leftPlan.Schema().Contains(lCol) && rightPlan.Schema().Contains(rCol) {
 			usedEdges = append(usedEdges, edge)
 			joinType = s.joinTypes[idx]
-		} else if rightNode.Schema().Contains(lCol) && leftNode.Schema().Contains(rCol) {
+		} else if rightPlan.Schema().Contains(lCol) && leftPlan.Schema().Contains(rCol) {
 			usedEdges = append(usedEdges, edge)
 			joinType = s.joinTypes[idx]
-			rightNode, leftNode = leftNode, rightNode
+			rightPlan, leftPlan = leftPlan, rightPlan
 		}
 
 	}
@@ -202,16 +232,16 @@ func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftNode, rightNode
 	var otherConds []expression.Expression
 	var leftConds []expression.Expression
 	var rightConds []expression.Expression
-	mergedSchema := expression.MergeSchema(leftNode.Schema(), rightNode.Schema())
+	mergedSchema := expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema())
 
 	remainOtherConds, leftConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
-		return expression.ExprFromSchema(expr, leftNode.Schema()) && !expression.ExprFromSchema(expr, rightNode.Schema())
+		return expression.ExprFromSchema(expr, leftPlan.Schema()) && !expression.ExprFromSchema(expr, rightPlan.Schema())
 	})
 	remainOtherConds, rightConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
-		return expression.ExprFromSchema(expr, rightNode.Schema()) && !expression.ExprFromSchema(expr, leftNode.Schema())
+		return expression.ExprFromSchema(expr, rightPlan.Schema()) && !expression.ExprFromSchema(expr, leftPlan.Schema())
 	})
 	remainOtherConds, otherConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
 		return expression.ExprFromSchema(expr, mergedSchema)
 	})
-	return s.newJoinWithEdges(leftNode, rightNode, usedEdges, otherConds, leftConds, rightConds, joinType), remainOtherConds
+	return s.newJoinWithEdges(leftPlan, rightPlan, usedEdges, otherConds, leftConds, rightConds, joinType), remainOtherConds
 }

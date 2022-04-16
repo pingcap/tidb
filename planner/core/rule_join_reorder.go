@@ -61,27 +61,32 @@ func extractJoinGroup(p LogicalPlan) (group []*joinNode, eqEdges []*expression.S
 				break
 			}
 		}
-		for _, ld := range rhsGroup {
-			if ld.p.Schema().Contains(arg1) {
-				rightNode = ld
+		for _, rd := range rhsGroup {
+			if rd.p.Schema().Contains(arg1) {
+				rightNode = rd
 				break
 			}
 		}
-		edge := directedEdge{
-			left:     leftNode,
-			right:    rightNode,
-			joinType: join.JoinType,
+		edge, ok := buildDirectedEdge(leftNode, rightNode, join.JoinType)
+		if !ok {
+			continue
 		}
-		directedEdges = append(directedEdges, edge)
 
+		directedEdges = append(directedEdges, edge)
 		for idx := range lhsDirectedEdges {
 			lhsEdge := lhsDirectedEdges[idx]
-			implicitEdges := extractImplictDirectedEdges(lhsEdge, edge)
+			implicitEdges, extracted := extractImplictDirectedEdges(lhsEdge, edge)
+			if !extracted {
+				continue
+			}
 			directedEdges = append(directedEdges, implicitEdges...)
 		}
 		for idx := range rhsDirectedEdges {
 			rhsEdge := rhsDirectedEdges[idx]
-			implicitEdges := extractImplictDirectedEdges(rhsEdge, edge)
+			implicitEdges, extracted := extractImplictDirectedEdges(rhsEdge, edge)
+			if !extracted {
+				continue
+			}
 			directedEdges = append(directedEdges, implicitEdges...)
 		}
 	}
@@ -105,17 +110,45 @@ func extractJoinGroup(p LogicalPlan) (group []*joinNode, eqEdges []*expression.S
 	return group, eqEdges, otherConds, directedEdges, joinTypes
 }
 
+func buildDirectedEdge(left *joinNode, right *joinNode, joinType JoinType) (directedEdge, bool) {
+	var edge directedEdge
+	if joinType == RightOuterJoin {
+		edge = directedEdge{
+			from:     left,
+			to:       right,
+			directed: true,
+		}
+	} else if joinType == LeftOuterJoin {
+		edge = directedEdge{
+			from:     right,
+			to:       left,
+			directed: true,
+		}
+	} else if joinType == InnerJoin {
+		edge = directedEdge{
+			from:     left,
+			to:       right,
+			directed: false,
+		}
+	} else {
+		// todo invalid join type
+		return edge, false
+	}
+	return edge, true
+}
+
 // extractImplictDirectedEdges constructs implicit directed edges to guarantee join order
 // when the implicit join order is not directly represented by the "join" expression.
 //
 // For example `A right join B right join C`,
 // there is an implicit meaning that B must join A before C,
 // so there will be a directed edge `B->C`
-func extractImplictDirectedEdges(edge1 directedEdge, edge2 directedEdge) (implicitEdges []directedEdge) {
-	if edge1.joinType == InnerJoin && edge2.joinType == InnerJoin {
-		return nil
+func extractImplictDirectedEdges(edge1 directedEdge, edge2 directedEdge) ([]directedEdge, bool) {
+	if !edge1.directed && !edge2.directed {
+		return nil, false
 	}
 
+	var implicitEdges []directedEdge
 	// Construct a directed graph of joinNode
 	joinNodeGraph := make(map[*joinNode][]*joinNode, 4)
 	mergeToGraph(edge1, joinNodeGraph)
@@ -123,31 +156,33 @@ func extractImplictDirectedEdges(edge1 directedEdge, edge2 directedEdge) (implic
 	// Find endpoints from the same source in a directed edge
 	endPoints, ok := getCommonImplictEndPoint(joinNodeGraph)
 
-	if ok {
-		for i := range endPoints {
-			if endPoints[i] == edge1.left || endPoints[i] == edge1.right {
-				// Construct implicit edges
-				implicitEdges = append(implicitEdges, directedEdge{
-					left:       endPoints[i],
-					right:      endPoints[i^1],
-					isImplicit: true,
-				})
-				return
-			}
-		}
+	if !ok {
+		return implicitEdges, false
 	}
-	return
+	for i := range endPoints {
+		if endPoints[i] != edge1.from && endPoints[i] != edge1.to {
+			continue
+		}
+		// Construct implicit edges
+		implicitEdges = append(implicitEdges, directedEdge{
+			from:       endPoints[i],
+			to:         endPoints[i^1],
+			directed:   true,
+			isImplicit: true,
+		})
+		return implicitEdges, true
+	}
+	return implicitEdges, false
 }
 
 // mergeToGraph merge directed edge to construct graph
 func mergeToGraph(edge directedEdge, joinNodeGraph map[*joinNode][]*joinNode) {
-	if edge.joinType == LeftOuterJoin {
-		joinNodeGraph[edge.right] = append(joinNodeGraph[edge.right], edge.left)
-	} else if edge.joinType == RightOuterJoin {
-		joinNodeGraph[edge.left] = append(joinNodeGraph[edge.left], edge.right)
-	} else if edge.joinType == InnerJoin {
-		joinNodeGraph[edge.left] = append(joinNodeGraph[edge.left], edge.right)
-		joinNodeGraph[edge.right] = append(joinNodeGraph[edge.right], edge.left)
+	if edge.directed {
+		joinNodeGraph[edge.from] = append(joinNodeGraph[edge.from], edge.to)
+	} else {
+		// double-sided
+		joinNodeGraph[edge.from] = append(joinNodeGraph[edge.from], edge.to)
+		joinNodeGraph[edge.to] = append(joinNodeGraph[edge.to], edge.from)
 	}
 }
 
@@ -166,9 +201,9 @@ type joinReOrderSolver struct {
 }
 
 type directedEdge struct {
-	left       *joinNode
-	right      *joinNode
-	joinType   JoinType
+	from       *joinNode
+	to         *joinNode
+	directed   bool
 	isImplicit bool
 }
 
@@ -274,7 +309,7 @@ type baseSingleGroupJoinOrderSolver struct {
 	curJoinGroup []*jrNode
 	otherConds   []expression.Expression
 	// A map maintain plan and plans which must join after the plan
-	directGraph [][]byte
+	priorityMap [][]byte
 }
 
 // baseNodeCumCost calculate the cumulative cost of the node in the join group.
