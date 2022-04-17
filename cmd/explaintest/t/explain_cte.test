@@ -237,3 +237,24 @@ desc format='brief' with year_total as (
          ,t_s_secyear.customer_last_name
          ,t_s_secyear.customer_email_address
 limit 100;
+
+
+# predicate pushdown
+drop table if exists t1;
+create table t1 (id int, bench_type varchar(10),version varchar(10),tps int(20));
+insert into t1 (id,bench_type,version,tps) values (1,'sysbench','5.4.0',1111111);
+insert into t1 (id,bench_type,version,tps) values (2,'sysbench','6.0.0',222222);
+with all_data as
+(select * from t1
+),version1 as (select * from all_data where version ='5.4.0'
+),version2 as(select * from all_data where version ='6.0.0')
+select v1.tps v1_tps,v2.tps v2_tps
+from version1 v1, version2 v2
+where v1.bench_type =v2.bench_type;
+desc format='brief' with all_data as
+(select * from t1
+),version1 as (select * from all_data where version ='5.4.0'
+),version2 as(select * from all_data where version ='6.0.0')
+select v1.tps v1_tps,v2.tps v2_tps
+from version1 v1, version2 v2
+where v1.bench_type =v2.bench_type;

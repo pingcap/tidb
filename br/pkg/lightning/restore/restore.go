@@ -972,11 +972,14 @@ func (rc *Controller) saveStatusCheckpoint(ctx context.Context, tableName string
 	switch {
 	case err == nil:
 		break
-	case !common.IsContextCanceledError(err):
+	case utils.MessageIsRetryableStorageError(err.Error()), common.IsContextCanceledError(err):
+		// recoverable error, should not be recorded in checkpoint
+		// which will prevent lightning from automatically recovering
+		return nil
+	default:
+		// unrecoverable error
 		merger.SetInvalid()
 		rc.errorSummaries.record(tableName, err, statusIfSucceed)
-	default:
-		return nil
 	}
 
 	if engineID == checkpoints.WholeTableEngineID {
