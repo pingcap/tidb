@@ -1074,13 +1074,14 @@ func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, nee
 		}
 		cnt := curCnt + results.Count - results.BaseCount
 		if cnt < 0 {
+			logutil.BgLogger().Warn("negative count", zap.Int64("curCnt", curCnt), zap.Int64("resCnt", results.Count), zap.Int64("baseCnt", results.BaseCount))
 			cnt = 0
-		}
-		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version=%?, modify_count=%?, count=%?, snapshot=%? where table_id=%?", version, modifyCnt, cnt, results.Snapshot, tableID); err != nil {
-			return err
 		}
 		if cnt == 0 {
 			logutil.BgLogger().Warn("save tableStats with calculated count=0", zap.Int64("tblID", tableID))
+		}
+		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version=%?, modify_count=%?, count=%?, snapshot=%? where table_id=%?", version, modifyCnt, cnt, results.Snapshot, tableID); err != nil {
+			return err
 		}
 		statsVer = version
 	}
