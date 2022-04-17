@@ -85,6 +85,7 @@ type hashRowContainer struct {
 	hashTable baseHashTable
 
 	rowContainer *chunk.RowContainer
+	memTracker   *memory.Tracker
 }
 
 func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContext, allTypes []*types.FieldType) *hashRowContainer {
@@ -96,7 +97,9 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 		stat:         new(hashStatistic),
 		hashTable:    newConcurrentMapHashTable(),
 		rowContainer: rc,
+		memTracker:   memory.NewTracker(memory.LabelForRowContainer, -1),
 	}
+	rc.GetMemTracker().AttachTo(c.GetMemTracker())
 	return c
 }
 
@@ -222,7 +225,7 @@ func (c *hashRowContainer) Close() error {
 }
 
 // GetMemTracker returns the underlying memory usage tracker in hashRowContainer.
-func (c *hashRowContainer) GetMemTracker() *memory.Tracker { return c.rowContainer.GetMemTracker() }
+func (c *hashRowContainer) GetMemTracker() *memory.Tracker { return c.memTracker }
 
 // GetDiskTracker returns the underlying disk usage tracker in hashRowContainer.
 func (c *hashRowContainer) GetDiskTracker() *disk.Tracker { return c.rowContainer.GetDiskTracker() }
