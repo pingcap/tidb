@@ -55,7 +55,7 @@ func TestNonTransactionalDelete(t *testing.T) {
 		for i := 0; i < 100; i++ {
 			tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
 		}
-		tk.MustExec("split on a limit 3 delete from t")
+		tk.MustExec("split on a limit 4 delete from t")
 		tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
 
 		for i := 0; i < 100; i++ {
@@ -192,5 +192,25 @@ func TestNonTransactionalDeleteAutoDetectShardColumn(t *testing.T) {
 	}
 	for _, table := range badTables {
 		testFunc(table, false)
+	}
+}
+
+func TestNonTransactionalSharding(t *testing.T) {
+	store, clean := createStorage(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_max_chunk_size=35")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, key(a))")
+	tableSizes := []int{0, 1, 10, 20, 35, 40, 100, 200}
+	splitSizes := []int{1, 2, 3, 5, 7, 10, 30, 35, 50, 100}
+	for _, tableSize := range tableSizes {
+		for _, splitSize := range splitSizes {
+			for i := 0; i < tableSize; i++ {
+				tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
+			}
+			tk.MustQuery(fmt.Sprintf("split on a limit %d delete from t", splitSize)).Check(testkit.Rows(fmt.Sprintf("%d all succeeded", (tableSize+splitSize-1)/splitSize)))
+			tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
+		}
 	}
 }

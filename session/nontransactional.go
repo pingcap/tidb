@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -304,29 +305,30 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, s
 			break
 		}
 
-		newStart := chk.GetRow(0).GetDatum(0, &rs.Fields()[0].Column.FieldType)
-
-		// end last batch if: (1) current start != last end (2) current size >= batch size
-		if currentSize >= batchSize {
-			cmp, err := newStart.Compare(se.GetSessionVars().StmtCtx, &currentEnd, collate.GetCollator(shardColumnCollate))
-			if err != nil {
-				return nil, err
+		iter := chunk.NewIterator4Chunk(chk)
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			if currentSize == 0 {
+				newStart := row.GetDatum(0, &rs.Fields()[0].Column.FieldType)
+				currentStart = *newStart.Clone()
 			}
-			if cmp != 0 {
-				jobs = append(jobs, job{jobID: jobCount, start: currentStart, end: currentEnd, jobSize: currentSize})
-				jobCount++
-				currentSize = 0
+			newEnd := row.GetDatum(0, &rs.Fields()[0].Column.FieldType)
+			if currentSize >= batchSize {
+				cmp, err := newEnd.Compare(se.GetSessionVars().StmtCtx, &currentEnd, collate.GetCollator(shardColumnCollate))
+				if err != nil {
+					return nil, err
+				}
+				if cmp != 0 {
+					jobs = append(jobs, job{jobID: jobCount, start: *currentStart.Clone(), end: *currentEnd.Clone(), jobSize: currentSize})
+					jobCount++
+					currentSize = 0
+					currentStart = newEnd
+				}
 			}
+			currentEnd = newEnd
+			currentSize++
 		}
-
-		// a new batch
-		if currentSize == 0 {
-			currentStart = *newStart.Clone()
-		}
-
-		currentSize += chk.NumRows()
-		currentEndPointer := chk.GetRow(chk.NumRows()-1).GetDatum(0, &rs.Fields()[0].Column.FieldType)
-		currentEnd = *currentEndPointer.Clone()
+		currentEnd = *currentEnd.Clone()
+		currentStart = *currentStart.Clone()
 	}
 
 	return jobs, nil
