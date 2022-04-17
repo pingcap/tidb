@@ -665,7 +665,7 @@ func TestColumnTypeChangeFromStringToOthers(t *testing.T) {
 
 	// MySQL will get "ERROR 1366 (HY000): Incorrect DECIMAL value: '0' for column '' at row -1" error.
 	tk.MustExec("insert into t(vc) values ('abc')")
-	tk.MustGetErrCode("alter table t modify vc decimal(5,3)", errno.ErrBadNumber)
+	tk.MustGetErrCode("alter table t modify vc decimal(5,3)", errno.ErrTruncatedWrongValue)
 }
 
 func TestColumnTypeChangeFromNumericToOthers(t *testing.T) {
