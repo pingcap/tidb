@@ -383,19 +383,30 @@
       {
         "SQL": "EXPLAIN SELECT count(*) from t where a=1; -- 1. static partition prune",
         "Plan": [
-          "StreamAgg_32 1.00 root  funcs:count(Column#6)->Column#4",
-          "└─TableReader_33 1.00 root  data:StreamAgg_13",
-          "  └─StreamAgg_13 1.00 batchCop[tiflash]  funcs:count(1)->Column#6",
-          "    └─Selection_31 10.00 batchCop[tiflash]  eq(test.t.a, 1)",
-          "      └─TableFullScan_30 10000.00 batchCop[tiflash] table:t, partition:p0 keep order:false, stats:pseudo"
+          "HashAgg_27 1.00 root  funcs:count(Column#6)->Column#4",
+          "└─TableReader_29 1.00 root partition:p0 data:ExchangeSender_28",
+          "  └─ExchangeSender_28 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg_10 1.00 batchCop[tiflash]  funcs:count(1)->Column#6",
+          "      └─Selection_26 10.00 batchCop[tiflash]  eq(test.t.a, 1)",
+          "        └─TableFullScan_25 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": [
-          "MPP mode may be blocked because table `t`is a partition table which is not supported when `@@tidb_partition_prune_mode=static`."
-        ]
+        "Warn": null
       },
       {
         "SQL": "set @@tidb_partition_prune_mode=dynamic;",
         "Plan": null,
+        "Warn": null
+      },
+      {
+        "SQL": "EXPLAIN SELECT count(*) from t where a=1; -- 2. dynamic partition prune",
+        "Plan": [
+          "HashAgg_27 1.00 root  funcs:count(Column#6)->Column#4",
+          "└─TableReader_29 1.00 root partition:p0 data:ExchangeSender_28",
+          "  └─ExchangeSender_28 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg_10 1.00 batchCop[tiflash]  funcs:count(1)->Column#6",
+          "      └─Selection_26 10.00 batchCop[tiflash]  eq(test.t.a, 1)",
+          "        └─TableFullScan_25 10000.00 batchCop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
         "Warn": null
       }
     ]

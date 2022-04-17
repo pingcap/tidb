@@ -522,45 +522,91 @@ func TestPessimisticLockOnPartitionForIndexMerge(t *testing.T) {
 	tk.MustExec("analyze table t1")
 	tk.MustExec("analyze table t2")
 
+	ch := make(chan int32, 5)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
-	tk1.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	/*
+		tk1.MustExec("set @@tidb_partition_prune_mode = 'static'")
 
-	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+		tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+		tk.MustExec("begin pessimistic")
+	*/
+	//tk.MustQuery(`explain format='brief' select /*+ use_index_merge(t1) */ c1 from t1 join t2
+	//on t1.c_datetime >= t2.c_datetime
+	//where t1.c1 < 10 or t1.c2 < 10 for update`).Check(testkit.Rows(
+	/*
+			"Projection 16635.64 root  test.t1.c1",
+			"└─SelectLock 16635.64 root  for update 0",
+			"  └─Projection 16635.64 root  test.t1.c1, test.t1._tidb_rowid, test.t1._tidb_tid, test.t2._tidb_rowid",
+			"    └─HashJoin 16635.64 root  CARTESIAN inner join, other cond:ge(test.t1.c_datetime, test.t2.c_datetime)",
+			"      ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
+			"      │ └─IndexFullScan 3.00 cop[tikv] table:t2, index:c_datetime(c_datetime) keep order:false",
+			"      └─PartitionUnion(Probe) 5545.21 root  ",
+			"        ├─IndexMerge 5542.21 root  ",
+			"        │ ├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t1, partition:p0, index:c1(c1) range:[-inf,10), keep order:false, stats:pseudo",
+			"        │ ├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t1, partition:p0, index:c2(c2) range:[-inf,10), keep order:false, stats:pseudo",
+			"        │ └─TableRowIDScan(Probe) 5542.21 cop[tikv] table:t1, partition:p0 keep order:false, stats:pseudo",
+			"        ├─IndexMerge 1.00 root  ",
+			"        │ ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p1, index:c1(c1) range:[-inf,10), keep order:false",
+			"        │ ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p1, index:c2(c2) range:[-inf,10), keep order:false",
+			"        │ └─TableRowIDScan(Probe) 1.00 cop[tikv] table:t1, partition:p1 keep order:false",
+			"        ├─IndexMerge 1.00 root  ",
+			"        │ ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p2, index:c1(c1) range:[-inf,10), keep order:false",
+			"        │ ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p2, index:c2(c2) range:[-inf,10), keep order:false",
+			"        │ └─TableRowIDScan(Probe) 1.00 cop[tikv] table:t1, partition:p2 keep order:false",
+			"        └─IndexMerge 1.00 root  ",
+			"          ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p3, index:c1(c1) range:[-inf,10), keep order:false",
+			"          ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p3, index:c2(c2) range:[-inf,10), keep order:false",
+			"          └─TableRowIDScan(Probe) 1.00 cop[tikv] table:t1, partition:p3 keep order:false",
+		))
+	*/
+	//tk.MustQuery(`select /*+ use_index_merge(t1) */ c1 from t1 join t2
+	//on t1.c_datetime >= t2.c_datetime
+	//where t1.c1 < 10 or t1.c2 < 10 for update`).Sort().Check(testkit.Rows("1", "1", "1", "2", "2", "3", "3"))
+	/*
+		tk1.MustExec("begin pessimistic")
+
+		go func() {
+			tk1.MustExec("update t1 set c_datetime = '2020-06-26 03:24:00' where c1 = 1")
+			ch <- 0
+			tk1.MustExec("rollback")
+			ch <- 0
+		}()
+
+		// Leave 50ms for tk1 to run, tk1 should be blocked at the update operation.
+		time.Sleep(50 * time.Millisecond)
+		ch <- 1
+
+		tk.MustExec("rollback")
+		// tk1 should be blocked until tk commit/rollback, check the order.
+		require.Equal(t, <-ch, int32(1))
+		require.Equal(t, <-ch, int32(0))
+		<-ch // wait for goroutine to quit.
+	*/
+
+	// TODO: add support for index merge reader in dynamic tidb_partition_prune_mode
+	tk1.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec("begin pessimistic")
 	tk.MustQuery(`explain format='brief' select /*+ use_index_merge(t1) */ c1 from t1 join t2
 			on t1.c_datetime >= t2.c_datetime
 			where t1.c1 < 10 or t1.c2 < 10 for update`).Check(testkit.Rows(
-		"Projection 16635.64 root  test.t1.c1",
-		"└─SelectLock 16635.64 root  for update 0",
-		"  └─Projection 16635.64 root  test.t1.c1, test.t1._tidb_rowid, test.t1._tidb_tid, test.t2._tidb_rowid",
-		"    └─HashJoin 16635.64 root  CARTESIAN inner join, other cond:ge(test.t1.c_datetime, test.t2.c_datetime)",
-		"      ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
-		"      │ └─IndexFullScan 3.00 cop[tikv] table:t2, index:c_datetime(c_datetime) keep order:false",
-		"      └─PartitionUnion(Probe) 5545.21 root  ",
-		"        ├─IndexMerge 5542.21 root  ",
-		"        │ ├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t1, partition:p0, index:c1(c1) range:[-inf,10), keep order:false, stats:pseudo",
-		"        │ ├─IndexRangeScan(Build) 3323.33 cop[tikv] table:t1, partition:p0, index:c2(c2) range:[-inf,10), keep order:false, stats:pseudo",
-		"        │ └─TableRowIDScan(Probe) 5542.21 cop[tikv] table:t1, partition:p0 keep order:false, stats:pseudo",
-		"        ├─IndexMerge 1.00 root  ",
-		"        │ ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p1, index:c1(c1) range:[-inf,10), keep order:false",
-		"        │ ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p1, index:c2(c2) range:[-inf,10), keep order:false",
-		"        │ └─TableRowIDScan(Probe) 1.00 cop[tikv] table:t1, partition:p1 keep order:false",
-		"        ├─IndexMerge 1.00 root  ",
-		"        │ ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p2, index:c1(c1) range:[-inf,10), keep order:false",
-		"        │ ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p2, index:c2(c2) range:[-inf,10), keep order:false",
-		"        │ └─TableRowIDScan(Probe) 1.00 cop[tikv] table:t1, partition:p2 keep order:false",
-		"        └─IndexMerge 1.00 root  ",
-		"          ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p3, index:c1(c1) range:[-inf,10), keep order:false",
-		"          ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t1, partition:p3, index:c2(c2) range:[-inf,10), keep order:false",
-		"          └─TableRowIDScan(Probe) 1.00 cop[tikv] table:t1, partition:p3 keep order:false",
+		"Projection 9.00 root  test.t1.c1",
+		"└─SelectLock 9.00 root  for update 0",
+		"  └─HashJoin 9.00 root  CARTESIAN inner join, other cond:ge(test.t1.c_datetime, test.t2.c_datetime)",
+		"    ├─IndexReader(Build) 3.00 root  index:IndexFullScan",
+		"    │ └─IndexFullScan 3.00 cop[tikv] table:t2, index:c_datetime(c_datetime) keep order:false",
+		"    └─IndexMerge(Probe) 3.00 root partition:all ",
+		"      ├─IndexRangeScan(Build) 3.00 cop[tikv] table:t1, index:c1(c1) range:[-inf,10), keep order:false",
+		"      ├─IndexRangeScan(Build) 3.00 cop[tikv] table:t1, index:c2(c2) range:[-inf,10), keep order:false",
+		"      └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t1 keep order:false",
 	))
 	tk.MustQuery(`select /*+ use_index_merge(t1) */ c1 from t1 join t2
 			on t1.c_datetime >= t2.c_datetime
 			where t1.c1 < 10 or t1.c2 < 10 for update`).Sort().Check(testkit.Rows("1", "1", "1", "2", "2", "3", "3"))
 	tk1.MustExec("begin pessimistic")
 
-	ch := make(chan int32, 5)
 	go func() {
 		tk1.MustExec("update t1 set c_datetime = '2020-06-26 03:24:00' where c1 = 1")
 		ch <- 0
@@ -572,11 +618,9 @@ func TestPessimisticLockOnPartitionForIndexMerge(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	ch <- 1
 
-	tk.MustExec("commit")
-	// tk1 should be blocked until tk commit, check the order.
+	tk.MustExec("rollback")
+	// tk1 should be blocked until tk commit/rollback, check the order.
 	require.Equal(t, <-ch, int32(1))
 	require.Equal(t, <-ch, int32(0))
 	<-ch // wait for goroutine to quit.
-
-	// TODO: add support for index merge reader in dynamic tidb_partition_prune_mode
 }

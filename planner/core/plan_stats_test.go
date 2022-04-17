@@ -78,12 +78,24 @@ func TestPlanStatsLoad(t *testing.T) {
 		{ // PartitionTable
 			sql: "select * from pt where a < 15 and c > 1",
 			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
+				switch pp := p.(type) {
+				case *plannercore.PhysicalTableReader:
+					stats := pp.Stats().HistColl
+					require.Equal(t, 0, countFullStats(stats, tableInfo.Columns[1].ID))
+					require.Equal(t, 0, countFullStats(stats, tableInfo.Columns[2].ID))
+				default:
+					t.Error("unexpected plan:", pp)
+				}
+			},
+			/* if static prune mode:
+			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
 				pua, ok := p.(*plannercore.PhysicalUnionAll)
 				require.True(t, ok)
 				for _, child := range pua.Children() {
 					require.Greater(t, countFullStats(child.Stats().HistColl, tableInfo.Columns[2].ID), 0)
 				}
 			},
+			*/
 		},
 		{ // Join
 			sql: "select * from t t1 inner join t t2 on t1.b=t2.b where t1.d=3",

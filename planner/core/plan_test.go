@@ -85,7 +85,7 @@ func TestPreferRangeScan(t *testing.T) {
 			output[i].SQL = tt
 			output[i].Plan = normalizedPlanRows
 		})
-		compareStringSlice(t, normalizedPlanRows, output[i].Plan)
+		compareStringSlice(t, normalizedPlanRows, output[i].Plan, tt)
 	}
 }
 
@@ -122,7 +122,7 @@ func TestNormalizedPlan(t *testing.T) {
 			output[i].SQL = tt
 			output[i].Plan = normalizedPlanRows
 		})
-		compareStringSlice(t, normalizedPlanRows, output[i].Plan)
+		compareStringSlice(t, normalizedPlanRows, output[i].Plan, tt)
 	}
 }
 
@@ -162,7 +162,7 @@ func TestNormalizedPlanForDiffStore(t *testing.T) {
 			output[i].Digest = digest.String()
 			output[i].Plan = normalizedPlanRows
 		})
-		compareStringSlice(t, normalizedPlanRows, output[i].Plan)
+		compareStringSlice(t, normalizedPlanRows, output[i].Plan, tt)
 		require.NotEqual(t, digest.String(), lastDigest)
 		lastDigest = digest.String()
 	}
@@ -425,11 +425,10 @@ func getPlanRows(planStr string) []string {
 	return strings.Split(planStr, "\n")
 }
 
-func compareStringSlice(t *testing.T, ss1, ss2 []string) {
-	require.Equal(t, len(ss1), len(ss2))
-	for i, s := range ss1 {
-		require.Equal(t, len(s), len(ss2[i]))
-	}
+func compareStringSlice(t *testing.T, got, expected []string, q string) {
+	s1 := `"` + strings.Join(expected, "\",\n\"") + `"`
+	s2 := `"` + strings.Join(got, "\",\n\"") + `"`
+	require.Equal(t, s1, s2, "Query: %s", q)
 }
 
 func TestExplainFormatHint(t *testing.T) {

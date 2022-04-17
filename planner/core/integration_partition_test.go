@@ -141,8 +141,10 @@ func TestListPartitionPruning(t *testing.T) {
 		})
 		tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].DynamicPlan...))
-		tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
-		tk.MustQuery(tt).Check(testkit.Rows(output[i].StaticPlan...))
+		/*
+			tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+			tk.MustQuery(tt).Check(testkit.Rows(output[i].StaticPlan...))
+		*/
 	}
 }
 

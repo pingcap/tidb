@@ -1081,7 +1081,8 @@ func (s *SessionVars) CheckAndGetTxnScope() string {
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
 func (s *SessionVars) UseDynamicPartitionPrune() bool {
-	return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
+	return true
+	//return PartitionPruneMode(s.PartitionPruneMode.Load()) == Dynamic
 }
 
 // BuildParserConfig generate parser.ParserConfig for initial parser
