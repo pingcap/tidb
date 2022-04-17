@@ -217,7 +217,7 @@ type Controller struct {
 	errorMgr          *errormanager.ErrorManager
 	taskMgr           taskMetaMgr
 
-	diskQuotaLock  *sync.RWMutex
+	diskQuotaLock  sync.RWMutex
 	diskQuotaState atomic.Int32
 	compactState   atomic.Int32
 	status         *LightningStatus
@@ -391,7 +391,6 @@ func NewRestoreControllerWithPauser(
 		ownStore:       p.OwnExtStorage,
 		metaMgrBuilder: metaBuilder,
 		errorMgr:       errorMgr,
-		diskQuotaLock:  &sync.RWMutex{},
 		status:         p.Status,
 		taskMgr:        nil,
 	}
@@ -1735,7 +1734,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 			if locker == nil {
 				// blocks all writers when we detected disk quota being exceeded.
 				rc.diskQuotaLock.Lock()
-				locker = rc.diskQuotaLock
+				locker = &rc.diskQuotaLock
 			}
 
 			logger.Warn("disk quota exceeded")
