@@ -330,7 +330,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		if err != nil {
 			panic(err)
 		}
-		if err := os.WriteFile(certPath+".old", certBytes, 0o644); err != nil {
+		if err := os.WriteFile(certPath+".old", certBytes, 0o600); err != nil {
 			panic(err)
 		}
 		if err := updateCertExpiry(rootKeyPath, rootCaPath, keyPath, certPath, time.Second*10); err != nil {
@@ -966,7 +966,7 @@ func updateCertExpiry(rootKeyPath, rootCaPath, keyPath, certPath string, expiry 
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes}), 0o644)
+	return os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes}), 0o600)
 }
 
 func parsePrivateKey(keyPath string) (*ecdsa.PrivateKey, error) {
