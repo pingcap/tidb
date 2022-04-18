@@ -335,11 +335,7 @@ func (t *Tracker) Consume(bytes int64) {
 				continue
 			}
 			if label, ok := MetricsTypes[tracker.label]; ok {
-				memStats := &runtime.MemStats{}
-				runtime.ReadMemStats(memStats)
-				logutil.BgLogger().Info("current memory usage", zap.Int64("consumed", consumed), zap.Uint64("HeapInUse", memStats.HeapInuse))
-				metrics.MemoryUsage.WithLabelValues(label[0]).Set(float64(consumed))
-				metrics.MemoryUsage.WithLabelValues(label[1]).Set(float64(maxNow))
+				metrics.MemoryUsage.WithLabelValues(label).Set(float64(consumed))
 			}
 			break
 		}
@@ -581,6 +577,6 @@ const (
 )
 
 // MetricsTypes is used to get label for metrics
-var MetricsTypes = map[int][]string{
-	LabelForAnalyzeSharedMemory: {"analyze-memory", "max-analyze-memory"},
+var MetricsTypes = map[int]string{
+	LabelForAnalyzeSharedMemory: "analyze",
 }
