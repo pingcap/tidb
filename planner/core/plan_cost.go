@@ -19,14 +19,14 @@ import (
 	"github.com/pingcap/tidb/planner/property"
 )
 
-// CalPlanCost calculates and returns the cost of current plan.
-func (p *basePhysicalPlan) CalPlanCost(taskType property.TaskType) (float64, error) {
+// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *basePhysicalPlan) GetPlanCost(taskType property.TaskType) (float64, error) {
 	if p.planCostInit {
 		return p.planCost, nil
 	}
 	p.planCost = 0 // the default implementation, the operator have no cost
 	for _, child := range p.children {
-		childCost, err := child.CalPlanCost(taskType)
+		childCost, err := child.GetPlanCost(taskType)
 		if err != nil {
 			return 0, err
 		}
@@ -36,112 +36,112 @@ func (p *basePhysicalPlan) CalPlanCost(taskType property.TaskType) (float64, err
 	return p.planCost, nil
 }
 
-// CalPlanCost calculates and returns the cost of current plan.
-func (p *PhysicalSelection) CalPlanCost(taskType property.TaskType) (float64, error) {
+// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *PhysicalSelection) GetPlanCost(taskType property.TaskType) (float64, error) {
 	return 0, errors.New("not implemented")
 }
 
-// CalPlanCost calculates and returns the cost of current plan.
-func (p *PhysicalProjection) CalPlanCost(taskType property.TaskType) (float64, error) {
+// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *PhysicalProjection) GetPlanCost(taskType property.TaskType) (float64, error) {
 	return 0, errors.New("not implemented")
 }
 
-// CalPlanCost calculates and returns the cost of current plan.
-func (p *PhysicalIndexLookUpReader) CalPlanCost(taskType property.TaskType) (float64, error) {
+// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType) (float64, error) {
 	return 0, errors.New("not implemented")
 }
 
-// CalPlanCost calculates and returns the cost of current plan.
-func (p *PhysicalIndexReader) CalPlanCost(taskType property.TaskType) (float64, error) {
+// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *PhysicalIndexReader) GetPlanCost(taskType property.TaskType) (float64, error) {
 	return 0, errors.New("not implemented")
 }
 
-// CalPlanCost calculates and returns the cost of current plan.
-func (p *PhysicalTableReader) CalPlanCost(taskType property.TaskType) (float64, error) {
+// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *PhysicalTableReader) GetPlanCost(taskType property.TaskType) (float64, error) {
 	return 0, errors.New("not implemented")
 }
 
-// CalPlanCost calculates and returns the cost of current plan.
-func (p *PhysicalIndexMergeReader) CalPlanCost(taskType property.TaskType) (float64, error) {
+// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *PhysicalIndexMergeReader) GetPlanCost(taskType property.TaskType) (float64, error) {
 	return 0, errors.New("not implemented")
 }
 
-// CalPlanCost calculates and returns the cost of current plan.
-func (p *PhysicalTableScan) CalPlanCost(taskType property.TaskType) (float64, error) {
+// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *PhysicalTableScan) GetPlanCost(taskType property.TaskType) (float64, error) {
 	return 0, errors.New("not implemented")
 }
 
-// CalPlanCost calculates and returns the cost of current plan.
-func (p *PhysicalIndexScan) CalPlanCost(taskType property.TaskType) (float64, error) {
+// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *PhysicalIndexScan) GetPlanCost(taskType property.TaskType) (float64, error) {
 	return 0, errors.New("not implemented")
 }
 
-// CalPlanCost calculates and returns the cost of current plan.
-func (p *PhysicalIndexJoin) CalPlanCost(taskType property.TaskType) (float64, error) {
+// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *PhysicalIndexJoin) GetPlanCost(taskType property.TaskType) (float64, error) {
 	return 0, errors.New("not implemented")
 }
 
-// CalPlanCost calculates and returns the cost of current plan.
-func (p *PhysicalIndexHashJoin) CalPlanCost(taskType property.TaskType) (float64, error) {
+// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *PhysicalIndexHashJoin) GetPlanCost(taskType property.TaskType) (float64, error) {
 	return 0, errors.New("not implemented")
 }
 
-// CalPlanCost calculates and returns the cost of current plan.
-func (p *PhysicalIndexMergeJoin) CalPlanCost(taskType property.TaskType) (float64, error) {
+// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *PhysicalIndexMergeJoin) GetPlanCost(taskType property.TaskType) (float64, error) {
 	return 0, errors.New("not implemented")
 }
 
-// CalPlanCost calculates and returns the cost of current plan.
-func (p *PhysicalApply) CalPlanCost(taskType property.TaskType) (float64, error) {
+// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *PhysicalApply) GetPlanCost(taskType property.TaskType) (float64, error) {
 	return 0, errors.New("not implemented")
 }
 
-// CalPlanCost calculates and returns the cost of current plan.
-func (p *PhysicalMergeJoin) CalPlanCost(taskType property.TaskType) (float64, error) {
+// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *PhysicalMergeJoin) GetPlanCost(taskType property.TaskType) (float64, error) {
 	return 0, errors.New("not implemented")
 }
 
-// CalPlanCost calculates and returns the cost of current plan.
-func (p *PhysicalHashJoin) CalPlanCost(taskType property.TaskType) (float64, error) {
+// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *PhysicalHashJoin) GetPlanCost(taskType property.TaskType) (float64, error) {
 	return 0, errors.New("not implemented")
 }
 
-// CalPlanCost calculates and returns the cost of current plan.
-func (p *PhysicalStreamAgg) CalPlanCost(taskType property.TaskType) (float64, error) {
+// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *PhysicalStreamAgg) GetPlanCost(taskType property.TaskType) (float64, error) {
 	return 0, errors.New("not implemented")
 }
 
-// CalPlanCost calculates and returns the cost of current plan.
-func (p *PhysicalHashAgg) CalPlanCost(taskType property.TaskType) (float64, error) {
+// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *PhysicalHashAgg) GetPlanCost(taskType property.TaskType) (float64, error) {
 	return 0, errors.New("not implemented")
 }
 
-// CalPlanCost calculates and returns the cost of current plan.
-func (p *PhysicalSort) CalPlanCost(taskType property.TaskType) (float64, error) {
+// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *PhysicalSort) GetPlanCost(taskType property.TaskType) (float64, error) {
 	return 0, errors.New("not implemented")
 }
 
-// CalPlanCost calculates and returns the cost of current plan.
-func (p *PhysicalTopN) CalPlanCost(taskType property.TaskType) (float64, error) {
+// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *PhysicalTopN) GetPlanCost(taskType property.TaskType) (float64, error) {
 	return 0, errors.New("not implemented")
 }
 
-// CalPlanCost calculates and returns the cost of current plan.
-func (p *BatchPointGetPlan) CalPlanCost(taskType property.TaskType) (float64, error) {
+// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *BatchPointGetPlan) GetPlanCost(taskType property.TaskType) (float64, error) {
 	return 0, errors.New("not implemented")
 }
 
-// CalPlanCost calculates and returns the cost of current plan.
-func (p *PointGetPlan) CalPlanCost(taskType property.TaskType) (float64, error) {
+// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *PointGetPlan) GetPlanCost(taskType property.TaskType) (float64, error) {
 	return 0, errors.New("not implemented")
 }
 
-// CalPlanCost calculates and returns the cost of current plan.
-func (p *PhysicalUnionAll) CalPlanCost(taskType property.TaskType) (float64, error) {
+// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *PhysicalUnionAll) GetPlanCost(taskType property.TaskType) (float64, error) {
 	return 0, errors.New("not implemented")
 }
 
-// CalPlanCost calculates and returns the cost of current plan.
-func (p *PhysicalExchangeReceiver) CalPlanCost(taskType property.TaskType) (float64, error) {
+// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
+func (p *PhysicalExchangeReceiver) GetPlanCost(taskType property.TaskType) (float64, error) {
 	return 0, errors.New("not implemented")
 }

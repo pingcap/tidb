@@ -319,7 +319,7 @@ func getTaskPlanCost(t task) (float64, error) {
 	default:
 		return 0, errors.New("unknown task type")
 	}
-	return t.plan().CalPlanCost(taskType)
+	return t.plan().GetPlanCost(taskType)
 }
 
 type physicalOptimizeOp struct {
