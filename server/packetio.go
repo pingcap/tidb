@@ -126,6 +126,7 @@ func (p *packetIO) setMaxAllowedPacket(maxAllowedPacket uint64) {
 }
 
 func (p *packetIO) readPacket() ([]byte, error) {
+	p.accumulatedLength = 0
 	if p.readTimeout == 0 {
 		if err := p.bufReadConn.SetReadDeadline(time.Time{}); err != nil {
 			return nil, errors.Trace(err)
