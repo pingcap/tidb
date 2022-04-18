@@ -812,6 +812,11 @@ func TestMultiSchemaChangeModifyColumns(t *testing.T) {
 	tk.MustQuery("select * from t use index(i1, i2);").Check(testkit.Rows("1 3 2", "11 33 22"))
 	tk.MustExec("admin check table t;")
 	checkDelRangeCnt(tk, jobIDExt.jobID, 1) // only i2 has tmp index.
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a bigint null default '1761233443433596323', index t(a));")
+	tk.MustExec("insert into t set a = '-7184819032643664798';")
+	tk.MustGetErrCode("alter table t change column a b datetime null default '8972-12-24 10:56:03', rename index t to t1;", errno.ErrTruncatedWrongValue)
 }
 
 func TestMultiSchemaChangeModifyColumnsCancelled(t *testing.T) {
