@@ -99,10 +99,8 @@ func TestCancelPartitionTable(t *testing.T) {
 	dom.DDL().SetHook(hook)
 
 	restHook := func(h *ddl.TestDDLCallback) {
-		h.OnJobRunBeforeExported = func(job *model.Job) {
-		}
-		h.OnJobUpdatedExported = func(job *model.Job) {
-		}
+		h.OnJobRunBeforeExported = nil
+		h.OnJobUpdatedExported = nil
 	}
 	registHook := func(h *ddl.TestDDLCallback, onJobRunBefore bool) {
 		if onJobRunBefore {
