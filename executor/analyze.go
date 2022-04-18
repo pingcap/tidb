@@ -159,7 +159,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		if results.Err != nil {
 			err = results.Err
-			if err == errAnalyzeWorkerPanic {
+			if err == errAnalyzeWorkerPanic || err == errAnalyzeWorkerPanicForMemLimit {
 				panicCnt++
 			} else {
 				logutil.Logger(ctx).Error("analyze failed", zap.Error(err))
@@ -356,10 +356,13 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 			buf = buf[:stackSize]
 			logutil.BgLogger().Error("analyze worker panicked", zap.String("stack", string(buf)))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
-			resultsCh <- &statistics.AnalyzeResults{
-				Err: errAnalyzeWorkerPanic,
-				Job: task.job,
+			analyzeResult := &statistics.AnalyzeResults{Job: task.job}
+			if str, ok := r.(string); ok && str == globalPanicAnalyzeMemoryExceed {
+				analyzeResult.Err = errAnalyzeWorkerPanicForMemLimit
+			} else {
+				analyzeResult.Err = errAnalyzeWorkerPanic
 			}
+			resultsCh <- analyzeResult
 		}
 	}()
 	for {
@@ -720,10 +723,10 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) *statistics.AnalyzeResu
 		})
 		defer wg.Wait()
 		count, hists, topns, fmSketches, extStats, err := colExec.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
+		runtime.GC() // force GC after stats built
 		if err != nil {
 			return &statistics.AnalyzeResults{Err: err, Job: colExec.job}
 		}
-		runtime.GC() // force GC after stats built
 		cLen := len(colExec.analyzePB.ColReq.ColumnsInfo)
 		colGroupResult := &statistics.AnalyzeResult{
 			Hist:    hists[cLen:],
@@ -1004,7 +1007,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		}
 		if mergeResult.err != nil {
 			err = mergeResult.err
-			if mergeResult.err == errAnalyzeWorkerPanic {
+			if mergeResult.err == errAnalyzeWorkerPanic || mergeResult.err == errAnalyzeWorkerPanicForMemLimit {
 				mergeWorkerPanicCnt++
 			}
 			continue
@@ -1119,7 +1122,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		}
 		if err1 != nil {
 			err = err1
-			if err1 == errAnalyzeWorkerPanic {
+			if err1 == errAnalyzeWorkerPanic || err1 == errAnalyzeWorkerPanicForMemLimit {
 				panicCnt++
 			}
 			continue
@@ -1414,7 +1417,6 @@ func (e *AnalyzeColumnsExec) subBuildWorker(
 			} else {
 				resultCh <- errAnalyzeWorkerPanic
 			}
-			resultCh <- errAnalyzeWorkerPanic
 		}
 	}()
 	failpoint.Inject("mockAnalyzeSamplingBuildWorkerPanic", func() {
