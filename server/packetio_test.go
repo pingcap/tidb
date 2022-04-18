@@ -57,10 +57,10 @@ func TestPacketIORead(t *testing.T) {
 	// Test read one packet
 	brc := newBufferedReadConn(&bytesConn{inBuffer})
 	pkt := newPacketIO(brc)
-	bytes, err := pkt.readPacket()
+	readBytes, err := pkt.readPacket()
 	require.NoError(t, err)
 	require.Equal(t, uint8(1), pkt.sequence)
-	require.Equal(t, []byte{0x01}, bytes)
+	require.Equal(t, []byte{0x01}, readBytes)
 
 	inBuffer.Reset()
 	buf := make([]byte, mysql.MaxPayloadLen+9)
@@ -79,11 +79,11 @@ func TestPacketIORead(t *testing.T) {
 	// Test read multiple packets
 	brc = newBufferedReadConn(&bytesConn{inBuffer})
 	pkt = newPacketIO(brc)
-	bytes, err = pkt.readPacket()
+	readBytes, err = pkt.readPacket()
 	require.NoError(t, err)
 	require.Equal(t, uint8(2), pkt.sequence)
-	require.Equal(t, mysql.MaxPayloadLen+1, len(bytes))
-	require.Equal(t, byte(0x0a), bytes[mysql.MaxPayloadLen])
+	require.Equal(t, mysql.MaxPayloadLen+1, len(readBytes))
+	require.Equal(t, byte(0x0a), readBytes[mysql.MaxPayloadLen])
 }
 
 type bytesConn struct {
