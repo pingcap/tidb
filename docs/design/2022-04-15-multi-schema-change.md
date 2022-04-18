@@ -88,24 +88,24 @@ In this way, we pack multiple schema changes into one job. Just like the other j
 
 In the normal cases, the worker executes the sub-jobs one by one serially as if they are plain jobs. However, the thing gets complex in the abnormal cases.
 
-To ensure the atomicity of a Multi-Schema Change execution, we need to maintain the changing schema object states carefully. Take the above SQL as an example, if the 2nd sub-job `MODIFY COLUMN a CHAR(255)` failed for some reasons, the 1st sub-job should be able to revert its changes(rollback the added column `b`).
+To ensure the atomicity of a Multi-Schema Change execution, we need to maintain the changing schema object states carefully. Take the above SQL as an example, if the second sub-job `MODIFY COLUMN a CHAR(255)` failed for some reasons, the first sub-job should be able to rollback its changes(rollback the added column `b`).
 
-This requirement means we cannot public the schema object when a sub-job is finished. Instead, the schema object should be **paused** in a "ready-to-public" state, which is still invisible to users. These schema object are finally public all at once when all the sub-jobs are confirmed to be success. This method is kind of like 2PC: the "commit" can only be started until all "prewrites" are done.
+This requirement means we cannot simply public the schema object when a sub-job is finished. Instead, it should stay in a state which is still unnoticeable to users, and wait for the other sub-jobs, finally public all at once when all the sub-jobs are confirmed to be success. This method is kind of like 2PC: the "commit" can only be started when "prewrites" are complete.
 
-Here is the table of states that should be paused under different schema changes. Note the "Next State" column shows the states that are visible to users.
+Here is the table of states that should stay for different DDL. Note the "Next State" column means the changes are noticeable to the users.
 
-| DDL Type (Schema Change) | Pausing State | Next State |
-|--------------------------|---------------|------------|
-| Add Column               | Write-Reorg   | Public     |
-| Add Index                | Write-Reorg   | Public     |
-| Drop Column              | Public        | Write-Only |
-| Drop Index               | Public        | Write-Only |
-| Non-reorg Modify Column  | Public        | None       |
-| Reorg Modify Column      | Write-Reorg   | None       |
+| DDL (Schema Change)     | Unnoticeable State | Next State |
+|-------------------------|--------------------|------------|
+| Add Column              | Write-Reorg        | Public     |
+| Add Index               | Write-Reorg        | Public     |
+| Drop Column             | Public             | Write-Only |
+| Drop Index              | Public             | Write-Only |
+| Non-reorg Modify Column | None               | Public     |
+| Reorg Modify Column     | Write-Reorg        | Public     |
 
-To achieve this behavior, we introduce a flag in sub-job named "non-revertible". This flag is set when a schema object has steped to a pausing state. When all sub-jobs are non-revertible, all the related schema objects step to the next state in one transaction.
+To achieve this behavior, we introduce a flag in sub-job named "non-revertible". This flag is set when a schema object has steped to the last unnoticeable state. When all sub-jobs become non-revertible, all the related schema objects step to the next state in one transaction. After that, the sub-jobs are executed serially to do the rest.
 
-On the other hand, if there is any error thrown by any sub-job before all of them become non-revertible, the whole job is switched to a `rollingback` state. For the executed sub-jobs, we set them to `cancelling`; for the sub-job that have not been executed, we set them to `cancelled`.
+On the other hand, if there is any error returned by any sub-job before all of them become non-revertible, the whole job is switched to a `rollingback` state. For the executed sub-jobs, we set them to `cancelling`; for the sub-job that have not been executed, we set them to `cancelled`.
 
 Finally we consider the extreme case: an error occurs while all the sub-jobs are non-revertible. In this situation, we tend to believe that the error can be solved by a trivial way like retrying. This behavior is compatible with the current DDL implementation. Take `DROP COLUMN` as an example, once the column steps to "Write-Only" state, there is no way to cancel this job.
 
