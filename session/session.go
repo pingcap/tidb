@@ -829,7 +829,11 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+<<<<<<< HEAD
 		err = variable.SetSessionSystemVar(se.sessionVars, variable.MaxAllowedPacket, types.NewStringDatum("67108864"))
+=======
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.MaxAllowedPacket, strconv.FormatUint(variable.DefMaxAllowedPacket, 10))
+>>>>>>> 4d3a3c259... server: use max_allowed_packet to limit the packet size. (#33651)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

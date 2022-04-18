@@ -358,6 +358,9 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 }
 
 func (cc *clientConn) readPacket() ([]byte, error) {
+	if cc.ctx != nil {
+		cc.pkt.setMaxAllowedPacket(cc.ctx.GetSessionVars().MaxAllowedPacket)
+	}
 	return cc.pkt.readPacket()
 }
 
@@ -833,12 +836,30 @@ func (cc *clientConn) Run(ctx context.Context) {
 		if err != nil {
 			if terror.ErrorNotEqual(err, io.EOF) {
 				if netErr, isNetErr := errors.Cause(err).(net.Error); isNetErr && netErr.Timeout() {
+<<<<<<< HEAD
 					idleTime := time.Since(start)
 					logutil.Logger(ctx).Info("read packet timeout, close this connection",
 						zap.Duration("idle", idleTime),
 						zap.Uint64("waitTimeout", waitTimeout),
 						zap.Error(err),
 					)
+=======
+					if atomic.LoadInt32(&cc.status) == connStatusWaitShutdown {
+						logutil.Logger(ctx).Info("read packet timeout because of killed connection")
+					} else {
+						idleTime := time.Since(start)
+						logutil.Logger(ctx).Info("read packet timeout, close this connection",
+							zap.Duration("idle", idleTime),
+							zap.Uint64("waitTimeout", waitTimeout),
+							zap.Error(err),
+						)
+					}
+				} else if errors.ErrorEqual(err, errNetPacketTooLarge) {
+					err := cc.writeError(ctx, err)
+					if err != nil {
+						terror.Log(err)
+					}
+>>>>>>> 4d3a3c259... server: use max_allowed_packet to limit the packet size. (#33651)
 				} else {
 					errStack := errors.ErrorStack(err)
 					if !strings.Contains(errStack, "use of closed network connection") {

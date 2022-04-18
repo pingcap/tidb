@@ -60,10 +60,17 @@ func (s *PacketIOTestSuite) TestRead(c *C) {
 	// Test read one packet
 	brc := newBufferedReadConn(&bytesConn{inBuffer})
 	pkt := newPacketIO(brc)
+<<<<<<< HEAD
 	bytes, err := pkt.readPacket()
 	c.Assert(err, IsNil)
 	c.Assert(pkt.sequence, Equals, uint8(1))
 	c.Assert(bytes, DeepEquals, []byte{0x01})
+=======
+	readBytes, err := pkt.readPacket()
+	require.NoError(t, err)
+	require.Equal(t, uint8(1), pkt.sequence)
+	require.Equal(t, []byte{0x01}, readBytes)
+>>>>>>> 4d3a3c259... server: use max_allowed_packet to limit the packet size. (#33651)
 
 	inBuffer.Reset()
 	buf := make([]byte, mysql.MaxPayloadLen+9)
@@ -82,11 +89,19 @@ func (s *PacketIOTestSuite) TestRead(c *C) {
 	// Test read multiple packets
 	brc = newBufferedReadConn(&bytesConn{inBuffer})
 	pkt = newPacketIO(brc)
+<<<<<<< HEAD
 	bytes, err = pkt.readPacket()
 	c.Assert(err, IsNil)
 	c.Assert(pkt.sequence, Equals, uint8(2))
 	c.Assert(len(bytes), Equals, mysql.MaxPayloadLen+1)
 	c.Assert(bytes[mysql.MaxPayloadLen], DeepEquals, byte(0x0a))
+=======
+	readBytes, err = pkt.readPacket()
+	require.NoError(t, err)
+	require.Equal(t, uint8(2), pkt.sequence)
+	require.Equal(t, mysql.MaxPayloadLen+1, len(readBytes))
+	require.Equal(t, byte(0x0a), readBytes[mysql.MaxPayloadLen])
+>>>>>>> 4d3a3c259... server: use max_allowed_packet to limit the packet size. (#33651)
 }
 
 type bytesConn struct {
