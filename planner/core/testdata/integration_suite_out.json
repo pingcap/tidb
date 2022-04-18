@@ -355,8 +355,8 @@
       {
         "SQL": "explain format = 'brief' select /*+ USE_INDEX_MERGE(t, a, b, c) */ * from t where 1 or t.a = 1 or t.b = 2",
         "Plan": [
-          "TableReader 8000.40 root  data:Selection",
-          "└─Selection 8000.40 cop[tikv]  or(1, or(eq(test.t.a, 1), eq(test.t.b, 2)))",
+          "TableReader 10000.00 root  data:Selection",
+          "└─Selection 10000.00 cop[tikv]  or(1, or(eq(test.t.a, 1), eq(test.t.b, 2)))",
           "  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       }
