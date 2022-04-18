@@ -20,6 +20,12 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+<<<<<<< HEAD
+=======
+	"strings"
+	"testing"
+	"time"
+>>>>>>> 4d3a3c259... server: use max_allowed_packet to limit the packet size. (#33651)
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
@@ -953,4 +959,32 @@ func (ts *ConnTestSuite) TestAuthPlugin2(c *C) {
 	_, err = cc.checkAuthPlugin(ctx, &resp)
 	c.Assert(err, IsNil)
 
+}
+
+func TestMaxAllowedPacket(t *testing.T) {
+	// Test cases from issue 31422: https://github.com/pingcap/tidb/issues/31422
+	// The string "SELECT length('') as len;" has 25 chars,
+	// so if the string inside '' has a length of 999, the total query reaches the max allowed packet size.
+
+	const maxAllowedPacket = 1024
+	var inBuffer bytes.Buffer
+	bytes := append([]byte{0x00, 0x04, 0x00, 0x00}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 999)))...)
+	_, err := inBuffer.Write(bytes)
+	require.NoError(t, err)
+	brc := newBufferedReadConn(&bytesConn{inBuffer})
+	pkt := newPacketIO(brc)
+	pkt.setMaxAllowedPacket(maxAllowedPacket)
+	_, err = pkt.readPacket()
+	require.NoError(t, err)
+	require.Equal(t, uint8(1), pkt.sequence)
+
+	inBuffer.Reset()
+	bytes = append([]byte{0x01, 0x04, 0x00, 0x00}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 1000)))...)
+	_, err = inBuffer.Write(bytes)
+	require.NoError(t, err)
+	brc = newBufferedReadConn(&bytesConn{inBuffer})
+	pkt = newPacketIO(brc)
+	pkt.setMaxAllowedPacket(maxAllowedPacket)
+	_, err = pkt.readPacket()
+	require.Error(t, err)
 }
