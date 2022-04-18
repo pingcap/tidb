@@ -604,6 +604,9 @@ func (s *testPlanSuite) TestProjectionEliminator(c *C) {
 		{
 			sql:  "select 1+num from (select 1+a as num from t) t1;",
 			best: "DataScan(t)->Projection",
+		}, {
+			sql:  "select count(*) from t where a in (select b from t2 where  a is null);",
+			best: "Join{DataScan(t)->Dual->Aggr(firstrow(test.t2.b))}(test.t.a,test.t2.b)->Aggr(count(1))->Projection",
 		},
 	}
 
@@ -619,6 +622,29 @@ func (s *testPlanSuite) TestProjectionEliminator(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, Commentf("for %s %d", tt.sql, ith))
 	}
+}
+
+func (s *testPlanSuite) TestCS3389(c *C) {
+	defer testleak.AfterTest(c)()
+
+	ctx := context.Background()
+	stmt, err := s.ParseOneStmt("select count(*) from t where a in (select b from t2 where  a is null);", "", "")
+	c.Assert(err, IsNil)
+	p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
+	c.Assert(err, IsNil)
+	p, err = logicalOptimize(context.TODO(), flagBuildKeyInfo|flagPrunColumns|flagPrunColumnsAgain|flagEliminateProjection|flagJoinReOrder, p.(LogicalPlan))
+	c.Assert(err, IsNil)
+
+	// Assert that all Projection is not empty and there is no Projection between Aggregation and Join.
+	proj, isProj := p.(*LogicalProjection)
+	c.Assert(isProj, IsTrue)
+	c.Assert(len(proj.Exprs) > 0, IsTrue)
+	child := proj.Children()[0]
+	agg, isAgg := child.(*LogicalAggregation)
+	c.Assert(isAgg, IsTrue)
+	child = agg.Children()[0]
+	_, isJoin := child.(*LogicalJoin)
+	c.Assert(isJoin, IsTrue)
 }
 
 func (s *testPlanSuite) TestAllocID(c *C) {
@@ -1456,7 +1482,7 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		{"select * from t", ""},
 		{"select t.* from t", ""},
 		{"select t2.* from t", "[planner:1051]Unknown table 't2'"},
-		{"select b as a, c as a from t group by a", "[planner:1052]Column 'c' in field list is ambiguous"},
+		{"select b as a, c as a from t group by a", "[planner:1052]Column 'a' in group statement is ambiguous"},
 		{"select 1 as a, b as a, c as a from t group by a", ""},
 		{"select a, b as a from t group by a+1", ""},
 		{"select c, a as c from t order by c+1", ""},
