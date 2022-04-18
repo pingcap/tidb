@@ -777,6 +777,8 @@ func (lp *ForListColumnPruning) buildPartitionValueMapAndSorted(p *parser.Parser
 
 // RebuildPartitionValueMapAndSorted rebuilds list columns partition value map for the specified column.
 func (lp *ForListColumnPruning) RebuildPartitionValueMapAndSorted(p *parser.Parser) error {
+	lp.valueMap = make(map[string]ListPartitionLocation, len(lp.valueMap))
+	lp.sorted.Clear(false)
 	return lp.buildListPartitionValueMapAndSorted(p)
 }
 
