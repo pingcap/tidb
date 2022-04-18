@@ -84,10 +84,6 @@ var (
 	initPdAddrsOnce sync.Once
 )
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
 var _ = Suite(&testSessionSuite{})
 var _ = Suite(&testSessionSuite2{})
 var _ = Suite(&testSessionSuite3{})
@@ -263,7 +259,7 @@ func (s *testSessionSuiteBase) TearDownTest(c *C) {
 	}
 }
 
-func createStorage(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, func()) {
+func createStorage(t *testing.T) (kv.Storage, func()) {
 	if *withTiKV {
 		initPdAddrs()
 		pdAddr := <-pdAddrChan
@@ -285,7 +281,7 @@ func createStorage(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Stor
 			pdAddrChan <- pdAddr
 		}
 	}
-	return newTestkit.CreateMockStore(t, opts...)
+	return newTestkit.CreateMockStore(t)
 }
 
 type mockBinlogPump struct {
