@@ -73,7 +73,7 @@ Here is the table of states that should stay for different DDLs. Note the "Next 
 | Add Index               | Write-Reorg        | Public     |
 | Drop Column             | Public             | Write-Only |
 | Drop Index              | Public             | Write-Only |
-| Non-reorg Modify Column | None               | Public     |
+| Non-reorg Modify Column | Public             | Public     |
 | Reorg Modify Column     | Write-Reorg        | Public     |
 
 To achieve this behavior, we introduce a flag in the sub-job named "non-revertible". This flag is set when a schema object has stepped to the last unnoticeable state. When all sub-jobs become non-revertible, all the related schema objects step to the next state in one transaction. After that, the sub-jobs are executed serially to do the rest.
