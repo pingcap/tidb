@@ -345,6 +345,7 @@ type analyzeTask struct {
 }
 
 var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
+var errAnalyzeWorkerPanicForMemLimit = errors.New("analyze panic for memory quota, please try with smaller samplerate/samples.")
 
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults) {
 	var task *analyzeTask
@@ -1329,7 +1330,11 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 			buf = buf[:stackSize]
 			logutil.BgLogger().Error("analyze worker panicked", zap.String("stack", string(buf)))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
-			resultCh <- &samplingMergeResult{err: errAnalyzeWorkerPanic}
+			if str, ok := r.(string); ok && str == globalPanicAnalyzeMemoryExceed {
+				resultCh <- &samplingMergeResult{err: errAnalyzeWorkerPanicForMemLimit}
+			} else {
+				resultCh <- &samplingMergeResult{err: errAnalyzeWorkerPanic}
+			}
 		}
 		// Consume the remaining things.
 		for {
@@ -1404,6 +1409,11 @@ func (e *AnalyzeColumnsExec) subBuildWorker(
 			buf = buf[:stackSize]
 			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.String("stack", string(buf)))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
+			if str, ok := r.(string); ok && str == globalPanicAnalyzeMemoryExceed {
+				resultCh <- errAnalyzeWorkerPanicForMemLimit
+			} else {
+				resultCh <- errAnalyzeWorkerPanic
+			}
 			resultCh <- errAnalyzeWorkerPanic
 		}
 	}()
