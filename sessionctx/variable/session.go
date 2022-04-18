@@ -1002,6 +1002,27 @@ type SessionVars struct {
 
 	// StatsLoadSyncWait indicates how long to wait for stats load before timeout.
 	StatsLoadSyncWait int64
+<<<<<<< HEAD
+=======
+
+	// SysdateIsNow indicates whether Sysdate is an alias of Now function
+	SysdateIsNow bool
+	// EnableMutationChecker indicates whether to check data consistency for mutations
+	EnableMutationChecker bool
+	// AssertionLevel controls how strict the assertions on data mutations should be.
+	AssertionLevel AssertionLevel
+	// IgnorePreparedCacheCloseStmt controls if ignore the close-stmt command for prepared statement.
+	IgnorePreparedCacheCloseStmt bool
+	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
+	BatchPendingTiFlashCount int
+	// RcReadCheckTS indicates if ts check optimization is enabled for current session.
+	RcReadCheckTS bool
+	// RemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
+	RemoveOrderbyInSubquery bool
+
+	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
+	MaxAllowedPacket uint64
+>>>>>>> 4d3a3c259... server: use max_allowed_packet to limit the packet size. (#33651)
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1237,6 +1258,12 @@ func NewSessionVars() *SessionVars {
 		EnablePlacementChecks:       DefEnablePlacementCheck,
 		Rng:                         utilMath.NewWithTime(),
 		StatsLoadSyncWait:           StatsLoadSyncWait.Load(),
+<<<<<<< HEAD
+=======
+		EnableLegacyInstanceScope:   DefEnableLegacyInstanceScope,
+		RemoveOrderbyInSubquery:     DefTiDBRemoveOrderbyInSubquery,
+		MaxAllowedPacket:            DefMaxAllowedPacket,
+>>>>>>> 4d3a3c259... server: use max_allowed_packet to limit the packet size. (#33651)
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{

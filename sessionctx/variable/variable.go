@@ -389,7 +389,11 @@ func (sv *SysVar) checkUInt64SystemVar(value string, vars *SessionVars) (string,
 	}
 	if val > sv.MaxValue {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
+<<<<<<< HEAD
 		return fmt.Sprintf("%d", sv.MaxValue), nil
+=======
+		return strconv.FormatUint(sv.MaxValue, 10), nil
+>>>>>>> 4d3a3c259... server: use max_allowed_packet to limit the packet size. (#33651)
 	}
 	return value, nil
 }
