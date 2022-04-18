@@ -182,7 +182,7 @@ loopCreate:
 }
 
 func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
-	stmts, _, err := p.ParseSQL(createTable)
+	stmts, _, err := p.Parse(createTable, "", "")
 	if err != nil {
 		return []string{}, err
 	}
