@@ -1146,6 +1146,7 @@ func tryGC(memToGC *atomicutil.Int64, memTracker *memory.Tracker) {
 		logutil.BgLogger().Info("Before GC:", zap.Uint64("heapInUse", memStats.HeapInuse))
 		runtime.GC()
 		memTracker.Consume(-toGC)
+		memToGC.Add(-toGC)
 		runtime.ReadMemStats(memStats)
 		logutil.BgLogger().Info("After GC:", zap.Uint64("heapInUse", memStats.HeapInuse))
 	}
