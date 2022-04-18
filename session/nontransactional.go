@@ -308,6 +308,8 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, s
 		if len(jobs) > 0 && chk.NumRows()+currentSize < batchSize {
 			// not enough data for a batch
 			currentSize += chk.NumRows()
+			newEnd := chk.GetRow(chk.NumRows()-1).GetDatum(0, &rs.Fields()[0].Column.FieldType)
+			currentEnd = *newEnd.Clone()
 			continue
 		}
 

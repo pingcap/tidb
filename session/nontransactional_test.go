@@ -50,7 +50,7 @@ func TestNonTransactionalDeleteSharding(t *testing.T) {
 		"create table t(a varchar(30), b int, unique key(a))",
 	}
 	tableSizes := []int{0, 1, 10, 35, 40, 100}
-	batchSizes := []int{1, 10, 35, 50, 80}
+	batchSizes := []int{1, 10, 25, 35, 50, 80, 120}
 	for _, table := range tables {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec(table)
