@@ -1325,14 +1325,14 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 	}
 	proj.SetChildren(p)
 	// delay the only-full-group-by-check in create view statement to later query.
-	if !b.isCreateView && b.ctx.GetSessionVars().OptimizerEnableNewOnlyFullGroupByCheck {
+	if !b.isCreateView && b.ctx.GetSessionVars().OptimizerEnableNewOnlyFullGroupByCheck && b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
 		fds := proj.ExtractFD()
 		// Projection -> Children -> ...
 		// Let the projection itself to evaluate the whole FD, which will build the connection
 		// 1: from select-expr to registered-expr
 		// 2: from base-column to select-expr
 		// After that
-		if p.SCtx().GetSessionVars().SQLMode.HasOnlyFullGroupBy() && fds.HasAggBuilt {
+		if fds.HasAggBuilt {
 			for offset, expr := range proj.Exprs[:len(fields)] {
 				// skip the auxiliary column in agg appended to select fields, which mainly comes from two kind of cases:
 				// 1: having agg(t.a), this will append t.a to the select fields, if it isn't here.
