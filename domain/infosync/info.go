@@ -24,6 +24,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -92,12 +93,15 @@ var ErrPrometheusAddrIsNotSet = dbterror.ClassDomain.NewStd(errno.ErrPrometheusA
 
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
-	etcdCli                 *clientv3.Client
-	info                    *ServerInfo
-	serverInfoPath          string
-	minStartTS              uint64
-	minStartTSPath          string
-	manager                 util2.SessionManager
+	etcdCli        *clientv3.Client
+	info           *ServerInfo
+	serverInfoPath string
+	minStartTS     uint64
+	minStartTSPath string
+	managerMu      struct {
+		mu sync.RWMutex
+		util2.SessionManager
+	}
 	session                 *concurrency.Session
 	topologySession         *concurrency.Session
 	prometheusAddr          string
@@ -204,12 +208,16 @@ func (is *InfoSyncer) init(ctx context.Context, skipRegisterToDashboard bool) er
 
 // SetSessionManager set the session manager for InfoSyncer.
 func (is *InfoSyncer) SetSessionManager(manager util2.SessionManager) {
-	is.manager = manager
+	is.managerMu.mu.Lock()
+	defer is.managerMu.mu.Unlock()
+	is.managerMu.SessionManager = manager
 }
 
 // GetSessionManager get the session manager.
 func (is *InfoSyncer) GetSessionManager() util2.SessionManager {
-	return is.manager
+	is.managerMu.mu.RLock()
+	defer is.managerMu.mu.RUnlock()
+	return is.managerMu.SessionManager
 }
 
 func initLabelRuleManager(etcdCli *clientv3.Client) LabelRuleManager {
@@ -368,7 +376,7 @@ func GetTiFlashTableSyncProgress(ctx context.Context) (map[int64]float64, error)
 	return progressMap, nil
 }
 
-func doRequest(ctx context.Context, addrs []string, route, method string, body io.Reader) ([]byte, error) {
+func doRequest(ctx context.Context, apiName string, addrs []string, route, method string, body io.Reader) ([]byte, error) {
 	var err error
 	var req *http.Request
 	var res *http.Response
@@ -383,8 +391,9 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 		}
 		start := time.Now()
 		res, err = doRequestWithFailpoint(req)
-		metrics.PDApiExecutionHistogram.WithLabelValues("placement").Observe(time.Since(start).Seconds())
 		if err == nil {
+			metrics.PDAPIExecutionHistogram.WithLabelValues(apiName).Observe(time.Since(start).Seconds())
+			metrics.PDAPIRequestCounter.WithLabelValues(apiName, res.Status).Inc()
 			bodyBytes, err := io.ReadAll(res.Body)
 			if err != nil {
 				terror.Log(res.Body.Close())
@@ -407,8 +416,10 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			terror.Log(res.Body.Close())
 			return bodyBytes, err
 		}
-		logutil.BgLogger().Warn("fail to doRequest, retry next address",
+		metrics.PDAPIRequestCounter.WithLabelValues(apiName, "network error").Inc()
+		logutil.BgLogger().Warn("fail to doRequest",
 			zap.Error(err),
+			zap.Bool("retry next address", idx == len(addrs)-1),
 			zap.String("method", method),
 			zap.String("hosts", addr),
 			zap.String("url", url),
@@ -615,12 +626,12 @@ func (is *InfoSyncer) RemoveMinStartTS() {
 
 // ReportMinStartTS reports self server min start timestamp to ETCD.
 func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
-	if is.manager == nil {
-		// Server may not start in time.
+	sm := is.GetSessionManager()
+	if sm == nil {
 		return
 	}
-	pl := is.manager.ShowProcessList()
-	innerSessionStartTSList := is.manager.GetInternalSessionStartTSList()
+	pl := sm.ShowProcessList()
+	innerSessionStartTSList := sm.GetInternalSessionStartTSList()
 
 	// Calculate the lower limit of the start timestamp to avoid extremely old transaction delaying GC.
 	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)

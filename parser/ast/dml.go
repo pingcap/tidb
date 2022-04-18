@@ -33,6 +33,7 @@ var (
 	_ DMLNode = &ShowStmt{}
 	_ DMLNode = &LoadDataStmt{}
 	_ DMLNode = &SplitRegionStmt{}
+	_ DMLNode = &NonTransactionalDeleteStmt{}
 
 	_ Node = &Assignment{}
 	_ Node = &ByItem{}
@@ -2347,6 +2348,70 @@ func (n *DeleteStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Limit = node.(*Limit)
+	}
+	return v.Leave(n)
+}
+
+const (
+	NoDryRun = iota
+	DryRunQuery
+	DryRunSplitDml
+)
+
+type NonTransactionalDeleteStmt struct {
+	dmlNode
+
+	DryRun      int         // 0: no dry run, 1: dry run the query, 2: dry run split DMLs
+	ShardColumn *ColumnName // if it's nil, the handle column is automatically chosen for it
+	Limit       uint64
+	DeleteStmt  *DeleteStmt
+}
+
+// Restore implements Node interface.
+func (n *NonTransactionalDeleteStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("SPLIT ")
+	if n.ShardColumn != nil {
+		ctx.WriteKeyWord("ON ")
+		if err := n.ShardColumn.Restore(ctx); err != nil {
+			return errors.Trace(err)
+		}
+		ctx.WritePlain(" ")
+	}
+	ctx.WriteKeyWord("LIMIT ")
+	ctx.WritePlainf("%d ", n.Limit)
+	if n.DryRun == DryRunSplitDml {
+		ctx.WriteKeyWord("DRY RUN ")
+	}
+	if n.DryRun == DryRunQuery {
+		ctx.WriteKeyWord("DRY RUN QUERY ")
+	}
+	if err := n.DeleteStmt.Restore(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *NonTransactionalDeleteStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+
+	n = newNode.(*NonTransactionalDeleteStmt)
+	if n.ShardColumn != nil {
+		node, ok := n.ShardColumn.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ShardColumn = node.(*ColumnName)
+	}
+	if n.DeleteStmt != nil {
+		node, ok := n.DeleteStmt.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.DeleteStmt = node.(*DeleteStmt)
 	}
 	return v.Leave(n)
 }

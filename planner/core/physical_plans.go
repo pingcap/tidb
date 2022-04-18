@@ -1293,6 +1293,17 @@ type PhysicalMaxOneRow struct {
 	basePhysicalPlan
 }
 
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalMaxOneRow) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalMaxOneRow)
+	base, err := p.basePhysicalPlan.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalPlan = *base
+	return cloned, nil
+}
+
 // PhysicalTableDual is the physical operator of dual.
 type PhysicalTableDual struct {
 	physicalSchemaProducer
