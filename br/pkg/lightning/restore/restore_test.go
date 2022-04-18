@@ -16,7 +16,6 @@ package restore
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/table/tables"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -59,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/table/tables"
 	tmock "github.com/pingcap/tidb/util/mock"
 )
 
