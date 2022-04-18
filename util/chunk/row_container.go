@@ -78,10 +78,6 @@ func (m *mutexForRowContainer) RUnlock() {
 type RowContainer struct {
 	m *mutexForRowContainer
 
-	fieldType []*types.FieldType
-	chunkSize int
-	numRow    int
-
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
 	actionSpill *SpillDiskAction
@@ -97,8 +93,6 @@ func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer 
 			rLock:   rLock,
 			wLocks:  []*sync.RWMutex{rLock},
 		},
-		fieldType:   fieldType,
-		chunkSize:   chunkSize,
 		memTracker:  li.memTracker,
 		diskTracker: disk.NewTracker(memory.LabelForRowContainer, -1),
 	}
@@ -437,13 +431,17 @@ type SortedRowContainer struct {
 	keyCmpFuncs []CompareFunc
 
 	actionSpill *SortAndSpillDiskAction
+	memTracker  *memory.Tracker
 }
 
 // NewSortedRowContainer creates a new SortedRowContainer in memory.
 func NewSortedRowContainer(fieldType []*types.FieldType, chunkSize int, ByItemsDesc []bool,
 	keyColumns []int, keyCmpFuncs []CompareFunc) *SortedRowContainer {
-	return &SortedRowContainer{RowContainer: NewRowContainer(fieldType, chunkSize),
+	src := SortedRowContainer{RowContainer: NewRowContainer(fieldType, chunkSize),
 		ByItemsDesc: ByItemsDesc, keyColumns: keyColumns, keyCmpFuncs: keyCmpFuncs}
+	src.memTracker = memory.NewTracker(memory.LabelForRowContainer, -1)
+	src.RowContainer.GetMemTracker().AttachTo(src.GetMemTracker())
+	return &src
 }
 
 // Close close the SortedRowContainer
@@ -497,7 +495,7 @@ func (c *SortedRowContainer) Sort() {
 		}
 	}
 	sort.Slice(c.ptrM.rowPtrs, c.keyColumnsLess)
-	c.GetMemTracker().Consume(int64(8 * c.numRow))
+	c.GetMemTracker().Consume(int64(8 * cap(c.ptrM.rowPtrs)))
 }
 
 func (c *SortedRowContainer) sortAndSpillToDisk() {
@@ -541,6 +539,11 @@ func (c *SortedRowContainer) ActionSpillForTest() *SortAndSpillDiskAction {
 		SpillDiskAction: c.RowContainer.ActionSpillForTest(),
 	}
 	return c.actionSpill
+}
+
+// GetMemTracker return the memory tracker for the sortedRowContainer
+func (c *SortedRowContainer) GetMemTracker() *memory.Tracker {
+	return c.memTracker
 }
 
 // SortAndSpillDiskAction implements memory.ActionOnExceed for chunk.List. If
