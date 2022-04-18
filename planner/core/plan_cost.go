@@ -266,8 +266,6 @@ func (p *PhysicalIndexJoin) CalPlanCost(taskType property.TaskType) (float64, er
 		return p.planCost, nil
 	}
 	outerChild, innerChild := p.children[1-p.InnerChildIdx], p.children[p.InnerChildIdx]
-	// NOTICE: seek cost of the probe side is not considered in the old model so minus it here for compatibility, we'll fix it later
-	probeSeekCost := getSeekCost(innerChild) / float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 	outerCost, err := outerChild.CalPlanCost(taskType)
 	if err != nil {
 		return 0, err
@@ -276,7 +274,7 @@ func (p *PhysicalIndexJoin) CalPlanCost(taskType property.TaskType) (float64, er
 	if err != nil {
 		return 0, err
 	}
-	p.planCost = p.GetCost(outerChild.StatsCount(), innerChild.StatsCount(), outerCost, innerCost-probeSeekCost)
+	p.planCost = p.GetCost(outerChild.StatsCount(), innerChild.StatsCount(), outerCost, innerCost)
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -286,8 +284,6 @@ func (p *PhysicalIndexHashJoin) CalPlanCost(taskType property.TaskType) (float64
 		return p.planCost, nil
 	}
 	outerChild, innerChild := p.children[1-p.InnerChildIdx], p.children[p.InnerChildIdx]
-	// NOTICE: same as IndexJoin
-	probeSeekCost := getSeekCost(innerChild) / float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 	outerCost, err := outerChild.CalPlanCost(taskType)
 	if err != nil {
 		return 0, err
@@ -296,7 +292,7 @@ func (p *PhysicalIndexHashJoin) CalPlanCost(taskType property.TaskType) (float64
 	if err != nil {
 		return 0, err
 	}
-	p.planCost = p.GetCost(outerChild.StatsCount(), innerChild.StatsCount(), outerCost, innerCost-probeSeekCost)
+	p.planCost = p.GetCost(outerChild.StatsCount(), innerChild.StatsCount(), outerCost, innerCost)
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -306,8 +302,6 @@ func (p *PhysicalIndexMergeJoin) CalPlanCost(taskType property.TaskType) (float6
 		return p.planCost, nil
 	}
 	outerChild, innerChild := p.children[1-p.InnerChildIdx], p.children[p.InnerChildIdx]
-	// NOTICE: same as IndexJoin
-	probeSeekCost := getSeekCost(innerChild) / float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 	outerCost, err := outerChild.CalPlanCost(taskType)
 	if err != nil {
 		return 0, err
@@ -316,7 +310,7 @@ func (p *PhysicalIndexMergeJoin) CalPlanCost(taskType property.TaskType) (float6
 	if err != nil {
 		return 0, err
 	}
-	p.planCost = p.GetCost(outerChild.StatsCount(), innerChild.StatsCount(), outerCost, innerCost-probeSeekCost)
+	p.planCost = p.GetCost(outerChild.StatsCount(), innerChild.StatsCount(), outerCost, innerCost)
 	p.planCostInit = true
 	return p.planCost, nil
 }
