@@ -155,11 +155,17 @@ func (m *txnManager) OnStmtStart(ctx context.Context) error {
 	return m.ctxProvider.OnStmtStart(ctx)
 }
 
-func (m *txnManager) OnStmtRetry(ctx context.Context) error {
+func (m *txnManager) OnStmtError(err error) {
+	if m.ctxProvider != nil {
+		m.ctxProvider.OnStmtError(err)
+	}
+}
+
+func (m *txnManager) OnStmtRetry(ctx context.Context, err error) error {
 	if m.ctxProvider == nil {
 		return errors.New("context provider not set")
 	}
-	return m.ctxProvider.OnStmtRetry(ctx)
+	return m.ctxProvider.OnStmtRetry(ctx, err)
 }
 
 func (m *txnManager) Advise(opt sessiontxn.AdviceOption, val ...interface{}) error {

@@ -751,14 +751,14 @@ func UpdateForUpdateTS(seCtx sessionctx.Context, newForUpdateTS uint64) error {
 }
 
 // handlePessimisticLockError updates TS and rebuild executor if the err is write conflict.
-func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (Executor, error) {
+func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error) (Executor, error) {
 	sessVars := a.Ctx.GetSessionVars()
-	if err != nil && sessVars.IsIsolation(ast.Serializable) {
-		return nil, err
+	if lockErr != nil && sessVars.IsIsolation(ast.Serializable) {
+		return nil, lockErr
 	}
 	txnCtx := sessVars.TxnCtx
 	var newForUpdateTS uint64
-	if deadlock, ok := errors.Cause(err).(*tikverr.ErrDeadlock); ok {
+	if deadlock, ok := errors.Cause(lockErr).(*tikverr.ErrDeadlock); ok {
 		if !deadlock.IsRetryable {
 			return nil, ErrDeadlock
 		}
@@ -767,8 +767,8 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 			zap.Uint64("lockTS", deadlock.LockTs),
 			zap.Stringer("lockKey", kv.Key(deadlock.LockKey)),
 			zap.Uint64("deadlockKeyHash", deadlock.DeadlockKeyHash))
-	} else if terror.ErrorEqual(kv.ErrWriteConflict, err) {
-		errStr := err.Error()
+	} else if terror.ErrorEqual(kv.ErrWriteConflict, lockErr) {
+		errStr := lockErr.Error()
 		forUpdateTS := txnCtx.GetForUpdateTS()
 		logutil.Logger(ctx).Debug("pessimistic write conflict, retry statement",
 			zap.Uint64("txn", txnCtx.StartTS),
@@ -787,7 +787,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		//         key1 lock not get and async rollback key1 is raised)
 		//         select for update key1 again(this time lock succ(maybe lock released by others))
 		//         the async rollback operation rollbacked the lock just acquired
-		if err != nil {
+		if lockErr != nil {
 			tsErr := UpdateForUpdateTS(a.Ctx, 0)
 			if tsErr == nil {
 				tsErr = sessiontxn.AdviseNoConflictUpdateTS(a.Ctx, a.Ctx.GetSessionVars().TxnCtx.GetForUpdateTS())
@@ -797,14 +797,14 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 				logutil.Logger(ctx).Warn("UpdateForUpdateTS failed", zap.Error(tsErr))
 			}
 		}
-		return nil, err
+		return nil, lockErr
 	}
 	if a.retryCount >= config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {
 		return nil, errors.New("pessimistic lock retry limit reached")
 	}
 	a.retryCount++
 	a.retryStartTime = time.Now()
-	err = UpdateForUpdateTS(a.Ctx, newForUpdateTS)
+	err := UpdateForUpdateTS(a.Ctx, newForUpdateTS)
 	if err != nil {
 		return nil, err
 	}
@@ -813,7 +813,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		return nil, err
 	}
 
-	if err = sessiontxn.GetTxnManager(a.Ctx).OnStmtRetry(ctx); err != nil {
+	if err = sessiontxn.GetTxnManager(a.Ctx).OnStmtRetry(ctx, lockErr); err != nil {
 		return nil, err
 	}
 

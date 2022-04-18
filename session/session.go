@@ -1808,7 +1808,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 	})
 }
 
-func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
+func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (_ sqlexec.RecordSet, err error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.ExecuteStmt", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -1844,16 +1844,15 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	s.txn.onStmtStart(digest.String())
 	defer s.txn.onStmtEnd()
 
-	var err error
-	if s.sessionVars.RetryInfo.Retrying {
-		err = sessiontxn.GetTxnManager(s).OnStmtStart(ctx)
-	} else {
-		err = sessiontxn.GetTxnManager(s).OnStmtRetry(ctx)
-	}
-
+	err = sessiontxn.GetTxnManager(s).OnStmtStart(ctx)
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if err != nil {
+			sessiontxn.GetTxnManager(s).OnStmtError(err)
+		}
+	}()
 
 	failpoint.Inject("mockStmtSlow", func(val failpoint.Value) {
 		if strings.Contains(stmtNode.Text(), "/* sleep */") {
@@ -2123,6 +2122,12 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		return
 	}
 
+	defer func() {
+		if err != nil {
+			sessiontxn.GetTxnManager(s).OnStmtError(err)
+		}
+	}()
+
 	if err = sessiontxn.AdviseTxnWarmUp(s); err != nil {
 		return
 	}
@@ -2293,8 +2298,7 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 }
 
 // ExecutePreparedStmt executes a prepared statement.
-func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args []types.Datum) (sqlexec.RecordSet, error) {
-	var err error
+func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args []types.Datum) (_ sqlexec.RecordSet, err error) {
 	if err = s.PrepareTxnCtx(ctx); err != nil {
 		return nil, err
 	}
@@ -2343,6 +2347,12 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	if err := txnManager.OnStmtStart(ctx); err != nil {
 		return nil, err
 	}
+
+	defer func() {
+		if err != nil {
+			sessiontxn.GetTxnManager(s).OnStmtError(err)
+		}
+	}()
 
 	if preparedStmt.ForUpdateRead {
 		if p, isOK := txnManager.GetContextProvider().(*sessiontxn.SimpleTxnContextProvider); isOK {

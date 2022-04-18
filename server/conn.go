@@ -77,6 +77,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/tablecodec"
 	tidbutil "github.com/pingcap/tidb/util"
@@ -1849,6 +1850,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		}
 		retryable, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
 		if err != nil {
+			sessiontxn.GetTxnManager(cc.ctx).OnStmtError(err)
 			if retryable && cc.ctx.GetSessionVars().IsRcCheckTsRetryable(err) {
 				cc.ctx.GetSessionVars().RetryInfo.Retrying = true
 				logutil.Logger(ctx).Info("RC read with ts checking has failed, retry RC read",

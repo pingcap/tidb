@@ -39,6 +39,7 @@ type rcStmtContext struct {
 	tsFuture      oracle.Future
 	// advisedRetryTS is the advised ts when retry
 	advisedRetryTS uint64
+	isError        bool
 }
 
 func newRcStmtContext(ctx context.Context, sctx sessionctx.Context, prevStmt *rcStmtContext) (*rcStmtContext, error) {
@@ -56,7 +57,7 @@ func newRcStmtContext(ctx context.Context, sctx sessionctx.Context, prevStmt *rc
 		sctx:          sctx,
 		prevStmt:      prevStmt,
 		useTxnStartTS: useTxnStartTS,
-		usePrevStmtTS: prevStmt != nil && prevStmt.ts > 0 && sctx.GetSessionVars().StmtCtx.RCCheckTS,
+		usePrevStmtTS: prevStmt != nil && !prevStmt.isError && prevStmt.ts > 0 && sctx.GetSessionVars().StmtCtx.RCCheckTS,
 	}, nil
 }
 
@@ -208,7 +209,12 @@ func (p *txnContextProvider) OnStmtStart(ctx context.Context) error {
 	return nil
 }
 
-func (p *txnContextProvider) OnStmtRetry(ctx context.Context) error {
+func (p *txnContextProvider) OnStmtError(_ error) {
+	p.stmt.isError = true
+	return
+}
+
+func (p *txnContextProvider) OnStmtRetry(ctx context.Context, _ error) error {
 	return p.stmt.retry(ctx)
 }
 
