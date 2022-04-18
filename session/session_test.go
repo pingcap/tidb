@@ -263,6 +263,24 @@ func (s *testSessionSuiteBase) TearDownTest(c *C) {
 	}
 }
 
+func cleanStorage(t *testing.T, store kv.Storage) {
+	tk := newTestkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	r := tk.MustQuery("show full tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		tableType := tb[1]
+		switch tableType {
+		case "VIEW":
+			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		case "BASE TABLE":
+			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		default:
+			panic(fmt.Sprintf("Unexpected table '%s' with type '%s'.", tableName, tableType))
+		}
+	}
+}
+
 func createStorage(t *testing.T, opts ...mockstore.MockTiKVStoreOption) (kv.Storage, func()) {
 	if *withTiKV {
 		initPdAddrs()

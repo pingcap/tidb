@@ -32,18 +32,6 @@ import (
 
 var _ = SerialSuites(&testPessimisticSuite{})
 
-func (s *testPessimisticSuite) newAsyncCommitTestKitWithInit(c *C) *testkit.TestKit {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.Se.GetSessionVars().EnableAsyncCommit = true
-	return tk
-}
-
-func (s *testPessimisticSuite) new1PCTestKitWithInit(c *C) *testkit.TestKit {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.Se.GetSessionVars().Enable1PC = true
-	return tk
-}
-
 type testPessimisticSuite struct {
 	testSessionSuiteBase
 }

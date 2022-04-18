@@ -77,6 +77,7 @@ func createPessimisticSuite(t *testing.T, opts ...mockstore.MockTiKVStoreOption)
 	atomic.StoreUint64(&transaction.ManagedLockTTL, 5000)
 	transaction.PrewriteMaxBackoff = 500
 	return store, func() {
+		cleanStorage(t, store)
 		clean()
 		transaction.PrewriteMaxBackoff = 20000
 	}
