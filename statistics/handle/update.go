@@ -339,6 +339,9 @@ func (h *Handle) sweepIdxUsageList() indexUsageMap {
 	return mapper
 }
 
+//batchInsertSize is the every insert values size limit.Used in such as DumpIndexUsageToKV,DumpColStatsUsageToKV
+const batchInsertSize = 10
+
 // DumpIndexUsageToKV will dump in-memory index usage information to KV.
 func (h *Handle) DumpIndexUsageToKV() error {
 	ctx := context.Background()
@@ -351,8 +354,8 @@ func (h *Handle) DumpIndexUsageToKV() error {
 	for id, value := range mapper {
 		indexInformationSlice = append(indexInformationSlice, FullIndexUsageInformation{id: id, information: value})
 	}
-	for i := 0; i < len(mapper); i += 10 {
-		end := i + 10
+	for i := 0; i < len(mapper); i += batchInsertSize {
+		end := i + batchInsertSize
 		if end > len(mapper) {
 			end = len(mapper)
 		}
@@ -913,8 +916,8 @@ func (h *Handle) DumpColStatsUsageToKV() error {
 		return pairs[i].tblColID.TableID < pairs[j].tblColID.TableID
 	})
 	// Use batch insert to reduce cost.
-	for i := 0; i < len(pairs); i += 10 {
-		end := i + 10
+	for i := 0; i < len(pairs); i += batchInsertSize {
+		end := i + batchInsertSize
 		if end > len(pairs) {
 			end = len(pairs)
 		}
