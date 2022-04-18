@@ -1024,6 +1024,14 @@ type SessionVars struct {
 	BatchPendingTiFlashCount int
 	// RcReadCheckTS indicates if ts check optimization is enabled for current session.
 	RcReadCheckTS bool
+<<<<<<< HEAD
+=======
+	// RemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
+	RemoveOrderbyInSubquery bool
+
+	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
+	MaxAllowedPacket uint64
+>>>>>>> 4d3a3c259... server: use max_allowed_packet to limit the packet size. (#33651)
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1259,6 +1267,11 @@ func NewSessionVars() *SessionVars {
 		Rng:                         utilMath.NewWithTime(),
 		StatsLoadSyncWait:           StatsLoadSyncWait.Load(),
 		EnableLegacyInstanceScope:   DefEnableLegacyInstanceScope,
+<<<<<<< HEAD
+=======
+		RemoveOrderbyInSubquery:     DefTiDBRemoveOrderbyInSubquery,
+		MaxAllowedPacket:            DefMaxAllowedPacket,
+>>>>>>> 4d3a3c259... server: use max_allowed_packet to limit the packet size. (#33651)
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
