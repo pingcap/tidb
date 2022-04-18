@@ -609,7 +609,7 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //          above all: constant FD are lost
 //
 //		<3.1> equivalence FD: when the left join conditions only contain equivalence FD (EFD for short below) across left and right
-//			cols and no other `LEFT` condition on (left cols - RED's from) to filter the left join results. We can maintain the strict
+//			cols and no other `LEFT` condition on the (left-side cols except the cols in EFD's from) to filter the left join results. We can maintain the strict
 //			FD from EFD's `from` side to EFD's `to` side over the left join result.
 //			a  b  |  c     d     e
 //			------+----------------
@@ -733,13 +733,8 @@ func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols F
 				leftCover := edge.from.Intersection(outerCols)
 				rightCover := edge.from.Intersection(innerCols)
 				if leftCover.Len() > 0 && rightCover.Len() > 0 {
-					if opt.TypeFDRule331 == CombinedFD {
-						leftCombinedFDFrom.UnionWith(leftCover)
-						leftCombinedFDTo.UnionWith(rightCover)
-					} else {
-						// singleFD case.
-						s.addFunctionalDependency(leftCover, rightCover, true, false)
-					}
+					leftCombinedFDFrom.UnionWith(leftCover)
+					leftCombinedFDTo.UnionWith(rightCover)
 				}
 			}
 
@@ -775,7 +770,7 @@ func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols F
 		// Rule #3.1, filters won't produce any strict/lax FDs.
 	}
 	// Rule #3.3.1 combinedFD case
-	if !opt.SkipFDRule331 && opt.TypeFDRule331 == CombinedFD {
+	if !opt.SkipFDRule331 {
 		s.addFunctionalDependency(leftCombinedFDFrom, leftCombinedFDTo, true, false)
 	}
 
@@ -839,19 +834,9 @@ func (s *FDSet) MakeRestoreRule333() {
 // ArgOpts contains some arg used for FD maintenance.
 type ArgOpts struct {
 	SkipFDRule331   bool
-	TypeFDRule331   TypeFilterFD331
 	OnlyInnerFilter bool
 	InnerIsFalse    bool
 }
-
-// TypeFilterFD331 describes the type of the filter used in this rule.
-type TypeFilterFD331 byte
-
-// Here's the two specific type.
-const (
-	SingleFD   TypeFilterFD331 = 0
-	CombinedFD TypeFilterFD331 = 1
-)
 
 // FindPrimaryKey checks whether there's a key in the current set which implies key -> all cols.
 func (s FDSet) FindPrimaryKey() (*FastIntSet, bool) {

@@ -321,12 +321,6 @@ func (p *LogicalJoin) extractFDForOuterJoin(filtersFromApply []expression.Expres
 		// judge whether left filters is on non-left-equiv cols.
 		if outerConditionUniqueIDs.Intersects(outerCols.Difference(equivOuterUniqueIDs)) {
 			opt.SkipFDRule331 = true
-		} else {
-			if equivAcrossNum > 1 {
-				opt.TypeFDRule331 = fd.CombinedFD
-			} else {
-				opt.TypeFDRule331 = fd.SingleFD
-			}
 		}
 	} else {
 		// if there is none across equivalence condition, skip rule 3.3.1.
