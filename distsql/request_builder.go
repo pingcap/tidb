@@ -668,7 +668,7 @@ func VerifyTxnScope(txnScope string, physicalTableID int64, is infoschema.InfoSc
 	if txnScope == "" || txnScope == kv.GlobalTxnScope {
 		return true
 	}
-	bundle, ok := is.BundleByName(placement.GroupID(physicalTableID))
+	bundle, ok := is.PlacementBundleByPhysicalTableID(physicalTableID)
 	if !ok {
 		return true
 	}
