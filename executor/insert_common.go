@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -38,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -308,10 +306,7 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		if err1 != nil {
 			logutil.BgLogger().Debug("time truncated error", zap.Error(err1))
 		}
-		err = dbterror.ClassTable.NewStdErr(
-			errno.ErrTruncatedWrongValue,
-			mysql.Message("Incorrect %-.32s value: '%-.128s' for column '%.192s' at row %d", nil),
-		).GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
+		err = errTruncateWrongInsertValue.GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
 	} else if types.ErrTruncatedWrongVal.Equal(err) || types.ErrWrongValue.Equal(err) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
@@ -783,7 +778,10 @@ func (e *InsertValues) adjustAutoIncrementDatum(ctx context.Context, d types.Dat
 	if retryInfo.Retrying {
 		id, ok := retryInfo.GetCurrAutoIncrementID()
 		if ok {
-			d.SetAutoID(id, c.Flag)
+			err := setDatumAutoIDAndCast(e.ctx, &d, id, c)
+			if err != nil {
+				return types.Datum{}, err
+			}
 			return d, nil
 		}
 	}
@@ -856,7 +854,10 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 	if retryInfo.Retrying {
 		autoRandomID, ok := retryInfo.GetCurrAutoRandomID()
 		if ok {
-			d.SetAutoID(autoRandomID, c.Flag)
+			err := setDatumAutoIDAndCast(e.ctx, &d, autoRandomID, c)
+			if err != nil {
+				return types.Datum{}, err
+			}
 			return d, nil
 		}
 	}
@@ -882,7 +883,10 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 			return types.Datum{}, err
 		}
 		e.ctx.GetSessionVars().StmtCtx.InsertID = uint64(recordID)
-		d.SetAutoID(recordID, c.Flag)
+		err = setDatumAutoIDAndCast(e.ctx, &d, recordID, c)
+		if err != nil {
+			return types.Datum{}, err
+		}
 		retryInfo.AddAutoRandomID(recordID)
 		return d, nil
 	}

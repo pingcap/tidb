@@ -104,7 +104,7 @@ func (s *TestDDLSuite) checkDropIndex(c *C, indexInfo *model.IndexInfo) {
 	c.Assert(err, IsNil)
 	txn, err := ctx.Txn(false)
 	c.Assert(err, IsNil)
-	defer func(){
+	defer func() {
 		err := txn.Rollback()
 		c.Assert(err, IsNil)
 	}()

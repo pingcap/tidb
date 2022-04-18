@@ -227,7 +227,7 @@ var (
 			Subsystem: "server",
 			Name:      "tiflash_query_total",
 			Help:      "Counter of TiFlash queries.",
-		}, []string{LblResult})
+		}, []string{LblType, LblResult})
 )
 
 // ExecuteErrorToLabel converts an execute error to label.

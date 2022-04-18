@@ -62,6 +62,10 @@ func (t BackoffType) metric() prometheus.Observer {
 		return metrics.BackoffHistogramServerBusy
 	case boStaleCmd:
 		return metrics.BackoffHistogramStaleCmd
+	case boTxnNotFound:
+		return metrics.BackoffHistogramTxnNotFound
+	case boMaxTsNotSynced:
+		return metrics.BackoffHistogramMaxTsNotSynced
 	}
 	return metrics.BackoffHistogramEmpty
 }

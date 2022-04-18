@@ -80,6 +80,10 @@ type executorBuilder struct {
 	snapshotTSCached bool
 	err              error // err is set when there is error happened during Executor building process.
 	hasLock          bool
+
+	inUpdateStmt bool
+	inDeleteStmt bool
+	inInsertStmt bool
 }
 
 func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema) *executorBuilder {
@@ -94,6 +98,23 @@ func newExecutorBuilder(ctx sessionctx.Context, is infoschema.InfoSchema) *execu
 type MockPhysicalPlan interface {
 	plannercore.PhysicalPlan
 	GetExecutor() Executor
+}
+
+// MockExecutorBuilder is a wrapper for executorBuilder.
+// ONLY used in test.
+type MockExecutorBuilder struct {
+	*executorBuilder
+}
+
+// NewMockExecutorBuilderForTest is ONLY used in test.
+func NewMockExecutorBuilderForTest(ctx sessionctx.Context, is infoschema.InfoSchema) *MockExecutorBuilder {
+	return &MockExecutorBuilder{
+		executorBuilder: newExecutorBuilder(ctx, is)}
+}
+
+// Build builds an executor tree according to `p`.
+func (b *MockExecutorBuilder) Build(p plannercore.Plan) Executor {
+	return b.build(p)
 }
 
 func (b *executorBuilder) build(p plannercore.Plan) Executor {
@@ -731,6 +752,7 @@ func (b *executorBuilder) buildSetConfig(v *plannercore.SetConfig) Executor {
 }
 
 func (b *executorBuilder) buildInsert(v *plannercore.Insert) Executor {
+	b.inInsertStmt = true
 	if v.SelectPlan != nil {
 		// Try to update the forUpdateTS for insert/replace into select statements.
 		// Set the selectPlan parameter to nil to make it always update the forUpdateTS.
@@ -1345,6 +1367,12 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) Exe
 	if int64(v.StatsCount()) < int64(b.ctx.GetSessionVars().MaxChunkSize) {
 		e.numWorkers = 0
 	}
+
+	// Use un-parallel projection for query that write on memdb to avoid data race.
+	// See also https://github.com/pingcap/tidb/issues/26832
+	if b.inUpdateStmt || b.inDeleteStmt || b.inInsertStmt || b.hasLock {
+		e.numWorkers = 0
+	}
 	return e
 }
 
@@ -1811,6 +1839,7 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 }
 
 func (b *executorBuilder) buildUpdate(v *plannercore.Update) Executor {
+	b.inUpdateStmt = true
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	multiUpdateOnSameTable := make(map[int64]bool)
 	for _, info := range v.TblColPosInfos {
@@ -1882,6 +1911,7 @@ func getAssignFlag(ctx sessionctx.Context, v *plannercore.Update, schemaLen int)
 }
 
 func (b *executorBuilder) buildDelete(v *plannercore.Delete) Executor {
+	b.inDeleteStmt = true
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	for _, info := range v.TblColPosInfos {
 		tblID2table[info.TblID], _ = b.is.TableByID(info.TblID)
@@ -3706,7 +3736,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 	partialResults := make([]aggfuncs.PartialResult, 0, len(v.WindowFuncDescs))
 	resultColIdx := v.Schema().Len() - len(v.WindowFuncDescs)
 	for _, desc := range v.WindowFuncDescs {
-		aggDesc, err := aggregation.NewAggFuncDesc(b.ctx, desc.Name, desc.Args, false)
+		aggDesc, err := aggregation.NewAggFuncDescForWindowFunc(b.ctx, desc, false)
 		if err != nil {
 			b.err = err
 			return nil

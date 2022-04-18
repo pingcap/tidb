@@ -130,7 +130,7 @@
     ]
   },
   {
-    "Name": "TestCardinalityGroupCols",
+    "Name": "TestNDVGroupCols",
     "Cases": [
       {
         "SQL": "select count(1) from t1 group by a, b",

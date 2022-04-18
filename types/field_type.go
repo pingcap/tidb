@@ -105,6 +105,16 @@ func AggFieldType(tps []*FieldType) *FieldType {
 	return &currType
 }
 
+// TryToFixFlenOfDatetime try to fix flen of Datetime for specific func or other field merge cases
+func TryToFixFlenOfDatetime(resultTp *FieldType) {
+	if resultTp.Tp == mysql.TypeDatetime {
+		resultTp.Flen = mysql.MaxDatetimeWidthNoFsp
+		if resultTp.Decimal > 0 {
+			resultTp.Flen += resultTp.Decimal + 1
+		}
+	}
+}
+
 // AggregateEvalType aggregates arguments' EvalType of a multi-argument function.
 func AggregateEvalType(fts []*FieldType, flag *uint) EvalType {
 	var (
@@ -250,7 +260,7 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 		SetBinChsClnFlag(tp)
 	case BitLiteral:
 		tp.Tp = mysql.TypeVarString
-		tp.Flen = len(x)
+		tp.Flen = len(x) * 3
 		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 	case HexLiteral:
@@ -260,8 +270,8 @@ func DefaultTypeForValue(value interface{}, tp *FieldType, char string, collate 
 		tp.Flag |= mysql.UnsignedFlag
 		SetBinChsClnFlag(tp)
 	case BinaryLiteral:
-		tp.Tp = mysql.TypeBit
-		tp.Flen = len(x) * 8
+		tp.Tp = mysql.TypeVarString
+		tp.Flen = len(x)
 		tp.Decimal = 0
 		SetBinChsClnFlag(tp)
 		tp.Flag &= ^mysql.BinaryFlag

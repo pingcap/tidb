@@ -310,6 +310,10 @@ const (
 	// Note if you want to set `tidb_enforce_mpp` to `true`, you must set `tidb_allow_mpp` to `true` first.
 	TiDBEnforceMPPExecution = "tidb_enforce_mpp"
 
+	// TiDBMPPStoreFailTTL is the unavailable time when a store is detected failed. During that time, tidb will not send any task to
+	// TiFlash even though the failed TiFlash node has been recovered.
+	TiDBMPPStoreFailTTL = "tidb_mpp_store_fail_ttl"
+
 	// TiDBInitChunkSize is used to control the init chunk size during query execution.
 	TiDBInitChunkSize = "tidb_init_chunk_size"
 
@@ -547,8 +551,8 @@ const (
 	// Now we only support TiFlash.
 	TiDBAllowFallbackToTiKV = "tidb_allow_fallback_to_tikv"
 
-	// TiDBEnableStableResultMode indicates if stabilize query results.
-	TiDBEnableStableResultMode = "tidb_enable_stable_result_mode"
+	// TiDBEnableOrderedResultMode indicates if stabilize query results.
+	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
 )
 
 // TiDB vars that have only global scope
@@ -632,7 +636,7 @@ const (
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBAllowBatchCop               = 1
 	DefTiDBAllowMPPExecution           = true
-	DefTiDBEnforceMPPExecution         = false
+	DefTiDBMPPStoreFailTTL             = "60s"
 	DefTiDBTxnMode                     = ""
 	DefTiDBRowFormatV1                 = 1
 	DefTiDBRowFormatV2                 = 2
@@ -692,7 +696,7 @@ const (
 	DefTiDBEnableIndexMergeJoin        = false
 	DefTiDBTrackAggregateMemoryUsage   = true
 	DefTiDBEnableExchangePartition     = false
-	DefTiDBEnableStableResultMode      = false
+	DefTiDBEnableOrderedResultMode     = false
 )
 
 // Process global variables.
@@ -737,9 +741,9 @@ var FeatureSwitchVariables = []string{
 }
 
 // FilterImplicitFeatureSwitch is used to filter result of show variables, these switches should be turn blind to users.
-func FilterImplicitFeatureSwitch(sysVar *SysVar) bool {
+func FilterImplicitFeatureSwitch(varName string) bool {
 	for _, one := range FeatureSwitchVariables {
-		if one == sysVar.Name {
+		if one == varName {
 			return true
 		}
 	}

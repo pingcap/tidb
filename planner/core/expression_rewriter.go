@@ -1382,7 +1382,8 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 		er.ctxStackAppend(expression.NewNull(), types.EmptyName)
 		return
 	}
-	if leftEt == types.ETInt {
+	containMut := expression.ContainMutableConst(er.sctx, args)
+	if !containMut && leftEt == types.ETInt {
 		for i := 1; i < len(args); i++ {
 			if c, ok := args[i].(*expression.Constant); ok {
 				var isExceptional bool
@@ -1596,17 +1597,27 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 
 	expr, lexp, rexp := er.wrapExpWithCast()
 
-	var op string
-	var l, r expression.Expression
-	l, er.err = er.newFunction(ast.GE, &v.Type, expr, lexp)
-	if er.err == nil {
-		r, er.err = er.newFunction(ast.LE, &v.Type, expr, rexp)
-	}
-	op = ast.LogicAnd
+	er.err = expression.CheckIllegalMixCollation("between", []expression.Expression{expr, lexp, rexp}, types.ETInt)
 	if er.err != nil {
 		return
 	}
-	function, err := er.newFunction(op, &v.Type, l, r)
+
+	dstCharset, dstCollation := expression.DeriveCollationFromExprs(er.sctx, expr, lexp, rexp)
+
+	var l, r expression.Expression
+	l, er.err = expression.NewFunctionBase(er.sctx, ast.GE, &v.Type, expr, lexp)
+	if er.err != nil {
+		return
+	}
+	r, er.err = expression.NewFunctionBase(er.sctx, ast.LE, &v.Type, expr, rexp)
+	if er.err != nil {
+		return
+	}
+	l.SetCharsetAndCollation(dstCharset, dstCollation)
+	r.SetCharsetAndCollation(dstCharset, dstCollation)
+	l = expression.FoldConstant(l)
+	r = expression.FoldConstant(r)
+	function, err := er.newFunction(ast.LogicAnd, &v.Type, l, r)
 	if err != nil {
 		er.err = err
 		return
@@ -1782,13 +1793,13 @@ func findFieldNameFromNaturalUsingJoin(p LogicalPlan, v *ast.ColumnName) (col *e
 	case *LogicalLimit, *LogicalSelection, *LogicalTopN, *LogicalSort, *LogicalMaxOneRow:
 		return findFieldNameFromNaturalUsingJoin(p.Children()[0], v)
 	case *LogicalJoin:
-		if x.redundantSchema != nil {
-			idx, err := expression.FindFieldName(x.redundantNames, v)
+		if x.fullSchema != nil {
+			idx, err := expression.FindFieldName(x.fullNames, v)
 			if err != nil {
 				return nil, nil, err
 			}
 			if idx >= 0 {
-				return x.redundantSchema.Columns[idx], x.redundantNames[idx], nil
+				return x.fullSchema.Columns[idx], x.fullNames[idx], nil
 			}
 		}
 	}

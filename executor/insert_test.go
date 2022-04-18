@@ -1561,6 +1561,23 @@ func combination(items []string) func() []string {
 	}
 }
 
+func (s *testSuite10) TestIssue26762(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 date);")
+	_, err := tk.Exec("insert into t1 values('2020-02-31');")
+	c.Assert(err.Error(), Equals, `[table:1292]Incorrect date value: '2020-02-31' for column 'c1' at row 1`)
+
+	tk.MustExec("set @@sql_mode='ALLOW_INVALID_DATES';")
+	tk.MustExec("insert into t1 values('2020-02-31');")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("2020-02-31"))
+
+	tk.MustExec("set @@sql_mode='STRICT_TRANS_TABLES';")
+	_, err = tk.Exec("insert into t1 values('2020-02-31');")
+	c.Assert(err.Error(), Equals, `[table:1292]Incorrect date value: '2020-02-31' for column 'c1' at row 1`)
+}
+
 func (s *testSuite10) TestBinaryLiteralInsertToEnum(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
@@ -1579,4 +1596,34 @@ func (s *testSuite10) TestBinaryLiteralInsertToSet(c *C) {
 	tk.MustExec("create table bintest (h set(0x61, '1', 'b')) character set utf8mb4")
 	tk.MustExec("insert into bintest(h) values(0x61)")
 	tk.MustQuery("select * from bintest").Check(testkit.Rows("a"))
+}
+
+// TestInsertIssue29892 test the double type with auto_increment problem, just leverage the serial test suite.
+func (s *testSerialSuite) TestInsertIssue29892(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+
+	tk.MustExec("set global tidb_txn_mode='optimistic';")
+	tk.MustExec("set global tidb_disable_txn_auto_retry=false;")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a double auto_increment key, b int)")
+	tk.MustExec("insert into t values (146576794, 1)")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec(`use test`)
+	tk1.MustExec("begin")
+	tk1.MustExec("insert into t(b) select 1")
+
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec(`use test`)
+	tk2.MustExec("begin")
+	tk2.MustExec("insert into t values (146576795, 1)")
+	tk2.MustExec("insert into t values (146576796, 1)")
+	tk2.MustExec("commit")
+
+	// since the origin auto-id (146576795) is cached in retryInfo, it will be fetched again to do the retry again,
+	// which will duplicate with what has been inserted in tk1.
+	_, err := tk1.Exec("commit")
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "Write conflict"), Equals, true)
 }

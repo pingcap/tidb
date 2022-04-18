@@ -615,10 +615,15 @@ func (ssbd *stmtSummaryByDigest) collectHistorySummaries(historySize int) []*stm
 	return ssElements
 }
 
+var maxEncodedPlanSizeInBytes = 1024 * 1024
+
 func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64) *stmtSummaryByDigestElement {
 	// sampleSQL / authUsers(sampleUser) / samplePlan / prevSQL / indexNames store the values shown at the first time,
 	// because it compacts performance to update every time.
 	samplePlan, planHint := sei.PlanGenerator()
+	if len(samplePlan) > maxEncodedPlanSizeInBytes {
+		samplePlan = plancodec.PlanDiscardedEncoded
+	}
 	ssElement := &stmtSummaryByDigestElement{
 		beginTime: beginTime,
 		sampleSQL: formatSQL(sei.OriginalSQL),

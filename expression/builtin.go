@@ -90,7 +90,7 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 	if ctx == nil {
 		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
 	}
-	if err := checkIllegalMixCollation(funcName, args, retType); err != nil {
+	if err := CheckIllegalMixCollation(funcName, args, retType); err != nil {
 		return baseBuiltinFunc{}, err
 	}
 	derivedCharset, derivedCollate := DeriveCollationFromExprs(ctx, args...)
@@ -112,7 +112,8 @@ var (
 	coerString = []string{"EXPLICIT", "NONE", "IMPLICIT", "SYSCONST", "COERCIBLE", "NUMERIC", "IGNORABLE"}
 )
 
-func checkIllegalMixCollation(funcName string, args []Expression, evalType types.EvalType) error {
+// CheckIllegalMixCollation check the if the aggregate expression is legal.
+func CheckIllegalMixCollation(funcName string, args []Expression, evalType types.EvalType) error {
 	if len(args) < 2 {
 		return nil
 	}
@@ -131,7 +132,7 @@ func illegalMixCollationErr(funcName string, args []Expression) error {
 	case 2:
 		return collate.ErrIllegalMix2Collation.GenWithStackByArgs(args[0].GetType().Collate, coerString[args[0].Coercibility()], args[1].GetType().Collate, coerString[args[1].Coercibility()], funcName)
 	case 3:
-		return collate.ErrIllegalMix3Collation.GenWithStackByArgs(args[0].GetType().Collate, coerString[args[0].Coercibility()], args[1].GetType().Collate, coerString[args[1].Coercibility()], args[0].GetType().Collate, coerString[args[2].Coercibility()], funcName)
+		return collate.ErrIllegalMix3Collation.GenWithStackByArgs(args[0].GetType().Collate, coerString[args[0].Coercibility()], args[1].GetType().Collate, coerString[args[1].Coercibility()], args[2].GetType().Collate, coerString[args[2].Coercibility()], funcName)
 	default:
 		return collate.ErrIllegalMixCollation.GenWithStackByArgs(funcName)
 	}
@@ -169,7 +170,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		}
 	}
 
-	if err = checkIllegalMixCollation(funcName, args, retType); err != nil {
+	if err = CheckIllegalMixCollation(funcName, args, retType); err != nil {
 		return
 	}
 

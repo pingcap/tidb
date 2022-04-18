@@ -330,14 +330,7 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		flag = uintFlag
 		t := row.GetTime(idx)
-		// Encoding timestamp need to consider timezone.
-		// If it's not in UTC, transform to UTC first.
-		if t.Type() == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
-			err = t.ConvertTimeZone(sc.TimeZone, time.UTC)
-			if err != nil {
-				return
-			}
-		}
+
 		var v uint64
 		v, err = t.ToPackedUint()
 		if err != nil {
@@ -501,14 +494,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 				isNull[i] = !ignoreNull
 			} else {
 				buf[0] = uintFlag
-				// Encoding timestamp need to consider timezone.
-				// If it's not in UTC, transform to UTC first.
-				if t.Type() == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
-					err = t.ConvertTimeZone(sc.TimeZone, time.UTC)
-					if err != nil {
-						return
-					}
-				}
+
 				var v uint64
 				v, err = t.ToPackedUint()
 				if err != nil {
@@ -962,7 +948,9 @@ func peek(b []byte) (length int, err error) {
 		return 0, errors.Trace(err)
 	}
 	length += l
-	if length > originLength {
+	if length <= 0 {
+		return 0, errors.New("invalid encoded key")
+	} else if length > originLength {
 		return 0, errors.Errorf("invalid encoded key, "+
 			"expected length: %d, actual length: %d", length, originLength)
 	}

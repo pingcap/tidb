@@ -184,8 +184,7 @@
       "select /*+ hash_join(t1, t2 partition(p0)) */ * from t t1 join t t2 on t1.a = t2.a",
       "select /*+ use_index_merge(t partition(p0)) */ * from t where t.b = 1 or t.c = \"8\"",
       "select /*+ use_index_merge(t partition(p0, p1) primary, b) */ * from t where t.a = 1 or t.b = 2",
-      "select /*+ use_index(t partition(p0) b) */ * from t partition(p0, p1)",
-      "select /*+ read_from_storage(tikv[t partition(p0)], tiflash[t partition(p1, p2)]) */ * from t"
+      "select /*+ use_index(t partition(p0) b) */ * from t partition(p0, p1)"
     ]
   },
   {
@@ -287,6 +286,25 @@
       // Query with WHERE or ON should have the same plan, i.e, the Apply has been decorrelated.
       "explain format = 'brief' select * from t where exists (select 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a)",
       "explain format = 'brief' select * from t where exists (select 1 from t t1 join t t2 on t1.a = t2.a and t1.a = t.a)"
+    ]
+  },
+  {
+    "name": "TestGroupBySetVar",
+    "cases": [
+      "select floor(dt.rn/2) rownum, count(c1) from (select @rownum := @rownum + 1 rn, c1 from (select @rownum := -1) drn, t1) dt group by floor(dt.rn/2) order by rownum;",
+      // TODO: fix these two cases
+      "select @n:=@n+1 as e from ta group by e",
+      "select @n:=@n+a as e from ta group by e",
+      "select * from (select @n:=@n+1 as e from ta) tt group by e",
+      "select * from (select @n:=@n+a as e from ta) tt group by e",
+      "select a from ta group by @n:=@n+1",
+      "select a from ta group by @n:=@n+a"
+    ]
+  },
+  {
+    "name": "TestIssue24095",
+    "cases": [
+      "select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;"
     ]
   }
 ]

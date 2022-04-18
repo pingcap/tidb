@@ -558,7 +558,7 @@ func (s *testEvaluatorSuite) TestControlFunc2Pb(c *C) {
 	pbExprs, err := ExpressionsToPBList(sc, controlFuncs, client)
 	c.Assert(err, IsNil)
 	jsons := []string{
-		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"},\"has_distinct\":false}],\"sig\":4208,\"field_type\":{\"tp\":3,\"flag\":128,\"flen\":-1,\"decimal\":0,\"collate\":63,\"charset\":\"\"},\"has_distinct\":false}",
+		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"},\"has_distinct\":false}],\"sig\":4208,\"field_type\":{\"tp\":3,\"flag\":128,\"flen\":-1,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
 		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"},\"has_distinct\":false}],\"sig\":4107,\"field_type\":{\"tp\":3,\"flag\":128,\"flen\":24,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
 		"{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":3,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":63,\"charset\":\"\"},\"has_distinct\":false}],\"sig\":4101,\"field_type\":{\"tp\":3,\"flag\":128,\"flen\":24,\"decimal\":0,\"collate\":63,\"charset\":\"binary\"},\"has_distinct\":false}",
 		"null",
@@ -615,6 +615,8 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	datetimeColumn := dg.genColumn(mysql.TypeDatetime, 6)
 	binaryStringColumn := dg.genColumn(mysql.TypeString, 7)
 	binaryStringColumn.RetType.Collate = charset.CollationBin
+	int32Column := dg.genColumn(mysql.TypeLong, 8)
+	float32Column := dg.genColumn(mysql.TypeFloat, 9)
 
 	function, err := NewFunction(mock.NewContext(), ast.JSONLength, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
 	c.Assert(err, IsNil)
@@ -662,28 +664,31 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
+	validDecimalType := types.NewFieldType(mysql.TypeNewDecimal)
+	validDecimalType.Flen = 20
+	validDecimalType.Decimal = 2
 	// CastIntAsDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), intColumn)
+	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, intColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
 	// CastRealAsDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), realColumn)
+	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, realColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
 	// CastDecimalAsDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), decimalColumn)
+	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, decimalColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
 	// CastStringAsDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), stringColumn)
+	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, stringColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
 	// CastTimeAsDecimal
-	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), datetimeColumn)
+	function, err = NewFunction(mock.NewContext(), ast.Cast, validDecimalType, datetimeColumn)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 
@@ -832,6 +837,16 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 	c.Assert(function.(*ScalarFunction).Function.PbCode(), Equals, tipb.ScalarFuncSig_UnixTimestampDec)
 	exprs = append(exprs, function)
 
+	// cast Int32 to Int32
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLong), int32Column)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// cast float32 to float32
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeFloat), float32Column)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
 	canPush := CanExprsPushDown(sc, exprs, client, kv.TiFlash)
 	c.Assert(canPush, Equals, true)
 
@@ -858,6 +873,28 @@ func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
 
 	// RoundDecimal: can not be pushed
 	function, err = NewFunction(mock.NewContext(), ast.Round, types.NewFieldType(mysql.TypeNewDecimal), decimalColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// Cast to Int32: not supported
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLong), stringColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// Cast to Float: not supported
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeFloat), intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// Cast to invalid Decimal Type: not supported
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeNewDecimal), intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	// cast Int32 to UInt32
+	unsignedInt32Type := types.NewFieldType(mysql.TypeLong)
+	unsignedInt32Type.Flag = mysql.UnsignedFlag
+	function, err = NewFunction(mock.NewContext(), ast.Cast, unsignedInt32Type, int32Column)
 	c.Assert(err, IsNil)
 	exprs = append(exprs, function)
 

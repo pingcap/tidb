@@ -2569,3 +2569,85 @@ func (s *testPessimisticSuite) TestAsyncCommitCalTSFail(c *C) {
 	tk2.MustExec("update tk set c2 = c2 + 1")
 	tk2.MustExec("commit")
 }
+
+func (s *testPessimisticSuite) TestChangeLockToPut(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("drop table if exists tk")
+	tk.MustExec("create table t1(c1 varchar(20) key, c2 int, c3 int, unique key k1(c2), key k2(c3))")
+	tk.MustExec(`insert into t1 values ("1", 1, 1), ("2", 2, 2), ("3", 3, 3)`)
+
+	// Test point get change lock to put.
+	for _, mode := range []string{"REPEATABLE-READ", "READ-COMMITTED"} {
+		tk.MustExec(fmt.Sprintf(`set tx_isolation = "%s"`, mode))
+		tk.MustExec("begin pessimistic")
+		tk.MustQuery(`select * from t1 where c1 = "1" for update`).Check(testkit.Rows("1 1 1"))
+		tk.MustExec("commit")
+		tk.MustExec("begin pessimistic")
+		tk.MustQuery(`select * from t1 where c1 = "1" for update`).Check(testkit.Rows("1 1 1"))
+		tk.MustExec("commit")
+		tk.MustExec("admin check table t1")
+		tk2.MustExec("begin")
+		tk2.MustQuery(`select * from t1 use index(k1) where c2 = "1" for update`).Check(testkit.Rows("1 1 1"))
+		tk2.MustQuery(`select * from t1 use index(k1) where c2 = "3" for update`).Check(testkit.Rows("3 3 3"))
+		tk2.MustExec("commit")
+		tk2.MustExec("begin")
+		tk2.MustQuery(`select * from t1 use index(k2) where c3 = 1`).Check(testkit.Rows("1 1 1"))
+		tk2.MustQuery("select * from t1 use index(k2) where c3 > 1").Check(testkit.Rows("2 2 2", "3 3 3"))
+		tk2.MustExec("commit")
+	}
+
+	// Test batch point get change lock to put.
+	for _, mode := range []string{"REPEATABLE-READ", "READ-COMMITTED"} {
+		tk.MustExec(fmt.Sprintf(`set tx_isolation = "%s"`, mode))
+		tk.MustExec("begin pessimistic")
+		tk.MustQuery(`select * from t1 where c1 in ("1", "5", "3") for update`).Check(testkit.Rows("1 1 1", "3 3 3"))
+		tk.MustExec("commit")
+		tk.MustExec("begin pessimistic")
+		tk.MustQuery(`select * from t1 where c1 in ("1", "2", "8") for update`).Check(testkit.Rows("1 1 1", "2 2 2"))
+		tk.MustExec("commit")
+		tk.MustExec("admin check table t1")
+		tk2.MustExec("begin")
+		tk2.MustQuery(`select * from t1 use index(k1) where c2 in ("1", "2", "3") for update`).Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3"))
+		tk2.MustQuery(`select * from t1 use index(k2) where c2 in ("2") for update`).Check(testkit.Rows("2 2 2"))
+		tk2.MustExec("commit")
+		tk2.MustExec("begin")
+		tk2.MustQuery(`select * from t1 use index(k2) where c3 in (5, 8)`).Check(testkit.Rows())
+		tk2.MustQuery(`select * from t1 use index(k2) where c3 in (1, 8) for update`).Check(testkit.Rows("1 1 1"))
+		tk2.MustQuery(`select * from t1 use index(k2) where c3 > 1`).Check(testkit.Rows("2 2 2", "3 3 3"))
+		tk2.MustExec("commit")
+	}
+
+	tk.MustExec("admin check table t1")
+}
+
+func (s *testPessimisticSuite) TestIssue30940(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int primary key, v int)")
+	tk.MustExec("insert into t values(1, 1)")
+
+	stmts := []string{
+		"update t set v = v + 1 where id = 1",
+		"delete from t where id = 1",
+	}
+	errCh := make(chan error, 1)
+	for _, stmt := range stmts {
+		tk.MustExec(fmt.Sprintf("prepare t from '%s'", stmt))
+		tk2.MustExec("alter table t add column a int")
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/planner/optimizeExecuteStmt", "pause"), IsNil)
+		go func() {
+			errCh <- tk.ExecToErr("execute t")
+		}()
+		tk2.MustExec("alter table t drop column a")
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/planner/optimizeExecuteStmt"), IsNil)
+		c.Assert(<-errCh, IsNil)
+	}
+}

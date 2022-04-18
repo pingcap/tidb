@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/logutil"
 	"github.com/pingcap/tidb/store/tikv/metrics"
@@ -257,11 +258,20 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			}
 			logutil.BgLogger().Info("prewrite encounters lock",
 				zap.Uint64("session", c.sessionID),
+				zap.Uint64("txnID", c.startTS),
 				zap.Stringer("lock", lock))
+			// If an optimistic transaction encounters a lock with larger TS, this transaction will certainly
+			// fail due to a WriteConflict error. So we can construct and return an error here early.
+			// Pessimistic transactions don't need such an optimization. If this key needs a pessimistic lock,
+			// TiKV will return a PessimisticLockNotFound error directly if it encounters a different lock. Otherwise,
+			// TiKV returns lock.TTL = 0, and we still need to resolve the lock.
+			if lock.TxnID > c.startTS && !c.isPessimistic {
+				return kv.ErrWriteConflict.GenWithStackByArgs(c.startTS, lock.TxnID, 0, lock.Key)
+			}
 			locks = append(locks, lock)
 		}
 		start := time.Now()
-		msBeforeExpired, err := c.store.lockResolver.resolveLocksForWrite(bo, c.startTS, locks)
+		msBeforeExpired, err := c.store.lockResolver.resolveLocksForWrite(bo, c.startTS, c.forUpdateTS, locks)
 		if err != nil {
 			return errors.Trace(err)
 		}

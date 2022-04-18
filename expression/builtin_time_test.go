@@ -1418,6 +1418,7 @@ func (s *testEvaluatorSuite) TestStrToDate(c *C) {
 		{"15-01-2001 1:59:58.", "%d-%m-%Y %H:%i:%s.%f", true, types.KindMysqlTime, time.Date(2001, 1, 15, 1, 59, 58, 000000000, time.Local)},
 		{"15-01-2001 1:9:8.999", "%d-%m-%Y %H:%i:%s.%f", true, types.KindMysqlTime, time.Date(2001, 1, 15, 1, 9, 8, 999000000, time.Local)},
 		{"15-01-2001 1:9:8.999", "%d-%m-%Y %H:%i:%S.%f", true, types.KindMysqlTime, time.Date(2001, 1, 15, 1, 9, 8, 999000000, time.Local)},
+		{"2003-01-02 10:11:12.0012", "%Y-%m-%d %H:%i:%S.%f", true, types.KindMysqlTime, time.Date(2003, 1, 2, 10, 11, 12, 1200000, time.Local)},
 		{"2003-01-02 10:11:12 PM", "%Y-%m-%d %H:%i:%S %p", false, types.KindMysqlTime, time.Time{}},
 		{"10:20:10AM", "%H:%i:%S%p", false, types.KindMysqlTime, time.Time{}},
 		// test %@(skip alpha), %#(skip number), %.(skip punct)
@@ -2781,22 +2782,35 @@ func (s *testEvaluatorSuite) TestLastDay(c *C) {
 		c.Assert(result, Equals, test.expect)
 	}
 
-	testsNull := []interface{}{
-		"0000-00-00",
-		"1992-13-00",
-		"2007-10-07 23:59:61",
-		"2005-00-00",
-		"2005-00-01",
-		"2243-01 00:00:00",
-		123456789}
+	var timeData types.Time
+	timeData.StrToDate(s.ctx.GetSessionVars().StmtCtx, "202010", "%Y%m")
+	testsNull := []struct {
+		param           interface{}
+		isNilNoZeroDate bool
+		isNil           bool
+	}{
+		{"0000-00-00", true, true},
+		{"1992-13-00", true, true},
+		{"2007-10-07 23:59:61", true, true},
+		{"2005-00-00", true, true},
+		{"2005-00-01", true, true},
+		{"2243-01 00:00:00", true, true},
+		{123456789, true, true},
+		{timeData, true, false},
+	}
 
 	for _, i := range testsNull {
-		t := []types.Datum{types.NewDatum(i)}
+		t := []types.Datum{types.NewDatum(i.param)}
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t))
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
-		c.Assert(d.IsNull(), IsTrue)
+		c.Assert(d.IsNull() == i.isNilNoZeroDate, IsTrue)
+		s.ctx.GetSessionVars().SQLMode &= ^mysql.ModeNoZeroDate
+		d, err = evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(d.IsNull() == i.isNil, IsTrue)
+		s.ctx.GetSessionVars().SQLMode |= mysql.ModeNoZeroDate
 	}
 }
 

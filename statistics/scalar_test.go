@@ -243,6 +243,13 @@ func (s *testStatisticsSuite) TestEnumRangeValues(c *C) {
 			highExclude: false,
 			res:         "",
 		},
+		{
+			low:         types.NewTimeDatum(getTime(2017, 1, 1, mysql.TypeDate)),
+			high:        types.NewTimeDatum(getTime(2017, 1, 1, mysql.TypeDate)),
+			lowExclude:  true,
+			highExclude: true,
+			res:         "",
+		},
 	}
 	for _, t := range tests {
 		vals := enumRangeValues(t.low, t.high, t.lowExclude, t.highExclude)

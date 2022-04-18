@@ -139,6 +139,8 @@ func InferType4ControlFuncs(lexp, rexp Expression) *types.FieldType {
 		if lhs.Tp != mysql.TypeNull || rhs.Tp != mysql.TypeNull {
 			resultFieldType.Decimal = types.UnspecifiedLength
 		}
+	} else if resultFieldType.Tp == mysql.TypeDatetime {
+		types.TryToFixFlenOfDatetime(resultFieldType)
 	}
 	return resultFieldType
 }
@@ -188,8 +190,16 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		decimal = 0
 	}
 	fieldTp.Decimal, fieldTp.Flen = decimal, flen
+	types.TryToFixFlenOfDatetime(fieldTp)
 	if fieldTp.EvalType().IsStringKind() && !isBinaryStr {
-		fieldTp.Charset, fieldTp.Collate = charset.CharsetUTF8MB4, charset.CollationUTF8MB4
+		fieldTp.Charset, fieldTp.Collate = DeriveCollationFromExprs(ctx, args...)
+		if fieldTp.Charset == charset.CharsetBin && fieldTp.Collate == charset.CollationBin {
+			// When args are Json and Numerical type(eg. Int), the fieldTp is String.
+			// Both their charset/collation is binary, but the String need a default charset/collation.
+			fieldTp.Charset, fieldTp.Collate = charset.GetDefaultCharsetAndCollate()
+		}
+	} else {
+		fieldTp.Charset, fieldTp.Collate = charset.CharsetBin, charset.CollationBin
 	}
 	if isBinaryFlag {
 		fieldTp.Flag |= mysql.BinaryFlag
@@ -214,6 +224,14 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, err
 	}
 	bf.tp = fieldTp
+	if fieldTp.Tp == mysql.TypeEnum || fieldTp.Tp == mysql.TypeSet {
+		switch tp {
+		case types.ETInt:
+			fieldTp.Tp = mysql.TypeLonglong
+		case types.ETString:
+			fieldTp.Tp = mysql.TypeVarchar
+		}
+	}
 
 	switch tp {
 	case types.ETInt:

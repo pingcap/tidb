@@ -961,7 +961,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		// TableScan as inner child of IndexJoin can return at most 1 tuple for each outer row.
 		RowCount:     math.Min(1.0, countAfterAccess),
 		StatsVersion: ds.stats.StatsVersion,
-		// Cardinality would not be used in cost computation of IndexJoin, set leave it as default nil.
+		// NDV would not be used in cost computation of IndexJoin, set leave it as default nil.
 	}
 	rowSize := ds.TblColHists.GetTableAvgRowSize(p.ctx, ds.TblCols, ts.StoreType, true)
 	sessVars := ds.ctx.GetSessionVars()
@@ -1241,18 +1241,18 @@ func (ijHelper *indexJoinBuildHelper) resetContextForIndex(innerKeys []*expressi
 // usefulEqOrInFilters is the continuous eq/in conditions on current unused index columns.
 // uselessFilters is the conditions which cannot be used for building ranges.
 // remainingRangeCandidates is the other conditions for future use.
-func (ijHelper *indexJoinBuildHelper) findUsefulEqAndInFilters(innerPlan *DataSource) (usefulEqOrInFilters, uselessFilters, remainingRangeCandidates []expression.Expression) {
+func (ijHelper *indexJoinBuildHelper) findUsefulEqAndInFilters(innerPlan *DataSource) (usefulEqOrInFilters, uselessFilters, remainingRangeCandidates []expression.Expression, emptyRange bool) {
 	uselessFilters = make([]expression.Expression, 0, len(innerPlan.pushedDownConds))
 	var remainedEqOrIn []expression.Expression
 	// Extract the eq/in functions of possible join key.
 	// you can see the comment of ExtractEqAndInCondition to get the meaning of the second return value.
-	usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates, _ = ranger.ExtractEqAndInCondition(
+	usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates, emptyRange = ranger.ExtractEqAndInCondition(
 		innerPlan.ctx, innerPlan.pushedDownConds,
 		ijHelper.curNotUsedIndexCols,
 		ijHelper.curNotUsedColLens,
 	)
 	uselessFilters = append(uselessFilters, remainedEqOrIn...)
-	return usefulEqOrInFilters, uselessFilters, remainingRangeCandidates
+	return usefulEqOrInFilters, uselessFilters, remainingRangeCandidates, emptyRange
 }
 
 // buildLastColManager analyze the `OtherConditions` of join to see whether there're some filters can be used in manager.
@@ -1332,7 +1332,10 @@ func (ijHelper *indexJoinBuildHelper) analyzeLookUpFilters(path *util.AccessPath
 	}
 	accesses := make([]expression.Expression, 0, len(path.IdxCols))
 	ijHelper.resetContextForIndex(innerJoinKeys, path.IdxCols, path.IdxColLens)
-	notKeyEqAndIn, remained, rangeFilterCandidates := ijHelper.findUsefulEqAndInFilters(innerPlan)
+	notKeyEqAndIn, remained, rangeFilterCandidates, emptyRange := ijHelper.findUsefulEqAndInFilters(innerPlan)
+	if emptyRange {
+		return true, nil
+	}
 	var remainedEqAndIn []expression.Expression
 	notKeyEqAndIn, remainedEqAndIn = ijHelper.removeUselessEqAndInFunc(path.IdxCols, notKeyEqAndIn, outerJoinKeys)
 	matchedKeyCnt := len(ijHelper.curPossibleUsedKeys)
@@ -1431,7 +1434,7 @@ func (ijHelper *indexJoinBuildHelper) updateBestChoice(ranges []*ranger.Range, p
 	}
 	var innerNDV float64
 	if stats := ijHelper.innerPlan.statsInfo(); stats != nil && stats.StatsVersion != statistics.PseudoVersion {
-		innerNDV = getCardinality(path.IdxCols[:usedColsLen], ijHelper.innerPlan.Schema(), stats)
+		innerNDV = getColsNDV(path.IdxCols[:usedColsLen], ijHelper.innerPlan.Schema(), stats)
 	}
 	// We choose the index by the NDV of the used columns, the larger the better.
 	// If NDVs are same, we choose index which uses more columns.
@@ -1869,8 +1872,22 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	} else {
 		if prop.MPPPartitionTp == property.HashType {
 			var matches []int
-			if matches = prop.IsSubsetOf(lkeys); len(matches) == 0 {
+			if p.JoinType == InnerJoin {
+				if matches = prop.IsSubsetOf(lkeys); len(matches) == 0 {
+					matches = prop.IsSubsetOf(rkeys)
+				}
+			} else if p.JoinType == RightOuterJoin {
+				// for right out join, only the right keys can possibly matches the prop, because
+				// the left keys will generate NULL values randomly
+				// todo maybe we can add a null-sensitive flag in the key columns to indicate whether the column is
+				//  null-sensitive(used in aggregation) or null-insensitive(used in join)
 				matches = prop.IsSubsetOf(rkeys)
+			} else {
+				// for left out join, only the left keys can possibly matches the prop, because
+				// the right keys will generate NULL values randomly
+				// for semi/anti semi/left out semi/anti left out semi join, only left keys are returned,
+				// so just check the left keys
+				matches = prop.IsSubsetOf(lkeys)
 			}
 			if len(matches) == 0 {
 				return nil
@@ -2139,7 +2156,7 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 	}
 	cacheHitRatio := 0.0
 	if la.stats.RowCount != 0 {
-		ndv := getCardinality(columns, la.schema, la.stats)
+		ndv := getColsNDV(columns, la.schema, la.stats)
 		// for example, if there are 100 rows and the number of distinct values of these correlated columns
 		// are 70, then we can assume 30 rows can hit the cache so the cache hit ratio is 1 - (70/100) = 0.3
 		cacheHitRatio = 1 - (ndv / la.stats.RowCount)

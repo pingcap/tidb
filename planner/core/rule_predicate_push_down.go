@@ -81,9 +81,16 @@ func splitSetGetVarFunc(filters []expression.Expression) ([]expression.Expressio
 func (p *LogicalSelection) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, LogicalPlan) {
 	predicates = DeleteTrueExprs(p, predicates)
 	p.Conditions = DeleteTrueExprs(p, p.Conditions)
-	canBePushDown, canNotBePushDown := splitSetGetVarFunc(p.Conditions)
-	retConditions, child := p.children[0].PredicatePushDown(append(canBePushDown, predicates...))
-	retConditions = append(retConditions, canNotBePushDown...)
+	var child LogicalPlan
+	var retConditions []expression.Expression
+	if p.buildByHaving {
+		retConditions, child = p.children[0].PredicatePushDown(predicates)
+		retConditions = append(retConditions, p.Conditions...)
+	} else {
+		canBePushDown, canNotBePushDown := splitSetGetVarFunc(p.Conditions)
+		retConditions, child = p.children[0].PredicatePushDown(append(canBePushDown, predicates...))
+		retConditions = append(retConditions, canNotBePushDown...)
+	}
 	if len(retConditions) > 0 {
 		p.Conditions = expression.PropagateConstant(p.ctx, retConditions)
 		// Return table dual when filter is constant false or null.
@@ -208,7 +215,6 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	addSelection(p, lCh, leftRet, 0)
 	addSelection(p, rCh, rightRet, 1)
 	p.updateEQCond()
-	p.mergeSchema()
 	buildKeyInfo(p)
 	return ret, p.self
 }
@@ -280,10 +286,14 @@ func (p *LogicalProjection) appendExpr(expr expression.Expression) *expression.C
 
 	col := &expression.Column{
 		UniqueID: p.ctx.GetSessionVars().AllocPlanColumnID(),
-		RetType:  expr.GetType(),
+		RetType:  expr.GetType().Clone(),
 	}
 	col.SetCoercibility(expr.Coercibility())
 	p.schema.Append(col)
+	// reset ParseToJSONFlag in order to keep the flag away from json column
+	if col.GetType().Tp == mysql.TypeJSON {
+		col.GetType().Flag &= ^mysql.ParseToJSONFlag
+	}
 	return col
 }
 

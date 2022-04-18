@@ -22,7 +22,12 @@ func NewMockGlobalAccessor() *MockGlobalAccessor {
 	return new(MockGlobalAccessor)
 }
 
-// GetGlobalSysVar implements GlobalVarAccessor.GetGlobalSysVar interface.
+// GetAllSysVars implements GlobalVarAccessor.GetAllSysVars interface.
+func (m *MockGlobalAccessor) GetAllSysVars() (map[string]string, error) {
+	panic("not supported")
+}
+
+// GetGlobalSysVar implements (s *session) GetAllSysVars().
 func (m *MockGlobalAccessor) GetGlobalSysVar(name string) (string, error) {
 	v, ok := sysVars[name]
 	if ok {
