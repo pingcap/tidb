@@ -609,7 +609,11 @@ func testTxnLazyInitialize(s *testSessionSuite, c *C, isPessimistic bool) {
 
 func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	varName := "max_allowed_packet"
-	varValue := "67108864" // This is the default value for max_allowed_packet
+	varValue := strconv.FormatUint(variable.DefMaxAllowedPacket, 10) // This is the default value for max_allowed_packet
+
+	// The value of max_allowed_packet should be a multiple of 1024,
+	// so the setting of varValue1 and varValue2 would be truncated to varValue0
+	varValue0 := "4194304"
 	varValue1 := "4194305"
 	varValue2 := "4194306"
 
@@ -627,25 +631,25 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	c.Assert(err, IsNil)
 	v, err = se.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, varValue1)
+	c.Assert(v, Equals, varValue0)
 	c.Assert(tk.Se.CommitTxn(context.TODO()), IsNil)
 
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	se1 := tk1.Se.(variable.GlobalVarAccessor)
 	v, err = se1.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, varValue1)
+	c.Assert(v, Equals, varValue0)
 	err = se1.SetGlobalSysVar(varName, varValue2)
 	c.Assert(err, IsNil)
 	v, err = se1.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, varValue2)
+	c.Assert(v, Equals, varValue0)
 	c.Assert(tk1.Se.CommitTxn(context.TODO()), IsNil)
 
 	// Make sure the change is visible to any client that accesses that global variable.
 	v, err = se.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, varValue2)
+	c.Assert(v, Equals, varValue0)
 
 	// For issue 10955, make sure the new session load `max_execution_time` into sessionVars.
 	tk1.MustExec("set @@global.max_execution_time = 100")

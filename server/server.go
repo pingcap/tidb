@@ -101,6 +101,11 @@ var (
 	errSecureTransportRequired = dbterror.ClassServer.NewStd(errno.ErrSecureTransportRequired)
 	errMultiStatementDisabled  = dbterror.ClassServer.NewStd(errno.ErrMultiStatementDisabled)
 	errNewAbortingConnection   = dbterror.ClassServer.NewStd(errno.ErrNewAbortingConnection)
+<<<<<<< HEAD
+=======
+	errNotSupportedAuthMode    = dbterror.ClassServer.NewStd(errno.ErrNotSupportedAuthMode)
+	errNetPacketTooLarge       = dbterror.ClassServer.NewStd(errno.ErrNetPacketTooLarge)
+>>>>>>> 4d3a3c259... server: use max_allowed_packet to limit the packet size. (#33651)
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
