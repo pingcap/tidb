@@ -9,7 +9,7 @@ This proposes an implementation of Multi-Schema Change.
 
 ## Background
 
-Multi-Schema Change refers to defining multiple schema changes in one SQL statement, including column and index `ADD`, `ALTER`, `DROP`, and `CHANGE`, as well as table option changes. For example:
+Multi-Schema Change is one of MySQL's extended features to the SQL standard. It allows the users to atomically make multiple schema changes in one SQL statement, including column and index `ADD`, `ALTER`, `DROP`, and `CHANGE`, as well as table option changes. For example:
 
 ```sql
 CREATE TABLE t (a INT, c INT);
@@ -24,33 +24,6 @@ Currently, TiDB only supports one schema change per SQL statement and multi-sche
 When users try to migrate data from MySQL-like databases, they have to spend extra effort to rewrite a multi-schema change DDL to several single-schema change DDLs. For the users who rely on ORM frameworks like flyway to construct SQLs automatically, rewriting SQL is not even possible.
 
 Above all, Multi-Schema Change can be a blocking issue for those who want to use TiDB.
-
-## Features
-
-Multi-Schema Change is one of MySQL's extended features to the SQL standard. It has the following features:
-
-- Atomicity: Schema changes from the same SQL statement either all succeed or fail. In the above example, adding column b, modifying column c, adding the index of column a, and modifying the auto-increment ID of the table must all succeed or fail. The intermediate states are invisible to users.
-
-- Cascading: Whether the previously generated object in the same statement can be referenced for the schema object currently being changed.
-    ```sql
-    CREATE TABLE t (a INT);
-    ALTER TABLE t ADD COLUMN b INT, ADD INDEX idx(b);
-    -- Query OK, 0 rows affected (0.07 sec)
-    ALTER TABLE t ADD COLUMN c INT, ADD COLUMN d INT as (c+1);
-    -- Query OK, 0 rows affected (0.07 sec)
-    ```
-  Only adding columns and adding indexes can be cascaded, and other schema object changes cannot be cascaded. For example, modifying columns cannot be cascaded:
-    ```SQL
-    ALTER TABLE t ADD COLUMN d INT, CHANGE COLUMN d e INT;
-    -- ERROR 1054 (42S22): Unknown column 'd' in 't'
-    ```
-
-- Uniqueness: Multiple changes to the same schema object in the same SQL statement are not allowed.
-    ```sql
-    CREATE TABLE t (a INT, b INT);
-    ALTER TABLE t MODIFY COLUMN a CHAR(5), DROP COLUMN a;
-    -- ERROR 1054 (42S22): Unknown column 'a' in 't'
-    ```
 
 ## Proposal
 
