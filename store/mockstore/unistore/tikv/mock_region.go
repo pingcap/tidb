@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/unistore/cophandler"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	pdclient "github.com/tikv/pd/client"
+	"go.uber.org/zap"
 	"golang.org/x/net/context"
 )
 
@@ -450,7 +452,9 @@ func (rm *MockRegionManager) calculateSplitKeys(start, end []byte, count int) []
 }
 
 func (rm *MockRegionManager) splitKeys(keys [][]byte) ([]*regionCtx, error) {
+	log.Error("!splitKeys", zap.ByteStrings("keys", keys))
 	rm.mu.Lock()
+	updatedRegions := make([]*regionCtx, 0, len(keys))
 	newRegions := make([]*regionCtx, 0, len(keys))
 	rm.sortedRegions.AscendGreaterOrEqual(newBtreeSearchItem(keys[0]), func(item btree.Item) bool {
 		if len(keys) == 0 {
@@ -478,7 +482,7 @@ func (rm *MockRegionManager) splitKeys(keys [][]byte) ([]*regionCtx, error) {
 			return true
 		}
 
-		newRegions = append(newRegions, newRegionCtx(&metapb.Region{
+		updatedRegions = append(updatedRegions, newRegionCtx(&metapb.Region{
 			Id:       region.Id,
 			StartKey: startKey,
 			EndKey:   splits[0],
@@ -510,12 +514,12 @@ func (rm *MockRegionManager) splitKeys(keys [][]byte) ([]*regionCtx, error) {
 		}
 		return true
 	})
-	for _, region := range newRegions {
+	for _, region := range append(updatedRegions, newRegions...) {
 		rm.regions[region.meta.Id] = region
 		rm.sortedRegions.ReplaceOrInsert(newBtreeItem(region))
 	}
 	rm.mu.Unlock()
-	return newRegions, rm.saveRegions(newRegions)
+	return newRegions, rm.saveRegions(append(updatedRegions, newRegions...))
 }
 
 func (rm *MockRegionManager) split(regionID, newRegionID uint64, key []byte, peerIDs []uint64) (*metapb.Region, error) {
@@ -592,6 +596,7 @@ func (rm *MockRegionManager) saveRegions(regions []*regionCtx) error {
 // If a region has no leader, corresponding leader will be placed by a peer
 // with empty value (PeerID is 0).
 func (rm *MockRegionManager) ScanRegions(startKey, endKey []byte, limit int) []*pdclient.Region {
+	log.Error("!ScanRegions", zap.ByteString("startKey", startKey), zap.ByteString("endKey", endKey), zap.Int("limit", limit))
 	rm.mu.RLock()
 	defer rm.mu.RUnlock()
 
@@ -839,6 +844,20 @@ func (pd *MockPD) ScanRegions(ctx context.Context, startKey []byte, endKey []byt
 // NOTICE: This method is the old version of ScatterRegions, you should use the later one as your first choice.
 func (pd *MockPD) ScatterRegion(ctx context.Context, regionID uint64) error {
 	return nil
+}
+
+// SplitKeys uses keys as boundaries to split regions.
+func (pd *MockPD) SplitKeys(keys [][]byte) ([]uint64, error) {
+	encodedKeys := make([][]byte, 0, len(keys))
+	for _, k := range keys {
+		encodedKeys = append(encodedKeys, codec.EncodeBytes(nil, k))
+	}
+	regions, err := pd.rm.splitKeys(encodedKeys)
+	regionIDs := make([]uint64, 0, len(regions))
+	for _, r := range regions {
+		regionIDs = append(regionIDs, r.meta.Id)
+	}
+	return regionIDs, err
 }
 
 // Close closes the MockPD.
