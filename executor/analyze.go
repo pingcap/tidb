@@ -722,7 +722,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) *statistics.AnalyzeResu
 		if err != nil {
 			return &statistics.AnalyzeResults{Err: err, Job: colExec.job}
 		}
-		runtime.GC()
+		runtime.GC() // force GC after stats built
 		cLen := len(colExec.analyzePB.ColReq.ColumnsInfo)
 		colGroupResult := &statistics.AnalyzeResult{
 			Hist:    hists[cLen:],
@@ -970,7 +970,6 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			err = err1
 		}
 	}()
-
 	l := len(e.analyzePB.ColReq.ColumnsInfo) + len(e.analyzePB.ColReq.ColumnGroups)
 	rootRowCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 	for i := 0; i < l; i++ {
@@ -978,6 +977,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	}
 	rootCollectorSize := rootRowCollector.Base().MemSize
 	e.memTracker.Consume(rootCollectorSize)
+	memToGC := atomicutil.NewInt64(0)
 	sc := e.ctx.GetSessionVars().StmtCtx
 	statsConcurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
@@ -988,7 +988,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	e.samplingMergeWg = &util.WaitGroupWrapper{}
 	e.samplingMergeWg.Add(statsConcurrency)
 	for i := 0; i < statsConcurrency; i++ {
-		go e.subMergeWorker(mergeResultCh, mergeTaskCh, l, i, e.memTracker)
+		go e.subMergeWorker(mergeResultCh, mergeTaskCh, l, i, e.memTracker, memToGC)
 	}
 	if err = readDataAndSendTask(e.ctx, e.resultHandler, mergeTaskCh, e.memTracker); err != nil {
 		return 0, nil, nil, nil, nil, err
@@ -996,6 +996,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 
 	mergeWorkerPanicCnt := 0
 	for mergeWorkerPanicCnt < statsConcurrency {
+		tryGC(memToGC, e.memTracker)
 		mergeResult, ok := <-mergeResultCh
 		if !ok {
 			break
@@ -1010,11 +1011,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		oldRootCollectorSize := rootCollectorSize
 		rootRowCollector.MergeCollector(mergeResult.collector)
 		rootCollectorSize = rootRowCollector.Base().MemSize
-		mergeMemConsume := rootCollectorSize - oldRootCollectorSize - mergeResult.collector.Base().MemSize
-		mergeResult = nil
-		runtime.GC()
-		logutil.BgLogger().Info("buildSamplingStats finalMerge: ", zap.Int64("collectorMerge", mergeMemConsume))
-		e.memTracker.Consume(mergeMemConsume)
+		memToGC.Add(oldRootCollectorSize + mergeResult.collector.Base().MemSize - rootCollectorSize)
 	}
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
@@ -1073,7 +1070,9 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	exitCh := make(chan struct{})
 	e.samplingBuilderWg.Add(statsConcurrency)
 	for i := 0; i < statsConcurrency; i++ {
-		e.samplingBuilderWg.Run(func() { e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, sampleCollectors, exitCh) })
+		e.samplingBuilderWg.Run(func() {
+			e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, sampleCollectors, exitCh, memToGC)
+		})
 	}
 	for i, col := range e.colsInfo {
 		buildTaskChan <- &samplingBuildTask{
@@ -1112,6 +1111,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	close(buildTaskChan)
 	panicCnt := 0
 	for panicCnt < statsConcurrency {
+		tryGC(memToGC, e.memTracker)
 		err1, ok := <-buildResultChan
 		if !ok {
 			break
@@ -1136,6 +1136,19 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		}
 	}
 	return
+}
+
+func tryGC(memToGC *atomicutil.Int64, memTracker *memory.Tracker) {
+	toGC := memToGC.Load()
+	if toGC > 524288000 { // GC when exceeds 500MB
+		memStats := &runtime.MemStats{}
+		runtime.ReadMemStats(memStats)
+		logutil.BgLogger().Info("Before GC:", zap.Uint64("heapInUse", memStats.HeapInuse))
+		runtime.GC()
+		memTracker.Consume(-toGC)
+		runtime.ReadMemStats(memStats)
+		logutil.BgLogger().Info("After GC:", zap.Uint64("heapInUse", memStats.HeapInuse))
+	}
 }
 
 type analyzeIndexNDVTotalResult struct {
@@ -1306,7 +1319,12 @@ type samplingMergeResult struct {
 	err       error
 }
 
-func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult, taskCh <-chan []byte, l int, idx int, memTracker *memory.Tracker) {
+func (e *AnalyzeColumnsExec) subMergeWorker(
+	resultCh chan<- *samplingMergeResult,
+	taskCh <-chan []byte,
+	l int, idx int,
+	memTracker *memory.Tracker,
+	memToGC *atomicutil.Int64) {
 	isClosedChanThread := idx == 0
 	defer func() {
 		if r := recover(); r != nil {
@@ -1344,42 +1362,31 @@ func (e *AnalyzeColumnsExec) subMergeWorker(resultCh chan<- *samplingMergeResult
 		if !ok {
 			break
 		}
+		dataSize := int64(cap(data))
 		colResp := &tipb.AnalyzeColumnsResp{}
 		err := colResp.Unmarshal(data)
 		if err != nil {
 			resultCh <- &samplingMergeResult{err: err}
 			return
 		}
-		dataSize := cap(data)
-		data = nil
-		colRespSize := colResp.Size()
-		memTracker.Consume(int64(colRespSize))
+		colRespSize := int64(colResp.Size())
+		memTracker.Consume(colRespSize)
 		subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 		before := time.Now()
-		runtime.ReadMemStats(memStats)
-		logutil.BgLogger().Info("subMergeWorker before FromProto:", zap.Int("idx", idx), zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
-		subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
+		tmpMemSize := subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
+		data = nil
+		colResp = nil
+		memToGC.Add(dataSize + colRespSize + tmpMemSize)
 		runtime.ReadMemStats(memStats)
 		logutil.BgLogger().Info("subMergeWorker after FromProto:", zap.Int("idx", idx), zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
-		colResp = nil
 		logutil.BgLogger().Info("subMergeWorker FromProto: ", zap.Int("idx", idx), zap.Duration("time", time.Now().Sub(before)))
 		logutil.BgLogger().Info("subMergeWorker consumes memory: ", zap.Int("idx", idx), zap.Int64("subCollector", subCollector.Base().MemSize))
 		UpdateAnalyzeJob(e.ctx, e.job, subCollector.Base().Count)
 		oldRetCollectorSize := retCollector.Base().MemSize
 		retCollector.MergeCollector(subCollector)
+		newRetCollectorSize := retCollector.Base().MemSize
 		subCollectorSize := subCollector.Base().MemSize
-		runtime.ReadMemStats(memStats)
-		logutil.BgLogger().Info("subMergeWorker before GC:", zap.Int("idx", idx), zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
-		subCollector = nil
-		runtime.GC()
-		logutil.BgLogger().Info("subMergeWorker consumes memory: ", zap.Int("idx", idx), zap.Int64("data", -int64(dataSize)))
-		logutil.BgLogger().Info("subMergeWorker consumes memory: ", zap.Int("idx", idx), zap.Int64("colResp", -int64(colRespSize)))
-		logutil.BgLogger().Info("subMergeWorker consumes memory: ", zap.Int("idx", idx), zap.Int64("subCollector", -subCollectorSize))
-		logutil.BgLogger().Info("subMergeWorker consumes memory: ", zap.Int("idx", idx), zap.Int64("oldRetCollector", -oldRetCollectorSize))
-		logutil.BgLogger().Info("subMergeWorker consumes memory: ", zap.Int("idx", idx), zap.Int64("newRetCollector", retCollector.Base().MemSize))
-		memTracker.Consume(retCollector.Base().MemSize - oldRetCollectorSize - subCollectorSize - int64(colRespSize) - int64(dataSize))
-		runtime.ReadMemStats(memStats)
-		logutil.BgLogger().Info("subMergeWorker after GC:", zap.Int("idx", idx), zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", memTracker.BytesConsumed()))
+		memToGC.Add(oldRetCollectorSize + subCollectorSize - newRetCollectorSize)
 	}
 	resultCh <- &samplingMergeResult{collector: retCollector}
 }
@@ -1398,7 +1405,8 @@ func (e *AnalyzeColumnsExec) subBuildWorker(
 	hists []*statistics.Histogram,
 	topns []*statistics.TopN,
 	collectors []*statistics.SampleCollector,
-	exitCh chan struct{}) {
+	exitCh chan struct{},
+	memToGC *atomicutil.Int64) {
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
@@ -1413,6 +1421,7 @@ func (e *AnalyzeColumnsExec) subBuildWorker(
 		panic("failpoint triggered")
 	})
 	colLen := len(e.colsInfo)
+	memStats := &runtime.MemStats{}
 workLoop:
 	for {
 		select {
@@ -1420,9 +1429,6 @@ workLoop:
 			if !ok {
 				break workLoop
 			}
-			memStats := &runtime.MemStats{}
-			runtime.ReadMemStats(memStats)
-			logutil.BgLogger().Info("subBuildWorker before build:", zap.Int("idx", task.slicePos), zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
 			var collector *statistics.SampleCollector
 			totalMemInc := int64(0)
 			if task.isColumn {
@@ -1434,8 +1440,8 @@ workLoop:
 				sampleNum := task.rootRowCollector.Base().Samples.Len()
 				sampleItems := make([]*statistics.SampleItem, 0, sampleNum)
 				initMemSize := int64(unsafe.Sizeof(sampleItems)) + 8*int64(sampleNum) + statistics.EmptySampleItemSize*int64(sampleNum)
-				totalMemInc += initMemSize
 				e.memTracker.Consume(initMemSize)
+				totalMemInc += initMemSize
 				logutil.BgLogger().Info("subBuildWorker consumes memory: ", zap.Int("idx", task.slicePos), zap.Int64("init", initMemSize), zap.Int("sampleNum", sampleNum))
 				bufferedMemInc := int64(0)
 				var collator collate.Collator
@@ -1453,14 +1459,15 @@ workLoop:
 					val := row.Columns[task.slicePos]
 					if collator != nil {
 						val.SetBytes(collator.Key(val.GetString()))
-						bufferedMemInc += int64(cap(val.GetBytes())) * 3 // TODO
-						if bufferedMemInc > int64(104857600) {           // track when exceeds 100 MB
+						bufferedMemInc += int64(cap(val.GetBytes())) * 3
+						if bufferedMemInc > int64(104857600) { // track when exceeds 100 MB
 							e.memTracker.Consume(bufferedMemInc)
 							totalMemInc += bufferedMemInc
 							bufferedMemInc = int64(0)
 							runtime.ReadMemStats(memStats)
 							logutil.BgLogger().Info("subBuildWorker collate:", zap.Int("idx", task.slicePos), zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()), zap.String("collate", ft.Collate))
 						}
+						memToGC.Add(int64(cap(val.GetBytes())) * 2)
 					}
 					sampleItems = append(sampleItems, &statistics.SampleItem{
 						Value:   val,
@@ -1527,19 +1534,13 @@ workLoop:
 				resultCh <- err
 				continue
 			}
-			runtime.ReadMemStats(memStats)
-			logutil.BgLogger().Info("subBuildWorker before GC:", zap.Int("idx", task.slicePos), zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
-			collector = nil
-			runtime.GC()
 			finalMemSize := hist.MemoryUsage() + topn.MemoryUsage()
-			logutil.BgLogger().Info("subBuildWorker consumes memory: ", zap.Int("idx", task.slicePos), zap.Int64("totalMemInc", -totalMemInc))
+			logutil.BgLogger().Info("subBuildWorker: ", zap.Int("idx", task.slicePos), zap.Int64("totalMemInc", totalMemInc))
 			logutil.BgLogger().Info("subBuildWorker consumes memory: ", zap.Int("idx", task.slicePos), zap.Int64("final", finalMemSize))
-			e.memTracker.Consume(finalMemSize - totalMemInc)
+			e.memTracker.Consume(finalMemSize)
 			hists[task.slicePos] = hist
 			topns[task.slicePos] = topn
 			resultCh <- nil
-			runtime.ReadMemStats(memStats)
-			logutil.BgLogger().Info("subBuildWorker after GC:", zap.Int("idx", task.slicePos), zap.Uint64("HeapInUse", memStats.HeapInuse), zap.Int64("tracked", e.memTracker.BytesConsumed()))
 		case <-exitCh:
 			return
 		}
