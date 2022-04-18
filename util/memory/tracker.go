@@ -17,15 +17,12 @@ package memory
 import (
 	"bytes"
 	"fmt"
-	"runtime"
 	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 // Tracker is used to track the memory usage during query execution.
