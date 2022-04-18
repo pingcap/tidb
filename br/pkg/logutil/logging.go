@@ -209,8 +209,19 @@ func Keys(keys [][]byte) zap.Field {
 	return zap.Object("keys", zapKeysMarshaler(keys))
 }
 
+// AShortError make the zap field with key to display error without verbose representation (e.g. the stack trace).
+func AShortError(key string, err error) zap.Field {
+	if err == nil {
+		return zap.Skip()
+	}
+	return zap.String(key, err.Error())
+}
+
 // ShortError make the zap field to display error without verbose representation (e.g. the stack trace).
 func ShortError(err error) zap.Field {
+	if err == nil {
+		return zap.Skip()
+	}
 	return zap.String("error", err.Error())
 }
 

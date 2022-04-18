@@ -565,11 +565,7 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableTelemetry, Value: BoolToOnOff(DefTiDBEnableTelemetry), Type: TypeBool},
-	{Scope: ScopeGlobal, Name: TiDBEnableHistoricalStats, Value: Off, Type: TypeBool, GetGlobal: func(s *SessionVars) (string, error) {
-		return getTiDBTableValue(s, "tidb_enable_historical_stats", Off)
-	}, SetGlobal: func(s *SessionVars, val string) error {
-		return setTiDBTableValue(s, "tidb_enable_historical_stats", val, "Current historical statistics enable status")
-	}},
+	{Scope: ScopeGlobal, Name: TiDBEnableHistoricalStats, Value: Off, Type: TypeBool},
 	/* tikv gc metrics */
 	{Scope: ScopeGlobal, Name: TiDBGCEnable, Value: On, Type: TypeBool, GetGlobal: func(s *SessionVars) (string, error) {
 		return getTiDBTableValue(s, "tikv_gc_enable", On)
@@ -852,7 +848,32 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: MaxAllowedPacket, Value: "67108864", Type: TypeUnsigned, MinValue: 1024, MaxValue: MaxOfMaxAllowedPacket},
+	{Scope: ScopeGlobal | ScopeSession, Name: MaxAllowedPacket, Value: strconv.FormatUint(DefMaxAllowedPacket, 10), Type: TypeUnsigned, MinValue: 1024, MaxValue: MaxOfMaxAllowedPacket,
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+			// Truncate the value of max_allowed_packet to be a multiple of 1024,
+			// nonmultiples are rounded down to the nearest multiple.
+			u, err := strconv.ParseUint(normalizedValue, 10, 64)
+			if err != nil {
+				return normalizedValue, err
+			}
+			remainder := u % 1024
+			if remainder != 0 {
+				vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(MaxAllowedPacket, normalizedValue))
+				u -= remainder
+			}
+			return strconv.FormatUint(u, 10), nil
+		},
+		GetSession: func(s *SessionVars) (string, error) {
+			return strconv.FormatUint(s.MaxAllowedPacket, 10), nil
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			var err error
+			if s.MaxAllowedPacket, err = strconv.ParseUint(val, 10, 64); err != nil {
+				return err
+			}
+			return nil
+		},
+	},
 	{Scope: ScopeGlobal | ScopeSession, Name: WindowingUseHighPrecision, Value: On, Type: TypeBool, IsHintUpdatable: true, SetSession: func(s *SessionVars, val string) error {
 		s.WindowingUseHighPrecision = TiDBOptOn(val)
 		return nil

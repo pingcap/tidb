@@ -1031,8 +1031,6 @@ func TestStaleReadFutureTime(t *testing.T) {
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int)")
 	// Setting tx_read_ts to a time in the future will fail. (One day before the 2038 problem)
 	_, err := tk.Exec("start transaction read only as of timestamp '2038-01-18 03:14:07'")
