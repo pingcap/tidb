@@ -70,6 +70,10 @@ func (msm *mockSessionManager1) GetInternalSessionStartTSList() []uint64 {
 	return nil
 }
 
+func (msm *mockSessionManager1) GetAutoAnalyzeID() uint64 {
+	return 0
+}
+
 func (msm *mockSessionManager1) Kill(_ uint64, _ bool)         {}
 func (msm *mockSessionManager1) KillAllConnections()           {}
 func (msm *mockSessionManager1) UpdateTLSConfig(_ *tls.Config) {}

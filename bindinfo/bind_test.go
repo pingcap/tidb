@@ -84,6 +84,10 @@ func (msm *mockSessionManager1) GetInternalSessionStartTSList() []uint64 {
 	return nil
 }
 
+func (msm *mockSessionManager1) GetAutoAnalyzeID() uint64 {
+	return 0
+}
+
 func TestPrepareCacheWithBinding(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

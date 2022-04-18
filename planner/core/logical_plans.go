@@ -707,6 +707,13 @@ func (la *LogicalAggregation) GetGroupByCols() []*expression.Column {
 		if col, ok := item.(*expression.Column); ok {
 			groupByCols = append(groupByCols, col)
 		}
+		if function, ok := item.(*expression.ScalarFunction); ok {
+			if len(function.GetArgs()) == 1 {
+				if col, ok := function.GetArgs()[0].(*expression.Column); ok {
+					groupByCols = append(groupByCols, col)
+				}
+			}
+		}
 	}
 	return groupByCols
 }

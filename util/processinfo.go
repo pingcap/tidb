@@ -175,6 +175,8 @@ type SessionManager interface {
 	DeleteInternalSession(se interface{})
 	// Get all startTS of every transactions running in the current internal sessions
 	GetInternalSessionStartTSList() []uint64
+	// GetAutoAnalyzeID returns the auto analyze ID.
+	GetAutoAnalyzeID() uint64
 }
 
 // GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.
@@ -212,7 +214,7 @@ const (
 	MaxServerID = 1<<22 - 1
 )
 
-func (g *GlobalConnID) makeID(localConnID uint64) uint64 {
+func (g *GlobalConnID) MakeID(localConnID uint64) uint64 {
 	var (
 		id       uint64
 		serverID uint64
@@ -235,13 +237,13 @@ func (g *GlobalConnID) makeID(localConnID uint64) uint64 {
 
 // ID returns the connection id
 func (g *GlobalConnID) ID() uint64 {
-	return g.makeID(g.LocalConnID)
+	return g.MakeID(g.LocalConnID)
 }
 
 // NextID returns next connection id
 func (g *GlobalConnID) NextID() uint64 {
 	localConnID := atomic.AddUint64(&g.LocalConnID, 1)
-	return g.makeID(localConnID)
+	return g.MakeID(localConnID)
 }
 
 // ParseGlobalConnID parses an uint64 to GlobalConnID.

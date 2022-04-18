@@ -832,6 +832,10 @@ func (s *Server) GetInternalSessionStartTSList() []uint64 {
 	return tsList
 }
 
+func (s *Server) GetAutoAnalyzeID() uint64 {
+	return s.globalConnID.MakeID(util.GetAutoAnalyzeProcID())
+}
+
 // setSysTimeZoneOnce is used for parallel run tests. When several servers are running,
 // only the first will actually do setSystemTimeZoneVariable, thus we can avoid data race.
 var setSysTimeZoneOnce = &sync.Once{}
