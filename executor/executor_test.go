@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -50,12 +52,14 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	error2 "github.com/pingcap/tidb/store/driver/error"
+	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
@@ -64,6 +68,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/testutils"
 )
 
 func checkFileName(s string) bool {
@@ -5485,4 +5490,452 @@ func TestIssue10435(t *testing.T) {
 	tk.MustQuery("SELECT SUM(i) OVER W FROM t1 WINDOW w AS (PARTITION BY j ORDER BY i) ORDER BY 1+SUM(i) OVER w").Check(
 		testkit.Rows("1", "2", "3", "4", "11", "22", "31", "33", "44", "61", "62", "93", "122", "124", "183", "244"),
 	)
+}
+
+func TestAdmin(t *testing.T) {
+	var cluster testutils.Cluster
+	store, clean := testkit.CreateMockStore(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
+		mockstore.BootstrapWithSingleStore(c)
+		cluster = c
+	}))
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1))")
+	tk.MustExec("insert admin_test (c1) values (1),(2),(NULL)")
+
+	ctx := context.Background()
+	// cancel DDL jobs test
+	r, err := tk.Exec("admin cancel ddl jobs 1")
+	require.NoError(t, err)
+	req := r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	row := req.GetRow(0)
+	require.Equal(t, 2, row.Len())
+	require.Equal(t, "1", row.GetString(0))
+	require.Regexp(t, ".*DDL Job:1 not found", row.GetString(1))
+
+	// show ddl test;
+	r, err = tk.Exec("admin show ddl")
+	require.NoError(t, err)
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	row = req.GetRow(0)
+	require.Equal(t, 6, row.Len())
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	ddlInfo, err := admin.GetDDLInfo(txn)
+	require.NoError(t, err)
+	require.Equal(t, ddlInfo.SchemaVer, row.GetInt64(0))
+	// TODO: Pass this test.
+	// rowOwnerInfos := strings.Split(row.Data[1].GetString(), ",")
+	// ownerInfos := strings.Split(ddlInfo.Owner.String(), ",")
+	// c.Assert(rowOwnerInfos[0], Equals, ownerInfos[0])
+	serverInfo, err := infosync.GetServerInfoByID(ctx, row.GetString(1))
+	require.NoError(t, err)
+	require.Equal(t, serverInfo.IP+":"+strconv.FormatUint(uint64(serverInfo.Port), 10), row.GetString(2))
+	require.Equal(t, "", row.GetString(3))
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Zero(t, req.NumRows())
+	err = txn.Rollback()
+	require.NoError(t, err)
+
+	// show DDL jobs test
+	r, err = tk.Exec("admin show ddl jobs")
+	require.NoError(t, err)
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	row = req.GetRow(0)
+	require.Equal(t, 12, row.Len())
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	historyJobs, err := admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
+	require.Greater(t, len(historyJobs), 1)
+	require.Greater(t, len(row.GetString(1)), 0)
+	require.NoError(t, err)
+	require.Equal(t, historyJobs[0].ID, row.GetInt64(0))
+	require.NoError(t, err)
+
+	r, err = tk.Exec("admin show ddl jobs 20")
+	require.NoError(t, err)
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	row = req.GetRow(0)
+	require.Equal(t, 12, row.Len())
+	require.Equal(t, historyJobs[0].ID, row.GetInt64(0))
+	require.NoError(t, err)
+
+	// show DDL job queries test
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test2")
+	tk.MustExec("create table admin_test2 (c1 int, c2 int, c3 int default 1, index (c1))")
+	result := tk.MustQuery(`admin show ddl job queries 1, 1, 1`)
+	result.Check(testkit.Rows())
+	result = tk.MustQuery(`admin show ddl job queries 1, 2, 3, 4`)
+	result.Check(testkit.Rows())
+	historyJobs, err = admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
+	result = tk.MustQuery(fmt.Sprintf("admin show ddl job queries %d", historyJobs[0].ID))
+	result.Check(testkit.Rows(historyJobs[0].Query))
+	require.NoError(t, err)
+
+	// check table test
+	tk.MustExec("create table admin_test1 (c1 int, c2 int default 1, index (c1))")
+	tk.MustExec("insert admin_test1 (c1) values (21),(22)")
+	r, err = tk.Exec("admin check table admin_test, admin_test1")
+	require.NoError(t, err)
+	require.Nil(t, r)
+	// error table name
+	require.Error(t, tk.ExecToErr("admin check table admin_test_error"))
+	// different index values
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	require.NotNil(t, is)
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("admin_test"))
+	require.NoError(t, err)
+	require.Len(t, tb.Indices(), 1)
+	_, err = tb.Indices()[0].Create(mock.NewContext(), txn, types.MakeDatums(int64(10)), kv.IntHandle(1), nil)
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	errAdmin := tk.ExecToErr("admin check table admin_test")
+	require.Error(t, errAdmin)
+
+	if config.CheckTableBeforeDrop {
+		tk.MustGetErrMsg("drop table admin_test", errAdmin.Error())
+
+		// Drop inconsistency index.
+		tk.MustExec("alter table admin_test drop index c1")
+		tk.MustExec("admin check table admin_test")
+	}
+	// checksum table test
+	tk.MustExec("create table checksum_with_index (id int, count int, PRIMARY KEY(id), KEY(count))")
+	tk.MustExec("create table checksum_without_index (id int, count int, PRIMARY KEY(id))")
+	r, err = tk.Exec("admin checksum table checksum_with_index, checksum_without_index")
+	require.NoError(t, err)
+	res := tk.ResultSetToResult(r, "admin checksum table")
+	// Mocktikv returns 1 for every table/index scan, then we will xor the checksums of a table.
+	// For "checksum_with_index", we have two checksums, so the result will be 1^1 = 0.
+	// For "checksum_without_index", we only have one checksum, so the result will be 1.
+	res.Sort().Check(testkit.Rows("test checksum_with_index 0 2 2", "test checksum_without_index 1 1 1"))
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (c2 BOOL, PRIMARY KEY (c2));")
+	tk.MustExec("INSERT INTO t1 SET c2 = '0';")
+	tk.MustExec("ALTER TABLE t1 ADD COLUMN c3 DATETIME NULL DEFAULT '2668-02-03 17:19:31';")
+	tk.MustExec("ALTER TABLE t1 ADD INDEX idx2 (c3);")
+	tk.MustExec("ALTER TABLE t1 ADD COLUMN c4 bit(10) default 127;")
+	tk.MustExec("ALTER TABLE t1 ADD INDEX idx3 (c4);")
+	tk.MustExec("admin check table t1;")
+
+	// Test admin show ddl jobs table name after table has been droped.
+	tk.MustExec("drop table if exists t1;")
+	re := tk.MustQuery("admin show ddl jobs 1")
+	rows := re.Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "t1", rows[0][2])
+
+	// Test for reverse scan get history ddl jobs when ddl history jobs queue has multiple regions.
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	historyJobs, err = admin.GetHistoryDDLJobs(txn, 20)
+	require.NoError(t, err)
+
+	// Split region for history ddl job queues.
+	m := meta.NewMeta(txn)
+	startKey := meta.DDLJobHistoryKey(m, 0)
+	endKey := meta.DDLJobHistoryKey(m, historyJobs[0].ID)
+	cluster.SplitKeys(startKey, endKey, int(historyJobs[0].ID/5))
+
+	historyJobs2, err := admin.GetHistoryDDLJobs(txn, 20)
+	require.NoError(t, err)
+	require.Equal(t, historyJobs2, historyJobs)
+}
+
+func TestForSelectScopeInUnion(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	// A union B for update, the "for update" option belongs to union statement, so
+	// it should works on both A and B.
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("drop table if exists t")
+	tk1.MustExec("create table t(a int)")
+	tk1.MustExec("insert into t values (1)")
+
+	tk1.MustExec("begin")
+	// 'For update' would act on the second select.
+	tk1.MustQuery("select 1 as a union select a from t for update")
+
+	tk2.MustExec("use test")
+	tk2.MustExec("update t set a = a + 1")
+
+	// As tk1 use select 'for update', it should detect conflict and fail.
+	_, err := tk1.Exec("commit")
+	require.Error(t, err)
+
+	tk1.MustExec("begin")
+	tk1.MustQuery("select 1 as a union select a from t limit 5 for update")
+	tk1.MustQuery("select 1 as a union select a from t order by a for update")
+
+	tk2.MustExec("update t set a = a + 1")
+
+	_, err = tk1.Exec("commit")
+	require.Error(t, err)
+}
+
+func TestUnsignedDecimalOverflow(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tests := []struct {
+		input  interface{}
+		hasErr bool
+		err    string
+	}{{
+		-1,
+		true,
+		"Out of range value for column",
+	}, {
+		"-1.1e-1",
+		true,
+		"Out of range value for column",
+	}, {
+		-1.1,
+		true,
+		"Out of range value for column",
+	}, {
+		-0,
+		false,
+		"",
+	},
+	}
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a decimal(10,2) unsigned)")
+	for _, test := range tests {
+		err := tk.ExecToErr("insert into t values (?)", test.input)
+		if test.hasErr {
+			require.Error(t, err)
+			require.Contains(t, err.Error(), test.err)
+		} else {
+			require.NoError(t, err)
+		}
+	}
+
+	tk.MustExec("set sql_mode=''")
+	tk.MustExec("delete from t")
+	tk.MustExec("insert into t values (?)", -1)
+	tk.MustQuery("select a from t limit 1").Check(testkit.Rows("0.00"))
+}
+
+func TestIndexJoinTableDualPanic(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists a")
+	tk.MustExec("create table a (f1 int, f2 varchar(32), primary key (f1))")
+	tk.MustExec("insert into a (f1,f2) values (1,'a'), (2,'b'), (3,'c')")
+	// TODO here: index join cause the data race of txn.
+	tk.MustQuery("select /*+ inl_merge_join(a) */ a.* from a inner join (select 1 as k1,'k2-1' as k2) as k on a.f1=k.k1;").
+		Check(testkit.Rows("1 a"))
+}
+
+func TestSortLeftJoinWithNullColumnInRightChildPanic(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+	tk.MustExec("insert into t1(a) select 1;")
+	tk.MustQuery("select b.n from t1 left join (select a as a, null as n from t2) b on b.a = t1.a order by t1.a").
+		Check(testkit.Rows("<nil>"))
+}
+
+func TestMaxOneRow(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`drop table if exists t2`)
+	tk.MustExec(`create table t1(a double, b double);`)
+	tk.MustExec(`create table t2(a double, b double);`)
+	tk.MustExec(`insert into t1 values(1, 1), (2, 2), (3, 3);`)
+	tk.MustExec(`insert into t2 values(0, 0);`)
+	tk.MustExec(`set @@tidb_init_chunk_size=1;`)
+	rs, err := tk.Exec(`select (select t1.a from t1 where t1.a > t2.a) as a from t2;`)
+	require.NoError(t, err)
+
+	err = rs.Next(context.TODO(), rs.NewChunk(nil))
+	require.Error(t, err)
+	require.Equal(t, "[executor:1242]Subquery returns more than 1 row", err.Error())
+	require.NoError(t, rs.Close())
+}
+
+func TestRowID(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.MustExec(`create table t(a varchar(10), b varchar(10), c varchar(1), index idx(a, b, c));`)
+	tk.MustExec(`insert into t values('a', 'b', 'c');`)
+	tk.MustExec(`insert into t values('a', 'b', 'c');`)
+	tk.MustQuery(`select b, _tidb_rowid from t use index(idx) where a = 'a';`).Check(testkit.Rows(
+		`b 1`,
+		`b 2`,
+	))
+	tk.MustExec(`begin;`)
+	tk.MustExec(`select * from t for update`)
+	tk.MustQuery(`select distinct b from t use index(idx) where a = 'a';`).Check(testkit.Rows(`b`))
+	tk.MustExec(`commit;`)
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a varchar(5) primary key)`)
+	tk.MustExec(`insert into t values('a')`)
+	tk.MustQuery("select *, _tidb_rowid from t use index(`primary`) where _tidb_rowid=1").Check(testkit.Rows("a 1"))
+}
+
+func TestDoSubquery(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t(a int)`)
+	tk.MustExec(`do 1 in (select * from t)`)
+	tk.MustExec(`insert into t values(1)`)
+	r, err := tk.Exec(`do 1 in (select * from t)`)
+	require.NoError(t, err)
+	require.Nil(t, r)
+}
+
+func TestSubqueryTableAlias(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+
+	tk.MustExec("set sql_mode = ''")
+	tk.MustGetErrCode("select a, b from (select 1 a) ``, (select 2 b) ``;", mysql.ErrDerivedMustHaveAlias)
+	tk.MustGetErrCode("select a, b from (select 1 a) `x`, (select 2 b) `x`;", mysql.ErrNonuniqTable)
+	tk.MustGetErrCode("select a, b from (select 1 a), (select 2 b);", mysql.ErrDerivedMustHaveAlias)
+	// ambiguous column name
+	tk.MustGetErrCode("select a from (select 1 a) ``, (select 2 a) ``;", mysql.ErrDerivedMustHaveAlias)
+	tk.MustGetErrCode("select a from (select 1 a) `x`, (select 2 a) `x`;", mysql.ErrNonuniqTable)
+	tk.MustGetErrCode("select x.a from (select 1 a) `x`, (select 2 a) `x`;", mysql.ErrNonuniqTable)
+	tk.MustGetErrCode("select a from (select 1 a), (select 2 a);", mysql.ErrDerivedMustHaveAlias)
+
+	tk.MustExec("set sql_mode = 'oracle';")
+	tk.MustQuery("select a, b from (select 1 a) ``, (select 2 b) ``;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select a, b from (select 1 a) `x`, (select 2 b) `x`;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select a, b from (select 1 a), (select 2 b);").Check(testkit.Rows("1 2"))
+	// ambiguous column name
+	tk.MustGetErrCode("select a from (select 1 a) ``, (select 2 a) ``;", mysql.ErrNonUniq)
+	tk.MustGetErrCode("select a from (select 1 a) `x`, (select 2 a) `x`;", mysql.ErrNonUniq)
+	tk.MustGetErrCode("select x.a from (select 1 a) `x`, (select 2 a) `x`;", mysql.ErrNonUniq)
+	tk.MustGetErrCode("select a from (select 1 a), (select 2 a);", mysql.ErrNonUniq)
+}
+
+func TestSelectHashPartitionTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists th`)
+	tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
+	tk.MustExec(`create table th (a int, b int) partition by hash(a) partitions 3;`)
+	defer tk.MustExec(`drop table if exists th`)
+	tk.MustExec(`insert into th values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8);`)
+	tk.MustExec("insert into th values (-1,-1),(-2,-2),(-3,-3),(-4,-4),(-5,-5),(-6,-6),(-7,-7),(-8,-8);")
+	tk.MustQuery("select b from th order by a").Check(testkit.Rows("-8", "-7", "-6", "-5", "-4", "-3", "-2", "-1", "0", "1", "2", "3", "4", "5", "6", "7", "8"))
+	tk.MustQuery(" select * from th where a=-2;").Check(testkit.Rows("-2 -2"))
+	tk.MustQuery(" select * from th where a=5;").Check(testkit.Rows("5 5"))
+}
+
+func TestSelectView(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table view_t (a int,b int)")
+	tk.MustExec("insert into view_t values(1,2)")
+	tk.MustExec("create definer='root'@'localhost' view view1 as select * from view_t")
+	tk.MustExec("create definer='root'@'localhost' view view2(c,d) as select * from view_t")
+	tk.MustExec("create definer='root'@'localhost' view view3(c,d) as select a,b from view_t")
+	tk.MustExec("create definer='root'@'localhost' view view4 as select * from (select * from (select * from view_t) tb1) tb;")
+	tk.MustQuery("select * from view1;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from view2;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from view3;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from view4;").Check(testkit.Rows("1 2"))
+	tk.MustExec("drop table view_t;")
+	tk.MustExec("create table view_t(c int,d int)")
+	tk.MustGetErrMsg("select * from view1", "[planner:1356]View 'test.view1' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them")
+	tk.MustGetErrMsg("select * from view2", "[planner:1356]View 'test.view2' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them")
+	tk.MustGetErrMsg("select * from view3", plannercore.ErrViewInvalid.GenWithStackByArgs("test", "view3").Error())
+	tk.MustExec("drop table view_t;")
+	tk.MustExec("create table view_t(a int,b int,c int)")
+	tk.MustExec("insert into view_t values(1,2,3)")
+	tk.MustQuery("select * from view1;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from view2;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from view3;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from view4;").Check(testkit.Rows("1 2"))
+	tk.MustExec("alter table view_t drop column a")
+	tk.MustExec("alter table view_t add column a int after b")
+	tk.MustExec("update view_t set a=1;")
+	tk.MustQuery("select * from view1;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from view2;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from view3;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select * from view4;").Check(testkit.Rows("1 2"))
+	tk.MustExec("drop table view_t;")
+	tk.MustExec("drop view view1,view2,view3,view4;")
+
+	tk.MustExec("set @@tidb_enable_window_function = 1")
+	defer func() {
+		tk.MustExec("set @@tidb_enable_window_function = 0")
+	}()
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values (1,1),(1,2),(2,1),(2,2)")
+	tk.MustExec("create definer='root'@'localhost' view v as select a, first_value(a) over(rows between 1 preceding and 1 following), last_value(a) over(rows between 1 preceding and 1 following) from t")
+	result := tk.MustQuery("select * from v")
+	result.Check(testkit.Rows("1 1 1", "1 1 2", "2 1 2", "2 2 2"))
+	tk.MustExec("drop view v;")
+}
+
+func TestSummaryFailedUpdate(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int as(-a))")
+	tk.MustExec("insert into t(a) values(1), (3), (7)")
+	sm := &mockSessionManager1{
+		PS: make([]*util.ProcessInfo, 0),
+	}
+	tk.Session().SetSessionManager(sm)
+	dom.ExpensiveQueryHandle().SetSessionManager(sm)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMAction = config.OOMActionCancel
+	})
+	require.True(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil))
+	tk.MustExec("set @@tidb_mem_quota_query=1")
+	tk.MustMatchErrMsg("update t set t.a = t.a - 1 where t.a in (select a from t where a < 4)", "Out Of Memory Quota!.*")
+	tk.MustExec("set @@tidb_mem_quota_query=1000000000")
+	tk.MustQuery("select stmt_type from information_schema.statements_summary where digest_text = 'update `t` set `t` . `a` = `t` . `a` - ? where `t` . `a` in ( select `a` from `t` where `a` < ? )'").Check(testkit.Rows("Update"))
 }
