@@ -178,9 +178,7 @@ func (t *copTask) finishIndexPlan() {
 	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
 	}
 	is := p.(*PhysicalIndexScan)
-	if !is.underInnerIndexJoin { // no need to accumulate seek cost for IndexJoin
-		t.cst += float64(len(is.Ranges)) * sessVars.GetSeekFactor(is.Table) // net seek cost
-	}
+	t.cst += float64(len(is.Ranges)) * sessVars.GetSeekFactor(is.Table) // net seek cost
 
 	if t.tablePlan == nil {
 		return
@@ -1075,13 +1073,11 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		ts := tp.(*PhysicalTableScan)
 
 		// net seek cost
-		if !ts.underInnerIndexJoin { // no need to accumulate net seek cost for IndexJoin
-			switch ts.StoreType {
-			case kv.TiKV:
-				t.cst += float64(len(ts.Ranges)) * sessVars.GetSeekFactor(ts.Table)
-			case kv.TiFlash:
-				t.cst += float64(len(ts.Ranges)) * float64(len(ts.Columns)) * sessVars.GetSeekFactor(ts.Table)
-			}
+		switch ts.StoreType {
+		case kv.TiKV:
+			t.cst += float64(len(ts.Ranges)) * sessVars.GetSeekFactor(ts.Table)
+		case kv.TiFlash:
+			t.cst += float64(len(ts.Ranges)) * float64(len(ts.Columns)) * sessVars.GetSeekFactor(ts.Table)
 		}
 
 		prevColumnLen := len(ts.Columns)
