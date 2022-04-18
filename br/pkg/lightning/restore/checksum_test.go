@@ -18,9 +18,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/util/memory"
 	tmock "github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -395,7 +393,7 @@ type mockChecksumKVClient struct {
 }
 
 // a mock client for checksum request
-func (c *mockChecksumKVClient) Send(ctx context.Context, req *kv.Request, vars interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool, eventCb trxevents.EventCallback) kv.Response {
+func (c *mockChecksumKVClient) Send(ctx context.Context, req *kv.Request, vars interface{}, option *kv.ClientSendOption) kv.Response {
 	if c.curErrCount < c.maxErrCount {
 		c.curErrCount++
 		return &mockErrorResponse{err: "tikv timeout"}

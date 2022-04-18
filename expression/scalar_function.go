@@ -288,6 +288,7 @@ func (sf *ScalarFunction) Clone() Expression {
 	}
 	c.SetCharsetAndCollation(sf.CharsetAndCollation(sf.GetCtx()))
 	c.SetCoercibility(sf.Coercibility())
+	c.SetRepertoire(sf.Repertoire())
 	return c
 }
 

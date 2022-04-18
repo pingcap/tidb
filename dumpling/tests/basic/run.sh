@@ -88,6 +88,12 @@ actual=$(sed -n '2p' ${DUMPLING_OUTPUT_DIR}/result.000000000.csv)
 echo "expected 2, actual ${actual}"
 [ "$actual" = 2 ]
 
+# Test for dump with sequence
+run_dumpling | tee ${DUMPLING_OUTPUT_DIR}/dumpling.log
+actual=$(grep -w "dump failed" ${DUMPLING_OUTPUT_DIR}/dumpling.log|wc -l)
+echo "expected 0, actual ${actual}"
+[ "$actual" = 0 ]
+
 # Test for tidb_mem_quota_query configuration
 export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/export/PrintTiDBMemQuotaQuery=1*return"
 run_dumpling > ${DUMPLING_OUTPUT_DIR}/dumpling.log

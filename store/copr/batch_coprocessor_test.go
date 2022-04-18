@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/stretchr/testify/require"
@@ -115,6 +116,22 @@ func TestBalanceBatchCopTaskWithContinuity(t *testing.T) {
 		tasks, _ := balanceBatchCopTaskWithContinuity(storeTasks, regionInfos, 20)
 		require.True(t, tasks == nil)
 	}
+}
+
+func TestBalanceBatchCopTaskWithEmptyTaskSet(t *testing.T) {
+	{
+		var nilTaskSet []*batchCopTask
+		nilResult := balanceBatchCopTask(nil, nil, nilTaskSet, nil, time.Second, false, 0)
+		require.True(t, nilResult == nil)
+	}
+
+	{
+		emptyTaskSet := make([]*batchCopTask, 0)
+		emptyResult := balanceBatchCopTask(nil, nil, emptyTaskSet, nil, time.Second, false, 0)
+		require.True(t, emptyResult != nil)
+		require.True(t, len(emptyResult) == 0)
+	}
+
 }
 
 func TestDeepCopyStoreTaskMap(t *testing.T) {

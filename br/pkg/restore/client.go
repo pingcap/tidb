@@ -754,6 +754,8 @@ func (rc *Client) switchTiKVMode(ctx context.Context, mode import_sstpb.SwitchMo
 			gctx,
 			store.GetAddress(),
 			opt,
+			grpc.WithBlock(),
+			grpc.FailOnNonTempDialError(true),
 			grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 			// we don't need to set keepalive timeout here, because the connection lives
 			// at most 5s. (shorter than minimal value for keepalive time!)

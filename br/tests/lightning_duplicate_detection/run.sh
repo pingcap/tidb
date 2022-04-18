@@ -22,7 +22,7 @@ LOG_FILE1="$TEST_DIR/lightning-duplicate-detection1.log"
 LOG_FILE2="$TEST_DIR/lightning-duplicate-detection2.log"
 
 # let lightning run a bit slow to avoid some table in the first lightning finish too fast.
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownImport=sleep(50)"
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownImport=sleep(250)"
 
 run_lightning --backend local --sorted-kv-dir "$TEST_DIR/lightning_duplicate_detection.sorted1" \
   --enable-checkpoint=1 --log-file "$LOG_FILE1" --config "tests/$TEST_NAME/config1.toml" &
