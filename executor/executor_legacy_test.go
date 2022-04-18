@@ -59,7 +59,6 @@ func TestT(t *testing.T) {
 
 var _ = Suite(&testSuite{&baseTestSuite{}})
 var _ = Suite(&testSuiteP2{&baseTestSuite{}})
-var _ = Suite(&testSuite2{&baseTestSuite{}})
 var _ = Suite(&testSuite3{&baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
@@ -651,18 +650,6 @@ func (s *testSuiteP2) TestUnion(c *C) {
 	tk.MustQuery("select a from t union select 10 order by a").Check(testkit.Rows("1", "2", "10"))
 }
 
-func (s *testSuite2) TestUnionLimit(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists union_limit")
-	tk.MustExec("create table union_limit (id int) partition by hash(id) partitions 30")
-	for i := 0; i < 60; i++ {
-		tk.MustExec(fmt.Sprintf("insert into union_limit values (%d)", i))
-	}
-	// Cover the code for worker count limit in the union executor.
-	tk.MustQuery("select * from union_limit limit 10")
-}
-
 func (s *testSuiteP2) TestToPBExpr(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1143,48 +1130,6 @@ func (s *testSuiteP2) TestHistoryRead(c *C) {
 	tk.MustQuery("select * from history_read order by a").Check(testkit.Rows("2 <nil>", "4 <nil>", "8 8", "9 9"))
 }
 
-func (s *testSuite2) TestLowResolutionTSORead(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@autocommit=1")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists low_resolution_tso")
-	tk.MustExec("create table low_resolution_tso(a int)")
-	tk.MustExec("insert low_resolution_tso values (1)")
-
-	// enable low resolution tso
-	c.Assert(tk.Se.GetSessionVars().LowResolutionTSO, IsFalse)
-	_, err := tk.Exec("set @@tidb_low_resolution_tso = 'on'")
-	c.Assert(err, IsNil)
-	c.Assert(tk.Se.GetSessionVars().LowResolutionTSO, IsTrue)
-
-	time.Sleep(3 * time.Second)
-	tk.MustQuery("select * from low_resolution_tso").Check(testkit.Rows("1"))
-	_, err = tk.Exec("update low_resolution_tso set a = 2")
-	c.Assert(err, NotNil)
-	tk.MustExec("set @@tidb_low_resolution_tso = 'off'")
-	tk.MustExec("update low_resolution_tso set a = 2")
-	tk.MustQuery("select * from low_resolution_tso").Check(testkit.Rows("2"))
-}
-
-func (s *testSuite2) TestStaleReadFutureTime(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	// Setting tx_read_ts to a time in the future will fail. (One day before the 2038 problem)
-	_, err := tk.Exec("set @@tx_read_ts = '2038-01-18 03:14:07'")
-	c.Assert(err, ErrorMatches, "cannot set read timestamp to a future time")
-	// TxnReadTS Is not updated if check failed.
-	c.Assert(tk.Se.GetSessionVars().TxnReadTS.PeakTxnReadTS(), Equals, uint64(0))
-}
-
-func (s *testSuite3) TestYearTypeDeleteIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a YEAR, PRIMARY KEY(a));")
-	tk.MustExec("insert into t set a = '2151';")
-	tk.MustExec("delete from t;")
-	tk.MustExec("admin check table t")
-}
-
 func (s *testSuite3) TestForSelectScopeInUnion(c *C) {
 	// A union B for update, the "for update" option belongs to union statement, so
 	// it should works on both A and B.
@@ -1465,26 +1410,6 @@ func (s *testSuite) TestSelectView(c *C) {
 	result := tk.MustQuery("select * from v")
 	result.Check(testkit.Rows("1 1 1", "1 1 2", "2 1 2", "2 2 2"))
 	tk.MustExec("drop view v;")
-}
-
-type testSuite2 struct {
-	*baseTestSuite
-}
-
-func (s *testSuite2) TearDownTest(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	r := tk.MustQuery("show full tables")
-	for _, tb := range r.Rows() {
-		tableName := tb[0]
-		if tb[1] == "VIEW" {
-			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
-		} else if tb[1] == "SEQUENCE" {
-			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
-		} else {
-			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
-		}
-	}
 }
 
 type testSuite3 struct {
