@@ -279,7 +279,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 		opt.appendCandidate(p, curTask.plan(), prop)
 		// Get the most efficient one.
-		if curIsBetter, err := compareTask(p.ctx, curTask, bestTask); err != nil {
+		if curIsBetter, err := compareTaskCost(p.ctx, curTask, bestTask); err != nil {
 			return nil, 0, err
 		} else if curIsBetter {
 			bestTask = curTask
@@ -288,7 +288,8 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 	return bestTask, cntPlan, nil
 }
 
-func compareTask(ctx sessionctx.Context, curTask, bestTask task) (curIsBetter bool, err error) {
+// compareTaskCost compares cost of curTask and bestTask and returns whether curTask's cost is smaller than bestTask's.
+func compareTaskCost(ctx sessionctx.Context, curTask, bestTask task) (curIsBetter bool, err error) {
 	if ctx.GetSessionVars().EnableNewCostInterface { // use the new cost interface
 		curCost, err := getTaskPlanCost(curTask)
 		if err != nil {
@@ -311,7 +312,7 @@ func getTaskPlanCost(t task) (float64, error) {
 	switch t.(type) {
 	case *rootTask:
 		taskType = property.RootTaskType
-	case *copTask:
+	case *copTask: // no need to know whether the task is single-read or double-read, so both CopSingleReadTaskType and CopDoubleReadTaskType are OK
 		taskType = property.CopSingleReadTaskType
 	case *mppTask:
 		taskType = property.MppTaskType
@@ -451,7 +452,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		goto END
 	}
 	opt.appendCandidate(p, curTask.plan(), prop)
-	if curIsBetter, err := compareTask(p.ctx, curTask, bestTask); err != nil {
+	if curIsBetter, err := compareTaskCost(p.ctx, curTask, bestTask); err != nil {
 		return nil, 0, err
 	} else if curIsBetter {
 		bestTask = curTask
