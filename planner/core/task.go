@@ -178,17 +178,17 @@ func (t *copTask) finishIndexPlan() {
 	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
 	}
 	is := p.(*PhysicalIndexScan)
-	if !is.underInnerIndexJoin { // no need to accumulate seek cost for IndexJoin
-		t.cst += float64(len(is.Ranges)) * sessVars.GetSeekFactor(is.Table) // net seek cost
-	}
+	t.cst += float64(len(is.Ranges)) * sessVars.GetSeekFactor(is.Table) // net seek cost
 
 	if t.tablePlan == nil {
 		return
 	}
 
 	// Calculate the IO cost of table scan here because we cannot know its stats until we finish index plan.
-	rowSize := t.tblColHists.GetIndexAvgRowSize(t.indexPlan.SCtx(), t.tblCols, is.Index.Unique)
-	t.cst += cnt * rowSize * sessVars.GetScanFactor(tableInfo)
+	for p = t.tablePlan; len(p.Children()) > 0; p = p.Children()[0] {
+	}
+	ts := p.(*PhysicalTableScan)
+	t.cst += cnt * ts.getScanRowSize() * sessVars.GetScanFactor(tableInfo)
 }
 
 func (t *copTask) getStoreType() kv.StoreType {
@@ -293,16 +293,15 @@ func (p *PhysicalIndexMergeJoin) attach2Task(tasks ...task) task {
 	}
 	t := &rootTask{
 		p:   p,
-		cst: p.GetCost(outerTask, innerTask),
+		cst: p.GetCost(outerTask.count(), innerTask.count(), outerTask.cost(), innerTask.cost()),
 	}
 	p.cost = t.cost()
 	return t
 }
 
 // GetCost computes the cost of index merge join operator and its children.
-func (p *PhysicalIndexMergeJoin) GetCost(outerTask, innerTask task) float64 {
+func (p *PhysicalIndexMergeJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost float64) float64 {
 	var cpuCost float64
-	outerCnt, innerCnt := outerTask.count(), innerTask.count()
 	sessVars := p.ctx.GetSessionVars()
 	// Add the cost of evaluating outer filter, since inner filter of index join
 	// is always empty, we can simply tell whether outer filter is empty using the
@@ -358,8 +357,8 @@ func (p *PhysicalIndexMergeJoin) GetCost(outerTask, innerTask task) float64 {
 	// So the memory cost consider the results size for each batch.
 	memoryCost := innerConcurrency * (batchSize * avgProbeCnt) * sessVars.MemoryFactor
 
-	innerPlanCost := outerCnt * innerTask.cost()
-	return outerTask.cost() + innerPlanCost + cpuCost + memoryCost
+	innerPlanCost := outerCnt * innerCost
+	return outerCost + innerPlanCost + cpuCost + memoryCost
 }
 
 func (p *PhysicalIndexHashJoin) attach2Task(tasks ...task) task {
@@ -372,16 +371,15 @@ func (p *PhysicalIndexHashJoin) attach2Task(tasks ...task) task {
 	}
 	t := &rootTask{
 		p:   p,
-		cst: p.GetCost(outerTask, innerTask),
+		cst: p.GetCost(outerTask.count(), innerTask.count(), outerTask.cost(), innerTask.cost()),
 	}
 	p.cost = t.cost()
 	return t
 }
 
 // GetCost computes the cost of index merge join operator and its children.
-func (p *PhysicalIndexHashJoin) GetCost(outerTask, innerTask task) float64 {
+func (p *PhysicalIndexHashJoin) GetCost(outerCnt, innerCnt, outerCost, innerCost float64) float64 {
 	var cpuCost float64
-	outerCnt, innerCnt := outerTask.count(), innerTask.count()
 	sessVars := p.ctx.GetSessionVars()
 	// Add the cost of evaluating outer filter, since inner filter of index join
 	// is always empty, we can simply tell whether outer filter is empty using the
@@ -435,8 +433,8 @@ func (p *PhysicalIndexHashJoin) GetCost(outerTask, innerTask task) float64 {
 	// since the executor is pipelined and not all workers are always in full load.
 	memoryCost := concurrency * (batchSize * distinctFactor) * innerCnt * sessVars.MemoryFactor
 	// Cost of inner child plan, i.e, mainly I/O and network cost.
-	innerPlanCost := outerCnt * innerTask.cost()
-	return outerTask.cost() + innerPlanCost + cpuCost + memoryCost
+	innerPlanCost := outerCnt * innerCost
+	return outerCost + innerPlanCost + cpuCost + memoryCost
 }
 
 func (p *PhysicalIndexJoin) attach2Task(tasks ...task) task {
@@ -1075,13 +1073,11 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		ts := tp.(*PhysicalTableScan)
 
 		// net seek cost
-		if !ts.underInnerIndexJoin { // no need to accumulate net seek cost for IndexJoin
-			switch ts.StoreType {
-			case kv.TiKV:
-				t.cst += float64(len(ts.Ranges)) * sessVars.GetSeekFactor(ts.Table)
-			case kv.TiFlash:
-				t.cst += float64(len(ts.Ranges)) * float64(len(ts.Columns)) * sessVars.GetSeekFactor(ts.Table)
-			}
+		switch ts.StoreType {
+		case kv.TiKV:
+			t.cst += float64(len(ts.Ranges)) * sessVars.GetSeekFactor(ts.Table)
+		case kv.TiFlash:
+			t.cst += float64(len(ts.Ranges)) * float64(len(ts.Columns)) * sessVars.GetSeekFactor(ts.Table)
 		}
 
 		prevColumnLen := len(ts.Columns)
