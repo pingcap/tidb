@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -38,13 +37,24 @@ import (
 )
 
 var testDataMap = make(testdata.BookKeeper, 1)
+var skipPessimisticTest bool
 
 func TestMain(m *testing.M) {
 	testmain.ShortCircuitForBench(m)
 
 	testbridge.SetupForCommonTest()
+	if flag.Lookup("check.f") == nil {
+		_ = flag.String("check.f", "", "workaroundGoCheckFlags: check.f")
+	}
+	if flag.Lookup("check.exclude") == nil {
+		_ = flag.String("check.exclude", "", "workaroundGoCheckFlags: check.exclude")
+	}
 
 	flag.Parse()
+	if f := flag.Lookup("check.exclude"); f != nil {
+		skipPessimisticTest = len(f.Value.String()) > 0 && f.Value.String() == "testPessimisticSuite"
+	}
+
 	testDataMap.LoadTestSuiteData("testdata", "clustered_index_suite")
 
 	SetSchemaLease(20 * time.Millisecond)
@@ -76,13 +86,14 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
 
-func GetClusteredIndexSuiteData() testdata.TestData {
-	return testDataMap["clustered_index_suite"]
+func TrySkipPessimisticTests(t *testing.T) {
+	if skipPessimisticTest {
+		t.Skip("pessimistic tests are skipped")
+	}
 }
 
-// TODO: remove once `session` tests migrated to testify
-func TestT(t *testing.T) {
-	check.TestingT(t)
+func GetClusteredIndexSuiteData() testdata.TestData {
+	return testDataMap["clustered_index_suite"]
 }
 
 func createStoreAndBootstrap(t *testing.T) (kv.Storage, *domain.Domain) {
