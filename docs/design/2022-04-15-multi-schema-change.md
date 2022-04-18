@@ -21,15 +21,15 @@ ALTER TABLE t ADD COLUMN b INT AUTO_INCREMENT PRIMARY KEY,
 
 Currently, TiDB only supports one schema change per SQL statement and multi-schema changes in rare cases.
 
-When users try to migrate data from MySQL-like databases, they have to spend extra effort to rewrite a multi-schema change DDL to several single-schema change DDL. For the users who rely on ORM frameworks like flyway to construct SQLs automatically, rewriting SQL is not even possible.
+When users try to migrate data from MySQL-like databases, they have to spend extra effort to rewrite a multi-schema change DDL to several single-schema change DDLs. For the users who rely on ORM frameworks like flyway to construct SQLs automatically, rewriting SQL is not even possible.
 
-Above all, Multi-Schema Change can be a blocking issue for the POC procedure.
+Above all, Multi-Schema Change can be a blocking issue for those who want to use TiDB.
 
 ## Features
 
 Multi-Schema Change is one of MySQL's extended features to the SQL standard. It has the following features:
 
-- Atomicity: Schema changes from the same SQL statement either all succeed or all fail. In the above example, adding column b, modifying column c, adding the index of column a, and modifying the auto-increment ID of the table must all succeed or fail. The intermediate states are invisible to users.
+- Atomicity: Schema changes from the same SQL statement either all succeed or fail. In the above example, adding column b, modifying column c, adding the index of column a, and modifying the auto-increment ID of the table must all succeed or fail. The intermediate states are invisible to users.
 
 - Cascading: Whether the previously generated object in the same statement can be referenced for the schema object currently being changed.
     ```sql
@@ -84,7 +84,7 @@ job := &Job {
 }
 ```
 
-In this way, we pack multiple schema changes into one job. Just like the other jobs, it enters the DDL job queue stored in TiKV and waits for a suitable worker to pick it up.
+In this way, we pack multiple schema changes into one job. Just like any other jobs, it enters the DDL job queue stored in TiKV and waits for a suitable worker to pick it up.
 
 In normal cases, the worker executes the sub-jobs one by one serially as if they are plain jobs. However, the thing gets complex in abnormal cases.
 
