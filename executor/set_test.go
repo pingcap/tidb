@@ -586,7 +586,62 @@ func (s *testSerialSuite1) TestSetVar(c *C) {
 	tk.MustQuery("select @@tidb_enable_tso_follower_proxy").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_enable_tso_follower_proxy = 0")
 	tk.MustQuery("select @@tidb_enable_tso_follower_proxy").Check(testkit.Rows("0"))
+<<<<<<< HEAD
 	c.Assert(tk.ExecToErr("set tidb_enable_tso_follower_proxy = 1"), NotNil)
+=======
+	require.Error(t, tk.ExecToErr("set tidb_enable_tso_follower_proxy = 1"))
+
+	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_enable_historical_stats = 0")
+	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("0"))
+
+	// test for tidb_enable_column_tracking
+	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_column_tracking = 1")
+	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_enable_column_tracking = 0")
+	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("0"))
+	// When set tidb_enable_column_tracking off, we record the time of the setting operation.
+	tk.MustQuery("select count(1) from mysql.tidb where variable_name = 'tidb_disable_column_tracking_time' and variable_value is not null").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_enable_column_tracking = 1")
+	tk.MustQuery("select @@tidb_enable_column_tracking").Check(testkit.Rows("1"))
+	require.Error(t, tk.ExecToErr("select @@session.tidb_enable_column_tracking"))
+	require.Error(t, tk.ExecToErr("set tidb_enable_column_tracking = 0"))
+	require.Error(t, tk.ExecToErr("set global tidb_enable_column_tracking = -1"))
+
+	// test for tidb_ignore_prepared_cache_close_stmt
+	tk.MustQuery("select @@global.tidb_ignore_prepared_cache_close_stmt").Check(testkit.Rows("0")) // default value is 0
+	tk.MustExec("set global tidb_ignore_prepared_cache_close_stmt=1")
+	tk.MustQuery("select @@global.tidb_ignore_prepared_cache_close_stmt").Check(testkit.Rows("1"))
+	tk.MustQuery("show global variables like 'tidb_ignore_prepared_cache_close_stmt'").Check(testkit.Rows("tidb_ignore_prepared_cache_close_stmt ON"))
+	tk.MustExec("set global tidb_ignore_prepared_cache_close_stmt=0")
+	tk.MustQuery("select @@global.tidb_ignore_prepared_cache_close_stmt").Check(testkit.Rows("0"))
+	tk.MustQuery("show global variables like 'tidb_ignore_prepared_cache_close_stmt'").Check(testkit.Rows("tidb_ignore_prepared_cache_close_stmt OFF"))
+
+	// test for tidb_remove_orderby_in_subquery
+	tk.MustQuery("select @@session.tidb_remove_orderby_in_subquery").Check(testkit.Rows("0")) // default value is 0
+	tk.MustExec("set session tidb_remove_orderby_in_subquery=1")
+	tk.MustQuery("select @@session.tidb_remove_orderby_in_subquery").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@global.tidb_remove_orderby_in_subquery").Check(testkit.Rows("0")) // default value is 0
+	tk.MustExec("set global tidb_remove_orderby_in_subquery=1")
+	tk.MustQuery("select @@global.tidb_remove_orderby_in_subquery").Check(testkit.Rows("1"))
+
+	// the value of max_allowed_packet should be a multiple of 1024
+	tk.MustExec("set @@global.max_allowed_packet=16385")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_allowed_packet value: '16385'"))
+	result := tk.MustQuery("select @@global.max_allowed_packet;")
+	result.Check(testkit.Rows("16384"))
+	tk.MustExec("set @@max_allowed_packet=2047")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_allowed_packet value: '2047'"))
+	result = tk.MustQuery("select @@max_allowed_packet;")
+	result.Check(testkit.Rows("1024"))
+	tk.MustExec("set @@global.max_allowed_packet=0")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect max_allowed_packet value: '0'"))
+	result = tk.MustQuery("select @@global.max_allowed_packet;")
+	result.Check(testkit.Rows("1024"))
+>>>>>>> 4d3a3c259... server: use max_allowed_packet to limit the packet size. (#33651)
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
