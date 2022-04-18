@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
@@ -42,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mockstorage"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/set"
@@ -270,6 +270,11 @@ func TestSelectClusterTable(t *testing.T) {
 	tk.MustQuery("select * from `CLUSTER_statements_summary_history`")
 	require.NotNil(t, re)
 	require.Equal(t, 0, len(re.Rows()))
+
+	// Test for https://github.com/pingcap/tidb/issues/33974
+	instanceAddr, err := infoschema.GetInstanceAddr(tk.Session())
+	require.NoError(t, err)
+	tk.MustQuery("select instance from `CLUSTER_SLOW_QUERY` where time='2019-02-12 19:33:56.571953'").Check(testkit.Rows(instanceAddr))
 }
 
 func SubTestSelectClusterTablePrivilege(t *testing.T) {
@@ -675,7 +680,6 @@ select * from t1;
 		config.StoreGlobalConfig(originCfg)
 		require.NoError(t, os.Remove(newCfg.Log.SlowQueryFile))
 	}()
-	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
 
 	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
 	checkFn := func(quota int) {
