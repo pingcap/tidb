@@ -1962,8 +1962,8 @@
               "expr": "tidb_server_memory_usage{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}",
               "format": "time_series",
               "intervalFactor": 1,
-              "legendFormat": "analyze-{{instance}}",
-              "refId": "C"
+              "legendFormat": "{{type}}-{{instance}}",
+              "refId": "H"
             }
           ],
           "thresholds": [],
