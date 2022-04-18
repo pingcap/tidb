@@ -1367,7 +1367,6 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 		colRespSize := int64(colResp.Size())
 		memTracker.Consume(colRespSize)
 		subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
-		before := time.Now()
 		tmpMemSize := subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
 		data = nil
 		colResp = nil
