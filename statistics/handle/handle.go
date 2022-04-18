@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -92,7 +93,6 @@ type Handle struct {
 		memTracker *memory.Tracker
 	}
 
-	// Deprecated: only used by feedback now
 	pool sessionPool
 
 	// ddlEventCh is a channel to notify a ddl operation has happened.
@@ -128,25 +128,43 @@ type Handle struct {
 	sysProcTracker sessionctx.SysProcTracker
 }
 
+func (h *Handle) withRestrictedSQLExecutor(ctx context.Context, fn func(context.Context, sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error)) ([]chunk.Row, []*ast.ResultField, error) {
+	se, err := h.pool.Get()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	defer h.pool.Put(se)
+
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+	return fn(ctx, exec)
+}
+
 func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	return h.mu.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, params...)
+	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
+		return exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql, params...)
+	})
 }
 
 func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int, procTrackID uint64, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	optFuncs := []sqlexec.OptionFuncAlias{
-		sqlexec.ExecOptionUseSessionPool,
-		execOptionForAnalyze[statsVer],
-		sqlexec.ExecOptionWithSysProcTrack(procTrackID, h.sysProcTracker.Track, h.sysProcTracker.UnTrack),
-	}
-	return h.mu.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, optFuncs, sql, params...)
+	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
+		optFuncs := []sqlexec.OptionFuncAlias{
+			execOptionForAnalyze[statsVer],
+			sqlexec.GetPartitionPruneModeOption(string(h.CurrentPruneMode())),
+			sqlexec.ExecOptionUseCurSession,
+			sqlexec.ExecOptionWithSysProcTrack(procTrackID, h.sysProcTracker.Track, h.sysProcTracker.UnTrack),
+		}
+		return exec.ExecRestrictedSQL(ctx, optFuncs, sql, params...)
+	})
 }
 
 func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, snapshot uint64, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	optFuncs := []sqlexec.OptionFuncAlias{
-		sqlexec.ExecOptionUseSessionPool,
-		sqlexec.ExecOptionWithSnapshot(snapshot),
-	}
-	return h.mu.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, optFuncs, sql, params...)
+	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
+		optFuncs := []sqlexec.OptionFuncAlias{
+			sqlexec.ExecOptionWithSnapshot(snapshot),
+			sqlexec.ExecOptionUseCurSession,
+		}
+		return exec.ExecRestrictedSQL(ctx, optFuncs, sql, params...)
+	})
 }
 
 // Clear the statsCache, only for test.
@@ -613,7 +631,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			continue
 		}
 		c, ok := tbl.Columns[col.ColumnID]
-		if !ok || c.Len() > 0 {
+		if !ok || c.IsLoaded() {
 			statistics.HistogramNeededColumns.Delete(col)
 			continue
 		}
@@ -645,6 +663,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			FMSketch:   fms,
 			IsHandle:   c.IsHandle,
 			StatsVer:   rows[0].GetInt64(0),
+			Loaded:     true,
 		}
 		// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing colHist.
 		colHist.Count = int64(colHist.TotalRowCount())
@@ -791,7 +810,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 		// 4. loadAll is false.
 		notNeedLoad := h.Lease() > 0 &&
 			!isHandle &&
-			(col == nil || col.Len() == 0 && col.LastUpdateVersion < histVer) &&
+			(col == nil || !col.IsLoaded() && col.LastUpdateVersion < histVer) &&
 			!loadAll
 		if notNeedLoad {
 			count, err := h.columnCountFromStorage(reader, table.PhysicalID, histID, statsVer)
@@ -833,6 +852,7 @@ func (h *Handle) columnStatsFromStorage(reader *statsReader, row chunk.Row, tabl
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.Flag),
 				Flag:       flag,
 				StatsVer:   statsVer,
+				Loaded:     true,
 			}
 			// Column.Count is calculated by Column.TotalRowCount(). Hence we don't set Column.Count when initializing col.
 			col.Count = int64(col.TotalRowCount())
@@ -2051,4 +2071,36 @@ func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64) error 
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+// InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
+func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, procID uint64) error {
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		return err
+	}
+	address := fmt.Sprintf("%s:%d", serverInfo.IP, serverInfo.Port)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	exec := h.mu.ctx.(sqlexec.RestrictedSQLExecutor)
+	ctx := context.TODO()
+	const insertJob = "INSERT INTO mysql.analyze_jobs (table_schema, table_name, partition_name, job_info, state, instance, process_id) VALUES (%?, %?, %?, %?, %?, %?, %?)"
+	_, _, err = exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, insertJob, job.DBName, job.TableName, job.PartitionName, job.JobInfo, statistics.AnalyzePending, address, procID)
+	if err != nil {
+		return err
+	}
+	const getJobID = "SELECT LAST_INSERT_ID()"
+	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, getJobID)
+	if err != nil {
+		return err
+	}
+	job.ID = new(uint64)
+	*job.ID = rows[0].GetUint64(0)
+	return nil
+}
+
+// DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
+func (h *Handle) DeleteAnalyzeJobs(updateTime time.Time) error {
+	_, _, err := h.execRestrictedSQL(context.TODO(), "DELETE FROM mysql.analyze_jobs WHERE update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)", updateTime.UTC().Format(types.TimeFormat))
+	return err
 }

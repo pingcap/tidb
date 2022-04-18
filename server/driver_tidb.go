@@ -80,8 +80,7 @@ func (ts *TiDBStatement) Execute(ctx context.Context, args []types.Datum) (rs Re
 		return
 	}
 	rs = &tidbResultSet{
-		recordSet:    tidbRecordset,
-		preparedStmt: ts.ctx.GetSessionVars().PreparedStmts[ts.id].(*core.CachedPrepareStmt),
+		recordSet: tidbRecordset,
 	}
 	return
 }
@@ -169,7 +168,9 @@ func (ts *TiDBStatement) Close() error {
 			if err != nil {
 				return err
 			}
-			ts.ctx.PreparedPlanCache().Delete(cacheKey)
+			if !ts.ctx.GetSessionVars().IgnorePreparedCacheCloseStmt { // keep the plan in cache
+				ts.ctx.PreparedPlanCache().Delete(cacheKey)
+			}
 		}
 		ts.ctx.GetSessionVars().RemovePreparedStmt(ts.id)
 	}
@@ -220,7 +221,13 @@ func (tc *TiDBContext) WarningCount() uint16 {
 
 // ExecuteStmt implements QueryCtx interface.
 func (tc *TiDBContext) ExecuteStmt(ctx context.Context, stmt ast.StmtNode) (ResultSet, error) {
-	rs, err := tc.Session.ExecuteStmt(ctx, stmt)
+	var rs sqlexec.RecordSet
+	var err error
+	if s, ok := stmt.(*ast.NonTransactionalDeleteStmt); ok {
+		rs, err = session.HandleNonTransactionalDelete(ctx, s, tc.Session)
+	} else {
+		rs, err = tc.Session.ExecuteStmt(ctx, stmt)
+	}
 	if err != nil {
 		tc.Session.GetSessionVars().StmtCtx.AppendError(err)
 		return nil, err
@@ -300,11 +307,10 @@ func (tc *TiDBContext) GetStmtStats() *stmtstats.StatementStats {
 }
 
 type tidbResultSet struct {
-	recordSet    sqlexec.RecordSet
-	columns      []*ColumnInfo
-	rows         []chunk.Row
-	closed       int32
-	preparedStmt *core.CachedPrepareStmt
+	recordSet sqlexec.RecordSet
+	columns   []*ColumnInfo
+	rows      []chunk.Row
+	closed    int32
 }
 
 func (trs *tidbResultSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
@@ -346,22 +352,11 @@ func (trs *tidbResultSet) Columns() []*ColumnInfo {
 	if trs.columns != nil {
 		return trs.columns
 	}
-	// for prepare statement, try to get cached columnInfo array
-	if trs.preparedStmt != nil {
-		ps := trs.preparedStmt
-		if colInfos, ok := ps.ColumnInfos.([]*ColumnInfo); ok {
-			trs.columns = colInfos
-		}
-	}
+
 	if trs.columns == nil {
 		fields := trs.recordSet.Fields()
 		for _, v := range fields {
 			trs.columns = append(trs.columns, convertColumnInfo(v))
-		}
-		if trs.preparedStmt != nil {
-			// if ColumnInfo struct has allocated object,
-			// here maybe we need deep copy ColumnInfo to do caching
-			trs.preparedStmt.ColumnInfos = trs.columns
 		}
 	}
 	return trs.columns

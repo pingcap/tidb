@@ -85,8 +85,7 @@ func TestGetPathByIndexName(t *testing.T) {
 	accessPath := []*util.AccessPath{
 		{IsIntHandlePath: true},
 		{Index: &model.IndexInfo{Name: model.NewCIStr("idx")}},
-		genTiFlashPath(tblInfo, false),
-		genTiFlashPath(tblInfo, true),
+		genTiFlashPath(tblInfo),
 	}
 
 	path := getPathByIndexName(accessPath, model.NewCIStr("idx"), tblInfo)
@@ -287,6 +286,11 @@ func TestPhysicalPlanClone(t *testing.T) {
 	sel := &PhysicalSelection{Conditions: []expression.Expression{col, cst}}
 	sel = sel.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(sel))
+
+	// maxOneRow
+	maxOneRow := &PhysicalMaxOneRow{}
+	maxOneRow = maxOneRow.Init(ctx, stats, 0)
+	require.NoError(t, checkPhysicalPlanClone(maxOneRow))
 
 	// projection
 	proj := &PhysicalProjection{Exprs: []expression.Expression{col, cst}}

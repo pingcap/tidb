@@ -15,15 +15,32 @@
 package fastrand
 
 import (
+	"math/bits"
 	_ "unsafe" // required by go:linkname
 )
+
+// wyrand is a fast PRNG. See https://github.com/wangyi-fudan/wyhash
+type wyrand uint64
+
+func _wymix(a, b uint64) uint64 {
+	hi, lo := bits.Mul64(a, b)
+	return hi ^ lo
+}
+
+func (r *wyrand) Next() uint64 {
+	*r += wyrand(0xa0761d6478bd642f)
+	return _wymix(uint64(*r), uint64(*r^wyrand(0xe7037ed1a0b428db)))
+}
 
 // Buf generates a random string using ASCII characters but avoid separator character.
 // See https://github.com/mysql/mysql-server/blob/5.7/mysys_ssl/crypt_genhash_impl.cc#L435
 func Buf(size int) []byte {
 	buf := make([]byte, size)
+	r := wyrand(Uint32())
 	for i := 0; i < size; i++ {
-		buf[i] = byte(Uint32N(127))
+		// This is similar to Uint32() % n, but faster.
+		// See https://lemire.me/blog/2016/06/27/a-fast-alternative-to-the-modulo-reduction/
+		buf[i] = byte(uint32(uint64(uint32(r.Next())) * uint64(127) >> 32))
 		if buf[i] == 0 || buf[i] == byte('$') {
 			buf[i]++
 		}
@@ -37,10 +54,9 @@ func Uint32() uint32
 
 // Uint32N returns, as an uint32, a pseudo-random number in [0,n).
 func Uint32N(n uint32) uint32 {
-	if n&(n-1) == 0 { // n is power of two, can mask
-		return Uint32() & (n - 1)
-	}
-	return Uint32() % n
+	// This is similar to Uint32() % n, but faster.
+	// See https://lemire.me/blog/2016/06/27/a-fast-alternative-to-the-modulo-reduction/
+	return uint32(uint64(Uint32()) * uint64(n) >> 32)
 }
 
 // Uint64N returns, as an uint64, a pseudo-random number in [0,n).

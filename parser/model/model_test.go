@@ -32,6 +32,85 @@ func TestT(t *testing.T) {
 	require.Equal(t, "aBC", abc.String())
 }
 
+func newColumnForTest(id int64, offset int) *ColumnInfo {
+	return &ColumnInfo{
+		ID:     id,
+		Name:   NewCIStr(fmt.Sprintf("c_%d", id)),
+		Offset: offset,
+	}
+}
+
+func newIndexForTest(id int64, cols ...*ColumnInfo) *IndexInfo {
+	idxCols := make([]*IndexColumn, 0, len(cols))
+	for _, c := range cols {
+		idxCols = append(idxCols, &IndexColumn{Offset: c.Offset, Name: c.Name})
+	}
+	return &IndexInfo{
+		ID:      id,
+		Name:    NewCIStr(fmt.Sprintf("i_%d", id)),
+		Columns: idxCols,
+	}
+}
+
+func checkOffsets(t *testing.T, tbl *TableInfo, ids ...int) {
+	require.Equal(t, len(ids), len(tbl.Columns))
+	for i := 0; i < len(ids); i++ {
+		expected := fmt.Sprintf("c_%d", ids[i])
+		require.Equal(t, expected, tbl.Columns[i].Name.L)
+		require.Equal(t, i, tbl.Columns[i].Offset)
+	}
+	for _, col := range tbl.Columns {
+		for _, idx := range tbl.Indices {
+			for _, idxCol := range idx.Columns {
+				if col.Name.L != idxCol.Name.L {
+					continue
+				}
+				// Columns with the same name should have a same offset.
+				require.Equal(t, col.Offset, idxCol.Offset)
+			}
+		}
+	}
+}
+
+func TestMoveColumnInfo(t *testing.T) {
+	c0 := newColumnForTest(0, 0)
+	c1 := newColumnForTest(1, 1)
+	c2 := newColumnForTest(2, 2)
+	c3 := newColumnForTest(3, 3)
+	c4 := newColumnForTest(4, 4)
+
+	i0 := newIndexForTest(0, c0, c1, c2, c3, c4)
+	i1 := newIndexForTest(1, c4, c2)
+	i2 := newIndexForTest(2, c0, c4)
+	i3 := newIndexForTest(3, c1, c2, c3)
+	i4 := newIndexForTest(4, c3, c2, c1)
+
+	tbl := &TableInfo{
+		ID:      1,
+		Name:    NewCIStr("t"),
+		Columns: []*ColumnInfo{c0, c1, c2, c3, c4},
+		Indices: []*IndexInfo{i0, i1, i2, i3, i4},
+	}
+
+	// Original offsets: [0, 1, 2, 3, 4]
+	tbl.MoveColumnInfo(4, 0)
+	checkOffsets(t, tbl, 4, 0, 1, 2, 3)
+	tbl.MoveColumnInfo(2, 3)
+	checkOffsets(t, tbl, 4, 0, 2, 1, 3)
+	tbl.MoveColumnInfo(3, 2)
+	checkOffsets(t, tbl, 4, 0, 1, 2, 3)
+	tbl.MoveColumnInfo(0, 4)
+	checkOffsets(t, tbl, 0, 1, 2, 3, 4)
+	tbl.MoveColumnInfo(2, 2)
+	checkOffsets(t, tbl, 0, 1, 2, 3, 4)
+	tbl.MoveColumnInfo(0, 0)
+	checkOffsets(t, tbl, 0, 1, 2, 3, 4)
+	tbl.MoveColumnInfo(1, 4)
+	checkOffsets(t, tbl, 0, 2, 3, 4, 1)
+	tbl.MoveColumnInfo(3, 0)
+	checkOffsets(t, tbl, 4, 0, 2, 3, 1)
+}
+
 func TestModelBasic(t *testing.T) {
 	column := &ColumnInfo{
 		ID:           1,
@@ -143,7 +222,7 @@ func TestJobStartTime(t *testing.T) {
 		BinlogInfo: &HistoryInfo{},
 	}
 	require.Equal(t, TSConvert2Time(job.StartTS), time.Unix(0, 0))
-	require.Equal(t, fmt.Sprintf("ID:123, Type:none, State:none, SchemaState:queueing, SchemaID:0, TableID:0, RowCount:0, ArgLen:0, start time: %s, Err:<nil>, ErrCount:0, SnapshotVersion:0", time.Unix(0, 0)), job.String())
+	require.Equal(t, fmt.Sprintf("ID:123, Type:none, State:none, SchemaState:none, SchemaID:0, TableID:0, RowCount:0, ArgLen:0, start time: %s, Err:<nil>, ErrCount:0, SnapshotVersion:0", time.Unix(0, 0)), job.String())
 }
 
 func TestJobCodec(t *testing.T) {
@@ -438,6 +517,39 @@ func TestPlacementSettingsString(t *testing.T) {
 		Constraints: "{+us-east-1:1,+us-east-2:1}",
 	}
 	require.Equal(t, "CONSTRAINTS=\"{+us-east-1:1,+us-east-2:1}\" VOTERS=3 FOLLOWERS=2 LEARNERS=1", settings.String())
+}
+
+func TestPlacementSettingsClone(t *testing.T) {
+	settings := &PlacementSettings{}
+	clonedSettings := settings.Clone()
+	clonedSettings.PrimaryRegion = "r1"
+	clonedSettings.Regions = "r1,r2"
+	clonedSettings.Followers = 1
+	clonedSettings.Voters = 2
+	clonedSettings.Followers = 3
+	clonedSettings.Constraints = "[+zone=z1]"
+	clonedSettings.LearnerConstraints = "[+region=r1]"
+	clonedSettings.FollowerConstraints = "[+disk=ssd]"
+	clonedSettings.LeaderConstraints = "[+region=r2]"
+	clonedSettings.VoterConstraints = "[+zone=z2]"
+	clonedSettings.Schedule = "even"
+	require.Equal(t, PlacementSettings{}, *settings)
+}
+
+func TestPlacementPolicyClone(t *testing.T) {
+	policy := &PolicyInfo{
+		PlacementSettings: &PlacementSettings{},
+	}
+	clonedPolicy := policy.Clone()
+	clonedPolicy.ID = 100
+	clonedPolicy.Name = NewCIStr("p2")
+	clonedPolicy.State = StateDeleteOnly
+	clonedPolicy.PlacementSettings.Followers = 10
+
+	require.Equal(t, int64(0), policy.ID)
+	require.Equal(t, NewCIStr(""), policy.Name)
+	require.Equal(t, StateNone, policy.State)
+	require.Equal(t, PlacementSettings{}, *(policy.PlacementSettings))
 }
 
 func TestLocation(t *testing.T) {
