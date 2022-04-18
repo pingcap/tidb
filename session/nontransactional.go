@@ -305,6 +305,12 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, s
 			break
 		}
 
+		if len(jobs) > 0 && chk.NumRows()+currentSize < batchSize {
+			// not enough data for a batch
+			currentSize += chk.NumRows()
+			continue
+		}
+
 		iter := chunk.NewIterator4Chunk(chk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			if currentSize == 0 {
