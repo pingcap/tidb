@@ -16,6 +16,7 @@ package restore
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/table/tables"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -558,8 +559,7 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed(c *C) {
 	}
 	defer close(rc.saveCpCh)
 	go func() {
-		for cp := range rc.saveCpCh {
-			cp.waitCh <- nil
+		for range rc.saveCpCh {
 		}
 	}()
 
@@ -573,7 +573,7 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed(c *C) {
 	c.Assert(err, IsNil)
 	_, indexUUID := backend.MakeUUID("`db`.`table`", -1)
 	_, dataUUID := backend.MakeUUID("`db`.`table`", 0)
-	realBackend := tidb.NewTiDBBackend(nil, "replace", nil)
+	realBackend := tidb.NewTiDBBackend(nil, "replace")
 	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	mockBackend.EXPECT().OpenEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	mockBackend.EXPECT().CloseEngine(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
