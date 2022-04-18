@@ -401,7 +401,6 @@ func (sv *SysVar) checkUInt64SystemVar(value string, vars *SessionVars) (string,
 	if val > sv.MaxValue {
 		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
 		return strconv.FormatUint(sv.MaxValue, 10), nil
-
 	}
 	return value, nil
 }
