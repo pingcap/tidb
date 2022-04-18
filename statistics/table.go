@@ -142,7 +142,9 @@ type IndexMemUsage struct {
 // We ignore the size of other metadata in Table
 func (t *Table) MemoryUsage() *TableMemoryUsage {
 	tMemUsage := &TableMemoryUsage{
-		TableID: t.PhysicalID,
+		TableID:         t.PhysicalID,
+		ColumnsMemUsage: make(map[int64]*ColumnMemUsage),
+		IndicesMemUsage: make(map[int64]*IndexMemUsage),
 	}
 	for _, col := range t.Columns {
 		if col != nil {
