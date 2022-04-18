@@ -4396,3 +4396,64 @@ func TestGetResultRowsCount(t *testing.T) {
 		require.Equal(t, cnt, ca.row, fmt.Sprintf("sql: %v", ca.sql))
 	}
 }
+
+func TestUnionLimit(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table union_limit (id int) partition by hash(id) partitions 30")
+	for i := 0; i < 60; i++ {
+		tk.MustExec(fmt.Sprintf("insert into union_limit values (%d)", i))
+	}
+	// Cover the code for worker count limit in the union executor.
+	tk.MustQuery("select * from union_limit limit 10")
+}
+
+func TestLowResolutionTSORead(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@autocommit=1")
+	tk.MustExec("use test")
+	tk.MustExec("create table low_resolution_tso(a int)")
+	tk.MustExec("insert low_resolution_tso values (1)")
+
+	// enable low resolution tso
+	require.False(t, tk.Session().GetSessionVars().LowResolutionTSO)
+	tk.MustExec("set @@tidb_low_resolution_tso = 'on'")
+	require.True(t, tk.Session().GetSessionVars().LowResolutionTSO)
+
+	time.Sleep(3 * time.Second)
+	tk.MustQuery("select * from low_resolution_tso").Check(testkit.Rows("1"))
+	err := tk.ExecToErr("update low_resolution_tso set a = 2")
+	require.Error(t, err)
+	tk.MustExec("set @@tidb_low_resolution_tso = 'off'")
+	tk.MustExec("update low_resolution_tso set a = 2")
+	tk.MustQuery("select * from low_resolution_tso").Check(testkit.Rows("2"))
+}
+
+func TestStaleReadAtFutureTime(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	// Setting tx_read_ts to a time in the future will fail. (One day before the 2038 problem)
+	tk.MustGetErrMsg("set @@tx_read_ts = '2038-01-18 03:14:07'", "cannot set read timestamp to a future time")
+	// TxnReadTS Is not updated if check failed.
+	require.Zero(t, tk.Session().GetSessionVars().TxnReadTS.PeakTxnReadTS())
+}
+
+func TestYearTypeDeleteIndex(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a YEAR, PRIMARY KEY(a));")
+	tk.MustExec("insert into t set a = '2151';")
+	tk.MustExec("delete from t;")
+	tk.MustExec("admin check table t")
+}
