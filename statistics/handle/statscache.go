@@ -18,7 +18,8 @@ import (
 	"github.com/pingcap/tidb/statistics"
 )
 
-type kvCache interface {
+// statsCacheInner is the interface to manage the statsCache, it can be implemented by map, lru cache or other structures.
+type statsCacheInner interface {
 	Get(int64) (*statistics.Table, bool)
 	Put(int64, *statistics.Table)
 	Del(int64)
@@ -29,7 +30,7 @@ type kvCache interface {
 	Len() int
 	FreshMemUsage()
 	FreshTableCost(int64)
-	Copy() kvCache
+	Copy() statsCacheInner
 }
 
 type cacheItem struct {
@@ -40,7 +41,7 @@ type cacheItem struct {
 
 func newStatsCache() statsCache {
 	return statsCache{
-		kvCache: &mapCache{
+		statsCacheInner: &mapCache{
 			tables:   make(map[int64]cacheItem),
 			memUsage: 0,
 		},
@@ -61,7 +62,7 @@ type statsCache struct {
 	// about this minorVersion actually.
 	minorVersion uint64
 
-	kvCache
+	statsCacheInner
 }
 
 func (sc statsCache) copy() statsCache {
@@ -69,7 +70,7 @@ func (sc statsCache) copy() statsCache {
 		version:      sc.version,
 		minorVersion: sc.minorVersion,
 	}
-	newCache.kvCache = sc.kvCache.Copy()
+	newCache.statsCacheInner = sc.statsCacheInner.Copy()
 	return newCache
 }
 
@@ -191,7 +192,7 @@ func (m *mapCache) FreshTableCost(k int64) {
 }
 
 // Copy implements kvCache
-func (m *mapCache) Copy() kvCache {
+func (m *mapCache) Copy() statsCacheInner {
 	newM := &mapCache{
 		tables:   make(map[int64]cacheItem),
 		memUsage: m.memUsage,
