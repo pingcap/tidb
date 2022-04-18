@@ -653,7 +653,7 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //				miss matched rows from left side are unique originally, even appended with NULL value from right side, they are still
 //				strictly determine themselves and even the all rows after left join.
 //			conclusion combined:
-//				equivalence with both strict Key from right and left, the left side's strict FD can be extended to all rows after left join.
+//				If there is an equivalence covering both strict Key from the right and left, we can create a new strict FD: {columns of the left side of the join in the equivalence} -> {all columns after join}.
 //
 //		<3.3> equivalence FD: let's see equivalence FD as double-directed strict FD from join equal conditions, and we  only keep the
 //			rhs ~~> lhs.
