@@ -406,14 +406,8 @@ func (p *baseLogicalPlan) ExplainInfo() string {
 	return ""
 }
 
-type basePhysicalCost struct {
-	planCostInit bool
-	planCost     float64
-}
-
 type basePhysicalPlan struct {
 	basePlan
-	basePhysicalCost
 
 	childrenReqProps []*property.PhysicalProperty
 	self             PhysicalPlan
