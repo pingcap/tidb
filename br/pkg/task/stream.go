@@ -1056,8 +1056,6 @@ func restoreStream(
 	if err != nil {
 		return errors.Annotate(err, "failed to fix index for some table")
 	}
-
-	// TODO split put and delete files
 	return nil
 }
 

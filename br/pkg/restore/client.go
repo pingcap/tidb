@@ -1630,10 +1630,11 @@ func (rc *Client) RestoreKVFiles(
 
 	eg, ectx := errgroup.WithContext(ctx)
 	skipFile := 0
-	for _, file := range files {
-		fileReplica := file
+	deleteFiles := make([]*backuppb.DataFileInfo, 0)
+
+	applyFunc := func(file *backuppb.DataFileInfo) {
 		// get rewrite rule from table id
-		rule, ok := rules[fileReplica.TableId]
+		rule, ok := rules[file.TableId]
 		if !ok {
 			// TODO handle new created table
 			// For this version we do not handle new created table after full backup.
@@ -1641,19 +1642,34 @@ func (rc *Client) RestoreKVFiles(
 			// so we can simply skip the file that doesn't have the rule here.
 			onProgress()
 			summary.CollectInt("FileSkip", 1)
-			log.Debug("skip file due to table id not matched", zap.String("file", fileReplica.Path), zap.Int64("tableId", fileReplica.TableId))
+			log.Debug("skip file due to table id not matched", zap.String("file", file.Path), zap.Int64("tableId", file.TableId))
 			skipFile++
+		} else {
+			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+				fileStart := time.Now()
+				defer func() {
+					onProgress()
+					summary.CollectInt("File", 1)
+					log.Info("import files done", zap.String("name", file.Path), zap.Duration("take", time.Since(fileStart)))
+				}()
+				return rc.fileImporter.ImportKVFiles(ectx, file, rule, rc.restoreTs)
+			})
+		}
+	}
+
+	for _, file := range files {
+		if file.Type == backuppb.FileType_Delete {
+			// collect delete type file and apply it later.
+			deleteFiles = append(deleteFiles, file)
 			continue
 		}
-		rc.workerPool.ApplyOnErrorGroup(eg, func() error {
-			fileStart := time.Now()
-			defer func() {
-				onProgress()
-				summary.CollectInt("File", 1)
-				log.Info("import files done", zap.String("name", fileReplica.Path), zap.Duration("take", time.Since(fileStart)))
-			}()
-			return rc.fileImporter.ImportKVFiles(ectx, fileReplica, rule, rc.restoreTs)
-		})
+		fileReplica := file
+		applyFunc(fileReplica)
+	}
+
+	for _, file := range deleteFiles {
+		fileReplica := file
+		applyFunc(fileReplica)
 	}
 	log.Info("total skip files due to table id not matched", zap.Int("count", skipFile))
 	if skipFile > 0 {
