@@ -167,7 +167,7 @@ func TestIssue33699(t *testing.T) {
 	doChangeUser()
 	atomic.StoreUint32(&stop, 1)
 	time.Sleep(time.Millisecond)
-	require.NotEqual(t, ctx, cc.ctx)
+	require.NotEqual(t, ctx, cc.getCtx())
 	require.NotEqual(t, ctx.Session, cc.ctx.Session)
 	// new session,so values is defaults;
 	tk.SetSession(cc.ctx.Session) // set new session.

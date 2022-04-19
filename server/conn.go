@@ -1944,7 +1944,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		}
 		// TODO: the preprocess is run twice, we should find some way to avoid do it again.
 		// TODO: handle the PreprocessorReturn.
-		if err = plannercore.Preprocess(cc.ctx, stmt); err != nil {
+		if err = plannercore.Preprocess(cc.getCtx(), stmt); err != nil {
 			return nil, err
 		}
 		p := plannercore.TryFastPlan(cc.ctx.Session, stmt)
@@ -1963,7 +1963,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 				}
 				if pp.IndexInfo != nil {
 					executor.ResetUpdateStmtCtx(sc, updateStmt, vars)
-					idxKey, err1 := executor.EncodeUniqueIndexKey(cc.ctx, pp.TblInfo, pp.IndexInfo, pp.IndexValues, pp.TblInfo.ID)
+					idxKey, err1 := executor.EncodeUniqueIndexKey(cc.getCtx(), pp.TblInfo, pp.IndexInfo, pp.IndexValues, pp.TblInfo.ID)
 					if err1 != nil {
 						return nil, err1
 					}
@@ -1992,7 +1992,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	}
 	if vars.TxnCtx.IsPessimistic {
 		allKeys := append(rowKeys, idxKeys...)
-		err = executor.LockKeys(ctx, cc.ctx, vars.LockWaitTimeout, allKeys...)
+		err = executor.LockKeys(ctx, cc.getCtx(), vars.LockWaitTimeout, allKeys...)
 		if err != nil {
 			// suppress the lock error, we are not going to handle it here for simplicity.
 			err = nil
