@@ -214,6 +214,7 @@ const (
 	MaxServerID = 1<<22 - 1
 )
 
+// MakeID returns the connection id whose local conn ID is specified.
 func (g *GlobalConnID) MakeID(localConnID uint64) uint64 {
 	var (
 		id       uint64

@@ -832,6 +832,7 @@ func (s *Server) GetInternalSessionStartTSList() []uint64 {
 	return tsList
 }
 
+// GetAutoAnalyzeID implements SessionManager interface.
 func (s *Server) GetAutoAnalyzeID() uint64 {
 	return s.globalConnID.MakeID(util.GetAutoAnalyzeProcID())
 }
