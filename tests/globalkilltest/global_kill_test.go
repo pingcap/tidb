@@ -64,7 +64,7 @@ type GlobalKillSuite struct {
 	pdCli *clientv3.Client
 	pdErr error
 
-	clusterId string
+	clusterID string
 	pdProc    *exec.Cmd
 	tikvProc  *exec.Cmd
 }
@@ -74,7 +74,7 @@ func createGloabalKillSuite(t *testing.T) (s *GlobalKillSuite, clean func()) {
 	err := logutil.InitLogger(&logutil.LogConfig{Config: log.Config{Level: *logLevel}})
 	require.NoError(t, err)
 
-	s.clusterId = time.Now().Format(time.RFC3339Nano)
+	s.clusterID = time.Now().Format(time.RFC3339Nano)
 	err = s.startCluster()
 	require.NoError(t, err)
 	s.pdCli, s.pdErr = s.connectPD()
@@ -157,12 +157,12 @@ func (s *GlobalKillSuite) startPD(dataDir string) (err error) {
 }
 
 func (s *GlobalKillSuite) startCluster() (err error) {
-	err = s.startPD(s.clusterId)
+	err = s.startPD(s.clusterID)
 	if err != nil {
 		return
 	}
 
-	err = s.startTiKV(s.clusterId)
+	err = s.startTiKV(s.clusterID)
 	if err != nil {
 		return
 	}
