@@ -47,7 +47,7 @@ TiDB gets an internal session from a session pool implemented in `(s *session) g
 
 #### Store And Delete Internal Transactions
 
-The internal transactions here are executed by function `RunInNewTxn`. It stores the transaction to  `globalInnerTxnTsBox`  at transaction begin and deletes the transaction at end.
+The internal transactions here are executed by function `RunInNewTxn`. It stores the transaction to `globalInnerTxnTsBox` at the transaction's beginning and deletes the transaction at the end.
 
 ### Data Structure Design
 
