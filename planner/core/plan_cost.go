@@ -280,11 +280,10 @@ func estimateNetSeekCost(copTaskPlan PhysicalPlan) float64 {
 	case *PhysicalTableScan:
 		if x.StoreType == kv.TiFlash { // the old TiFlash interface uses cop-task protocol
 			return float64(len(x.Ranges)) * float64(len(x.Columns)) * x.ctx.GetSessionVars().GetSeekFactor(x.Table)
-		} else { // TiKV
-			return float64(len(x.Ranges)) * x.ctx.GetSessionVars().GetSeekFactor(x.Table)
 		}
-	case *PhysicalIndexScan: // TiKV
-		return float64(len(x.Ranges)) * x.ctx.GetSessionVars().GetSeekFactor(x.Table)
+		return float64(len(x.Ranges)) * x.ctx.GetSessionVars().GetSeekFactor(x.Table) // TiKV
+	case *PhysicalIndexScan:
+		return float64(len(x.Ranges)) * x.ctx.GetSessionVars().GetSeekFactor(x.Table) // TiKV
 	default:
 		return estimateNetSeekCost(copTaskPlan.Children()[0])
 	}
