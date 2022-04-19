@@ -353,9 +353,11 @@ type PhysicalPlan interface {
 	Stats() *property.StatsInfo
 
 	// Cost returns the estimated cost of the subplan.
+	// Deprecated: use the new method GetPlanCost
 	Cost() float64
 
 	// SetCost set the cost of the subplan.
+	// Deprecated: use the new method GetPlanCost
 	SetCost(cost float64)
 
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.

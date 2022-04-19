@@ -22,6 +22,7 @@ import (
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *basePhysicalPlan) GetPlanCost(taskType property.TaskType) (float64, error) {
 	if p.planCostInit {
+		// just calculate the cost once and always reuse it
 		return p.planCost, nil
 	}
 	p.planCost = 0 // the default implementation, the operator have no cost
