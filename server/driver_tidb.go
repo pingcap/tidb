@@ -196,10 +196,11 @@ func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8,
 	}
 	se.SetClientCapability(capability)
 	se.SetConnectionID(connID)
-	tc := new(TiDBContext)
-	tc.Session = se
-	tc.currentDB = dbname
-	tc.stmts = make(map[int]*TiDBStatement)
+	tc := &TiDBContext{
+		Session:   se,
+		currentDB: dbname,
+		stmts:     make(map[int]*TiDBStatement),
+	}
 	return tc, nil
 }
 
