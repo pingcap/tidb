@@ -181,7 +181,7 @@ func (p *printByJSON) PrintTasks() {
 		Storage     string           `json:"storage"`
 		Checkpoint  uint64           `json:"checkpoint"`
 		EstQPS      float64          `json:"estimate_qps"`
-		LastError   []storeLastError `json:"last_errors"`
+		LastErrors   []storeLastError `json:"last_errors"`
 	}
 	taskToJSON := func(t TaskStatus) jsonTask {
 		s := storage.FormatBackendURL(t.Info.GetStorage())
