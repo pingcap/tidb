@@ -701,7 +701,7 @@ select * from t1;
 		checkFn(quota)
 	}
 	for i := 0; i < 100; i++ {
-		quota := rand.Int()%10240 + 1
+		quota := rand.Int()%8192 + 1
 		checkFn(quota)
 	}
 
