@@ -1797,7 +1797,7 @@ func upgradeToVer88(s Session, ver int64) {
 	if ver >= version88 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE `mysql.user` CHANGE `Repl_slave_priv` `Repl_slave_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Create_Tablespace_Priv`")
+	doReentrantDDL(s, "ALTER TABLE mysql.user CHANGE `Repl_slave_priv` `Repl_slave_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Create_Tablespace_Priv`")
 }
 
 func writeOOMAction(s Session) {
