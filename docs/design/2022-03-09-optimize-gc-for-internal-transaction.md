@@ -11,7 +11,7 @@ This document describes the design of the feature "optimize gc advance for inter
 
 TiDB advances gc safe point every `tidb_gc_run_interval` time with step `tidb_gc_life_time`. If there is a long time transaction from user client lives more than `tidb_gc_life_time`, the safe point can't be advanced until the transaction is finished or lives over 24 hours. This mechanism ensures the continuous advancement of gc safe point and ensures that the data active transactions need to access will not be cleared.
 
-However, Internal transactions run in TiDB don't comply with the mechanism above. If the internal transaction lives more than `tidb_gc_life_time`, maybe failed because the data it needs to access was cleared. This design aims to resolve the problem that internal transaction run failed because data is cleared by the gc mechanism.
+However, Internal transactions run in TiDB don't comply with the mechanism above. If the internal transaction lives more than `tidb_gc_life_time`, it may fail because the data it needs to access was cleared. This design aims to resolve the problem that internal transaction run failed because data is cleared by the gc mechanism.
 
 ## Detailed Design
 
