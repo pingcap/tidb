@@ -728,3 +728,25 @@ func TestIssue31721(t *testing.T) {
 	tk.MustExec("insert into t_31721 values ('1')")
 	tk.MustExec("select * from t_31721 partition(p0, p1) where col1 != 2;")
 }
+func TestPartitionIssue30489(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.Session().GetSessionVars().BinlogClient = binloginfo.MockPumpsClient(mockPumpClient{})
+	tk.MustExec(`CREATE TABLE t30489 (id int primary key nonclustered, v int)
+PARTITION BY RANGE (id) ( PARTITION p0 VALUES LESS THAN (4), PARTITION pMax VALUES LESS THAN (MAXVALUE))`)
+	tk.MustQuery(`show create table t30489`).Check(testkit.Rows(
+		"t30489 CREATE TABLE `t30489` (\n" +
+			"  `id` int(11) NOT NULL,\n" +
+			"  `v` int(11) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE (`id`)\n" +
+			"(PARTITION `p0` VALUES LESS THAN (4),\n" +
+			" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustExec("insert into t30489 values(5,50)")
+	tk.MustExec("update t30489 set id = 2 where id = 5")
+	tk.MustQuery(`select * from t30489`).Check(testkit.Rows("2 50"))
+	tk.MustExec(`drop table t30489`)
+}
