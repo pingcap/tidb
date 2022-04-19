@@ -326,22 +326,9 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		rootCaPath := taskCfg.Security.CAPath
 		keyPath := taskCfg.Security.KeyPath
 		certPath := taskCfg.Security.CertPath
-		certBytes, err := os.ReadFile(certPath)
-		if err != nil {
-			panic(err)
-		}
-		if err := os.WriteFile(certPath+".old", certBytes, 0o600); err != nil {
-			panic(err)
-		}
 		if err := updateCertExpiry(rootKeyPath, rootCaPath, keyPath, certPath, time.Second*10); err != nil {
 			panic(err)
 		}
-		// Must restore the original cert before the new cert is expired.
-		time.AfterFunc(time.Second*5, func() {
-			if err := os.Rename(certPath+".old", certPath); err != nil {
-				panic(err)
-			}
-		})
 	})
 
 	if err := taskCfg.TiDB.Security.RegisterMySQL(); err != nil {

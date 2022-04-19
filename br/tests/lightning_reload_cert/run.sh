@@ -23,4 +23,31 @@ trap 'mv "$TEST_DIR/certs/lightning-valid.pem" "$TEST_DIR/certs/lightning.pem"' 
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/SetCertExpiredSoon=return(\"$TEST_DIR/certs/ca.key\")"
 export GO_FAILPOINTS="${GO_FAILPOINTS};github.com/pingcap/tidb/br/pkg/lightning/restore/SlowDownWriteRows=sleep(15000)"
 
+# 1. After 10s, the certificate will be expired and import should report connection error.
+run_lightning --backend='local' &
+shpid="$!"
+sleep 15
+ok=0
+for _ in {0..60}; do
+  if grep -Fq "connection closed before server preface received" "$TEST_DIR"/lightning.log; then
+    ok=1
+    break
+  fi
+  sleep 1
+done
+# Lightning process is wrapped by a shell process, use pstree to extract it out.
+pid=$(pstree -pT "$shpid" | grep -Eo "tidb-lightning\.\([0-9]*\)" | grep -Eo "[0-9]*")
+if [ -n "$pid" ]; then
+  kill -9 "$pid" &>/dev/null || true
+fi
+if [ "$ok" = "0" ]; then
+  echo "lightning should report connection error due to certificate expired, but not error is reported"
+  exit 1
+fi
+# Do some cleanup.
+cp "$TEST_DIR/certs/lightning-valid.pem" "$TEST_DIR/certs/lightning.pem"
+rm -rf "$TEST_DIR/lightning_reload_cert.sorted" "$TEST_DIR"/lightning.log
+
+# 2. Replace the certificate with a valid certificate before it is expired. Lightning should import successfully.
+sleep 10 && cp "$TEST_DIR/certs/lightning-valid.pem" "$TEST_DIR/certs/lightning.pem" &
 run_lightning --backend='local'
