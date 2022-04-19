@@ -88,7 +88,7 @@ func (c *MetaDataClient) ResumeTask(ctx context.Context, taskName string) error 
 }
 
 func (c *MetaDataClient) CleanLastErrorOfTask(ctx context.Context, taskName string) error {
-	_, err := c.KV.Delete(ctx, LastErrorPrefixOf(taskName))
+	_, err := c.KV.Delete(ctx, LastErrorPrefixOf(taskName), clientv3.WithPrefix())
 	if err != nil {
 		return errors.Annotatef(err, "failed to clean last error of task %s", taskName)
 	}

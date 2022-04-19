@@ -76,11 +76,19 @@ func statusErr(message string) string {
 	return color.RedString("○") + color.New(color.Bold).Sprintf(" %s", message)
 }
 
-func colorfulStatusString(paused bool) string {
+// statusBlock make a string like <yellow>●</yellow> <bold>{message}</bold>
+func statusBlock(message string) string {
+	return color.YellowString("●") + color.New(color.Bold).Sprintf(" %s", message)
+}
+
+func (t *TaskStatus) colorfulStatusString() string {
 	// Maybe we need 3 kinds of status: ERROR/NORMAL/PAUSE.
 	// And should return "ERROR" when find error information in PD.
-	if paused {
-		return statusOK("PAUSE")
+	if t.paused && len(t.LastErrors) > 0 {
+		return statusErr("ERROR")
+	}
+	if t.paused {
+		return statusBlock("PAUSE")
 	}
 	return statusOK("NORMAL")
 }
@@ -101,7 +109,7 @@ func (t TaskStatus) GetCheckpoint() uint64 {
 func (p *printByTable) AddTask(task TaskStatus) {
 	table := p.console.CreateTable()
 	table.Add("name", task.Info.Name)
-	table.Add("status", colorfulStatusString(task.paused))
+	table.Add("status", task.colorfulStatusString())
 	table.Add("start", fmt.Sprint(oracle.GetTimeFromTS(task.Info.StartTs)))
 	if task.Info.EndTs > 0 {
 		table.Add("end", fmt.Sprint(oracle.GetTimeFromTS(task.Info.EndTs)))
