@@ -42,6 +42,8 @@ type TxnContextProvider interface {
 
 	// ActiveTxn actives the txn
 	ActiveTxn(ctx context.Context) (kv.Transaction, error)
+	// IsTxnActive returns whether the txn is active
+	IsTxnActive() bool
 	// OnStmtStart is the hook that should be called when a new statement started
 	OnStmtStart(ctx context.Context) error
 	// OnStmtError is the hook that should be called when statement get an error
@@ -90,6 +92,10 @@ func (p *SimpleTxnContextProvider) GetForUpdateTS() (uint64, error) {
 
 // ActiveTxn actives the txn
 func (p *SimpleTxnContextProvider) ActiveTxn(ctx context.Context) (kv.Transaction, error) {
+	if txn, err := p.Sctx.Txn(false); err == nil && txn.Valid() {
+		return txn, nil
+	}
+
 	if !p.stmtStarted {
 		if err := p.Sctx.NewTxn(ctx); err != nil {
 			return nil, err
@@ -116,6 +122,12 @@ func (p *SimpleTxnContextProvider) ActiveTxn(ctx context.Context) (kv.Transactio
 		txn.SetOption(kv.GuaranteeLinearizability, false)
 	}
 	return txn, nil
+}
+
+// IsTxnActive returns whether the txn is active
+func (p *SimpleTxnContextProvider) IsTxnActive() bool {
+	txn, _ := p.Sctx.Txn(false)
+	return txn.Valid()
 }
 
 // OnStmtStart is the hook that should be called when a new statement started

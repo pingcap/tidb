@@ -59,11 +59,21 @@ func (p *StalenessTxnContextProvider) GetForUpdateTS() (uint64, error) {
 
 // ActiveTxn actives stale read txn
 func (p *StalenessTxnContextProvider) ActiveTxn(ctx context.Context) (kv.Transaction, error) {
+	if txn, err := p.sctx.Txn(false); err == nil && txn.Valid() {
+		return txn, nil
+	}
+
 	if err := p.sctx.NewStaleTxnWithStartTS(ctx, p.ts); err != nil {
 		return nil, err
 	}
 	p.is = p.sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	return p.sctx.Txn(true)
+}
+
+// IsTxnActive returns whether the txn is active
+func (p *StalenessTxnContextProvider) IsTxnActive() bool {
+	txn, _ := p.sctx.Txn(false)
+	return txn.Valid()
 }
 
 // OnStmtStart is the hook that should be called when a new statement started

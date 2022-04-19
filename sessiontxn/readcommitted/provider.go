@@ -166,6 +166,10 @@ func (p *txnContextProvider) GetTxnInfoSchema() infoschema.InfoSchema {
 }
 
 func (p *txnContextProvider) ActiveTxn(ctx context.Context) (kv.Transaction, error) {
+	if txn, err := p.sctx.Txn(false); err == nil && txn.Valid() {
+		return txn, nil
+	}
+
 	if p.stmt == nil {
 		if err := p.sctx.NewTxn(ctx); err != nil {
 			return nil, err
@@ -183,6 +187,12 @@ func (p *txnContextProvider) ActiveTxn(ctx context.Context) (kv.Transaction, err
 		txn.SetOption(kv.GuaranteeLinearizability, false)
 	}
 	return txn, nil
+}
+
+// IsTxnActive returns whether the txn is active
+func (p *txnContextProvider) IsTxnActive() bool {
+	txn, _ := p.sctx.Txn(false)
+	return txn.Valid()
 }
 
 func (p *txnContextProvider) GetReadTS() (uint64, error) {
