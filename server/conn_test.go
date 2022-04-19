@@ -21,6 +21,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -1262,4 +1263,63 @@ func TestAuthPlugin2(t *testing.T) {
 	require.Equal(t, respAuthSwitch, []byte(mysql.AuthNativePassword))
 	require.NoError(t, err)
 
+}
+
+func TestMaxAllowedPacket(t *testing.T) {
+	// Test cases from issue 31422: https://github.com/pingcap/tidb/issues/31422
+	// The string "SELECT length('') as len;" has 25 chars,
+	// so if the string inside '' has a length of 999, the total query reaches the max allowed packet size.
+
+	const maxAllowedPacket = 1024
+	var (
+		inBuffer  bytes.Buffer
+		readBytes []byte
+	)
+
+	// The length of total payload is (25 + 999 = 1024).
+	bytes := append([]byte{0x00, 0x04, 0x00, 0x00}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 999)))...)
+	_, err := inBuffer.Write(bytes)
+	require.NoError(t, err)
+	brc := newBufferedReadConn(&bytesConn{inBuffer})
+	pkt := newPacketIO(brc)
+	pkt.setMaxAllowedPacket(maxAllowedPacket)
+	readBytes, err = pkt.readPacket()
+	require.NoError(t, err)
+	require.Equal(t, fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 999)), string(readBytes))
+	require.Equal(t, uint8(1), pkt.sequence)
+
+	// The length of total payload is (25 + 1000 = 1025).
+	inBuffer.Reset()
+	bytes = append([]byte{0x01, 0x04, 0x00, 0x00}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 1000)))...)
+	_, err = inBuffer.Write(bytes)
+	require.NoError(t, err)
+	brc = newBufferedReadConn(&bytesConn{inBuffer})
+	pkt = newPacketIO(brc)
+	pkt.setMaxAllowedPacket(maxAllowedPacket)
+	_, err = pkt.readPacket()
+	require.Error(t, err)
+
+	// The length of total payload is (25 + 488 = 513).
+	// Two separate packets would NOT exceed the limitation of maxAllowedPacket.
+	inBuffer.Reset()
+	bytes = append([]byte{0x01, 0x02, 0x00, 0x00}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 488)))...)
+	_, err = inBuffer.Write(bytes)
+	require.NoError(t, err)
+	brc = newBufferedReadConn(&bytesConn{inBuffer})
+	pkt = newPacketIO(brc)
+	pkt.setMaxAllowedPacket(maxAllowedPacket)
+	readBytes, err = pkt.readPacket()
+	require.NoError(t, err)
+	require.Equal(t, fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 488)), string(readBytes))
+	require.Equal(t, uint8(1), pkt.sequence)
+	inBuffer.Reset()
+	bytes = append([]byte{0x01, 0x02, 0x00, 0x01}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("b", 488)))...)
+	_, err = inBuffer.Write(bytes)
+	require.NoError(t, err)
+	brc = newBufferedReadConn(&bytesConn{inBuffer})
+	pkt.setBufferedReadConn(brc)
+	readBytes, err = pkt.readPacket()
+	require.NoError(t, err)
+	require.Equal(t, fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("b", 488)), string(readBytes))
+	require.Equal(t, uint8(2), pkt.sequence)
 }
