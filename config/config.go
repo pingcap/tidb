@@ -96,36 +96,38 @@ var (
 	tempStorageDirName = encodeDefTempStorageDir(os.TempDir(), DefHost, DefStatusHost, DefPort, DefStatusPort)
 )
 
-// Potential conflicts between 'instance' config options and other ones.
 var (
-	potentialConflictOptions = map[string][]string{
-		"": {
-			"check-mb4-value-in-utf8",
-			"enable-collect-execution-info",
-			"plugin.load",
-			"plugin.dir",
+	// Potential conflicts between 'instance' config options and other ones.
+	// Key is the config section, value is the config options.
+	potentialConflictOptions = []struct {
+		sectionName string
+		options     []string
+	}{
+		{
+			"",
+			[]string{"check-mb4-value-in-utf8",
+				"enable-collect-execution-info",
+				"plugin.load",
+				"plugin.dir"},
 		},
-		"log": {
-			"enable-slow-log",
-			"slow-threshold",
-			"query-log-max-len",
-			"record-plan-in-slow-log",
+		{
+			"log",
+			[]string{
+				"enable-slow-log",
+				"slow-threshold",
+				"query-log-max-len",
+				"record-plan-in-slow-log"},
 		},
-		"performance": {
-			"force-priority",
-			"memory-usage-alarm-ratio",
+		{
+			"performance",
+			[]string{
+				"force-priority",
+				"memory-usage-alarm-ratio"},
 		},
 	}
-	ConflictOptions = map[string]bool{}
+	// Conflict config options between 'instance' and other ones.
+	ConflictOptions = map[string]struct{}{}
 )
-
-func mapToSlice(m map[string]bool) []string {
-	s := make([]string, 0, len(m))
-	for k := range m {
-		s = append(s, k)
-	}
-	return s
-}
 
 // Config contains configuration options.
 type Config struct {
@@ -509,8 +511,8 @@ type ErrConfigInstanceSection struct {
 }
 
 func (e *ErrConfigInstanceSection) Error() string {
-	return fmt.Sprintf("config file %s contained conflict configuration options that exist "+
-		"on both [instance] section and another place: %s", e.confFile, strings.Join(e.conflictOptions, ", "))
+	return fmt.Sprintf("Config file %s contained conflict configuration options '%s' that exist "+
+		"on both [instance] section and some other sections. Please use [instance] section instead.", e.confFile, strings.Join(e.conflictOptions, ","))
 }
 
 // ClusterSecurity returns Security info for cluster
@@ -992,21 +994,23 @@ func (c *Config) Load(confFile string) error {
 	}
 
 	if metaData.IsDefined("instance") {
-		for k, v := range potentialConflictOptions {
-			for _, configOption := range v {
-				if k == "" {
-					if metaData.IsDefined("instance", configOption) && metaData.IsDefined(configOption) {
-						ConflictOptions[configOption] = true
-					}
-				} else {
-					if metaData.IsDefined("instance", configOption) && metaData.IsDefined(k, configOption) {
-						ConflictOptions[configOption] = true
+		for _, section := range potentialConflictOptions {
+			for _, option := range section.options {
+				if metaData.IsDefined("instance", option) {
+					if section.sectionName == "" && metaData.IsDefined(option) ||
+						section.sectionName != "" && metaData.IsDefined(section.sectionName, option) {
+						ConflictOptions[option] = struct{}{}
 					}
 				}
 			}
 		}
 		if len(ConflictOptions) > 0 {
-			err = &ErrConfigInstanceSection{confFile, mapToSlice(ConflictOptions)}
+			// Give a warning that the 'instance' section should be used.
+			s := make([]string, 0, len(ConflictOptions))
+			for k := range ConflictOptions {
+				s = append(s, k)
+			}
+			err = &ErrConfigInstanceSection{confFile, s}
 		}
 	}
 
