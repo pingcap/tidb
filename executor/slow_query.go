@@ -201,7 +201,6 @@ func (e *slowQueryRetriever) getPreviousFile() *os.File {
 }
 
 func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessionctx.Context) {
-	e.wg.Add(1)
 	defer e.wg.Done()
 	file := e.getNextFile()
 	if file == nil {
@@ -1118,6 +1117,7 @@ func readLastLines(ctx context.Context, file *os.File, endCursor int64) ([]strin
 
 func (e *slowQueryRetriever) initializeAsyncParsing(ctx context.Context, sctx sessionctx.Context) {
 	e.taskList = make(chan slowLogTask, 1)
+	e.wg.Add(1)
 	go e.parseDataForSlowLog(ctx, sctx)
 }
 
