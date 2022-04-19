@@ -46,7 +46,7 @@ func checkExistTableBundlesInPD(t *testing.T, do *domain.Domain, dbName string, 
 
 	require.NoError(t, kv.RunInNewTxn(context.TODO(), do.Store(), false, func(ctx context.Context, txn kv.Transaction) error {
 		tt := meta.NewMeta(txn)
-		checkTableBundlesInPD(t, tt, tblInfo.Meta())
+		checkTableBundlesInPD(t, do, tt, tblInfo.Meta())
 		return nil
 	}))
 }
@@ -75,42 +75,54 @@ func checkAllBundlesNotChange(t *testing.T, bundles []*placement.Bundle) {
 	}
 }
 
-func checkTableBundlesInPD(t *testing.T, tt *meta.Meta, tblInfo *model.TableInfo) {
+func checkTableBundlesInPD(t *testing.T, do *domain.Domain, tt *meta.Meta, tblInfo *model.TableInfo) {
 	checks := make([]*struct {
-		ID     string
-		bundle *placement.Bundle
+		ID      string
+		tableID int64
+		bundle  *placement.Bundle
 	}, 0)
 
 	bundle, err := placement.NewTableBundle(tt, tblInfo)
 	require.NoError(t, err)
 	checks = append(checks, &struct {
-		ID     string
-		bundle *placement.Bundle
-	}{ID: placement.GroupID(tblInfo.ID), bundle: bundle})
+		ID      string
+		tableID int64
+		bundle  *placement.Bundle
+	}{ID: placement.GroupID(tblInfo.ID), tableID: tblInfo.ID, bundle: bundle})
 
 	if tblInfo.Partition != nil {
 		for _, def := range tblInfo.Partition.Definitions {
 			bundle, err := placement.NewPartitionBundle(tt, def)
 			require.NoError(t, err)
 			checks = append(checks, &struct {
-				ID     string
-				bundle *placement.Bundle
-			}{ID: placement.GroupID(def.ID), bundle: bundle})
+				ID      string
+				tableID int64
+				bundle  *placement.Bundle
+			}{ID: placement.GroupID(def.ID), tableID: def.ID, bundle: bundle})
 		}
 	}
 
+	is := do.InfoSchema()
 	for _, check := range checks {
-		got, err := infosync.GetRuleBundle(context.TODO(), check.ID)
+		pdGot, err := infosync.GetRuleBundle(context.TODO(), check.ID)
 		require.NoError(t, err)
+		isGot, ok := is.PlacementBundleByPhysicalTableID(check.tableID)
 		if check.bundle == nil {
-			require.True(t, got.IsEmpty())
+			require.True(t, pdGot.IsEmpty(), "bundle should be nil for table: %d", check.tableID)
+			require.False(t, ok, "bundle should be nil for table: %d", check.tableID)
 		} else {
 			expectedJSON, err := json.Marshal(check.bundle)
 			require.NoError(t, err)
 
-			gotJSON, err := json.Marshal(got)
+			pdGotJSON, err := json.Marshal(pdGot)
 			require.NoError(t, err)
-			require.Equal(t, string(expectedJSON), string(gotJSON))
+			require.NotNil(t, pdGot)
+			require.Equal(t, string(expectedJSON), string(pdGotJSON))
+
+			isGotJSON, err := json.Marshal(isGot)
+			require.NoError(t, err)
+			require.NotNil(t, isGot)
+			require.Equal(t, string(expectedJSON), string(isGotJSON))
 		}
 	}
 }
@@ -1285,6 +1297,11 @@ func TestDropTableGCPlacement(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, len(bundles))
 	require.Equal(t, placement.GroupID(t1.Meta().ID), bundles[0].ID)
+
+	bundles = dom.InfoSchema().AllPlacementBundles()
+	require.NoError(t, err)
+	require.Equal(t, 1, len(bundles))
+	require.Equal(t, placement.GroupID(t1.Meta().ID), bundles[0].ID)
 }
 
 func TestAlterTablePlacement(t *testing.T) {
@@ -1423,6 +1440,22 @@ func TestDropTablePartitionGCPlacement(t *testing.T) {
 		bundlesMap[bundle.ID] = bundle
 	}
 	_, ok := bundlesMap[placement.GroupID(t1.Meta().ID)]
+	require.True(t, ok)
+
+	_, ok = bundlesMap[placement.GroupID(t2.Meta().ID)]
+	require.True(t, ok)
+
+	_, ok = bundlesMap[placement.GroupID(t2.Meta().Partition.Definitions[1].ID)]
+	require.True(t, ok)
+
+	bundles = dom.InfoSchema().AllPlacementBundles()
+	require.NoError(t, err)
+	require.Equal(t, 3, len(bundles))
+	bundlesMap = make(map[string]*placement.Bundle)
+	for _, bundle := range bundles {
+		bundlesMap[bundle.ID] = bundle
+	}
+	_, ok = bundlesMap[placement.GroupID(t1.Meta().ID)]
 	require.True(t, ok)
 
 	_, ok = bundlesMap[placement.GroupID(t2.Meta().ID)]
