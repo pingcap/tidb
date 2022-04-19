@@ -188,6 +188,16 @@ func (sm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, bool
 	return rs, ok
 }
 
+func (sm *mockSessionManager) StoreInternalSession(se interface{}) {
+}
+
+func (sm *mockSessionManager) DeleteInternalSession(se interface{}) {
+}
+
+func (sm *mockSessionManager) GetInternalSessionStartTSList() []uint64 {
+	return nil
+}
+
 func (sm *mockSessionManager) Kill(_ uint64, _ bool) {}
 
 func (sm *mockSessionManager) KillAllConnections() {}

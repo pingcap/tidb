@@ -394,6 +394,9 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 }
 
 func (cc *clientConn) readPacket() ([]byte, error) {
+	if cc.ctx != nil {
+		cc.pkt.setMaxAllowedPacket(cc.ctx.GetSessionVars().MaxAllowedPacket)
+	}
 	return cc.pkt.readPacket()
 }
 
@@ -1074,6 +1077,11 @@ func (cc *clientConn) Run(ctx context.Context) {
 							zap.Uint64("waitTimeout", waitTimeout),
 							zap.Error(err),
 						)
+					}
+				} else if errors.ErrorEqual(err, errNetPacketTooLarge) {
+					err := cc.writeError(ctx, err)
+					if err != nil {
+						terror.Log(err)
 					}
 				} else {
 					errStack := errors.ErrorStack(err)
@@ -2340,6 +2348,12 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 
 	if err := cc.ctx.Close(); err != nil {
 		logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
+	}
+	// session was closed by `ctx.Close` and should `openSession` explicitly to renew session.
+	// `openSession` won't run again in `openSessionAndDoAuth` because ctx is not nil.
+	err := cc.openSession()
+	if err != nil {
+		return err
 	}
 	if err := cc.openSessionAndDoAuth(pass, ""); err != nil {
 		return err

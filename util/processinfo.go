@@ -169,6 +169,12 @@ type SessionManager interface {
 	KillAllConnections()
 	UpdateTLSConfig(cfg *tls.Config)
 	ServerID() uint64
+	// Put the internal session pointer to the map in the SessionManager
+	StoreInternalSession(se interface{})
+	// Delete the internal session pointer from the map in the SessionManager
+	DeleteInternalSession(se interface{})
+	// Get all startTS of every transactions running in the current internal sessions
+	GetInternalSessionStartTSList() []uint64
 }
 
 // GlobalConnID is the global connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.

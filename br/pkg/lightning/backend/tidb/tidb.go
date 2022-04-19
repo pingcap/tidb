@@ -308,9 +308,19 @@ func (enc *tidbEncoder) Encode(logger log.Logger, row []types.Datum, _ int64, co
 	// See: tests/generated_columns/data/gencol.various_types.0.sql this sql has no columns, so encodeLoop will fill the
 	// column permutation with default, thus enc.columnCnt > len(row).
 	if len(row) < enc.columnCnt {
+		// 1. if len(row) < enc.columnCnt: data in row cannot populate the insert statement, because
+		// there are enc.columnCnt elements to insert but fewer columns in row
 		logger.Error("column count mismatch", zap.Ints("column_permutation", columnPermutation),
 			zap.Array("data", kv.RowArrayMarshaler(row)))
 		return emptyTiDBRow, errors.Errorf("column count mismatch, expected %d, got %d", enc.columnCnt, len(row))
+	}
+
+	if len(row) > len(enc.columnIdx) {
+		// 2. if len(row) > len(columnIdx): raw row data has more columns than those
+		// in the table
+		logger.Error("column count mismatch", zap.Ints("column_count", enc.columnIdx),
+			zap.Array("data", kv.RowArrayMarshaler(row)))
+		return emptyTiDBRow, errors.Errorf("column count mismatch, at most %d but got %d", len(enc.columnIdx), len(row))
 	}
 
 	var encoded strings.Builder
