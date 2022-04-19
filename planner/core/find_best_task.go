@@ -1033,7 +1033,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		tblColHists:       ds.TblColHists,
 	}
 	cop.partitionInfo = PartitionInfo{
-		PruningConds:   ds.allConds,
+		PruningConds:   pushDownNot(ds.ctx, ds.allConds),
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
@@ -1333,7 +1333,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 		expectCnt:   uint64(prop.ExpectedCnt),
 	}
 	cop.partitionInfo = PartitionInfo{
-		PruningConds:   ds.allConds,
+		PruningConds:   pushDownNot(ds.ctx, ds.allConds),
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
@@ -1850,7 +1850,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			partTp: property.AnyType,
 		}
 		ts.PartitionInfo = PartitionInfo{
-			PruningConds:   ds.allConds,
+			PruningConds:   pushDownNot(ds.ctx, ds.allConds),
 			PartitionNames: ds.partitionNames,
 			Columns:        ds.TblCols,
 			ColumnNames:    ds.names,
@@ -1866,7 +1866,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		cst:               cost,
 	}
 	copTask.partitionInfo = PartitionInfo{
-		PruningConds:   ds.allConds,
+		PruningConds:   pushDownNot(ds.ctx, ds.allConds),
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
@@ -2282,4 +2282,13 @@ func appendCandidate(lp LogicalPlan, task task, prop *property.PhysicalProperty,
 		return
 	}
 	opt.appendCandidate(lp, task.plan(), prop)
+}
+
+// PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from conds, the condition like
+// 'not (a != 1)' would not be handled so we need to convert it to 'a = 1', which can be handled when building range.
+func pushDownNot(ctx sessionctx.Context, conds []expression.Expression) []expression.Expression {
+	for i, cond := range conds {
+		conds[i] = expression.PushDownNot(ctx, cond)
+	}
+	return conds
 }
