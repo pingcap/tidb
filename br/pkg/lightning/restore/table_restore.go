@@ -538,7 +538,7 @@ func (tr *TableRestore) restoreEngine(
 			}
 			if err == nil {
 				metric.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Add(remainChunkCnt)
-				metric.BytesCounter.WithLabelValues(metric.TableStateWritten).Add(float64(cr.chunk.Checksum.SumSize()))
+				metric.BytesCounter.WithLabelValues(metric.BytesStateRestoreWritten).Add(float64(cr.chunk.Checksum.SumSize()))
 				if dataFlushStatus != nil && indexFlushStaus != nil {
 					if dataFlushStatus.Flushed() && indexFlushStaus.Flushed() {
 						saveCheckpoint(rc, tr, engineID, cr.chunk)
@@ -697,8 +697,8 @@ func (tr *TableRestore) postProcess(
 	}
 
 	// tidb backend don't need checksum & analyze
-	if !rc.backend.ShouldPostProcess() {
-		tr.logger.Debug("skip checksum & analyze, not supported by this backend")
+	if rc.cfg.PostRestore.Checksum == config.OpLevelOff && rc.cfg.PostRestore.Analyze == config.OpLevelOff {
+		tr.logger.Debug("skip checksum & analyze, either because not supported by this backend or manually disabled")
 		err := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, nil, checkpoints.CheckpointStatusAnalyzeSkipped)
 		return false, errors.Trace(err)
 	}

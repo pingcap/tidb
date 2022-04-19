@@ -90,11 +90,6 @@ func numericContextResultType(ft *types.FieldType) types.EvalType {
 // type according to the two input parameter's types.
 func setFlenDecimal4RealOrDecimal(ctx sessionctx.Context, retTp *types.FieldType, arg0, arg1 Expression, isReal bool, isMultiply bool) {
 	a, b := arg0.GetType(), arg1.GetType()
-	if MaybeOverOptimized4PlanCache(ctx, []Expression{arg0, arg1}) {
-		// set length and decimal to unspecified if arguments depend on parameters
-		retTp.Flen, retTp.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
-		return
-	}
 	if a.Decimal != types.UnspecifiedLength && b.Decimal != types.UnspecifiedLength {
 		retTp.Decimal = a.Decimal + b.Decimal
 		if !isMultiply {
@@ -726,7 +721,7 @@ func (s *builtinArithmeticDivideDecimalSig) evalDecimal(row chunk.Row) (*types.M
 	} else if err == nil {
 		_, frac := c.PrecisionAndFrac()
 		if frac < s.baseBuiltinFunc.tp.Decimal {
-			err = c.Round(c, s.baseBuiltinFunc.tp.Decimal, types.ModeHalfEven)
+			err = c.Round(c, s.baseBuiltinFunc.tp.Decimal, types.ModeHalfUp)
 		}
 	} else if err == types.ErrOverflow {
 		err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s / %s)", s.args[0].String(), s.args[1].String()))

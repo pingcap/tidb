@@ -1734,7 +1734,7 @@ func evalFromUnixTime(ctx sessionctx.Context, fsp int, unixTimeStamp *types.MyDe
 
 	sc := ctx.GetSessionVars().StmtCtx
 	tmp := time.Unix(integralPart, fractionalPart).In(sc.TimeZone)
-	t, err := convertTimeToMysqlTime(tmp, fsp, types.ModeHalfEven)
+	t, err := convertTimeToMysqlTime(tmp, fsp, types.ModeHalfUp)
 	if err != nil {
 		return res, true, err
 	}
@@ -2050,7 +2050,7 @@ func (b *builtinSysDateWithFspSig) evalTime(row chunk.Row) (d types.Time, isNull
 
 	loc := b.ctx.GetSessionVars().Location()
 	now := time.Now().In(loc)
-	result, err := convertTimeToMysqlTime(now, int(fsp), types.ModeHalfEven)
+	result, err := convertTimeToMysqlTime(now, int(fsp), types.ModeHalfUp)
 	if err != nil {
 		return types.ZeroTime, true, err
 	}
@@ -2072,7 +2072,7 @@ func (b *builtinSysDateWithoutFspSig) Clone() builtinFunc {
 func (b *builtinSysDateWithoutFspSig) evalTime(row chunk.Row) (d types.Time, isNull bool, err error) {
 	tz := b.ctx.GetSessionVars().Location()
 	now := time.Now().In(tz)
-	result, err := convertTimeToMysqlTime(now, 0, types.ModeHalfEven)
+	result, err := convertTimeToMysqlTime(now, 0, types.ModeHalfUp)
 	if err != nil {
 		return types.ZeroTime, true, err
 	}
@@ -2393,7 +2393,7 @@ func evalUTCTimestampWithFsp(ctx sessionctx.Context, fsp int) (types.Time, bool,
 	if err != nil {
 		return types.ZeroTime, true, err
 	}
-	result, err := convertTimeToMysqlTime(nowTs.UTC(), fsp, types.ModeHalfEven)
+	result, err := convertTimeToMysqlTime(nowTs.UTC(), fsp, types.ModeHalfUp)
 	if err != nil {
 		return types.ZeroTime, true, err
 	}

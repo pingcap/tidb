@@ -239,6 +239,11 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, v.OptimizerSelectivityLevel)
 
+	require.Equal(t, DefTiDBOptimizerEnableNewOFGB, v.OptimizerEnableNewOnlyFullGroupByCheck)
+	err = SetSessionSystemVar(v, TiDBOptimizerEnableNewOnlyFullGroupByCheck, "off")
+	require.NoError(t, err)
+	require.Equal(t, false, v.OptimizerEnableNewOnlyFullGroupByCheck)
+
 	err = SetSessionSystemVar(v, TiDBDDLReorgWorkerCount, "4") // wrong scope global only
 	require.True(t, terror.ErrorEqual(err, errGlobalVariable))
 

@@ -499,6 +499,7 @@ type PlanBuilder struct {
 	isForUpdateRead             bool
 	allocIDForCTEStorage        int
 	buildingRecursivePartForCTE bool
+	buildingCTE                 bool
 }
 
 type handleColHelper struct {
@@ -715,7 +716,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.AlterInstanceStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt,
-		*ast.RenameUserStmt:
+		*ast.RenameUserStmt, *ast.NonTransactionalDeleteStmt:
 		return b.buildSimple(ctx, node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(ctx, x)
@@ -1456,6 +1457,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		Ranges:           ranger.FullRange(),
 		physicalTableID:  physicalID,
 		isPartition:      isPartition,
+		tblColHists:      &(statistics.PseudoTable(tblInfo)).HistColl,
 	}.Init(b.ctx, b.getSelectOffset())
 	// There is no alternative plan choices, so just use pseudo stats to avoid panic.
 	is.stats = &property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo)).HistColl}
@@ -1473,6 +1475,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		TableAsName:     &tblInfo.Name,
 		physicalTableID: physicalID,
 		isPartition:     isPartition,
+		tblColHists:     &(statistics.PseudoTable(tblInfo)).HistColl,
 	}.Init(b.ctx, b.getSelectOffset())
 	ts.SetSchema(idxColSchema)
 	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
@@ -2982,6 +2985,14 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		}
 		if tableInfo.Meta().TempTableType != model.TempTableNone {
 			return nil, ErrOptOnTemporaryTable.GenWithStackByArgs("show table regions")
+		}
+	}
+	if show.Tp == ast.ShowVariables {
+		var extractor ShowVariablesExtractor
+		if extractor.Extract(show) {
+			p.Extractor = &extractor
+			// Avoid building Selection.
+			show.Pattern = nil
 		}
 	}
 	schema, names := buildShowSchema(show, isView, isSequence)
@@ -4716,8 +4727,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"bindings_in_cache", "bindings_in_table", "memory_usage", "memory_quota"}
 		ftypes = []byte{mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowAnalyzeStatus:
-		names = []string{"Table_schema", "Table_name", "Partition_name", "Job_info", "Processed_rows", "Start_time", "End_time", "State"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar}
+		names = []string{"Table_schema", "Table_name", "Partition_name", "Job_info", "Processed_rows", "Start_time", "End_time", "State", "Fail_reason", "Instance", "Process_ID"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong}
 	case ast.ShowBuiltins:
 		names = []string{"Supported_builtin_functions"}
 		ftypes = []byte{mysql.TypeVarchar}

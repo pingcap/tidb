@@ -330,6 +330,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	// build logical plan
 	sctx.GetSessionVars().PlanID = 0
 	sctx.GetSessionVars().PlanColumnID = 0
+	sctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol = nil
 	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
 	node.Accept(hintProcessor)
 

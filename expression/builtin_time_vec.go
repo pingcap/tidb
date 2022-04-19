@@ -172,7 +172,7 @@ func (b *builtinSysDateWithoutFspSig) vecEvalTime(input *chunk.Chunk, result *ch
 
 	result.ResizeTime(n, false)
 	times := result.Times()
-	t, err := convertTimeToMysqlTime(now, 0, types.ModeHalfEven)
+	t, err := convertTimeToMysqlTime(now, 0, types.ModeHalfUp)
 	if err != nil {
 		return err
 	}
@@ -775,7 +775,7 @@ func (b *builtinSysDateWithFspSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		if result.IsNull(i) {
 			continue
 		}
-		t, err := convertTimeToMysqlTime(now, int(ds[i]), types.ModeHalfEven)
+		t, err := convertTimeToMysqlTime(now, int(ds[i]), types.ModeHalfUp)
 		if err != nil {
 			return err
 		}

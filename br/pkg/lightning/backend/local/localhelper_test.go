@@ -287,8 +287,6 @@ func (c *testClient) SetStoresLabel(ctx context.Context, stores []uint64, labelK
 	return nil
 }
 
-func (c *testClient) InvalidateStoreCache(storeID uint64) {}
-
 func cloneRegion(region *restore.RegionInfo) *restore.RegionInfo {
 	r := &metapb.Region{}
 	if region.Region != nil {

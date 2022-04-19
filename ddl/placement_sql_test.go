@@ -16,88 +16,18 @@ package ddl_test
 
 import (
 	"fmt"
-	"sort"
 	"testing"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
-
-// TODO: Remove in https://github.com/pingcap/tidb/issues/27971 or change to use SQL PLACEMENT POLICY
-func TestPlacementPolicyCache(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_exchange_partition = 1")
-	defer func() {
-		tk.MustExec("set @@tidb_enable_exchange_partition = 0")
-		tk.MustExec("drop table if exists t1")
-		tk.MustExec("drop table if exists t2")
-	}()
-
-	initTable := func() []string {
-		tk.MustExec("drop table if exists t2")
-		tk.MustExec("drop table if exists t1")
-		tk.MustExec(`create table t1(id int) partition by range(id)
-(partition p0 values less than (100), partition p1 values less than (200))`)
-
-		is := dom.InfoSchema()
-
-		tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-		require.NoError(t, err)
-		partDefs := tb.Meta().GetPartitionInfo().Definitions
-
-		sort.Slice(partDefs, func(i, j int) bool { return partDefs[i].Name.L < partDefs[j].Name.L })
-
-		rows := []string{}
-		for k, v := range partDefs {
-			ptID := placement.GroupID(v.ID)
-			is.SetBundle(&placement.Bundle{
-				ID:    ptID,
-				Rules: []*placement.Rule{{Count: k}},
-			})
-			rows = append(rows, fmt.Sprintf("%s 0  test t1 %s <nil>  %d ", ptID, v.Name.L, k))
-		}
-		return rows
-	}
-
-	// test drop
-	_ = initTable()
-	//tk.MustQuery("select * from information_schema.placement_policy order by REPLICAS").Check(testkit.Rows(rows...))
-	tk.MustExec("alter table t1 drop partition p0")
-	//tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows(rows[1:]...))
-
-	_ = initTable()
-	//tk.MustQuery("select * from information_schema.placement_policy order by REPLICAS").Check(testkit.Rows(rows...))
-	tk.MustExec("drop table t1")
-	//tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
-
-	// test truncate
-	_ = initTable()
-	//tk.MustQuery("select * from information_schema.placement_policy order by REPLICAS").Check(testkit.Rows(rows...))
-	tk.MustExec("alter table t1 truncate partition p0")
-	//tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows(rows[1:]...))
-
-	_ = initTable()
-	//tk.MustQuery("select * from information_schema.placement_policy order by REPLICAS").Check(testkit.Rows(rows...))
-	tk.MustExec("truncate table t1")
-	//tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
-
-	// test exchange
-	_ = initTable()
-	//tk.MustQuery("select * from information_schema.placement_policy order by REPLICAS").Check(testkit.Rows(rows...))
-	tk.MustExec("create table t2(id int)")
-	tk.MustExec("alter table t1 exchange partition p0 with table t2")
-	//tk.MustQuery("select * from information_schema.placement_policy").Check(testkit.Rows())
-}
 
 func TestTxnScopeConstraint(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
@@ -105,10 +35,16 @@ func TestTxnScopeConstraint(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("drop placement policy if exists p2")
 	defer func() {
 		tk.MustExec("drop table if exists t1")
+		tk.MustExec("drop placement policy if exists p1")
+		tk.MustExec("drop placement policy if exists p2")
 	}()
 
+	tk.MustExec("create placement policy p1 leader_constraints='[+zone=sh]'")
+	tk.MustExec("create placement policy p2 follower_constraints='[+zone=sh]'")
 	tk.MustExec(`create table t1 (c int)
 PARTITION BY RANGE (c) (
 	PARTITION p0 VALUES LESS THAN (6),
@@ -125,43 +61,9 @@ PARTITION BY RANGE (c) (
 
 	for _, def := range partDefs {
 		if def.Name.String() == "p0" {
-			groupID := placement.GroupID(def.ID)
-			is.SetBundle(&placement.Bundle{
-				ID: groupID,
-				Rules: []*placement.Rule{
-					{
-						GroupID: groupID,
-						Role:    placement.Leader,
-						Count:   1,
-						Constraints: []placement.Constraint{
-							{
-								Key:    placement.DCLabelKey,
-								Op:     placement.In,
-								Values: []string{"sh"},
-							},
-						},
-					},
-				},
-			})
+			tk.MustExec("alter table t1 partition p0 placement policy p1")
 		} else if def.Name.String() == "p2" {
-			groupID := placement.GroupID(def.ID)
-			is.SetBundle(&placement.Bundle{
-				ID: groupID,
-				Rules: []*placement.Rule{
-					{
-						GroupID: groupID,
-						Role:    placement.Follower,
-						Count:   3,
-						Constraints: []placement.Constraint{
-							{
-								Key:    placement.DCLabelKey,
-								Op:     placement.In,
-								Values: []string{"sh"},
-							},
-						},
-					},
-				},
-			})
+			tk.MustExec("alter table t1 partition p2 placement policy p2")
 		}
 	}
 
@@ -435,11 +337,13 @@ func TestPlacementMode(t *testing.T) {
 	// create placement policy with info in ignore mode (policy name exists)
 	newPolicy := existPolicy.Clone()
 	newPolicy.Followers = 8
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistError)
 	require.NoError(t, err)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
 	tk.MustQuery("show placement where target='POLICY p1'").Check(testkit.Rows("POLICY p1 FOLLOWERS=4 NULL"))
 
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistReplace)
 	require.NoError(t, err)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
@@ -449,6 +353,7 @@ func TestPlacementMode(t *testing.T) {
 	newPolicy = existPolicy.Clone()
 	newPolicy.Name = model.NewCIStr("p3")
 	newPolicy.Followers = 8
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy, ddl.OnExistError)
 	require.NoError(t, err)
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Placement is ignored when TIDB_PLACEMENT_MODE is 'IGNORE'"))
@@ -632,6 +537,7 @@ func TestPlacementMode(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tbl.PlacementPolicyRef)
 	tbl.Name = model.NewCIStr("t2")
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test"), tbl, ddl.OnExistError)
 	require.NoError(t, err)
 	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
@@ -645,6 +551,7 @@ func TestPlacementMode(t *testing.T) {
 	require.NotNil(t, tbl.PlacementPolicyRef)
 	tbl.Name = model.NewCIStr("t2")
 	tbl.PlacementPolicyRef.Name = model.NewCIStr("pxx")
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test"), tbl, ddl.OnExistError)
 	require.NoError(t, err)
 	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
@@ -657,6 +564,7 @@ func TestPlacementMode(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, db1.PlacementPolicyRef)
 	db1.Name = model.NewCIStr("db2")
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = dom.DDL().CreateSchemaWithInfo(tk.Session(), db1, ddl.OnExistError)
 	require.NoError(t, err)
 	tk.MustQuery("show create database db2").Check(testkit.Rows("db2 CREATE DATABASE `db2` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
@@ -668,6 +576,7 @@ func TestPlacementMode(t *testing.T) {
 	require.NotNil(t, db1.PlacementPolicyRef)
 	db1.Name = model.NewCIStr("db2")
 	db1.PlacementPolicyRef.Name = model.NewCIStr("pxx")
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = dom.DDL().CreateSchemaWithInfo(tk.Session(), db1, ddl.OnExistError)
 	require.NoError(t, err)
 	tk.MustQuery("show create database db2").Check(testkit.Rows("db2 CREATE DATABASE `db2` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))

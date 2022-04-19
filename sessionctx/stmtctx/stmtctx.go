@@ -240,6 +240,9 @@ type StatementContext struct {
 
 	// SysdateIsNow indicates whether sysdate() is an alias of now() in this statement
 	SysdateIsNow bool
+
+	// RCCheckTS indicates the current read-consistency read select statement will use `RCCheckTS` path.
+	RCCheckTS bool
 }
 
 // StmtHints are SessionVars related sql hints.

@@ -165,6 +165,7 @@ func TestAdminCheckIndexInCacheTable(t *testing.T) {
 	tk.MustExec("admin check table cache_admin_test;")
 	tk.MustExec("admin check index cache_admin_test c1;")
 	tk.MustExec("admin check index cache_admin_test c2;")
+	tk.MustExec("alter table cache_admin_test nocache;")
 	tk.MustExec("drop table if exists cache_admin_test;")
 
 	tk.MustExec(`drop table if exists check_index_test;`)
@@ -175,6 +176,7 @@ func TestAdminCheckIndexInCacheTable(t *testing.T) {
 	result.Check(testkit.Rows("1 ef 3", "2 cd 2"))
 	result = tk.MustQuery("admin check index check_index_test a_b (3, 5);")
 	result.Check(testkit.Rows("-1 hi 4", "1 ef 3"))
+	tk.MustExec("alter table check_index_test nocache;")
 	tk.MustExec("drop table if exists check_index_test;")
 
 	tk.MustExec("drop table if exists cache_admin_table_with_index_test;")
@@ -185,8 +187,12 @@ func TestAdminCheckIndexInCacheTable(t *testing.T) {
 	tk.MustExec("alter table cache_admin_table_without_index_test cache")
 	tk.MustExec("admin checksum table cache_admin_table_with_index_test;")
 	tk.MustExec("admin checksum table cache_admin_table_without_index_test;")
+
+	tk.MustExec("alter table cache_admin_table_with_index_test nocache;")
+	tk.MustExec("alter table cache_admin_table_without_index_test nocache;")
 	tk.MustExec("drop table if exists cache_admin_table_with_index_test,cache_admin_table_without_index_test;")
 }
+
 func TestAdminRecoverIndex(t *testing.T) {
 	store, domain, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()
@@ -476,6 +482,18 @@ func TestAdminRecoverIndex1(t *testing.T) {
 	tk.MustExec("admin check table admin_test")
 	tk.MustExec("admin check index admin_test c2")
 	tk.MustExec("admin check index admin_test `primary`")
+}
+
+// https://github.com/pingcap/tidb/issues/32915.
+func TestAdminRecoverIndexEdge(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id bigint(20) primary key, col varchar(255) unique key);")
+	tk.MustExec("insert into t values(9223372036854775807, 'test');")
+	tk.MustQuery("admin recover index t col;").Check(testkit.Rows("0 1"))
 }
 
 func TestAdminCleanupIndex(t *testing.T) {

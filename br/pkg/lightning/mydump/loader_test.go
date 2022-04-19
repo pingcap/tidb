@@ -20,11 +20,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
-	router "github.com/pingcap/tidb-tools/pkg/table-router"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	md "github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	filter "github.com/pingcap/tidb/util/table-filter"
+	router "github.com/pingcap/tidb/util/table-router"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -345,220 +345,318 @@ func TestTablesWithDots(t *testing.T) {
 }
 
 func TestRouter(t *testing.T) {
-	s := newTestMydumpLoaderSuite(t)
-	s.cfg.Routes = []*router.TableRule{
-		{
-			SchemaPattern: "a*",
-			TablePattern:  "t*",
-			TargetSchema:  "b",
-			TargetTable:   "u",
-		},
-		{
-			SchemaPattern: "c*",
-			TargetSchema:  "c",
-		},
-		{
-			SchemaPattern: "e*",
-			TablePattern:  "f*",
-			TargetSchema:  "v",
-			TargetTable:   "vv",
-		},
-		{
-			SchemaPattern: "~.*regexpr[1-9]+",
-			TablePattern:  "~.*regexprtable",
-			TargetSchema:  "downstream_db",
-			TargetTable:   "downstream_table",
-		},
-		{
-			SchemaPattern: "~.bdb.*",
-			TargetSchema:  "db",
-		},
+	// route db and table but with some table not hit rules
+	{
+		s := newTestMydumpLoaderSuite(t)
+		s.cfg.Routes = []*router.TableRule{
+			{
+				SchemaPattern: "a*",
+				TablePattern:  "t*",
+				TargetSchema:  "b",
+				TargetTable:   "u",
+			},
+		}
+
+		s.touch(t, "a0-schema-create.sql")
+		s.touch(t, "a0.t0-schema.sql")
+		s.touch(t, "a0.t0.1.sql")
+		s.touch(t, "a0.t1-schema.sql")
+		s.touch(t, "a0.t1.1.sql")
+
+		s.touch(t, "a1-schema-create.sql")
+		s.touch(t, "a1.s1-schema.sql")
+		s.touch(t, "a1.s1.1.sql")
+		s.touch(t, "a1.t2-schema.sql")
+		s.touch(t, "a1.t2.1.sql")
+
+		s.touch(t, "a1.v1-schema.sql")
+		s.touch(t, "a1.v1-schema-view.sql")
+
+		mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+		require.NoError(t, err)
+		dbs := mdl.GetDatabases()
+		// hit rules: a0.t0 -> b.u, a0.t1 -> b.0, a1.t2 -> b.u
+		// not hit: a1.s1, a1.v1
+		expectedDBS := []*md.MDDatabaseMeta{
+			{
+				Name:       "a0",
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "a0", Name: ""}, FileMeta: md.SourceFileMeta{Path: "a0-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+			},
+			{
+				Name:       "a1",
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "a1", Name: ""}, FileMeta: md.SourceFileMeta{Path: "a1-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+				Tables: []*md.MDTableMeta{
+					{
+						DB:           "a1",
+						Name:         "s1",
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "a1", Name: "s1"}, FileMeta: md.SourceFileMeta{Path: "a1.s1-schema.sql", Type: md.SourceTypeTableSchema}},
+						DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "a1", Name: "s1"}, FileMeta: md.SourceFileMeta{Path: "a1.s1.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}}},
+						IndexRatio:   0.0,
+						IsRowOrdered: true,
+					},
+					{
+						DB:           "a1",
+						Name:         "v1",
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "a1", Name: "v1"}, FileMeta: md.SourceFileMeta{Path: "a1.v1-schema.sql", Type: md.SourceTypeTableSchema}},
+						DataFiles:    []md.FileInfo{},
+						IndexRatio:   0.0,
+						IsRowOrdered: true,
+					},
+				},
+				Views: []*md.MDTableMeta{
+					{
+						DB:           "a1",
+						Name:         "v1",
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "a1", Name: "v1"}, FileMeta: md.SourceFileMeta{Path: "a1.v1-schema-view.sql", Type: md.SourceTypeViewSchema}},
+						IndexRatio:   0.0,
+						IsRowOrdered: true,
+					},
+				},
+			},
+			{
+				Name:       "b",
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "b", Name: ""}, FileMeta: md.SourceFileMeta{Path: "a0-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+				Tables: []*md.MDTableMeta{
+					{
+						DB:         "b",
+						Name:       "u",
+						SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "b", Name: "u"}, FileMeta: md.SourceFileMeta{Path: "a0.t0-schema.sql", Type: md.SourceTypeTableSchema}},
+						DataFiles: []md.FileInfo{
+							{TableName: filter.Table{Schema: "b", Name: "u"}, FileMeta: md.SourceFileMeta{Path: "a0.t0.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}},
+							{TableName: filter.Table{Schema: "b", Name: "u"}, FileMeta: md.SourceFileMeta{Path: "a0.t1.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}},
+							{TableName: filter.Table{Schema: "b", Name: "u"}, FileMeta: md.SourceFileMeta{Path: "a1.t2.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}},
+						},
+						IndexRatio:   0.0,
+						IsRowOrdered: true,
+					},
+				},
+			},
+		}
+		require.Equal(t, expectedDBS, dbs)
 	}
 
-	/*
-		Path/
-			a0-schema-create.sql
-			a0.t0-schema.sql
-			a0.t0.1.sql
-			a0.t1-schema.sql
-			a0.t1.1.sql
-			a1-schema-create.sql
-			a1.s1-schema.sql
-			a1.s1.1.schema.sql
-			a1.t2-schema.sql
-			a1.t2.1.sql
-			a1.v1-schema.sql
-			a1.v1-schema-view.sql
-			c0-schema-create.sql
-			c0.t3-schema.sql
-			c0.t3.1.sql
-			d0-schema-create.sql
-			e0-schema-create.sql
-			e0.f0-schema.sql
-			e0.f0-schema-view.sql
-			test_regexpr1-schema-create.sql
-			test_regexpr1.test_regexprtable-schema.sql
-			test_regexpr1.test_regexprtable.1.sql
-			zbdb-schema-create.sql
-			zbdb.table-schema.sql
-			zbdb.table.1.sql
-	*/
-
-	s.touch(t, "a0-schema-create.sql")
-	s.touch(t, "a0.t0-schema.sql")
-	s.touch(t, "a0.t0.1.sql")
-	s.touch(t, "a0.t1-schema.sql")
-	s.touch(t, "a0.t1.1.sql")
-
-	s.touch(t, "a1-schema-create.sql")
-	s.touch(t, "a1.s1-schema.sql")
-	s.touch(t, "a1.s1.1.sql")
-	s.touch(t, "a1.t2-schema.sql")
-	s.touch(t, "a1.t2.1.sql")
-	s.touch(t, "a1.v1-schema.sql")
-	s.touch(t, "a1.v1-schema-view.sql")
-
-	s.touch(t, "c0-schema-create.sql")
-	s.touch(t, "c0.t3-schema.sql")
-	s.touch(t, "c0.t3.1.sql")
-
-	s.touch(t, "d0-schema-create.sql")
-
-	s.touch(t, "e0-schema-create.sql")
-	s.touch(t, "e0.f0-schema.sql")
-	s.touch(t, "e0.f0-schema-view.sql")
-
-	s.touch(t, "test_regexpr1-schema-create.sql")
-	s.touch(t, "test_regexpr1.test_regexprtable-schema.sql")
-	s.touch(t, "test_regexpr1.test_regexprtable.1.sql")
-
-	s.touch(t, "zbdb-schema-create.sql")
-	s.touch(t, "zbdb.table-schema.sql")
-	s.touch(t, "zbdb.table.1.sql")
-
-	mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
-	require.NoError(t, err)
-	require.Equal(t, []*md.MDDatabaseMeta{
-		{
-			Name:       "a1",
-			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "a1", Name: ""}, FileMeta: md.SourceFileMeta{Path: "a1-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
-			Tables: []*md.MDTableMeta{
-				{
-					DB:           "a1",
-					Name:         "s1",
-					SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "a1", Name: "s1"}, FileMeta: md.SourceFileMeta{Path: "a1.s1-schema.sql", Type: md.SourceTypeTableSchema}},
-					DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "a1", Name: "s1"}, FileMeta: md.SourceFileMeta{Path: "a1.s1.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}}},
-					IndexRatio:   0.0,
-					IsRowOrdered: true,
-				},
-				{
-					DB:           "a1",
-					Name:         "v1",
-					SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "a1", Name: "v1"}, FileMeta: md.SourceFileMeta{Path: "a1.v1-schema.sql", Type: md.SourceTypeTableSchema}},
-					DataFiles:    []md.FileInfo{},
-					IndexRatio:   0.0,
-					IsRowOrdered: true,
-				},
+	// only route schema but with some db not hit rules
+	{
+		s := newTestMydumpLoaderSuite(t)
+		s.cfg.Routes = []*router.TableRule{
+			{
+				SchemaPattern: "c*",
+				TargetSchema:  "c",
 			},
-			Views: []*md.MDTableMeta{
-				{
-					DB:           "a1",
-					Name:         "v1",
-					SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "a1", Name: "v1"}, FileMeta: md.SourceFileMeta{Path: "a1.v1-schema-view.sql", Type: md.SourceTypeViewSchema}},
-					IndexRatio:   0.0,
-					IsRowOrdered: true,
-				},
+		}
+		s.touch(t, "c0-schema-create.sql")
+		s.touch(t, "c0.t3-schema.sql")
+		s.touch(t, "c0.t3.1.sql")
+
+		s.touch(t, "d0-schema-create.sql")
+		mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+		require.NoError(t, err)
+		dbs := mdl.GetDatabases()
+		// hit rules: c0.t3 -> c.t3
+		// not hit: d0
+		expectedDBS := []*md.MDDatabaseMeta{
+			{
+				Name:       "d0",
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "d0", Name: ""}, FileMeta: md.SourceFileMeta{Path: "d0-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
 			},
-		},
-		{
-			Name:       "d0",
-			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "d0", Name: ""}, FileMeta: md.SourceFileMeta{Path: "d0-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
-		},
-		{
-			Name:       "b",
-			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "b", Name: ""}, FileMeta: md.SourceFileMeta{Path: "a0-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
-			Tables: []*md.MDTableMeta{
-				{
-					DB:         "b",
-					Name:       "u",
-					SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "b", Name: "u"}, FileMeta: md.SourceFileMeta{Path: "a0.t0-schema.sql", Type: md.SourceTypeTableSchema}},
-					DataFiles: []md.FileInfo{
-						{TableName: filter.Table{Schema: "b", Name: "u"}, FileMeta: md.SourceFileMeta{Path: "a0.t0.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}},
-						{TableName: filter.Table{Schema: "b", Name: "u"}, FileMeta: md.SourceFileMeta{Path: "a0.t1.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}},
-						{TableName: filter.Table{Schema: "b", Name: "u"}, FileMeta: md.SourceFileMeta{Path: "a1.t2.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}},
+			{
+				Name:       "c",
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "c", Name: ""}, FileMeta: md.SourceFileMeta{Path: "c0-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+				Tables: []*md.MDTableMeta{
+					{
+						DB:           "c",
+						Name:         "t3",
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "c", Name: "t3"}, FileMeta: md.SourceFileMeta{Path: "c0.t3-schema.sql", Type: md.SourceTypeTableSchema}},
+						DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "c", Name: "t3"}, FileMeta: md.SourceFileMeta{Path: "c0.t3.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}}},
+						IndexRatio:   0.0,
+						IsRowOrdered: true,
 					},
-					IndexRatio:   0.0,
-					IsRowOrdered: true,
 				},
 			},
-		},
-		{
-			Name:       "c",
-			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "c", Name: ""}, FileMeta: md.SourceFileMeta{Path: "c0-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
-			Tables: []*md.MDTableMeta{
-				{
-					DB:           "c",
-					Name:         "t3",
-					SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "c", Name: "t3"}, FileMeta: md.SourceFileMeta{Path: "c0.t3-schema.sql", Type: md.SourceTypeTableSchema}},
-					DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "c", Name: "t3"}, FileMeta: md.SourceFileMeta{Path: "c0.t3.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}}},
-					IndexRatio:   0.0,
-					IsRowOrdered: true,
-				},
-			},
-		},
-		{
-			Name:       "v",
-			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "v", Name: ""}, FileMeta: md.SourceFileMeta{Path: "e0-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
-			Tables: []*md.MDTableMeta{
-				{
-					DB:           "v",
-					Name:         "vv",
-					SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "v", Name: "vv"}, FileMeta: md.SourceFileMeta{Path: "e0.f0-schema.sql", Type: md.SourceTypeTableSchema}},
-					DataFiles:    []md.FileInfo{},
-					IndexRatio:   0.0,
-					IsRowOrdered: true,
-				},
-			},
-			Views: []*md.MDTableMeta{
-				{
-					DB:           "v",
-					Name:         "vv",
-					SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "v", Name: "vv"}, FileMeta: md.SourceFileMeta{Path: "e0.f0-schema-view.sql", Type: md.SourceTypeViewSchema}},
-					IndexRatio:   0.0,
-					IsRowOrdered: true,
-				},
-			},
-		},
+		}
+		require.Equal(t, expectedDBS, dbs)
+	}
 
-		{
-			Name:       "downstream_db",
-			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "downstream_db", Name: ""}, FileMeta: md.SourceFileMeta{Path: "test_regexpr1-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
-			Tables: []*md.MDTableMeta{
-				{
-					DB:           "downstream_db",
-					Name:         "downstream_table",
-					SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "downstream_db", Name: "downstream_table"}, FileMeta: md.SourceFileMeta{Path: "test_regexpr1.test_regexprtable-schema.sql", Type: md.SourceTypeTableSchema}},
-					DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "downstream_db", Name: "downstream_table"}, FileMeta: md.SourceFileMeta{Path: "test_regexpr1.test_regexprtable.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}}},
-					IndexRatio:   0.0,
-					IsRowOrdered: true,
+	// route schema and table but not have table data
+	{
+		s := newTestMydumpLoaderSuite(t)
+		s.cfg.Routes = []*router.TableRule{
+			{
+				SchemaPattern: "e*",
+				TablePattern:  "f*",
+				TargetSchema:  "v",
+				TargetTable:   "vv",
+			},
+		}
+		s.touch(t, "e0-schema-create.sql")
+		s.touch(t, "e0.f0-schema.sql")
+		s.touch(t, "e0.f0-schema-view.sql")
+
+		mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+		require.NoError(t, err)
+		dbs := mdl.GetDatabases()
+		// hit rules: e0.f0 -> v.vv
+		expectedDBS := []*md.MDDatabaseMeta{
+			{
+				Name:       "e0",
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "e0", Name: ""}, FileMeta: md.SourceFileMeta{Path: "e0-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+			},
+			{
+				Name:       "v",
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "v", Name: ""}, FileMeta: md.SourceFileMeta{Path: "e0-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+				Tables: []*md.MDTableMeta{
+					{
+						DB:           "v",
+						Name:         "vv",
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "v", Name: "vv"}, FileMeta: md.SourceFileMeta{Path: "e0.f0-schema.sql", Type: md.SourceTypeTableSchema}},
+						DataFiles:    []md.FileInfo{},
+						IndexRatio:   0.0,
+						IsRowOrdered: true,
+					},
+				},
+				Views: []*md.MDTableMeta{
+					{
+						DB:           "v",
+						Name:         "vv",
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "v", Name: "vv"}, FileMeta: md.SourceFileMeta{Path: "e0.f0-schema-view.sql", Type: md.SourceTypeViewSchema}},
+						IndexRatio:   0.0,
+						IsRowOrdered: true,
+					},
 				},
 			},
-		},
-		{
-			Name:       "db",
-			SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "db", Name: ""}, FileMeta: md.SourceFileMeta{Path: "zbdb-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
-			Tables: []*md.MDTableMeta{
-				{
-					DB:           "db",
-					Name:         "table",
-					SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "db", Name: "table"}, FileMeta: md.SourceFileMeta{Path: "zbdb.table-schema.sql", Type: md.SourceTypeTableSchema}},
-					DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "db", Name: "table"}, FileMeta: md.SourceFileMeta{Path: "zbdb.table.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}}},
-					IndexRatio:   0.0,
-					IsRowOrdered: true,
+		}
+		require.Equal(t, expectedDBS, dbs)
+	}
+
+	// route by regex
+	{
+		s := newTestMydumpLoaderSuite(t)
+		s.cfg.Routes = []*router.TableRule{
+			{
+				SchemaPattern: "~.*regexpr[1-9]+",
+				TablePattern:  "~.*regexprtable",
+				TargetSchema:  "downstream_db",
+				TargetTable:   "downstream_table",
+			},
+			{
+				SchemaPattern: "~.bdb.*",
+				TargetSchema:  "db",
+			},
+		}
+
+		s.touch(t, "test_regexpr1-schema-create.sql")
+		s.touch(t, "test_regexpr1.test_regexprtable-schema.sql")
+		s.touch(t, "test_regexpr1.test_regexprtable.1.sql")
+
+		s.touch(t, "zbdb-schema-create.sql")
+		s.touch(t, "zbdb.table-schema.sql")
+		s.touch(t, "zbdb.table.1.sql")
+
+		mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+		require.NoError(t, err)
+		dbs := mdl.GetDatabases()
+		// hit rules: test_regexpr1.test_regexprtable -> downstream_db.downstream_table, zbdb.table -> db.table
+		expectedDBS := []*md.MDDatabaseMeta{
+			{
+				Name:       "test_regexpr1",
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "test_regexpr1", Name: ""}, FileMeta: md.SourceFileMeta{Path: "test_regexpr1-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+			},
+			{
+				Name:       "db",
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "db", Name: ""}, FileMeta: md.SourceFileMeta{Path: "zbdb-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+				Tables: []*md.MDTableMeta{
+					{
+						DB:           "db",
+						Name:         "table",
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "db", Name: "table"}, FileMeta: md.SourceFileMeta{Path: "zbdb.table-schema.sql", Type: md.SourceTypeTableSchema}},
+						DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "db", Name: "table"}, FileMeta: md.SourceFileMeta{Path: "zbdb.table.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}}},
+						IndexRatio:   0.0,
+						IsRowOrdered: true,
+					},
 				},
 			},
-		},
-	}, mdl.GetDatabases())
+			{
+				Name:       "downstream_db",
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "downstream_db", Name: ""}, FileMeta: md.SourceFileMeta{Path: "test_regexpr1-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+				Tables: []*md.MDTableMeta{
+					{
+						DB:           "downstream_db",
+						Name:         "downstream_table",
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "downstream_db", Name: "downstream_table"}, FileMeta: md.SourceFileMeta{Path: "test_regexpr1.test_regexprtable-schema.sql", Type: md.SourceTypeTableSchema}},
+						DataFiles:    []md.FileInfo{{TableName: filter.Table{Schema: "downstream_db", Name: "downstream_table"}, FileMeta: md.SourceFileMeta{Path: "test_regexpr1.test_regexprtable.1.sql", Type: md.SourceTypeSQL, SortKey: "1"}}},
+						IndexRatio:   0.0,
+						IsRowOrdered: true,
+					},
+				},
+			},
+		}
+		require.Equal(t, expectedDBS, dbs)
+	}
+
+	// only route db and only route some tables
+	{
+		s := newTestMydumpLoaderSuite(t)
+		s.cfg.Routes = []*router.TableRule{
+			// only route schema
+			{
+				SchemaPattern: "web",
+				TargetSchema:  "web_test",
+			},
+			// only route one table
+			{
+				SchemaPattern: "x",
+				TablePattern:  "t1*",
+				TargetSchema:  "x2",
+				TargetTable:   "t",
+			},
+		}
+
+		s.touch(t, "web-schema-create.sql")
+		s.touch(t, "x-schema-create.sql")
+		s.touch(t, "x.t10-schema.sql") // hit rules, new name is x2.t
+		s.touch(t, "x.t20-schema.sql") // not hit rules, name is x.t20
+
+		mdl, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+		require.NoError(t, err)
+		dbs := mdl.GetDatabases()
+		// hit rules: web -> web_test, x.t10 -> x2.t
+		// not hit: x.t20
+		expectedDBS := []*md.MDDatabaseMeta{
+			{
+				Name:       "x",
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "x", Name: ""}, FileMeta: md.SourceFileMeta{Path: "x-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+				Tables: []*md.MDTableMeta{
+					{
+						DB:           "x",
+						Name:         "t20",
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "x", Name: "t20"}, FileMeta: md.SourceFileMeta{Path: "x.t20-schema.sql", Type: md.SourceTypeTableSchema}},
+						IndexRatio:   0.0,
+						IsRowOrdered: true,
+						DataFiles:    []md.FileInfo{},
+					},
+				},
+			},
+			{
+				Name:       "web_test",
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "web_test", Name: ""}, FileMeta: md.SourceFileMeta{Path: "web-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+			},
+			{
+				Name:       "x2",
+				SchemaFile: md.FileInfo{TableName: filter.Table{Schema: "x2", Name: ""}, FileMeta: md.SourceFileMeta{Path: "x-schema-create.sql", Type: md.SourceTypeSchemaSchema}},
+				Tables: []*md.MDTableMeta{
+					{
+						DB:           "x2",
+						Name:         "t",
+						SchemaFile:   md.FileInfo{TableName: filter.Table{Schema: "x2", Name: "t"}, FileMeta: md.SourceFileMeta{Path: "x.t10-schema.sql", Type: md.SourceTypeTableSchema}},
+						IndexRatio:   0.0,
+						IsRowOrdered: true,
+						DataFiles:    []md.FileInfo{},
+					},
+				},
+			},
+		}
+		require.Equal(t, expectedDBS, dbs)
+	}
 }
 
 func TestBadRouterRule(t *testing.T) {

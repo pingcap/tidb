@@ -46,7 +46,7 @@ func checkExistTableBundlesInPD(t *testing.T, do *domain.Domain, dbName string, 
 
 	require.NoError(t, kv.RunInNewTxn(context.TODO(), do.Store(), false, func(ctx context.Context, txn kv.Transaction) error {
 		tt := meta.NewMeta(txn)
-		checkTableBundlesInPD(t, tt, tblInfo.Meta())
+		checkTableBundlesInPD(t, do, tt, tblInfo.Meta())
 		return nil
 	}))
 }
@@ -75,42 +75,54 @@ func checkAllBundlesNotChange(t *testing.T, bundles []*placement.Bundle) {
 	}
 }
 
-func checkTableBundlesInPD(t *testing.T, tt *meta.Meta, tblInfo *model.TableInfo) {
+func checkTableBundlesInPD(t *testing.T, do *domain.Domain, tt *meta.Meta, tblInfo *model.TableInfo) {
 	checks := make([]*struct {
-		ID     string
-		bundle *placement.Bundle
+		ID      string
+		tableID int64
+		bundle  *placement.Bundle
 	}, 0)
 
 	bundle, err := placement.NewTableBundle(tt, tblInfo)
 	require.NoError(t, err)
 	checks = append(checks, &struct {
-		ID     string
-		bundle *placement.Bundle
-	}{ID: placement.GroupID(tblInfo.ID), bundle: bundle})
+		ID      string
+		tableID int64
+		bundle  *placement.Bundle
+	}{ID: placement.GroupID(tblInfo.ID), tableID: tblInfo.ID, bundle: bundle})
 
 	if tblInfo.Partition != nil {
 		for _, def := range tblInfo.Partition.Definitions {
 			bundle, err := placement.NewPartitionBundle(tt, def)
 			require.NoError(t, err)
 			checks = append(checks, &struct {
-				ID     string
-				bundle *placement.Bundle
-			}{ID: placement.GroupID(def.ID), bundle: bundle})
+				ID      string
+				tableID int64
+				bundle  *placement.Bundle
+			}{ID: placement.GroupID(def.ID), tableID: def.ID, bundle: bundle})
 		}
 	}
 
+	is := do.InfoSchema()
 	for _, check := range checks {
-		got, err := infosync.GetRuleBundle(context.TODO(), check.ID)
+		pdGot, err := infosync.GetRuleBundle(context.TODO(), check.ID)
 		require.NoError(t, err)
+		isGot, ok := is.PlacementBundleByPhysicalTableID(check.tableID)
 		if check.bundle == nil {
-			require.True(t, got.IsEmpty())
+			require.True(t, pdGot.IsEmpty(), "bundle should be nil for table: %d", check.tableID)
+			require.False(t, ok, "bundle should be nil for table: %d", check.tableID)
 		} else {
 			expectedJSON, err := json.Marshal(check.bundle)
 			require.NoError(t, err)
 
-			gotJSON, err := json.Marshal(got)
+			pdGotJSON, err := json.Marshal(pdGot)
 			require.NoError(t, err)
-			require.Equal(t, string(expectedJSON), string(gotJSON))
+			require.NotNil(t, pdGot)
+			require.Equal(t, string(expectedJSON), string(pdGotJSON))
+
+			isGotJSON, err := json.Marshal(isGot)
+			require.NoError(t, err)
+			require.NotNil(t, isGot)
+			require.Equal(t, string(expectedJSON), string(isGotJSON))
 		}
 	}
 }
@@ -224,6 +236,7 @@ PARTITION p1 VALUES LESS THAN (1000))
 		newPolicy.Name = model.NewCIStr("p2")
 		newPolicy.Followers = 2
 		newPolicy.LearnerConstraints = "[+zone=z2]"
+		tk.Session().SetValue(sessionctx.QueryString, "skip")
 		err := dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), onExist)
 		require.NoError(t, err)
 		// old policy should not be changed
@@ -245,6 +258,7 @@ PARTITION p1 VALUES LESS THAN (1000))
 	// create same name policy with on exists error
 	newPolicy := oldPolicy.Clone()
 	newPolicy.ID = oldPolicy.ID + 1
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err := dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistError)
 	require.Error(t, err)
 	require.True(t, infoschema.ErrPlacementPolicyExists.Equal(err))
@@ -256,6 +270,7 @@ PARTITION p1 VALUES LESS THAN (1000))
 	// create same name policy with on exist ignore
 	newPolicy = oldPolicy.Clone()
 	newPolicy.ID = oldPolicy.ID + 1
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistIgnore)
 	require.NoError(t, err)
 	found, ok = dom.InfoSchema().PolicyByName(model.NewCIStr("p"))
@@ -268,6 +283,7 @@ PARTITION p1 VALUES LESS THAN (1000))
 	newPolicy.ID = oldPolicy.ID + 1
 	newPolicy.Followers = 1
 	newPolicy.LearnerConstraints = "[+zone=z1]"
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = dom.DDL().CreatePlacementPolicyWithInfo(tk.Session(), newPolicy.Clone(), ddl.OnExistReplace)
 	require.NoError(t, err)
 	found, ok = dom.InfoSchema().PolicyByName(model.NewCIStr("p"))
@@ -700,6 +716,7 @@ func TestCreateTableWithInfoPlacement(t *testing.T) {
 	tk.MustExec("alter table t1 placement policy='default'")
 	tk.MustExec("drop placement policy p1")
 	tk.MustExec("create placement policy p1 followers=2")
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	require.Nil(t, dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test2"), tbl, ddl.OnExistError))
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 		"  `a` int(11) DEFAULT NULL\n" +
@@ -720,6 +737,7 @@ func TestCreateTableWithInfoPlacement(t *testing.T) {
 	// Test policy not exists
 	tbl2.Name = model.NewCIStr("t3")
 	tbl2.PlacementPolicyRef.Name = model.NewCIStr("pxx")
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = dom.DDL().CreateTableWithInfo(tk.Session(), model.NewCIStr("test2"), tbl2, ddl.OnExistError)
 	require.Equal(t, "[schema:8239]Unknown placement policy 'pxx'", err.Error())
 }
@@ -751,6 +769,7 @@ func TestCreateSchemaWithInfoPlacement(t *testing.T) {
 	tk.MustExec("alter database test2 placement policy='default'")
 	tk.MustExec("drop placement policy p1")
 	tk.MustExec("create placement policy p1 followers=2")
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	require.Nil(t, dom.DDL().CreateSchemaWithInfo(tk.Session(), db2, ddl.OnExistError))
 	tk.MustQuery("show create database test2").Check(testkit.Rows("test2 CREATE DATABASE `test2` /*!40100 DEFAULT CHARACTER SET utf8mb4 */"))
 	tk.MustQuery("show create database test3").Check(testkit.Rows("test3 CREATE DATABASE `test3` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![placement] PLACEMENT POLICY=`p1` */"))
@@ -767,6 +786,7 @@ func TestCreateSchemaWithInfoPlacement(t *testing.T) {
 	// Test policy not exists
 	db2.Name = model.NewCIStr("test4")
 	db2.PlacementPolicyRef.Name = model.NewCIStr("p2")
+	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err := dom.DDL().CreateSchemaWithInfo(tk.Session(), db2, ddl.OnExistError)
 	require.Equal(t, "[schema:8239]Unknown placement policy 'p2'", err.Error())
 }
@@ -1277,6 +1297,11 @@ func TestDropTableGCPlacement(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, len(bundles))
 	require.Equal(t, placement.GroupID(t1.Meta().ID), bundles[0].ID)
+
+	bundles = dom.InfoSchema().AllPlacementBundles()
+	require.NoError(t, err)
+	require.Equal(t, 1, len(bundles))
+	require.Equal(t, placement.GroupID(t1.Meta().ID), bundles[0].ID)
 }
 
 func TestAlterTablePlacement(t *testing.T) {
@@ -1415,6 +1440,22 @@ func TestDropTablePartitionGCPlacement(t *testing.T) {
 		bundlesMap[bundle.ID] = bundle
 	}
 	_, ok := bundlesMap[placement.GroupID(t1.Meta().ID)]
+	require.True(t, ok)
+
+	_, ok = bundlesMap[placement.GroupID(t2.Meta().ID)]
+	require.True(t, ok)
+
+	_, ok = bundlesMap[placement.GroupID(t2.Meta().Partition.Definitions[1].ID)]
+	require.True(t, ok)
+
+	bundles = dom.InfoSchema().AllPlacementBundles()
+	require.NoError(t, err)
+	require.Equal(t, 3, len(bundles))
+	bundlesMap = make(map[string]*placement.Bundle)
+	for _, bundle := range bundles {
+		bundlesMap[bundle.ID] = bundle
+	}
+	_, ok = bundlesMap[placement.GroupID(t1.Meta().ID)]
 	require.True(t, ok)
 
 	_, ok = bundlesMap[placement.GroupID(t2.Meta().ID)]

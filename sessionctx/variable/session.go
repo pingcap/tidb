@@ -30,7 +30,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -66,6 +66,7 @@ type RetryInfo struct {
 	DroppedPreparedStmtIDs []uint32
 	autoIncrementIDs       retryInfoAutoIDs
 	autoRandomIDs          retryInfoAutoIDs
+	LastRcReadTS           uint64
 }
 
 // Clean does some clean work.
@@ -182,6 +183,9 @@ type TransactionContext struct {
 
 	// CachedTables is not nil if the transaction write on cached table.
 	CachedTables map[int64]interface{}
+
+	// Last ts used by read-consistency read.
+	LastRcReadTs uint64
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.
@@ -535,6 +539,9 @@ type SessionVars struct {
 	// PlanColumnID is the unique id for column when building plan.
 	PlanColumnID int64
 
+	// MapHashCode2UniqueID4ExtendedCol map the expr's hash code to specified unique ID.
+	MapHashCode2UniqueID4ExtendedCol map[string]int
+
 	// User is the user identity with which the session login.
 	User *auth.UserIdentity
 
@@ -705,6 +712,9 @@ type SessionVars struct {
 
 	// OptimizerSelectivityLevel defines the level of the selectivity estimation in plan.
 	OptimizerSelectivityLevel int
+
+	// OptimizerEnableNewOnlyFullGroupByCheck enables the new only_full_group_by check which is implemented by maintaining functional dependency.
+	OptimizerEnableNewOnlyFullGroupByCheck bool
 
 	// EnableTablePartition enables table partition feature.
 	EnableTablePartition string
@@ -1010,8 +1020,17 @@ type SessionVars struct {
 	AssertionLevel AssertionLevel
 	// IgnorePreparedCacheCloseStmt controls if ignore the close-stmt command for prepared statement.
 	IgnorePreparedCacheCloseStmt bool
+	// EnableNewCostInterface is a internal switch to indicates whether to use the new cost calculation interface.
+	EnableNewCostInterface bool
 	// BatchPendingTiFlashCount shows the threshold of pending TiFlash tables when batch adding.
 	BatchPendingTiFlashCount int
+	// RcReadCheckTS indicates if ts check optimization is enabled for current session.
+	RcReadCheckTS bool
+	// RemoveOrderbyInSubquery indicates whether to remove ORDER BY in subquery.
+	RemoveOrderbyInSubquery bool
+
+	// MaxAllowedPacket indicates the maximum size of a packet for the MySQL protocol.
+	MaxAllowedPacket uint64
 }
 
 // InitStatementContext initializes a StatementContext, the object is reused to reduce allocation.
@@ -1247,6 +1266,8 @@ func NewSessionVars() *SessionVars {
 		Rng:                         utilMath.NewWithTime(),
 		StatsLoadSyncWait:           StatsLoadSyncWait.Load(),
 		EnableLegacyInstanceScope:   DefEnableLegacyInstanceScope,
+		RemoveOrderbyInSubquery:     DefTiDBRemoveOrderbyInSubquery,
+		MaxAllowedPacket:            DefMaxAllowedPacket,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -2351,4 +2372,13 @@ func (s *SessionVars) GetSeekFactor(tbl *model.TableInfo) float64 {
 		}
 	}
 	return s.seekFactor
+}
+
+// IsRcCheckTsRetryable checks if the current error is retryable for `RcReadCheckTS` path.
+func (s *SessionVars) IsRcCheckTsRetryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	// The `RCCheckTS` flag of `stmtCtx` is set.
+	return s.RcReadCheckTS && s.StmtCtx.RCCheckTS && errors.ErrorEqual(err, kv.ErrWriteConflict)
 }

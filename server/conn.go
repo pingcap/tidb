@@ -394,6 +394,9 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 }
 
 func (cc *clientConn) readPacket() ([]byte, error) {
+	if cc.ctx != nil {
+		cc.pkt.setMaxAllowedPacket(cc.ctx.GetSessionVars().MaxAllowedPacket)
+	}
 	return cc.pkt.readPacket()
 }
 
@@ -885,25 +888,21 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshakeRespon
 		if err != nil {
 			return nil, err
 		}
-		if resp.Capability&mysql.ClientPluginAuth > 0 {
-			_, err = cc.authSwitchRequest(ctx, mysql.AuthNativePassword)
-			if err != nil {
-				return nil, err
-			}
-		}
 		return []byte(user.Username), nil
 	}
 	if len(userplugin) == 0 {
 		// No user plugin set, assuming MySQL Native Password
 		// This happens if the account doesn't exist or if the account doesn't have
 		// a password set.
-		if resp.Capability&mysql.ClientPluginAuth > 0 {
-			resp.AuthPlugin = mysql.AuthNativePassword
-			authData, err := cc.authSwitchRequest(ctx, mysql.AuthNativePassword)
-			if err != nil {
-				return nil, err
+		if resp.AuthPlugin != mysql.AuthNativePassword {
+			if resp.Capability&mysql.ClientPluginAuth > 0 {
+				resp.AuthPlugin = mysql.AuthNativePassword
+				authData, err := cc.authSwitchRequest(ctx, mysql.AuthNativePassword)
+				if err != nil {
+					return nil, err
+				}
+				return authData, nil
 			}
-			return authData, nil
 		}
 		return nil, nil
 	}
@@ -1078,6 +1077,11 @@ func (cc *clientConn) Run(ctx context.Context) {
 							zap.Uint64("waitTimeout", waitTimeout),
 							zap.Error(err),
 						)
+					}
+				} else if errors.ErrorEqual(err, errNetPacketTooLarge) {
+					err := cc.writeError(ctx, err)
+					if err != nil {
+						terror.Log(err)
 					}
 				} else {
 					errStack := errors.ErrorStack(err)
@@ -1853,6 +1857,17 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		}
 		retryable, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
 		if err != nil {
+			if retryable && cc.ctx.GetSessionVars().IsRcCheckTsRetryable(err) {
+				cc.ctx.GetSessionVars().RetryInfo.Retrying = true
+				logutil.Logger(ctx).Info("RC read with ts checking has failed, retry RC read",
+					zap.String("sql", cc.ctx.GetSessionVars().StmtCtx.OriginalSQL))
+				_, err = cc.handleStmt(ctx, stmt, parserWarns, i == len(stmts)-1)
+				cc.ctx.GetSessionVars().RetryInfo.Retrying = false
+				if err != nil {
+					break
+				}
+				continue
+			}
 			if !retryable || !errors.ErrorEqual(err, storeerr.ErrTiFlashServerTimeout) {
 				break
 			}
@@ -2333,6 +2348,12 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 
 	if err := cc.ctx.Close(); err != nil {
 		logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
+	}
+	// session was closed by `ctx.Close` and should `openSession` explicitly to renew session.
+	// `openSession` won't run again in `openSessionAndDoAuth` because ctx is not nil.
+	err := cc.openSession()
+	if err != nil {
+		return err
 	}
 	if err := cc.openSessionAndDoAuth(pass, ""); err != nil {
 		return err

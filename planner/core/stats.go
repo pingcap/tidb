@@ -1258,6 +1258,13 @@ func (p *LogicalCTE) DeriveStats(childStats []*property.StatsInfo, selfSchema *e
 
 	var err error
 	if p.cte.seedPartPhysicalPlan == nil {
+		// Build push-downed predicates.
+		if len(p.cte.pushDownPredicates) > 0 {
+			newCond := expression.ComposeDNFCondition(p.ctx, p.cte.pushDownPredicates...)
+			newSel := LogicalSelection{Conditions: []expression.Expression{newCond}}.Init(p.SCtx(), p.cte.seedPartLogicalPlan.SelectBlockOffset())
+			newSel.SetChildren(p.cte.seedPartLogicalPlan)
+			p.cte.seedPartLogicalPlan = newSel
+		}
 		p.cte.seedPartPhysicalPlan, _, err = DoOptimize(context.TODO(), p.ctx, p.cte.optFlag, p.cte.seedPartLogicalPlan)
 		if err != nil {
 			return nil, err

@@ -375,6 +375,20 @@ func DecodeColumnValue(data []byte, ft *types.FieldType, loc *time.Location) (ty
 	return colDatum, nil
 }
 
+// DecodeColumnValueWithDatum decodes data to an existing Datum according to the column info.
+func DecodeColumnValueWithDatum(data []byte, ft *types.FieldType, loc *time.Location, result *types.Datum) error {
+	var err error
+	_, *result, err = codec.DecodeOne(data)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	*result, err = Unflatten(*result, ft, loc)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // DecodeRowWithMapNew decode a row to datum map.
 func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType,
 	loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
@@ -401,7 +415,7 @@ func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType,
 	return rd.DecodeToDatumMap(b, row)
 }
 
-// DecodeRowWithMap decodes a byte slice into datums with a existing row map.
+// DecodeRowWithMap decodes a byte slice into datums with an existing row map.
 // Row layout: colID1, value1, colID2, value2, .....
 func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	if row == nil {

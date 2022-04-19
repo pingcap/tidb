@@ -306,6 +306,15 @@ func TestCreateView(t *testing.T) {
 	// Refer https://github.com/pingcap/tidb/issues/25876
 	err = tk.ExecToErr("create view v_stale as select * from source_table as of timestamp current_timestamp(3)")
 	require.Truef(t, terror.ErrorEqual(err, executor.ErrViewInvalid), "err %s", err)
+
+	// Refer https://github.com/pingcap/tidb/issues/32682
+	tk.MustExec("drop view if exists v1,v2;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1(a INT, b INT);")
+	err = tk.ExecToErr("CREATE DEFINER=1234567890abcdefGHIKL1234567890abcdefGHIKL@localhost VIEW v1 AS SELECT a FROM t1;")
+	require.Truef(t, terror.ErrorEqual(err, executor.ErrWrongStringLength), "ERROR 1470 (HY000): String '1234567890abcdefGHIKL1234567890abcdefGHIKL' is too long for user name (should be no longer than 32)")
+	err = tk.ExecToErr("CREATE DEFINER=some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890X VIEW v2 AS SELECT b FROM t1;")
+	require.Truef(t, terror.ErrorEqual(err, executor.ErrWrongStringLength), "ERROR 1470 (HY000): String 'host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij12345' is too long for host name (should be no longer than 255)")
 }
 
 func TestViewRecursion(t *testing.T) {

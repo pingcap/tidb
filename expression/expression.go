@@ -950,7 +950,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 
 		// compare functions.
 		ast.LT, ast.LE, ast.EQ, ast.NE, ast.GE, ast.GT, ast.NullEQ, ast.In, ast.IsNull, ast.Like, ast.IsTruthWithoutNull, ast.IsTruthWithNull, ast.IsFalsity,
-		ast.Greatest, ast.Least, /* ast.Interval */
+		// ast.Greatest, ast.Least, ast.Interval
 
 		// arithmetical functions.
 		ast.PI, /* ast.Truncate */
@@ -961,21 +961,21 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 
 		// Rust use the llvm math functions, which have different precision with Golang/MySQL(cmath)
 		// open the following switchers if we implement them in coprocessor via `cmath`
-		ast.Sin, ast.Asin, ast.Cos, ast.Acos, ast.Tan, ast.Atan, ast.Atan2, ast.Cot,
+		ast.Sin, ast.Asin, ast.Cos, ast.Acos /* ast.Tan */, ast.Atan, ast.Atan2, ast.Cot,
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
 
 		// control flow functions.
 		ast.Case, ast.If, ast.Ifnull, ast.Coalesce,
 
 		// string functions.
-		ast.Bin, ast.Unhex, ast.Locate, ast.Ord, ast.Lpad, ast.Rpad,
-		ast.Trim, ast.FromBase64, ast.ToBase64, ast.Upper, ast.Lower, ast.InsertFunc,
-		ast.MakeSet, ast.SubstringIndex, ast.Instr, ast.Quote, ast.Oct,
-		ast.FindInSet, ast.Repeat,
+		// ast.Bin, ast.Unhex, ast.Locate, ast.Ord, ast.Lpad, ast.Rpad,
+		// ast.Trim, ast.FromBase64, ast.ToBase64, ast.Upper, ast.Lower, ast.InsertFunc,
+		// ast.MakeSet, ast.SubstringIndex, ast.Instr, ast.Quote, ast.Oct,
+		// ast.FindInSet, ast.Repeat,
 		ast.Length, ast.BitLength, ast.Concat, ast.ConcatWS, ast.Replace, ast.ASCII, ast.Hex,
 		ast.Reverse, ast.LTrim, ast.RTrim, ast.Strcmp, ast.Space, ast.Elt, ast.Field,
 		InternalFuncFromBinary, InternalFuncToBinary, ast.Mid, ast.Substring, ast.Substr, ast.CharLength,
-		ast.Right, ast.Left,
+		ast.Right, /* ast.Left */
 
 		// json functions.
 		ast.JSONType, ast.JSONExtract, ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
@@ -984,14 +984,14 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		ast.JSONUnquote,
 
 		// date functions.
-		ast.Date, ast.Week, ast.YearWeek, ast.ToSeconds, ast.DateDiff,
+		ast.Date, ast.Week /* ast.YearWeek, ast.ToSeconds */, ast.DateDiff,
 		/* ast.TimeDiff, ast.AddTime,  ast.SubTime, */
 		ast.MonthName, ast.MakeDate, ast.TimeToSec, ast.MakeTime,
 		ast.DateFormat,
 		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond, ast.Month,
 		/* ast.DayName */ ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear,
-		ast.Weekday, ast.WeekOfYear, ast.Year,
-		ast.FromDays, ast.ToDays,
+		/* ast.Weekday */ ast.WeekOfYear, ast.Year,
+		ast.FromDays,                  /* ast.ToDays */
 		ast.PeriodAdd, ast.PeriodDiff, /*ast.TimestampDiff, ast.DateAdd, ast.FromUnixTime,*/
 		/* ast.LastDay */
 		ast.Sysdate,
@@ -1056,7 +1056,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.Concat, ast.ConcatWS,
 		ast.Date, ast.Year, ast.Month, ast.Day, ast.Quarter, ast.DayName, ast.MonthName,
 		ast.DateDiff, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
-		ast.DayOfMonth, ast.LastDay,
+		ast.DayOfWeek, ast.DayOfMonth, ast.DayOfYear, ast.LastDay,
 
 		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Sign,
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,

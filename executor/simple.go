@@ -786,6 +786,12 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 
 	users := make([]*auth.UserIdentity, 0, len(s.Specs))
 	for _, spec := range s.Specs {
+		if len(spec.User.Username) > auth.UserNameMaxLength {
+			return ErrWrongStringLength.GenWithStackByArgs(spec.User.Username, "user name", auth.UserNameMaxLength)
+		}
+		if len(spec.User.Hostname) > auth.HostNameMaxLength {
+			return ErrWrongStringLength.GenWithStackByArgs(spec.User.Hostname, "host name", auth.HostNameMaxLength)
+		}
 		if len(users) > 0 {
 			sqlexec.MustFormatSQL(sql, ",")
 		}
@@ -1081,6 +1087,12 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 
 	for _, userToUser := range s.UserToUsers {
 		oldUser, newUser := userToUser.OldUser, userToUser.NewUser
+		if len(newUser.Username) > auth.UserNameMaxLength {
+			return ErrWrongStringLength.GenWithStackByArgs(newUser.Username, "user name", auth.UserNameMaxLength)
+		}
+		if len(newUser.Hostname) > auth.HostNameMaxLength {
+			return ErrWrongStringLength.GenWithStackByArgs(newUser.Hostname, "host name", auth.HostNameMaxLength)
+		}
 		exists, err := userExistsInternal(sqlExecutor, oldUser.Username, oldUser.Hostname)
 		if err != nil {
 			return err

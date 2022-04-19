@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -475,6 +476,9 @@ func TestCheckTableEmpty(t *testing.T) {
 	require.NoError(t, err)
 	rc.tidbGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
 	mock.MatchExpectationsInOrder(false)
+	// test auto retry retryable error
+	mock.ExpectQuery("select 1 from `test1`.`tbl1` limit 1").
+		WillReturnError(mysql.NewErr(errno.ErrPDServerTimeout))
 	mock.ExpectQuery("select 1 from `test1`.`tbl1` limit 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
 	mock.ExpectQuery("select 1 from `test1`.`tbl2` limit 1").
@@ -543,6 +547,18 @@ func TestCheckTableEmpty(t *testing.T) {
 	err = rc.checkTableEmpty(ctx)
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
+
+	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/restore/CheckTableEmptyFailed", `return`)
+	require.NoError(t, err)
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/restore/CheckTableEmptyFailed")
+	}()
+
+	// restrict the concurrency to ensure there are more tables than workers
+	rc.cfg.App.RegionConcurrency = 1
+	// test check tables not stuck but return the right error
+	err = rc.checkTableEmpty(ctx)
+	require.Regexp(t, ".*check table contains data failed: mock error.*", err.Error())
 }
 
 func TestLocalResource(t *testing.T) {

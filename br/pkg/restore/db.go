@@ -30,6 +30,15 @@ type UniqueTableName struct {
 	Table string
 }
 
+type DDLJobFilterRule func(ddlJob *model.Job) bool
+
+var incrementalRestoreActionBlockList = map[model.ActionType]struct{}{
+	model.ActionSetTiFlashReplica:          {},
+	model.ActionUpdateTiFlashReplicaStatus: {},
+	model.ActionLockTable:                  {},
+	model.ActionUnlockTable:                {},
+}
+
 // NewDB returns a new DB.
 func NewDB(g glue.Glue, store kv.Storage, policyMode string) (*DB, bool, error) {
 	se, err := g.CreateSession(store)
@@ -88,6 +97,13 @@ func (db *DB) ExecDDL(ctx context.Context, ddlJob *model.Job) error {
 				zap.Error(err))
 		}
 		return errors.Trace(err)
+	}
+
+	if ddlJob.Query == "" {
+		log.Warn("query of ddl job is empty, ignore it",
+			zap.Stringer("type", ddlJob.Type),
+			zap.String("db", ddlJob.SchemaName))
+		return nil
 	}
 
 	if tableInfo != nil {
@@ -211,7 +227,7 @@ func (db *DB) restoreSequence(ctx context.Context, table *metautil.Table) error 
 	return errors.Trace(err)
 }
 
-func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table, ddlTables map[UniqueTableName]bool) error {
+func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table, toBeCorrectedTables map[UniqueTableName]bool) error {
 
 	var restoreMetaSQL string
 	var err error
@@ -223,8 +239,8 @@ func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table,
 		if err != nil {
 			return errors.Trace(err)
 		}
-	// only table exists in ddlJobs during incremental restoration should do alter after creation.
-	case ddlTables[UniqueTableName{table.DB.Name.String(), table.Info.Name.String()}]:
+	// only table exists in restored cluster during incremental restoration should do alter after creation.
+	case toBeCorrectedTables[UniqueTableName{table.DB.Name.String(), table.Info.Name.String()}]:
 		if utils.NeedAutoID(table.Info) {
 			restoreMetaSQL = fmt.Sprintf(
 				"alter table %s.%s auto_increment = %d;",
@@ -263,18 +279,13 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 		m := map[string][]*model.TableInfo{}
 		for _, table := range tables {
 			m[table.DB.Name.L] = append(m[table.DB.Name.L], table.Info)
-			if table.Info.PlacementPolicyRef != nil && policyMap != nil {
-				if !supportPolicy {
-					log.Info("set placementPolicyRef to nil when target tidb not support policy",
-						zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
-					table.Info.PlacementPolicyRef = nil
-				} else if p, exists := policyMap.Load(table.Info.PlacementPolicyRef.Name.L); exists {
-					err := db.CreatePlacementPolicy(ctx, p.(*model.PolicyInfo))
-					if err != nil {
-						return errors.Trace(err)
-					}
-					// delete policy in cache after restore table succeed.
-					policyMap.Delete(table.Info.PlacementPolicyRef.Name.L)
+			if !supportPolicy {
+				log.Info("set placementPolicyRef to nil when target tidb not support policy",
+					zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
+				table.Info.ClearPlacement()
+			} else {
+				if err := db.ensureTablePlacementPolicies(ctx, table.Info, policyMap); err != nil {
+					return errors.Trace(err)
 				}
 			}
 		}
@@ -295,20 +306,16 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 // CreateTable executes a CREATE TABLE SQL.
 func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 	ddlTables map[UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
-	if table.Info.PlacementPolicyRef != nil && policyMap != nil {
-		if !supportPolicy {
-			log.Info("set placementPolicyRef to nil when target tidb not support policy",
-				zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
-			table.Info.PlacementPolicyRef = nil
-		} else if p, exists := policyMap.Load(table.Info.PlacementPolicyRef.Name.L); exists {
-			err := db.CreatePlacementPolicy(ctx, p.(*model.PolicyInfo))
-			if err != nil {
-				return errors.Trace(err)
-			}
-			// delete policy in cache after restore table succeed.
-			policyMap.Delete(table.Info.PlacementPolicyRef.Name.L)
+	if !supportPolicy {
+		log.Info("set placementPolicyRef to nil when target tidb not support policy",
+			zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
+		table.Info.ClearPlacement()
+	} else {
+		if err := db.ensureTablePlacementPolicies(ctx, table.Info, policyMap); err != nil {
+			return errors.Trace(err)
 		}
 	}
+
 	err := db.se.CreateTable(ctx, table.DB.Name, table.Info)
 	if err != nil {
 		log.Error("create table failed",
@@ -329,6 +336,41 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 // Close closes the connection.
 func (db *DB) Close() {
 	db.se.Close()
+}
+
+func (db *DB) ensurePlacementPolicy(ctx context.Context, policyName model.CIStr, policies *sync.Map) error {
+	if policies == nil {
+		return nil
+	}
+
+	if policy, ok := policies.LoadAndDelete(policyName.L); ok {
+		return db.CreatePlacementPolicy(ctx, policy.(*model.PolicyInfo))
+	}
+
+	// This means policy already created
+	return nil
+}
+
+func (db *DB) ensureTablePlacementPolicies(ctx context.Context, tableInfo *model.TableInfo, policies *sync.Map) error {
+	if tableInfo.PlacementPolicyRef != nil {
+		if err := db.ensurePlacementPolicy(ctx, tableInfo.PlacementPolicyRef.Name, policies); err != nil {
+			return err
+		}
+	}
+
+	if tableInfo.Partition != nil {
+		for _, def := range tableInfo.Partition.Definitions {
+			if def.PlacementPolicyRef == nil {
+				continue
+			}
+
+			if err := db.ensurePlacementPolicy(ctx, def.PlacementPolicyRef.Name, policies); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 // FilterDDLJobs filters ddl jobs.
@@ -383,6 +425,31 @@ func FilterDDLJobs(allDDLJobs []*model.Job, tables []*metautil.Table) (ddlJobs [
 	return ddlJobs
 }
 
+// FilterDDLJobByRules if one of rules returns true, the job in srcDDLJobs will be filtered.
+func FilterDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) (dstDDLJobs []*model.Job) {
+	dstDDLJobs = make([]*model.Job, 0, len(srcDDLJobs))
+	for _, ddlJob := range srcDDLJobs {
+		passed := true
+		for _, rule := range rules {
+			if rule(ddlJob) {
+				passed = false
+				break
+			}
+		}
+
+		if passed {
+			dstDDLJobs = append(dstDDLJobs, ddlJob)
+		}
+	}
+
+	return
+}
+
+// DDLJobBlockListRule rule for filter ddl job with type in block list.
+func DDLJobBlockListRule(ddlJob *model.Job) bool {
+	return checkIsInActions(ddlJob.Type, incrementalRestoreActionBlockList)
+}
+
 func getDatabases(tables []*metautil.Table) (dbs []*model.DBInfo) {
 	dbIDs := make(map[int64]bool)
 	for _, table := range tables {
@@ -392,4 +459,9 @@ func getDatabases(tables []*metautil.Table) (dbs []*model.DBInfo) {
 		}
 	}
 	return
+}
+
+func checkIsInActions(action model.ActionType, actions map[model.ActionType]struct{}) bool {
+	_, ok := actions[action]
+	return ok
 }
