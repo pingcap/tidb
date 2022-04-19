@@ -440,3 +440,23 @@ func TestCTEExecError(t *testing.T) {
 		require.True(t, terror.ErrorEqual(err, types.ErrOverflow))
 	}
 }
+
+// https://github.com/pingcap/tidb/issues/33965.
+func TestCTEsInView(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("create database if not exists test1;")
+	tk.MustExec("create table test.t (a int);")
+	tk.MustExec("create table test1.t (a int);")
+	tk.MustExec("insert into test.t values (1);")
+	tk.MustExec("insert into test1.t values (2);")
+
+	tk.MustExec("use test;")
+	tk.MustExec("create definer='root'@'localhost' view test.v as with tt as (select * from t) select * from tt;")
+	tk.MustQuery("select * from test.v;").Check(testkit.Rows("1"))
+	tk.MustExec("use test1;")
+	tk.MustQuery("select * from test.v;").Check(testkit.Rows("1"))
+}
