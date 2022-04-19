@@ -23,6 +23,7 @@ import (
 	"reflect"
 	"regexp"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/BurntSushi/toml"
@@ -531,6 +532,70 @@ func TestPreparePlanCacheValid(t *testing.T) {
 	for testCase, res := range tests {
 		conf.PreparedPlanCache = testCase
 		require.Equal(t, res, conf.Valid() == nil)
+	}
+}
+
+func TestConflictInstanceConfig(t *testing.T) {
+	conf := new(Config)
+	configFile := "config.toml"
+	_, localFile, _, _ := runtime.Caller(0)
+	configFile = filepath.Join(filepath.Dir(localFile), configFile)
+
+	f, err := os.Create(configFile)
+	require.NoError(t, err)
+	defer func(configFile string) {
+		require.NoError(t, os.Remove(configFile))
+	}(configFile)
+
+	// conflictOptions indicates the options existing in both [instance] and some other sessions.
+	// Just receive a warning and keep their respective values.
+	conflictOptions := []string{
+		"check-mb4-value-in-utf8",
+		"enable-slow-log",
+		"force-priority",
+	}
+	_, err = f.WriteString("check-mb4-value-in-utf8 = true \n" +
+		"[log] \nenable-slow-log = true \n" +
+		"[performance] \nforce-priority = \"NO_PRIORITY\"\n" +
+		"[instance] \ncheck-mb4-value-in-utf8 = false \nenable-slow-log = false \nforce-priority = \"LOW_PRIORITY\"")
+	require.NoError(t, err)
+	require.NoError(t, f.Sync())
+	err = conf.Load(configFile)
+	require.Error(t, err)
+	require.True(t, strings.Contains(err.Error(), "exists on both [instance] section and some other sections"))
+	require.True(t, !conf.Instance.CheckMb4ValueInUTF8.Load() && conf.CheckMb4ValueInUTF8.Load())
+	require.Equal(t, true, conf.Log.EnableSlowLog.Load())
+	require.Equal(t, false, conf.Instance.EnableSlowLog.Load())
+	require.Equal(t, "NO_PRIORITY", conf.Performance.ForcePriority)
+	require.Equal(t, "LOW_PRIORITY", conf.Instance.ForcePriority)
+	for _, conflictOption := range conflictOptions {
+		_, ok := ConflictOptions[conflictOption]
+		require.True(t, ok)
+	}
+
+	err = f.Truncate(0)
+	require.NoError(t, err)
+	_, err = f.Seek(0, 0)
+	require.NoError(t, err)
+
+	// deprecatedOptions indicates the options that should be moved to [instance] section.
+	// The value in conf.Instance.* would be overwritten by the other sections.
+	deprecatedOptions := []string{
+		"enable-collect-execution-info",
+		"slow-threshold",
+		"memory-usage-alarm-ratio",
+	}
+	_, err = f.WriteString("enable-collect-execution-info = false \n" +
+		"[log] \nslow-threshold = 100 \n" +
+		"[performance] \nmemory-usage-alarm-ratio = 0.5")
+	require.NoError(t, err)
+	require.NoError(t, f.Sync())
+	err = conf.Load(configFile)
+	require.Error(t, err)
+	require.True(t, strings.Contains(err.Error(), "should be moved to [instance] section."))
+	for _, deprecatedOption := range deprecatedOptions {
+		_, ok := DeprecatedOptions[deprecatedOption]
+		require.True(t, ok)
 	}
 }
 

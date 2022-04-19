@@ -97,9 +97,8 @@ var (
 )
 
 var (
-	// Potential conflicts between 'instance' config options and other ones.
-	// Key is the config section, value is the config options.
-	potentialConflictOptions = []struct {
+	// optionsMovedToInstance indicates the config options that should be moved to [instance] section from other sessions.
+	optionsMovedToInstance = []struct {
 		sectionName string
 		options     []string
 	}{
@@ -125,8 +124,10 @@ var (
 				"memory-usage-alarm-ratio"},
 		},
 	}
-	// Conflict config options between 'instance' and other ones.
+	// ConflictOptions indicates the conflict config options between 'instance' and other sections.
 	ConflictOptions = map[string]struct{}{}
+	// DeprecatedOptions indicates the config options that should be moved to 'instance' section.
+	DeprecatedOptions = map[string]struct{}{}
 )
 
 // Config contains configuration options.
@@ -506,13 +507,23 @@ func (e *ErrConfigValidationFailed) Error() string {
 // ErrConfigInstanceSection error is used to warning the user that the config options in 'instance'
 // are also set in another place.
 type ErrConfigInstanceSection struct {
-	confFile        string
-	conflictOptions []string
+	confFile          string
+	conflictOptions   []string
+	deprecatedOptions []string
 }
 
 func (e *ErrConfigInstanceSection) Error() string {
-	return fmt.Sprintf("Config file %s contained conflict configuration options '%s' that exist "+
-		"on both [instance] section and some other sections. Please use [instance] section instead.", e.confFile, strings.Join(e.conflictOptions, ","))
+	str := ""
+	if len(e.conflictOptions) > 0 {
+		str += fmt.Sprintf("Conflict configuration options '%s' exists on both [instance] section and some other sections, "+
+			"please use [instance] section instead.",
+			strings.Join(e.conflictOptions, ","))
+	}
+	if len(e.deprecatedOptions) > 0 {
+		str += fmt.Sprintf("Configuration options '%s' should be moved to [instance] section.",
+			strings.Join(e.deprecatedOptions, ","))
+	}
+	return str
 }
 
 // ClusterSecurity returns Security info for cluster
@@ -993,25 +1004,29 @@ func (c *Config) Load(confFile string) error {
 		err = &ErrConfigValidationFailed{confFile, undecodedItems}
 	}
 
-	if metaData.IsDefined("instance") {
-		for _, section := range potentialConflictOptions {
-			for _, option := range section.options {
+	for _, section := range optionsMovedToInstance {
+		for _, option := range section.options {
+			if section.sectionName == "" && metaData.IsDefined(option) ||
+				section.sectionName != "" && metaData.IsDefined(section.sectionName, option) {
 				if metaData.IsDefined("instance", option) {
-					if section.sectionName == "" && metaData.IsDefined(option) ||
-						section.sectionName != "" && metaData.IsDefined(section.sectionName, option) {
-						ConflictOptions[option] = struct{}{}
-					}
+					ConflictOptions[option] = struct{}{}
+				} else {
+					DeprecatedOptions[option] = struct{}{}
 				}
 			}
 		}
-		if len(ConflictOptions) > 0 {
-			// Give a warning that the 'instance' section should be used.
-			s := make([]string, 0, len(ConflictOptions))
-			for k := range ConflictOptions {
-				s = append(s, k)
-			}
-			err = &ErrConfigInstanceSection{confFile, s}
+	}
+	if len(ConflictOptions) > 0 || len(DeprecatedOptions) > 0 {
+		// Give a warning that the 'instance' section should be used.
+		strConflictOptions := make([]string, 0, len(ConflictOptions))
+		for k := range ConflictOptions {
+			strConflictOptions = append(strConflictOptions, k)
 		}
+		strDeprecatedOptions := make([]string, 0, len(ConflictOptions))
+		for k := range DeprecatedOptions {
+			strDeprecatedOptions = append(strDeprecatedOptions, k)
+		}
+		err = &ErrConfigInstanceSection{confFile, strConflictOptions, strDeprecatedOptions}
 	}
 
 	return err
