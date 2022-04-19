@@ -949,7 +949,7 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, enforceCm
 					err = nil
 				}
 			} else if tmp, ok := err.(*ErrConfigInstanceSection); ok {
-				logutil.BgLogger().Warn(fmt.Sprintf(tmp.Error()))
+				logutil.BgLogger().Warn(tmp.Error())
 				err = nil
 			}
 		}
