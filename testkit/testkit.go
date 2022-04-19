@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -206,7 +207,13 @@ func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, err
 		parserWarns := warns[len(prevWarns):]
 		var rs0 sqlexec.RecordSet
 		for i, stmt := range stmts {
-			rs, err := tk.session.ExecuteStmt(ctx, stmt)
+			var rs sqlexec.RecordSet
+			var err error
+			if s, ok := stmt.(*ast.NonTransactionalDeleteStmt); ok {
+				rs, err = session.HandleNonTransactionalDelete(ctx, s, tk.Session())
+			} else {
+				rs, err = tk.Session().ExecuteStmt(ctx, stmt)
+			}
 			if i == 0 {
 				rs0 = rs
 			}
