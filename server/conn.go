@@ -411,6 +411,9 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 }
 
 func (cc *clientConn) readPacket() ([]byte, error) {
+	if cc.getCtx() != nil {
+		cc.pkt.setMaxAllowedPacket(cc.ctx.GetSessionVars().MaxAllowedPacket)
+	}
 	return cc.pkt.readPacket()
 }
 
@@ -1091,6 +1094,11 @@ func (cc *clientConn) Run(ctx context.Context) {
 							zap.Uint64("waitTimeout", waitTimeout),
 							zap.Error(err),
 						)
+					}
+				} else if errors.ErrorEqual(err, errNetPacketTooLarge) {
+					err := cc.writeError(ctx, err)
+					if err != nil {
+						terror.Log(err)
 					}
 				} else {
 					errStack := errors.ErrorStack(err)
