@@ -84,7 +84,7 @@ type innerTxnStartTsBox struct {
 
 #### Store And Delete Internal Sessions
 
-TiDB gets an internal session from a session pool implemented in `(s *session) getInternalSession`, when the transaction finished,it puts the session to the pool. This design stores the internal session to session manger and deletes the internal session from session manager in the function	`(s *session) getInternalSession`. It calls the function `infosync.DeleteInternalSession()` to delete the internal session from session manager and calls the function `infosync.StoreInternalSession` to add the internal session to session manger.
+TiDB gets an internal session from a session pool implemented in `(s *session) getInternalSession`, when the transaction finished,it puts the session to the pool. This design stores the internal session to session manger in the function `(s *session) getInternalSession` and deletes the internal session from session manager in the callback returned by `getInternalSession`. It calls the function `infosync.DeleteInternalSession()` to delete the internal session from session manager and calls the function `infosync.StoreInternalSession` to add the internal session to session manger.
 
 ```go
 func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, func(), error) {
@@ -124,7 +124,7 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 
 #### Calculate GC Safe Point
 
-Currently, TiDB calculates gc safepoint in the function `(is *InfoSyncer) ReportMinStartTS`. This design add some code in the  function `ReportMinStartTS` to consider internal transactions when calculates gc safepoint.
+`ReportMinStartTS` calculates the minimum startTS of ongoing transactions (except the ones that exceed the limit), and it's result is useful for calculating the safe point, which is gc_worker's work.This design add some code in the  function `ReportMinStartTS` to consider internal transactions when calculates the minimum startTS.
 
 ```go
 func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {}
