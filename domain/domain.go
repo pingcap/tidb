@@ -86,11 +86,11 @@ type Domain struct {
 	sysVarCache          sysVarCache // replaces GlobalVariableCache
 	slowQuery            *topNSlowQueries
 	expensiveQueryHandle *expensivequery.Handle
-	wg                   sync.WaitGroup
+	wg                   util.WaitGroupWrapper
 	statsUpdating        atomicutil.Int32
 	cancel               context.CancelFunc
 	indexUsageSyncLease  time.Duration
-	planReplayer         *planReplayer
+	dumpFileGcChecker    *dumpFileGcChecker
 	expiredTimeStamp4PC  types.Time
 
 	serverID             uint64
@@ -154,17 +154,12 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	bundles, err := infosync.GetAllRuleBundles(context.TODO())
-	if err != nil {
-		return nil, false, currentSchemaVersion, nil, err
-	}
-
 	policies, err := do.fetchPolicies(m)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithDBInfos(schemas, bundles, policies, neededSchemaVersion)
+	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithDBInfos(schemas, policies, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -287,6 +282,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		diffs = append(diffs, diff)
 	}
 	builder := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithOldInfoSchema(do.infoCache.GetLatest())
+	builder.SetDeltaUpdateBundles()
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
 	for _, diff := range diffs {
@@ -718,7 +714,7 @@ func (do *Domain) Close() {
 const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
-func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, idxUsageSyncLease time.Duration, planReplayerGCLease time.Duration, factory pools.Factory, onClose func()) *Domain {
+func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, idxUsageSyncLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory, onClose func()) *Domain {
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
 		store:               store,
@@ -728,7 +724,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		infoCache:           infoschema.NewCache(16),
 		slowQuery:           newTopNSlowQueries(30, time.Hour*24*7, 500),
 		indexUsageSyncLease: idxUsageSyncLease,
-		planReplayer:        &planReplayer{planReplayerGCLease: planReplayerGCLease},
+		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{GetPlanReplayerDirName(), GetOptimizerTraceDirName()}},
 		onClose:             onClose,
 		expiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),
 	}
@@ -810,6 +806,25 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 			do.ddl = d
 		}
 	})
+
+	if config.GetGlobalConfig().Experimental.EnableGlobalKill {
+		if do.etcdClient != nil {
+			err := do.acquireServerID(ctx)
+			if err != nil {
+				logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
+				do.isLostConnectionToPD.Store(1) // will retry in `do.serverIDKeeper`
+			} else {
+				do.isLostConnectionToPD.Store(0)
+			}
+
+			do.wg.Add(1)
+			go do.serverIDKeeper()
+		} else {
+			// set serverID for standalone deployment to enable 'KILL'.
+			atomic.StoreUint64(&do.serverID, serverIDForStandalone)
+		}
+	}
+
 	// step 1: prepare the info/schema syncer which domain reload needed.
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID, do.etcdClient, skipRegisterToDashboard)
@@ -836,24 +851,6 @@ func (do *Domain) Init(ddlLease time.Duration, sysExecutorFactory func(*Domain) 
 	err = do.ddl.Start(sysCtxPool)
 	if err != nil {
 		return err
-	}
-
-	if config.GetGlobalConfig().Experimental.EnableGlobalKill {
-		if do.etcdClient != nil {
-			err := do.acquireServerID(ctx)
-			if err != nil {
-				logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
-				do.isLostConnectionToPD.Store(1) // will retry in `do.serverIDKeeper`
-			} else {
-				do.isLostConnectionToPD.Store(0)
-			}
-
-			do.wg.Add(1)
-			go do.serverIDKeeper()
-		} else {
-			// set serverID for standalone deployment to enable 'KILL'.
-			atomic.StoreUint64(&do.serverID, serverIDForStandalone)
-		}
 	}
 
 	// Only when the store is local that the lease value is 0.
@@ -1221,23 +1218,23 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 	}()
 }
 
-// PlanReplayerLoop creates a goroutine that handles `exit` and `gc`.
-func (do *Domain) PlanReplayerLoop() {
+// DumpFileGcCheckerLoop creates a goroutine that handles `exit` and `gc`.
+func (do *Domain) DumpFileGcCheckerLoop() {
 	do.wg.Add(1)
 	go func() {
-		gcTicker := time.NewTicker(do.planReplayer.planReplayerGCLease)
+		gcTicker := time.NewTicker(do.dumpFileGcChecker.gcLease)
 		defer func() {
 			gcTicker.Stop()
 			do.wg.Done()
-			logutil.BgLogger().Info("PlanReplayerLoop exited.")
-			util.Recover(metrics.LabelDomain, "PlanReplayerLoop", nil, false)
+			logutil.BgLogger().Info("dumpFileGcChecker exited.")
+			util.Recover(metrics.LabelDomain, "dumpFileGcCheckerLoop", nil, false)
 		}()
 		for {
 			select {
 			case <-do.exit:
 				return
 			case <-gcTicker.C:
-				do.planReplayer.planReplayerGC(time.Hour)
+				do.dumpFileGcChecker.gcDumpFiles(time.Hour)
 			}
 		}
 	}()
@@ -1297,8 +1294,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	do.ddl.RegisterStatsHandle(statsHandle)
 	// Negative stats lease indicates that it is in test, it does not need update.
 	if do.statsLease >= 0 {
-		do.wg.Add(1)
-		go do.loadStatsWorker()
+		do.wg.Run(do.loadStatsWorker)
 	}
 	owner := do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
 	if do.indexUsageSyncLease > 0 {
@@ -1308,13 +1304,12 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	if do.statsLease <= 0 {
 		return nil
 	}
-	do.wg.Add(1)
 	do.SetStatsUpdating(true)
-	go do.updateStatsWorker(ctx, owner)
+	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) })
 	if RunAutoAnalyze {
-		do.wg.Add(1)
-		go do.autoAnalyzeWorker(owner)
+		do.wg.Run(func() { do.autoAnalyzeWorker(owner) })
 	}
+	do.wg.Run(func() { do.gcAnalyzeHistory(owner) })
 	return nil
 }
 
@@ -1353,7 +1348,6 @@ func (do *Domain) loadStatsWorker() {
 	loadTicker := time.NewTicker(lease)
 	defer func() {
 		loadTicker.Stop()
-		do.wg.Done()
 		logutil.BgLogger().Info("loadStatsWorker exited.")
 	}()
 	statsHandle := do.StatsHandle()
@@ -1431,7 +1425,6 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		gcStatsTicker.Stop()
 		deltaUpdateTicker.Stop()
 		do.SetStatsUpdating(false)
-		do.wg.Done()
 		logutil.BgLogger().Info("updateStatsWorker exited.")
 	}()
 	for {
@@ -1489,7 +1482,6 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	analyzeTicker := time.NewTicker(do.statsLease)
 	defer func() {
 		analyzeTicker.Stop()
-		do.wg.Done()
 		logutil.BgLogger().Info("autoAnalyzeWorker exited.")
 	}()
 	for {
@@ -1497,6 +1489,32 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 		case <-analyzeTicker.C:
 			if owner.IsOwner() {
 				statsHandle.HandleAutoAnalyze(do.InfoSchema())
+			}
+		case <-do.exit:
+			return
+		}
+	}
+}
+
+func (do *Domain) gcAnalyzeHistory(owner owner.Manager) {
+	defer util.Recover(metrics.LabelDomain, "gcAnalyzeHistory", nil, false)
+	const gcInterval = time.Hour
+	statsHandle := do.StatsHandle()
+	gcTicker := time.NewTicker(gcInterval)
+	defer func() {
+		gcTicker.Stop()
+		logutil.BgLogger().Info("gcAnalyzeHistory exited.")
+	}()
+	for {
+		select {
+		case <-gcTicker.C:
+			if owner.IsOwner() {
+				const DaysToKeep = 7
+				updateTime := time.Now().AddDate(0, 0, -DaysToKeep)
+				err := statsHandle.DeleteAnalyzeJobs(updateTime)
+				if err != nil {
+					logutil.BgLogger().Warn("gc analyze history failed", zap.Error(err))
+				}
 			}
 		case <-do.exit:
 			return

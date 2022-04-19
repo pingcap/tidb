@@ -122,6 +122,14 @@ func (sm *mockSessionManager2) KillAllConnections()           {}
 func (sm *mockSessionManager2) UpdateTLSConfig(_ *tls.Config) {}
 func (sm *mockSessionManager2) ServerID() uint64              { return 1 }
 
+func (sm *mockSessionManager2) StoreInternalSession(se interface{}) {}
+
+func (sm *mockSessionManager2) DeleteInternalSession(se interface{}) {}
+
+func (sm *mockSessionManager2) GetInternalSessionStartTSList() []uint64 {
+	return nil
+}
+
 func TestPreparedStmtWithHint(t *testing.T) {
 	// see https://github.com/pingcap/tidb/issues/18535
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)

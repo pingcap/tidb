@@ -30,6 +30,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -49,8 +50,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-
-	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/shurcooL/httpgzip"
 	"go.uber.org/zap"
@@ -134,6 +133,50 @@ func (l *Lightning) GoServe() error {
 	return l.goServe(statusAddr, io.Discard)
 }
 
+// TODO: maybe handle http request using gin
+type loggingResponseWriter struct {
+	http.ResponseWriter
+	statusCode int
+	body       string
+}
+
+func newLoggingResponseWriter(w http.ResponseWriter) *loggingResponseWriter {
+	return &loggingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+}
+
+func (lrw *loggingResponseWriter) WriteHeader(code int) {
+	lrw.statusCode = code
+	lrw.ResponseWriter.WriteHeader(code)
+}
+
+func (lrw *loggingResponseWriter) Write(d []byte) (int, error) {
+	// keep first part of the response for logging, max 1K
+	if lrw.body == "" && len(d) > 0 {
+		length := len(d)
+		if length > 1024 {
+			length = 1024
+		}
+		lrw.body = string(d[:length])
+	}
+	return lrw.ResponseWriter.Write(d)
+}
+
+func httpHandleWrapper(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		logger := log.L().With(zap.String("method", r.Method), zap.Stringer("url", r.URL)).
+			Begin(zapcore.InfoLevel, "process http request")
+
+		newWriter := newLoggingResponseWriter(w)
+		h.ServeHTTP(newWriter, r)
+
+		bodyField := zap.Skip()
+		if newWriter.Header().Get("Content-Encoding") != "gzip" {
+			bodyField = zap.String("body", newWriter.body)
+		}
+		logger.End(zapcore.InfoLevel, nil, zap.Int("status", newWriter.statusCode), bodyField)
+	}
+}
+
 func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	mux := http.NewServeMux()
 	mux.Handle("/", http.RedirectHandler("/web/", http.StatusFound))
@@ -146,13 +189,13 @@ func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
 	handleTasks := http.StripPrefix("/tasks", http.HandlerFunc(l.handleTask))
-	mux.Handle("/tasks", handleTasks)
-	mux.Handle("/tasks/", handleTasks)
-	mux.HandleFunc("/progress/task", handleProgressTask)
-	mux.HandleFunc("/progress/table", handleProgressTable)
-	mux.HandleFunc("/pause", handlePause)
-	mux.HandleFunc("/resume", handleResume)
-	mux.HandleFunc("/loglevel", handleLogLevel)
+	mux.Handle("/tasks", httpHandleWrapper(handleTasks.ServeHTTP))
+	mux.Handle("/tasks/", httpHandleWrapper(handleTasks.ServeHTTP))
+	mux.HandleFunc("/progress/task", httpHandleWrapper(handleProgressTask))
+	mux.HandleFunc("/progress/table", httpHandleWrapper(handleProgressTable))
+	mux.HandleFunc("/pause", httpHandleWrapper(handlePause))
+	mux.HandleFunc("/resume", httpHandleWrapper(handleResume))
+	mux.HandleFunc("/loglevel", httpHandleWrapper(handleLogLevel))
 
 	mux.Handle("/web/", http.StripPrefix("/web", httpgzip.FileServer(web.Res, httpgzip.FileServerOptions{
 		IndexHTML: true,
@@ -188,6 +231,7 @@ func (l *Lightning) goServe(statusAddr string, realAddrWriter io.Writer) error {
 //   use a default glue later.
 // - for lightning as a library, taskCtx could be a meaningful context that get canceled outside, and glue could be a
 //   caller implemented glue.
+// deprecated: use RunOnceWithOptions instead.
 func (l *Lightning) RunOnce(taskCtx context.Context, taskCfg *config.Config, glue glue.Glue) error {
 	if err := taskCfg.Adjust(taskCtx); err != nil {
 		return err
@@ -198,7 +242,7 @@ func (l *Lightning) RunOnce(taskCtx context.Context, taskCfg *config.Config, glu
 		taskCfg.TaskID = int64(val.(int))
 	})
 
-	return l.run(taskCtx, taskCfg, glue)
+	return l.run(taskCtx, taskCfg, &options{glue: glue})
 }
 
 func (l *Lightning) RunServer() error {
@@ -215,7 +259,8 @@ func (l *Lightning) RunServer() error {
 		if err != nil {
 			return err
 		}
-		err = l.run(context.Background(), task, nil)
+		o := &options{}
+		err = l.run(context.Background(), task, o)
 		if err != nil && !common.IsContextCanceledError(err) {
 			restore.DeliverPauser.Pause() // force pause the progress on error
 			log.L().Error("tidb lightning encountered error", zap.Error(err))
@@ -223,12 +268,63 @@ func (l *Lightning) RunServer() error {
 	}
 }
 
+// RunOnceWithOptions is used by binary lightning and host when using lightning as a library.
+// - for binary lightning, taskCtx could be context.Background which means taskCtx wouldn't be canceled directly by its
+//   cancel function, but only by Lightning.Stop or HTTP DELETE using l.cancel. No need to set Options
+// - for lightning as a library, taskCtx could be a meaningful context that get canceled outside, and there Options may
+//   be used:
+//   - WithGlue: set a caller implemented glue. Otherwise, lightning will use a default glue later.
+//   - WithDumpFileStorage: caller has opened an external storage for lightning. Otherwise, lightning will open a
+//     storage by config
+//   - WithCheckpointStorage: caller has opened an external storage for lightning and want to save checkpoint
+//     in it. Otherwise, lightning will save checkpoint by the Checkpoint.DSN in config
+func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.Config, opts ...Option) error {
+	o := &options{}
+	for _, opt := range opts {
+		opt(o)
+	}
+
+	failpoint.Inject("setExtStorage", func(val failpoint.Value) {
+		path := val.(string)
+		b, err := storage.ParseBackend(path, nil)
+		if err != nil {
+			panic(err)
+		}
+		s, err := storage.New(context.Background(), b, &storage.ExternalStorageOptions{})
+		if err != nil {
+			panic(err)
+		}
+		o.dumpFileStorage = s
+		o.checkpointStorage = s
+	})
+	failpoint.Inject("setCheckpointName", func(val failpoint.Value) {
+		file := val.(string)
+		o.checkpointName = file
+	})
+
+	if o.dumpFileStorage != nil {
+		// we don't use it, set a value to pass Adjust
+		taskCfg.Mydumper.SourceDir = "noop://"
+	}
+
+	if err := taskCfg.Adjust(taskCtx); err != nil {
+		return err
+	}
+
+	taskCfg.TaskID = time.Now().UnixNano()
+	failpoint.Inject("SetTaskID", func(val failpoint.Value) {
+		taskCfg.TaskID = int64(val.(int))
+	})
+
+	return l.run(taskCtx, taskCfg, o)
+}
+
 var (
 	taskRunNotifyKey   = "taskRunNotifyKey"
 	taskCfgRecorderKey = "taskCfgRecorderKey"
 )
 
-func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.Glue) (err error) {
+func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *options) (err error) {
 	build.LogInfo(build.Lightning)
 	log.L().Info("cfg", zap.Stringer("cfg", taskCfg))
 
@@ -279,6 +375,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 
 	// initiation of default glue should be after RegisterMySQL, which is ready to be called after taskCfg.Adjust
 	// and also put it here could avoid injecting another two SkipRunTask failpoint to caller
+	g := o.glue
 	if g == nil {
 		db, err := restore.DBFromConfig(ctx, taskCfg.TiDB)
 		if err != nil {
@@ -287,13 +384,16 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 		g = glue.NewExternalTiDBGlue(db, taskCfg.TiDB.SQLMode)
 	}
 
-	u, err := storage.ParseBackend(taskCfg.Mydumper.SourceDir, nil)
-	if err != nil {
-		return common.NormalizeError(err)
-	}
-	s, err := storage.New(ctx, u, &storage.ExternalStorageOptions{})
-	if err != nil {
-		return common.NormalizeError(err)
+	s := o.dumpFileStorage
+	if s == nil {
+		u, err := storage.ParseBackend(taskCfg.Mydumper.SourceDir, nil)
+		if err != nil {
+			return common.NormalizeError(err)
+		}
+		s, err = storage.New(ctx, u, &storage.ExternalStorageOptions{})
+		if err != nil {
+			return common.NormalizeError(err)
+		}
 	}
 
 	// return expectedErr means at least meet one file
@@ -333,7 +433,17 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, g glue.
 
 	var procedure *restore.Controller
 
-	procedure, err = restore.NewRestoreController(ctx, dbMetas, taskCfg, &l.status, s, g)
+	param := &restore.ControllerParam{
+		DBMetas:           dbMetas,
+		Status:            &l.status,
+		DumpFileStorage:   s,
+		OwnExtStorage:     o.dumpFileStorage == nil,
+		Glue:              g,
+		CheckpointStorage: o.checkpointStorage,
+		CheckpointName:    o.checkpointName,
+	}
+
+	procedure, err = restore.NewRestoreController(ctx, taskCfg, param)
 	if err != nil {
 		log.L().Error("restore failed", log.ShortError(err))
 		return errors.Trace(err)
@@ -494,7 +604,7 @@ func (l *Lightning) handlePostTask(w http.ResponseWriter, req *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "cannot read request", err)
 		return
 	}
-	log.L().Debug("received task config", zap.ByteString("content", data))
+	log.L().Info("received task config", zap.ByteString("content", data))
 
 	cfg := config.NewConfig()
 	if err = cfg.LoadFromGlobal(l.globalCfg); err != nil {

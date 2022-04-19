@@ -1151,6 +1151,7 @@ func TestVisitInfo(t *testing.T) {
 				{mysql.IndexPriv, "test", "", "", nil, false, "", false},
 				{mysql.CreateViewPriv, "test", "", "", nil, false, "", false},
 				{mysql.ShowViewPriv, "test", "", "", nil, false, "", false},
+				{mysql.TriggerPriv, "test", "", "", nil, false, "", false},
 			},
 		},
 		{
@@ -1225,6 +1226,7 @@ func TestVisitInfo(t *testing.T) {
 				{mysql.IndexPriv, "test", "", "", nil, false, "", false},
 				{mysql.CreateViewPriv, "test", "", "", nil, false, "", false},
 				{mysql.ShowViewPriv, "test", "", "", nil, false, "", false},
+				{mysql.TriggerPriv, "test", "", "", nil, false, "", false},
 			},
 		},
 		{
@@ -1505,7 +1507,7 @@ func TestUnion(t *testing.T) {
 			require.Error(t, err)
 			continue
 		}
-		require.NoError(t, err)
+		require.NoError(t, err, comment)
 		p := plan.(LogicalPlan)
 		p, err = logicalOptimize(ctx, builder.optFlag, p)
 		testdata.OnRecord(func() {
@@ -2119,5 +2121,41 @@ func TestWindowLogicalPlanAmbiguous(t *testing.T) {
 		} else {
 			require.Equal(t, ToString(p), planString)
 		}
+	}
+}
+
+func TestRemoveOrderbyInSubquery(t *testing.T) {
+	tests := []struct {
+		sql  string
+		best string
+	}{
+		{
+			sql:  "select * from t order by a",
+			best: "DataScan(t)->Projection->Sort",
+		},
+		{
+			sql:  "select (select 1) from t order by a",
+			best: "DataScan(t)->Projection->Sort->Projection",
+		},
+		{
+			sql:  "select count(*) from (select b from t order by a) n",
+			best: "DataScan(t)->Projection->Projection->Aggr(count(1),firstrow(test.t.b))->Projection",
+		},
+		{
+			sql:  "select count(1) from (select b from t order by a limit 1) n",
+			best: "DataScan(t)->Projection->Sort->Limit->Projection->Aggr(count(1),firstrow(test.t.b))->Projection",
+		},
+	}
+
+	s := createPlannerSuite()
+	s.ctx.GetSessionVars().RemoveOrderbyInSubquery = true
+	ctx := context.TODO()
+	for i, tt := range tests {
+		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
+		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err, comment)
+		p, _, err := BuildLogicalPlanForTest(ctx, s.ctx, stmt, s.is)
+		require.NoError(t, err, comment)
+		require.Equal(t, tt.best, ToString(p), comment)
 	}
 }

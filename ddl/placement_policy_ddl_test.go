@@ -45,7 +45,7 @@ func testCreatePlacementPolicy(t *testing.T, ctx sessionctx.Context, d *ddl, pol
 		Args:       []interface{}{policyInfo},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.doDDLJob(ctx, job)
+	err := d.DoDDLJob(ctx, job)
 	require.NoError(t, err)
 
 	v := getSchemaVer(t, ctx)
@@ -126,7 +126,6 @@ func TestPlacementPolicyInUse(t *testing.T) {
 
 	builder, err := infoschema.NewBuilder(store, nil).InitWithDBInfos(
 		[]*model.DBInfo{db1, db2, dbP},
-		nil,
 		[]*model.PolicyInfo{p1, p2, p3, p4, p5},
 		1,
 	)

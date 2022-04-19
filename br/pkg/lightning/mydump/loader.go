@@ -21,12 +21,12 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	regexprrouter "github.com/pingcap/tidb-tools/pkg/regexpr-router"
-	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	regexprrouter "github.com/pingcap/tidb/util/regexpr-router"
+	filter "github.com/pingcap/tidb/util/table-filter"
 	"go.uber.org/zap"
 )
 
@@ -357,73 +357,77 @@ func (s *mdLoaderSetup) route() error {
 
 	type dbInfo struct {
 		fileMeta SourceFileMeta
-		count    int
+		count    int // means file count(db/table/view schema and table data)
 	}
 
-	knownDBNames := make(map[string]dbInfo)
+	knownDBNames := make(map[string]*dbInfo)
 	for _, info := range s.dbSchemas {
-		knownDBNames[info.TableName.Schema] = dbInfo{
+		knownDBNames[info.TableName.Schema] = &dbInfo{
 			fileMeta: info.FileMeta,
 			count:    1,
 		}
 	}
 	for _, info := range s.tableSchemas {
-		dbInfo := knownDBNames[info.TableName.Schema]
-		dbInfo.count++
-		knownDBNames[info.TableName.Schema] = dbInfo
+		knownDBNames[info.TableName.Schema].count++
 	}
 	for _, info := range s.viewSchemas {
-		dbInfo := knownDBNames[info.TableName.Schema]
-		dbInfo.count++
+		knownDBNames[info.TableName.Schema].count++
+	}
+	for _, info := range s.tableDatas {
+		knownDBNames[info.TableName.Schema].count++
 	}
 
-	run := func(arr []FileInfo) error {
+	runRoute := func(arr []FileInfo) error {
 		for i, info := range arr {
-			dbName, tableName, err := r.Route(info.TableName.Schema, info.TableName.Name)
+			rawDB, rawTable := info.TableName.Schema, info.TableName.Name
+			targetDB, targetTable, err := r.Route(rawDB, rawTable)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if dbName != info.TableName.Schema {
-				oldInfo := knownDBNames[info.TableName.Schema]
+			if targetDB != rawDB {
+				oldInfo := knownDBNames[rawDB]
 				oldInfo.count--
-				knownDBNames[info.TableName.Schema] = oldInfo
-
-				newInfo, ok := knownDBNames[dbName]
-				newInfo.count++
+				newInfo, ok := knownDBNames[targetDB]
 				if !ok {
-					newInfo.fileMeta = oldInfo.fileMeta
+					newInfo = &dbInfo{fileMeta: oldInfo.fileMeta, count: 1}
 					s.dbSchemas = append(s.dbSchemas, FileInfo{
-						TableName: filter.Table{Schema: dbName},
+						TableName: filter.Table{Schema: targetDB},
 						FileMeta:  oldInfo.fileMeta,
 					})
 				}
-				knownDBNames[dbName] = newInfo
+				newInfo.count++
+				knownDBNames[targetDB] = newInfo
 			}
-			arr[i].TableName = filter.Table{Schema: dbName, Name: tableName}
+			arr[i].TableName = filter.Table{Schema: targetDB, Name: targetTable}
 		}
 		return nil
 	}
 
-	if err := run(s.tableSchemas); err != nil {
+	// route for schema table and view
+	if err := runRoute(s.dbSchemas); err != nil {
 		return errors.Trace(err)
 	}
-	if err := run(s.viewSchemas); err != nil {
+	if err := runRoute(s.tableSchemas); err != nil {
 		return errors.Trace(err)
 	}
-	if err := run(s.tableDatas); err != nil {
+	if err := runRoute(s.viewSchemas); err != nil {
 		return errors.Trace(err)
 	}
-
-	// remove all schemas which has been entirely routed away
+	if err := runRoute(s.tableDatas); err != nil {
+		return errors.Trace(err)
+	}
+	// remove all schemas which has been entirely routed away(file count > 0)
 	// https://github.com/golang/go/wiki/SliceTricks#filtering-without-allocating
 	remainingSchemas := s.dbSchemas[:0]
 	for _, info := range s.dbSchemas {
-		if knownDBNames[info.TableName.Schema].count > 0 {
+		if dbInfo := knownDBNames[info.TableName.Schema]; dbInfo.count > 0 {
 			remainingSchemas = append(remainingSchemas, info)
+		} else if dbInfo.count < 0 {
+			// this should not happen if there are no bugs in the code
+			return common.ErrTableRoute.GenWithStack("something wrong happened when route %s", info.TableName.String())
 		}
 	}
 	s.dbSchemas = remainingSchemas
-
 	return nil
 }
 

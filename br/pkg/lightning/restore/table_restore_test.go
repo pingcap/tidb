@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/noop"
@@ -62,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	tmock "github.com/pingcap/tidb/util/mock"
+	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -338,7 +338,6 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 		backend:        backend.MakeBackend(mockBackend),
 		errorSummaries: makeErrorSummaries(log.L()),
 		saveCpCh:       make(chan saveCp, 1),
-		diskQuotaLock:  newDiskQuotaLock(),
 	}
 	defer close(rc.saveCpCh)
 	go func() {
@@ -935,7 +934,6 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 		closedEngineLimit: worker.NewPool(ctx, 1, "closed_engine"),
 		store:             s.store,
 		metaMgrBuilder:    noopMetaMgrBuilder{},
-		diskQuotaLock:     newDiskQuotaLock(),
 		errorMgr:          errormanager.New(nil, cfg),
 	}
 	go func() {
@@ -989,8 +987,23 @@ func (s *tableRestoreSuite) TestSaveStatusCheckpoint() {
 	rc.checkpointsWg.Add(1)
 	go rc.listenCheckpointUpdates()
 
+	rc.errorSummaries = makeErrorSummaries(log.L())
+
+	err := rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), indexEngineID, errors.New("connection refused"), checkpoints.CheckpointStatusImported)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 0, len(rc.errorSummaries.summary))
+
+	err = rc.saveStatusCheckpoint(
+		context.Background(),
+		common.UniqueTable("test", "tbl"), indexEngineID,
+		common.ErrChecksumMismatch.GenWithStackByArgs(0, 0, 0, 0, 0, 0),
+		checkpoints.CheckpointStatusImported,
+	)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, len(rc.errorSummaries.summary))
+
 	start := time.Now()
-	err := rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), indexEngineID, nil, checkpoints.CheckpointStatusImported)
+	err = rc.saveStatusCheckpoint(context.Background(), common.UniqueTable("test", "tbl"), indexEngineID, nil, checkpoints.CheckpointStatusImported)
 	require.NoError(s.T(), err)
 	elapsed := time.Since(start)
 	require.GreaterOrEqual(s.T(), elapsed, time.Millisecond*100)
