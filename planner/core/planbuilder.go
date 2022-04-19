@@ -2527,7 +2527,7 @@ var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumTopN:       1024,
 	ast.AnalyzeOptCMSketchWidth: CMSketchSizeLimit,
 	ast.AnalyzeOptCMSketchDepth: CMSketchSizeLimit,
-	ast.AnalyzeOptNumSamples:    math.MaxUint64,
+	ast.AnalyzeOptNumSamples:    500000,
 	ast.AnalyzeOptSampleRate:    math.Float64bits(1),
 }
 
