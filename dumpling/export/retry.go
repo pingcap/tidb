@@ -88,7 +88,14 @@ func (b *noopBackoffer) Reset() {
 	b.attempt = 1
 }
 
-func newLockTablesBackoffer(tctx *tcontext.Context, blockList map[string]map[string]interface{}) *lockTablesBackoffer {
+func newLockTablesBackoffer(tctx *tcontext.Context, blockList map[string]map[string]interface{}, conf *Config) *lockTablesBackoffer {
+	if conf.specifiedTables {
+		return &lockTablesBackoffer{
+			tctx:      tctx,
+			attempt:   1,
+			blockList: blockList,
+		}
+	}
 	return &lockTablesBackoffer{
 		tctx:      tctx,
 		attempt:   lockTablesRetryTime,
