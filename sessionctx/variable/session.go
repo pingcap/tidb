@@ -1020,7 +1020,7 @@ type SessionVars struct {
 	AssertionLevel AssertionLevel
 	// IgnorePreparedCacheCloseStmt controls if ignore the close-stmt command for prepared statement.
 	IgnorePreparedCacheCloseStmt bool
-	// EnableNewCostInterface ...
+	// EnableNewCostInterface is a internal switch to indicates whether to use the new cost calculation interface.
 	EnableNewCostInterface bool
 
 	DEBUG bool

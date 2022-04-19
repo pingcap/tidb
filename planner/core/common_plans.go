@@ -1539,7 +1539,7 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 	estCost := "N/A"
 	if pp, ok := p.(PhysicalPlan); ok {
 		if p.SCtx().GetSessionVars().EnableNewCostInterface {
-			planCost, _ := pp.CalPlanCost(property.RootTaskType)
+			planCost, _ := pp.GetPlanCost(property.RootTaskType)
 			estCost = strconv.FormatFloat(planCost, 'f', 2, 64)
 		} else {
 			estCost = strconv.FormatFloat(pp.Cost(), 'f', 2, 64)
