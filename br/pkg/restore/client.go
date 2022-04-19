@@ -1687,6 +1687,14 @@ func (rc *Client) RestoreKVFiles(
 	return nil
 }
 
+func (rc *Client) CleanUpKVFiles(
+	ctx context.Context,
+) error {
+	// Current we only have v1 prefix.
+	// In the future, we can add more operation for this interface.
+	return rc.fileImporter.ClearFiles(ctx, rc.pdClient, "v1")
+}
+
 // InitSchemasReplaceForDDL gets schemas information Mapping from old schemas to new schemas.
 // It is used to rewrite meta kv-event.
 func (rc *Client) InitSchemasReplaceForDDL(

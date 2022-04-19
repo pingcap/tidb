@@ -4,6 +4,7 @@ package restore
 
 import (
 	"context"
+	"github.com/tikv/client-go/v2/kv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -33,6 +34,12 @@ type OverRegionsInRangeController struct {
 // apply a function over these regions.
 // You can then call the `Run` method for applying some functions.
 func OverRegionsInRange(start, end []byte, metaClient SplitClient, retryStatus utils.RetryState) OverRegionsInRangeController {
+	// IMPORTANT: we record the start/end key with TimeStamp.
+	// but scanRegion will drop the TimeStamp.
+	// if we do not use PrefixNextKey. we might scan fewer regions than we expected.
+	// and finally cause the data lost.
+	end = kv.PrefixNextKey(end)
+
 	return OverRegionsInRangeController{
 		start:      start,
 		end:        end,

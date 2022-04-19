@@ -1056,6 +1056,12 @@ func restoreStream(
 	if err != nil {
 		return errors.Annotate(err, "failed to fix index for some table")
 	}
+
+	err = client.CleanUpKVFiles(ctx)
+	if err != nil {
+		return errors.Annotate(err, "failed to clean up")
+	}
+
 	return nil
 }
 

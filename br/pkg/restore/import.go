@@ -43,6 +43,12 @@ const (
 
 // ImporterClient is used to import a file to TiKV.
 type ImporterClient interface {
+	ClearFiles(
+		ctx context.Context,
+		storeID uint64,
+		req *import_sstpb.ClearRequest,
+	) (*import_sstpb.ClearResponse, error)
+
 	ApplyKVFile(
 		ctx context.Context,
 		storeID uint64,
@@ -340,6 +346,26 @@ func (importer *FileImporter) ImportKVFileForRegion(
 	}
 	summary.CollectInt("RegionInvolved", 1)
 	return RPCResultOK()
+}
+
+func (importer *FileImporter) ClearFiles(ctx context.Context, pdClient pd.Client, prefix string) error {
+	allStores, err := conn.GetAllTiKVStoresWithRetry(ctx, pdClient, conn.SkipTiFlash)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, s := range allStores {
+		if s.State != metapb.StoreState_Up {
+			continue
+		}
+		req := &import_sstpb.ClearRequest{
+			Prefix: prefix,
+		}
+		_, err = importer.importClient.ClearFiles(ctx, s.GetId(), req)
+		if err != nil {
+			log.Warn("cleanup kv files failed", zap.Uint64("store", s.GetId()), zap.Error(err))
+		}
+	}
+	return nil
 }
 
 func (importer *FileImporter) ImportKVFiles(
