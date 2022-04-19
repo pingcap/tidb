@@ -239,8 +239,8 @@ func (p *LogicalJoin) extractFDForInnerJoin(filtersFromApply []expression.Expres
 		fds.HashCodeToUniqueID = rightFD.HashCodeToUniqueID
 	} else {
 		for k, v := range rightFD.HashCodeToUniqueID {
+			// If there's same constant in the different subquery, we might go into this IF branch.
 			if _, ok := fds.HashCodeToUniqueID[k]; ok {
-				logutil.BgLogger().Warn("Error occurred while maintaining functional dependency")
 				continue
 			}
 			fds.HashCodeToUniqueID[k] = v

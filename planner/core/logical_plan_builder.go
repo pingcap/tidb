@@ -2720,6 +2720,8 @@ func (b *PlanBuilder) resolveCorrelatedAggregates(ctx context.Context, sel *ast.
 				Table:  k.TblName,
 				Name:   k.ColName,
 			}
+			// Add the column referred in the agg func into the select list. So that we can resolve the agg func correctly.
+			// And we need set the AuxiliaryColInAgg to true to help our only_full_group_by checker work correctly.
 			sel.Fields.Fields = append(sel.Fields.Fields, &ast.SelectField{
 				Auxiliary:         true,
 				AuxiliaryColInAgg: true,

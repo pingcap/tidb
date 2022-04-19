@@ -727,20 +727,18 @@ func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols F
 		}
 		// Rule #3.3, we only keep the lax FD from right side pointing the left side.
 		if edge.equiv {
+			equivColsRight := edge.from.Intersection(innerCols)
+			equivColsLeft := edge.from.Intersection(outerCols)
 			// equivalence: {superset} --> {superset}, either `from` or `to` side is ok here.
 			// Rule 3.3.1
 			if !opt.SkipFDRule331 {
-				leftCover := edge.from.Intersection(outerCols)
-				rightCover := edge.from.Intersection(innerCols)
-				if leftCover.Len() > 0 && rightCover.Len() > 0 {
-					leftCombinedFDFrom.UnionWith(leftCover)
-					leftCombinedFDTo.UnionWith(rightCover)
+				if equivColsLeft.Len() > 0 && equivColsRight.Len() > 0 {
+					leftCombinedFDFrom.UnionWith(equivColsLeft)
+					leftCombinedFDTo.UnionWith(equivColsRight)
 				}
 			}
 
 			// Rule 3.3.2
-			equivColsRight := edge.from.Intersection(innerCols)
-			equivColsLeft := edge.from.Intersection(outerCols)
 			rightAllCols := copyRightFDSet.AllCols()
 			leftAllCols := copyLeftFDSet.AllCols()
 			coveringStrictKeyRight := rightAllCols.SubsetOf(copyRightFDSet.ClosureOfStrict(equivColsRight))
