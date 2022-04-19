@@ -31,7 +31,7 @@ Currently, the processes TiDB calculates safe point is as bellow, it is implemen
 - Get all user client sessions, save them to slice `processlist`
 - Traverse `processlist` to get startTS from every client session and compare the `startTS` with `now` to get the minimum time stamp which is after `startTSLowerLimit` , save it as minStartTS which is gc safe point.
 
-This design add extra processes  in `(is *InfoSyncer) ReportMinStartTS` to take account of internal transactions startTS when calculates gc safe point . The new processes TiDB calculates safe point is as bellow.
+This design add extra processes in `(is *InfoSyncer) ReportMinStartTS` to take account of internal transactions startTS when calculates gc safe point . The new processes TiDB calculates safe point is as bellow.
 
 - Get current time stamp from PD, save it to variable `now`,  get time stamp that is earlier than `now` which is specified by system variable `tidb_gc_txn_max_wait_time`, save it to variable `startTSLowerLimit`
 - Get all user client sessions, save them to slice `processlist`
