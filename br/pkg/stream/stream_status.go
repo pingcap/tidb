@@ -9,6 +9,7 @@ import (
 	"io"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -315,6 +316,15 @@ func NewStatusController(meta *MetaDataClient, mgr *conn.Mgr, view TaskPrinter) 
 	}
 }
 
+func isTiFlash(store *metapb.Store) bool {
+	for _, l := range store.GetLabels() {
+		if strings.EqualFold(l.Key, "engine") && strings.EqualFold(l.Value, "tiflash") {
+			return true
+		}
+	}
+	return false
+}
+
 // fillTask queries and fills the extra information for a raw task.
 func (ctl *StatusController) fillTask(ctx context.Context, task Task) (TaskStatus, error) {
 	var err error
@@ -335,6 +345,9 @@ func (ctl *StatusController) fillTask(ctx context.Context, task Task) (TaskStatu
 		return s, errors.Annotate(err, "failed to get stores from PD")
 	}
 	for _, store := range stores {
+		if isTiFlash(store) {
+			continue
+		}
 		if _, ok := s.Progress[store.GetId()]; !ok {
 			s.Progress[store.GetId()] = s.Info.StartTs
 		}
