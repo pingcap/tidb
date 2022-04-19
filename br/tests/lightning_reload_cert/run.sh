@@ -36,7 +36,7 @@ for _ in {0..60}; do
   sleep 1
 done
 # Lightning process is wrapped by a shell process, use pstree to extract it out.
-pid=$(pstree -pT "$shpid" | grep -Eo "tidb-lightning\.\([0-9]*\)" | grep -Eo "[0-9]*")
+pid=$(pstree -p "$shpid" | grep -Eo "tidb-lightning\.\([0-9]*\)" | grep -Eo "[0-9]*")
 if [ -n "$pid" ]; then
   kill -9 "$pid" &>/dev/null || true
 fi
