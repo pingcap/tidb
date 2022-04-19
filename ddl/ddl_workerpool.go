@@ -46,9 +46,13 @@ func (sg *workerPool) get() (*worker, error) {
 	}
 
 	// no need to protect sg.resPool
-	resource, err := sg.resPool.Get()
+	resource, err := sg.resPool.TryGet()
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	if resource == nil {
+		return nil, nil
 	}
 
 	worker := resource.(*worker)

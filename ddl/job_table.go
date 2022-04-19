@@ -202,12 +202,6 @@ func (d *ddl) getReorgJob(sess sessionctx.Context) (*model.Job, error) {
 }
 
 func (d *ddl) startDispatchLoop() {
-	for !d.isOwner() {
-		time.Sleep(time.Second)
-		if isChanClosed(d.ctx.Done()) {
-			return
-		}
-	}
 	sess, err := d.sessPool.get()
 	if err != nil {
 		log.Fatal("fail to get sessPool", zap.Error(err))
@@ -269,6 +263,14 @@ func (d *ddl) startDispatchLoop() {
 }
 
 func (d *ddl) generalDDLJob(sctx sessionctx.Context) bool {
+	wk, err := d.generalDDLWorkerPool.get()
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl] get general worker fail", zap.Error(err))
+	}
+	if wk == nil {
+		return false
+	}
+	defer d.generalDDLWorkerPool.put(wk)
 	job, err := d.getGeneralJob(sctx)
 	if err != nil {
 		logutil.BgLogger().Error("[ddl] getGeneralJob", zap.Error(err))
@@ -277,11 +279,11 @@ func (d *ddl) generalDDLJob(sctx sessionctx.Context) bool {
 	if job == nil {
 		return false
 	}
-	d.doGeneralDDLJobWorker(job)
+	d.doGeneralDDLJobWorker(wk, job)
 	return true
 }
 
-func (d *ddl) doGeneralDDLJobWorker(job *model.Job) {
+func (d *ddl) doGeneralDDLJobWorker(wk *worker, job *model.Job) {
 	injectFailPointForGetJob(job)
 	d.insertRunningDDLJobMap(int(job.ID))
 	d.wg.Run(func() {
@@ -291,19 +293,6 @@ func (d *ddl) doGeneralDDLJobWorker(job *model.Job) {
 				asyncNotify(d.ddlJobDoneCh)
 			}
 			asyncNotify(d.ddlJobCh)
-		}()
-		log.Info("ready to get generalDDLWorkerPool")
-		wk, err := d.generalDDLWorkerPool.get()
-		log.Info("complete to get generalDDLWorkerPool")
-		if err != nil {
-			log.Error("fail to get generalDDLWorkerPool", zap.Error(err))
-			return
-		}
-		defer func() {
-			if r := recover(); r != nil {
-				logutil.BgLogger().Error("doGeneralDDLJobWorker panic", zap.Any("recover()", r), zap.Stack("stack"))
-			}
-			d.generalDDLWorkerPool.put(wk)
 		}()
 		wk.handleDDLJobWaitSchemaSynced(d.ddlCtx, job)
 		if err := wk.HandleDDLJob(d.ddlCtx, job, d.ddlJobCh, kvrpcpb.DiskFullOpt_AllowedOnAlmostFull); err != nil {
@@ -313,6 +302,14 @@ func (d *ddl) doGeneralDDLJobWorker(job *model.Job) {
 }
 
 func (d *ddl) reorgDDLJob(sctx sessionctx.Context) bool {
+	wk, err := d.reorgWorkerPool.get()
+	if err != nil {
+		logutil.BgLogger().Warn("[ddl] get reorg worker fail", zap.Error(err))
+	}
+	if wk == nil {
+		return false
+	}
+	defer d.reorgWorkerPool.put(wk)
 	job, err := d.getReorgJob(sctx)
 	if err != nil {
 		logutil.BgLogger().Error("[ddl] getReorgJob", zap.Error(err))
@@ -321,11 +318,11 @@ func (d *ddl) reorgDDLJob(sctx sessionctx.Context) bool {
 	if job == nil {
 		return false
 	}
-	d.doReorgDDLJobWorker(job)
+	d.doReorgDDLJobWorker(wk, job)
 	return true
 }
 
-func (d *ddl) doReorgDDLJobWorker(job *model.Job) {
+func (d *ddl) doReorgDDLJobWorker(wk *worker, job *model.Job) {
 	injectFailPointForGetJob(job)
 	d.insertRunningDDLJobMap(int(job.ID))
 	d.wg.Run(func() {
@@ -335,19 +332,6 @@ func (d *ddl) doReorgDDLJobWorker(job *model.Job) {
 				asyncNotify(d.ddlJobDoneCh)
 			}
 			asyncNotify(d.ddlJobCh)
-		}()
-		log.Info("ready to get reorgWorkerPool")
-		wk, err := d.reorgWorkerPool.get()
-		log.Info("complete to get reorgWorkerPool")
-		if err != nil {
-			log.Error("fail to get reorgWorkerPool", zap.Error(err))
-			return
-		}
-		defer func() {
-			if r := recover(); r != nil {
-				logutil.BgLogger().Error("doReorgDDLJobWorker panic", zap.Any("recover()", r), zap.Stack("stack"))
-			}
-			d.reorgWorkerPool.put(wk)
 		}()
 		wk.handleDDLJobWaitSchemaSynced(d.ddlCtx, job)
 		if err := wk.HandleDDLJob(d.ddlCtx, job, d.ddlJobCh, kvrpcpb.DiskFullOpt_NotAllowedOnFull); err != nil {
