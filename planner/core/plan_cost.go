@@ -41,70 +41,6 @@ func (p *basePhysicalPlan) GetPlanCost(taskType property.TaskType) (float64, err
 	return p.planCost, nil
 }
 
-// HistColl may not be propagated to some upper operators, so get HistColl recursively for safety.
-func getHistCollSafely(p PhysicalPlan) *statistics.HistColl {
-	if p.Stats().HistColl != nil {
-		return p.Stats().HistColl
-	}
-	var children []PhysicalPlan
-	switch x := p.(type) {
-	case *PhysicalTableReader:
-		children = append(children, x.tablePlan)
-	case *PhysicalIndexReader:
-		children = append(children, x.indexPlan)
-	case *PhysicalIndexLookUpReader:
-		children = append(children, x.tablePlan, x.indexPlan)
-	case *PhysicalIndexMergeReader:
-		children = append(children, x.tablePlan)
-		children = append(children, x.partialPlans...)
-	default:
-		children = append(children, p.Children()...)
-	}
-	for _, c := range children {
-		if hist := getHistCollSafely(c); hist != nil {
-			return hist
-		}
-	}
-	return nil
-}
-
-func getSeekCost(p PhysicalPlan) float64 {
-	switch x := p.(type) {
-	case *PhysicalTableReader:
-		return getSeekCost(x.tablePlan)
-	case *PhysicalIndexReader:
-		return getSeekCost(x.indexPlan)
-	case *PhysicalIndexLookUpReader:
-		return getSeekCost(x.indexPlan)
-	case *PhysicalTableScan:
-		if x.StoreType == kv.TiFlash {
-			return float64(len(x.Ranges)) * float64(len(x.Columns)) * x.ctx.GetSessionVars().GetSeekFactor(x.Table)
-		} else { // TiKV
-			return float64(len(x.Ranges)) * x.ctx.GetSessionVars().GetSeekFactor(x.Table)
-		}
-	case *PhysicalIndexScan:
-		return float64(len(x.Ranges)) * x.ctx.GetSessionVars().GetSeekFactor(x.Table)
-	default:
-		return getSeekCost(p.Children()[0])
-	}
-}
-
-func getTblStats(p PhysicalPlan) *statistics.HistColl {
-	switch x := p.(type) {
-	case *PhysicalTableScan:
-		return x.tblColHists
-	case *PhysicalIndexScan:
-		return x.tblColHists
-	default:
-		for _, c := range p.Children() {
-			if tblStats := getTblStats(c); tblStats != nil {
-				return tblStats
-			}
-		}
-	}
-	return nil
-}
-
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalSelection) GetPlanCost(taskType property.TaskType) (float64, error) {
 	if p.planCostInit {
@@ -550,4 +486,68 @@ func (p *PhysicalExchangeReceiver) GetPlanCost(taskType property.TaskType) (floa
 	p.planCost += p.children[0].StatsCount() * p.ctx.GetSessionVars().GetNetworkFactor(nil)
 	p.planCostInit = true
 	return p.planCost, nil
+}
+
+// HistColl may not be propagated to some upper operators, so get HistColl recursively for safety.
+func getHistCollSafely(p PhysicalPlan) *statistics.HistColl {
+	if p.Stats().HistColl != nil {
+		return p.Stats().HistColl
+	}
+	var children []PhysicalPlan
+	switch x := p.(type) {
+	case *PhysicalTableReader:
+		children = append(children, x.tablePlan)
+	case *PhysicalIndexReader:
+		children = append(children, x.indexPlan)
+	case *PhysicalIndexLookUpReader:
+		children = append(children, x.tablePlan, x.indexPlan)
+	case *PhysicalIndexMergeReader:
+		children = append(children, x.tablePlan)
+		children = append(children, x.partialPlans...)
+	default:
+		children = append(children, p.Children()...)
+	}
+	for _, c := range children {
+		if hist := getHistCollSafely(c); hist != nil {
+			return hist
+		}
+	}
+	return nil
+}
+
+func getSeekCost(p PhysicalPlan) float64 {
+	switch x := p.(type) {
+	case *PhysicalTableReader:
+		return getSeekCost(x.tablePlan)
+	case *PhysicalIndexReader:
+		return getSeekCost(x.indexPlan)
+	case *PhysicalIndexLookUpReader:
+		return getSeekCost(x.indexPlan)
+	case *PhysicalTableScan:
+		if x.StoreType == kv.TiFlash {
+			return float64(len(x.Ranges)) * float64(len(x.Columns)) * x.ctx.GetSessionVars().GetSeekFactor(x.Table)
+		} else { // TiKV
+			return float64(len(x.Ranges)) * x.ctx.GetSessionVars().GetSeekFactor(x.Table)
+		}
+	case *PhysicalIndexScan:
+		return float64(len(x.Ranges)) * x.ctx.GetSessionVars().GetSeekFactor(x.Table)
+	default:
+		return getSeekCost(p.Children()[0])
+	}
+}
+
+func getTblStats(p PhysicalPlan) *statistics.HistColl {
+	switch x := p.(type) {
+	case *PhysicalTableScan:
+		return x.tblColHists
+	case *PhysicalIndexScan:
+		return x.tblColHists
+	default:
+		for _, c := range p.Children() {
+			if tblStats := getTblStats(c); tblStats != nil {
+				return tblStats
+			}
+		}
+	}
+	return nil
 }
