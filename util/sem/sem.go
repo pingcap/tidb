@@ -61,6 +61,7 @@ const (
 	tikvProfileCPU        = "tikv_profile_cpu"
 	tidbGCLeaderDesc      = "tidb_gc_leader_desc"
 	restrictedPriv        = "RESTRICTED_"
+	tidbAuditRetractLog   = "tidb_audit_redact_log" // sysvar installed by a plugin
 )
 
 var (
@@ -156,7 +157,8 @@ func IsInvisibleSysVar(varNameInLower string) bool {
 		variable.TiDBRedactLog,
 		variable.TiDBRestrictedReadOnly,
 		variable.TiDBTopSQLMaxTimeSeriesCount,
-		variable.TiDBTopSQLMaxMetaCount:
+		variable.TiDBTopSQLMaxMetaCount,
+		tidbAuditRetractLog:
 		return true
 	}
 	return false

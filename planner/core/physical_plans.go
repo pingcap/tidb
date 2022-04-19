@@ -437,6 +437,11 @@ type PhysicalIndexScan struct {
 	DoubleRead bool
 
 	NeedCommonHandle bool
+
+	// required by cost model
+	// tblColHists contains all columns before pruning, which are used to calculate row-size
+	tblColHists   *statistics.HistColl
+	pkIsHandleCol *expression.Column
 }
 
 // Clone implements PhysicalPlan interface.
@@ -533,6 +538,11 @@ type PhysicalTableScan struct {
 	PartitionInfo PartitionInfo
 
 	SampleInfo *TableSampleInfo
+
+	// required by cost model
+	// tblCols and tblColHists contains all columns before pruning, which are used to calculate row-size
+	tblCols     []*expression.Column
+	tblColHists *statistics.HistColl
 }
 
 // Clone implements PhysicalPlan interface.
@@ -1281,6 +1291,17 @@ func (p *PhysicalSelection) ExtractCorrelatedCols() []*expression.CorrelatedColu
 // PhysicalMaxOneRow is the physical operator of maxOneRow.
 type PhysicalMaxOneRow struct {
 	basePhysicalPlan
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalMaxOneRow) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalMaxOneRow)
+	base, err := p.basePhysicalPlan.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalPlan = *base
+	return cloned, nil
 }
 
 // PhysicalTableDual is the physical operator of dual.

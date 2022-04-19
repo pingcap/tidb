@@ -51,7 +51,7 @@ import (
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/helper"
-	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/logutil/consistency"
 	"github.com/pingcap/tidb/util/topsql"
@@ -231,8 +231,6 @@ type session struct {
 
 	// indexUsageCollector collects index usage information.
 	idxUsageCollector *handle.SessionIndexUsageCollector
-
-	cache [1]ast.StmtNode
 
 	functionUsageMu struct {
 		sync.RWMutex
@@ -632,10 +630,11 @@ type cachedTableRenewLease struct {
 func (c *cachedTableRenewLease) start(ctx context.Context) error {
 	c.exit = make(chan struct{})
 	c.lease = make([]uint64, len(c.tables))
-	wg := make(chan error)
+	wg := make(chan error, len(c.tables))
 	ith := 0
-	for tid, raw := range c.tables {
-		go c.keepAlive(ctx, wg, raw.(tables.StateRemote), tid, &c.lease[ith])
+	for _, raw := range c.tables {
+		tbl := raw.(table.CachedTable)
+		go tbl.WriteLockAndKeepAlive(ctx, c.exit, &c.lease[ith], wg)
 		ith++
 	}
 
@@ -648,47 +647,6 @@ func (c *cachedTableRenewLease) start(ctx context.Context) error {
 		}
 	}
 	return err
-}
-
-const cacheTableWriteLease = 5 * time.Second
-
-func (c *cachedTableRenewLease) keepAlive(ctx context.Context, wg chan error, handle tables.StateRemote, tid int64, leasePtr *uint64) {
-	writeLockLease, err := handle.LockForWrite(ctx, tid, cacheTableWriteLease)
-	atomic.StoreUint64(leasePtr, writeLockLease)
-	wg <- err
-	if err != nil {
-		logutil.Logger(ctx).Warn("[cached table] lock for write lock fail", zap.Error(err))
-		return
-	}
-
-	t := time.NewTicker(cacheTableWriteLease)
-	defer t.Stop()
-	for {
-		select {
-		case <-t.C:
-			if err := c.renew(ctx, handle, tid, leasePtr); err != nil {
-				logutil.Logger(ctx).Warn("[cached table] renew write lock lease fail", zap.Error(err))
-				return
-			}
-		case <-c.exit:
-			return
-		}
-	}
-}
-
-func (c *cachedTableRenewLease) renew(ctx context.Context, handle tables.StateRemote, tid int64, leasePtr *uint64) error {
-	oldLease := atomic.LoadUint64(leasePtr)
-	physicalTime := oracle.GetTimeFromTS(oldLease)
-	newLease := oracle.GoTimeToTS(physicalTime.Add(cacheTableWriteLease))
-
-	succ, err := handle.RenewWriteLease(ctx, tid, newLease)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if succ {
-		atomic.StoreUint64(leasePtr, newLease)
-	}
-	return nil
 }
 
 func (c *cachedTableRenewLease) stop(ctx context.Context) {
@@ -1213,7 +1171,7 @@ func createSessionFunc(store kv.Storage) pools.Factory {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		err = variable.SetSessionSystemVar(se.sessionVars, variable.MaxAllowedPacket, "67108864")
+		err = variable.SetSessionSystemVar(se.sessionVars, variable.MaxAllowedPacket, strconv.FormatUint(variable.DefMaxAllowedPacket, 10))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1396,10 +1354,6 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 	p.SetParserConfig(s.sessionVars.BuildParserConfig())
 	tmp, warn, err := p.ParseSQL(sql, params...)
 	// The []ast.StmtNode is referenced by the parser, to reuse the parser, make a copy of the result.
-	if len(tmp) == 1 {
-		s.cache[0] = tmp[0]
-		return s.cache[:], warn, err
-	}
 	res := make([]ast.StmtNode, len(tmp))
 	copy(res, tmp)
 	return res, warn, err
@@ -1710,6 +1664,10 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 	if execOption.AnalyzeVer != 0 {
 		s.sessionVars.AnalyzeVersion = execOption.AnalyzeVer
 	}
+	prePruneMode := s.sessionVars.PartitionPruneMode.Load()
+	if len(execOption.PartitionPruneMode) > 0 {
+		s.sessionVars.PartitionPruneMode.Store(execOption.PartitionPruneMode)
+	}
 	prevSQL := s.sessionVars.StmtCtx.OriginalSQL
 	prevStmtType := s.sessionVars.StmtCtx.StmtType
 	prevTables := s.sessionVars.StmtCtx.Tables
@@ -1719,6 +1677,7 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 			logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
 		}
 		s.sessionVars.SnapshotInfoschema = nil
+		s.sessionVars.PartitionPruneMode.Store(prePruneMode)
 		s.sessionVars.StmtCtx.OriginalSQL = prevSQL
 		s.sessionVars.StmtCtx.StmtType = prevStmtType
 		s.sessionVars.StmtCtx.Tables = prevTables
@@ -1740,7 +1699,6 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 	if ok := s.sessionVars.OptimizerUseInvisibleIndexes; ok {
 		se.sessionVars.OptimizerUseInvisibleIndexes = true
 	}
-	prePruneMode := se.sessionVars.PartitionPruneMode.Load()
 
 	if execOption.SnapshotTS != 0 {
 		se.sessionVars.SnapshotInfoschema, err = getSnapshotInfoSchema(s, execOption.SnapshotTS)
@@ -1757,8 +1715,10 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 		se.sessionVars.AnalyzeVersion = execOption.AnalyzeVer
 	}
 
-	// for analyze stmt we need let worker session follow user session that executing stmt.
-	se.sessionVars.PartitionPruneMode.Store(s.sessionVars.PartitionPruneMode.Load())
+	prePruneMode := se.sessionVars.PartitionPruneMode.Load()
+	if len(execOption.PartitionPruneMode) > 0 {
+		se.sessionVars.PartitionPruneMode.Store(execOption.PartitionPruneMode)
+	}
 
 	// Put the internal session to the map of SessionManager
 	infosync.StoreInternalSession(se)
@@ -2034,6 +1994,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	if err != nil {
 		return nil, err
 	}
+
 	rs, err = s.Exec(ctx)
 	se.updateTelemetryMetric(s.(*executor.ExecStmt))
 	sessVars.TxnCtx.StatementCount++
@@ -2101,10 +2062,11 @@ func resetCTEStorageMap(se *session) error {
 		return errors.New("type assertion for CTEStorageMap failed")
 	}
 	for _, v := range storageMap {
-		// No need to lock IterInTbl.
 		v.ResTbl.Lock()
-		defer v.ResTbl.Unlock()
 		err1 := v.ResTbl.DerefAndClose()
+		// Make sure we do not hold the lock for longer than necessary.
+		v.ResTbl.Unlock()
+		// No need to lock IterInTbl.
 		err2 := v.IterInTbl.DerefAndClose()
 		if err1 != nil {
 			return err1
@@ -2268,9 +2230,9 @@ func (s *session) cachedPlanExec(ctx context.Context,
 // IsCachedExecOk check if we can execute using plan cached in prepared structure
 // Be careful for the short path, current precondition is ths cached plan satisfying
 // IsPointGetWithPKOrUniqueKeyByAutoCommit
-func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.CachedPrepareStmt) (bool, error) {
+func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.CachedPrepareStmt, isStaleness bool) (bool, error) {
 	prepared := preparedStmt.PreparedAst
-	if prepared.CachedPlan == nil || preparedStmt.SnapshotTSEvaluator != nil {
+	if prepared.CachedPlan == nil || isStaleness {
 		return false, nil
 	}
 	// check auto commit
@@ -2351,7 +2313,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	}
 
 	executor.CountStmtNode(preparedStmt.PreparedAst.Stmt, s.sessionVars.InRestrictedSQL)
-	ok, err = s.IsCachedExecOk(ctx, preparedStmt)
+	ok, err = s.IsCachedExecOk(ctx, preparedStmt, snapshotTS != 0)
 	if err != nil {
 		return nil, err
 	}
@@ -3345,7 +3307,7 @@ func (s *session) checkPlacementPolicyBeforeCommit() error {
 				tblInfo, _ := is.TableByID(physicalTableID)
 				tableName = tblInfo.Meta().Name.String()
 			}
-			bundle, ok := is.BundleByName(placement.GroupID(physicalTableID))
+			bundle, ok := is.PlacementBundleByPhysicalTableID(physicalTableID)
 			if !ok {
 				errMsg := fmt.Sprintf("table %v doesn't have placement policies with txn_scope %v",
 					tableName, txnScope)

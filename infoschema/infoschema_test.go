@@ -16,26 +16,27 @@ package infoschema_test
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/table"
-	"github.com/stretchr/testify/require"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBasic(t *testing.T) {
@@ -108,7 +109,7 @@ func TestBasic(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	builder, err := infoschema.NewBuilder(dom.Store(), nil).InitWithDBInfos(dbInfos, nil, nil, 1)
+	builder, err := infoschema.NewBuilder(dom.Store(), nil).InitWithDBInfos(dbInfos, nil, 1)
 	require.NoError(t, err)
 
 	txn, err := store.Begin()
@@ -254,7 +255,7 @@ func TestInfoTables(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	builder, err := infoschema.NewBuilder(store, nil).InitWithDBInfos(nil, nil, nil, 0)
+	builder, err := infoschema.NewBuilder(store, nil).InitWithDBInfos(nil, nil, 0)
 	require.NoError(t, err)
 	is := builder.Build()
 
@@ -311,79 +312,85 @@ func genGlobalID(store kv.Storage) (int64, error) {
 	return globalID, errors.Trace(err)
 }
 
-func TestGetBundle(t *testing.T) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
+func TestBuildBundle(t *testing.T) {
+	store, _, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("drop placement policy if exists p2")
+	tk.MustExec("create placement policy p1 followers=1")
+	tk.MustExec("create placement policy p2 followers=2")
+	tk.MustExec(`create table t1(a int primary key) placement policy p1 partition by range(a) (
+		partition p1 values less than (10) placement policy p2,
+		partition p2 values less than (20)
+	)`)
+	tk.MustExec("create table t2(a int)")
 	defer func() {
-		err := store.Close()
-		require.NoError(t, err)
+		tk.MustExec("drop table if exists t1, t2")
+		tk.MustExec("drop placement policy if exists p1")
+		tk.MustExec("drop placement policy if exists p2")
 	}()
 
-	builder, err := infoschema.NewBuilder(store, nil).InitWithDBInfos(nil, nil, nil, 0)
+	is := domain.GetDomain(tk.Session()).InfoSchema()
+	db, ok := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, ok)
+
+	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
-	is := builder.Build()
 
-	bundle := &placement.Bundle{
-		ID: placement.PDBundleID,
-		Rules: []*placement.Rule{
-			{
-				GroupID: placement.PDBundleID,
-				ID:      "default",
-				Role:    "voter",
-				Count:   3,
-			},
-		},
+	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+
+	var p1 model.PartitionDefinition
+	for _, par := range tbl1.Meta().Partition.Definitions {
+		if par.Name.L == "p1" {
+			p1 = par
+			break
+		}
 	}
-	is.SetBundle(bundle)
+	require.NotNil(t, p1)
 
-	b := infoschema.GetBundle(is, []int64{})
-	require.Equal(t, bundle.Rules, b.Rules)
+	var tb1Bundle, p1Bundle *placement.Bundle
 
-	// bundle itself is cloned
-	b.ID = "test"
-	require.Equal(t, placement.PDBundleID, bundle.ID)
+	require.NoError(t, kv.RunInNewTxn(context.TODO(), store, false, func(ctx context.Context, txn kv.Transaction) (err error) {
+		m := meta.NewMeta(txn)
+		tb1Bundle, err = placement.NewTableBundle(m, tbl1.Meta())
+		require.NoError(t, err)
+		require.NotNil(t, tb1Bundle)
 
-	ptID := placement.GroupID(3)
-	bundle = &placement.Bundle{
-		ID: ptID,
-		Rules: []*placement.Rule{
-			{
-				GroupID: ptID,
-				ID:      "default",
-				Role:    "voter",
-				Count:   4,
-			},
-		},
+		p1Bundle, err = placement.NewPartitionBundle(m, p1)
+		require.NoError(t, err)
+		require.NotNil(t, p1Bundle)
+		return
+	}))
+
+	assertBundle := func(checkIS infoschema.InfoSchema, id int64, expected *placement.Bundle) {
+		actual, ok := checkIS.PlacementBundleByPhysicalTableID(id)
+		if expected == nil {
+			require.False(t, ok)
+			return
+		}
+
+		expectedJSON, err := json.Marshal(expected)
+		require.NoError(t, err)
+		actualJSON, err := json.Marshal(actual)
+		require.NoError(t, err)
+		require.Equal(t, string(expectedJSON), string(actualJSON))
 	}
-	is.SetBundle(bundle)
 
-	b = infoschema.GetBundle(is, []int64{2, 3})
-	require.Equal(t, bundle, b)
+	assertBundle(is, tbl1.Meta().ID, tb1Bundle)
+	assertBundle(is, tbl2.Meta().ID, nil)
+	assertBundle(is, p1.ID, p1Bundle)
 
-	// bundle itself is cloned
-	b.ID = "test"
-	require.Equal(t, ptID, bundle.ID)
-
-	ptID = placement.GroupID(1)
-	bundle = &placement.Bundle{
-		ID: ptID,
-		Rules: []*placement.Rule{
-			{
-				GroupID: ptID,
-				ID:      "default",
-				Role:    "voter",
-				Count:   4,
-			},
-		},
-	}
-	is.SetBundle(bundle)
-
-	b = infoschema.GetBundle(is, []int64{1, 2, 3})
-	require.Equal(t, bundle, b)
-
-	// bundle itself is cloned
-	b.ID = "test"
-	require.Equal(t, ptID, bundle.ID)
+	builder, err := infoschema.NewBuilder(store, nil).InitWithDBInfos([]*model.DBInfo{db}, is.AllPlacementPolicies(), is.SchemaMetaVersion())
+	require.NoError(t, err)
+	is2 := builder.Build()
+	assertBundle(is2, tbl1.Meta().ID, tb1Bundle)
+	assertBundle(is2, tbl2.Meta().ID, nil)
+	assertBundle(is2, p1.ID, p1Bundle)
 }
 
 func TestLocalTemporaryTables(t *testing.T) {

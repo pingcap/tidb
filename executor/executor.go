@@ -2010,17 +2010,13 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 	return nil
 }
 
-func setResourceGroupTaggerForTxn(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
-	if snapshot != nil && topsqlstate.TopSQLEnabled() {
-		snapshot.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
+func setOptionForTopSQL(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
+	if snapshot == nil || !topsqlstate.TopSQLEnabled() {
+		return
 	}
-}
-
-// setRPCInterceptorOfExecCounterForTxn binds an interceptor for client-go to count
-// the number of SQL executions of each TiKV.
-func setRPCInterceptorOfExecCounterForTxn(vars *variable.SessionVars, snapshot kv.Snapshot) {
-	if snapshot != nil && topsqlstate.TopSQLEnabled() && vars.StmtCtx.KvExecCounter != nil {
-		snapshot.SetOption(kv.RPCInterceptor, vars.StmtCtx.KvExecCounter.RPCInterceptor())
+	snapshot.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
+	if sc.KvExecCounter != nil {
+		snapshot.SetOption(kv.RPCInterceptor, sc.KvExecCounter.RPCInterceptor())
 	}
 }
 
