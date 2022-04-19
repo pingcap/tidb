@@ -268,15 +268,13 @@ func (d *ddl) generalDDLJob(sctx sessionctx.Context) bool {
 		logutil.BgLogger().Warn("[ddl] get general worker fail", zap.Error(err))
 	}
 	if wk == nil {
+		logutil.BgLogger().Info("[ddl] no general worker available now")
 		return false
 	}
-	defer d.generalDDLWorkerPool.put(wk)
 	job, err := d.getGeneralJob(sctx)
-	if err != nil {
-		logutil.BgLogger().Error("[ddl] getGeneralJob", zap.Error(err))
-		return false
-	}
-	if job == nil {
+	if job == nil || err != nil {
+		logutil.BgLogger().Info("[ddl] no general job or get job met error", zap.Error(err))
+		d.generalDDLWorkerPool.put(wk)
 		return false
 	}
 	d.doGeneralDDLJobWorker(wk, job)
@@ -288,6 +286,7 @@ func (d *ddl) doGeneralDDLJobWorker(wk *worker, job *model.Job) {
 	d.insertRunningDDLJobMap(int(job.ID))
 	d.wg.Run(func() {
 		defer func() {
+			d.generalDDLWorkerPool.put(wk)
 			d.deleteRunningDDLJobMap(int(job.ID))
 			if job.IsSynced() || job.IsCancelled() || job.IsRollbackDone() {
 				asyncNotify(d.ddlJobDoneCh)
@@ -309,13 +308,10 @@ func (d *ddl) reorgDDLJob(sctx sessionctx.Context) bool {
 	if wk == nil {
 		return false
 	}
-	defer d.reorgWorkerPool.put(wk)
 	job, err := d.getReorgJob(sctx)
-	if err != nil {
-		logutil.BgLogger().Error("[ddl] getReorgJob", zap.Error(err))
-		return false
-	}
-	if job == nil {
+	if job == nil || err != nil {
+		logutil.BgLogger().Info("[ddl] no reorg job or get job met error", zap.Error(err))
+		d.reorgWorkerPool.put(wk)
 		return false
 	}
 	d.doReorgDDLJobWorker(wk, job)
@@ -327,6 +323,7 @@ func (d *ddl) doReorgDDLJobWorker(wk *worker, job *model.Job) {
 	d.insertRunningDDLJobMap(int(job.ID))
 	d.wg.Run(func() {
 		defer func() {
+			d.reorgWorkerPool.put(wk)
 			d.deleteRunningDDLJobMap(int(job.ID))
 			if job.IsSynced() || job.IsCancelled() || job.IsRollbackDone() {
 				asyncNotify(d.ddlJobDoneCh)
