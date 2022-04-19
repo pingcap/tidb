@@ -11,7 +11,7 @@ This document describes the design of the feature "optimize gc advance for inter
 
 TiDB advances gc safe point every `tidb_gc_run_interval` time with the value `now - tidb_gc_life_time`. If there is a long time transaction from user client lives more than `tidb_gc_life_time`, the safepoint can't be advanced until the transaction is finished or lives over 24 hours. This mechanism ensures the continuous advancement of gc safepoint and ensures that the data active transactions need to access will not be cleared.
 
-However, Internal transactions run in TiDB don't comply with the mechanism above. If the internal transaction lives more than `tidb_gc_life_time`, maybe failed because the data it needs to access was cleared. This design aims to resolve the problem that internal transaction run failed because data is cleared by the gc mechanism.
+However, Internal transactions run in TiDB don't comply with the mechanism above. If the internal transaction lives more than `tidb_gc_life_time`, it may fail because the data it needs to access was cleared. This design aims to resolve the problem that internal transaction run failed because data is cleared by the gc mechanism.
 
 ## Detailed Design
 
@@ -23,7 +23,7 @@ Currently here are two kinds of internal transactions. one is run by internal se
 
 The design stores internal sessions to session manager and stores the internal transactions to `globalInnerTxnTsBox` so that it can get startTS of internal transactions when calculates gc safepoint.
 
-#### Calculate GC Safe Point
+#### Calculate GC SafePoint
 
 Currently, the processes TiDB calculates safepoint is as bellow, it is implemented in `(is *InfoSyncer) ReportMinStartTS`
 
@@ -31,8 +31,7 @@ Currently, the processes TiDB calculates safepoint is as bellow, it is implement
 - Get all user client sessions, save them to slice `processlist`
 - Traverse `processlist` to get startTS from every client session and compare the `startTS` with `now` to get the minimum timestamp which is after `startTSLowerLimit` , save it as minStartTS which is gc safepoint.
 
-  This design add extra processes in `(is *InfoSyncer) ReportMinStartTS` to take account of internal transactions startTS when calculates gc safepoint . The new processes TiDB calculates safepoint is as bellow.
-
+This design add extra processes in `(is *InfoSyncer) ReportMinStartTS` to take account of internal transactions startTS when calculates gc safe point . The new processes TiDB calculates safe point is as bellow.
   - Get current timestamp from PD, save it to variable `now`, get timestamp that is earlier than `now` which is specified by system variable `tidb_gc_txn_max_wait_time`, save it to variable `startTSLowerLimit`
 - Get all user client sessions, save them to slice `processlist`
 - Get the startTS of every internal transaction run by internal session, save it to slice `InnerSessionStartTSList`
@@ -47,8 +46,7 @@ TiDB gets an internal session from a session pool implemented in `(s *session) g
 
 #### Store And Delete Internal Transactions
 
-The internal transactions here are executed by function `RunInNewTxn`. It stores the transaction to	 `globalInnerTxnTsBox`	at transaction begin and deletes the transaction at end.
-
+The internal transactions here are executed by function `RunInNewTxn`. It stores the transaction to `globalInnerTxnTsBox` at the transaction's beginning and deletes the transaction at the end.
 ### Data Structure Design
 
 #### SessionManager 
