@@ -61,6 +61,7 @@ func (c *MetaDataClient) DeleteTask(ctx context.Context, taskName string) error 
 	_, err := c.KV.Txn(ctx).
 		Then(clientv3.OpDelete(TaskOf(taskName)),
 			clientv3.OpDelete(RangesOf(taskName), clientv3.WithPrefix()),
+			clientv3.OpDelete(CheckPointsOf(taskName), clientv3.WithPrefix()),
 			clientv3.OpDelete(Pause(taskName))).
 		Commit()
 	if err != nil {

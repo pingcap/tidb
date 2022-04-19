@@ -464,10 +464,8 @@ func (s *streamMgr) backupFullSchemas(ctx context.Context, g glue.Glue) error {
 	}
 
 	schemasConcurrency := uint(utils.MinInt(backup.DefaultSchemaConcurrency, schemas.Len()))
-	updateCh := g.StartProgress(ctx, "Checksum", int64(schemas.Len()), !s.cfg.LogProgress)
-
 	err = schemas.BackupSchemas(ctx, metaWriter, s.mgr.GetStorage(), nil,
-		s.cfg.StartTS, schemasConcurrency, 0, true, updateCh)
+		s.cfg.StartTS, schemasConcurrency, 0, true, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -550,7 +548,7 @@ func RunStreamStart(
 	if count, err := cli.GetTaskCount(ctx); err != nil {
 		return errors.Trace(err)
 	} else if count > 0 {
-		return errors.Annotate(berrors.ErrStreamLogTaskExist, "It supports single stream log task current")
+		return errors.Annotate(berrors.ErrStreamLogTaskExist, "It supports single stream log task currently")
 	}
 
 	if err = streamMgr.setLock(ctx); err != nil {
