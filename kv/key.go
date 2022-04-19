@@ -20,9 +20,11 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unsafe"
 
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/set"
 )
 
 // Key represents high-level Key type.
@@ -157,7 +159,13 @@ type Handle interface {
 	Data() ([]types.Datum, error)
 	// String implements the fmt.Stringer interface.
 	String() string
+	// MemSize returns the size of memory occupied by the handle.
+	MemSize() uint64
 }
+
+var _ Handle = IntHandle(0)
+var _ Handle = &CommonHandle{}
+var _ Handle = PartitionHandle{}
 
 // IntHandle implement the Handle interface for int64 type handle.
 type IntHandle int64
@@ -226,6 +234,11 @@ func (ih IntHandle) Data() ([]types.Datum, error) {
 // String implements the Handle interface.
 func (ih IntHandle) String() string {
 	return strconv.FormatInt(int64(ih), 10)
+}
+
+// MemSize implements the Handle interface.
+func (ih IntHandle) MemSize() uint64 {
+	return 64
 }
 
 // CommonHandle implements the Handle interface for non-int64 type handle.
@@ -347,6 +360,11 @@ func (ch *CommonHandle) String() string {
 	return fmt.Sprintf("{%s}", strings.Join(strs, ", "))
 }
 
+// MemSize implements the Handle interface.
+func (ch *CommonHandle) MemSize() uint64 {
+	return uint64(len(ch.encoded) + len(ch.colEndOffsets)*2)
+}
+
 // HandleMap is the map for Handle.
 type HandleMap struct {
 	ints map[int64]interface{}
@@ -416,6 +434,50 @@ func (m *HandleMap) Range(fn func(h Handle, val interface{}) bool) {
 		if !fn(strVal.h, strVal.val) {
 			return
 		}
+	}
+}
+
+// MemAwareHandleMap is similar to HandleMap, but it's aware of its memory usage and doesn't support delete.
+type MemAwareHandleMap[V any] struct {
+	ints set.MemAwareMap[int64, V]
+	strs set.MemAwareMap[string, strHandleValue[V]]
+}
+
+type strHandleValue[V any] struct {
+	h   Handle
+	val V
+}
+
+// NewMemAwareHandleMap creates a new map for handle.
+func NewMemAwareHandleMap[V any]() *MemAwareHandleMap[V] {
+	// Initialize the two maps to avoid checking nil.
+	return &MemAwareHandleMap[V]{
+		ints: set.NewMemAwareMap[int64, V](64 + 1), // map[int64]V{},
+		strs: set.NewMemAwareMap[string, strHandleValue[V]](16 + uint64(unsafe.Sizeof(strHandleValue[V]{}))),
+	}
+}
+
+// Get gets a value by a Handle.
+func (m *MemAwareHandleMap[V]) Get(h Handle) (v V, ok bool) {
+	if h.IsInt() {
+		v, ok = m.ints.Get(h.IntValue())
+	} else {
+		var strVal strHandleValue[V]
+		strVal, ok = m.strs.Get(string(h.Encoded()))
+		v = strVal.val
+	}
+	return
+}
+
+// Set sets a value with a Handle.
+func (m *MemAwareHandleMap[V]) Set(h Handle, val V, sizeOfValue uint64) int64 {
+	if h.IsInt() {
+		return m.ints.Set(h.IntValue(), val, h.MemSize()+sizeOfValue)
+	} else {
+		return m.strs.Set(string(h.Encoded()), strHandleValue[V]{
+			h:   h,
+			val: val,
+		}, h.MemSize()+sizeOfValue)
 	}
 }
 
