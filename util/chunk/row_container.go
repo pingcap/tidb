@@ -448,7 +448,7 @@ func NewSortedRowContainer(fieldType []*types.FieldType, chunkSize int, ByItemsD
 func (c *SortedRowContainer) Close() error {
 	c.ptrM.Lock()
 	defer c.ptrM.Unlock()
-	c.GetMemTracker().Consume(int64(-8 * cap(c.ptrM.rowPtrs)))
+	c.GetMemTracker().Consume(int64(-8 * c.NumRow()))
 	c.ptrM.rowPtrs = nil
 	return c.RowContainer.Close()
 }
@@ -483,7 +483,7 @@ func (c *SortedRowContainer) Sort() {
 	if c.ptrM.rowPtrs != nil {
 		return
 	}
-	c.ptrM.rowPtrs = make([]RowPtr, 0, c.NumRow())
+	c.ptrM.rowPtrs = make([]RowPtr, 0, c.NumRow()) // The memory usage has been tracked in SortedRowContainer.Add() function
 	for chkIdx := 0; chkIdx < c.NumChunks(); chkIdx++ {
 		rowChk, err := c.GetChunk(chkIdx)
 		// err must be nil, because the chunk is in memory.
@@ -495,7 +495,6 @@ func (c *SortedRowContainer) Sort() {
 		}
 	}
 	sort.Slice(c.ptrM.rowPtrs, c.keyColumnsLess)
-	c.GetMemTracker().Consume(int64(8 * cap(c.ptrM.rowPtrs)))
 }
 
 func (c *SortedRowContainer) sortAndSpillToDisk() {
@@ -510,6 +509,8 @@ func (c *SortedRowContainer) Add(chk *Chunk) (err error) {
 	if c.ptrM.rowPtrs != nil {
 		return ErrCannotAddBecauseSorted
 	}
+	// Consume the memory usage of rowPtrs in advance
+	c.GetMemTracker().Consume(int64(chk.NumRows() * 8))
 	return c.RowContainer.Add(chk)
 }
 
