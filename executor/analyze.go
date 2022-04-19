@@ -1376,14 +1376,12 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 		memTracker.Consume(colRespSize)
 		subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 		tmpMemSize := subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
-		data = nil
-		colResp = nil
-		memToGC.Add(dataSize + colRespSize + tmpMemSize)
 		UpdateAnalyzeJob(e.ctx, e.job, subCollector.Base().Count)
 		oldRetCollectorSize := retCollector.Base().MemSize
 		retCollector.MergeCollector(subCollector)
 		newRetCollectorSize := retCollector.Base().MemSize
 		subCollectorSize := subCollector.Base().MemSize
+		memToGC.Add(dataSize + colRespSize + tmpMemSize)
 		memToGC.Add(oldRetCollectorSize + subCollectorSize - newRetCollectorSize)
 	}
 	resultCh <- &samplingMergeResult{collector: retCollector}
