@@ -123,7 +123,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	}()
 
 	// for consistency lock, we should get table list at first to generate the lock tables SQL
-	if conf.Consistency == consistencyTypeLock {
+	if conf.Consistency == ConsistencyTypeLock {
 		conn, err = createConnWithConsistency(tctx, pool, repeatableRead)
 		if err != nil {
 			return errors.Trace(err)
@@ -176,7 +176,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	}
 
 	// for other consistencies, we should get table list after consistency is set up and GlobalMetaData is cached
-	if conf.Consistency != consistencyTypeLock {
+	if conf.Consistency != ConsistencyTypeLock {
 		if err = prepareTableListToDump(tctx, conf, metaConn); err != nil {
 			return err
 		}
@@ -221,7 +221,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	defer tearDownWriters()
 
 	if conf.TransactionalConsistency {
-		if conf.Consistency == consistencyTypeFlush || conf.Consistency == consistencyTypeLock {
+		if conf.Consistency == ConsistencyTypeFlush || conf.Consistency == ConsistencyTypeLock {
 			tctx.L().Info("All the dumping transactions have started. Start to unlock tables")
 		}
 		if err = conCtrl.TearDown(tctx); err != nil {
@@ -1075,10 +1075,10 @@ func extractTiDBRowIDFromDecodedKey(indexField, key string) (string, error) {
 func getListTableTypeByConf(conf *Config) listTableType {
 	// use listTableByShowTableStatus by default because it has better performance
 	listType := listTableByShowTableStatus
-	if conf.Consistency == consistencyTypeLock {
+	if conf.Consistency == ConsistencyTypeLock {
 		// for consistency lock, we need to build the tables to dump as soon as possible
 		listType = listTableByInfoSchema
-	} else if conf.Consistency == consistencyTypeFlush && matchMysqlBugversion(conf.ServerInfo) {
+	} else if conf.Consistency == ConsistencyTypeFlush && matchMysqlBugversion(conf.ServerInfo) {
 		// For some buggy versions of mysql, we need a workaround to get a list of table names.
 		listType = listTableByShowFullTables
 	}
@@ -1205,9 +1205,9 @@ func (d *Dumper) dumpSQL(tctx *tcontext.Context, metaConn *BaseConn, taskChan ch
 
 func canRebuildConn(consistency string, trxConsistencyOnly bool) bool {
 	switch consistency {
-	case consistencyTypeLock, consistencyTypeFlush:
+	case ConsistencyTypeLock, ConsistencyTypeFlush:
 		return !trxConsistencyOnly
-	case consistencyTypeSnapshot, consistencyTypeNone:
+	case ConsistencyTypeSnapshot, ConsistencyTypeNone:
 		return true
 	default:
 		return false
@@ -1310,23 +1310,23 @@ func detectServerInfo(d *Dumper) error {
 // resolveAutoConsistency is an initialization step of Dumper.
 func resolveAutoConsistency(d *Dumper) error {
 	conf := d.conf
-	if conf.Consistency != consistencyTypeAuto {
+	if conf.Consistency != ConsistencyTypeAuto {
 		return nil
 	}
 	switch conf.ServerInfo.ServerType {
 	case version.ServerTypeTiDB:
-		conf.Consistency = consistencyTypeSnapshot
+		conf.Consistency = ConsistencyTypeSnapshot
 	case version.ServerTypeMySQL, version.ServerTypeMariaDB:
-		conf.Consistency = consistencyTypeFlush
+		conf.Consistency = ConsistencyTypeFlush
 	default:
-		conf.Consistency = consistencyTypeNone
+		conf.Consistency = ConsistencyTypeNone
 	}
 	return nil
 }
 
 func validateResolveAutoConsistency(d *Dumper) error {
 	conf := d.conf
-	if conf.Consistency != consistencyTypeSnapshot && conf.Snapshot != "" {
+	if conf.Consistency != ConsistencyTypeSnapshot && conf.Snapshot != "" {
 		return errors.Errorf("can't specify --snapshot when --consistency isn't snapshot, resolved consistency: %s", conf.Consistency)
 	}
 	return nil
@@ -1454,7 +1454,7 @@ func setSessionParam(d *Dumper) error {
 		if si.ServerType != version.ServerTypeTiDB {
 			return errors.New("snapshot consistency is not supported for this server")
 		}
-		if consistency == consistencyTypeSnapshot {
+		if consistency == ConsistencyTypeSnapshot {
 			conf.ServerInfo.HasTiKV, err = CheckTiDBWithTiKV(pool)
 			if err != nil {
 				d.L().Info("cannot check whether TiDB has TiKV, will apply tidb_snapshot by default. This won't affect dump process", log.ShortError(err))
