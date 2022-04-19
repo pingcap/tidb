@@ -278,7 +278,21 @@ func (p *PhysicalIndexScan) GetPlanCost(taskType property.TaskType) (float64, er
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PhysicalIndexJoin) GetPlanCost(taskType property.TaskType) (float64, error) {
-	return 0, errors.New("not implemented")
+	if p.planCostInit {
+		return p.planCost, nil
+	}
+	outerChild, innerChild := p.children[1-p.InnerChildIdx], p.children[p.InnerChildIdx]
+	outerCost, err := outerChild.GetPlanCost(taskType)
+	if err != nil {
+		return 0, err
+	}
+	innerCost, err := innerChild.GetPlanCost(taskType)
+	if err != nil {
+		return 0, err
+	}
+	p.planCost = p.GetCost(outerChild.StatsCount(), innerChild.StatsCount(), outerCost, innerCost)
+	p.planCostInit = true
+	return p.planCost, nil
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
