@@ -105,6 +105,18 @@ func NewImportClient(metaClient SplitClient, tlsConf *tls.Config, keepaliveConf 
 	}
 }
 
+func (ic *importClient) ClearFiles(
+	ctx context.Context,
+	storeID uint64,
+	req *import_sstpb.ClearRequest,
+) (*import_sstpb.ClearResponse, error) {
+	client, err := ic.GetImportClient(ctx, storeID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return client.ClearFiles(ctx, req)
+}
+
 func (ic *importClient) ApplyKVFile(
 	ctx context.Context,
 	storeID uint64,
