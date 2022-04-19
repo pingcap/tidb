@@ -301,6 +301,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 			job.Version = currentVersion
 			job.StartTS = txn.StartTS()
 			job.ID = ids[i]
+			job.State = model.JobStateQueueing
 			if err = buildJobDependence(t, job); err != nil {
 				return errors.Trace(err)
 			}

@@ -93,7 +93,6 @@ type Handle struct {
 		memTracker *memory.Tracker
 	}
 
-	// Deprecated: only used by feedback now
 	pool sessionPool
 
 	// ddlEventCh is a channel to notify a ddl operation has happened.
@@ -129,25 +128,43 @@ type Handle struct {
 	sysProcTracker sessionctx.SysProcTracker
 }
 
+func (h *Handle) withRestrictedSQLExecutor(ctx context.Context, fn func(context.Context, sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error)) ([]chunk.Row, []*ast.ResultField, error) {
+	se, err := h.pool.Get()
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	defer h.pool.Put(se)
+
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+	return fn(ctx, exec)
+}
+
 func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	return h.mu.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool}, sql, params...)
+	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
+		return exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql, params...)
+	})
 }
 
 func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int, procTrackID uint64, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	optFuncs := []sqlexec.OptionFuncAlias{
-		sqlexec.ExecOptionUseSessionPool,
-		execOptionForAnalyze[statsVer],
-		sqlexec.ExecOptionWithSysProcTrack(procTrackID, h.sysProcTracker.Track, h.sysProcTracker.UnTrack),
-	}
-	return h.mu.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, optFuncs, sql, params...)
+	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
+		optFuncs := []sqlexec.OptionFuncAlias{
+			execOptionForAnalyze[statsVer],
+			sqlexec.GetPartitionPruneModeOption(string(h.CurrentPruneMode())),
+			sqlexec.ExecOptionUseCurSession,
+			sqlexec.ExecOptionWithSysProcTrack(procTrackID, h.sysProcTracker.Track, h.sysProcTracker.UnTrack),
+		}
+		return exec.ExecRestrictedSQL(ctx, optFuncs, sql, params...)
+	})
 }
 
 func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, snapshot uint64, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	optFuncs := []sqlexec.OptionFuncAlias{
-		sqlexec.ExecOptionUseSessionPool,
-		sqlexec.ExecOptionWithSnapshot(snapshot),
-	}
-	return h.mu.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(ctx, optFuncs, sql, params...)
+	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
+		optFuncs := []sqlexec.OptionFuncAlias{
+			sqlexec.ExecOptionWithSnapshot(snapshot),
+			sqlexec.ExecOptionUseCurSession,
+		}
+		return exec.ExecRestrictedSQL(ctx, optFuncs, sql, params...)
+	})
 }
 
 // Clear the statsCache, only for test.

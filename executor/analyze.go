@@ -1971,8 +1971,7 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
-	setResourceGroupTaggerForTxn(e.ctx.GetSessionVars().StmtCtx, snapshot)
-	setRPCInterceptorOfExecCounterForTxn(e.ctx.GetSessionVars(), snapshot)
+	setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, snapshot)
 	for _, t := range e.scanTasks {
 		iter, err := snapshot.Iter(kv.Key(t.StartKey), kv.Key(t.EndKey))
 		if err != nil {
@@ -1993,8 +1992,7 @@ func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 	snapshot.SetOption(kv.NotFillCache, true)
 	snapshot.SetOption(kv.IsolationLevel, kv.SI)
 	snapshot.SetOption(kv.Priority, kv.PriorityLow)
-	setResourceGroupTaggerForTxn(e.ctx.GetSessionVars().StmtCtx, snapshot)
-	setRPCInterceptorOfExecCounterForTxn(e.ctx.GetSessionVars(), snapshot)
+	setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, snapshot)
 	readReplicaType := e.ctx.GetSessionVars().GetReplicaRead()
 	if readReplicaType.IsFollowerRead() {
 		snapshot.SetOption(kv.ReplicaRead, readReplicaType)

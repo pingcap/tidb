@@ -305,7 +305,7 @@ func cmdRun(args ...string) bool {
 		tasks = tmp
 	}
 
-	fmt.Printf("building task finish, count=%d, takes=%v\n", len(tasks), time.Since(start))
+	fmt.Printf("building task finish, maxproc=%d, count=%d, takes=%v\n", P, len(tasks), time.Since(start))
 
 	taskCh := make(chan task, 100)
 	works := make([]numa, P)
@@ -695,7 +695,7 @@ func (n *numa) worker(wg *sync.WaitGroup, ch chan task) {
 		res := n.runTestCase(t.pkg, t.test, t.old)
 		if res.Failure != nil {
 			fmt.Println("[FAIL] ", t.pkg, t.test)
-			fmt.Fprintf(os.Stderr, "err=%s\n%s", res.err, res.Failure.Contents)
+			fmt.Fprintf(os.Stderr, "err=%s\n%s", res.err.Error(), res.Failure.Contents)
 			n.Fail = true
 		}
 		n.results = append(n.results, res)
@@ -731,8 +731,15 @@ func (n *numa) runTestCase(pkg string, fn string, old bool) testResult {
 		if err != nil {
 			if _, ok := err.(*exec.ExitError); ok {
 				// Retry 3 times to get rid of the weird error:
-				// err=signal: segmentation fault (core dumped)
-				if err.Error() == "signal: segmentation fault (core dumped)" {
+				switch err.Error() {
+				case "signal: segmentation fault (core dumped)":
+					buf.Reset()
+					continue
+				case "signal: trace/breakpoint trap (core dumped)":
+					buf.Reset()
+					continue
+				}
+				if strings.Contains(buf.String(), "panic during panic") {
 					buf.Reset()
 					continue
 				}

@@ -1173,11 +1173,13 @@ func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourc
 		cachedTable := tbl.(table.CachedTable)
 		// Determine whether the cache can be used.
 		leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
-		cacheData := cachedTable.TryReadFromCache(startTS, leaseDuration)
+		cacheData, loading := cachedTable.TryReadFromCache(startTS, leaseDuration)
 		if cacheData != nil {
 			vars.StmtCtx.ReadFromTableCache = true
 			x.setDummy()
 			us.cacheTable = cacheData
+		} else if loading {
+			// continue
 		} else {
 			if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !vars.StmtCtx.InExplainStmt {
 				store := b.ctx.GetStore()
@@ -1803,6 +1805,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			}
 
 		case strings.ToLower(infoschema.TableSlowQuery), strings.ToLower(infoschema.ClusterTableSlowLog):
+			memTracker := memory.NewTracker(v.ID(), -1)
+			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 				table:        v.Table,
@@ -1810,6 +1814,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 					table:      v.Table,
 					outputCols: v.Columns,
 					extractor:  v.Extractor.(*plannercore.SlowQueryExtractor),
+					memTracker: memTracker,
 				},
 			}
 		case strings.ToLower(infoschema.TableStorageStats):
@@ -3379,11 +3384,14 @@ func keyColumnsIncludeAllPartitionColumns(keyColumns []int, pe *tables.Partition
 	return true
 }
 
-func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, schema *expression.Schema, partitionInfo *plannercore.PartitionInfo,
+func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table, schema *expression.Schema, partitionInfo *plannercore.PartitionInfo,
 	lookUpContent []*indexJoinLookUpContent) (usedPartition []table.PhysicalTable, canPrune bool, contentPos []int64, err error) {
 	partitionTbl := tbl.(table.PartitionedTable)
+
+	// In index join, this is called by multiple goroutines simultaneously, but partitionPruning is not thread-safe.
+	// Use once.Do to avoid DATA RACE here.
 	// TODO: condition based pruning can be do in advance.
-	condPruneResult, err := partitionPruning(ctx, partitionTbl, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
+	condPruneResult, err := builder.partitionPruning(partitionTbl, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
 	if err != nil {
 		return nil, false, nil, err
 	}
@@ -3436,7 +3444,7 @@ func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, sch
 		for i, date := range content.keys {
 			locateKey[keyColOffsets[i]] = date
 		}
-		p, err := partitionTbl.GetPartitionByRow(ctx, locateKey)
+		p, err := partitionTbl.GetPartitionByRow(builder.ctx, locateKey)
 		if err != nil {
 			return nil, false, nil, err
 		}
@@ -3881,6 +3889,11 @@ type dataReaderBuilder struct {
 	*executorBuilder
 
 	selectResultHook // for testing
+	once             struct {
+		sync.Once
+		condPruneResult []table.PhysicalTable
+		err             error
+	}
 }
 
 type mockPhysicalIndexReader struct {
@@ -3980,7 +3993,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		return nil, err
 	}
 	partitionInfo := &v.PartitionInfo
-	usedPartitionList, err := partitionPruning(e.ctx, pt, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
+	usedPartitionList, err := builder.partitionPruning(pt, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
 	if err != nil {
 		return nil, err
 	}
@@ -4184,7 +4197,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 	}
 
 	tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
-	usedPartition, canPrune, contentPos, err := prunePartitionForInnerExecutor(builder.executorBuilder.ctx, tbl, e.Schema(), &v.PartitionInfo, lookUpContents)
+	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, e.Schema(), &v.PartitionInfo, lookUpContents)
 	if err != nil {
 		return nil, err
 	}
@@ -4230,7 +4243,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 		return e, err
 	}
 	tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
-	usedPartition, canPrune, contentPos, err := prunePartitionForInnerExecutor(builder.executorBuilder.ctx, tbl, e.Schema(), &v.PartitionInfo, lookUpContents)
+	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, e.Schema(), &v.PartitionInfo, lookUpContents)
 	if err != nil {
 		return nil, err
 	}
@@ -4757,6 +4770,16 @@ func (b *executorBuilder) buildAdminResetTelemetryID(v *plannercore.AdminResetTe
 	return &AdminResetTelemetryIDExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID())}
 }
 
+func (builder *dataReaderBuilder) partitionPruning(tbl table.PartitionedTable, conds []expression.Expression, partitionNames []model.CIStr,
+	columns []*expression.Column, columnNames types.NameSlice) ([]table.PhysicalTable, error) {
+	builder.once.Do(func() {
+		condPruneResult, err := partitionPruning(builder.executorBuilder.ctx, tbl, conds, partitionNames, columns, columnNames)
+		builder.once.condPruneResult = condPruneResult
+		builder.once.err = err
+	})
+	return builder.once.condPruneResult, builder.once.err
+}
+
 func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []model.CIStr,
 	columns []*expression.Column, columnNames types.NameSlice) ([]table.PhysicalTable, error) {
 	idxArr, err := plannercore.PartitionPruning(ctx, tbl, conds, partitionNames, columns, columnNames)
@@ -4969,13 +4992,16 @@ func (b *executorBuilder) getCacheTable(tblInfo *model.TableInfo, startTS uint64
 	}
 	sessVars := b.ctx.GetSessionVars()
 	leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
-	cacheData := tbl.(table.CachedTable).TryReadFromCache(startTS, leaseDuration)
+	cacheData, loading := tbl.(table.CachedTable).TryReadFromCache(startTS, leaseDuration)
 	if cacheData != nil {
 		sessVars.StmtCtx.ReadFromTableCache = true
 		return cacheData
-	}
-	if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
-		tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS, leaseDuration)
+	} else if loading {
+		// continue
+	} else {
+		if !b.ctx.GetSessionVars().StmtCtx.InExplainStmt && !b.inDeleteStmt && !b.inUpdateStmt {
+			tbl.(table.CachedTable).UpdateLockForRead(context.Background(), b.ctx.GetStore(), startTS, leaseDuration)
+		}
 	}
 	return nil
 }
