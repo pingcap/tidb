@@ -49,7 +49,6 @@ func createRestoreSchemaSuite(t *testing.T) (s *testRestoreSchemaSuite, clean fu
 }
 
 func TestRestoreAutoIncID(t *testing.T) {
-	t.Skip("just for debug")
 	s, clean := createRestoreSchemaSuite(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, s.mock.Storage)
@@ -168,7 +167,6 @@ func TestCreateTablesInDb(t *testing.T) {
 }
 
 func TestFilterDDLJobs(t *testing.T) {
-	t.Skip("Skip test")
 	s, clean := createRestoreSchemaSuite(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, s.mock.Storage)
@@ -233,7 +231,6 @@ func TestFilterDDLJobs(t *testing.T) {
 }
 
 func TestFilterDDLJobsV2(t *testing.T) {
-	t.Skip("Skip test")
 	s, clean := createRestoreSchemaSuite(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, s.mock.Storage)

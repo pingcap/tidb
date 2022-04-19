@@ -294,7 +294,6 @@ func TestSendCreds(t *testing.T) {
 }
 
 func TestSkipUnsupportedDDLJob(t *testing.T) {
-	t.Skip("just for debug")
 	s, clean := createBackupSuite(t)
 	defer clean()
 
