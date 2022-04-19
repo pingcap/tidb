@@ -5,41 +5,41 @@
 
 ## Introduction
 
-This document describes the design of the feature "optimize gc advance for internal transaction", which adds the startTS(start time stamp) of all internal transactions to the gc(garbage collect) safe point calculation process.
+This document describes the design of the feature "optimize gc advance for internal transaction", which adds the startTS(start timestamp) of all internal transactions to the gc(garbage collect) safepoint calculation process.
 
 ## Motivation or Background
 
-TiDB advances gc safe point every `tidb_gc_run_interval` time with step `tidb_gc_life_time`. If there is a long time transaction from user client lives more than `tidb_gc_life_time`, the safe point can't be advanced until the transaction is finished or lives over 24 hours. This mechanism ensures the continuous advancement of gc safe point and ensures that the data active transactions need to access will not be cleared.
+TiDB advances gc safe point every `tidb_gc_run_interval` time with the value `now - tidb_gc_life_time`. If there is a long time transaction from user client lives more than `tidb_gc_life_time`, the safepoint can't be advanced until the transaction is finished or lives over 24 hours. This mechanism ensures the continuous advancement of gc safepoint and ensures that the data active transactions need to access will not be cleared.
 
 However, Internal transactions run in TiDB don't comply with the mechanism above. If the internal transaction lives more than `tidb_gc_life_time`, maybe failed because the data it needs to access was cleared. This design aims to resolve the problem that internal transaction run failed because data is cleared by the gc mechanism.
 
 ## Detailed Design
 
-`Design Summary` describes the main processes of safe point calculation and what job this design did.
+`Design Summary` describes the main processes of safepoint calculation and what job this design did.
 
 ### Design Summary
 
-Currently here are two kinds of internal transactions. one is run by internal session, the other is run by function `RunInNewTxn`. This design aims to take account of all internal transactions when calculate gc safe point.
+Currently here are two kinds of internal transactions. one is run by internal session, the other is run by function `RunInNewTxn`. This design aims to take account of all internal transactions when calculate gc safepoint.
 
-The design stores internal sessions to session manager and stores the internal transactions to `globalInnerTxnTsBox` so that it can get startTS of internal transactions when calculates gc safe point.
+The design stores internal sessions to session manager and stores the internal transactions to `globalInnerTxnTsBox` so that it can get startTS of internal transactions when calculates gc safepoint.
 
 #### Calculate GC Safe Point
 
-Currently, the processes TiDB calculates safe point is as bellow, it is implemented in `(is *InfoSyncer) ReportMinStartTS`
+Currently, the processes TiDB calculates safepoint is as bellow, it is implemented in `(is *InfoSyncer) ReportMinStartTS`
 
-- Get current time stamp from PD, save it to variable `now`,  get time stamp that is 24 hours earlier than `now`, save it to variable `startTSLowerLimit`
+- Get current timestamp from PD, save it to variable `now`,	 get timestamp that is 24 hours earlier than `now`, save it to variable `startTSLowerLimit`
 - Get all user client sessions, save them to slice `processlist`
-- Traverse `processlist` to get startTS from every client session and compare the `startTS` with `now` to get the minimum time stamp which is after `startTSLowerLimit` , save it as minStartTS which is gc safe point.
+- Traverse `processlist` to get startTS from every client session and compare the `startTS` with `now` to get the minimum timestamp which is after `startTSLowerLimit` , save it as minStartTS which is gc safepoint.
 
-This design add extra processes  in `(is *InfoSyncer) ReportMinStartTS` to take account of internal transactions startTS when calculates gc safe point . The new processes TiDB calculates safe point is as bellow.
+  This design add extra processes in `(is *InfoSyncer) ReportMinStartTS` to take account of internal transactions startTS when calculates gc safepoint . The new processes TiDB calculates safepoint is as bellow.
 
-- Get current time stamp from PD, save it to variable `now`,  get time stamp that is earlier than `now` which is specified by system variable `tidb_gc_txn_max_wait_time`, save it to variable `startTSLowerLimit`
+  - Get current timestamp from PD, save it to variable `now`, get timestamp that is earlier than `now` which is specified by system variable `tidb_gc_txn_max_wait_time`, save it to variable `startTSLowerLimit`
 - Get all user client sessions, save them to slice `processlist`
 - Get the startTS of every internal transaction run by internal session, save it to slice `InnerSessionStartTSList`
 - Get the startTS of every internal transaction run by `RunInNewTxn`, save it to map `innerTxnStartTsMap`
-- Traverse `processlist` to get startTS from every client session and compare the `startTS` with `now` to get the minimum time stamp which is after `startTSLowerLimit` , save it as `minStartTS`.
-- Traverse `InnerSessionStartTSList` to get startTS and compare with `minStartTS` to get the minimum time stamp which is after `startTSLowerLimit` , save it also as `minStartTS`.
-- Traverse `innerTxnStartTsMap` to get startTS and compare with `minStartTS` to get the minimum time stamp which is after `startTSLowerLimit` , save it also as `minStartTS` which is gc safe point.
+- Traverse `processlist` to get startTS from every client session and compare the `startTS` with `now` to get the minimum timestamp which is after `startTSLowerLimit` , save it as `minStartTS`.
+- Traverse `InnerSessionStartTSList` to get startTS and compare with `minStartTS` to get the minimum timestamp which is after `startTSLowerLimit` , save it also as `minStartTS`.
+- Traverse `innerTxnStartTsMap` to get startTS and compare with `minStartTS` to get the minimum timestamp which is after `startTSLowerLimit` , save it also as `minStartTS` which is gc safepoint.
 
 #### Store And Delete Internal Sessions
 
@@ -47,7 +47,7 @@ TiDB gets an internal session from a session pool implemented in `(s *session) g
 
 #### Store And Delete Internal Transactions
 
-The internal transactions here are executed by function `RunInNewTxn`. It stores the transaction to  `globalInnerTxnTsBox`  at transaction begin and deletes the transaction at end.
+The internal transactions here are executed by function `RunInNewTxn`. It stores the transaction to	 `globalInnerTxnTsBox`	at transaction begin and deletes the transaction at end.
 
 ### Data Structure Design
 
@@ -72,12 +72,12 @@ This design defines a global variable `globalInnerTxnTsBox` to manage internal t
 
 ```go
 var globalInnerTxnTsBox = innerTxnStartTsBox{
-	innerTSLock:        sync.Mutex{},
+	innerTSLock:		sync.Mutex{},
 	innerTxnStartTsMap: make(map[uint64]struct{}, 256),
 }
 
 type innerTxnStartTsBox struct {
-	innerTSLock        sync.Mutex
+	innerTSLock		   sync.Mutex
 	innerTxnStartTsMap map[uint64]struct{}
 }
 ```
@@ -86,7 +86,7 @@ type innerTxnStartTsBox struct {
 
 #### Store And Delete Internal Sessions
 
-TiDB gets an internal session from a session pool implemented in `(s *session) getInternalSession`, when the transaction finished,it puts the session to the pool. This design stores the internal session to session manger and deletes the internal session from session manager in the function  `(s *session) getInternalSession`. It calls the function `infosync.DeleteInternalSession()` to delete the internal session from session manager and calls the function `infosync.StoreInternalSession` to add the internal session to session manger.
+TiDB gets an internal session from a session pool implemented in `(s *session) getInternalSession`, when the transaction finished,it puts the session to the pool. This design stores the internal session to session manger and deletes the internal session from session manager in the function	`(s *session) getInternalSession`. It calls the function `infosync.DeleteInternalSession()` to delete the internal session from session manager and calls the function `infosync.StoreInternalSession` to add the internal session to session manger.
 
 ```go
 func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, func(), error) {
@@ -112,21 +112,21 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 	defer func() {
 		wrapDeleteInterTxnTS(originalTxnTS)
 	}()
-    for i := uint(0); i < maxRetryCnt; i++ {
-        txn, err = store.Begin()
-        		if i == 0 {
+	for i := uint(0); i < maxRetryCnt; i++ {
+		txn, err = store.Begin()
+				if i == 0 {
 			originalTxnTS = txn.StartTS()
 			wrapStoreInterTxnTS(originalTxnTS)
 		}
 		err = txn.Commit(ctx)
-        ...
-    }
+		...
+	}
 }
 ```
 
 #### Calculate GC Safe Point
 
-Currently, TiDB calculates gc safe point in the function `(is *InfoSyncer) ReportMinStartTS`. This design add some code in the  function `ReportMinStartTS` to consider internal transactions when calculates gc safe point.
+Currently, TiDB calculates gc safepoint in the function `(is *InfoSyncer) ReportMinStartTS`. This design add some code in the  function `ReportMinStartTS` to consider internal transactions when calculates gc safepoint.
 
 ```go
 func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {}
