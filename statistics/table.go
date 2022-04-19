@@ -122,19 +122,19 @@ type TableMemoryUsage struct {
 
 // ColumnMemUsage records column memory usage
 type ColumnMemUsage struct {
-	TableID           int64
 	ColumnID          int64
 	HistogramMemUsage int64
 	CMSketchMemUsage  int64
 	FMSketchMemUsage  int64
+	TotalMemUsage     int64
 }
 
 // IndexMemUsage records index memory usage
 type IndexMemUsage struct {
-	TableID           int64
 	IndexID           int64
 	HistogramMemUsage int64
 	CMSketchMemUsage  int64
+	TotalMemUsage     int64
 }
 
 // MemoryUsage returns the total memory usage of this Table.
@@ -148,12 +148,16 @@ func (t *Table) MemoryUsage() *TableMemoryUsage {
 	}
 	for _, col := range t.Columns {
 		if col != nil {
-			tMemUsage.TotalMemUsage += col.MemoryUsage(tMemUsage)
+			colMemUsage := col.MemoryUsage()
+			tMemUsage.ColumnsMemUsage[colMemUsage.ColumnID] = colMemUsage
+			tMemUsage.TotalMemUsage += colMemUsage.TotalMemUsage
 		}
 	}
 	for _, index := range t.Indices {
 		if index != nil {
-			tMemUsage.TotalMemUsage += index.MemoryUsage(tMemUsage)
+			idxMemUsage := index.MemoryUsage()
+			tMemUsage.IndicesMemUsage[idxMemUsage.IndexID] = idxMemUsage
+			tMemUsage.TotalMemUsage += idxMemUsage.TotalMemUsage
 		}
 	}
 	return tMemUsage

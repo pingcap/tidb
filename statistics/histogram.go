@@ -1093,16 +1093,10 @@ func (c *Column) GetIncreaseFactor(realtimeRowCount int64) float64 {
 
 // MemoryUsage returns the total memory usage of Histogram, CMSketch, FMSketch in Column.
 // We ignore the size of other metadata in Column
-func (c *Column) MemoryUsage(tableMemUsage *TableMemoryUsage) (sum int64) {
-	var columnMemUsage *ColumnMemUsage
-	var ok bool
-	columnMemUsage, ok = tableMemUsage.ColumnsMemUsage[c.PhysicalID]
-	if !ok {
-		columnMemUsage = &ColumnMemUsage{
-			TableID:  tableMemUsage.TableID,
-			ColumnID: c.PhysicalID,
-		}
-		tableMemUsage.ColumnsMemUsage[c.PhysicalID] = columnMemUsage
+func (c *Column) MemoryUsage() *ColumnMemUsage {
+	var sum int64
+	columnMemUsage := &ColumnMemUsage{
+		ColumnID: c.Info.ID,
 	}
 	histogramMemUsage := c.Histogram.MemoryUsage()
 	columnMemUsage.HistogramMemUsage = histogramMemUsage
@@ -1117,7 +1111,8 @@ func (c *Column) MemoryUsage(tableMemUsage *TableMemoryUsage) (sum int64) {
 		columnMemUsage.FMSketchMemUsage = fmSketchMemUsage
 		sum += fmSketchMemUsage
 	}
-	return
+	columnMemUsage.TotalMemUsage = sum
+	return columnMemUsage
 }
 
 // HistogramNeededColumns stores the columns whose Histograms need to be loaded from physical kv layer.
@@ -1343,16 +1338,10 @@ func (idx *Index) IsInvalid(collPseudo bool) bool {
 
 // MemoryUsage returns the total memory usage of a Histogram and CMSketch in Index.
 // We ignore the size of other metadata in Index.
-func (idx *Index) MemoryUsage(tableMemUsage *TableMemoryUsage) (sum int64) {
-	var indexMemUsage *IndexMemUsage
-	var ok bool
-	indexMemUsage, ok = tableMemUsage.IndicesMemUsage[idx.ID]
-	if !ok {
-		indexMemUsage = &IndexMemUsage{
-			TableID: tableMemUsage.TableID,
-			IndexID: idx.ID,
-		}
-		tableMemUsage.IndicesMemUsage[idx.ID] = indexMemUsage
+func (idx *Index) MemoryUsage() *IndexMemUsage {
+	var sum int64
+	indexMemUsage := &IndexMemUsage{
+		IndexID: idx.ID,
 	}
 	histMemUsage := idx.Histogram.MemoryUsage()
 	indexMemUsage.HistogramMemUsage = histMemUsage
@@ -1362,7 +1351,8 @@ func (idx *Index) MemoryUsage(tableMemUsage *TableMemoryUsage) (sum int64) {
 		indexMemUsage.CMSketchMemUsage = cmSketchMemUsage
 		sum += cmSketchMemUsage
 	}
-	return
+	indexMemUsage.TotalMemUsage = sum
+	return indexMemUsage
 }
 
 var nullKeyBytes, _ = codec.EncodeKey(nil, nil, types.NewDatum(nil))
