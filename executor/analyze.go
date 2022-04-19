@@ -345,7 +345,7 @@ type analyzeTask struct {
 }
 
 var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
-var errAnalyzeWorkerPanicForMemLimit = errors.New("analyze panic for memory quota, please try with smaller samplerate/samples.")
+var errAnalyzeWorkerPanicForMemLimit = errors.New("analyze panic for memory quota, please try with smaller samplerate/samples")
 
 func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults) {
 	var task *analyzeTask
