@@ -1247,7 +1247,7 @@ loopWrite:
 			engine.importedKVSize.Add(rangeStats.totalBytes)
 			engine.importedKVCount.Add(rangeStats.count)
 			engine.finishedRanges.add(finishedRange)
-			metric.BytesCounter.WithLabelValues(metric.TableStateImported).Add(float64(rangeStats.totalBytes))
+			metric.BytesCounter.WithLabelValues(metric.BytesStateImported).Add(float64(rangeStats.totalBytes))
 		}
 		return errors.Trace(err)
 	}
