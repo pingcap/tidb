@@ -191,7 +191,7 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 		rowPtr := chunk.RowPtr{ChkIdx: chkIdx, RowIdx: uint32(i)}
 		c.hashTable.Put(key, rowPtr)
 	}
-	c.GetMemTracker().Consume(c.hashTable.GetMemoryDelta())
+	c.GetMemTracker().Consume(c.hashTable.GetAndCleanMemoryDelta())
 	return nil
 }
 
@@ -280,9 +280,9 @@ type baseHashTable interface {
 	Put(hashKey uint64, rowPtr chunk.RowPtr)
 	Get(hashKey uint64) (rowPtrs []chunk.RowPtr)
 	Len() uint64
-	// GetMemoryDelta gets the memDelta of the baseHashTable. Memory delta will be cleared after each fetch.
-	// It indicates the memory delta of the baseHashTable since the last calling GetMemoryDelta().
-	GetMemoryDelta() int64
+	// GetAndCleanMemoryDelta gets and cleans the memDelta of the baseHashTable. Memory delta will be cleared after each fetch.
+	// It indicates the memory delta of the baseHashTable since the last calling GetAndCleanMemoryDelta().
+	GetAndCleanMemoryDelta() int64
 }
 
 // TODO (fangzhuhe) remove unsafeHashTable later if it not used anymore
@@ -295,7 +295,7 @@ type unsafeHashTable struct {
 	length     uint64
 
 	bInMap   int64 // indicate there are 2^bInMap buckets in hashMap
-	memDelta int64 // the memory delta of the unsafeHashTable since the last calling GetMemoryDelta()
+	memDelta int64 // the memory delta of the unsafeHashTable since the last calling GetAndCleanMemoryDelta()
 }
 
 // newUnsafeHashTable creates a new unsafeHashTable. estCount means the estimated size of the hashMap.
@@ -336,8 +336,8 @@ func (ht *unsafeHashTable) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
 // if the same key is put more than once.
 func (ht *unsafeHashTable) Len() uint64 { return ht.length }
 
-// GetMemoryDelta gets the memDelta of the unsafeHashTable.
-func (ht *unsafeHashTable) GetMemoryDelta() int64 {
+// GetAndCleanMemoryDelta gets and cleans the memDelta of the unsafeHashTable.
+func (ht *unsafeHashTable) GetAndCleanMemoryDelta() int64 {
 	memDelta := ht.memDelta
 	ht.memDelta = 0
 	return memDelta
@@ -348,7 +348,7 @@ type concurrentMapHashTable struct {
 	hashMap    concurrentMap
 	entryStore *entryStore
 	length     uint64
-	memDelta   int64 // the memory delta of the concurrentMapHashTable since the last calling GetMemoryDelta()
+	memDelta   int64 // the memory delta of the concurrentMapHashTable since the last calling GetAndCleanMemoryDelta()
 }
 
 // newConcurrentMapHashTable creates a concurrentMapHashTable
@@ -388,8 +388,8 @@ func (ht *concurrentMapHashTable) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
 	return
 }
 
-// GetMemoryDelta gets the memDelta of the concurrentMapHashTable. Memory delta will be cleared after each fetch.
-func (ht *concurrentMapHashTable) GetMemoryDelta() int64 {
+// GetAndCleanMemoryDelta gets and cleans the memDelta of the concurrentMapHashTable. Memory delta will be cleared after each fetch.
+func (ht *concurrentMapHashTable) GetAndCleanMemoryDelta() int64 {
 	var memDelta int64
 	for {
 		memDelta = atomic.LoadInt64(&ht.memDelta)

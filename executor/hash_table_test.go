@@ -178,6 +178,6 @@ func TestConcurrentMapHashTableMemoryUsage(t *testing.T) {
 	}
 	mapMemoryExpected := int64(1024) * hack.DefBucketMemoryUsageForMapIntToPtr
 	entryMemoryExpected := 16 * int64(64+128+256+512+1024+2048+4096)
-	require.Equal(t, mapMemoryExpected+entryMemoryExpected, m.GetMemoryDelta())
-	require.Equal(t, int64(0), m.GetMemoryDelta())
+	require.Equal(t, mapMemoryExpected+entryMemoryExpected, m.GetAndCleanMemoryDelta())
+	require.Equal(t, int64(0), m.GetAndCleanMemoryDelta())
 }
