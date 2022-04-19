@@ -181,7 +181,7 @@ func (p *printByJSON) PrintTasks() {
 		Storage     string           `json:"storage"`
 		Checkpoint  uint64           `json:"checkpoint"`
 		EstQPS      float64          `json:"estimate_qps"`
-		LastErrors   []storeLastError `json:"last_errors"`
+		LastErrors  []storeLastError `json:"last_errors"`
 	}
 	taskToJSON := func(t TaskStatus) jsonTask {
 		s := storage.FormatBackendURL(t.Info.GetStorage())
@@ -208,7 +208,7 @@ func (p *printByJSON) PrintTasks() {
 			Storage:     s.String(),
 			Checkpoint:  t.GetCheckpoint(),
 			EstQPS:      t.QPS,
-			LastError:   se,
+			LastErrors:  se,
 		}
 	}
 	mustMarshal := func(i interface{}) string {
