@@ -49,7 +49,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	split "github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/parser/model"
@@ -1632,6 +1632,10 @@ func (t tblNames) String() string {
 	}
 	b.WriteByte(']')
 	return b.String()
+}
+
+func CheckTiFlashVersion4test(ctx context.Context, g glue.Glue, checkCtx *backend.CheckCtx, tidbVersion semver.Version) error {
+	return checkTiFlashVersion(ctx, g, checkCtx, tidbVersion)
 }
 
 // check TiFlash replicas.

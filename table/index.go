@@ -16,7 +16,6 @@ package table
 
 import (
 	"context"
-
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -76,4 +75,9 @@ type Index interface {
 	// Param columns is a reused buffer, if it is not nil, FetchValues will fill the index values in it,
 	// and return the buffer, if it is nil, FetchValues will allocate the buffer instead.
 	FetchValues(row []types.Datum, columns []types.Datum) ([]types.Datum, error)
+}
+
+// TODO: delete later. just for cycle import test.
+func ref() {
+	// addindex.IndexCycleReference()
 }
