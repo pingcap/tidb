@@ -260,7 +260,7 @@ func TestNonTransactionalDeleteReadStaleness(t *testing.T) {
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
 }
 
-func TestNonTransactionalDeleteTiDBSnapshot(t *testing.T) {
+func TestNonTransactionalDeleteTiDBSnapshotAndReadConsistency(t *testing.T) {
 	store, clean := createStorage(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -288,4 +288,10 @@ func TestNonTransactionalDeleteTiDBSnapshot(t *testing.T) {
 	require.Error(t, err)
 	tk.MustExec("set @@tidb_snapshot=''")
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
+
+	tk.MustExec("set @@tidb_read_consistency=weak")
+	err = tk.ExecToErr("split on a limit 10 delete from t")
+	require.Error(t, err)
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
+
 }

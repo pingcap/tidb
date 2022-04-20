@@ -96,6 +96,9 @@ func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactiona
 }
 
 func checkConstraint(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, se Session) error {
+	if se.GetSessionVars().ReadConsistency.IsWeak() {
+		return errors.New("can't run non-transactional under weak read consistency")
+	}
 	if se.GetSessionVars().SnapshotTS != 0 {
 		return errors.New("Can't do non-transactional DML when tidb_snapshot is set")
 	}
