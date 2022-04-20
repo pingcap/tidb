@@ -4660,6 +4660,14 @@ ExplainStmt:
 			Analyze: true,
 		}
 	}
+|	ExplainSym "ANALYZE" "FORMAT" "=" stringLit ExplainableStmt
+	{
+		$$ = &ast.ExplainStmt{
+			Stmt:    $6,
+			Format:  $5,
+			Analyze: true,
+		}
+	}
 
 ExplainFormatType:
 	"TRADITIONAL"

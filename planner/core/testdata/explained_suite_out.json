@@ -1,0 +1,154 @@
+[
+  {
+    "Name": "TestExplainedPhysicalPlan",
+    "Cases": [
+      {
+        "SQL": "select * from t",
+        "Main": [
+          {
+            "Origin": null,
+            "ExplainID": "TableReader_5",
+            "PrettyExplainID": "TableReader_5",
+            "EstRows": "10000.00",
+            "AccessObject": "",
+            "OperatorInfo": "data:TableFullScan_4",
+            "ActRows": "0",
+            "AnalyzeInfo": "",
+            "MemInfo": "N/A",
+            "DiskInfo": "N/A",
+            "Depth": 0,
+            "DriverSide": 0,
+            "TaskType": "root"
+          },
+          {
+            "Origin": null,
+            "ExplainID": "TableFullScan_4",
+            "PrettyExplainID": "└─TableFullScan_4",
+            "EstRows": "10000.00",
+            "AccessObject": "table:t",
+            "OperatorInfo": "keep order:false, stats:pseudo",
+            "ActRows": "0",
+            "AnalyzeInfo": "",
+            "MemInfo": "N/A",
+            "DiskInfo": "N/A",
+            "Depth": 1,
+            "DriverSide": 0,
+            "TaskType": "cop[tikv]"
+          }
+        ],
+        "CTEs": null
+      },
+      {
+        "SQL": "select sum(t.a) from t join t2",
+        "Main": [
+          {
+            "Origin": null,
+            "ExplainID": "HashAgg_8",
+            "PrettyExplainID": "HashAgg_8",
+            "EstRows": "1.00",
+            "AccessObject": "",
+            "OperatorInfo": "funcs:sum(Column#33)->Column#16",
+            "ActRows": "0",
+            "AnalyzeInfo": "",
+            "MemInfo": "N/A",
+            "DiskInfo": "N/A",
+            "Depth": 0,
+            "DriverSide": 0,
+            "TaskType": "root"
+          },
+          {
+            "Origin": null,
+            "ExplainID": "Projection_34",
+            "PrettyExplainID": "└─Projection_34",
+            "EstRows": "100000000.00",
+            "AccessObject": "",
+            "OperatorInfo": "cast(test.t.a, decimal(10,0) BINARY)->Column#33",
+            "ActRows": "0",
+            "AnalyzeInfo": "",
+            "MemInfo": "N/A",
+            "DiskInfo": "N/A",
+            "Depth": 1,
+            "DriverSide": 0,
+            "TaskType": "root"
+          },
+          {
+            "Origin": null,
+            "ExplainID": "HashJoin_10",
+            "PrettyExplainID": "  └─HashJoin_10",
+            "EstRows": "100000000.00",
+            "AccessObject": "",
+            "OperatorInfo": "CARTESIAN inner join",
+            "ActRows": "0",
+            "AnalyzeInfo": "",
+            "MemInfo": "N/A",
+            "DiskInfo": "N/A",
+            "Depth": 2,
+            "DriverSide": 0,
+            "TaskType": "root"
+          },
+          {
+            "Origin": null,
+            "ExplainID": "IndexReader_17",
+            "PrettyExplainID": "    ├─IndexReader_17(Build)",
+            "EstRows": "10000.00",
+            "AccessObject": "",
+            "OperatorInfo": "index:IndexFullScan_16",
+            "ActRows": "0",
+            "AnalyzeInfo": "",
+            "MemInfo": "N/A",
+            "DiskInfo": "N/A",
+            "Depth": 3,
+            "DriverSide": 1,
+            "TaskType": "root"
+          },
+          {
+            "Origin": null,
+            "ExplainID": "IndexFullScan_16",
+            "PrettyExplainID": "    │ └─IndexFullScan_16",
+            "EstRows": "10000.00",
+            "AccessObject": "table:t, index:f(f)",
+            "OperatorInfo": "keep order:false, stats:pseudo",
+            "ActRows": "0",
+            "AnalyzeInfo": "",
+            "MemInfo": "N/A",
+            "DiskInfo": "N/A",
+            "Depth": 4,
+            "DriverSide": 0,
+            "TaskType": "cop[tikv]"
+          },
+          {
+            "Origin": null,
+            "ExplainID": "TableReader_27",
+            "PrettyExplainID": "    └─TableReader_27(Probe)",
+            "EstRows": "10000.00",
+            "AccessObject": "",
+            "OperatorInfo": "data:TableFullScan_26",
+            "ActRows": "0",
+            "AnalyzeInfo": "",
+            "MemInfo": "N/A",
+            "DiskInfo": "N/A",
+            "Depth": 3,
+            "DriverSide": 2,
+            "TaskType": "root"
+          },
+          {
+            "Origin": null,
+            "ExplainID": "TableFullScan_26",
+            "PrettyExplainID": "      └─TableFullScan_26",
+            "EstRows": "10000.00",
+            "AccessObject": "table:t2",
+            "OperatorInfo": "keep order:false, stats:pseudo",
+            "ActRows": "0",
+            "AnalyzeInfo": "",
+            "MemInfo": "N/A",
+            "DiskInfo": "N/A",
+            "Depth": 4,
+            "DriverSide": 0,
+            "TaskType": "cop[tikv]"
+          }
+        ],
+        "CTEs": null
+      }
+    ]
+  }
+]

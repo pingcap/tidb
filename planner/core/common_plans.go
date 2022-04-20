@@ -17,9 +17,12 @@ package core
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
+	"github.com/golang/snappy"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/bindinfo"
@@ -49,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/texttree"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
@@ -1255,6 +1259,8 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"dot contents"}
 	case format == types.ExplainFormatHint:
 		fieldNames = []string{"hint"}
+	case format == types.ExplainFormatVisual:
+		fieldNames = []string{"visual plan proto"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -1298,10 +1304,70 @@ func (e *Explain) RenderResult() error {
 		hints := GenHintsFromPhysicalPlan(e.TargetPlan)
 		hints = append(hints, hint.ExtractTableHintsFromStmtNode(e.ExecStmt, nil)...)
 		e.Rows = append(e.Rows, []string{hint.RestoreOptimizerHints(hints)})
+	case types.ExplainFormatVisual:
+		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
+			explained := ExplainPhysicalPlan(physicalPlan, e.ctx)
+			s := make([]*tipb.VisualData, len(explained.Main))
+			for i, op := range explained.Main {
+				singleVisData := visualDataFromExplainedOperator(op)
+				s[i] = singleVisData
+				for j := i - 1; j >= 0; j-- {
+					if explained.Main[j].Depth == op.Depth-1 {
+						s[j].Children = append(s[j].Children, singleVisData)
+						break
+					}
+				}
+			}
+			mainTree := s[0]
+			proto, err := mainTree.Marshal()
+			if err != nil {
+				return err
+			}
+			str := base64.StdEncoding.EncodeToString(snappy.Encode(nil, proto))
+			e.Rows = append(e.Rows, []string{str})
+		}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
 	return nil
+}
+
+func visualDataFromExplainedOperator(op *ExplainedPhysicalOperator) *tipb.VisualData {
+	res := &tipb.VisualData{
+		Name:            op.ExplainID,
+		Cost:            op.EstCost,
+		EstRows:         op.EstRows,
+		ActRows:         uint64(op.ActRows),
+		AccessTable:     "",
+		AccessIndex:     "",
+		AccessPartition: "",
+		TimeUs:          0,
+		RunAt:           op.StoreType.Name(),
+	}
+	if op.RootStats != nil {
+		if basicStats := op.RootStats.MergeBasicStats(); basicStats != nil {
+			res.TimeUs = float64(time.Duration(basicStats.GetTime()).Microseconds())
+		}
+	} else if op.CopStats != nil {
+		var totalTime time.Duration
+		if times, _, _, _ := op.CopStats.MergeBasicStats(); len(times) > 0 {
+			for i := range times {
+				totalTime += times[i]
+			}
+			res.TimeUs = float64(totalTime.Microseconds())
+		}
+	}
+	switch op.(type) {
+	case *PointGetPlan:
+	case *BatchPointGetPlan:
+	case *PhysicalTableScan:
+	case *PhysicalIndexScan:
+	case *PhysicalTableReader:
+	case *PhysicalIndexReader:
+	case *PhysicalIndexLookUpReader:
+	case *PhysicalIndexMergeReader:
+	}
+	return res
 }
 
 func (e *Explain) explainPlanInRowFormatCTE() (err error) {

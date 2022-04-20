@@ -46,6 +46,7 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "integration_suite")
 	testDataMap.LoadTestSuiteData("testdata", "analyze_suite")
 	testDataMap.LoadTestSuiteData("testdata", "plan_suite_unexported")
+	testDataMap.LoadTestSuiteData("testdata", "explained_suite")
 
 	indexMergeSuiteData = testDataMap["index_merge_suite"]
 	planSuiteUnexportedData = testDataMap["plan_suite_unexported"]
@@ -106,4 +107,8 @@ func GetIntegrationSuiteData() testdata.TestData {
 
 func GetAnalyzeSuiteData() testdata.TestData {
 	return testDataMap["analyze_suite"]
+}
+
+func GetExplainedSuiteData() testdata.TestData {
+	return testDataMap["explained_suite"]
 }

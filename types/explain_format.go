@@ -29,6 +29,8 @@ var (
 	ExplainFormatVerbose = "verbose"
 	// ExplainFormatTraditional is the same as ExplainFormatROW.
 	ExplainFormatTraditional = "traditional"
+	// ExplainFormatVisual prints the proto for visual plan.
+	ExplainFormatVisual = "visual"
 
 	// ExplainFormats stores the valid formats for explain statement, used by validator.
 	ExplainFormats = []string{
@@ -39,5 +41,6 @@ var (
 		ExplainFormatROW,
 		ExplainFormatVerbose,
 		ExplainFormatTraditional,
+		ExplainFormatVisual,
 	}
 )
