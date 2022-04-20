@@ -9,6 +9,7 @@ import (
 	"io"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,6 +39,8 @@ type TaskStatus struct {
 	Progress map[uint64]uint64
 	// Total QPS of the task in recent seconds.
 	QPS float64
+	// Last error reported by the store.
+	LastErrors map[uint64]backuppb.StreamBackupError
 }
 
 type TaskPrinter interface {
@@ -74,11 +77,19 @@ func statusErr(message string) string {
 	return color.RedString("○") + color.New(color.Bold).Sprintf(" %s", message)
 }
 
-func colorfulStatusString(paused bool) string {
+// statusBlock make a string like <yellow>●</yellow> <bold>{message}</bold>
+func statusBlock(message string) string {
+	return color.YellowString("●") + color.New(color.Bold).Sprintf(" %s", message)
+}
+
+func (t *TaskStatus) colorfulStatusString() string {
 	// Maybe we need 3 kinds of status: ERROR/NORMAL/PAUSE.
 	// And should return "ERROR" when find error information in PD.
-	if paused {
-		return statusOK("PAUSE")
+	if t.paused && len(t.LastErrors) > 0 {
+		return statusErr("ERROR")
+	}
+	if t.paused {
+		return statusBlock("PAUSE")
 	}
 	return statusOK("NORMAL")
 }
@@ -99,7 +110,7 @@ func (t TaskStatus) GetCheckpoint() uint64 {
 func (p *printByTable) AddTask(task TaskStatus) {
 	table := p.console.CreateTable()
 	table.Add("name", task.Info.Name)
-	table.Add("status", colorfulStatusString(task.paused))
+	table.Add("status", task.colorfulStatusString())
 	table.Add("start", fmt.Sprint(oracle.GetTimeFromTS(task.Info.StartTs)))
 	if task.Info.EndTs > 0 {
 		table.Add("end", fmt.Sprint(oracle.GetTimeFromTS(task.Info.EndTs)))
@@ -122,6 +133,11 @@ func (p *printByTable) AddTask(task TaskStatus) {
 	table.Add("checkpoint[global]", formatTS(task.GetCheckpoint()))
 	for store, p := range task.Progress {
 		table.Add(fmt.Sprintf("checkpoint[store=%d]", store), formatTS(p))
+	}
+	for store, e := range task.LastErrors {
+		table.Add(fmt.Sprintf("error[store=%d]", store), e.ErrorCode)
+		table.Add(fmt.Sprintf("error-happen-at[store=%d]", store), formatTS(oracle.ComposeTS(int64(e.HappenAt), 0)))
+		table.Add(fmt.Sprintf("error-message[store=%d]", store), e.ErrorMessage)
 	}
 	p.pendingTables = append(p.pendingTables, table)
 }
@@ -152,15 +168,20 @@ func (p *printByJSON) PrintTasks() {
 		StoreID    uint64 `json:"store_id"`
 		Checkpoint uint64 `json:"checkpoint"`
 	}
+	type storeLastError struct {
+		StoreID   uint64                     `json:"store_id"`
+		LastError backuppb.StreamBackupError `json:"last_error"`
+	}
 	type jsonTask struct {
-		Name        string          `json:"name"`
-		StartTS     uint64          `json:"start_ts,omitempty"`
-		EndTS       uint64          `json:"end_ts,omitempty"`
-		TableFilter []string        `json:"table_filter"`
-		Progress    []storeProgress `json:"progress"`
-		Storage     string          `json:"storage"`
-		Checkpoint  uint64          `json:"checkpoint"`
-		EstQPS      float64         `json:"estimate_qps"`
+		Name        string           `json:"name"`
+		StartTS     uint64           `json:"start_ts,omitempty"`
+		EndTS       uint64           `json:"end_ts,omitempty"`
+		TableFilter []string         `json:"table_filter"`
+		Progress    []storeProgress  `json:"progress"`
+		Storage     string           `json:"storage"`
+		Checkpoint  uint64           `json:"checkpoint"`
+		EstQPS      float64          `json:"estimate_qps"`
+		LastErrors  []storeLastError `json:"last_errors"`
 	}
 	taskToJSON := func(t TaskStatus) jsonTask {
 		s := storage.FormatBackendURL(t.Info.GetStorage())
@@ -169,6 +190,13 @@ func (p *printByJSON) PrintTasks() {
 			sp = append(sp, storeProgress{
 				StoreID:    store,
 				Checkpoint: checkpoint,
+			})
+		}
+		se := make([]storeLastError, 0, len(t.LastErrors))
+		for store, lastError := range t.LastErrors {
+			se = append(se, storeLastError{
+				StoreID:   store,
+				LastError: lastError,
 			})
 		}
 		return jsonTask{
@@ -180,6 +208,7 @@ func (p *printByJSON) PrintTasks() {
 			Storage:     s.String(),
 			Checkpoint:  t.GetCheckpoint(),
 			EstQPS:      t.QPS,
+			LastErrors:  se,
 		}
 	}
 	mustMarshal := func(i interface{}) string {
@@ -287,6 +316,15 @@ func NewStatusController(meta *MetaDataClient, mgr *conn.Mgr, view TaskPrinter) 
 	}
 }
 
+func isTiFlash(store *metapb.Store) bool {
+	for _, l := range store.GetLabels() {
+		if strings.EqualFold(l.Key, "engine") && strings.EqualFold(l.Value, "tiflash") {
+			return true
+		}
+	}
+	return false
+}
+
 // fillTask queries and fills the extra information for a raw task.
 func (ctl *StatusController) fillTask(ctx context.Context, task Task) (TaskStatus, error) {
 	var err error
@@ -307,9 +345,17 @@ func (ctl *StatusController) fillTask(ctx context.Context, task Task) (TaskStatu
 		return s, errors.Annotate(err, "failed to get stores from PD")
 	}
 	for _, store := range stores {
+		if isTiFlash(store) {
+			continue
+		}
 		if _, ok := s.Progress[store.GetId()]; !ok {
 			s.Progress[store.GetId()] = s.Info.StartTs
 		}
+	}
+
+	s.LastErrors, err = task.LastError(ctx)
+	if err != nil {
+		return s, err
 	}
 
 	s.QPS, err = MaybeQPS(ctx, ctl.mgr)
