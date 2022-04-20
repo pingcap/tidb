@@ -267,15 +267,14 @@ func TestNonTransactionalDeleteTiDBSnapshotAndReadConsistency(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, key(a))")
-	if !*withTiKV {
-		// For mocked tikv, safe point is not initialized, we manually insert it for snapshot to use.
-		safePointName := "tikv_gc_safe_point"
-		now := time.Now()
-		safePointValue := now.Format(tikvutil.GCTimeFormat)
-		safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
-		updateSafePoint := fmt.Sprintf("INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s') ON DUPLICATE KEY UPDATE variable_value = '%[2]s', comment = '%[3]s'", safePointName, safePointValue, safePointComment)
-		tk.MustExec(updateSafePoint)
-	}
+
+	// For mocked tikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	now := time.Now()
+	safePointValue := now.Format(tikvutil.GCTimeFormat)
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf("INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s') ON DUPLICATE KEY UPDATE variable_value = '%[2]s', comment = '%[3]s'", safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
 
 	tk.MustExec("set @@tidb_max_chunk_size=35")
 	tk.MustExec("set @a=now(6)")
@@ -293,5 +292,4 @@ func TestNonTransactionalDeleteTiDBSnapshotAndReadConsistency(t *testing.T) {
 	err = tk.ExecToErr("split on a limit 10 delete from t")
 	require.Error(t, err)
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
-
 }
