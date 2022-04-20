@@ -1045,15 +1045,14 @@ func restoreStream(
 	}
 
 	// fix indices.
-	// to do:
 	// No need to fix indices if backup stream all of tables, because the index recored has been observed.
-	pi := g.StartProgress(ctx, "Restore Index", countIndices(fullBackupTables), !cfg.LogProgress)
-	err = withProgress(pi, func(p glue.Progress) error {
-		return client.FixIndicesOfTables(ctx, fullBackupTables, p.Inc)
-	})
-	if err != nil {
-		return errors.Annotate(err, "failed to fix index for some table")
-	}
+	// pi := g.StartProgress(ctx, "Restore Index", countIndices(fullBackupTables), !cfg.LogProgress)
+	// err = withProgress(pi, func(p glue.Progress) error {
+	// 	return client.FixIndicesOfTables(ctx, fullBackupTables, p.Inc)
+	// })
+	// if err != nil {
+	// 	return errors.Annotate(err, "failed to fix index for some table")
+	// }
 
 	// TODO split put and delete files
 	return nil
