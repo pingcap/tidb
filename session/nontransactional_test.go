@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNonTransactionalDelete(t *testing.T) {
+func TestNonTransactionalDeleteSharding(t *testing.T) {
 	store, clean := createStorage(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -49,28 +49,40 @@ func TestNonTransactionalDelete(t *testing.T) {
 		"create table t(a varchar(30), b int, unique key(a, b))",
 		"create table t(a varchar(30), b int, unique key(a))",
 	}
+	tableSizes := []int{0, 1, 10, 35, 40, 100}
+	batchSizes := []int{1, 10, 25, 35, 50, 80, 120}
 	for _, table := range tables {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec(table)
-		for i := 0; i < 100; i++ {
-			tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
-		}
-		tk.MustExec("split on a limit 3 delete from t")
-		tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
-
-		for i := 0; i < 100; i++ {
-			tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
-		}
-		if strings.Contains(table, "a int") {
-			rows := tk.MustQuery("split on a limit 3 dry run delete from t").Rows()
-			for _, row := range rows {
-				require.True(t, strings.HasPrefix(row[0].(string), "DELETE FROM `test`.`t` WHERE `a` BETWEEN"))
+		for _, tableSize := range tableSizes {
+			for _, batchSize := range batchSizes {
+				for i := 0; i < tableSize; i++ {
+					tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
+				}
+				tk.MustQuery(fmt.Sprintf("split on a limit %d delete from t", batchSize)).Check(testkit.Rows(fmt.Sprintf("%d all succeeded", (tableSize+batchSize-1)/batchSize)))
+				tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
 			}
 		}
-		tk.MustQuery("split on a limit 3 dry run query delete from t").Check(testkit.Rows(
-			"SELECT `a` FROM `test`.`t` WHERE TRUE ORDER BY IF(ISNULL(`a`),0,1),`a`"))
-		tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
 	}
+}
+
+func TestNonTransactionalDeleteDryRun(t *testing.T) {
+	store, clean := createStorage(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_max_chunk_size=35")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, primary key(a, b) clustered)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values ('%d', %d)", i, i*2))
+	}
+	rows := tk.MustQuery("split on a limit 3 dry run delete from t").Rows()
+	for _, row := range rows {
+		require.True(t, strings.HasPrefix(row[0].(string), "DELETE FROM `test`.`t` WHERE `a` BETWEEN"))
+	}
+	tk.MustQuery("split on a limit 3 dry run query delete from t").Check(testkit.Rows(
+		"SELECT `a` FROM `test`.`t` WHERE TRUE ORDER BY IF(ISNULL(`a`),0,1),`a`"))
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("100"))
 }
 
 func TestNonTransactionalDeleteErrorMessage(t *testing.T) {
