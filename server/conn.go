@@ -215,8 +215,8 @@ func (cc *clientConn) getCtx() *TiDBContext {
 
 func (cc *clientConn) setCtx(ctx *TiDBContext) {
 	cc.ctx.Lock()
-	defer cc.ctx.Unlock()
 	cc.ctx.TiDBContext = ctx
+	cc.ctx.Unlock()
 }
 
 func (cc *clientConn) String() string {
