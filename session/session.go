@@ -1827,7 +1827,10 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 	normalizedSQL, digest := s.sessionVars.StmtCtx.SQLDigest()
-	ctx = executor.AttachSQLInfoForTopSQL(ctx, s.sessionVars.StmtCtx, normalizedSQL, digest, s.sessionVars.InRestrictedSQL)
+	if topsqlstate.TopSQLEnabled() {
+		s.sessionVars.StmtCtx.IsSQLRegistered.Store(true)
+		ctx = topsql.AttachAndRegisterSQLInfo(ctx, normalizedSQL, digest, s.sessionVars.InRestrictedSQL)
+	}
 
 	if err := s.validateStatementReadOnlyInStaleness(stmtNode); err != nil {
 		return nil, err

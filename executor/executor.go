@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
@@ -1801,8 +1800,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			goCtx = pprof.WithLabels(goCtx, pprof.Labels("sql", util.QueryStrForLog(prepareStmt.NormalizedSQL)))
 			pprof.SetGoroutineLabels(goCtx)
 		}
-		if prepareStmt.SQLDigest != nil {
-			AttachSQLInfoForTopSQL(goCtx, sc, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, vars.InRestrictedSQL)
+		if topsqlstate.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
+			sc.IsSQLRegistered.Store(true)
+			topsql.AttachAndRegisterSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, vars.InRestrictedSQL)
 		}
 		if s, ok := prepareStmt.PreparedAst.Stmt.(*ast.SelectStmt); ok {
 			if s.LockInfo == nil {
@@ -1952,16 +1952,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.PrevFoundInBinding = vars.FoundInBinding
 	vars.FoundInBinding = false
 	return
-}
-
-// AttachSQLInfoForTopSQL attach the sql information for Top SQL. It should be call as soon as possible after got the
-// SQL digest.
-func AttachSQLInfoForTopSQL(ctx context.Context, sc *stmtctx.StatementContext, normalizedSQL string, sqlDigest *parser.Digest, isInternal bool) context.Context {
-	if !topsqlstate.TopSQLEnabled() {
-		return ctx
-	}
-	sc.IsSQLRegistered.Store(true)
-	return topsql.AttachAndRegisterSQLInfo(ctx, normalizedSQL, sqlDigest, isInternal)
 }
 
 // registerSQLAndPlanInExecForTopSQL register the sql and plan information if it doesn't register before execution.
