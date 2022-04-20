@@ -183,6 +183,7 @@ type PreprocessWith struct {
 	inWithClause bool //Only in ast.WithClause should judge to add schema or not when table name is the same as WITH name
 }
 
+//ContainsCTEName judge lowerTableName if is CTE name or not
 func (p *PreprocessWith) ContainsCTEName(lowerTableName string) bool {
 	if _, ok := p.name[lowerTableName]; ok {
 		return true
