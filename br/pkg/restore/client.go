@@ -1656,7 +1656,6 @@ func (rc *Client) RestoreKVFiles(
 			})
 		}
 	}
-
 	for _, file := range files {
 		if file.Type == backuppb.FileType_Delete {
 			// collect delete type file and apply it later.
@@ -1666,7 +1665,9 @@ func (rc *Client) RestoreKVFiles(
 		fileReplica := file
 		applyFunc(fileReplica)
 	}
-
+	if len(deleteFiles) > 0 {
+		log.Info("restore delete files", zap.Int("count", len(deleteFiles)))
+	}
 	for _, file := range deleteFiles {
 		fileReplica := file
 		applyFunc(fileReplica)
