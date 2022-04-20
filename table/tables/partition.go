@@ -1285,9 +1285,8 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx sessionctx.Context, 
 		// 'Key Already Exists' will generally happen during step1, errors are
 		// unlikely to happen in step2.
 		deleteData := currData
-		if !t.Meta().IsCommonHandle && !t.Meta().PKIsHandle {
+		if !t.Meta().IsCommonHandle && !t.Meta().PKIsHandle && len(deleteData) > len(t.Cols()) {
 			// The row already has the handle column added, remove it since it is not expected in RemoveRecord!
-			// TODO: Should we also verify that the handle actually is int and is equal to the last column in the row?
 			deleteData = deleteData[:len(deleteData)-1]
 		}
 		err = t.GetPartition(from).RemoveRecord(ctx, h, deleteData)
