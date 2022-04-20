@@ -165,6 +165,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(CPUProfileCounter)
 	prometheus.MustRegister(ReadFromTableCacheCounter)
 	prometheus.MustRegister(LoadTableCacheDurationHistogram)
+	prometheus.MustRegister(StatsCacheLRUCounter)
+	prometheus.MustRegister(StatsCacheLRUMemUsage)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()

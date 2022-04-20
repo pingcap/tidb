@@ -21,7 +21,7 @@ import (
 // statsCacheInner is the interface to manage the statsCache, it can be implemented by map, lru cache or other structures.
 type statsCacheInner interface {
 	Get(int64) (*statistics.Table, bool)
-	Put(int64, *statistics.Table)
+	Put(int64, *statistics.Table) bool
 	Del(int64)
 	Cost() int64
 	Keys() []int64
@@ -31,12 +31,6 @@ type statsCacheInner interface {
 	FreshMemUsage()
 	FreshTableCost(int64)
 	Copy() statsCacheInner
-}
-
-type cacheItem struct {
-	key   int64
-	value *statistics.Table
-	cost  int64
 }
 
 func newStatsCache() statsCache {
@@ -105,25 +99,26 @@ func (m *mapCache) Get(k int64) (*statistics.Table, bool) {
 }
 
 // Put implements statsCacheInner
-func (m *mapCache) Put(k int64, v *statistics.Table) {
+func (m *mapCache) Put(k int64, v *statistics.Table) bool {
 	item, ok := m.tables[k]
 	if ok {
-		oldCost := item.cost
-		newCost := v.MemoryUsage().TotalMemUsage
+		oldMemUsage := item.tblMemUsage
+		newMemUsage := v.MemoryUsage()
 		item.value = v
-		item.cost = newCost
+		item.tblMemUsage = newMemUsage
 		m.tables[k] = item
-		m.memUsage += newCost - oldCost
-		return
+		m.memUsage += newMemUsage.TotalMemUsage - oldMemUsage.TotalMemUsage
+		return true
 	}
-	cost := v.MemoryUsage().TotalMemUsage
+	memUsage := v.MemoryUsage()
 	item = cacheItem{
-		key:   k,
-		value: v,
-		cost:  cost,
+		key:         k,
+		value:       v,
+		tblMemUsage: memUsage,
 	}
 	m.tables[k] = item
-	m.memUsage += cost
+	m.memUsage += memUsage.TotalMemUsage
+	return true
 }
 
 // Del implements statsCacheInner
@@ -133,7 +128,7 @@ func (m *mapCache) Del(k int64) {
 		return
 	}
 	delete(m.tables, k)
-	m.memUsage -= item.cost
+	m.memUsage -= item.tblMemUsage.TotalMemUsage
 }
 
 // Cost implements statsCacheInner
@@ -176,9 +171,10 @@ func (m *mapCache) Len() int {
 // FreshMemUsage implements statsCacheInner
 func (m *mapCache) FreshMemUsage() {
 	for _, v := range m.tables {
-		oldCost := v.cost
-		newCost := v.value.MemoryUsage().TotalMemUsage
-		m.memUsage += newCost - oldCost
+		oldMemUsage := v.tblMemUsage
+		newMemUsage := v.value.MemoryUsage()
+		v.tblMemUsage = newMemUsage
+		m.memUsage += newMemUsage.TotalMemUsage - oldMemUsage.TotalMemUsage
 	}
 }
 
