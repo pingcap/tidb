@@ -116,7 +116,7 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...Preproce
 	v := preprocessor{
 		ctx:                ctx,
 		tableAliasInJoin:   make([]map[string]interface{}, 0),
-		with:               PreprocessWith{name: make(map[string]interface{}), isRecursive: false},
+		preprocessWith:     PreprocessWith{name: make(map[string]interface{}), recursive: false, inWithClause: false},
 		staleReadProcessor: staleread.NewStaleReadProcessor(ctx),
 	}
 	for _, optFn := range preprocessOpt {
@@ -178,8 +178,16 @@ type PreprocessExecuteISUpdate struct {
 
 // PreprocessWith is used to process WITH statement.Such as record CTE name、if use RECURSIVE or not
 type PreprocessWith struct {
-	name        map[string]interface{}
-	isRecursive bool
+	name         map[string]interface{}
+	recursive    bool
+	inWithClause bool //Only in ast.WithClause should judge to add schema or not when table name is the same as WITH name
+}
+
+func (p *PreprocessWith) ContainsCTEName(lowerTableName string) bool {
+	if _, ok := p.name[lowerTableName]; ok {
+		return true
+	}
+	return false
 }
 
 // preprocessor is an ast.Visitor that preprocess
@@ -193,7 +201,7 @@ type preprocessor struct {
 	// tableAliasInJoin is a stack that keeps the table alias names for joins.
 	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
 	tableAliasInJoin []map[string]interface{}
-	with             PreprocessWith
+	preprocessWith   PreprocessWith
 
 	staleReadProcessor staleread.Processor
 
@@ -324,9 +332,10 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.GroupByClause:
 		p.checkGroupBy(node)
 	case *ast.WithClause:
-		p.with.isRecursive = node.IsRecursive
+		p.preprocessWith.recursive = node.IsRecursive
+		p.preprocessWith.inWithClause = true
 		for _, cte := range node.CTEs {
-			p.with.name[cte.Name.L] = struct{}{}
+			p.preprocessWith.name[cte.Name.L] = struct{}{}
 		}
 	case *ast.BeginStmt:
 		// If the begin statement was like following:
@@ -571,6 +580,8 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		if x.Kind == ast.BRIEKindRestore {
 			p.flag &= ^inCreateOrDropTable
 		}
+	case *ast.WithClause:
+		p.preprocessWith.inWithClause = false
 	}
 
 	return in, p.err == nil
@@ -1437,15 +1448,28 @@ func (p *preprocessor) stmtType() string {
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
-		if _, ok := p.with.name[tn.Name.L]; ok && p.with.isRecursive {
-			return
-		}
-
 		currentDB := p.ctx.GetSessionVars().CurrentDB
 		if currentDB == "" {
 			p.err = errors.Trace(ErrNoDB)
 			return
 		}
+
+		if p.preprocessWith.ContainsCTEName(tn.Name.L) {
+			if !p.preprocessWith.inWithClause {
+				return
+			}
+
+			txnManager := sessiontxn.GetTxnManager(p.ctx)
+			if !txnManager.GetTxnInfoSchema().TableExists(model.NewCIStr(currentDB), tn.Name) {
+				return
+			}
+
+			if p.preprocessWith.recursive {
+				return
+			}
+
+		}
+
 		tn.Schema = model.NewCIStr(currentDB)
 	}
 
