@@ -882,6 +882,16 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.Equal(t, tipb.ScalarFuncSig_ConcatWS, function.(*ScalarFunction).Function.PbCode())
 	exprs = append(exprs, function)
 
+	function, err = NewFunction(mock.NewContext(), ast.FromDays, types.NewFieldType(mysql.TypeDate), intColumn)
+	require.NoError(t, err)
+	require.Equal(t, tipb.ScalarFuncSig_FromDays, function.(*ScalarFunction).Function.PbCode())
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.ToDays, types.NewFieldType(mysql.TypeLonglong), datetimeColumn)
+	require.NoError(t, err)
+	require.Equal(t, tipb.ScalarFuncSig_ToDays, function.(*ScalarFunction).Function.PbCode())
+	exprs = append(exprs, function)
+
 	// StrToDateDateTime
 	function, err = NewFunction(mock.NewContext(), ast.StrToDate, types.NewFieldType(mysql.TypeDatetime), stringColumn, stringColumn)
 	require.NoError(t, err)
