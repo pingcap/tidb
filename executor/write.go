@@ -73,16 +73,16 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 	// causes all writable columns are after public columns.
 
 	// 1. Cast modified values.
-	for i, col := range t.Cols() {
-		if modified[i] {
-			// Cast changed fields with respective columns.
-			v, err := table.CastValue(sctx, newData[i], col.ToInfo(), false, false)
-			if err != nil {
-				return false, err
-			}
-			newData[i] = v
-		}
-	}
+	// for i, col := range t.Cols() {
+	// 	if modified[i] {
+	// 		// Cast changed fields with respective columns.
+	// 		v, err := table.CastValue(sctx, newData[i], col.ToInfo(), false, false)
+	// 		if err != nil {
+	// 			return false, err
+	// 		}
+	// 		newData[i] = v
+	// 	}
+	// }
 
 	// 2. Handle the bad null error.
 	for i, col := range t.Cols() {
