@@ -447,7 +447,7 @@ func (local *local) waitForSplit(ctx context.Context, regionID uint64) {
 
 func (local *local) waitForScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) {
 	for i := 0; i < split.ScatterWaitMaxRetryTimes; i++ {
-		ok, err := local.isScatterRegionFinished(ctx, regionInfo)
+		ok, err := local.checkScatterRegionFinishedOrReScatter(ctx, regionInfo)
 		if ok {
 			return
 		}
@@ -466,7 +466,7 @@ func (local *local) waitForScatterRegion(ctx context.Context, regionInfo *split.
 	}
 }
 
-func (local *local) isScatterRegionFinished(ctx context.Context, regionInfo *split.RegionInfo) (bool, error) {
+func (local *local) checkScatterRegionFinishedOrReScatter(ctx context.Context, regionInfo *split.RegionInfo) (bool, error) {
 	resp, err := local.splitCli.GetOperator(ctx, regionInfo.Region.GetId())
 	if err != nil {
 		return false, err
