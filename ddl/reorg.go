@@ -229,6 +229,14 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 	// wait reorganization job done or timeout
 	select {
 	case err := <-rc.doneCh:
+		if err != nil {
+			d.removeReorgCtx(job)
+			return errors.Trace(err)
+		}
+		if w.reorgCtx.isReorgCanceled() {
+			d.removeReorgCtx(job)
+			return dbterror.ErrCancelledDDLJob
+		}
 		rowCount, _, _ := rc.getRowCountAndKey()
 		logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount), zap.Int32("worker id", w.id), zap.String("job", job.String()))
 		// Update a job's RowCount.
