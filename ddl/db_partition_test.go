@@ -24,8 +24,11 @@ import (
 	"testing"
 	"time"
 
+<<<<<<< HEAD
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+=======
+>>>>>>> 7ddfdba44... ddl: add new cancel test framework and rewrite some tests (#33931)
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -47,12 +50,19 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	ntestkit "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
+=======
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/stretchr/testify/require"
+>>>>>>> 7ddfdba44... ddl: add new cancel test framework and rewrite some tests (#33931)
 	"go.uber.org/zap"
 )
 
@@ -2676,6 +2686,7 @@ LOOP:
 	tk.MustExec("drop table partition_drop_idx;")
 }
 
+<<<<<<< HEAD
 func (s *testIntegrationSuite2) TestPartitionCancelAddPrimaryKey(c *C) {
 	idxName := "primary"
 	addIdxSQL := "alter table t1 add primary key c3_index (c1);"
@@ -2829,6 +2840,13 @@ func backgroundExecOnJobUpdatedExported(c *C, store kv.Storage, ctx sessionctx.C
 func (s *testIntegrationSuite5) TestPartitionAddPrimaryKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	testPartitionAddIndexOrPK(c, tk, "primary key")
+=======
+func TestPartitionAddPrimaryKey(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	testPartitionAddIndexOrPK(t, tk, "primary key")
+>>>>>>> 7ddfdba44... ddl: add new cancel test framework and rewrite some tests (#33931)
 }
 
 func (s *testIntegrationSuite1) TestPartitionAddIndex(c *C) {
