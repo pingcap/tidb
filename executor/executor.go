@@ -1961,7 +1961,7 @@ func AttachSQLInfoForTopSQL(ctx context.Context, sc *stmtctx.StatementContext, n
 		return ctx
 	}
 	sc.IsSQLRegistered.Store(true)
-	return topsql.AttachSQLInfo(ctx, normalizedSQL, sqlDigest, isInternal)
+	return topsql.AttachAndRegisterSQLInfo(ctx, normalizedSQL, sqlDigest, isInternal)
 }
 
 // registerSQLAndPlanInExecForTopSQL register the sql and plan information if it doesn't register before execution.

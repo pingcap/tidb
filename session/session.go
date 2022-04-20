@@ -1585,7 +1585,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 			// Reset the goroutine label when internal sql execute finish.
 			// Specifically reset in ExecRestrictedStmt function.
 			s.sessionVars.StmtCtx.IsSQLRegistered.Store(true)
-			topsql.AttachSQLInfo(ctx, normalized, digest, s.sessionVars.InRestrictedSQL)
+			topsql.AttachAndRegisterSQLInfo(ctx, normalized, digest, s.sessionVars.InRestrictedSQL)
 		}
 	}
 	return stmts[0], nil

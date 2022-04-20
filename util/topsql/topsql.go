@@ -95,8 +95,8 @@ func RegisterPlan(normalizedPlan string, planDigest *parser.Digest) {
 	}
 }
 
-// AttachSQLInfo attach the sql information into Top SQL and register the SQL meta information.
-func AttachSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.Digest, isInternal bool) context.Context {
+// AttachAndRegisterSQLInfo attach the sql information into Top SQL and register the SQL meta information.
+func AttachAndRegisterSQLInfo(ctx context.Context, normalizedSQL string, sqlDigest *parser.Digest, isInternal bool) context.Context {
 	if sqlDigest == nil || len(sqlDigest.Bytes()) == 0 {
 		return ctx
 	}
