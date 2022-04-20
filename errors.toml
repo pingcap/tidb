@@ -2126,6 +2126,11 @@ error = '''
 The '%-.64s' syntax is reserved for purposes internal to the MySQL server
 '''
 
+["schema:1450"]
+error = '''
+Changing schema from '%-.192s' to '%-.192s' is not allowed.
+'''
+
 ["schema:1831"]
 error = '''
 Duplicate index '%-.64s' defined on the table '%-.64s.%-.64s'. This is deprecated and will be disallowed in a future release.

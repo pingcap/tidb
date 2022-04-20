@@ -93,9 +93,10 @@ func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer 
 			rLock:   rLock,
 			wLocks:  []*sync.RWMutex{rLock},
 		},
-		memTracker:  li.memTracker,
+		memTracker:  memory.NewTracker(memory.LabelForRowContainer, -1),
 		diskTracker: disk.NewTracker(memory.LabelForRowContainer, -1),
 	}
+	li.GetMemTracker().AttachTo(rc.GetMemTracker())
 	return rc
 }
 
