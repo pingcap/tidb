@@ -279,11 +279,47 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 		opt.appendCandidate(p, curTask.plan(), prop)
 		// Get the most efficient one.
-		if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
+		if curIsBetter, err := compareTaskCost(p.ctx, curTask, bestTask); err != nil {
+			return nil, 0, err
+		} else if curIsBetter {
 			bestTask = curTask
 		}
 	}
 	return bestTask, cntPlan, nil
+}
+
+// compareTaskCost compares cost of curTask and bestTask and returns whether curTask's cost is smaller than bestTask's.
+func compareTaskCost(ctx sessionctx.Context, curTask, bestTask task) (curIsBetter bool, err error) {
+	if ctx.GetSessionVars().EnableNewCostInterface { // use the new cost interface
+		curCost, err := getTaskPlanCost(curTask)
+		if err != nil {
+			return false, err
+		}
+		bestCost, err := getTaskPlanCost(bestTask)
+		if err != nil {
+			return false, err
+		}
+		return curCost < bestCost || (bestTask.invalid() && !curTask.invalid()), nil
+	}
+	return curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()), nil
+}
+
+func getTaskPlanCost(t task) (float64, error) {
+	if t.invalid() {
+		return math.MaxFloat64, nil
+	}
+	var taskType property.TaskType
+	switch t.(type) {
+	case *rootTask:
+		taskType = property.RootTaskType
+	case *copTask: // no need to know whether the task is single-read or double-read, so both CopSingleReadTaskType and CopDoubleReadTaskType are OK
+		taskType = property.CopSingleReadTaskType
+	case *mppTask:
+		taskType = property.MppTaskType
+	default:
+		return 0, errors.New("unknown task type")
+	}
+	return t.plan().GetPlanCost(taskType)
 }
 
 type physicalOptimizeOp struct {
@@ -416,7 +452,9 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		goto END
 	}
 	opt.appendCandidate(p, curTask.plan(), prop)
-	if curTask.cost() < bestTask.cost() || (bestTask.invalid() && !curTask.invalid()) {
+	if curIsBetter, err := compareTaskCost(p.ctx, curTask, bestTask); err != nil {
+		return nil, 0, err
+	} else if curIsBetter {
 		bestTask = curTask
 	}
 
@@ -995,7 +1033,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		tblColHists:       ds.TblColHists,
 	}
 	cop.partitionInfo = PartitionInfo{
-		PruningConds:   ds.allConds,
+		PruningConds:   pushDownNot(ds.ctx, ds.allConds),
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
@@ -1295,7 +1333,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 		expectCnt:   uint64(prop.ExpectedCnt),
 	}
 	cop.partitionInfo = PartitionInfo{
-		PruningConds:   ds.allConds,
+		PruningConds:   pushDownNot(ds.ctx, ds.allConds),
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
@@ -1812,7 +1850,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			partTp: property.AnyType,
 		}
 		ts.PartitionInfo = PartitionInfo{
-			PruningConds:   ds.allConds,
+			PruningConds:   pushDownNot(ds.ctx, ds.allConds),
 			PartitionNames: ds.partitionNames,
 			Columns:        ds.TblCols,
 			ColumnNames:    ds.names,
@@ -1828,7 +1866,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		cst:               cost,
 	}
 	copTask.partitionInfo = PartitionInfo{
-		PruningConds:   ds.allConds,
+		PruningConds:   pushDownNot(ds.ctx, ds.allConds),
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
@@ -2244,4 +2282,13 @@ func appendCandidate(lp LogicalPlan, task task, prop *property.PhysicalProperty,
 		return
 	}
 	opt.appendCandidate(lp, task.plan(), prop)
+}
+
+// PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from conds, the condition like
+// 'not (a != 1)' would not be handled so we need to convert it to 'a = 1', which can be handled when building range.
+func pushDownNot(ctx sessionctx.Context, conds []expression.Expression) []expression.Expression {
+	for i, cond := range conds {
+		conds[i] = expression.PushDownNot(ctx, cond)
+	}
+	return conds
 }

@@ -102,7 +102,7 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
-	require.True(t, statsTbl.MemoryUsage() > 0)
+	require.True(t, statsTbl.MemoryUsage().TotalMemUsage > 0)
 	require.True(t, statsTbl.Pseudo)
 
 	testKit.MustExec("analyze table t")
@@ -131,7 +131,7 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	require.NoError(t, err)
 
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-	require.True(t, statsTbl.MemoryUsage() > 0)
+	require.True(t, statsTbl.MemoryUsage().TotalMemUsage > 0)
 	require.False(t, statsTbl.Pseudo)
 
 	// If the new schema add a column, the table stats can still work.

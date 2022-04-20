@@ -29,11 +29,9 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -675,157 +673,6 @@ func TestAddIndexWithPK(t *testing.T) {
 			tk.MustExec("create index idx on t (a, b);")
 		})
 	}
-}
-
-func TestCancelAddPrimaryKey(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, indexModifyLease)
-	defer clean()
-	idxName := "primary"
-	addIdxSQL := "alter table t1 add primary key idx_c2 (c2);"
-	testCancelAddIndex(t, store, dom, idxName, addIdxSQL)
-
-	// Check the column's flag when the "add primary key" failed.
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	require.NoError(t, tk.Session().NewTxn(context.Background()))
-	tbl := external.GetTableByName(t, tk, "test", "t1")
-	col1Flag := tbl.Cols()[1].Flag
-	require.True(t, !mysql.HasNotNullFlag(col1Flag) && !mysql.HasPreventNullInsertFlag(col1Flag) && mysql.HasUnsignedFlag(col1Flag))
-}
-
-func TestCancelAddIndex(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, indexModifyLease)
-	defer clean()
-	idxName := "c3_index"
-	addIdxSQL := "create unique index c3_index on t1 (c3)"
-	testCancelAddIndex(t, store, dom, idxName, addIdxSQL)
-}
-
-func testCancelAddIndex(t *testing.T, store kv.Storage, dom *domain.Domain, idxName, addIdxSQL string) {
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (c1 int, c2 int unsigned, c3 int, unique key(c1))")
-
-	d := dom.DDL()
-
-	// defaultBatchSize is equal to ddl.defaultBatchSize
-	count := defaultBatchSize * 32
-	start := 0
-	for i := start; i < count; i += defaultBatchSize {
-		batchInsert(tk, "t1", i, i+defaultBatchSize)
-	}
-
-	hook := &ddl.TestDDLCallback{Do: dom}
-	originBatchSize := tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
-	// Set batch size to lower try to slow down add-index reorganization, This if for hook to cancel this ddl job.
-	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 32")
-	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", originBatchSize.Rows()[0][0]))
-	// let hook.OnJobUpdatedExported has chance to cancel the job.
-	// the hook.OnJobUpdatedExported is called when the job is updated, runReorgJob will wait ddl.ReorgWaitTimeout, then return the ddl.runDDLJob.
-	// After that ddl call d.hook.OnJobUpdated(job), so that we can canceled the job in this test case.
-	var checkErr error
-	hook.OnJobUpdatedExported, _, checkErr = backgroundExecOnJobUpdatedExported(t, tk, store, hook, idxName)
-	originalHook := d.GetHook()
-	jobIDExt := wrapJobIDExtCallback(hook)
-	d.SetHook(jobIDExt)
-	done := make(chan error, 1)
-	go backgroundExec(store, addIdxSQL, done)
-
-	times := 0
-	ticker := time.NewTicker(indexModifyLease / 2)
-	defer ticker.Stop()
-LOOP:
-	for {
-		select {
-		case err := <-done:
-			require.NoError(t, checkErr)
-			require.EqualError(t, err, "[ddl:8214]Cancelled DDL job")
-			break LOOP
-		case <-ticker.C:
-			if times >= 10 {
-				break
-			}
-			step := 5
-			// delete some rows, and add some data
-			for i := count; i < count+step; i++ {
-				n := rand.Intn(count)
-				tk.MustExec("delete from t1 where c1 = ?", n)
-				tk.MustExec("insert into t1 values (?, ?, ?)", i+10, i, i)
-			}
-			count += step
-			times++
-		}
-	}
-	d.SetHook(originalHook)
-}
-
-func backgroundExecOnJobUpdatedExported(t *testing.T, tk *testkit.TestKit, store kv.Storage, hook *ddl.TestDDLCallback, idxName string) (func(*model.Job), *model.IndexInfo, error) {
-	var checkErr error
-	first := true
-	c3IdxInfo := &model.IndexInfo{}
-	hook.OnJobUpdatedExported = func(job *model.Job) {
-		addIndexNotFirstReorg := (job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey) &&
-			job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0
-		// If the action is adding index and the state is writing reorganization, it want to test the case of cancelling the job when backfilling indexes.
-		// When the job satisfies this case of addIndexNotFirstReorg, the worker will start to backfill indexes.
-		if !addIndexNotFirstReorg {
-			// Get the index's meta.
-			if c3IdxInfo.ID != 0 {
-				return
-			}
-			tbl := external.GetTableByName(t, tk, "test", "t1")
-			for _, index := range tbl.Indices() {
-				if !tables.IsIndexWritable(index) {
-					continue
-				}
-				if index.Meta().Name.L == idxName {
-					*c3IdxInfo = *index.Meta()
-				}
-			}
-			return
-		}
-		// The job satisfies the case of addIndexNotFirst for the first time, the worker hasn't finished a batch of backfill indexes.
-		if first {
-			first = false
-			return
-		}
-		if checkErr != nil {
-			return
-		}
-		hookCtx := mock.NewContext()
-		hookCtx.Store = store
-		err := hookCtx.NewTxn(context.Background())
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		jobIDs := []int64{job.ID}
-		txn, err := hookCtx.Txn(true)
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		errs, err := admin.CancelJobs(txn, jobIDs)
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		// It only tests cancel one DDL job.
-		if errs[0] != nil {
-			checkErr = errors.Trace(errs[0])
-			return
-		}
-		txn, err = hookCtx.Txn(true)
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		err = txn.Commit(context.Background())
-		if err != nil {
-			checkErr = errors.Trace(err)
-		}
-	}
-	return hook.OnJobUpdatedExported, c3IdxInfo, checkErr
 }
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
