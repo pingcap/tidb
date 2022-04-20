@@ -26,6 +26,7 @@ import (
 	"unicode"
 
 	"github.com/pingcap/errors"
+<<<<<<< HEAD:pkg/planner/core/logical_plan_builder.go
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -67,6 +68,41 @@ import (
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
+=======
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/format"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/parser/terror"
+	fd "github.com/pingcap/tidb/planner/funcdep"
+	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/privilege"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/table/temptable"
+	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
+	util2 "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/set"
+>>>>>>> 571d97bb16f (planner: using the funcdep to check the only_full_group_by (#33567)):planner/core/logical_plan_builder.go
 )
 
 const (
@@ -3827,8 +3863,14 @@ type aggColNameResolver struct {
 	colNameResolver
 }
 
+<<<<<<< HEAD:pkg/planner/core/logical_plan_builder.go
 func (*aggColNameResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 	if _, ok := inNode.(*ast.ColumnNameExpr); ok {
+=======
+func (c *aggColNameResolver) Enter(inNode ast.Node) (ast.Node, bool) {
+	switch inNode.(type) {
+	case *ast.ColumnNameExpr:
+>>>>>>> 571d97bb16f (planner: using the funcdep to check the only_full_group_by (#33567)):planner/core/logical_plan_builder.go
 		return inNode, true
 	}
 	return inNode, false

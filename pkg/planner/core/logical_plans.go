@@ -20,6 +20,7 @@ import (
 	"math"
 	"unsafe"
 
+<<<<<<< HEAD:pkg/planner/core/logical_plans.go
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -40,6 +41,24 @@ import (
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
+=======
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	fd "github.com/pingcap/tidb/planner/funcdep"
+	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/ranger"
+>>>>>>> 571d97bb16f (planner: using the funcdep to check the only_full_group_by (#33567)):planner/core/logical_plans.go
 	"go.uber.org/zap"
 )
 
@@ -367,12 +386,20 @@ func (p *LogicalJoin) extractFDForOuterJoin(filtersFromApply []expression.Expres
 		opt.SkipFDRule331 = true
 	}
 
+<<<<<<< HEAD:pkg/planner/core/logical_plans.go
 	opt.OnlyInnerFilter = len(eqCondSlice) == 0 && len(outerCondition) == 0 && len(p.OtherConditions) == 0
+=======
+	opt.OnlyInnerFilter = len(eqCondSlice) == 0 && len(outerCondition) == 0
+>>>>>>> 571d97bb16f (planner: using the funcdep to check the only_full_group_by (#33567)):planner/core/logical_plans.go
 	if opt.OnlyInnerFilter {
 		// if one of the inner condition is constant false, the inner side are all null, left make constant all of that.
 		for _, one := range innerCondition {
 			if c, ok := one.(*expression.Constant); ok && c.DeferredExpr == nil && c.ParamMarker == nil {
+<<<<<<< HEAD:pkg/planner/core/logical_plans.go
 				if isTrue, err := c.Value.ToBool(p.SCtx().GetSessionVars().StmtCtx); err == nil {
+=======
+				if isTrue, err := c.Value.ToBool(p.ctx.GetSessionVars().StmtCtx); err == nil {
+>>>>>>> 571d97bb16f (planner: using the funcdep to check the only_full_group_by (#33567)):planner/core/logical_plans.go
 					if isTrue == 0 {
 						// c is false
 						opt.InnerIsFalse = true

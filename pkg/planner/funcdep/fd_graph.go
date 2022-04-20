@@ -634,6 +634,7 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //	 	<1> strict/lax FD: join key filter conditions can not produce new strict/lax FD yet (knowledge: 1&2).
 //
 //		<2> constant FD from the join conditions is only used for checking other FD. We cannot keep itself.
+<<<<<<< HEAD:pkg/planner/funcdep/fd_graph.go
 /*
    a   b  |  c     d
    -------+---------
@@ -643,11 +644,23 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //          left join with (a,b) * (c,d) on (a=c and d=1), some rhs rows will be substituted with null values, and FD on rhs
 //          {d=1} are lost.
 /*
+=======
+//			a   b  |  c     d
+//          -------+---------
+//          1   1  |  1     1
+//          1   2  | NULL NULL
+//          left join with (a,b) * (c,d) on (a=c and d=1), some rhs rows will be substituted with null values, and FD on rhs
+//          {d=1} are lost.
+//
+>>>>>>> 571d97bb16f (planner: using the funcdep to check the only_full_group_by (#33567)):planner/funcdep/fd_graph.go
 //          a   b  |  c     d
 //  		-------+---------
 //		    1   1  |  1     1
 //          1   2  | NULL NULL
+<<<<<<< HEAD:pkg/planner/funcdep/fd_graph.go
 */
+=======
+>>>>>>> 571d97bb16f (planner: using the funcdep to check the only_full_group_by (#33567)):planner/funcdep/fd_graph.go
 //          left join with (a,b) * (c,d) on (a=c and b=1), it only gives the pass to the first matching, lhs other rows are still
 //          kept and appended with null values. So the FD on rhs {b=1} are not applicable to lhs rows.
 //
@@ -656,6 +669,7 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //		<3.1> equivalence FD: when the left join conditions only contain equivalence FD (EFD for short below) across left and right
 //			cols and no other `LEFT` condition on the (left-side cols except the cols in EFD's from) to filter the left join results. We can maintain the strict
 //			FD from EFD's `from` side to EFD's `to` side over the left join result.
+<<<<<<< HEAD:pkg/planner/funcdep/fd_graph.go
 /*
 //    		a  b  |  c     d     e
 //    		------+----------------
@@ -667,10 +681,21 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //			miss matched with right row (1, null 1) by a=c, consequently leading the left row appended as (1,2,null,null,null), which
 //			will break the FD: {a} -> {c} for key a=1 with different c=1/null.
 /*
+=======
+//			a  b  |  c     d     e
+//			------+----------------
+//		 	1  1  |  1    NULL   1
+//		    1  2  | NULL  NULL  NULL
+//		    2  1  | NULL  NULL  NULL
+//			Neg eg: left join with (a,b) * (c,d,e) on (a=c and b=1), other b=1 will filter the result, causing the left row (1, 2)
+//			miss matched with right row (1, null 1) by a=c, consequently leading the left row appended as (1,2,null,null,null), which
+//			will break the FD: {a} -> {c} for key a=1 with different c=1/null.
+>>>>>>> 571d97bb16f (planner: using the funcdep to check the only_full_group_by (#33567)):planner/funcdep/fd_graph.go
 //			a  b  |  c     d     e
 //			------+----------------
 //		 	1  1  | NULL  NULL  NULL
 //		    2  1  | NULL  NULL  NULL
+<<<<<<< HEAD:pkg/planner/funcdep/fd_graph.go
 */
 //			Pos eg: if the filter is on EFD's `from` cols, it's ok. Let's say: (a,b) * (c,d,e) on (a=c and a=2), a=2 only won't leading
 //			same key a with matched c and mismatched NULL, neg case result is changed as above, so strict FD {a} -> {c} can exist.
@@ -681,6 +706,15 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //		    1  2  | NULL  NULL  NULL
 //			2  1  | NULL  NULL  NULL
 */
+=======
+//			Pos eg: if the filter is on EFD's `from` cols, it's ok. Let's say: (a,b) * (c,d,e) on (a=c and a=2), a=2 only won't leading
+//			same key a with matched c and mismatched NULL, neg case result is changed as above, so strict FD {a} -> {c} can exist.
+//			a  b  |  c     d     e
+//			------+----------------
+//		 	1  1  |  1    NULL   1
+//		    1  2  | NULL  NULL  NULL
+//			2  1  | NULL  NULL  NULL
+>>>>>>> 571d97bb16f (planner: using the funcdep to check the only_full_group_by (#33567)):planner/funcdep/fd_graph.go
 //			Neg eg: left join with (a,b) * (c,d,e) on (a=c and b=c), two EFD here, where b=c can also refuse some rows joined by a=c,
 //			consequently applying it with NULL as (1  2  | NULL  NULL  NULL), leading the same key a has different value 1/NULL. But
 //			macroscopically, we can combine {a,b} together as the strict FD's from side, so new FD {a,b} -> {c} is secured. For case
@@ -690,6 +724,7 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //
 //		<3.2> equivalence FD: when the determinant and dependencies from an equivalence FD of join condition are each covering a strict
 //			FD of the left / right side. After joining, we can extend the left side strict FD's dependencies to all cols.
+<<<<<<< HEAD:pkg/planner/funcdep/fd_graph.go
 /*
 //			a  b  |  c     d     e
 //			------+----------------
@@ -697,6 +732,13 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //	    	2  2  | NULL  NULL  NULL
 //	    	3  1  | NULL  NULL  NULL
 */
+=======
+//			a  b  |  c     d     e
+//			------+----------------
+//		 	1  1  |  1    NULL   1
+//		    2  2  | NULL  NULL  NULL
+//		    3  1  | NULL  NULL  NULL
+>>>>>>> 571d97bb16f (planner: using the funcdep to check the only_full_group_by (#33567)):planner/funcdep/fd_graph.go
 //			left join with (a,b) * (c,d,e) on (a=c and b=1). Supposing that left `a` are strict Key and right `c` are strict Key too.
 //			Key means the strict FD can determine all cols from that table.
 //			case 1: left join matched
@@ -710,6 +752,7 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //
 //		<3.3> equivalence FD: let's see equivalence FD as double-directed strict FD from join equal conditions, and we  only keep the
 //			rhs ~~> lhs.
+<<<<<<< HEAD:pkg/planner/funcdep/fd_graph.go
 /*
 //			a  b  |  c     d     e
 //			------+----------------
@@ -717,6 +760,13 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //	    	1  2  | NULL  NULL  NULL
 //	    	2  1  | NULL  NULL  NULL
 */
+=======
+//			a  b  |  c     d     e
+//			------+----------------
+//		 	1  1  |  1    NULL   1
+//		    1  2  | NULL  NULL  NULL
+//		    2  1  | NULL  NULL  NULL
+>>>>>>> 571d97bb16f (planner: using the funcdep to check the only_full_group_by (#33567)):planner/funcdep/fd_graph.go
 //			left join with (a,b) * (c,d,e) on (a=c and b=1). From the join equivalence condition can derive a new FD {ac} == {ac}.
 //			while since there are some supplied null value in the c column, we don't guarantee {ac} == {ac} yet, so do {a} -> {c}
 //			because two same determinant key {1} can point to different dependency {1} & {NULL}. But in return, FD like {c} -> {a}
@@ -761,6 +811,124 @@ func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols F
 			// One of determinant are not null column, strict FD are kept.
 			// According knowledge #2, we can't take use of right filter's not null attribute.
 			s.addFunctionalDependency(edge.from, edge.to, edge.strict, edge.equiv)
+<<<<<<< HEAD:pkg/planner/funcdep/fd_graph.go
+=======
+		} else {
+			// Otherwise, the strict FD are downgraded to a lax one.
+			s.addFunctionalDependency(edge.from, edge.to, false, edge.equiv)
+		}
+	}
+	leftCombinedFDFrom := NewFastIntSet()
+	leftCombinedFDTo := NewFastIntSet()
+	for _, edge := range filterFDs.fdEdges {
+		// Rule #3.2, constant FD are removed from right side of left join.
+		if edge.isConstant() {
+			s.Rule333Equiv.Edges = append(s.Rule333Equiv.Edges, &fdEdge{
+				from:   edge.from,
+				to:     edge.to,
+				strict: edge.strict,
+				equiv:  edge.equiv,
+			})
+			s.Rule333Equiv.InnerCols = innerCols
+			continue
+		}
+		// Rule #3.3, we only keep the lax FD from right side pointing the left side.
+		if edge.equiv {
+			equivColsRight := edge.from.Intersection(innerCols)
+			equivColsLeft := edge.from.Intersection(outerCols)
+			// equivalence: {superset} --> {superset}, either `from` or `to` side is ok here.
+			// Rule 3.3.1
+			if !opt.SkipFDRule331 {
+				if equivColsLeft.Len() > 0 && equivColsRight.Len() > 0 {
+					leftCombinedFDFrom.UnionWith(equivColsLeft)
+					leftCombinedFDTo.UnionWith(equivColsRight)
+				}
+			}
+
+			// Rule 3.3.2
+			rightAllCols := copyRightFDSet.AllCols()
+			leftAllCols := copyLeftFDSet.AllCols()
+			coveringStrictKeyRight := rightAllCols.SubsetOf(copyRightFDSet.ClosureOfStrict(equivColsRight))
+			coveringStrictKeyLeft := leftAllCols.SubsetOf(copyLeftFDSet.closureOfStrict(equivColsLeft))
+			if coveringStrictKeyLeft && coveringStrictKeyRight {
+				// find the minimum strict Key set, and add
+				s.addFunctionalDependency(copyLeftFDSet.ReduceCols(equivColsLeft), rightAllCols.Union(leftAllCols), true, false)
+			}
+
+			// Rule 3.3.3
+			// need to break down the superset of equivalence, adding each lax FD of them.
+			laxFDFrom := equivColsRight
+			laxFDTo := equivColsLeft
+			for i, ok := laxFDFrom.Next(0); ok; i, ok = laxFDFrom.Next(i + 1) {
+				for j, ok := laxFDTo.Next(0); ok; j, ok = laxFDTo.Next(j + 1) {
+					s.addFunctionalDependency(NewFastIntSet(i), NewFastIntSet(j), false, false)
+				}
+			}
+			s.Rule333Equiv.Edges = append(s.Rule333Equiv.Edges, &fdEdge{
+				from:   laxFDFrom,
+				to:     laxFDTo,
+				strict: true,
+				equiv:  true,
+			})
+			s.Rule333Equiv.InnerCols = innerCols
+		}
+		// Rule #3.1, filters won't produce any strict/lax FDs.
+	}
+	// Rule #3.3.1 combinedFD case
+	if !opt.SkipFDRule331 {
+		s.addFunctionalDependency(leftCombinedFDFrom, leftCombinedFDTo, true, false)
+	}
+
+	// Rule #4, add new FD {left key + right key} -> {all columns} if it could.
+	if ok1 && ok2 {
+		s.addFunctionalDependency(leftPK.Union(*rightPK), outerCols.Union(innerCols), true, false)
+	}
+
+	// Rule #5, adding the strict equiv edges if there's no join key and no filters from outside.
+	if opt.OnlyInnerFilter {
+		if opt.InnerIsFalse {
+			s.AddConstants(innerCols)
+		} else {
+			for _, edge := range filterFDs.fdEdges {
+				// keep filterFD's constant and equivalence.
+				if edge.strict && (edge.equiv || edge.from.IsEmpty()) {
+					s.addFunctionalDependency(edge.from, edge.to, edge.strict, edge.equiv)
+				}
+			}
+			// keep all FDs from inner side.
+			for _, edge := range innerFDs.fdEdges {
+				s.addFunctionalDependency(edge.from, edge.to, edge.strict, edge.equiv)
+			}
+		}
+	}
+
+	// merge the not-null-cols/registered-map from both side together.
+	s.NotNullCols.UnionWith(innerFDs.NotNullCols)
+	s.NotNullCols.UnionWith(filterFDs.NotNullCols)
+	// inner cols can be nullable since then.
+	s.NotNullCols.DifferenceWith(innerCols)
+	if s.HashCodeToUniqueID == nil {
+		s.HashCodeToUniqueID = innerFDs.HashCodeToUniqueID
+	} else {
+		for k, v := range innerFDs.HashCodeToUniqueID {
+			if _, ok := s.HashCodeToUniqueID[k]; ok {
+				logutil.BgLogger().Warn("Error occurred when building the functional dependency")
+			}
+			s.HashCodeToUniqueID[k] = v
+		}
+	}
+	for i, ok := innerFDs.GroupByCols.Next(0); ok; i, ok = innerFDs.GroupByCols.Next(i + 1) {
+		s.GroupByCols.Insert(i)
+	}
+	s.HasAggBuilt = s.HasAggBuilt || innerFDs.HasAggBuilt
+}
+
+// MakeRestoreRule333 reset the status of how we deal with this rule.
+func (s *FDSet) MakeRestoreRule333() {
+	for _, eg := range s.Rule333Equiv.Edges {
+		if eg.isConstant() {
+			s.AddConstants(eg.to)
+>>>>>>> 571d97bb16f (planner: using the funcdep to check the only_full_group_by (#33567)):planner/funcdep/fd_graph.go
 		} else {
 			// Otherwise, the strict FD are downgraded to a lax one.
 			s.addFunctionalDependency(edge.from, edge.to, false, edge.equiv)

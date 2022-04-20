@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"testing"
 
+<<<<<<< HEAD:pkg/planner/funcdep/extract_fd_test.go
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -27,6 +28,15 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/hint"
+=======
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser"
+	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/hint"
+>>>>>>> 571d97bb16f (planner: using the funcdep to check the only_full_group_by (#33567)):planner/funcdep/extract_fd_test.go
 	"github.com/stretchr/testify/require"
 )
 
@@ -369,6 +379,55 @@ func TestFDSet_MakeOuterJoin(t *testing.T) {
 		err = plannercore.Preprocess(context.Background(), tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 		require.NoError(t, err, comment)
 		require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
+		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session(), is, &hint.BlockHintProcessor{})
+		// extract FD to every OP
+		p, err := builder.Build(ctx, stmt)
+		require.NoError(t, err, comment)
+		p, err = plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag(), p.(plannercore.LogicalPlan))
+		require.NoError(t, err, comment)
+		require.Equal(t, tt.best, plannercore.ToString(p), comment)
+		// extract FD to every OP
+		p.(plannercore.LogicalPlan).ExtractFD()
+		require.Equal(t, tt.fd, plannercore.FDToString(p.(plannercore.LogicalPlan)), comment)
+	}
+}
+
+func TestFDSet_MakeOuterJoin(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	par := parser.New()
+	par.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_new_only_full_group_by_check = 'on';")
+	tk.MustExec("CREATE TABLE X (a INT PRIMARY KEY, b INT, c INT, d INT, e INT)")
+	tk.MustExec("CREATE UNIQUE INDEX uni ON X (b, c)")
+	tk.MustExec("CREATE TABLE Y (m INT, n INT, p INT, q INT, PRIMARY KEY (m, n))")
+
+	tests := []struct {
+		sql  string
+		best string
+		fd   string
+	}{
+		{
+			sql:  "select * from X left outer join (select *, p+q from Y) Y1 ON true",
+			best: "Join{DataScan(X)->DataScan(Y)->Projection}->Projection",
+			fd:   "{(1)-->(2-5), (2,3)~~>(1,4,5), (6,7)-->(8,9,11), (8,9)-->(11), (1,6,7)-->(2-5,8,9,11)} >>> {(1)-->(2-5), (2,3)~~>(1,4,5), (6,7)-->(8,9,11), (8,9)-->(11), (1,6,7)-->(2-5,8,9,11)}",
+		},
+	}
+
+	ctx := context.TODO()
+	is := testGetIS(t, tk.Session())
+	for i, tt := range tests {
+		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
+		stmt, err := par.ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err, comment)
+		tk.Session().GetSessionVars().PlanID = 0
+		tk.Session().GetSessionVars().PlanColumnID = 0
+		err = plannercore.Preprocess(tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
+		require.NoError(t, err, comment)
+		tk.Session().PrepareTSFuture(ctx)
 		builder, _ := plannercore.NewPlanBuilder().Init(tk.Session(), is, &hint.BlockHintProcessor{})
 		// extract FD to every OP
 		p, err := builder.Build(ctx, stmt)
