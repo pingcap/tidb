@@ -446,22 +446,17 @@ func (local *local) waitForSplit(ctx context.Context, regionID uint64) {
 }
 
 func (local *local) waitForScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) {
-	regionID := regionInfo.Region.GetId()
 	for i := 0; i < split.ScatterWaitMaxRetryTimes; i++ {
-		ok, err := local.isScatterRegionFinished(ctx, regionID)
-		if err != nil {
-			log.L().Warn(
-				"wait for scatter region failed, will scatter again",
-				logutil.Region(regionInfo.Region),
-				zap.Error(err),
-			)
-			if err := local.splitCli.ScatterRegion(ctx, regionInfo); err != nil {
-				log.L().Warn("scatter region failed", zap.Error(err))
-			}
-			continue
-		}
+		ok, err := local.isScatterRegionFinished(ctx, regionInfo)
 		if ok {
-			break
+			return
+		}
+		if err != nil {
+			if !utils.IsRetryableError(err) {
+				log.L().Warn("wait for scatter region encountered non-retryable error", logutil.Region(regionInfo.Region), zap.Error(err))
+				return
+			}
+			log.L().Warn("wait for scatter region encountered error, will retry again", logutil.Region(regionInfo.Region), zap.Error(err))
 		}
 		select {
 		case <-time.After(time.Second):
@@ -471,8 +466,8 @@ func (local *local) waitForScatterRegion(ctx context.Context, regionInfo *split.
 	}
 }
 
-func (local *local) isScatterRegionFinished(ctx context.Context, regionID uint64) (bool, error) {
-	resp, err := local.splitCli.GetOperator(ctx, regionID)
+func (local *local) isScatterRegionFinished(ctx context.Context, regionInfo *split.RegionInfo) (bool, error) {
+	resp, err := local.splitCli.GetOperator(ctx, regionInfo.Region.GetId())
 	if err != nil {
 		return false, err
 	}
@@ -500,7 +495,9 @@ func (local *local) isScatterRegionFinished(ctx context.Context, regionID uint64
 	case pdpb.OperatorStatus_SUCCESS:
 		return true, nil
 	default:
-		return false, errors.Errorf("operator status is %v", resp.GetStatus())
+		log.L().Warn("scatter-region operator status is abnormal, will scatter region again",
+			logutil.Region(regionInfo.Region), zap.Stringer("status", resp.GetStatus()))
+		return false, local.splitCli.ScatterRegion(ctx, regionInfo)
 	}
 }
 
