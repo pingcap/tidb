@@ -5476,6 +5476,13 @@ func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 		// oldIdent is equal to newIdent, do nothing
 		return nil, 0, nil
 	}
+	//View can be renamed only in the same schema. Compatible with mysql
+	if is.TableIsView(oldIdent.Schema, oldIdent.Name) {
+		if oldIdent.Schema != newIdent.Schema {
+			return nil, 0, infoschema.ErrForbidSchemaChange.GenWithStackByArgs(oldIdent.Schema, newIdent.Schema)
+		}
+	}
+
 	newSchema, ok := is.SchemaByName(newIdent.Schema)
 	if !ok {
 		return nil, 0, dbterror.ErrErrorOnRename.GenWithStackByArgs(
