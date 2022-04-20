@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
@@ -96,11 +97,16 @@ func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactiona
 }
 
 func checkConstraint(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, se Session) error {
-	if se.GetSessionVars().ReadConsistency.IsWeak() {
+	sessVars := se.GetSessionVars()
+	if config.GetGlobalConfig().EnableBatchDML && sessVars.DMLBatchSize > 0 && (sessVars.BatchDelete || sessVars.BatchInsert) {
+		return errors.Errorf("can't run non-transactional statement with batch dml")
+	}
+
+	if sessVars.ReadConsistency.IsWeak() {
 		return errors.New("can't run non-transactional under weak read consistency")
 	}
-	if se.GetSessionVars().SnapshotTS != 0 {
-		return errors.New("Can't do non-transactional DML when tidb_snapshot is set")
+	if sessVars.SnapshotTS != 0 {
+		return errors.New("can't do non-transactional DML when tidb_snapshot is set")
 	}
 	// TODO: return error if there are multiple tables
 	if stmt.DeleteStmt.TableRefs == nil || stmt.DeleteStmt.TableRefs.TableRefs == nil {
