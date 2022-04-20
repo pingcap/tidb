@@ -226,7 +226,7 @@ type ddlCtx struct {
 	// reorgCtx is used for reorganization.
 	reorgCtx struct {
 		sync.RWMutex
-		reorgMap map[int64]*reorgCtx
+		reorgCtxMap map[int64]*reorgCtx
 	}
 
 	// hook may be modified.
@@ -254,7 +254,7 @@ func (dc *ddlCtx) isOwner() bool {
 func (dc *ddlCtx) getReorgCtx(job *model.Job) *reorgCtx {
 	dc.reorgCtx.RLock()
 	defer dc.reorgCtx.RUnlock()
-	return dc.reorgCtx.reorgMap[job.ID]
+	return dc.reorgCtx.reorgCtxMap[job.ID]
 }
 
 func (dc *ddlCtx) newReorgCtx(r *reorgInfo) *reorgCtx {
@@ -268,14 +268,14 @@ func (dc *ddlCtx) newReorgCtx(r *reorgInfo) *reorgCtx {
 	rc.mu.warningsCount = make(map[errors.ErrorID]int64)
 	dc.reorgCtx.Lock()
 	defer dc.reorgCtx.Unlock()
-	dc.reorgCtx.reorgMap[r.Job.ID] = rc
+	dc.reorgCtx.reorgCtxMap[r.Job.ID] = rc
 	return rc
 }
 
 func (dc *ddlCtx) removeReorgCtx(job *model.Job) {
 	dc.reorgCtx.Lock()
 	defer dc.reorgCtx.Unlock()
-	delete(dc.reorgCtx.reorgMap, job.ID)
+	delete(dc.reorgCtx.reorgCtxMap, job.ID)
 }
 
 func (dc *ddlCtx) notifyReorgCancel(job *model.Job) {
@@ -384,7 +384,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		tableLockCkr: deadLockCkr,
 		etcdCli:      opt.EtcdCli,
 	}
-	ddlCtx.reorgCtx.reorgMap = make(map[int64]*reorgCtx)
+	ddlCtx.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	d := &ddl{

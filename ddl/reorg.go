@@ -149,13 +149,6 @@ func (rc *reorgCtx) getRowCountAndKey() (int64, kv.Key, *meta.Element) {
 	return row, h.key, element
 }
 
-func (rc *reorgCtx) clean() {
-	rc.setRowCount(0)
-	rc.setNextKey(nil)
-	rc.resetWarnings()
-	rc.doneCh = nil
-}
-
 // runReorgJob is used as a portal to do the reorganization work.
 // eg:
 // 1: add index
@@ -212,6 +205,10 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 			delayForAsyncCommit()
 		}
 		rc = d.newReorgCtx(reorgInfo)
+		// this job is cancelling, we should notify the reorg worker.
+		if job.IsCancelling() {
+			d.notifyReorgCancel(job)
+		}
 		go func() {
 			rc.doneCh <- f()
 		}()
@@ -235,11 +232,8 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 			d.removeReorgCtx(job)
 			return dbterror.ErrCancelledDDLJob
 		}
-		rowCount, _, _ := w.reorgCtx.getRowCountAndKey()
-		logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
-	case err := <-rc.doneCh:
 		rowCount, _, _ := rc.getRowCountAndKey()
-		logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount), zap.Int32("worker id", w.id), zap.String("job", job.String()))
+		logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
 

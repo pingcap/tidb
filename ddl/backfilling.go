@@ -265,8 +265,9 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 		// small ranges. This will cause the `redo` action in reorganization.
 		// So for added count and warnings collection, it is recommended to collect the statistics in every
 		// successfully committed small ranges rather than fetching it in the total result.
-		d.getReorgCtx(w.reorgInfo.Job).increaseRowCount(int64(taskCtx.addedCount))
-		d.getReorgCtx(w.reorgInfo.Job).mergeWarnings(taskCtx.warnings, taskCtx.warningsCount)
+		rc := d.getReorgCtx(w.reorgInfo.Job)
+		rc.increaseRowCount(int64(taskCtx.addedCount))
+		rc.mergeWarnings(taskCtx.warnings, taskCtx.warningsCount)
 
 		if num := result.scanCount - lastLogCount; num >= 30000 {
 			lastLogCount = result.scanCount
