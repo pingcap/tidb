@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
@@ -363,4 +364,31 @@ func TestLargeVarcharAutoConv(t *testing.T) {
 	for i := range warns {
 		require.True(t, terror.ErrorEqual(warns[i].Err, dbterror.ErrAutoConvert))
 	}
+}
+
+//TestViewWith test create VIEW as WITH when WITH name is same the with table name. Case in Non RECURSIVE/RECURSIVE
+func TestViewWith(t *testing.T) {
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	privileges.SkipWithGrant = true
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (a int);insert into t1 values (0), (1), (2), (3), (4);")
+	tk.MustExec("create table t2 (a int);insert into t2 values (1), (2), (3), (4), (5);")
+
+	tk.MustExec("drop view if exists v1,v2;")
+	//WITH Non RECURSIVE
+	tk.MustExec("create view v1 as WITH t1 as (select a from t2 where t2.a=3 union select t2.a+1 from t1,t2 where t1.a=t2.a) select * from t1;")
+	//WITH RECURSIVE
+	tk.MustExec("create view v2 as WITH RECURSIVE t1 as (select a from t2 where t2.a=3 union select t2.a+1 from t1,t2 where t1.a=t2.a) select * from t1;")
+
+	tk.MustExec("create database if not exists test1;")
+	tk.MustExec("use test1;")
+
+	tk.MustQuery("show columns from test.v1;")
+	tk.MustQuery("show columns from test.v2;")
+
 }

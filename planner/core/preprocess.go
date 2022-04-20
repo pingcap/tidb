@@ -116,7 +116,7 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...Preproce
 	v := preprocessor{
 		ctx:                ctx,
 		tableAliasInJoin:   make([]map[string]interface{}, 0),
-		withName:           make(map[string]interface{}),
+		with:               PreprocessWith{name: make(map[string]interface{}), isRecursive: false},
 		staleReadProcessor: staleread.NewStaleReadProcessor(ctx),
 	}
 	for _, optFn := range preprocessOpt {
@@ -176,6 +176,12 @@ type PreprocessExecuteISUpdate struct {
 	Node                    ast.Node
 }
 
+// PreprocessWith is used to process WITH statement.Such as record CTE name、if use RECURSIVE or not
+type PreprocessWith struct {
+	name        map[string]interface{}
+	isRecursive bool
+}
+
 // preprocessor is an ast.Visitor that preprocess
 // ast Nodes parsed from parser.
 type preprocessor struct {
@@ -187,7 +193,7 @@ type preprocessor struct {
 	// tableAliasInJoin is a stack that keeps the table alias names for joins.
 	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
 	tableAliasInJoin []map[string]interface{}
-	withName         map[string]interface{}
+	with             PreprocessWith
 
 	staleReadProcessor staleread.Processor
 
@@ -318,8 +324,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.GroupByClause:
 		p.checkGroupBy(node)
 	case *ast.WithClause:
+		p.with.isRecursive = node.IsRecursive
 		for _, cte := range node.CTEs {
-			p.withName[cte.Name.L] = struct{}{}
+			p.with.name[cte.Name.L] = struct{}{}
 		}
 	case *ast.BeginStmt:
 		// If the begin statement was like following:
@@ -1430,7 +1437,7 @@ func (p *preprocessor) stmtType() string {
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
-		if _, ok := p.withName[tn.Name.L]; ok {
+		if _, ok := p.with.name[tn.Name.L]; ok && p.with.isRecursive {
 			return
 		}
 
