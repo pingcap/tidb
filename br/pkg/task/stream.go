@@ -988,7 +988,7 @@ func restoreStream(
 	}
 	client.SetRestoreTs(cfg.RestoreTS)
 	client.SetCurrentTS(currentTS)
-	log.Info("start restore on point", zap.Uint64("ts", cfg.RestoreTS))
+	log.Info("start restore on point", zap.Uint64("restore-ts", cfg.RestoreTS))
 
 	// get full backup meta to generate rewrite rules.
 	fullBackupTables, err := initFullBackupTables(ctx, cfg)
@@ -1064,6 +1064,7 @@ func withProgress(p glue.Progress, cc func(p glue.Progress) error) error {
 	return cc(p)
 }
 
+// nolint: unused, deadcode
 func countIndices(ts map[int64]*metautil.Table) int64 {
 	result := int64(0)
 	for _, t := range ts {
