@@ -107,7 +107,6 @@ type Config struct {
 	OOMUseTmpStorage bool   `toml:"oom-use-tmp-storage" json:"oom-use-tmp-storage"`
 	TempStoragePath  string `toml:"tmp-storage-path" json:"tmp-storage-path"`
 	OOMAction        string `toml:"oom-action" json:"oom-action"`
-	MemQuotaQuery    int64  `toml:"mem-quota-query" json:"mem-quota-query"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
 	TempStorageQuota           int64                   `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
@@ -628,7 +627,6 @@ var defaultConf = Config{
 	TempStorageQuota:             -1,
 	TempStoragePath:              tempStorageDirName,
 	OOMAction:                    OOMActionCancel,
-	MemQuotaQuery:                1 << 30,
 	EnableBatchDML:               false,
 	CheckMb4ValueInUTF8:          *NewAtomicBool(true),
 	MaxIndexLength:               3072,
@@ -802,6 +800,7 @@ var deprecatedConfig = map[string]struct{}{
 	"stmt-summary.max-sql-length":        {},
 	"stmt-summary.refresh-interval":      {},
 	"stmt-summary.history-size":          {},
+	"mem-quota-query":                    {},
 }
 
 func isAllDeprecatedConfigItems(items []string) bool {
@@ -812,10 +811,6 @@ func isAllDeprecatedConfigItems(items []string) bool {
 	}
 	return true
 }
-
-// IsMemoryQuotaQuerySetByUser indicates whether the config item mem-quota-query
-// is set by the user.
-var IsMemoryQuotaQuerySetByUser bool
 
 // IsOOMActionSetByUser indicates whether the config item mem-action is set by
 // the user.
@@ -875,9 +870,6 @@ func (c *Config) Load(confFile string) error {
 	metaData, err := toml.DecodeFile(confFile, c)
 	if c.TokenLimit == 0 {
 		c.TokenLimit = 1000
-	}
-	if metaData.IsDefined("mem-quota-query") {
-		IsMemoryQuotaQuerySetByUser = true
 	}
 	if metaData.IsDefined("oom-action") {
 		IsOOMActionSetByUser = true
