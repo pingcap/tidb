@@ -24,7 +24,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -47,11 +46,9 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -2777,167 +2774,6 @@ LOOP:
 		}
 	}
 	tk.MustExec("drop table partition_drop_idx;")
-}
-
-func TestPartitionCancelAddPrimaryKey(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	idxName := "primary"
-	addIdxSQL := "alter table t1 add primary key c3_index (c1);"
-	testPartitionCancelAddIndex(t, store, dom.DDL(), 50*time.Millisecond, idxName, addIdxSQL)
-}
-
-func TestPartitionCancelAddIndex(t *testing.T) {
-	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
-	defer clean()
-	idxName := "c3_index"
-	addIdxSQL := "create unique index c3_index on t1 (c1)"
-	testPartitionCancelAddIndex(t, store, dom.DDL(), 50*time.Millisecond, idxName, addIdxSQL)
-}
-
-func batchInsertT(tk *testkit.TestKit, tbl string, start, end int) {
-	dml := fmt.Sprintf("insert into %s values", tbl)
-	for i := start; i < end; i++ {
-		dml += fmt.Sprintf("(%d, %d, %d)", i, i, i)
-		if i != end-1 {
-			dml += ","
-		}
-	}
-	tk.MustExec(dml)
-}
-
-func testPartitionCancelAddIndex(t *testing.T, store kv.Storage, d ddl.DDL, lease time.Duration, idxName, addIdxSQL string) {
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec(`create table t1 (
-		c1 int, c2 int, c3 int
-	)
-	partition by range( c1 ) (
-    	partition p0 values less than (1024),
-    	partition p1 values less than (2048),
-    	partition p2 values less than (3072),
-    	partition p3 values less than (4096),
-		partition p4 values less than (maxvalue)
-   	);`)
-	count := defaultBatchSize * 32
-	// add some rows
-	for i := 0; i < count; i += defaultBatchSize {
-		batchInsertT(tk, "t1", i, i+defaultBatchSize)
-	}
-
-	var checkErr error
-	hook := &ddl.TestDDLCallback{}
-	originBatchSize := tk.MustQuery("select @@global.tidb_ddl_reorg_batch_size")
-	// Set batch size to lower try to slow down add-index reorganization, This if for hook to cancel this ddl job.
-	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 32")
-	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_batch_size = %v", originBatchSize.Rows()[0][0]))
-	hook.OnJobUpdatedExported, _, checkErr = backgroundExecOnJobUpdatedExportedT(t, tk, store, hook, idxName)
-	originHook := d.GetHook()
-	defer d.SetHook(originHook)
-	jobIDExt := wrapJobIDExtCallback(hook)
-	d.SetHook(jobIDExt)
-	done := make(chan error, 1)
-	go backgroundExec(store, addIdxSQL, done)
-
-	times := 0
-	ticker := time.NewTicker(lease / 2)
-	defer ticker.Stop()
-LOOP:
-	for {
-		select {
-		case err := <-done:
-			require.Nil(t, checkErr)
-			require.EqualError(t, err, "[ddl:8214]Cancelled DDL job")
-			break LOOP
-		case <-ticker.C:
-			if times >= 10 {
-				break
-			}
-			step := 10
-			rand.Seed(time.Now().Unix())
-			// delete some rows, and add some data
-			for i := count; i < count+step; i++ {
-				n := rand.Intn(count)
-				tk.MustExec("delete from t1 where c1 = ?", n)
-				tk.MustExec("insert into t1 values (?, ?, ?)", i+10, i, i)
-			}
-			count += step
-			times++
-		}
-	}
-	tk.MustExec("drop table t1")
-}
-
-func backgroundExecOnJobUpdatedExportedT(t *testing.T, tk *testkit.TestKit, store kv.Storage, hook *ddl.TestDDLCallback, idxName string) (
-	func(*model.Job), *model.IndexInfo, error) {
-	var checkErr error
-	first := true
-	c3IdxInfo := &model.IndexInfo{}
-	hook.OnJobUpdatedExported = func(job *model.Job) {
-		addIndexNotFirstReorg := (job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey) &&
-			job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0
-		// If the action is adding index and the state is writing reorganization, it want to test the case of cancelling the job when backfilling indexes.
-		// When the job satisfies this case of addIndexNotFirstReorg, the worker will start to backfill indexes.
-		if !addIndexNotFirstReorg {
-			// Get the index's meta.
-			if c3IdxInfo.ID != 0 {
-				return
-			}
-			tt := external.GetTableByName(t, tk, "test", "t1")
-			for _, index := range tt.Indices() {
-				if !tables.IsIndexWritable(index) {
-					continue
-				}
-				if index.Meta().Name.L == idxName {
-					*c3IdxInfo = *index.Meta()
-				}
-			}
-			return
-		}
-		// The job satisfies the case of addIndexNotFirst for the first time, the worker hasn't finished a batch of backfill indexes.
-		if first {
-			first = false
-			return
-		}
-		if checkErr != nil {
-			return
-		}
-		hookCtx := mock.NewContext()
-		hookCtx.Store = store
-		err := hookCtx.NewTxn(context.Background())
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		jobIDs := []int64{job.ID}
-		txn, err := hookCtx.Txn(true)
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		errs, err := admin.CancelJobs(txn, jobIDs)
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		// It only tests cancel one DDL job.
-		if errs[0] != nil {
-			checkErr = errors.Trace(errs[0])
-			return
-		}
-		txn, err = hookCtx.Txn(true)
-		if err != nil {
-			checkErr = errors.Trace(err)
-			return
-		}
-		err = txn.Commit(context.Background())
-		if err != nil {
-			checkErr = errors.Trace(err)
-		}
-	}
-	return hook.OnJobUpdatedExported, c3IdxInfo, checkErr
 }
 
 func TestPartitionAddPrimaryKey(t *testing.T) {
