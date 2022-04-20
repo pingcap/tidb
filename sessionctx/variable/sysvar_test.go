@@ -986,3 +986,28 @@ func TestTiDBCommitterConcurrency(t *testing.T) {
 	require.Equal(t, val, fmt.Sprintf("%d", expected))
 	require.NoError(t, err)
 }
+
+func TestSetTIDBFastDDL(t *testing.T) {
+	vars := NewSessionVars()
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+    fastDDL := GetSysVar(TiDBFastDDL)
+
+	// Default off
+	require.Equal(t, fastDDL.Value, Off)
+
+	// Set to On
+	err := mock.SetGlobalSysVar(TiDBFastDDL, On)
+	require.NoError(t, err)
+	val, err1 := mock.GetGlobalSysVar(TiDBFastDDL)
+	require.NoError(t, err1)
+	require.Equal(t, On, val)
+
+	// Set to off
+	err = mock.SetGlobalSysVar(TiDBFastDDL, Off)
+	require.NoError(t, err)
+	val, err1 = mock.GetGlobalSysVar(TiDBFastDDL)
+	require.NoError(t, err1)
+	require.Equal(t, Off, val)
+}

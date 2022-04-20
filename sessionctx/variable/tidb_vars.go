@@ -704,6 +704,9 @@ const (
 	// TiDBMaxAutoAnalyzeTime is the max time that auto analyze can run. If auto analyze runs longer than the value, it
 	// will be killed. 0 indicates that there is no time limit.
 	TiDBMaxAutoAnalyzeTime = "tidb_max_auto_analyze_time"
+	// TiDBFastDDL indicates whether use lighting to help acceleate adding index stmt.
+	TiDBFastDDL = "tidb_fast_ddl"
+	TiDBDiskQuota = "tidb_disk_quota"
 )
 
 // TiDB intentional limits
@@ -892,6 +895,8 @@ const (
 	DefTiDBEnablePrepPlanCache                   = true
 	DefTiDBPrepPlanCacheSize                     = 100
 	DefTiDBPrepPlanCacheMemoryGuardRatio         = 0.1
+	DefTiDBFastDDL                               = false
+	DefTiDBDiskQuota                             = 100        // 100GB
 )
 
 // Process global variables.
@@ -937,6 +942,10 @@ var (
 	EnablePreparedPlanCache           = atomic.NewBool(DefTiDBEnablePrepPlanCache)
 	PreparedPlanCacheSize             = atomic.NewUint64(DefTiDBPrepPlanCacheSize)
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
+	// TiDBFastDDL indicates whether to use lightning to enhance DDL reorg performance.
+	FastDDL                               = atomic.NewBool(false)
+	// Temporary Variable for set dist quota for lightning add index, int type, GB as unit
+    DiskQuota                             = atomic.NewInt32(100)
 )
 
 var (
@@ -947,3 +956,4 @@ var (
 	// SetStatsCacheCapacity is the func registered by domain to set statsCache memory quota.
 	SetStatsCacheCapacity atomic.Value
 )
+

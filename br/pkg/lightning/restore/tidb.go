@@ -19,7 +19,6 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -36,13 +35,39 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
+type TiDBManager struct {
+	db     *sql.DB
+	parser *parser.Parser
+}
 
-// defaultImportantVariables is used in ObtainImportantVariables to retrieve the system
+func NewTiDBManager(ctx context.Context, dsn config.DBStore, tls *common.TLS) (*TiDBManager, error) {
+	db, err := DBFromConfig(ctx, dsn)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return NewTiDBManagerWithDB(db, dsn.SQLMode), nil
+}
+
+// NewTiDBManagerWithDB creates a new TiDB manager with an existing database
+// connection.
+func NewTiDBManagerWithDB(db *sql.DB, sqlMode mysql.SQLMode) *TiDBManager {
+	parser := parser.New()
+	parser.SetSQLMode(sqlMode)
+
+	return &TiDBManager{
+		db:     db,
+		parser: parser,
+	}
+}
+func (timgr *TiDBManager) Close() {
+	timgr.db.Close()
+}
+// DefaultImportantVariables is used in ObtainImportantVariables to retrieve the system
 // variables from downstream which may affect KV encode result. The values record the default
 // values if missing.
-var defaultImportantVariables = map[string]string{
+var DefaultImportantVariables = map[string]string{
 	"max_allowed_packet":      "67108864",
 	"div_precision_increment": "4",
 	"time_zone":               "SYSTEM",
@@ -52,16 +77,57 @@ var defaultImportantVariables = map[string]string{
 	"group_concat_max_len":    "1024",
 }
 
-// defaultImportVariablesTiDB is used in ObtainImportantVariables to retrieve the system
+// DefaultImportVariablesTiDB is used in ObtainImportantVariables to retrieve the system
 // variables from downstream in local/importer backend. The values record the default
 // values if missing.
-var defaultImportVariablesTiDB = map[string]string{
+var DefaultImportVariablesTiDB = map[string]string{
 	"tidb_row_format_version": "1",
 }
 
-type TiDBManager struct {
-	db     *sql.DB
-	parser *parser.Parser
+func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor, needTiDBVars bool) map[string]string {
+	var query strings.Builder
+	query.WriteString("SHOW VARIABLES WHERE Variable_name IN ('")
+	first := true
+	for k := range DefaultImportantVariables {
+		if first {
+			first = false
+		} else {
+			query.WriteString("','")
+		}
+		query.WriteString(k)
+	}
+	if needTiDBVars {
+		for k := range DefaultImportVariablesTiDB {
+			query.WriteString("','")
+			query.WriteString(k)
+		}
+	}
+	query.WriteString("')")
+	kvs, err := g.QueryStringsWithLog(ctx, query.String(), "obtain system variables", log.L())
+	if err != nil {
+		// error is not fatal
+		log.L().Warn("obtain system variables failed, use default variables instead", log.ShortError(err))
+	}
+
+	// convert result into a map. fill in any missing variables with default values.
+	result := make(map[string]string, len(DefaultImportantVariables)+len(DefaultImportVariablesTiDB))
+	for _, kv := range kvs {
+		result[kv[0]] = kv[1]
+	}
+
+	setDefaultValue := func(res map[string]string, vars map[string]string) {
+		for k, defV := range vars {
+			if _, ok := res[k]; !ok {
+				res[k] = defV
+			}
+		}
+	}
+	setDefaultValue(result, DefaultImportantVariables)
+	if needTiDBVars {
+		setDefaultValue(result, DefaultImportVariablesTiDB)
+	}
+
+	return result
 }
 
 func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
@@ -114,32 +180,7 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 	param.Vars = vars
 	db, err = param.Connect()
 	return db, errors.Trace(err)
-}
-
-func NewTiDBManager(ctx context.Context, dsn config.DBStore, tls *common.TLS) (*TiDBManager, error) {
-	db, err := DBFromConfig(ctx, dsn)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return NewTiDBManagerWithDB(db, dsn.SQLMode), nil
-}
-
-// NewTiDBManagerWithDB creates a new TiDB manager with an existing database
-// connection.
-func NewTiDBManagerWithDB(db *sql.DB, sqlMode mysql.SQLMode) *TiDBManager {
-	parser := parser.New()
-	parser.SetSQLMode(sqlMode)
-
-	return &TiDBManager{
-		db:     db,
-		parser: parser,
-	}
-}
-
-func (timgr *TiDBManager) Close() {
-	timgr.db.Close()
-}
+}	
 
 func InitSchema(ctx context.Context, g glue.Glue, database string, tablesSchema map[string]string) error {
 	logger := log.With(zap.String("db", database))
@@ -301,52 +342,6 @@ func UpdateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error 
 		"UPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
 		gcLifeTime,
 	)
-}
-
-func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor, needTiDBVars bool) map[string]string {
-	var query strings.Builder
-	query.WriteString("SHOW VARIABLES WHERE Variable_name IN ('")
-	first := true
-	for k := range defaultImportantVariables {
-		if first {
-			first = false
-		} else {
-			query.WriteString("','")
-		}
-		query.WriteString(k)
-	}
-	if needTiDBVars {
-		for k := range defaultImportVariablesTiDB {
-			query.WriteString("','")
-			query.WriteString(k)
-		}
-	}
-	query.WriteString("')")
-	kvs, err := g.QueryStringsWithLog(ctx, query.String(), "obtain system variables", log.L())
-	if err != nil {
-		// error is not fatal
-		log.L().Warn("obtain system variables failed, use default variables instead", log.ShortError(err))
-	}
-
-	// convert result into a map. fill in any missing variables with default values.
-	result := make(map[string]string, len(defaultImportantVariables)+len(defaultImportVariablesTiDB))
-	for _, kv := range kvs {
-		result[kv[0]] = kv[1]
-	}
-
-	setDefaultValue := func(res map[string]string, vars map[string]string) {
-		for k, defV := range vars {
-			if _, ok := res[k]; !ok {
-				res[k] = defV
-			}
-		}
-	}
-	setDefaultValue(result, defaultImportantVariables)
-	if needTiDBVars {
-		setDefaultValue(result, defaultImportVariablesTiDB)
-	}
-
-	return result
 }
 
 func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) (bool, error) {

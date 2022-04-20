@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	lit "github.com/pingcap/tidb/ddl/lightning"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/collate"
@@ -374,7 +375,7 @@ func NewRestoreControllerWithPauser(
 		pauser:        p.Pauser,
 		backend:       backend,
 		tidbGlue:      p.Glue,
-		sysVars:       defaultImportantVariables,
+		sysVars:       lit.DefaultImportantVariables,
 		tls:           tls,
 		checkTemplate: NewSimpleTemplate(),
 

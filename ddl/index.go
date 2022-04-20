@@ -595,7 +595,32 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 		return false, ver, errors.Trace(err)
 	}
 
+	// If reorg task started already, now be here for restore previous execution.
+	if reorgInfo.Meta.IsLightningEnabled {
+		// If reorg task can not be restore with lightning execution, should restart reorg task to keep data consist.
+		if !canRestoreReorgTask(reorgInfo, indexInfo.ID) {
+			reorgInfo, err = getReorgInfo(d.jobContext(job), d, rh, job, tbl, elements)
+			if err != nil || reorgInfo.first {
+				return false, ver, errors.Trace(err)
+			}
+		}
+	}
+	
+	// Check and set up lightning Backend. Whether use lightning add index will depends on
+	// TiDBFastDDL sysvars is true or false at this time. Also if IsLightningEnabled mean 
+	// restore lightning reorg task, no need to init the lightning environment another time.
+	if IsAllowFastDDL() && !reorgInfo.Meta.IsLightningEnabled {
+		// Check if the reorg task is re-entry task, If TiDB is restarted, then currently
+		// reorg task should be restart.
+		err = prepareBackend(w.ctx, indexInfo.Unique, job, reorgInfo.ReorgMeta.SQLMode)
+		// Once Env is created well, set IsLightningOk to true.
+		if err == nil {
+			reorgInfo.Meta.IsLightningEnabled = true
+		}
+	}
+
 	err = w.runReorgJob(rh, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
+
 		defer util.Recover(metrics.LabelDDL, "onCreateIndex",
 			func() {
 				addIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tbl.Meta().Name, indexInfo.Name)
@@ -614,8 +639,19 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 				logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback, RemoveDDLReorgHandle failed", zap.String("job", job.String()), zap.Error(err1))
 			}
 		}
+		// Clean job related lightning backend data, will handle both user cancel ddl job and
+		// others errors that occurs in reorg processing.
+		// For error that will rollback the add index statement, here only remove locale lightning
+		// files, other rollback process will follow add index roll back flow.
+		cleanUpLightningEnv(reorgInfo, true, indexInfo.ID)
+
 		return false, ver, errors.Trace(err)
 	}
+	// Ingest data to TiKV
+	importIndexDataToStore(w.ctx, reorgInfo, indexInfo.ID, indexInfo.Unique, tbl)
+
+	// Cleanup lightning environment
+	cleanUpLightningEnv(reorgInfo, false)
 	return true, ver, errors.Trace(err)
 }
 

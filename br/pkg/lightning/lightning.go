@@ -51,10 +51,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	lit "github.com/pingcap/tidb/ddl/lightning"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/shurcooL/httpgzip"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	// get rid of `import cycle`: just init expression.RewriteAstExpr,and called at package `backend.kv`
+	_ "github.com/pingcap/tidb/planner/core"
 )
 
 type Lightning struct {
@@ -388,7 +391,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	// and also put it here could avoid injecting another two SkipRunTask failpoint to caller
 	g := o.glue
 	if g == nil {
-		db, err := restore.DBFromConfig(ctx, taskCfg.TiDB)
+		db, err := lit.DBFromConfig(ctx, taskCfg.TiDB)
 		if err != nil {
 			return common.ErrDBConnect.Wrap(err)
 		}
@@ -884,7 +887,7 @@ func CleanupMetas(ctx context.Context, cfg *config.Config, tableName string) err
 		tableName = ""
 	}
 	// try to clean up table metas if exists
-	db, err := restore.DBFromConfig(ctx, cfg.TiDB)
+	db, err := lit.DBFromConfig(ctx, cfg.TiDB)
 	if err != nil {
 		return errors.Trace(err)
 	}
