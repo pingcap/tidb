@@ -169,6 +169,7 @@ func TestOnlyFullGroupByOldCases(t *testing.T) {
 	// classic cases
 	tk.MustQuery("select customer1.a, count(*) from customer1 left join customer2 on customer1.a=customer2.b where customer2.pk in (7,9) group by customer2.b;")
 	tk.MustQuery("select customer1.a, count(*) from customer1 left join customer2 on customer1.a=1 where customer2.pk in (7,9) group by customer2.b;")
+	tk.MustQuery("select c1.a, count(*) from customer2 c3 left join (customer1 c1 left join customer2 c2 on c1.a=c2.b) on c3.b=c1.a where c2.pk in (7,9) group by c2.b;")
 	tk.MustExec("drop view if exists customer")
 	// this left join can extend left pk to all cols.
 	tk.MustExec("CREATE algorithm=merge definer='root'@'localhost' VIEW customer as SELECT pk,a,b FROM customer1 LEFT JOIN customer2 USING (pk);")
