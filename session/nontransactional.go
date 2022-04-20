@@ -450,7 +450,7 @@ func selectShardColumn(stmt *ast.NonTransactionalDeleteStmt, se Session, tableNa
 	}
 
 	for _, index := range tbl.Indices() {
-		if index.Meta().State != model.StatePublic {
+		if index.Meta().State != model.StatePublic || index.Meta().Invisible {
 			continue
 		}
 		indexColumns := index.Meta().Columns
