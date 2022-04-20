@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/domain"
 	"math"
 	"sort"
 	"strconv"
@@ -1173,7 +1172,7 @@ var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 func (h *Handle) getAutoAnalyzeID() uint64 {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return util.GetAutoAnalyzeProcID(domain.GetDomain(h.mu.ctx).ServerID)
+	return util.GetAutoAnalyzeProcID(h.serverIDGetter)
 }
 
 func (h *Handle) execAutoAnalyze(statsVer int, sql string, params ...interface{}) {
