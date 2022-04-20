@@ -84,10 +84,10 @@ var allTestCase = []testCancelJob{
 	{"alter table t drop column c3", false, model.StateDeleteReorganization, true, true, []string{"alter table t add column c3 bigint"}},
 	{"alter table t drop column c3", false, model.StatePublic, false, true, []string{"alter table t add column c3 bigint"}},
 	// rebase auto ID.
-	{"alter table t_rebase auto_increment = 6000", true, model.StateNone, true, false, nil},
+	{"alter table t_rebase auto_increment = 6000", true, model.StateNone, true, false, []string{"create table t_rebase (c1 bigint auto_increment primary key, c2 bigint);"}},
 	{"alter table t_rebase auto_increment = 9000", false, model.StatePublic, false, true, nil},
 	// Shard row ID,
-	{"alter table t_auto shard_row_id_bits = 5", true, model.StateNone, true, false, nil},
+	{"alter table t_auto shard_row_id_bits = 5", true, model.StateNone, true, false, []string{"create table t_auto (c1 int not null auto_increment unique) shard_row_id_bits = 0"}},
 	{"alter table t_auto shard_row_id_bits = 8", false, model.StatePublic, false, true, nil},
 	// Modify column, no reorg.
 	{"alter table t modify column c11 mediumint", true, model.StateNone, true, false, nil},
@@ -99,13 +99,13 @@ var allTestCase = []testCancelJob{
 	{"alter table t modify column c11 char(10)", true, model.StateWriteReorganization, true, true, nil},
 	{"alter table t modify column c11 char(10)", false, model.StatePublic, false, true, nil},
 	// Add foreign key.
-	{"alter table t add constraint fk foreign key a(c1) references t_ref(c1)", true, model.StateNone, true, false, nil},
+	{"alter table t add constraint fk foreign key a(c1) references t_ref(c1)", true, model.StateNone, true, false, []string{"create table t_ref (c1 int, c2 int, c3 int, c11 tinyint);"}},
 	{"alter table t add constraint fk foreign key a(c1) references t_ref(c1)", false, model.StatePublic, false, true, nil},
 	// Drop foreign key.
 	{"alter table t drop foreign key fk", true, model.StateNone, true, false, nil},
 	{"alter table t drop foreign key fk", false, model.StatePublic, false, true, nil},
 	// Rename table.
-	{"rename table t_rename1 to t_rename11", true, model.StateNone, true, false, nil},
+	{"rename table t_rename1 to t_rename11", true, model.StateNone, true, false, []string{"create table t_rename1 (c1 bigint , c2 bigint);", "create table t_rename2 (c1 bigint , c2 bigint);"}},
 	{"rename table t_rename1 to t_rename11", false, model.StatePublic, false, true, nil},
 	// Rename tables.
 	{"rename table t_rename11 to t_rename111, t_rename2 to t_rename22", true, model.StateNone, true, false, nil},
@@ -181,19 +181,6 @@ func TestCancel(t *testing.T) {
 	tk.MustExec(`create table t (
 		c1 int, c2 int, c3 int, c11 tinyint
 	);`)
-	tk.MustExec(`create table t_ref (
-		c1 int, c2 int, c3 int, c11 tinyint
-	);`)
-	tk.MustExec(`create table t_rebase (
-		c1 bigint auto_increment primary key, c2 bigint
-	);`)
-	tk.MustExec(`create table t_rename1 (
-		c1 bigint , c2 bigint
-	);`)
-	tk.MustExec(`create table t_rename2 (
-		c1 bigint , c2 bigint
-	);`)
-	tk.MustExec("create table t_auto (c1 int not null auto_increment unique) shard_row_id_bits = 0")
 
 	// Prepare data.
 	for i := 0; i <= 2048; i++ {
