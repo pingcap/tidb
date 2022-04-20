@@ -98,13 +98,13 @@ type mapCache struct {
 	memUsage int64
 }
 
-// Get implements kvCache
+// Get implements statsCacheInner
 func (m *mapCache) Get(k int64) (*statistics.Table, bool) {
 	v, ok := m.tables[k]
 	return v.value, ok
 }
 
-// Put implements kvCache
+// Put implements statsCacheInner
 func (m *mapCache) Put(k int64, v *statistics.Table) {
 	item, ok := m.tables[k]
 	if ok {
@@ -126,7 +126,7 @@ func (m *mapCache) Put(k int64, v *statistics.Table) {
 	m.memUsage += cost
 }
 
-// Del implements kvCache
+// Del implements statsCacheInner
 func (m *mapCache) Del(k int64) {
 	item, ok := m.tables[k]
 	if !ok {
@@ -136,44 +136,44 @@ func (m *mapCache) Del(k int64) {
 	m.memUsage -= item.cost
 }
 
-// Cost implements kvCache
+// Cost implements statsCacheInner
 func (m *mapCache) Cost() int64 {
 	return m.memUsage
 }
 
-// Keys implements kvCache
+// Keys implements statsCacheInner
 func (m *mapCache) Keys() []int64 {
-	ks := make([]int64, 0)
+	ks := make([]int64, 0, m.Len())
 	for k := range m.tables {
 		ks = append(ks, k)
 	}
 	return ks
 }
 
-// Values implements kvCache
+// Values implements statsCacheInner
 func (m *mapCache) Values() []*statistics.Table {
-	vs := make([]*statistics.Table, 0)
+	vs := make([]*statistics.Table, 0, m.Len())
 	for _, v := range m.tables {
 		vs = append(vs, v.value)
 	}
 	return vs
 }
 
-// Map implements kvCache
+// Map implements statsCacheInner
 func (m *mapCache) Map() map[int64]*statistics.Table {
-	t := make(map[int64]*statistics.Table)
+	t := make(map[int64]*statistics.Table, m.Len())
 	for k, v := range m.tables {
 		t[k] = v.value
 	}
 	return t
 }
 
-// Len implements kvCache
+// Len implements statsCacheInner
 func (m *mapCache) Len() int {
 	return len(m.tables)
 }
 
-// FreshMemUsage implements kvCache
+// FreshMemUsage implements statsCacheInner
 func (m *mapCache) FreshMemUsage() {
 	for _, v := range m.tables {
 		oldCost := v.cost
@@ -182,7 +182,7 @@ func (m *mapCache) FreshMemUsage() {
 	}
 }
 
-// FreshTableCost implements kvCache
+// FreshTableCost implements statsCacheInner
 func (m *mapCache) FreshTableCost(k int64) {
 	item, ok := m.tables[k]
 	if !ok {
@@ -191,10 +191,10 @@ func (m *mapCache) FreshTableCost(k int64) {
 	m.Put(k, item.value)
 }
 
-// Copy implements kvCache
+// Copy implements statsCacheInner
 func (m *mapCache) Copy() statsCacheInner {
 	newM := &mapCache{
-		tables:   make(map[int64]cacheItem),
+		tables:   make(map[int64]cacheItem, m.Len()),
 		memUsage: m.memUsage,
 	}
 	for k, v := range m.tables {
