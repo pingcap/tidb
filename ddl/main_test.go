@@ -26,9 +26,12 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/meta/autoid"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
+=======
+>>>>>>> 7ddfdba44... ddl: add new cancel test framework and rewrite some tests (#33931)
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
@@ -68,6 +71,7 @@ func TestMain(m *testing.M) {
 
 	goleak.VerifyTestMain(m, opts...)
 }
+<<<<<<< HEAD
 
 func wrapJobIDExtCallback(oldCallback ddl.Callback) *testDDLJobIDCallback {
 	return &testDDLJobIDCallback{
@@ -106,3 +110,5 @@ func (t *testDDLJobIDCallback) OnJobUpdated(job *model.Job) {
 		t.Callback.OnJobUpdated(job)
 	}
 }
+=======
+>>>>>>> 7ddfdba44... ddl: add new cancel test framework and rewrite some tests (#33931)

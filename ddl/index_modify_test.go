@@ -29,11 +29,9 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -677,6 +675,7 @@ func TestAddIndexWithPK(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
 func TestCancelAddPrimaryKey(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, indexModifyLease)
 	defer clean()
@@ -830,6 +829,8 @@ func backgroundExecOnJobUpdatedExported(t *testing.T, tk *testkit.TestKit, store
 	return hook.OnJobUpdatedExported, c3IdxInfo, checkErr
 }
 
+=======
+>>>>>>> 7ddfdba44... ddl: add new cancel test framework and rewrite some tests (#33931)
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
 func TestCancelAddIndex1(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, indexModifyLease)
