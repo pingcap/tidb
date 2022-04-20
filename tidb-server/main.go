@@ -453,10 +453,10 @@ func overrideConfig(cfg *config.Config) {
 		cfg.TokenLimit = uint(*tokenLimit)
 	}
 	if actualFlags[nmPluginLoad] {
-		cfg.Instance.Plugin.Load = *pluginLoad
+		cfg.Instance.PluginLoad = *pluginLoad
 	}
 	if actualFlags[nmPluginDir] {
-		cfg.Instance.Plugin.Dir = *pluginDir
+		cfg.Instance.PluginDir = *pluginDir
 	}
 	if actualFlags[nmRequireSecureTransport] {
 		cfg.Security.RequireSecureTransport = *requireTLS
@@ -548,6 +548,44 @@ func setVersions() {
 func setGlobalVars() {
 	cfg := config.GetGlobalConfig()
 
+	// config.DeprecatedOptions records the config options that should be moved to [instance] section.
+	for _, deprecatedOption := range config.DeprecatedOptions {
+		for oldName := range deprecatedOption.NameMappings {
+			switch deprecatedOption.SectionName {
+			case "":
+				switch oldName {
+				case "check-mb4-value-in-utf8":
+					cfg.Instance.CheckMb4ValueInUTF8.Store(cfg.CheckMb4ValueInUTF8.Load())
+				case "enable-collect-execution-info":
+					cfg.Instance.EnableCollectExecutionInfo = cfg.EnableCollectExecutionInfo
+				case "plugin.load":
+					cfg.Instance.PluginLoad = cfg.Plugin.Load
+				case "plugin.dir":
+					cfg.Instance.PluginDir = cfg.Plugin.Dir
+				}
+			case "log":
+				switch oldName {
+				case "enable-slow-log":
+					cfg.Instance.EnableSlowLog.Store(cfg.Log.EnableSlowLog.Load())
+				case "slow-threshold":
+					cfg.Instance.SlowThreshold = cfg.Log.SlowThreshold
+				case "query-log-max-len":
+					cfg.Instance.QueryLogMaxLen = cfg.Log.QueryLogMaxLen
+				case "record-plan-in-slow-log":
+					cfg.Instance.RecordPlanInSlowLog = cfg.Log.RecordPlanInSlowLog
+				}
+			case "performance":
+				switch oldName {
+				case "force-priority":
+					cfg.Instance.ForcePriority = cfg.Performance.ForcePriority
+				case "memory-usage-alarm-ratio":
+					cfg.Instance.MemoryUsageAlarmRatio = cfg.Performance.MemoryUsageAlarmRatio
+				}
+			default:
+			}
+		}
+	}
+
 	// Disable automaxprocs log
 	nopLog := func(string, ...interface{}) {}
 	_, err := maxprocs.Set(maxprocs.Logger(nopLog))
@@ -584,9 +622,6 @@ func setGlobalVars() {
 	}
 	kv.TxnEntrySizeLimit = cfg.Performance.TxnEntrySizeLimit
 
-	if _, ok := config.DeprecatedOptions["force-priority"]; ok {
-		cfg.Instance.ForcePriority = cfg.Performance.ForcePriority
-	}
 	priority := mysql.Str2Priority(cfg.Instance.ForcePriority)
 	variable.ForcePriority = int32(priority)
 
@@ -622,9 +657,6 @@ func setGlobalVars() {
 	variable.SetSysVar(variable.TiDBSlowQueryFile, cfg.Log.SlowQueryFile)
 	variable.SetSysVar(variable.TiDBIsolationReadEngines, strings.Join(cfg.IsolationRead.Engines, ","))
 	variable.SetSysVar(variable.TiDBEnforceMPPExecution, variable.BoolToOnOff(config.GetGlobalConfig().Performance.EnforceMPP))
-	if _, ok := config.DeprecatedOptions["memory-usage-alarm-ratio"]; ok {
-		cfg.Instance.MemoryUsageAlarmRatio = cfg.Performance.MemoryUsageAlarmRatio
-	}
 	variable.MemoryUsageAlarmRatio.Store(cfg.Instance.MemoryUsageAlarmRatio)
 	if hostname, err := os.Hostname(); err == nil {
 		variable.SetSysVar(variable.Hostname, hostname)
@@ -672,32 +704,6 @@ func setGlobalVars() {
 	tikv.SetStoreLivenessTimeout(t)
 	parsertypes.TiDBStrictIntegerDisplayWidth = cfg.DeprecateIntegerDisplayWidth
 	deadlockhistory.GlobalDeadlockHistory.Resize(cfg.PessimisticTxn.DeadlockHistoryCapacity)
-
-	// Check [instance] section configuration options.
-	if _, ok := config.DeprecatedOptions["enable-slow-log"]; ok {
-		cfg.Instance.EnableSlowLog.Store(cfg.Log.EnableSlowLog.Load())
-	}
-	if _, ok := config.DeprecatedOptions["slow-threshold"]; ok {
-		cfg.Instance.SlowThreshold = cfg.Log.SlowThreshold
-	}
-	if _, ok := config.DeprecatedOptions["query-log-max-len"]; ok {
-		cfg.Instance.QueryLogMaxLen = cfg.Log.QueryLogMaxLen
-	}
-	if _, ok := config.DeprecatedOptions["record-plan-in-slow-log"]; ok {
-		cfg.Instance.RecordPlanInSlowLog = cfg.Log.RecordPlanInSlowLog
-	}
-	if _, ok := config.DeprecatedOptions["check-mb4-value-in-utf8"]; ok {
-		cfg.Instance.CheckMb4ValueInUTF8.Store(cfg.CheckMb4ValueInUTF8.Load())
-	}
-	if _, ok := config.DeprecatedOptions["enable-collect-execution-info"]; ok {
-		cfg.Instance.EnableCollectExecutionInfo = cfg.EnableCollectExecutionInfo
-	}
-	if _, ok := config.DeprecatedOptions["plugin.load"]; ok {
-		cfg.Instance.Plugin.Load = cfg.Plugin.Load
-	}
-	if _, ok := config.DeprecatedOptions["plugin.dir"]; ok {
-		cfg.Instance.Plugin.Dir = cfg.Plugin.Dir
-	}
 }
 
 func setupLog() {

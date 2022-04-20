@@ -96,38 +96,49 @@ var (
 	tempStorageDirName = encodeDefTempStorageDir(os.TempDir(), DefHost, DefStatusHost, DefPort, DefStatusPort)
 )
 
+// InstanceConfigSection indicates a config session that has options moved to [instance] session.
+type InstanceConfigSection struct {
+	// SectionName indicates the origin section name.
+	SectionName string
+	// NameMappings maps the origin name to the name in [instance].
+	NameMappings map[string]string
+}
+
 var (
-	// optionsMovedToInstance indicates the config options that should be moved to [instance] section from other sessions.
-	optionsMovedToInstance = []struct {
-		sectionName string
-		options     []string
-	}{
+	// sectionMovedToInstance records all config section and options that should be moved to [instance].
+	sectionMovedToInstance = []InstanceConfigSection{
 		{
 			"",
-			[]string{"check-mb4-value-in-utf8",
-				"enable-collect-execution-info",
-				"plugin.load",
-				"plugin.dir"},
+			map[string]string{
+				"check-mb4-value-in-utf8":       "tidb_check_mb4_value_in_utf8",
+				"enable-collect-execution-info": "tidb_enable_collect_execution_info",
+				"plugin.load":                   "plugin_load",
+				"plugin.dir":                    "plugin_dir",
+			},
 		},
 		{
 			"log",
-			[]string{
-				"enable-slow-log",
-				"slow-threshold",
-				"query-log-max-len",
-				"record-plan-in-slow-log"},
+			map[string]string{
+				"enable-slow-log":         "tidb_enable_slow_log",
+				"slow-threshold":          "tidb_slow_log_threshold",
+				"query-log-max-len":       "tidb_query_log_max_len",
+				"record-plan-in-slow-log": "tidb_record_plan_in_slow_log",
+			},
 		},
 		{
 			"performance",
-			[]string{
-				"force-priority",
-				"memory-usage-alarm-ratio"},
+			map[string]string{
+				"force-priority":           "tidb_force_priority",
+				"memory-usage-alarm-ratio": "tidb_memory_usage_alarm_ratio",
+			},
 		},
 	}
-	// ConflictOptions indicates the conflict config options between 'instance' and other sections.
-	ConflictOptions = map[string]struct{}{}
-	// DeprecatedOptions indicates the config options that should be moved to 'instance' section.
-	DeprecatedOptions = map[string]struct{}{}
+
+	// ConflictOptions indicates the conflict config options existing in both [instance] and other sections.
+	ConflictOptions []InstanceConfigSection
+
+	// DeprecatedOptions indicates the config options that should be moved to [instance].
+	DeprecatedOptions []InstanceConfigSection
 )
 
 // Config contains configuration options.
@@ -413,27 +424,28 @@ type Instance struct {
 	// These variables only exist in [instance] section.
 
 	// GeneralLog is used to log every query in the server in info level.
-	GeneralLog bool `toml:"tidb-general-log" json:"tidb-general-log"`
+	GeneralLog bool `toml:"tidb_general_log" json:"tidb_general_log"`
 	// EnablePProfSQLCPU is used to add label sql label to pprof result.
-	EnablePProfSQLCPU bool `toml:"tidb-pprof-sql-cpu" json:"tidb-pprof-sql-cpu"`
+	EnablePProfSQLCPU bool `toml:"tidb_pprof_sql_cpu" json:"tidb_pprof_sql_cpu"`
 	// DDLSlowOprThreshold sets log DDL operations whose execution time exceeds the threshold value.
-	DDLSlowOprThreshold uint32 `toml:"ddl-slow-threshold" json:"ddl-slow-threshold"`
+	DDLSlowOprThreshold uint32 `toml:"ddl_slow_threshold" json:"ddl_slow_threshold"`
 	// ExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
-	ExpensiveQueryTimeThreshold uint64 `toml:"expensive-query-time-threshold" json:"expensive-query-time-threshold"`
+	ExpensiveQueryTimeThreshold uint64 `toml:"tidb_expensive_query_time_threshold" json:"tidb_expensive_query_time_threshold"`
 
 	// These variables exist in both 'instance' section and another place.
 	// The configuration in 'instance' section takes precedence.
 
-	EnableSlowLog         AtomicBool `toml:"enable-slow-log" json:"enable-slow-log"`
-	SlowThreshold         uint64     `toml:"slow-threshold" json:"slow-threshold"`
-	QueryLogMaxLen        uint64     `toml:"query-log-max-len" json:"query-log-max-len"`
-	RecordPlanInSlowLog   uint32     `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
-	CheckMb4ValueInUTF8   AtomicBool `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
-	ForcePriority         string     `toml:"force-priority" json:"force-priority"`
-	MemoryUsageAlarmRatio float64    `toml:"memory-usage-alarm-ratio" json:"memory-usage-alarm-ratio"`
+	EnableSlowLog         AtomicBool `toml:"tidb_enable_slow_log" json:"tidb_enable_slow_log"`
+	SlowThreshold         uint64     `toml:"tidb_slow_log_threshold" json:"tidb_slow_log_threshold"`
+	QueryLogMaxLen        uint64     `toml:"tidb_query_log_max_len" json:"tidb_query_log_max_len"`
+	RecordPlanInSlowLog   uint32     `toml:"tidb_record_plan_in_slow_log" json:"tidb_record_plan_in_slow_log"`
+	CheckMb4ValueInUTF8   AtomicBool `toml:"tidb_check_mb4_value_in_utf8" json:"tidb_check_mb4_value_in_utf8"`
+	ForcePriority         string     `toml:"tidb_force_priority" json:"tidb_force_priority"`
+	MemoryUsageAlarmRatio float64    `toml:"tidb_memory_usage_alarm_ratio" json:"tidb_memory_usage_alarm_ratio"`
 	// EnableCollectExecutionInfo enables the TiDB to collect execution info.
-	EnableCollectExecutionInfo bool   `toml:"enable-collect-execution-info" json:"enable-collect-execution-info"`
-	Plugin                     Plugin `toml:"plugin" json:"plugin"`
+	EnableCollectExecutionInfo bool   `toml:"tidb_enable_collect_execution_info" json:"tidb_enable_collect_execution_info"`
+	PluginDir                  string `toml:"plugin_dir" json:"plugin_dir"`
+	PluginLoad                 string `toml:"plugin_load" json:"plugin_load"`
 }
 
 func (l *Log) getDisableTimestamp() bool {
@@ -507,23 +519,33 @@ func (e *ErrConfigValidationFailed) Error() string {
 // ErrConfigInstanceSection error is used to warning the user that the config options in 'instance'
 // are also set in another place.
 type ErrConfigInstanceSection struct {
-	confFile          string
-	conflictOptions   []string
-	deprecatedOptions []string
+	confFile           string
+	configSections     *[]InstanceConfigSection
+	deprecatedSections *[]InstanceConfigSection
 }
 
 func (e *ErrConfigInstanceSection) Error() string {
-	str := ""
-	if len(e.conflictOptions) > 0 {
-		str += fmt.Sprintf("Conflict configuration options '%s' exists on both [instance] section and some other sections, "+
-			"please use [instance] section instead.",
-			strings.Join(e.conflictOptions, ","))
+	var builder strings.Builder
+	if len(*e.configSections) > 0 {
+		builder.WriteString("Conflict configuration options exists on both [instance] section and some other sections. ")
 	}
-	if len(e.deprecatedOptions) > 0 {
-		str += fmt.Sprintf("Configuration options '%s' should be moved to [instance] section.",
-			strings.Join(e.deprecatedOptions, ","))
+	if len(*e.deprecatedSections) > 0 {
+		builder.WriteString("Some configuration options should be moved to [instance] section. ")
 	}
-	return str
+	builder.WriteString("Please use the latter config options in [instance] instead: ")
+	for _, configSection := range *e.configSections {
+		for oldName, newName := range configSection.NameMappings {
+			builder.WriteString(fmt.Sprintf(" (%s, %s)", oldName, newName))
+		}
+	}
+	for _, configSection := range *e.deprecatedSections {
+		for oldName, newName := range configSection.NameMappings {
+			builder.WriteString(fmt.Sprintf(" (%s, %s)", oldName, newName))
+		}
+	}
+	builder.WriteString(". ")
+
+	return builder.String()
 }
 
 // ClusterSecurity returns Security info for cluster
@@ -766,10 +788,8 @@ var defaultConf = Config{
 		ForcePriority:               "NO_PRIORITY",
 		MemoryUsageAlarmRatio:       DefMemoryUsageAlarmRatio,
 		EnableCollectExecutionInfo:  true,
-		Plugin: Plugin{
-			Dir:  "/data/deploy/plugin",
-			Load: "",
-		},
+		PluginDir:                   "/data/deploy/plugin",
+		PluginLoad:                  "",
 	},
 	Status: Status{
 		ReportStatus:          true,
@@ -1004,29 +1024,29 @@ func (c *Config) Load(confFile string) error {
 		err = &ErrConfigValidationFailed{confFile, undecodedItems}
 	}
 
-	for _, section := range optionsMovedToInstance {
-		for _, option := range section.options {
-			if section.sectionName == "" && metaData.IsDefined(option) ||
-				section.sectionName != "" && metaData.IsDefined(section.sectionName, option) {
-				if metaData.IsDefined("instance", option) {
-					ConflictOptions[option] = struct{}{}
+	for _, section := range sectionMovedToInstance {
+		newConflictSection := InstanceConfigSection{SectionName: section.SectionName, NameMappings: map[string]string{}}
+		newDeprecatedSection := InstanceConfigSection{SectionName: section.SectionName, NameMappings: map[string]string{}}
+		for oldName, newName := range section.NameMappings {
+			if section.SectionName == "" && metaData.IsDefined(oldName) ||
+				section.SectionName != "" && metaData.IsDefined(section.SectionName, oldName) {
+				if metaData.IsDefined("instance", newName) {
+					newConflictSection.NameMappings[oldName] = newName
 				} else {
-					DeprecatedOptions[option] = struct{}{}
+					newDeprecatedSection.NameMappings[oldName] = newName
 				}
 			}
+		}
+		if len(newConflictSection.NameMappings) > 0 {
+			ConflictOptions = append(ConflictOptions, newConflictSection)
+		}
+		if len(newDeprecatedSection.NameMappings) > 0 {
+			DeprecatedOptions = append(DeprecatedOptions, newDeprecatedSection)
 		}
 	}
 	if len(ConflictOptions) > 0 || len(DeprecatedOptions) > 0 {
 		// Give a warning that the 'instance' section should be used.
-		strConflictOptions := make([]string, 0, len(ConflictOptions))
-		for k := range ConflictOptions {
-			strConflictOptions = append(strConflictOptions, k)
-		}
-		strDeprecatedOptions := make([]string, 0, len(ConflictOptions))
-		for k := range DeprecatedOptions {
-			strDeprecatedOptions = append(strDeprecatedOptions, k)
-		}
-		err = &ErrConfigInstanceSection{confFile, strConflictOptions, strDeprecatedOptions}
+		err = &ErrConfigInstanceSection{confFile, &ConflictOptions, &DeprecatedOptions}
 	}
 
 	return err
@@ -1091,7 +1111,7 @@ func (c *Config) Valid() error {
 	}
 
 	if c.Instance.MemoryUsageAlarmRatio > 1 || c.Instance.MemoryUsageAlarmRatio < 0 {
-		return fmt.Errorf("memory-usage-alarm-ratio in [Performance] must be greater than or equal to 0 and less than or equal to 1")
+		return fmt.Errorf("tidb_memory_usage_alarm_ratio in [Instance] must be greater than or equal to 0 and less than or equal to 1")
 	}
 
 	if c.PreparedPlanCache.Capacity < 1 {

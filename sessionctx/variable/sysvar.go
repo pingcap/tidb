@@ -409,10 +409,10 @@ var defaultSysVars = []*SysVar{
 		return BoolToOnOff(config.GetGlobalConfig().Instance.EnableCollectExecutionInfo), nil
 	}},
 	{Scope: ScopeInstance, Name: PluginLoad, Value: "", GetGlobal: func(s *SessionVars) (string, error) {
-		return config.GetGlobalConfig().Instance.Plugin.Load, nil
+		return config.GetGlobalConfig().Instance.PluginLoad, nil
 	}},
 	{Scope: ScopeInstance, Name: PluginDir, Value: "/data/deploy/plugin", GetGlobal: func(s *SessionVars) (string, error) {
-		return config.GetGlobalConfig().Instance.Plugin.Dir, nil
+		return config.GetGlobalConfig().Instance.PluginDir, nil
 	}},
 
 	/* The system variables below have GLOBAL scope  */

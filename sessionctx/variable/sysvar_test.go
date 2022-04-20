@@ -624,11 +624,11 @@ func TestInstanceScopedVars(t *testing.T) {
 
 	val, err = GetSessionOrGlobalSystemVar(vars, PluginDir)
 	require.NoError(t, err)
-	require.Equal(t, config.GetGlobalConfig().Instance.Plugin.Dir, val)
+	require.Equal(t, config.GetGlobalConfig().Instance.PluginDir, val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, PluginLoad)
 	require.NoError(t, err)
-	require.Equal(t, config.GetGlobalConfig().Instance.Plugin.Load, val)
+	require.Equal(t, config.GetGlobalConfig().Instance.PluginLoad, val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBSlowLogThreshold)
 	require.NoError(t, err)
