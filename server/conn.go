@@ -186,7 +186,7 @@ type clientConn struct {
 	// ShowProcess() and mysql.ComChangeUser both visit this field, ShowProcess() read information through
 	// the TiDBContext and mysql.ComChangeUser re-create it, so a lock is required here.
 	ctx struct {
-		sync.RWMutex
+		syncutil.RWMutex
 		*TiDBContext // an interface to execute sql statements.
 	}
 	attrs         map[string]string // attributes parsed from client handshake response, not used for now.

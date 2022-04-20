@@ -4,10 +4,10 @@ package utils_test
 
 import (
 	"context"
-	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 )

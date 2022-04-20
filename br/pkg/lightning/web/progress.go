@@ -2,7 +2,6 @@ package web
 
 import (
 	"encoding/json"
-	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"

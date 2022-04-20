@@ -22,13 +22,13 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"sort"
-	"sync"
 	"testing"
 
 	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	kv "github.com/pingcap/tidb/br/pkg/lightning/tikv"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/stretchr/testify/require"
 )
 

@@ -18,7 +18,6 @@ import (
 	"io"
 	"os"
 	"strconv"
-	"sync"
 
 	errors2 "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/encrypt"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 // ListInDisk represents a slice of chunks storing in temporary disk.
@@ -41,7 +41,7 @@ type ListInDisk struct {
 
 	disk          *os.File
 	w             io.WriteCloser
-	bufFlushMutex sync.RWMutex
+	bufFlushMutex syncutil.RWMutex
 	diskTracker   *disk.Tracker // track disk usage.
 	numRowsInDisk int
 
@@ -85,7 +85,7 @@ func (l *ListInDisk) initDiskFile() (err error) {
 	}
 	l.checksumWriter = checksum.NewWriter(underlying)
 	l.w = l.checksumWriter
-	l.bufFlushMutex = sync.RWMutex{}
+	l.bufFlushMutex = syncutil.RWMutex{}
 	return
 }
 

@@ -24,7 +24,7 @@ import (
 )
 
 type datum struct {
-	syncutil.Mutex
+	sync.Mutex
 
 	intValue    int64
 	minIntValue int64

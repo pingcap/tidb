@@ -5,7 +5,6 @@ package restore_test
 import (
 	"bytes"
 	"context"
-	"sync"
 	"testing"
 	"time"
 

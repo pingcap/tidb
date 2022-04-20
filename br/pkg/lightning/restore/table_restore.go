@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )

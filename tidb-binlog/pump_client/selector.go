@@ -15,9 +15,8 @@
 package client
 
 import (
-	"sync"
-
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/util/syncutil"
 	pb "github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 )
@@ -41,7 +40,7 @@ var (
 	// And Commit binlog should send to the same pump.
 	tsMap = make(map[int64]*PumpStatus)
 
-	selectorLock sync.RWMutex
+	selectorLock syncutil.RWMutex
 )
 
 // PumpSelector selects pump for sending binlog.
