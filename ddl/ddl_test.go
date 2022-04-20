@@ -148,20 +148,6 @@ func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bo
 	}
 }
 
-func buildDropIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, indexName string) *model.Job {
-	tp := model.ActionDropIndex
-	if indexName == "primary" {
-		tp = model.ActionDropPrimaryKey
-	}
-	return &model.Job{
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       tp,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{model.NewCIStr(indexName)},
-	}
-}
-
 func TestGetIntervalFromPolicy(t *testing.T) {
 	policy := []time.Duration{
 		1 * time.Second,
