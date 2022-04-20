@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -107,7 +108,7 @@ type schemaVersionSyncer struct {
 	etcdCli           *clientv3.Client
 	session           unsafe.Pointer
 	mu                struct {
-		sync.RWMutex
+		syncutil.RWMutex
 		globalVerCh clientv3.WatchChan
 	}
 

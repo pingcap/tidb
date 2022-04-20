@@ -17,7 +17,6 @@ package ddl
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -274,7 +274,7 @@ func (s *testDDLSerialSuiteToVerify) TestCancelJob() {
 	firstJobID := job.ID
 	tests := buildCancelJobTests(firstJobID)
 	var checkErr error
-	var mu sync.Mutex
+	var mu syncutil.Mutex
 	var test *testCancelJob
 	updateTest := func(t *testCancelJob) {
 		mu.Lock()

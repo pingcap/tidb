@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/tidb-binlog/node"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/etcd"
+	"github.com/pingcap/tidb/util/syncutil"
 	pb "github.com/pingcap/tipb/go-binlog"
 	pd "github.com/tikv/pd/client"
 	"go.etcd.io/etcd/api/v3/mvccpb"
@@ -85,7 +86,7 @@ func NewPumpInfos() *PumpInfos {
 
 // PumpsClient is the client of pumps.
 type PumpsClient struct {
-	sync.RWMutex
+	syncutil.RWMutex
 
 	ctx context.Context
 

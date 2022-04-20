@@ -19,13 +19,13 @@ package oomtest
 import (
 	"os"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/testbridge"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -185,7 +185,7 @@ var oom *oomCapture
 func registerHook() {
 	conf := &log.Config{Level: os.Getenv("log_level"), File: log.FileLogConfig{}}
 	_, r, _ := log.InitLogger(conf)
-	oom = &oomCapture{r.Core, "", sync.Mutex{}}
+	oom = &oomCapture{r.Core, "", syncutil.Mutex{}}
 	lg := zap.New(oom)
 	log.ReplaceGlobals(lg, r)
 }
@@ -193,7 +193,7 @@ func registerHook() {
 type oomCapture struct {
 	zapcore.Core
 	tracker string
-	mu      sync.Mutex
+	mu      syncutil.Mutex
 }
 
 func (h *oomCapture) SetTracker(tracker string) {

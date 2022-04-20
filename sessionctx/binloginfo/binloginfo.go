@@ -16,7 +16,6 @@ package binloginfo
 
 import (
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/tidb-binlog/node"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -43,7 +43,7 @@ func init() {
 // pumpsClient is the client to write binlog, it is opened on server start and never close,
 // shared by all sessions.
 var pumpsClient *pumpcli.PumpsClient
-var pumpsClientLock sync.RWMutex
+var pumpsClientLock syncutil.RWMutex
 
 // BinlogInfo contains binlog data and binlog client.
 type BinlogInfo struct {

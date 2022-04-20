@@ -16,10 +16,10 @@ package reporter
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc/metadata"
@@ -32,7 +32,7 @@ func (r *mockPubSubDataSinkRegisterer) Register(dataSink DataSink) error { retur
 func (r *mockPubSubDataSinkRegisterer) Deregister(dataSink DataSink) {}
 
 type mockPubSubDataSinkStream struct {
-	sync.Mutex
+	syncutil.Mutex
 	records   []*tipb.TopSQLRecord
 	sqlMetas  []*tipb.SQLMeta
 	planMetas []*tipb.PlanMeta

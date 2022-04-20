@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -19,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/util"
 	tmock "github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -227,7 +227,7 @@ type safePointTTL struct {
 }
 
 type testPDClient struct {
-	sync.Mutex
+	syncutil.Mutex
 	pd.Client
 	count            atomic.Int32
 	gcSafePoint      []safePointTTL

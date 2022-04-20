@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -326,7 +327,7 @@ func balanceBatchCopTask(ctx context.Context, kvStore *kvStore, originalTasks []
 		// decide the available stores
 		stores := cache.RegionCache.GetTiFlashStores()
 		var wg sync.WaitGroup
-		var mu sync.Mutex
+		var mu syncutil.Mutex
 		wg.Add(len(stores))
 		cur := time.Now()
 		for i := range stores {

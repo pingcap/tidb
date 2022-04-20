@@ -16,11 +16,11 @@ package telemetry
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/prometheus/client_golang/api"
 	promv1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	pmodel "github.com/prometheus/common/model"
@@ -94,7 +94,7 @@ type tiFlashUsageData struct {
 
 // builtinFunctionsUsageCollector collects builtin functions usage information and dump it into windowData.
 type builtinFunctionsUsageCollector struct {
-	sync.Mutex
+	syncutil.Mutex
 
 	// Should acquire lock to access this
 	usageData BuiltinFunctionsUsage
@@ -148,7 +148,7 @@ var GlobalBuiltinFunctionsUsage = &builtinFunctionsUsageCollector{usageData: mak
 
 var (
 	rotatedSubWindows []*windowData
-	subWindowsLock    = sync.RWMutex{}
+	subWindowsLock    = syncutil.RWMutex{}
 )
 
 func getSQLSum(sqlTypeData *sqlType) uint64 {

@@ -22,7 +22,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"go.uber.org/zap"
@@ -891,7 +891,7 @@ func TestTiFlashBatchRateLimiter(t *testing.T) {
 
 	// Retrigger, but close session before the whole job ends.
 	var wg util.WaitGroupWrapper
-	var mu sync.Mutex
+	var mu syncutil.Mutex
 	wg.Run(func() {
 		time.Sleep(time.Millisecond * 20)
 		mu.Lock()

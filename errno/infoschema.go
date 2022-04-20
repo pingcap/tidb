@@ -15,8 +15,9 @@
 package errno
 
 import (
-	"sync"
 	"time"
+
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 // The error summary is protected by a mutex for simplicity.
@@ -34,7 +35,7 @@ type ErrorSummary struct {
 
 // instanceStatistics provide statistics for a tidb-server instance.
 type instanceStatistics struct {
-	sync.Mutex
+	syncutil.Mutex
 	global map[uint16]*ErrorSummary
 	users  map[string]map[uint16]*ErrorSummary
 	hosts  map[string]map[uint16]*ErrorSummary

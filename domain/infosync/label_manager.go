@@ -19,10 +19,10 @@ import (
 	"context"
 	"encoding/json"
 	"path"
-	"sync"
 
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/syncutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
@@ -93,7 +93,7 @@ func (lm *PDLabelManager) GetLabelRules(ctx context.Context, ruleIDs []string) (
 }
 
 type mockLabelManager struct {
-	sync.RWMutex
+	syncutil.RWMutex
 	labelRules map[string][]byte
 }
 

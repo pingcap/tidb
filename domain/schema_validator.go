@@ -16,7 +16,6 @@ package domain
 
 import (
 	"sort"
-	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/infoschema"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.uber.org/zap"
@@ -67,7 +67,7 @@ type deltaSchemaInfo struct {
 
 type schemaValidator struct {
 	isStarted          bool
-	mux                sync.RWMutex
+	mux                syncutil.RWMutex
 	lease              time.Duration
 	latestSchemaVer    int64
 	latestInfoSchema   infoschema.InfoSchema

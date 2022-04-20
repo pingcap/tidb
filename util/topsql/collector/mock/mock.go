@@ -16,12 +16,12 @@ package mock
 
 import (
 	"bytes"
-	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/topsql/collector"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"go.uber.org/atomic"
@@ -30,7 +30,7 @@ import (
 
 // TopSQLCollector uses for testing.
 type TopSQLCollector struct {
-	sync.Mutex
+	syncutil.Mutex
 	// sql_digest -> normalized SQL
 	sqlMap map[string]string
 	// plan_digest -> normalized plan

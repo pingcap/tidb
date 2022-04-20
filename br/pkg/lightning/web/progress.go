@@ -8,6 +8,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/atomic"
 )
 
@@ -24,7 +25,7 @@ import (
 // Do not implement this using a sync.Map, its mutex can't protect the content
 // of a pointer.
 type checkpointsMap struct {
-	mu          sync.RWMutex
+	mu          syncutil.RWMutex
 	checkpoints map[string]*checkpoints.TableCheckpoint
 }
 
@@ -100,7 +101,7 @@ type tableInfo struct {
 }
 
 type taskProgress struct {
-	mu      sync.RWMutex
+	mu      syncutil.RWMutex
 	Tables  map[string]*tableInfo `json:"t"`
 	Status  taskStatus            `json:"s"`
 	Message string                `json:"m,omitempty"`

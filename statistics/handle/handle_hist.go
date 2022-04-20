@@ -16,7 +16,6 @@ package handle
 
 import (
 	"runtime"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -29,12 +28,13 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
 
 // StatsLoad is used to load stats concurrently
 type StatsLoad struct {
-	sync.Mutex
+	syncutil.Mutex
 	SubCtxs          []sessionctx.Context
 	NeededColumnsCh  chan *NeededColumnTask
 	TimeoutColumnsCh chan *NeededColumnTask

@@ -21,7 +21,6 @@ import (
 	"math/rand"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -33,6 +32,7 @@ import (
 	txn_driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -44,7 +44,7 @@ import (
 )
 
 type storeCache struct {
-	sync.Mutex
+	syncutil.Mutex
 	cache map[string]*tikvStore
 }
 

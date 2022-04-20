@@ -86,6 +86,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/syncutil"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/util"
@@ -197,7 +198,7 @@ type clientConn struct {
 	socketCredUID uint32            // UID from the other end of the Unix Socket
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
-		sync.RWMutex
+		syncutil.RWMutex
 		cancelFunc context.CancelFunc
 	}
 }

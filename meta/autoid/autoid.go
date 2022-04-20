@@ -19,7 +19,6 @@ import (
 	"context"
 	"math"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/cznic/mathutil"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -194,7 +194,7 @@ func (all Allocators) Filter(pred func(Allocator) bool) Allocators {
 }
 
 type allocator struct {
-	mu    sync.Mutex
+	mu    syncutil.Mutex
 	base  int64
 	end   int64
 	store kv.Storage

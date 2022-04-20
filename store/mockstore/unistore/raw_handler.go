@@ -17,14 +17,14 @@ package unistore
 import (
 	"bytes"
 	"context"
-	"sync"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/mockstore/unistore/lockstore"
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 type rawHandler struct {
-	mu    sync.RWMutex
+	mu    syncutil.RWMutex
 	store *lockstore.MemStore
 }
 

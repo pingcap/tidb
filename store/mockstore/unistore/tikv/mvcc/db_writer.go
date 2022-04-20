@@ -15,11 +15,10 @@
 package mvcc
 
 import (
-	"sync"
-
 	"github.com/pingcap/badger"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/store/mockstore/unistore/lockstore"
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 // DBWriter is the interface to persistent data.
@@ -50,7 +49,7 @@ type WriteBatch interface {
 type DBBundle struct {
 	DB         *badger.DB
 	LockStore  *lockstore.MemStore
-	MemStoreMu sync.Mutex
+	MemStoreMu syncutil.Mutex
 	StateTS    uint64
 }
 

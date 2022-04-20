@@ -6,13 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/cheggaaa/pb/v3"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
 
@@ -25,7 +25,7 @@ type ProgressPrinter struct {
 	redirectLog bool
 	progress    int64
 
-	closeMu sync.Mutex
+	closeMu syncutil.Mutex
 	closeCh chan struct{}
 	closed  chan struct{}
 }

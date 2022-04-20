@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -145,7 +146,7 @@ func TestMemStoreConcurrent(t *testing.T) {
 		concurrentKeys[i] = numToKey(i)
 	}
 
-	lock := sync.RWMutex{}
+	lock := syncutil.RWMutex{}
 	ls := NewMemStore(1 << 20)
 	// Starts 10 readers and 1 writer.
 	closeCh := make(chan bool)
@@ -184,7 +185,7 @@ func TestMemStoreConcurrent(t *testing.T) {
 	fmt.Println(len(arena.pendingBlocks), len(arena.writableQueue), len(arena.blocks))
 }
 
-func runReader(ls *MemStore, lock *sync.RWMutex, closeCh chan bool, i int, wg *sync.WaitGroup) {
+func runReader(ls *MemStore, lock *syncutil.RWMutex, closeCh chan bool, i int, wg *sync.WaitGroup) {
 	defer wg.Done()
 	key := numToKey(i)
 	buf := make([]byte, 100)

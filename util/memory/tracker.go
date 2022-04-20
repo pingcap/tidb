@@ -19,8 +19,9 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
-	"sync"
 	"sync/atomic"
+
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 // Tracker is used to track the memory usage during query execution.
@@ -53,7 +54,7 @@ import (
 // PanicOnExceed, globalPanicOnExceed, LogOnExceed.
 type Tracker struct {
 	mu struct {
-		sync.Mutex
+		syncutil.Mutex
 		// The children memory trackers. If the Tracker is the Global Tracker, like executor.GlobalDiskUsageTracker,
 		// we wouldn't maintain its children in order to avoiding mutex contention.
 		children map[int][]*Tracker
@@ -61,7 +62,7 @@ type Tracker struct {
 	actionMuForHardLimit actionMu
 	actionMuForSoftLimit actionMu
 	parMu                struct {
-		sync.Mutex
+		syncutil.Mutex
 		parent *Tracker // The parent memory tracker.
 	}
 
@@ -74,7 +75,7 @@ type Tracker struct {
 }
 
 type actionMu struct {
-	sync.Mutex
+	syncutil.Mutex
 	actionOnExceed ActionOnExceed
 }
 

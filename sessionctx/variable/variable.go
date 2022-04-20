@@ -17,12 +17,12 @@ package variable
 import (
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 // ScopeFlag is for system variable whether can be changed in global/session dynamically or not.
@@ -522,7 +522,7 @@ func (sv *SysVar) SkipInit() bool {
 }
 
 var sysVars map[string]*SysVar
-var sysVarsLock sync.RWMutex
+var sysVarsLock syncutil.RWMutex
 
 // RegisterSysVar adds a sysvar to the SysVars list
 func RegisterSysVar(sv *SysVar) {

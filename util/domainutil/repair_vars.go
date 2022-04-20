@@ -16,13 +16,13 @@ package domainutil
 
 import (
 	"strings"
-	"sync"
 
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 type repairInfo struct {
-	sync.RWMutex
+	syncutil.RWMutex
 	repairMode      bool
 	repairTableList []string
 	repairDBInfoMap map[int64]*model.DBInfo

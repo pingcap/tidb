@@ -20,7 +20,6 @@ import (
 	"math"
 	"math/rand"
 	"sort"
-	"sync"
 	"testing"
 	"time"
 
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 )
@@ -47,7 +47,7 @@ func init() {
 }
 
 type testClient struct {
-	mu           sync.RWMutex
+	mu           syncutil.RWMutex
 	stores       map[uint64]*metapb.Store
 	regions      map[uint64]*restore.RegionInfo
 	regionsInfo  *pdtypes.RegionTree // For now it's only used in ScanRegions

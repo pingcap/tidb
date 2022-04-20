@@ -16,14 +16,14 @@ package kv
 
 import (
 	"context"
-	"sync"
 
 	"github.com/coocood/freecache"
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 type (
 	cacheDB struct {
-		mu        sync.RWMutex
+		mu        syncutil.RWMutex
 		memTables map[int64]*freecache.Cache
 	}
 

@@ -118,7 +118,7 @@ Note that the test logger only prevents logs when go test without `-v` flag. But
 
 #### Prefer determinate tests for concurrency logics
 
-Make use of `sync.Mutex`, `sync.WaitGroup`, or other concurrent utils like latches, and get rid of "long enough" sleep, which is brittle and causes unnecessary time for tests.
+Make use of `syncutil.Mutex`, `sync.WaitGroup`, or other concurrent utils like latches, and get rid of "long enough" sleep, which is brittle and causes unnecessary time for tests.
 
 #### Separate huge test files into small test units that can be run in parallel
 

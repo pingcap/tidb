@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -102,7 +103,7 @@ type StatementContext struct {
 	IsStaleness bool
 	// mu struct holds variables that change during execution.
 	mu struct {
-		sync.Mutex
+		syncutil.Mutex
 
 		affectedRows uint64
 		foundRows    uint64

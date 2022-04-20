@@ -15,14 +15,14 @@
 package common
 
 import (
-	"sync"
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 // OnceError is an error value which will can be assigned once.
 //
 // The zero value is ready for use.
 type OnceError struct {
-	lock sync.Mutex
+	lock syncutil.Mutex
 	err  error
 }
 

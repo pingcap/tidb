@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"sync"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"go.uber.org/zap"
 )
@@ -94,7 +94,7 @@ type InsertValues struct {
 	// The other one for commit task, which will invalid txn.
 	// We use mutex to protect routine from using invalid txn.
 	isLoadData bool
-	txnInUse   sync.Mutex
+	txnInUse   syncutil.Mutex
 }
 
 type defaultVal struct {

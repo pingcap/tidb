@@ -15,8 +15,9 @@
 package math
 
 import (
-	"sync"
 	"time"
+
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 const maxRandValue = 0x3FFFFFFF
@@ -26,7 +27,7 @@ const maxRandValue = 0x3FFFFFFF
 type MysqlRng struct {
 	seed1 uint32
 	seed2 uint32
-	mu    *sync.Mutex
+	mu    *syncutil.Mutex
 }
 
 // NewWithSeed create a rng with random seed.
@@ -36,7 +37,7 @@ func NewWithSeed(seed int64) *MysqlRng {
 	return &MysqlRng{
 		seed1: seed1,
 		seed2: seed2,
-		mu:    &sync.Mutex{},
+		mu:    &syncutil.Mutex{},
 	}
 }
 

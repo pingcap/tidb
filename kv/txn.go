@@ -20,12 +20,12 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"sync"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
@@ -37,12 +37,12 @@ const (
 )
 
 var globalInnerTxnTsBox = innerTxnStartTsBox{
-	innerTSLock:        sync.Mutex{},
+	innerTSLock:        syncutil.Mutex{},
 	innerTxnStartTsMap: make(map[uint64]struct{}, 256),
 }
 
 type innerTxnStartTsBox struct {
-	innerTSLock        sync.Mutex
+	innerTSLock        syncutil.Mutex
 	innerTxnStartTsMap map[uint64]struct{}
 }
 

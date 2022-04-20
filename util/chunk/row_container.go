@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
 
@@ -44,8 +45,8 @@ type mutexForRowContainer struct {
 	// each goroutine. Thus each goroutine holds its own rLock but share the same
 	// underlying data, which can reduce the contention on m.rLock remarkably and
 	// get better performance.
-	rLock   *sync.RWMutex
-	wLocks  []*sync.RWMutex
+	rLock   *syncutil.RWMutex
+	wLocks  []*syncutil.RWMutex
 	records *rowContainerRecord
 }
 
@@ -90,12 +91,12 @@ type RowContainer struct {
 // NewRowContainer creates a new RowContainer in memory.
 func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer {
 	li := NewList(fieldType, chunkSize, chunkSize)
-	rLock := new(sync.RWMutex)
+	rLock := new(syncutil.RWMutex)
 	rc := &RowContainer{
 		m: &mutexForRowContainer{
 			records: &rowContainerRecord{inMemory: li},
 			rLock:   rLock,
-			wLocks:  []*sync.RWMutex{rLock},
+			wLocks:  []*syncutil.RWMutex{rLock},
 		},
 		fieldType:   fieldType,
 		chunkSize:   chunkSize,
@@ -110,7 +111,7 @@ func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer 
 // holds an individual rLock.
 func (c *RowContainer) ShallowCopyWithNewMutex() *RowContainer {
 	newRC := *c
-	rLock := new(sync.RWMutex)
+	rLock := new(syncutil.RWMutex)
 	c.m.wLocks = append(c.m.wLocks, rLock)
 	newRC.m.rLock = rLock
 	return &newRC
@@ -292,7 +293,7 @@ func (c *RowContainer) ActionSpill() *SpillDiskAction {
 	if c.actionSpill == nil {
 		c.actionSpill = &SpillDiskAction{
 			c:    c,
-			cond: spillStatusCond{sync.NewCond(new(sync.Mutex)), notSpilled}}
+			cond: spillStatusCond{sync.NewCond(new(syncutil.Mutex)), notSpilled}}
 	}
 	return c.actionSpill
 }
@@ -307,7 +308,7 @@ func (c *RowContainer) ActionSpillForTest() *SpillDiskAction {
 		testSyncOutputFunc: func() {
 			c.actionSpill.testWg.Done()
 		},
-		cond: spillStatusCond{sync.NewCond(new(sync.Mutex)), notSpilled},
+		cond: spillStatusCond{sync.NewCond(new(syncutil.Mutex)), notSpilled},
 	}
 	return c.actionSpill
 }
@@ -318,7 +319,7 @@ func (c *RowContainer) ActionSpillForTest() *SpillDiskAction {
 type SpillDiskAction struct {
 	memory.BaseOOMAction
 	c    *RowContainer
-	m    sync.Mutex
+	m    syncutil.Mutex
 	once sync.Once
 	cond spillStatusCond
 
@@ -423,7 +424,7 @@ var ErrCannotAddBecauseSorted = errors.New("can not add because sorted")
 type SortedRowContainer struct {
 	*RowContainer
 	ptrM struct {
-		sync.RWMutex
+		syncutil.RWMutex
 		// rowPtrs store the chunk index and row index for each row.
 		// rowPtrs != nil indicates the pointer is initialized and sorted.
 		// It will get an ErrCannotAddBecauseSorted when trying to insert data if rowPtrs != nil.

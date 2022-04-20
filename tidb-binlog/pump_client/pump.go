@@ -18,13 +18,13 @@ import (
 	"context"
 	"crypto/tls"
 	"net"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/tidb-binlog/node"
+	"github.com/pingcap/tidb/util/syncutil"
 	pb "github.com/pingcap/tipb/go-binlog"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -54,7 +54,7 @@ type PumpStatus struct {
 		Offline:
 			this pump is offline, and can't provide write binlog service forever.
 	*/
-	sync.RWMutex
+	syncutil.RWMutex
 
 	node.Status
 

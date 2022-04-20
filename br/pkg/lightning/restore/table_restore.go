@@ -433,7 +433,7 @@ func (tr *TableRestore) restoreEngine(
 	}
 
 	// chunks that are finished writing, but checkpoints are not finished due to flush not finished.
-	var checkFlushLock sync.Mutex
+	var checkFlushLock syncutil.Mutex
 	flushPendingChunks := make([]chunkFlushStatus, 0, 16)
 
 	chunkCpChan := make(chan *checkpoints.ChunkCheckpoint, 16)

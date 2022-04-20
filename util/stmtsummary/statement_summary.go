@@ -22,7 +22,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
 )
@@ -66,7 +66,7 @@ func (key *stmtSummaryByDigestKey) Hash() []byte {
 // stmtSummaryByDigestMap is a LRU cache that stores statement summaries.
 type stmtSummaryByDigestMap struct {
 	// It's rare to read concurrently, so RWMutex is not needed.
-	sync.Mutex
+	syncutil.Mutex
 	summaryMap *kvcache.SimpleLRUCache
 	// beginTimeForCurInterval is the begin time for current summary.
 	beginTimeForCurInterval int64
@@ -90,7 +90,7 @@ var StmtSummaryByDigestMap = newStmtSummaryByDigestMap()
 type stmtSummaryByDigest struct {
 	// It's rare to read concurrently, so RWMutex is not needed.
 	// Mutex is only used to lock `history`.
-	sync.Mutex
+	syncutil.Mutex
 	initialized bool
 	// Each element in history is a summary in one interval.
 	history *list.List
@@ -107,7 +107,7 @@ type stmtSummaryByDigest struct {
 
 // stmtSummaryByDigestElement is the summary for each type of statements in current interval.
 type stmtSummaryByDigestElement struct {
-	sync.Mutex
+	syncutil.Mutex
 	// Each summary is summarized between [beginTime, endTime).
 	beginTime int64
 	endTime   int64

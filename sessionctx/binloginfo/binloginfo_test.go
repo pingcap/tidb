@@ -20,7 +20,6 @@ import (
 	"net"
 	"os"
 	"strconv"
-	"sync"
 	"testing"
 	"time"
 
@@ -41,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -48,7 +48,7 @@ import (
 
 type mockBinlogPump struct {
 	mu struct {
-		sync.Mutex
+		syncutil.Mutex
 		payloads [][]byte
 		mockFail bool
 	}

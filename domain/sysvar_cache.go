@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/sessionctx"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"github.com/pingcap/tidb/util/syncutil"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	storekv "github.com/tikv/client-go/v2/kv"
 	pd "github.com/tikv/pd/client"
@@ -40,10 +40,10 @@ import (
 
 // sysVarCache represents the cache of system variables broken up into session and global scope.
 type sysVarCache struct {
-	sync.RWMutex // protects global and session maps
-	global       map[string]string
-	session      map[string]string
-	rebuildLock  sync.Mutex // protects concurrent rebuild
+	syncutil.RWMutex // protects global and session maps
+	global           map[string]string
+	session          map[string]string
+	rebuildLock      syncutil.Mutex // protects concurrent rebuild
 }
 
 func (do *Domain) rebuildSysVarCacheIfNeeded() (err error) {

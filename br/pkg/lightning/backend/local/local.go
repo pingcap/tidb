@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/syncutil"
 	tikverror "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
@@ -1259,7 +1260,7 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 	}
 	log.L().Debug("the ranges Length write to tikv", zap.Int("Length", len(ranges)))
 
-	var allErrLock sync.Mutex
+	var allErrLock syncutil.Mutex
 	var allErr error
 	var wg sync.WaitGroup
 	metErr := atomic.NewBool(false)

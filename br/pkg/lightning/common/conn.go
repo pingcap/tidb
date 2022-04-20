@@ -16,10 +16,10 @@ package common
 
 import (
 	"context"
-	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -28,7 +28,7 @@ import (
 // When `Get` called, it lazily allocates new connection if connection not full.
 // If it's full, then it will return allocated channels round-robin.
 type ConnPool struct {
-	mu sync.Mutex
+	mu syncutil.Mutex
 
 	conns   []*grpc.ClientConn
 	next    int
@@ -78,12 +78,12 @@ func NewConnPool(capacity int, newConn func(ctx context.Context) (*grpc.ClientCo
 		conns:   make([]*grpc.ClientConn, 0, capacity),
 		newConn: newConn,
 
-		mu: sync.Mutex{},
+		mu: syncutil.Mutex{},
 	}
 }
 
 type GRPCConns struct {
-	mu    sync.Mutex
+	mu    syncutil.Mutex
 	conns map[uint64]*ConnPool
 }
 

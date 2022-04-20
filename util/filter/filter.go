@@ -17,9 +17,9 @@ package filter
 import (
 	"regexp"
 	"strings"
-	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/syncutil"
 	tfilter "github.com/pingcap/tidb/util/table-filter"
 	selector "github.com/pingcap/tidb/util/table-rule-selector"
 )
@@ -37,7 +37,7 @@ const (
 type Table = tfilter.Table
 
 type cache struct {
-	sync.RWMutex
+	syncutil.RWMutex
 	items map[string]ActionType // `schema`.`table` => do/ignore
 }
 

@@ -16,7 +16,6 @@ package cophandler
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
 )
@@ -526,7 +526,7 @@ func HandleMPPDAGReq(dbReader *dbreader.DBReader, req *coprocessor.Request, mppC
 // MPPTaskHandler exists in a single store.
 type MPPTaskHandler struct {
 	// When a connect request comes, it contains server task (source) and client task (target), Exchanger dataCh set will find dataCh by client task.
-	tunnelSetLock sync.Mutex
+	tunnelSetLock syncutil.Mutex
 	TunnelSet     map[int64]*ExchangerTunnel
 
 	Meta      *mpp.TaskMeta

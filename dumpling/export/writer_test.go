@@ -337,7 +337,7 @@ func TestWriteTableDataWithStatementSize(t *testing.T) {
 	}
 }
 
-var mu sync.Mutex
+var mu syncutil.Mutex
 
 func createTestWriter(conf *Config, t *testing.T) (w *Writer, clean func()) {
 	mu.Lock()

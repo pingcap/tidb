@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/syncutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
@@ -144,7 +145,7 @@ type errorSummary struct {
 }
 
 type errorSummaries struct {
-	sync.Mutex
+	syncutil.Mutex
 	logger  log.Logger
 	summary map[string]errorSummary
 }
@@ -199,7 +200,7 @@ type Controller struct {
 	backend       backend.Backend
 	tidbGlue      glue.Glue
 
-	alterTableLock sync.Mutex
+	alterTableLock syncutil.Mutex
 	sysVars        map[string]string
 	tls            *common.TLS
 	checkTemplate  Template
@@ -217,7 +218,7 @@ type Controller struct {
 	errorMgr          *errormanager.ErrorManager
 	taskMgr           taskMetaMgr
 
-	diskQuotaLock  sync.RWMutex
+	diskQuotaLock  syncutil.RWMutex
 	diskQuotaState atomic.Int32
 	compactState   atomic.Int32
 	status         *LightningStatus
@@ -955,7 +956,7 @@ func (rc *Controller) saveStatusCheckpoint(ctx context.Context, tableName string
 func (rc *Controller) listenCheckpointUpdates() {
 	defer rc.checkpointsWg.Done()
 
-	var lock sync.Mutex
+	var lock syncutil.Mutex
 	coalesed := make(map[string]*checkpoints.TableCheckpointDiff)
 	var waiters []chan<- error
 

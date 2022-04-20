@@ -21,10 +21,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -310,7 +310,7 @@ func (e *basicCopRuntimeStats) Tp() int {
 
 // CopRuntimeStats collects cop tasks' execution info.
 type CopRuntimeStats struct {
-	sync.Mutex
+	syncutil.Mutex
 
 	// stats stores the runtime statistics of coprocessor tasks.
 	// The key of the map is the tikv-server address. Because a tikv-server can
@@ -557,7 +557,7 @@ func (e *BasicRuntimeStats) GetTime() int64 {
 
 // RuntimeStatsColl collects executors's execution info.
 type RuntimeStatsColl struct {
-	mu        sync.Mutex
+	mu        syncutil.Mutex
 	rootStats map[int]*RootRuntimeStats
 	copStats  map[int]*CopRuntimeStats
 }
@@ -709,7 +709,7 @@ func NewConcurrencyInfo(name string, num int) *ConcurrencyInfo {
 // RuntimeStatsWithConcurrencyInfo is the BasicRuntimeStats with ConcurrencyInfo.
 type RuntimeStatsWithConcurrencyInfo struct {
 	// protect concurrency
-	sync.Mutex
+	syncutil.Mutex
 	// executor concurrency information
 	concurrency []*ConcurrencyInfo
 }

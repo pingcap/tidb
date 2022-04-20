@@ -17,7 +17,6 @@ package ddl
 import (
 	"context"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -136,7 +136,7 @@ func TestForeignKey(t *testing.T) {
 	require.NoError(t, err)
 
 	// fix data race
-	var mu sync.Mutex
+	var mu syncutil.Mutex
 	checkOK := false
 	var hookErr error
 	tc := &TestDDLCallback{}

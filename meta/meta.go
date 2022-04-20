@@ -22,7 +22,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -35,12 +34,13 @@ import (
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
 
 var (
-	globalIDMutex sync.Mutex
-	policyIDMutex sync.Mutex
+	globalIDMutex syncutil.Mutex
+	policyIDMutex syncutil.Mutex
 )
 
 // Meta structure:

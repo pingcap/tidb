@@ -21,17 +21,17 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
 
 // dumpFileGcChecker is used to gc dump file in circle
 // For now it is used by `plan replayer` and `trace plan` statement
 type dumpFileGcChecker struct {
-	sync.Mutex
+	syncutil.Mutex
 	gcLease time.Duration
 	paths   []string
 }

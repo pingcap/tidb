@@ -17,16 +17,16 @@ package stmtsummary
 import (
 	"container/list"
 	"math"
-	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 // stmtSummaryByDigestEvicted contents digests evicted from stmtSummaryByDigestMap
 type stmtSummaryByDigestEvicted struct {
-	sync.Mutex
+	syncutil.Mutex
 	// record evicted data in intervals
 	// latest history data is Back()
 	history *list.List

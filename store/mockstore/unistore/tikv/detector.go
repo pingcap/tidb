@@ -29,19 +29,19 @@ package tikv
 
 import (
 	"container/list"
-	"sync"
 	"time"
 
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/kverrors"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
 
 // Detector detects deadlock.
 type Detector struct {
 	waitForMap       map[uint64]*txnList
-	lock             sync.Mutex
+	lock             syncutil.Mutex
 	entryTTL         time.Duration
 	totalSize        uint64
 	lastActiveExpire time.Time

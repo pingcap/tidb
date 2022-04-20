@@ -841,7 +841,7 @@ func skipDIR(pkg string) bool {
 
 func buildTestBinary(pkg string) error {
 	// go test -c
-	cmd := exec.Command("go", "test", "-c", "-vet", "off", "-o", testFileName(pkg))
+	cmd := exec.Command("go", "test", "-c", "-vet", "off", "-o", testFileName(pkg), "-tags", "deadlock")
 	if coverprofile != "" {
 		cmd.Args = append(cmd.Args, "-cover")
 	}

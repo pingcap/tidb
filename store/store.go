@@ -17,17 +17,17 @@ package store
 import (
 	"net/url"
 	"strings"
-	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
 
 var stores = make(map[string]kv.Driver)
-var storesLock sync.RWMutex
+var storesLock syncutil.RWMutex
 
 // Register registers a kv storage with unique name and its associated Driver.
 func Register(name string, driver kv.Driver) error {

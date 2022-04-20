@@ -17,13 +17,13 @@ package variable
 import (
 	"bytes"
 	"crypto/tls"
-	"sync"
 
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 var statisticsList []Statistics
-var statisticsListLock sync.RWMutex
+var statisticsListLock syncutil.RWMutex
 
 // DefaultStatusVarScopeFlag is the default scope of status variables.
 var DefaultStatusVarScopeFlag = ScopeGlobal | ScopeSession

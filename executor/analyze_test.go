@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -51,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
@@ -583,7 +583,7 @@ func TestIssue15752(t *testing.T) {
 type regionProperityClient struct {
 	tikv.Client
 	mu struct {
-		sync.Mutex
+		syncutil.Mutex
 		failedOnce bool
 		count      int64
 	}

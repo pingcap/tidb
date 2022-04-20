@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"fmt"
-	"sync"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
@@ -24,12 +23,13 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 // sessionPool is used to new session.
 type sessionPool struct {
 	mu struct {
-		sync.Mutex
+		syncutil.Mutex
 		closed bool
 	}
 	resPool *pools.ResourcePool

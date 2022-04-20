@@ -19,7 +19,6 @@ import (
 	"math"
 	"sort"
 	"strings"
-	"sync"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -237,7 +237,7 @@ type tableColumnID struct {
 }
 
 type neededColumnMap struct {
-	m    sync.RWMutex
+	m    syncutil.RWMutex
 	cols map[tableColumnID]struct{}
 }
 

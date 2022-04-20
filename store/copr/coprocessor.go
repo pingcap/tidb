@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/paging"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/metrics"
@@ -1200,7 +1201,7 @@ type rateLimitAction struct {
 	// totalTokenNum indicates the total token at initial
 	totalTokenNum uint
 	cond          struct {
-		sync.Mutex
+		syncutil.Mutex
 		// exceeded indicates whether have encountered OOM situation.
 		exceeded bool
 		// remainingTokenNum indicates the count of tokens which still exists
@@ -1215,13 +1216,13 @@ func newRateLimitAction(totalTokenNumber uint) *rateLimitAction {
 	return &rateLimitAction{
 		totalTokenNum: totalTokenNumber,
 		cond: struct {
-			sync.Mutex
+			syncutil.Mutex
 			exceeded            bool
 			remainingTokenNum   uint
 			once                sync.Once
 			triggerCountForTest uint
 		}{
-			Mutex:             sync.Mutex{},
+			Mutex:             syncutil.Mutex{},
 			exceeded:          false,
 			remainingTokenNum: totalTokenNumber,
 			once:              sync.Once{},

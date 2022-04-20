@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/store/pdtypes"
+	"github.com/pingcap/tidb/util/syncutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -79,7 +80,7 @@ type SplitClient interface {
 
 // pdClient is a wrapper of pd client, can be used by RegionSplitter.
 type pdClient struct {
-	mu         sync.Mutex
+	mu         syncutil.Mutex
 	client     pd.Client
 	tlsConf    *tls.Config
 	storeCache map[uint64]*metapb.Store

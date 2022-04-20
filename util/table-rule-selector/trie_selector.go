@@ -16,9 +16,9 @@ package selector
 
 import (
 	"fmt"
-	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 // 1. asterisk character (*, also called "star") matches zero or more characters,
@@ -78,7 +78,7 @@ func (r *matchedResult) empty() bool {
 }
 
 type trieSelector struct {
-	sync.RWMutex
+	syncutil.RWMutex
 
 	cache map[string]RuleSet
 	root  *node

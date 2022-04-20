@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/topsql"
 	"github.com/pingcap/tidb/util/topsql/collector"
 	mockTopSQLTraceCPU "github.com/pingcap/tidb/util/topsql/collector/mock"
@@ -1927,7 +1928,7 @@ func TestTopSQLStatementStats(t *testing.T) {
 }
 
 type resourceTagChecker struct {
-	sync.Mutex
+	syncutil.Mutex
 	sqlDigest2Reqs map[stmtstats.BinaryDigest]map[tikvrpc.CmdType]struct{}
 }
 
@@ -1968,7 +1969,7 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*tidbTestSuite, stmtstats.S
 	stmtstats.SetupAggregator()
 
 	// Register stmt stats collector.
-	var mu sync.Mutex
+	var mu syncutil.Mutex
 	collectedNotifyCh := make(chan struct{})
 	total := stmtstats.StatementStatsMap{}
 	mockCollector := newMockCollector(func(data stmtstats.StatementStatsMap) {

@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/temptable"
 	"github.com/pingcap/tidb/util/logutil/consistency"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
@@ -204,7 +205,7 @@ type session struct {
 	txn         LazyTxn
 
 	mu struct {
-		sync.RWMutex
+		syncutil.RWMutex
 		values map[fmt.Stringer]interface{}
 	}
 
@@ -233,7 +234,7 @@ type session struct {
 	idxUsageCollector *handle.SessionIndexUsageCollector
 
 	functionUsageMu struct {
-		sync.RWMutex
+		syncutil.RWMutex
 		builtinFunctionUsage telemetry.BuiltinFunctionsUsage
 	}
 	// allowed when tikv disk full happened.

@@ -15,9 +15,9 @@
 package stmtstats
 
 import (
-	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/atomic"
 )
 
@@ -41,7 +41,7 @@ type StatementObserver interface {
 // and it is expected that these statistics will eventually be collected and merged
 // in the background.
 type StatementStats struct {
-	mu       sync.Mutex
+	mu       syncutil.Mutex
 	data     StatementStatsMap
 	finished *atomic.Bool
 }

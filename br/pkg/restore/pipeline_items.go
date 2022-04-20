@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -79,7 +80,7 @@ type brContextManager struct {
 
 	// This 'set' of table ID allow us to handle each table just once.
 	hasTable map[int64]CreatedTable
-	mu       sync.Mutex
+	mu       syncutil.Mutex
 }
 
 func (manager *brContextManager) Close(ctx context.Context) {

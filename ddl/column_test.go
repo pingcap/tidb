@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"reflect"
 	"strconv"
-	"sync"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -712,7 +712,7 @@ func TestAddColumns(t *testing.T) {
 	}
 	defaultColValue := int64(4)
 
-	var mu sync.Mutex
+	var mu syncutil.Mutex
 	var hookErr error
 	checkOK := false
 
@@ -803,7 +803,7 @@ func TestDropColumnInColumnTest(t *testing.T) {
 
 	checkOK := false
 	var hookErr error
-	var mu sync.Mutex
+	var mu syncutil.Mutex
 
 	d := dom.DDL()
 	tc := &ddl.TestDDLCallback{Do: dom}
@@ -866,7 +866,7 @@ func TestDropColumns(t *testing.T) {
 
 	checkOK := false
 	var hookErr error
-	var mu sync.Mutex
+	var mu syncutil.Mutex
 
 	d := dom.DDL()
 	tc := &ddl.TestDDLCallback{Do: dom}

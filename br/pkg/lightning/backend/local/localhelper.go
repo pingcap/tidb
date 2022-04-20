@@ -22,7 +22,6 @@ import (
 	"runtime"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/docker/go-units"
@@ -37,6 +36,7 @@ import (
 	split "github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -184,7 +184,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 			keys   [][]byte
 		}
 
-		var syncLock sync.Mutex
+		var syncLock syncutil.Mutex
 		// TODO, make this size configurable
 		size := utils.MinInt(len(splitKeyMap), runtime.GOMAXPROCS(0))
 		ch := make(chan *splitInfo, size)

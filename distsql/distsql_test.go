@@ -16,7 +16,6 @@ package distsql
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -207,7 +207,7 @@ type mockResponse struct {
 	total int
 	batch int
 	ctx   sessionctx.Context
-	sync.Mutex
+	syncutil.Mutex
 }
 
 // Close implements kv.Response interface.

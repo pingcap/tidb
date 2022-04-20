@@ -49,6 +49,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -191,7 +192,7 @@ type limitJobTask struct {
 
 // ddl is used to handle the statements that define the structure or schema of the database.
 type ddl struct {
-	m          sync.RWMutex
+	m          syncutil.RWMutex
 	ctx        context.Context
 	cancel     context.CancelFunc
 	wg         tidbutil.WaitGroupWrapper // It's only used to deal with data race in restart_test.
@@ -221,13 +222,13 @@ type ddlCtx struct {
 
 	// hook may be modified.
 	mu struct {
-		sync.RWMutex
+		syncutil.RWMutex
 		hook        Callback
 		interceptor Interceptor
 	}
 
 	ddlSeqNumMu struct {
-		sync.Mutex
+		syncutil.Mutex
 		seqNum uint64
 	}
 }

@@ -15,13 +15,12 @@
 package cteutil
 
 import (
-	"sync"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 var _ Storage = &StorageRC{}
@@ -93,7 +92,7 @@ type Storage interface {
 
 // StorageRC implements Storage interface using RowContainer.
 type StorageRC struct {
-	mu      sync.Mutex
+	mu      syncutil.Mutex
 	refCnt  int
 	tp      []*types.FieldType
 	chkSize int

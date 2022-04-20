@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
@@ -531,7 +532,7 @@ type exchRecvExec struct {
 
 	exchangeReceiver *tipb.ExchangeReceiver
 	chk              *chunk.Chunk
-	lock             sync.Mutex
+	lock             syncutil.Mutex
 	wg               sync.WaitGroup
 	err              error
 	inited           bool

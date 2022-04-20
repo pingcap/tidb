@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -121,7 +122,7 @@ func (kr pendingKeyRange) Less(other btree.Item) bool {
 }
 
 type pendingKeyRanges struct {
-	mu   sync.Mutex
+	mu   syncutil.Mutex
 	tree *btree.BTree
 }
 

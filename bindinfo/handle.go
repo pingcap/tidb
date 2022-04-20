@@ -20,7 +20,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -41,6 +40,7 @@ import (
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"github.com/pingcap/tidb/util/syncutil"
 	tablefilter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
@@ -49,7 +49,7 @@ import (
 // BindHandle is used to handle all global sql bind operations.
 type BindHandle struct {
 	sctx struct {
-		sync.Mutex
+		syncutil.Mutex
 		sessionctx.Context
 	}
 
@@ -72,7 +72,7 @@ type BindHandle struct {
 	//    read the content
 	//
 	bindInfo struct {
-		sync.Mutex
+		syncutil.Mutex
 		atomic.Value
 		parser         *parser.Parser
 		lastUpdateTime types.Time
@@ -558,7 +558,7 @@ func (h *BindHandle) LockBindInfoSQL() string {
 // tmpBindRecordMap is used to temporarily save bind record changes.
 // Those changes will be flushed into store periodically.
 type tmpBindRecordMap struct {
-	sync.Mutex
+	syncutil.Mutex
 	atomic.Value
 	flushFunc func(record *BindRecord) error
 }

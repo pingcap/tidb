@@ -16,14 +16,14 @@ package kv
 
 import (
 	"context"
-	"sync"
 
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
 // InjectionConfig is used for fault injections for KV components.
 type InjectionConfig struct {
-	sync.RWMutex
+	syncutil.RWMutex
 	getError    error // kv.Get() always return this error.
 	commitError error // Transaction.Commit() always return this error.
 }

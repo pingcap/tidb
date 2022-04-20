@@ -17,10 +17,10 @@ package unistore
 import (
 	"errors"
 	"math"
-	"sync"
 
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
+	"github.com/pingcap/tidb/util/syncutil"
 	pd "github.com/tikv/pd/client"
 	"golang.org/x/net/context"
 )
@@ -31,7 +31,7 @@ type pdClient struct {
 	*us.MockPD
 
 	serviceSafePoints map[string]uint64
-	gcSafePointMu     sync.Mutex
+	gcSafePointMu     syncutil.Mutex
 	globalConfig      map[string]string
 }
 

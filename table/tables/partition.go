@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
 
@@ -252,7 +253,7 @@ type ForListColumnPruning struct {
 	ExprCol  *expression.Column
 	valueTp  *types.FieldType
 	valueMap map[string]ListPartitionLocation
-	mu       sync.RWMutex
+	mu       syncutil.RWMutex
 	sorted   *btree.BTree
 
 	// To deal with the location partition failure caused by inconsistent NewCollationEnabled values(see issue #32416).

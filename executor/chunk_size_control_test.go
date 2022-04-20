@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
@@ -39,7 +39,7 @@ import (
 
 // nolint: unused, deadcode
 type testSlowClient struct {
-	sync.RWMutex
+	syncutil.RWMutex
 	tikv.Client
 	regionDelay map[uint64]time.Duration
 }

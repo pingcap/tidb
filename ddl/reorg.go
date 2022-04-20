@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -45,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -73,7 +73,7 @@ type reorgCtx struct {
 	// warnings is used to store the warnings when doing the reorg job under
 	// a certain SQL Mode.
 	mu struct {
-		sync.Mutex
+		syncutil.Mutex
 		warnings      map[errors.ErrorID]*terror.Error
 		warningsCount map[errors.ErrorID]int64
 	}

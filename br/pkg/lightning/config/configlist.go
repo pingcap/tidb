@@ -19,6 +19,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 // List is a goroutine-safe FIFO list of *Config, which supports removal
@@ -39,7 +41,7 @@ type List struct {
 // NewConfigList creates a new ConfigList instance.
 func NewConfigList() *List {
 	return &List{
-		cond:      sync.NewCond(new(sync.Mutex)),
+		cond:      sync.NewCond(new(syncutil.Mutex)),
 		taskIDMap: make(map[int64]*list.Element),
 	}
 }

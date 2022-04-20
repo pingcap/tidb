@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc"
@@ -575,7 +576,7 @@ func TestLocalIngestLoop(t *testing.T) {
 	totalSize := int64(0)
 	concurrency := 4
 	count := 500
-	var metaSeqLock sync.Mutex
+	var metaSeqLock syncutil.Mutex
 	maxMetaSeq := int32(0)
 	for i := 0; i < concurrency; i++ {
 		go func() {

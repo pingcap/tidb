@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/syncutil"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -692,7 +693,7 @@ func (bc *Client) fineGrainedBackup(
 
 		max := &struct {
 			ms int
-			mu sync.Mutex
+			mu syncutil.Mutex
 		}{}
 		wg := new(sync.WaitGroup)
 		for i := 0; i < 4; i++ {

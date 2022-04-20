@@ -16,12 +16,12 @@ package unistore
 
 import (
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/testutils"
 )
 
@@ -47,7 +47,7 @@ type Cluster struct {
 
 	// delayEvents is used to control the execution sequence of rpc requests for test.
 	delayEvents map[delayKey]time.Duration
-	delayMu     sync.Mutex
+	delayMu     syncutil.Mutex
 }
 
 func newCluster(rm *us.MockRegionManager) *Cluster {

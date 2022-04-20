@@ -16,12 +16,12 @@ package memory
 
 import (
 	"fmt"
-	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
 
@@ -88,7 +88,7 @@ const (
 // LogOnExceed logs a warning only once when memory usage exceeds memory quota.
 type LogOnExceed struct {
 	BaseOOMAction
-	mutex   sync.Mutex // For synchronization.
+	mutex   syncutil.Mutex // For synchronization.
 	acted   bool
 	ConnID  uint64
 	logHook func(uint64)
@@ -122,7 +122,7 @@ func (a *LogOnExceed) GetPriority() int64 {
 // PanicOnExceed panics when memory usage exceeds memory quota.
 type PanicOnExceed struct {
 	BaseOOMAction
-	mutex   sync.Mutex // For synchronization.
+	mutex   syncutil.Mutex // For synchronization.
 	acted   bool
 	ConnID  uint64
 	logHook func(uint64)

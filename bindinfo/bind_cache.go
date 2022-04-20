@@ -16,20 +16,20 @@ package bindinfo
 
 import (
 	"errors"
-	"sync"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 // bindCache uses the LRU cache to store the bindRecord.
 // The key of the LRU cache is original sql, the value is a slice of BindRecord.
 // Note: The bindCache should be accessed with lock.
 type bindCache struct {
-	lock        sync.Mutex
+	lock        syncutil.Mutex
 	cache       *kvcache.SimpleLRUCache
 	memCapacity int64
 	memTracker  *memory.Tracker // track memory usage.

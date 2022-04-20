@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -65,7 +66,7 @@ type importer struct {
 
 	mutationPool sync.Pool
 	// lock ensures ImportEngine are runs serially
-	lock sync.Mutex
+	lock syncutil.Mutex
 
 	tsMap sync.Map // engineUUID -> commitTS
 	// For testing convenience.

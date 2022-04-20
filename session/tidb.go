@@ -20,7 +20,6 @@ package session
 
 import (
 	"context"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -39,12 +38,13 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
 
 type domainMap struct {
 	domains map[string]*domain.Domain
-	mu      sync.RWMutex
+	mu      syncutil.RWMutex
 }
 
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
@@ -115,7 +115,7 @@ var (
 	}
 	// store.UUID()-> IfBootstrapped
 	storeBootstrapped     = make(map[string]bool)
-	storeBootstrappedLock sync.Mutex
+	storeBootstrappedLock syncutil.Mutex
 
 	// schemaLease is the time for re-updating remote schema.
 	// In online DDL, we must wait 2 * SchemaLease time to guarantee

@@ -11,19 +11,19 @@ import (
 	// For pprof
 	_ "net/http/pprof" // #nosec G108
 	"os"
-	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	tidbutils "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
 
 var (
 	startedPProf = ""
-	mu           sync.Mutex
+	mu           syncutil.Mutex
 )
 
 func listen(statusAddr string) (net.Listener, error) {

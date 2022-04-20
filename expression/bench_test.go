@@ -23,7 +23,6 @@ import (
 	"net"
 	"reflect"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -41,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -220,7 +220,7 @@ type defaultRandGen struct {
 }
 
 type lockedSource struct {
-	lk  sync.Mutex
+	lk  syncutil.Mutex
 	src rand.Source
 }
 

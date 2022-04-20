@@ -18,10 +18,10 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/shirou/gopsutil/v3/mem"
 )
 
@@ -66,7 +66,7 @@ const (
 )
 
 type memInfoCache struct {
-	*sync.RWMutex
+	*syncutil.RWMutex
 	mem        uint64
 	updateTime time.Time
 }
@@ -127,10 +127,10 @@ func init() {
 		MemUsed = MemUsedNormal
 	}
 	memLimit = &memInfoCache{
-		RWMutex: &sync.RWMutex{},
+		RWMutex: &syncutil.RWMutex{},
 	}
 	memUsage = &memInfoCache{
-		RWMutex: &sync.RWMutex{},
+		RWMutex: &syncutil.RWMutex{},
 	}
 	_, err := MemTotal()
 	terror.MustNil(err)

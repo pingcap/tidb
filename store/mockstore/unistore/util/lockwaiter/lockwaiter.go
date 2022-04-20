@@ -16,12 +16,12 @@ package lockwaiter
 
 import (
 	"sort"
-	"sync"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/store/mockstore/unistore/config"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
 
@@ -32,7 +32,7 @@ var LockNoWait = int64(-1)
 
 // Manager represents a waiters manager.
 type Manager struct {
-	mu                  sync.Mutex
+	mu                  syncutil.Mutex
 	waitingQueues       map[uint64]*queue
 	wakeUpDelayDuration int64
 }

@@ -70,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
 
@@ -262,7 +263,7 @@ func getDataAndIndexLength(info *model.TableInfo, physicalID int64, rowCount uin
 }
 
 type statsCache struct {
-	mu         sync.RWMutex
+	mu         syncutil.RWMutex
 	modifyTime time.Time
 	tableRows  map[int64]uint64
 	colLength  map[tableHistID]uint64

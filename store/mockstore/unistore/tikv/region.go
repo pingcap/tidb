@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore/pd"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 	"golang.org/x/net/context"
 )
@@ -75,7 +76,7 @@ type regionCtx struct {
 
 type latches struct {
 	slots [256]map[uint64]*sync.WaitGroup
-	locks [256]sync.Mutex
+	locks [256]syncutil.Mutex
 }
 
 func newLatches() *latches {
@@ -281,7 +282,7 @@ type RegionManager interface {
 
 type regionManager struct {
 	storeMeta *metapb.Store
-	mu        sync.RWMutex
+	mu        syncutil.RWMutex
 	regions   map[uint64]*regionCtx
 	latches   *latches
 }

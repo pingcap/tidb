@@ -101,7 +101,7 @@ func TestForAllStores(t *testing.T) {
 
 	ctx := context.Background()
 	var (
-		allStoresLock sync.Mutex
+		allStoresLock syncutil.Mutex
 		allStores     []*kv.Store
 	)
 	tls := common.NewTLSFromMockServer(server)

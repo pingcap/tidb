@@ -22,6 +22,7 @@ import (
 	deadlockPb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/store/mockstore/unistore/config"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -84,7 +85,7 @@ func TestLockwaiterConcurrent(t *testing.T) {
 	commitTs := uint64(199)
 	deadlockKeyHash := uint64(299)
 	numbers := uint64(10)
-	lock := sync.RWMutex{}
+	lock := syncutil.RWMutex{}
 	for i := uint64(0); i < numbers; i++ {
 		wg.Add(1)
 		endWg.Add(1)

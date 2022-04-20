@@ -24,7 +24,6 @@ import (
 	"path"
 	"sort"
 	"strings"
-	"sync"
 
 	"github.com/joho/sqltocsv"
 	"github.com/pingcap/errors"
@@ -36,6 +35,7 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 	"modernc.org/mathutil"
 )
@@ -946,7 +946,7 @@ func (cpdb *MySQLCheckpointsDB) Update(checkpointDiffs map[string]*TableCheckpoi
 }
 
 type FileCheckpointsDB struct {
-	lock        sync.Mutex // we need to ensure only a thread can access to `checkpoints` at a time
+	lock        syncutil.Mutex // we need to ensure only a thread can access to `checkpoints` at a time
 	checkpoints checkpointspb.CheckpointsModel
 	ctx         context.Context
 	path        string

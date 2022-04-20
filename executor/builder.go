@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -897,7 +898,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		Columns:      v.Columns,
 		GenExprs:     v.GenCols.Exprs,
 		isLoadData:   true,
-		txnInUse:     sync.Mutex{},
+		txnInUse:     syncutil.Mutex{},
 	}
 	loadDataInfo := &LoadDataInfo{
 		row:                make([]types.Datum, 0, len(insertVal.insertColumns)),

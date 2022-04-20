@@ -19,7 +19,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -36,6 +35,7 @@ import (
 	tidbcfg "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -179,7 +179,7 @@ func DoChecksum(ctx context.Context, table *checkpoints.TidbTableInfo) (*RemoteC
 }
 
 type gcLifeTimeManager struct {
-	runningJobsLock sync.Mutex
+	runningJobsLock syncutil.Mutex
 	runningJobs     int
 	oriGCLifeTime   string
 }
@@ -366,7 +366,7 @@ func (m *gcTTLManager) Pop() interface{} {
 }
 
 type gcTTLManager struct {
-	lock     sync.Mutex
+	lock     syncutil.Mutex
 	pdClient pd.Client
 	// tableGCSafeTS is a binary heap that stored active checksum jobs GC safe point ts
 	tableGCSafeTS []*tableChecksumTS

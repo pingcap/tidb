@@ -15,20 +15,20 @@
 package variable
 
 import (
-	"sync"
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 // SequenceState cache all sequence's latest value accessed by lastval() builtins. It's a session scoped
 // variable, and all public methods of SequenceState are currently-safe.
 type SequenceState struct {
-	mu sync.Mutex
+	mu syncutil.Mutex
 	// latestValueMap caches the last value obtained by nextval() for each sequence id.
 	latestValueMap map[int64]int64
 }
 
 // NewSequenceState creates a SequenceState.
 func NewSequenceState() *SequenceState {
-	return &SequenceState{mu: sync.Mutex{}, latestValueMap: make(map[int64]int64)}
+	return &SequenceState{mu: syncutil.Mutex{}, latestValueMap: make(map[int64]int64)}
 }
 
 // UpdateState will update the last value of specified sequenceID in a session.

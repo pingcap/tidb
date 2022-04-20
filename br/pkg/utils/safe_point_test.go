@@ -35,7 +35,7 @@ func TestCheckGCSafepoint(t *testing.T) {
 }
 
 type mockSafePoint struct {
-	sync.Mutex
+	syncutil.Mutex
 	pd.Client
 	safepoint           uint64
 	minServiceSafepoint uint64

@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -45,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/oracle"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -75,7 +75,7 @@ type statsCache struct {
 // Handle can update stats info periodically.
 type Handle struct {
 	mu struct {
-		sync.RWMutex
+		syncutil.RWMutex
 		ctx sessionctx.Context
 		// rateMap contains the error rate delta from feedback.
 		rateMap errorRateDeltaMap
@@ -88,7 +88,7 @@ type Handle struct {
 	// It can be read by multiple readers at the same time without acquiring lock, but it can be
 	// written only after acquiring the lock.
 	statsCache struct {
-		sync.Mutex
+		syncutil.Mutex
 		atomic.Value
 		memTracker *memory.Tracker
 	}
@@ -102,17 +102,17 @@ type Handle struct {
 	listHead *SessionStatsCollector
 	// globalMap contains all the delta map from collectors when we dump them to KV.
 	globalMap struct {
-		sync.Mutex
+		syncutil.Mutex
 		data tableDeltaMap
 	}
 	// feedback is used to store query feedback info.
 	feedback struct {
-		sync.Mutex
+		syncutil.Mutex
 		data *statistics.QueryFeedbackMap
 	}
 	// colMap contains all the column stats usage information from collectors when we dump them to KV.
 	colMap struct {
-		sync.Mutex
+		syncutil.Mutex
 		data colStatsUsageMap
 	}
 

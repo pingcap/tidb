@@ -16,10 +16,10 @@ package reporter
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/syncutil"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -58,7 +58,7 @@ var _ DataSinkRegisterer = &DefaultDataSinkRegisterer{}
 
 // DefaultDataSinkRegisterer implements DataSinkRegisterer.
 type DefaultDataSinkRegisterer struct {
-	sync.Mutex
+	syncutil.Mutex
 	ctx       context.Context
 	dataSinks map[DataSink]struct{}
 }

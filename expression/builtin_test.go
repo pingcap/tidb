@@ -16,7 +16,6 @@ package expression
 
 import (
 	"reflect"
-	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/parser/ast"
@@ -27,13 +26,14 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/stretchr/testify/require"
 )
 
 func evalBuiltinFuncConcurrent(f builtinFunc, row chunk.Row) (d types.Datum, err error) {
 	var wg util.WaitGroupWrapper
 	concurrency := 10
-	var lock sync.Mutex
+	var lock syncutil.Mutex
 	err = nil
 	for i := 0; i < concurrency; i++ {
 		wg.Run(func() {

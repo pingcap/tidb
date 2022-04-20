@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"sync"
 	"time"
 
 	pingcapErrors "github.com/pingcap/errors"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	pmodel "github.com/prometheus/common/model"
 	"go.uber.org/zap"
 )
@@ -59,7 +59,7 @@ var (
 	lastSQBInfo SlowQueryBucket
 	// currentSQBInfo records current statitic information of slow query buckets
 	currentSQBInfo SlowQueryBucket
-	slowQueryLock  sync.Mutex
+	slowQueryLock  syncutil.Mutex
 )
 
 func getSlowQueryStats(ctx sessionctx.Context) (*slowQueryStats, error) {

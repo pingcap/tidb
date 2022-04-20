@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"sync"
 	"testing"
 	"time"
 
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -426,7 +426,7 @@ func TestConcurrentAlloc(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	var mu sync.Mutex
+	var mu syncutil.Mutex
 	var wg util.WaitGroupWrapper
 	m := map[int64]struct{}{}
 	count := 10

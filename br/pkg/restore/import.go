@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/tls"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/util/syncutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -75,7 +75,7 @@ type ImporterClient interface {
 }
 
 type importClient struct {
-	mu         sync.Mutex
+	mu         syncutil.Mutex
 	metaClient SplitClient
 	clients    map[uint64]import_sstpb.ImportSSTClient
 	tlsConf    *tls.Config

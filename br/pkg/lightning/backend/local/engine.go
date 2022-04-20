@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -75,7 +76,7 @@ type engineMeta struct {
 }
 
 type syncedRanges struct {
-	sync.Mutex
+	syncutil.Mutex
 	ranges []Range
 }
 
@@ -102,7 +103,7 @@ type Engine struct {
 	// This should not be used as a "spin lock" indicator.
 	isImportingAtomic atomic.Uint32
 	// flush and ingest sst hold the rlock, other operation hold the wlock.
-	mutex sync.RWMutex
+	mutex syncutil.RWMutex
 
 	ctx            context.Context
 	cancel         context.CancelFunc
@@ -114,7 +115,7 @@ type Engine struct {
 	finishedRanges syncedRanges
 
 	// sst seq lock
-	seqLock sync.Mutex
+	seqLock syncutil.Mutex
 	// seq number for incoming sst meta
 	nextSeq int32
 	// max seq of sst metas ingested into pebble
@@ -510,7 +511,7 @@ func (e *Engine) ingestSSTLoop() {
 
 	seq := atomic.NewInt32(0)
 	finishedSeq := atomic.NewInt32(0)
-	var seqLock sync.Mutex
+	var seqLock syncutil.Mutex
 	// a flush is finished iff all the compaction&ingest tasks with a lower seq number are finished.
 	flushQueue := make([]flushSeq, 0)
 	// inSyncSeqs is a heap that stores all the finished compaction tasks whose seq is bigger than `finishedSeq + 1`
@@ -979,7 +980,7 @@ type sstMeta struct {
 }
 
 type Writer struct {
-	sync.Mutex
+	syncutil.Mutex
 	engine            *Engine
 	memtableSizeLimit int64
 

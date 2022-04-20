@@ -15,8 +15,9 @@
 package statistics
 
 import (
-	"sync"
 	"time"
+
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 // AnalyzeJob is used to represent the status of one analyze job.
@@ -33,7 +34,7 @@ type AnalyzeJob struct {
 
 // AnalyzeProgress represents the process of one analyze job.
 type AnalyzeProgress struct {
-	sync.Mutex
+	syncutil.Mutex
 	// deltaCount is the newly processed rows after the last time mysql.analyze_jobs.processed_rows is updated.
 	deltaCount int64
 	// lastDumpTime is the last time mysql.analyze_jobs.processed_rows is updated.

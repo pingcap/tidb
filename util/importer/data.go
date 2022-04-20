@@ -16,14 +16,15 @@ package importer
 
 import (
 	"fmt"
-	"sync"
 	"time"
+
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 var defaultStep int64 = 1
 
 type datum struct {
-	sync.Mutex
+	syncutil.Mutex
 
 	intValue    int64
 	minIntValue int64

@@ -79,7 +79,7 @@ type ddlSuite struct {
 	s     session.Session
 	ctx   sessionctx.Context
 
-	m     sync.Mutex
+	m     syncutil.Mutex
 	procs []*server
 
 	wg   sync.WaitGroup
@@ -823,7 +823,7 @@ func TestSimpleInsert(t *testing.T) {
 		for _, test := range tests {
 			tblName := test.name
 			t.Run(test.name, func(t *testing.T) {
-				var mu sync.Mutex
+				var mu syncutil.Mutex
 				keysMap := make(map[int64]int64)
 
 				workerNum := 10
@@ -886,7 +886,7 @@ func TestSimpleUpdate(t *testing.T) {
 		for _, test := range tests {
 			tblName := test.name
 			t.Run(test.name, func(t *testing.T) {
-				var mu sync.Mutex
+				var mu syncutil.Mutex
 				keysMap := make(map[int64]int64)
 
 				workerNum := 10
@@ -945,7 +945,7 @@ func TestSimpleUpdate(t *testing.T) {
 		for _, test := range tests {
 			tblName := test.name
 			t.Run(test.name, func(t *testing.T) {
-				var mu sync.Mutex
+				var mu syncutil.Mutex
 				keysMap := make(map[int64]int64)
 
 				workerNum := 10
@@ -1086,7 +1086,7 @@ func TestSimpleDelete(t *testing.T) {
 			tblName := test.name
 			t.Run(test.name, func(t *testing.T) {
 
-				var mu sync.Mutex
+				var mu syncutil.Mutex
 				keysMap := make(map[int64]int64)
 
 				workerNum := 10

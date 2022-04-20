@@ -15,7 +15,6 @@
 package variable_test
 
 import (
-	"sync"
 	"testing"
 	"time"
 
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -35,7 +35,7 @@ func TestSetSystemVariable(t *testing.T) {
 	v := variable.NewSessionVars()
 	v.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
 	v.TimeZone = time.UTC
-	mtx := new(sync.Mutex)
+	mtx := new(syncutil.Mutex)
 
 	testCases := []struct {
 		key   string

@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/stretchr/testify/require"
 	kv2 "github.com/tikv/client-go/v2/kv"
 )
@@ -644,7 +645,7 @@ func TestIsolationInc(t *testing.T) {
 	threadCnt := 4
 
 	ids := make(map[int64]struct{}, threadCnt*100)
-	var m sync.Mutex
+	var m syncutil.Mutex
 	var wg sync.WaitGroup
 
 	wg.Add(threadCnt)

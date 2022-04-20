@@ -22,7 +22,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -44,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/atomic"
@@ -158,7 +158,7 @@ func merge(s *SessionStatsCollector, deltaMap tableDeltaMap, rateMap errorRateDe
 
 // SessionStatsCollector is a list item that holds the delta mapper. If you want to write or read mapper, you must lock it.
 type SessionStatsCollector struct {
-	sync.Mutex
+	syncutil.Mutex
 
 	mapper   tableDeltaMap
 	feedback *statistics.QueryFeedbackMap
@@ -258,7 +258,7 @@ type indexUsageMap map[GlobalIndexID]IndexUsageInformation
 
 // SessionIndexUsageCollector is a list item that holds the index usage mapper. If you want to write or read mapper, you must lock it.
 type SessionIndexUsageCollector struct {
-	sync.Mutex
+	syncutil.Mutex
 
 	mapper  indexUsageMap
 	next    *SessionIndexUsageCollector

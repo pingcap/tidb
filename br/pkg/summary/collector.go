@@ -5,12 +5,12 @@ package summary
 import (
 	"context"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/docker/go-units"
 	berror "github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
 
@@ -73,7 +73,7 @@ func InitCollector( // revive:disable-line:flag-parameter
 }
 
 type logCollector struct {
-	mu               sync.Mutex
+	mu               syncutil.Mutex
 	unit             string
 	successUnitCount int
 	failureUnitCount int

@@ -15,7 +15,7 @@
 package executor
 
 import (
-	"sync"
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 // ShardCount controls the shard maps within the concurrent map
@@ -27,8 +27,8 @@ type concurrentMap []*concurrentMapShared
 
 // A "thread" safe string to anything map.
 type concurrentMapShared struct {
-	items        map[uint64]*entry
-	sync.RWMutex // Read Write mutex, guards access to internal map.
+	items            map[uint64]*entry
+	syncutil.RWMutex // Read Write mutex, guards access to internal map.
 }
 
 // newConcurrentMap creates a new concurrent map.

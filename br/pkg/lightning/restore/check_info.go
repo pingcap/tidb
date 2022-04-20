@@ -25,7 +25,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -48,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"modernc.org/mathutil"
@@ -1090,7 +1090,7 @@ func (rc *Controller) checkTableEmpty(ctx context.Context) error {
 		tableCount += len(db.Tables)
 	}
 
-	var lock sync.Mutex
+	var lock syncutil.Mutex
 	tableNames := make([]string, 0)
 	concurrency := utils.MinInt(tableCount, rc.cfg.App.RegionConcurrency)
 	ch := make(chan string, concurrency)

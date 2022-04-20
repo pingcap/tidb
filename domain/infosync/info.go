@@ -24,7 +24,6 @@ import (
 	"path"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -50,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/tikv/client-go/v2/oracle"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -99,7 +99,7 @@ type InfoSyncer struct {
 	minStartTS     uint64
 	minStartTSPath string
 	managerMu      struct {
-		mu sync.RWMutex
+		mu syncutil.RWMutex
 		util2.SessionManager
 	}
 	session                 *concurrency.Session

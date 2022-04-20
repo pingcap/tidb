@@ -27,7 +27,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -50,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/shurcooL/httpgzip"
 	"go.uber.org/zap"
@@ -65,10 +65,10 @@ type Lightning struct {
 	shutdown   context.CancelFunc // for whole lightning context
 	server     http.Server
 	serverAddr net.Addr
-	serverLock sync.Mutex
+	serverLock syncutil.Mutex
 	status     restore.LightningStatus
 
-	cancelLock sync.Mutex
+	cancelLock syncutil.Mutex
 	curTask    *config.Config
 	cancel     context.CancelFunc // for per task context, which maybe different from lightning context
 }

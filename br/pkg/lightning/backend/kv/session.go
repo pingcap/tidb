@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"sync"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"go.uber.org/zap"
 )
@@ -79,7 +79,7 @@ func (b *bytesBuf) destroy() {
 }
 
 type kvMemBuf struct {
-	sync.Mutex
+	syncutil.Mutex
 	kv.MemBuffer
 	buf           *bytesBuf
 	availableBufs []*bytesBuf

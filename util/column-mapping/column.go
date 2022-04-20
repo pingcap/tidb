@@ -18,9 +18,9 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/syncutil"
 	selector "github.com/pingcap/tidb/util/table-rule-selector"
 )
 
@@ -157,7 +157,7 @@ type Mapping struct {
 	caseSensitive bool
 
 	cache struct {
-		sync.RWMutex
+		syncutil.RWMutex
 		infos map[string]*mappingInfo
 	}
 }

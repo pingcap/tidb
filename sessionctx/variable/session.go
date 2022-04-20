@@ -25,7 +25,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -49,6 +48,7 @@ import (
 	utilMath "github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -175,7 +175,7 @@ type TransactionContext struct {
 	TxnScope string
 
 	// TableDeltaMap lock to prevent potential data race
-	tdmLock sync.Mutex
+	tdmLock syncutil.Mutex
 
 	// TemporaryTables is used to store transaction-specific information for global temporary tables.
 	// It can also be stored in sessionCtx with local temporary tables, but it's easier to clean this data after transaction ends.
@@ -471,7 +471,7 @@ type SessionVars struct {
 	RetryLimit          int64
 	DisableTxnAutoRetry bool
 	// UsersLock is a lock for user defined variables.
-	UsersLock sync.RWMutex
+	UsersLock syncutil.RWMutex
 	// Users are user defined variables.
 	Users map[string]types.Datum
 	// UserVarTypes stores the FieldType for user variables, it cannot be inferred from Users when Users have not been set yet.
@@ -516,7 +516,7 @@ type SessionVars struct {
 
 	// mppTaskIDAllocator is used to allocate mpp task id for a session.
 	mppTaskIDAllocator struct {
-		mu     sync.Mutex
+		mu     syncutil.Mutex
 		lastTS uint64
 		taskID int64
 	}

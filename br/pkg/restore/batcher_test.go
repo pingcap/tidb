@@ -21,7 +21,7 @@ import (
 )
 
 type drySender struct {
-	mu *sync.Mutex
+	mu *syncutil.Mutex
 
 	rewriteRules *restore.RewriteRules
 	ranges       []rtree.Range
@@ -60,12 +60,12 @@ func newDrySender() *drySender {
 	return &drySender{
 		rewriteRules: restore.EmptyRewriteRule(),
 		ranges:       []rtree.Range{},
-		mu:           new(sync.Mutex),
+		mu:           new(syncutil.Mutex),
 	}
 }
 
 type recordCurrentTableManager struct {
-	lock sync.Mutex
+	lock syncutil.Mutex
 	m    map[int64]bool
 }
 

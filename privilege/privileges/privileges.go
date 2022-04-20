@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/infoschema/perfschema"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sem"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
 
@@ -55,7 +55,7 @@ var dynamicPrivs = []string{
 	"RESTRICTED_CONNECTION_ADMIN",     // Can not be killed by PROCESS/CONNECTION_ADMIN privilege
 	"RESTRICTED_REPLICA_WRITER_ADMIN", // Can write to the sever even when tidb_restriced_read_only is turned on.
 }
-var dynamicPrivLock sync.Mutex
+var dynamicPrivLock syncutil.Mutex
 
 // UserPrivileges implements privilege.Manager interface.
 // This is used to check privilege for the current user.

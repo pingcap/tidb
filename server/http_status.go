@@ -31,7 +31,6 @@ import (
 	rpprof "runtime/pprof"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -47,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/soheilhy/cmux"
@@ -112,7 +112,7 @@ func (s *Server) listenStatusHTTPServer() error {
 // Ballast try to reduce the GC frequency by using Ballast Object
 type Ballast struct {
 	ballast     []byte
-	ballastLock sync.Mutex
+	ballastLock syncutil.Mutex
 
 	maxSize int
 }

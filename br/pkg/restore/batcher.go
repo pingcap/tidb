@@ -12,6 +12,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/rtree"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
 
@@ -33,7 +34,7 @@ const (
 // Batcher collects ranges to restore and send batching split/ingest request.
 type Batcher struct {
 	cachedTables   []TableWithRange
-	cachedTablesMu *sync.Mutex
+	cachedTablesMu *syncutil.Mutex
 	rewriteRules   *RewriteRules
 
 	// autoCommitJoiner is for joining the background batch sender.
@@ -112,7 +113,7 @@ func NewBatcher(
 		sender:             sender,
 		manager:            manager,
 		sendCh:             sendChan,
-		cachedTablesMu:     new(sync.Mutex),
+		cachedTablesMu:     new(syncutil.Mutex),
 		everythingIsDone:   new(sync.WaitGroup),
 		batchSizeThreshold: 1,
 	}

@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/pingcap/tipb/go-tipb"
@@ -1666,7 +1667,7 @@ type sequenceCommon struct {
 	base int64
 	// round is used to count the cycle times.
 	round int64
-	mu    sync.RWMutex
+	mu    syncutil.RWMutex
 }
 
 // GetSequenceBaseEndRound is used in test.

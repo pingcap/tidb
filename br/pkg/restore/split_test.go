@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/store/pdtypes"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
@@ -30,7 +31,7 @@ import (
 )
 
 type TestClient struct {
-	mu                  sync.RWMutex
+	mu                  syncutil.RWMutex
 	stores              map[uint64]*metapb.Store
 	regions             map[uint64]*restore.RegionInfo
 	regionsInfo         *pdtypes.RegionTree // For now it's only used in ScanRegions
@@ -572,7 +573,7 @@ func TestRegionConsistency(t *testing.T) {
 }
 
 type fakeRestorer struct {
-	mu sync.Mutex
+	mu syncutil.Mutex
 
 	errorInSplit  bool
 	splitRanges   []rtree.Range

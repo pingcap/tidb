@@ -18,18 +18,18 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
 type mockAgentServer struct {
-	sync.Mutex
+	syncutil.Mutex
 	addr       string
 	grpcServer *grpc.Server
 	sqlMetas   map[string]tipb.SQLMeta

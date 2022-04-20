@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/atomic"
 )
 
@@ -45,7 +46,7 @@ type Watcher struct {
 	running atomic.Int32
 	closed  chan struct{}
 	wg      sync.WaitGroup
-	mu      sync.Mutex
+	mu      syncutil.Mutex
 
 	names map[string]struct{}    // original added names needed to watch
 	files map[string]os.FileInfo // all latest watching files

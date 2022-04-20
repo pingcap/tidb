@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"math/rand"
 	"strconv"
-	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -56,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -78,7 +78,7 @@ type Domain struct {
 	ddl                  ddl.DDL
 	info                 *infosync.InfoSyncer
 	globalCfgSyncer      *globalconfigsync.GlobalConfigSyncer
-	m                    sync.Mutex
+	m                    syncutil.Mutex
 	SchemaValidator      SchemaValidator
 	sysSessionPool       *sessionPool
 	exit                 chan struct{}
@@ -731,7 +731,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
-	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
+	do.sysProcesses = SysProcesses{mu: &syncutil.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
 	return do
 }
 
@@ -876,7 +876,7 @@ type sessionPool struct {
 	resources chan pools.Resource
 	factory   pools.Factory
 	mu        struct {
-		sync.RWMutex
+		syncutil.RWMutex
 		closed bool
 	}
 }
@@ -1836,7 +1836,7 @@ var (
 
 // SysProcesses holds the sys processes infos
 type SysProcesses struct {
-	mu      *sync.RWMutex
+	mu      *syncutil.RWMutex
 	procMap map[uint64]sessionctx.Context
 }
 

@@ -156,6 +156,7 @@ require (
 	github.com/modern-go/reflect2 v1.0.1 // indirect
 	github.com/ncw/directio v1.0.5 // indirect
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef // indirect
+	github.com/petermattis/goid v0.0.0-20180202154549-b0b1615b78e5 // indirect
 	github.com/pierrec/lz4 v2.6.1+incompatible // indirect
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989 // indirect
 	github.com/pkg/browser v0.0.0-20180916011732-0a3d74bf9ce4 // indirect
@@ -167,6 +168,7 @@ require (
 	github.com/remyoudompheng/bigfft v0.0.0-20200410134404-eec4a21b6bb0 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
 	github.com/rogpeppe/go-internal v1.6.1 // indirect
+	github.com/sasha-s/go-deadlock v0.3.1 // indirect
 	github.com/shurcooL/httpfs v0.0.0-20190707220628-8d4bc4ba7749 // indirect
 	github.com/sirupsen/logrus v1.8.1 // indirect
 	github.com/tklauser/go-sysconf v0.3.9 // indirect

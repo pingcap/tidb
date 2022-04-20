@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 type slowQueryHeap struct {
@@ -117,7 +118,7 @@ type topNSlowQueries struct {
 	msgCh    chan *showSlowMessage
 
 	mu struct {
-		sync.RWMutex
+		syncutil.RWMutex
 		closed bool
 	}
 }

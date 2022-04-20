@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/util/gcutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
@@ -1071,7 +1072,7 @@ type checkPrioClient struct {
 	tikv.Client
 	priority kvrpcpb.CommandPri
 	mu       struct {
-		sync.RWMutex
+		syncutil.RWMutex
 		checkPrio bool
 	}
 }

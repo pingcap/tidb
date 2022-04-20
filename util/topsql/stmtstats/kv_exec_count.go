@@ -15,8 +15,7 @@
 package stmtstats
 
 import (
-	"sync"
-
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 )
@@ -38,7 +37,7 @@ func (s *StatementStats) CreateKvExecCounter(sqlDigest, planDigest []byte) *KvEx
 type KvExecCounter struct {
 	stats  *StatementStats
 	digest SQLPlanDigest
-	mu     sync.Mutex
+	mu     syncutil.Mutex
 	marked map[string]struct{} // HashSet<Target>
 }
 

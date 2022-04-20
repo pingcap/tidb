@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -49,7 +50,7 @@ var systemTZ atomic.String
 // they suggests that only programmers knows which one is best for their use case.
 // For detail, please refer to: https://github.com/golang/go/issues/26106
 type locCache struct {
-	sync.RWMutex
+	syncutil.RWMutex
 	// locMap stores locations used in past and can be retrieved by a timezone's name.
 	locMap map[string]*time.Location
 }

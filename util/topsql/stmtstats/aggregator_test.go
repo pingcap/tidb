@@ -16,10 +16,10 @@ package stmtstats
 
 import (
 	"math/rand"
-	"sync"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/topsql/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -90,7 +90,7 @@ func Test_aggregator_run_close(t *testing.T) {
 }
 
 func TestAggregatorDisableAggregate(t *testing.T) {
-	var mu sync.Mutex
+	var mu syncutil.Mutex
 	total := StatementStatsMap{}
 	a := newAggregator()
 	a.registerCollector(newMockCollector(func(data StatementStatsMap) {

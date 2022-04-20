@@ -17,13 +17,13 @@ package deadlockhistory
 import (
 	"encoding/hex"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
+	"github.com/pingcap/tidb/util/syncutil"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
 )
@@ -113,7 +113,7 @@ func (r *DeadlockRecord) ToDatum(waitChainIdx int, columnName string) types.Datu
 
 // DeadlockHistory is a collection for maintaining recent several deadlock events. All its public APIs are thread safe.
 type DeadlockHistory struct {
-	sync.RWMutex
+	syncutil.RWMutex
 
 	deadlocks []*DeadlockRecord
 

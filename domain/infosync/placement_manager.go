@@ -19,10 +19,10 @@ import (
 	"context"
 	"encoding/json"
 	"path"
-	"sync"
 
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/syncutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
@@ -77,7 +77,7 @@ func (m *PDPlacementManager) PutRuleBundles(ctx context.Context, bundles []*plac
 }
 
 type mockPlacementManager struct {
-	sync.Mutex
+	syncutil.Mutex
 	bundles map[string]*placement.Bundle
 }
 

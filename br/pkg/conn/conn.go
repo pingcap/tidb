@@ -7,7 +7,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
@@ -46,7 +46,7 @@ const (
 // When `Get` called, it lazily allocates new connection if connection not full.
 // If it's full, then it will return allocated channels round-robin.
 type Pool struct {
-	mu sync.Mutex
+	mu syncutil.Mutex
 
 	conns   []*grpc.ClientConn
 	next    int
@@ -96,7 +96,7 @@ func NewConnPool(capacity int, newConn func(ctx context.Context) (*grpc.ClientCo
 		conns:   make([]*grpc.ClientConn, 0, capacity),
 		newConn: newConn,
 
-		mu: sync.Mutex{},
+		mu: syncutil.Mutex{},
 	}
 }
 
@@ -108,7 +108,7 @@ type Mgr struct {
 	storage   kv.Storage   // Used to access SQL related interfaces.
 	tikvStore tikv.Storage // Used to access TiKV specific interfaces.
 	grpcClis  struct {
-		mu   sync.Mutex
+		mu   syncutil.Mutex
 		clis map[uint64]*grpc.ClientConn
 	}
 	keepalive   keepalive.ClientParameters
@@ -288,7 +288,7 @@ func NewMgr(
 		tlsConf:      tlsConf,
 		ownsStorage:  g.OwnsStorage(),
 		grpcClis: struct {
-			mu   sync.Mutex
+			mu   syncutil.Mutex
 			clis map[uint64]*grpc.ClientConn
 		}{clis: make(map[uint64]*grpc.ClientConn)},
 		keepalive: keepalive,

@@ -17,7 +17,6 @@ package infoschema
 import (
 	"fmt"
 	"sort"
-	"sync"
 
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -95,7 +95,7 @@ type infoSchema struct {
 	ruleBundleMap map[int64]*placement.Bundle
 
 	// policyMap stores all placement policies.
-	policyMutex sync.RWMutex
+	policyMutex syncutil.RWMutex
 	policyMap   map[string]*model.PolicyInfo
 
 	schemaMap map[string]*schemaTables

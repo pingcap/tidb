@@ -26,7 +26,6 @@ import (
 	"path"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/syncutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -187,7 +187,7 @@ func (m *TiFlashPDPlacementManager) GetStoresStat(ctx context.Context) (*helper.
 }
 
 type mockTiFlashPlacementManager struct {
-	sync.Mutex
+	syncutil.Mutex
 	// Set to nil if there is no need to set up a mock TiFlash server.
 	// Otherwise use NewMockTiFlash to create one.
 	tiflash *MockTiFlash
@@ -247,7 +247,7 @@ func (m *mockTiFlashTableInfo) String() string {
 
 // MockTiFlash mocks a TiFlash, with necessary Pd support.
 type MockTiFlash struct {
-	sync.Mutex
+	syncutil.Mutex
 	StatusAddr                  string
 	StatusServer                *httptest.Server
 	SyncStatus                  map[int]mockTiFlashTableInfo

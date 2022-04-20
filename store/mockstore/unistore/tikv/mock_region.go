@@ -17,7 +17,6 @@ package tikv
 import (
 	"bytes"
 	"sort"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -36,13 +35,14 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/syncutil"
 	pdclient "github.com/tikv/pd/client"
 	"golang.org/x/net/context"
 )
 
 // MPPTaskHandlerMap is a map of *cophandler.MPPTaskHandler.
 type MPPTaskHandlerMap struct {
-	mu           sync.RWMutex
+	mu           syncutil.RWMutex
 	taskHandlers map[int64]*cophandler.MPPTaskHandler
 }
 
@@ -786,7 +786,7 @@ func (pd *MockPD) StoreHeartbeat(ctx context.Context, stats *pdpb.StoreStats) er
 
 // Use global variables to prevent pdClients from creating duplicate timestamps.
 var tsMu = struct {
-	sync.Mutex
+	syncutil.Mutex
 	physicalTS int64
 	logicalTS  int64
 }{}

@@ -16,9 +16,9 @@ package infoschema
 
 import (
 	"sort"
-	"sync"
 
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 var (
@@ -35,7 +35,7 @@ var (
 // The cache behavior, however, is transparent and under automatic management.
 // It only promised to cache the infoschema, if it is newer than all the cached.
 type InfoCache struct {
-	mu sync.RWMutex
+	mu syncutil.RWMutex
 	// cache is sorted by SchemaVersion in descending order
 	cache []InfoSchema
 	// record SnapshotTS of the latest schema Insert.

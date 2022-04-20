@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
 
@@ -74,7 +75,7 @@ func Unregister(ch ProfileConsumer) {
 // With parallelCPUProfiler, it is possible to have multiple profile consumer at the same time.
 // WARN: Only one running parallelCPUProfiler is allowed in the process, otherwise some profiler may profiling fail.
 type parallelCPUProfiler struct {
-	sync.Mutex
+	syncutil.Mutex
 	cs             map[ProfileConsumer]struct{}
 	notifyRegister chan struct{}
 
