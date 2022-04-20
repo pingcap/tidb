@@ -226,3 +226,18 @@ func TestNonTransactionalDeleteInvisibleIndex(t *testing.T) {
 	tk.MustExec("split on a limit 10 delete from t")
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
 }
+
+func TestNonTransactionalDeleteIgnoreSelectLimit(t *testing.T) {
+	store, clean := createStorage(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_max_chunk_size=35")
+	tk.MustExec("set @@sql_select_limit=3")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, key(a))")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i*2))
+	}
+	tk.MustExec("split on a limit 10 delete from t")
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
+}
