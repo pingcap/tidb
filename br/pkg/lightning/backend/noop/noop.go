@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
@@ -155,6 +156,10 @@ func (b noopBackend) ResolveDuplicateRows(ctx context.Context, tbl table.Table, 
 	return nil
 }
 
+func (b noopBackend) TotalMemoryConsume() int64 {
+	return 0
+}
+
 type noopEncoder struct{}
 
 // Close the encoder.
@@ -178,6 +183,10 @@ func (r noopRow) ClassifyAndAppend(*kv.Rows, *verification.KVChecksum, *kv.Rows,
 type Writer struct{}
 
 func (w Writer) AppendRows(context.Context, string, []string, kv.Rows) error {
+	return nil
+}
+
+func (w Writer) AppendRow(context.Context, string, []string, []common.KvPair) error {
 	return nil
 }
 

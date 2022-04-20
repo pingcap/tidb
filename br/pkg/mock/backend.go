@@ -347,6 +347,20 @@ func (mr *MockEngineWriterMockRecorder) AppendRows(arg0, arg1, arg2, arg3 interf
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AppendRows", reflect.TypeOf((*MockEngineWriter)(nil).AppendRows), arg0, arg1, arg2, arg3)
 }
 
+// AppendRow mocks base method.
+func (m *MockEngineWriter) AppendRow(arg0 context.Context, arg1 string, arg2 []string, arg3 kv.Rows) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AppendRow", arg0, arg1, arg2, arg3)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// AppendRow indicates an expected call of AppendRows.
+func (mr *MockEngineWriterMockRecorder) AppendRow(arg0, arg1, arg2, arg3 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AppendRow", reflect.TypeOf((*MockEngineWriter)(nil).AppendRows), arg0, arg1, arg2, arg3)
+}
+
 // Close mocks base method.
 func (m *MockEngineWriter) Close(arg0 context.Context) (backend.ChunkFlushStatus, error) {
 	m.ctrl.T.Helper()
@@ -374,4 +388,17 @@ func (m *MockEngineWriter) IsSynced() bool {
 func (mr *MockEngineWriterMockRecorder) IsSynced() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsSynced", reflect.TypeOf((*MockEngineWriter)(nil).IsSynced))
+}
+
+func (m *MockBackend) TotalMemoryConsume() int64 {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "TotalMemoryConsume")
+	ret0, _ := ret[0].(int64)
+	return ret0
+}
+
+// LocalWriter indicates an expected call of LocalWriter.
+func (mr *MockBackendMockRecorder) TotalMemoryConsume() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TotalMemoryConsume", reflect.TypeOf((*MockBackend)(nil).OpenEngine))
 }

@@ -29,9 +29,7 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/pebble"
-	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
-	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -42,11 +40,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/membuf"
-	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tidbkv "github.com/pingcap/tidb/kv"
@@ -424,11 +420,11 @@ func TestLocalWriterWithIngestUnsort(t *testing.T) {
 }
 
 type mockSplitClient struct {
-	restore.SplitClient
+	split.SplitClient
 }
 
-func (c *mockSplitClient) GetRegion(ctx context.Context, key []byte) (*restore.RegionInfo, error) {
-	return &restore.RegionInfo{
+func (c *mockSplitClient) GetRegion(ctx context.Context, key []byte) (*split.RegionInfo, error) {
+	return &split.RegionInfo{
 		Leader: &metapb.Peer{Id: 1},
 		Region: &metapb.Region{
 			Id:       1,
@@ -451,7 +447,7 @@ func TestIsIngestRetryable(t *testing.T) {
 		},
 	}
 	ctx := context.Background()
-	region := &restore.RegionInfo{
+	region := &split.RegionInfo{
 		Leader: &metapb.Peer{Id: 1},
 		Region: &metapb.Region{
 			Id:       1,
@@ -624,55 +620,6 @@ func TestLocalIngestLoop(t *testing.T) {
 	require.Equal(t, f.TotalSize.Load(), totalSize)
 	require.Equal(t, int64(concurrency*count), f.Length.Load())
 	require.Equal(t, atomic.LoadInt32(&maxMetaSeq), f.finishedMetaSeq.Load())
-}
-
-func TestCheckRequirementsTiFlash(t *testing.T) {
-	controller := gomock.NewController(t)
-	defer controller.Finish()
-	glue := mock.NewMockGlue(controller)
-	exec := mock.NewMockSQLExecutor(controller)
-	ctx := context.Background()
-
-	dbMetas := []*mydump.MDDatabaseMeta{
-		{
-			Name: "test",
-			Tables: []*mydump.MDTableMeta{
-				{
-					DB:        "test",
-					Name:      "t1",
-					DataFiles: []mydump.FileInfo{{}},
-				},
-				{
-					DB:        "test",
-					Name:      "tbl",
-					DataFiles: []mydump.FileInfo{{}},
-				},
-			},
-		},
-		{
-			Name: "test1",
-			Tables: []*mydump.MDTableMeta{
-				{
-					DB:        "test1",
-					Name:      "t",
-					DataFiles: []mydump.FileInfo{{}},
-				},
-				{
-					DB:        "test1",
-					Name:      "tbl",
-					DataFiles: []mydump.FileInfo{{}},
-				},
-			},
-		},
-	}
-	checkCtx := &backend.CheckCtx{DBMetas: dbMetas}
-
-	glue.EXPECT().GetSQLExecutor().Return(exec)
-	exec.EXPECT().QueryStringsWithLog(ctx, tiFlashReplicaQuery, gomock.Any(), gomock.Any()).
-		Return([][]string{{"db", "tbl"}, {"test", "t1"}, {"test1", "tbl"}}, nil)
-
-	err := checkTiFlashVersion(ctx, glue, checkCtx, *semver.New("4.0.2"))
-	require.Regexp(t, "^lightning local backend doesn't support TiFlash in this TiDB version. conflict tables: \\[`test`.`t1`, `test1`.`tbl`\\]", err.Error())
 }
 
 func makeRanges(input []string) []Range {

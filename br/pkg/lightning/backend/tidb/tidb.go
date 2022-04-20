@@ -466,6 +466,10 @@ rowLoop:
 	return nil
 }
 
+func (be *tidbBackend) TotalMemoryConsume() int64 {
+	return 0
+}
+
 type stmtTask struct {
 	rows tidbRows
 	stmt string
@@ -723,6 +727,9 @@ func (w *Writer) AppendRows(ctx context.Context, tableName string, columnNames [
 	return w.be.WriteRows(ctx, tableName, columnNames, rows)
 }
 
+func (w *Writer) AppendRow(ctx context.Context, tableName string, columnNames []string, kvs []common.KvPair) error {
+	return nil
+}
 func (w *Writer) IsSynced() bool {
 	return true
 }

@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/distsql"
 	tidbkv "github.com/pingcap/tidb/kv"
@@ -299,7 +299,7 @@ type RemoteDupKVStream struct {
 
 func getDupDetectClient(
 	ctx context.Context,
-	region *restore.RegionInfo,
+	region *split.RegionInfo,
 	keyRange tidbkv.KeyRange,
 	importClientFactory ImportClientFactory,
 ) (import_sstpb.ImportSST_DuplicateDetectClient, error) {
@@ -331,7 +331,7 @@ func getDupDetectClient(
 // NewRemoteDupKVStream creates a new RemoteDupKVStream.
 func NewRemoteDupKVStream(
 	ctx context.Context,
-	region *restore.RegionInfo,
+	region *split.RegionInfo,
 	keyRange tidbkv.KeyRange,
 	importClientFactory ImportClientFactory,
 ) (*RemoteDupKVStream, error) {
@@ -393,7 +393,7 @@ func (s *RemoteDupKVStream) Close() error {
 type DuplicateManager struct {
 	tbl         table.Table
 	tableName   string
-	splitCli    restore.SplitClient
+	splitCli    split.SplitClient
 	tikvCli     *tikv.KVStore
 	errorMgr    *errormanager.ErrorManager
 	decoder     *kv.TableKVDecoder
@@ -406,7 +406,7 @@ type DuplicateManager struct {
 func NewDuplicateManager(
 	tbl table.Table,
 	tableName string,
-	splitCli restore.SplitClient,
+	splitCli split.SplitClient,
 	tikvCli *tikv.KVStore,
 	errMgr *errormanager.ErrorManager,
 	sessOpts *kv.SessionOptions,
@@ -661,14 +661,14 @@ func (m *DuplicateManager) CollectDuplicateRowsFromDupDB(ctx context.Context, du
 
 func (m *DuplicateManager) splitKeyRangeByRegions(
 	ctx context.Context, keyRange tidbkv.KeyRange,
-) ([]*restore.RegionInfo, []tidbkv.KeyRange, error) {
+) ([]*split.RegionInfo, []tidbkv.KeyRange, error) {
 	rawStartKey := codec.EncodeBytes(nil, keyRange.StartKey)
 	rawEndKey := codec.EncodeBytes(nil, keyRange.EndKey)
-	allRegions, err := restore.PaginateScanRegion(ctx, m.splitCli, rawStartKey, rawEndKey, 1024)
+	allRegions, err := split.PaginateScanRegion(ctx, m.splitCli, rawStartKey, rawEndKey, 1024)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	regions := make([]*restore.RegionInfo, 0, len(allRegions))
+	regions := make([]*split.RegionInfo, 0, len(allRegions))
 	keyRanges := make([]tidbkv.KeyRange, 0, len(allRegions))
 	for _, region := range allRegions {
 		startKey := keyRange.StartKey
@@ -711,7 +711,7 @@ func (m *DuplicateManager) processRemoteDupTaskOnce(
 	remainKeyRanges *pendingKeyRanges,
 ) (madeProgress bool, err error) {
 	//nolint: prealloc
-	var regions []*restore.RegionInfo
+	var regions []*split.RegionInfo
 	//nolint: prealloc
 	var keyRanges []tidbkv.KeyRange
 

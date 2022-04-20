@@ -49,7 +49,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	split "github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/infoschema"
@@ -353,6 +353,18 @@ func NewLocalBackend(
 	}
 
 	return backend.MakeBackend(local), nil
+}
+
+func (local *local) TotalMemoryConsume() int64 {
+	var memConsume int64 = 0
+	local.engines.Range(func(k, v interface{}) bool {
+		e := v.(*Engine)
+		if e != nil {
+			memConsume += e.TotalMemorySize()
+		}
+		return true
+	})
+	return memConsume
 }
 
 func (local *local) checkMultiIngestSupport(ctx context.Context) error {
@@ -1696,6 +1708,10 @@ func (t tblNames) String() string {
 	}
 	b.WriteByte(']')
 	return b.String()
+}
+
+func CheckTiFlashVersion4test(ctx context.Context, g glue.Glue, checkCtx *backend.CheckCtx, tidbVersion semver.Version) error {
+	return checkTiFlashVersion(ctx, g, checkCtx, tidbVersion)
 }
 
 // check TiFlash replicas.
