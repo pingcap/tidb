@@ -23,7 +23,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/opentracing/opentracing-go"

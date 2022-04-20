@@ -22,7 +22,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
