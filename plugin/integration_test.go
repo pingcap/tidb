@@ -696,23 +696,15 @@ func TestAuditLogNormal(t *testing.T) {
 		query := append([]byte{mysql.ComQuery}, []byte(test.sql)...)
 		err := conn.Dispatch(context.Background(), query)
 		require.NoError(t, err, errMsg)
-		require.Equal(t, 2, len(testResults), errMsg)
+		require.Equal(t, 1, len(testResults), errMsg)
 		result := testResults[0]
 		// TODO: currently, result.text is wrong.
 		require.Equal(t, "Query", result.cmd, errMsg)
-		require.Equal(t, plugin.Starting, result.event, errMsg)
-		result = testResults[1]
-		if test.text == "" {
-			require.Equal(t, test.sql, result.text, errMsg)
-		} else {
-			require.Equal(t, test.text, result.text, errMsg)
-		}
 		require.Equal(t, test.rows, result.rows, errMsg)
 		require.Equal(t, test.stmtType, result.stmtType, errMsg)
 		require.Equal(t, test.dbs, result.dbs, errMsg)
 		require.Equal(t, test.tables, result.tables, errMsg)
 		require.Equal(t, "Query", result.cmd, errMsg)
-		require.Equal(t, plugin.Completed, result.event, errMsg)
 	}
 }
 
