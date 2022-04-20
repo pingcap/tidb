@@ -41,7 +41,7 @@ if [ -n "$pid" ]; then
   kill -9 "$pid" &>/dev/null || true
 fi
 if [ "$ok" = "0" ]; then
-  echo "lightning should report connection error due to certificate expired, but not error is reported"
+  echo "lightning should report connection error due to certificate expired, but no error is reported"
   exit 1
 fi
 # Do some cleanup.
