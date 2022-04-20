@@ -139,6 +139,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 	// wait reorganization job done or timeout
 	select {
 	case err := <-w.reorgCtx.doneCh:
+<<<<<<< HEAD
 		rowCount, _ := w.reorgCtx.getRowCountAndHandle()
 		logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
 		// Update a job's RowCount.
@@ -149,6 +150,37 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		w.reorgCtx.clean()
 		return errors.Trace(err)
 	case <-w.quitCh:
+=======
+		if err != nil {
+			w.reorgCtx.clean()
+			return errors.Trace(err)
+		}
+		if w.reorgCtx.isReorgCanceled() {
+			w.reorgCtx.clean()
+			return dbterror.ErrCancelledDDLJob
+		}
+		rowCount, _, _ := w.reorgCtx.getRowCountAndKey()
+		logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
+		// Update a job's RowCount.
+		job.SetRowCount(rowCount)
+
+		// Update a job's warnings.
+		w.mergeWarningsIntoJob(job)
+
+		w.reorgCtx.clean()
+
+		switch reorgInfo.Type {
+		case model.ActionAddIndex, model.ActionAddPrimaryKey:
+			metrics.GetBackfillProgressByLabel(metrics.LblAddIndex).Set(100)
+		case model.ActionModifyColumn:
+			metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn).Set(100)
+		}
+		if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+			logutil.BgLogger().Warn("[ddl] run reorg job done, removeDDLReorgHandle failed", zap.Error(err1))
+			return errors.Trace(err1)
+		}
+	case <-w.ctx.Done():
+>>>>>>> 7ddfdba44... ddl: add new cancel test framework and rewrite some tests (#33931)
 		logutil.BgLogger().Info("[ddl] run reorg job quit")
 		w.reorgCtx.setNextHandle(0)
 		w.reorgCtx.setRowCount(0)
