@@ -106,10 +106,6 @@ func (msm *mockSessionManager) GetInternalSessionStartTSList() []uint64 {
 	return nil
 }
 
-func (msm *mockSessionManager) GetAutoAnalyzeID() uint64 {
-	return 0
-}
-
 func TestShowProcessList(t *testing.T) {
 	// Compose schema.
 	names := []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}

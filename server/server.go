@@ -732,6 +732,13 @@ func (s *Server) KillAllConnections() {
 		}
 		killConn(conn)
 	}
+
+	if s.dom != nil {
+		sysProcTracker := s.dom.SysProcTracker()
+		for connID := range sysProcTracker.GetSysProcessList() {
+			sysProcTracker.KillSysProcess(connID)
+		}
+	}
 }
 
 var gracefulCloseConnectionsTimeout = 15 * time.Second
@@ -830,11 +837,6 @@ func (s *Server) GetInternalSessionStartTSList() []uint64 {
 		}
 	}
 	return tsList
-}
-
-// GetAutoAnalyzeID implements SessionManager interface.
-func (s *Server) GetAutoAnalyzeID() uint64 {
-	return s.globalConnID.MakeID(util.GetAutoAnalyzeProcID())
 }
 
 // setSysTimeZoneOnce is used for parallel run tests. When several servers are running,

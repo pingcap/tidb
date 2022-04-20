@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/domain"
 	"math"
 	"sort"
 	"strconv"
@@ -1172,12 +1173,7 @@ var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 func (h *Handle) getAutoAnalyzeID() uint64 {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	sm := h.mu.ctx.GetSessionManager()
-	if sm == nil {
-		// When GetSessionManager() is nil(occur in tests), we just use the reserved local conn ID for auto analyze as its connection ID.
-		return util.GetAutoAnalyzeProcID()
-	}
-	return sm.GetAutoAnalyzeID()
+	return util.GetAutoAnalyzeProcID(domain.GetDomain(h.mu.ctx).ServerID)
 }
 
 func (h *Handle) execAutoAnalyze(statsVer int, sql string, params ...interface{}) {

@@ -198,10 +198,6 @@ func (sm *mockSessionManager) GetInternalSessionStartTSList() []uint64 {
 	return nil
 }
 
-func (sm *mockSessionManager) GetAutoAnalyzeID() uint64 {
-	return 0
-}
-
 func (sm *mockSessionManager) Kill(_ uint64, _ bool) {}
 
 func (sm *mockSessionManager) KillAllConnections() {}

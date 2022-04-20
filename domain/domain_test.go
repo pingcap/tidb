@@ -452,7 +452,3 @@ func (msm *mockSessionManager) DeleteInternalSession(se interface{}) {}
 func (msm *mockSessionManager) GetInternalSessionStartTSList() []uint64 {
 	return nil
 }
-
-func (msm *mockSessionManager) GetAutoAnalyzeID() uint64 {
-	return 0
-}
