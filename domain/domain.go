@@ -86,7 +86,7 @@ type Domain struct {
 	sysVarCache          sysVarCache // replaces GlobalVariableCache
 	slowQuery            *topNSlowQueries
 	expensiveQueryHandle *expensivequery.Handle
-	wg                   sync.WaitGroup
+	wg                   util.WaitGroupWrapper
 	statsUpdating        atomicutil.Int32
 	cancel               context.CancelFunc
 	indexUsageSyncLease  time.Duration
@@ -154,17 +154,12 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	bundles, err := infosync.GetAllRuleBundles(context.TODO())
-	if err != nil {
-		return nil, false, currentSchemaVersion, nil, err
-	}
-
 	policies, err := do.fetchPolicies(m)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
 
-	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithDBInfos(schemas, bundles, policies, neededSchemaVersion)
+	newISBuilder, err := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithDBInfos(schemas, policies, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
@@ -287,6 +282,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		diffs = append(diffs, diff)
 	}
 	builder := infoschema.NewBuilder(do.Store(), do.sysFacHack).InitWithOldInfoSchema(do.infoCache.GetLatest())
+	builder.SetDeltaUpdateBundles()
 	phyTblIDs := make([]int64, 0, len(diffs))
 	actions := make([]uint64, 0, len(diffs))
 	for _, diff := range diffs {
@@ -1298,8 +1294,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	do.ddl.RegisterStatsHandle(statsHandle)
 	// Negative stats lease indicates that it is in test, it does not need update.
 	if do.statsLease >= 0 {
-		do.wg.Add(1)
-		go do.loadStatsWorker()
+		do.wg.Run(do.loadStatsWorker)
 	}
 	owner := do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
 	if do.indexUsageSyncLease > 0 {
@@ -1309,13 +1304,12 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 	if do.statsLease <= 0 {
 		return nil
 	}
-	do.wg.Add(1)
 	do.SetStatsUpdating(true)
-	go do.updateStatsWorker(ctx, owner)
+	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) })
 	if RunAutoAnalyze {
-		do.wg.Add(1)
-		go do.autoAnalyzeWorker(owner)
+		do.wg.Run(func() { do.autoAnalyzeWorker(owner) })
 	}
+	do.wg.Run(func() { do.gcAnalyzeHistory(owner) })
 	return nil
 }
 
@@ -1354,7 +1348,6 @@ func (do *Domain) loadStatsWorker() {
 	loadTicker := time.NewTicker(lease)
 	defer func() {
 		loadTicker.Stop()
-		do.wg.Done()
 		logutil.BgLogger().Info("loadStatsWorker exited.")
 	}()
 	statsHandle := do.StatsHandle()
@@ -1432,7 +1425,6 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		gcStatsTicker.Stop()
 		deltaUpdateTicker.Stop()
 		do.SetStatsUpdating(false)
-		do.wg.Done()
 		logutil.BgLogger().Info("updateStatsWorker exited.")
 	}()
 	for {
@@ -1490,7 +1482,6 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	analyzeTicker := time.NewTicker(do.statsLease)
 	defer func() {
 		analyzeTicker.Stop()
-		do.wg.Done()
 		logutil.BgLogger().Info("autoAnalyzeWorker exited.")
 	}()
 	for {
@@ -1498,6 +1489,32 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 		case <-analyzeTicker.C:
 			if owner.IsOwner() {
 				statsHandle.HandleAutoAnalyze(do.InfoSchema())
+			}
+		case <-do.exit:
+			return
+		}
+	}
+}
+
+func (do *Domain) gcAnalyzeHistory(owner owner.Manager) {
+	defer util.Recover(metrics.LabelDomain, "gcAnalyzeHistory", nil, false)
+	const gcInterval = time.Hour
+	statsHandle := do.StatsHandle()
+	gcTicker := time.NewTicker(gcInterval)
+	defer func() {
+		gcTicker.Stop()
+		logutil.BgLogger().Info("gcAnalyzeHistory exited.")
+	}()
+	for {
+		select {
+		case <-gcTicker.C:
+			if owner.IsOwner() {
+				const DaysToKeep = 7
+				updateTime := time.Now().AddDate(0, 0, -DaysToKeep)
+				err := statsHandle.DeleteAnalyzeJobs(updateTime)
+				if err != nil {
+					logutil.BgLogger().Warn("gc analyze history failed", zap.Error(err))
+				}
 			}
 		case <-do.exit:
 			return

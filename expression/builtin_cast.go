@@ -969,7 +969,7 @@ func (b *builtinCastDecimalAsIntSig) evalInt(row chunk.Row) (res int64, isNull b
 
 	// Round is needed for both unsigned and signed.
 	var to types.MyDecimal
-	err = val.Round(&to, 0, types.ModeHalfEven)
+	err = val.Round(&to, 0, types.ModeHalfUp)
 	if err != nil {
 		return 0, true, err
 	}

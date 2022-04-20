@@ -861,6 +861,11 @@ error = '''
 Field '%-.192s' is of a not allowed type for this type of partitioning
 '''
 
+["ddl:1674"]
+error = '''
+Statement is unsafe because it uses a system function that may return a different value on the slave
+'''
+
 ["ddl:1688"]
 error = '''
 Comment for index '%-.64s' is too long (max = %d)
@@ -999,6 +1004,11 @@ Expression index on a column is not supported. Consider using a regular index in
 ["ddl:3764"]
 error = '''
 Expression of generated column '%s' cannot refer to a row value
+'''
+
+["ddl:3770"]
+error = '''
+Default value expression of column '%s' contains a disallowed function: `%s`.
 '''
 
 ["ddl:3780"]

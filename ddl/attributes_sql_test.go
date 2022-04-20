@@ -74,7 +74,6 @@ func TestAlterTableAttributes(t *testing.T) {
 	// without equal
 	tk.MustExec(`alter table alter_t attributes " merge_option=allow ";`)
 	tk.MustExec(`alter table alter_t attributes " merge_option=allow , key=value ";`)
-
 }
 
 func TestAlterTablePartitionAttributes(t *testing.T) {
@@ -101,6 +100,42 @@ PARTITION BY RANGE (c) (
 	// without equal
 	tk.MustExec(`alter table alter_p partition p1 attributes " merge_option=allow ";`)
 	tk.MustExec(`alter table alter_p partition p1 attributes " merge_option=allow , key=value ";`)
+
+	// reset all
+	tk.MustExec(`alter table alter_p partition p0 attributes default;`)
+	tk.MustExec(`alter table alter_p partition p1 attributes default;`)
+	tk.MustExec(`alter table alter_p partition p2 attributes default;`)
+	tk.MustExec(`alter table alter_p partition p3 attributes default;`)
+
+	// add table level attribute
+	tk.MustExec(`alter table alter_p attributes="merge_option=deny";`)
+	rows := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
+	require.Len(t, rows, 1)
+
+	// add a new partition p4
+	tk.MustExec(`alter table alter_p add partition (PARTITION p4 VALUES LESS THAN (60));`)
+	rows1 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
+	require.Len(t, rows1, 1)
+	require.NotEqual(t, rows[0][3], rows1[0][3])
+
+	// drop the new partition p4
+	tk.MustExec(`alter table alter_p drop partition p4;`)
+	rows2 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
+	require.Len(t, rows2, 1)
+	require.Equal(t, rows[0][3], rows2[0][3])
+
+	// add a new partition p5
+	tk.MustExec(`alter table alter_p add partition (PARTITION p5 VALUES LESS THAN (80));`)
+	rows3 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
+	require.Len(t, rows3, 1)
+	require.NotEqual(t, rows[0][3], rows3[0][3])
+
+	// truncate the new partition p5
+	tk.MustExec(`alter table alter_p truncate partition p5;`)
+	rows4 := tk.MustQuery(`select * from information_schema.attributes;`).Sort().Rows()
+	require.Len(t, rows4, 1)
+	require.NotEqual(t, rows3[0][3], rows4[0][3])
+	require.NotEqual(t, rows[0][3], rows4[0][3])
 }
 
 func TestTruncateTable(t *testing.T) {
@@ -443,7 +478,8 @@ PARTITION BY RANGE (c) (
 	require.Len(t, rows1, 2)
 	require.Equal(t, "schema/test/part", rows1[0][0])
 	require.Equal(t, `"key=value"`, rows1[0][2])
-	require.Equal(t, rows[0][3], rows1[0][3])
+	// table attribute only contains three ranges now
+	require.NotEqual(t, rows[0][3], rows1[0][3])
 	require.Equal(t, "schema/test/part/p1", rows1[1][0])
 	require.Equal(t, `"key2=value2"`, rows1[1][2])
 	require.Equal(t, rows[2][3], rows1[1][3])

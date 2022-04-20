@@ -81,6 +81,7 @@ type Config struct {
 	storage.BackendOptions
 	ExtStorage storage.ExternalStorage `json:"-"`
 
+	specifiedTables          bool
 	AllowCleartextPasswords  bool
 	SortByPk                 bool
 	NoViews                  bool
@@ -122,21 +123,20 @@ type Config struct {
 	CsvDelimiter  string
 	Databases     []string
 
-	TableFilter        filter.Filter `json:"-"`
-	Where              string
-	FileType           string
-	ServerInfo         version.ServerInfo
-	Logger             *zap.Logger        `json:"-"`
-	OutputFileTemplate *template.Template `json:"-"`
-	Rows               uint64
-	ReadTimeout        time.Duration
-	TiDBMemQuotaQuery  uint64
-	FileSize           uint64
-	StatementSize      uint64
-	SessionParams      map[string]interface{}
-	Labels             prometheus.Labels `json:"-"`
-	Tables             DatabaseTables
-
+	TableFilter         filter.Filter `json:"-"`
+	Where               string
+	FileType            string
+	ServerInfo          version.ServerInfo
+	Logger              *zap.Logger        `json:"-"`
+	OutputFileTemplate  *template.Template `json:"-"`
+	Rows                uint64
+	ReadTimeout         time.Duration
+	TiDBMemQuotaQuery   uint64
+	FileSize            uint64
+	StatementSize       uint64
+	SessionParams       map[string]interface{}
+	Labels              prometheus.Labels `json:"-"`
+	Tables              DatabaseTables
 	CollationCompatible string
 }
 
@@ -182,6 +182,7 @@ func DefaultConfig() *Config {
 		OutputFileTemplate:  DefaultOutputFileTemplate,
 		PosAfterConnect:     false,
 		CollationCompatible: LooseCollationCompatible,
+		specifiedTables:     false,
 	}
 }
 
@@ -456,6 +457,12 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
+	conf.specifiedTables = len(tablesList) > 0
+	conf.Tables, err = GetConfTables(tablesList)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	conf.TableFilter, err = ParseTableFilter(tablesList, filters)
 	if err != nil {
 		return errors.Errorf("failed to parse filter: %s", err)
@@ -534,6 +541,25 @@ func ParseTableFilter(tablesList, filters []string) (filter.Filter, error) {
 	}
 
 	return filter.NewTablesFilter(tableNames...), nil
+}
+
+func GetConfTables(tablesList []string) (DatabaseTables, error) {
+	dbTables := DatabaseTables{}
+	var (
+		tablename    string
+		avgRowLength uint64
+	)
+	avgRowLength = 0
+	for _, tablename = range tablesList {
+		parts := strings.SplitN(tablename, ".", 2)
+		if len(parts) < 2 {
+			return nil, errors.Errorf("--tables-list only accepts qualified table names, but `%s` lacks a dot", tablename)
+		}
+		dbName := parts[0]
+		tbName := parts[1]
+		dbTables[dbName] = append(dbTables[dbName], &TableInfo{tbName, avgRowLength, TableTypeBase})
+	}
+	return dbTables, nil
 }
 
 // ParseCompressType parses compressType string to storage.CompressType

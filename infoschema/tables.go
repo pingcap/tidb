@@ -869,6 +869,7 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogIsWriteCacheTable, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlanFromCache, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlanFromBinding, tp: mysql.TypeTiny, size: 1},
+	{name: variable.SlowLogHasMoreResults, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogPlanDigest, tp: mysql.TypeVarchar, size: 128},
 	{name: variable.SlowLogPrevStmt, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
@@ -936,11 +937,14 @@ var tableAnalyzeStatusCols = []columnInfo{
 	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64},
 	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "PARTITION_NAME", tp: mysql.TypeVarchar, size: 64},
-	{name: "JOB_INFO", tp: mysql.TypeVarchar, size: 64},
-	{name: "PROCESSED_ROWS", tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: "JOB_INFO", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},
+	{name: "PROCESSED_ROWS", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
 	{name: "START_TIME", tp: mysql.TypeDatetime},
 	{name: "END_TIME", tp: mysql.TypeDatetime},
 	{name: "STATE", tp: mysql.TypeVarchar, size: 64},
+	{name: "FAIL_REASON", tp: mysql.TypeVarchar, size: types.UnspecifiedLength},
+	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 64},
+	{name: "PROCESS_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
 }
 
 // TableTiKVRegionStatusCols is TiKV region status mem table columns.

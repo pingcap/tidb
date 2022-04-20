@@ -199,7 +199,7 @@ func TestRollbackColumnTypeChangeBetweenInteger(t *testing.T) {
 	// Alter sql will modify column c2 to bigint not null.
 	SQL := "alter table t modify column c2 int not null"
 	err := tk.ExecToErr(SQL)
-	require.EqualError(t, err, "[ddl:1]MockRollingBackInCallBack-queueing")
+	require.EqualError(t, err, "[ddl:1]MockRollingBackInCallBack-none")
 	assertRollBackedColUnchanged(t, tk)
 
 	// Mock roll back at model.StateDeleteOnly.

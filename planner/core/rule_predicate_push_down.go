@@ -933,6 +933,9 @@ func (p *LogicalCTE) PredicatePushDown(predicates []expression.Expression, opt *
 		// Doesn't support recursive CTE yet.
 		return predicates, p.self
 	}
+	if !p.isOuterMostCTE {
+		return predicates, p.self
+	}
 	if len(predicates) == 0 {
 		p.cte.pushDownPredicates = append(p.cte.pushDownPredicates, expression.NewOne())
 		return predicates, p.self
