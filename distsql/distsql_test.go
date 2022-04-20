@@ -161,7 +161,7 @@ func TestAnalyze(t *testing.T) {
 		Build()
 	require.NoError(t, err)
 
-	response, err := Analyze(context.TODO(), sctx.GetClient(), request, tikvstore.DefaultVars, true, sctx.GetSessionVars().StmtCtx)
+	response, _, err := Analyze(context.TODO(), sctx.GetClient(), request, tikvstore.DefaultVars, true, sctx.GetSessionVars().StmtCtx)
 	require.NoError(t, err)
 
 	result, ok := response.(*selectResult)
@@ -279,6 +279,10 @@ func (resp *mockResponse) Next(context.Context) (kv.ResultSubset, error) {
 		panic(err)
 	}
 	return &mockResultSubset{respBytes}, nil
+}
+
+func (resp *mockResponse) NumOfResultSubsets() int {
+	return 0
 }
 
 // mockResultSubset implements kv.ResultSubset interface.

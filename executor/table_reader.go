@@ -446,7 +446,9 @@ type tableResultHandler struct {
 	optionalResult distsql.SelectResult
 	result         distsql.SelectResult
 
-	optionalFinished bool
+	optionalFinished      bool
+	estNumOfResultSubsets int
+	estAvgSampleCnt       int
 }
 
 func (tr *tableResultHandler) open(optionalResult, result distsql.SelectResult) {

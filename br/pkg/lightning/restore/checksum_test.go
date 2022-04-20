@@ -361,6 +361,10 @@ func (r *mockResponse) Close() error {
 	return nil
 }
 
+func (r *mockResponse) NumOfResultSubsets() int {
+	return 0
+}
+
 type mockErrorResponse struct {
 	err string
 }
@@ -371,6 +375,10 @@ func (r *mockErrorResponse) Next(ctx context.Context) (resultSubset kv.ResultSub
 
 func (r *mockErrorResponse) Close() error {
 	return nil
+}
+
+func (r *mockErrorResponse) NumOfResultSubsets() int {
+	return 0
 }
 
 type mockResultSubset struct {

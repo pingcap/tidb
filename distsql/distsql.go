@@ -160,11 +160,11 @@ func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq 
 
 // Analyze do a analyze request.
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{},
-	isRestrict bool, stmtCtx *stmtctx.StatementContext) (SelectResult, error) {
+	isRestrict bool, stmtCtx *stmtctx.StatementContext) (SelectResult, int, error) {
 	ctx = WithSQLKvExecCounterInterceptor(ctx, stmtCtx)
 	resp := client.Send(ctx, kvReq, vars, &kv.ClientSendOption{})
 	if resp == nil {
-		return nil, errors.New("client returns nil response")
+		return nil, 0, errors.New("client returns nil response")
 	}
 	label := metrics.LblGeneral
 	if isRestrict {
@@ -178,7 +178,7 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars inte
 		encodeType: tipb.EncodeType_TypeDefault,
 		storeType:  kvReq.StoreType,
 	}
-	return result, nil
+	return result, resp.NumOfResultSubsets(), nil
 }
 
 // Checksum sends a checksum request.

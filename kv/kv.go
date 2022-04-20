@@ -392,6 +392,9 @@ type Response interface {
 	Next(ctx context.Context) (resultSubset ResultSubset, err error)
 	// Close response.
 	Close() error
+	// NumOfResultSubsets returns the expected number of result subsets,
+	// sometimes the actual number is slightly larger since region split.
+	NumOfResultSubsets() int
 }
 
 // Snapshot defines the interface for the snapshot fetched from KV store.

@@ -998,3 +998,7 @@ func (b *batchCopIterator) handleCollectExecutionInfo(bo *Backoffer, resp *batch
 	}
 	resp.detail.CalleeAddress = task.storeAddr
 }
+
+func (b *batchCopIterator) NumOfResultSubsets() int {
+	return len(b.tasks)
+}

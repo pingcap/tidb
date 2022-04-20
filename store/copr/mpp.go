@@ -501,6 +501,10 @@ func (m *mppIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	return resp, nil
 }
 
+func (m *mppIterator) NumOfResultSubsets() int {
+	return 0
+}
+
 // DispatchMPPTasks dispatches all the mpp task and waits for the responses.
 func (c *MPPClient) DispatchMPPTasks(ctx context.Context, variables interface{}, dispatchReqs []*kv.MPPDispatchRequest, needTriggerFallback bool, startTs uint64) kv.Response {
 	vars := variables.(*tikv.Variables)

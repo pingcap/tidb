@@ -504,7 +504,7 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 		return err
 	}
 	ctx := context.TODO()
-	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetSessionVars().StmtCtx)
+	result, _, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
 		return err
 	}
@@ -722,8 +722,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) *statistics.AnalyzeResu
 			colExec.handleNDVForSpecialIndexes(specialIndexes, idxNDVPushDownCh)
 		})
 		defer wg.Wait()
-		count, hists, topns, fmSketches, extStats, err := colExec.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
-		runtime.GC() // force GC after stats built
+		count, hists, topns, fmSketches, extStats, err := colExec.buildSamplingStatsWithRetry(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
 		if err != nil {
 			return &statistics.AnalyzeResults{Err: err, Job: colExec.job}
 		}
@@ -849,25 +848,26 @@ func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.resultHandler = &tableResultHandler{}
 	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(ranges, true, false, !hasPkHist(e.handleCols))
-	firstResult, err := e.buildResp(firstPartRanges)
+	firstResult, numOfSubsets, err := e.buildResp(firstPartRanges)
 	if err != nil {
 		return err
 	}
+	e.resultHandler.estNumOfResultSubsets = numOfSubsets
 	if len(secondPartRanges) == 0 {
 		e.resultHandler.open(nil, firstResult)
 		return nil
 	}
 	var secondResult distsql.SelectResult
-	secondResult, err = e.buildResp(secondPartRanges)
+	secondResult, numOfSubsets, err = e.buildResp(secondPartRanges)
 	if err != nil {
 		return err
 	}
+	e.resultHandler.estNumOfResultSubsets += numOfSubsets
 	e.resultHandler.open(firstResult, secondResult)
-
 	return nil
 }
 
-func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectResult, error) {
+func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectResult, int, error) {
 	var builder distsql.RequestBuilder
 	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetSessionVars().StmtCtx, []int64{e.TableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges, nil)
 	builder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx)
@@ -881,14 +881,14 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 		SetMemTracker(e.memTracker).
 		Build()
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	ctx := context.TODO()
-	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetSessionVars().StmtCtx)
+	result, numOfSubsets, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetSessionVars().StmtCtx)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return result, nil
+	return result, numOfSubsets, nil
 }
 
 // decodeSampleDataWithVirtualColumn constructs the virtual column by evaluating from the deocded normal columns.
@@ -953,6 +953,42 @@ func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, me
 	return nil
 }
 
+func (e *AnalyzeColumnsExec) buildSamplingStatsWithRetry(
+	ranges []*ranger.Range,
+	needExtStats bool,
+	indexesWithVirtualColOffsets []int,
+	idxNDVPushDownCh chan analyzeIndexNDVTotalResult,
+) (
+	count int64,
+	hists []*statistics.Histogram,
+	topns []*statistics.TopN,
+	fmSketches []*statistics.FMSketch,
+	extStats *statistics.ExtendedStatsColl,
+	err error,
+) {
+	for i := 0; i < 2; i++ {
+		count, hists, topns, fmSketches, extStats, err = e.buildSamplingStats(ranges, needExtStats, indexesWithVirtualColOffsets, idxNDVPushDownCh)
+		runtime.GC() // force GC after stats built
+		if err != errAnalyzeWorkerPanicForMemLimit || i > 0 || e.analyzePB.ColReq == nil {
+			return
+		}
+		oldSampleRate := *e.analyzePB.ColReq.SampleRate
+		if oldSampleRate <= 0 || oldSampleRate > 1 {
+			return
+		}
+		estTotalCount := float64(e.resultHandler.estNumOfResultSubsets*e.resultHandler.estAvgSampleCnt) / oldSampleRate
+		if estTotalCount <= 0 {
+			return
+		}
+		newSampleRate := math.Min(1, 110000/estTotalCount)
+		if newSampleRate >= oldSampleRate {
+			return
+		}
+		*e.analyzePB.ColReq.SampleRate = newSampleRate
+	}
+	return
+}
+
 func (e *AnalyzeColumnsExec) buildSamplingStats(
 	ranges []*ranger.Range,
 	needExtStats bool,
@@ -999,6 +1035,8 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 	}
 
 	mergeWorkerPanicCnt := 0
+	totalSampleCnt := 0
+	validResOfSampleCnt := 0
 	for mergeWorkerPanicCnt < statsConcurrency {
 		tryGC(memToGC, e.memTracker)
 		mergeResult, ok := <-mergeResultCh
@@ -1010,6 +1048,10 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 			if mergeResult.err == errAnalyzeWorkerPanic || mergeResult.err == errAnalyzeWorkerPanicForMemLimit {
 				mergeWorkerPanicCnt++
 			}
+			if mergeResult.sampleCnt > 0 {
+				totalSampleCnt += mergeResult.sampleCnt
+				validResOfSampleCnt += 1
+			}
 			continue
 		}
 		oldRootCollectorSize := rootCollectorSize
@@ -1017,6 +1059,7 @@ func (e *AnalyzeColumnsExec) buildSamplingStats(
 		rootCollectorSize = rootRowCollector.Base().MemSize
 		memToGC.Add(oldRootCollectorSize + mergeResult.collector.Base().MemSize - rootCollectorSize)
 	}
+	e.resultHandler.estAvgSampleCnt = totalSampleCnt / validResOfSampleCnt
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
 	}
@@ -1317,6 +1360,7 @@ func (e *AnalyzeColumnsExec) buildSubIndexJobForSpecialIndex(indexInfos []*model
 type samplingMergeResult struct {
 	collector statistics.RowSampleCollector
 	err       error
+	sampleCnt int
 }
 
 func (e *AnalyzeColumnsExec) subMergeWorker(
@@ -1326,6 +1370,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 	memTracker *memory.Tracker,
 	memToGC *atomicutil.Int64) {
 	isClosedChanThread := idx == 0
+	sampleCount := 0
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
@@ -1334,7 +1379,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 			logutil.BgLogger().Error("analyze worker panicked", zap.String("stack", string(buf)))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			if str, ok := r.(string); ok && str == globalPanicAnalyzeMemoryExceed {
-				resultCh <- &samplingMergeResult{err: errAnalyzeWorkerPanicForMemLimit}
+				resultCh <- &samplingMergeResult{err: errAnalyzeWorkerPanicForMemLimit, sampleCnt: sampleCount}
 			} else {
 				resultCh <- &samplingMergeResult{err: errAnalyzeWorkerPanic}
 			}
@@ -1372,6 +1417,7 @@ func (e *AnalyzeColumnsExec) subMergeWorker(
 			resultCh <- &samplingMergeResult{err: err}
 			return
 		}
+		sampleCount = len(colResp.RowCollector.Samples)
 		colRespSize := int64(colResp.Size())
 		memTracker.Consume(colRespSize)
 		subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)

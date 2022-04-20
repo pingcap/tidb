@@ -1178,6 +1178,10 @@ func (it *copIterator) Close() error {
 	return nil
 }
 
+func (it *copIterator) NumOfResultSubsets() int {
+	return len(it.tasks)
+}
+
 // copErrorResponse returns error when calling Next()
 type copErrorResponse struct{ error }
 
@@ -1187,6 +1191,10 @@ func (it copErrorResponse) Next(ctx context.Context) (kv.ResultSubset, error) {
 
 func (it copErrorResponse) Close() error {
 	return nil
+}
+
+func (it copErrorResponse) NumOfResultSubsets() int {
+	return 0
 }
 
 // rateLimitAction an OOM Action which is used to control the token if OOM triggered. The token number should be
