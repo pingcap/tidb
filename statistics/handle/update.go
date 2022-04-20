@@ -1169,15 +1169,9 @@ var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 	statistics.Version2: sqlexec.ExecOptionAnalyzeVer2,
 }
 
-func (h *Handle) getAutoAnalyzeID() uint64 {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return util.GetAutoAnalyzeProcID(h.serverIDGetter)
-}
-
 func (h *Handle) execAutoAnalyze(statsVer int, sql string, params ...interface{}) {
 	startTime := time.Now()
-	_, _, err := h.execRestrictedSQLWithStatsVer(context.Background(), statsVer, h.getAutoAnalyzeID(), sql, params...)
+	_, _, err := h.execRestrictedSQLWithStatsVer(context.Background(), statsVer, util.GetAutoAnalyzeProcID(h.serverIDGetter), sql, params...)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
