@@ -413,6 +413,17 @@ If a table is imported when `tidb_placement_mode='IGNORE'`, and the placement po
 
 The default value for `tidb_placement_mode` is `STRICT`. The option is an enum, and in future we may add support for a `WARN` mode.
 
+#### Ambiguous and edge cases
+
+The following two policies are not identical:
+
+```sql
+CREATE PLACEMENT POLICY p1 FOLLOWER_CONSTRAINTS="[+region=us-east-1,+region=us-east-2]" FOLLOWERS=2;
+CREATE PLACEMENT POLICY p2 FOLLOWER_CONSTRAINTS="{+region=us-east-1: 1,-region=us-east-2: 1}";
+```
+
+This is because p2 explicitly requires a follower count of 1 per region, whereas p1 allows for 2 in any of the above (see "Schedule Property" above for an explanation).
+
 ### Additional Semantics
 
 #### Partitioned Tables
