@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -1537,7 +1538,12 @@ func (e *Explain) getOperatorInfo(p Plan, id string) (string, string, string, st
 	}
 	estCost := "N/A"
 	if pp, ok := p.(PhysicalPlan); ok {
-		estCost = strconv.FormatFloat(pp.Cost(), 'f', 2, 64)
+		if p.SCtx().GetSessionVars().EnableNewCostInterface {
+			planCost, _ := pp.GetPlanCost(property.RootTaskType)
+			estCost = strconv.FormatFloat(planCost, 'f', 2, 64)
+		} else {
+			estCost = strconv.FormatFloat(pp.Cost(), 'f', 2, 64)
+		}
 	}
 	var accessObject, operatorInfo string
 	if plan, ok := p.(dataAccesser); ok {

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
@@ -494,18 +495,18 @@ func TestObtainNewCollationEnabled(t *testing.T) {
 	defer clean()
 	ctx := context.Background()
 
+	// cannot retry on this err
+	permErr := &mysql.MySQLError{Number: errno.ErrAccessDenied}
 	s.mockDB.
 		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
-		WillReturnError(errors.New("mock permission deny"))
-	s.mockDB.
-		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
-		WillReturnError(errors.New("mock permission deny"))
-	s.mockDB.
-		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
-		WillReturnError(errors.New("mock permission deny"))
+		WillReturnError(permErr)
 	_, err := ObtainNewCollationEnabled(ctx, s.tiGlue.GetSQLExecutor())
-	require.Equal(t, "obtain new collation enabled failed: mock permission deny", err.Error())
+	require.Equal(t, permErr, errors.Cause(err))
 
+	// this error can retry
+	s.mockDB.
+		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
+		WillReturnError(&mysql.MySQLError{Number: errno.ErrTiKVServerBusy})
 	s.mockDB.
 		ExpectQuery("\\QSELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"variable_value"}).RowError(0, sql.ErrNoRows))

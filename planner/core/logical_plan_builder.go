@@ -2417,12 +2417,9 @@ func (r *correlatedAggregateResolver) resolveSelect(sel *ast.SelectStmt) (err er
 		}
 	}
 	// collect correlated aggregate from sub-queries inside FROM clause.
-	_, err = r.collectFromTableRefs(r.ctx, sel.From)
-	if err != nil {
+	if err := r.collectFromTableRefs(sel.From); err != nil {
 		return err
 	}
-	// we cannot use cache if there are correlated aggregates inside FROM clause,
-	// since the plan we are building now is not correct and need to be rebuild later.
 	p, err := r.b.buildTableRefs(r.ctx, sel.From)
 	if err != nil {
 		return err
@@ -2483,9 +2480,9 @@ func (r *correlatedAggregateResolver) resolveSelect(sel *ast.SelectStmt) (err er
 	return nil
 }
 
-func (r *correlatedAggregateResolver) collectFromTableRefs(ctx context.Context, from *ast.TableRefsClause) (canCache bool, err error) {
+func (r *correlatedAggregateResolver) collectFromTableRefs(from *ast.TableRefsClause) error {
 	if from == nil {
-		return true, nil
+		return nil
 	}
 	subResolver := &correlatedAggregateResolver{
 		ctx: r.ctx,
@@ -2493,13 +2490,13 @@ func (r *correlatedAggregateResolver) collectFromTableRefs(ctx context.Context, 
 	}
 	_, ok := from.TableRefs.Accept(subResolver)
 	if !ok {
-		return false, subResolver.err
+		return subResolver.err
 	}
 	if len(subResolver.correlatedAggFuncs) == 0 {
-		return true, nil
+		return nil
 	}
 	r.correlatedAggFuncs = append(r.correlatedAggFuncs, subResolver.correlatedAggFuncs...)
-	return false, nil
+	return nil
 }
 
 func (r *correlatedAggregateResolver) collectFromSelectFields(p LogicalPlan, fields []*ast.SelectField) error {
@@ -3618,9 +3615,6 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 
-	// For sub-queries, the FROM clause may have already been built in outer query when resolving correlated aggregates.
-	// If the ResultSetNode inside FROM clause has nothing to do with correlated aggregates, we can simply get the
-	// existing ResultSetNode from the cache.
 	p, err = b.buildTableRefs(ctx, sel.From)
 	if err != nil {
 		return nil, err
