@@ -188,7 +188,13 @@ func (s *rpcServer) handleCopRequest(ctx context.Context, req *coprocessor.Reque
 		resp.OtherError = err.Error()
 		return resp
 	}
-	defer se.Close()
+	defer func() {
+		sc := se.GetSessionVars().StmtCtx
+		if sc.MemTracker != nil {
+			sc.MemTracker.DetachFromGlobalTracker()
+		}
+		se.Close()
+	}()
 
 	if p, ok := peer.FromContext(ctx); ok {
 		se.GetSessionVars().SourceAddr = *p.Addr.(*net.TCPAddr)
