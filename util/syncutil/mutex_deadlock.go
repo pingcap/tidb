@@ -19,10 +19,18 @@ package syncutil
 
 import "github.com/sasha-s/go-deadlock"
 
+// Mutex is a mutual exclusion lock. The zero value for a Mutex is an unlocked mutex.
+//
+// Mutex must not be copied after first use.
 type Mutex struct {
 	deadlock.Mutex
 }
 
+// RWMutex is a reader/writer mutual exclusion lock.
+// The lock can be held by an arbitrary number of readers or a single writer.
+// The zero value for a RWMutex is an unlocked mutex.
+//
+// RWMutex must not be copied after first use.
 type RWMutex struct {
 	deadlock.RWMutex
 }
