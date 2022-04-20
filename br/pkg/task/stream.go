@@ -720,6 +720,11 @@ func RunStreamResume(
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	err = cli.CleanLastErrorOfTask(ctx, cfg.TaskName)
+	if err != nil {
+		return err
+	}
 	summary.Log(cmdName, logutil.StreamBackupTaskInfo(&ti.Info))
 	return nil
 }
