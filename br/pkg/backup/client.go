@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx"
 	"io"
 	"os"
 	"strings"
@@ -440,7 +441,7 @@ func skipUnsupportedDDLJob(job *model.Job) bool {
 }
 
 // WriteBackupDDLJobs sends the ddl jobs are done in (lastBackupTS, backupTS] to metaWriter.
-func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastBackupTS, backupTS uint64) error {
+func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, se sessionctx.Context, store kv.Storage, lastBackupTS, backupTS uint64) error {
 	snapshot := store.GetSnapshot(kv.NewVersion(backupTS))
 	snapMeta := meta.NewSnapshotMeta(snapshot)
 	lastSnapshot := store.GetSnapshot(kv.NewVersion(lastBackupTS))
@@ -450,19 +451,19 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, store kv.Storage, lastB
 		return errors.Trace(err)
 	}
 	allJobs := make([]*model.Job, 0)
-	defaultJobs, err := snapMeta.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
+	defaultJobs, err := meta.GetAllDDLJobs(se, snapMeta, meta.DefaultJobListKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	log.Debug("get default jobs", zap.Int("jobs", len(defaultJobs)))
 	allJobs = append(allJobs, defaultJobs...)
-	addIndexJobs, err := snapMeta.GetAllDDLJobsInQueue(meta.AddIndexJobListKey)
+	addIndexJobs, err := meta.GetAllDDLJobs(se, snapMeta, meta.AddIndexJobListKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	log.Debug("get add index jobs", zap.Int("jobs", len(addIndexJobs)))
 	allJobs = append(allJobs, addIndexJobs...)
-	historyJobs, err := snapMeta.GetAllHistoryDDLJobs()
+	historyJobs, err := meta.GetAllHistoryDDLJobs(se, snapMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}
