@@ -332,7 +332,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	return a.InfoSchema.SchemaMetaVersion(), nil
 }
 
-func isFastPlan(p plannercore.Plan) bool {
+func IsFastPlan(p plannercore.Plan) bool {
 	if proj, ok := p.(*plannercore.PhysicalProjection); ok {
 		p = proj.Children()[0]
 	}
@@ -1359,7 +1359,7 @@ func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Contex
 	if !topsqlstate.TopSQLEnabled() {
 		// To reduce the performance impact on fast plan.
 		// Drop them does not cause notable accuracy issue in TopSQL.
-		if isFastPlan(a.Plan) {
+		if IsFastPlan(a.Plan) {
 			return ctx
 		}
 		// Always attach the SQL and plan info uses to catch the running SQL when Top SQL is enabled in execution.
