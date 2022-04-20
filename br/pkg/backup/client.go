@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/sessionctx"
 	"io"
 	"os"
 	"strings"
@@ -31,11 +30,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/ranger"
@@ -451,19 +452,19 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, se sessionctx.Context, 
 		return errors.Trace(err)
 	}
 	allJobs := make([]*model.Job, 0)
-	defaultJobs, err := meta.GetAllDDLJobs(se, snapMeta, meta.DefaultJobListKey)
+	defaultJobs, err := ddl.GetAllDDLJobs(se, snapMeta, meta.DefaultJobListKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	log.Debug("get default jobs", zap.Int("jobs", len(defaultJobs)))
 	allJobs = append(allJobs, defaultJobs...)
-	addIndexJobs, err := meta.GetAllDDLJobs(se, snapMeta, meta.AddIndexJobListKey)
+	addIndexJobs, err := ddl.GetAllDDLJobs(se, snapMeta, meta.AddIndexJobListKey)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	log.Debug("get add index jobs", zap.Int("jobs", len(addIndexJobs)))
 	allJobs = append(allJobs, addIndexJobs...)
-	historyJobs, err := meta.GetAllHistoryDDLJobs(se, snapMeta)
+	historyJobs, err := ddl.GetAllHistoryDDLJobs(se, snapMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}

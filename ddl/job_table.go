@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strconv"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -459,4 +461,53 @@ func wrapKey2String(key []byte) string {
 		return "''"
 	}
 	return fmt.Sprintf("0x%x", key)
+}
+
+func GetAllDDLJobs(sess sessionctx.Context, m *meta.Meta, jobListKeys ...meta.JobListKeyType) ([]*model.Job, error) {
+	if variable.AllowConcurrencyDDL.Load() {
+		isReorg := "not reorg"
+		if len(jobListKeys) != 0 && bytes.Compare(jobListKeys[0], meta.AddIndexJobListKey) == 0 {
+			isReorg = "reorg"
+		}
+
+		return getJobsBySQL(sess, "tidb_ddl_job", isReorg)
+	}
+
+	return m.GetAllDDLJobsInQueue(jobListKeys...)
+}
+
+func getJobsBySQL(sess sessionctx.Context, tbl, condition string) ([]*model.Job, error) {
+	rs, err := sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), fmt.Sprintf("select job_meta from mysql.%s where %s", tbl, condition))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	var rows []chunk.Row
+	if rows, err = sqlexec.DrainRecordSet(context.Background(), rs, 8); err != nil {
+		return nil, errors.Trace(err)
+	}
+	if err = rs.Close(); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	jobs := make([]*model.Job, 0, len(rows))
+	for _, row := range rows {
+		jobBinary := row.GetBytes(0)
+		job := model.Job{}
+		err = job.Decode(jobBinary)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		jobs = append(jobs, &job)
+	}
+
+	return jobs, nil
+}
+
+func GetAllHistoryDDLJobs(sess sessionctx.Context, m *meta.Meta) ([]*model.Job, error) {
+	// no history job table now.
+	//if variable.AllowConcurrencyDDL.Load() {
+	//	return getJobsBySQL(sess, "tidb_history_job", "1")
+	//}
+
+	return m.GetAllHistoryDDLJobs()
 }
