@@ -444,6 +444,9 @@ allow-expression-index = false
 engines = ["tikv", "tiflash", "tidb"]
 
 # instance scope variables
+# These options are also available as a system variable for online configuration
+# changes to the system variable do not persist to the cluster. You must make changes
+# in this configuration file on each tidb-server.
 [instance]
 
 # tidb-general-log is used to log every query in the server in info level.
