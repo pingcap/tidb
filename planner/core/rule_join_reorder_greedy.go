@@ -15,6 +15,7 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/parser/ast"
 	"math"
 	"sort"
 
@@ -44,7 +45,6 @@ type joinReorderGreedySolver struct {
 // For the nodes and join trees which don't have a join equal condition to
 // connect them, we make a bushy join tree to do the cartesian joins finally.
 func (s *joinReorderGreedySolver) solve(joinNodePlans []*joinNode, tracer *joinReorderTrace) (LogicalPlan, error) {
-	joinNodeCount := 0
 	for _, node := range joinNodePlans {
 		_, err := node.p.recursiveDeriveStats(nil)
 		if err != nil {
@@ -52,16 +52,13 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []*joinNode, tracer *joinR
 		}
 		cost := s.baseNodeCumCost(node.p)
 		s.curJoinGroup = append(s.curJoinGroup, &jrNode{
-			id:      joinNodeCount,
 			p:       node.p,
 			cumCost: cost,
 		})
-		node.id = joinNodeCount
-		joinNodeCount++
 		tracer.appendLogicalJoinCost(node.p, cost)
 	}
 
-	s.priorityMap = s.buildPriorityMap(joinNodeCount)
+	s.priorityMap = s.buildPriorityMap()
 
 	// Sort plans by cost and join order
 	sort.SliceStable(s.curJoinGroup, func(i, j int) bool {
@@ -69,51 +66,32 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []*joinNode, tracer *joinR
 	})
 
 	var cartesianGroup []LogicalPlan
-	for len(s.curJoinGroup) > 0 {
-		newNode, err := s.constructConnectedJoinTree(tracer)
-		if err != nil {
-			return nil, err
-		}
-		cartesianGroup = append(cartesianGroup, newNode.p)
+	//for len(s.curJoinGroup) > 0 {
+	err := s.constructConnectedJoinTree(tracer)
+	if err != nil {
+		return nil, err
+	}
+	//}
+	for i, _ := range s.curJoinGroup {
+		cartesianGroup = append(cartesianGroup, s.curJoinGroup[i].p)
 	}
 
 	return s.makeBushyJoin(cartesianGroup), nil
 }
 
 // Build directed graph by driectedEdges
-func (s *joinReorderGreedySolver) buildPriorityMap(joinNodeCount int) [][]byte {
-	// 1.init graph
-	priorityMap := make([][]byte, joinNodeCount)
+func (s *joinReorderGreedySolver) buildPriorityMap() map[*expression.ScalarFunction]map[*expression.ScalarFunction]struct{} {
+	// 1.Init graph
+	priorityMap := make(map[*expression.ScalarFunction]map[*expression.ScalarFunction]struct{})
 	for _, edge := range s.directedEdges {
 		if !edge.isImplicit {
 			continue
 		}
-		nodeBitSet := priorityMap[edge.from.id]
-		if len(nodeBitSet) == 0 {
-			nodeBitSet = make([]byte, (joinNodeCount+7)>>3)
-			priorityMap[edge.from.id] = nodeBitSet
-		}
-		rightOffset := byte(1 << (7 & edge.to.id))
-		nodeBitSet[edge.to.id>>3] |= rightOffset
-	}
 
-	// todo 2.
-	for isPropagated := true; isPropagated; {
-		isPropagated = false
-		for idx, nodeBitSet := range priorityMap {
-			for k1 := range nodeBitSet {
-				for i := 0; i < 8; i++ {
-					mask := nodeBitSet[k1] & (1 << i)
-					if mask > 0 {
-						isChange := s.merge(nodeBitSet, priorityMap[k1<<3+i])
-						priorityMap[idx] = nodeBitSet
-						if isChange {
-							isPropagated = true
-						}
-					}
-				}
-			}
+		if len(priorityMap[edge.toEqCond]) == 0 {
+			priorityMap[edge.toEqCond] = make(map[*expression.ScalarFunction]struct{})
 		}
+		priorityMap[edge.toEqCond][edge.fromEqCond] = struct{}{}
 	}
 	return priorityMap
 }
@@ -132,39 +110,25 @@ func (s *joinReorderGreedySolver) merge(dest []byte, src []byte) (isChange bool)
 	return
 }
 
-func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorderTrace) (*jrNode, error) {
-	// We need the node with the least cost and is the starting node
-	// of the directGraph built using the nodes in curJoinGroup
-	startIdx := 0
-	for i := range s.curJoinGroup {
-		found := true
-		for j := range s.curJoinGroup {
-			if s.comparePriority(s.curJoinGroup[j].id, s.curJoinGroup[i].id) > 0 {
-				found = false
-			}
-		}
-		if found {
-			startIdx = i
-			break
-		}
-	}
-
-	curJoinTree := s.curJoinGroup[startIdx]
-	s.curJoinGroup = append(s.curJoinGroup[0:startIdx], s.curJoinGroup[startIdx+1:len(s.curJoinGroup)]...)
-	for {
+func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorderTrace) error {
+	curIndex := 0
+	for curIndex < len(s.curJoinGroup)-1 {
+		curJoinTree := s.curJoinGroup[curIndex]
+		s.curJoinGroup = append(s.curJoinGroup[0:curIndex], s.curJoinGroup[curIndex:]...)
 		bestCost := math.MaxFloat64
 		bestIdx := -1
 		var finalRemainOthers []expression.Expression
 		var bestJoin LogicalPlan
-		for i := range s.curJoinGroup {
+		var finalUsedEdges []*expression.ScalarFunction
+		for i := curIndex + 1; i < len(s.curJoinGroup); i++ {
 			node := s.curJoinGroup[i]
-			newJoin, remainOthers := s.checkConnectionAndMakeJoin(curJoinTree, node)
+			newJoin, remainOthers, joinedEdges := s.checkConnectionAndMakeJoin(curJoinTree, node)
 			if newJoin == nil {
 				continue
 			}
 			_, err := newJoin.recursiveDeriveStats(nil)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			curCost := s.calcJoinCumCost(newJoin, curJoinTree, node)
 			tracer.appendLogicalJoinCost(newJoin, curCost)
@@ -173,41 +137,38 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 				bestJoin = newJoin
 				bestIdx = i
 				finalRemainOthers = remainOthers
+				finalUsedEdges = joinedEdges
 			}
 		}
 		// If we could find more join node, meaning that the sub connected graph have been totally explored.
 		if bestJoin == nil {
-			break
+			curIndex++
+			continue
 		}
 		curJoinTree = &jrNode{
 			p:       bestJoin,
 			cumCost: bestCost,
 		}
 		s.curJoinGroup = append(s.curJoinGroup[:bestIdx], s.curJoinGroup[bestIdx+1:]...)
+		s.curJoinGroup = append(s.curJoinGroup[:curIndex], s.curJoinGroup[curIndex+1:]...)
+		s.insertIntoCurJoinGroup(curJoinTree)
 		s.otherConds = finalRemainOthers
-	}
-	return curJoinTree, nil
-}
-
-func (s *joinReorderGreedySolver) comparePriority(joinNodeID1, joinNodeID2 int) int {
-	if len(s.priorityMap) == 0 {
-		return 0
-	}
-	if bitmap := s.priorityMap[joinNodeID1]; len(bitmap) > 0 && bitmap[joinNodeID2>>3]&(1<<(7&joinNodeID2)) > 0 {
-		return 1
-	} else if bitmap = s.priorityMap[joinNodeID2]; len(bitmap) > 0 && bitmap[joinNodeID1>>3]&(1<<(7&joinNodeID1)) > 0 {
-		return -1
-	}
-	return 0
-}
-
-func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftNode, rightNode *jrNode) (LogicalPlan, []expression.Expression) {
-	for i := range s.curJoinGroup {
-		if s.comparePriority(s.curJoinGroup[i].id, rightNode.id) > 0 {
-			return nil, nil
+		// delete from priorityMap
+		for _, edge := range finalUsedEdges {
+			for _, edgeSet := range s.priorityMap {
+				if _, ok := edgeSet[edge]; ok {
+					curIndex = 0
+					delete(edgeSet, edge)
+				}
+			}
 		}
 	}
+	return nil
+}
+
+func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftNode, rightNode *jrNode) (LogicalPlan, []expression.Expression, []*expression.ScalarFunction) {
 	var usedEdges []*expression.ScalarFunction
+	var joinedEdges []*expression.ScalarFunction
 	leftPlan := leftNode.p
 	rightPlan := rightNode.p
 	remainOtherConds := make([]expression.Expression, len(s.otherConds))
@@ -217,17 +178,29 @@ func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftNode, rightNode
 		lCol := edge.GetArgs()[0].(*expression.Column)
 		rCol := edge.GetArgs()[1].(*expression.Column)
 		if leftPlan.Schema().Contains(lCol) && rightPlan.Schema().Contains(rCol) {
+			if len(s.priorityMap[edge]) > 0 {
+				return nil, nil, nil
+			}
 			usedEdges = append(usedEdges, edge)
+			joinedEdges = append(joinedEdges, edge)
 			joinType = s.joinTypes[idx]
 		} else if rightPlan.Schema().Contains(lCol) && leftPlan.Schema().Contains(rCol) {
-			usedEdges = append(usedEdges, edge)
+			if len(s.priorityMap[edge]) > 0 {
+				return nil, nil, nil
+			}
 			joinType = s.joinTypes[idx]
-			rightPlan, leftPlan = leftPlan, rightPlan
+			if joinType != InnerJoin {
+				rightPlan, leftPlan = leftPlan, rightPlan
+				usedEdges = append(usedEdges, edge)
+			} else {
+				newSf := expression.NewFunctionInternal(s.ctx, ast.EQ, edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
+				usedEdges = append(usedEdges, newSf)
+			}
+			joinedEdges = append(joinedEdges, edge)
 		}
-
 	}
 	if len(usedEdges) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	var otherConds []expression.Expression
 	var leftConds []expression.Expression
@@ -243,5 +216,15 @@ func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftNode, rightNode
 	remainOtherConds, otherConds = expression.FilterOutInPlace(remainOtherConds, func(expr expression.Expression) bool {
 		return expression.ExprFromSchema(expr, mergedSchema)
 	})
-	return s.newJoinWithEdges(leftPlan, rightPlan, usedEdges, otherConds, leftConds, rightConds, joinType), remainOtherConds
+	return s.newJoinWithEdges(leftPlan, rightPlan, usedEdges, otherConds, leftConds, rightConds, joinType), remainOtherConds, joinedEdges
+}
+
+func (s *joinReorderGreedySolver) insertIntoCurJoinGroup(node *jrNode) {
+	insertIdx := 0
+	for insertIdx, _ = range s.curJoinGroup {
+		if s.curJoinGroup[insertIdx].cumCost > node.cumCost {
+			break
+		}
+	}
+	s.curJoinGroup = append(s.curJoinGroup[:insertIdx], append([]*jrNode{node}, s.curJoinGroup[insertIdx:]...)...)
 }

@@ -40,7 +40,8 @@ func extractJoinGroup(p LogicalPlan) (group []*joinNode, eqEdges []*expression.S
 	}
 	if !isJoin || join.preferJoinType > uint(0) || join.StraightJoin ||
 		(join.JoinType != InnerJoin && join.JoinType != LeftOuterJoin && join.JoinType != RightOuterJoin) ||
-		((join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) && join.EqualConditions == nil) {
+		((join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) && join.EqualConditions == nil) ||
+		((join.JoinType == LeftOuterJoin || join.JoinType == RightOuterJoin) && len(join.EqualConditions) > 1) {
 		return []*joinNode{jNode}, nil, nil, directedEdges, nil
 	}
 
@@ -67,7 +68,7 @@ func extractJoinGroup(p LogicalPlan) (group []*joinNode, eqEdges []*expression.S
 				break
 			}
 		}
-		edge, ok := buildDirectedEdge(leftNode, rightNode, join.JoinType)
+		edge, ok := buildDirectedEdge(leftNode, rightNode, join.JoinType, eqCond, nil)
 		if !ok {
 			continue
 		}
@@ -110,25 +111,31 @@ func extractJoinGroup(p LogicalPlan) (group []*joinNode, eqEdges []*expression.S
 	return group, eqEdges, otherConds, directedEdges, joinTypes
 }
 
-func buildDirectedEdge(left *joinNode, right *joinNode, joinType JoinType) (directedEdge, bool) {
+func buildDirectedEdge(left *joinNode, right *joinNode, joinType JoinType, fromEqCond *expression.ScalarFunction, toEqCond *expression.ScalarFunction) (directedEdge, bool) {
 	var edge directedEdge
 	if joinType == RightOuterJoin {
 		edge = directedEdge{
-			from:     left,
-			to:       right,
-			directed: true,
+			from:       left,
+			to:         right,
+			fromEqCond: fromEqCond,
+			toEqCond:   toEqCond,
+			directed:   true,
 		}
 	} else if joinType == LeftOuterJoin {
 		edge = directedEdge{
-			from:     right,
-			to:       left,
-			directed: true,
+			from:       right,
+			to:         left,
+			fromEqCond: fromEqCond,
+			toEqCond:   toEqCond,
+			directed:   true,
 		}
 	} else if joinType == InnerJoin {
 		edge = directedEdge{
-			from:     left,
-			to:       right,
-			directed: false,
+			from:       left,
+			to:         right,
+			fromEqCond: fromEqCond,
+			toEqCond:   toEqCond,
+			directed:   false,
 		}
 	} else {
 		// todo invalid join type
@@ -165,6 +172,8 @@ func extractImplictDirectedEdges(edge1 directedEdge, edge2 directedEdge) ([]dire
 		}
 		// Construct implicit edges
 		implicitEdges = append(implicitEdges, directedEdge{
+			fromEqCond: edge1.fromEqCond,
+			toEqCond:   edge2.fromEqCond,
 			from:       endPoints[i],
 			to:         endPoints[i^1],
 			directed:   true,
@@ -203,6 +212,8 @@ type joinReOrderSolver struct {
 type directedEdge struct {
 	from       *joinNode
 	to         *joinNode
+	fromEqCond *expression.ScalarFunction
+	toEqCond   *expression.ScalarFunction
 	directed   bool
 	isImplicit bool
 }
@@ -213,7 +224,6 @@ type joinNode struct {
 }
 
 type jrNode struct {
-	id      int
 	p       LogicalPlan
 	cumCost float64
 }
@@ -309,7 +319,7 @@ type baseSingleGroupJoinOrderSolver struct {
 	curJoinGroup []*jrNode
 	otherConds   []expression.Expression
 	// A map maintain plan and plans which must join after the plan
-	priorityMap [][]byte
+	priorityMap map[*expression.ScalarFunction]map[*expression.ScalarFunction]struct{}
 }
 
 // baseNodeCumCost calculate the cumulative cost of the node in the join group.

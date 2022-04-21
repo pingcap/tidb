@@ -589,15 +589,16 @@ create table tpk1(c1 int primary key);
 insert into tpk1 values(1), (2), (3);
 explain with cte1 as (select c1 from tpk) select /*+ merge_join(dt1, dt2) */ * from tpk1 dt1 inner join cte1 dt2 inner join cte1 dt3 on dt1.c1 = dt2.c1 and dt2.c1 = dt3.c1;
 id	estRows	task	access object	operator info
-HashJoin_17	12500.00	root		inner join, equal:[eq(test.tpk.c1, test.tpk.c1)]
-├─Selection_26(Build)	8000.00	root		not(isnull(test.tpk.c1))
-│ └─CTEFullScan_27	10000.00	root	CTE:dt3	data:CTE_0
-└─MergeJoin_19(Probe)	10000.00	root		inner join, left key:test.tpk1.c1, right key:test.tpk.c1
-  ├─Sort_25(Build)	8000.00	root		test.tpk.c1
-  │ └─Selection_23	8000.00	root		not(isnull(test.tpk.c1))
-  │   └─CTEFullScan_24	10000.00	root	CTE:dt2	data:CTE_0
-  └─TableReader_21(Probe)	10000.00	root		data:TableFullScan_20
-    └─TableFullScan_20	10000.00	cop[tikv]	table:dt1	keep order:true, stats:pseudo
+Projection_18	12500.00	root		test.tpk1.c1, test.tpk.c1, test.tpk.c1
+└─HashJoin_20	12500.00	root		inner join, equal:[eq(test.tpk.c1, test.tpk.c1)]
+  ├─Selection_21(Build)	8000.00	root		not(isnull(test.tpk.c1))
+  │ └─CTEFullScan_22	10000.00	root	CTE:dt3	data:CTE_0
+  └─MergeJoin_23(Probe)	10000.00	root		inner join, left key:test.tpk1.c1, right key:test.tpk.c1
+    ├─Sort_29(Build)	8000.00	root		test.tpk.c1
+    │ └─Selection_27	8000.00	root		not(isnull(test.tpk.c1))
+    │   └─CTEFullScan_28	10000.00	root	CTE:dt2	data:CTE_0
+    └─TableReader_25(Probe)	10000.00	root		data:TableFullScan_24
+      └─TableFullScan_24	10000.00	cop[tikv]	table:dt1	keep order:true, stats:pseudo
 CTE_0	10000.00	root		Non-Recursive CTE
 └─TableReader_14(Seed Part)	10000.00	root		data:TableFullScan_13
   └─TableFullScan_13	10000.00	cop[tikv]	table:tpk	keep order:false, stats:pseudo

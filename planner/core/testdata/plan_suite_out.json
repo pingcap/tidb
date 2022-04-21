@@ -2812,7 +2812,7 @@
         "Plan": [
           "TableReader 1.25 root  data:ExchangeSender",
           "└─ExchangeSender 1.25 batchCop[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 1.25 batchCop[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#5)]",
+          "  └─HashJoin 1.25 batchCop[tiflash]  inner join, equal:[eq(Column#5, test.employee.deptid)]",
           "    ├─ExchangeReceiver(Build) 1.00 batchCop[tiflash]  ",
           "    │ └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: Broadcast",
           "    │   └─Projection 1.00 batchCop[tiflash]  Column#5",
