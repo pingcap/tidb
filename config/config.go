@@ -19,6 +19,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -798,7 +799,7 @@ var defaultConf = Config{
 		GRPCKeepAliveTimeout:  3,
 		GRPCConcurrentStreams: 1024,
 		GRPCInitialWindowSize: 2 * 1024 * 1024,
-		GRPCMaxSendMsgSize:    10 * 1024 * 1024,
+		GRPCMaxSendMsgSize:    math.MaxInt32,
 	},
 	Performance: Performance{
 		MaxMemory:             0,

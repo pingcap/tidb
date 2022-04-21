@@ -5,12 +5,12 @@ package utils
 import (
 	"context"
 	"database/sql"
-	stderrors "errors"
+	"database/sql/driver"
 	"io"
 	"net"
-	"reflect"
-	"regexp"
+	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -83,13 +83,6 @@ func MessageIsRetryableStorageError(msg string) bool {
 	return false
 }
 
-// sqlmock uses fmt.Errorf to produce expectation failures, which will cause
-// unnecessary retry if not specially handled >:(
-var stdFatalErrorsRegexp = regexp.MustCompile(
-	`^call to (?s:.*) was not expected|arguments do not match:|could not match actual sql|mock non-retryable error`,
-)
-var stdErrorType = reflect.TypeOf(stderrors.New(""))
-
 // IsRetryableError returns whether the error is transient (e.g. network
 // connection dropped) or irrecoverable (e.g. user pressing Ctrl+C). This
 // function returns `false` (irrecoverable) if `err == nil`.
@@ -110,11 +103,23 @@ func isSingleRetryableError(err error) bool {
 	switch err {
 	case nil, context.Canceled, context.DeadlineExceeded, io.EOF, sql.ErrNoRows:
 		return false
+	case mysql.ErrInvalidConn, driver.ErrBadConn:
+		return true
 	}
 
 	switch nerr := err.(type) {
 	case net.Error:
-		return nerr.Timeout()
+		if nerr.Timeout() {
+			return true
+		}
+		switch cause := nerr.(type) {
+		case *net.OpError:
+			syscallErr, ok := cause.Unwrap().(*os.SyscallError)
+			if ok {
+				return syscallErr.Err == syscall.ECONNREFUSED || syscallErr.Err == syscall.ECONNRESET
+			}
+		}
+		return false
 	case *mysql.MySQLError:
 		switch nerr.Number {
 		// ErrLockDeadlock can retry to commit while meet deadlock
@@ -130,10 +135,7 @@ func isSingleRetryableError(err error) bool {
 		case codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss:
 			return true
 		case codes.Unknown:
-			if reflect.TypeOf(err) == stdErrorType {
-				return !stdFatalErrorsRegexp.MatchString(err.Error())
-			}
-			return true
+			return false
 		default:
 			return false
 		}
