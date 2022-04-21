@@ -47,7 +47,7 @@ type UpdateExec struct {
 	tblID2table    map[int64]table.Table
 	// mergedRowData is a map for unique (Table, handle) pair.
 	// The value is cached table row
-	mergedRowData          map[int64]*kv.HandleMap
+	mergedRowData          map[int64]*kv.MemAwareHandleMap[[]types.Datum]
 	multiUpdateOnSameTable map[int64]bool
 
 	matched uint64 // a counter of matched rows during update
@@ -115,7 +115,7 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 
 func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) error {
 	if e.mergedRowData == nil {
-		e.mergedRowData = make(map[int64]*kv.HandleMap)
+		e.mergedRowData = make(map[int64]*kv.MemAwareHandleMap[[]types.Datum])
 	}
 	var mergedData []types.Datum
 	// merge updates from and into mergedRowData
@@ -136,13 +136,13 @@ func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) erro
 		flags := e.assignFlag[content.Start:content.End]
 
 		if e.mergedRowData[content.TblID] == nil {
-			e.mergedRowData[content.TblID] = kv.NewHandleMap()
+			e.mergedRowData[content.TblID] = kv.NewMemAwareHandleMap[[]types.Datum]()
 		}
 		tbl := e.tblID2table[content.TblID]
 		oldData := row[content.Start:content.End]
 		newTableData := newData[content.Start:content.End]
 		if v, ok := e.mergedRowData[content.TblID].Get(handle); ok {
-			mergedData = v.([]types.Datum)
+			mergedData = v
 			for i, flag := range flags {
 				if tbl.WritableCols()[i].IsGenerated() != mergeGenerated {
 					continue
@@ -157,7 +157,8 @@ func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) erro
 		} else {
 			mergedData = append([]types.Datum{}, newTableData...)
 		}
-		e.mergedRowData[content.TblID].Set(handle, mergedData)
+		memDelta := e.mergedRowData[content.TblID].Set(handle, mergedData, uint64(types.EstimatedMemUsage(mergedData, 1)))
+		e.memTracker.Consume(memDelta)
 	}
 	return nil
 }

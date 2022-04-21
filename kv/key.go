@@ -165,7 +165,6 @@ type Handle interface {
 
 var _ Handle = IntHandle(0)
 var _ Handle = &CommonHandle{}
-var _ Handle = PartitionHandle{}
 
 // IntHandle implement the Handle interface for int64 type handle.
 type IntHandle int64
@@ -452,7 +451,7 @@ type strHandleValue[V any] struct {
 func NewMemAwareHandleMap[V any]() *MemAwareHandleMap[V] {
 	// Initialize the two maps to avoid checking nil.
 	return &MemAwareHandleMap[V]{
-		ints: set.NewMemAwareMap[int64, V](64 + 1), // map[int64]V{},
+		ints: set.NewMemAwareMap[int64, V](64 + 1),
 		strs: set.NewMemAwareMap[string, strHandleValue[V]](16 + uint64(unsafe.Sizeof(strHandleValue[V]{}))),
 	}
 }
@@ -473,12 +472,11 @@ func (m *MemAwareHandleMap[V]) Get(h Handle) (v V, ok bool) {
 func (m *MemAwareHandleMap[V]) Set(h Handle, val V, sizeOfValue uint64) int64 {
 	if h.IsInt() {
 		return m.ints.Set(h.IntValue(), val, h.MemSize()+sizeOfValue)
-	} else {
-		return m.strs.Set(string(h.Encoded()), strHandleValue[V]{
-			h:   h,
-			val: val,
-		}, h.MemSize()+sizeOfValue)
 	}
+	return m.strs.Set(string(h.Encoded()), strHandleValue[V]{
+		h:   h,
+		val: val,
+	}, h.MemSize()+sizeOfValue)
 }
 
 // PartitionHandle combines a handle and a PartitionID, used to location a row in partitioned table.
