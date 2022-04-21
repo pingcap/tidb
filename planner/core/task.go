@@ -2056,6 +2056,7 @@ func computePartialCursorOffset(name string) int {
 func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputRows := t.count()
+	final := p
 	if cop, ok := t.(*copTask); ok {
 		// We should not push agg down across double read, since the data of second read is ordered by handle instead of index.
 		// The `extraHandleCol` is added if the double read needs to keep order. So we just use it to decided
@@ -2067,6 +2068,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 		} else {
 			copTaskType := cop.getStoreType()
 			partialAgg, finalAgg := p.newPartialAggregate(copTaskType, false)
+			final = finalAgg.(*PhysicalStreamAgg)
 			if partialAgg != nil {
 				if cop.tablePlan != nil {
 					cop.finishIndexPlan()
@@ -2096,7 +2098,7 @@ func (p *PhysicalStreamAgg) attach2Task(tasks ...task) task {
 	} else {
 		attachPlan2Task(p, t)
 	}
-	t.addCost(p.GetCost(inputRows, true))
+	t.addCost(final.GetCost(inputRows, true))
 	t.plan().SetCost(t.cost())
 	return t
 }
@@ -2294,12 +2296,12 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 		} else {
 			t = cop.convertToRootTask(p.ctx)
 			inputRows = t.count()
-			attachPlan2Task(final, t)
+			attachPlan2Task(p, t)
 		}
 	} else if _, ok := t.(*mppTask); ok {
 		return final.attach2TaskForMpp(tasks...)
 	} else {
-		attachPlan2Task(final, t)
+		attachPlan2Task(p, t)
 	}
 	// We may have 3-phase hash aggregation actually, strictly speaking, we'd better
 	// calculate cost of each phase and sum the results up, but in fact we don't have
