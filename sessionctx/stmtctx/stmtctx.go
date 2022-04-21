@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/disk"
@@ -75,6 +76,7 @@ type StatementContext struct {
 	InLoadDataStmt         bool
 	InExplainStmt          bool
 	InCreateOrAlterStmt    bool
+	InPreparedPlanBuilding bool
 	IgnoreTruncate         bool
 	IgnoreZeroInDate       bool
 	NoZeroDate             bool
@@ -238,6 +240,9 @@ type StatementContext struct {
 
 	// SysdateIsNow indicates whether sysdate() is an alias of now() in this statement
 	SysdateIsNow bool
+
+	// RCCheckTS indicates the current read-consistency read select statement will use `RCCheckTS` path.
+	RCCheckTS bool
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -262,6 +267,9 @@ type StmtHints struct {
 	HasMaxExecutionTime            bool
 	HasEnableCascadesPlannerHint   bool
 	SetVars                        map[string]string
+
+	// the original table hints
+	OriginalTableHints []*ast.TableOptimizerHint
 }
 
 // TaskMapNeedBackUp indicates that whether we need to back up taskMap during physical optimizing.

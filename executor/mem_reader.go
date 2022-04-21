@@ -180,6 +180,7 @@ type memTableReader struct {
 	buffer        allocBuf
 	pkColIDs      []int64
 	cacheTable    kv.MemBuffer
+	offsets       []int
 }
 
 type allocBuf struct {
@@ -240,18 +241,25 @@ func (m *memTableReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 		opentracing.ContextWithSpan(ctx, span1)
 	}
 	mutableRow := chunk.MutRowFromTypes(m.retFieldTypes)
+	resultRows := make([]types.Datum, len(m.columns))
+	m.offsets = make([]int, len(m.columns))
+	for i, col := range m.columns {
+		m.offsets[i] = m.colIDs[col.ID]
+	}
 	err := iterTxnMemBuffer(m.ctx, m.cacheTable, m.kvRanges, func(key, value []byte) error {
-		row, err := m.decodeRecordKeyValue(key, value)
+		var err error
+		resultRows, err = m.decodeRecordKeyValue(key, value, &resultRows)
 		if err != nil {
 			return err
 		}
 
-		mutableRow.SetDatums(row...)
+		mutableRow.SetDatums(resultRows...)
 		matched, _, err := expression.EvalBool(m.ctx, m.conditions, mutableRow.ToRow())
 		if err != nil || !matched {
 			return err
 		}
-		m.addedRows = append(m.addedRows, row)
+		m.addedRows = append(m.addedRows, resultRows)
+		resultRows = make([]types.Datum, len(m.columns))
 		return nil
 	})
 	if err != nil {
@@ -265,30 +273,29 @@ func (m *memTableReader) getMemRows(ctx context.Context) ([][]types.Datum, error
 	return m.addedRows, nil
 }
 
-func (m *memTableReader) decodeRecordKeyValue(key, value []byte) ([]types.Datum, error) {
+func (m *memTableReader) decodeRecordKeyValue(key, value []byte, resultRows *[]types.Datum) ([]types.Datum, error) {
 	handle, err := tablecodec.DecodeRowKey(key)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return m.decodeRowData(handle, value)
+	return m.decodeRowData(handle, value, resultRows)
 }
 
 // decodeRowData uses to decode row data value.
-func (m *memTableReader) decodeRowData(handle kv.Handle, value []byte) ([]types.Datum, error) {
+func (m *memTableReader) decodeRowData(handle kv.Handle, value []byte, resultRows *[]types.Datum) ([]types.Datum, error) {
 	values, err := m.getRowData(handle, value)
 	if err != nil {
 		return nil, err
 	}
-	ds := make([]types.Datum, 0, len(m.columns))
-	for _, col := range m.columns {
-		offset := m.colIDs[col.ID]
-		d, err := tablecodec.DecodeColumnValue(values[offset], &col.FieldType, m.ctx.GetSessionVars().Location())
+	for i, col := range m.columns {
+		var datum types.Datum
+		err := tablecodec.DecodeColumnValueWithDatum(values[m.offsets[i]], &col.FieldType, m.ctx.GetSessionVars().Location(), &datum)
 		if err != nil {
 			return nil, err
 		}
-		ds = append(ds, d)
+		(*resultRows)[i] = datum
 	}
-	return ds, nil
+	return *resultRows, nil
 }
 
 // getRowData decodes raw byte slice to row data.

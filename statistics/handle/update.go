@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -377,7 +376,7 @@ func needDumpStatsDelta(h *Handle, id int64, item variable.TableDelta, currentTi
 	if item.InitTime.IsZero() {
 		item.InitTime = currentTime
 	}
-	tbl, ok := h.statsCache.Load().(statsCache).tables[id]
+	tbl, ok := h.statsCache.Load().(statsCache).Get(id)
 	if !ok {
 		// No need to dump if the stats is invalid.
 		return false
@@ -573,7 +572,7 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 			if fb.Tp == statistics.PkType {
 				err = h.DumpFeedbackToKV(fb)
 			} else {
-				t, ok := h.statsCache.Load().(statsCache).tables[fb.PhysicalID]
+				t, ok := h.statsCache.Load().(statsCache).Get(fb.PhysicalID)
 				if !ok {
 					continue
 				}
@@ -737,50 +736,32 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 	}
 
 	for _, ptbl := range tables {
-		// this func lets `defer` works normally, where `Close()` should be called before any return
-		err = func() error {
-			tbl := ptbl.GetInt64(0)
-			const sql = "select table_id, hist_id, is_index, feedback from mysql.stats_feedback where table_id=%? order by hist_id, is_index"
-			rc, err := h.mu.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql, tbl)
+		tableID, histID, isIndex := ptbl.GetInt64(0), int64(-1), int64(-1)
+		for {
+			// fetch at most 100000 rows each time to avoid OOM
+			const sql = "select table_id, hist_id, is_index, feedback from mysql.stats_feedback where table_id = %? and is_index >= %? and hist_id > %? order by is_index, hist_id limit 100000"
+			rows, _, err := h.execRestrictedSQL(ctx, sql, tableID, histID, isIndex)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			defer terror.Call(rc.Close)
-			tableID, histID, isIndex := int64(-1), int64(-1), int64(-1)
-			var rows []chunk.Row
-			for {
-				req := rc.NewChunk(nil)
-				iter := chunk.NewIterator4Chunk(req)
-				err := rc.Next(context.TODO(), req)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if req.NumRows() == 0 {
-					if len(rows) > 0 {
-						if err := h.handleSingleHistogramUpdate(is, rows); err != nil {
+			if len(rows) == 0 {
+				break
+			}
+			startIdx := 0
+			for i, row := range rows {
+				if row.GetInt64(1) != histID || row.GetInt64(2) != isIndex {
+					if i > 0 {
+						if err = h.handleSingleHistogramUpdate(is, rows[startIdx:i]); err != nil {
 							return errors.Trace(err)
 						}
 					}
-					break
-				}
-				for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-					// len(rows) > 100000 limits the rows to avoid OOM
-					if row.GetInt64(0) != tableID || row.GetInt64(1) != histID || row.GetInt64(2) != isIndex || len(rows) > 100000 {
-						if len(rows) > 0 {
-							if err := h.handleSingleHistogramUpdate(is, rows); err != nil {
-								return errors.Trace(err)
-							}
-						}
-						tableID, histID, isIndex = row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
-						rows = rows[:0]
-					}
-					rows = append(rows, row)
+					histID, isIndex = row.GetInt64(1), row.GetInt64(2)
+					startIdx = i
 				}
 			}
-			return nil
-		}()
-		if err != nil {
-			return err
+			if err = h.handleSingleHistogramUpdate(is, rows[startIdx:]); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil
@@ -1190,7 +1171,7 @@ var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 
 func (h *Handle) execAutoAnalyze(statsVer int, sql string, params ...interface{}) {
 	startTime := time.Now()
-	_, _, err := h.execRestrictedSQLWithStatsVer(context.Background(), statsVer, util.GetAutoAnalyzeProcID(), sql, params...)
+	_, _, err := h.execRestrictedSQLWithStatsVer(context.Background(), statsVer, util.GetAutoAnalyzeProcID(h.serverIDGetter), sql, params...)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
@@ -1305,7 +1286,7 @@ func logForIndex(prefix string, t *statistics.Table, idx *statistics.Index, rang
 }
 
 func (h *Handle) logDetailedInfo(q *statistics.QueryFeedback) {
-	t, ok := h.statsCache.Load().(statsCache).tables[q.PhysicalID]
+	t, ok := h.statsCache.Load().(statsCache).Get(q.PhysicalID)
 	if !ok {
 		return
 	}
@@ -1346,7 +1327,7 @@ func logForPK(prefix string, c *statistics.Column, ranges []*ranger.Range, actua
 
 // RecalculateExpectCount recalculates the expect row count if the origin row count is estimated by pseudo. Deprecated.
 func (h *Handle) RecalculateExpectCount(q *statistics.QueryFeedback) error {
-	t, ok := h.statsCache.Load().(statsCache).tables[q.PhysicalID]
+	t, ok := h.statsCache.Load().(statsCache).Get(q.PhysicalID)
 	if !ok {
 		return nil
 	}

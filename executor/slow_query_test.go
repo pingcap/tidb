@@ -39,7 +39,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bufio.Reader, logNum int) ([][]types.Datum, error) {
+func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datum, error) {
 	retriever.taskList = make(chan slowLogTask, 100)
 	ctx := context.Background()
 	retriever.parseSlowLog(ctx, sctx, reader, 64)
@@ -55,7 +55,7 @@ func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bu
 }
 
 func newSlowQueryRetriever() (*slowQueryRetriever, error) {
-	newISBuilder, err := infoschema.NewBuilder(nil, nil).InitWithDBInfos(nil, nil, nil, 0)
+	newISBuilder, err := infoschema.NewBuilder(nil, nil).InitWithDBInfos(nil, nil, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -67,14 +67,14 @@ func newSlowQueryRetriever() (*slowQueryRetriever, error) {
 	return &slowQueryRetriever{outputCols: tbl.Meta().Columns}, nil
 }
 
-func parseSlowLog(sctx sessionctx.Context, reader *bufio.Reader, logNum int) ([][]types.Datum, error) {
+func parseSlowLog(sctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datum, error) {
 	retriever, err := newSlowQueryRetriever()
 	if err != nil {
 		return nil, err
 	}
 	// Ignore the error is ok for test.
 	terror.Log(retriever.initialize(context.Background(), sctx))
-	rows, err := parseLog(retriever, sctx, reader, logNum)
+	rows, err := parseLog(retriever, sctx, reader)
 	return rows, err
 }
 
@@ -108,7 +108,7 @@ select * from t;`
 	require.NoError(t, err)
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().TimeZone = loc
-	_, err = parseSlowLog(sctx, reader, 64)
+	_, err = parseSlowLog(sctx, reader)
 	require.Error(t, err)
 	require.Equal(t, err.Error(), "panic test")
 }
@@ -145,7 +145,7 @@ select * from t;`
 	require.NoError(t, err)
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().TimeZone = loc
-	rows, err := parseSlowLog(ctx, reader, 64)
+	rows, err := parseSlowLog(ctx, reader)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	recordString := ""
@@ -162,13 +162,13 @@ select * from t;`
 		`0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,10,10,10,10,100,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,` +
 		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,0,0,0,0,` +
 		`Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2 Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2 Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2,` +
-		`0,0,1,0,1,1,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
+		`0,0,1,0,1,1,0,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
 		`update t set i = 1;,select * from t;`
 	require.Equal(t, expectRecordString, recordString)
 
 	// Issue 20928
 	reader = bufio.NewReader(bytes.NewBufferString(slowLogStr))
-	rows, err = parseSlowLog(ctx, reader, 1)
+	rows, err = parseSlowLog(ctx, reader)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	recordString = ""
@@ -185,7 +185,7 @@ select * from t;`
 		`0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,10,10,10,10,100,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,` +
 		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,0,0,0,0,` +
 		`Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2 Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2 Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2,` +
-		`0,0,1,0,1,1,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
+		`0,0,1,0,1,1,0,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
 		`update t set i = 1;,select * from t;`
 	require.Equal(t, expectRecordString, recordString)
 
@@ -204,7 +204,7 @@ select a# from t;
 select * from t;
 `)
 	reader = bufio.NewReader(slowLog)
-	_, err = parseSlowLog(ctx, reader, 64)
+	_, err = parseSlowLog(ctx, reader)
 	require.NoError(t, err)
 
 	// test for time format compatibility.
@@ -215,7 +215,7 @@ select * from t;
 select * from t;
 `)
 	reader = bufio.NewReader(slowLog)
-	rows, err = parseSlowLog(ctx, reader, 64)
+	rows, err = parseSlowLog(ctx, reader)
 	require.NoError(t, err)
 	require.Len(t, rows, 2)
 	t0Str, err := rows[0][0].ToString()
@@ -232,7 +232,7 @@ select * from t;
 select * from t;
 `)
 	reader = bufio.NewReader(slowLog)
-	_, err = parseSlowLog(ctx, reader, 64)
+	_, err = parseSlowLog(ctx, reader)
 	require.NoError(t, err)
 	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 	require.Len(t, warnings, 1)
@@ -256,13 +256,13 @@ select * from t;
 	sql := strings.Repeat("x", int(variable.MaxOfMaxAllowedPacket+1))
 	slowLog.WriteString(sql)
 	reader := bufio.NewReader(slowLog)
-	_, err = parseSlowLog(ctx, reader, 64)
+	_, err = parseSlowLog(ctx, reader)
 	require.Error(t, err)
 	require.EqualError(t, err, "single line length exceeds limit: 65536")
 
 	variable.MaxOfMaxAllowedPacket = originValue
 	reader = bufio.NewReader(slowLog)
-	_, err = parseSlowLog(ctx, reader, 64)
+	_, err = parseSlowLog(ctx, reader)
 	require.NoError(t, err)
 }
 
@@ -313,7 +313,7 @@ select * from t;`)
 	require.NoError(t, err)
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().TimeZone = loc
-	_, err = parseSlowLog(ctx, scanner, 64)
+	_, err = parseSlowLog(ctx, scanner)
 	require.NoError(t, err)
 
 	// Test parser error.
@@ -323,7 +323,7 @@ select * from t;`)
 select * from t;
 `)
 	scanner = bufio.NewReader(slowLog)
-	_, err = parseSlowLog(ctx, scanner, 64)
+	_, err = parseSlowLog(ctx, scanner)
 	require.NoError(t, err)
 	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 	require.Len(t, warnings, 1)
@@ -469,7 +469,7 @@ select 7;`
 		require.Equal(t, len(retriever.files), len(cas.files), comment)
 		if len(retriever.files) > 0 {
 			reader := bufio.NewReader(retriever.files[0].file)
-			rows, err := parseLog(retriever, sctx, reader, 64)
+			rows, err := parseLog(retriever, sctx, reader)
 			require.NoError(t, err)
 			require.Equal(t, len(rows), len(cas.querys), comment)
 			for i, row := range rows {

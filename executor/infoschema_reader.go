@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
@@ -82,6 +81,7 @@ type memtableRetriever struct {
 	rowIdx      int
 	retrieved   bool
 	initialized bool
+	extractor   plannercore.MemTablePredicateExtractor
 }
 
 // retrieve implements the infoschemaRetriever interface
@@ -115,7 +115,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableClusterInfo:
 			err = e.dataForTiDBClusterInfo(sctx)
 		case infoschema.TableAnalyzeStatus:
-			e.setDataForAnalyzeStatus(sctx)
+			err = e.setDataForAnalyzeStatus(sctx)
 		case infoschema.TableTiDBIndexes:
 			e.setDataFromIndexes(sctx, dbs)
 		case infoschema.TableViews:
@@ -1482,7 +1482,7 @@ func keyColumnUsageInTable(schema *model.DBInfo, table *model.TableInfo) [][]typ
 	return rows
 }
 
-func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) error {
+func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) (err error) {
 	tikvStore, ok := ctx.GetStore().(helper.Storage)
 	if !ok {
 		return errors.New("Information about TiKV region status can be gotten only when the storage is TiKV")
@@ -1491,22 +1491,60 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx sessionctx.Context) e
 		Store:       tikvStore,
 		RegionCache: tikvStore.GetRegionCache(),
 	}
-	regionsInfo, err := tikvHelper.GetRegionsInfo()
-	if err != nil {
-		return err
+	requestByTableRange := false
+	allRegionsInfo := helper.NewRegionsInfo()
+	if e.extractor != nil {
+		extractor, ok := e.extractor.(*plannercore.TiKVRegionStatusExtractor)
+		if ok && len(extractor.GetTablesID()) > 0 {
+			for _, tableID := range extractor.GetTablesID() {
+				regionsInfo, err := e.getRegionsInfoForSingleTable(tikvHelper, tableID)
+				if err != nil {
+					return err
+				}
+				allRegionsInfo = allRegionsInfo.Merge(regionsInfo)
+			}
+			requestByTableRange = true
+		}
+	}
+	if !requestByTableRange {
+		allRegionsInfo, err = tikvHelper.GetRegionsInfo()
+		if err != nil {
+			return err
+		}
 	}
 	allSchemas := ctx.GetInfoSchema().(infoschema.InfoSchema).AllSchemas()
-	tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, allSchemas)
-	for i := range regionsInfo.Regions {
-		tableList := tableInfos[regionsInfo.Regions[i].ID]
+	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, allSchemas)
+	for i := range allRegionsInfo.Regions {
+		tableList := tableInfos[allRegionsInfo.Regions[i].ID]
 		if len(tableList) == 0 {
-			e.setNewTiKVRegionStatusCol(&regionsInfo.Regions[i], nil)
+			e.setNewTiKVRegionStatusCol(&allRegionsInfo.Regions[i], nil)
 		}
 		for j := range tableList {
-			e.setNewTiKVRegionStatusCol(&regionsInfo.Regions[i], &tableList[j])
+			e.setNewTiKVRegionStatusCol(&allRegionsInfo.Regions[i], &tableList[j])
 		}
 	}
 	return nil
+}
+
+func (e *memtableRetriever) getRegionsInfoForSingleTable(helper *helper.Helper, tableID int64) (*helper.RegionsInfo, error) {
+	sk, ek := tablecodec.GetTableHandleKeyRange(tableID)
+	sRegion, err := helper.GetRegionByKey(codec.EncodeBytes(nil, sk))
+	if err != nil {
+		return nil, err
+	}
+	eRegion, err := helper.GetRegionByKey(codec.EncodeBytes(nil, ek))
+	if err != nil {
+		return nil, err
+	}
+	sk, err = hex.DecodeString(sRegion.StartKey)
+	if err != nil {
+		return nil, err
+	}
+	ek, err = hex.DecodeString(eRegion.EndKey)
+	if err != nil {
+		return nil, err
+	}
+	return helper.GetRegionsInfoByRange(sk, ek)
 }
 
 func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *helper.RegionInfo, table *helper.TableInfo) {
@@ -1640,6 +1678,18 @@ func (e *memtableRetriever) setDataFromTableConstraints(ctx sessionctx.Context, 
 					schema.Name.O,         // TABLE_SCHEMA
 					tbl.Name.O,            // TABLE_NAME
 					ctype,                 // CONSTRAINT_TYPE
+				)
+				rows = append(rows, record)
+			}
+			//  TiDB includes foreign key information for compatibility but foreign keys are not yet enforced.
+			for _, fk := range tbl.ForeignKeys {
+				record := types.MakeDatums(
+					infoschema.CatalogVal,     // CONSTRAINT_CATALOG
+					schema.Name.O,             // CONSTRAINT_SCHEMA
+					fk.Name.O,                 // CONSTRAINT_NAME
+					schema.Name.O,             // TABLE_SCHEMA
+					tbl.Name.O,                // TABLE_NAME
+					infoschema.ForeignKeyType, // CONSTRAINT_TYPE
 				)
 				rows = append(rows, record)
 			}
@@ -1812,41 +1862,70 @@ func (e *memtableRetriever) setDataFromSessionVar(ctx sessionctx.Context) error 
 }
 
 // dataForAnalyzeStatusHelper is a helper function which can be used in show_stats.go
-func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum) {
+func dataForAnalyzeStatusHelper(sctx sessionctx.Context) (rows [][]types.Datum, err error) {
+	const maxAnalyzeJobs = 30
+	const sql = "SELECT table_schema, table_name, partition_name, job_info, processed_rows, CONVERT_TZ(start_time, @@TIME_ZONE, '+00:00'), CONVERT_TZ(end_time, @@TIME_ZONE, '+00:00'), state, fail_reason, instance, process_id FROM mysql.analyze_jobs ORDER BY update_time DESC LIMIT %?"
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	chunkRows, _, err := exec.ExecRestrictedSQL(context.TODO(), nil, sql, maxAnalyzeJobs)
+	if err != nil {
+		return nil, err
+	}
 	checker := privilege.GetPrivilegeManager(sctx)
-	for _, job := range statistics.GetAllAnalyzeJobs() {
-		job.Lock()
+	for _, chunkRow := range chunkRows {
+		dbName := chunkRow.GetString(0)
+		tableName := chunkRow.GetString(1)
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, dbName, tableName, "", mysql.AllPrivMask) {
+			continue
+		}
+		partitionName := chunkRow.GetString(2)
+		jobInfo := chunkRow.GetString(3)
+		processedRows := chunkRow.GetInt64(4)
 		var startTime, endTime interface{}
-		if job.StartTime.IsZero() {
-			startTime = nil
-		} else {
-			startTime = types.NewTime(types.FromGoTime(job.StartTime), mysql.TypeDatetime, 0)
+		if !chunkRow.IsNull(5) {
+			t, err := chunkRow.GetTime(5).GoTime(time.UTC)
+			if err != nil {
+				return nil, err
+			}
+			startTime = types.NewTime(types.FromGoTime(t.In(sctx.GetSessionVars().TimeZone)), mysql.TypeDatetime, 0)
 		}
-		if job.EndTime.IsZero() {
-			endTime = nil
-		} else {
-			endTime = types.NewTime(types.FromGoTime(job.EndTime), mysql.TypeDatetime, 0)
+		if !chunkRow.IsNull(6) {
+			t, err := chunkRow.GetTime(6).GoTime(time.UTC)
+			if err != nil {
+				return nil, err
+			}
+			endTime = types.NewTime(types.FromGoTime(t.In(sctx.GetSessionVars().TimeZone)), mysql.TypeDatetime, 0)
 		}
-		if checker == nil || checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, job.DBName, job.TableName, "", mysql.AllPrivMask) {
-			rows = append(rows, types.MakeDatums(
-				job.DBName,        // TABLE_SCHEMA
-				job.TableName,     // TABLE_NAME
-				job.PartitionName, // PARTITION_NAME
-				job.JobInfo,       // JOB_INFO
-				job.RowCount,      // ROW_COUNT
-				startTime,         // START_TIME
-				endTime,           // END_TIME
-				job.State,         // STATE
-			))
+		state := chunkRow.GetEnum(7).String()
+		var failReason interface{}
+		if !chunkRow.IsNull(8) {
+			failReason = chunkRow.GetString(8)
 		}
-		job.Unlock()
+		instance := chunkRow.GetString(9)
+		var procID interface{}
+		if !chunkRow.IsNull(10) {
+			procID = chunkRow.GetUint64(10)
+		}
+		rows = append(rows, types.MakeDatums(
+			dbName,        // TABLE_SCHEMA
+			tableName,     // TABLE_NAME
+			partitionName, // PARTITION_NAME
+			jobInfo,       // JOB_INFO
+			processedRows, // ROW_COUNT
+			startTime,     // START_TIME
+			endTime,       // END_TIME
+			state,         // STATE
+			failReason,    // FAIL_REASON
+			instance,      // INSTANCE
+			procID,        // PROCESS_ID
+		))
 	}
 	return
 }
 
 // setDataForAnalyzeStatus gets all the analyze jobs.
-func (e *memtableRetriever) setDataForAnalyzeStatus(sctx sessionctx.Context) {
-	e.rows = dataForAnalyzeStatusHelper(sctx)
+func (e *memtableRetriever) setDataForAnalyzeStatus(sctx sessionctx.Context) (err error) {
+	e.rows, err = dataForAnalyzeStatusHelper(sctx)
+	return
 }
 
 // setDataForPseudoProfiling returns pseudo data for table profiling when system variable `profiling` is set to `ON`.

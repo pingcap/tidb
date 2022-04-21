@@ -34,6 +34,14 @@ type TaskViewMeta struct {
 	CreateViewSQL  string
 }
 
+// TaskSequenceMeta is a dumping sequence metadata task
+type TaskSequenceMeta struct {
+	Task
+	DatabaseName      string
+	SequenceName      string
+	CreateSequenceSQL string
+}
+
 // TaskPolicyMeta is a dumping view metadata task
 type TaskPolicyMeta struct {
 	Task
@@ -77,6 +85,15 @@ func NewTaskViewMeta(dbName, tblName, createTableSQL, createViewSQL string) *Tas
 	}
 }
 
+// NewTaskSequenceMeta returns a new dumping sequence metadata task
+func NewTaskSequenceMeta(dbName, tblName, createSequenceSQL string) *TaskSequenceMeta {
+	return &TaskSequenceMeta{
+		DatabaseName:      dbName,
+		SequenceName:      tblName,
+		CreateSequenceSQL: createSequenceSQL,
+	}
+}
+
 // NewTaskPolicyMeta returns a new dumping placement policy metadata task
 func NewTaskPolicyMeta(policyName, createPolicySQL string) *TaskPolicyMeta {
 	return &TaskPolicyMeta{
@@ -108,6 +125,11 @@ func (t *TaskTableMeta) Brief() string {
 // Brief implements task.Brief
 func (t *TaskViewMeta) Brief() string {
 	return fmt.Sprintf("meta of view '%s'.'%s'", t.DatabaseName, t.ViewName)
+}
+
+// Brief implements task.Brief
+func (t *TaskSequenceMeta) Brief() string {
+	return fmt.Sprintf("meta of sequence '%s'.'%s'", t.DatabaseName, t.SequenceName)
 }
 
 // Brief implements task.Brief

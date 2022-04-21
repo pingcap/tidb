@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
@@ -65,11 +64,24 @@ func (c *MPPClient) selectAllTiFlashStore() []kv.MPPTaskMeta {
 func (c *MPPClient) ConstructMPPTasks(ctx context.Context, req *kv.MPPBuildTasksRequest, mppStoreLastFailTime map[string]time.Time, ttl time.Duration) ([]kv.MPPTaskMeta, error) {
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTS)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
-	if req.KeyRanges == nil {
-		return c.selectAllTiFlashStore(), nil
+	var tasks []*batchCopTask
+	var err error
+	if req.PartitionIDAndRanges != nil {
+		rangesForEachPartition := make([]*KeyRanges, len(req.PartitionIDAndRanges))
+		partitionIDs := make([]int64, len(req.PartitionIDAndRanges))
+		for i, p := range req.PartitionIDAndRanges {
+			rangesForEachPartition[i] = NewKeyRanges(p.KeyRanges)
+			partitionIDs[i] = p.ID
+		}
+		tasks, err = buildBatchCopTasksForPartitionedTable(bo, c.store, rangesForEachPartition, kv.TiFlash, mppStoreLastFailTime, ttl, true, 20, partitionIDs)
+	} else {
+		if req.KeyRanges == nil {
+			return c.selectAllTiFlashStore(), nil
+		}
+		ranges := NewKeyRanges(req.KeyRanges)
+		tasks, err = buildBatchCopTasksForNonPartitionedTable(bo, c.store, ranges, kv.TiFlash, mppStoreLastFailTime, ttl, true, 20)
 	}
-	ranges := NewKeyRanges(req.KeyRanges)
-	tasks, err := buildBatchCopTasks(bo, c.store, ranges, kv.TiFlash, mppStoreLastFailTime, ttl, true, 20)
+
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -200,14 +212,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	originalTask, ok := req.Meta.(*batchCopTask)
 	if ok {
 		for _, ri := range originalTask.regionInfos {
-			regionInfos = append(regionInfos, &coprocessor.RegionInfo{
-				RegionId: ri.Region.GetID(),
-				RegionEpoch: &metapb.RegionEpoch{
-					ConfVer: ri.Region.GetConfVer(),
-					Version: ri.Region.GetVer(),
-				},
-				Ranges: ri.Ranges.ToPBRanges(),
-			})
+			regionInfos = append(regionInfos, ri.toCoprocessorRegionInfo())
 		}
 	}
 
@@ -221,6 +226,12 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		Timeout:   60,
 		SchemaVer: req.SchemaVar,
 		Regions:   regionInfos,
+	}
+	if originalTask != nil {
+		mppReq.TableRegions = originalTask.PartitionTableRegions
+		if mppReq.TableRegions != nil {
+			mppReq.Regions = nil
+		}
 	}
 
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPTask, mppReq, kvrpcpb.Context{})

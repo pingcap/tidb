@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -105,7 +106,7 @@ func (h *Handle) genHistMissingColumns(neededColumns []model.TableColumnID) []mo
 	statsCache := h.statsCache.Load().(statsCache)
 	missingColumns := make([]model.TableColumnID, 0, len(neededColumns))
 	for _, col := range neededColumns {
-		tbl, ok := statsCache.tables[col.TableID]
+		tbl, ok := statsCache.Get(col.TableID)
 		if !ok {
 			continue
 		}
@@ -136,7 +137,7 @@ type StatsReaderContext struct {
 }
 
 // SubLoadWorker loads hist data for each column
-func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitWg *sync.WaitGroup) {
+func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitWg *util.WaitGroupWrapper) {
 	readerCtx := &StatsReaderContext{}
 	defer func() {
 		exitWg.Done()
@@ -190,7 +191,7 @@ func (h *Handle) HandleOneTask(lastTask *NeededColumnTask, readerCtx *StatsReade
 	}
 	col := task.TableColumnID
 	oldCache := h.statsCache.Load().(statsCache)
-	tbl, ok := oldCache.tables[col.TableID]
+	tbl, ok := oldCache.Get(col.TableID)
 	if !ok {
 		h.writeToResultChan(task.ResultCh, col)
 		return nil, nil
@@ -370,7 +371,7 @@ func (h *Handle) updateCachedColumn(col model.TableColumnID, colHist *statistics
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	oldCache := h.statsCache.Load().(statsCache)
-	tbl, ok := oldCache.tables[col.TableID]
+	tbl, ok := oldCache.Get(col.TableID)
 	if !ok {
 		return true
 	}

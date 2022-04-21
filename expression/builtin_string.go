@@ -679,9 +679,6 @@ func (b *builtinRepeatSig) evalString(row chunk.Row) (d string, isNull bool, err
 		return "", true, handleAllowedPacketOverflowed(b.ctx, "repeat", b.maxAllowedPacket)
 	}
 
-	if int64(byteLength) > int64(b.tp.Flen)/num {
-		return "", true, nil
-	}
 	return strings.Repeat(str, int(num)), false, nil
 }
 

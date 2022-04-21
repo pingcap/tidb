@@ -701,6 +701,7 @@ func TestOnlyFullGroupBy(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
+	tk.MustExec("set @@session.tidb_enable_new_only_full_group_by_check = 'on';")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int not null primary key, b int not null, c int default null, d int not null, unique key I_b_c (b,c), unique key I_b_d (b,d))")
 	tk.MustExec("create table x(a int not null primary key, b int not null, c int default null, d int not null, unique key I_b_c (b,c), unique key I_b_d (b,d))")
@@ -742,16 +743,22 @@ func TestOnlyFullGroupBy(t *testing.T) {
 	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrMixOfGroupFuncAndFields), "err %v", err)
 	err = tk.ExecToErr("select count(b), c from t")
 	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrMixOfGroupFuncAndFields), "err %v", err)
+	tk.MustQuery("select count(b), any_value(c) from t")
+	tk.MustQuery("select count(b), any_value(c) + 2 from t")
 	err = tk.ExecToErr("select distinct a, b, count(a) from t")
 	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrMixOfGroupFuncAndFields), "err %v", err)
 	// test compatible with sql_mode = ONLY_FULL_GROUP_BY
 	tk.MustQuery("select a from t group by a,b,c")
 	tk.MustQuery("select b from t group by b")
+	err = tk.ExecToErr("select b*rand() from t group by b")
+	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), "err %v", err)
 	tk.MustQuery("select b as e from t group by b")
 	tk.MustQuery("select b+c from t group by b+c")
 	tk.MustQuery("select b+c, min(a) from t group by b+c, b-c")
 	tk.MustQuery("select b+c, min(a) from t group by b, c")
 	tk.MustQuery("select b+c from t group by b,c")
+	err = tk.ExecToErr("select b+c from (select b, b+rand() as c from t) t group by b")
+	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), "err %v", err)
 	tk.MustQuery("select b between c and d from t group by b,c,d")
 	tk.MustQuery("select case b when 1 then c when 2 then d else d end from t group by b,c,d")
 	tk.MustQuery("select c > (select b from t) from t group by c")
@@ -779,8 +786,7 @@ func TestOnlyFullGroupBy(t *testing.T) {
 	tk.MustQuery("select t.*, x.* from t, x where t.b = x.b and t.d = x.d group by t.b, t.d")
 	tk.MustQuery("select t.*, x.* from t, x where t.b = x.a group by t.b, t.d")
 	tk.MustQuery("select t.b, x.* from t, x where t.b = x.a group by t.b")
-	err = tk.ExecToErr("select t.*, x.* from t, x where t.c = x.a group by t.b, t.c")
-	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), "err %v", err)
+	tk.MustQuery("select t.*, x.* from t, x where t.c = x.a group by t.b, t.c")
 	// test functional dependency derived from keys in join
 	tk.MustQuery("select t.*, x.* from t inner join x on t.a = x.a group by t.a")
 	tk.MustQuery("select t.*, x.* from t inner join x  on (t.b = x.b and t.d = x.d) group by t.b, x.d")
@@ -794,11 +800,10 @@ func TestOnlyFullGroupBy(t *testing.T) {
 	err = tk.ExecToErr("select t.b, x.* from t right join x on t.b = x.b group by t.b, x.d")
 	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), "err %v", err)
 
-	// FixMe: test functional dependency of derived table
-	// tk.MustQuery("select * from (select * from t) as e group by a")
-	// tk.MustQuery("select * from (select * from t) as e group by b,d")
-	// err = tk.ExecToErr("select * from (select * from t) as e group by b,c")
-	// c.Assert(terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), IsTrue)
+	tk.MustQuery("select * from (select * from t) as e group by a")
+	tk.MustQuery("select * from (select * from t) as e group by b,d")
+	err = tk.ExecToErr("select * from (select * from t) as e group by b,c")
+	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), "err %v", err)
 
 	// test order by
 	tk.MustQuery("select c from t group by c,d order by d")
@@ -925,18 +930,6 @@ func TestHaving(t *testing.T) {
 	tk.MustQuery("select sum(c1) as s from t group by c1 having sum(c1) order by s").Check(testkit.Rows("1", "2", "3"))
 	tk.MustQuery("select sum(c1) - 1 as s from t group by c1 having sum(c1) - 1 order by s").Check(testkit.Rows("1", "2"))
 	tk.MustQuery("select 1 from t group by c1 having sum(abs(c2 + c3)) = c1").Check(testkit.Rows("1"))
-}
-
-func TestIssue26496(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
-	defer clean()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("drop table if exists UK_NSPRE_19416")
-	tk.MustExec("CREATE TABLE `UK_NSPRE_19416` (  `COL1` binary(20) DEFAULT NULL,  `COL2` varchar(20) DEFAULT NULL,  `COL4` datetime DEFAULT NULL,  `COL3` bigint(20) DEFAULT NULL,  `COL5` float DEFAULT NULL,  UNIQUE KEY `UK_COL1` (`COL1`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
-	tk.MustExec("insert into `UK_NSPRE_19416`(col1) values (0xc5b428e2ebc1b78f0b183899a8df55c88a333f86), (0x004dad637b37cc4a9742484ab93f97ede2ab8bd5), (0x550c4a4390ba14fd6d382dd29063e10210c99381)")
-	tk.MustQuery("select t1.col1, count(t2.col1) from UK_NSPRE_19416 as t1 left join UK_NSPRE_19416 as t2 on t1.col1 = t2.col1 where t1.col1 in (0x550C4A4390BA14FD6D382DD29063E10210C99381, 0x004DAD637B37CC4A9742484AB93F97EDE2AB8BD5, 0xC5B428E2EBC1B78F0B183899A8DF55C88A333F86) group by t1.col1, t2.col1 having t1.col1 in (0x9B4B48FEBA9225BACF8F9ADEAEE810AEC26DC7A2, 0x25A6C4FAD832F8E0267AAA504CFAE767565C8B84, 0xE26E5B0080EC5A8156DACE67D13B239500E540E6)").Check(nil)
 }
 
 func TestAggEliminator(t *testing.T) {

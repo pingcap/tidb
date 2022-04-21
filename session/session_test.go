@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
@@ -65,10 +64,10 @@ import (
 	newTestkit "github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"github.com/pingcap/tidb/util/testutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
@@ -643,7 +642,11 @@ func testTxnLazyInitialize(s *testSessionSuite, c *C, isPessimistic bool) {
 
 func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	varName := "max_allowed_packet"
-	varValue := "67108864" // This is the default value for max_allowed_packet
+	varValue := strconv.FormatUint(variable.DefMaxAllowedPacket, 10) // This is the default value for max_allowed_packet
+
+	// The value of max_allowed_packet should be a multiple of 1024,
+	// so the setting of varValue1 and varValue2 would be truncated to varValue0
+	varValue0 := "4194304"
 	varValue1 := "4194305"
 	varValue2 := "4194306"
 
@@ -661,25 +664,25 @@ func (s *testSessionSuite) TestGlobalVarAccessor(c *C) {
 	c.Assert(err, IsNil)
 	v, err = se.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, varValue1)
+	c.Assert(v, Equals, varValue0)
 	c.Assert(tk.Se.CommitTxn(context.TODO()), IsNil)
 
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	se1 := tk1.Se.(variable.GlobalVarAccessor)
 	v, err = se1.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, varValue1)
+	c.Assert(v, Equals, varValue0)
 	err = se1.SetGlobalSysVar(varName, varValue2)
 	c.Assert(err, IsNil)
 	v, err = se1.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, varValue2)
+	c.Assert(v, Equals, varValue0)
 	c.Assert(tk1.Se.CommitTxn(context.TODO()), IsNil)
 
 	// Make sure the change is visible to any client that accesses that global variable.
 	v, err = se.GetGlobalSysVar(varName)
 	c.Assert(err, IsNil)
-	c.Assert(v, Equals, varValue2)
+	c.Assert(v, Equals, varValue0)
 
 	// For issue 10955, make sure the new session load `max_execution_time` into sessionVars.
 	tk1.MustExec("set @@global.max_execution_time = 100")
@@ -762,6 +765,42 @@ func (s *testSessionSuite) TestUpgradeSysvars(c *C) {
 	v, err = se.GetGlobalSysVar("tidb_enable_noop_functions")
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, "OFF") // the default value is restored.
+}
+
+func (s *testSessionSuite) TestSetInstanceSysvarBySetGlobalSysVar(c *C) {
+	varName := "tidb_general_log"
+	defaultValue := "OFF" // This is the default value for tidb_general_log
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	se := tk.Se.(variable.GlobalVarAccessor)
+
+	// Get globalSysVar twice and get the same default value
+	v, err := se.GetGlobalSysVar(varName)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, defaultValue)
+	v, err = se.GetGlobalSysVar(varName)
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, defaultValue)
+
+	// session.GetGlobalSysVar would not get the value which session.SetGlobalSysVar writes,
+	// because SetGlobalSysVar calls SetGlobalFromHook, which uses TiDBGeneralLog's SetGlobal,
+	// but GetGlobalSysVar could not access TiDBGeneralLog's GetGlobal.
+
+	// set to "1"
+	err = se.SetGlobalSysVar(varName, "ON")
+	c.Assert(err, IsNil)
+	v, err = se.GetGlobalSysVar(varName)
+	tk.MustQuery("select @@global.tidb_general_log").Check(testkit.Rows("1"))
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, defaultValue)
+
+	// set back to "0"
+	err = se.SetGlobalSysVar(varName, defaultValue)
+	c.Assert(err, IsNil)
+	v, err = se.GetGlobalSysVar(varName)
+	tk.MustQuery("select @@global.tidb_general_log").Check(testkit.Rows("0"))
+	c.Assert(err, IsNil)
+	c.Assert(v, Equals, defaultValue)
 }
 
 func (s *testSessionSuite) TestMatchIdentity(c *C) {
@@ -3039,7 +3078,7 @@ func (s *testSessionSuite2) TestHostLengthMax(c *C) {
 	tk.MustExec(fmt.Sprintf(`CREATE USER 'abcddfjakldfjaldddds'@'%s'`, host1))
 
 	err := tk.ExecToErr(fmt.Sprintf(`CREATE USER 'abcddfjakldfjaldddds'@'%s'`, host2))
-	c.Assert(err.Error(), Equals, "[types:1406]Data too long for column 'Host' at row 1")
+	c.Assert(err.Error(), Equals, "[ddl:1470]String 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' is too long for host name (should be no longer than 255)")
 }
 
 func (s *testSessionSerialSuite) TestKVVars(c *C) {
@@ -3267,7 +3306,7 @@ func (s *testSessionSuite2) TestSetGroupConcatMaxLen(c *C) {
 
 	// Test value out of range
 	tk.MustExec("set @@group_concat_max_len=1")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect group_concat_max_len value: '1'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect group_concat_max_len value: '1'"))
 	result = tk.MustQuery("select @@group_concat_max_len;")
 	result.Check(testkit.Rows("4"))
 
@@ -3754,46 +3793,21 @@ func (s *testSessionSerialSuite) TestGlobalAndLocalTxn(c *C) {
 	}
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set global tidb_enable_local_txn = on;")
-	tk.MustExec("drop table if exists t1;")
-	defer tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop placement policy if exists p1")
+	tk.MustExec("drop placement policy if exists p2")
+	tk.MustExec("create placement policy p1 leader_constraints='[+zone=dc-1]'")
+	tk.MustExec("create placement policy p2 leader_constraints='[+zone=dc-2]'")
 	tk.MustExec(`create table t1 (c int)
 PARTITION BY RANGE (c) (
-	PARTITION p0 VALUES LESS THAN (100),
-	PARTITION p1 VALUES LESS THAN (200)
+	PARTITION p0 VALUES LESS THAN (100) placement policy p1,
+	PARTITION p1 VALUES LESS THAN (200) placement policy p2
 );`)
-	// Config the Placement Rules
-	is := s.dom.InfoSchema()
-	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
-	setBundle := func(parName, dc string) {
-		pid, err := tables.FindPartitionByName(tb.Meta(), parName)
-		c.Assert(err, IsNil)
-		groupID := placement.GroupID(pid)
-		is.SetBundle(&placement.Bundle{
-			ID: groupID,
-			Rules: []*placement.Rule{
-				{
-					GroupID: groupID,
-					Role:    placement.Leader,
-					Count:   1,
-					Constraints: []placement.Constraint{
-						{
-							Key:    placement.DCLabelKey,
-							Op:     placement.In,
-							Values: []string{dc},
-						},
-						{
-							Key:    placement.EngineLabelKey,
-							Op:     placement.NotIn,
-							Values: []string{placement.EngineLabelTiFlash},
-						},
-					},
-				},
-			},
-		})
-	}
-	setBundle("p0", "dc-1")
-	setBundle("p1", "dc-2")
+	defer func() {
+		tk.MustExec("drop table if exists t1")
+		tk.MustExec("drop placement policy if exists p1")
+		tk.MustExec("drop placement policy if exists p2")
+	}()
 
 	// set txn_scope to global
 	tk.MustExec(fmt.Sprintf("set @@session.txn_scope = '%s';", kv.GlobalTxnScope))
@@ -3951,6 +3965,18 @@ func (s *testSessionSuite2) TestSetEnableRateLimitAction(c *C) {
 	// assert default value
 	result := tk.MustQuery("select @@tidb_enable_rate_limit_action;")
 	result.Check(testkit.Rows("1"))
+	tk.MustExec("use test")
+	tk.MustExec("create table tmp123(id int)")
+	tk.MustQuery("select * from tmp123;")
+	haveRateLimitAction := false
+	action := tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest(false)
+	for ; action != nil; action = action.GetFallback() {
+		if action.GetPriority() == memory.DefRateLimitPriority {
+			haveRateLimitAction = true
+			break
+		}
+	}
+	c.Assert(haveRateLimitAction, IsTrue)
 
 	// assert set sys variable
 	tk.MustExec("set global tidb_enable_rate_limit_action= '0';")
@@ -3961,6 +3987,16 @@ func (s *testSessionSuite2) TestSetEnableRateLimitAction(c *C) {
 	tk.Se = se
 	result = tk.MustQuery("select @@tidb_enable_rate_limit_action;")
 	result.Check(testkit.Rows("0"))
+
+	haveRateLimitAction = false
+	action = tk.Se.GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest(false)
+	for ; action != nil; action = action.GetFallback() {
+		if action.GetPriority() == memory.DefRateLimitPriority {
+			haveRateLimitAction = true
+			break
+		}
+	}
+	c.Assert(haveRateLimitAction, IsFalse)
 }
 
 func (s *testSessionSuite3) TestSetVarHint(c *C) {
@@ -5887,6 +5923,7 @@ func (s *testTiDBAsLibrary) TestMemoryLeak(c *C) {
 func (s *testSessionSuite) TestTiDBReadStaleness(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("set @@tidb_read_staleness='-5'")
+	tk.MustExec("set @@tidb_read_staleness='-100'")
 	err := tk.ExecToErr("set @@tidb_read_staleness='-5s'")
 	c.Assert(err, NotNil)
 	err = tk.ExecToErr("set @@tidb_read_staleness='foo'")
@@ -5934,16 +5971,16 @@ func (s *testSessionSuite) TestSetPDClientDynmaicOption(c *C) {
 	err = tk.ExecToErr("set tidb_tso_client_batch_max_wait_time = 0;")
 	c.Assert(err, NotNil)
 	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = -1;")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '-1'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '-1'"))
 	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("0"))
 	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = -0.1;")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '-0.1'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '-0.1'"))
 	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("0"))
 	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 10.1;")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '10.1'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '10.1'"))
 	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("10"))
 	tk.MustExec("set global tidb_tso_client_batch_max_wait_time = 11;")
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '11'"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_tso_client_batch_max_wait_time value: '11'"))
 	tk.MustQuery("select @@tidb_tso_client_batch_max_wait_time;").Check(testkit.Rows("10"))
 
 	tk.MustQuery("select @@tidb_enable_tso_follower_proxy;").Check(testkit.Rows("0"))
@@ -6052,6 +6089,10 @@ func (s *testSessionSuite) TestWriteOnMultipleCachedTable(c *C) {
 
 	tk.MustQuery("select * from ct1").Check(testkit.Rows("3 4"))
 	tk.MustQuery("select * from ct2").Check(testkit.Rows("5 6"))
+
+	// cleanup
+	tk.MustExec("alter table ct1 nocache")
+	tk.MustExec("alter table ct2 nocache")
 }
 
 func (s *testSessionSuite) TestForbidSettingBothTSVariable(c *C) {
@@ -6090,4 +6131,19 @@ func (s *testSessionSuite) TestSysdateIsNow(c *C) {
 	tk.MustExec("set @@tidb_sysdate_is_now=true")
 	tk.MustQuery("show variables like '%tidb_sysdate_is_now%'").Check(testkit.Rows("tidb_sysdate_is_now ON"))
 	c.Assert(tk.Se.GetSessionVars().SysdateIsNow, IsTrue)
+}
+
+func (s *testSessionSuite) TestEnableLegacyInstanceScope(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// enable 'switching' to SESSION variables
+	tk.MustExec("set tidb_enable_legacy_instance_scope = 1")
+	tk.MustExec("set tidb_general_log = 1")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(fmt.Sprintf("Warning %d modifying tidb_general_log will require SET GLOBAL in a future version of TiDB", errno.ErrInstanceScope)))
+	c.Assert(tk.Se.GetSessionVars().EnableLegacyInstanceScope, IsTrue)
+
+	// disable 'switching' to SESSION variables
+	tk.MustExec("set tidb_enable_legacy_instance_scope = 0")
+	tk.MustGetErrCode("set tidb_general_log = 1", errno.ErrGlobalVariable)
+	c.Assert(tk.Se.GetSessionVars().EnableLegacyInstanceScope, IsFalse)
 }

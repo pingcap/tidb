@@ -392,7 +392,7 @@ func (b *builtinRoundDecSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Co
 		if result.IsNull(i) {
 			continue
 		}
-		if err := d64s[i].Round(buf, 0, types.ModeHalfEven); err != nil {
+		if err := d64s[i].Round(buf, 0, types.ModeHalfUp); err != nil {
 			return err
 		}
 		d64s[i] = *buf
@@ -994,7 +994,7 @@ func (b *builtinRoundWithFracDecSig) vecEvalDecimal(input *chunk.Chunk, result *
 			continue
 		}
 		// TODO: reuse d64[i] and remove the temporary variable tmp.
-		if err := d64s[i].Round(tmp, mathutil.Min(int(i64s[i]), b.tp.Decimal), types.ModeHalfEven); err != nil {
+		if err := d64s[i].Round(tmp, mathutil.Min(int(i64s[i]), b.tp.Decimal), types.ModeHalfUp); err != nil {
 			return err
 		}
 		d64s[i] = *tmp

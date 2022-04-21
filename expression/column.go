@@ -224,6 +224,8 @@ type Column struct {
 	InOperand bool
 
 	collationInfo
+
+	CorrelatedColUniqueID int64
 }
 
 // Equal implements Expression interface.

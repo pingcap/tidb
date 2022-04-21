@@ -1215,6 +1215,50 @@ func TestAutoIDIncrementAndOffset(t *testing.T) {
 	require.EqualError(t, err, "[autoid:8060]Invalid auto_increment settings: auto_increment_increment: 65536, auto_increment_offset: 65536, both of them must be in range [1..65535]")
 }
 
+// Fix https://github.com/pingcap/tidb/issues/32601.
+func TestTextTooLongError(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// Set strict sql_mode
+	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY,STRICT_ALL_TABLES,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';")
+
+	// For max_allowed_packet default value is big enough to ensure tinytext, text can test correctly.
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec("CREATE TABLE t1(c1 TINYTEXT CHARACTER SET utf8mb4);")
+	_, err := tk.Exec("INSERT INTO t1 (c1) VALUES(REPEAT(X'C385', 128));")
+	require.EqualError(t, err, "[types:1406]Data too long for column 'c1' at row 1")
+
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec("CREATE TABLE t1(c1 Text CHARACTER SET utf8mb4);")
+	_, err = tk.Exec("INSERT INTO t1 (c1) VALUES(REPEAT(X'C385', 32768));")
+	require.EqualError(t, err, "[types:1406]Data too long for column 'c1' at row 1")
+
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec("CREATE TABLE t1(c1 mediumtext);")
+	_, err = tk.Exec("INSERT INTO t1 (c1) VALUES(REPEAT(X'C385', 8777215));")
+	require.EqualError(t, err, "[types:1406]Data too long for column 'c1' at row 1")
+
+	// For long text, max_allowed_packet default value can not allow 4GB package, skip the test case.
+
+	// Set non strict sql_mode, we are not supposed to raise an error but to truncate the value.
+	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';")
+
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec("CREATE TABLE t1(c1 TINYTEXT CHARACTER SET utf8mb4);")
+	_, err = tk.Exec("INSERT INTO t1 (c1) VALUES(REPEAT(X'C385', 128));")
+	require.NoError(t, err)
+	tk.MustQuery(`select length(c1) from t1;`).Check(testkit.Rows("254"))
+
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec("CREATE TABLE t1(c1 Text CHARACTER SET utf8mb4);")
+	_, err = tk.Exec("INSERT INTO t1 (c1) VALUES(REPEAT(X'C385', 32768));")
+	require.NoError(t, err)
+	tk.MustQuery(`select length(c1) from t1;`).Check(testkit.Rows("65534"))
+	// For mediumtext or bigger size, for tikv limit, we will get:ERROR 8025 (HY000): entry too large, the max entry size is 6291456, the size of data is 16777247, no need to test.
+}
+
 func TestAutoRandomID(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
@@ -1939,4 +1983,23 @@ func TestInsertIntoSelectError(t *testing.T) {
 	tk.MustExec("INSERT IGNORE into t1(SELECT SLEEP(1));")
 	tk.MustQuery("SELECT * FROM t1;").Check(testkit.Rows("0", "0", "0"))
 	tk.MustExec("DROP TABLE t1;")
+}
+
+// https://github.com/pingcap/tidb/issues/32213.
+func TestIssue32213(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+
+	tk.MustExec("create table test.t1(c1 float)")
+	tk.MustExec("insert into test.t1 values(999.99)")
+	tk.MustQuery("select cast(test.t1.c1 as decimal(4, 1)) from test.t1").Check(testkit.Rows("999.9"))
+	tk.MustQuery("select cast(test.t1.c1 as decimal(5, 1)) from test.t1").Check(testkit.Rows("1000.0"))
+
+	tk.MustExec("drop table if exists test.t1")
+	tk.MustExec("create table test.t1(c1 decimal(6, 4))")
+	tk.MustExec("insert into test.t1 values(99.9999)")
+	tk.MustQuery("select cast(test.t1.c1 as decimal(5, 3)) from test.t1").Check(testkit.Rows("99.999"))
+	tk.MustQuery("select cast(test.t1.c1 as decimal(6, 3)) from test.t1").Check(testkit.Rows("100.000"))
 }

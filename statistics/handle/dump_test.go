@@ -391,6 +391,59 @@ func TestDumpVer2Stats(t *testing.T) {
 	requireTableEqual(t, statsCacheTbl, loadTbl)
 }
 
+func TestLoadStatsForNewCollation(t *testing.T) {
+	// This test is almost the same as TestDumpVer2Stats, except that: b varchar(10) => b varchar(3) collate utf8mb4_unicode_ci
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(3) collate utf8mb4_unicode_ci)")
+	tk.MustExec("insert into t value(1, 'aaa'), (3, 'aab'), (5, 'bba'), (2, 'bbb'), (4, 'cca'), (6, 'ccc')")
+	// mark column stats as needed
+	tk.MustExec("select * from t where a = 3")
+	tk.MustExec("select * from t where b = 'bbb'")
+	tk.MustExec("alter table t add index single(a)")
+	tk.MustExec("alter table t add index multi(a, b)")
+	tk.MustExec("analyze table t with 2 topn")
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	tableInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+
+	storageTbl, err := h.TableStatsFromStorage(tableInfo.Meta(), tableInfo.Meta().ID, false, 0)
+	require.NoError(t, err)
+
+	dumpJSONTable, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil)
+	require.NoError(t, err)
+
+	jsonBytes, err := json.MarshalIndent(dumpJSONTable, "", " ")
+	require.NoError(t, err)
+
+	loadJSONTable := &handle.JSONTable{}
+	err = json.Unmarshal(jsonBytes, loadJSONTable)
+	require.NoError(t, err)
+
+	loadTbl, err := handle.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, loadJSONTable)
+	require.NoError(t, err)
+
+	// assert that a statistics.Table from storage dumped into JSON text and then unmarshalled into a statistics.Table keeps unchanged
+	requireTableEqual(t, loadTbl, storageTbl)
+
+	// assert that this statistics.Table is the same as the one in stats cache
+	statsCacheTbl := h.GetTableStats(tableInfo.Meta())
+	requireTableEqual(t, loadTbl, statsCacheTbl)
+
+	err = h.LoadStatsFromJSON(is, loadJSONTable)
+	require.NoError(t, err)
+	require.Nil(t, h.Update(is))
+	statsCacheTbl = h.GetTableStats(tableInfo.Meta())
+	// assert that after the JSONTable above loaded into storage then updated into the stats cache,
+	// the statistics.Table in the stats cache is the same as the unmarshalled statistics.Table
+	requireTableEqual(t, statsCacheTbl, loadTbl)
+}
+
 func TestJSONTableToBlocks(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
 	defer clean()

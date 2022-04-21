@@ -434,7 +434,7 @@ func TestIndexJoin31494(t *testing.T) {
 		insertStr += fmt.Sprintf(", (%d, %d, %d)", i, i, i)
 	}
 	tk.MustExec(insertStr)
-	sm := &mockSessionManager1{
+	sm := &testkit.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
@@ -1192,4 +1192,55 @@ func TestIssue23567(t *testing.T) {
 	// The SQL should not panic.
 	tk.MustQuery("select count(distinct b) from t")
 	failpoint.Disable("github.com/pingcap/tidb/statistics/feedbackNoNDVCollect")
+}
+
+func TestIssue33038(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t (id int, c int as (id))")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t(id) values (1),(2),(3),(4)")
+	tk.MustExec("insert into t(id) select id from t")
+	tk.MustExec("insert into t(id) select id from t")
+	tk.MustExec("insert into t(id) select id from t")
+	tk.MustExec("insert into t(id) select id from t")
+	tk.MustExec("insert into t(id) values (5)")
+	tk.MustQuery("select * from t where c = 5").Check(testkit.Rows("5 5"))
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_max_chunk_size=16")
+	tk.MustExec("create table t1 (id int, c int as (id))")
+	tk.MustExec("insert into t1(id) values (1),(2),(3),(4)")
+	tk.MustExec("insert into t1(id) select id from t1")
+	tk.MustExec("insert into t1(id) select id from t1")
+	tk.MustExec("insert into t1(id) select id from t1")
+	tk.MustExec("insert into t1(id) values (5)")
+	tk.MustExec("alter table t1 cache")
+
+	for {
+		tk.MustQuery("select * from t1 where c = 5").Check(testkit.Rows("5 5"))
+		if tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache {
+			break
+		}
+	}
+}
+
+func TestIssue33214(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (col enum('a', 'b', 'c') default null)")
+	tk.MustExec("insert into t values ('a'), ('b'), ('c'), (null), ('c')")
+	tk.MustExec("alter table t cache")
+	for {
+		tk.MustQuery("select col from t t1 where (select count(*) from t t2 where t2.col = t1.col or t2.col =  'sdf') > 1;").Check(testkit.Rows("c", "c"))
+		if tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache {
+			break
+		}
+	}
 }

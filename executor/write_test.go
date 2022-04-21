@@ -301,16 +301,16 @@ func TestInsert(t *testing.T) {
 
 	tk.MustExec("create view v as select * from t")
 	_, err = tk.Exec("insert into v values(1,2)")
-	require.EqualError(t, err, "insert into view v is not supported now.")
+	require.EqualError(t, err, "insert into view v is not supported now")
 	_, err = tk.Exec("replace into v values(1,2)")
-	require.EqualError(t, err, "replace into view v is not supported now.")
+	require.EqualError(t, err, "replace into view v is not supported now")
 	tk.MustExec("drop view v")
 
 	tk.MustExec("create sequence seq")
 	_, err = tk.Exec("insert into seq values()")
-	require.EqualError(t, err, "insert into sequence seq is not supported now.")
+	require.EqualError(t, err, "insert into sequence seq is not supported now")
 	_, err = tk.Exec("replace into seq values()")
-	require.EqualError(t, err, "replace into sequence seq is not supported now.")
+	require.EqualError(t, err, "replace into sequence seq is not supported now")
 	tk.MustExec("drop sequence seq")
 
 	// issue 22851
@@ -1729,7 +1729,7 @@ func TestDelete(t *testing.T) {
 
 	tk.MustExec("create sequence seq")
 	_, err = tk.Exec("delete from seq")
-	require.EqualError(t, err, "delete sequence seq is not supported now.")
+	require.EqualError(t, err, "delete sequence seq is not supported now")
 	tk.MustExec("drop sequence seq")
 }
 
@@ -1855,6 +1855,47 @@ func TestQualifiedDelete(t *testing.T) {
 
 	_, err := tk.Exec("delete t1, t2 from t1 as a join t2 as b where a.c2 = b.c1")
 	require.Error(t, err)
+}
+
+type testCase struct {
+	data1       []byte
+	data2       []byte
+	expected    []string
+	restData    []byte
+	expectedMsg string
+}
+
+func checkCases(tests []testCase, ld *executor.LoadDataInfo, t *testing.T, tk *testkit.TestKit, ctx sessionctx.Context, selectSQL, deleteSQL string) {
+	origin := ld.IgnoreLines
+	for _, tt := range tests {
+		ld.IgnoreLines = origin
+		require.Nil(t, ctx.NewTxn(context.Background()))
+		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
+		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
+		ctx.GetSessionVars().StmtCtx.InLoadDataStmt = true
+		ctx.GetSessionVars().StmtCtx.InDeleteStmt = false
+		data, reachLimit, err1 := ld.InsertData(context.Background(), tt.data1, tt.data2)
+		require.NoError(t, err1)
+		require.False(t, reachLimit)
+		err1 = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
+		require.NoError(t, err1)
+		ld.SetMaxRowsInBatch(20000)
+		comment := fmt.Sprintf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data))
+		if tt.restData == nil {
+			require.Len(t, data, 0, comment)
+		} else {
+			require.Equal(t, tt.restData, data, comment)
+		}
+		ld.SetMessage()
+		require.Equal(t, tt.expectedMsg, tk.Session().LastMessage())
+		ctx.StmtCommit()
+		txn, err := ctx.Txn(true)
+		require.NoError(t, err)
+		err = txn.Commit(context.Background())
+		require.NoError(t, err)
+		tk.MustQuery(selectSQL).Check(testkit.RowsWithSep("|", tt.expected...))
+		tk.MustExec(deleteSQL)
+	}
 }
 
 func TestLoadDataMissingColumn(t *testing.T) {

@@ -313,6 +313,9 @@ type Request struct {
 	Data      []byte
 	KeyRanges []KeyRange
 
+	// For PartitionTableScan used by tiflash.
+	PartitionIDAndRanges []PartitionIDAndRanges
+
 	// Concurrency is 1, if it only sends the request to a single storage unit when
 	// ResponseIterator.Next is called. If concurrency is greater than 1, the request will be
 	// sent to multiple storage units concurrently.
@@ -329,8 +332,6 @@ type Request struct {
 	Desc bool
 	// NotFillCache makes this request do not touch the LRU cache of the underlying storage.
 	NotFillCache bool
-	// SyncLog decides whether the WAL(write-ahead log) of this request should be synchronized.
-	SyncLog bool
 	// Streaming indicates using streaming API for this request, result in that one Next()
 	// call would not corresponds to a whole region result.
 	Streaming bool
@@ -358,6 +359,12 @@ type Request struct {
 	ResourceGroupTagger tikvrpc.ResourceGroupTagger
 	// Paging indicates whether the request is a paging request.
 	Paging bool
+}
+
+// PartitionIDAndRanges used by PartitionTableScan in tiflash.
+type PartitionIDAndRanges struct {
+	ID        int64
+	KeyRanges []KeyRange
 }
 
 const (
@@ -504,4 +511,6 @@ const (
 	SI IsoLevel = iota
 	// RC stands for 'read committed'.
 	RC
+	// RCCheckTS stands for 'read consistency read with ts check'.
+	RCCheckTS
 )

@@ -133,7 +133,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		it.sendRate = util.NewRateLimit(it.concurrency)
 	}
 	it.actionOnExceed = newRateLimitAction(uint(it.sendRate.GetCapacity()))
-	if sessionMemTracker != nil {
+	if sessionMemTracker != nil && enabledRateLimitAction {
 		sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
 	}
 
@@ -158,6 +158,8 @@ type copTask struct {
 	eventCb    trxevents.EventCallback
 	paging     bool
 	pagingSize uint64
+
+	partitionIndex int64 // used by balanceBatchCopTask in PartitionTableScan
 }
 
 func (r *copTask) String() string {
@@ -981,6 +983,9 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			zap.Uint64("regionID", task.region.GetID()),
 			zap.String("storeAddr", task.storeAddr),
 			zap.Error(err))
+		if strings.Contains(err.Error(), "write conflict") {
+			return nil, kv.ErrWriteConflict
+		}
 		return nil, errors.Trace(err)
 	}
 	// When the request is using streaming API, the `Range` is not nil.
@@ -1308,6 +1313,7 @@ func (e *rateLimitAction) close() {
 	e.conditionLock()
 	defer e.conditionUnlock()
 	e.cond.exceeded = false
+	e.SetFinished()
 }
 
 func (e *rateLimitAction) setEnabled(enabled bool) {
@@ -1340,6 +1346,8 @@ func isolationLevelToPB(level kv.IsoLevel) kvrpcpb.IsolationLevel {
 		return kvrpcpb.IsolationLevel_RC
 	case kv.SI:
 		return kvrpcpb.IsolationLevel_SI
+	case kv.RCCheckTS:
+		return kvrpcpb.IsolationLevel_RCCheckTS
 	default:
 		return kvrpcpb.IsolationLevel_SI
 	}

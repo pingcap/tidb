@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -70,11 +71,12 @@ func runInterruptedJob(d *ddl, job *model.Job, doneCh chan error) {
 		err     error
 	)
 
-	err = d.doDDLJob(ctx, job)
+	ctx.SetValue(sessionctx.QueryString, "skip")
+	err = d.DoDDLJob(ctx, job)
 	if errors.Is(err, context.Canceled) {
 		endlessLoopTime := time.Now().Add(time.Minute)
 		for history == nil {
-			// imitate doDDLJob's logic, quit only find history
+			// imitate DoDDLJob's logic, quit only find history
 			history, _ = d.getHistoryDDLJob(job.ID)
 			if history != nil {
 				err = history.Error

@@ -79,7 +79,7 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor) (p PhysicalPlan, err 
 		p, err = b.pbToKill(e)
 	default:
 		// TODO: Support other types.
-		err = errors.Errorf("this exec type %v doesn't support yet.", e.GetTp())
+		err = errors.Errorf("this exec type %v doesn't support yet", e.GetTp())
 	}
 	return p, err
 }

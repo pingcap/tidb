@@ -327,7 +327,14 @@ grpc-max-send-msg-size = 40960
 [log.file]
 log-rotate = true
 [performance]
-mem-profile-interval="1m"`)
+mem-profile-interval="1m"
+[stmt-summary]
+enable=false
+enable-internal-query=true
+max-stmt-count=1000
+max-sql-length=1024
+refresh-interval=100
+history-size=100`)
 	require.NoError(t, err)
 	err = conf.Load(configFile)
 	tmp := err.(*ErrConfigValidationFailed)

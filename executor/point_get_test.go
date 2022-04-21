@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
@@ -440,7 +442,7 @@ func TestReturnValues(t *testing.T) {
 	tk.MustExec("insert t values ('a', 1), ('b', 2), ('c', 3)")
 	tk.MustExec("begin pessimistic")
 	tk.MustQuery("select * from t where a = 'b' for update").Check(testkit.Rows("b 2"))
-	tid := tk.GetTableByName("test", "t").Meta().ID
+	tid := external.GetTableByName(t, tk, "test", "t").Meta().ID
 	idxVal, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, types.NewStringDatum("b"))
 	require.NoError(t, err)
 	pk := tablecodec.EncodeIndexSeekKey(tid, 1, idxVal)
@@ -682,8 +684,6 @@ func TestPointGetWriteLock(t *testing.T) {
 }
 
 func TestPointGetLockExistKey(t *testing.T) {
-	var wg util.WaitGroupWrapper
-
 	testLock := func(rc bool, key string, tableName string) {
 		store, clean := testkit.CreateMockStore(t)
 		defer clean()
@@ -782,6 +782,7 @@ func TestPointGetLockExistKey(t *testing.T) {
 		))
 	}
 
+	var wg sync.WaitGroup
 	for i, one := range []struct {
 		rc  bool
 		key string
@@ -791,10 +792,12 @@ func TestPointGetLockExistKey(t *testing.T) {
 		{rc: true, key: "primary key"},
 		{rc: true, key: "unique key"},
 	} {
+		wg.Add(1)
 		tableName := fmt.Sprintf("t_%d", i)
-		wg.Run(func() {
-			testLock(one.rc, one.key, tableName)
-		})
+		go func(rc bool, key string, tableName string) {
+			defer wg.Done()
+			testLock(rc, key, tableName)
+		}(one.rc, one.key, tableName)
 	}
 	wg.Wait()
 }

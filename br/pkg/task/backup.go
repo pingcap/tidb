@@ -50,6 +50,13 @@ const (
 	maxBackupConcurrency     = 256
 )
 
+const (
+	FullBackupCmd  = "Full Backup"
+	DBBackupCmd    = "Database Backup"
+	TableBackupCmd = "Table Backup"
+	RawBackupCmd   = "Raw Backup"
+)
+
 // CompressionConfig is the configuration for sst file compression.
 type CompressionConfig struct {
 	CompressionType  backuppb.CompressionType `json:"compression-type" toml:"compression-type"`
@@ -217,6 +224,10 @@ func (cfg *BackupConfig) adjustBackupConfig() {
 	}
 }
 
+func isFullBackup(cmdName string) bool {
+	return cmdName == FullBackupCmd
+}
+
 // RunBackup starts a backup task inside the current goroutine.
 func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig) error {
 	cfg.adjustBackupConfig()
@@ -249,6 +260,17 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	if !skipStats {
 		statsHandle = mgr.GetDomain().StatsHandle()
 	}
+
+	se, err := g.CreateSession(mgr.GetStorage())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	newCollationEnable, err := se.GetGlobalVariable(tidbNewCollationEnabled)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	log.Info("get new_collations_enabled_on_first_bootstrap config from system table",
+		zap.String(tidbNewCollationEnabled, newCollationEnable))
 
 	client, err := backup.NewBackupClient(ctx, mgr)
 	if err != nil {
@@ -312,6 +334,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		StartVersion:     cfg.LastBackupTS,
 		EndVersion:       backupTS,
 		RateLimit:        cfg.RateLimit,
+		StorageBackend:   client.GetStorageBackend(),
 		Concurrency:      defaultBackupConcurrency,
 		CompressionType:  cfg.CompressionType,
 		CompressionLevel: cfg.CompressionLevel,
@@ -323,7 +346,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 
-	ranges, schemas, err := backup.BuildBackupRangeAndSchema(mgr.GetStorage(), cfg.TableFilter, backupTS)
+	ranges, schemas, policies, err := backup.BuildBackupRangeAndSchema(mgr.GetStorage(), cfg.TableFilter, backupTS, isFullBackup(cmdName))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -339,7 +362,15 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		m.ClusterId = req.ClusterId
 		m.ClusterVersion = clusterVersion
 		m.BrVersion = brVersion
+		m.NewCollationsEnabled = newCollationEnable
 	})
+
+	log.Info("get placement policies", zap.Int("count", len(policies)))
+	if len(policies) != 0 {
+		metawriter.Update(func(m *backuppb.BackupMeta) {
+			m.Policies = policies
+		})
+	}
 
 	// nothing to backup
 	if ranges == nil {

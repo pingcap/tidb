@@ -246,22 +246,32 @@ func TestScope(t *testing.T) {
 	sv := SysVar{Scope: ScopeGlobal | ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
 	require.True(t, sv.HasSessionScope())
 	require.True(t, sv.HasGlobalScope())
+	require.False(t, sv.HasInstanceScope())
 	require.False(t, sv.HasNoneScope())
 
 	sv = SysVar{Scope: ScopeGlobal, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
 	require.False(t, sv.HasSessionScope())
 	require.True(t, sv.HasGlobalScope())
+	require.False(t, sv.HasInstanceScope())
 	require.False(t, sv.HasNoneScope())
 
 	sv = SysVar{Scope: ScopeSession, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
 	require.True(t, sv.HasSessionScope())
 	require.False(t, sv.HasGlobalScope())
+	require.False(t, sv.HasInstanceScope())
 	require.False(t, sv.HasNoneScope())
 
 	sv = SysVar{Scope: ScopeNone, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
 	require.False(t, sv.HasSessionScope())
 	require.False(t, sv.HasGlobalScope())
+	require.False(t, sv.HasInstanceScope())
 	require.True(t, sv.HasNoneScope())
+
+	sv = SysVar{Scope: ScopeInstance, Name: "mynewsysvar", Value: On, Type: TypeEnum, PossibleValues: []string{"OFF", "ON", "AUTO"}}
+	require.False(t, sv.HasSessionScope())
+	require.False(t, sv.HasGlobalScope())
+	require.True(t, sv.HasInstanceScope())
+	require.False(t, sv.HasNoneScope())
 }
 
 func TestBuiltInCase(t *testing.T) {
@@ -696,7 +706,7 @@ func TestSettersandGetters(t *testing.T) {
 			require.Nil(t, sv.SetSession)
 			require.Nil(t, sv.GetSession)
 		}
-		if !sv.HasGlobalScope() {
+		if !sv.HasGlobalScope() && !sv.HasInstanceScope() {
 			require.Nil(t, sv.SetGlobal)
 			if sv.Name == Timestamp {
 				// The Timestamp sysvar will have GetGlobal func even though it does not have global scope.
@@ -843,6 +853,58 @@ func TestDefaultCharsetAndCollation(t *testing.T) {
 	val, err = GetSessionOrGlobalSystemVar(vars, CollationConnection)
 	require.NoError(t, err)
 	require.Equal(t, val, mysql.DefaultCollationName)
+}
+
+func TestInstanceScope(t *testing.T) {
+	// Instance scope used to be settable via "SET SESSION", which is weird to any MySQL user.
+	// It is now settable via SET GLOBAL, but to work correctly a sysvar can only ever
+	// be INSTANCE scoped or GLOBAL scoped, never *both* at the same time (at least for now).
+	// Otherwise the semantics are confusing to users for how precedence applies.
+
+	for _, sv := range GetSysVars() {
+		require.False(t, sv.HasGlobalScope() && sv.HasInstanceScope(), "sysvar %s has both instance and global scope", sv.Name)
+		if sv.HasInstanceScope() {
+			require.NotNil(t, sv.GetGlobal)
+			require.NotNil(t, sv.SetGlobal)
+		}
+	}
+
+	count := len(GetSysVars())
+	sv := SysVar{Scope: ScopeInstance, Name: "newinstancesysvar", Value: On, Type: TypeBool,
+		SetGlobal: func(s *SessionVars, val string) error {
+			return fmt.Errorf("set should fail")
+		},
+		GetGlobal: func(s *SessionVars) (string, error) {
+			return "", fmt.Errorf("get should fail")
+		},
+	}
+
+	RegisterSysVar(&sv)
+	require.Len(t, GetSysVars(), count+1)
+
+	sysVar := GetSysVar("newinstancesysvar")
+	require.NotNil(t, sysVar)
+
+	vars := NewSessionVars()
+
+	// It is a boolean, try to set it to a bogus value
+	_, err := sysVar.Validate(vars, "ABCD", ScopeInstance)
+	require.Error(t, err)
+
+	// Boolean oN or 1 converts to canonical ON or OFF
+	normalizedVal, err := sysVar.Validate(vars, "oN", ScopeInstance)
+	require.Equal(t, "ON", normalizedVal)
+	require.NoError(t, err)
+	normalizedVal, err = sysVar.Validate(vars, "0", ScopeInstance)
+	require.Equal(t, "OFF", normalizedVal)
+	require.NoError(t, err)
+
+	err = sysVar.SetGlobalFromHook(vars, "OFF", true) // default is on
+	require.Equal(t, "set should fail", err.Error())
+
+	// Test unregistration restores previous count
+	UnregisterSysVar("newinstancesysvar")
+	require.Equal(t, len(GetSysVars()), count)
 }
 
 func TestIndexMergeSwitcher(t *testing.T) {

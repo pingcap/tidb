@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // SessionHandle is used to handle all session sql bind operations.
@@ -42,7 +44,10 @@ func NewSessionBindHandle(parser *parser.Parser) *SessionHandle {
 // removed from the cache after this operation.
 func (h *SessionHandle) appendBindRecord(hash string, meta *BindRecord) {
 	oldRecord := h.ch.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
-	h.ch.SetBindRecord(hash, meta)
+	err := h.ch.SetBindRecord(hash, meta)
+	if err != nil {
+		logutil.BgLogger().Warn("[sql-bind] SessionHandle.appendBindRecord", zap.Error(err))
+	}
 	updateMetrics(metrics.ScopeSession, oldRecord, meta, false)
 }
 
@@ -80,7 +85,11 @@ func (h *SessionHandle) DropBindRecord(originalSQL, db string, binding *Binding)
 	} else {
 		newRecord = record
 	}
-	h.ch.SetBindRecord(hash, newRecord)
+	err := h.ch.SetBindRecord(hash, newRecord)
+	if err != nil {
+		// Should never reach here, just return an error for safety
+		return err
+	}
 	updateMetrics(metrics.ScopeSession, oldRecord, newRecord, false)
 	return nil
 }

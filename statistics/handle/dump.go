@@ -300,9 +300,17 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 			}
 			hist := statistics.HistogramFromProto(jsonCol.Histogram)
 			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+			// Deal with sortKey, the length of sortKey maybe longer than the column's length.
+			orgLen := colInfo.FieldType.Flen
+			if types.IsString(colInfo.FieldType.Tp) {
+				colInfo.Flen = types.UnspecifiedLength
+			}
 			hist, err := hist.ConvertTo(sc, &colInfo.FieldType)
 			if err != nil {
 				return nil, errors.Trace(err)
+			}
+			if types.IsString(colInfo.FieldType.Tp) {
+				colInfo.Flen = orgLen
 			}
 			cm, topN := statistics.CMSketchAndTopNFromProto(jsonCol.CMSketch)
 			fms := statistics.FMSketchFromProto(jsonCol.FMSketch)

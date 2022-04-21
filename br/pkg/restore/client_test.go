@@ -32,7 +32,9 @@ var defaultKeepaliveCfg = keepalive.ClientParameters{
 
 func TestCreateTables(t *testing.T) {
 	m := mc
-	client, err := restore.NewRestoreClient(gluetidb.New(), m.PDClient, m.Storage, nil, defaultKeepaliveCfg, false)
+	g := gluetidb.New()
+	client := restore.NewRestoreClient(m.PDClient, nil, defaultKeepaliveCfg, false)
+	err := client.Init(g, m.Storage)
 	require.NoError(t, err)
 
 	info, err := m.Domain.GetSnapshotInfoSchema(math.MaxUint64)
@@ -89,7 +91,9 @@ func TestCreateTables(t *testing.T) {
 
 func TestIsOnline(t *testing.T) {
 	m := mc
-	client, err := restore.NewRestoreClient(gluetidb.New(), m.PDClient, m.Storage, nil, defaultKeepaliveCfg, false)
+	g := gluetidb.New()
+	client := restore.NewRestoreClient(m.PDClient, nil, defaultKeepaliveCfg, false)
+	err := client.Init(g, m.Storage)
 	require.NoError(t, err)
 
 	require.False(t, client.IsOnline())
@@ -99,7 +103,9 @@ func TestIsOnline(t *testing.T) {
 
 func TestPreCheckTableClusterIndex(t *testing.T) {
 	m := mc
-	client, err := restore.NewRestoreClient(gluetidb.New(), m.PDClient, m.Storage, nil, defaultKeepaliveCfg, false)
+	g := gluetidb.New()
+	client := restore.NewRestoreClient(m.PDClient, nil, defaultKeepaliveCfg, false)
+	err := client.Init(g, m.Storage)
 	require.NoError(t, err)
 
 	info, err := m.Domain.GetSnapshotInfoSchema(math.MaxUint64)
@@ -191,9 +197,11 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 		},
 	}
 
-	client, err := restore.NewRestoreClient(gluetidb.New(), fakePDClient{
+	g := gluetidb.New()
+	client := restore.NewRestoreClient(fakePDClient{
 		stores: mockStores,
-	}, m.Storage, nil, defaultKeepaliveCfg, false)
+	}, nil, defaultKeepaliveCfg, false)
+	err := client.Init(g, m.Storage)
 	require.NoError(t, err)
 
 	tables := make([]*metautil.Table, 4)

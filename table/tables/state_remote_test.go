@@ -79,9 +79,9 @@ func TestStateRemote(t *testing.T) {
 
 	// Renew read lock lease operation.
 	leaseVal = oracle.GoTimeToTS(physicalTime.Add(400 * time.Millisecond))
-	succ, err = h.RenewLease(ctx, 5, leaseVal, tables.RenewReadLease)
+	leaseVal, err = h.RenewReadLease(ctx, 5, lease, leaseVal)
 	require.NoError(t, err)
-	require.True(t, succ)
+	require.True(t, leaseVal > 0)
 	lockType, lease, err = h.Load(ctx, 5)
 	require.NoError(t, err)
 	require.Equal(t, lockType, tables.CachedTableLockRead)
@@ -101,23 +101,23 @@ func TestStateRemote(t *testing.T) {
 	// Lock for write again
 	writeLease, err = h.LockForWrite(ctx, 5, 3*time.Second)
 	require.NoError(t, err)
-	lockType, _, err = h.Load(ctx, 5)
+	lockType, lease, err = h.Load(ctx, 5)
 	require.NoError(t, err)
 	require.Equal(t, lockType, tables.CachedTableLockWrite)
 	require.Equal(t, lockType.String(), "WRITE")
 
 	// Renew read lock lease should fail when the write lock is hold.
-	succ, err = h.RenewLease(ctx, 5, leaseVal, tables.RenewReadLease)
+	leaseVal, err = h.RenewReadLease(ctx, 5, lease, lease+1)
 	require.NoError(t, err)
-	require.False(t, succ)
+	require.False(t, leaseVal > 0)
 
 	// Acquire read lock should also fail when the write lock is hold.
-	succ, err = h.LockForRead(ctx, 5, leaseVal)
+	succ, err = h.LockForRead(ctx, 5, lease+1)
 	require.NoError(t, err)
 	require.False(t, succ)
 
 	// Renew write lease.
-	succ, err = h.RenewLease(ctx, 5, writeLease+1, tables.RenewWriteLease)
+	succ, err = h.RenewWriteLease(ctx, 5, writeLease+1)
 	require.NoError(t, err)
 	require.True(t, succ)
 

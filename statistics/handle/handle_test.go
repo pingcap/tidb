@@ -102,7 +102,7 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
-	require.True(t, statsTbl.MemoryUsage() > 0)
+	require.True(t, statsTbl.MemoryUsage().TotalMemUsage > 0)
 	require.True(t, statsTbl.Pseudo)
 
 	testKit.MustExec("analyze table t")
@@ -131,7 +131,7 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	require.NoError(t, err)
 
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-	require.True(t, statsTbl.MemoryUsage() > 0)
+	require.True(t, statsTbl.MemoryUsage().TotalMemUsage > 0)
 	require.False(t, statsTbl.Pseudo)
 
 	// If the new schema add a column, the table stats can still work.
@@ -359,7 +359,7 @@ func TestVersion(t *testing.T) {
 	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tableInfo1 := tbl1.Meta()
-	h, err := handle.NewHandle(testKit.Session(), time.Millisecond, do.SysSessionPool(), do.SysProcTracker())
+	h, err := handle.NewHandle(testKit.Session(), time.Millisecond, do.SysSessionPool(), do.SysProcTracker(), do.ServerID)
 	require.NoError(t, err)
 	unit := oracle.ComposeTS(1, 0)
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", 2*unit, tableInfo1.ID)
@@ -905,6 +905,9 @@ func checkForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, db, tt, pp st
 
 	delta := buckets/2 + 10
 	for _, idxStats := range tblStats.Indices {
+		if len(idxStats.Buckets) == 0 {
+			continue // it's not loaded
+		}
 		numTopN := idxStats.TopN.Num()
 		numBuckets := len(idxStats.Buckets)
 		// since the hist-building algorithm doesn't stipulate the final bucket number to be equal to the expected number exactly,
@@ -926,7 +929,6 @@ func checkForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, db, tt, pp st
 }
 
 func TestAnalyzeGlobalStatsWithOpts1(t *testing.T) {
-	t.Skip("unstable test")
 	if israce.RaceEnabled {
 		t.Skip("exhaustive types test, skip race test")
 	}
@@ -967,7 +969,6 @@ func TestAnalyzeGlobalStatsWithOpts1(t *testing.T) {
 }
 
 func TestAnalyzeGlobalStatsWithOpts2(t *testing.T) {
-	t.Skip("unstable test")
 	if israce.RaceEnabled {
 		t.Skip("exhaustive types test, skip race test")
 	}
@@ -2213,7 +2214,7 @@ func TestFMSWithAnalyzePartition(t *testing.T) {
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("0"))
 	tk.MustExec("analyze table t partition p0 with 1 topn, 2 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0.",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0",
 		"Warning 8131 Build table: `t` global-level stats failed due to missing partition-level stats",
 		"Warning 8131 Build table: `t` index: `a` global-level stats failed due to missing partition-level stats",
 	))

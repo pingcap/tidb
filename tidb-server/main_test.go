@@ -15,6 +15,7 @@
 package main
 
 import (
+	"os"
 	"testing"
 
 	"github.com/pingcap/tidb/config"
@@ -30,6 +31,7 @@ var isCoverageServer string
 func TestMain(m *testing.M) {
 	testbridge.SetupForCommonTest()
 	opts := []goleak.Option{
+		goleak.IgnoreTopFunction("github.com/golang/glog.(*loggingT).flushDaemon"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
@@ -72,4 +74,8 @@ func TestSetGlobalVars(t *testing.T) {
 
 	cfg := config.GetGlobalConfig()
 	require.Equal(t, cfg.Socket, variable.GetSysVar(variable.Socket).Value)
+
+	if hostname, err := os.Hostname(); err == nil {
+		require.Equal(t, variable.GetSysVar(variable.Hostname).Value, hostname)
+	}
 }

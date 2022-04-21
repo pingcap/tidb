@@ -65,7 +65,11 @@ func (e *MPPGather) appendMPPDispatchReq(pf *plannercore.Fragment) error {
 		dagReq.EncodeType = tipb.EncodeType_TypeChunk
 	}
 	for _, mppTask := range pf.ExchangeSender.Tasks {
-		err := updateExecutorTableID(context.Background(), dagReq.RootExecutor, mppTask.TableID, true)
+		if mppTask.PartitionTableIDs != nil {
+			err = updateExecutorTableID(context.Background(), dagReq.RootExecutor, true, mppTask.PartitionTableIDs)
+		} else {
+			err = updateExecutorTableID(context.Background(), dagReq.RootExecutor, true, []int64{mppTask.TableID})
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
