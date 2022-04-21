@@ -1849,7 +1849,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (rs sq
 	}
 
 	defer func() {
-		if err != nil && rs == nil {
+		if err != nil {
 			sessiontxn.GetTxnManager(s).OnStmtError(err)
 		}
 	}()
@@ -2355,7 +2355,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	}
 
 	defer func() {
-		if err != nil && rs == nil {
+		if err != nil {
 			sessiontxn.GetTxnManager(s).OnStmtError(err)
 		}
 	}()
