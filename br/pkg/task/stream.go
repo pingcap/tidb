@@ -464,10 +464,8 @@ func (s *streamMgr) backupFullSchemas(ctx context.Context, g glue.Glue) error {
 	}
 
 	schemasConcurrency := uint(utils.MinInt(backup.DefaultSchemaConcurrency, schemas.Len()))
-	updateCh := g.StartProgress(ctx, "Checksum", int64(schemas.Len()), !s.cfg.LogProgress)
-
 	err = schemas.BackupSchemas(ctx, metaWriter, s.mgr.GetStorage(), nil,
-		s.cfg.StartTS, schemasConcurrency, 0, true, updateCh)
+		s.cfg.StartTS, schemasConcurrency, 0, true, nil)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -550,7 +548,7 @@ func RunStreamStart(
 	if count, err := cli.GetTaskCount(ctx); err != nil {
 		return errors.Trace(err)
 	} else if count > 0 {
-		return errors.Annotate(berrors.ErrStreamLogTaskExist, "It supports single stream log task current")
+		return errors.Annotate(berrors.ErrStreamLogTaskExist, "It supports single stream log task currently")
 	}
 
 	if err = streamMgr.setLock(ctx); err != nil {
@@ -990,7 +988,7 @@ func restoreStream(
 	}
 	client.SetRestoreTs(cfg.RestoreTS)
 	client.SetCurrentTS(currentTS)
-	log.Info("start restore on point", zap.Uint64("ts", cfg.RestoreTS))
+	log.Info("start restore on point", zap.Uint64("restore-ts", cfg.RestoreTS))
 
 	// get full backup meta to generate rewrite rules.
 	fullBackupTables, err := initFullBackupTables(ctx, cfg)
@@ -1047,15 +1045,14 @@ func restoreStream(
 	}
 
 	// fix indices.
-	// to do:
 	// No need to fix indices if backup stream all of tables, because the index recored has been observed.
-	pi := g.StartProgress(ctx, "Restore Index", countIndices(fullBackupTables), !cfg.LogProgress)
-	err = withProgress(pi, func(p glue.Progress) error {
-		return client.FixIndicesOfTables(ctx, fullBackupTables, p.Inc)
-	})
-	if err != nil {
-		return errors.Annotate(err, "failed to fix index for some table")
-	}
+	// pi := g.StartProgress(ctx, "Restore Index", countIndices(fullBackupTables), !cfg.LogProgress)
+	// err = withProgress(pi, func(p glue.Progress) error {
+	// 	return client.FixIndicesOfTables(ctx, fullBackupTables, p.Inc)
+	// })
+	// if err != nil {
+	// 	return errors.Annotate(err, "failed to fix index for some table")
+	// }
 
 	// TODO split put and delete files
 	return nil
@@ -1067,6 +1064,7 @@ func withProgress(p glue.Progress, cc func(p glue.Progress) error) error {
 	return cc(p)
 }
 
+// nolint: unused, deadcode
 func countIndices(ts map[int64]*metautil.Table) int64 {
 	result := int64(0)
 	for _, t := range ts {

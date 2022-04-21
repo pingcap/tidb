@@ -158,7 +158,7 @@ func newStreamRestoreCommand() *cobra.Command {
 			return runRestoreCommand(command, task.PointRestoreCmd)
 		},
 	}
-	task.DefineFilterFlags(command, filterOutSysAndMemTables, false)
+	task.DefineFilterFlags(command, filterOutSysAndMemTables, true)
 	task.DefineStreamRestoreFlags(command)
 	return command
 }

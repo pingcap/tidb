@@ -127,7 +127,9 @@ func (ss *Schemas) BackupSchemas(
 			if err := metaWriter.Send(s, op); err != nil {
 				return errors.Trace(err)
 			}
-			updateCh.Inc()
+			if updateCh != nil {
+				updateCh.Inc()
+			}
 			return nil
 		})
 	}
