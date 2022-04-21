@@ -1491,7 +1491,7 @@
     "Cases": [
       {
         "SQL": "select t1.a, (select count(t2.a) from t t2 where t2.g in (select t3.d from t t3 where t3.c = t1.a)) as agg_col from t t1;",
-        "Best": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexJoin{IndexReader(Index(t.g)[[NULL,+inf]])->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->HashAgg)->HashAgg}(test.t.d,test.t.g)}->HashAgg"
+        "Best": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexJoin{IndexReader(Index(t.c_d_e)[[NULL,+inf]]->HashAgg)->HashAgg->IndexReader(Index(t.g)[[NULL,+inf]])}(test.t.d,test.t.g)}->HashAgg"
       }
     ]
   },
@@ -2813,7 +2813,7 @@
           "TableReader 1.25 root  data:ExchangeSender",
           "└─ExchangeSender 1.25 batchCop[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 1.25 batchCop[tiflash]  Column#5, test.employee.empid, test.employee.deptid, test.employee.salary",
-          "    └─HashJoin 1.25 batchCop[tiflash]  inner join, equal:[eq(Column#5, test.employee.deptid)]",
+          "    └─HashJoin 1.25 batchCop[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#5)]",
           "      ├─ExchangeReceiver(Build) 1.00 batchCop[tiflash]  ",
           "      │ └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: Broadcast",
           "      │   └─Projection 1.00 batchCop[tiflash]  Column#5",
