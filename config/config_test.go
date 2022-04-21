@@ -371,7 +371,7 @@ spilled-file-encryption-method = "aes128-ctr"
 	require.NoError(t, f.Sync())
 	require.NoError(t, conf.Load(configFile))
 
-	configFile = filepath.Join(filepath.Dir(localFile), "config.toml.example")
+	configFile = "config.toml.example"
 	require.NoError(t, conf.Load(configFile))
 
 	// Make sure the example config is the same as default config except `auto_tls`.
@@ -391,7 +391,6 @@ spilled-file-encryption-method = "aes128-ctr"
 
 	// Test for TLS config.
 	certFile := "cert.pem"
-	certFile = filepath.Join(filepath.Dir(localFile), certFile)
 	f, err = os.Create(certFile)
 	require.NoError(t, err)
 	_, err = f.WriteString(`-----BEGIN CERTIFICATE-----
@@ -417,7 +416,6 @@ c933WW1E0hCtvuGxWFIFtoJMQoyH0Pl4ACmY/6CokCCZKDInrPdhhf3MGRjkkw==
 	require.NoError(t, f.Close())
 
 	keyFile := "key.pem"
-	keyFile = filepath.Join(filepath.Dir(localFile), keyFile)
 	f, err = os.Create(keyFile)
 	require.NoError(t, err)
 	_, err = f.WriteString(`-----BEGIN RSA PRIVATE KEY-----
