@@ -1460,8 +1460,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 				return
 			}
 
-			txnManager := sessiontxn.GetTxnManager(p.ctx)
-			if !txnManager.GetTxnInfoSchema().TableExists(model.NewCIStr(currentDB), tn.Name) {
+			if !p.ensureInfoSchema().TableExists(model.NewCIStr(currentDB), tn.Name) {
 				return
 			}
 
