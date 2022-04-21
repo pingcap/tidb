@@ -17,6 +17,7 @@ package restore
 import (
 	"context"
 	"database/sql"
+	"math"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -408,6 +409,9 @@ func TestAlterAutoInc(t *testing.T) {
 		ExpectClose()
 
 	err := AlterAutoIncrement(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345)
+	require.NoError(t, err)
+
+	err = AlterAutoIncrement(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", uint64(math.MaxInt64+1))
 	require.NoError(t, err)
 }
 

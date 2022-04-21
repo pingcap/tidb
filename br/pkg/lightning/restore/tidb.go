@@ -18,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -373,8 +374,12 @@ func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) (bool, e
 // NOTE: since tidb can make sure the auto id is always be rebase even if the `incr` value is smaller
 // the the auto incremanet base in tidb side, we needn't fetch currently auto increment value here.
 // See: https://github.com/pingcap/tidb/blob/64698ef9a3358bfd0fdc323996bb7928a56cadca/ddl/ddl_api.go#L2528-L2533
-func AlterAutoIncrement(ctx context.Context, g glue.SQLExecutor, tableName string, incr int64) error {
-	logger := log.With(zap.String("table", tableName), zap.Int64("auto_increment", incr))
+func AlterAutoIncrement(ctx context.Context, g glue.SQLExecutor, tableName string, incr uint64) error {
+	logger := log.With(zap.String("table", tableName), zap.Uint64("auto_increment", incr))
+	if incr > math.MaxInt64 {
+		logger.Warn("auto_increment out of the maximum value TiDB supports", zap.Uint64("auto_increment", incr))
+		return nil
+	}
 	query := fmt.Sprintf("ALTER TABLE %s AUTO_INCREMENT=%d", tableName, incr)
 	task := logger.Begin(zap.InfoLevel, "alter table auto_increment")
 	err := g.ExecuteWithLog(ctx, query, "alter table auto_increment", logger)
