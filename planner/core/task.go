@@ -2258,10 +2258,12 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	inputRows := t.count()
+	final := p
 	if cop, ok := t.(*copTask); ok {
 		if len(cop.rootTaskConds) == 0 {
 			copTaskType := cop.getStoreType()
 			partialAgg, finalAgg := p.newPartialAggregate(copTaskType, false)
+			final = finalAgg.(*PhysicalHashAgg)
 			if partialAgg != nil {
 				if cop.tablePlan != nil {
 					cop.finishIndexPlan()
@@ -2292,12 +2294,12 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 		} else {
 			t = cop.convertToRootTask(p.ctx)
 			inputRows = t.count()
-			attachPlan2Task(p, t)
+			attachPlan2Task(final, t)
 		}
 	} else if _, ok := t.(*mppTask); ok {
-		return p.attach2TaskForMpp(tasks...)
+		return final.attach2TaskForMpp(tasks...)
 	} else {
-		attachPlan2Task(p, t)
+		attachPlan2Task(final, t)
 	}
 	// We may have 3-phase hash aggregation actually, strictly speaking, we'd better
 	// calculate cost of each phase and sum the results up, but in fact we don't have
@@ -2311,7 +2313,7 @@ func (p *PhysicalHashAgg) attach2Task(tasks ...task) task {
 	// hash aggregation, it would cause under-estimation as the reason mentioned in comment above.
 	// To make it simple, we also treat 2-phase parallel hash aggregation in TiDB layer as
 	// 1-phase when computing cost.
-	t.addCost(p.GetCost(inputRows, true, false))
+	t.addCost(final.GetCost(inputRows, true, false))
 	t.plan().SetCost(t.cost())
 	return t
 }
