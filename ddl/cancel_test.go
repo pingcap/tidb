@@ -39,17 +39,127 @@ type testCancelJob struct {
 }
 
 var allTestCase = []testCancelJob{
+	// Add index.
 	{"create unique index c3_index on t_partition (c1)", true, model.StateWriteReorganization, true, true, nil},
-	{"alter table t_partition add primary key c3_index (c1);", true, model.StateWriteReorganization, true, true, nil},
-	{"alter table t add primary key idx_c2 (c2);", true, model.StateWriteReorganization, true, true, nil},
-	{"alter table t add unique index idx_c2 (c2);", true, model.StateWriteReorganization, true, true, nil},
+	{"alter table t_partition add primary key c3_index (c1)", true, model.StateWriteReorganization, true, true, nil},
+	// Add primary key
+	{"alter table t add primary key idx_pc2 (c2)", true, model.StateNone, true, false, nil},
+	{"alter table t add primary key idx_pc2 (c2)", true, model.StateDeleteOnly, true, true, nil},
+	{"alter table t add primary key idx_pc2 (c2)", true, model.StateWriteOnly, true, true, nil},
+	{"alter table t add primary key idx_pc2 (c2)", true, model.StateWriteReorganization, true, true, nil},
+	{"alter table t add primary key idx_pc2 (c2)", false, model.StatePublic, false, true, nil},
+	// Drop primary key
+	{"alter table t drop primary key", true, model.StateNone, true, false, nil},
+	{"alter table t drop primary key", false, model.StateWriteOnly, true, false, nil},
+	{"alter table t drop primary key", false, model.StateWriteOnly, true, false, []string{"alter table t add primary key idx_pc2 (c2)"}},
+	{"alter table t drop primary key", false, model.StateDeleteOnly, true, false, []string{"alter table t add primary key idx_pc2 (c2)"}},
+	{"alter table t drop primary key", false, model.StateDeleteOnly, false, true, []string{"alter table t add primary key idx_pc2 (c2)"}},
+	// Add unique key
+	{"alter table t add unique index idx_uc2 (c2)", true, model.StateNone, true, false, nil},
+	{"alter table t add unique index idx_uc2 (c2)", true, model.StateDeleteOnly, true, true, nil},
+	{"alter table t add unique index idx_uc2 (c2)", true, model.StateWriteOnly, true, true, nil},
+	{"alter table t add unique index idx_uc2 (c2)", true, model.StateWriteReorganization, true, true, nil},
+	{"alter table t add unique index idx_uc2 (c2)", false, model.StatePublic, false, true, nil},
+	{"alter table t add index idx_c2(c2)", true, model.StateNone, true, false, nil},
+	{"alter table t add index idx_c2(c2)", true, model.StateDeleteOnly, true, true, nil},
+	{"alter table t add index idx_c2(c2)", true, model.StateWriteOnly, true, true, nil},
+	{"alter table t add index idx_cx2(c2)", false, model.StatePublic, false, true, nil},
+	// Add column.
+	{"alter table t add column c4 bigint", true, model.StateNone, true, false, nil},
+	{"alter table t add column c4 bigint", true, model.StateDeleteOnly, true, true, nil},
+	{"alter table t add column c4 bigint", true, model.StateWriteOnly, true, true, nil},
+	{"alter table t add column c4 bigint", true, model.StateWriteReorganization, true, true, nil},
+	{"alter table t add column c4 bigint", false, model.StatePublic, false, true, nil},
+	// Create table.
+	{"create table test_create_table(a int)", true, model.StateNone, true, false, nil},
+	{"create table test_create_table(a int)", false, model.StatePublic, false, true, nil},
+	// Create schema.
+	{"create database test_create_db", true, model.StateNone, true, false, nil},
+	{"create database test_create_db", false, model.StatePublic, false, true, nil},
+	// Drop column.
+	{"alter table t drop column c3", true, model.StateNone, true, false, nil},
+	{"alter table t drop column c3", false, model.StateDeleteOnly, true, false, nil},
+	{"alter table t drop column c3", false, model.StateDeleteOnly, false, true, []string{"alter table t add column c3 bigint"}},
+	{"alter table t drop column c3", false, model.StateWriteOnly, true, true, []string{"alter table t add column c3 bigint"}},
+	{"alter table t drop column c3", false, model.StateDeleteReorganization, true, true, []string{"alter table t add column c3 bigint"}},
+	{"alter table t drop column c3", false, model.StatePublic, false, true, []string{"alter table t add column c3 bigint"}},
+	// rebase auto ID.
+	{"alter table t_rebase auto_increment = 6000", true, model.StateNone, true, false, []string{"create table t_rebase (c1 bigint auto_increment primary key, c2 bigint);"}},
+	{"alter table t_rebase auto_increment = 9000", false, model.StatePublic, false, true, nil},
+	// Shard row ID,
+	{"alter table t_auto shard_row_id_bits = 5", true, model.StateNone, true, false, []string{"create table t_auto (c1 int not null auto_increment unique) shard_row_id_bits = 0"}},
+	{"alter table t_auto shard_row_id_bits = 8", false, model.StatePublic, false, true, nil},
+	// Modify column, no reorg.
+	{"alter table t modify column c11 mediumint", true, model.StateNone, true, false, nil},
+	{"alter table t modify column c11 int", false, model.StatePublic, false, true, nil},
+	// Modify column, reorg.
+	{"alter table t modify column c11 char(10)", true, model.StateNone, true, false, nil},
+	{"alter table t modify column c11 char(10)", true, model.StateDeleteOnly, true, true, nil},
+	{"alter table t modify column c11 char(10)", true, model.StateWriteOnly, true, true, nil},
+	{"alter table t modify column c11 char(10)", true, model.StateWriteReorganization, true, true, nil},
+	{"alter table t modify column c11 char(10)", false, model.StatePublic, false, true, nil},
+	// Add foreign key.
+	{"alter table t add constraint fk foreign key a(c1) references t_ref(c1)", true, model.StateNone, true, false, []string{"create table t_ref (c1 int, c2 int, c3 int, c11 tinyint);"}},
+	{"alter table t add constraint fk foreign key a(c1) references t_ref(c1)", false, model.StatePublic, false, true, nil},
+	// Drop foreign key.
+	{"alter table t drop foreign key fk", true, model.StateNone, true, false, nil},
+	{"alter table t drop foreign key fk", false, model.StatePublic, false, true, nil},
+	// Rename table.
+	{"rename table t_rename1 to t_rename11", true, model.StateNone, true, false, []string{"create table t_rename1 (c1 bigint , c2 bigint);", "create table t_rename2 (c1 bigint , c2 bigint);"}},
+	{"rename table t_rename1 to t_rename11", false, model.StatePublic, false, true, nil},
+	// Rename tables.
+	{"rename table t_rename11 to t_rename111, t_rename2 to t_rename22", true, model.StateNone, true, false, nil},
+	{"rename table t_rename11 to t_rename111, t_rename2 to t_rename22", false, model.StatePublic, false, true, nil},
+	// Modify table charset and collate.
+	{"alter table t_cs convert to charset utf8mb4", true, model.StateNone, true, false, []string{"create table t_cs(a varchar(10)) charset utf8"}},
+	{"alter table t_cs convert to charset utf8mb4", false, model.StatePublic, false, true, nil},
+	// Modify schema charset and collate.
+	{"alter database db_coll charset utf8mb4 collate utf8mb4_bin", true, model.StateNone, true, false, []string{"create database db_coll default charset utf8 collate utf8_bin"}},
+	{"alter database db_coll charset utf8mb4 collate utf8mb4_bin", false, model.StatePublic, false, true, nil},
+	// Truncate partition.
+	{"alter table t_partition truncate partition p3", true, model.StateNone, true, false, nil},
+	{"alter table t_partition truncate partition p3", false, model.StatePublic, false, true, nil},
+	// Add columns.
+	{"alter table t add column c41 bigint, add column c42 bigint", true, model.StateNone, true, false, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", true, model.StateDeleteOnly, true, true, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", true, model.StateWriteOnly, true, true, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", true, model.StateWriteReorganization, true, true, nil},
+	{"alter table t add column c41 bigint, add column c42 bigint", false, model.StatePublic, false, true, nil},
+	// Drop columns.
+	{"alter table t drop column c41, drop column c42", true, model.StateNone, true, false, nil},
+	{"alter table t drop column c41, drop column c42", false, model.StateDeleteOnly, true, false, nil},
+	{"alter table t drop column c41, drop column c42", false, model.StateDeleteOnly, false, true, []string{"alter table t add column c41 bigint, add column c42 bigint"}},
+	{"alter table t drop column c41, drop column c42", false, model.StateWriteOnly, true, true, []string{"alter table t add column c41 bigint, add column c42 bigint"}},
+	{"alter table t drop column c41, drop column c42", false, model.StateDeleteReorganization, true, true, []string{"alter table t add column c41 bigint, add column c42 bigint"}},
+	{"alter table t drop column c41, drop column c42", false, model.StatePublic, false, true, []string{"alter table t add column c41 bigint, add column c42 bigint"}},
+	// Alter index visibility.
+	{"alter table t alter index idx_v invisible", true, model.StateNone, true, false, []string{"alter table t add index idx_v(c1)"}},
+	{"alter table t alter index idx_v invisible", false, model.StatePublic, false, true, nil},
+	// Exchange partition.
+	{"alter table t_partition exchange partition p0 with table t_partition2", true, model.StateNone, true, false, []string{"create table t_partition2(c1 int, c2 int, c3 int)", "set @@tidb_enable_exchange_partition=1"}},
+	{"alter table t_partition exchange partition p0 with table t_partition2", false, model.StatePublic, false, true, nil},
+	// Add partition.
+	{"alter table t_partition add partition (partition p6 values less than (8192))", true, model.StateNone, true, false, nil},
+	{"alter table t_partition add partition (partition p6 values less than (8192))", true, model.StateReplicaOnly, true, true, nil},
+	{"alter table t_partition add partition (partition p6 values less than (8192))", false, model.StatePublic, false, true, nil},
+	// Drop indexes.
+	{"alter table t drop index mul_idx1, drop index mul_idx2", true, model.StateNone, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", false, model.StateWriteOnly, true, false, nil},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", false, model.StateWriteOnly, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", false, model.StateDeleteOnly, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", false, model.StateDeleteOnly, false, true, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", false, model.StateDeleteReorganization, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
+	{"alter table t drop index mul_idx1, drop index mul_idx2", false, model.StateDeleteReorganization, false, true, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
+	// Alter db placement.
+	{"alter database db_placement placement policy = 'alter_x'", true, model.StateNone, true, false, []string{"create placement policy alter_x PRIMARY_REGION=\"cn-east-1\", REGIONS=\"cn-east-1\";", "create database db_placement"}},
+	{"alter database db_placement placement policy = 'alter_x'", false, model.StatePublic, false, true, nil},
 }
 
 func cancelSuccess(rs *testkit.Result) bool {
 	return strings.Contains(rs.Rows()[0][1].(string), "success")
 }
 
-func TestCancelPartitionTable(t *testing.T) {
+func TestCancel(t *testing.T) {
 	store, dom, clean := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 100*time.Millisecond)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
@@ -66,16 +176,16 @@ func TestCancelPartitionTable(t *testing.T) {
     	partition p1 values less than (2048),
     	partition p2 values less than (3072),
     	partition p3 values less than (4096),
-		partition p4 values less than (maxvalue)
+		partition p4 values less than (7096)
    	);`)
 	tk.MustExec(`create table t (
-		c1 int, c2 int, c3 int
+		c1 int, c2 int, c3 int, c11 tinyint
 	);`)
 
 	// Prepare data.
 	for i := 0; i <= 2048; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t_partition values(%d, %d, %d)", i*3, i*2, i))
-		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d, %d)", i*3, i*2, i))
+		tk.MustExec(fmt.Sprintf("insert into t(c1, c2, c3) values(%d, %d, %d)", i*3, i*2, i))
 	}
 
 	// Change some configurations.
@@ -88,7 +198,7 @@ func TestCancelPartitionTable(t *testing.T) {
 
 	hookFunc := func(job *model.Job) {
 		if job.SchemaState == allTestCase[i].cancelState && !cancel {
-			if job.SchemaState == model.StateWriteReorganization && (job.RowCount == 0) {
+			if job.SchemaState == model.StateWriteReorganization && ddl.MayNeedReorg(job) && job.RowCount == 0 {
 				return
 			}
 			rs := tkCancel.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
@@ -113,12 +223,12 @@ func TestCancelPartitionTable(t *testing.T) {
 	for j, tc := range allTestCase {
 		i = j
 		if tc.onJobBefore {
+			restHook(hook)
 			for _, prepareSQL := range tc.prepareSQL {
 				tk.MustExec(prepareSQL)
 			}
 
 			cancel = false
-			restHook(hook)
 			registHook(hook, true)
 			logutil.BgLogger().Info("test case", zap.Int("", i))
 			if tc.ok {
@@ -128,12 +238,12 @@ func TestCancelPartitionTable(t *testing.T) {
 			}
 		}
 		if tc.onJobUpdate {
+			restHook(hook)
 			for _, prepareSQL := range tc.prepareSQL {
 				tk.MustExec(prepareSQL)
 			}
 
 			cancel = false
-			restHook(hook)
 			registHook(hook, false)
 			logutil.BgLogger().Info("test case", zap.Int("", i))
 			if tc.ok {
