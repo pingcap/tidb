@@ -284,6 +284,7 @@ func (s *tableRegionSampler) scanFirstKVForEachRange(ranges []kv.KeyRange,
 	fn func(handle kv.Handle, value []byte) error) error {
 	ver := kv.Version{Ver: s.startTS}
 	snap := s.ctx.GetStore().GetSnapshot(ver)
+	setOptionForTopSQL(s.ctx.GetSessionVars().StmtCtx, snap)
 	concurrency := sampleMethodRegionConcurrency
 	if len(ranges) < concurrency {
 		concurrency = len(ranges)
