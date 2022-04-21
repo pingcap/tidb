@@ -241,6 +241,12 @@ var defaultSysVars = []*SysVar{
 		s.AllowRemoveAutoInc = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: ScopeSession, Name: TiDBQueryLogMaxLen, Value: strconv.Itoa(logutil.DefaultQueryLogMaxLen), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64, skipInit: true, SetSession: func(s *SessionVars, val string) error {
+		atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(TidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
+		return nil
+	}, GetSession: func(s *SessionVars) (string, error) {
+		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10), nil
+	}},
 	{Scope: ScopeSession, Name: TiDBIsolationReadEngines, Value: strings.Join(config.GetGlobalConfig().IsolationRead.Engines, ","), Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		engines := strings.Split(normalizedValue, ",")
 		var formatVal string
@@ -349,12 +355,6 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, GetGlobal: func(s *SessionVars) (string, error) {
 		return BoolToOnOff(config.GetGlobalConfig().Instance.EnableSlowLog.Load()), nil
-	}},
-	{Scope: ScopeInstance, Name: TiDBQueryLogMaxLen, Value: strconv.Itoa(logutil.DefaultQueryLogMaxLen), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64, skipInit: true, SetGlobal: func(s *SessionVars, val string) error {
-		atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(TidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
-		return nil
-	}, GetGlobal: func(s *SessionVars) (string, error) {
-		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10), nil
 	}},
 	{Scope: ScopeInstance, Name: TiDBCheckMb4ValueInUTF8, Value: BoolToOnOff(config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Load()), skipInit: true, Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
 		config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Store(TiDBOptOn(val))
