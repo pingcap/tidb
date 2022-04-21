@@ -750,3 +750,13 @@ a
 5
 4
 3
+drop table if exists t ,t1, t2;
+create table t(a int);
+insert into t values (0);
+create table t1 (b int);
+insert into t1 values (0);
+create table t2 (c int);
+insert into t2 values (0);
+with t1 as (with t11 as (select * from t) select * from t1, t2) select * from t1;
+b	c
+0	0
