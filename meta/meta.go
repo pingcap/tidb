@@ -215,7 +215,25 @@ func IsDBkey(dbKey []byte) bool {
 }
 
 func (m *Meta) autoTableIDKey(tableID int64) []byte {
+	return AutoTableIDKey(tableID)
+}
+
+func AutoTableIDKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mTableIDPrefix, tableID))
+}
+
+func IsAutoTableIDKey(key []byte) bool {
+	return strings.HasPrefix(string(key), mTableIDPrefix+":")
+}
+
+func ParseAutoTableID(key []byte) (int64, error) {
+	if !IsAutoTableIDKey(key) {
+		return 0, ErrInvalidString.GenWithStack("fail to parse autoTableKey")
+	}
+
+	tableID := strings.TrimPrefix(string(key), mTableIDPrefix+":")
+	id, err := strconv.Atoi(tableID)
+	return int64(id), err
 }
 
 func (m *Meta) autoIncrementIDKey(tableID int64) []byte {
