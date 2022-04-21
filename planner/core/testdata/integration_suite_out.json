@@ -426,13 +426,13 @@
           "TopN 1.00 root  Column#4, offset:0, count:1",
           "└─Projection 10000.00 root  Column#4, test.t.a, test.t.b",
           "  └─HashJoin 10000.00 root  inner join, equal:[eq(test.t.b, Column#4)]",
-          "  ├─Projection(Build) 8000.00 root  plus(test.t.b, test.t.b)->Column#4",
-          "  │ └─TableReader 8000.00 root  data:Selection",
-          "  │   └─Selection 8000.00 cop[tikv]  not(isnull(plus(test.t.b, test.t.b)))",
-          "  │     └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-          "  └─TableReader(Probe) 9990.00 root  data:Selection",
-          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t.b))",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "    ├─Projection(Build) 8000.00 root  plus(test.t.b, test.t.b)->Column#4",
+          "    │ └─TableReader 8000.00 root  data:Selection",
+          "    │   └─Selection 8000.00 cop[tikv]  not(isnull(plus(test.t.b, test.t.b)))",
+          "    │     └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t.b))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -3479,7 +3479,7 @@
           "        │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.d3_t.value, collate: binary]",
           "        │   └─Selection 4.00 batchCop[tiflash]  not(isnull(test.d3_t.value))",
           "        │     └─TableFullScan 4.00 batchCop[tiflash] table:d3_t keep order:false",
-          "        └─HashJoin(Probe) 64.00 batchCop[tiflash]  inner join, equal:[eq(test.fact_t.d1_k, test.d2_t.value)]",
+          "        └─HashJoin(Probe) 64.00 batchCop[tiflash]  inner join, equal:[eq(test.d2_t.value, test.fact_t.d1_k)]",
           "          ├─ExchangeReceiver(Build) 4.00 batchCop[tiflash]  ",
           "          │ └─ExchangeSender 4.00 batchCop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: test.d2_t.value, collate: binary]",
           "          │   └─Selection 4.00 batchCop[tiflash]  not(isnull(test.d2_t.value))",
@@ -4899,7 +4899,7 @@
           "      │ └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#27, collate: binary]",
           "      │   └─Projection 10000.00 cop[tiflash]  test.t.c1, test.t.c2, test.t.c3, test.t.c4, test.t.c5, cast(test.t.c4, decimal(40,20))->Column#27",
           "      │     └─TableFullScan 10000.00 cop[tiflash] table:t4 keep order:false, stats:pseudo",
-          "      └─HashJoin 15593.77 cop[tiflash]  inner join, equal:[eq(test.t.c3, test.t.c5)]",
+          "      └─HashJoin(Probe) 15593.77 cop[tiflash]  inner join, equal:[eq(test.t.c3, test.t.c5)]",
           "        ├─ExchangeReceiver(Build) 10000.00 cop[tiflash]  ",
           "        │ └─ExchangeSender 10000.00 cop[tiflash]  ExchangeType: HashPartition, Hash Cols: [name: Column#25, collate: binary]",
           "        │   └─Projection 10000.00 cop[tiflash]  test.t.c1, test.t.c2, test.t.c3, test.t.c4, test.t.c5, cast(test.t.c3, decimal(40,20))->Column#25",
