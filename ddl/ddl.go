@@ -206,18 +206,19 @@ type ddl struct {
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
 type ddlCtx struct {
-	uuid         string
-	store        kv.Storage
-	ownerManager owner.Manager
-	schemaSyncer util.SchemaSyncer
-	ddlJobDoneCh chan struct{}
-	ddlEventCh   chan<- *util.Event
-	lease        time.Duration        // lease is schema lease.
-	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
-	infoCache    *infoschema.InfoCache
-	statsHandle  *handle.Handle
-	tableLockCkr util.DeadTableLockChecker
-	etcdCli      *clientv3.Client
+	schemaVersionMu sync.Mutex
+	uuid            string
+	store           kv.Storage
+	ownerManager    owner.Manager
+	schemaSyncer    util.SchemaSyncer
+	ddlJobDoneCh    chan struct{}
+	ddlEventCh      chan<- *util.Event
+	lease           time.Duration        // lease is schema lease.
+	binlogCli       *pumpcli.PumpsClient // binlogCli is used for Binlog.
+	infoCache       *infoschema.InfoCache
+	statsHandle     *handle.Handle
+	tableLockCkr    util.DeadTableLockChecker
+	etcdCli         *clientv3.Client
 
 	// hook may be modified.
 	mu struct {
