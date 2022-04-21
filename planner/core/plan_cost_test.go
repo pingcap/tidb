@@ -49,7 +49,6 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int primary key, b int, c int, d int, key b(b), key cd(c, d))`)
-	tk.MustExec(`set @@session.tidb_stats_load_sync_wait=2000`)
 
 	queries := []string{
 		// table-reader

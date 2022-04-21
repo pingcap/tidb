@@ -181,9 +181,9 @@ func (p *PhysicalTableScan) GetPlanCost(taskType property.TaskType) (float64, er
 		return p.planCost, nil
 	}
 	// scan cost: rows * row-size * scan-factor
-	scanFactor := p.ctx.GetSessionVars().GetScanFactor(nil)
+	scanFactor := p.ctx.GetSessionVars().GetScanFactor(p.Table)
 	if p.Desc {
-		scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(nil)
+		scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
 	}
 	p.planCost = p.StatsCount() * p.getScanRowSize() * scanFactor
 	p.planCostInit = true
@@ -196,9 +196,9 @@ func (p *PhysicalIndexScan) GetPlanCost(taskType property.TaskType) (float64, er
 		return p.planCost, nil
 	}
 	// scan cost: rows * row-size * scan-factor
-	scanFactor := p.ctx.GetSessionVars().GetScanFactor(nil)
+	scanFactor := p.ctx.GetSessionVars().GetScanFactor(p.Table)
 	if p.Desc {
-		scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(nil)
+		scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
 	}
 	p.planCost = p.StatsCount() * p.getScanRowSize() * scanFactor
 	p.planCostInit = true
