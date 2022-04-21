@@ -254,6 +254,9 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *model.Job) (err error
 	case model.ActionSetDefaultValue:
 		col := job.Args[0].(*table.Column)
 		info.ModifyColumns = append(info.ModifyColumns, col.Name)
+	case model.ActionAlterIndexVisibility:
+		idxName := job.Args[0].(model.CIStr)
+		info.AlterIndexes = append(info.AlterIndexes, idxName)
 	default:
 		return dbterror.ErrRunMultiSchemaChanges
 	}
@@ -306,7 +309,10 @@ func checkOperateSameColumn(info *model.MultiSchemaInfo) error {
 	if err := checkIndexes(info.AddIndexes, true); err != nil {
 		return err
 	}
-	return checkIndexes(info.DropIndexes, true)
+	if err := checkIndexes(info.DropIndexes, true); err != nil {
+		return err
+	}
+	return checkIndexes(info.AlterIndexes, true)
 }
 
 func checkMultiSchemaInfo(info *model.MultiSchemaInfo, t table.Table) error {

@@ -265,6 +265,7 @@ type MultiSchemaInfo struct {
 	ModifyColumns []CIStr `json:"-"`
 	AddIndexes    []CIStr `json:"-"`
 	DropIndexes   []CIStr `json:"-"`
+	AlterIndexes  []CIStr `json:"-"`
 
 	RelativeColumns []CIStr `json:"-"`
 }
