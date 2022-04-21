@@ -131,7 +131,7 @@ package funcdep
 //  ---------------------------------
 //   1   2    1     2     1    1    1
 //   2   2    null null null null null
-//   3   3    3     3   null null null
+//   3   3    null null null null null
 //
 //  Even like that, the case of old Cond-FD and new Cond-FD are existed too. Seems the null-constraint column set of
 //  old Cond-FD {c,d,e} can be expanded as {a,b,c,d,e} visually, but we couldn't derive the inference of the join predicate
