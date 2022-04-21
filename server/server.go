@@ -732,6 +732,13 @@ func (s *Server) KillAllConnections() {
 		}
 		killConn(conn)
 	}
+
+	if s.dom != nil {
+		sysProcTracker := s.dom.SysProcTracker()
+		for connID := range sysProcTracker.GetSysProcessList() {
+			sysProcTracker.KillSysProcess(connID)
+		}
+	}
 }
 
 var gracefulCloseConnectionsTimeout = 15 * time.Second
