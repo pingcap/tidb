@@ -194,8 +194,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 			panic("point get replica option fail")
 		}
 	})
-	setResourceGroupTaggerForTxn(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
-	setRPCInterceptorOfExecCounterForTxn(e.ctx.GetSessionVars(), e.snapshot)
+	setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, e.snapshot)
 	return nil
 }
 

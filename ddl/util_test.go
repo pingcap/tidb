@@ -29,23 +29,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func testTableInfoWith2IndexOnFirstColumn(t *testing.T, d *ddl, name string, num int) *model.TableInfo {
-	normalInfo, err := testTableInfo(d, name, num)
-	require.NoError(t, err)
-	idxs := make([]*model.IndexInfo, 0, 2)
-	for i := range idxs {
-		idx := &model.IndexInfo{
-			Name:    model.NewCIStr(fmt.Sprintf("i%d", i+1)),
-			State:   model.StatePublic,
-			Columns: []*model.IndexColumn{{Name: model.NewCIStr("c1")}},
-		}
-		idxs = append(idxs, idx)
-	}
-	normalInfo.Indices = idxs
-	normalInfo.Columns[0].FieldType.Flen = 11
-	return normalInfo
-}
-
 // testTableInfo creates a test table with num int columns and with no index.
 func testTableInfo(d *ddl, name string, num int) (*model.TableInfo, error) {
 	tblInfo := &model.TableInfo{
@@ -96,30 +79,6 @@ func testTableInfoWithPartition(t *testing.T, d *ddl, name string, num int) *mod
 	}
 
 	return tblInfo
-}
-
-// testTableInfoWithPartitionLessThan creates a test table with num int columns and one partition specified with lessthan.
-func testTableInfoWithPartitionLessThan(t *testing.T, d *ddl, name string, num int, lessthan string) *model.TableInfo {
-	tblInfo := testTableInfoWithPartition(t, d, name, num)
-	tblInfo.Partition.Definitions[0].LessThan = []string{lessthan}
-	return tblInfo
-}
-
-func testAddedNewTablePartitionInfo(t *testing.T, d *ddl, tblInfo *model.TableInfo, partName, lessthan string) *model.PartitionInfo {
-	genIDs, err := d.genGlobalIDs(1)
-	require.NoError(t, err)
-	pid := genIDs[0]
-	// the new added partition should change the partition state to state none at the beginning.
-	return &model.PartitionInfo{
-		Type:   model.PartitionTypeRange,
-		Expr:   tblInfo.Columns[0].Name.L,
-		Enable: true,
-		Definitions: []model.PartitionDefinition{{
-			ID:       pid,
-			Name:     model.NewCIStr(partName),
-			LessThan: []string{lessthan},
-		}},
-	}
 }
 
 func testCreateTable(t *testing.T, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo) *model.Job {

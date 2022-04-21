@@ -73,8 +73,10 @@ type Client struct {
 
 	databases map[string]*utils.Database
 	ddlJobs   []*model.Job
-	// ddlJobsMap record the tables' auto id need to restore after create table
-	ddlJobsMap map[UniqueTableName]bool
+
+	// store tables need to rebase info like auto id and random id and so on after create table
+	rebasedTablesMap map[UniqueTableName]bool
+
 	backupMeta *backuppb.BackupMeta
 	// TODO Remove this field or replace it with a []*DB,
 	// since https://github.com/pingcap/br/pull/377 needs more DBs to speed up DDL execution.
@@ -151,6 +153,10 @@ func (rc *Client) Init(g glue.Glue, store kv.Storage) error {
 	// tikv.Glue will return nil, tidb.Glue will return available domain
 	if rc.dom != nil {
 		rc.statsHandler = rc.dom.StatsHandle()
+	}
+	// init backupMeta only for passing unit test
+	if rc.backupMeta == nil {
+		rc.backupMeta = new(backuppb.BackupMeta)
 	}
 
 	// Only in binary we can use multi-thread sessions to create tables.
@@ -522,7 +528,7 @@ func (rc *Client) createTables(
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID")
 	} else {
-		err := db.CreateTables(ctx, tables, rc.GetDDLJobsMap(), rc.GetSupportPolicy(), rc.GetPolicyMap())
+		err := db.CreateTables(ctx, tables, rc.GetRebasedTables(), rc.GetSupportPolicy(), rc.GetPolicyMap())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -562,7 +568,7 @@ func (rc *Client) createTable(
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID", zap.Stringer("table", table.Info.Name))
 	} else {
-		err := db.CreateTable(ctx, table, rc.GetDDLJobsMap(), rc.GetSupportPolicy(), rc.GetPolicyMap())
+		err := db.CreateTable(ctx, table, rc.GetRebasedTables(), rc.GetSupportPolicy(), rc.GetPolicyMap())
 		if err != nil {
 			return CreatedTable{}, errors.Trace(err)
 		}
@@ -600,7 +606,7 @@ func (rc *Client) GoCreateTables(
 	// Could we have a smaller size of tables?
 	log.Info("start create tables")
 
-	rc.GenerateDDLJobsMap()
+	rc.GenerateRebasedTables(tables)
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.GoCreateTables", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -1341,25 +1347,27 @@ func (rc *Client) IsSkipCreateSQL() bool {
 	return rc.noSchema
 }
 
-// GenerateDDLJobsMap returns a map[UniqueTableName]bool about < db table, hasCreate/hasTruncate DDL >.
-// if we execute some DDLs before create table.
-// we may get two situation that need to rebase auto increment/random id.
-// 1. truncate table: truncate will generate new id cache.
-// 2. create table/create and rename table: the first create table will lock down the id cache.
-// because we cannot create onExistReplace table.
-// so the final create DDL with the correct auto increment/random id won't be executed.
-func (rc *Client) GenerateDDLJobsMap() {
-	rc.ddlJobsMap = make(map[UniqueTableName]bool)
-	for _, job := range rc.ddlJobs {
-		switch job.Type {
-		case model.ActionTruncateTable, model.ActionCreateTable, model.ActionRenameTable:
-			rc.ddlJobsMap[UniqueTableName{job.SchemaName, job.BinlogInfo.TableInfo.Name.String()}] = true
-		}
+// GenerateRebasedTables generate a map[UniqueTableName]bool to represent tables that haven't updated table info.
+// there are two situations:
+// 1. tables that already exists in the restored cluster.
+// 2. tables that are created by executing ddl jobs.
+// so, only tables in incremental restoration will be added to the map
+func (rc *Client) GenerateRebasedTables(tables []*metautil.Table) {
+	if !rc.IsIncremental() {
+		// in full restoration, all tables are created by Session.CreateTable, and all tables' info is updated.
+		rc.rebasedTablesMap = make(map[UniqueTableName]bool)
+		return
+	}
+
+	rc.rebasedTablesMap = make(map[UniqueTableName]bool, len(tables))
+	for _, table := range tables {
+		rc.rebasedTablesMap[UniqueTableName{DB: table.DB.Name.String(), Table: table.Info.Name.String()}] = true
 	}
 }
 
-func (rc *Client) GetDDLJobsMap() map[UniqueTableName]bool {
-	return rc.ddlJobsMap
+// GetRebasedTables returns tables that may need to be rebase auto increment id or auto random id
+func (rc *Client) GetRebasedTables() map[UniqueTableName]bool {
+	return rc.rebasedTablesMap
 }
 
 // PreCheckTableTiFlashReplica checks whether TiFlash replica is less than TiFlash node.
