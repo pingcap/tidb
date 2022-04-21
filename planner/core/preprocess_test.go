@@ -15,6 +15,7 @@
 package core_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -22,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
@@ -366,7 +368,7 @@ func TestLargeVarcharAutoConv(t *testing.T) {
 	}
 }
 
-//TestViewWith test create VIEW as WITH when WITH name is same the with table name. Case in Non RECURSIVE/RECURSIVE
+// TestViewWith test create VIEW as WITH when WITH name is same the with table name. Case in Non RECURSIVE/RECURSIVE
 func TestViewWith(t *testing.T) {
 
 	store, clean := testkit.CreateMockStore(t)
@@ -380,9 +382,9 @@ func TestViewWith(t *testing.T) {
 	tk.MustExec("create table t2 (a int);insert into t2 values (1), (2), (3), (4), (5);")
 
 	tk.MustExec("drop view if exists v1,v2;")
-	//WITH Non RECURSIVE
+	// WITH Non RECURSIVE
 	tk.MustExec("create view v1 as WITH t1 as (select a from t2 where t2.a=3 union select t2.a+1 from t1,t2 where t1.a=t2.a) select * from t1;")
-	//WITH RECURSIVE
+	// WITH RECURSIVE
 	tk.MustExec("create view v2 as WITH RECURSIVE t1 as (select a from t2 where t2.a=3 union select t2.a+1 from t1,t2 where t1.a=t2.a) select * from t1;")
 
 	tk.MustExec("create database if not exists test1;")
@@ -391,4 +393,46 @@ func TestViewWith(t *testing.T) {
 	tk.MustQuery("show columns from test.v1;")
 	tk.MustQuery("show columns from test.v2;")
 
+}
+
+func TestPreprocessCTE(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (a int);insert into t1 values (0), (1), (2), (3), (4);")
+	tk.MustExec("create table t2 (a int);insert into t2 values (1), (2), (3), (4), (5);")
+	tk.MustExec("drop table if exists tbl_1;")
+	tk.MustExec("CREATE TABLE `tbl_1`(`col_2` char(65) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,`col_3` int(11) NOT NULL);")
+	testCases := []struct {
+		before string
+		after  string
+	}{
+		{
+			"create view v1 as WITH t1 as (select a from t2 where t2.a=3 union select t2.a+1 from t1,t2 where t1.a=t2.a) select * from t1;",
+			"CREATE ALGORITHM = UNDEFINED DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `test`.`v1` AS WITH `t1` AS (SELECT `a` FROM `test`.`t2` WHERE `t2`.`a`=3 UNION SELECT `t2`.`a`+1 FROM (`test`.`t1`) JOIN `test`.`t2` WHERE `t1`.`a`=`t2`.`a`) SELECT * FROM `t1`",
+		},
+		{
+			"WITH t1 AS ( SELECT(WITH t1 AS ( WITH qn AS ( SELECT 10 * a AS a FROM t1 ) SELECT 10 * a AS a FROM qn ) SELECT *  FROM t1  LIMIT 1  )  FROM t2  WHERE t2.a = 3 UNION SELECT t2.a + 1  FROM t1, t2 WHERE t1.a = t2.a) SELECT * FROM t1",
+			"WITH `t1` AS (SELECT (WITH `t1` AS (WITH `qn` AS (SELECT 10*`a` AS `a` FROM `test`.`t1`) SELECT 10*`a` AS `a` FROM `qn`) SELECT * FROM `t1` LIMIT 1) FROM `test`.`t2` WHERE `t2`.`a`=3 UNION SELECT `t2`.`a`+1 FROM (`t1`) JOIN `test`.`t2` WHERE `t1`.`a`=`t2`.`a`) SELECT * FROM `t1`"},
+		{
+			"with recursive cte_8932 (col_34891,col_34892) AS ( with cte_8932 (col_34893,col_34894,col_34895) AS ( with tbl_1 (col_34896,col_34897,col_34898,col_34899) AS ( select 1, \"2\",3,col_3 from tbl_1 ) select cte_as_8958.col_34896,cte_as_8958.col_34898,cte_as_8958.col_34899 from tbl_1 as cte_as_8958 UNION DISTINCT select col_34893 + 1,concat(col_34894, 1),col_34895 + 1 from cte_8932 where col_34893 < 5 ) select cte_as_8959.col_34893,cte_as_8959.col_34895 from cte_8932 as cte_as_8959 ) select * from cte_8932 as cte_as_8960 order by cte_as_8960.col_34891,cte_as_8960.col_34892;",
+			"WITH RECURSIVE `cte_8932` (`col_34891`, `col_34892`) AS (WITH `cte_8932` (`col_34893`, `col_34894`, `col_34895`) AS (WITH `tbl_1` (`col_34896`, `col_34897`, `col_34898`, `col_34899`) AS (SELECT 1,_UTF8MB4'2',3,`col_3` FROM `test`.`tbl_1`) SELECT `cte_as_8958`.`col_34896`,`cte_as_8958`.`col_34898`,`cte_as_8958`.`col_34899` FROM `tbl_1` AS `cte_as_8958` UNION SELECT `col_34893`+1,CONCAT(`col_34894`, 1),`col_34895`+1 FROM `cte_8932` WHERE `col_34893`<5) SELECT `cte_as_8959`.`col_34893`,`cte_as_8959`.`col_34895` FROM `cte_8932` AS `cte_as_8959`) SELECT * FROM `cte_8932` AS `cte_as_8960` ORDER BY `cte_as_8960`.`col_34891`,`cte_as_8960`.`col_34892`",
+		},
+	}
+	for _, tc := range testCases {
+		stmts, warnings, err := parser.New().ParseSQL(tc.before)
+		require.Len(t, warnings, 0)
+		require.NoError(t, err)
+		require.Len(t, stmts, 1)
+
+		err = core.Preprocess(tk.Session(), stmts[0])
+		require.NoError(t, err)
+
+		var rs strings.Builder
+		err = stmts[0].Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &rs))
+		require.NoError(t, err)
+		require.Equal(t, tc.after, rs.String())
+	}
 }

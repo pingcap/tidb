@@ -116,7 +116,7 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...Preproce
 	v := preprocessor{
 		ctx:                ctx,
 		tableAliasInJoin:   make([]map[string]interface{}, 0),
-		preprocessWith:     PreprocessWith{name: make(map[string]interface{}), recursive: false, inWithClause: false},
+		preprocessWith:     PreprocessWith{name: make(map[string]interface{}), inDeepestWithClause: false, deepestRecursive: false},
 		staleReadProcessor: staleread.NewStaleReadProcessor(ctx),
 	}
 	for _, optFn := range preprocessOpt {
@@ -176,19 +176,11 @@ type PreprocessExecuteISUpdate struct {
 	Node                    ast.Node
 }
 
-// PreprocessWith is used to process WITH statement.Such as record CTE name、if use RECURSIVE or not
+// PreprocessWith is used to record info from WITH statements like CTE name and RECURSIVE.
 type PreprocessWith struct {
-	name         map[string]interface{}
-	recursive    bool
-	inWithClause bool //Only in ast.WithClause should judge to add schema or not when table name is the same as WITH name
-}
-
-//containsCTEName judge lowerTableName if is CTE name or not
-func (p *PreprocessWith) containsCTEName(lowerTableName string) bool {
-	if _, ok := p.name[lowerTableName]; ok {
-		return true
-	}
-	return false
+	name                map[string]interface{}
+	deepestRecursive    bool
+	inDeepestWithClause bool // Only in the deepest ast.WithClause should judge to add schema or not when table name is the same as WITH name
 }
 
 // preprocessor is an ast.Visitor that preprocess
@@ -333,8 +325,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.GroupByClause:
 		p.checkGroupBy(node)
 	case *ast.WithClause:
-		p.preprocessWith.recursive = node.IsRecursive
-		p.preprocessWith.inWithClause = true
+		p.preprocessWith.deepestRecursive = node.IsRecursive
+		p.preprocessWith.inDeepestWithClause = true
 		for _, cte := range node.CTEs {
 			p.preprocessWith.name[cte.Name.L] = struct{}{}
 		}
@@ -582,7 +574,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 			p.flag &= ^inCreateOrDropTable
 		}
 	case *ast.WithClause:
-		p.preprocessWith.inWithClause = false
+		p.preprocessWith.inDeepestWithClause = false
 	}
 
 	return in, p.err == nil
@@ -1455,16 +1447,15 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 			return
 		}
 
-		if p.preprocessWith.containsCTEName(tn.Name.L) {
-			if !p.preprocessWith.inWithClause {
+		if _, ok := p.preprocessWith.name[tn.Name.L]; ok {
+
+			if !p.preprocessWith.inDeepestWithClause {
 				return
 			}
 
-			if !p.ensureInfoSchema().TableExists(model.NewCIStr(currentDB), tn.Name) {
-				return
-			}
-
-			if p.preprocessWith.recursive {
+			if p.ensureInfoSchema().TableExists(model.NewCIStr(currentDB), tn.Name) && !p.preprocessWith.deepestRecursive {
+				// do noting
+			} else {
 				return
 			}
 
