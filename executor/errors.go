@@ -60,6 +60,7 @@ var (
 	ErrCTEMaxRecursionDepth          = dbterror.ClassExecutor.NewStd(mysql.ErrCTEMaxRecursionDepth)
 	ErrDataInConsistentExtraIndex    = dbterror.ClassExecutor.NewStd(mysql.ErrDataInConsistentExtraIndex)
 	ErrDataInConsistentMisMatchIndex = dbterror.ClassExecutor.NewStd(mysql.ErrDataInConsistentMisMatchIndex)
+	ErrNotSupportedWithSem           = dbterror.ClassOptimizer.NewStd(mysql.ErrNotSupportedWithSem)
 	ErrFuncNotEnabled                = dbterror.ClassExecutor.NewStdErr(mysql.ErrNotSupportedYet, parser_mysql.Message("%-.32s is not supported. To enable this experimental feature, set '%-.32s' in the configuration file.", nil))
 
 	errUnsupportedFlashbackTmpTable = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Recover/flashback table is not supported on temporary tables", nil))

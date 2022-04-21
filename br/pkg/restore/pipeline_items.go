@@ -182,6 +182,8 @@ type tikvSender struct {
 	inCh chan<- DrainResult
 
 	wg *sync.WaitGroup
+
+	isRawKv bool
 }
 
 func (b *tikvSender) PutSink(sink TableSink) {
@@ -199,6 +201,7 @@ func NewTiKVSender(
 	ctx context.Context,
 	cli *Client,
 	updateCh glue.Progress,
+	isRawKv bool,
 ) (BatchSender, error) {
 	inCh := make(chan DrainResult, defaultChannelSize)
 	midCh := make(chan DrainResult, defaultChannelSize)
@@ -208,6 +211,7 @@ func NewTiKVSender(
 		updateCh: updateCh,
 		inCh:     inCh,
 		wg:       new(sync.WaitGroup),
+		isRawKv:  isRawKv,
 	}
 
 	sender.wg.Add(2)
@@ -230,7 +234,7 @@ func (b *tikvSender) splitWorker(ctx context.Context, ranges <-chan DrainResult,
 			if !ok {
 				return
 			}
-			if err := SplitRanges(ctx, b.client, result.Ranges, result.RewriteRules, b.updateCh); err != nil {
+			if err := SplitRanges(ctx, b.client, result.Ranges, result.RewriteRules, b.updateCh, b.isRawKv); err != nil {
 				log.Error("failed on split range", rtree.ZapRanges(result.Ranges), zap.Error(err))
 				b.sink.EmitError(err)
 				return
