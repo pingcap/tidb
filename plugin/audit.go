@@ -24,27 +24,29 @@ import (
 type GeneralEvent byte
 
 const (
-	// Starting represents a GeneralEvent that is about to start
-	Starting GeneralEvent = iota
-	// Completed represents a GeneralEvent that has completed
-	Completed
-	// Error represents a GeneralEvent that has error (and typically couldn't start)
+	// Log presents log event.
+	Log GeneralEvent = iota
+	// Error presents error event.
 	Error
+	// Result presents result event.
+	Result
+	// Status presents status event.
+	Status
 )
 
 // ConnectionEvent presents TiDB connection event.
 type ConnectionEvent byte
 
 const (
-	// Connected represents new connection establish event(finish auth).
+	// Connected presents new connection establish event(finish auth).
 	Connected ConnectionEvent = iota
-	// Disconnect represents disconnect event.
+	// Disconnect presents disconnect event.
 	Disconnect
-	// ChangeUser represents change user.
+	// ChangeUser presents change user.
 	ChangeUser
-	// PreAuth represents event before start auth.
+	// PreAuth presents event before start auth.
 	PreAuth
-	// Reject represents event reject connection event.
+	// Reject presents event reject connection event.
 	Reject
 )
 
