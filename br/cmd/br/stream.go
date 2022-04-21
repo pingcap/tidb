@@ -27,7 +27,7 @@ import (
 // NewStreamCommand specifies adding several commands for backup log
 func NewStreamCommand() *cobra.Command {
 	command := &cobra.Command{
-		Use:          "stream",
+		Use:          "log",
 		Short:        "backup stream log from TiDB/TiKV cluster",
 		SilenceUsage: true,
 		PersistentPreRunE: func(c *cobra.Command, args []string) error {

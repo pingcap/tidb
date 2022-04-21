@@ -152,7 +152,7 @@ func newRawRestoreCommand() *cobra.Command {
 func newStreamRestoreCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "point",
-		Short: "restore backups to specify commit timestamp",
+		Short: "restore data from log until specify commit timestamp",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			return runRestoreCommand(command, task.PointRestoreCmd)
