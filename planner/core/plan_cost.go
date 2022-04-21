@@ -94,7 +94,7 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType) (flo
 	}
 
 	// index-side net I/O cost: rows * row-size * net-factor
-	netFactor := p.ctx.GetSessionVars().GetNetworkFactor(nil)
+	netFactor := getTableNetFactor(p.tablePlan)
 	rowSize := getTblStats(p.indexPlan).GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
 	p.planCost += p.indexPlan.StatsCount() * rowSize * netFactor
 
@@ -144,7 +144,7 @@ func (p *PhysicalTableReader) GetPlanCost(taskType property.TaskType) (float64, 
 		return p.planCost, nil
 	}
 	p.planCost = 0
-	netFactor := p.ctx.GetSessionVars().GetNetworkFactor(nil)
+	netFactor := getTableNetFactor(p.tablePlan)
 	switch p.StoreType {
 	case kv.TiKV:
 		// child's cost
@@ -299,4 +299,15 @@ func getTblStats(copTaskPlan PhysicalPlan) *statistics.HistColl {
 	default:
 		return getTblStats(copTaskPlan.Children()[0])
 	}
+}
+
+// getTableNetFactor returns the corresponding net factor of this table, it's mainly for temporary tables
+func getTableNetFactor(copTaskPlan PhysicalPlan) float64 {
+	if ts, ok := copTaskPlan.(*PhysicalTableScan); ok {
+		return copTaskPlan.SCtx().GetSessionVars().GetNetworkFactor(ts.Table)
+	}
+	if len(copTaskPlan.Children()) == 0 {
+		return copTaskPlan.SCtx().GetSessionVars().GetNetworkFactor(nil)
+	}
+	return getTableNetFactor(copTaskPlan.Children()[0])
 }
