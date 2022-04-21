@@ -22,8 +22,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // DefProfileDuration exports for testing.
@@ -56,6 +58,7 @@ func StopCPUProfiler() {
 // Normally, the registered ProfileConsumer will receive the cpu profile data per second.
 // If the ProfileConsumer (channel) is full, the latest cpu profile data will not be sent to it.
 // This function is thread-safe.
+// WARN: ProfileConsumer should not be closed before unregister.
 func Register(ch ProfileConsumer) {
 	globalCPUProfiler.register(ch)
 }
@@ -75,6 +78,7 @@ type parallelCPUProfiler struct {
 	cs             map[ProfileConsumer]struct{}
 	notifyRegister chan struct{}
 
+	profileData  *ProfileData
 	lastDataSize int
 
 	started bool
@@ -155,6 +159,7 @@ func (p *parallelCPUProfiler) profilingLoop() {
 	checkTicker := time.NewTicker(DefProfileDuration)
 	defer func() {
 		checkTicker.Stop()
+		pprof.StopCPUProfile()
 		p.wg.Done()
 	}()
 	for {
@@ -162,6 +167,10 @@ func (p *parallelCPUProfiler) profilingLoop() {
 		case <-p.ctx.Done():
 			return
 		case <-p.notifyRegister:
+			// If already in profiling, don't do anything.
+			if p.profileData != nil {
+				continue
+			}
 		case <-checkTicker.C:
 		}
 		p.doProfiling()
@@ -169,29 +178,27 @@ func (p *parallelCPUProfiler) profilingLoop() {
 }
 
 func (p *parallelCPUProfiler) doProfiling() {
+	if p.profileData != nil {
+		pprof.StopCPUProfile()
+		p.lastDataSize = p.profileData.Data.Len()
+		p.sendToConsumers()
+	}
+
 	if p.consumersCount() == 0 {
 		return
 	}
 
+	metrics.CPUProfileCounter.Inc()
+
 	capacity := (p.lastDataSize/4096 + 1) * 4096
-	data := &ProfileData{Data: bytes.NewBuffer(make([]byte, 0, capacity))}
-	err := pprof.StartCPUProfile(data.Data)
+	p.profileData = &ProfileData{Data: bytes.NewBuffer(make([]byte, 0, capacity))}
+	err := pprof.StartCPUProfile(p.profileData.Data)
 	if err != nil {
-		data.Error = err
+		p.profileData.Error = err
 		// notify error as soon as possible
-		p.sendToConsumers(data)
+		p.sendToConsumers()
 		return
 	}
-
-	// wait 1 second
-	select {
-	case <-p.ctx.Done():
-	case <-time.After(DefProfileDuration):
-	}
-
-	pprof.StopCPUProfile()
-	p.lastDataSize = data.Data.Len()
-	p.sendToConsumers(data)
 }
 
 func (p *parallelCPUProfiler) consumersCount() int {
@@ -201,14 +208,21 @@ func (p *parallelCPUProfiler) consumersCount() int {
 	return n
 }
 
-func (p *parallelCPUProfiler) sendToConsumers(data *ProfileData) {
+func (p *parallelCPUProfiler) sendToConsumers() {
 	p.Lock()
+	defer func() {
+		p.Unlock()
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error("parallel cpu profiler panic", zap.Any("recover", r))
+		}
+	}()
+
 	for c := range p.cs {
 		select {
-		case c <- data:
+		case c <- p.profileData:
 		default:
 			// ignore
 		}
 	}
-	p.Unlock()
+	p.profileData = nil
 }

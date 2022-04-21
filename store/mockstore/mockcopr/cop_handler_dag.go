@@ -176,7 +176,7 @@ func (h coprHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 		childExec = curr.Limit.Child
 	default:
 		// TODO: Support other types.
-		err = errors.Errorf("this exec type %v doesn't support yet.", curr.GetTp())
+		err = errors.Errorf("this exec type %v doesn't support yet", curr.GetTp())
 	}
 
 	return currExec, childExec, errors.Trace(err)

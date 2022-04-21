@@ -36,10 +36,10 @@ import (
 )
 
 // DispatchMPPTasks dispatches all tasks and returns an iterator.
-func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType, planIDs []int, rootID int) (SelectResult, error) {
+func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType, planIDs []int, rootID int, startTs uint64) (SelectResult, error) {
 	ctx = WithSQLKvExecCounterInterceptor(ctx, sctx.GetSessionVars().StmtCtx)
 	_, allowTiFlashFallback := sctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
-	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, sctx.GetSessionVars().KVVars, tasks, allowTiFlashFallback)
+	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, sctx.GetSessionVars().KVVars, tasks, allowTiFlashFallback, startTs)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
@@ -78,9 +78,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		hook.(func(*kv.Request))(kvReq)
 	}
 
-	if !sctx.GetSessionVars().EnableStreaming {
-		kvReq.Streaming = false
-	}
+	kvReq.Streaming = false
 	enabledRateLimitAction := sctx.GetSessionVars().EnabledRateLimitAction
 	originalSQL := sctx.GetSessionVars().StmtCtx.OriginalSQL
 	eventCb := func(event trxevents.TransactionEvent) {
@@ -217,9 +215,6 @@ func SetEncodeType(ctx sessionctx.Context, dagReq *tipb.DAGRequest) {
 
 func canUseChunkRPC(ctx sessionctx.Context) bool {
 	if !ctx.GetSessionVars().EnableChunkRPC {
-		return false
-	}
-	if ctx.GetSessionVars().EnableStreaming {
 		return false
 	}
 	if !checkAlignment() {

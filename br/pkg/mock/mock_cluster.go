@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/pprof"
 	"strings"
@@ -84,25 +83,16 @@ func NewCluster() (*Cluster, error) {
 
 // Start runs a mock cluster.
 func (mock *Cluster) Start() error {
-	// choose a random available port
-	l1, _ := net.Listen("tcp", "127.0.0.1:")
-	statusPort := l1.Addr().(*net.TCPAddr).Port
-
-	// choose a random available port
-	l2, _ := net.Listen("tcp", "127.0.0.1:")
-	addrPort := l2.Addr().(*net.TCPAddr).Port
-
+	server.RunInGoTest = true
 	mock.TiDBDriver = server.NewTiDBDriver(mock.Storage)
 	cfg := config.NewConfig()
-	cfg.Port = uint(addrPort)
+	// let tidb random select a port
+	cfg.Port = 0
 	cfg.Store = "tikv"
-	cfg.Status.StatusPort = uint(statusPort)
+	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true
 	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
 
-	// close port for next listen in NewServer
-	l1.Close()
-	l2.Close()
 	svr, err := server.NewServer(cfg, mock.TiDBDriver)
 	if err != nil {
 		return errors.Trace(err)
@@ -174,6 +164,7 @@ func waitUntilServerOnline(addr string, statusPort uint) string {
 	// connect http status
 	statusURL := fmt.Sprintf("http://127.0.0.1:%d/status", statusPort)
 	for retry = 0; retry < retryTime; retry++ {
+		// #nosec G107
 		resp, err := http.Get(statusURL) // nolint:noctx,gosec
 		if err == nil {
 			// Ignore errors.

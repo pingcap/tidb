@@ -142,11 +142,8 @@ func onModifySchemaCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _
 }
 
 func onModifySchemaDefaultPlacement(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var (
-		placementPolicyRef  *model.PolicyRefInfo
-		directPlacementOpts *model.PlacementSettings
-	)
-	if err := job.DecodeArgs(&placementPolicyRef, &directPlacementOpts); err != nil {
+	var placementPolicyRef *model.PolicyRefInfo
+	if err := job.DecodeArgs(&placementPolicyRef); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -162,15 +159,13 @@ func onModifySchemaDefaultPlacement(t *meta.Meta, job *model.Job) (ver int64, _ 
 
 	// Notice: dbInfo.DirectPlacementOpts and dbInfo.PlacementPolicyRef can not be both not nil, which checked before constructing ddl job.
 	// So that we can just check the two situation that do not need ddl: 1. DB.DP == DDL.DP && nil == nil 2. nil == nil && DB.PP == DDL.PP
-	if (directPlacementOpts != nil && dbInfo.DirectPlacementOpts != nil && *dbInfo.DirectPlacementOpts == *directPlacementOpts) ||
-		(placementPolicyRef != nil && dbInfo.PlacementPolicyRef != nil && *dbInfo.PlacementPolicyRef == *placementPolicyRef) {
+	if placementPolicyRef != nil && dbInfo.PlacementPolicyRef != nil && *dbInfo.PlacementPolicyRef == *placementPolicyRef {
 		job.FinishDBJob(model.JobStateDone, model.StatePublic, ver, dbInfo)
 		return ver, nil
 	}
 
 	// If placementPolicyRef and directPlacementOpts are both nil, And placement of dbInfo is not nil, it will remove all placement options.
 	dbInfo.PlacementPolicyRef = placementPolicyRef
-	dbInfo.DirectPlacementOpts = directPlacementOpts
 
 	if err = t.UpdateDatabase(dbInfo); err != nil {
 		return ver, errors.Trace(err)

@@ -18,7 +18,10 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDefaultValueIsBinaryString(t *testing.T) {
@@ -78,4 +81,73 @@ func TestDefaultValueInEnum(t *testing.T) {
 	tk.MustExec("create table t (a enum('a', 0xE4BDA0E5A5BD) charset gbk);")
 	tk.MustExec("insert into t values (1), (2);")
 	tk.MustQuery("select a from t;").Check(testkit.Rows("a", "你好"))
+}
+
+func TestDDLStatementsBackFill(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	needReorg := false
+	dom.DDL().SetHook(&ddl.TestDDLCallback{
+		Do: dom,
+		OnJobUpdatedExported: func(job *model.Job) {
+			if job.SchemaState == model.StateWriteReorganization {
+				needReorg = true
+			}
+		},
+	})
+	tk.MustExec("create table t (a int, b char(65));")
+	tk.MustExec("insert into t values (1, '123');")
+	testCases := []struct {
+		ddlSQL            string
+		expectedNeedReorg bool
+	}{
+		{"alter table t modify column a bigint;", false},
+		{"alter table t modify column b char(255);", false},
+		{"alter table t modify column a varchar(100);", true},
+		{"create table t1 (a int, b int);", false},
+		{"alter table t1 add index idx_a(a);", true},
+		{"alter table t1 add primary key(b) nonclustered;", true},
+		{"alter table t1 drop primary key;", false},
+	}
+	for _, tc := range testCases {
+		needReorg = false
+		tk.MustExec(tc.ddlSQL)
+		require.Equal(t, tc.expectedNeedReorg, needReorg, tc)
+	}
+}
+
+func TestSchema(t *testing.T) {
+	_, clean := testkit.CreateMockStore(t)
+	defer clean()
+
+	ddl.ExportTestSchema(t)
+}
+
+func TestDDLOnCachedTable(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tests := []struct {
+		sql    string
+		result string
+	}{
+		{"drop table t", "[ddl:8242]'Drop Table' is unsupported on cache tables."},
+		{"create index t_id on t (id)", "[ddl:8242]'Create Index' is unsupported on cache tables."},
+		{"alter table t drop index c", "[ddl:8242]'Alter Table' is unsupported on cache tables."},
+		{"alter table t add column (d int)", "[ddl:8242]'Alter Table' is unsupported on cache tables."},
+		{"truncate table t", "[ddl:8242]'Truncate Table' is unsupported on cache tables."},
+		{"rename table t to t1", "[ddl:8242]'Rename Table' is unsupported on cache tables."},
+	}
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (id int, c int, index(c));")
+	tk.MustExec("alter table t cache;")
+
+	for _, tt := range tests {
+		tk.MustGetErrMsg(tt.sql, tt.result)
+	}
+
+	tk.MustExec("alter table t nocache;")
+	tk.MustExec("drop table if exists t;")
 }

@@ -298,8 +298,6 @@ func TestInFunc(t *testing.T) {
 		require.NoError(t, err)
 		require.Equalf(t, tc.res, d.GetValue(), "%v", types.MakeDatums(tc.args))
 	}
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
 	strD1 := types.NewCollationStringDatum("a", "utf8_general_ci")
 	strD2 := types.NewCollationStringDatum("Á", "utf8_general_ci")
 	fn, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{strD1, strD2}))

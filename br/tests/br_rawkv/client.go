@@ -163,6 +163,7 @@ func testRandKey(startKey, endKey []byte, maxLen int) {
 	}
 }
 
+//nolint:gosec
 func randKey(startKey, endKey []byte, maxLen int) []byte {
 Retry:
 	for { // Regenerate on fail
@@ -213,6 +214,7 @@ Retry:
 	}
 }
 
+//nolint:gosec
 func randValue() []byte {
 	result := make([]byte, 0, 512)
 	for i := 0; i < 512; i++ {

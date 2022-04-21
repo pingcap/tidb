@@ -15,6 +15,7 @@
 package rowcodec
 
 import (
+	"encoding/binary"
 	"fmt"
 	"time"
 
@@ -134,7 +135,7 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		var t types.Time
 		t.SetType(col.Ft.Tp)
-		t.SetFsp(int8(col.Ft.Decimal))
+		t.SetFsp(col.Ft.Decimal)
 		err := t.FromPackedUint(decodeUint(colData))
 		if err != nil {
 			return d, err
@@ -149,7 +150,7 @@ func (decoder *DatumMapDecoder) decodeColDatum(col *ColInfo, colData []byte) (ty
 	case mysql.TypeDuration:
 		var dur types.Duration
 		dur.Duration = time.Duration(decodeInt(colData))
-		dur.Fsp = int8(col.Ft.Decimal)
+		dur.Fsp = col.Ft.Decimal
 		d.SetMysqlDuration(dur)
 	case mysql.TypeEnum:
 		// ignore error deliberately, to read empty enum value.
@@ -299,7 +300,7 @@ func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData 
 		}
 		if col.Ft.Decimal != types.UnspecifiedLength && frac > col.Ft.Decimal {
 			to := new(types.MyDecimal)
-			err := dec.Round(to, col.Ft.Decimal, types.ModeHalfEven)
+			err := dec.Round(to, col.Ft.Decimal, types.ModeHalfUp)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -309,7 +310,7 @@ func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData 
 	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		var t types.Time
 		t.SetType(col.Ft.Tp)
-		t.SetFsp(int8(col.Ft.Decimal))
+		t.SetFsp(col.Ft.Decimal)
 		err := t.FromPackedUint(decodeUint(colData))
 		if err != nil {
 			return err
@@ -324,7 +325,7 @@ func (decoder *ChunkDecoder) decodeColToChunk(colIdx int, col *ColInfo, colData 
 	case mysql.TypeDuration:
 		var dur types.Duration
 		dur.Duration = time.Duration(decodeInt(colData))
-		dur.Fsp = int8(col.Ft.Decimal)
+		dur.Fsp = col.Ft.Decimal
 		chk.AppendDuration(colIdx, dur)
 	case mysql.TypeEnum:
 		// ignore error deliberately, to read empty enum value.
@@ -452,7 +453,7 @@ func (decoder *BytesDecoder) tryDecodeHandle(values [][]byte, offset int, col *C
 	return false
 }
 
-// DecodeToBytesNoHandle decodes raw byte slice to row dat without handle.
+// DecodeToBytesNoHandle decodes raw byte slice to row data without handle.
 func (decoder *BytesDecoder) DecodeToBytesNoHandle(outputOffset map[int64]int, value []byte) ([][]byte, error) {
 	return decoder.decodeToBytesInternal(outputOffset, nil, value, nil)
 }
@@ -463,7 +464,7 @@ func (decoder *BytesDecoder) DecodeToBytes(outputOffset map[int64]int, handle kv
 }
 
 func (decoder *BytesDecoder) encodeOldDatum(tp byte, val []byte) []byte {
-	var buf []byte
+	buf := make([]byte, 0, 1+binary.MaxVarintLen64+len(val))
 	switch tp {
 	case BytesFlag:
 		buf = append(buf, CompactBytesFlag)

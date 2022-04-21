@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/testkit/trequire"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
@@ -124,13 +124,13 @@ func TestCast(t *testing.T) {
 	f.Charset = charset.CharsetBin
 	v, err = evalAstExpr(ctx, expr)
 	require.NoError(t, err)
-	trequire.DatumEqual(t, types.NewDatum([]byte("1")), v)
+	testutil.DatumEqual(t, types.NewDatum([]byte("1")), v)
 
 	f.Tp = mysql.TypeString
 	f.Charset = charset.CharsetUTF8
 	v, err = evalAstExpr(ctx, expr)
 	require.NoError(t, err)
-	trequire.DatumEqual(t, types.NewDatum([]byte("1")), v)
+	testutil.DatumEqual(t, types.NewDatum([]byte("1")), v)
 
 	expr.Expr = ast.NewValueExpr(nil, "", "")
 	v, err = evalAstExpr(ctx, expr)

@@ -39,7 +39,10 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	tidb_util "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 const tiflashCheckTiDBHTTPAPIHalfInterval = 2500 * time.Millisecond
@@ -81,6 +84,28 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job) (*model.TableInfo, err
 			return tbInfo, errors.Trace(err)
 		}
 
+		if tbInfo.TiFlashReplica != nil {
+			replicaInfo := tbInfo.TiFlashReplica
+			if pi := tbInfo.GetPartitionInfo(); pi != nil {
+				logutil.BgLogger().Info("Set TiFlash replica pd rule for partitioned table when creating", zap.Int64("tableID", tbInfo.ID))
+				if e := infosync.ConfigureTiFlashPDForPartitions(false, &pi.Definitions, replicaInfo.Count, &replicaInfo.LocationLabels, tbInfo.ID); e != nil {
+					job.State = model.JobStateCancelled
+					return tbInfo, errors.Trace(e)
+				}
+				// Partitions that in adding mid-state. They have high priorities, so we should set accordingly pd rules.
+				if e := infosync.ConfigureTiFlashPDForPartitions(true, &pi.AddingDefinitions, replicaInfo.Count, &replicaInfo.LocationLabels, tbInfo.ID); e != nil {
+					job.State = model.JobStateCancelled
+					return tbInfo, errors.Trace(e)
+				}
+			} else {
+				logutil.BgLogger().Info("Set TiFlash replica pd rule when creating", zap.Int64("tableID", tbInfo.ID))
+				if e := infosync.ConfigureTiFlashPDForTable(tbInfo.ID, replicaInfo.Count, &replicaInfo.LocationLabels); e != nil {
+					job.State = model.JobStateCancelled
+					return tbInfo, errors.Trace(e)
+				}
+			}
+		}
+
 		bundles, err := placement.NewFullTableBundles(t, tbInfo)
 		if err != nil {
 			job.State = model.JobStateCancelled
@@ -96,7 +121,7 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job) (*model.TableInfo, err
 
 		return tbInfo, nil
 	default:
-		return tbInfo, ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
+		return tbInfo, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
 	}
 }
 
@@ -246,11 +271,11 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateView, TableInfo: tbInfo})
 		return ver, nil
 	default:
-		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
+		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tbInfo.State)
 	}
 }
 
-func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, err := checkTableExistAndCancelNonExistJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -304,7 +329,7 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)
 		job.Args = append(job.Args, startKey, oldIDs, ruleIDs)
 	default:
-		err = ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
+		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
 	}
 
 	return ver, errors.Trace(err)
@@ -378,14 +403,8 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			job.Args[checkFlagIndexInJobArgs] = recoverTableCheckFlagDisableGC
 		}
 
-		bundles, err := placement.NewFullTableBundles(t, tblInfo)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
-
-		// Send the placement bundle to PD.
-		err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
+		// Clear all placement when recover
+		err = clearTablePlacementAndBundles(tblInfo)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
@@ -460,9 +479,33 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	default:
-		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
+		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
 	}
 	return ver, nil
+}
+
+func clearTablePlacementAndBundles(tblInfo *model.TableInfo) error {
+	var bundles []*placement.Bundle
+	if tblInfo.PlacementPolicyRef != nil {
+		tblInfo.PlacementPolicyRef = nil
+		bundles = append(bundles, placement.NewBundle(tblInfo.ID))
+	}
+
+	if tblInfo.Partition != nil {
+		for i := range tblInfo.Partition.Definitions {
+			par := &tblInfo.Partition.Definitions[i]
+			if par.PlacementPolicyRef != nil {
+				par.PlacementPolicyRef = nil
+				bundles = append(bundles, placement.NewBundle(par.ID))
+			}
+		}
+	}
+
+	if len(bundles) == 0 {
+		return nil
+	}
+
+	return infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
 }
 
 // mockRecoverTableCommitErrOnce uses to make sure
@@ -515,7 +558,8 @@ func getTable(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) (table
 	return tbl, errors.Trace(err)
 }
 
-func getTableInfoAndCancelFaultJob(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInfo, error) {
+// GetTableInfoAndCancelFaultJob is exported for test.
+func GetTableInfoAndCancelFaultJob(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInfo, error) {
 	tblInfo, err := checkTableExistAndCancelNonExistJob(t, job, schemaID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -523,7 +567,7 @@ func getTableInfoAndCancelFaultJob(t *meta.Meta, job *model.Job, schemaID int64)
 
 	if tblInfo.State != model.StatePublic {
 		job.State = model.JobStateCancelled
-		return nil, ErrInvalidDDLState.GenWithStack("table %s is not in public, but %s", tblInfo.Name, tblInfo.State)
+		return nil, dbterror.ErrInvalidDDLState.GenWithStack("table %s is not in public, but %s", tblInfo.Name, tblInfo.State)
 	}
 
 	return tblInfo, nil
@@ -532,6 +576,11 @@ func getTableInfoAndCancelFaultJob(t *meta.Meta, job *model.Job, schemaID int64)
 func checkTableExistAndCancelNonExistJob(t *meta.Meta, job *model.Job, schemaID int64) (*model.TableInfo, error) {
 	tblInfo, err := getTableInfo(t, job.TableID, schemaID)
 	if err == nil {
+		// Check if table name is renamed.
+		if job.TableName != "" && tblInfo.Name.L != job.TableName && job.Type != model.ActionRepairTable {
+			job.State = model.JobStateCancelled
+			return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(job.SchemaName, job.TableName)
+		}
 		return tblInfo, nil
 	}
 	if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
@@ -574,7 +623,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -617,7 +666,7 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		for i := range oldPartitionIDs {
 			newDef := &newDefs[i]
 			newID := newDef.ID
-			if newDef.PlacementPolicyRef != nil || newDef.DirectPlacementOpts != nil {
+			if newDef.PlacementPolicyRef != nil {
 				oldIDs = append(oldIDs, oldPartitionIDs[i])
 				newIDs = append(newIDs, newID)
 			}
@@ -637,8 +686,22 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		return 0, errors.Wrapf(err, "failed to update the label rule to PD")
 	}
 
-	// Clear the tiflash replica available status.
+	// Clear the TiFlash replica available status.
 	if tblInfo.TiFlashReplica != nil {
+		// Set PD rules for TiFlash
+		if pi := tblInfo.GetPartitionInfo(); pi != nil {
+			if e := infosync.ConfigureTiFlashPDForPartitions(true, &pi.Definitions, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels, tblInfo.ID); e != nil {
+				logutil.BgLogger().Error("ConfigureTiFlashPDForPartitions fails", zap.Error(err))
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(e)
+			}
+		} else {
+			if e := infosync.ConfigureTiFlashPDForTable(newTableID, tblInfo.TiFlashReplica.Count, &tblInfo.TiFlashReplica.LocationLabels); e != nil {
+				logutil.BgLogger().Error("ConfigureTiFlashPDForTable fails", zap.Error(err))
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(e)
+			}
+		}
 		tblInfo.TiFlashReplica.AvailablePartitionIDs = nil
 		tblInfo.TiFlashReplica.Available = false
 	}
@@ -700,7 +763,7 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job, tp autoid.Al
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -745,7 +808,7 @@ func onModifyTableAutoIDCache(t *meta.Meta, job *model.Job) (int64, error) {
 		return 0, errors.Trace(err)
 	}
 
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -766,7 +829,7 @@ func (w *worker) onShardRowID(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -852,7 +915,8 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 	tableNames := []*model.CIStr{}
 	tableIDs := []int64{}
 	oldSchemaNames := []*model.CIStr{}
-	if err := job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs, &oldSchemaNames); err != nil {
+	oldTableNames := []*model.CIStr{}
+	if err := job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs, &oldSchemaNames, &oldTableNames); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -861,6 +925,7 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 	var err error
 	for i, oldSchemaID := range oldSchemaIDs {
 		job.TableID = tableIDs[i]
+		job.TableName = oldTableNames[i].L
 		ver, tblInfo, err := checkAndRenameTables(t, job, oldSchemaID, newSchemaIDs[i], oldSchemaNames[i], tableNames[i])
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -877,7 +942,7 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 }
 
 func checkAndRenameTables(t *meta.Meta, job *model.Job, oldSchemaID, newSchemaID int64, oldSchemaName, tableName *model.CIStr) (ver int64, tblInfo *model.TableInfo, _ error) {
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, oldSchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, oldSchemaID)
 	if err != nil {
 		return ver, tblInfo, errors.Trace(err)
 	}
@@ -939,7 +1004,7 @@ func onModifyTableComment(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -966,7 +1031,7 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 		return ver, errors.Trace(err)
 	}
 
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1009,25 +1074,44 @@ func (w *worker) onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64
 		return ver, errors.Trace(err)
 	}
 
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
 	if replicaInfo.Count > 0 && tableHasPlacementSettings(tblInfo) {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(ErrIncompatibleTiFlashAndPlacement)
+		return ver, errors.Trace(dbterror.ErrIncompatibleTiFlashAndPlacement)
 	}
 
 	// Ban setting replica count for tables in system database.
 	if tidb_util.IsMemOrSysDB(job.SchemaName) {
-		return ver, errors.Trace(errUnsupportedAlterReplicaForSysTable)
+		return ver, errors.Trace(dbterror.ErrUnsupportedAlterReplicaForSysTable)
 	}
 
 	err = w.checkTiFlashReplicaCount(replicaInfo.Count)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
+	}
+	// We should check this first, in order to avoid creating redundant DDL jobs.
+	if pi := tblInfo.GetPartitionInfo(); pi != nil {
+		logutil.BgLogger().Info("Set TiFlash replica pd rule for partitioned table", zap.Int64("tableID", tblInfo.ID))
+		if e := infosync.ConfigureTiFlashPDForPartitions(false, &pi.Definitions, replicaInfo.Count, &replicaInfo.Labels, tblInfo.ID); e != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(e)
+		}
+		// Partitions that in adding mid-state. They have high priorities, so we should set accordingly pd rules.
+		if e := infosync.ConfigureTiFlashPDForPartitions(true, &pi.AddingDefinitions, replicaInfo.Count, &replicaInfo.Labels, tblInfo.ID); e != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(e)
+		}
+	} else {
+		logutil.BgLogger().Info("Set TiFlash replica pd rule", zap.Int64("tableID", tblInfo.ID))
+		if e := infosync.ConfigureTiFlashPDForTable(tblInfo.ID, replicaInfo.Count, &replicaInfo.Labels); e != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(e)
+		}
 	}
 
 	if replicaInfo.Count > 0 {
@@ -1065,7 +1149,7 @@ func onUpdateFlashReplicaStatus(t *meta.Meta, job *model.Job) (ver int64, _ erro
 		return ver, errors.Trace(err)
 	}
 
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1225,7 +1309,7 @@ func onRepairTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	tblInfo.State = model.StateNone
 
 	// Check the old DB and old table exist.
-	_, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
+	_, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -1251,7 +1335,7 @@ func onRepairTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionRepairTable, TableInfo: tblInfo})
 		return ver, nil
 	default:
-		return ver, ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
+		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
 	}
 }
 
@@ -1263,7 +1347,7 @@ func onAlterTableAttributes(t *meta.Meta, job *model.Job) (ver int64, err error)
 		return 0, errors.Trace(err)
 	}
 
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return 0, err
 	}
@@ -1295,7 +1379,7 @@ func onAlterTablePartitionAttributes(t *meta.Meta, job *model.Job) (ver int64, e
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
 	}
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return 0, err
 	}
@@ -1328,20 +1412,19 @@ func onAlterTablePartitionAttributes(t *meta.Meta, job *model.Job) (ver int64, e
 func onAlterTablePartitionPlacement(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	var partitionID int64
 	policyRefInfo := &model.PolicyRefInfo{}
-	placementSettings := &model.PlacementSettings{}
-	err = job.DecodeArgs(&partitionID, &policyRefInfo, &placementSettings)
+	err = job.DecodeArgs(&partitionID, &policyRefInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
 	}
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return 0, err
 	}
 
 	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 {
 		job.State = model.JobStateCancelled
-		return 0, errors.Trace(ErrIncompatibleTiFlashAndPlacement)
+		return 0, errors.Trace(dbterror.ErrIncompatibleTiFlashAndPlacement)
 	}
 
 	ptInfo := tblInfo.GetPartitionInfo()
@@ -1351,8 +1434,7 @@ func onAlterTablePartitionPlacement(t *meta.Meta, job *model.Job) (ver int64, er
 	for i := range definitions {
 		if partitionID == definitions[i].ID {
 			def := &definitions[i]
-			oldPartitionEnablesPlacement = def.PlacementPolicyRef != nil || def.DirectPlacementOpts != nil
-			def.DirectPlacementOpts = placementSettings
+			oldPartitionEnablesPlacement = def.PlacementPolicyRef != nil
 			def.PlacementPolicyRef = policyRefInfo
 			partitionDef = &definitions[i]
 			break
@@ -1399,31 +1481,28 @@ func onAlterTablePartitionPlacement(t *meta.Meta, job *model.Job) (ver int64, er
 
 func onAlterTablePlacement(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	policyRefInfo := &model.PolicyRefInfo{}
-	placementSettings := &model.PlacementSettings{}
-	err = job.DecodeArgs(&policyRefInfo, &placementSettings)
+	err = job.DecodeArgs(&policyRefInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
 	}
 
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return 0, err
 	}
 
 	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0 {
 		job.State = model.JobStateCancelled
-		return 0, errors.Trace(ErrIncompatibleTiFlashAndPlacement)
+		return 0, errors.Trace(dbterror.ErrIncompatibleTiFlashAndPlacement)
 	}
 
 	if _, err = checkPlacementPolicyRefValidAndCanNonValidJob(t, job, policyRefInfo); err != nil {
 		return 0, errors.Trace(err)
 	}
 
-	oldTableEnablesPlacement := tblInfo.PlacementPolicyRef != nil || tblInfo.DirectPlacementOpts != nil
+	oldTableEnablesPlacement := tblInfo.PlacementPolicyRef != nil
 	tblInfo.PlacementPolicyRef = policyRefInfo
-	tblInfo.DirectPlacementOpts = placementSettings
-
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -1496,7 +1575,7 @@ func updateLabelRules(job *model.Job, tblInfo *model.TableInfo, oldRules map[str
 }
 
 func onAlterCacheTable(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tbInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tbInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -1507,11 +1586,11 @@ func onAlterCacheTable(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	}
 
 	if tbInfo.TempTableType != model.TempTableNone {
-		return ver, errors.Trace(ErrOptOnTemporaryTable.GenWithStackByArgs("alter temporary table cache"))
+		return ver, errors.Trace(dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("alter temporary table cache"))
 	}
 
 	if tbInfo.Partition != nil {
-		return ver, errors.Trace(ErrOptOnCacheTable.GenWithStackByArgs("partition mode"))
+		return ver, errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("partition mode"))
 	}
 
 	switch tbInfo.TableCacheStatusType {
@@ -1533,13 +1612,13 @@ func onAlterCacheTable(t *meta.Meta, job *model.Job) (ver int64, err error) {
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 	default:
 		job.State = model.JobStateCancelled
-		err = ErrInvalidDDLState.GenWithStackByArgs("alter table cache", tbInfo.TableCacheStatusType.String())
+		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("alter table cache", tbInfo.TableCacheStatusType.String())
 	}
 	return ver, err
 }
 
 func onAlterNoCacheTable(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tbInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	tbInfo, err := GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -1568,7 +1647,7 @@ func onAlterNoCacheTable(t *meta.Meta, job *model.Job) (ver int64, err error) {
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 	default:
 		job.State = model.JobStateCancelled
-		err = ErrInvalidDDLState.GenWithStackByArgs("alter table no cache", tbInfo.TableCacheStatusType.String())
+		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("alter table no cache", tbInfo.TableCacheStatusType.String())
 	}
 	return ver, err
 }

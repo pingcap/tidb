@@ -314,6 +314,7 @@ import (
 	begin                 "BEGIN"
 	bernoulli             "BERNOULLI"
 	binding               "BINDING"
+	bindingCache          "BINDING_CACHE"
 	bindings              "BINDINGS"
 	binlog                "BINLOG"
 	bitType               "BIT"
@@ -370,12 +371,14 @@ import (
 	delayKeyWrite         "DELAY_KEY_WRITE"
 	directory             "DIRECTORY"
 	disable               "DISABLE"
+	disabled              "DISABLED"
 	discard               "DISCARD"
 	disk                  "DISK"
 	do                    "DO"
 	duplicate             "DUPLICATE"
 	dynamic               "DYNAMIC"
 	enable                "ENABLE"
+	enabled               "ENABLED"
 	encryption            "ENCRYPTION"
 	end                   "END"
 	enforced              "ENFORCED"
@@ -721,6 +724,7 @@ import (
 	dependency                 "DEPENDENCY"
 	depth                      "DEPTH"
 	drainer                    "DRAINER"
+	dry                        "DRY"
 	jobs                       "JOBS"
 	job                        "JOB"
 	nodeID                     "NODE_ID"
@@ -728,6 +732,7 @@ import (
 	optimistic                 "OPTIMISTIC"
 	pessimistic                "PESSIMISTIC"
 	pump                       "PUMP"
+	run                        "RUN"
 	samples                    "SAMPLES"
 	sampleRate                 "SAMPLERATE"
 	statistics                 "STATISTICS"
@@ -748,7 +753,6 @@ import (
 	reset                      "RESET"
 	regions                    "REGIONS"
 	region                     "REGION"
-	builtinAddDate
 	builtinBitAnd
 	builtinBitOr
 	builtinBitXor
@@ -766,7 +770,6 @@ import (
 	builtinMin
 	builtinNow
 	builtinPosition
-	builtinSubDate
 	builtinSubstring
 	builtinSum
 	builtinSysDate
@@ -810,35 +813,37 @@ import (
 
 %token not2
 %type	<expr>
-	Expression             "expression"
-	MaxValueOrExpression   "maxvalue or expression"
-	BoolPri                "boolean primary expression"
-	ExprOrDefault          "expression or default"
-	PredicateExpr          "Predicate expression factor"
-	SetExpr                "Set variable statement value's expression"
-	BitExpr                "bit expression"
-	SimpleExpr             "simple expression"
-	SimpleIdent            "Simple Identifier expression"
-	SumExpr                "aggregate functions"
-	FunctionCallGeneric    "Function call with Identifier"
-	FunctionCallKeyword    "Function call with keyword as function name"
-	FunctionCallNonKeyword "Function call with nonkeyword as function name"
-	Literal                "literal value"
-	Variable               "User or system variable"
-	SystemVariable         "System defined variable name"
-	UserVariable           "User defined variable name"
-	SubSelect              "Sub Select"
-	StringLiteral          "text literal"
-	ExpressionOpt          "Optional expression"
-	SignedLiteral          "Literal or NumLiteral with sign"
-	DefaultValueExpr       "DefaultValueExpr(Now or Signed Literal)"
-	NowSymOptionFraction   "NowSym with optional fraction part"
-	CharsetNameOrDefault   "Character set name or default"
-	NextValueForSequence   "Default nextval expression"
-	FunctionNameSequence   "Function with sequence function call"
-	WindowFuncCall         "WINDOW function call"
-	RepeatableOpt          "Repeatable optional in sample clause"
-	ProcedureCall          "Procedure call with Identifier or identifier"
+	Expression                      "expression"
+	MaxValueOrExpression            "maxvalue or expression"
+	BoolPri                         "boolean primary expression"
+	ExprOrDefault                   "expression or default"
+	PredicateExpr                   "Predicate expression factor"
+	SetExpr                         "Set variable statement value's expression"
+	BitExpr                         "bit expression"
+	SimpleExpr                      "simple expression"
+	SimpleIdent                     "Simple Identifier expression"
+	SumExpr                         "aggregate functions"
+	FunctionCallGeneric             "Function call with Identifier"
+	FunctionCallKeyword             "Function call with keyword as function name"
+	FunctionCallNonKeyword          "Function call with nonkeyword as function name"
+	Literal                         "literal value"
+	Variable                        "User or system variable"
+	SystemVariable                  "System defined variable name"
+	UserVariable                    "User defined variable name"
+	SubSelect                       "Sub Select"
+	StringLiteral                   "text literal"
+	ExpressionOpt                   "Optional expression"
+	SignedLiteral                   "Literal or NumLiteral with sign"
+	DefaultValueExpr                "DefaultValueExpr(Now or Signed Literal)"
+	NowSymOptionFraction            "NowSym with optional fraction part"
+	NowSymOptionFractionParentheses "NowSym with optional fraction part within potential parentheses"
+	CharsetNameOrDefault            "Character set name or default"
+	NextValueForSequence            "Default nextval expression"
+	BuiltinFunction                 "Default builtin functions for columns"
+	FunctionNameSequence            "Function with sequence function call"
+	WindowFuncCall                  "WINDOW function call"
+	RepeatableOpt                   "Repeatable optional in sample clause"
+	ProcedureCall                   "Procedure call with Identifier or identifier"
 
 %type	<statement>
 	AdminStmt                  "Check table statement or show ddl statement"
@@ -898,6 +903,7 @@ import (
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
 	LockTablesStmt             "Lock tables statement"
+	NonTransactionalDeleteStmt "Non-transactional delete statement"
 	PlanReplayerStmt           "Plan replayer statement"
 	PreparedStmt               "PreparedStmt"
 	PurgeImportStmt            "PURGE IMPORT statement that removes a IMPORT task record"
@@ -914,6 +920,7 @@ import (
 	SplitRegionStmt            "Split index region statement"
 	SetStmt                    "Set variable statement"
 	ChangeStmt                 "Change statement"
+	SetBindingStmt             "Set binding statement"
 	SetRoleStmt                "Set active role statement"
 	SetDefaultRoleStmt         "Set default statement for some user"
 	ShowImportStmt             "SHOW IMPORT statement"
@@ -1165,6 +1172,7 @@ import (
 	StatementList                          "statement list"
 	StatsPersistentVal                     "stats_persistent value"
 	StatsType                              "stats type value"
+	BindingStatusType                      "binding status type value"
 	StringList                             "string list"
 	SubPartDefinition                      "SubPartition definition"
 	SubPartDefinitionList                  "SubPartition definition list"
@@ -1310,13 +1318,14 @@ import (
 	BRIEBooleanOptionName                  "Name of a BRIE option which takes a boolean as input"
 	BRIEStringOptionName                   "Name of a BRIE option which takes a string as input"
 	BRIEKeywordOptionName                  "Name of a BRIE option which takes a case-insensitive string as input"
-	PlacementOption                        "Anonymous or direct placement option"
 	PlacementPolicyOption                  "Anonymous or placement policy option"
 	DirectPlacementOption                  "Subset of anonymous or direct placement option"
 	PlacementOptionList                    "Anomymous or direct placement option list"
 	AttributesOpt                          "Attributes options"
 	AllColumnsOrPredicateColumnsOpt        "all columns or predicate columns option"
 	StatsOptionsOpt                        "Stats options"
+	DryRunOptions                          "Dry run options"
+	OptionalShardColumn                    "Optional shard column"
 
 %type	<ident>
 	AsOpt             "AS or EmptyString"
@@ -1565,10 +1574,6 @@ DirectPlacementOption:
 	{
 		$$ = &ast.PlacementOption{Tp: ast.PlacementOptionLearnerConstraints, StrValue: $3}
 	}
-
-PlacementOption:
-	DirectPlacementOption
-|	PlacementPolicyOption
 
 PlacementPolicyOption:
 	"PLACEMENT" "POLICY" EqOpt stringLit
@@ -3039,7 +3044,7 @@ ColumnOption:
 		startOffset := parser.startOffset(&yyS[yypt-2])
 		endOffset := parser.endOffset(&yyS[yypt-1])
 		expr := $4
-		expr.SetText(parser.src[startOffset:endOffset])
+		expr.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
 
 		$$ = &ast.ColumnOption{
 			Tp:     ast.ColumnOptionGenerated,
@@ -3324,19 +3329,46 @@ ReferOpt:
 
 /*
  * The DEFAULT clause specifies a default value for a column.
- * With one exception, the default value must be a constant;
- * it cannot be a function or an expression. This means, for example,
- * that you cannot set the default for a date column to be the value of
- * a function such as NOW() or CURRENT_DATE. The exception is that you
- * can specify CURRENT_TIMESTAMP as the default for a TIMESTAMP or DATETIME column.
+ * It can be a function or an expression. This means, for example,
+ * that you can set the default for a date column to be the value of
+ * a function such as NOW() or CURRENT_DATE. While in MySQL 8.0
+ * expression default values are required to be enclosed in parentheses,
+ * they are NOT required so in TiDB.
  *
- * See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
- *      https://github.com/mysql/mysql-server/blob/5.7/sql/sql_yacc.yy#L6832
+ * See https://dev.mysql.com/doc/refman/8.0/en/create-table.html
+ *     https://dev.mysql.com/doc/refman/8.0/en/data-type-defaults.html
  */
 DefaultValueExpr:
-	NowSymOptionFraction
+	NowSymOptionFractionParentheses
 |	SignedLiteral
 |	NextValueForSequence
+|	BuiltinFunction
+
+BuiltinFunction:
+	'(' BuiltinFunction ')'
+	{
+		$$ = $2.(*ast.FuncCallExpr)
+	}
+|	identifier '(' ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+		}
+	}
+|	identifier '(' ExpressionList ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args:   $3.([]ast.ExprNode),
+		}
+	}
+
+NowSymOptionFractionParentheses:
+	'(' NowSymOptionFractionParentheses ')'
+	{
+		$$ = $2.(*ast.FuncCallExpr)
+	}
+|	NowSymOptionFraction
 
 NowSymOptionFraction:
 	NowSym
@@ -3420,6 +3452,16 @@ StatsType:
 |	"CORRELATION"
 	{
 		$$ = ast.StatsTypeCorrelation
+	}
+
+BindingStatusType:
+	"ENABLED"
+	{
+		$$ = ast.BindingStatusTypeEnabled
+	}
+|	"DISABLED"
+	{
+		$$ = ast.BindingStatusTypeDisabled
 	}
 
 CreateStatisticsStmt:
@@ -3664,7 +3706,7 @@ DatabaseOption:
 			UintValue: placementOptions.UintValue,
 		}
 	}
-|	PlacementOption
+|	PlacementPolicyOption
 	{
 		placementOptions := $1.(*ast.PlacementOption)
 		$$ = &ast.DatabaseOption{
@@ -3672,6 +3714,17 @@ DatabaseOption:
 			Tp:        ast.DatabaseOptionType(placementOptions.Tp),
 			Value:     placementOptions.StrValue,
 			UintValue: placementOptions.UintValue,
+		}
+	}
+|	"SET" "TIFLASH" "REPLICA" LengthNum LocationLabelList
+	{
+		tiflashReplicaSpec := &ast.TiFlashReplicaSpec{
+			Count:  $4.(uint64),
+			Labels: $5.([]string),
+		}
+		$$ = &ast.DatabaseOption{
+			Tp:             ast.DatabaseSetTiFlashReplica,
+			TiFlashReplica: tiflashReplicaSpec,
 		}
 	}
 
@@ -4033,7 +4086,7 @@ PartDefOption:
 	{
 		$$ = &ast.TableOption{Tp: ast.TableOptionNodegroup, UintValue: $3.(uint64)}
 	}
-|	PlacementOption
+|	PlacementPolicyOption
 	{
 		placementOptions := $1.(*ast.PlacementOption)
 		$$ = &ast.TableOption{
@@ -4176,7 +4229,7 @@ CreateViewStmt:
 	{
 		startOffset := parser.startOffset(&yyS[yypt-1])
 		selStmt := $10.(ast.StmtNode)
-		selStmt.SetText(strings.TrimSpace(parser.src[startOffset:]))
+		selStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 		x := &ast.CreateViewStmt{
 			OrReplace: $2.(bool),
 			ViewName:  $7.(*ast.TableName),
@@ -4191,7 +4244,7 @@ CreateViewStmt:
 		if $11 != nil {
 			x.CheckOption = $11.(model.ViewCheckOption)
 			endOffset := parser.startOffset(&yyS[yypt])
-			selStmt.SetText(strings.TrimSpace(parser.src[startOffset:endOffset]))
+			selStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
 		} else {
 			x.CheckOption = model.CheckOptionCascaded
 		}
@@ -4534,7 +4587,7 @@ TraceStmt:
 			TracePlan: false,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		$2.SetText(string(parser.src[startOffset:]))
+		$2.SetText(parser.lexer.client, string(parser.src[startOffset:]))
 	}
 |	"TRACE" "FORMAT" "=" stringLit TraceableStmt
 	{
@@ -4544,7 +4597,7 @@ TraceStmt:
 			TracePlan: false,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		$5.SetText(string(parser.src[startOffset:]))
+		$5.SetText(parser.lexer.client, string(parser.src[startOffset:]))
 	}
 |	"TRACE" "PLAN" TraceableStmt
 	{
@@ -4553,7 +4606,7 @@ TraceStmt:
 			TracePlan: true,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		$3.SetText(string(parser.src[startOffset:]))
+		$3.SetText(parser.lexer.client, string(parser.src[startOffset:]))
 	}
 |	"TRACE" "PLAN" "TARGET" "=" stringLit TraceableStmt
 	{
@@ -4563,7 +4616,7 @@ TraceStmt:
 			TracePlanTarget: $5,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		$6.SetText(string(parser.src[startOffset:]))
+		$6.SetText(parser.lexer.client, string(parser.src[startOffset:]))
 	}
 
 ExplainSym:
@@ -5496,7 +5549,7 @@ FieldList:
 		last := fl[len(fl)-1]
 		if last.Expr != nil && last.AsName.O == "" {
 			lastEnd := parser.endOffset(&yyS[yypt-1])
-			last.SetText(parser.src[last.Offset:lastEnd])
+			last.SetText(parser.lexer.client, parser.src[last.Offset:lastEnd])
 		}
 		newField := $3.(*ast.SelectField)
 		newField.Offset = parser.startOffset(&yyS[yypt])
@@ -5729,6 +5782,7 @@ UnReservedKeyword:
 |	"ADVISE"
 |	"ASCII"
 |	"ATTRIBUTES"
+|	"BINDING_CACHE"
 |	"STATS_OPTIONS"
 |	"STATS_SAMPLE_RATE"
 |	"STATS_COL_CHOICE"
@@ -5875,7 +5929,9 @@ UnReservedKeyword:
 |	"PROCESSLIST"
 |	"SQL_NO_CACHE"
 |	"DISABLE"
+|	"DISABLED"
 |	"ENABLE"
+|	"ENABLED"
 |	"REVERSE"
 |	"PRIVILEGES"
 |	"NO"
@@ -6100,6 +6156,8 @@ TiDBKeyword:
 |	"REGIONS"
 |	"REGION"
 |	"RESET"
+|	"DRY"
+|	"RUN"
 
 NotKeywordToken:
 	"ADDDATE"
@@ -6239,7 +6297,6 @@ ProcedureCall:
  *
  *  Insert Statements
  *
- *  TODO: support PARTITION
  **********************************************************************************/
 InsertIntoStmt:
 	"INSERT" TableOptimizerHintsOpt PriorityOpt IgnoreOptional IntoOpt TableName PartitionNameListOpt InsertValues OnDuplicateKeyUpdate
@@ -6413,7 +6470,6 @@ OnDuplicateKeyUpdate:
  *  Replace Statements
  *  See https://dev.mysql.com/doc/refman/5.7/en/replace.html
  *
- *  TODO: support PARTITION
  **********************************************************************************/
 ReplaceIntoStmt:
 	"REPLACE" PriorityOpt IntoOpt TableName PartitionNameListOpt InsertValues
@@ -6762,7 +6818,7 @@ SimpleExpr:
 		startOffset := parser.startOffset(&yyS[yypt-1])
 		endOffset := parser.endOffset(&yyS[yypt])
 		expr := $2
-		expr.SetText(parser.src[startOffset:endOffset])
+		expr.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
 		$$ = &ast.ParenthesesExpr{Expr: expr}
 	}
 |	'(' ExpressionList ',' Expression ')'
@@ -7242,8 +7298,8 @@ FunctionNameDateArith:
 |	builtinDateSub
 
 FunctionNameDateArithMultiForms:
-	builtinAddDate
-|	builtinSubDate
+	addDate
+|	subDate
 
 TrimDirection:
 	"BOTH"
@@ -8077,7 +8133,7 @@ SelectStmtFromDualTable:
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := yyS[yypt-1].offset - 1
-			lastField.SetText(parser.src[lastField.Offset:lastEnd])
+			lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
 		}
 		if $3 != nil {
 			st.Where = $3.(ast.ExprNode)
@@ -8092,7 +8148,7 @@ SelectStmtFromTable:
 		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
 		if lastField.Expr != nil && lastField.AsName.O == "" {
 			lastEnd := parser.endOffset(&yyS[yypt-5])
-			lastField.SetText(parser.src[lastField.Offset:lastEnd])
+			lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
 		}
 		if $4 != nil {
 			st.Where = $4.(ast.ExprNode)
@@ -8210,7 +8266,7 @@ SelectStmt:
 					lastEnd--
 				}
 			}
-			lastField.SetText(src[lastField.Offset:lastEnd])
+			lastField.SetText(parser.lexer.client, src[lastField.Offset:lastEnd])
 		}
 		if $2 != nil {
 			st.Where = $2.(ast.ExprNode)
@@ -9152,14 +9208,14 @@ SubSelect:
 		parser.setLastSelectFieldText(rs, endOffset)
 		src := parser.src
 		// See the implementation of yyParse function
-		rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
+		rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
 		$$ = &ast.SubqueryExpr{Query: rs}
 	}
 |	'(' SetOprStmt ')'
 	{
 		rs := $2.(*ast.SetOprStmt)
 		src := parser.src
-		rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
+		rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
 		$$ = &ast.SubqueryExpr{Query: rs}
 	}
 |	'(' SelectStmtWithClause ')'
@@ -9169,7 +9225,7 @@ SubSelect:
 		parser.setLastSelectFieldText(rs, endOffset)
 		src := parser.src
 		// See the implementation of yyParse function
-		rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
+		rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
 		$$ = &ast.SubqueryExpr{Query: rs}
 	}
 |	'(' SubSelect ')'
@@ -9187,11 +9243,11 @@ SubSelect:
 			endOffset := parser.endOffset(&yyS[yypt])
 			parser.setLastSelectFieldText(rs, endOffset)
 			src := parser.src
-			rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
+			rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
 			$$ = &ast.SubqueryExpr{Query: rs}
 		case *ast.SetOprStmt:
 			src := parser.src
-			rs.SetText(src[yyS[yypt-1].offset:yyS[yypt].offset])
+			rs.SetText(parser.lexer.client, src[yyS[yypt-1].offset:yyS[yypt].offset])
 			$$ = &ast.SubqueryExpr{Query: rs}
 		}
 	}
@@ -10617,6 +10673,12 @@ ShowTargetFilterable:
 			DBName: $2,
 		}
 	}
+|	"BINDING_CACHE" "STATUS"
+	{
+		$$ = &ast.ShowStmt{
+			Tp: ast.ShowBindingCacheStatus,
+		}
+	}
 |	"PROCEDURE" "STATUS"
 	{
 		$$ = &ast.ShowStmt{
@@ -11000,6 +11062,7 @@ Statement:
 		$$ = sel
 	}
 |	SetStmt
+|	SetBindingStmt
 |	SetRoleStmt
 |	SetDefaultRoleStmt
 |	SplitRegionStmt
@@ -11015,6 +11078,7 @@ Statement:
 |	ShutdownStmt
 |	RestartStmt
 |	HelpStmt
+|	NonTransactionalDeleteStmt
 
 TraceableStmt:
 	DeleteFromStmt
@@ -11072,7 +11136,7 @@ StatementList:
 		if $1 != nil {
 			s := $1
 			if lexer, ok := yylex.(stmtTexter); ok {
-				s.SetText(lexer.stmtText())
+				s.SetText(parser.lexer.client, lexer.stmtText())
 			}
 			parser.result = append(parser.result, s)
 		}
@@ -11082,7 +11146,7 @@ StatementList:
 		if $3 != nil {
 			s := $3
 			if lexer, ok := yylex.(stmtTexter); ok {
-				s.SetText(lexer.stmtText())
+				s.SetText(parser.lexer.client, lexer.stmtText())
 			}
 			parser.result = append(parser.result, s)
 		}
@@ -12594,11 +12658,11 @@ CreateBindingStmt:
 		startOffset := parser.startOffset(&yyS[yypt-2])
 		endOffset := parser.startOffset(&yyS[yypt-1])
 		originStmt := $5
-		originStmt.SetText(strings.TrimSpace(parser.src[startOffset:endOffset]))
+		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
 
 		startOffset = parser.startOffset(&yyS[yypt])
 		hintedStmt := $7
-		hintedStmt.SetText(strings.TrimSpace(parser.src[startOffset:]))
+		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.CreateBindingStmt{
 			OriginNode:  originStmt,
@@ -12621,7 +12685,7 @@ DropBindingStmt:
 	{
 		startOffset := parser.startOffset(&yyS[yypt])
 		originStmt := $5
-		originStmt.SetText(strings.TrimSpace(parser.src[startOffset:]))
+		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.DropBindingStmt{
 			OriginNode:  originStmt,
@@ -12635,16 +12699,50 @@ DropBindingStmt:
 		startOffset := parser.startOffset(&yyS[yypt-2])
 		endOffset := parser.startOffset(&yyS[yypt-1])
 		originStmt := $5
-		originStmt.SetText(strings.TrimSpace(parser.src[startOffset:endOffset]))
+		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
 
 		startOffset = parser.startOffset(&yyS[yypt])
 		hintedStmt := $7
-		hintedStmt.SetText(strings.TrimSpace(parser.src[startOffset:]))
+		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.DropBindingStmt{
 			OriginNode:  originStmt,
 			HintedNode:  hintedStmt,
 			GlobalScope: $2.(bool),
+		}
+
+		$$ = x
+	}
+
+SetBindingStmt:
+	"SET" "BINDING" BindingStatusType "FOR" BindableStmt
+	{
+		startOffset := parser.startOffset(&yyS[yypt])
+		originStmt := $5
+		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+
+		x := &ast.SetBindingStmt{
+			BindingStatusType: $3.(ast.BindingStatusType),
+			OriginNode:        originStmt,
+		}
+
+		$$ = x
+	}
+|	"SET" "BINDING" BindingStatusType "FOR" BindableStmt "USING" BindableStmt
+	{
+		startOffset := parser.startOffset(&yyS[yypt-2])
+		endOffset := parser.startOffset(&yyS[yypt-1])
+		originStmt := $5
+		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
+
+		startOffset = parser.startOffset(&yyS[yypt])
+		hintedStmt := $7
+		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
+
+		x := &ast.SetBindingStmt{
+			BindingStatusType: $3.(ast.BindingStatusType),
+			OriginNode:        originStmt,
+			HintedNode:        hintedStmt,
 		}
 
 		$$ = x
@@ -13330,6 +13428,43 @@ TableLockList:
 	}
 
 /********************************************************************
+ * Non-transactional Delete Statement
+ * Split a SQL on a column. Used for bulk delete that doesn't need ACID.
+ *******************************************************************/
+NonTransactionalDeleteStmt:
+	"SPLIT" OptionalShardColumn "LIMIT" NUM DryRunOptions DeleteFromStmt
+	{
+		$$ = &ast.NonTransactionalDeleteStmt{
+			DryRun:      $5.(int),
+			ShardColumn: $2.(*ast.ColumnName),
+			Limit:       getUint64FromNUM($4),
+			DeleteStmt:  $6.(*ast.DeleteStmt),
+		}
+	}
+
+DryRunOptions:
+	{
+		$$ = ast.NoDryRun
+	}
+|	"DRY" "RUN"
+	{
+		$$ = ast.DryRunSplitDml
+	}
+|	"DRY" "RUN" "QUERY"
+	{
+		$$ = ast.DryRunQuery
+	}
+
+OptionalShardColumn:
+	{
+		$$ = (*ast.ColumnName)(nil)
+	}
+|	"ON" ColumnName
+	{
+		$$ = $2.(*ast.ColumnName)
+	}
+
+/********************************************************************
  * Kill Statement
  * See https://dev.mysql.com/doc/refman/5.7/en/kill.html
  *******************************************************************/
@@ -13726,7 +13861,7 @@ PlanReplayerStmt:
 			Limit:   nil,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		x.Stmt.SetText(strings.TrimSpace(parser.src[startOffset:]))
+		x.Stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		$$ = x
 	}
@@ -13742,7 +13877,7 @@ PlanReplayerStmt:
 			Limit:   nil,
 		}
 		startOffset := parser.startOffset(&yyS[yypt])
-		x.Stmt.SetText(strings.TrimSpace(parser.src[startOffset:]))
+		x.Stmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		$$ = x
 	}

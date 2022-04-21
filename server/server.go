@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/plugin"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
@@ -70,10 +71,11 @@ import (
 )
 
 var (
-	serverPID   int
-	osUser      string
-	osVersion   string
-	runInGoTest bool
+	serverPID int
+	osUser    string
+	osVersion string
+	// RunInGoTest represents whether we are run code in test.
+	RunInGoTest bool
 )
 
 func init() {
@@ -102,6 +104,7 @@ var (
 	errMultiStatementDisabled  = dbterror.ClassServer.NewStd(errno.ErrMultiStatementDisabled)
 	errNewAbortingConnection   = dbterror.ClassServer.NewStd(errno.ErrNewAbortingConnection)
 	errNotSupportedAuthMode    = dbterror.ClassServer.NewStd(errno.ErrNotSupportedAuthMode)
+	errNetPacketTooLarge       = dbterror.ClassServer.NewStd(errno.ErrNetPacketTooLarge)
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.
@@ -131,6 +134,9 @@ type Server struct {
 	statusServer   *http.Server
 	grpcServer     *grpc.Server
 	inShutdownMode bool
+
+	sessionMapMutex  sync.Mutex
+	internalSessions map[interface{}]struct{}
 }
 
 // ConnectionCount gets current connection count.
@@ -162,10 +168,7 @@ func (s *Server) SetDomain(dom *domain.Domain) {
 
 // InitGlobalConnID initialize global connection id.
 func (s *Server) InitGlobalConnID(serverIDGetter func() uint64) {
-	s.globalConnID = util.GlobalConnID{
-		ServerIDGetter: serverIDGetter,
-		Is64bits:       true,
-	}
+	s.globalConnID = util.NewGlobalConnIDWithGetter(serverIDGetter, true)
 }
 
 // newConn creates a new *clientConn from a net.Conn.
@@ -192,7 +195,8 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		driver:            driver,
 		concurrentLimiter: NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint64]*clientConn),
-		globalConnID:      util.GlobalConnID{ServerID: 0, Is64bits: true},
+		globalConnID:      util.NewGlobalConnID(0, true),
+		internalSessions:  make(map[interface{}]struct{}, 100),
 	}
 	s.capability = defaultCapability
 	setTxnScope()
@@ -235,7 +239,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		s.capability |= mysql.ClientSSL
 	}
 
-	if s.cfg.Host != "" && (s.cfg.Port != 0 || runInGoTest) {
+	if s.cfg.Host != "" && (s.cfg.Port != 0 || RunInGoTest) {
 		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
 		tcpProto := "tcp"
 		if s.cfg.EnableTCP4Only {
@@ -245,7 +249,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 			return nil, errors.Trace(err)
 		}
 		logutil.BgLogger().Info("server is running MySQL protocol", zap.String("addr", addr))
-		if runInGoTest && s.cfg.Port == 0 {
+		if RunInGoTest && s.cfg.Port == 0 {
 			s.cfg.Port = uint(s.listener.Addr().(*net.TCPAddr).Port)
 		}
 	}
@@ -316,10 +320,8 @@ func cleanupStaleSocket(socket string) error {
 		return fmt.Errorf("unix socket %s exists and is functional, not removing it", socket)
 	}
 
-	logutil.BgLogger().Warn("Unix socket exists and is nonfunctional, removing it",
-		zap.String("socket", socket), zap.Error(err))
-	if err = os.Remove(socket); err != nil {
-		return fmt.Errorf("failed to remove socket file %s", socket)
+	if err2 := os.Remove(socket); err2 != nil {
+		return fmt.Errorf("failed to cleanup stale Unix socket file %s: %w", socket, err)
 	}
 
 	return nil
@@ -499,8 +501,8 @@ func (s *Server) Close() {
 func (s *Server) onConn(conn *clientConn) {
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 	if err := conn.handshake(ctx); err != nil {
-		if plugin.IsEnable(plugin.Audit) && conn.ctx != nil {
-			conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
+		if plugin.IsEnable(plugin.Audit) && conn.getCtx() != nil {
+			conn.getCtx().GetSessionVars().ConnectionInfo = conn.connectInfo()
 			err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 				authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 				if authPlugin.OnConnectionEvent != nil {
@@ -620,13 +622,23 @@ func (s *Server) checkConnectionCount() error {
 
 // ShowProcessList implements the SessionManager interface.
 func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
+	rs := make(map[uint64]*util.ProcessInfo)
+	for connID, pi := range s.getUserProcessList() {
+		rs[connID] = pi
+	}
+	if s.dom != nil {
+		for connID, pi := range s.dom.SysProcTracker().GetSysProcessList() {
+			rs[connID] = pi
+		}
+	}
+	return rs
+}
+
+func (s *Server) getUserProcessList() map[uint64]*util.ProcessInfo {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
-	rs := make(map[uint64]*util.ProcessInfo, len(s.clients))
+	rs := make(map[uint64]*util.ProcessInfo)
 	for _, client := range s.clients {
-		if atomic.LoadInt32(&client.status) == connStatusWaitShutdown {
-			continue
-		}
 		if pi := client.ctx.ShowProcess(); pi != nil {
 			rs[pi.ID] = pi
 		}
@@ -669,7 +681,8 @@ func (s *Server) Kill(connectionID uint64, query bool) {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
 	conn, ok := s.clients[connectionID]
-	if !ok {
+	if !ok && s.dom != nil {
+		s.dom.SysProcTracker().KillSysProcess(connectionID)
 		return
 	}
 
@@ -699,6 +712,11 @@ func killConn(conn *clientConn) {
 	if cancelFunc != nil {
 		cancelFunc()
 	}
+	if conn.bufReadConn != nil {
+		if err := conn.bufReadConn.SetReadDeadline(time.Now()); err != nil {
+			logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
+		}
+	}
 }
 
 // KillAllConnections kills all connections when server is not gracefully shutdown.
@@ -713,6 +731,13 @@ func (s *Server) KillAllConnections() {
 			terror.Log(err)
 		}
 		killConn(conn)
+	}
+
+	if s.dom != nil {
+		sysProcTracker := s.dom.SysProcTracker()
+		for connID := range sysProcTracker.GetSysProcessList() {
+			sysProcTracker.KillSysProcess(connID)
+		}
 	}
 }
 
@@ -783,6 +808,35 @@ func (s *Server) kickIdleConnection() {
 // ServerID implements SessionManager interface.
 func (s *Server) ServerID() uint64 {
 	return s.dom.ServerID()
+}
+
+// StoreInternalSession implements SessionManager interface.
+// @param addr	The address of a session.session struct variable
+func (s *Server) StoreInternalSession(se interface{}) {
+	s.sessionMapMutex.Lock()
+	s.internalSessions[se] = struct{}{}
+	s.sessionMapMutex.Unlock()
+}
+
+// DeleteInternalSession implements SessionManager interface.
+// @param addr	The address of a session.session struct variable
+func (s *Server) DeleteInternalSession(se interface{}) {
+	s.sessionMapMutex.Lock()
+	delete(s.internalSessions, se)
+	s.sessionMapMutex.Unlock()
+}
+
+// GetInternalSessionStartTSList implements SessionManager interface.
+func (s *Server) GetInternalSessionStartTSList() []uint64 {
+	s.sessionMapMutex.Lock()
+	defer s.sessionMapMutex.Unlock()
+	tsList := make([]uint64, 0, len(s.internalSessions))
+	for se := range s.internalSessions {
+		if ts := session.GetStartTSFromSession(se); ts != 0 {
+			tsList = append(tsList, ts)
+		}
+	}
+	return tsList
 }
 
 // setSysTimeZoneOnce is used for parallel run tests. When several servers are running,

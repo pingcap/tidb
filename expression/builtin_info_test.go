@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/testkit/trequire"
+	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -192,9 +192,9 @@ func TestCharset(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.Charset]
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(nil)))
-	require.Nil(t, f)
-	require.Error(t, err)
-	require.Regexp(t, "FUNCTION CHARSET does not exist$", err.Error())
+	require.NotNil(t, f)
+	require.NoError(t, err)
+	require.Equal(t, 64, f.getRetTp().Flen)
 }
 
 func TestCoercibility(t *testing.T) {
@@ -323,7 +323,7 @@ func TestFormatBytes(t *testing.T) {
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, tt["Ret"][0], v)
+		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
 }
 
@@ -352,6 +352,6 @@ func TestFormatNanoTime(t *testing.T) {
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		trequire.DatumEqual(t, tt["Ret"][0], v)
+		testutil.DatumEqual(t, tt["Ret"][0], v)
 	}
 }

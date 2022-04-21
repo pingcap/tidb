@@ -447,7 +447,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: InnodbTableLocks, Value: On, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeNone, Name: PerformanceSchema, Value: Off, Type: TypeBool},
 	{Scope: ScopeNone, Name: "myisam_recover_options", Value: Off},
-	{Scope: ScopeGlobal | ScopeSession, Name: NetBufferLength, Value: "16384"},
+	{Scope: ScopeGlobal | ScopeSession, Name: NetBufferLength, Value: "16384", Type: TypeUnsigned, MinValue: 1024, MaxValue: 1048576},
 	{Scope: ScopeGlobal | ScopeSession, Name: "binlog_row_image", Value: "FULL"},
 	{Scope: ScopeNone, Name: "innodb_locks_unsafe_for_binlog", Value: "0"},
 	{Scope: ScopeSession, Name: "rbr_exec_mode", Value: ""},
@@ -494,6 +494,8 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: "information_schema_stats_expiry", Value: "86400"},
 	{Scope: ScopeGlobal, Name: ThreadPoolSize, Value: "16", Type: TypeUnsigned, MinValue: 1, MaxValue: 64},
 	{Scope: ScopeNone, Name: "lower_case_file_system", Value: "1"},
+	{Scope: ScopeNone, Name: LowerCaseTableNames, Value: "2"},
+
 	// for compatibility purpose, we should leave them alone.
 	// TODO: Follow the Terminology Updates of MySQL after their changes arrived.
 	// https://mysqlhighavailability.com/mysql-terminology-updates/

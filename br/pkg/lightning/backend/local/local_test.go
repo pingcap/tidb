@@ -33,6 +33,7 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -173,21 +174,6 @@ func TestRangeProperties(t *testing.T) {
 	// Largest key in props.
 	require.Equal(t, cases[len(cases)-1].key, props[len(props)-1].Key)
 	require.Len(t, props, 7)
-
-	a := props.get([]byte("a"))
-	require.Equal(t, uint64(1), a.Size)
-	e := props.get([]byte("e"))
-	require.Equal(t, uint64(defaultPropSizeIndexDistance+5), e.Size)
-	i := props.get([]byte("i"))
-	require.Equal(t, uint64(defaultPropSizeIndexDistance/8*17+9), i.Size)
-	k := props.get([]byte("k"))
-	require.Equal(t, uint64(defaultPropSizeIndexDistance/8*25+11), k.Size)
-	m := props.get([]byte("m"))
-	require.Equal(t, uint64(defaultPropKeysIndexDistance+11), m.Keys)
-	n := props.get([]byte("n"))
-	require.Equal(t, uint64(defaultPropKeysIndexDistance*2+11), n.Keys)
-	o := props.get([]byte("o"))
-	require.Equal(t, uint64(defaultPropKeysIndexDistance*2+12), o.Keys)
 
 	props2 := rangeProperties([]rangeProperty{
 		{[]byte("b"), rangeOffsets{defaultPropSizeIndexDistance + 10, defaultPropKeysIndexDistance / 2}},
@@ -927,8 +913,6 @@ func (f *mockImportClientFactory) Create(_ context.Context, storeID uint64) (sst
 
 func (f *mockImportClientFactory) Close() {}
 
-type testMultiIngestSuite struct{}
-
 func TestMultiIngest(t *testing.T) {
 	allStores := []*metapb.Store{
 		{
@@ -1204,4 +1188,15 @@ func TestMultiIngest(t *testing.T) {
 			require.Equal(t, testCase.supportMutliIngest, local.supportMultiIngest)
 		}
 	}
+}
+
+func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
+	bak := local{}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace"))
+	}()
+	err := bak.writeAndIngestPairs(context.Background(), nil, nil, nil, nil, 0, 0)
+	require.Error(t, err)
+	require.Regexp(t, "The available disk of TiKV.*", err.Error())
 }

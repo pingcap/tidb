@@ -81,7 +81,7 @@ func (e *baseAvgDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 	if frac == -1 {
 		frac = mysql.MaxDecimalScale
 	}
-	err = finalResult.Round(finalResult, frac, types.ModeHalfEven)
+	err = finalResult.Round(finalResult, frac, types.ModeHalfUp)
 	if err != nil {
 		return err
 	}
@@ -276,7 +276,7 @@ func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx.Co
 	if frac == -1 {
 		frac = mysql.MaxDecimalScale
 	}
-	err = finalResult.Round(finalResult, frac, types.ModeHalfEven)
+	err = finalResult.Round(finalResult, frac, types.ModeHalfUp)
 	if err != nil {
 		return err
 	}

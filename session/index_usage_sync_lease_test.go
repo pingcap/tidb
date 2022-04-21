@@ -20,6 +20,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var GetBootstrapVersion = getBootstrapVersion
+var CurrentBootstrapVersion = currentBootstrapVersion
+
 func TestIndexUsageSyncLease(t *testing.T) {
 	store, dom := createStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()

@@ -52,7 +52,7 @@ func (cf *concatFunction) initSeparator(sc *stmtctx.StatementContext, row chunk.
 		return err
 	}
 	if sepDatum.IsNull() {
-		return errors.Errorf("Invalid separator argument.")
+		return errors.Errorf("Invalid separator argument")
 	}
 	cf.separator, err = sepDatum.ToString()
 	return err

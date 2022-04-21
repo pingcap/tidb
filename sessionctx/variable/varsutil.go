@@ -19,7 +19,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -230,6 +229,10 @@ func SetStmtVar(vars *SessionVars, name string, value string) error {
 	return vars.SetStmtVar(name, sVal)
 }
 
+// Deprecated: Read the value from the mysql.tidb table.
+// This supports the use case that a TiDB server *older* than 5.0 is a member of the cluster.
+// i.e. system variables such as tidb_gc_concurrency, tidb_gc_enable, tidb_gc_life_time
+// do not exist.
 func getTiDBTableValue(vars *SessionVars, name, defaultVal string) (string, error) {
 	val, err := vars.GlobalVarsAccessor.GetTiDBTableValue(name)
 	if err != nil { // handle empty result or other errors
@@ -238,6 +241,10 @@ func getTiDBTableValue(vars *SessionVars, name, defaultVal string) (string, erro
 	return trueFalseToOnOff(val), nil
 }
 
+// Deprecated: Set the value from the mysql.tidb table.
+// This supports the use case that a TiDB server *older* than 5.0 is a member of the cluster.
+// i.e. system variables such as tidb_gc_concurrency, tidb_gc_enable, tidb_gc_life_time
+// do not exist.
 func setTiDBTableValue(vars *SessionVars, name, value, comment string) error {
 	value = OnOffToTrueFalse(value)
 	return vars.GlobalVarsAccessor.SetTiDBTableValue(name, value, comment)
@@ -328,6 +335,31 @@ func TiDBOptEnableClustered(opt string) ClusteredIndexDefMode {
 	}
 }
 
+// AssertionLevel controls the assertion that will be performed during transactions.
+type AssertionLevel int
+
+const (
+	// AssertionLevelOff indicates no assertion should be performed.
+	AssertionLevelOff AssertionLevel = iota
+	// AssertionLevelFast indicates assertions that doesn't affect performance should be performed.
+	AssertionLevelFast
+	// AssertionLevelStrict indicates full assertions should be performed, even if the performance might be slowed down.
+	AssertionLevelStrict
+)
+
+func tidbOptAssertionLevel(opt string) AssertionLevel {
+	switch opt {
+	case AssertionStrictStr:
+		return AssertionLevelStrict
+	case AssertionFastStr:
+		return AssertionLevelFast
+	case AssertionOffStr:
+		return AssertionLevelOff
+	default:
+		return AssertionLevelOff
+	}
+}
+
 func tidbOptPositiveInt32(opt string, defaultVal int) int {
 	val, err := strconv.Atoi(opt)
 	if err != nil || val <= 0 {
@@ -336,7 +368,8 @@ func tidbOptPositiveInt32(opt string, defaultVal int) int {
 	return val
 }
 
-func tidbOptInt(opt string, defaultVal int) int {
+// TidbOptInt converts a string to an int
+func TidbOptInt(opt string, defaultVal int) int {
 	val, err := strconv.Atoi(opt)
 	if err != nil {
 		return defaultVal
@@ -344,7 +377,8 @@ func tidbOptInt(opt string, defaultVal int) int {
 	return val
 }
 
-func tidbOptInt64(opt string, defaultVal int64) int64 {
+// TidbOptInt64 converts a string to an int64
+func TidbOptInt64(opt string, defaultVal int64) int64 {
 	val, err := strconv.ParseInt(opt, 10, 64)
 	if err != nil {
 		return defaultVal
@@ -456,39 +490,8 @@ func setReadStaleness(s *SessionVars, sVal string) error {
 	if err != nil {
 		return err
 	}
-	if sValue > 0 {
-		return fmt.Errorf("%s's value should be less than 0", TiDBReadStaleness)
-	}
 	s.ReadStaleness = time.Duration(sValue) * time.Second
 	return nil
-}
-
-// serverGlobalVariable is used to handle variables that acts in server and global scope.
-type serverGlobalVariable struct {
-	sync.Mutex
-	serverVal string
-	globalVal string
-}
-
-// Set sets the value according to variable scope.
-func (v *serverGlobalVariable) Set(val string, isServer bool) {
-	v.Lock()
-	if isServer {
-		v.serverVal = val
-	} else {
-		v.globalVal = val
-	}
-	v.Unlock()
-}
-
-// GetVal gets the value.
-func (v *serverGlobalVariable) GetVal() string {
-	v.Lock()
-	defer v.Unlock()
-	if v.serverVal != "" {
-		return v.serverVal
-	}
-	return v.globalVal
 }
 
 func collectAllowFuncName4ExpressionIndex() string {
@@ -507,4 +510,38 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.MD5:        {},
 	ast.Reverse:    {},
 	ast.VitessHash: {},
+	ast.TiDBShard:  {},
+}
+
+func checkGCTxnMaxWaitTime(vars *SessionVars,
+	normalizedValue string,
+	originalValue string,
+	scope ScopeFlag) (string, error) {
+	ival, err := strconv.Atoi(normalizedValue)
+	if err != nil {
+		return originalValue, errors.Trace(err)
+	}
+	GcLifeTimeStr, _ := getTiDBTableValue(vars, "tikv_gc_life_time", "10m0s")
+	GcLifeTimeDuration, err := time.ParseDuration(GcLifeTimeStr)
+	if err != nil {
+		return originalValue, errors.Trace(err)
+	}
+	if GcLifeTimeDuration.Seconds() > (float64)(ival) {
+		return originalValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(TiDBGCMaxWaitTime, normalizedValue))
+	}
+	return normalizedValue, nil
+}
+
+func checkTiKVGCLifeTime(vars *SessionVars,
+	normalizedValue string,
+	originalValue string,
+	scope ScopeFlag) (string, error) {
+	gcLifetimeDuration, err := time.ParseDuration(normalizedValue)
+	if err != nil {
+		return originalValue, errors.Trace(err)
+	}
+	if gcLifetimeDuration.Seconds() > float64(GCMaxWaitTime.Load()) {
+		return originalValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(TiDBGCLifetime, normalizedValue))
+	}
+	return normalizedValue, nil
 }

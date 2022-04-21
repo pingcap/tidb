@@ -21,15 +21,11 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func TestVecGroupChecker(t *testing.T) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
 	tp := &types.FieldType{Tp: mysql.TypeVarchar}
 	col0 := &expression.Column{
 		RetType: tp,

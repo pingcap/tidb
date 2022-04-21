@@ -341,7 +341,8 @@ func (b *builtinSleepSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) e
 
 		sessVars := b.ctx.GetSessionVars()
 		if isNull || val < 0 {
-			if sessVars.StrictSQLMode {
+			// for insert ignore stmt, the StrictSQLMode and ignoreErr should both be considered.
+			if !sessVars.StmtCtx.BadNullAsWarning {
 				return errIncorrectArgs.GenWithStackByArgs("sleep")
 			}
 			err := errIncorrectArgs.GenWithStackByArgs("sleep")

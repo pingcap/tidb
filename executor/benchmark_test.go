@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
@@ -1303,7 +1302,7 @@ func (tc indexJoinTestCase) getMockDataSourceOptByRows(rows int) mockDataSourceP
 	}
 }
 
-func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, innerDS *mockDataSource) Executor {
+func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, innerDS *mockDataSource) (Executor, error) {
 	outerCols, innerCols := tc.columns(), tc.columns()
 	joinSchema := expression.NewSchema(outerCols...)
 	joinSchema.Append(innerCols...)
@@ -1317,6 +1316,13 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 	for i := range keyOff2IdxOff {
 		keyOff2IdxOff[i] = i
 	}
+
+	readerBuilder, err := newExecutorBuilder(tc.ctx, nil, nil, 0, false, oracle.GlobalTxnScope).
+		newDataReaderBuilder(&mockPhysicalIndexReader{e: innerDS})
+	if err != nil {
+		return nil, err
+	}
+
 	e := &IndexLookUpJoin{
 		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, 1, outerDS),
 		outerCtx: outerCtx{
@@ -1325,7 +1331,7 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 			hashCols: tc.outerHashKeyIdx,
 		},
 		innerCtx: innerCtx{
-			readerBuilder: &dataReaderBuilder{Plan: &mockPhysicalIndexReader{e: innerDS}, executorBuilder: newExecutorBuilder(tc.ctx, nil, nil, 0, false, oracle.GlobalTxnScope)},
+			readerBuilder: readerBuilder,
 			rowTypes:      rightTypes,
 			colLens:       colLens,
 			keyCols:       tc.innerJoinKeyIdx,
@@ -1338,21 +1344,24 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 		lastColHelper: nil,
 	}
 	e.joinResult = newFirstChunk(e)
-	return e
+	return e, nil
 }
 
-func prepare4IndexOuterHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, innerDS *mockDataSource) Executor {
-	e := prepare4IndexInnerHashJoin(tc, outerDS, innerDS).(*IndexLookUpJoin)
-	idxHash := &IndexNestedLoopHashJoin{IndexLookUpJoin: *e}
+func prepare4IndexOuterHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, innerDS *mockDataSource) (Executor, error) {
+	e, err := prepare4IndexInnerHashJoin(tc, outerDS, innerDS)
+	if err != nil {
+		return nil, err
+	}
+	idxHash := &IndexNestedLoopHashJoin{IndexLookUpJoin: *e.(*IndexLookUpJoin)}
 	concurrency := tc.concurrency
 	idxHash.joiners = make([]joiner, concurrency)
 	for i := 0; i < concurrency; i++ {
-		idxHash.joiners[i] = e.joiner.Clone()
+		idxHash.joiners[i] = e.(*IndexLookUpJoin).joiner.Clone()
 	}
-	return idxHash
+	return idxHash, nil
 }
 
-func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, innerDS *mockDataSource) Executor {
+func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, innerDS *mockDataSource) (Executor, error) {
 	outerCols, innerCols := tc.columns(), tc.columns()
 	joinSchema := expression.NewSchema(outerCols...)
 	joinSchema.Append(innerCols...)
@@ -1381,6 +1390,13 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 		compareFuncs = append(compareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], innerJoinKeys[i]))
 		outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], outerJoinKeys[i]))
 	}
+
+	readerBuilder, err := newExecutorBuilder(tc.ctx, nil, nil, 0, false, oracle.GlobalTxnScope).
+		newDataReaderBuilder(&mockPhysicalIndexReader{e: innerDS})
+	if err != nil {
+		return nil, err
+	}
+
 	e := &IndexLookUpMergeJoin{
 		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, 2, outerDS),
 		outerMergeCtx: outerMergeCtx{
@@ -1391,7 +1407,7 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 			compareFuncs:  outerCompareFuncs,
 		},
 		innerMergeCtx: innerMergeCtx{
-			readerBuilder: &dataReaderBuilder{Plan: &mockPhysicalIndexReader{e: innerDS}, executorBuilder: newExecutorBuilder(tc.ctx, nil, nil, 0, false, oracle.GlobalTxnScope)},
+			readerBuilder: readerBuilder,
 			rowTypes:      rightTypes,
 			joinKeys:      innerJoinKeys,
 			colLens:       colLens,
@@ -1409,7 +1425,7 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 		joiners[i] = newJoiner(tc.ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil)
 	}
 	e.joiners = joiners
-	return e
+	return e, nil
 }
 
 type indexJoinType int8
@@ -1431,13 +1447,18 @@ func benchmarkIndexJoinExecWithCase(
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		var exec Executor
+		var err error
 		switch execType {
 		case indexInnerHashJoin:
-			exec = prepare4IndexInnerHashJoin(tc, outerDS, innerDS)
+			exec, err = prepare4IndexInnerHashJoin(tc, outerDS, innerDS)
 		case indexOuterHashJoin:
-			exec = prepare4IndexOuterHashJoin(tc, outerDS, innerDS)
+			exec, err = prepare4IndexOuterHashJoin(tc, outerDS, innerDS)
 		case indexMergeJoin:
-			exec = prepare4IndexMergeJoin(tc, outerDS, innerDS)
+			exec, err = prepare4IndexMergeJoin(tc, outerDS, innerDS)
+		}
+
+		if err != nil {
+			b.Fatal(err)
 		}
 
 		tmpCtx := context.Background()
@@ -1446,7 +1467,7 @@ func benchmarkIndexJoinExecWithCase(
 		innerDS.prepareChunks()
 
 		b.StartTimer()
-		if err := exec.Open(tmpCtx); err != nil {
+		if err = exec.Open(tmpCtx); err != nil {
 			b.Fatal(err)
 		}
 		for {
@@ -2100,10 +2121,4 @@ func BenchmarkAggPartialResultMapperMemoryUsage(b *testing.B) {
 func BenchmarkPipelinedRowNumberWindowFunctionExecution(b *testing.B) {
 	b.ReportAllocs()
 
-}
-
-func TestBenchDaily(t *testing.T) {
-	benchdaily.Run(
-		BenchmarkReadLastLinesOfHugeLine,
-	)
 }

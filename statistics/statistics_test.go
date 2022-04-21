@@ -200,7 +200,7 @@ func TestPseudoTable(t *testing.T) {
 	}
 	ti.Columns = append(ti.Columns, colInfo)
 	tbl := PseudoTable(ti)
-	require.Equal(t, len(tbl.Columns), 1)
+	require.Len(t, tbl.Columns, 1)
 	require.Greater(t, tbl.Count, int64(0))
 	sctx := mock.NewContext()
 	count := tbl.ColumnLessRowCount(sctx, types.NewIntDatum(100), colInfo.ID)
@@ -250,7 +250,12 @@ func SubTestColumnRange() func(*testing.T) {
 		hg, err := BuildColumn(ctx, bucketCount, 2, collector, types.NewFieldType(mysql.TypeLonglong))
 		hg.PreCalculateScalar()
 		require.NoError(t, err)
-		col := &Column{Histogram: *hg, CMSketch: buildCMSketch(s.rc.(*recordSet).data), Info: &model.ColumnInfo{}}
+		col := &Column{
+			Histogram: *hg,
+			CMSketch:  buildCMSketch(s.rc.(*recordSet).data),
+			Info:      &model.ColumnInfo{},
+			Loaded:    true,
+		}
 		tbl := &Table{
 			HistColl: HistColl{
 				Count:   int64(col.TotalRowCount()),
@@ -322,7 +327,7 @@ func SubTestIntColumnRanges() func(*testing.T) {
 		hg.PreCalculateScalar()
 		require.NoError(t, err)
 		require.Equal(t, int64(100000), rowCount)
-		col := &Column{Histogram: *hg, Info: &model.ColumnInfo{}}
+		col := &Column{Histogram: *hg, Info: &model.ColumnInfo{}, Loaded: true}
 		tbl := &Table{
 			HistColl: HistColl{
 				Count:   int64(col.TotalRowCount()),

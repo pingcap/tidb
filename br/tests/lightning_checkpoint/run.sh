@@ -83,12 +83,14 @@ for BACKEND in importer local; do
   set -e
 
   export GO_FAILPOINTS="$SLOWDOWN_FAILPOINTS"
-  set +e
-  for i in $(seq "$TABLE_COUNT"); do
-      echo "******** Importing Table Now (step $i/$TABLE_COUNT) ********"
-      run_lightning -d "$DBPATH" --backend $BACKEND --enable-checkpoint=1 2> /dev/null
-  done
-  set -e
+  # After everything is done, there should be no longer new calls to ImportEngine
+  # (and thus `kill_lightning_after_one_import` will spare this final check)
+  echo "******** Verify checkpoint no-op ********"
+  run_lightning -d "$DBPATH" --backend $BACKEND --enable-checkpoint=1
+  run_sql "$PARTIAL_IMPORT_QUERY"
+  check_contains "s: $(( (1000 * $CHUNK_COUNT + 1001) * $CHUNK_COUNT * $TABLE_COUNT ))"
+  run_sql 'SELECT count(*) FROM `tidb_lightning_checkpoint_test_cppk`.table_v7 WHERE status >= 200'
+  check_contains "count(*): $TABLE_COUNT"
 
   # Start importing the tables.
   run_sql 'DROP DATABASE IF EXISTS cppk_tsr'

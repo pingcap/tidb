@@ -112,21 +112,55 @@ type HistColl struct {
 	Pseudo         bool
 }
 
+// TableMemoryUsage records tbl memory usage
+type TableMemoryUsage struct {
+	TableID         int64
+	TotalMemUsage   int64
+	ColumnsMemUsage map[int64]*ColumnMemUsage
+	IndicesMemUsage map[int64]*IndexMemUsage
+}
+
+// ColumnMemUsage records column memory usage
+type ColumnMemUsage struct {
+	ColumnID          int64
+	HistogramMemUsage int64
+	CMSketchMemUsage  int64
+	FMSketchMemUsage  int64
+	TotalMemUsage     int64
+}
+
+// IndexMemUsage records index memory usage
+type IndexMemUsage struct {
+	IndexID           int64
+	HistogramMemUsage int64
+	CMSketchMemUsage  int64
+	TotalMemUsage     int64
+}
+
 // MemoryUsage returns the total memory usage of this Table.
 // it will only calc the size of Columns and Indices stats data of table.
 // We ignore the size of other metadata in Table
-func (t *Table) MemoryUsage() (sum int64) {
+func (t *Table) MemoryUsage() *TableMemoryUsage {
+	tMemUsage := &TableMemoryUsage{
+		TableID:         t.PhysicalID,
+		ColumnsMemUsage: make(map[int64]*ColumnMemUsage),
+		IndicesMemUsage: make(map[int64]*IndexMemUsage),
+	}
 	for _, col := range t.Columns {
 		if col != nil {
-			sum += col.MemoryUsage()
+			colMemUsage := col.MemoryUsage()
+			tMemUsage.ColumnsMemUsage[colMemUsage.ColumnID] = colMemUsage
+			tMemUsage.TotalMemUsage += colMemUsage.TotalMemUsage
 		}
 	}
 	for _, index := range t.Indices {
 		if index != nil {
-			sum += index.MemoryUsage()
+			idxMemUsage := index.MemoryUsage()
+			tMemUsage.IndicesMemUsage[idxMemUsage.IndexID] = idxMemUsage
+			tMemUsage.TotalMemUsage += idxMemUsage.TotalMemUsage
 		}
 	}
-	return
+	return tMemUsage
 }
 
 // Copy copies the current table.
@@ -591,23 +625,13 @@ func (coll *HistColl) crossValidationSelectivity(sctx sessionctx.Context, idx *I
 			if col.IsInvalid(sctx, coll.Pseudo) {
 				continue
 			}
-			lowExclude := idxPointRange.LowExclude
-			highExclude := idxPointRange.HighExclude
-			// Consider this case:
-			// create table t(a int, b int, c int, primary key(a,b,c));
-			// insert into t values(1,1,1),(2,2,3);
-			// explain select * from t where (a,b) in ((1,1),(2,2)) and c > 2;
-			// For column a, we will get range: (1, 1], (2, 2], but GetColumnRowCount() with rang = (2, 2] will return 0.
-			// And the result of the explain statement will output estRow 0.0. So we change it to [2, 2].
-			if lowExclude != highExclude && i < usedColsLen {
-				lowExclude = false
-				highExclude = false
-			}
+			// Since the column range is point range(LowVal is equal to HighVal), we need to set both LowExclude and HighExclude to false.
+			// Otherwise we would get 0.0 estRow from GetColumnRowCount.
 			rang := ranger.Range{
 				LowVal:      []types.Datum{idxPointRange.LowVal[i]},
-				LowExclude:  lowExclude,
+				LowExclude:  false,
 				HighVal:     []types.Datum{idxPointRange.HighVal[i]},
-				HighExclude: highExclude,
+				HighExclude: false,
 				Collators:   []collate.Collator{idxPointRange.Collators[i]},
 			}
 

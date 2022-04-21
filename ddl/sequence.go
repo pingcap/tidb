@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/util/dbterror"
 	math2 "github.com/pingcap/tidb/util/math"
 )
 
@@ -65,7 +66,7 @@ func onCreateSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ err
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateSequence, TableInfo: tbInfo})
 		return ver, nil
 	default:
-		return ver, ErrInvalidDDLState.GenWithStackByArgs("sequence", tbInfo.State)
+		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("sequence", tbInfo.State)
 	}
 }
 
@@ -178,12 +179,12 @@ func buildSequenceInfo(stmt *ast.CreateSequenceStmt, ident ast.Ident) (*model.Se
 		case ast.TableOptionEngine:
 			// TableOptionEngine will always be 'InnoDB', thus we do nothing in this branch to avoid error happening.
 		default:
-			return nil, ErrSequenceUnsupportedTableOption.GenWithStackByArgs(op.StrValue)
+			return nil, dbterror.ErrSequenceUnsupportedTableOption.GenWithStackByArgs(op.StrValue)
 		}
 	}
 	handleSequenceOptions(stmt.SeqOptions, sequenceInfo)
 	if !validateSequenceOptions(sequenceInfo) {
-		return nil, ErrSequenceInvalidData.GenWithStackByArgs(ident.Schema.L, ident.Name.L)
+		return nil, dbterror.ErrSequenceInvalidData.GenWithStackByArgs(ident.Schema.L, ident.Name.L)
 	}
 	return sequenceInfo, nil
 }
@@ -223,7 +224,7 @@ func alterSequenceOptions(sequenceOptions []*ast.SequenceOption, ident ast.Ident
 		}
 	}
 	if !validateSequenceOptions(oldSequence) {
-		return false, 0, ErrSequenceInvalidData.GenWithStackByArgs(ident.Schema.L, ident.Name.L)
+		return false, 0, dbterror.ErrSequenceInvalidData.GenWithStackByArgs(ident.Schema.L, ident.Name.L)
 	}
 	if restartWithFlag {
 		return true, restartValue, nil

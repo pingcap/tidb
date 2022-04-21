@@ -365,7 +365,13 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 		}
 		return "DropTable"
 	case *ast.ExplainStmt:
-		return "Explain"
+		if _, ok := x.Stmt.(*ast.ShowStmt); ok {
+			return "DescTable"
+		}
+		if x.Analyze {
+			return "ExplainAnalyzeSQL"
+		}
+		return "ExplainSQL"
 	case *ast.InsertStmt:
 		if x.IsReplace {
 			return "Replace"

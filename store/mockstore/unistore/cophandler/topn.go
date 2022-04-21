@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
-	tipb "github.com/pingcap/tipb/go-tipb"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 type sortRow struct {

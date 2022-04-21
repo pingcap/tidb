@@ -66,8 +66,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	if err != nil {
 		return err
 	}
-	setResourceGroupTaggerForTxn(sessVars.StmtCtx, txn)
-	setRPCInterceptorOfExecCounterForTxn(sessVars, txn)
+	setOptionForTopSQL(sessVars.StmtCtx, txn)
 	txnSize := txn.Size()
 	sessVars.StmtCtx.AddRecordRows(uint64(len(rows)))
 	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
@@ -83,7 +82,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			return err
 		}
 	} else if ignoreErr {
-		err := e.batchCheckAndInsert(ctx, rows, e.addRecord)
+		err := e.batchCheckAndInsert(ctx, rows, e.addRecord, false)
 		if err != nil {
 			return err
 		}
