@@ -129,7 +129,7 @@ package funcdep
 //         +-----------------------------------+-----------> New Cond-FD are <e=a with {a,b,c,d,e}> occurs.
 //
 //
-// the old Cond-FD with null constraint columns set {c,d,e} is preserved cause new append cols are all null too.
+// the old Cond-FD with null constraint columns set {c,d,e} is preserved cause new appended cols are all null too.
 // the new Cond-FD with null constraint columns set {a,b,c,d,e} are also meaningful, even if the null-reject column
 // is one of {c,d,e} which may reduce one of the matched row out of the result, the equivalence {a}={e} still exist.
 //
@@ -175,3 +175,6 @@ package funcdep
 //
 //  If the first left join result is in the outer side of the second left join, just keep the ncEdge from left as well,
 //  appending the new ncEdges in current left join.
+//
+//  For a inner join, both side of the join result won't be appended with null-supplied rows, so we can simply collect
+//  the ncEdges from both join side together.

@@ -584,6 +584,11 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 			s.fdEdges = append(s.fdEdges, fd)
 		}
 	}
+	// just simple merge the ncEdge from both side together.
+	for i := 0; i < len(rhs.ncEdges); i++ {
+		fd := rhs.ncEdges[i]
+		s.ncEdges = append(s.ncEdges, fd)
+	}
 	// todo: add strict FD: (left key + right key) -> all cols.
 	// maintain a key?
 }
