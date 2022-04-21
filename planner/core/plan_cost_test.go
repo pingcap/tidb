@@ -1,8 +1,21 @@
+// Copyright 2022 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package core_test
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/domain"
@@ -39,16 +52,6 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int primary key, b int, c int, d int, key b(b), key cd(c, d))`)
-	var vals []string
-	for i := 0; i < 1500; i++ {
-		vals = append(vals, fmt.Sprintf(`(%v, %v, %v, %v)`, i, i, i, i))
-		if len(vals) >= 100 {
-			tk.MustExec(fmt.Sprintf(`insert into t values %v`, strings.Join(vals, ", ")))
-			vals = vals[:0]
-		}
-	}
-	tk.MustExec(`analyze table t`)
-	tk.MustExec(`set @@session.tidb_stats_load_sync_wait=2000`)
 
 	queries := []string{
 		// table-reader

@@ -48,12 +48,10 @@ func (p *PhysicalSelection) GetPlanCost(taskType property.TaskType) (float64, er
 	}
 	var cpuFactor float64
 	switch taskType {
-	case property.RootTaskType:
+	case property.RootTaskType, property.MppTaskType:
 		cpuFactor = p.ctx.GetSessionVars().CPUFactor
 	case property.CopSingleReadTaskType, property.CopDoubleReadTaskType:
 		cpuFactor = p.ctx.GetSessionVars().CopCPUFactor
-	case property.MppTaskType:
-		cpuFactor = p.ctx.GetSessionVars().CPUFactor // TODO: introduce a new factor for TiFlash?
 	default:
 		return 0, errors.Errorf("unknown task type %v", taskType)
 	}
@@ -61,8 +59,8 @@ func (p *PhysicalSelection) GetPlanCost(taskType property.TaskType) (float64, er
 	if err != nil {
 		return 0, err
 	}
-	p.planCost += childCost
-	p.planCost += cpuFactor * p.children[0].StatsCount()
+	p.planCost = childCost
+	p.planCost += p.children[0].StatsCount() * cpuFactor // selection cost: rows * cpu-factor
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -76,8 +74,8 @@ func (p *PhysicalProjection) GetPlanCost(taskType property.TaskType) (float64, e
 	if err != nil {
 		return 0, err
 	}
-	p.planCost += childCost
-	p.planCost += p.GetCost(p.StatsCount())
+	p.planCost = childCost
+	p.planCost += p.GetCost(p.StatsCount()) // projection cost
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -97,25 +95,25 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType) (flo
 		p.planCost += childCost
 	}
 
-	// index net I/O cost
-	idxCount := p.indexPlan.StatsCount()
-	tblStats := getTblStats(p.indexPlan)
-	rowSize := tblStats.GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
-	p.planCost += idxCount * rowSize * p.ctx.GetSessionVars().GetNetworkFactor(nil)
+	// index-side net I/O cost: rows * row-size * net-factor
+	netFactor := getTableNetFactor(p.tablePlan)
+	rowSize := getTblStats(p.indexPlan).GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
+	p.planCost += p.indexPlan.StatsCount() * rowSize * netFactor
 
-	// index net seek cost
-	p.planCost += getSeekCost(p)
+	// index-side net seek cost
+	p.planCost += estimateNetSeekCost(p.indexPlan)
 
-	// table net I/O cost
-	tblRowSize := getHistCollSafely(p).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
-	tblCount := p.tablePlan.StatsCount()
-	p.planCost += tblCount * p.ctx.GetSessionVars().GetNetworkFactor(nil) * tblRowSize
+	// table-side net I/O cost: rows * row-size * net-factor
+	tblRowSize := getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
+	p.planCost += p.tablePlan.StatsCount() * tblRowSize * netFactor
+
+	// table-side seek cost
+	p.planCost += estimateNetSeekCost(p.tablePlan)
 
 	// consider concurrency
 	p.planCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 
-	// lookup-cost (table net seek cost)
-	// TODO: consider lookup concurrency for this cost?
+	// lookup-cpu-cost in TiDB
 	p.planCost += p.GetCost()
 	p.planCostInit = true
 	return p.planCost, nil
@@ -126,19 +124,18 @@ func (p *PhysicalIndexReader) GetPlanCost(taskType property.TaskType) (float64, 
 	if p.planCostInit {
 		return p.planCost, nil
 	}
-
 	// child's cost
 	childCost, err := p.indexPlan.GetPlanCost(property.CopSingleReadTaskType)
 	if err != nil {
 		return 0, err
 	}
 	p.planCost = childCost
-	// net I/O cost
+	// net I/O cost: rows * row-size * net-factor
 	tblStats := getTblStats(p.indexPlan)
 	rowSize := tblStats.GetAvgRowSize(p.ctx, p.indexPlan.Schema().Columns, true, false)
-	p.planCost += p.indexPlan.StatsCount() * rowSize * p.ctx.GetSessionVars().GetNetworkFactor(nil)
+	p.planCost += p.indexPlan.StatsCount() * rowSize * getTableNetFactor(p.indexPlan)
 	// net seek cost
-	p.planCost += getSeekCost(p)
+	p.planCost += estimateNetSeekCost(p.indexPlan)
 	// consider concurrency
 	p.planCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 
@@ -151,9 +148,8 @@ func (p *PhysicalTableReader) GetPlanCost(taskType property.TaskType) (float64, 
 	if p.planCostInit {
 		return p.planCost, nil
 	}
-
 	p.planCost = 0
-	netFactor := p.ctx.GetSessionVars().GetNetworkFactor(nil)
+	netFactor := getTableNetFactor(p.tablePlan)
 	switch p.StoreType {
 	case kv.TiKV:
 		// child's cost
@@ -162,11 +158,11 @@ func (p *PhysicalTableReader) GetPlanCost(taskType property.TaskType) (float64, 
 			return 0, err
 		}
 		p.planCost = childCost
-		// net I/O cost
-		rowSize := getHistCollSafely(p).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
+		// net I/O cost: rows * row-size * net-factor
+		rowSize := getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
 		p.planCost += p.tablePlan.StatsCount() * rowSize * netFactor
 		// net seek cost
-		p.planCost += getSeekCost(p)
+		p.planCost += estimateNetSeekCost(p.tablePlan)
 		// consider concurrency
 		p.planCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 	case kv.TiFlash:
@@ -181,7 +177,7 @@ func (p *PhysicalTableReader) GetPlanCost(taskType property.TaskType) (float64, 
 			// cop protocol
 			concurrency = float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 			rowSize = getHistCollSafely(p).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
-			seekCost = getSeekCost(p)
+			seekCost = estimateNetSeekCost(p.tablePlan)
 		}
 
 		//  child's cost
@@ -201,7 +197,6 @@ func (p *PhysicalTableReader) GetPlanCost(taskType property.TaskType) (float64, 
 			p.planCost /= 1000000000
 		}
 	}
-
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -246,14 +241,12 @@ func (p *PhysicalTableScan) GetPlanCost(taskType property.TaskType) (float64, er
 	if p.planCostInit {
 		return p.planCost, nil
 	}
-	p.planCost = 0
-
-	// scan cost
-	scanFactor := p.ctx.GetSessionVars().GetScanFactor(nil)
+	// scan cost: rows * row-size * scan-factor
+	scanFactor := p.ctx.GetSessionVars().GetScanFactor(p.Table)
 	if p.Desc {
-		scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(nil)
+		scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
 	}
-	p.planCost += p.StatsCount() * p.getScanRowSize() * scanFactor
+	p.planCost = p.StatsCount() * p.getScanRowSize() * scanFactor
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -263,15 +256,12 @@ func (p *PhysicalIndexScan) GetPlanCost(taskType property.TaskType) (float64, er
 	if p.planCostInit {
 		return p.planCost, nil
 	}
-	p.planCost = 0
-
-	// scan cost
-	scanFactor := p.ctx.GetSessionVars().GetScanFactor(nil)
+	// scan cost: rows * row-size * scan-factor
+	scanFactor := p.ctx.GetSessionVars().GetScanFactor(p.Table)
 	if p.Desc {
-		scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(nil)
+		scanFactor = p.ctx.GetSessionVars().GetDescScanFactor(p.Table)
 	}
-	p.planCost += p.StatsCount() * p.getScanRowSize() * scanFactor
-
+	p.planCost = p.StatsCount() * p.getScanRowSize() * scanFactor
 	p.planCostInit = true
 	return p.planCost, nil
 }
@@ -529,39 +519,46 @@ func getHistCollSafely(p PhysicalPlan) *statistics.HistColl {
 	return nil
 }
 
-func getSeekCost(p PhysicalPlan) float64 {
-	switch x := p.(type) {
-	case *PhysicalTableReader:
-		return getSeekCost(x.tablePlan)
-	case *PhysicalIndexReader:
-		return getSeekCost(x.indexPlan)
-	case *PhysicalIndexLookUpReader:
-		return getSeekCost(x.indexPlan)
+// estimateNetSeekCost calculates the net seek cost for the plan.
+// for TiKV, it's len(access-range) * seek-factor,
+// and for TiFlash, it's len(access-range) * len(access-column) * seek-factor.
+func estimateNetSeekCost(copTaskPlan PhysicalPlan) float64 {
+	switch x := copTaskPlan.(type) {
 	case *PhysicalTableScan:
-		if x.StoreType == kv.TiFlash {
+		if x.StoreType == kv.TiFlash { // the old TiFlash interface uses cop-task protocol
 			return float64(len(x.Ranges)) * float64(len(x.Columns)) * x.ctx.GetSessionVars().GetSeekFactor(x.Table)
-		} else { // TiKV
-			return float64(len(x.Ranges)) * x.ctx.GetSessionVars().GetSeekFactor(x.Table)
 		}
+		return float64(len(x.Ranges)) * x.ctx.GetSessionVars().GetSeekFactor(x.Table) // TiKV
 	case *PhysicalIndexScan:
-		return float64(len(x.Ranges)) * x.ctx.GetSessionVars().GetSeekFactor(x.Table)
+		return float64(len(x.Ranges)) * x.ctx.GetSessionVars().GetSeekFactor(x.Table) // TiKV
 	default:
-		return getSeekCost(p.Children()[0])
+		return estimateNetSeekCost(copTaskPlan.Children()[0])
 	}
 }
 
-func getTblStats(p PhysicalPlan) *statistics.HistColl {
-	switch x := p.(type) {
+// getTblStats returns the tbl-stats of this plan, which contains all columns before pruning.
+func getTblStats(copTaskPlan PhysicalPlan) *statistics.HistColl {
+	switch x := copTaskPlan.(type) {
 	case *PhysicalTableScan:
 		return x.tblColHists
 	case *PhysicalIndexScan:
 		return x.tblColHists
 	default:
-		for _, c := range p.Children() {
-			if tblStats := getTblStats(c); tblStats != nil {
-				return tblStats
-			}
-		}
+		return getTblStats(copTaskPlan.Children()[0])
 	}
-	return nil
+}
+
+// getTableNetFactor returns the corresponding net factor of this table, it's mainly for temporary tables
+func getTableNetFactor(copTaskPlan PhysicalPlan) float64 {
+	switch x := copTaskPlan.(type) {
+	case *PhysicalTableScan:
+		return x.SCtx().GetSessionVars().GetNetworkFactor(x.Table)
+	case *PhysicalIndexScan:
+		return x.SCtx().GetSessionVars().GetNetworkFactor(x.Table)
+	default:
+		if len(x.Children()) == 0 {
+			x.SCtx().GetSessionVars().GetNetworkFactor(nil)
+		}
+		return getTableNetFactor(x.Children()[0])
+	}
 }
