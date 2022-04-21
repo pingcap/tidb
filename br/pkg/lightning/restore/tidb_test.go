@@ -406,12 +406,15 @@ func TestAlterAutoInc(t *testing.T) {
 		ExpectExec("\\QALTER TABLE `db`.`table` AUTO_INCREMENT=12345\\E").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	s.mockDB.
+		ExpectExec("\\QALTER TABLE `db`.`table` FORCE AUTO_INCREMENT=9223372036854775807\\E").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	s.mockDB.
 		ExpectClose()
 
 	err := AlterAutoIncrement(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345)
 	require.NoError(t, err)
 
-	err = AlterAutoIncrement(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", uint64(math.MaxInt64+1))
+	err = AlterAutoIncrement(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", uint64(math.MaxInt64)+1)
 	require.NoError(t, err)
 }
 
@@ -427,6 +430,9 @@ func TestAlterAutoRandom(t *testing.T) {
 		ExpectClose()
 
 	err := AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345)
+	require.NoError(t, err)
+
+	err = AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", uint64(math.MaxInt64)+1)
 	require.NoError(t, err)
 }
 

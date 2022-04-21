@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
@@ -375,12 +376,16 @@ func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) (bool, e
 // the the auto incremanet base in tidb side, we needn't fetch currently auto increment value here.
 // See: https://github.com/pingcap/tidb/blob/64698ef9a3358bfd0fdc323996bb7928a56cadca/ddl/ddl_api.go#L2528-L2533
 func AlterAutoIncrement(ctx context.Context, g glue.SQLExecutor, tableName string, incr uint64) error {
+	var query string
 	logger := log.With(zap.String("table", tableName), zap.Uint64("auto_increment", incr))
 	if incr > math.MaxInt64 {
-		logger.Warn("auto_increment out of the maximum value TiDB supports", zap.Uint64("auto_increment", incr))
-		return nil
+		// automatically set max value
+		logger.Warn("auto_increment out of the maximum value TiDB supports, automatically set to the max", zap.Uint64("auto_increment", incr))
+		incr = math.MaxInt64
+		query = fmt.Sprintf("ALTER TABLE %s FORCE AUTO_INCREMENT=%d", tableName, incr)
+	} else {
+		query = fmt.Sprintf("ALTER TABLE %s AUTO_INCREMENT=%d", tableName, incr)
 	}
-	query := fmt.Sprintf("ALTER TABLE %s AUTO_INCREMENT=%d", tableName, incr)
 	task := logger.Begin(zap.InfoLevel, "alter table auto_increment")
 	err := g.ExecuteWithLog(ctx, query, "alter table auto_increment", logger)
 	task.End(zap.ErrorLevel, err)
@@ -393,8 +398,17 @@ func AlterAutoIncrement(ctx context.Context, g glue.SQLExecutor, tableName strin
 	return errors.Annotatef(err, "%s", query)
 }
 
-func AlterAutoRandom(ctx context.Context, g glue.SQLExecutor, tableName string, randomBase int64) error {
-	logger := log.With(zap.String("table", tableName), zap.Int64("auto_random", randomBase))
+func AlterAutoRandom(ctx context.Context, g glue.SQLExecutor, tableName string, randomBase uint64) error {
+	logger := log.With(zap.String("table", tableName), zap.Uint64("auto_random", randomBase))
+	// according to https://docs.pingcap.com/zh/tidb/dev/auto-random
+	// auto_random_base is related to shard_bits from (0, 15]
+	// which can be specified by users.
+	// To make the random_base always valid, we conservatively set it to 15.
+	maxRandom := 1<<(64-autoid.MaxAutoRandomBits-1) - 1 // one bit for sign
+	if randomBase > uint64(maxRandom) {
+		logger.Warn("auto_random out of the maximum value TiDB supports, automatically set to the max", zap.Uint64("auto_random", randomBase))
+		return nil
+	}
 	query := fmt.Sprintf("ALTER TABLE %s AUTO_RANDOM_BASE=%d", tableName, randomBase)
 	task := logger.Begin(zap.InfoLevel, "alter table auto_random")
 	err := g.ExecuteWithLog(ctx, query, "alter table auto_random_base", logger)
