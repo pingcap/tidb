@@ -105,10 +105,13 @@ func (p *PhysicalIndexLookUpReader) GetPlanCost(taskType property.TaskType) (flo
 	tblRowSize := getTblStats(p.tablePlan).GetAvgRowSize(p.ctx, p.tablePlan.Schema().Columns, false, false)
 	p.planCost += p.tablePlan.StatsCount() * tblRowSize * netFactor
 
+	// table-side seek cost
+	p.planCost += estimateNetSeekCost(p.tablePlan)
+
 	// consider concurrency
 	p.planCost /= float64(p.ctx.GetSessionVars().DistSQLScanConcurrency())
 
-	// lookup-cost(table-size seek cost)
+	// lookup-cpu-cost in TiDB
 	p.planCost += p.GetCost()
 	p.planCostInit = true
 	return p.planCost, nil
