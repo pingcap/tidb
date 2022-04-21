@@ -2243,6 +2243,7 @@ func (la *LogicalApply) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([
 	}
 	if !prop.IsEmpty() && la.ctx.GetSessionVars().EnableParallelApply {
 		la.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Parallel Apply cannot keep the order of its outer child"))
+		return nil, true, nil
 	}
 	disableAggPushDownToCop(la.children[0])
 	join := la.GetHashJoin(prop)
