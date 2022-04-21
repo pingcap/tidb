@@ -185,7 +185,7 @@ func (rc *reorgCtx) getRowCountAndKey() (int64, kv.Key, *meta.Element) {
 // After that, we can make sure that the worker goroutine is correctly shut down.
 func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.TableInfo, lease time.Duration, f func() error) error {
 	job := reorgInfo.Job
-	d := reorgInfo.d
+	d := w.ddlCtx
 	// This is for tests compatible, because most of the early tests try to build the reorg job manually
 	// without reorg meta info, which will cause nil pointer in here.
 	if job.ReorgMeta == nil {
@@ -238,7 +238,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		job.SetRowCount(rowCount)
 
 		// Update a job's warnings.
-		mergeWarningsIntoJob(reorgInfo)
+		mergeWarningsIntoJob(w.ddlCtx, reorgInfo)
 
 		d.removeReorgCtx(job)
 		// For other errors, even err is not nil here, we still wait the partial counts to be collected.
@@ -271,7 +271,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
 
 		// Update a job's warnings.
-		mergeWarningsIntoJob(reorgInfo)
+		mergeWarningsIntoJob(nil, reorgInfo)
 
 		rc.resetWarnings()
 
@@ -293,8 +293,8 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 	return nil
 }
 
-func mergeWarningsIntoJob(reorgInfo *reorgInfo) {
-	rc := reorgInfo.d.getReorgCtx(reorgInfo.Job)
+func mergeWarningsIntoJob(d *ddlCtx, reorgInfo *reorgInfo) {
+	rc := d.getReorgCtx(reorgInfo.Job)
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
 	partWarnings := rc.mu.warnings
@@ -349,20 +349,20 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	return rows[0].GetInt64(0)
 }
 
-func (w *worker) isReorgRunnable(reorgInfo *reorgInfo) error {
+func (w *worker) isReorgRunnable(job *model.Job) error {
 	if isChanClosed(w.ctx.Done()) {
 		// Worker is closed. So it can't do the reorganizational job.
 		return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
 	}
 
-	if reorgInfo.d.getReorgCtx(reorgInfo.Job).isReorgCanceled() {
+	if w.ddlCtx.getReorgCtx(job).isReorgCanceled() {
 		// Job is cancelled. So it can't be done.
 		return dbterror.ErrCancelledDDLJob
 	}
 
-	if !reorgInfo.d.isOwner() {
+	if !w.ddlCtx.isOwner() {
 		// If it's not the owner, we will try later, so here just returns an error.
-		logutil.BgLogger().Info("[ddl] DDL worker is not the DDL owner", zap.String("ID", reorgInfo.d.uuid))
+		logutil.BgLogger().Info("[ddl] DDL worker is not the DDL owner", zap.String("ID", w.ddlCtx.uuid))
 		return errors.Trace(dbterror.ErrNotOwner)
 	}
 	return nil
