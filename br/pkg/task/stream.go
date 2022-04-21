@@ -1022,11 +1022,11 @@ func restoreStream(
 	}
 	defer rawkvClient.Close()
 
-	pm := g.StartProgress(ctx, "Restore DDL files", int64(len(ddlFiles)), !cfg.LogProgress)
+	pm := g.StartProgress(ctx, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress)
 	if err = withProgress(pm, func(p glue.Progress) error {
 		return client.RestoreMetaKVFiles(ctx, rawkvClient, ddlFiles, schemasReplace, p.Inc)
 	}); err != nil {
-		return errors.Annotate(err, "failed to restore DDL files")
+		return errors.Annotate(err, "failed to restore meta files")
 	}
 
 	// perform restore kv files
@@ -1036,12 +1036,12 @@ func restoreStream(
 	}
 	updateRewriteRules(rewriteRules, schemasReplace)
 
-	pd := g.StartProgress(ctx, "Restore DML Files", int64(len(dmlFiles)), !cfg.LogProgress)
+	pd := g.StartProgress(ctx, "Restore KV Files", int64(len(dmlFiles)), !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) error {
 		return client.RestoreKVFiles(ctx, rewriteRules, dmlFiles, p.Inc)
 	})
 	if err != nil {
-		return errors.Annotate(err, "failed to restore DML files")
+		return errors.Annotate(err, "failed to restore kv files")
 	}
 
 	// fix indices.
@@ -1054,7 +1054,11 @@ func restoreStream(
 	// 	return errors.Annotate(err, "failed to fix index for some table")
 	// }
 
-	// TODO split put and delete files
+	err = client.CleanUpKVFiles(ctx)
+	if err != nil {
+		return errors.Annotate(err, "failed to clean up")
+	}
+
 	return nil
 }
 

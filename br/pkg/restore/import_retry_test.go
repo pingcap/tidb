@@ -44,30 +44,40 @@ func TestScanSuccess(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient()
 	rs := utils.InitialRetryState(1, 0, 0)
-	ctl := restore.OverRegionsInRange([]byte("aaz"), []byte("bb"), cli, rs)
 	ctx := context.Background()
-	colletedRegions := []*restore.RegionInfo{}
+
+	// make exclusive to inclusive.
+	ctl := restore.OverRegionsInRange([]byte("aa"), []byte("aay"), cli, rs)
+	collectedRegions := []*restore.RegionInfo{}
 	ctl.Run(ctx, func(ctx context.Context, r *restore.RegionInfo) restore.RPCResult {
-		colletedRegions = append(colletedRegions, r)
+		collectedRegions = append(collectedRegions, r)
 		return restore.RPCResultOK()
 	})
-	assertRegions(t, colletedRegions, "aay", "bba")
+	assertRegions(t, collectedRegions, "", "aay", "bba")
+
+	ctl = restore.OverRegionsInRange([]byte("aaz"), []byte("bb"), cli, rs)
+	collectedRegions = []*restore.RegionInfo{}
+	ctl.Run(ctx, func(ctx context.Context, r *restore.RegionInfo) restore.RPCResult {
+		collectedRegions = append(collectedRegions, r)
+		return restore.RPCResultOK()
+	})
+	assertRegions(t, collectedRegions, "aay", "bba", "bbh", "cca")
 
 	ctl = restore.OverRegionsInRange([]byte("aa"), []byte("cc"), cli, rs)
-	colletedRegions = []*restore.RegionInfo{}
+	collectedRegions = []*restore.RegionInfo{}
 	ctl.Run(ctx, func(ctx context.Context, r *restore.RegionInfo) restore.RPCResult {
-		colletedRegions = append(colletedRegions, r)
+		collectedRegions = append(collectedRegions, r)
 		return restore.RPCResultOK()
 	})
-	assertRegions(t, colletedRegions, "", "aay", "bba", "bbh", "cca")
+	assertRegions(t, collectedRegions, "", "aay", "bba", "bbh", "cca", "")
 
 	ctl = restore.OverRegionsInRange([]byte("aa"), []byte(""), cli, rs)
-	colletedRegions = []*restore.RegionInfo{}
+	collectedRegions = []*restore.RegionInfo{}
 	ctl.Run(ctx, func(ctx context.Context, r *restore.RegionInfo) restore.RPCResult {
-		colletedRegions = append(colletedRegions, r)
+		collectedRegions = append(collectedRegions, r)
 		return restore.RPCResultOK()
 	})
-	assertRegions(t, colletedRegions, "", "aay", "bba", "bbh", "cca", "")
+	assertRegions(t, collectedRegions, "", "aay", "bba", "bbh", "cca", "")
 }
 
 func TestNotLeader(t *testing.T) {

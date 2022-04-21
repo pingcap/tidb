@@ -461,6 +461,9 @@ func TruncateTS(key []byte) []byte {
 	if len(key) == 0 {
 		return nil
 	}
+	if len(key) < 8 {
+		return key
+	}
 	return key[:len(key)-8]
 }
 
