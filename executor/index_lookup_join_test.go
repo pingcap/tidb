@@ -440,14 +440,14 @@ PARTITIONS 1`)
 
 	// Why must it be = 1 and not 2?
 	tk.MustQuery("explain select /* +INL_JOIN(t1,t2) */ t1.id, t1.pc from t1 where id in ( select prefiller from t2 where t2.postfiller = 1 )").Check(testkit.Rows("" +
-		"IndexJoin_13 10.00 root  inner join, inner:TableReader_12, outer key:test.t2.prefiller, inner key:test.t1.id, equal cond:eq(test.t2.prefiller, test.t1.id)]\n" +
-		"[├─HashAgg_23(Build) 8.00 root  group by:test.t2.prefiller, funcs:firstrow(test.t2.prefiller)->test.t2.prefiller]\n" +
-		"[│ └─TableReader_24 8.00 root  data:HashAgg_18]\n" +
-		"[│   └─HashAgg_18 8.00 cop[tikv]  group by:test.t2.prefiller, ]\n" +
-		"[│     └─Selection_22 10.00 cop[tikv]  eq(test.t2.postfiller, 1)]\n" +
-		"[│       └─TableFullScan_21 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo]\n" +
-		"[└─TableReader_12(Probe) 1.00 root partition:all data:TableRangeScan_11]\n" +
-		"[  └─TableRangeScan_11 1.00 cop[tikv] table:t1 range: decided by [test.t2.prefiller], keep order:false, stats:pseudo"))
+		"IndexJoin_15 10.00 root  inner join, inner:TableReader_14, outer key:test.t2.prefiller, inner key:test.t1.id, equal cond:eq(test.t2.prefiller, test.t1.id)]\n" +
+		"[├─HashAgg_25(Build) 8.00 root  group by:test.t2.prefiller, funcs:firstrow(test.t2.prefiller)->test.t2.prefiller]\n" +
+		"[│ └─TableReader_26 8.00 root  data:HashAgg_20]\n" +
+		"[│   └─HashAgg_20 8.00 cop[tikv]  group by:test.t2.prefiller, ]\n" +
+		"[│     └─Selection_24 10.00 cop[tikv]  eq(test.t2.postfiller, 1)]\n" +
+		"[│       └─TableFullScan_23 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo]\n" +
+		"[└─TableReader_14(Probe) 1.00 root partition:all data:TableRangeScan_13]\n" +
+		"[  └─TableRangeScan_13 1.00 cop[tikv] table:t1 range: decided by [test.t2.prefiller], keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	// without fix it fails with: "runtime error: index out of range [0] with length 0"
 	tk.MustQuery("select /* +INL_JOIN(t1,t2) */ t1.id, t1.pc from t1 where id in ( select prefiller from t2 where t2.postfiller = 1 )").Check(testkit.Rows())

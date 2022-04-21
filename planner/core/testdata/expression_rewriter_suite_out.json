@@ -34,7 +34,7 @@
       {
         "SQL": "select t1.a from t1 group by t1.a having (a, count(1)) in (select a, b from t2)",
         "Plan": [
-          "HashJoin 1.69 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(Column#7, test.t2.b)]",
+          "HashJoin 1.69 root  inner join, equal:[eq(test.t2.a, test.t1.a) eq(test.t2.b, Column#7)]",
           "├─HashAgg(Build) 1.69 root  group by:test.t2.a, test.t2.b, funcs:firstrow(test.t2.a)->test.t2.a, funcs:firstrow(test.t2.b)->test.t2.b",
           "│ └─TableReader 2.25 root  data:Selection",
           "│   └─Selection 2.25 cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",

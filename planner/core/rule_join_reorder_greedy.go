@@ -66,13 +66,11 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []*joinNode, tracer *joinR
 	})
 
 	var cartesianGroup []LogicalPlan
-	//for len(s.curJoinGroup) > 0 {
 	err := s.constructConnectedJoinTree(tracer)
 	if err != nil {
 		return nil, err
 	}
-	//}
-	for i, _ := range s.curJoinGroup {
+	for i := range s.curJoinGroup {
 		cartesianGroup = append(cartesianGroup, s.curJoinGroup[i].p)
 	}
 
@@ -221,7 +219,7 @@ func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftNode, rightNode
 
 func (s *joinReorderGreedySolver) insertIntoCurJoinGroup(node *jrNode) {
 	insertIdx := 0
-	for insertIdx, _ = range s.curJoinGroup {
+	for insertIdx = range s.curJoinGroup {
 		if s.curJoinGroup[insertIdx].cumCost > node.cumCost {
 			break
 		}

@@ -1246,15 +1246,15 @@
     "Cases": [
       {
         "SQL": "select /*+ TIDB_INLJ(t1) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
-        "Best": "LeftHashJoin{IndexJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)",
+        "Best": "RightHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)}(test.t.a,test.t.a)->Projection",
         "Warning": "",
-        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` `f`), inl_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t3` `f`), hash_join(@`sel_1` `test`.`t3`)"
+        "Hints": "use_index(@`sel_1` `test`.`t3` `f`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` `f`), inl_join(@`sel_1` `test`.`t1`), hash_join(@`sel_1` `test`.`t3`)"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(test.t1) */ t1.a, t2.a, t3.a from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a;",
-        "Best": "LeftHashJoin{IndexJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)",
+        "Best": "RightHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)}(test.t.a,test.t.a)->Projection",
         "Warning": "",
-        "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` `f`), inl_join(@`sel_1` `test`.`t1`), use_index(@`sel_1` `test`.`t3` `f`), hash_join(@`sel_1` `test`.`t3`)"
+        "Hints": "use_index(@`sel_1` `test`.`t3` `f`), use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` `f`), inl_join(@`sel_1` `test`.`t1`), hash_join(@`sel_1` `test`.`t3`)"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t1) */ t1.b, t2.a from t t1, t t2 where t1.b = t2.a;",
@@ -1320,7 +1320,7 @@
       },
       {
         "SQL": "select /*+ STREAM_AGG() */ sum(t1.a) from t t1 join t t2 on t1.b = t2.b group by t1.b",
-        "Best": "RightHashJoin{TableReader(Table(t))->Sort->Projection->StreamAgg->TableReader(Table(t))}(test.t.b,test.t.b)->HashAgg",
+        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))->Sort->Projection->StreamAgg}(test.t.b,test.t.b)->HashAgg",
         "Warning": ""
       },
       {
@@ -2812,17 +2812,18 @@
         "Plan": [
           "TableReader 1.25 root  data:ExchangeSender",
           "└─ExchangeSender 1.25 batchCop[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 1.25 batchCop[tiflash]  inner join, equal:[eq(Column#5, test.employee.deptid)]",
-          "    ├─ExchangeReceiver(Build) 1.00 batchCop[tiflash]  ",
-          "    │ └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: Broadcast",
-          "    │   └─Projection 1.00 batchCop[tiflash]  Column#5",
-          "    │     └─HashAgg 1.00 batchCop[tiflash]  funcs:count(distinct test.employee.deptid)->Column#5",
-          "    │       └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
-          "    │         └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
-          "    │           └─HashAgg 1.00 batchCop[tiflash]  group by:test.employee.deptid, ",
-          "    │             └─TableFullScan 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo",
-          "    └─Selection(Probe) 9990.00 batchCop[tiflash]  not(isnull(test.employee.deptid))",
-          "      └─TableFullScan 10000.00 batchCop[tiflash] table:e2 keep order:false, stats:pseudo"
+          "  └─Projection 1.25 batchCop[tiflash]  Column#5, test.employee.empid, test.employee.deptid, test.employee.salary",
+          "    └─HashJoin 1.25 batchCop[tiflash]  inner join, equal:[eq(Column#5, test.employee.deptid)]",
+          "      ├─ExchangeReceiver(Build) 1.00 batchCop[tiflash]  ",
+          "      │ └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: Broadcast",
+          "      │   └─Projection 1.00 batchCop[tiflash]  Column#5",
+          "      │     └─HashAgg 1.00 batchCop[tiflash]  funcs:count(distinct test.employee.deptid)->Column#5",
+          "      │       └─ExchangeReceiver 1.00 batchCop[tiflash]  ",
+          "      │         └─ExchangeSender 1.00 batchCop[tiflash]  ExchangeType: PassThrough",
+          "      │           └─HashAgg 1.00 batchCop[tiflash]  group by:test.employee.deptid, ",
+          "      │             └─TableFullScan 10000.00 batchCop[tiflash] table:employee keep order:false, stats:pseudo",
+          "      └─Selection(Probe) 9990.00 batchCop[tiflash]  not(isnull(test.employee.deptid))",
+          "        └─TableFullScan 10000.00 batchCop[tiflash] table:e2 keep order:false, stats:pseudo"
         ]
       },
       {
