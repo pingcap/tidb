@@ -22,7 +22,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
-	"runtime"
 	"testing"
 
 	"github.com/BurntSushi/toml"
@@ -106,9 +105,6 @@ func TestNullableBoolUnmarshal(t *testing.T) {
 func TestLogConfig(t *testing.T) {
 	var conf Config
 	configFile := "log_config.toml"
-	_, localFile, _, _ := runtime.Caller(0)
-	configFile = filepath.Join(filepath.Dir(localFile), configFile)
-
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
 	defer func() {
@@ -179,9 +175,6 @@ func TestConfig(t *testing.T) {
 	conf.TiKVClient.RegionCacheTTL = 600
 	conf.Log.EnableSlowLog.Store(logutil.DefaultTiDBEnableSlowLog)
 	configFile := "config.toml"
-	_, localFile, _, _ := runtime.Caller(0)
-	configFile = filepath.Join(filepath.Dir(localFile), configFile)
-
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
 	defer func(configFile string) {
@@ -658,8 +651,7 @@ func TestTcpNoDelay(t *testing.T) {
 
 func TestConfigExample(t *testing.T) {
 	conf := NewConfig()
-	_, localFile, _, _ := runtime.Caller(0)
-	configFile := filepath.Join(filepath.Dir(localFile), "config.toml.example")
+	configFile := "config.toml.example"
 	metaData, err := toml.DecodeFile(configFile, conf)
 	require.NoError(t, err)
 	keys := metaData.Keys()
