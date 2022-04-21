@@ -206,3 +206,23 @@ func TestNonTransactionalDeleteAutoDetectShardColumn(t *testing.T) {
 		testFunc(table, false)
 	}
 }
+
+func TestNonTransactionalDeleteInvisibleIndex(t *testing.T) {
+	store, clean := createStorage(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_max_chunk_size=35")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int)")
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i*2))
+	}
+	err := tk.ExecToErr("split on a limit 10 delete from t")
+	require.Error(t, err)
+	tk.MustExec("CREATE UNIQUE INDEX c1 ON t (a) INVISIBLE")
+	err = tk.ExecToErr("split on a limit 10 delete from t")
+	require.Error(t, err)
+	tk.MustExec("CREATE UNIQUE INDEX c2 ON t (a)")
+	tk.MustExec("split on a limit 10 delete from t")
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
+}
