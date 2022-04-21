@@ -826,7 +826,6 @@ func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols F
 	}
 
 	// merge the not-null-cols/registered-map from both side together.
-	s.NotNullCols.UnionWith(innerFDs.NotNullCols)
 	s.NotNullCols.UnionWith(filterFDs.NotNullCols)
 	// inner cols can be nullable since then.
 	s.NotNullCols.DifferenceWith(innerCols)
@@ -918,6 +917,7 @@ func (s *FDSet) AddFrom(fds *FDSet) {
 	for i, ok := fds.GroupByCols.Next(0); ok; i, ok = fds.GroupByCols.Next(i + 1) {
 		s.GroupByCols.Insert(i)
 	}
+	s.HasAggBuilt = fds.HasAggBuilt
 }
 
 // MaxOneRow will regard every column in the fdSet as a constant. Since constant is stronger that strict FD, it will
