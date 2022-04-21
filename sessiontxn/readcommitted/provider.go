@@ -84,6 +84,7 @@ func (s *rcStmtContext) getTS() (ts uint64, err error) {
 
 func (s *rcStmtContext) retry(ctx context.Context) error {
 	s.ctx = ctx
+	s.isError = false
 	if s.ts > 0 && s.advisedRetryTS > s.ts {
 		s.tsFuture = sessiontxn.ConstantTSFuture(s.advisedRetryTS)
 	} else {
@@ -224,7 +225,7 @@ func (p *txnContextProvider) OnStmtError(_ error) {
 	return
 }
 
-func (p *txnContextProvider) OnStmtRetry(ctx context.Context, _ error) error {
+func (p *txnContextProvider) OnStmtRetry(ctx context.Context) error {
 	return p.stmt.retry(ctx)
 }
 

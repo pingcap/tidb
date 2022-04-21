@@ -93,7 +93,7 @@ func (m *txnManager) ReplaceContextProvider(provider sessiontxn.TxnContextProvid
 func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.NewTxnRequest) error {
 	sessVars := m.sctx.GetSessionVars()
 	txnCtx := sessVars.TxnCtx
-	if r.ExplictStart && txnCtx.History == nil && !txnCtx.IsStaleness && r.StaleReadTS == 0 {
+	if r.ExplicitStart && txnCtx.History == nil && !txnCtx.IsStaleness && r.StaleReadTS == 0 {
 		// If BEGIN is the first statement in TxnCtx, we can reuse the existing transaction, without the
 		// need to call NewTxn, which commits the existing transaction and begins a new one.
 		// If the last un-committed/un-rollback transaction is a time-bounded read-only transaction, we should
@@ -118,7 +118,7 @@ func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.NewTxnReques
 		m.ctxProvider = &sessiontxn.SimpleTxnContextProvider{Sctx: m.sctx, CausalConsistencyOnly: r.CausalConsistencyOnly}
 	}
 
-	if r.ExplictStart {
+	if r.ExplicitStart {
 		if _, err := m.ctxProvider.ActiveTxn(ctx); err != nil {
 			return err
 		}
@@ -161,11 +161,11 @@ func (m *txnManager) OnStmtError(err error) {
 	}
 }
 
-func (m *txnManager) OnStmtRetry(ctx context.Context, err error) error {
+func (m *txnManager) OnStmtRetry(ctx context.Context) error {
 	if m.ctxProvider == nil {
 		return errors.New("context provider not set")
 	}
-	return m.ctxProvider.OnStmtRetry(ctx, err)
+	return m.ctxProvider.OnStmtRetry(ctx)
 }
 
 func (m *txnManager) Advise(opt sessiontxn.AdviceOption, val ...interface{}) error {

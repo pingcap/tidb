@@ -813,7 +813,9 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 		return nil, err
 	}
 
-	if err = sessiontxn.GetTxnManager(a.Ctx).OnStmtRetry(ctx, lockErr); err != nil {
+	txnManager := sessiontxn.GetTxnManager(a.Ctx)
+	txnManager.OnStmtError(lockErr)
+	if err = sessiontxn.GetTxnManager(a.Ctx).OnStmtRetry(ctx); err != nil {
 		return nil, err
 	}
 
@@ -1006,6 +1008,10 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 
 // CloseRecordSet will finish the execution of current statement and do some record work
 func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
+	if lastErr != nil {
+		sessiontxn.GetTxnManager(a.Ctx).OnStmtError(lastErr)
+	}
+
 	a.FinishExecuteStmt(txnStartTS, lastErr, false)
 	a.logAudit()
 	// Detach the Memory and disk tracker for the previous stmtCtx from GlobalMemoryUsageTracker and GlobalDiskUsageTracker

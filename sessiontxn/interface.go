@@ -49,7 +49,7 @@ type TxnContextProvider interface {
 	// OnStmtError is the hook that should be called when statement get an error
 	OnStmtError(err error)
 	// OnStmtRetry is the hook that should be called when a statement is retrying
-	OnStmtRetry(ctx context.Context, err error) error
+	OnStmtRetry(ctx context.Context) error
 	// Advise is used to provide some extra information to make a better performance.
 	// For example, we can give `AdviceWarmUpNow` to advice provider prefetch tso.
 	// Give or not give an advice should not affect the correctness.
@@ -144,7 +144,7 @@ func (p *SimpleTxnContextProvider) OnStmtError(_ error) {
 }
 
 // OnStmtRetry is the hook that should be called when a statement is retrying
-func (p *SimpleTxnContextProvider) OnStmtRetry(_ context.Context, _ error) error {
+func (p *SimpleTxnContextProvider) OnStmtRetry(_ context.Context) error {
 	return nil
 }
 
@@ -163,7 +163,7 @@ func UsingNonSimpleProvider(sctx sessionctx.Context) bool {
 }
 
 type NewTxnRequest struct {
-	ExplictStart          bool
+	ExplicitStart         bool
 	TxnMode               string
 	CausalConsistencyOnly bool
 	StaleReadTS           uint64
@@ -188,7 +188,7 @@ type TxnManager interface {
 	// OnStmtStart is the hook that should be called when a new statement started
 	OnStmtStart(ctx context.Context) error
 	// OnStmtRetry is the hook that should be called when a statement is retrying
-	OnStmtRetry(ctx context.Context, err error) error
+	OnStmtRetry(ctx context.Context) error
 	// OnStmtError is the hook that should be called when statement get an error
 	OnStmtError(err error)
 	// Advise is used to provide some extra information to make a better performance.

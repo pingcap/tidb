@@ -601,7 +601,7 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	}
 
 	return sessiontxn.GetTxnManager(e.ctx).EnterNewTxn(ctx, &sessiontxn.NewTxnRequest{
-		ExplictStart:          true,
+		ExplicitStart:         true,
 		StaleReadTS:           e.staleTxnStartTS,
 		TxnMode:               s.Mode,
 		CausalConsistencyOnly: s.CausalConsistencyOnly,

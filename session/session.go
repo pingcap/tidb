@@ -1808,7 +1808,7 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 	})
 }
 
-func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (_ sqlexec.RecordSet, err error) {
+func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (rs sqlexec.RecordSet, err error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("session.ExecuteStmt", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
@@ -1844,12 +1844,12 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (_ sql
 	s.txn.onStmtStart(digest.String())
 	defer s.txn.onStmtEnd()
 
-	err = sessiontxn.GetTxnManager(s).OnStmtStart(ctx)
-	if err != nil {
+	if err = s.onStartOrRetryTxnManagerStmt(ctx); err != nil {
 		return nil, err
 	}
+
 	defer func() {
-		if err != nil {
+		if err != nil && rs == nil {
 			sessiontxn.GetTxnManager(s).OnStmtError(err)
 		}
 	}()
@@ -1906,6 +1906,13 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (_ sql
 		}
 	}
 	return recordSet, nil
+}
+
+func (s *session) onStartOrRetryTxnManagerStmt(ctx context.Context) error {
+	if s.sessionVars.RetryInfo.Retrying {
+		return sessiontxn.GetTxnManager(s).OnStmtRetry(ctx)
+	}
+	return sessiontxn.GetTxnManager(s).OnStmtStart(ctx)
 }
 
 func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) error {
@@ -2117,8 +2124,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 		return
 	}
 
-	txnManager := sessiontxn.GetTxnManager(s)
-	if err = txnManager.OnStmtStart(ctx); err != nil {
+	if err = s.onStartOrRetryTxnManagerStmt(ctx); err != nil {
 		return
 	}
 
@@ -2298,7 +2304,7 @@ func (s *session) IsCachedExecOk(ctx context.Context, preparedStmt *plannercore.
 }
 
 // ExecutePreparedStmt executes a prepared statement.
-func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args []types.Datum) (_ sqlexec.RecordSet, err error) {
+func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args []types.Datum) (rs sqlexec.RecordSet, err error) {
 	if err = s.PrepareTxnCtx(ctx); err != nil {
 		return nil, err
 	}
@@ -2344,12 +2350,12 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, args [
 	s.txn.onStmtStart(preparedStmt.SQLDigest.String())
 	defer s.txn.onStmtEnd()
 
-	if err := txnManager.OnStmtStart(ctx); err != nil {
+	if err = s.onStartOrRetryTxnManagerStmt(ctx); err != nil {
 		return nil, err
 	}
 
 	defer func() {
-		if err != nil {
+		if err != nil && rs == nil {
 			sessiontxn.GetTxnManager(s).OnStmtError(err)
 		}
 	}()
