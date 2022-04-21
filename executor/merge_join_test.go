@@ -253,7 +253,7 @@ func TestShuffleMergeJoinInDisk(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	sm := &mockSessionManager1{
+	sm := &testkit.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
@@ -295,7 +295,7 @@ func TestMergeJoinInDisk(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	sm := &mockSessionManager1{
+	sm := &testkit.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
