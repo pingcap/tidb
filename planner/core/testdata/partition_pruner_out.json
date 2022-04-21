@@ -1634,7 +1634,7 @@
         ],
         "Plan": [
           "Sort 19.98 root  test_partition.t1.a",
-          "└─HashJoin 19.98 root  inner join, equal:[eq(test_partition.t1.a, test_partition.t2.b)]",
+          "└─HashJoin 19.98 root  inner join, equal:[eq(test_partition.t2.b, test_partition.t1.a)]",
           "  ├─HashAgg(Build) 15.98 root  group by:test_partition.t2.b, funcs:firstrow(test_partition.t2.b)->test_partition.t2.b",
           "  │ └─TableReader 15.98 root partition:p0 data:HashAgg",
           "  │   └─HashAgg 15.98 cop[tikv]  group by:test_partition.t2.b, ",
