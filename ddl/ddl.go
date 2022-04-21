@@ -689,8 +689,8 @@ func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 	}
 }
 
-// mayNeedReorg indicates that this job may need to reorganize the data.
-func mayNeedReorg(job *model.Job) bool {
+// MayNeedReorg indicates that this job may need to reorganize the data.
+func MayNeedReorg(job *model.Job) bool {
 	switch job.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		return true
@@ -712,7 +712,7 @@ func (d *ddl) asyncNotifyWorker(job *model.Job) {
 	}
 	if variable.AllowConcurrencyDDL.Load() {
 		key := ""
-		if mayNeedReorg(job) {
+		if MayNeedReorg(job) {
 			key = addingDDLJobReorg
 		} else {
 			key = addingDDLJobGeneral
@@ -724,7 +724,7 @@ func (d *ddl) asyncNotifyWorker(job *model.Job) {
 		}
 	} else {
 		var worker *worker
-		if mayNeedReorg(job) {
+		if MayNeedReorg(job) {
 			worker = d.workers[addIdxWorker]
 		} else {
 			worker = d.workers[generalWorker]

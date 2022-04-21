@@ -37,7 +37,7 @@ import (
 )
 
 func createRPCServer(t *testing.T, dom *domain.Domain) *grpc.Server {
-	sm := &mockSessionManager1{}
+	sm := &testkit.MockSessionManager{}
 	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      1,
 		User:    "root",
