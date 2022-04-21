@@ -102,7 +102,7 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
-	require.True(t, statsTbl.MemoryUsage() > 0)
+	require.True(t, statsTbl.MemoryUsage().TotalMemUsage > 0)
 	require.True(t, statsTbl.Pseudo)
 
 	testKit.MustExec("analyze table t")
@@ -131,7 +131,7 @@ func TestStatsCacheMemTracker(t *testing.T) {
 	require.NoError(t, err)
 
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
-	require.True(t, statsTbl.MemoryUsage() > 0)
+	require.True(t, statsTbl.MemoryUsage().TotalMemUsage > 0)
 	require.False(t, statsTbl.Pseudo)
 
 	// If the new schema add a column, the table stats can still work.
@@ -359,7 +359,7 @@ func TestVersion(t *testing.T) {
 	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tableInfo1 := tbl1.Meta()
-	h, err := handle.NewHandle(testKit.Session(), time.Millisecond, do.SysSessionPool(), do.SysProcTracker())
+	h, err := handle.NewHandle(testKit.Session(), time.Millisecond, do.SysSessionPool(), do.SysProcTracker(), do.ServerID)
 	require.NoError(t, err)
 	unit := oracle.ComposeTS(1, 0)
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", 2*unit, tableInfo1.ID)
