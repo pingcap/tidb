@@ -905,6 +905,9 @@ func checkForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, db, tt, pp st
 
 	delta := buckets/2 + 10
 	for _, idxStats := range tblStats.Indices {
+		if len(idxStats.Buckets) == 0 {
+			continue // it's not loaded
+		}
 		numTopN := idxStats.TopN.Num()
 		numBuckets := len(idxStats.Buckets)
 		// since the hist-building algorithm doesn't stipulate the final bucket number to be equal to the expected number exactly,
@@ -926,7 +929,6 @@ func checkForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, db, tt, pp st
 }
 
 func TestAnalyzeGlobalStatsWithOpts1(t *testing.T) {
-	t.Skip("unstable test")
 	if israce.RaceEnabled {
 		t.Skip("exhaustive types test, skip race test")
 	}
@@ -967,7 +969,6 @@ func TestAnalyzeGlobalStatsWithOpts1(t *testing.T) {
 }
 
 func TestAnalyzeGlobalStatsWithOpts2(t *testing.T) {
-	t.Skip("unstable test")
 	if israce.RaceEnabled {
 		t.Skip("exhaustive types test, skip race test")
 	}
