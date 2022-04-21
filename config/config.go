@@ -121,7 +121,6 @@ var (
 			map[string]string{
 				"enable-slow-log":         "tidb_enable_slow_log",
 				"slow-threshold":          "tidb_slow_log_threshold",
-				"query-log-max-len":       "tidb_query_log_max_len",
 				"record-plan-in-slow-log": "tidb_record_plan_in_slow_log",
 			},
 		},
