@@ -645,7 +645,7 @@ func TestInstanceScopedVars(t *testing.T) {
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBQueryLogMaxLen)
 	require.NoError(t, err)
-	require.Equal(t, strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Instance.QueryLogMaxLen), 10), val)
+	require.Equal(t, strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10), val)
 
 	val, err = GetSessionOrGlobalSystemVar(vars, TiDBCheckMb4ValueInUTF8)
 	require.NoError(t, err)

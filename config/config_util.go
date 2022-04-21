@@ -51,7 +51,7 @@ var (
 		"Log.Level":                       {},
 		"Log.ExpensiveThreshold":          {},
 		"Instance.SlowThreshold":          {},
-		"Instance.QueryLogMaxLen":         {},
+		"Log.QueryLogMaxLen":              {},
 		"Instance.CheckMb4ValueInUTF8":    {},
 		"TxnLocalLatches.Capacity":        {},
 		"CompatibleKillQuery":             {},

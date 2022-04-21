@@ -351,10 +351,10 @@ var defaultSysVars = []*SysVar{
 		return BoolToOnOff(config.GetGlobalConfig().Instance.EnableSlowLog.Load()), nil
 	}},
 	{Scope: ScopeInstance, Name: TiDBQueryLogMaxLen, Value: strconv.Itoa(logutil.DefaultQueryLogMaxLen), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64, skipInit: true, SetGlobal: func(s *SessionVars, val string) error {
-		atomic.StoreUint64(&config.GetGlobalConfig().Instance.QueryLogMaxLen, uint64(TidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
+		atomic.StoreUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen, uint64(TidbOptInt64(val, logutil.DefaultQueryLogMaxLen)))
 		return nil
 	}, GetGlobal: func(s *SessionVars) (string, error) {
-		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Instance.QueryLogMaxLen), 10), nil
+		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.QueryLogMaxLen), 10), nil
 	}},
 	{Scope: ScopeInstance, Name: TiDBCheckMb4ValueInUTF8, Value: BoolToOnOff(config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Load()), skipInit: true, Type: TypeBool, SetGlobal: func(s *SessionVars, val string) error {
 		config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8.Store(TiDBOptOn(val))

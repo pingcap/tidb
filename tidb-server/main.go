@@ -569,8 +569,6 @@ func setGlobalVars() {
 					cfg.Instance.EnableSlowLog.Store(cfg.Log.EnableSlowLog.Load())
 				case "slow-threshold":
 					cfg.Instance.SlowThreshold = cfg.Log.SlowThreshold
-				case "query-log-max-len":
-					cfg.Instance.QueryLogMaxLen = cfg.Log.QueryLogMaxLen
 				case "record-plan-in-slow-log":
 					cfg.Instance.RecordPlanInSlowLog = cfg.Log.RecordPlanInSlowLog
 				}

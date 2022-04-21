@@ -921,7 +921,7 @@ func FormatSQL(sql string) stringutil.StringerFunc {
 	return func() string {
 		cfg := config.GetGlobalConfig()
 		length := len(sql)
-		if maxQueryLen := atomic.LoadUint64(&cfg.Instance.QueryLogMaxLen); uint64(length) > maxQueryLen {
+		if maxQueryLen := atomic.LoadUint64(&cfg.Log.QueryLogMaxLen); uint64(length) > maxQueryLen {
 			sql = fmt.Sprintf("%.*q(len:%d)", maxQueryLen, sql, length)
 		}
 		return QueryReplacer.Replace(sql)

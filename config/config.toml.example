@@ -482,9 +482,6 @@ tidb_enable_slow_log = true
 # Queries with execution time greater than this value will be logged. (Milliseconds)
 tidb_slow_log_threshold = 300
 
-# Maximum query length recorded in log.
-tidb_query_log_max_len = 4096
-
 # tidb_record_plan_in_slow_log is used to enable record query plan in slow log.
 # 0 is disable. 1 is enable.
 tidb_record_plan_in_slow_log = 1

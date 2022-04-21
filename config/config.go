@@ -437,7 +437,6 @@ type Instance struct {
 
 	EnableSlowLog         AtomicBool `toml:"tidb_enable_slow_log" json:"tidb_enable_slow_log"`
 	SlowThreshold         uint64     `toml:"tidb_slow_log_threshold" json:"tidb_slow_log_threshold"`
-	QueryLogMaxLen        uint64     `toml:"tidb_query_log_max_len" json:"tidb_query_log_max_len"`
 	RecordPlanInSlowLog   uint32     `toml:"tidb_record_plan_in_slow_log" json:"tidb_record_plan_in_slow_log"`
 	CheckMb4ValueInUTF8   AtomicBool `toml:"tidb_check_mb4_value_in_utf8" json:"tidb_check_mb4_value_in_utf8"`
 	ForcePriority         string     `toml:"tidb_force_priority" json:"tidb_force_priority"`
@@ -782,7 +781,6 @@ var defaultConf = Config{
 		ExpensiveQueryTimeThreshold: DefExpensiveQueryTimeThreshold,
 		EnableSlowLog:               *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
 		SlowThreshold:               logutil.DefaultSlowThreshold,
-		QueryLogMaxLen:              logutil.DefaultQueryLogMaxLen,
 		RecordPlanInSlowLog:         logutil.DefaultRecordPlanInSlowLog,
 		CheckMb4ValueInUTF8:         *NewAtomicBool(true),
 		ForcePriority:               "NO_PRIORITY",
