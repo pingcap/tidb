@@ -323,10 +323,9 @@ func (l *internalLRUCache) maintainList(element *list.Element, item *cacheItem, 
 		if newUsage.TotalColTrackingMemUsage() > 0 {
 			l.cache.MoveToFront(element)
 			return element
-		} else {
-			l.cache.Remove(element)
-			return nil
 		}
+		l.cache.Remove(element)
+		return nil
 	} else {
 		if newUsage.TotalColTrackingMemUsage() > 0 {
 			return l.cache.PushFront(item)
