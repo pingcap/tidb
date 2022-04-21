@@ -202,6 +202,7 @@ func TestRangeColumnPartitionPruningForInString(t *testing.T) {
 		{sql: `select * from t where a = 'AA' collate utf8mb4_general_ci`, partitions: "all", rows: []string{"AA", "aa"}},
 		{sql: `select * from t where a = 'aa'`, partitions: "paaa", rows: []string{"aa"}},
 		{sql: `select * from t where a = 'aa' collate utf8mb4_general_ci`, partitions: "all", rows: []string{"AA", "aa"}},
+		{sql: `select * from t where a collate utf8mb4_general_ci = 'aa'`, partitions: "all", rows: []string{"AA", "aa"}},
 		{sql: `select * from t where a = 'AAA'`, partitions: "pAAAA", rows: []string{"AAA"}},
 		{sql: `select * from t where a = 'AB'`, partitions: "pCCC", rows: []string{}},
 		{sql: `select * from t where a = 'aB'`, partitions: "paaa", rows: []string{}},
@@ -210,6 +211,7 @@ func TestRangeColumnPartitionPruningForInString(t *testing.T) {
 		{sql: `select * from t where a in ('AAA', 'aa')`, partitions: "pAAAA,paaa", rows: []string{"AAA", "aa"}},
 		{sql: `select * from t where a in ('AAA' collate utf8mb4_general_ci, 'aa')`, partitions: "all", rows: []string{"AA", "AAA", "aa", "aaa"}},
 		{sql: `select * from t where a in ('AAA', 'aa' collate utf8mb4_general_ci)`, partitions: "all", rows: []string{"AA", "AAA", "aa", "aaa"}},
+		{sql: `select * from t where a collate utf8mb4_general_ci in ('AAA', 'aa')`, partitions: "all", rows: []string{"AA", "AAA", "aa", "aaa"}},
 	}
 	checkColumnStringPruningTests(tests)
 	tk.MustExec(`set names utf8mb4 collate utf8mb4_general_ci`)

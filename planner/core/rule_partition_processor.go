@@ -1581,16 +1581,14 @@ func (p *rangeColumnsPruner) partitionRangeForExpr(sctx sessionctx.Context, expr
 	// - same char set
 	// - EQ operator, consider values 'a','b','ä' where 'ä' would be in the same partition as 'a' if general_ci, but is binary after 'b'
 	// otherwise return all partitions / no pruning
-	conCharSet, conColl := con.CharsetAndCollation()
-	colCharSet, colColl := p.partCol.RetType.Charset, p.partCol.RetType.Collate
-	if (conCharSet != "" && conCharSet != colCharSet) || (conColl != "" && conColl != colColl) {
-		if !collate.IsBinCollation(conColl) || conCharSet != colCharSet || opName != ast.EQ {
+	_, exprColl := expr.CharsetAndCollation()
+	colColl := p.partCol.RetType.Collate
+	if exprColl != "" && exprColl != colColl {
+		if !collate.IsBinCollation(exprColl) || opName != ast.EQ {
 			return 0, len(p.data), true
 		}
-		clonedCon := con.Clone()
-		if newCon, ok := clonedCon.(*expression.Constant); ok {
-			con = newCon
-		}
+		con = con.Clone().(*expression.Constant)
+		conCharSet, _ := con.CharsetAndCollation()
 		con.SetCharsetAndCollation(conCharSet, colColl)
 	}
 	start, end := p.pruneUseBinarySearch(sctx, opName, con)
