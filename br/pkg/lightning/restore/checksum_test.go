@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
+	uatomic "go.uber.org/atomic"
 )
 
 var _ = Suite(&checksumSuite{})
@@ -174,16 +175,11 @@ func (s *checksumSuite) TestDoChecksumWithTikv(c *C) {
 			checksumTS = req.StartTs
 		}
 		checksumExec := &tikvChecksumManager{manager: newGCTTLManager(pdClient), client: kvClient}
-<<<<<<< HEAD
-		startTS := oracle.ComposeTS(time.Now().Unix()*1000, 0)
-		ctx := context.WithValue(context.Background(), &checksumManagerKey, checksumExec)
-		_, err = DoChecksum(ctx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
-=======
+		ctx := context.Background()
 		physicalTS, logicalTS, err := pdClient.GetTS(ctx)
-		require.NoError(t, err)
+		c.Assert(err, IsNil)
 		subCtx := context.WithValue(ctx, &checksumManagerKey, checksumExec)
 		_, err = DoChecksum(subCtx, &TidbTableInfo{DB: "test", Name: "t", Core: tableInfo})
->>>>>>> 5288efa20... lightning: use pd timestamp to update gc safepoint (#32734)
 		// with max error retry < maxErrorRetryCount, the checksum can success
 		if i >= maxErrorRetryCount {
 			c.Assert(err, ErrorMatches, "tikv timeout")
@@ -195,17 +191,10 @@ func (s *checksumSuite) TestDoChecksumWithTikv(c *C) {
 		// after checksum, safepint should be small than start ts
 		ts := pdClient.currentSafePoint()
 		// 1ms for the schedule deviation
-<<<<<<< HEAD
-		c.Assert(ts <= startTS+1, IsTrue)
-		c.Assert(atomic.LoadUint32(&checksumExec.manager.started) > 0, IsTrue)
-=======
 		startTS := oracle.ComposeTS(physicalTS+1, logicalTS)
-		require.True(t, ts <= startTS+1)
-		require.GreaterOrEqual(t, checksumTS, ts)
-		require.True(t, checksumExec.manager.started.Load())
-		require.Zero(t, checksumExec.manager.currentTS)
-		require.Equal(t, 0, len(checksumExec.manager.tableGCSafeTS))
->>>>>>> 5288efa20... lightning: use pd timestamp to update gc safepoint (#32734)
+		c.Assert(ts <= startTS+1, IsTrue)
+		c.Assert(checksumTS >= ts, IsTrue)
+		c.Assert(atomic.LoadUint32(&checksumExec.manager.started) > 0, IsTrue)
 	}
 }
 
@@ -241,14 +230,9 @@ type safePointTTL struct {
 type testPDClient struct {
 	sync.Mutex
 	pd.Client
-<<<<<<< HEAD
-	count       int32
-	gcSafePoint []safePointTTL
-=======
-	count            atomic.Int32
+	count            int32
 	gcSafePoint      []safePointTTL
-	logicalTSCounter atomic.Uint64
->>>>>>> 5288efa20... lightning: use pd timestamp to update gc safepoint (#32734)
+	logicalTSCounter uatomic.Uint64
 }
 
 func (c *testPDClient) currentSafePoint() uint64 {
@@ -421,14 +405,10 @@ type mockChecksumKVClient struct {
 }
 
 // a mock client for checksum request
-<<<<<<< HEAD
 func (c *mockChecksumKVClient) Send(ctx context.Context, req *kv.Request, vars interface{}, sessionMemTracker *memory.Tracker, enabledRateLimitAction bool, eventCb trxevents.EventCallback) kv.Response {
-=======
-func (c *mockChecksumKVClient) Send(ctx context.Context, req *kv.Request, vars interface{}, option *kv.ClientSendOption) kv.Response {
 	if c.onSendReq != nil {
 		c.onSendReq(req)
 	}
->>>>>>> 5288efa20... lightning: use pd timestamp to update gc safepoint (#32734)
 	if c.curErrCount < c.maxErrCount {
 		c.curErrCount++
 		return &mockErrorResponse{err: "tikv timeout"}
