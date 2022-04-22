@@ -67,10 +67,6 @@ func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactiona
 	if err != nil {
 		return nil, err
 	}
-	if !(se.GetSessionVars().IsAutocommit() && !se.GetSessionVars().InTxn()) {
-		return nil, errors.Errorf("non-transactional statement can only run in auto-commit mode. auto-commit:%v, inTxn:%v",
-			se.GetSessionVars().IsAutocommit(), se.GetSessionVars().InTxn())
-	}
 	if err := checkConstraint(ctx, stmt, se); err != nil {
 		return nil, err
 	}
@@ -98,6 +94,10 @@ func HandleNonTransactionalDelete(ctx context.Context, stmt *ast.NonTransactiona
 
 func checkConstraint(ctx context.Context, stmt *ast.NonTransactionalDeleteStmt, se Session) error {
 	sessVars := se.GetSessionVars()
+	if !(sessVars.IsAutocommit() && !sessVars.InTxn()) {
+		return errors.Errorf("non-transactional statement can only run in auto-commit mode. auto-commit:%v, inTxn:%v",
+			se.GetSessionVars().IsAutocommit(), se.GetSessionVars().InTxn())
+	}
 	if config.GetGlobalConfig().EnableBatchDML && sessVars.DMLBatchSize > 0 && (sessVars.BatchDelete || sessVars.BatchInsert) {
 		return errors.Errorf("can't run non-transactional statement with batch dml")
 	}
