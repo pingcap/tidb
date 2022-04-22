@@ -242,7 +242,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 	select {
 	case err := <-w.reorgCtx.doneCh:
 		// Since job is cancelled，we don't care about its partial counts.
-		if w.reorgCtx.isReorgCanceled() {
+		if w.reorgCtx.isReorgCanceled() || terror.ErrorEqual(err, dbterror.ErrCancelledDDLJob) {
 			w.reorgCtx.clean()
 			return dbterror.ErrCancelledDDLJob
 		}
@@ -255,8 +255,8 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		w.mergeWarningsIntoJob(job)
 
 		w.reorgCtx.clean()
-		// even err is not nil here, we still wait the partial counts to be collected.
-		// since the next round, the startKey is brand new which is stored by last time.
+		// For other errors, even err is not nil here, we still wait the partial counts to be collected.
+		// since in the next round, the startKey is brand new which is stored by last time.
 		if err != nil {
 			return errors.Trace(err)
 		}
