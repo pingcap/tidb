@@ -65,24 +65,35 @@ To ensure the atomicity of a Multi-Schema Change execution, we need to maintain 
 
 This requirement means we cannot simply public the schema object when a sub-job is finished. Instead, it should stay in a state which is still unnoticeable to users, and wait for the other sub-jobs, finally public all at once when all the sub-jobs are confirmed to be successful. This method is kind of like 2PC: the "commit" can only be started when "prewrites" are complete.
 
-Here is the table of states that should stay for different DDLs. Note the "Next State" means the changes are noticeable to the users.
+Here is the table of schema states that may occur in different DDLs. Note the "Revertible States" means the changes are unnoticeable to the users.
 
-| DDL (Schema Change)     | Unnoticeable State | Next State |
-|-------------------------|--------------------|------------|
-| Add Column              | Write-Reorg        | Public     |
-| Add Index               | Write-Reorg        | Public     |
-| Drop Column             | Public             | Write-Only |
-| Drop Index              | Public             | Write-Only |
-| Non-reorg Modify Column | Public             | Public     |
-| Reorg Modify Column     | Write-Reorg        | Public     |
+| DDL (Schema Change)     | Revertible States                          | Non-revertible States                       |
+|-------------------------|--------------------------------------------|---------------------------------------------|
+| Add Column              | None, Delete-Only, Write-Only, Write-Reorg | Public                                      |
+| Add Index               | None, Delete-Only, Write-Only, Write-Reorg | Public                                      |
+| Drop Column             | Public                                     | Write-Only, Delete-Only, Delete-Reorg, None |
+| Drop Index              | Public                                     | Write-Only, Delete-Only, Delete-Reorg, None |
+| Non-reorg Modify Column | Public (before meta change)                | Public (after meta change)                  |
+| Reorg Modify Column     | None, Delete-Only, Write-Only, Write-Reorg | Public                                      |
 
-To achieve this behavior, we introduce a flag in the sub-job named "non-revertible". This flag is set when a schema object has stepped to the last unnoticeable state. When all sub-jobs become non-revertible, all the related schema objects step to the next state in one transaction. After that, the sub-jobs are executed serially to do the rest.
+To achieve this behavior, we introduce a flag in the sub-job named "non-revertible". This flag is set when a schema object has stepped to the last revertible state. When all sub-jobs become non-revertible, all the related schema objects step to the next state in one transaction. After that, the sub-jobs are executed serially to do the rest.
 
 On the other hand, if there is an error returned by any sub-job before all of them become non-revertible, the whole job is switched to a `rollingback` state. For the executed sub-jobs, we set them to `cancelling`; for the sub-job that have not been executed, we set them to `cancelled`.
 
 Finally, we consider the extreme case: an error occurs while all the sub-jobs are non-revertible. In this situation, we tend to believe that the error can be solved in a trivial way like retrying. This behavior is compatible with the current DDL implementation. Take `DROP COLUMN` as an example, once the column steps to the "Write-Only" state, there is no way to cancel this job.
 
 ## Compatibility
+
+### Upgrade Compatibility
+
+When a TiDB cluster performs a rolling upgrade, there are 2 cases:
+
+1. DDL owner is the new version of TiDB. When users execute a Multi-Schema Change statement on an old version of TiDB, they receive an "Unsupported Multi-Schema Change" error message.
+2. DDL owner is the old version of TiDB. When users execute a Multi-Schema Change statement on a new version of TiDB, they receive the "invalid ddl job type" error message.
+
+In both cases, the Multi-Schema Change statement cannot be executed. Therefore, users should avoid executing Multi-Schema Change during a rolling upgrade.
+
+### MySQL Compatibility
 
 MySQL may reorder some schema changes:
 
