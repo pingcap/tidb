@@ -134,10 +134,11 @@ var (
 		},
 	}
 
-	// ConflictOptions indicates the conflict config options existing in both [instance] and other sections.
+	// ConflictOptions indicates the conflict config options existing in both [instance] and other sections in config file.
 	ConflictOptions []InstanceConfigSection
 
-	// DeprecatedOptions indicates the config options that should be moved to [instance].
+	// DeprecatedOptions indicates the config options existing in some other sections in config file.
+	// They should be moved to [instance] section.
 	DeprecatedOptions []InstanceConfigSection
 )
 
@@ -515,8 +516,8 @@ func (e *ErrConfigValidationFailed) Error() string {
 		e.UndecodedItems, ", "))
 }
 
-// ErrConfigInstanceSection error is used to warning the user that the config options in 'instance'
-// are also set in another place.
+// ErrConfigInstanceSection error is used to warning the user
+// which config options should be moved to 'instance'.
 type ErrConfigInstanceSection struct {
 	confFile           string
 	configSections     *[]InstanceConfigSection
