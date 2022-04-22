@@ -42,6 +42,7 @@ cleanup
 
 run_lightning --sorted-kv-dir "$TEST_DIR/sst" --config "tests/$TEST_NAME/config.toml" --log-file "$TEST_DIR/lightning.log"
 check_result
-run_sql 'INSERT INTO db.test(b) VALUES(11);'
-check_contains 'ERROR'
+run_sql 'INSERT INTO db.test(b) VALUES(11) ON DUPLICATE KEY UPDATE b=10000;' # verify incr set to MaxInt64
+run_sql 'SELECT b FROM db.test;'
+check_contains 'b: 10000'
 cleanup
