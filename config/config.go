@@ -423,8 +423,8 @@ type Log struct {
 type Instance struct {
 	// These variables only exist in [instance] section.
 
-	// GeneralLog is used to log every query in the server in info level.
-	GeneralLog bool `toml:"tidb_general_log" json:"tidb_general_log"`
+	// TiDBGeneralLog is used to log every query in the server in info level.
+	TiDBGeneralLog bool `toml:"tidb_general_log" json:"tidb_general_log"`
 	// EnablePProfSQLCPU is used to add label sql label to pprof result.
 	EnablePProfSQLCPU bool `toml:"tidb_pprof_sql_cpu" json:"tidb_pprof_sql_cpu"`
 	// DDLSlowOprThreshold sets log DDL operations whose execution time exceeds the threshold value.
@@ -775,7 +775,7 @@ var defaultConf = Config{
 		EnableSlowLog:       *NewAtomicBool(logutil.DefaultTiDBEnableSlowLog),
 	},
 	Instance: Instance{
-		GeneralLog:                  false,
+		TiDBGeneralLog:              false,
 		EnablePProfSQLCPU:           false,
 		DDLSlowOprThreshold:         DefDDLSlowOprThreshold,
 		ExpensiveQueryTimeThreshold: DefExpensiveQueryTimeThreshold,

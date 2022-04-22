@@ -623,7 +623,7 @@ func setGlobalVars() {
 	priority := mysql.Str2Priority(cfg.Instance.ForcePriority)
 	variable.ForcePriority = int32(priority)
 
-	variable.ProcessGeneralLog.Store(cfg.Instance.GeneralLog)
+	variable.ProcessGeneralLog.Store(cfg.Instance.TiDBGeneralLog)
 	variable.EnablePProfSQLCPU.Store(cfg.Instance.EnablePProfSQLCPU)
 	atomic.StoreUint32(&variable.DDLSlowOprThreshold, cfg.Instance.DDLSlowOprThreshold)
 	atomic.StoreUint64(&variable.ExpensiveQueryTimeThreshold, cfg.Instance.ExpensiveQueryTimeThreshold)
