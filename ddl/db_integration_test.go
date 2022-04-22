@@ -2788,6 +2788,26 @@ func TestAutoIncrementTableOption(t *testing.T) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("12345678901234567890"))
 }
 
+func TestAutoIncrementOverflow(t *testing.T) {
+	// https://github.com/pingcap/tidb/issues/34142
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists auto_inc_overflow;")
+	tk.MustExec("create database auto_inc_overflow;")
+	tk.MustExec("use auto_inc_overflow;")
+
+	tk.MustExec("drop table if exists test1;")
+	tk.MustExec("create table test1( a bigint(20) auto_increment, b int, primary key(a));")
+	tk.MustExec("alter table test1 auto_increment=9223372036854775800;")
+	tk.MustExec("insert into test1(b) values (1),(2),(3);")
+	tk.MustGetErrCode("alter table test1 auto_increment=9223372036854775807;", errno.ErrAutoIncrementOverflow)
+	tk.MustGetErrCode("alter table test1 auto_increment=9223372036854775803;", errno.ErrAutoIncrementOverflow)
+	tk.MustExec("insert into test1(b) values (4);")
+	tk.MustQuery("select a, b from test1;").Check(testkit.Rows("9223372036854775800 1",
+		"9223372036854775801 2", "9223372036854775802 3", "9223372036854775803 4"))
+}
+
 func TestAutoIncrementForce(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()
