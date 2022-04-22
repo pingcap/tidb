@@ -3277,6 +3277,9 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 			return err
 		}
 		if newBase != newBaseTemp {
+			if newBaseTemp < 0 {
+				return errors.Trace(dbterror.ErrAutoIncrementOverflow)
+			}
 			ctx.GetSessionVars().StmtCtx.AppendWarning(
 				fmt.Errorf("Can't reset AUTO_INCREMENT to %d without FORCE option, using %d instead",
 					newBase, newBaseTemp,

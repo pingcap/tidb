@@ -1056,6 +1056,11 @@ error = '''
 `%s` is unsupported on temporary tables.
 '''
 
+["ddl:8143"]
+error = '''
+AUTO_INCREMENT has reached the maximum value limitation(9223372036854775807)
+'''
+
 ["ddl:8200"]
 error = '''
 Unsupported shard_row_id_bits for table with primary key as row id

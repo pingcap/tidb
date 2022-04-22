@@ -271,6 +271,8 @@ var (
 	ErrUnsupportedConstraintCheck = ClassDDL.NewStd(mysql.ErrUnsupportedConstraintCheck)
 	// ErrDerivedMustHaveAlias returns when a sub select statement does not have a table alias.
 	ErrDerivedMustHaveAlias = ClassDDL.NewStd(mysql.ErrDerivedMustHaveAlias)
+	// ErrAutoIncrementOverflow returns when the auto_increment overflows.
+	ErrAutoIncrementOverflow = ClassDDL.NewStd(mysql.ErrAutoIncrementOverflow)
 
 	// ErrSequenceRunOut returns when the sequence has been run out.
 	ErrSequenceRunOut = ClassDDL.NewStd(mysql.ErrSequenceRunOut)

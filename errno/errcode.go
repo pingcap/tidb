@@ -1019,6 +1019,7 @@ const (
 	ErrInconsistentIndexedValue            = 8140
 	ErrAssertionFailed                     = 8141
 	ErrInstanceScope                       = 8142
+	ErrAutoIncrementOverflow               = 8143
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
