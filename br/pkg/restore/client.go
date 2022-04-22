@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -1866,18 +1868,33 @@ func (rc *Client) GenGlobalIDs(ctx context.Context, n int) ([]int64, error) {
 // UpdateSchemaVersion updates schema version by transaction way.
 func (rc *Client) UpdateSchemaVersion(ctx context.Context) error {
 	storage := rc.GetDomain().Store()
+	var schemaVersion int64
 
-	err := kv.RunInNewTxn(
+	if err := kv.RunInNewTxn(
 		ctx,
 		storage,
 		true,
 		func(ctx context.Context, txn kv.Transaction) error {
 			t := meta.NewMeta(txn)
-			_, e := t.GenSchemaVersion()
+			var e error
+			schemaVersion, e = t.GenSchemaVersion()
 			return e
-		})
-	if err != nil {
+		},
+	); err != nil {
 		return errors.Trace(err)
+	}
+
+	log.Info("update global schema version", zap.Int64("global-schema-version", schemaVersion))
+
+	ver := strconv.FormatInt(schemaVersion, 10)
+	if err := ddlutil.PutKVToEtcd(
+		ctx,
+		rc.GetDomain().GetEtcdClient(),
+		math.MaxInt,
+		ddlutil.DDLGlobalSchemaVersion,
+		ver,
+	); err != nil {
+		return errors.Annotatef(err, "failed to put global schema verson %v to etcd", ver)
 	}
 
 	return nil
