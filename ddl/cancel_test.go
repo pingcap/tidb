@@ -110,7 +110,8 @@ var allTestCase = []testCancelJob{
 	{"alter table t modify column c11 mediumint", true, model.StateNone, true, false, nil},
 	{"alter table t modify column c11 int", false, model.StatePublic, false, true, nil},
 	// TODO: test cancel during second model.StateNone
-	{"alter table t modify column mayNullCol bigint default 1 not null", true, model.StateNone, true, true, []string{"alter table t add column mayNullCol bigint default 1"}},
+	{"alter table t modify column mayNullCol bigint default 1 not null", true, model.StateNone, true, false, []string{"alter table t add column mayNullCol bigint default 1"}},
+	{"alter table t modify column mayNullCol bigint default 1 not null", true, model.StateNone, false, true, nil},
 	{"alter table t modify column mayNullCol bigint default 1 not null", false, model.StatePublic, false, true, nil},
 	// Modify column, reorg.
 	{"alter table t modify column c11 char(10)", true, model.StateNone, true, false, nil},
