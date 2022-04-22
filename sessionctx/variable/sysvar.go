@@ -132,6 +132,10 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
+	{Scope: ScopeSession, Name: TiDBOptProjectionPushDown, Value: BoolToOnOff(config.GetGlobalConfig().Performance.ProjectionPushDown), skipInit: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.AllowProjectionPushDown = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeSession, Name: TiDBOptAggPushDown, Value: BoolToOnOff(DefOptAggPushDown), Type: TypeBool, skipInit: true, SetSession: func(s *SessionVars, val string) error {
 		s.AllowAggPushDown = TiDBOptOn(val)
 		return nil
