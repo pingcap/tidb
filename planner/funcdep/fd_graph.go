@@ -217,6 +217,7 @@ func (s *FDSet) AddLaxFunctionalDependency(from, to FastIntSet) {
 	s.addFunctionalDependency(from, to, false, false)
 }
 
+// AddNCFunctionalDependency is to add conditional functional dependency to the fdGraph.
 func (s *FDSet) AddNCFunctionalDependency(from, to, nc FastIntSet, strict, equiv bool) {
 	// Since nc edge is invisible by now, just collecting them together simply, once the
 	// null-reject on nc cols is satisfied, let's pick them out and insert into the fdEdge
