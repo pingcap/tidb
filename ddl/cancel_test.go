@@ -283,6 +283,7 @@ func TestCancel(t *testing.T) {
 			}
 
 			cancel = false
+			cancelWhenReorgNotStart = false
 			registHook(hook, false)
 			logutil.BgLogger().Info("test case", zap.Int("", i))
 			if tc.ok {
