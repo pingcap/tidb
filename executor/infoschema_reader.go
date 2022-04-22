@@ -2792,6 +2792,24 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context) error {
 					"end_key":   "7480000000000000ff3a5f720000000000fa",
 				}),
 			},
+			{
+				ID:       "invalidIDtest",
+				Labels:   []label.Label{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
+				RuleType: "key-range",
+				Data: convert(map[string]interface{}{
+					"start_key": "7480000000000000ff395f720000000000fa",
+					"end_key":   "7480000000000000ff3a5f720000000000fa",
+				}),
+			},
+			{
+				ID:       "schema/test/test_label",
+				Labels:   []label.Label{{Key: "merge_option", Value: "allow"}, {Key: "db", Value: "test"}, {Key: "table", Value: "test_label"}},
+				RuleType: "key-range",
+				Data: convert(map[string]interface{}{
+					"start_key": "aaaaa",
+					"end_key":   "bbbbb",
+				}),
+			},
 		}
 		err = nil
 	})
@@ -2801,9 +2819,19 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context) error {
 	}
 	for _, rule := range rules {
 		skip := true
+<<<<<<< HEAD
 		dbName, tableName, err := checkRule(rule)
+=======
+		dbName, tableName, partitionName, err := checkRule(rule)
 		if err != nil {
-			return err
+			logutil.BgLogger().Warn("check table-rule failed", zap.String("ID", rule.ID), zap.Error(err))
+			continue
+		}
+		tableID, err := decodeTableIDFromRule(rule)
+>>>>>>> e6d55e14f... executor/infoschema_reader.go: skip the unidentifiable table-attributes (#34129)
+		if err != nil {
+			logutil.BgLogger().Warn("decode table ID from rule failed", zap.String("ID", rule.ID), zap.Error(err))
+			continue
 		}
 		if tableName != "" && dbName != "" && (checker == nil || checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", mysql.SelectPriv)) {
 			skip = false
