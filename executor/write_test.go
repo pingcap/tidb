@@ -1857,6 +1857,47 @@ func TestQualifiedDelete(t *testing.T) {
 	require.Error(t, err)
 }
 
+type testCase struct {
+	data1       []byte
+	data2       []byte
+	expected    []string
+	restData    []byte
+	expectedMsg string
+}
+
+func checkCases(tests []testCase, ld *executor.LoadDataInfo, t *testing.T, tk *testkit.TestKit, ctx sessionctx.Context, selectSQL, deleteSQL string) {
+	origin := ld.IgnoreLines
+	for _, tt := range tests {
+		ld.IgnoreLines = origin
+		require.Nil(t, ctx.NewTxn(context.Background()))
+		ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
+		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
+		ctx.GetSessionVars().StmtCtx.InLoadDataStmt = true
+		ctx.GetSessionVars().StmtCtx.InDeleteStmt = false
+		data, reachLimit, err1 := ld.InsertData(context.Background(), tt.data1, tt.data2)
+		require.NoError(t, err1)
+		require.False(t, reachLimit)
+		err1 = ld.CheckAndInsertOneBatch(context.Background(), ld.GetRows(), ld.GetCurBatchCnt())
+		require.NoError(t, err1)
+		ld.SetMaxRowsInBatch(20000)
+		comment := fmt.Sprintf("data1:%v, data2:%v, data:%v", string(tt.data1), string(tt.data2), string(data))
+		if tt.restData == nil {
+			require.Len(t, data, 0, comment)
+		} else {
+			require.Equal(t, tt.restData, data, comment)
+		}
+		ld.SetMessage()
+		require.Equal(t, tt.expectedMsg, tk.Session().LastMessage())
+		ctx.StmtCommit()
+		txn, err := ctx.Txn(true)
+		require.NoError(t, err)
+		err = txn.Commit(context.Background())
+		require.NoError(t, err)
+		tk.MustQuery(selectSQL).Check(testkit.RowsWithSep("|", tt.expected...))
+		tk.MustExec(deleteSQL)
+	}
+}
+
 func TestLoadDataMissingColumn(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

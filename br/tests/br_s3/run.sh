@@ -38,7 +38,7 @@ start_s3() {
     s3_pid=$!
     i=0
     status="$(curl -o /dev/null -v -s "http://$S3_ENDPOINT/" -w '%{http_code}' || true)"
-    while ! [ "$status" -gt 0 ] && [ "$status" -lt 500 ]; do
+    while ! { [ "$status" -gt 0 ] && [ "$status" -lt 500 ]; } ; do
         i=$(($i+1))
         if [ $i -gt 30 ]; then
             echo 'Failed to start minio'
@@ -103,7 +103,7 @@ for p in $(seq 2); do
       exit 1
   fi
 
-  target_log="get newCollationEnable for check during restore"
+  target_log="get new_collations_enabled_on_first_bootstrap config from system table"
   if ! grep -i "$target_log" $BACKUP_LOG; then
       echo "${target_log} not found in log"
       exit 1

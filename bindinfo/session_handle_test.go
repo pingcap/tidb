@@ -406,6 +406,14 @@ func (msm *mockSessionManager) ServerID() uint64 {
 	return 1
 }
 
+func (msm *mockSessionManager) StoreInternalSession(se interface{}) {}
+
+func (msm *mockSessionManager) DeleteInternalSession(se interface{}) {}
+
+func (msm *mockSessionManager) GetInternalSessionStartTSList() []uint64 {
+	return nil
+}
+
 func TestIssue19836(t *testing.T) {
 	store, clean := testkit.CreateMockStore(t)
 	defer clean()

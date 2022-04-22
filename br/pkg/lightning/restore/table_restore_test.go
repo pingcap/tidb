@@ -339,7 +339,6 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 		backend:        backend.MakeBackend(mockBackend),
 		errorSummaries: makeErrorSummaries(log.L()),
 		saveCpCh:       make(chan saveCp, 1),
-		diskQuotaLock:  newDiskQuotaLock(),
 	}
 	defer close(rc.saveCpCh)
 	go func() {
@@ -936,7 +935,6 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 		closedEngineLimit: worker.NewPool(ctx, 1, "closed_engine"),
 		store:             s.store,
 		metaMgrBuilder:    noopMetaMgrBuilder{},
-		diskQuotaLock:     newDiskQuotaLock(),
 		errorMgr:          errormanager.New(nil, cfg),
 	}
 	go func() {

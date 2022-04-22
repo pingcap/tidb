@@ -1332,11 +1332,6 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			args:         []Expression{dateColumn},
 		},
 		{
-			functionName: ast.ToSeconds,
-			retType:      types.NewFieldType(mysql.TypeDate),
-			args:         []Expression{dateColumn},
-		},
-		{
 			functionName: ast.DateDiff,
 			retType:      types.NewFieldType(mysql.TypeDate),
 			args:         []Expression{dateColumn, dateColumn},
