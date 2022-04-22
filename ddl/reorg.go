@@ -229,14 +229,10 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 
 	// wait reorganization job done or timeout
 	select {
-	case err := <-rc.doneCh:
+	case err := <-w.reorgCtx.doneCh:
 		defer w.removeReorgCtx(job)
-		if err != nil {
-			d.removeReorgCtx(job)
-			return errors.Trace(err)
-		}
-		if w.reorgCtx.isReorgCanceled() {
-			d.removeReorgCtx(job)
+		// Since job is cancelled，we don't care about its partial counts.
+		if w.reorgCtx.isReorgCanceled() || terror.ErrorEqual(err, dbterror.ErrCancelledDDLJob) {
 			return dbterror.ErrCancelledDDLJob
 		}
 		rowCount, _, _ := rc.getRowCountAndKey()
@@ -247,6 +243,8 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		// Update a job's warnings.
 		w.mergeWarningsIntoJob(job)
 
+		// For other errors, even err is not nil here, we still wait the partial counts to be collected.
+		// since in the next round, the startKey is brand new which is stored by last time.
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -369,7 +367,7 @@ func (w *worker) isReorgRunnable(reorgInfo *reorgInfo) error {
 		return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
 	}
 
-	if w.getReorgCtx(job).isReorgCanceled() {
+	if w.getReorgCtx(reorgInfo.Job).isReorgCanceled() {
 		// Job is cancelled. So it can't be done.
 		return dbterror.ErrCancelledDDLJob
 	}
