@@ -42,7 +42,11 @@ cleanup
 
 run_lightning --sorted-kv-dir "$TEST_DIR/sst" --config "tests/$TEST_NAME/config.toml" --log-file "$TEST_DIR/lightning.log"
 check_result
-run_sql 'INSERT INTO db.test(b) VALUES(11) ON DUPLICATE KEY UPDATE b=10000;' # verify incr set to MaxInt64
+# local-backend set auto_increment to 9223372036854775807 after importing
+run_sql_fail 'INSERT INTO db.test(b) VALUES(11);' # will not succeed
+check_contains 'ERROR'
+# duplicate key update
+run_sql 'INSERT INTO db.test(b) VALUES(11) ON DUPLICATE KEY UPDATE b=10000;'
 run_sql 'SELECT b FROM db.test;'
 check_contains 'b: 10000'
 cleanup
