@@ -50,6 +50,27 @@ When TiDB bootstrapping, it’ll create some internal sessions, these sessions a
 
 The coprocessor request, transaction, and snapshot created by `RunInNewTxn` and the internal sessions need to be marked as internal.
 
+#### kvproto
+
+Add a field `request_source` in the proto, which is a string type field and can be empty(TiDB does not allow empty `request_source`). The string type can make the metrics display more readable.
+
+```diff
+// Miscellaneous metadata attached to most requests.
+message Context {
+    reserved 4;
+    ...
++   // The source of the request.
++   string request_source = xx;
+}
+
+```
+
+In TiDB, `request_source` is concatenated by **scope** and **type**, the scope is one of “internal" and "external", for type, there will be some variation between internal and external transactions.
+
+The type of the internal transactions would be their capabilities, the internal transactions are listed in the [Internal Transaction Usage](#internal-transaction-usage) section. The concatenated `request_source` would be like “internal_ddl_backfill_index", “internal_bindinfo_load", “internal_statistic_load", etc.
+
+The type of external transaction is the statement type. The concatenated `request_source` would be like “external_select", “external_insert", “external_commit", etc.
+
 #### Session
 
 Add a flag in `SessionVars`, TiDB creates some internal sessions when bootstrap, and the internal flags are set after bootstrap.
@@ -67,19 +88,21 @@ type SessionVars struct {
 // Request represents a kv request.
 type Request struct {
 	...
-+	Internal bool
++	RequestSourceScope string
++	RequestSourceType string
 }
 ```
 
 #### KV Client
 
-Add internal flag in transaction and snapshot.
+Add in transaction and snapshot.
 
 ```diff
 // KVTxn contains methods to interact with a TiKV transaction.
 type KVTxn struct {
 	...
-+	Internal bool
++	RequestSourceScope string
++	RequestSourceType string
 }
 ```
 
@@ -87,19 +110,8 @@ type KVTxn struct {
 // KVSnapshot implements the tidbkv.Snapshot interface.
 type KVSnapshot struct {
 	...
-+	Internal bool
-}
-```
-
-#### kvproto
-
-```diff
-// Miscellaneous metadata attached to most requests.
-message Context {
-    reserved 4;
-    ...
-+   // whether it's from internal request.
-+   bool internal = xx;
++	RequestSourceScope string
++	RequestSourceType string
 }
 ```
 
