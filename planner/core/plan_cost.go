@@ -15,11 +15,12 @@
 package core
 
 import (
+	"math"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/statistics"
-	"math"
 )
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
