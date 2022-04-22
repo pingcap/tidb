@@ -19,6 +19,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -483,8 +484,10 @@ type Performance struct {
 	CrossJoin             bool    `toml:"cross-join" json:"cross-join"`
 	RunAutoAnalyze        bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
 	DistinctAggPushDown   bool    `toml:"distinct-agg-push-down" json:"distinct-agg-push-down"`
-	CommitterConcurrency  int     `toml:"committer-concurrency" json:"committer-concurrency"`
-	MaxTxnTTL             uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
+	// Whether enable projection push down for coprocessors (both tikv & tiflash), default false.
+	ProjectionPushDown   bool   `toml:"projection-push-down" json:"projection-push-down"`
+	CommitterConcurrency int    `toml:"committer-concurrency" json:"committer-concurrency"`
+	MaxTxnTTL            uint64 `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	// Deprecated
 	MemProfileInterval   string `toml:"-" json:"-"`
 	IndexUsageSyncLease  string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
@@ -672,7 +675,7 @@ var defaultConf = Config{
 		GRPCKeepAliveTimeout:  3,
 		GRPCConcurrentStreams: 1024,
 		GRPCInitialWindowSize: 2 * 1024 * 1024,
-		GRPCMaxSendMsgSize:    10 * 1024 * 1024,
+		GRPCMaxSendMsgSize:    math.MaxInt32,
 	},
 	Performance: Performance{
 		MaxMemory:             0,
@@ -692,6 +695,7 @@ var defaultConf = Config{
 		TxnEntrySizeLimit:     DefTxnEntrySizeLimit,
 		TxnTotalSizeLimit:     DefTxnTotalSizeLimit,
 		DistinctAggPushDown:   false,
+		ProjectionPushDown:    false,
 		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
 		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
 		// TODO: set indexUsageSyncLease to 60s.

@@ -178,9 +178,7 @@ func (t *copTask) finishIndexPlan() {
 	for p = t.indexPlan; len(p.Children()) > 0; p = p.Children()[0] {
 	}
 	is := p.(*PhysicalIndexScan)
-	if !is.underInnerIndexJoin { // no need to accumulate seek cost for IndexJoin
-		t.cst += float64(len(is.Ranges)) * sessVars.GetSeekFactor(is.Table) // net seek cost
-	}
+	t.cst += float64(len(is.Ranges)) * sessVars.GetSeekFactor(is.Table) // net seek cost
 
 	if t.tablePlan == nil {
 		return
@@ -1075,13 +1073,11 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		ts := tp.(*PhysicalTableScan)
 
 		// net seek cost
-		if !ts.underInnerIndexJoin { // no need to accumulate net seek cost for IndexJoin
-			switch ts.StoreType {
-			case kv.TiKV:
-				t.cst += float64(len(ts.Ranges)) * sessVars.GetSeekFactor(ts.Table)
-			case kv.TiFlash:
-				t.cst += float64(len(ts.Ranges)) * float64(len(ts.Columns)) * sessVars.GetSeekFactor(ts.Table)
-			}
+		switch ts.StoreType {
+		case kv.TiKV:
+			t.cst += float64(len(ts.Ranges)) * sessVars.GetSeekFactor(ts.Table)
+		case kv.TiFlash:
+			t.cst += float64(len(ts.Ranges)) * float64(len(ts.Columns)) * sessVars.GetSeekFactor(ts.Table)
 		}
 
 		prevColumnLen := len(ts.Columns)
@@ -1464,7 +1460,7 @@ func (p *PhysicalProjection) GetCost(count float64) float64 {
 func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	if cop, ok := t.(*copTask); ok {
-		if len(cop.rootTaskConds) == 0 && cop.getStoreType() == kv.TiFlash && expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.Exprs, p.ctx.GetClient(), cop.getStoreType()) {
+		if len(cop.rootTaskConds) == 0 && expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, p.Exprs, p.ctx.GetClient(), cop.getStoreType()) {
 			copTask := attachPlan2Task(p, cop)
 			copTask.addCost(p.GetCost(t.count()))
 			p.cost = copTask.cost()
@@ -1479,7 +1475,6 @@ func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 			return mpp
 		}
 	}
-	// TODO: support projection push down for TiKV.
 	t = t.convertToRootTask(p.ctx)
 	t = attachPlan2Task(p, t)
 	t.addCost(p.GetCost(t.count()))
