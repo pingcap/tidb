@@ -27,9 +27,9 @@ check_result() {
     check_contains 'Tables_in_db: test'
     check_contains 'Tables_in_db: test1'
     run_sql 'SELECT count(*) FROM db.test;'
-    check_contains: 'count(*): 2'
+    check_contains 'count(*): 2'
     run_sql 'SELECT count(*) FROM db.test1;'
-    check_contains: 'count(*): 2'
+    check_contains 'count(*): 2'
 }
 
 cleanup() {

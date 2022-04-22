@@ -427,12 +427,15 @@ func TestAlterAutoRandom(t *testing.T) {
 		ExpectExec("\\QALTER TABLE `db`.`table` AUTO_RANDOM_BASE=12345\\E").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	s.mockDB.
+		ExpectExec("\\QALTER TABLE `db`.`table` AUTO_RANDOM_BASE=288230376151711743\\E").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	s.mockDB.
 		ExpectClose()
 
-	err := AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345)
+	err := AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", 12345, 288230376151711743)
 	require.NoError(t, err)
 
-	err = AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", uint64(math.MaxInt64)+1)
+	err = AlterAutoRandom(ctx, s.tiGlue.GetSQLExecutor(), "`db`.`table`", uint64(math.MaxInt64)+1, 288230376151711743)
 	require.NoError(t, err)
 }
 
