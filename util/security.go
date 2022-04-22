@@ -93,9 +93,9 @@ func ToTLSConfigWithVerify(caPath, certPath, keyPath string, verifyCN []string) 
 	if !certPool.AppendCertsFromPEM(ca) {
 		return nil, errors.New("failed to append ca certs")
 	}
-	//nolint:gosec
+
 	tlsCfg := &tls.Config{
-		MinVersion:   tls.VersionTLS10,
+		MinVersion:   tls.VersionTLS12,
 		Certificates: certificates,
 		RootCAs:      certPool,
 		ClientCAs:    certPool,
@@ -123,9 +123,9 @@ func ToTLSConfigWithVerifyByRawbytes(caData, certData, keyData []byte, verifyCN 
 	if !certPool.AppendCertsFromPEM(caData) {
 		return nil, errors.New("failed to append ca certs")
 	}
-	//nolint:gosec
+
 	tlsCfg := &tls.Config{
-		MinVersion:   tls.VersionTLS10,
+		MinVersion:   tls.VersionTLS12,
 		Certificates: certificates,
 		RootCAs:      certPool,
 		ClientCAs:    certPool,

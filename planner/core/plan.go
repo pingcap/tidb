@@ -318,6 +318,9 @@ type LogicalPlan interface {
 type PhysicalPlan interface {
 	Plan
 
+	// GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
+	GetPlanCost(taskType property.TaskType) (float64, error)
+
 	// attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
 	// current task. If the child's task is cop task, some operator may close this task and return a new rootTask.
 	attach2Task(...task) task
@@ -350,9 +353,11 @@ type PhysicalPlan interface {
 	Stats() *property.StatsInfo
 
 	// Cost returns the estimated cost of the subplan.
+	// Deprecated: use the new method GetPlanCost
 	Cost() float64
 
 	// SetCost set the cost of the subplan.
+	// Deprecated: use the new method GetPlanCost
 	SetCost(cost float64)
 
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
@@ -408,6 +413,10 @@ type basePhysicalPlan struct {
 	self             PhysicalPlan
 	children         []PhysicalPlan
 	cost             float64
+
+	// used by the new cost interface
+	planCostInit bool
+	planCost     float64
 }
 
 // Cost implements PhysicalPlan interface.
