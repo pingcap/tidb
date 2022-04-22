@@ -309,12 +309,12 @@ func (p *PhysicalTopN) GetPlanCost(taskType property.TaskType) (float64, error) 
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *BatchPointGetPlan) GetPlanCost(taskType property.TaskType) (float64, error) {
-	return 0, nil
+	return 0, errors.New("not implemented")
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.
 func (p *PointGetPlan) GetPlanCost(taskType property.TaskType) (float64, error) {
-	return 0, nil
+	return 0, errors.New("not implemented")
 }
 
 // GetPlanCost calculates the cost of the plan if it has not been calculated yet and returns the cost.

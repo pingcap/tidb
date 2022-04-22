@@ -102,6 +102,9 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 		"select /*+ use_index_merge(t, b, cd) */ * from t where b<100 or c<100",
 		"select /*+ use_index_merge(t, b, cd) */ * from t where b<100 or c=100 and d<100",
 		"select /*+ use_index_merge(t, b, cd) */ * from t where b<100 or c=100 and d<100 and a<100",
+		"select /*+ use_index_merge(t, b, cd) */ * from t where b<100 or c<100 and mod(a, 3)=1",
+		"select /*+ use_index_merge(t, b, cd) */ * from t where b<100 or c=100 and d<100 and mod(a, 3)=1",
+		"select /*+ use_index_merge(t, b, cd) */ * from t where b<100 or c=100 and d<100 and a<100 and mod(a, 3)=1",
 		// selection + projection
 		"select * from t use index(primary) where a+200 < 1000",      // pushed down to table-scan
 		"select * from t use index(primary) where mod(a, 200) < 100", // not pushed down
@@ -156,9 +159,6 @@ func TestNewCostInterfaceTiKV(t *testing.T) {
 		"select * from t use index(cd) where c < 200 order by c limit 10",
 		"select * from t use index(cd) where c = 200 order by c limit 10",
 		"select * from t use index(cd) where c = 200 and d < 200 order by c, d limit 10",
-		// point get
-		"select * from t where a = 1",
-		"select * from t where a in (1, 2, 3, 4, 5)",
 	}
 
 	for _, q := range queries {
