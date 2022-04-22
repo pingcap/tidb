@@ -467,7 +467,7 @@ func wrapKey2String(key []byte) string {
 func GetAllDDLJobs(sess sessionctx.Context, m *meta.Meta, jobListKeys ...meta.JobListKeyType) ([]*model.Job, error) {
 	if variable.AllowConcurrencyDDL.Load() {
 		isReorg := "not reorg"
-		if len(jobListKeys) != 0 && bytes.Compare(jobListKeys[0], meta.AddIndexJobListKey) == 0 {
+		if len(jobListKeys) != 0 && bytes.Equal(jobListKeys[0], meta.AddIndexJobListKey) {
 			isReorg = "reorg"
 		}
 
