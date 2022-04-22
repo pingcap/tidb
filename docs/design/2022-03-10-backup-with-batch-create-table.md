@@ -65,7 +65,7 @@ for _, info := range tableInfo {
 
   for j := range args {
   if err = d.createTableWithInfoPost(ctx, args[j], jobs.SchemaID); err != nil {
-    return errors.Trace(d.callHookOnChanged(err))
+    return errors.Trace(d.callHookOnChanged(job, err))
   }
  }
 ```

@@ -575,7 +575,7 @@ func MayNeedReorg(job *model.Job) bool {
 	case model.ActionMultiSchemaChange:
 		for _, sub := range job.MultiSchemaInfo.SubJobs {
 			proxyJob := cloneFromSubJob(job, sub)
-			if mayNeedReorg(proxyJob) {
+			if MayNeedReorg(proxyJob) {
 				return true
 			}
 		}
@@ -741,7 +741,12 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	}
 }
 
-func (d *ddl) callHookOnChanged(err error) error {
+func (d *ddl) callHookOnChanged(job *model.Job, err error) error {
+	if job.State == model.JobStateNone {
+		// In multiple schema change, we don't call the hook because
+		// the job does not run yet.
+		return nil
+	}
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 

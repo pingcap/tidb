@@ -151,7 +151,14 @@ func (w *worker) typeStr() string {
 }
 
 func (w *worker) String() string {
-	return fmt.Sprintf("worker %d, tp %s", w.id, w.typeStr())
+	tp := "unknown"
+	switch w.tp {
+	case generalWorker:
+		tp = "non-reorg"
+	case addIdxWorker:
+		tp = "reorg"
+	}
+	return fmt.Sprintf("worker %d, tp %s", w.id, tp)
 }
 
 func (w *worker) close() {

@@ -475,7 +475,7 @@ func (job *Job) String() string {
 	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v",
 		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer)
 	if job.Type != ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
-		ret += fmt.Sprintf(", RawArgs:%s", job.RawArgs)
+		ret += fmt.Sprintf(", Multi-Schema Change:true, Revertible:%v", job.MultiSchemaInfo.Revertible)
 	}
 	return ret
 }

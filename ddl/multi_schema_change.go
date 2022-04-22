@@ -55,7 +55,7 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
 	}
 	ctx.GetSessionVars().StmtCtx.MultiSchemaInfo = nil
 	err = d.DoDDLJob(ctx, job)
-	return d.callHookOnChanged(err)
+	return d.callHookOnChanged(job, err)
 }
 
 func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {

@@ -95,7 +95,11 @@ func (dr *delRange) addDelRangeJob(ctx context.Context, job *model.Job) error {
 	defer dr.sessPool.put(sctx)
 
 	if job.MultiSchemaInfo != nil {
-		err = insertJobIntoDeleteRangeTableMultiSchema(ctx, sctx, job)
+		var added bool
+		added, err = insertJobIntoDeleteRangeTableMultiSchema(ctx, sctx, job)
+		if !added {
+			return nil
+		}
 	} else {
 		err = insertJobIntoDeleteRangeTable(ctx, sctx, job, &elementIDAlloc{})
 	}
@@ -110,18 +114,19 @@ func (dr *delRange) addDelRangeJob(ctx context.Context, job *model.Job) error {
 	return nil
 }
 
-func insertJobIntoDeleteRangeTableMultiSchema(ctx context.Context, sctx sessionctx.Context, job *model.Job) error {
+func insertJobIntoDeleteRangeTableMultiSchema(ctx context.Context, sctx sessionctx.Context, job *model.Job) (bool, error) {
 	var ea elementIDAlloc
 	for _, sub := range job.MultiSchemaInfo.SubJobs {
 		proxyJob := cloneFromSubJob(job, sub)
 		if jobNeedGC(proxyJob) {
 			err := insertJobIntoDeleteRangeTable(ctx, sctx, proxyJob, &ea)
 			if err != nil {
-				return errors.Trace(err)
+				return true, errors.Trace(err)
 			}
 		}
 	}
-	return nil
+	added := len(ea.indexIDs)+len(ea.physicalIDs) != 0
+	return added, nil
 }
 
 // removeFromGCDeleteRange implements delRangeManager interface.
