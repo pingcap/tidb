@@ -65,11 +65,11 @@ message Context {
 
 ```
 
-In TiDB, `request_source` is concatenated by **scope** and **type**, the scope is one of “internal" and "external", for type, there will be some variation between internal and external transactions.
+In TiDB, `request_source` is concatenated by **scope** and **type**, the scope is one of "internal" and "external", for type, there will be some variation between internal and external transactions.
 
-The type of the internal transactions would be their capabilities, the internal transactions are listed in the [Internal Transaction Usage](#internal-transaction-usage) section. The concatenated `request_source` would be like “internal_ddl_backfill_index", “internal_bindinfo_load", “internal_statistic_load", etc.
+The type of the internal transactions would be their capabilities, the internal transactions are listed in the [Internal Transaction Usage](#internal-transaction-usage) section. The concatenated `request_source` would be like "internal_ddl_backfill_index", "internal_bindinfo_load", "internal_statistic_load", etc.
 
-The type of external transaction is the statement type. The concatenated `request_source` would be like “external_select", “external_insert", “external_commit", etc.
+The type of external transaction is the statement type. The concatenated `request_source` would be like "external_select", "external_insert", "external_commit", etc.
 
 #### Session
 
