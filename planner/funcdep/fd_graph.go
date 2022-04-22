@@ -586,10 +586,7 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 		}
 	}
 	// just simple merge the ncEdge from both side together.
-	for i := 0; i < len(rhs.ncEdges); i++ {
-		fd := rhs.ncEdges[i]
-		s.ncEdges = append(s.ncEdges, fd)
-	}
+	s.ncEdges = append(s.ncEdges, rhs.ncEdges...)
 	// todo: add strict FD: (left key + right key) -> all cols.
 	// maintain a key?
 }
@@ -756,9 +753,7 @@ func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols F
 			s.addFunctionalDependency(edge.from, edge.to, false, edge.equiv)
 		}
 	}
-	for _, edge := range innerFDs.ncEdges {
-		s.ncEdges = append(s.ncEdges, edge)
-	}
+	s.ncEdges = append(s.ncEdges, innerFDs.ncEdges...)
 	leftCombinedFDFrom := NewFastIntSet()
 	leftCombinedFDTo := NewFastIntSet()
 	for _, edge := range filterFDs.fdEdges {
