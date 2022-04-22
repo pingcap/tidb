@@ -833,6 +833,15 @@ func TestMultiSchemaChangeModifyColumns(t *testing.T) {
 	tk.MustExec("create table t (a int, _Col$_a double, index _Idx$_i(a, _Col$_a), index i(a, _Col$_a));")
 	tk.MustExec("alter table t modify column a tinyint;")
 	tk.MustQuery("select count(distinct KEY_NAME) from information_schema.TIDB_INDEXES where TABLE_NAME='t';").Check(testkit.Rows("2"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a BIGINT NULL DEFAULT '-283977870758975838', b double);")
+	tk.MustExec("insert into t values (-283977870758975838, 0);")
+	tk.MustGetErrCode("alter table t change column a c tinyint null default '111' after b, modify column b time null default '13:51:02' FIRST;", errno.ErrDataOutOfRange)
+	rows := tk.MustQuery("admin show ddl jobs 1").Rows()
+	require.Equal(t, rows[0][11], "rollback done")
+	require.Equal(t, rows[1][11], "rollback done")
+	require.Equal(t, rows[2][11], "cancelled")
 }
 
 func TestMultiSchemaChangeModifyColumnsCancelled(t *testing.T) {

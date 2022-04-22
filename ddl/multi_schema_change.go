@@ -181,7 +181,7 @@ func handleRevertibleException(job *model.Job, subJob *model.SubJob, idx int, er
 		switch sub.State {
 		case model.JobStateRunning:
 			sub.State = model.JobStateCancelling
-		case model.JobStateNone:
+		case model.JobStateNone, model.JobStateQueueing:
 			sub.State = model.JobStateCancelled
 		}
 	}
