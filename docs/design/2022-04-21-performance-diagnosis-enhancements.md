@@ -21,7 +21,7 @@ This RPC proposes some improvements to the metrics collection, and display.
 
 ## Detailed Design
 
-### D**ifferentiate Between Internal and External Requests**
+### Differences Between Internal and External Requests
 
 The tracking issue of it is #33963, and it should be applied to most of the metrics.
 
