@@ -463,6 +463,7 @@ func wrapKey2String(key []byte) string {
 	return fmt.Sprintf("0x%x", key)
 }
 
+// GetAllDDLJobs get All the ddl jobs by types.
 func GetAllDDLJobs(sess sessionctx.Context, m *meta.Meta, jobListKeys ...meta.JobListKeyType) ([]*model.Job, error) {
 	if variable.AllowConcurrencyDDL.Load() {
 		isReorg := "not reorg"
@@ -503,6 +504,7 @@ func getJobsBySQL(sess sessionctx.Context, tbl, condition string) ([]*model.Job,
 	return jobs, nil
 }
 
+// GetAllHistoryDDLJobs get All the done ddl jobs.
 func GetAllHistoryDDLJobs(sess sessionctx.Context, m *meta.Meta) ([]*model.Job, error) {
 	// no history job table now.
 	//if variable.AllowConcurrencyDDL.Load() {
