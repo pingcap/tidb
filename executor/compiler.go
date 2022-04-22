@@ -380,7 +380,7 @@ func GetStmtLabel(stmtNode ast.StmtNode) string {
 	case *ast.LoadDataStmt:
 		return "LoadData"
 	case *ast.RollbackStmt:
-		return "RollBack"
+		return "Rollback"
 	case *ast.SelectStmt:
 		return "Select"
 	case *ast.SetStmt, *ast.SetPwdStmt:
