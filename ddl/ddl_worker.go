@@ -383,6 +383,7 @@ func (d *ddl) addConcurrencyDDLJobs(tasks []*limitJobTask) {
 			job.Version = currentVersion
 			job.StartTS = startTs
 			job.ID = ids[i]
+			job.State = model.JobStateQueueing
 			jobTasks[i] = job
 			failpoint.Inject("MockModifyJobArg", func(val failpoint.Value) {
 				if val.(bool) {
