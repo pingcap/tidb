@@ -542,7 +542,7 @@ func (e *ErrConfigInstanceSection) Error() string {
 			builder.WriteString(fmt.Sprintf(" (%s, %s)", oldName, newName))
 		}
 	}
-	builder.WriteString(". ")
+	builder.WriteString(".")
 
 	return builder.String()
 }
