@@ -103,7 +103,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		AddNewAnalyzeJob(e.ctx, task.job)
 	}
 	failpoint.Inject("mockKillPendingAnalyzeJob", func() {
-		domain.GetDomain(e.ctx).SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
+		dom := domain.GetDomain(e.ctx)
+		dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
 	})
 	for _, task := range e.tasks {
 		taskCh <- task
@@ -200,7 +201,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}
 	failpoint.Inject("mockKillFinishedAnalyzeJob", func() {
-		domain.GetDomain(e.ctx).SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
+		dom := domain.GetDomain(e.ctx)
+		dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
 	})
 	if err != nil {
 		return err
@@ -586,7 +588,8 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 	}
 	for {
 		failpoint.Inject("mockKillRunningAnalyzeIndexJob", func() {
-			domain.GetDomain(e.ctx).SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
+			dom := domain.GetDomain(e.ctx)
+			dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
 		})
 		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
 			return nil, nil, nil, nil, errors.Trace(ErrQueryInterrupted)
@@ -915,7 +918,8 @@ func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, me
 	defer close(mergeTaskCh)
 	for {
 		failpoint.Inject("mockKillRunningV2AnalyzeJob", func() {
-			domain.GetDomain(ctx).SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
+			dom := domain.GetDomain(ctx)
+			dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
 		})
 		if atomic.LoadUint32(&ctx.GetSessionVars().Killed) == 1 {
 			return errors.Trace(ErrQueryInterrupted)
@@ -1489,7 +1493,8 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 	}
 	for {
 		failpoint.Inject("mockKillRunningV1AnalyzeJob", func() {
-			domain.GetDomain(e.ctx).SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID())
+			dom := domain.GetDomain(e.ctx)
+			dom.SysProcTracker().KillSysProcess(util.GetAutoAnalyzeProcID(dom.ServerID))
 		})
 		if atomic.LoadUint32(&e.ctx.GetSessionVars().Killed) == 1 {
 			return nil, nil, nil, nil, nil, errors.Trace(ErrQueryInterrupted)

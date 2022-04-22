@@ -3615,7 +3615,7 @@ func TestOOMPanicAction(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key, b double);")
 	tk.MustExec("insert into t values (1,1)")
-	sm := &mockSessionManager1{
+	sm := &testkit.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)
@@ -5924,7 +5924,7 @@ func TestSummaryFailedUpdate(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int as(-a))")
 	tk.MustExec("insert into t(a) values(1), (3), (7)")
-	sm := &mockSessionManager1{
+	sm := &testkit.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)

@@ -359,7 +359,7 @@ func TestVersion(t *testing.T) {
 	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tableInfo1 := tbl1.Meta()
-	h, err := handle.NewHandle(testKit.Session(), time.Millisecond, do.SysSessionPool(), do.SysProcTracker())
+	h, err := handle.NewHandle(testKit.Session(), time.Millisecond, do.SysSessionPool(), do.SysProcTracker(), do.ServerID)
 	require.NoError(t, err)
 	unit := oracle.ComposeTS(1, 0)
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", 2*unit, tableInfo1.ID)
@@ -905,6 +905,9 @@ func checkForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, db, tt, pp st
 
 	delta := buckets/2 + 10
 	for _, idxStats := range tblStats.Indices {
+		if len(idxStats.Buckets) == 0 {
+			continue // it's not loaded
+		}
 		numTopN := idxStats.TopN.Num()
 		numBuckets := len(idxStats.Buckets)
 		// since the hist-building algorithm doesn't stipulate the final bucket number to be equal to the expected number exactly,
@@ -926,7 +929,6 @@ func checkForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, db, tt, pp st
 }
 
 func TestAnalyzeGlobalStatsWithOpts1(t *testing.T) {
-	t.Skip("unstable test")
 	if israce.RaceEnabled {
 		t.Skip("exhaustive types test, skip race test")
 	}
@@ -967,7 +969,6 @@ func TestAnalyzeGlobalStatsWithOpts1(t *testing.T) {
 }
 
 func TestAnalyzeGlobalStatsWithOpts2(t *testing.T) {
-	t.Skip("unstable test")
 	if israce.RaceEnabled {
 		t.Skip("exhaustive types test, skip race test")
 	}

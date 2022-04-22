@@ -205,7 +205,7 @@ func TestIndexMergeWithPreparedStmt(t *testing.T) {
 	tk.MustExec("prepare stmt1 from 'select /*+ use_index_merge(t1) */ count(1) from t1 where c1 < ? or c2 < ?';")
 	tk.MustExec("set @a = 10;")
 	tk.MustQuery("execute stmt1 using @a, @a;").Check(testkit.Rows("10"))
-	tk.Session().SetSessionManager(&mockSessionManager1{
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{
 		PS: []*util.ProcessInfo{tk.Session().ShowProcess()},
 	})
 	explainStr := "explain for connection " + strconv.FormatUint(tk.Session().ShowProcess().ID, 10)
