@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -18,9 +19,9 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbutil"
 	"github.com/pingcap/tidb/util/importer"
-	"github.com/pingcap/tidb/util/utils"
 )
 
 var _ = Suite(&testChunkSuite{})
@@ -251,7 +252,7 @@ func (*testChunkSuite) TestRangeLimit(c *C) {
 	count := 0
 
 	for _, chunk := range chunks {
-		rows, _, err := getChunkRows(ctx, conn, "test", "test_range", tableInfo, chunk.Where, utils.StringsToInterfaces(chunk.Args), "")
+		rows, _, err := getChunkRows(ctx, conn, "test", "test_range", tableInfo, chunk.Where, util.StringsToInterfaces(chunk.Args), "")
 		c.Assert(err, IsNil)
 		for rows.Next() {
 			count++

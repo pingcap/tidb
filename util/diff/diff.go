@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -8,6 +8,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -31,8 +32,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbutil"
-	"github.com/pingcap/tidb/util/utils"
 	"go.uber.org/zap"
 )
 
@@ -509,7 +510,7 @@ func (t *TableDiff) compareChecksum(ctx context.Context, chunk *ChunkRange) (boo
 		}
 	}
 
-	args := utils.StringsToInterfaces(chunk.Args)
+	args := util.StringsToInterfaces(chunk.Args)
 	for _, sourceTable := range t.SourceTables {
 		go getChecksum(sourceTable.Conn, sourceTable.Schema, sourceTable.Table, chunk.Where, t.TargetTable.info, args, "source")
 	}
@@ -558,7 +559,7 @@ func (t *TableDiff) compareRows(ctx context.Context, chunk *ChunkRange) (bool, e
 
 	sourceRows := make(map[int]*sql.Rows)
 	sourceHaveData := make(map[int]bool)
-	args := utils.StringsToInterfaces(chunk.Args)
+	args := util.StringsToInterfaces(chunk.Args)
 
 	targetRows, orderKeyCols, err := getChunkRows(ctx, t.TargetTable.Conn, t.TargetTable.Schema, t.TargetTable.Table, t.TargetTable.info, chunk.Where, args, t.Collation)
 	if err != nil {
