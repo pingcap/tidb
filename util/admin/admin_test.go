@@ -346,7 +346,7 @@ func TestIsJobRollbackable(t *testing.T) {
 	for _, ca := range cases {
 		job.Type = ca.tp
 		job.SchemaState = ca.state
-		re := IsJobRollbackable(job)
+		re := job.IsRollbackable()
 		require.Equal(t, ca.result, re)
 	}
 }
