@@ -434,7 +434,7 @@ func TestIndexJoin31494(t *testing.T) {
 		insertStr += fmt.Sprintf(", (%d, %d, %d)", i, i, i)
 	}
 	tk.MustExec(insertStr)
-	sm := &mockSessionManager1{
+	sm := &testkit.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
 	tk.Session().SetSessionManager(sm)

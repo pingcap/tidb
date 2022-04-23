@@ -241,11 +241,8 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 	// wait reorganization job done or timeout
 	select {
 	case err := <-w.reorgCtx.doneCh:
-		if err != nil {
-			w.reorgCtx.clean()
-			return errors.Trace(err)
-		}
-		if w.reorgCtx.isReorgCanceled() {
+		// Since job is cancelled，we don't care about its partial counts.
+		if w.reorgCtx.isReorgCanceled() || terror.ErrorEqual(err, dbterror.ErrCancelledDDLJob) {
 			w.reorgCtx.clean()
 			return dbterror.ErrCancelledDDLJob
 		}
@@ -258,6 +255,11 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		w.mergeWarningsIntoJob(job)
 
 		w.reorgCtx.clean()
+		// For other errors, even err is not nil here, we still wait the partial counts to be collected.
+		// since in the next round, the startKey is brand new which is stored by last time.
+		if err != nil {
+			return errors.Trace(err)
+		}
 
 		switch reorgInfo.Type {
 		case model.ActionAddIndex, model.ActionAddPrimaryKey:
