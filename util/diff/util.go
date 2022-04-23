@@ -21,8 +21,8 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbutil"
-	"github.com/pingcap/tidb/util/utils"
 	"go.uber.org/zap"
 )
 
@@ -43,7 +43,7 @@ func ignoreColumns(tableInfo *model.TableInfo, columns []string) *model.TableInf
 		return tableInfo
 	}
 
-	removeColMap := utils.SliceToMap(columns)
+	removeColMap := util.SliceToMap(columns)
 	for i := 0; i < len(tableInfo.Indices); i++ {
 		index := tableInfo.Indices[i]
 		for j := 0; j < len(index.Columns); j++ {

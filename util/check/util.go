@@ -23,7 +23,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/util/utils"
+	"github.com/pingcap/tidb/util"
 )
 
 // MySQLVersion represents MySQL version number.
@@ -127,7 +127,7 @@ func IsMariaDB(version string) bool {
 func markCheckError(result *Result, err error) {
 	if err != nil {
 		var state State
-		if utils.OriginError(err) == context.Canceled {
+		if util.OriginError(err) == context.Canceled {
 			state = StateWarning
 		} else {
 			state = StateFailure

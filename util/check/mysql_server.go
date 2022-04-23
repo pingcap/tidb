@@ -19,8 +19,8 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbutil"
-	"github.com/pingcap/tidb/util/utils"
 )
 
 // MySQLVersionChecker checks mysql/mariadb/rds,... version.
@@ -126,7 +126,7 @@ func (pc *MySQLServerIDChecker) Check(ctx context.Context) *Result {
 
 	serverID, err := dbutil.ShowServerID(ctx, pc.db)
 	if err != nil {
-		if utils.OriginError(err) == sql.ErrNoRows {
+		if util.OriginError(err) == sql.ErrNoRows {
 			result.Errors = append(result.Errors, NewError("server_id not set"))
 			result.Instruction = "please set server_id in your database"
 		} else {
