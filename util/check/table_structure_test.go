@@ -121,7 +121,7 @@ func TestTablesChecker(t *testing.T) {
 	require.NoError(t, err)
 	ctx := context.Background()
 
-	printJson := func(r *Result) {
+	printJSON := func(r *Result) {
 		rawResult, _ := json.MarshalIndent(r, "", "\t")
 		fmt.Println("\n" + string(rawResult))
 	}
@@ -145,7 +145,7 @@ func TestTablesChecker(t *testing.T) {
 
 	require.Equal(t, StateSuccess, result.State)
 	require.NoError(t, mock.ExpectationsWereMet())
-	printJson(result)
+	printJSON(result)
 
 	// 2. check many errors
 
@@ -164,7 +164,7 @@ func TestTablesChecker(t *testing.T) {
 	require.Equal(t, StateFailure, result.State)
 	require.Len(t, result.Errors, 2) // no PK/UK + has FK
 	require.NoError(t, mock.ExpectationsWereMet())
-	printJson(result)
+	printJSON(result)
 
 	// 3. unsupported charset
 
@@ -183,5 +183,5 @@ func TestTablesChecker(t *testing.T) {
 	require.Equal(t, StateFailure, result.State)
 	require.Len(t, result.Errors, 1)
 	require.NoError(t, mock.ExpectationsWereMet())
-	printJson(result)
+	printJSON(result)
 }
