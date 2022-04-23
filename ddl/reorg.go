@@ -198,6 +198,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		}
 	}
 	rc := w.getReorgCtx(job)
+
 	if rc == nil {
 		// Since reorg job will be interrupted for polling the cancel action outside. we don't need to wait for 2.5s
 		// for the later entrances.
@@ -210,11 +211,9 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		if job.IsCancelling() {
 			w.notifyReorgCancel(job)
 		}
-		w.wg.Add(1)
-		go func() {
-			defer w.wg.Done()
+		w.wg.Run(func() {
 			rc.doneCh <- f()
-		}()
+		})
 	}
 
 	waitTimeout := defaultWaitReorgTimeout
@@ -232,7 +231,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 	case err := <-rc.doneCh:
 		defer w.removeReorgCtx(job)
 		// Since job is cancelled，we don't care about its partial counts.
-		if w.reorgCtx.isReorgCanceled() || terror.ErrorEqual(err, dbterror.ErrCancelledDDLJob) {
+		if rc.isReorgCanceled() || terror.ErrorEqual(err, dbterror.ErrCancelledDDLJob) {
 			return dbterror.ErrCancelledDDLJob
 		}
 		rowCount, _, _ := rc.getRowCountAndKey()

@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -92,7 +91,7 @@ type worker struct {
 	addingDDLJobKey string
 	ddlJobCh        chan struct{}
 	ctx             context.Context
-	wg              sync.WaitGroup
+	wg              tidbutil.WaitGroupWrapper
 
 	sessPool        *sessionPool // sessPool is used to new sessions to execute SQL in ddl package.
 	sessForJob      sessionctx.Context
