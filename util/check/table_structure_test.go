@@ -31,7 +31,7 @@ func TestShardingTablesChecker(t *testing.T) {
 	require.NoError(t, err)
 	ctx := context.Background()
 
-	printJson := func(r *Result) {
+	printJSON := func(r *Result) {
 		rawResult, _ := json.MarshalIndent(r, "", "\t")
 		fmt.Println("\n" + string(rawResult))
 	}
@@ -64,7 +64,7 @@ func TestShardingTablesChecker(t *testing.T) {
 
 	require.Equal(t, StateSuccess, result.State)
 	require.NoError(t, mock.ExpectationsWereMet())
-	printJson(result)
+	printJSON(result)
 
 	// 2. check different column number
 
@@ -89,7 +89,7 @@ func TestShardingTablesChecker(t *testing.T) {
 	require.Equal(t, StateFailure, result.State)
 	require.Len(t, result.Errors, 1)
 	require.NoError(t, mock.ExpectationsWereMet())
-	printJson(result)
+	printJSON(result)
 
 	// 3. check different column def
 
@@ -113,7 +113,7 @@ func TestShardingTablesChecker(t *testing.T) {
 	require.Equal(t, StateFailure, result.State)
 	require.Len(t, result.Errors, 1)
 	require.NoError(t, mock.ExpectationsWereMet())
-	printJson(result)
+	printJSON(result)
 }
 
 func TestTablesChecker(t *testing.T) {

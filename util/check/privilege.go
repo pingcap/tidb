@@ -168,10 +168,7 @@ func verifyPrivileges(result *Result, grants []string, expectedGrants map[mysql.
 
 		for _, privElem := range grantStmt.Privs {
 			if privElem.Priv == mysql.AllPriv {
-				if grantStmt.Level.Level == ast.GrantLevelGlobal {
-					result.State = StateSuccess
-					return
-				} else {
+				if grantStmt.Level.Level != ast.GrantLevelGlobal {
 					// REPLICATION CLIENT, REPLICATION SLAVE, RELOAD should be global privileges,
 					// thus a non-global GRANT ALL is not enough
 					for expectedGrant := range lackGrants {
@@ -180,6 +177,8 @@ func verifyPrivileges(result *Result, grants []string, expectedGrants map[mysql.
 						}
 					}
 				}
+				result.State = StateSuccess
+				return
 			} else {
 				// check every privilege and remove it from expectedGrants
 				if _, ok := lackGrants[privElem.Priv]; ok {

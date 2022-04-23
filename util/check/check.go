@@ -39,6 +39,7 @@ const (
 	StateWarning State = "warn"
 )
 
+// Error is error of check
 type Error struct {
 	Severity    State  `json:"severity"`
 	ShortErr    string `json:"short_error"`
