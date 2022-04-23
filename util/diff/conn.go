@@ -18,7 +18,7 @@ import (
 	"database/sql"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb-tools/pkg/dbutil"
+	"github.com/pingcap/tidb/util/dbutil"
 )
 
 // CreateDB creates sql.DB used for select data

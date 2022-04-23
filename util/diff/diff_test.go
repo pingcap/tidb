@@ -23,9 +23,9 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb-tools/pkg/dbutil"
-	"github.com/pingcap/tidb-tools/pkg/importer"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/util/dbutil"
+	"github.com/pingcap/tidb/util/importer"
 )
 
 func TestClient(t *testing.T) {
@@ -255,8 +255,8 @@ func testDataEqual(ctx context.Context, conn *sql.DB, schema string, sourceTable
 	// cancel `Equal`, dataEqual will be false, and will not panic
 	ctx1, cancel1 := context.WithCancel(ctx)
 	cancelEqualFunc = cancel1
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb-tools/pkg/diff/CancelCheckChunkDataEqual", `return(2)`), IsNil)
-	defer failpoint.Disable("github.com/pingcap/tidb-tools/pkg/diff/CancelCheckChunkDataEqual")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/util/diff/CancelCheckChunkDataEqual", `return(2)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/util/diff/CancelCheckChunkDataEqual")
 	structEqual, dataEqual, err = tableDiff.Equal(ctx1, writeSqls)
 	c.Assert(err, IsNil)
 	c.Assert(structEqual, Equals, true)

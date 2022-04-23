@@ -22,7 +22,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb-tools/pkg/utils"
+	"github.com/pingcap/tidb/util/utils"
 )
 
 // MySQLVersion represents MySQL version number.

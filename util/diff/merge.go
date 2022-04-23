@@ -17,8 +17,8 @@ import (
 	"strconv"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb-tools/pkg/dbutil"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/util/dbutil"
 	"go.uber.org/zap"
 )
 

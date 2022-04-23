@@ -18,8 +18,8 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/pingcap/tidb-tools/pkg/dbutil"
-	"github.com/pingcap/tidb-tools/pkg/utils"
+	"github.com/pingcap/tidb/util/dbutil"
+	"github.com/pingcap/tidb/util/utils"
 )
 
 // MySQLVersionChecker checks mysql/mariadb/rds,... version.

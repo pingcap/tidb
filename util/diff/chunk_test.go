@@ -18,9 +18,9 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb-tools/pkg/dbutil"
-	"github.com/pingcap/tidb-tools/pkg/importer"
-	"github.com/pingcap/tidb-tools/pkg/utils"
+	"github.com/pingcap/tidb/util/dbutil"
+	"github.com/pingcap/tidb/util/importer"
+	"github.com/pingcap/tidb/util/utils"
 )
 
 var _ = Suite(&testChunkSuite{})

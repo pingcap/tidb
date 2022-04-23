@@ -21,12 +21,12 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	column "github.com/pingcap/tidb-tools/pkg/column-mapping"
-	"github.com/pingcap/tidb-tools/pkg/dbutil"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	column "github.com/pingcap/tidb/util/column-mapping"
+	"github.com/pingcap/tidb/util/dbutil"
 )
 
 // AutoIncrementKeyChecking is an identification for auto increment key checking
