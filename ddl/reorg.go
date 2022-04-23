@@ -229,7 +229,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 
 	// wait reorganization job done or timeout
 	select {
-	case err := <-w.reorgCtx.doneCh:
+	case err := <-rc.doneCh:
 		defer w.removeReorgCtx(job)
 		// Since job is cancelled，we don't care about its partial counts.
 		if w.reorgCtx.isReorgCanceled() || terror.ErrorEqual(err, dbterror.ErrCancelledDDLJob) {
