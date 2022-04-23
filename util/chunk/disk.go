@@ -75,12 +75,19 @@ func (l *tempFileWithIOWrapper) initWithFileName(fileName string) (err error) {
 	return
 }
 
-func (l *tempFileWithIOWrapper) getSelectionReader(off int64) *io.SectionReader {
+func (l *tempFileWithIOWrapper) getReader() io.ReaderAt {
 	var underlying io.ReaderAt = l.disk
 	if l.ctrCipher != nil {
 		underlying = NewReaderWithCache(encrypt.NewReader(l.disk, l.ctrCipher), l.cipherWriter.GetCache(), l.cipherWriter.GetCacheDataOffset())
 	}
-	checksumReader := NewReaderWithCache(checksum.NewReader(underlying), l.checksumWriter.GetCache(), l.checksumWriter.GetCacheDataOffset())
+	if l.checksumWriter != nil {
+		underlying = NewReaderWithCache(checksum.NewReader(underlying), l.checksumWriter.GetCache(), l.checksumWriter.GetCacheDataOffset())
+	}
+	return underlying
+}
+
+func (l *tempFileWithIOWrapper) getSelectionReader(off int64) *io.SectionReader {
+	checksumReader := l.getReader()
 	r := io.NewSectionReader(checksumReader, off, l.offWrite-off)
 	return r
 }
@@ -195,7 +202,7 @@ func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 func (l *ListInDisk) getOffset(chkIdx uint32, rowIdx uint32) (int64, error) {
 	offsetInOffsetFile := l.offsetsForEachChunk[chkIdx] + int64(rowIdx)
 	b := make([]byte, 8)
-	reader := l.dataFile.getSelectionReader(offsetInOffsetFile * 8)
+	reader := l.offsetFile.getSelectionReader(offsetInOffsetFile * 8)
 	n, err := io.ReadFull(reader, b)
 	if err != nil {
 		return 0, err

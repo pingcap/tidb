@@ -31,8 +31,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
-	"github.com/pingcap/tidb/util/checksum"
-	"github.com/pingcap/tidb/util/encrypt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -302,11 +300,7 @@ func testReaderWithCache(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, chk.GetRow(0).GetDatumRow(field), row.GetDatumRow(field))
 
-	var underlying io.ReaderAt = l.disk
-	if l.ctrCipher != nil {
-		underlying = NewReaderWithCache(encrypt.NewReader(l.disk, l.ctrCipher), l.cipherWriter.GetCache(), l.cipherWriter.GetCacheDataOffset())
-	}
-	checksumReader := NewReaderWithCache(checksum.NewReader(underlying), l.checksumWriter.GetCache(), l.checksumWriter.GetCacheDataOffset())
+	checksumReader := l.dataFile.getReader()
 
 	// Read all data.
 	data := make([]byte, 1024)
@@ -375,12 +369,7 @@ func testReaderWithCacheNoFlush(t *testing.T) {
 	row, err := l.GetRow(RowPtr{0, 0})
 	require.NoError(t, err)
 	require.Equal(t, chk.GetRow(0).GetDatumRow(field), row.GetDatumRow(field))
-
-	var underlying io.ReaderAt = l.disk
-	if l.ctrCipher != nil {
-		underlying = NewReaderWithCache(encrypt.NewReader(l.disk, l.ctrCipher), l.cipherWriter.GetCache(), l.cipherWriter.GetCacheDataOffset())
-	}
-	checksumReader := NewReaderWithCache(checksum.NewReader(underlying), l.checksumWriter.GetCache(), l.checksumWriter.GetCacheDataOffset())
+	checksumReader := l.dataFile.getReader()
 
 	// Read all data.
 	data := make([]byte, 1024)
