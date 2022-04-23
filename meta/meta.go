@@ -226,7 +226,7 @@ func IsAutoTableIDKey(key []byte) bool {
 	return strings.HasPrefix(string(key), mTableIDPrefix+":")
 }
 
-func ParseAutoTableID(key []byte) (int64, error) {
+func ParseAutoTableIDKey(key []byte) (int64, error) {
 	if !IsAutoTableIDKey(key) {
 		return 0, ErrInvalidString.GenWithStack("fail to parse autoTableKey")
 	}
@@ -241,7 +241,25 @@ func (m *Meta) autoIncrementIDKey(tableID int64) []byte {
 }
 
 func (m *Meta) autoRandomTableIDKey(tableID int64) []byte {
+	return AutoRandomTableIDKey(tableID)
+}
+
+func AutoRandomTableIDKey(tableID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mRandomIDPrefix, tableID))
+}
+
+func IsAutoRandomTableIDKey(key []byte) bool {
+	return strings.HasPrefix(string(key), mRandomIDPrefix+":")
+}
+
+func ParseAutoRandomTableIDKey(key []byte) (int64, error) {
+	if !IsAutoRandomTableIDKey(key) {
+		return 0, ErrInvalidString.GenWithStack("fail to parse AutoRandomTableIDKey")
+	}
+
+	tableID := strings.TrimPrefix(string(key), mRandomIDPrefix+":")
+	id, err := strconv.Atoi(tableID)
+	return int64(id), err
 }
 
 func (m *Meta) tableKey(tableID int64) []byte {
@@ -270,7 +288,25 @@ func ParseTableKey(tableKey []byte) (int64, error) {
 }
 
 func (m *Meta) sequenceKey(sequenceID int64) []byte {
+	return SequenceKey(sequenceID)
+}
+
+func SequenceKey(sequenceID int64) []byte {
 	return []byte(fmt.Sprintf("%s:%d", mSequencePrefix, sequenceID))
+}
+
+func IsSequenceKey(key []byte) bool {
+	return strings.HasPrefix(string(key), mSequencePrefix+":")
+}
+
+func ParseSequenceKey(key []byte) (int64, error) {
+	if !IsSequenceKey(key) {
+		return 0, ErrInvalidString.GenWithStack("fail to parse sequence key")
+	}
+
+	sequenceID := strings.TrimPrefix(string(key), mSequencePrefix+":")
+	id, err := strconv.Atoi(sequenceID)
+	return int64(id), errors.Trace(err)
 }
 
 func (m *Meta) sequenceCycleKey(sequenceID int64) []byte {

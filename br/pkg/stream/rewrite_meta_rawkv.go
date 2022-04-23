@@ -163,7 +163,12 @@ func (sr *SchemasReplace) rewriteKVEntryForDB(e *kv.Entry, cf string) (*kv.Entry
 	return &kv.Entry{Key: newKey, Value: newValue}, nil
 }
 
-func (sr *SchemasReplace) rewriteKeyForTable(key []byte, cf string) ([]byte, bool, int64, error) {
+func (sr *SchemasReplace) rewriteKeyForTable(
+	key []byte,
+	cf string,
+	parseField func([]byte) (tableID int64, err error),
+	encodeField func(tableID int64) []byte,
+) ([]byte, bool, int64, error) {
 	rawMetaKey, err := ParseTxnMetaKeyFrom(key)
 	if err != nil {
 		return nil, false, 0, errors.Trace(err)
@@ -173,7 +178,7 @@ func (sr *SchemasReplace) rewriteKeyForTable(key []byte, cf string) ([]byte, boo
 	if err != nil {
 		return nil, false, 0, errors.Trace(err)
 	}
-	tableID, err := meta.ParseTableKey(rawMetaKey.Field)
+	tableID, err := parseField(rawMetaKey.Field)
 	if err != nil {
 		log.Warn("parse table key failed", zap.ByteString("field", rawMetaKey.Field))
 		return nil, false, 0, errors.Trace(err)
@@ -203,7 +208,7 @@ func (sr *SchemasReplace) rewriteKeyForTable(key []byte, cf string) ([]byte, boo
 	}
 
 	rawMetaKey.UpdateKey(meta.DBkey(dbReplace.DBID))
-	rawMetaKey.UpdateField(meta.TableKey(tableReplace.TableID))
+	rawMetaKey.UpdateField(encodeField(tableReplace.TableID))
 	if cf == "write" {
 		rawMetaKey.UpdateTS(sr.RewriteTS)
 	}
@@ -269,7 +274,7 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, bo
 }
 
 func (sr *SchemasReplace) rewriteKVEntryForTable(e *kv.Entry, cf string) (*kv.Entry, error) {
-	newKey, needWrite, dbID, err := sr.rewriteKeyForTable(e.Key, cf)
+	newKey, needWrite, dbID, err := sr.rewriteKeyForTable(e.Key, cf, meta.ParseTableKey, meta.TableKey)
 	if err != nil || !needWrite {
 		return nil, errors.Trace(err)
 	}
@@ -282,54 +287,41 @@ func (sr *SchemasReplace) rewriteKVEntryForTable(e *kv.Entry, cf string) (*kv.En
 	return &kv.Entry{Key: newKey, Value: newValue}, nil
 }
 
-func (sr *SchemasReplace) rewriteKeyForAutoTableID(key []byte, cf string) ([]byte, bool, error) {
-	rawMetaKey, err := ParseTxnMetaKeyFrom(key)
-	if err != nil {
-		return nil, false, errors.Trace(err)
+func (sr *SchemasReplace) rewriteKVEntryForAutoTableIDKey(e *kv.Entry, cf string) (*kv.Entry, error) {
+	newKey, needWrite, _, err := sr.rewriteKeyForTable(
+		e.Key,
+		cf,
+		meta.ParseAutoTableIDKey,
+		meta.AutoTableIDKey,
+	)
+	if err != nil || !needWrite {
+		return nil, errors.Trace(err)
 	}
 
-	dbID, err := meta.ParseDBKey(rawMetaKey.Key)
-	if err != nil {
-		return nil, false, errors.Trace(err)
-	}
-
-	tableID, err := meta.ParseAutoTableID(rawMetaKey.Field)
-	if err != nil {
-		return nil, false, errors.Trace(err)
-	}
-
-	dbReplace, exist := sr.DbMap[dbID]
-	if !exist {
-		newID, err := sr.genGenGlobalID(context.Background())
-		if err != nil {
-			return nil, false, errors.Trace(err)
-		}
-
-		dbReplace = NewDBReplace(newID, "", "")
-		sr.DbMap[dbID] = dbReplace
-	}
-
-	tableReplace, exist := dbReplace.TableMap[tableID]
-	if !exist {
-		newID, err := sr.genGenGlobalID(context.Background())
-		if err != nil {
-			return nil, false, errors.Trace(err)
-		}
-
-		tableReplace = NewTableReplace(newID, "", "")
-		dbReplace.TableMap[tableID] = tableReplace
-	}
-
-	rawMetaKey.UpdateKey(meta.DBkey(dbReplace.DBID))
-	rawMetaKey.UpdateField(meta.AutoTableIDKey(tableReplace.TableID))
-	if cf == "write" {
-		rawMetaKey.UpdateTS(sr.RewriteTS)
-	}
-	return rawMetaKey.EncodeMetaKey(), true, nil
+	return &kv.Entry{Key: newKey, Value: e.Value}, nil
 }
 
-func (sr *SchemasReplace) rewriteKVEntryForAutoTableID(e *kv.Entry, cf string) (*kv.Entry, error) {
-	newKey, needWrite, err := sr.rewriteKeyForAutoTableID(e.Key, cf)
+func (sr *SchemasReplace) rewriteKVEntryForSequenceKey(e *kv.Entry, cf string) (*kv.Entry, error) {
+	newKey, needWrite, _, err := sr.rewriteKeyForTable(
+		e.Key,
+		cf,
+		meta.ParseSequenceKey,
+		meta.SequenceKey,
+	)
+	if err != nil || !needWrite {
+		return nil, errors.Trace(err)
+	}
+
+	return &kv.Entry{Key: newKey, Value: e.Value}, nil
+}
+
+func (sr *SchemasReplace) rewriteKVEntryForAutoRandomTableIDKey(e *kv.Entry, cf string) (*kv.Entry, error) {
+	newKey, needWrite, _, err := sr.rewriteKeyForTable(
+		e.Key,
+		cf,
+		meta.ParseAutoRandomTableIDKey,
+		meta.AutoRandomTableIDKey,
+	)
 	if err != nil || !needWrite {
 		return nil, errors.Trace(err)
 	}
@@ -385,7 +377,11 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, err
 		if meta.IsTableKey(rawKey.Field) {
 			return sr.rewriteKVEntryForTable(e, cf)
 		} else if meta.IsAutoTableIDKey(rawKey.Field) {
-			return sr.rewriteKVEntryForAutoTableID(e, cf)
+			return sr.rewriteKVEntryForAutoTableIDKey(e, cf)
+		} else if meta.IsSequenceKey(rawKey.Field) {
+			return sr.rewriteKVEntryForSequenceKey(e, cf)
+		} else if meta.IsAutoRandomTableIDKey(rawKey.Field) {
+			return sr.rewriteKVEntryForAutoRandomTableIDKey(e, cf)
 		} else {
 			return nil, nil
 		}
