@@ -1483,11 +1483,6 @@ func (p *preprocessor) stmtType() string {
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
-		currentDB := p.ctx.GetSessionVars().CurrentDB
-		if currentDB == "" {
-			p.err = errors.Trace(ErrNoDB)
-			return
-		}
 
 		if len(p.preprocessWith.withNameNew) > 0 {
 			with := p.preprocessWith.withNameNew[len(p.preprocessWith.withNameNew)-1]
@@ -1505,6 +1500,13 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 				}
 			}
 		}
+
+		currentDB := p.ctx.GetSessionVars().CurrentDB
+		if currentDB == "" {
+			p.err = errors.Trace(ErrNoDB)
+			return
+		}
+
 		tn.Schema = model.NewCIStr(currentDB)
 	}
 
