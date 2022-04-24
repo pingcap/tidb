@@ -132,14 +132,14 @@ var (
 	StatsCacheLRUCounter = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "tidb",
 		Subsystem: "statistics",
-		Name:      "stats_cache_lru",
+		Name:      "cache_lru",
 		Help:      "The counter of stats cache lru operation",
 	}, []string{LblType})
 
 	StatsCacheLRUMemUsage = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "tidb",
 		Subsystem: "statistics",
-		Name:      "stats_cache_mem_usage",
+		Name:      "cache_mem_usage",
 		Help:      "The Gauge of stats cache mem usage",
 	}, []string{LblType})
 )

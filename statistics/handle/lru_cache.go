@@ -33,7 +33,7 @@ const (
 	typTotal  = "total"
 )
 
-// cacheEntry wraps Key and Value. It's the value of list.Element.
+// cacheItem wraps Key and Value. It's the value of list.Element.
 type cacheItem struct {
 	key         int64
 	value       *statistics.Table
