@@ -37,7 +37,7 @@ func TestUpdateNodeInfo(t *testing.T) {
 	defer testEtcdCluster.Terminate(t)
 
 	etcdclient := etcd.NewClient(testEtcdCluster.RandClient(), DefaultRootPath)
-	r := NewEtcdRegistry(etcdclient, time.Duration(5)*time.Second)
+	r := NewEtcdRegistry(etcdclient, time.Duration(30)*time.Second)
 	ns := &Status{
 		NodeID:  "test",
 		Addr:    "test",

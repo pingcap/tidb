@@ -120,7 +120,7 @@ func (s *chunkRestoreSuite) TestDeliverLoopEmptyData() {
 	// Deliver nothing.
 
 	cfg := &config.Config{}
-	rc := &Controller{cfg: cfg, backend: importer, diskQuotaLock: newDiskQuotaLock()}
+	rc := &Controller{cfg: cfg, backend: importer}
 
 	kvsCh := make(chan []deliveredKVs, 1)
 	kvsCh <- []deliveredKVs{}
@@ -216,7 +216,7 @@ func (s *chunkRestoreSuite) TestDeliverLoop() {
 	}()
 
 	cfg := &config.Config{}
-	rc := &Controller{cfg: cfg, saveCpCh: saveCpCh, backend: importer, diskQuotaLock: newDiskQuotaLock()}
+	rc := &Controller{cfg: cfg, saveCpCh: saveCpCh, backend: importer}
 
 	_, err = s.cr.deliverLoop(ctx, kvsCh, s.tr, 0, dataWriter, indexWriter, rc)
 	require.NoError(s.T(), err)
@@ -557,11 +557,10 @@ func (s *chunkRestoreSuite) TestRestore() {
 
 	saveCpCh := make(chan saveCp, 2)
 	err = s.cr.restore(ctx, s.tr, 0, dataWriter, indexWriter, &Controller{
-		cfg:           s.cfg,
-		saveCpCh:      saveCpCh,
-		backend:       importer,
-		pauser:        DeliverPauser,
-		diskQuotaLock: newDiskQuotaLock(),
+		cfg:      s.cfg,
+		saveCpCh: saveCpCh,
+		backend:  importer,
+		pauser:   DeliverPauser,
 	})
 	require.NoError(s.T(), err)
 	require.Len(s.T(), saveCpCh, 2)
