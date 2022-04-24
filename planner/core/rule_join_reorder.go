@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/logutil"
 	"sort"
 
 	"github.com/pingcap/tidb/expression"
@@ -507,7 +506,6 @@ type joinReorderTrace struct {
 }
 
 func (t *joinReorderTrace) traceJoinReorder(p LogicalPlan) {
-	logutil.BgLogger().Warn(allJoinOrderToString(extractJoinAndDataSource(p.buildPlanTrace())))
 	if t == nil || t.opt == nil || t.opt.tracer == nil {
 		return
 	}
