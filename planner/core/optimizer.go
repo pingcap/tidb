@@ -504,7 +504,7 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 		logic.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The parameter of nth_plan() is out of range"))
 	}
 	if t.invalid() {
-		return nil, 0, ErrInternal.GenWithStackByArgs("Can't find a proper physical plan for this query--%v", t)
+		return nil, 0, ErrInternal.GenWithStackByArgs("Can't find a proper physical plan for this query", t)
 	}
 
 	err = t.plan().ResolveIndices()
