@@ -871,3 +871,29 @@ func (s *testSuite3) TestIssue17247(c *C) {
 	_, err := tk1.Exec("ALTER USER USER() IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F'")
 	c.Assert(err, NotNil)
 }
+
+func TestStatementsCauseImplicitCommit(t *testing.T) {
+	// Test some of the implicit commit statements.
+	// See https://dev.mysql.com/doc/refman/5.7/en/implicit-commit.html
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table ic (id int primary key)")
+
+	cases := []string{
+		"create table xx (id int)",
+		"create user 'xx'@'127.0.0.1'",
+		"grant SELECT on test.ic to 'xx'@'127.0.0.1'",
+		"flush privileges",
+		"analyze table ic",
+	}
+	for i, sql := range cases {
+		tk.MustExec("begin")
+		tk.MustExec("insert into ic values (?)", i)
+		tk.MustExec(sql)
+		tk.MustQuery("select * from ic where id = ?", i).Check(testkit.Rows(strconv.FormatInt(int64(i), 10)))
+		// Clean up data
+		tk.MustExec("delete from ic")
+	}
+}
