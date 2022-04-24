@@ -312,6 +312,19 @@ func TestTxnSavepoint(t *testing.T) {
 		{sql: "insert into t values (4, 4)"},
 		{sql: "commit"},
 		{sql: "select * from t order by id", result: []string{"1 2", "2 2", "3 3", "4 4"}},
+
+		{sql: "delete from t"},
+		{sql: "begin"},
+		{sql: "savepoint s1"},
+		{sql: "insert into t values (1, 1)"},
+		{sql: "savepoint s2"},
+		{sql: "insert into t values (2, 2)"},
+		{sql: "savepoint s1"},
+		{sql: "insert into t values (3, 3)"},
+		{sql: "rollback to s1"},
+		{sql: "select * from t order by id", result: []string{"1 2", "2 2"}},
+		{sql: "commit"},
+		{sql: "select * from t order by id", result: []string{"1 2", "2 2"}},
 	}
 	for idx, ca := range cases {
 		comment := fmt.Sprintf("idx: %v, %#v", idx, ca)

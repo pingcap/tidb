@@ -656,29 +656,39 @@ func (e *SimpleExec) executeSavepoint(s *ast.SavepointStmt) error {
 
 	memBuffer := txn.GetMemBuffer()
 	cp := memBuffer.Checkpoint()
+	e.deleteSavepoint(s.Name)
 	txnCtx.Savepoints = append(txnCtx.Savepoints, variable.SavepointRecord{Name: s.Name, Cp: cp})
 	return nil
 }
 
 func (e *SimpleExec) executeReleaseSavepoint(s *ast.ReleaseSavepointStmt) error {
+	deleted := e.deleteSavepoint(s.Name)
+	if !deleted {
+		return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.Name)
+	}
+	return nil
+}
+
+// deleteSavepoint deletes the savepoint, return false indicate the savepoint name doesn't exists.
+func (e *SimpleExec) deleteSavepoint(savepoint string) bool {
 	sessVars := e.ctx.GetSessionVars()
 	txnCtx := sessVars.TxnCtx
 	idx := -1
 	for i, sp := range txnCtx.Savepoints {
-		if sp.Name == s.Name {
+		if sp.Name == savepoint {
 			idx = i
 			break
 		}
 	}
 	if idx < 0 {
-		return errSavepointNotExists.GenWithStackByArgs("SAVEPOINT", s.Name)
+		return false
 	}
 	length := len(txnCtx.Savepoints)
 	for i := idx; i < length-1; i++ {
 		txnCtx.Savepoints[i] = txnCtx.Savepoints[i+1]
 	}
 	txnCtx.Savepoints = txnCtx.Savepoints[:length-1]
-	return nil
+	return true
 }
 
 func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStmt) error {
