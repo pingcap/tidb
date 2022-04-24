@@ -568,7 +568,7 @@ func (t *TableDiff) compareRows(ctx context.Context, chunk *ChunkRange) (bool, e
 	defer targetRows.Close()
 
 	for i, sourceTable := range t.SourceTables {
-		rows, _, err := getChunkRows(ctx, sourceTable.Conn, sourceTable.Schema, sourceTable.Table, sourceTable.info, chunk.Where, args, t.Collation) // noline:rowserrcheck
+		rows, _, err := getChunkRows(ctx, sourceTable.Conn, sourceTable.Schema, sourceTable.Table, sourceTable.info, chunk.Where, args, t.Collation) // nolint:rowserrcheck
 		if err != nil {
 			return false, errors.Trace(err)
 		}
