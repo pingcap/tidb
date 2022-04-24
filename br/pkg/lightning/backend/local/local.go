@@ -1798,9 +1798,9 @@ func (local *local) isIngestRetryable(
 		}
 		return retryWrite, newRegion, errors.New(errPb.GetMessage())
 	case errPb.ServerIsBusy != nil:
-		return retryNone, nil, common.ErrKVServerIsBusy
+		return retryNone, nil, errors.Annotate(common.ErrKVServerIsBusy, errPb.GetMessage())
 	case errPb.RegionNotFound != nil:
-		return retryNone, nil, common.ErrKVRegionNotFound
+		return retryNone, nil, errors.Annotate(common.ErrKVRegionNotFound, errPb.GetMessage())
 	}
 	return retryNone, nil, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
 }
