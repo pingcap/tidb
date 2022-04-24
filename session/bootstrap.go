@@ -700,7 +700,6 @@ var (
 		upgradeToVer85,
 		upgradeToVer86,
 		upgradeToVer87,
-		upgradeToVer88,
 	}
 )
 
