@@ -605,11 +605,13 @@ const (
 	version86 = 86
 	// version87 adds the mysql.analyze_jobs table
 	version87 = 87
+	// version88 fixes the issue https://github.com/pingcap/tidb/issues/33650.
+	version88 = 88
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version87
+var currentBootstrapVersion int64 = version88
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -700,6 +702,7 @@ var (
 		upgradeToVer85,
 		upgradeToVer86,
 		upgradeToVer87,
+		upgradeToVer88,
 	}
 )
 
@@ -1788,6 +1791,14 @@ func upgradeToVer87(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateAnalyzeJobs)
+}
+
+func upgradeToVer88(s Session, ver int64) {
+	if ver >= version88 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user CHANGE `Repl_slave_priv` `Repl_slave_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Execute_priv`")
+	doReentrantDDL(s, "ALTER TABLE mysql.user CHANGE `Repl_client_priv` `Repl_client_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`")
 }
 
 func writeOOMAction(s Session) {
