@@ -100,7 +100,7 @@ func (s *testCheckpointSuite) testUpdateSummary(t *testing.T, db *sql.DB) {
 	require.Equal(t, failedState, state)
 }
 
-func TestloadFromCheckPoint(t *testing.T) {
+func TestLoadFromCheckPoint(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 
