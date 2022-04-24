@@ -43,7 +43,8 @@ cleanup
 run_lightning --sorted-kv-dir "$TEST_DIR/sst" --config "tests/$TEST_NAME/config.toml" --log-file "$TEST_DIR/lightning.log"
 check_result
 # local-backend set auto_increment to 9223372036854775807 after importing
-run_sql_fail 'INSERT INTO db.test(b) VALUES(11);' # will not succeed
+# sql fail because of of duplicate key
+run_sql 'INSERT INTO db.test(b) VALUES(11);' 2>&1 | tee -a "$TEST_DIR/sql_res.$TEST_NAME.txt"
 check_contains 'ERROR'
 # duplicate key update
 run_sql 'INSERT INTO db.test(b) VALUES(11) ON DUPLICATE KEY UPDATE b=10000;'
