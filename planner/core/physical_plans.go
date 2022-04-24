@@ -261,7 +261,7 @@ func (p *PhysicalIndexReader) SetSchema(_ *expression.Schema) {
 	if p.indexPlan != nil {
 		p.IndexPlans = flattenPushDownPlan(p.indexPlan)
 		switch p.indexPlan.(type) {
-		case *PhysicalHashAgg, *PhysicalStreamAgg:
+		case *PhysicalHashAgg, *PhysicalStreamAgg, *PhysicalProjection:
 			p.schema = p.indexPlan.Schema()
 		default:
 			is := p.IndexPlans[0].(*PhysicalIndexScan)
@@ -439,8 +439,6 @@ type PhysicalIndexScan struct {
 	NeedCommonHandle bool
 
 	// required by cost model
-	// IndexScan operators under inner side of IndexJoin no need to consider net seek cost
-	underInnerIndexJoin bool
 	// tblColHists contains all columns before pruning, which are used to calculate row-size
 	tblColHists   *statistics.HistColl
 	pkIsHandleCol *expression.Column
@@ -542,8 +540,6 @@ type PhysicalTableScan struct {
 	SampleInfo *TableSampleInfo
 
 	// required by cost model
-	// TableScan operators under inner side of IndexJoin no need to consider net seek cost
-	underInnerIndexJoin bool
 	// tblCols and tblColHists contains all columns before pruning, which are used to calculate row-size
 	tblCols     []*expression.Column
 	tblColHists *statistics.HistColl
