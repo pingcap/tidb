@@ -11,8 +11,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -1306,9 +1304,7 @@ func buildMockNewRows(mock sqlmock.Sqlmock, columns []string, driverValues [][]d
 }
 
 func readRegionCsvDriverValues(t *testing.T) [][]driver.Value {
-	// nolint: dogsled
-	_, filename, _, _ := runtime.Caller(0)
-	csvFilename := path.Join(path.Dir(filename), "region_results.csv")
+	csvFilename := "region_results.csv"
 	file, err := os.Open(csvFilename)
 	require.NoError(t, err)
 	csvReader := csv.NewReader(file)
