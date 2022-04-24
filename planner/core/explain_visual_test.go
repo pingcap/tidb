@@ -17,13 +17,14 @@ package core_test
 import (
 	"encoding/base64"
 	"fmt"
+	"testing"
+
 	"github.com/golang/snappy"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestExplainVisual(t *testing.T) {
