@@ -40,6 +40,7 @@ func TestIsRetryableError(t *testing.T) {
 
 	// kv errors
 	require.True(t, IsRetryableError(ErrKVNotLeader))
+	require.True(t, IsRetryableError(ErrKVNotLeader.GenWithStack("test")))
 	require.True(t, IsRetryableError(ErrKVEpochNotMatch))
 	require.True(t, IsRetryableError(ErrKVServerIsBusy))
 	require.True(t, IsRetryableError(ErrKVRegionNotFound))

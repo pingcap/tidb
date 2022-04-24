@@ -1759,7 +1759,7 @@ func (local *local) isIngestRetryable(
 		// Thus directly retry ingest may cause TiKV panic. So always return retryWrite here to avoid
 		// this issue.
 		// See: https://github.com/tikv/tikv/issues/9496
-		return retryWrite, newRegion, errors.Annotate(common.ErrKVNotLeader, errPb.GetMessage())
+		return retryWrite, newRegion, common.ErrKVNotLeader.GenWithStack(errPb.GetMessage())
 	case errPb.EpochNotMatch != nil:
 		if currentRegions := errPb.GetEpochNotMatch().GetCurrentRegions(); currentRegions != nil {
 			var currentRegion *metapb.Region
@@ -1789,7 +1789,7 @@ func (local *local) isIngestRetryable(
 		if newRegion != nil {
 			retryTy = retryWrite
 		}
-		return retryTy, newRegion, errors.Annotate(common.ErrKVEpochNotMatch, errPb.GetMessage())
+		return retryTy, newRegion, common.ErrKVEpochNotMatch.GenWithStack(errPb.GetMessage())
 	case strings.Contains(errPb.Message, "raft: proposal dropped"):
 		// TODO: we should change 'Raft raft: proposal dropped' to a error type like 'NotLeader'
 		newRegion, err = getRegion()
@@ -1798,9 +1798,9 @@ func (local *local) isIngestRetryable(
 		}
 		return retryWrite, newRegion, errors.New(errPb.GetMessage())
 	case errPb.ServerIsBusy != nil:
-		return retryNone, nil, errors.Annotate(common.ErrKVServerIsBusy, errPb.GetMessage())
+		return retryNone, nil, common.ErrKVServerIsBusy.GenWithStack(errPb.GetMessage())
 	case errPb.RegionNotFound != nil:
-		return retryNone, nil, errors.Annotate(common.ErrKVRegionNotFound, errPb.GetMessage())
+		return retryNone, nil, common.ErrKVRegionNotFound.GenWithStack(errPb.GetMessage())
 	}
 	return retryNone, nil, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
 }

@@ -24,6 +24,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	tmysql "github.com/pingcap/tidb/errno"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -51,11 +52,6 @@ func isSingleRetryableError(err error) bool {
 		return false
 	case mysql.ErrInvalidConn, driver.ErrBadConn:
 		return true
-	case ErrKVEpochNotMatch, ErrKVNotLeader, ErrKVRegionNotFound, ErrKVServerIsBusy:
-		// common.ErrKVServerIsBusy is a little duplication with tmysql.ErrTiKVServerBusy below
-		// it's because the response of sst.ingest gives us a sst.IngestResponse which doesn't contain error code,
-		// so we have to transform it into a defined code
-		return true
 	}
 
 	switch nerr := err.(type) {
@@ -81,6 +77,16 @@ func isSingleRetryableError(err error) bool {
 		default:
 			return false
 		}
+	case *errors.Error:
+		switch {
+		case berrors.Is(nerr, ErrKVEpochNotMatch), berrors.Is(nerr, ErrKVNotLeader),
+			berrors.Is(nerr, ErrKVRegionNotFound), berrors.Is(nerr, ErrKVServerIsBusy):
+			// common.ErrKVServerIsBusy is a little duplication with tmysql.ErrTiKVServerBusy
+			// it's because the response of sst.ingest gives us a sst.IngestResponse which doesn't contain error code,
+			// so we have to transform it into a defined code
+			return true
+		}
+		return false
 	default:
 		switch status.Code(err) {
 		case codes.DeadlineExceeded, codes.NotFound, codes.AlreadyExists, codes.PermissionDenied, codes.ResourceExhausted, codes.Aborted, codes.OutOfRange, codes.Unavailable, codes.DataLoss:
