@@ -22,7 +22,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
-	"runtime"
 	"testing"
 
 	"github.com/BurntSushi/toml"
@@ -106,9 +105,6 @@ func TestNullableBoolUnmarshal(t *testing.T) {
 func TestLogConfig(t *testing.T) {
 	var conf Config
 	configFile := "log_config.toml"
-	_, localFile, _, _ := runtime.Caller(0)
-	configFile = filepath.Join(filepath.Dir(localFile), configFile)
-
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
 	defer func() {
@@ -179,9 +175,6 @@ func TestConfig(t *testing.T) {
 	conf.TiKVClient.RegionCacheTTL = 600
 	conf.Log.EnableSlowLog.Store(logutil.DefaultTiDBEnableSlowLog)
 	configFile := "config.toml"
-	_, localFile, _, _ := runtime.Caller(0)
-	configFile = filepath.Join(filepath.Dir(localFile), configFile)
-
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
 	defer func(configFile string) {
@@ -378,7 +371,7 @@ spilled-file-encryption-method = "aes128-ctr"
 	require.NoError(t, f.Sync())
 	require.NoError(t, conf.Load(configFile))
 
-	configFile = filepath.Join(filepath.Dir(localFile), "config.toml.example")
+	configFile = "config.toml.example"
 	require.NoError(t, conf.Load(configFile))
 
 	// Make sure the example config is the same as default config except `auto_tls`.
@@ -398,7 +391,6 @@ spilled-file-encryption-method = "aes128-ctr"
 
 	// Test for TLS config.
 	certFile := "cert.pem"
-	certFile = filepath.Join(filepath.Dir(localFile), certFile)
 	f, err = os.Create(certFile)
 	require.NoError(t, err)
 	_, err = f.WriteString(`-----BEGIN CERTIFICATE-----
@@ -424,7 +416,6 @@ c933WW1E0hCtvuGxWFIFtoJMQoyH0Pl4ACmY/6CokCCZKDInrPdhhf3MGRjkkw==
 	require.NoError(t, f.Close())
 
 	keyFile := "key.pem"
-	keyFile = filepath.Join(filepath.Dir(localFile), keyFile)
 	f, err = os.Create(keyFile)
 	require.NoError(t, err)
 	_, err = f.WriteString(`-----BEGIN RSA PRIVATE KEY-----
@@ -658,8 +649,7 @@ func TestTcpNoDelay(t *testing.T) {
 
 func TestConfigExample(t *testing.T) {
 	conf := NewConfig()
-	_, localFile, _, _ := runtime.Caller(0)
-	configFile := filepath.Join(filepath.Dir(localFile), "config.toml.example")
+	configFile := "config.toml.example"
 	metaData, err := toml.DecodeFile(configFile, conf)
 	require.NoError(t, err)
 	keys := metaData.Keys()

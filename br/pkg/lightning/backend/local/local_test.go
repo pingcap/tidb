@@ -33,6 +33,7 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -1187,4 +1188,15 @@ func TestMultiIngest(t *testing.T) {
 			require.Equal(t, testCase.supportMutliIngest, local.supportMultiIngest)
 		}
 	}
+}
+
+func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
+	bak := local{}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace"))
+	}()
+	err := bak.writeAndIngestPairs(context.Background(), nil, nil, nil, nil, 0, 0)
+	require.Error(t, err)
+	require.Regexp(t, "The available disk of TiKV.*", err.Error())
 }
