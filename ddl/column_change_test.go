@@ -392,7 +392,7 @@ func checkHistoryJobArgs(t *testing.T, ctx sessionctx.Context, id int64, args *h
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
 	tran := meta.NewMeta(txn)
-	historyJob, err := tran.GetHistoryDDLJob(id)
+	historyJob, err := ddl.GetHistoryJob(ctx, tran, id)
 	require.NoError(t, err)
 	require.Greater(t, historyJob.BinlogInfo.FinishedTS, uint64(0))
 
@@ -412,19 +412,15 @@ func checkHistoryJobArgs(t *testing.T, ctx sessionctx.Context, id int64, args *h
 }
 
 func testCheckJobDone(t *testing.T, store kv.Storage, jobID int64, isAdd bool) {
-	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		historyJob, err := m.GetHistoryDDLJob(jobID)
-		require.NoError(t, err)
-		require.Equal(t, historyJob.State, model.JobStateSynced)
-		if isAdd {
-			require.Equal(t, historyJob.SchemaState, model.StatePublic)
-		} else {
-			require.Equal(t, historyJob.SchemaState, model.StateNone)
-		}
-
-		return nil
-	}))
+	sess := testNewContext(store)
+	historyJob, err := ddl.GetHistoryJobFromStore(sess, store, jobID)
+	require.NoError(t, err)
+	require.Equal(t, historyJob.State, model.JobStateSynced)
+	if isAdd {
+		require.Equal(t, historyJob.SchemaState, model.StatePublic)
+	} else {
+		require.Equal(t, historyJob.SchemaState, model.StateNone)
+	}
 }
 
 func testNewContext(store kv.Storage) sessionctx.Context {

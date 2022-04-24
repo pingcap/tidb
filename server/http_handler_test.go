@@ -23,6 +23,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/ddl"
 	"io"
 	"net"
 	"net/http"
@@ -970,9 +971,8 @@ func TestAllHistory(t *testing.T) {
 	store := domain.GetDomain(s.(sessionctx.Context)).Store()
 	txn, _ := store.Begin()
 	txnMeta := meta.NewMeta(txn)
-	_, err = txnMeta.GetAllHistoryDDLJobs()
+	data, err := ddl.GetAllHistoryDDLJobs(s, txnMeta)
 	require.NoError(t, err)
-	data, _ := txnMeta.GetAllHistoryDDLJobs()
 	err = decoder.Decode(&jobs)
 
 	require.NoError(t, err)

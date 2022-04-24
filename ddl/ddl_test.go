@@ -119,7 +119,7 @@ func checkHistoryJobArgs(t *testing.T, ctx sessionctx.Context, id int64, args *h
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
 	tran := meta.NewMeta(txn)
-	historyJob, err := tran.GetHistoryDDLJob(id)
+	historyJob, err := GetHistoryJob(ctx, tran, id)
 	require.NoError(t, err)
 	require.Greater(t, historyJob.BinlogInfo.FinishedTS, uint64(0))
 

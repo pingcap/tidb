@@ -30,6 +30,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
@@ -4420,19 +4421,13 @@ func TestAdminShowDDLJobs(t *testing.T) {
 	jobID, err := strconv.Atoi(row[0].(string))
 	require.NoError(t, err)
 
-	err = kv.RunInNewTxn(context.Background(), store, true, func(ctx context.Context, txn kv.Transaction) error {
-		tt := meta.NewMeta(txn)
-		job, err := tt.GetHistoryDDLJob(int64(jobID))
-		require.NoError(t, err)
-		require.NotNil(t, job)
-		// Test for compatibility. Old TiDB version doesn't have SchemaName field, and the BinlogInfo maybe nil.
-		// See PR: 11561.
-		job.BinlogInfo = nil
-		job.SchemaName = ""
-		err = tt.AddHistoryDDLJob(job, true)
-		require.NoError(t, err)
-		return nil
-	})
+	job, err := ddl.GetHistoryJobFromStore(tk.Session(), store, int64(jobID))
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	// Test for compatibility. Old TiDB version doesn't have SchemaName field, and the BinlogInfo maybe nil.
+	// See PR: 11561.
+	job.BinlogInfo = nil
+	job.SchemaName = ""
 	require.NoError(t, err)
 
 	re = tk.MustQuery("admin show ddl jobs 1")

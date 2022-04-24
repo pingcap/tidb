@@ -22,8 +22,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -226,17 +224,14 @@ func TestForeignKey(t *testing.T) {
 }
 
 func testCheckJobDone(t *testing.T, d *ddl, job *model.Job, isAdd bool) {
-	require.NoError(t, kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		historyJob, err := m.GetHistoryDDLJob(job.ID)
-		require.NoError(t, err)
-		checkHistoryJob(t, historyJob)
-		if isAdd {
-			require.Equal(t, historyJob.SchemaState, model.StatePublic)
-		} else {
-			require.Equal(t, historyJob.SchemaState, model.StateNone)
-		}
-
-		return nil
-	}))
+	sess := testNewContext(d)
+	historyJob, err := GetHistoryJobFromStore(sess, d.store, job.ID)
+	require.NoError(t, err)
+	require.NoError(t, err)
+	checkHistoryJob(t, historyJob)
+	if isAdd {
+		require.Equal(t, historyJob.SchemaState, model.StatePublic)
+	} else {
+		require.Equal(t, historyJob.SchemaState, model.StateNone)
+	}
 }

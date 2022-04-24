@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -257,14 +258,12 @@ func doDDLJobErr(t *testing.T, schemaID, tableID int64, tp model.ActionType, arg
 }
 
 func testCheckJobCancelled(t *testing.T, store kv.Storage, job *model.Job, state *model.SchemaState) {
-	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
-		historyJob, err := m.GetHistoryDDLJob(job.ID)
-		require.NoError(t, err)
-		require.True(t, historyJob.IsCancelled() || historyJob.IsRollbackDone(), "history job %s", historyJob)
-		if state != nil {
-			require.Equal(t, historyJob.SchemaState, *state)
-		}
-		return nil
-	}))
+	se := mock.NewContext()
+	se.Store = store
+	historyJob, err := GetHistoryJobFromStore(se, store, job.ID)
+	require.NoError(t, err)
+	require.True(t, historyJob.IsCancelled() || historyJob.IsRollbackDone(), "history job %s", historyJob)
+	if state != nil {
+		require.Equal(t, historyJob.SchemaState, *state)
+	}
 }

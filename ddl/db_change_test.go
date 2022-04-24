@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -1711,15 +1710,7 @@ func (s *stateChangeSuite) TestModifyColumnTypeArgs() {
 
 	id, err := strconv.Atoi(jobID)
 	s.Require().NoError(err)
-	var historyJob *model.Job
-	err = kv.RunInNewTxn(context.Background(), s.store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		historyJob, err = t.GetHistoryDDLJob(int64(id))
-		if err != nil {
-			return err
-		}
-		return nil
-	})
+	historyJob, err := ddl.GetHistoryJobFromStore(tk.Session(), s.store, int64(id))
 	s.Require().NoError(err)
 	s.Require().NotNil(historyJob)
 
