@@ -53,7 +53,7 @@ func isSingleRetryableError(err error) bool {
 		return true
 	case ErrKVEpochNotMatch, ErrKVNotLeader, ErrKVRegionNotFound, ErrKVServerIsBusy:
 		// common.ErrKVServerIsBusy is a little duplication with tmysql.ErrTiKVServerBusy below
-		// it's because the reponse of sst.ingest gives us a sst.IngestResponse which doesn't contain error code,
+		// it's because the response of sst.ingest gives us a sst.IngestResponse which doesn't contain error code,
 		// so we have to transform it into a defined code
 		return true
 	}

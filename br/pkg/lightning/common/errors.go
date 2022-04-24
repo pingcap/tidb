@@ -87,9 +87,7 @@ var (
 	ErrAllocTableRowIDs   = errors.Normalize("allocate table row id error", errors.RFCCodeText("Lightning:Restore:ErrAllocTableRowIDs"))
 	ErrInvalidMetaStatus  = errors.Normalize("invalid meta status: '%s'", errors.RFCCodeText("Lightning:Restore:ErrInvalidMetaStatus"))
 	ErrTableIsChecksuming = errors.Normalize("table '%s' is checksuming", errors.RFCCodeText("Lightning:Restore:ErrTableIsChecksuming"))
-)
 
-var (
 	// TODO: BR has similar errors, but it contains BR inside, maybe merge them later
 
 	ErrKVEpochNotMatch  = errors.Normalize("epoch not match", errors.RFCCodeText("Lightning:KV:EpochNotMatch"))
