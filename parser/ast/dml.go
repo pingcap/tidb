@@ -1044,6 +1044,16 @@ type CommonTableExpression struct {
 	ColNameList []model.CIStr
 }
 
+// Restore implement it Before using
+func (c CommonTableExpression) Restore(ctx *format.RestoreCtx) error {
+	panic("implement me")
+}
+
+// Accept implement it Before using
+func (c CommonTableExpression) Accept(v Visitor) (node Node, ok bool) {
+	panic("implement me")
+}
+
 type WithClause struct {
 	node
 
@@ -1147,11 +1157,13 @@ func (n *WithClause) Accept(v Visitor) (Node, bool) {
 	}
 
 	for _, cte := range n.CTEs {
+		v.Enter(cte)
 		node, ok := cte.Query.Accept(v)
 		if !ok {
 			return n, false
 		}
 		cte.Query = node.(*SubqueryExpr)
+		v.Leave(cte)
 	}
 	return v.Leave(n)
 }

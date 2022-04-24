@@ -114,9 +114,10 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 // preprocessReturn used to extract the infoschema for the tableName and the timestamp from the asof clause.
 func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...PreprocessOpt) error {
 	v := preprocessor{
-		ctx:                ctx,
-		tableAliasInJoin:   make([]map[string]interface{}, 0),
-		preprocessWith:     PreprocessWith{name: make(map[string]interface{}), inDeepestWithClause: false, deepestRecursive: false},
+		ctx:              ctx,
+		tableAliasInJoin: make([]map[string]interface{}, 0),
+		preprocessWith: preprocessWith{withNameNew: make([]ast.WithClause, 0),
+			withNameCanUsed: make([]ast.WithClause, 0)},
 		staleReadProcessor: staleread.NewStaleReadProcessor(ctx),
 	}
 	for _, optFn := range preprocessOpt {
@@ -176,11 +177,16 @@ type PreprocessExecuteISUpdate struct {
 	Node                    ast.Node
 }
 
-// PreprocessWith is used to record info from WITH statements like CTE name and RECURSIVE.
-type PreprocessWith struct {
-	name                map[string]interface{}
-	deepestRecursive    bool
-	inDeepestWithClause bool // Only in the deepest ast.WithClause should judge to add schema or not when table name is the same as WITH name
+// preprocessWith is used to record info from WITH statements like CTE name.
+type preprocessWith struct {
+	withNameNew     []ast.WithClause
+	withNameCanUsed []ast.WithClause
+}
+
+func (p *preprocessWith) popWithNameCanUsedIfNotEmpty() {
+	if len(p.withNameCanUsed) > 0 {
+		p.withNameCanUsed = p.withNameCanUsed[:len(p.withNameCanUsed)-1]
+	}
 }
 
 // preprocessor is an ast.Visitor that preprocess
@@ -194,7 +200,7 @@ type preprocessor struct {
 	// tableAliasInJoin is a stack that keeps the table alias names for joins.
 	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
 	tableAliasInJoin []map[string]interface{}
-	preprocessWith   PreprocessWith
+	preprocessWith   preprocessWith
 
 	staleReadProcessor staleread.Processor
 
@@ -325,11 +331,17 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.GroupByClause:
 		p.checkGroupBy(node)
 	case *ast.WithClause:
-		p.preprocessWith.deepestRecursive = node.IsRecursive
-		p.preprocessWith.inDeepestWithClause = true
-		for _, cte := range node.CTEs {
-			p.preprocessWith.name[cte.Name.L] = struct{}{}
+		p.preprocessWith.withNameNew = append(p.preprocessWith.withNameNew, *node)
+	case *ast.CommonTableExpression:
+		lastWithNode := p.preprocessWith.withNameNew[len(p.preprocessWith.withNameNew)-1]
+		newCTEMap := make([]*ast.CommonTableExpression, 0)
+		for _, cte := range lastWithNode.CTEs {
+			if cte.Name.L == node.Name.L && !lastWithNode.IsRecursive {
+				continue
+			}
+			newCTEMap = append(newCTEMap, cte)
 		}
+		lastWithNode.CTEs = newCTEMap
 	case *ast.BeginStmt:
 		// If the begin statement was like following:
 		// start transaction read only as of timestamp ....
@@ -573,8 +585,38 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		if x.Kind == ast.BRIEKindRestore {
 			p.flag &= ^inCreateOrDropTable
 		}
+	case *ast.CommonTableExpression:
+		lastWithNode := p.preprocessWith.withNameNew[len(p.preprocessWith.withNameNew)-1]
+		if !lastWithNode.IsRecursive {
+			lastWithNode.CTEs = append(lastWithNode.CTEs, x)
+		}
+
 	case *ast.WithClause:
-		p.preprocessWith.inDeepestWithClause = false
+		if len(p.preprocessWith.withNameNew) > 0 {
+			p.preprocessWith.withNameNew =
+				p.preprocessWith.withNameNew[:len(p.preprocessWith.withNameNew)-1]
+		}
+		p.preprocessWith.withNameCanUsed = append(p.preprocessWith.withNameCanUsed, *x)
+	case *ast.SetOprSelectList:
+		if x.With != nil {
+			p.preprocessWith.popWithNameCanUsedIfNotEmpty()
+		}
+	case *ast.SelectStmt:
+		if x.With != nil {
+			p.preprocessWith.popWithNameCanUsedIfNotEmpty()
+		}
+	case *ast.UpdateStmt:
+		if x.With != nil {
+			p.preprocessWith.popWithNameCanUsedIfNotEmpty()
+		}
+	case *ast.DeleteStmt:
+		if x.With != nil {
+			p.preprocessWith.popWithNameCanUsedIfNotEmpty()
+		}
+	case *ast.SetOprStmt:
+		if x.With != nil {
+			p.preprocessWith.popWithNameCanUsedIfNotEmpty()
+		}
 	}
 
 	return in, p.err == nil
@@ -1447,20 +1489,22 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 			return
 		}
 
-		if _, ok := p.preprocessWith.name[tn.Name.L]; ok {
-
-			if !p.preprocessWith.inDeepestWithClause {
-				return
+		if len(p.preprocessWith.withNameNew) > 0 {
+			with := p.preprocessWith.withNameNew[len(p.preprocessWith.withNameNew)-1]
+			for _, cte := range with.CTEs {
+				if cte.Name.L == tn.Name.L {
+					return
+				}
 			}
-
-			if p.ensureInfoSchema().TableExists(model.NewCIStr(currentDB), tn.Name) && !p.preprocessWith.deepestRecursive {
-				// do noting
-			} else {
-				return
-			}
-
 		}
 
+		for _, with := range p.preprocessWith.withNameCanUsed {
+			for _, cte := range with.CTEs {
+				if cte.Name.L == tn.Name.L {
+					return
+				}
+			}
+		}
 		tn.Schema = model.NewCIStr(currentDB)
 	}
 
