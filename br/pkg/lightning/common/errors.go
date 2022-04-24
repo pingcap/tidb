@@ -89,6 +89,15 @@ var (
 	ErrTableIsChecksuming = errors.Normalize("table '%s' is checksuming", errors.RFCCodeText("Lightning:Restore:ErrTableIsChecksuming"))
 )
 
+var (
+	// TODO: BR has similar errors, but it contains BR inside, maybe merge them later
+
+	ErrKVEpochNotMatch  = errors.Normalize("epoch not match", errors.RFCCodeText("Lightning:KV:EpochNotMatch"))
+	ErrKVNotLeader      = errors.Normalize("not leader", errors.RFCCodeText("Lightning:KV:NotLeader"))
+	ErrKVServerIsBusy   = errors.Normalize("server is busy", errors.RFCCodeText("Lightning:KV:ServerIsBusy"))
+	ErrKVRegionNotFound = errors.Normalize("region not found", errors.RFCCodeText("Lightning:KV:RegionNotFound"))
+)
+
 type withStack struct {
 	error
 	errors.StackTracer

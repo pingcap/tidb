@@ -1103,7 +1103,7 @@ WriteAndIngest:
 			err = local.writeAndIngestPairs(ctx, engine, region, pairStart, end, regionSplitSize, regionSplitKeys)
 			local.ingestConcurrency.Recycle(w)
 			if err != nil {
-				if !utils.IsRetryableError(err) {
+				if !common.IsRetryableError(err) {
 					return err
 				}
 				_, regionStart, _ := codec.DecodeBytes(region.Region.StartKey, []byte{})
@@ -1150,7 +1150,7 @@ loopWrite:
 		var rangeStats rangeStats
 		metas, finishedRange, rangeStats, err = local.WriteToTiKV(ctx, engine, region, start, end, regionSplitSize, regionSplitKeys)
 		if err != nil {
-			if !utils.IsRetryableError(err) {
+			if !common.IsRetryableError(err) {
 				return err
 			}
 
@@ -1291,7 +1291,7 @@ func (local *local) writeAndIngestByRanges(ctx context.Context, engine *Engine, 
 				if err == nil || common.IsContextCanceledError(err) {
 					return
 				}
-				if !utils.IsRetryableError(err) {
+				if !common.IsRetryableError(err) {
 					break
 				}
 				log.L().Warn("write and ingest by range failed",
@@ -1759,7 +1759,7 @@ func (local *local) isIngestRetryable(
 		// Thus directly retry ingest may cause TiKV panic. So always return retryWrite here to avoid
 		// this issue.
 		// See: https://github.com/tikv/tikv/issues/9496
-		return retryWrite, newRegion, errors.Errorf("not leader: %s", errPb.GetMessage())
+		return retryWrite, newRegion, errors.Annotate(common.ErrKVNotLeader, errPb.GetMessage())
 	case errPb.EpochNotMatch != nil:
 		if currentRegions := errPb.GetEpochNotMatch().GetCurrentRegions(); currentRegions != nil {
 			var currentRegion *metapb.Region
@@ -1789,7 +1789,7 @@ func (local *local) isIngestRetryable(
 		if newRegion != nil {
 			retryTy = retryWrite
 		}
-		return retryTy, newRegion, errors.Errorf("epoch not match: %s", errPb.GetMessage())
+		return retryTy, newRegion, errors.Annotate(common.ErrKVEpochNotMatch, errPb.GetMessage())
 	case strings.Contains(errPb.Message, "raft: proposal dropped"):
 		// TODO: we should change 'Raft raft: proposal dropped' to a error type like 'NotLeader'
 		newRegion, err = getRegion()
@@ -1797,6 +1797,10 @@ func (local *local) isIngestRetryable(
 			return retryNone, nil, errors.Trace(err)
 		}
 		return retryWrite, newRegion, errors.New(errPb.GetMessage())
+	case errPb.ServerIsBusy != nil:
+		return retryNone, nil, common.ErrKVServerIsBusy
+	case errPb.RegionNotFound != nil:
+		return retryNone, nil, common.ErrKVRegionNotFound
 	}
 	return retryNone, nil, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
 }
