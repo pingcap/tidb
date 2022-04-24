@@ -116,8 +116,8 @@ func Preprocess(ctx sessionctx.Context, node ast.Node, preprocessOpt ...Preproce
 	v := preprocessor{
 		ctx:              ctx,
 		tableAliasInJoin: make([]map[string]interface{}, 0),
-		preprocessWith: preprocessWith{withNameNew: make([]ast.WithClause, 0),
-			withNameCanUsed: make([]ast.WithClause, 0)},
+		preprocessWith: preprocessWith{withNameNew: make([]*ast.WithClause, 0),
+			withNameCanUsed: make([]*ast.WithClause, 0)},
 		staleReadProcessor: staleread.NewStaleReadProcessor(ctx),
 	}
 	for _, optFn := range preprocessOpt {
@@ -179,8 +179,8 @@ type PreprocessExecuteISUpdate struct {
 
 // preprocessWith is used to record info from WITH statements like CTE name.
 type preprocessWith struct {
-	withNameNew     []ast.WithClause
-	withNameCanUsed []ast.WithClause
+	withNameNew     []*ast.WithClause
+	withNameCanUsed []*ast.WithClause
 }
 
 func (p *preprocessWith) popWithNameCanUsedIfNotEmpty() {
@@ -331,7 +331,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.GroupByClause:
 		p.checkGroupBy(node)
 	case *ast.WithClause:
-		p.preprocessWith.withNameNew = append(p.preprocessWith.withNameNew, *node)
+		p.preprocessWith.withNameNew = append(p.preprocessWith.withNameNew, node)
 	case *ast.CommonTableExpression:
 		lastWithNode := p.preprocessWith.withNameNew[len(p.preprocessWith.withNameNew)-1]
 		newCTEMap := make([]*ast.CommonTableExpression, 0)
@@ -596,7 +596,7 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 			p.preprocessWith.withNameNew =
 				p.preprocessWith.withNameNew[:len(p.preprocessWith.withNameNew)-1]
 		}
-		p.preprocessWith.withNameCanUsed = append(p.preprocessWith.withNameCanUsed, *x)
+		p.preprocessWith.withNameCanUsed = append(p.preprocessWith.withNameCanUsed, x)
 	case *ast.SetOprSelectList:
 		if x.With != nil {
 			p.preprocessWith.popWithNameCanUsedIfNotEmpty()
