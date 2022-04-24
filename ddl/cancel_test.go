@@ -198,7 +198,7 @@ func TestCancel(t *testing.T) {
 
 	hookFunc := func(job *model.Job) {
 		if job.SchemaState == allTestCase[i].cancelState && !cancel {
-			if job.SchemaState == model.StateWriteReorganization && ddl.MayNeedReorg(job) && job.RowCount == 0 {
+			if job.SchemaState == model.StateWriteReorganization && job.MayNeedReorg() && job.RowCount == 0 {
 				return
 			}
 			rs := tkCancel.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
