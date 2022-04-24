@@ -80,6 +80,8 @@ const (
 		Index_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_user_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Event_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Repl_slave_priv	    	ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Repl_client_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Trigger_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_role_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Drop_role_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
@@ -89,8 +91,6 @@ const (
 		FILE_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Config_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Create_Tablespace_Priv  ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Repl_slave_priv	    	ENUM('N','Y') NOT NULL DEFAULT 'N',
-		Repl_client_priv		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
@@ -1596,7 +1596,7 @@ func upgradeToVer64(s Session, ver int64) {
 	if ver >= version64 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_slave_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_Tablespace_Priv`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_slave_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Execute_priv`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Repl_client_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`", infoschema.ErrColumnExists)
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Repl_slave_priv='Y',Repl_client_priv='Y' where Super_priv='Y'")
 }
@@ -1791,14 +1791,6 @@ func upgradeToVer87(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateAnalyzeJobs)
-}
-
-func upgradeToVer88(s Session, ver int64) {
-	if ver >= version88 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.user CHANGE `Repl_slave_priv` `Repl_slave_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Create_Tablespace_Priv`")
-	doReentrantDDL(s, "ALTER TABLE mysql.user CHANGE `Repl_client_priv` `Repl_client_priv` ENUM('N','Y') NOT NULL DEFAULT 'N' AFTER `Repl_slave_priv`")
 }
 
 func writeOOMAction(s Session) {
