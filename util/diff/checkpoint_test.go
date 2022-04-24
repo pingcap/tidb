@@ -27,6 +27,7 @@ import (
 type testCheckpointSuite struct{}
 
 func TestCheckpoint(t *testing.T) {
+	t.Skip("remove it after migrate CI from tidb-tools")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	s := &testCheckpointSuite{}

@@ -79,6 +79,7 @@ func TestGenerateSQLs(t *testing.T) {
 }
 
 func TestDiff(t *testing.T) {
+	t.Skip("remove it after migrate CI from tidb-tools")
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
 	defer cancel()
 

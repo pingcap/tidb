@@ -26,6 +26,7 @@ import (
 )
 
 func TestSplitRange(t *testing.T) {
+	t.Skip("remove it after migrate CI from tidb-tools")
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
@@ -185,6 +186,7 @@ func TestChunkToString(t *testing.T) {
 }
 
 func TestRangeLimit(t *testing.T) {
+	t.Skip("remove it after migrate CI from tidb-tools")
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
