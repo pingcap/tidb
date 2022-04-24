@@ -49,6 +49,7 @@ var allTestCase = []testCancelJob{
 	{"alter table t add primary key idx_pc2 (c2)", true, model.StateWriteReorganization, true, true, nil},
 	{"alter table t add primary key idx_pc2 (c2)", false, model.StatePublic, false, true, nil},
 	// Drop primary key
+	// TODO: fix schema state.
 	{"alter table t drop primary key", true, model.StateNone, true, false, nil},
 	{"alter table t drop primary key", false, model.StateWriteOnly, true, false, nil},
 	{"alter table t drop primary key", false, model.StateWriteOnly, true, false, []string{"alter table t add primary key idx_pc2 (c2)"}},
@@ -74,6 +75,7 @@ var allTestCase = []testCancelJob{
 	{"create table test_create_table(a int)", true, model.StateNone, true, false, nil},
 	{"create table test_create_table(a int)", false, model.StatePublic, false, true, nil},
 	// Drop table.
+	// TODO: fix schema state.
 	{"drop table test_create_table", true, model.StateNone, true, false, nil},
 	{"drop table test_create_table", false, model.StateWriteOnly, true, true, []string{"create table if not exists test_create_table(a int)"}},
 	{"drop table test_create_table", false, model.StateDeleteOnly, true, true, []string{"create table if not exists test_create_table(a int)"}},
@@ -82,11 +84,13 @@ var allTestCase = []testCancelJob{
 	{"create database test_create_db", true, model.StateNone, true, false, nil},
 	{"create database test_create_db", false, model.StatePublic, false, true, nil},
 	// Drop schema.
+	// TODO: fix schema state.
 	{"drop database test_create_db", true, model.StateNone, true, false, nil},
 	{"drop database test_create_db", false, model.StateWriteOnly, true, true, []string{"create database if not exists test_create_db"}},
 	{"drop database test_create_db", false, model.StateDeleteOnly, true, true, []string{"create database if not exists test_create_db"}},
 	{"drop database test_create_db", false, model.StatePublic, false, true, []string{"create database if not exists test_create_db"}},
 	// Drop column.
+	// TODO: fix schema state.
 	{"alter table t drop column c3", true, model.StateNone, true, false, nil},
 	{"alter table t drop column c3", false, model.StateDeleteOnly, true, false, nil},
 	{"alter table t drop column c3", false, model.StateDeleteOnly, false, true, []string{"alter table t add column c3 bigint"}},
@@ -94,6 +98,7 @@ var allTestCase = []testCancelJob{
 	{"alter table t drop column c3", false, model.StateDeleteReorganization, true, true, []string{"alter table t add column c3 bigint"}},
 	{"alter table t drop column c3", false, model.StatePublic, false, true, []string{"alter table t add column c3 bigint"}},
 	// Drop column with index.
+	// TODO: fix schema state.
 	{"alter table t drop column c3", true, model.StateNone, true, false, []string{"alter table t add column c3 bigint", "alter table t add index idx_c3(c3)"}},
 	{"alter table t drop column c3", false, model.StateDeleteOnly, true, false, nil},
 	{"alter table t drop column c3", false, model.StateDeleteOnly, false, true, []string{"alter table t add column c3 bigint", "alter table t add index idx_c3(c3)"}},
@@ -123,6 +128,7 @@ var allTestCase = []testCancelJob{
 	{"alter table t add constraint fk foreign key a(c1) references t_ref(c1)", true, model.StateNone, true, false, []string{"create table t_ref (c1 int, c2 int, c3 int, c11 tinyint);"}},
 	{"alter table t add constraint fk foreign key a(c1) references t_ref(c1)", false, model.StatePublic, false, true, nil},
 	// Drop foreign key.
+	// TODO: fix schema state.
 	{"alter table t drop foreign key fk", true, model.StateNone, true, false, nil},
 	{"alter table t drop foreign key fk", false, model.StatePublic, false, true, nil},
 	// Rename table.
@@ -147,6 +153,7 @@ var allTestCase = []testCancelJob{
 	{"alter table t add column c41 bigint, add column c42 bigint", true, model.StateWriteReorganization, true, true, nil},
 	{"alter table t add column c41 bigint, add column c42 bigint", false, model.StatePublic, false, true, nil},
 	// Drop columns.
+	// TODO: fix schema state.
 	{"alter table t drop column c41, drop column c42", true, model.StateNone, true, false, nil},
 	{"alter table t drop column c41, drop column c42", false, model.StateDeleteOnly, true, false, nil},
 	{"alter table t drop column c41, drop column c42", false, model.StateDeleteOnly, false, true, []string{"alter table t add column c41 bigint, add column c42 bigint"}},
@@ -154,6 +161,7 @@ var allTestCase = []testCancelJob{
 	{"alter table t drop column c41, drop column c42", false, model.StateDeleteReorganization, true, true, []string{"alter table t add column c41 bigint, add column c42 bigint"}},
 	{"alter table t drop column c41, drop column c42", false, model.StatePublic, false, true, []string{"alter table t add column c41 bigint, add column c42 bigint"}},
 	// Drop columns with index.
+	// TODO: fix schema state.
 	{"alter table t drop column c41, drop column c42", true, model.StateNone, true, false, []string{"alter table t add column c41 bigint, add column c42 bigint", "alter table t add index drop_columns_idx(c41)"}},
 	{"alter table t drop column c41, drop column c42", false, model.StateDeleteOnly, true, false, nil},
 	{"alter table t drop column c41, drop column c42", false, model.StateDeleteOnly, false, true, []string{"alter table t add column c41 bigint, add column c42 bigint", "alter table t add index drop_columns_idx(c41)"}},
@@ -171,12 +179,14 @@ var allTestCase = []testCancelJob{
 	{"alter table t_partition add partition (partition p6 values less than (8192))", true, model.StateReplicaOnly, true, true, nil},
 	{"alter table t_partition add partition (partition p6 values less than (8192))", false, model.StatePublic, false, true, nil},
 	// Drop partition.
+	// TODO: fix schema state.
 	{"alter table t_partition drop partition p6", true, model.StateNone, true, false, nil},
 	{"alter table t_partition drop partition p6", false, model.StateDeleteOnly, true, false, nil},
 	{"alter table t_partition drop partition p6", false, model.StateDeleteOnly, false, true, []string{"alter table t_partition add partition (partition p6 values less than (8192))"}},
 	{"alter table t_partition drop partition p6", false, model.StateDeleteReorganization, true, true, []string{"alter table t_partition add partition (partition p6 values less than (8192))"}},
 	{"alter table t_partition drop partition p6", false, model.StatePublic, true, true, []string{"alter table t_partition add partition (partition p6 values less than (8192))"}},
 	// Drop indexes.
+	// TODO: fix schema state.
 	{"alter table t drop index mul_idx1, drop index mul_idx2", true, model.StateNone, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
 	{"alter table t drop index mul_idx1, drop index mul_idx2", false, model.StateWriteOnly, true, false, nil},
 	{"alter table t drop index mul_idx1, drop index mul_idx2", false, model.StateWriteOnly, true, false, []string{"alter table t add index mul_idx1(c1)", "alter table t add index mul_idx2(c1)"}},
