@@ -2735,11 +2735,30 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 }
 
 func (p *LogicalSelection) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
+	newProps := make([]*property.PhysicalProperty, 0, 3)
 	childProp := prop.CloneEssentialFields()
-	sel := PhysicalSelection{
-		Conditions: p.Conditions,
-	}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, childProp)
-	return []PhysicalPlan{sel}, true, nil
+	newProps = append(newProps, childProp)
+	if p.canPushToCop(kv.TiFlash) &&
+		expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.Conditions, p.SCtx().GetClient(), kv.TiFlash) {
+		if prop.TaskTp != property.CopSingleReadTaskType {
+			childPropMpp := prop.CloneEssentialFields()
+			childPropMpp.TaskTp = property.CopSingleReadTaskType
+			newProps = append(newProps, childPropMpp)
+		}
+		if prop.TaskTp != property.MppTaskType && p.SCtx().GetSessionVars().IsMPPAllowed() {
+			childPropMpp := prop.CloneEssentialFields()
+			childPropMpp.TaskTp = property.MppTaskType
+			newProps = append(newProps, childPropMpp)
+		}
+	}
+	ret := make([]PhysicalPlan, 0, len(newProps))
+	for _, newProp := range newProps {
+		sel := PhysicalSelection{
+			Conditions: p.Conditions,
+		}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, newProp)
+		ret = append(ret, sel)
+	}
+	return ret, true, nil
 }
 
 func (p *LogicalLimit) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {

@@ -592,30 +592,30 @@
       {
         "SQL": "explain select a from t where t.a>1 or t.a in (select a from t); -- 7. left outer semi join",
         "Plan": [
-          "TableReader_48 8000.00 root  data:ExchangeSender_47",
-          "└─ExchangeSender_47 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "TableReader_53 8000.00 root  data:ExchangeSender_52",
+          "└─ExchangeSender_52 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection_8 8000.00 mpp[tiflash]  test.t.a",
-          "    └─Selection_45 8000.00 mpp[tiflash]  or(gt(test.t.a, 1), Column#3)",
-          "      └─HashJoin_46 10000.00 mpp[tiflash]  left outer semi join, equal:[eq(test.t.a, test.t.a)]",
-          "        ├─ExchangeReceiver_26(Build) 10000.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender_25 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─TableFullScan_24 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "        └─TableFullScan_23(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─Selection_50 8000.00 mpp[tiflash]  or(gt(test.t.a, 1), Column#3)",
+          "      └─HashJoin_47 10000.00 mpp[tiflash]  left outer semi join, equal:[eq(test.t.a, test.t.a)]",
+          "        ├─ExchangeReceiver_28(Build) 10000.00 mpp[tiflash]  ",
+          "        │ └─ExchangeSender_27 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "        │   └─TableFullScan_26 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─TableFullScan_25(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
         "SQL": "explain select a from t where t.a>1 or t.a not in (select a from t); -- now it's supported -- 8. anti left outer semi join",
         "Plan": [
-          "TableReader_48 8000.00 root  data:ExchangeSender_47",
-          "└─ExchangeSender_47 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "TableReader_53 8000.00 root  data:ExchangeSender_52",
+          "└─ExchangeSender_52 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection_8 8000.00 mpp[tiflash]  test.t.a",
-          "    └─Selection_45 8000.00 mpp[tiflash]  or(gt(test.t.a, 1), Column#3)",
-          "      └─HashJoin_46 10000.00 mpp[tiflash]  anti left outer semi join, equal:[eq(test.t.a, test.t.a)]",
-          "        ├─ExchangeReceiver_26(Build) 10000.00 mpp[tiflash]  ",
-          "        │ └─ExchangeSender_25 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
-          "        │   └─TableFullScan_24 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "        └─TableFullScan_23(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "    └─Selection_50 8000.00 mpp[tiflash]  or(gt(test.t.a, 1), Column#3)",
+          "      └─HashJoin_47 10000.00 mpp[tiflash]  anti left outer semi join, equal:[eq(test.t.a, test.t.a)]",
+          "        ├─ExchangeReceiver_28(Build) 10000.00 mpp[tiflash]  ",
+          "        │ └─ExchangeSender_27 10000.00 mpp[tiflash]  ExchangeType: Broadcast",
+          "        │   └─TableFullScan_26 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "        └─TableFullScan_25(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
