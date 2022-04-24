@@ -478,7 +478,7 @@ type ShowDDLJobsExec struct {
 // nolint:structcheck
 type DDLJobRetriever struct {
 	runningJobs    []*model.Job
-	historyJobIter *meta.LastJobIterator
+	historyJobIter meta.LastJobIterator
 	cursor         int
 	is             infoschema.InfoSchema
 	activeRoles    []*auth.RoleIdentity
@@ -504,7 +504,7 @@ func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) e
 			return err
 		}
 	}
-	e.historyJobIter, err = m.GetLastHistoryDDLJobsIterator()
+	e.historyJobIter, err = admin.GetLastHistoryDDLJobsIterator(sess, m)
 	if err != nil {
 		return err
 	}
@@ -622,7 +622,7 @@ func (e *ShowDDLJobQueriesExec) Open(ctx context.Context) error {
 	}
 
 	// TODO(hawkingrei): Can it be used in concurrency DDL. it need to be checked.
-	historyJobs, err := admin.GetHistoryDDLJobs(txn, admin.DefNumHistoryJobs)
+	historyJobs, err := admin.GetHistoryDDLJobs(nil, txn, admin.DefNumHistoryJobs)
 	if err != nil {
 		return err
 	}

@@ -105,7 +105,7 @@ func TestGetDDLJobs(t *testing.T) {
 		require.Len(t, currJobs, i+1)
 
 		currJobs2 = currJobs2[:0]
-		err = IterAllDDLJobs(txn, func(jobs []*model.Job) (b bool, e error) {
+		err = IterAllDDLJobs(nil, txn, func(jobs []*model.Job) (b bool, e error) {
 			for _, job := range jobs {
 				if job.NotStarted() {
 					currJobs2 = append(currJobs2, job)
@@ -282,6 +282,9 @@ func TestCancelJobs(t *testing.T) {
 }
 
 func TestGetHistoryDDLJobs(t *testing.T) {
+	if variable.AllowConcurrencyDDL.Load() {
+		t.Skip("skip test on allow concurrent DDL")
+	}
 	store, clean := newMockStore(t)
 	defer clean()
 
@@ -300,7 +303,7 @@ func TestGetHistoryDDLJobs(t *testing.T) {
 		err = m.AddHistoryDDLJob(jobs[i], true)
 		require.NoError(t, err)
 
-		historyJobs, err := GetHistoryDDLJobs(txn, DefNumHistoryJobs)
+		historyJobs, err := GetHistoryDDLJobs(nil, txn, DefNumHistoryJobs)
 		require.NoError(t, err)
 
 		if i+1 > MaxHistoryJobs {
@@ -311,7 +314,7 @@ func TestGetHistoryDDLJobs(t *testing.T) {
 	}
 
 	delta := cnt - MaxHistoryJobs
-	historyJobs, err := GetHistoryDDLJobs(txn, DefNumHistoryJobs)
+	historyJobs, err := GetHistoryDDLJobs(nil, txn, DefNumHistoryJobs)
 	require.NoError(t, err)
 	require.Len(t, historyJobs, MaxHistoryJobs)
 
@@ -323,7 +326,7 @@ func TestGetHistoryDDLJobs(t *testing.T) {
 	}
 
 	var historyJobs2 []*model.Job
-	err = IterHistoryDDLJobs(txn, func(jobs []*model.Job) (b bool, e error) {
+	err = IterHistoryDDLJobs(nil, txn, func(jobs []*model.Job) (b bool, e error) {
 		for _, job := range jobs {
 			historyJobs2 = append(historyJobs2, job)
 			if len(historyJobs2) == DefNumHistoryJobs {

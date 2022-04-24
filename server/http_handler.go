@@ -897,7 +897,7 @@ func (h flashReplicaHandler) getDropOrTruncateTableTiflash(currentSchema infosch
 	if variable.AllowConcurrencyDDL.Load() {
 		err = admin.IterAllConcurrentDDLJobs(txn, fn, s)
 	} else {
-		err = admin.IterAllDDLJobs(txn, fn)
+		err = admin.IterAllDDLJobs(s, txn, fn)
 	}
 	if err != nil {
 		if terror.ErrorEqual(variable.ErrSnapshotTooOld, err) {
@@ -1273,8 +1273,15 @@ func (h ddlHistoryJobHandler) getAllHistoryDDL() ([]*model.Job, error) {
 		return nil, errors.Trace(err)
 	}
 	txnMeta := meta.NewMeta(txn)
+	se, err := session.CreateSession(h.Store)
+	if err != nil {
+		logutil.BgLogger().Warn("[gc worker] create session", zap.Error(err))
+		return nil, errors.Trace(err)
+	}
+	se.GetSessionVars().InRestrictedSQL = true
+	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 
-	jobs, err := txnMeta.GetAllHistoryDDLJobs()
+	jobs, err := ddl.GetAllHistoryDDLJobs(se, txnMeta)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

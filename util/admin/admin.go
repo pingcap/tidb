@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -248,19 +250,15 @@ const DefNumHistoryJobs = 10
 
 // GetHistoryDDLJobs returns the DDL history jobs and an error.
 // The maximum count of history jobs is num.
-func GetHistoryDDLJobs(txn kv.Transaction, maxNumJobs int) ([]*model.Job, error) {
+func GetHistoryDDLJobs(sess sessionctx.Context, txn kv.Transaction, maxNumJobs int) ([]*model.Job, error) {
 	t := meta.NewMeta(txn)
-	jobs, err := t.GetLastNHistoryDDLJobs(maxNumJobs)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return jobs, nil
+	return GetLastNHistoryDDLJobs(sess, t, maxNumJobs)
 }
 
 // IterHistoryDDLJobs iterates history DDL jobs until the `finishFn` return true or error.
-func IterHistoryDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
+func IterHistoryDDLJobs(sess sessionctx.Context, txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
 	txnMeta := meta.NewMeta(txn)
-	iter, err := txnMeta.GetLastHistoryDDLJobsIterator()
+	iter, err := GetLastHistoryDDLJobsIterator(sess, txnMeta)
 	if err != nil {
 		return err
 	}
@@ -279,7 +277,7 @@ func IterHistoryDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, e
 
 // IterAllDDLJobs will iterates running DDL jobs first, return directly if `finishFn` return true or error,
 // then iterates history DDL jobs until the `finishFn` return true or error.
-func IterAllDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
+func IterAllDDLJobs(ctx sessionctx.Context, txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
 	jobs, err := GetDDLJobs(txn)
 	if err != nil {
 		return err
@@ -289,7 +287,7 @@ func IterAllDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error
 	if err != nil || finish {
 		return err
 	}
-	return IterHistoryDDLJobs(txn, finishFn)
+	return IterHistoryDDLJobs(ctx, txn, finishFn)
 }
 
 // IterAllConcurrentDDLJobs will iterates running DDL jobs first, return directly if `finishFn` return true or error,
@@ -304,7 +302,73 @@ func IterAllConcurrentDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (b
 	if err != nil || finish {
 		return err
 	}
-	return IterHistoryDDLJobs(txn, finishFn)
+	return IterHistoryDDLJobs(sess, txn, finishFn)
+}
+
+func GetLastNHistoryDDLJobs(sess sessionctx.Context, m *meta.Meta, maxNumJobs int) ([]*model.Job, error) {
+	if variable.AllowConcurrencyDDL.Load() {
+		return getJobsBySQL(sess, "tidb_history_job", "1 order by job_seq desc limit "+strconv.Itoa(maxNumJobs), nil)
+	}
+	jobs, err := m.GetLastNHistoryDDLJobs(maxNumJobs)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return jobs, nil
+}
+
+// GetLastHistoryDDLJobsIterator gets latest N history ddl jobs iterator.
+func GetLastHistoryDDLJobsIterator(sess sessionctx.Context, m *meta.Meta) (meta.LastJobIterator, error) {
+	if variable.AllowConcurrencyDDL.Load() {
+		return &ConcurrentDDLLastJobIterator{
+			sess:   sess,
+			offset: 0,
+		}, nil
+	}
+	return m.GetLastHistoryDDLJobsIterator()
+}
+
+// ConcurrentDDLLastJobIterator is the iterator for gets latest history.
+type ConcurrentDDLLastJobIterator struct {
+	sess   sessionctx.Context
+	offset uint64
+}
+
+func (c *ConcurrentDDLLastJobIterator) GetLastJobs(num int, jobs []*model.Job) ([]*model.Job, error) {
+	jobs, err := getJobsBySQL(c.sess, "tidb_history_job", fmt.Sprintf("1 order by job_seq desc limit %d, %d", c.offset, num), jobs)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	c.offset += uint64(len(jobs))
+	return jobs, err
+}
+
+func getJobsBySQL(sess sessionctx.Context, tbl, condition string, jobs []*model.Job) ([]*model.Job, error) {
+	rs, err := sess.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), fmt.Sprintf("select job_meta from mysql.%s where %s", tbl, condition))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	var rows []chunk.Row
+	if rows, err = sqlexec.DrainRecordSet(context.Background(), rs, 8); err != nil {
+		return nil, errors.Trace(err)
+	}
+	if err = rs.Close(); err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(jobs) == 0 {
+		jobs = make([]*model.Job, 0, len(rows))
+	}
+	jobs = jobs[:0]
+	for _, row := range rows {
+		jobBinary := row.GetBytes(0)
+		job := model.Job{}
+		err = job.Decode(jobBinary)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		jobs = append(jobs, &job)
+	}
+
+	return jobs, nil
 }
 
 // RecordData is the record data composed of a handle and values.

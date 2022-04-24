@@ -465,7 +465,6 @@ func (d *ddl) readyForConcurrencyDDL() error {
 	d.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(reorgWorkerFunc, batchAddingJobs, batchAddingJobs, 3*time.Minute))
 	d.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(generalWorkerFunc, 1, 1, 0))
 	var err error
-	d.sessForAddDDL, err = d.sessPool.get()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -504,7 +503,11 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.wg.Run(d.limitDDLJobs)
 
 	d.sessPool = newSessionPool(ctxPool)
-
+	var err error
+	d.sessForAddDDL, err = d.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	// If RunWorker is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
 	if RunWorker {
@@ -525,11 +528,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 			d.readyForDDL()
 		}
 
-		err = kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
-			t := meta.NewMeta(txn)
-			d.ddlSeqNumMu.seqNum, err = t.GetHistoryDDLCount()
-			return err
-		})
+		d.ddlSeqNumMu.seqNum, err = d.GetHistoryDDLCount()
 		if err != nil {
 			return err
 		}
@@ -549,6 +548,33 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	d.wg.Run(d.PollTiFlashRoutine)
 
 	return nil
+}
+
+// GetHistoryDDLCount the count of done ddl jobs.
+func (d *ddl) GetHistoryDDLCount() (count uint64, err error) {
+	if variable.AllowConcurrencyDDL.Load() {
+		rs, err := d.sessForAddDDL.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), fmt.Sprintf("select count(1) from mysql.tidb_history_job"))
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		var rows []chunk.Row
+		if rows, err = sqlexec.DrainRecordSet(context.Background(), rs, 8); err != nil {
+			return 0, errors.Trace(err)
+		}
+		if err = rs.Close(); err != nil {
+			return 0, errors.Trace(err)
+		}
+
+		count = rows[0].GetUint64(0)
+		return count, nil
+	}
+
+	err = kv.RunInNewTxn(d.ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		count, err = t.GetHistoryDDLCount()
+		return err
+	})
+	return
 }
 
 func (d *ddl) close() {

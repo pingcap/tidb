@@ -608,7 +608,7 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 }
 
 func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, dom *domain.Domain) (*model.Job, *model.TableInfo, error) {
-	job, err := t.GetHistoryDDLJob(s.JobID)
+	job, err := ddl.GetHistoryJob(e.ctx, t, s.JobID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -692,7 +692,7 @@ func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.J
 	fn := func(jobs []*model.Job) (bool, error) {
 		return GetDropOrTruncateTableInfoFromJobs(jobs, gcSafePoint, dom, handleJobAndTableInfo)
 	}
-	err = admin.IterHistoryDDLJobs(txn, fn)
+	err = admin.IterHistoryDDLJobs(e.ctx, txn, fn)
 	if err != nil {
 		if terror.ErrorEqual(variable.ErrSnapshotTooOld, err) {
 			return nil, nil, errors.Errorf("Can't find dropped/truncated table '%s' in GC safe point %s", tableName.Name.O, model.TSConvert2Time(gcSafePoint).String())

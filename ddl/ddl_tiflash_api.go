@@ -502,7 +502,7 @@ func getDropOrTruncateTableTiflash(ctx sessionctx.Context, currentSchema infosch
 	if variable.AllowConcurrencyDDL.Load() {
 		err = admin.IterAllConcurrentDDLJobs(txn, fn, ctx)
 	} else {
-		err = admin.IterAllDDLJobs(txn, fn)
+		err = admin.IterAllDDLJobs(ctx, txn, fn)
 	}
 	if err != nil {
 		if terror.ErrorEqual(variable.ErrSnapshotTooOld, err) {

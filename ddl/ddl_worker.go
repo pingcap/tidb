@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -418,15 +419,34 @@ func (d *ddl) addConcurrencyDDLJobs(tasks []*limitJobTask) {
 
 // getHistoryDDLJob gets a DDL job with job's ID from history queue.
 func (d *ddl) getHistoryDDLJob(id int64) (*model.Job, error) {
-	var job *model.Job
+	job, err := GetHistoryJobFromStore(d.sessForAddDDL, d.store, id)
+	return job, errors.Trace(err)
+}
 
-	err := kv.RunInNewTxn(context.Background(), d.store, false, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+func GetHistoryJobFromStore(sess sessionctx.Context, store kv.Storage, id int64) (*model.Job, error) {
+	if variable.AllowConcurrencyDDL.Load() {
+		return GetHistoryJob(sess, nil, id)
+	}
+
+	var historyJob *model.Job
+	err := kv.RunInNewTxn(context.Background(), store, false, func(ctx context.Context, txn kv.Transaction) error {
 		var err1 error
-		job, err1 = t.GetHistoryDDLJob(id)
-		return errors.Trace(err1)
+		t := meta.NewMeta(txn)
+		historyJob, err1 = GetHistoryJob(nil, t, id)
+		return err1
 	})
+	return historyJob, errors.Trace(err)
+}
 
+func GetHistoryJob(sess sessionctx.Context, t *meta.Meta, id int64) (*model.Job, error) {
+	if variable.AllowConcurrencyDDL.Load() {
+		jobs, err := getJobsBySQL(sess, "tidb_history_job", fmt.Sprintf("job_id = %d", id))
+		if err != nil || len(jobs) == 0 {
+			return nil, errors.Trace(err)
+		}
+		return jobs[0], nil
+	}
+	job, err := t.GetHistoryDDLJob(id)
 	return job, errors.Trace(err)
 }
 
@@ -566,8 +586,21 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	}
 	w.writeDDLSeqNum(job)
 	w.JobContext.resetWhenJobFinish()
-	err = t.AddHistoryDDLJob(job, updateRawArgs)
+	err = w.AddHistoryDDLJob(t, job, updateRawArgs)
 	return errors.Trace(err)
+}
+
+func (w *worker) AddHistoryDDLJob(t *meta.Meta, job *model.Job, updateRawArgs bool) error {
+	if variable.AllowConcurrencyDDL.Load() {
+		b, err := job.Encode(updateRawArgs)
+		if err != nil {
+			return err
+		}
+		_, err = w.sessForJob.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), fmt.Sprintf("insert into mysql.tidb_history_job(job_id, job_meta, job_seq) values (%d, 0x%x, %d)", job.ID, b, job.SeqNum))
+		return errors.Trace(err)
+	}
+
+	return t.AddHistoryDDLJob(job, updateRawArgs)
 }
 
 func (w *worker) writeDDLSeqNum(job *model.Job) {
@@ -599,7 +632,7 @@ func isDependencyJobDone(t *meta.Meta, job *model.Job) (bool, error) {
 		return true, nil
 	}
 
-	historyJob, err := t.GetHistoryDDLJob(job.DependencyID)
+	historyJob, err := GetHistoryJob(nil, t, job.DependencyID)
 	if err != nil {
 		return false, errors.Trace(err)
 	}

@@ -615,6 +615,78 @@ func (m *Meta) CreateDDLJobTable(dbid int64) error {
 		return err
 	}
 
+	historyTblCol1 := &model.ColumnInfo{
+		ID:      1,
+		Name:    model.NewCIStr("job_id"),
+		Offset:  0,
+		State:   model.StatePublic,
+		Version: 1,
+	}
+	historyTblCol2 := &model.ColumnInfo{
+		ID:      2,
+		Name:    model.NewCIStr("job_meta"),
+		Offset:  1,
+		State:   model.StatePublic,
+		Version: 1,
+	}
+	historyTblCol3 := &model.ColumnInfo{
+		ID:      3,
+		Name:    model.NewCIStr("job_seq"),
+		Offset:  2,
+		State:   model.StatePublic,
+		Version: 1,
+	}
+	historyIdx := &model.IndexInfo{
+		ID:      1,
+		Name:    model.NewCIStr("PRIMARY"),
+		Table:   model.NewCIStr("tidb_history_job"),
+		State:   model.StatePublic,
+		Tp:      model.IndexTypeBtree,
+		Unique:  true,
+		Primary: true,
+	}
+	historyIdx2 := &model.IndexInfo{
+		ID:      2,
+		Name:    model.NewCIStr("job_seq_idx"),
+		Table:   model.NewCIStr("tidb_history_job"),
+		State:   model.StatePublic,
+		Tp:      model.IndexTypeBtree,
+		Unique:  true,
+		Primary: false,
+	}
+	historyIdx.Columns = append(idx.Columns, &model.IndexColumn{Name: model.NewCIStr("job_id"), Length: types.UnspecifiedLength})
+	historyIdx2.Columns = append(historyIdx2.Columns, &model.IndexColumn{Name: model.NewCIStr("job_seq"), Length: types.UnspecifiedLength})
+	historyTblCol1.FieldType = *types.NewFieldType(mysql.TypeLonglong)
+	historyTblCol1.Flag |= mysql.NotNullFlag
+	historyTblCol1.Flag |= mysql.PriKeyFlag
+	historyTblCol2.FieldType = *types.NewFieldType(mysql.TypeBlob)
+	historyTblCol3.FieldType = *types.NewFieldType(mysql.TypeLonglong)
+	historyTblCol1.Flag |= mysql.NotNullFlag
+	historyTblCol1.Flag |= mysql.UniqueFlag
+
+	historyTbl, err := m.GenGlobalID()
+	if err != nil {
+		return err
+	}
+	historyTblInfo := model.TableInfo{
+		ID:         historyTbl,
+		Name:       model.NewCIStr("tidb_history_job"),
+		Charset:    mysql.UTF8MB4Charset,
+		Collate:    mysql.UTF8MB4DefaultCollation,
+		PKIsHandle: true,
+		State:      model.StatePublic,
+	}
+	historyTblInfo.Indices = append(tableInfo.Indices, historyIdx2)
+	historyTblInfo.Columns = append(historyTblInfo.Columns, historyTblCol1, historyTblCol2, historyTblCol3)
+	data, err = json.Marshal(historyTblInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = m.txn.HSet(m.dbKey(dbid), m.tableKey(historyTblInfo.ID), data)
+	if err != nil {
+		return err
+	}
+
 	return m.txn.Set(mInitDDLTable, []byte("asd"))
 }
 
@@ -1175,23 +1247,28 @@ func (m *Meta) GetLastNHistoryDDLJobs(num int) ([]*model.Job, error) {
 }
 
 // LastJobIterator is the iterator for gets latest history.
-type LastJobIterator struct {
-	iter *structure.ReverseHashIterator
+type LastJobIterator interface {
+	GetLastJobs(num int, jobs []*model.Job) ([]*model.Job, error)
 }
 
 // GetLastHistoryDDLJobsIterator gets latest N history ddl jobs iterator.
-func (m *Meta) GetLastHistoryDDLJobsIterator() (*LastJobIterator, error) {
+func (m *Meta) GetLastHistoryDDLJobsIterator() (LastJobIterator, error) {
 	iter, err := structure.NewHashReverseIter(m.txn, mDDLJobHistoryKey)
 	if err != nil {
 		return nil, err
 	}
-	return &LastJobIterator{
+	return &HLastJobIterator{
 		iter: iter,
 	}, nil
 }
 
+// HLastJobIterator is the iterator for gets latest history.
+type HLastJobIterator struct {
+	iter *structure.ReverseHashIterator
+}
+
 // GetLastJobs gets last several jobs.
-func (i *LastJobIterator) GetLastJobs(num int, jobs []*model.Job) ([]*model.Job, error) {
+func (i *HLastJobIterator) GetLastJobs(num int, jobs []*model.Job) ([]*model.Job, error) {
 	if len(jobs) < num {
 		jobs = make([]*model.Job, 0, num)
 	}
